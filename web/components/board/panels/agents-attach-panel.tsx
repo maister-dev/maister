@@ -4,6 +4,7 @@ import type { ReactElement } from "react";
 import type { AgentConfigParam } from "@/lib/agents/definition";
 
 import { useState, useTransition } from "react";
+import { DocumentTextIcon } from "@heroicons/react/24/outline";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
@@ -353,14 +354,17 @@ export function AgentsAttachPanel({
                       >
                         {t("edit")}
                       </button>
+                      {/* Icon-only, per the UI affordance convention — the row's
+                          action cluster is scanned by glyph. The accessible name
+                          comes from aria-label. */}
                       <button
                         aria-label={t("memoryAction")}
-                        className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink"
+                        className="flex h-8 items-center rounded-[8px] border border-line px-3 text-ink"
                         title={t("memoryAction")}
                         type="button"
                         onClick={() => setMemoryFor(row)}
                       >
-                        {t("memoryAction")}
+                        <DocumentTextIcon aria-hidden className="h-4 w-4" />
                       </button>
                       <button
                         className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink disabled:opacity-50"
@@ -399,6 +403,8 @@ export function AgentsAttachPanel({
             cancel: t("memoryCancel"),
             clear: t("memoryClear"),
             clearConfirm: t("memoryClearConfirm"),
+            clearConfirmTitle: t("memoryClearConfirmTitle"),
+            clearError: t("memoryClearError"),
             empty: t("memoryEmpty"),
             size: t("memorySize"),
             overCap: t("memoryOverCap"),

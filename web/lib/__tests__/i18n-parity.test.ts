@@ -36,6 +36,8 @@ describe("T-C9b — agent-memory keys are complete in both catalogs", () => {
     "memoryCancel",
     "memoryClear",
     "memoryClearConfirm",
+    "memoryClearConfirmTitle",
+    "memoryClearError",
     "memoryEmpty",
     "memorySize",
     "memoryOverCap",

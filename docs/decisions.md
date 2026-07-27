@@ -13438,12 +13438,22 @@ _C · Agent memory files._
   the task block (D13): standing project knowledge belongs with standing
   config, and the current ask comes after. Injection happens at **initial
   spawn only** (D14) — a resumed session already carries it in restored ACP
-  context, and re-injecting would duplicate it.
+  context, and re-injecting would duplicate it. This needs an explicit gate,
+  not a hope: `startAgentSession` is BOTH the spawn and the resume entry point
+  (it passes `resumeSessionId` when the run has an `acp_session_id`, and the
+  hook_trip / idle-permission resumes in `lib/services/hitl.ts` call it), so the
+  whole memory step is skipped when `run.acpSessionId` is set. Without that gate
+  every resume also re-wrote the provenance pair, leaving
+  `runs.agent_memory_hash` describing the last resume rather than what the agent
+  started from — which is the one question the column exists to answer.
 - **Degradation never blocks a launch.** Memory disabled, file absent,
   unreadable, or over the cap all yield no MEMORY section and a normal launch;
   unreadable and over-cap each emit a `log.warn` naming which failure
   occurred, so a broken read is never indistinguishable from a healthy empty
-  one.
+  one. This extends past the READ to the provenance WRITE: the snapshot and the
+  hash stamp sit inside the spawn try/catch whose catch finalizes the run
+  `Failed`, so they carry their own WARN-only catch. Evidence about a launch
+  must never be able to kill the launch it describes.
 - **Every memory-injecting launch is provenance-recorded twice, and the
   durable half is a `runs` column** (D23). `memory-snapshot.md` in the run dir
   is not sufficient on its own: the run dir is GC'd for terminal runs older
@@ -13500,6 +13510,30 @@ _C · Agent memory files._
   `DELETE` is idempotent. `memoryEnabled` is threaded through the **existing**
   aggregating `PATCH /api/projects/{slug}/agents/{agentId}` — one transaction,
   never a new per-field route.
+- **The CAS is serialized by a `pg_advisory_xact_lock`, not by hope** (D26,
+  added post-review). A compare-then-write over a file is a check-then-act, not
+  a compare-and-swap: two callers observing the same hash both pass the
+  comparison and both write, so the loser is discarded with a `200` while the
+  contract — and the maintenance instruction injected into every agent prompt —
+  promises it a `409` carrying the winner's content to merge. The first
+  implementation had exactly that hole; a route-level two-racer test missed it
+  because both handlers ran the same DB round-trips and happened to stagger.
+  `writeAgentMemoryCas` therefore takes a db handle and holds a
+  per-`(project, agent)` advisory lock across read → compare → atomic write.
+  A DB hash column with a SQL CAS was rejected: it would split the truth across
+  the row and the file, and a crash between them leaves a hash describing bytes
+  that were never written. An in-process mutex was rejected as it closes the
+  window only within one Node worker. The regression test lives at the STORE
+  layer (`memory-store.db.integration.test.ts`) because the route layer
+  structurally cannot prove it.
+- **A flow-bound attachment cannot be switched on, in either direction** (D22,
+  extended post-review). The disabled toggle is an affordance, not the boundary:
+  `attachAgent` overrules a `memory: enabled` definition to `false` for a
+  flow-bound agent, and `updateAgentLink` refuses an explicit `true` with
+  `MaisterError("CONFIG")`. Only the ENABLE is refused — turning it off always
+  works, so a link mis-set before this rule stays fixable. Without both, a direct
+  `PATCH` lands a permanently inert `true`, which is the "looks configured but
+  isn't" state D22 exists to prevent.
 - **Flow-bound agents are out of scope for v1, surfaced rather than hidden**
   (D22). When an effective definition declares `flow:`, the launch diverts to
   the agent-driven flow path and produces a `run_kind='flow'` run that never

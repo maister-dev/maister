@@ -1795,6 +1795,15 @@ export async function resolveAgentMemoryForLaunch(
 // so writing provenance there would claim memory for a prompt that carried none.
 // Returns the text to inject, or null when nothing was injected (and, in that
 // case, nothing was recorded either).
+//
+// ADR-152 D14/REQ-C4 AC4 — INITIAL SPAWN ONLY. `startAgentSession` is also the
+// RESUME entry point (it passes `resumeSessionId` when the run has an
+// `acp_session_id`, and the hook_trip / idle-permission resumes in
+// `lib/services/hitl.ts` call it), so without this gate every resume would
+// re-inject the block AND overwrite the provenance pair — leaving
+// `runs.agent_memory_hash` describing the last resume rather than what the agent
+// actually started from. A resumed ACP session already carries the original
+// prompt in restored context.
 export async function applyAgentMemoryForLaunch(
   _db: Db,
   run: Record<string, any>,
@@ -1803,25 +1812,51 @@ export async function applyAgentMemoryForLaunch(
 ): Promise<string | null> {
   if (skip) return null;
 
+  if (run.acpSessionId) {
+    log.debug(
+      { runId: run.id ?? run.runId, acpSessionId: run.acpSessionId },
+      "[agents.memory] resume — memory already in restored context, not re-injected",
+    );
+
+    return null;
+  }
+
   const memory = await resolveAgentMemoryForLaunch(_db, run, projectSlug);
 
   if (!memory) return null;
 
   const runId = (run.id ?? run.runId) as string;
 
-  // Human-readable evidence beside the run's other artifacts. GC'd with the run
-  // dir after 7 days, which is exactly why the hash below also lands on the row.
-  await atomicWriteText(
-    path.join(
-      runDirPath(runtimeRoot(), projectSlug, runId),
-      "memory-snapshot.md",
-    ),
-    memory.text,
-  );
-  await _db
-    .update(runs)
-    .set({ agentMemoryHash: memory.hash })
-    .where(eq(runs.id, runId));
+  // Provenance is a BEST-EFFORT follow-up, never a launch precondition: this
+  // whole block sits inside the caller's spawn try/catch, whose catch finalizes
+  // the run as `Failed`. REQ-C5 says memory must never block a launch, so a full
+  // disk or an unwritable run dir degrades to a WARN — the agent still gets its
+  // memory, we just cannot prove afterwards that it did.
+  try {
+    // Human-readable evidence beside the run's other artifacts. GC'd with the
+    // run dir after 7 days, which is exactly why the hash also lands on the row.
+    await atomicWriteText(
+      path.join(
+        runDirPath(runtimeRoot(), projectSlug, runId),
+        "memory-snapshot.md",
+      ),
+      memory.text,
+    );
+    await _db
+      .update(runs)
+      .set({ agentMemoryHash: memory.hash })
+      .where(eq(runs.id, runId));
+  } catch (err) {
+    log.warn(
+      {
+        runId,
+        agentId: run.agentId,
+        reason: "provenance_write_failed",
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "[agents.memory] memory injected but provenance could not be recorded",
+    );
+  }
 
   return memory.text;
 }

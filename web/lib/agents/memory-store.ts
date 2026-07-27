@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
+import { sql, type SQLWrapper } from "drizzle-orm";
 import pino from "pino";
 
 import { atomicWriteText } from "@/lib/atomic";
@@ -15,6 +16,17 @@ const log = pino({
   name: "agent-memory-store",
   level: process.env.LOG_LEVEL ?? "info",
 });
+
+// Only the two members the CAS needs, so both the ext route's and the owner
+// route's db handles satisfy it without importing a drizzle generic through the
+// dual peer-dep seam.
+export type AgentMemoryCasDb = {
+  transaction: <T>(
+    fn: (tx: {
+      execute: (query: SQLWrapper) => Promise<unknown>;
+    }) => Promise<T>,
+  ) => Promise<T>;
+};
 
 const MEMORY_FILE = "memory.md";
 const SAFE_COMPONENT_BYTE = /^[A-Za-z0-9._-]$/;
@@ -72,16 +84,36 @@ export function agentMemoryPath(projectSlug: string, agentId: string): string {
     agentId,
   );
   const stem = assertUsableComponent(agentId.slice(separator + 1), agentId);
+  // Defence in depth: every caller passes a `projects.slug` that
+  // `projectSlugSchema` already constrained to kebab-case at registration, so
+  // this is a no-op on every real slug (it is made of safe bytes). It exists so
+  // the confinement of this path does not rest on a validator in a different
+  // module staying correct — every OTHER component here is encoded.
+  const slug = assertUsableComponent(projectSlug, agentId);
 
   return path.join(
     runtimeRoot(),
     ".maister",
-    projectSlug,
+    slug,
     "agents",
     packageName,
     stem,
     MEMORY_FILE,
   );
+}
+
+// ONE spelling of the cap refusal. The routes check it BEFORE the CAS (so an
+// over-cap write answers 422 rather than a misleading 409) and `writeAgentMemory`
+// checks it again as the store's own invariant — three call sites, one message.
+export function assertAgentMemoryWithinCap(content: string): void {
+  const max = agentMemoryMaxChars();
+
+  if (content.length > max) {
+    throw new MaisterError(
+      "CONFIG",
+      `agent memory: content is ${content.length} characters, over the ${max}-character cap`,
+    );
+  }
 }
 
 export function hashAgentMemory(content: string): string {
@@ -138,32 +170,65 @@ export async function readAgentMemoryRaw(
   }
 }
 
+// Keeps this lock space disjoint from the scheduler / relations / standardization
+// namespaces. "agmm" = agent memory.
+const AGENT_MEMORY_LOCK_NAMESPACE = 0x61676d6d;
+
 // ADR-152 REQ-C7 / D18: the ONE content-hash CAS, shared by the agent ext route
 // and the owner PUT — a blind human Save must not clobber a concurrent agent
 // write, so the human clears the same bar. Ordering is read-current -> compare
 // -> atomic write -> return the POST-write hash.
+//
+// The read-compare-write runs under a per-(project, agent) `pg_advisory_xact_lock`
+// because a bare compare-then-write is a check-then-act, NOT a CAS: two callers
+// that both observe hash H both pass the comparison and both write, so the loser
+// is silently discarded with a 200 instead of the 409 this contract promises.
+// (Measured: two concurrent first-writer calls each returned ok, and the
+// surviving bytes varied run to run.) The lock is the serialization the
+// filesystem cannot provide — and unlike an in-process mutex it also holds
+// across web workers and hosts. It is held until the transaction ends, i.e.
+// across the atomic rename.
 export async function writeAgentMemoryCas(
+  db: AgentMemoryCasDb,
   projectSlug: string,
   agentId: string,
   content: string,
   ifHash: string | null,
 ): Promise<
-  { ok: true; hash: string } | { ok: false; current: AgentMemoryState }
+  | { ok: true; state: AgentMemoryState }
+  | { ok: false; current: AgentMemoryState }
 > {
-  const current = await readAgentMemoryRaw(projectSlug, agentId);
-
-  if ((current.hash ?? null) !== (ifHash ?? null)) {
-    log.info(
-      { agentId, projectSlug, priorHash: current.hash, ifHash },
-      "[agents.memory] CAS lost",
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(${AGENT_MEMORY_LOCK_NAMESPACE}::int, hashtext(${`${projectSlug}:${agentId}`})::int)`,
     );
 
-    return { ok: false, current };
-  }
+    const current = await readAgentMemoryRaw(projectSlug, agentId);
 
-  const { hash } = await writeAgentMemory(projectSlug, agentId, content);
+    if ((current.hash ?? null) !== (ifHash ?? null)) {
+      log.info(
+        { agentId, projectSlug, priorHash: current.hash, ifHash },
+        "[agents.memory] CAS lost",
+      );
 
-  return { ok: true, hash };
+      return { ok: false, current };
+    }
+
+    // The post-write state is captured INSIDE the lock and returned, so the
+    // caller never re-reads the file afterwards: a re-read outside the lock can
+    // observe the NEXT writer's bytes and would report them as the result of
+    // this write.
+    const { hash, updatedAt } = await writeAgentMemory(
+      projectSlug,
+      agentId,
+      content,
+    );
+
+    return {
+      ok: true,
+      state: { content, hash, sizeChars: content.length, updatedAt },
+    };
+  });
 }
 
 // The LAUNCH view: the raw state plus the cap gate. Absent, unreadable, and
@@ -205,26 +270,24 @@ export async function writeAgentMemory(
   projectSlug: string,
   agentId: string,
   content: string,
-): Promise<{ hash: string }> {
-  const max = agentMemoryMaxChars();
-
-  if (content.length > max) {
-    throw new MaisterError(
-      "CONFIG",
-      `agent memory: content is ${content.length} characters, over the ${max}-character cap`,
-    );
-  }
+): Promise<{ hash: string; updatedAt: Date | null }> {
+  assertAgentMemoryWithinCap(content);
 
   const filePath = agentMemoryPath(projectSlug, agentId);
 
   await atomicWriteText(filePath, content);
 
   const hash = hashAgentMemory(content);
+  // Best-effort: the bytes are already durable, so a stat failure must not turn
+  // a successful write into an error — the caller reports a null timestamp.
+  const updatedAt = await stat(filePath)
+    .then((stats) => stats.mtime)
+    .catch(() => null);
 
   log.debug(
     { agentId, hash, projectSlug, sizeChars: content.length },
     "[agents.memory] written",
   );
 
-  return { hash };
+  return { hash, updatedAt };
 }

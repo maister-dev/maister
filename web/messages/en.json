@@ -4179,6 +4179,8 @@
     "memoryCancel": "Cancel",
     "memoryClear": "Clear",
     "memoryClearConfirm": "Clear this agent's memory for this project? The agent will start its next run with nothing.",
+    "memoryClearConfirmTitle": "Clear agent memory",
+    "memoryClearError": "Agent memory could not be cleared.",
     "memoryEmpty": "No memory yet — this agent has not written anything for this project.",
     "memorySize": "{size} / {max} characters",
     "memoryOverCap": "Too long — compact it below the character cap before saving.",

@@ -313,13 +313,19 @@ export async function attachAgent(
     { projectId: input.projectId, agentId: input.agentId },
     _db,
   );
-  const memoryEnabled = effective.parsed.memory === "enabled";
+  // ADR-152 D22: a flow-bound agent can never carry memory (its launch diverts
+  // to a run_kind='flow' run), so the definition's recommendation is overruled
+  // here rather than landing a `true` that updateAgentLink would then refuse to
+  // re-set — attach and PATCH agree on one rule.
+  const memoryEnabled =
+    effective.parsed.memory === "enabled" && !effective.parsed.flow;
 
   log.debug(
     {
       agentId: input.agentId,
       projectId: input.projectId,
       definitionDefault: effective.parsed.memory,
+      flowBound: Boolean(effective.parsed.flow),
       effective: memoryEnabled,
     },
     "[agents.attach] memory axis prefilled",
@@ -423,6 +429,36 @@ export async function updateAgentLink(
 
     if (configError) {
       throw new MaisterError("CONFIG", configError);
+    }
+  }
+
+  // ADR-152 D22: a flow-bound agent's launch diverts to launchAgentDrivenFlowRun
+  // and produces a `run_kind='flow'` run that never reaches the prompt seam, so
+  // memory can never be injected for it. The panel renders the toggle disabled
+  // with that reason and omits the field, but the toggle is a UI affordance, not
+  // the boundary: refuse here too, or a direct PATCH lands a permanently inert
+  // `true` — the "looks configured but isn't" state D22 exists to prevent.
+  //
+  // Read `agents.flow_ref` (one FLAT single-table read) rather than resolving the
+  // effective definition, for two reasons: it is the SAME signal the panel uses
+  // to disable the control, so the two cannot disagree; and a metadata PATCH must
+  // not start requiring a resolvable package pin it never required before — a
+  // link whose pin broke has to stay editable. `attachAgent` uses the pinned
+  // definition instead because it already resolves it to read `memory:` at all.
+  //
+  // Only an ENABLE is refused; turning it off (or omitting the field) always
+  // works, so a link mis-set before this rule existed stays fixable.
+  if (input.patch.memoryEnabled === true) {
+    const agentRows = await _db
+      .select({ flowRef: agents.flowRef })
+      .from(agents)
+      .where(eq(agents.id, input.agentId));
+
+    if (agentRows[0]?.flowRef) {
+      throw new MaisterError(
+        "CONFIG",
+        `agent ${input.agentId} drives a Flow; Flow runs do not carry agent memory, so memory cannot be enabled for this attachment`,
+      );
     }
   }
 

@@ -62,7 +62,7 @@ with a `min-w`. Forms (the modal) stay narrow (520–760px).
   (`escalate` / `terminate` / `terminate_restorable`), **Branch base**, and a
   **`brain:rw` chip** (ADR-122) when the link grants `canReadBrain` /
   `canWriteBrain` (`r`, `w`, or `rw` per the granted axes), and — **(ADR-152 —
-  Designed)** — a **`mem` chip** in the same axes cluster when
+  Implemented)** — a **`mem` chip** in the same axes cluster when
   `memoryEnabled` is set. No inline
   editing — the row carries data only; an action cluster on the right reads
   left→right **Edit (⚙) · Memory (📄, ADR-152 — Implemented) · Launch (▶) ·
@@ -74,13 +74,17 @@ with a `min-w`. Forms (the modal) stay narrow (520–760px).
   `MAISTER_AGENT_MEMORY_MAX_CHARS` (default 32 768) characters and needs the
   width. It renders `memory.md` read-only by default with a live
   **`sizeChars / max`** indicator (so "compact when near the cap" is actionable),
-  an **Edit** affordance switching to a textarea, **Save** behind the shared
-  confirmation popup (the request carries `ifHash` — a stale hash returns 409
-  with the current content, because a blind human Save must not clobber a
-  concurrent agent write), and **Clear** as a destructive confirmation.
-  Accessibility follows the shared popup convention: focus trap, initial focus,
-  focus restore, Esc, body scroll lock, `aria-labelledby`, `role="alert"` for
-  save errors, `createPortal` to `document.body`. Behavior lives in
+  an **Edit** affordance switching to a textarea, and a **Save** that submits
+  directly (the request carries `ifHash` — a stale hash returns 409 with the
+  current content, which is surfaced in place with the agent's version, because
+  a blind human Save must not clobber a concurrent agent write). **Clear** is
+  destructive and goes through the **shared portaled `ConfirmDialog`**; a failed
+  clear reports its own error rather than silently reloading. Save is
+  deliberately NOT confirmed — it is reversible and CAS-guarded, while Clear is
+  neither. Accessibility comes from the shared `useModalFocusTrap` (focus trap,
+  initial focus, focus restore, Esc, body scroll lock) plus `aria-labelledby`,
+  `role="alert"` for errors, and `createPortal` to `document.body`. Behavior
+  lives in
   [`../../system-analytics/agent-memory.md`](../../system-analytics/agent-memory.md).
 - **Available agents — list.** Agents projected from the project's **attached +
   trusted** packages that are not yet linked. Each shows `packageName:stem` + name
@@ -129,7 +133,10 @@ with a `min-w`. Forms (the modal) stay narrow (520–760px).
     **disabled with its reason shown** — "this agent drives a Flow; Flow runs do
     not carry agent memory" — never hidden and never silently inert, because the
     launch diverts to the agent-driven flow path and never reaches the prompt
-    seam.
+    seam. The disabled control is an affordance, not the boundary: `attachAgent`
+    lands `false` for a flow-bound agent regardless of its definition, and the
+    `PATCH` refuses an explicit `memoryEnabled: true` with `422 CONFIG`, so no
+    client can land a permanently inert `true`.
   - Close affordance: top-right **✕** (+ Esc + backdrop), `createPortal` to body
     (shared popup convention).
 
@@ -161,9 +168,11 @@ stateDiagram-v2
   returns `200` even when the file is absent (`content: ""`, `hash: null`) —
   the first-writer state, not a 404. `PUT` and `DELETE` require `editSettings`;
   `PUT` carries `ifHash` and answers `409` with the current state on a stale
-  hash, `DELETE` is idempotent (`204`). `memoryEnabled` itself is NOT a
-  per-field route — it rides the existing aggregating
-  `PATCH /api/projects/{slug}/agents/{agentId}` in one transaction.
+  hash, `DELETE` is idempotent (`204`). An unknown project OR an unattached
+  agent is `404` on all three — the attachment is the addressable resource here.
+  `memoryEnabled` itself is NOT a per-field route — it rides the existing
+  aggregating `PATCH /api/projects/{slug}/agents/{agentId}` in one transaction,
+  which refuses an explicit `true` for a flow-bound agent with `422 CONFIG`.
 - **Attach:** `POST /api/projects/{slug}/agents` `{ agentId, enabled?,
   runnerOverrideId? }` (admin) — `409 PRECONDITION` when the package is not
   attached+trusted.

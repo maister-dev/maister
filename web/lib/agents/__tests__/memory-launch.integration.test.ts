@@ -111,6 +111,9 @@ async function seedRun(input: {
   runKind?: "agent" | "flow";
   memoryEnabled?: boolean;
   attached?: boolean;
+  // Set to model a RESUME: `startAgentSession` passes `resumeSessionId` when the
+  // run already has one, so this is the signal that distinguishes the two.
+  acpSessionId?: string;
 }): Promise<Record<string, unknown>> {
   const runId = randomUUID();
 
@@ -140,6 +143,7 @@ async function seedRun(input: {
     projectId,
     agentId: AGENT_ID,
     runKind: input.runKind ?? "agent",
+    acpSessionId: input.acpSessionId ?? null,
   };
 }
 
@@ -301,6 +305,64 @@ describe("T-C6 / REQ-C6 — every memory-injecting launch is provenance-recorded
     // provenance for it would be a lie.
     expect(text).toBeNull();
     expect(await snapshotOf(run.runId as string)).toBeNull();
+    expect(await stampOf(run.runId as string)).toBeNull();
+  });
+
+  it("REQ-C4 AC4 / D14 — a RESUME injects nothing and does NOT re-stamp the provenance pair", async () => {
+    // Spawn first: this is the state a resume inherits.
+    const run = await seedRun({ memoryEnabled: true });
+
+    await writeMemory(MEMORY);
+    await applyAgentMemoryForLaunch(testDatabase.db, run, SLUG, false);
+
+    const spawnStamp = await stampOf(run.runId as string);
+
+    expect(spawnStamp).toBe(hashAgentMemory(MEMORY));
+
+    // The agent then rewrites its memory mid-run and the session is resumed
+    // (hook_trip / idle-permission both re-enter startAgentSession).
+    await writeMemory("# rewritten after the spawn\n");
+
+    const resumed = { ...run, acpSessionId: "acp-session-1" };
+    const text = await applyAgentMemoryForLaunch(
+      testDatabase.db,
+      resumed,
+      SLUG,
+      false,
+    );
+
+    expect(text).toBeNull();
+    // The stamp still describes what the agent STARTED from — the one question
+    // the column exists to answer. Re-stamping would silently answer a different
+    // one.
+    expect(await stampOf(run.runId as string)).toBe(spawnStamp);
+    expect(await snapshotOf(run.runId as string)).toBe(MEMORY);
+  });
+
+  it("REQ-C5 — a provenance write failure WARNs and still returns the memory: it never fails the launch", async () => {
+    const run = await seedRun({ memoryEnabled: true });
+
+    await writeMemory(MEMORY);
+
+    // A directory where `memory-snapshot.md` must be written: atomicWriteText's
+    // rename fails with EISDIR. This whole step runs inside the caller's spawn
+    // try/catch, whose catch finalizes the run `Failed`.
+    const snapshotPath = path.join(
+      runDirPath(root, SLUG, run.runId as string),
+      "memory-snapshot.md",
+    );
+
+    await mkdir(snapshotPath, { recursive: true });
+
+    const text = await applyAgentMemoryForLaunch(
+      testDatabase.db,
+      run,
+      SLUG,
+      false,
+    );
+
+    // The agent still gets its memory; only the evidence is missing.
+    expect(text).toBe(MEMORY);
     expect(await stampOf(run.runId as string)).toBeNull();
   });
 

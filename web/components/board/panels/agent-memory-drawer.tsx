@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
+import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
+import { useModalFocusTrap } from "@/components/feedback/use-modal-focus-trap";
+
 export type AgentMemoryDrawerLabels = {
   title: string;
   close: string;
@@ -11,6 +14,8 @@ export type AgentMemoryDrawerLabels = {
   cancel: string;
   clear: string;
   clearConfirm: string;
+  clearConfirmTitle: string;
+  clearError: string;
   empty: string;
   size: string;
   overCap: string;
@@ -52,10 +57,19 @@ export function AgentMemoryDrawer({
   const [draft, setDraft] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [confirmingClear, setConfirmingClear] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const closeRef = useRef<HTMLButtonElement | null>(null);
-  const triggerRef = useRef<Element | null>(null);
   const endpoint = `/api/projects/${slug}/agents/${encodeURIComponent(agentId)}/memory`;
+
+  const requestClose = useCallback((): void => {
+    if (!busy) onClose();
+  }, [busy, onClose]);
+
+  // The shared trap owns initial focus, Escape, focus restore, body scroll lock
+  // and the Tab cycle — hand-rolling a second copy is how the two drift. It is
+  // disabled while the Clear confirmation is open so the nested dialog keeps the
+  // keyboard.
+  useModalFocusTrap(panelRef, requestClose, !confirmingClear);
 
   const load = useCallback(async () => {
     try {
@@ -75,46 +89,8 @@ export function AgentMemoryDrawer({
   }, [endpoint, labels.loadError]);
 
   useEffect(() => {
-    triggerRef.current = document.activeElement;
     void load();
-    closeRef.current?.focus();
-
-    const previousOverflow = document.body.style.overflow;
-
-    document.body.style.overflow = "hidden";
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      (triggerRef.current as HTMLElement | null)?.focus?.();
-    };
   }, [load]);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === "Escape" && !busy) onClose();
-      if (event.key !== "Tab" || !panelRef.current) return;
-
-      const focusable = panelRef.current.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
-      );
-
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-
-    document.addEventListener("keydown", onKey);
-
-    return () => document.removeEventListener("keydown", onKey);
-  }, [busy, onClose]);
 
   const save = async (): Promise<void> => {
     if (draft === null || !state) return;
@@ -154,14 +130,26 @@ export function AgentMemoryDrawer({
     }
   };
 
+  // A failed clear must SAY so: silently reloading unchanged content reads as
+  // "nothing happened" for a destructive action the operator just confirmed.
   const clear = async (): Promise<void> => {
-    if (!window.confirm(labels.clearConfirm)) return;
     setBusy(true);
+    setError(null);
 
     try {
-      await fetch(endpoint, { method: "DELETE" });
+      const res = await fetch(endpoint, { method: "DELETE" });
+
+      if (!res.ok) {
+        setError(labels.clearError);
+
+        return;
+      }
+
       await load();
       setDraft(null);
+      setConfirmingClear(false);
+    } catch {
+      setError(labels.clearError);
     } finally {
       setBusy(false);
     }
@@ -187,7 +175,7 @@ export function AgentMemoryDrawer({
         disabled={busy}
         tabIndex={-1}
         type="button"
-        onClick={onClose}
+        onClick={requestClose}
       />
       <div
         ref={panelRef}
@@ -204,12 +192,11 @@ export function AgentMemoryDrawer({
             <p className="m-0 font-mono text-[11px] text-mute">{agentLabel}</p>
           </div>
           <button
-            ref={closeRef}
             aria-label={labels.close}
             className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink"
             disabled={busy}
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
           >
             ✕
           </button>
@@ -257,7 +244,7 @@ export function AgentMemoryDrawer({
                   className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-danger disabled:opacity-50"
                   disabled={busy}
                   type="button"
-                  onClick={() => void clear()}
+                  onClick={() => setConfirmingClear(true)}
                 >
                   {labels.clear}
                 </button>
@@ -283,6 +270,38 @@ export function AgentMemoryDrawer({
               </>
             )}
           </div>
+        ) : null}
+
+        {confirmingClear ? (
+          <ConfirmDialog
+            body={labels.clearConfirm}
+            busy={busy}
+            cancelLabel={labels.cancel}
+            testId="agent-memory-clear-confirm"
+            title={labels.clearConfirmTitle}
+            titleId="agent-memory-clear-confirm-title"
+            onClose={() => setConfirmingClear(false)}
+          >
+            <div className="flex justify-end gap-2">
+              <button
+                className="h-8 rounded-[8px] border border-line px-3 text-[12px] text-mute hover:bg-ivory disabled:opacity-50"
+                disabled={busy}
+                type="button"
+                onClick={() => setConfirmingClear(false)}
+              >
+                {labels.cancel}
+              </button>
+              <button
+                className="h-8 rounded-[8px] border border-danger bg-danger px-3 text-[12px] font-semibold text-white disabled:opacity-50"
+                data-testid="agent-memory-clear-confirm-submit"
+                disabled={busy}
+                type="button"
+                onClick={() => void clear()}
+              >
+                {labels.clear}
+              </button>
+            </div>
+          </ConfirmDialog>
         ) : null}
       </div>
     </div>,

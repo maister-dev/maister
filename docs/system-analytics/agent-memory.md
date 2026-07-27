@@ -37,6 +37,11 @@ different owner, and the two axes never imply each other. (Implemented — ADR-1
 - **Content hash** — `hashAgentMemory(content)`, sha256 hex over the exact
   content bytes. An absent file hashes to `null`. It is both the CAS token and
   the provenance stamp. (Implemented)
+- **CAS lock** — a per-`(project, agent)` `pg_advisory_xact_lock` held across the
+  whole read-compare-write in `writeAgentMemoryCas`. The filesystem offers no
+  compare-and-swap, so without it two callers observing the same hash would both
+  pass the comparison and both write, and the loser would be discarded with a
+  `200`. (Implemented)
 - **Memory snapshot** — `memory-snapshot.md`, written into the run dir
   (`runDirPath(runtimeRoot(), projectSlug, runId)`) on every launch that
   actually injected memory. Human-readable evidence, GC'd with the run dir
@@ -93,7 +98,9 @@ Resolution happens at the **launch site**, not inside `buildAgentPrompt`,
 because the launch site's `opts.overridePrompt ?? …` discards the composed
 base prompt wholesale — resolving inside the builder would stamp provenance for
 a prompt that carried no memory. The whole path is gated on
-`runs.run_kind = 'agent'`.
+`runs.run_kind = 'agent'` and on the run having **no** `acp_session_id`:
+`startAgentSession` is also the resume entry point, and a resumed session
+already carries the original prompt in restored context.
 
 ```mermaid
 sequenceDiagram
@@ -103,24 +110,30 @@ sequenceDiagram
     participant FS as maister runtime store
     participant P as buildAgentPrompt
 
-    L->>DB: SELECT memory_enabled FROM agent_project_links
-    alt memory_enabled is false, or the launch uses overridePrompt
+    alt overridePrompt, or a RESUME (run has an acp_session_id)
         L->>P: compose without a MEMORY section
-        Note over L,DB: agent_memory_hash stays NULL
-    else memory_enabled is true
-        L->>MS: readAgentMemory projectSlug agentId
-        MS->>FS: read memory.md
-        alt absent
-            MS-->>L: null
+        Note over L,DB: agent_memory_hash untouched - a resume must not restamp it
+    else initial spawn of an agent run
+        L->>DB: SELECT memory_enabled FROM agent_project_links
+        alt memory_enabled is false
             L->>P: compose without a MEMORY section
-        else unreadable or over cap
-            MS-->>L: null and a WARN naming the reason
-            L->>P: compose without a MEMORY section
-        else readable and within the cap
-            MS-->>L: content and hash
-            L->>P: compose with MEMORY placed after config and before task
-            L->>FS: atomicWriteText memory-snapshot.md into the run dir
-            L->>DB: UPDATE runs SET agent_memory_hash
+            Note over L,DB: agent_memory_hash stays NULL
+        else memory_enabled is true
+            L->>MS: readAgentMemory projectSlug agentId
+            MS->>FS: read memory.md
+            alt absent
+                MS-->>L: null
+                L->>P: compose without a MEMORY section
+            else unreadable or over cap
+                MS-->>L: null and a WARN naming the reason
+                L->>P: compose without a MEMORY section
+            else readable and within the cap
+                MS-->>L: content and hash
+                L->>P: compose with MEMORY placed after config and before task
+                L->>FS: atomicWriteText memory-snapshot.md into the run dir
+                L->>DB: UPDATE runs SET agent_memory_hash
+                Note over L,FS: a failure of either records a WARN, launch proceeds
+            end
         end
     end
 ```
@@ -143,7 +156,8 @@ sequenceDiagram
     EXT->>EXT: derive projectId agentId runId from the run-bound token
     EXT->>EXT: 403 when not an agent token, detached, or memory_enabled false
     EXT->>EXT: 422 CONFIG when content exceeds the cap
-    EXT->>MS: writeAgentMemoryCas projectSlug agentId content ifHash
+    EXT->>MS: writeAgentMemoryCas db projectSlug agentId content ifHash
+    MS->>MS: pg_advisory_xact_lock on project and agent - serializes racers
     MS->>FS: read the current file and hash it
     alt ifHash equals the current hash
         MS->>FS: atomicWriteText memory.md
@@ -216,19 +230,25 @@ sequenceDiagram
   occurred. (REQ-C5, Implemented)
 - Every launch that injects memory MUST write `memory-snapshot.md` into the run
   dir via `atomicWriteText` AND stamp `runs.agent_memory_hash`; a launch taking
-  the `overridePrompt` branch MUST write neither. (REQ-C6, Implemented)
+  the `overridePrompt` branch MUST write neither, a RESUME MUST write neither
+  (it injects nothing), and a failure to record either one MUST degrade to a
+  `log.warn` rather than fail the launch. (REQ-C6, Implemented)
 - A write MUST be a content-hash CAS: `ifHash === null` is the first-writer
   form, ordering MUST be read-current → compare → atomic write → return the
   post-write hash, a stale `ifHash` MUST return `MaisterError("CONFLICT")` with
-  the current `{content, hash}`, and two concurrent writers MUST leave the file
-  containing exactly one writer's bytes. (REQ-C7, Implemented)
+  the current `{content, hash}`, and the read-compare-write MUST be serialized
+  per `(project, agent)` by a `pg_advisory_xact_lock` so that of two concurrent
+  writers holding the same `ifHash` exactly ONE wins and the other is refused —
+  never both admitted with one silently discarded. (REQ-C7, Implemented)
 - `POST /api/v1/ext/agent/memory` MUST take no body-controlled identifier —
   `projectId`, `agentId` and the audit `runId` come from the token binding and
-  `projectSlug` from a `projects` lookup — MUST resolve its scope to a named
-  `ProjectAction` (`writeAgentMemory`, minimum `member`) and never the
-  `readBoard` fallback, and MUST target `.maister/<slug>/agents/…` rather than
-  the worktree so it works in every workspace mode including `none`.
-  (REQ-C8, Implemented)
+  `projectSlug` from a `projects` lookup — MUST map its scope to a named
+  `ProjectAction` (`writeAgentMemory`, minimum `member`) rather than falling into
+  `resolveProjectAction`'s `readBoard` default, and MUST target
+  `.maister/<slug>/agents/…` rather than the worktree so it works in every
+  workspace mode including `none`. (The mapping is a guard for the slug-bearing
+  user-token path; this route's own authorization is agent-token kind + link row
+  + `memory_enabled` + scope.) (REQ-C8, Implemented)
 - The owner MUST be able to read, replace and clear the file through
   `GET | PUT | DELETE /api/projects/{slug}/agents/{agentId}/memory` with
   `PUT` carrying `ifHash` and `DELETE` idempotent, and `memoryEnabled` MUST
@@ -254,13 +274,17 @@ sequenceDiagram
 | File larger than the cap at launch | No MEMORY section, `log.warn` with `reason: "over_cap"`, launch proceeds. The file is NOT truncated or rewritten — only a write refuses. |
 | Path exists but is not a readable regular file (a directory, a bad mode) | No MEMORY section, `log.warn` with `reason: "unreadable"`, launch proceeds. Nothing throws. |
 | CAS loss | 409 `MaisterError("CONFLICT")` whose body carries the current `{content, hash}` so the agent can merge and retry. The agent's bytes are discarded, never partially merged. |
-| Two genuinely concurrent writers | The atomic tmp+rename write means the file ends up containing exactly one writer's payload; the loser sees the 409 and the winner's content. |
+| Two genuinely concurrent writers | The advisory lock serializes them: the second observes the first's committed bytes, loses the hash comparison, and gets the 409 with the winner's content. The atomic tmp+rename additionally guarantees the file is never a partial or interleaved write. Both halves are required — without the lock the compare-then-write is a check-then-act and BOTH writers succeed. |
+| A flow-bound agent whose definition says `memory: enabled` | `attachAgent` lands `memory_enabled = false` and `updateAgentLink` refuses an explicit `true` with `MaisterError("CONFIG")`. The axis can never be switched on for an attachment that structurally cannot use it, from the UI or from a direct `PATCH`. |
+| Owner `DELETE` racing an agent write | `DELETE` is deliberately NOT CAS-guarded: it is an explicit, confirmed operator action on an admin-only route, and the documented contract is idempotency. An agent write landing in the same instant may therefore survive the clear; the operator sees the surviving content on the next open. |
+| A directory (or any non-file) at the memory path on `DELETE` | Surfaces as an error rather than a `204`. Only `ENOENT`/`ENOTDIR` mean "already absent"; answering "cleared" while the path survives would be the same lie the read path already reports as `unreadable`. |
 | Workspace mode `none` | Memory works normally — the store lives under `.maister/<slug>/agents/…`, never in a worktree, so the L1–L3 read-only enforcement contour is untouched. |
 | Detach | Memory becomes inert immediately (no injection, write 403) and the file survives untouched on disk. |
 | Re-attach of an agent whose definition says `memory: none` | The surviving file is revived but the attachment lands `memory_enabled = false`, so it stays inert. Correct by construction and deliberately surprising — the definition default is re-applied, not the previous operator choice. |
 | Package re-pin or upgrade | The file is preserved: the path is keyed by qualified agent id, never by revision. |
 | Launch using `opts.overridePrompt` | Injects nothing and records nothing — no MEMORY section, no `memory-snapshot.md`, no `runs.agent_memory_hash`. The override discards the composed base prompt, so claiming provenance would be a lie. |
-| Session resume | Memory is injected at initial spawn only; a resumed ACP session already carries it in restored context, so re-injection would duplicate it. |
+| Session resume | Memory is injected at initial spawn only. `startAgentSession` is ALSO the resume entry point (hook_trip and idle-permission resumes call it), so the gate is explicit: a run with an `acp_session_id` resolves no memory, re-injects nothing, and — crucially — does NOT re-write `memory-snapshot.md` or re-stamp `runs.agent_memory_hash`, which would otherwise describe the last resume instead of what the agent started from. |
+| Provenance write fails (full disk, unwritable run dir, DB error) | The launch PROCEEDS with memory injected; the failure degrades to a `log.warn` carrying `reason: "provenance_write_failed"`. Memory must never block a launch, and the snapshot/stamp are evidence, not a precondition. |
 | Flow-bound agent | An effective definition declaring `flow:` diverts to the agent-driven flow path and produces a `run_kind='flow'` run that never reaches the prompt seam, so it carries no memory. The owner's Memory toggle renders disabled with that reason rather than hidden. |
 | Agent id with no `:` reaching the store | `MaisterError("CONFIG")` — never a silent single-level path, which would let two different agents share a file. |
 | Run dir GC'd after 7 days | `memory-snapshot.md` is gone but `runs.agent_memory_hash` remains, so "what did this agent remember when it acted" stays answerable. |

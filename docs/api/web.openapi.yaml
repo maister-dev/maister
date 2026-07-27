@@ -1821,7 +1821,7 @@ paths:
                   description: "(ADR-122) Per-link Brain write axis — gates `memory_retain`; separate from read (read never grants write)."
                 memoryEnabled:
                   type: boolean
-                  description: "(ADR-152) Per-link agent-memory axis — gates launch injection and `agent_memory_write`. A SEPARATE store from Brain: neither Brain axis implies it. Threaded through THIS aggregating PATCH, never a per-field route."
+                  description: "(ADR-152) Per-link agent-memory axis — gates launch injection and `agent_memory_write`. A SEPARATE store from Brain: neither Brain axis implies it. Threaded through THIS aggregating PATCH, never a per-field route. An explicit `true` is refused with `422 CONFIG` for a flow-bound agent (its launch produces a `run_kind=flow` run that can never carry memory); `false` is always accepted so a mis-set link stays fixable."
                 schedules:
                   type: array
                   items: { $ref: "#/components/schemas/AgentScheduleBody" }
@@ -1917,7 +1917,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404":
-          description: No attachment for this (project, agent).
+          description: Unknown project, or no attachment for this (project, agent).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -1962,7 +1962,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404":
-          description: No attachment for this (project, agent).
+          description: Unknown project, or no attachment for this (project, agent).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -2000,7 +2000,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404":
-          description: No attachment for this (project, agent).
+          description: Unknown project, or no attachment for this (project, agent).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

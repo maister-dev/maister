@@ -8,8 +8,10 @@ import { z } from "zod";
 import { agentsErrorResponse } from "@/lib/agents/admin-shared";
 import {
   agentMemoryPath,
+  assertAgentMemoryWithinCap,
   readAgentMemoryRaw,
   writeAgentMemoryCas,
+  type AgentMemoryCasDb,
   type AgentMemoryState,
 } from "@/lib/agents/memory-store";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
@@ -53,13 +55,19 @@ function serialize(state: AgentMemoryState) {
   };
 }
 
-// The attachment is the addressable resource: memory for an agent this project
-// has not attached does not exist here, which is a 404 on this surface (the
-// sibling link route uses the same contract).
+// The attachment is the addressable resource: memory for a project or an agent
+// this project has not attached does not exist HERE, so both are 404 on this
+// surface. Returned as a discriminated result rather than thrown, because the
+// repo rule is that callers branch on a typed value — never on `err.message`
+// matching, which silently breaks the moment a message is reworded.
+type AttachmentLookup =
+  | { ok: true; projectId: string }
+  | { ok: false; missing: "project" | "attachment" };
+
 async function resolveAttachment(
   slug: string,
   agentId: string,
-): Promise<{ projectId: string }> {
+): Promise<AttachmentLookup> {
   const db = getDb() as unknown as { select: any };
   const projectRows = await db
     .select()
@@ -68,7 +76,7 @@ async function resolveAttachment(
   const project = projectRows[0];
 
   if (!project || project.archivedAt) {
-    throw new MaisterError("PRECONDITION", `project not found: ${slug}`);
+    return { ok: false, missing: "project" };
   }
 
   const links = await db
@@ -82,28 +90,23 @@ async function resolveAttachment(
     );
 
   if (links.length === 0) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `agent ${agentId} is not attached to ${slug}`,
-    );
+    return { ok: false, missing: "attachment" };
   }
 
-  return { projectId: project.id as string };
+  return { ok: true, projectId: project.id as string };
 }
 
-function notAttachedTo404(err: unknown): NextResponse | null {
-  if (
-    err instanceof MaisterError &&
-    (err.message.includes("is not attached") ||
-      err.message.includes("project not found"))
-  ) {
-    return NextResponse.json(
-      { code: "PRECONDITION", message: err.message },
-      { status: 404 },
-    );
-  }
-
-  return null;
+function notFound(lookup: { missing: "project" | "attachment" }): NextResponse {
+  return NextResponse.json(
+    {
+      code: "PRECONDITION",
+      message:
+        lookup.missing === "project"
+          ? "project not found"
+          : "agent is not attached to this project",
+    },
+    { status: 404 },
+  );
 }
 
 export async function GET(
@@ -115,15 +118,17 @@ export async function GET(
   try {
     await requireActiveSession();
     const agentId = decodeRouteParam(rawAgentId, "agentId");
-    const { projectId } = await resolveAttachment(slug, agentId);
+    const lookup = await resolveAttachment(slug, agentId);
 
-    await requireProjectAction(projectId, "readBoard");
+    if (!lookup.ok) return notFound(lookup);
+
+    await requireProjectAction(lookup.projectId, "readBoard");
 
     const state = await readAgentMemoryRaw(slug, agentId);
 
     return NextResponse.json(serialize(state), { status: 200 });
   } catch (err) {
-    return notAttachedTo404(err) ?? agentsErrorResponse(err);
+    return agentsErrorResponse(err);
   }
 }
 
@@ -136,7 +141,11 @@ export async function PUT(
   try {
     const actor = await requireActiveSession();
     const agentId = decodeRouteParam(rawAgentId, "agentId");
-    const { projectId } = await resolveAttachment(slug, agentId);
+    const lookup = await resolveAttachment(slug, agentId);
+
+    if (!lookup.ok) return notFound(lookup);
+
+    const projectId = lookup.projectId;
 
     await requireProjectAction(projectId, "editSettings");
 
@@ -157,16 +166,12 @@ export async function PUT(
       throw new MaisterError("CONFIG", `invalid body: ${parsed.error.message}`);
     }
 
-    const max = agentMemoryMaxChars();
-
-    if (parsed.data.content.length > max) {
-      throw new MaisterError(
-        "CONFIG",
-        `agent memory: content is ${parsed.data.content.length} characters, over the ${max}-character cap`,
-      );
-    }
+    // Checked BEFORE the CAS so an over-cap body answers 422 CONFIG rather than
+    // a misleading 409 when the hash also happens to be stale.
+    assertAgentMemoryWithinCap(parsed.data.content);
 
     const result = await writeAgentMemoryCas(
+      getDb() as unknown as AgentMemoryCasDb,
       slug,
       agentId,
       parsed.data.content,
@@ -195,14 +200,10 @@ export async function PUT(
       "[agents.memory] owner write",
     );
 
-    return NextResponse.json(
-      serialize(await readAgentMemoryRaw(slug, agentId)),
-      {
-        status: 200,
-      },
-    );
+    // This write's own post-write state, captured under the CAS lock.
+    return NextResponse.json(serialize(result.state), { status: 200 });
   } catch (err) {
-    return notAttachedTo404(err) ?? agentsErrorResponse(err);
+    return agentsErrorResponse(err);
   }
 }
 
@@ -215,7 +216,11 @@ export async function DELETE(
   try {
     const actor = await requireActiveSession();
     const agentId = decodeRouteParam(rawAgentId, "agentId");
-    const { projectId } = await resolveAttachment(slug, agentId);
+    const lookup = await resolveAttachment(slug, agentId);
+
+    if (!lookup.ok) return notFound(lookup);
+
+    const projectId = lookup.projectId;
 
     await requireProjectAction(projectId, "editSettings");
 
@@ -226,9 +231,12 @@ export async function DELETE(
     } catch (err) {
       const code = (err as { code?: string }).code;
 
-      // Idempotent: clearing an already-absent file succeeds. Only the "absent"
-      // errnos are allow-listed — EACCES and friends must still surface.
-      if (code !== "ENOENT" && code !== "ENOTDIR" && code !== "EISDIR") {
+      // Idempotent: clearing an already-absent file succeeds. ONLY the two
+      // "nothing is there" errnos are allow-listed. EISDIR is deliberately NOT
+      // among them — a directory at the memory path is a real anomaly, and
+      // swallowing it would answer 204 "cleared" while the path survives, which
+      // is exactly the lie the read path already WARNs about as `unreadable`.
+      if (code !== "ENOENT" && code !== "ENOTDIR") {
         throw err;
       }
     }
@@ -240,6 +248,6 @@ export async function DELETE(
 
     return new NextResponse(null, { status: 204 });
   } catch (err) {
-    return notAttachedTo404(err) ?? agentsErrorResponse(err);
+    return agentsErrorResponse(err);
   }
 }

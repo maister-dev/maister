@@ -9,6 +9,7 @@ import pino from "pino";
 import { z } from "zod";
 
 import {
+  assertAgentMemoryWithinCap,
   readAgentMemoryRaw,
   writeAgentMemoryCas,
   type AgentMemoryState,
@@ -16,7 +17,6 @@ import {
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { agentMemoryMaxChars } from "@/lib/instance-config";
 import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -184,16 +184,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           );
         }
 
-        const max = agentMemoryMaxChars();
-
-        if (parsed.data.content.length > max) {
-          throw new MaisterError(
-            "CONFIG",
-            `agent memory: content is ${parsed.data.content.length} characters, over the ${max}-character cap`,
-          );
-        }
+        // Checked BEFORE the CAS so an over-cap body answers 422 CONFIG rather
+        // than a misleading 409 when the hash also happens to be stale.
+        assertAgentMemoryWithinCap(parsed.data.content);
 
         const result = await writeAgentMemoryCas(
+          db,
           target.projectSlug,
           target.agentId,
           parsed.data.content,
@@ -223,17 +219,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             runId: ctx.actor.boundRunId,
             sizeChars: parsed.data.content.length,
             priorHash: parsed.data.ifHash ?? null,
-            newHash: result.hash,
+            newHash: result.state.hash,
           },
           "[ext.agent-memory] written",
         );
 
-        const state = await readAgentMemoryRaw(
-          target.projectSlug,
-          target.agentId,
-        );
-
-        return NextResponse.json(serialize(state), { status: 200 });
+        // THIS write's own post-write state, captured under the CAS lock — not a
+        // fresh read, which could report a later writer's bytes as the outcome
+        // of this call.
+        return NextResponse.json(serialize(result.state), { status: 200 });
       } catch (err) {
         return extError(err);
       }
