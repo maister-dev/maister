@@ -1,4 +1,5 @@
-import type { RunStatus } from "@/lib/db/schema";
+import type { HitlRequest, RunStatus } from "@/lib/db/schema";
+import type { DomainEventKind } from "@/lib/domain-events/taxonomy";
 
 export type ActivitySalience = "high" | "normal" | "low";
 
@@ -9,18 +10,7 @@ export type ActivityAction = {
   detail?: string | null;
 };
 
-export type PulseEventKind =
-  | "task.created"
-  | "task.comment_added"
-  | "task.triage_requeued"
-  | "task.clarification_answered"
-  | "run.done"
-  | "run.failed"
-  | "run.crashed"
-  | "run.abandoned"
-  | "run.review"
-  | "run.escalated"
-  | "gate.failed";
+export type PulseEventKind = DomainEventKind;
 
 export type ActivityLivenessState =
   | "working"
@@ -103,7 +93,7 @@ export type NeedsYouItem = {
   taskKey: string | null;
   taskTitle: string | null;
   hitlRequestId: string;
-  kind: string;
+  kind: HitlRequest["kind"];
   title: string;
   summary: string;
   requestedAt: Date;

@@ -1,6 +1,6 @@
 # Assistant activity domain
 
-## Status: Designed (v1 contract frozen on 2026-07-26)
+## Status: Implemented (v1 contract frozen on 2026-07-26; as-built verified on 2026-07-27)
 
 ## Purpose
 
@@ -24,8 +24,10 @@ token model.
 - **Per-run activity feed** — the run-scoped ext/MCP response returning
   semantic items for one run plus the same synthesized `now` snapshot.
 - **`domain_events`** — the append-only fact log backing `happened`. Cursor
-  ordering is `domain_events.id`; no dispatcher consumer row is created for
-  the pulse. See [domain-events.md](domain-events.md).
+  ordering is `domain_events.id`, but bootstrap and replay only advance across
+  rows below the current `tx_id < pg_snapshot_xmin(pg_current_snapshot())`
+  commit horizon; no dispatcher consumer row is created for the pulse. See
+  [domain-events.md](domain-events.md).
 - **`run_messages`** — the persisted semantic transcript rows for flow and
   scratch/agent projection, keyed by stable item identity plus the monotonic
   `supervisor_event_id` mutation horizon. See [runs.md](runs.md) and
@@ -97,11 +99,11 @@ sequenceDiagram
     A->>EXT: GET /api/v1/ext/activity?since=<cursor>&salience=<tier>
     EXT->>EXT: verify project-bound token and runs:read scope
     alt since omitted
-        EXT->>DB: SELECT current MAX(domain_events.id) for the token project
+        EXT->>DB: SELECT current visible MAX(domain_events.id) below the commit horizon
         EXT->>ACT: seed happened cursor to current tail
         ACT-->>EXT: happened.items = []
     else since supplied
-        EXT->>ACT: decode cursor and load domain_events.id > since
+        EXT->>ACT: decode cursor and load domain_events.id > since below the commit horizon
         ACT->>DB: SELECT project facts ordered by id ASC
     end
     EXT->>ACT: list active runs and pending needs-you rows
@@ -144,9 +146,12 @@ sequenceDiagram
 
 Replay rules:
 
-- `sinceId` is a forward-only mutation horizon over semantic item changes.
+- `sinceId` is an opaque forward-only cursor over semantic item changes.
 - A stable `id` may reappear if its `lastMutationId` advanced after the
   caller's `sinceId`.
+- When multiple items share the same `lastMutationId`, replay MUST break ties
+  by stable item id instead of dropping equal-horizon siblings at a page
+  boundary.
 - When `sinceId` is omitted, replay starts from the beginning of the run's
   semantic history and returns up to the `limit` window.
 - There is no backward pagination API in v1.
@@ -164,19 +169,19 @@ Replay rules:
 - Pulse `since` cursors are client-held only. The route MUST NOT create or
   advance a `domain_event_consumers` row.
 - Pulse `happened` ordering MUST be `domain_events.id ASC`, filtered strictly
-  to the token-bound project.
+  to the token-bound project, and bounded by the current
+  `tx_id < pg_snapshot_xmin(pg_current_snapshot())` commit horizon so an older
+  in-flight transaction cannot be skipped forever.
 - Omitting `since` on the pulse MUST return `happened.items = []` and seed
   `happened.nextCursor` to the current project tail. This call still MUST
   compute `now` and `needsYou`.
 - Per-run replay MUST use stable item ids plus monotonic `lastMutationId`
-  values so in-place item mutations resurface on later polls.
+  values so in-place item mutations resurface on later polls. Equal
+  `lastMutationId` siblings MUST remain reachable through the opaque cursor.
 - The current design assumes the existing schema is sufficient:
   `domain_events.id` for pulse replay, `run_messages.supervisor_event_id` for
-  flow-run mutation replay, and the same semantic horizon exposed through the
-  whole-run coalescer for scratch / standalone agent runs. If a run cannot be
-  replayed honestly with those persisted identifiers, the implementation MUST
-  fail closed or add an explicit additive migration; it MUST NOT invent a
-  best-effort cursor.
+  flow-run mutation replay, and the durable session-update order exposed
+  through the whole-run coalescer for scratch / standalone agent runs.
 - `salience` query filtering is minimum-threshold, not exact-match:
   `high` returns `high`; `normal` returns `high` + `normal`; `low` returns all
   emitted items. `suppressed` is never emitted.
@@ -211,6 +216,9 @@ Replay rules:
 - **No domain events yet** — bootstrap pulse returns empty `happened.items`,
   `nextCursor = "0"` (or the encoded zero horizon), and still reports `now`
   plus `needsYou`.
+- **Older transaction still open** — bootstrap and replay hold `happened` at
+  the latest visible fact below the current commit horizon; newer committed rows
+  wait until the older transaction clears, preventing a permanent replay gap.
 - **No active runs** — `now.runs` is `[]`, not omitted, and does not imply
   anything about `happened` or `needsYou`.
 - **No pending human attention** — `needsYou.items` is `[]`, not omitted, and
@@ -234,9 +242,16 @@ Replay rules:
   [runs.md](runs.md), [hitl.md](hitl.md), [domain-events.md](domain-events.md).
 - DB narrative: [`../database-schema.md`](../database-schema.md)
   (`domain_events`, `run_messages`, `hitl_requests`).
-- Source files (planned v1 implementation): `web/lib/ext-activity/*`,
+- Source files (implemented v1 surface): `web/lib/ext-activity/*`,
   `web/lib/run-transcript/*`, `web/lib/runs/run-transcript-projector.ts`,
   `web/lib/services/runs.ts`, `web/lib/queries/hitl.ts`,
   `web/app/api/v1/ext/activity/route.ts`,
   `web/app/api/v1/ext/runs/[runId]/activity/route.ts`,
   `mcp/src/tools.ts`.
+- Focused verification surfaces: `web/lib/ext-activity/__tests__/*`,
+  `web/app/api/v1/ext/activity/__tests__/route.integration.test.ts`,
+  `web/app/api/v1/ext/runs/[runId]/activity/__tests__/route.integration.test.ts`,
+  `web/app/api/v1/ext/runs/[runId]/activity/__tests__/route.db.integration.test.ts`,
+  `web/lib/runs/__tests__/run-transcript-projector.integration.test.ts`,
+  `mcp/src/__tests__/tools.test.ts`,
+  `mcp/src/__tests__/tool-contract.test.ts`.

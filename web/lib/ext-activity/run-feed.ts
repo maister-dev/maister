@@ -3,6 +3,7 @@ import {
   summarizeToolInput,
   type ScratchToolPayload,
 } from "@/lib/run-transcript/transcript";
+import type { RunActivityCursor } from "@/lib/ext-activity/cursor";
 import { filterBySalience } from "@/lib/ext-activity/salience";
 import type {
   ActivityAction,
@@ -13,7 +14,7 @@ import type {
 
 type RunActivityPage = {
   items: RunActivityItem[];
-  nextSinceId: bigint;
+  nextSinceId: RunActivityCursor;
   hasMore: boolean;
 };
 
@@ -49,7 +50,9 @@ function toolPath(tool: ScratchToolPayload): string | null {
     (input?.path as string | undefined) ??
     summarizeToolInput(tool.rawInput);
 
-  return typeof pathValue === "string" && pathValue.length > 0 ? pathValue : null;
+  return typeof pathValue === "string" && pathValue.length > 0
+    ? pathValue
+    : null;
 }
 
 function toolCommand(tool: ScratchToolPayload): string | null {
@@ -147,15 +150,13 @@ function toolAction(
   };
 }
 
-function genericSystemAction(input: {
-  content: string;
-  summary?: string;
-}): {
+function genericSystemAction(input: { content: string; summary?: string }): {
   salience: ActivitySalience;
   summary: string;
   action: ActivityAction;
 } {
-  const summary = input.summary ?? truncateSummary(input.content || "system update");
+  const summary =
+    input.summary ?? truncateSummary(input.content || "system update");
 
   return {
     salience: "normal",
@@ -316,19 +317,42 @@ export function buildSemanticRunActivityItems(
 export function pageRunActivityItems(
   items: readonly RunActivityItem[],
   input: {
-    sinceId: bigint | null;
+    sinceId: RunActivityCursor | null;
     limit: number;
     salience: ActivitySalience;
   },
 ): RunActivityPage {
+  const isAfterCursor = (item: RunActivityItem): boolean => {
+    if (input.sinceId === null) {
+      return true;
+    }
+
+    if (item.lastMutationId > input.sinceId.lastMutationId) {
+      return true;
+    }
+
+    if (item.lastMutationId < input.sinceId.lastMutationId) {
+      return false;
+    }
+
+    if (input.sinceId.lastItemId === null) {
+      return false;
+    }
+
+    return item.id.localeCompare(input.sinceId.lastItemId) > 0;
+  };
+
   const filtered = filterBySalience(items, input.salience).filter((item) =>
-    input.sinceId === null ? true : item.lastMutationId > input.sinceId,
+    isAfterCursor(item),
   );
   const pageItems = filtered.slice(0, input.limit);
   const nextSinceId =
     pageItems.length > 0
-      ? pageItems[pageItems.length - 1].lastMutationId
-      : (input.sinceId ?? 0n);
+      ? {
+          lastMutationId: pageItems[pageItems.length - 1].lastMutationId,
+          lastItemId: pageItems[pageItems.length - 1].id,
+        }
+      : (input.sinceId ?? { lastMutationId: 0n, lastItemId: null });
 
   return {
     items: pageItems,

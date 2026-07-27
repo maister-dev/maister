@@ -73,6 +73,25 @@ function parseEventLines(raw: string): EventLine[] {
   return out;
 }
 
+function resolveReplayHorizon(
+  previous: number,
+  line: EventLine,
+): number | null {
+  if (line.type !== "session.update") {
+    return null;
+  }
+
+  if (
+    typeof line.monotonicId === "number" &&
+    Number.isInteger(line.monotonicId) &&
+    line.monotonicId >= 0
+  ) {
+    return line.monotonicId > previous ? line.monotonicId : previous + 1;
+  }
+
+  return previous + 1;
+}
+
 export type ProjectRunTranscriptResult = {
   status: "projected" | "missing-run" | "missing-events" | "unchanged";
   nodeAttempts: number;
@@ -130,18 +149,30 @@ export async function projectRunTranscript(
   }
 
   const lines = parseEventLines(raw);
-  // Only attributable lines (carrying a nodeAttemptId) ever become rows, so the
-  // resume cursor compares against the highest attributable monotonicId.
-  // Run-level lines (e.g. the `run.needs_input` marker) have no nodeAttemptId;
-  // counting them here would keep `logMax > dbMax` and defeat the `unchanged`
-  // short-circuit while a run sits in NeedsInput, re-deriving on every read.
-  const logMax = lines.reduce(
-    (m, l) =>
-      l.nodeAttemptId && typeof l.monotonicId === "number"
-        ? Math.max(m, l.monotonicId)
-        : m,
-    0,
-  );
+
+  // Group lines by node attempt, preserving log order within each group.
+  const byAttempt = new Map<string, CoalesceEntry[]>();
+  let logMax = 0;
+
+  for (const line of lines) {
+    const attemptId = line.nodeAttemptId;
+
+    if (!attemptId) continue;
+    const entries = byAttempt.get(attemptId) ?? [];
+    const replayHorizon = resolveReplayHorizon(logMax, line);
+
+    if (replayHorizon !== null) {
+      logMax = replayHorizon;
+      entries.push({
+        kind: "update",
+        update: line.update,
+        supervisorEventId: String(replayHorizon),
+      });
+    } else if (line.type && RESET_EVENT_TYPES.has(line.type)) {
+      entries.push({ kind: "reset" });
+    }
+    byAttempt.set(attemptId, entries);
+  }
 
   // Resume cursor (identical intent to the scratch consumer): the highest
   // supervisor_event_id already projected for this run. If the log has not
@@ -158,27 +189,6 @@ export async function projectRunTranscript(
 
   if (existing.length > 0 && logMax <= dbMax) {
     return { status: "unchanged", nodeAttempts: 0, rowsUpserted: 0 };
-  }
-
-  // Group lines by node attempt, preserving log order within each group.
-  const byAttempt = new Map<string, CoalesceEntry[]>();
-
-  for (const line of lines) {
-    const attemptId = line.nodeAttemptId;
-
-    if (!attemptId) continue;
-    const entries = byAttempt.get(attemptId) ?? [];
-
-    if (line.type === "session.update") {
-      entries.push({
-        kind: "update",
-        update: line.update,
-        supervisorEventId: String(line.monotonicId ?? 0),
-      });
-    } else if (line.type && RESET_EVENT_TYPES.has(line.type)) {
-      entries.push({ kind: "reset" });
-    }
-    byAttempt.set(attemptId, entries);
   }
 
   // Ownership guard: only attribute to node attempts that genuinely belong to
@@ -431,13 +441,17 @@ export async function getWholeRunTranscriptMessages(
   }
 
   const entries: CoalesceEntry[] = [];
+  let replayHorizon = 0;
 
   for (const line of parseEventLines(raw)) {
-    if (line.type === "session.update") {
+    const nextHorizon = resolveReplayHorizon(replayHorizon, line);
+
+    if (nextHorizon !== null) {
+      replayHorizon = nextHorizon;
       entries.push({
         kind: "update",
         update: line.update,
-        supervisorEventId: String(line.monotonicId ?? 0),
+        supervisorEventId: String(nextHorizon),
       });
     } else if (line.type && RESET_EVENT_TYPES.has(line.type)) {
       entries.push({ kind: "reset" });

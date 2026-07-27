@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { encodeThoughtPayload, encodeToolPayload, encodeUsagePayload } from "@/lib/run-transcript/transcript";
+import {
+  encodeThoughtPayload,
+  encodeToolPayload,
+  encodeUsagePayload,
+} from "@/lib/run-transcript/transcript";
 import {
   buildSemanticRunActivityItems,
   pageRunActivityItems,
@@ -80,7 +84,7 @@ describe("run activity semantic replay", () => {
         runId: RUN_ID,
         nodeId: null,
         role: "system",
-        content: "{\"unexpected\":true}",
+        content: '{"unexpected":true}',
         lastMutationId: 7n,
         ts: null,
       },
@@ -127,7 +131,10 @@ describe("run activity semantic replay", () => {
       },
     ]);
     const page = pageRunActivityItems(items, {
-      sinceId: 4n,
+      sinceId: {
+        lastMutationId: 4n,
+        lastItemId: null,
+      },
       limit: 10,
       salience: "low",
     });
@@ -138,7 +145,73 @@ describe("run activity semantic replay", () => {
       lastMutationId: 5n,
       action: { outcome: "completed" },
     });
-    expect(page.nextSinceId).toBe(5n);
+    expect(page.nextSinceId).toEqual({
+      lastMutationId: 5n,
+      lastItemId: "tool-1",
+    });
     expect(page.hasMore).toBe(false);
+  });
+
+  it("uses the stable item id to page equal mutation horizons without dropping siblings", () => {
+    const items = buildSemanticRunActivityItems([
+      {
+        id: "tool-1",
+        runId: RUN_ID,
+        nodeId: "implement",
+        role: "tool",
+        content: encodeToolPayload({
+          name: "Edit",
+          toolKind: "edit",
+          status: "completed",
+          arg: "web/lib/a.ts",
+          rawInput: { file_path: "web/lib/a.ts" },
+          result: "",
+        }),
+        lastMutationId: 8n,
+        ts: new Date("2026-07-26T10:01:00.000Z"),
+      },
+      {
+        id: "tool-2",
+        runId: RUN_ID,
+        nodeId: "implement",
+        role: "tool",
+        content: encodeToolPayload({
+          name: "Edit",
+          toolKind: "edit",
+          status: "completed",
+          arg: "web/lib/b.ts",
+          rawInput: { file_path: "web/lib/b.ts" },
+          result: "",
+        }),
+        lastMutationId: 8n,
+        ts: new Date("2026-07-26T10:02:00.000Z"),
+      },
+    ]);
+
+    const firstPage = pageRunActivityItems(items, {
+      sinceId: null,
+      limit: 1,
+      salience: "low",
+    });
+
+    expect(firstPage.items.map((item) => item.id)).toEqual(["tool-1"]);
+    expect(firstPage.nextSinceId).toEqual({
+      lastMutationId: 8n,
+      lastItemId: "tool-1",
+    });
+    expect(firstPage.hasMore).toBe(true);
+
+    const secondPage = pageRunActivityItems(items, {
+      sinceId: firstPage.nextSinceId,
+      limit: 1,
+      salience: "low",
+    });
+
+    expect(secondPage.items.map((item) => item.id)).toEqual(["tool-2"]);
+    expect(secondPage.nextSinceId).toEqual({
+      lastMutationId: 8n,
+      lastItemId: "tool-2",
+    });
+    expect(secondPage.hasMore).toBe(false);
   });
 });

@@ -1,12 +1,5 @@
 import { NextRequest } from "next/server";
-import {
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const routeMocks = vi.hoisted(() => ({
   verifyToken: vi.fn(),
@@ -55,9 +48,9 @@ vi.mock("@/lib/ext-activity/service", async (importOriginal) => {
 let GET: typeof import("@/app/api/v1/ext/activity/route").GET;
 
 beforeAll(async () => {
-  const module = await import("@/app/api/v1/ext/activity/route");
+  const routeModule = await import("@/app/api/v1/ext/activity/route");
 
-  GET = module.GET;
+  GET = routeModule.GET;
 });
 
 beforeEach(() => {
@@ -120,6 +113,19 @@ describe("GET /api/v1/ext/activity", () => {
     await expect(res.json()).resolves.toMatchObject({
       code: "UNAUTHORIZED",
       message: "project-bound token required",
+    });
+    expect(routeMocks.getActivityPulse).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 when the token lacks runs:read", async () => {
+    routeMocks.verifyToken.mockResolvedValue(projectActor({ scopes: [] }));
+
+    const res = await GET(makeRequest());
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "UNAUTHORIZED",
+      message: "insufficient scope",
     });
     expect(routeMocks.getActivityPulse).not.toHaveBeenCalled();
   });

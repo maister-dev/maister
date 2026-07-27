@@ -874,7 +874,8 @@ paths:
           description: Objective checks + metrics for the bound execution.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ExtEvaluationObjectiveResults" }
+              schema:
+                { $ref: "#/components/schemas/ExtEvaluationObjectiveResults" }
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -909,7 +910,8 @@ paths:
           description: Result sealed (valid or terminal-invalid).
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ExtEvaluationResultResponse" }
+              schema:
+                { $ref: "#/components/schemas/ExtEvaluationResultResponse" }
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -1999,9 +2001,11 @@ paths:
         boundary.
 
         Bootstrap rule: when `since` is omitted, `happened.items` is empty and
-        `happened.nextCursor` is seeded to the current project tail of
-        `domain_events` so polling can start without replaying historical
-        backlog. `now` and `needsYou` are still fully recomputed on that call.
+        `happened.nextCursor` is seeded to the latest project fact currently
+        visible below the `domain_events.tx_id` commit horizon, so polling can
+        start without replaying historical backlog or skipping an older
+        in-flight transaction. `now` and `needsYou` are still fully recomputed
+        on that call.
 
         `salience` is a minimum filter: `high` returns only `high`, `normal`
         returns `high` + `normal`, and `low` returns every emitted item.
@@ -2017,8 +2021,9 @@ paths:
           required: false
           description: |
             Opaque pulse cursor returned by the previous call. The current
-            implementation seeds it from the token project's `domain_events.id`
-            tail, but callers must treat it as an opaque string.
+            implementation seeds it from the token project's visible
+            `domain_events.id` tail below the current commit horizon, but
+            callers must treat it as an opaque string.
           schema:
             type: string
         - name: salience
@@ -2059,11 +2064,12 @@ paths:
         match the token's bound project. Cross-project or inaccessible runs
         return 404 (existence-hide).
 
-        Replay is mutation-horizon based: every item has a stable `id` and a
-        monotonic `lastMutationId`. Supplying `sinceId` returns items whose
-        `lastMutationId` is greater than that horizon, so in-place item
-        mutations resurface on later polls. Omitting `sinceId` starts from the
-        beginning of the run's semantic history.
+        Replay is cursor-based: every item has a stable `id` and a monotonic
+        `lastMutationId`. `sinceId` is an opaque forward-only cursor whose
+        current encoding combines that mutation horizon with a stable item-id
+        tiebreaker, so equal-horizon siblings are not dropped at page
+        boundaries. Omitting `sinceId` starts from the beginning of the run's
+        semantic history.
 
         The payload is semantic only. Raw ACP JSON-RPC frames, tool payload
         blobs, diff bodies, token material, supervisor handles, and absolute
@@ -2841,7 +2847,8 @@ components:
     ExtMemoryOwnedItem:
       type: object
       description: (ADR-122, Implemented) A recalled owned-tier brain item.
-      required: [tier, itemId, kind, title, content, confidence, score, createdAt]
+      required:
+        [tier, itemId, kind, title, content, confidence, score, createdAt]
       properties:
         tier:
           type: string
@@ -2879,7 +2886,8 @@ components:
     ExtMemoryIndexedItem:
       type: object
       description: (ADR-127, Implemented) A recalled indexed chunk with canonical pointer.
-      required: [tier, chunkId, kind, title, preview, confidence, score, pointer]
+      required:
+        [tier, chunkId, kind, title, preview, confidence, score, pointer]
       properties:
         tier:
           type: string
@@ -3464,7 +3472,17 @@ components:
               enum: [mechanical, agent]
             phase:
               type: string
-              enum: [starting, rebasing, agent_running, verifying, pushing, succeeded, failed, aborted]
+              enum:
+                [
+                  starting,
+                  rebasing,
+                  agent_running,
+                  verifying,
+                  pushing,
+                  succeeded,
+                  failed,
+                  aborted,
+                ]
             pushed:
               type: boolean
             errorCode:
@@ -3505,6 +3523,7 @@ components:
         at:
           type: string
           format: date-time
+          nullable: true
         salience:
           $ref: "#/components/schemas/ExtActivitySalience"
         nodeId:
@@ -3522,12 +3541,21 @@ components:
       properties:
         state:
           type: string
-          enum: [working, silent, waiting_on_tool, waiting_on_human, stalled, inactive]
+          enum:
+            [
+              working,
+              silent,
+              waiting_on_tool,
+              waiting_on_human,
+              stalled,
+              inactive,
+            ]
         summary:
           type: string
         since:
           type: string
           format: date-time
+          nullable: true
         ageMinutes:
           type: integer
           minimum: 0
@@ -3557,7 +3585,20 @@ components:
           enum: [flow, scratch, agent]
         status:
           type: string
-          enum: [Pending, Running, NeedsInput, NeedsInputIdle, HumanWorking, WaitingOnChildren, Review, Crashed, Done, Abandoned, Failed]
+          enum:
+            [
+              Pending,
+              Running,
+              NeedsInput,
+              NeedsInputIdle,
+              HumanWorking,
+              WaitingOnChildren,
+              Review,
+              Crashed,
+              Done,
+              Abandoned,
+              Failed,
+            ]
         currentStepId:
           type: string
           nullable: true
@@ -3687,7 +3728,17 @@ components:
           format: uuid
         kind:
           type: string
-          enum: [permission, form, human, agent_question, infra_recovery, budget_breach, hook_trip]
+          enum:
+            [
+              permission,
+              form,
+              human,
+              agent_question,
+              infra_recovery,
+              budget_breach,
+              hook_trip,
+              decision_request,
+            ]
         title:
           type: string
         summary:
@@ -3729,7 +3780,18 @@ components:
 
     ExtRunActivityKind:
       type: string
-      enum: [message, reasoning, tool_call, file_change, command, test, hitl, lifecycle, generic]
+      enum:
+        [
+          message,
+          reasoning,
+          tool_call,
+          file_change,
+          command,
+          test,
+          hitl,
+          lifecycle,
+          generic,
+        ]
 
     ExtRunActivityItem:
       type: object
@@ -3746,6 +3808,7 @@ components:
         ts:
           type: string
           format: date-time
+          nullable: true
         runId:
           type: string
           format: uuid
@@ -4037,7 +4100,16 @@ components:
           format: uuid
         kind:
           type: string
-          enum: [permission, form, human, agent_question, infra_recovery, budget_breach, hook_trip]
+          enum:
+            [
+              permission,
+              form,
+              human,
+              agent_question,
+              infra_recovery,
+              budget_breach,
+              hook_trip,
+            ]
           description: |
             Any pending HITL kind is surfaced, mirroring the web inbox —
             `permission`/`form` items are answerable via the run-scoped
@@ -4075,7 +4147,15 @@ components:
             answer only `permission` and `form`; human-only kinds, including
             `agent_question`, require a
             global personal user token with exact `hitl:respond:human`.
-          enum: [permission, form, human, agent_question, infra_recovery, budget_breach]
+          enum:
+            [
+              permission,
+              form,
+              human,
+              agent_question,
+              infra_recovery,
+              budget_breach,
+            ]
         prompt:
           type: string
           description: Prompt text shown to the responder.
@@ -4188,7 +4268,8 @@ components:
       properties:
         name: { type: string, minLength: 1 }
         label: { type: string, minLength: 1 }
-        type: { type: string, enum: [string, number, boolean, enum, array, object] }
+        type:
+          { type: string, enum: [string, number, boolean, enum, array, object] }
         required: { type: boolean }
         default: {}
         options:

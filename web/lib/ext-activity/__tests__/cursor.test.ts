@@ -4,6 +4,7 @@ import { MaisterError } from "@/lib/errors";
 import {
   DEFAULT_RUN_ACTIVITY_LIMIT,
   MAX_RUN_ACTIVITY_LIMIT,
+  encodeRunActivityCursor,
   encodePulseCursor,
   encodeRunSinceId,
   parsePulseCursor,
@@ -19,8 +20,26 @@ describe("ext activity cursor helpers", () => {
   });
 
   it("round-trips run mutation horizons including zero", () => {
-    expect(parseRunSinceId(encodeRunSinceId(0))).toBe(0n);
-    expect(parseRunSinceId(encodeRunSinceId(19))).toBe(19n);
+    expect(parseRunSinceId(encodeRunSinceId(0))).toEqual({
+      lastMutationId: 0n,
+      lastItemId: null,
+    });
+    expect(parseRunSinceId(encodeRunSinceId(19))).toEqual({
+      lastMutationId: 19n,
+      lastItemId: null,
+    });
+  });
+
+  it("round-trips composite run-activity cursors", () => {
+    const encoded = encodeRunActivityCursor({
+      lastMutationId: 19n,
+      lastItemId: "run-1:item-2",
+    });
+
+    expect(parseRunSinceId(encoded)).toEqual({
+      lastMutationId: 19n,
+      lastItemId: "run-1:item-2",
+    });
   });
 
   it("treats absent cursors as bootstrap requests", () => {
@@ -34,6 +53,10 @@ describe("ext activity cursor helpers", () => {
     expect(() => parsePulseCursor("nope")).toThrow(MaisterError);
     expect(() => parseRunSinceId("-1")).toThrow(MaisterError);
     expect(() => parseRunSinceId("1.5")).toThrow(MaisterError);
+    expect(() => parseRunSinceId("7:")).toThrow(MaisterError);
+    expect(() => parseRunSinceId("7:%ZZ")).toThrow(MaisterError);
+    expect(() => parsePulseCursor("9223372036854775808")).toThrow(MaisterError);
+    expect(() => parseRunSinceId("9223372036854775808")).toThrow(MaisterError);
   });
 
   it("uses the default run-activity limit when omitted", () => {

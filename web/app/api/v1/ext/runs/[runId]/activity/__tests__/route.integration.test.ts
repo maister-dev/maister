@@ -1,12 +1,5 @@
 import { NextRequest } from "next/server";
-import {
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const routeMocks = vi.hoisted(() => ({
   verifyToken: vi.fn(),
@@ -55,11 +48,11 @@ vi.mock("@/lib/ext-activity/service", async (importOriginal) => {
 let GET: typeof import("@/app/api/v1/ext/runs/[runId]/activity/route").GET;
 
 beforeAll(async () => {
-  const module = await import(
+  const routeModule = await import(
     "@/app/api/v1/ext/runs/[runId]/activity/route"
   );
 
-  GET = module.GET;
+  GET = routeModule.GET;
 });
 
 beforeEach(() => {
@@ -160,7 +153,10 @@ describe("GET /api/v1/ext/runs/[runId]/activity", () => {
           },
         },
       ],
-      nextSinceId: 8n,
+      nextSinceId: {
+        lastMutationId: 8n,
+        lastItemId: "item-1",
+      },
       hasMore: false,
       now: {
         runId: "run-1",
@@ -188,16 +184,22 @@ describe("GET /api/v1/ext/runs/[runId]/activity", () => {
       },
     });
 
-    const res = await GET(makeRequest("run-1", "?sinceId=4&limit=25&salience=normal"), {
-      params: Promise.resolve({ runId: "run-1" }),
-    });
+    const res = await GET(
+      makeRequest("run-1", "?sinceId=4&limit=25&salience=normal"),
+      {
+        params: Promise.resolve({ runId: "run-1" }),
+      },
+    );
 
     expect(res.status).toBe(200);
     expect(routeMocks.getRunActivityResponse).toHaveBeenCalledWith(
       "proj-1",
       "run-1",
       {
-        sinceId: 4n,
+        sinceId: {
+          lastMutationId: 4n,
+          lastItemId: null,
+        },
         limit: 25,
         salience: "normal",
         client: { name: "db" },
@@ -222,7 +224,7 @@ describe("GET /api/v1/ext/runs/[runId]/activity", () => {
           },
         },
       ],
-      nextSinceId: "8",
+      nextSinceId: "8:item-1",
       hasMore: false,
       now: {
         runId: "run-1",
@@ -273,5 +275,57 @@ describe("GET /api/v1/ext/runs/[runId]/activity", () => {
       code: "CONFIG",
     });
     expect(routeMocks.getRunActivityResponse).not.toHaveBeenCalled();
+  });
+
+  it("accepts opaque composite sinceId cursors", async () => {
+    routeMocks.verifyToken.mockResolvedValue(projectActor());
+    routeMocks.getRunActivityResponse.mockResolvedValue({
+      items: [],
+      nextSinceId: {
+        lastMutationId: 8n,
+        lastItemId: "item-2",
+      },
+      hasMore: false,
+      now: {
+        runId: "run-1",
+        taskId: null,
+        taskKey: null,
+        taskTitle: null,
+        runKind: "agent",
+        status: "Running",
+        currentStepId: null,
+        currentAttemptNumber: null,
+        startedAt: null,
+        lastAction: null,
+        liveness: {
+          state: "working",
+          summary: "working",
+          since: null,
+          ageMinutes: null,
+        },
+      },
+    });
+
+    const res = await GET(
+      makeRequest("run-1", "?sinceId=8:item-1&limit=25&salience=normal"),
+      {
+        params: Promise.resolve({ runId: "run-1" }),
+      },
+    );
+
+    expect(res.status).toBe(200);
+    expect(routeMocks.getRunActivityResponse).toHaveBeenCalledWith(
+      "proj-1",
+      "run-1",
+      {
+        sinceId: {
+          lastMutationId: 8n,
+          lastItemId: "item-1",
+        },
+        limit: 25,
+        salience: "normal",
+        client: { name: "db" },
+      },
+    );
   });
 });

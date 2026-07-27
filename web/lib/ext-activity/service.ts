@@ -16,24 +16,26 @@ import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import {
+  encodeRunActivityCursor,
   encodePulseCursor,
   encodeRunSinceId,
+  type RunActivityCursor,
 } from "@/lib/ext-activity/cursor";
 import { mapDomainEventToPulseItem } from "@/lib/ext-activity/domain-events";
-import { buildSemanticRunActivityItems, pageRunActivityItems } from "@/lib/ext-activity/run-feed";
-import { listProjectNeedsYou } from "@/lib/ext-activity/needs-you";
 import { deriveActivityLiveness } from "@/lib/ext-activity/liveness";
+import { listProjectNeedsYou } from "@/lib/ext-activity/needs-you";
+import {
+  buildSemanticRunActivityItems,
+  pageRunActivityItems,
+} from "@/lib/ext-activity/run-feed";
 import { filterBySalience } from "@/lib/ext-activity/salience";
-import { getWholeRunTranscriptMessages, projectRunTranscript } from "@/lib/runs/run-transcript-projector";
+import {
+  getWholeRunTranscriptMessages,
+  projectRunTranscript,
+} from "@/lib/runs/run-transcript-projector";
 
-const {
-  domainEvents,
-  nodeAttempts,
-  projects,
-  runMessages,
-  runs,
-  tasks,
-} = schema;
+const { domainEvents, nodeAttempts, projects, runMessages, runs, tasks } =
+  schema;
 
 const PULSE_PAGE_SIZE = 100;
 const ACTIVE_PULSE_RUN_STATUSES = [
@@ -171,7 +173,12 @@ async function loadCurrentAttemptNumber(
   const rows = await client
     .select({ attempt: nodeAttempts.attempt })
     .from(nodeAttempts)
-    .where(and(eq(nodeAttempts.runId, runId), eq(nodeAttempts.nodeId, currentStepId)))
+    .where(
+      and(
+        eq(nodeAttempts.runId, runId),
+        eq(nodeAttempts.nodeId, currentStepId),
+      ),
+    )
     .orderBy(desc(nodeAttempts.attempt))
     .limit(1);
 
@@ -181,7 +188,10 @@ async function loadCurrentAttemptNumber(
 async function loadRunActivitySources(
   run: RunRow,
   client: DbClient,
-): Promise<{ messages: RunActivitySourceMessage[]; lastObservedAt: Date | null }> {
+): Promise<{
+  messages: RunActivitySourceMessage[];
+  lastObservedAt: Date | null;
+}> {
   if (run.runKind === "flow") {
     await projectRunTranscript(run.runId, { client });
   }
@@ -282,7 +292,7 @@ async function buildRunSnapshot(
     run.status === "NeedsInputIdle" ||
     run.status === "HumanWorking" ||
     run.status === "Review"
-      ? source.lastObservedAt ?? run.endedAt ?? run.startedAt ?? now
+      ? (source.lastObservedAt ?? run.endedAt ?? run.startedAt ?? now)
       : null);
   const lastMeaningfulAt =
     lastMeaningfulItem?.ts ??
@@ -308,15 +318,15 @@ async function buildRunSnapshot(
       currentAttemptNumber,
       startedAt: run.startedAt,
       lastAction: lastVisibleAction,
-        liveness: deriveActivityLiveness({
-          runStatus: run.status,
-          now,
-          lastMeaningfulAt,
-          waitingOnHumanSince,
-          waitingOnToolSince,
-          endedAt: run.endedAt,
-        }),
-      },
+      liveness: deriveActivityLiveness({
+        runStatus: run.status,
+        now,
+        lastMeaningfulAt,
+        waitingOnHumanSince,
+        waitingOnToolSince,
+        endedAt: run.endedAt,
+      }),
+    },
     items: allItems,
   };
 }
@@ -333,10 +343,11 @@ export async function getActivityPulse(
   const client = input.client ?? db();
   const now = input.now ?? new Date();
   const needsYou = await listProjectNeedsYou(projectId, { db: client });
+  const committedHorizon = sql`${domainEvents.txId} < pg_snapshot_xmin(pg_current_snapshot())`;
   const maxIdRows = await client
     .select({ id: domainEvents.id })
     .from(domainEvents)
-    .where(eq(domainEvents.projectId, projectId))
+    .where(and(eq(domainEvents.projectId, projectId), committedHorizon))
     .orderBy(desc(domainEvents.id))
     .limit(1);
   const currentTail = toBigInt(maxIdRows[0]?.id ?? 0);
@@ -358,26 +369,26 @@ export async function getActivityPulse(
             and(
               eq(domainEvents.projectId, projectId),
               sql`${domainEvents.id} > ${input.since.toString()}::bigint`,
+              committedHorizon,
             ),
           )
           .orderBy(asc(domainEvents.id))
           .limit(PULSE_PAGE_SIZE + 1);
   const happenedHasMore = happenedRows.length > PULSE_PAGE_SIZE;
-  const happenedMapped = happenedRows
-    .slice(0, PULSE_PAGE_SIZE)
-    .map((row) =>
-      mapDomainEventToPulseItem({
-        id: BigInt(row.id),
-        kind: row.kind,
-        occurredAt: row.occurredAt,
-        runId: row.runId ?? null,
-        taskId: row.taskId ?? null,
-        taskKey:
-          (typeof row.payload?.taskKey === "string" ? row.payload.taskKey : null) ??
-          null,
-        payload: row.payload,
-      }),
-    );
+  const happenedMapped = happenedRows.slice(0, PULSE_PAGE_SIZE).map((row) =>
+    mapDomainEventToPulseItem({
+      id: BigInt(row.id),
+      kind: row.kind,
+      occurredAt: row.occurredAt,
+      runId: row.runId ?? null,
+      taskId: row.taskId ?? null,
+      taskKey:
+        (typeof row.payload?.taskKey === "string"
+          ? row.payload.taskKey
+          : null) ?? null,
+      payload: row.payload,
+    }),
+  );
   const happenedItems = filterBySalience(happenedMapped, input.salience);
   const nextCursor =
     input.since === null
@@ -415,7 +426,7 @@ export async function getRunActivityResponse(
   projectId: string,
   runId: string,
   input: {
-    sinceId: bigint | null;
+    sinceId: RunActivityCursor | null;
     limit: number;
     salience: ActivitySalience;
     now?: Date;
@@ -423,7 +434,7 @@ export async function getRunActivityResponse(
   },
 ): Promise<{
   items: RunActivityItem[];
-  nextSinceId: bigint;
+  nextSinceId: RunActivityCursor;
   hasMore: boolean;
   now: ActivityRunSnapshot;
 } | null> {
@@ -498,7 +509,7 @@ export function serializePulseResponse(response: ActivityPulseResponse) {
 
 export function serializeRunActivityResponse(response: {
   items: RunActivityItem[];
-  nextSinceId: bigint;
+  nextSinceId: RunActivityCursor;
   hasMore: boolean;
   now: ActivityRunSnapshot;
 }) {
@@ -508,7 +519,7 @@ export function serializeRunActivityResponse(response: {
       ts: item.ts?.toISOString() ?? null,
       lastMutationId: encodeRunSinceId(item.lastMutationId),
     })),
-    nextSinceId: encodeRunSinceId(response.nextSinceId),
+    nextSinceId: encodeRunActivityCursor(response.nextSinceId),
     hasMore: response.hasMore,
     now: {
       ...response.now,
