@@ -26,7 +26,13 @@ test("admin reaches /agents from the nav and sees the platform-agents panel", as
 test("a non-admin member has no /agents nav link and is forbidden on the route", async ({
   browser,
 }) => {
-  const context = await browser.newContext();
+  // `browser.newContext()` inside a test INHERITS the project's `use` context
+  // options, and the `authed` project pins `storageState: AUTH_FILE` — so a
+  // bare newContext() arrives signed in as the seeded ADMIN, /login redirects
+  // straight to the portfolio, the email input never renders and the fill()
+  // below eats the whole test budget. Opt out explicitly to get a signed-out
+  // context this spec can sign in as the member.
+  const context = await browser.newContext({ storageState: undefined });
   const page = await context.newPage();
 
   try {
