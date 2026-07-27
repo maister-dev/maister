@@ -39,7 +39,7 @@ Both are a **globally sequential shared namespace**. Owner confirmed (2026-07-27
 | V6 | `computeReadinessByRun(client, runIds): Promise<Map<string, ReadinessState>>` — **4 batched `inArray` queries total, no N+1**, shared verbatim by board/portfolio/project read models, same contributions as the merge guard | `web/lib/queries/readiness-batch.ts:36` |
 | V7 | `getRunReadiness()` (behind `readiness_get`) is `5 + 2×externalGates + 1×requiredArtifactDefs` queries — **must not** be looped per run | `web/lib/queries/readiness.ts` |
 | V8 | `ReadinessState = "ready" \| "blocked" \| "stale" \| "failed" \| "waiting" \| "overridden"` | `web/lib/flows/graph/readiness-core.ts:85` |
-| **V9ʹ** | **⚠ CORRECTED during T11 (2026-07-27).** `assertEvidenceReady(runId, phase, db)` **NEVER throws** — it returns `EvidenceReadinessResult = {ready: boolean, reasons: string[]}` (`evidence-readiness.ts:61,231`), and every correct consumer reads `.ready` (`promote.ts:726`, `runner-graph.ts:908`). So "not throwing" is NOT the green test; `.ready === true` is. **Separately: `readinessGreen()` at `auto-promotion/readers.ts:123` is a pre-existing DEFECT** — it `await`s the call inside a `try` and returns `true` whenever nothing throws, discarding `.ready`, so the ADR-126 lane's own readiness gate is inert (the `promoteRun` re-gate at `promote.ts:726` is what actually stops a blocked auto-promote). **Out of scope for this plan — flagged, not fixed.** | `web/lib/flows/graph/evidence-readiness.ts:61,231`, `web/lib/auto-promotion/readers.ts:123` |
+| **V9ʹ** | **⚠ CORRECTED during T11 (2026-07-27).** `assertEvidenceReady(runId, phase, db)` **NEVER throws** — it returns `EvidenceReadinessResult = {ready: boolean, reasons: string[]}` (`evidence-readiness.ts:61,231`), and every correct consumer reads `.ready` (`promote.ts:726`, `runner-graph.ts:908`). So "not throwing" is NOT the green test; `.ready === true` is. **Separately: `readinessGreen()` at `auto-promotion/readers.ts:123` is a pre-existing DEFECT** — it `await`s the call inside a `try` and returns `true` whenever nothing throws, discarding `.ready`, so the ADR-126 lane's own readiness gate is inert (the `promoteRun` re-gate at `promote.ts:726` is what actually stops a blocked auto-promote). **Out of scope for this plan — flagged, not fixed here. ✅ RESOLVED on `main` in `897643b5a` ("fix(auto-promotion): read the evidence verdict in readinessGreen"), which this branch picked up when it rebased onto that commit; `readinessGreen` now returns `.ready` and its catch fails closed on genuine DB errors only.** | `web/lib/flows/graph/evidence-readiness.ts:61,231`, `web/lib/auto-promotion/readers.ts:123` |
 | **V10ʹ** | **⚠ CORRECTED.** `promoteRun`'s `promotionHold` and `isLaunchedLineageRun` refusals are **conditional on unattended attribution**: `isUnattendedPromotion(input) = input.autoOnReady === true \|\| input.attribution?.source === "auto_promotion"` gates the lineage guard, and `attribution?.source === "auto_promotion"` alone gates the hold check. The code comment is verbatim: *"Only HUMAN promotes set neither flag, so they are allowed."* A human/assistant promote of a held or launched-lineage run **succeeds**. Only the `status='Review'` CAS is unconditional. | `web/lib/runs/promote.ts:125,575,623` |
 | V11 | **The summonability predicate already exists**: `listMentionCandidateAgents(dbOrTx, projectId): Promise<MentionableAgent[]>` → `{id, stem, name, summonable}` | `web/lib/agents/summonability.ts:46` |
 | V12 | `summonable` = 5 conjuncts: link `enabled` ∧ `agents.enabled` ∧ `quarantinedAt === null` ∧ `agents.triggers` includes `"domain_event"` ∧ an enabled `agent_schedules` mention row exists | `web/lib/agents/summonability.ts:111-116` |
@@ -545,7 +545,23 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
 
 **Phase 1 exit:** `pnpm --filter maister-web test:unit && pnpm --filter maister-web test:integration` green; REQ-A1…A6 rows in §5 all have a passing test.
 
-> **⚠ Recorded integration baseline (measured 2026-07-27, before any Phase-1 code).**
+> **⚠ Recorded integration baseline — RE-MEASURED after the rebase onto `897643b5a`.**
+> The branch was rebased onto `main` (which had gained exactly one commit, the
+> `readinessGreen` fix) after T28. Because that commit changes auto-promotion
+> behavior, the original baseline below was stale, so a **fresh** one was measured
+> by checking out `897643b5a` directly: **63 failed / 2836 passed / 3 skipped
+> across 23 failed files, 2 failed suites**. The rebased branch measures **63
+> failed / 2900 passed / 3 skipped across 23 failed files, 2 failed suites** —
+> an **empty regression diff** on failing-test names, failed-suite names and skip
+> count, with **+64 passing tests**. Evidence: `scratchpad/{baseline2,mine2}.txt`.
+> The rebase itself was proved content-preserving: `git diff <old-tip> <new-tip>`
+> is byte-identical to `git diff 78abc67b3 897643b5a`, i.e. it introduced main's
+> commit and nothing else. Migration triple intact, journal `when` still strictly
+> monotonic across 119 entries, and `main`'s maxima re-derived at the new base are
+> still ADR **151** / migration **121** — so ADR-152 and `0122` remain uncontested
+> and no renumber is owed.
+>
+> **Original baseline (measured 2026-07-27, before any Phase-1 code):**
 > `pnpm typecheck` clean; `test:unit` **708 files / 6981 tests, 0 failures**.
 > `test:integration` is **NOT green on this branch and was not green before it**:
 > a `git stash`-proved baseline at `a72cb5d6a` (docs-only commit) fails
