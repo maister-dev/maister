@@ -60,6 +60,7 @@ const ATTACHED: AttachedAgentRow = {
     riskTier: "read_only",
     enabled: true,
     quarantinedAt: null,
+    flowRef: null,
     recommended: null,
     configSchema: null,
     effectiveMcps: [],

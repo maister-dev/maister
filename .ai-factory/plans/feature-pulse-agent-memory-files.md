@@ -793,7 +793,8 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
 
 ### Phase 6 — B6: owner visibility & control
 
-- [ ] **T25. Owner routes `GET | PUT | DELETE /api/projects/{slug}/agents/{agentId}/memory` (REQ-C9 AC1–AC3).**
+- [x] **T25. Owner routes `GET | PUT | DELETE /api/projects/{slug}/agents/{agentId}/memory` (REQ-C9 AC1–AC3).**
+  *Note:* the REFACTOR (extract `writeAgentMemoryCas`) was already done at T23 — the second caller was in the same plan, so writing the CAS twice would have been pure churn.
 
   **RED.** Write `web/app/api/projects/[slug]/agents/[agentId]/memory/__tests__/route.integration.test.ts` (`integration`; bracketed dirs are already globbed, V41) with `T-C9a`:
   - `PUT` with a stale `ifHash` returns **409** carrying the current content — CAS applies to the human too (D18); a blind human Save must not clobber a concurrent agent write.
@@ -809,7 +810,8 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
   *Logging (verbose):* INFO on human write/clear with `{actorUserId, agentId, projectId, sizeChars}` — an owner edit is audit-worthy.
   *Depends on:* T18, T23.
 
-- [ ] **T26. Attachment-panel UI + i18n (REQ-C9 AC4–AC6).**
+- [x] **T26. Attachment-panel UI + i18n (REQ-C9 AC4–AC6).**
+  *Note:* `agent.flowRef` had to be threaded onto the panel row (it was not projected) so the toggle can render disabled-with-reason per D22; the PATCH omits `memoryEnabled` entirely in that state, so a disabled control cannot smuggle a value.
 
   **RED.** Extend the i18n parity check (`T-C9b`) to cover the new `agentsAttach` keys in both catalogs — EN ≡ RU key sets, as the namespace already maintains (52 ≡ 52, V28). UI rendering itself is proven by the existing `renderToStaticMarkup` convention where a component test already exists for the panel; do **not** add a jsdom harness for this slice (§6.3 — no trivial tests).
 

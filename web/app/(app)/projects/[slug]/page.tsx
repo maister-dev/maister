@@ -901,6 +901,7 @@ async function AgentsAttachPanelLoader({
           quarantinedAt: row.agent.quarantinedAt
             ? new Date(row.agent.quarantinedAt as Date).toISOString()
             : null,
+          flowRef: (row.agent.flowRef as string | null) ?? null,
           recommended: toRecommendedView(row.agent.recommended),
           configSchema:
             (row.agent.configSchema as AgentConfigParam[] | null) ?? null,

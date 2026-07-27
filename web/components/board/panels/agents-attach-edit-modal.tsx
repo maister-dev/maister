@@ -121,6 +121,8 @@ export function AttachEditModal({
   // write gates memory_retain (separate axis — a read grant never opens write).
   const [canReadBrain, setCanReadBrain] = useState(row.canReadBrain);
   const [canWriteBrain, setCanWriteBrain] = useState(row.canWriteBrain);
+  const [memoryEnabled, setMemoryEnabled] = useState(row.memoryEnabled);
+  const flowBound = row.agent.flowRef !== null;
 
   function setConfigValue(key: string, value: unknown): void {
     setConfigValues((current) => ({ ...current, [key]: value }));
@@ -247,6 +249,7 @@ export function AttachEditModal({
         // (ADR-122) Fold the Brain grants into the SAME aggregating PATCH.
         canReadBrain,
         canWriteBrain,
+        ...(flowBound ? {} : { memoryEnabled }),
         // (ADR-111) Fold the per-instance config into the SAME aggregating
         // PATCH; omit the field entirely when nothing is declared.
         ...(configSchema.length > 0 ? { configValues } : {}),
@@ -418,6 +421,27 @@ export function AttachEditModal({
               />
               {t("brainWrite")}
             </label>
+            <label
+              className={`inline-flex items-center gap-2 font-mono text-[12px] ${
+                flowBound ? "text-mute" : "text-ink"
+              }`}
+            >
+              <input
+                checked={memoryEnabled && !flowBound}
+                data-testid="memory-enabled"
+                disabled={flowBound}
+                type="checkbox"
+                onChange={(event) => setMemoryEnabled(event.target.checked)}
+              />
+              {t("memoryToggle")}
+            </label>
+            {/* D22: disabled WITH its reason — a hidden control teaches nothing
+                about the boundary it hides. */}
+            {flowBound ? (
+              <p className="m-0 font-mono text-[11px] text-mute">
+                {t("memoryFlowBound")}
+              </p>
+            ) : null}
           </section>
 
           {configSchema.length > 0 ? (

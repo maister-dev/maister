@@ -7,6 +7,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import { AgentMemoryDrawer } from "@/components/board/panels/agent-memory-drawer";
 import {
   AttachEditModal,
   sendJson,
@@ -76,6 +77,11 @@ export type AttachedAgentRow = {
     riskTier: string;
     enabled: boolean;
     quarantinedAt: string | null;
+    // (ADR-152/ADR-106) The same-package flow this agent drives, when any. A
+    // flow-bound agent's launch diverts to a run_kind='flow' run that never
+    // reaches the prompt seam, so it can carry no memory — the Memory toggle
+    // renders disabled WITH that reason rather than hidden.
+    flowRef: string | null;
     recommended: AgentRecommendedView | null;
     // (ADR-111) The package-declared config params; null → no config section.
     configSchema: AgentConfigParam[] | null;
@@ -197,6 +203,7 @@ export function AgentsAttachPanel({
   const [error, setError] = useState<string | null>(null);
   const [attachId, setAttachId] = useState(available[0]?.id ?? "");
   const [editing, setEditing] = useState<AttachedAgentRow | null>(null);
+  const [memoryFor, setMemoryFor] = useState<AttachedAgentRow | null>(null);
   const [attaching, setAttaching] = useState<AvailableAgentRow | null>(null);
 
   const refresh = (): void => startTransition(() => router.refresh());
@@ -347,6 +354,15 @@ export function AgentsAttachPanel({
                         {t("edit")}
                       </button>
                       <button
+                        aria-label={t("memoryAction")}
+                        className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink"
+                        title={t("memoryAction")}
+                        type="button"
+                        onClick={() => setMemoryFor(row)}
+                      >
+                        {t("memoryAction")}
+                      </button>
+                      <button
                         className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink disabled:opacity-50"
                         disabled={pending !== null}
                         type="button"
@@ -369,6 +385,30 @@ export function AgentsAttachPanel({
           </tbody>
         </table>
       </div>
+
+      {memoryFor ? (
+        <AgentMemoryDrawer
+          agentId={memoryFor.agent.id}
+          agentLabel={memoryFor.agent.id}
+          canEdit={canManage}
+          labels={{
+            title: t("memoryTitle"),
+            close: t("memoryClose"),
+            edit: t("memoryEdit"),
+            save: t("memorySave"),
+            cancel: t("memoryCancel"),
+            clear: t("memoryClear"),
+            clearConfirm: t("memoryClearConfirm"),
+            empty: t("memoryEmpty"),
+            size: t("memorySize"),
+            overCap: t("memoryOverCap"),
+            conflict: t("memoryConflict"),
+            loadError: t("memoryLoadError"),
+          }}
+          slug={slug}
+          onClose={() => setMemoryFor(null)}
+        />
+      ) : null}
 
       {editing ? (
         <AttachEditModal
@@ -451,6 +491,7 @@ function rowFromAvailable(agent: AvailableAgentRow): AttachedAgentRow {
       riskTier: "",
       enabled: true,
       quarantinedAt: null,
+      flowRef: null,
       recommended: rec,
       configSchema: agent.configSchema,
       effectiveMcps: [],

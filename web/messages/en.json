@@ -4170,7 +4170,22 @@
     "brainWrite": "Can write memory (retain)",
     "colConfig": "Config",
     "colEffectiveMcps": "Effective MCPs",
-    "configuration": "Configuration"
+    "configuration": "Configuration",
+    "memoryAction": "Memory",
+    "memoryTitle": "Agent memory",
+    "memoryClose": "Close memory",
+    "memoryEdit": "Edit",
+    "memorySave": "Save",
+    "memoryCancel": "Cancel",
+    "memoryClear": "Clear",
+    "memoryClearConfirm": "Clear this agent's memory for this project? The agent will start its next run with nothing.",
+    "memoryEmpty": "No memory yet — this agent has not written anything for this project.",
+    "memorySize": "{size} / {max} characters",
+    "memoryOverCap": "Too long — compact it below the character cap before saving.",
+    "memoryConflict": "The agent changed this file while you were editing. Its current content is shown — merge your changes and save again.",
+    "memoryLoadError": "Agent memory could not be loaded.",
+    "memoryToggle": "Memory (agent's own file — separate from Brain)",
+    "memoryFlowBound": "This agent drives a Flow; Flow runs do not carry agent memory."
   },
   "autoPromotion": {
     "reason": {

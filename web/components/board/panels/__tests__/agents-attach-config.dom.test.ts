@@ -81,6 +81,7 @@ function buildRow(over?: {
       riskTier: "read_only",
       enabled: true,
       quarantinedAt: null,
+      flowRef: null,
       recommended,
       configSchema:
         over?.configSchema === undefined ? CONFIG_SCHEMA : over.configSchema,
