@@ -247,9 +247,13 @@ describe("runAutoPromoteJob — AC-1 happy path", () => {
 
 describe("runAutoPromoteJob — AC-5 readiness gate", () => {
   it("skips (no promote) when readiness is not green", async () => {
-    mocks.assertEvidenceReady.mockRejectedValue(
-      new MaisterError("PRECONDITION", "not ready"),
-    );
+    // assertEvidenceReady RESOLVES `{ ready, reasons }`; it never rejects
+    // (ADR-048). A mockRejectedValue here asserted a path production cannot take
+    // and passed even while the readiness term was inert.
+    mocks.assertEvidenceReady.mockResolvedValue({
+      ready: false,
+      reasons: ['blocking external_check gate "ci" (id=g1) is failed'],
+    });
     await seedReviewRun();
 
     const summary = await runAutoPromoteJob({ db, promote: mocks.promoteRun });

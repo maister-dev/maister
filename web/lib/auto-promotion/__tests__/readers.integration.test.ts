@@ -241,3 +241,35 @@ describe("externalCheck reader — graph declaration lookup (ADR-126 F3)", () =>
     expect(await readers(runId).externalCheck("ci")).toBe("not_declared");
   });
 });
+
+// ADR-048: assertEvidenceReady RETURNS `{ ready, reasons }` — it does not throw.
+// A readinessGreen() that only caught a rejection therefore read green for EVERY
+// run, so the lane's own readiness term (`readiness_not_green`) could never fire
+// and the gate that reads as protective was inert.
+describe("readinessGreen reader — evidence verdict (ADR-048)", () => {
+  it("a failed blocking gate ⇒ not green", async () => {
+    const runId = await seedRun(MANIFEST);
+
+    await seedGate(runId, {
+      attempt: 1,
+      status: "failed",
+      at: "2026-07-03T10:00:00.000Z",
+    });
+
+    expect(await readers(runId).readinessGreen()).toBe(false);
+  });
+
+  // Positive control: pins the reader to the verdict, so a fix that merely
+  // hard-codes `false` cannot pass the pair.
+  it("a passed blocking gate ⇒ green", async () => {
+    const runId = await seedRun(MANIFEST);
+
+    await seedGate(runId, {
+      attempt: 1,
+      status: "passed",
+      at: "2026-07-03T10:00:00.000Z",
+    });
+
+    expect(await readers(runId).readinessGreen()).toBe(true);
+  });
+});

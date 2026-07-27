@@ -120,12 +120,32 @@ export function buildAutoPromotionReaders(args: {
     async isLaunchedLineage(): Promise<boolean> {
       return isLaunchedLineageRun(db, runId);
     },
+    // assertEvidenceReady RESOLVES `{ ready, reasons }` — it does NOT throw on a
+    // not-ready verdict (ADR-048), so awaiting it for a rejection read green for
+    // every run and left this gate inert. Read the verdict. The catch covers
+    // GENUINE failures (DB) only and fails closed, for the same reason
+    // declaredExternalCheckGateIds swallows above: evaluateAutoPromotion runs
+    // OUTSIDE the sweep's per-candidate try, so a throw here would abort the
+    // whole tick AND skip the rotation-cursor advance that prevents starvation.
     async readinessGreen(): Promise<boolean> {
       try {
-        await assertEvidenceReady(runId, "review", db);
+        const { ready, reasons } = await assertEvidenceReady(
+          runId,
+          "review",
+          db,
+        );
 
-        return true;
-      } catch {
+        if (!ready) {
+          log.debug({ runId, reasons }, "auto-promotion: readiness not green");
+        }
+
+        return ready;
+      } catch (err) {
+        log.warn(
+          { runId, err: err instanceof Error ? err.message : String(err) },
+          "auto-promotion: readiness check failed — fail-closed",
+        );
+
         return false;
       }
     },
