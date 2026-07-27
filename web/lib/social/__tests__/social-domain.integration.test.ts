@@ -1001,7 +1001,11 @@ describe("comment pipeline (ADR-078 D6/D7/D8/D9)", () => {
     );
 
     const { comment, mentionedAgents } = await addTaskComment(
-      { taskId: a.taskId, body: "plain text", actor: { type: "user", id: creator } },
+      {
+        taskId: a.taskId,
+        body: "plain text",
+        actor: { type: "user", id: creator },
+      },
       db,
     );
 
@@ -1074,6 +1078,51 @@ describe("comment pipeline (ADR-078 D6/D7/D8/D9)", () => {
     expect(mentionedAgents).toEqual([
       { id: "core:reviewer", name: "reviewer", summonable: false },
     ]);
+  });
+
+  // ADR-151 D11 — the `summonable` flag is ASYMMETRIC and the response is a
+  // write-time report, never an acceptance receipt. A self-mention is the
+  // cheapest proof: the write path legitimately reports `summonable: true`
+  // (the handle resolved, the operator grant is in place) while the consumer
+  // skips the launch outright. The no-run half is decision-table row 3 in
+  // lib/agents/__tests__/triggers.integration.test.ts — asserted THERE, so
+  // this case owns only the write-time half.
+  it("reports summonable:true for a self-mention the consumer will skip", async () => {
+    const { projectId, flowId } = await seedProject("SLM");
+    const creator = await seedUser();
+    const a = await createTask(
+      { title: "A", prompt: "p", flowId },
+      { projectId, actorUserId: creator },
+      db,
+    );
+    const agentId = await seedSummonableAgent(projectId, "core", "triager");
+
+    const { comment, mentionedAgents } = await addTaskComment(
+      {
+        taskId: a.taskId,
+        // The agent mentions ITSELF.
+        body: "@core:triager ping",
+        actor: { type: "agent", id: agentId },
+      },
+      db,
+    );
+
+    expect(comment.actorType).toBe("agent");
+    expect(comment.body).toBe("[@core:triager](/agents/core:triager) ping");
+    expect(mentionedAgents).toEqual([
+      { id: "core:triager", name: "triager", summonable: true },
+    ]);
+
+    // The event still carries the id — the consumer, not the write path, is
+    // what declines to act on it.
+    const events = await rowsOf(
+      "domain_events",
+      `task_id = '${a.taskId}' and kind = 'task.comment_added'`,
+    );
+
+    expect(events[0].payload.mentionedAgentIds).toEqual(["core:triager"]);
+    expect(events[0].actor_type).toBe("agent");
+    expect(events[0].actor_id).toBe(agentId);
   });
 
   it("rejects a comment on a missing task with PRECONDITION", async () => {

@@ -402,6 +402,12 @@ async function summonMentionedAgents(input: {
     });
 
     try {
+      // Read-then-launch, serialized ONLY by the singleton dispatcher
+      // (`domainEventDispatch: 1` + the per-consumer CAS lease): it holds
+      // summon-vs-summon, NOT summon-vs-manual/cron/flow. No launch path has
+      // ever enforced one active run per (agent, task), so a DB claim here
+      // would gate every other path and refuse legitimate manual relaunches.
+      // Recorded as an accepted edge case in agent-mentions.md (ADR-151 D5).
       const busy = await _db
         .select({ id: runs.id })
         .from(runs)

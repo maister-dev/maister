@@ -492,7 +492,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   comment_list: {
     description:
-      "List comments on a task (markdown bodies with KEY-N mentions already expanded)",
+      "List comments on a task (markdown bodies with mentions already expanded). Two expanded forms appear: `[KEY-N](/projects/<slug>/tasks/<n>)` is a real task link, while `[@<agentId>](/agents/<agentId>)` marks an AGENT MENTION — that href is a marker, not a route, so read it as \"this comment mentioned <agentId>\" and never follow it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -506,7 +506,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   comment_create: {
     description:
-      "Add a markdown comment to a task; KEY-N mentions are expanded to task links at write time. An `@<agentId>` handle summons that platform agent to this task: use the canonical `@<package>:<stem>` form (a bare `@<stem>` resolves only when exactly one eligible agent in the project carries that stem). Handles inside fenced code blocks, inline code spans, or existing markdown links are inert, and an unresolved handle stays literal text. The response reports every handle that resolved, each with `summonable` — false means it rendered as a chip but nothing will launch until a project admin enables a mention trigger. You cannot summon yourself.",
+      "Add a markdown comment to a task; KEY-N mentions are expanded to task links at write time. An `@<agentId>` handle summons that platform agent to this task: use the canonical `@<package>:<stem>` form (a bare `@<stem>` resolves only when exactly one eligible agent in the project carries that stem). Handles inside fenced code blocks, inline code spans, or existing markdown links are inert, and an unresolved handle stays literal text. The response reports every handle that resolved, each with `summonable`. `summonable: false` means it rendered as a chip but nothing will launch until a project admin enables a mention trigger. `summonable: true` is NOT a receipt that a run started — it means the handle resolved and the grant existed when you posted; the trigger consumer decides afterwards and may still skip (you cannot summon yourself), suppress (that agent already has an active run on this task), or refuse the launch. Poll the task's runs if you need to know a run actually started.",
     inputSchema: {
       type: "object",
       properties: {

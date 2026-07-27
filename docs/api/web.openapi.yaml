@@ -2469,10 +2469,12 @@ paths:
         markdown links are inert; unresolved or ambiguous handles stay
         literal. Resolved handles are stored expanded as
         `[@<agentId>](/agents/<agentId>)` and are echoed back in
-        `mentionedAgents` with their write-time `summonable` flag, so a
-        caller learns whether a directed summon was accepted without
-        polling. A summonable mention causes at most one directed agent run
-        per `(agent, comment event)`; see
+        `mentionedAgents` with their write-time `summonable` flag. That flag
+        reports RESOLUTION plus the operator grant at write time — it is NOT
+        an acceptance receipt: the `agent_triggers` consumer re-evaluates
+        afterwards and may still skip, suppress, or refuse the launch. A
+        summonable mention causes AT MOST one directed agent run per
+        `(agent, comment event)`; see
         `docs/system-analytics/agent-mentions.md`.
 
         Source: `web/app/api/projects/[slug]/tasks/[number]/comments/route.ts`.
@@ -14615,7 +14617,20 @@ components:
         taskId: { type: string, format: uuid }
         body:
           type: string
-          description: Markdown; mentions stored expanded.
+          description: |
+            Markdown; mentions stored expanded.
+
+            (ADR-151, Implemented) Two expanded mention forms appear in this
+            text and a consumer MUST know them apart:
+            `[KEY-N](/projects/<slug>/tasks/<n>)` is a real navigable task
+            link, while `[@<agentId>](/agents/<agentId>)` is an AGENT MENTION
+            whose href is a marker, NOT a route — `/agents/<agentId>` does not
+            exist and `/agents` is admin-only. The MAIster UI detects that
+            shape and renders a non-navigating chip. A consumer rendering this
+            body as plain markdown MUST do the same (match
+            `^/agents/` with an `@`-prefixed label) or suppress the link;
+            following it lands on 404/403. The shape is stable and
+            resolution is never re-run at read time.
         actor: { $ref: "#/components/schemas/SocialActor" }
         createdAt: { type: string, format: date-time }
     MentionedAgentDTO:

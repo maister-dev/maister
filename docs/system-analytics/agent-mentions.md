@@ -199,9 +199,15 @@ ON CONFLICT DO NOTHING and record suppressed]
 - An agent MUST NEVER summon itself through a comment it authored.
   (Implemented)
 - A mentioned agent holding a run on the same task in
-  `MENTION_SUPPRESSION_STATUSES` MUST NOT be launched again and MUST record
-  exactly one `agent_summon_suppressed` row per `(task, agent,
-  triggerEventId)`, under any number of redeliveries. (Implemented)
+  `MENTION_SUPPRESSION_STATUSES` MUST NOT be **summoned** again and MUST
+  record exactly one `agent_summon_suppressed` row per `(task, agent,
+  triggerEventId)`, under any number of redeliveries. The guarantee is scoped
+  to this branch and rests on the dispatcher being a singleton
+  (`domainEventDispatch: 1` + the per-consumer CAS lease), so no two summons
+  evaluate it concurrently. It is NOT a global mutual exclusion: `launchRun`,
+  the cron tick and flow bindings have never gated on "this agent is busy on
+  this task", so a launch from one of those paths can still land beside a
+  summon. (Implemented)
 - Mention summons MUST be additive: generic `eventMatch.kinds` subscribers to
   `task.comment_added` MUST keep firing exactly as before (including the
   lowest-`scheduleId`-wins single-owner rule), and `trigger_type = 'mention'`
@@ -212,8 +218,13 @@ ON CONFLICT DO NOTHING and record suppressed]
   `handle`, and one agent's failure MUST NOT block the other agents
   mentioned in the same event. (Implemented)
 - The comment POST response (web and ext) MUST report each resolved mention
-  with its write-time summonability, so an API or MCP caller learns whether
-  its summon was accepted without polling. (Implemented)
+  with its write-time summonability. `summonable: true` MUST be read as "this
+  handle resolved and the operator grant was in place when the comment was
+  written" — NEVER as "a run was accepted": the consumer re-evaluates the
+  decision table afterwards and can still skip (self-mention), suppress
+  (busy task), or refuse (trust, quarantine, `trigger_missing`, destructive,
+  subagent, pin divergence). `summonable: false` is the stronger signal — it
+  MUST mean nothing will launch. (Implemented)
 
 ## Edge cases
 
@@ -232,6 +243,7 @@ ON CONFLICT DO NOTHING and record suppressed]
 | Binding exists but the definition lacks `domain_event` | `summonable = false` at write time (footnote); if launched anyway through drift, `loadAgentContext` refuses with `trigger_missing` → decision row 9. |
 | Trust revoked between binding and consume | `resolveEffectiveAgentDefinition` throws → decision row 9 (`refused`, `MaisterError("PRECONDITION")`). |
 | Comment posted by an ownerless project token | The actor is `('system', NULL)`; mentions summon normally — no self-exclusion applies. |
+| A manual/cron/flow launch of the same agent races the summon | Both can end up active on the task. The busy check is a read-then-launch inside the singleton dispatcher, which serializes summon-vs-summon but cannot serialize summon-vs-other-path — no launch path has ever enforced one-active-run-per-`(agent, task)`. Accepted, not silently: making it an invariant would need a DB claim shared by every launch path and would block legitimate manual relaunches. The cost ceiling stays `MAISTER_MAX_CONCURRENT_AGENTS`. |
 | Comment write succeeds but the dispatcher is down | The event stays in `domain_events`; the summon fires when the dispatcher next ticks (at-least-once, no expiry). |
 
 ## Non-goals

@@ -13190,6 +13190,15 @@ picks its own owner via the lowest-`scheduleId` rule, and cannot be aimed.
   `ACTIVE_RUN_STATUSES`: `Pending` is included so a queued summon is not
   double-queued, while `Review` and `Crashed` are excluded because
   re-mentioning after a finished or dead attempt is the intended rework loop.
+  **Two separate claims, deliberately not conflated:** the NOTE is
+  structurally idempotent (the partial unique above); the busy DECISION is a
+  read-then-launch that is serialized only by the singleton dispatcher, so it
+  holds summon-vs-summon and not summon-vs-manual/cron/flow. A DB claim over
+  active `(agent_id, task_id)` was rejected: no launch path has ever enforced
+  that, so the constraint would gate `launchRun`, the cron tick and flow
+  bindings too, and would refuse legitimate manual relaunches. The residual
+  race is recorded as an edge case in `agent-mentions.md` rather than hidden
+  behind an absolute-sounding expectation.
 - **This is the first domain-event consumer to write `task_activity`**, so
   ADR-078 D7's one-writer invariant is restated rather than quietly bent:
   *`recordTaskActivity` remains the only writer; callers are either the
@@ -13211,9 +13220,17 @@ picks its own owner via the lowest-`scheduleId` rule, and cannot be aimed.
 - **Both comment POST responses report the resolved mentions** (D11) as
   `mentionedAgents: [{id, name, summonable}]`, omitted when empty. The
   assistant-over-MCP is a first-class author of summoning comments and would
-  otherwise have to parse markdown links to learn whether its summon was
-  accepted. This is write-time truth the pipeline already computed — zero
-  extra queries. Scope guard: POST responses only; `CommentDTO` and the GET
+  otherwise have to parse markdown links to learn what its handles resolved
+  to. This is write-time truth the pipeline already computed — zero extra
+  queries. **The flag is deliberately NOT an acceptance receipt and must not
+  be documented as one:** it is asymmetric. `false` is a hard negative
+  (nothing will launch); `true` only means "resolved, and the operator grant
+  existed at write time" — the consumer still owns the decision table and may
+  skip a self-mention, suppress a busy task, or hit a launch refusal. Making
+  it a true acceptance signal would require running the actor-, task- and
+  effective-definition gates inside the comment transaction, which both
+  duplicates the consumer and lies the moment eligibility changes during the
+  dispatch window. Scope guard: POST responses only; `CommentDTO` and the GET
   list stay untouched (deriving this for historical comments would need an
   activity join).
 - **`recommended.mention` lands now** (D13), and the Studio frontmatter editor

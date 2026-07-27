@@ -3147,6 +3147,18 @@ components:
         taskId: { type: string, format: uuid }
         body:
           type: string
+          description: |
+            Markdown with mentions already expanded at write time.
+
+            (ADR-151, Implemented) Two expanded forms appear here and a
+            consumer MUST know them apart: `[KEY-N](/projects/<slug>/tasks/<n>)`
+            is a real navigable task link, while
+            `[@<agentId>](/agents/<agentId>)` is an AGENT MENTION whose href
+            is a marker, NOT a route — `/agents/<agentId>` does not exist and
+            `/agents` is admin-only. Render it as a chip (match `^/agents/`
+            with an `@`-prefixed label) or suppress the link; following it
+            lands on 404/403. The shape is stable and resolution is never
+            re-run at read time.
         actor:
           type: object
           required: [type, id, label]
