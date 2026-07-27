@@ -255,8 +255,9 @@ delivery degrades to manual with status, command, and bounded conflict paths.
   (Implemented — M15)
 - A `blocking` `human_review` gate MUST be rejected at manifest validation with
   `MaisterError("CONFIG")`; advisory `human_review` is permitted. (Implemented — M15)
-- Board and portfolio readiness MUST be computed over bulk-fetched rows; neither MUST call
-  `getRunReadiness` per run (no N+1). (Implemented — M15)
+- Board, portfolio, and assistant-pulse readiness MUST be computed over bulk-fetched rows
+  (one `computeReadinessByRun` call per request); none MUST call `getRunReadiness` per run
+  (no N+1). (Implemented — M15; pulse Designed — ADR-152)
 - M15 MUST NOT add a DB migration, a new `MaisterError` code, a new `runs.status` value, or
   bump `MAISTER_ENGINE_VERSION` (stays `1.2.0`).
 - **(M29 — Implemented)** A `failed` blocking `artifact_required` gate whose verdict carries

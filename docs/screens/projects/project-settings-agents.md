@@ -61,10 +61,27 @@ with a `min-w`. Forms (the modal) stay narrow (520–760px).
   (`off` / `permissions` "с чел" / `full` "без чел"), **On budget breach**
   (`escalate` / `terminate` / `terminate_restorable`), **Branch base**, and a
   **`brain:rw` chip** (ADR-122) when the link grants `canReadBrain` /
-  `canWriteBrain` (`r`, `w`, or `rw` per the granted axes). No inline
+  `canWriteBrain` (`r`, `w`, or `rw` per the granted axes), and — **(ADR-152 —
+  Designed)** — a **`mem` chip** in the same axes cluster when
+  `memoryEnabled` is set. No inline
   editing — the row carries data only; an action cluster on the right reads
-  left→right **Edit (⚙) · Launch (▶) · Disable/Enable (toggle) · Detach (trash,
-  danger tone)**, all icon buttons with `aria-label`.
+  left→right **Edit (⚙) · Memory (📄, ADR-152 — Designed) · Launch (▶) ·
+  Disable/Enable (toggle) · Detach (trash, danger tone)**, all icon buttons
+  with `aria-label`.
+- **Memory drawer** (ADR-152 — Designed) — the row's Memory action opens a
+  **dedicated portaled drawer**, deliberately NOT the 520–760px instance-config
+  modal: a memory file is a document up to
+  `MAISTER_AGENT_MEMORY_MAX_CHARS` (default 32 768) characters and needs the
+  width. It renders `memory.md` read-only by default with a live
+  **`sizeChars / max`** indicator (so "compact when near the cap" is actionable),
+  an **Edit** affordance switching to a textarea, **Save** behind the shared
+  confirmation popup (the request carries `ifHash` — a stale hash returns 409
+  with the current content, because a blind human Save must not clobber a
+  concurrent agent write), and **Clear** as a destructive confirmation.
+  Accessibility follows the shared popup convention: focus trap, initial focus,
+  focus restore, Esc, body scroll lock, `aria-labelledby`, `role="alert"` for
+  save errors, `createPortal` to `document.body`. Behavior lives in
+  [`../../system-analytics/agent-memory.md`](../../system-analytics/agent-memory.md).
 - **Available agents — list.** Agents projected from the project's **attached +
   trusted** packages that are not yet linked. Each shows `packageName:stem` + name
   + risk tier; an **Attach (＋)** icon button opens the bindings modal pre-filled
@@ -103,6 +120,16 @@ with a `min-w`. Forms (the modal) stay narrow (520–760px).
   - **Brain access** (ADR-122) — two toggles: **canReadBrain** (gates
     `memory_recall`) and **canWriteBrain** (gates `memory_retain`, a separate
     write axis — read never grants write). Both default off.
+  - **Memory** (ADR-152 — Designed) — a third toggle in the same section,
+    **`memoryEnabled`**, labelled explicitly as a **separate axis** from
+    `canWriteBrain`: it gates the agent's own private `memory.md`, not Project
+    Brain, and neither Brain axis implies it. Default off, seeded server-side on
+    attach from the effective definition's `memory:` field. For a **flow-bound
+    agent** (an effective definition declaring `flow:`) the toggle renders
+    **disabled with its reason shown** — "this agent drives a Flow; Flow runs do
+    not carry agent memory" — never hidden and never silently inert, because the
+    launch diverts to the agent-driven flow path and never reaches the prompt
+    seam.
   - Close affordance: top-right **✕** (+ Esc + backdrop), `createPortal` to body
     (shared popup convention).
 
@@ -126,8 +153,17 @@ stateDiagram-v2
 
 - **Read:** `GET /api/projects/{slug}/agents` → `{ attached: AttachedAgent[],
   available: AgentSummary[] }` (member+). `AttachedAgent` now carries
-  `branchBase` + `executionPolicyOverride` (ADR-106) and
-  `canReadBrain` + `canWriteBrain` (ADR-122).
+  `branchBase` + `executionPolicyOverride` (ADR-106),
+  `canReadBrain` + `canWriteBrain` (ADR-122), and `memoryEnabled`
+  (ADR-152 — Designed).
+- **Memory (ADR-152 — Designed):** `GET | PUT | DELETE
+  /api/projects/{slug}/agents/{agentId}/memory`. `GET` is `readBoard` and
+  returns `200` even when the file is absent (`content: ""`, `hash: null`) —
+  the first-writer state, not a 404. `PUT` and `DELETE` require `editSettings`;
+  `PUT` carries `ifHash` and answers `409` with the current state on a stale
+  hash, `DELETE` is idempotent (`204`). `memoryEnabled` itself is NOT a
+  per-field route — it rides the existing aggregating
+  `PATCH /api/projects/{slug}/agents/{agentId}` in one transaction.
 - **Attach:** `POST /api/projects/{slug}/agents` `{ agentId, enabled?,
   runnerOverrideId? }` (admin) — `409 PRECONDITION` when the package is not
   attached+trusted.
@@ -163,9 +199,15 @@ a partial run.
 
 ## i18n
 
-`web/messages/{en,ru}.json` namespace `projectSettings.agents` (table headers,
-the 3-way control labels incl. the **с чел / без чел** captions, trigger editor,
-empty states, action `aria-label`s, modal). EN + RU parity required.
+`web/messages/{en,ru}.json` namespace **`agentsAttach`** (table headers, the
+3-way control labels incl. the **с чел / без чел** captions, trigger editor,
+empty states, action `aria-label`s, modal). EN + RU parity required — verified
+52 ≡ 52 keys on 2026-07-27. (Corrected: this doc previously named
+`projectSettings.agents`; no `projectSettings` namespace exists in either
+catalog, and code wins over docs.) The ADR-152 memory strings — `mem` chip, the
+Memory row action `aria-label`, drawer title/Edit/Save/Clear, the
+`sizeChars / max` indicator, the over-cap warning, the CAS-conflict message,
+and the flow-bound disabled-reason — all land in this namespace.
 
 ## Linked artifacts
 

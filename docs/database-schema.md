@@ -971,6 +971,19 @@ agent_project_links {
   config? (jsonb),                 // (Implemented — ADR-111, migration 0071) NULL —
                                    //   per-instance config values keyed by config_schema
                                    //   param; NULL ⇒ declared defaults
+  memoryEnabled,                   // (ADR-152, migration 0122) boolean NOT NULL
+                                   //   DEFAULT false — the agent-memory axis. Gates
+                                   //   launch-time injection of
+                                   //   .maister/<slug>/agents/<pkg>/<stem>/memory.md
+                                   //   AND the `agent_memory:write` ext route; BOTH
+                                   //   the scope and this flag must pass. A SEPARATE
+                                   //   store from Brain — neither can_read_brain nor
+                                   //   can_write_brain implies it. Seeded on attach
+                                   //   from the effective definition's `memory:`
+                                   //   field, effective thereafter (an upgrade never
+                                   //   re-enables what an operator turned off).
+                                   //   `false` is the honest default: a pre-existing
+                                   //   attachment genuinely has no memory.
   createdAt, updatedAt
   // UNIQUE (agent_id, project_id)
 }
@@ -3404,6 +3417,30 @@ reinforced a near-dup never double-counts confidence/TTL. No FK on
   deferred.
 - `runs` += `brain_context` (boolean NULL — null = off (default) in A, a
   flow/agent-level default is reserved; the persisted launch-time decision).
+
+## Agent memory (ADR-152, migration `0122`)
+
+Two additive columns, one migration, no backfill and no abort-guard (both are
+new and data-free).
+
+- `agent_project_links` += `memory_enabled` (boolean NOT NULL DEFAULT false) —
+  the per-attachment agent-memory axis, described in full in the
+  `agent_project_links` block above. Independent of `can_read_brain` /
+  `can_write_brain`: agent memory is a private per-attachment markdown file,
+  Project Brain is the project-owned indexed store.
+- `runs` += `agent_memory_hash` (text NULL) — the sha256 hex of the memory
+  content injected into THIS run's prompt at initial spawn. `NULL` means the
+  run injected no memory, which is the honest seed for every pre-`0122` row and
+  for every flow/scratch run. It mirrors the `runs.runner_snapshot` philosophy:
+  the sibling `memory-snapshot.md` in the run dir is human-readable evidence
+  but is GC'd with the run dir after 7 days, so the durable, queryable answer to
+  "what did this agent remember when it acted" has to live on the row. It is
+  deliberately NOT folded into `runner_snapshot`, which resume/recover reads and
+  which must stay runner identity only.
+
+Contract details — path derivation, the CAS write, degradation, and the owner
+surface — live in
+[`system-analytics/agent-memory.md`](system-analytics/agent-memory.md).
 
 ## Planned roadmap persistence
 

@@ -1819,6 +1819,9 @@ paths:
                 canWriteBrain:
                   type: boolean
                   description: "(ADR-122) Per-link Brain write axis — gates `memory_retain`; separate from read (read never grants write)."
+                memoryEnabled:
+                  type: boolean
+                  description: "(ADR-152) Per-link agent-memory axis — gates launch injection and `agent_memory_write`. A SEPARATE store from Brain: neither Brain axis implies it. Threaded through THIS aggregating PATCH, never a per-field route."
                 schedules:
                   type: array
                   items: { $ref: "#/components/schemas/AgentScheduleBody" }
@@ -1876,6 +1879,124 @@ paths:
             { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
       responses:
         "204": { description: Detached. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: No attachment for this (project, agent).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/projects/{slug}/agents/{agentId}/memory:
+    get:
+      tags: [projects]
+      summary: (ADR-152 — Designed) Read the agent's memory file for this project
+      description: |
+        Project `readBoard` (`viewer`+). Returns the current `memory.md` state
+        for this `(agent, project)` attachment. An absent file is NOT a 404: it
+        returns `200` with `content: ""`, `hash: null`, `sizeChars: 0`,
+        `updatedAt: null` — the first-writer state. Identifiers: `slug` +
+        `agentId` are url-params; `projectId` is server-state derived from
+        `slug`. Memory content is never exposed through the assistant pulse.
+      operationId: getProjectAgentMemory
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
+      responses:
+        "200":
+          description: Current memory state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentMemoryState" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: No attachment for this (project, agent).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    put:
+      tags: [projects]
+      summary: (ADR-152 — Designed) Replace the agent's memory file (CAS)
+      description: |
+        Project `admin`+ (`editSettings`). **CAS applies to the human too**
+        (ADR-152 D18): a blind Save would clobber a concurrent agent write, so
+        `ifHash` is required in the body — `null` is the first-writer form.
+        Ordering is read-current → compare → atomic write → return the
+        POST-write hash. A stale `ifHash` returns `409 CONFLICT` carrying the
+        current `{content, hash}` so the operator can merge.
+      operationId: putProjectAgentMemory
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [content, ifHash]
+              properties:
+                content: { type: string, maxLength: 32768 }
+                ifHash: { type: string, nullable: true }
+      responses:
+        "200":
+          description: Written. `hash` is the POST-write hash.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentMemoryState" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: No attachment for this (project, agent).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: CAS loss (`CONFLICT`) — body carries the current state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentMemoryConflictBody" }
+        "422":
+          description: |
+            Invalid body, or `content` exceeds `MAISTER_AGENT_MEMORY_MAX_CHARS`
+            (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    delete:
+      tags: [projects]
+      summary: (ADR-152 — Designed) Clear the agent's memory file
+      description: |
+        Project `admin`+ (`editSettings`). Removes `memory.md` for this
+        attachment. **Idempotent** — clearing an already-absent file succeeds.
+      operationId: deleteProjectAgentMemory
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
+      responses:
+        "204": { description: Cleared (idempotent when already absent). }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404":
@@ -14552,9 +14673,40 @@ components:
         canWriteBrain:
           type: boolean
           description: "(ADR-122) Per-link Brain write axis (default false; read never grants write)."
+        memoryEnabled:
+          type: boolean
+          description: "(ADR-152) Per-link agent-memory axis (default false). A SEPARATE store from Brain — neither `canReadBrain` nor `canWriteBrain` implies it. Seeded server-side from the effective definition's `memory:` field on attach, effective thereafter."
         schedules:
           type: array
           items: { $ref: "#/components/schemas/AgentScheduleBody" }
+    AgentMemoryState:
+      type: object
+      description: |
+        (ADR-152 — Designed) Current state of one agent's `memory.md` for a
+        project. An absent file is reported as `content: ""` with `null` `hash`
+        and `updatedAt` — the first-writer state.
+      required: [content, hash, sizeChars, maxChars, updatedAt]
+      additionalProperties: false
+      properties:
+        content: { type: string }
+        hash:
+          type: string
+          nullable: true
+          description: sha256 hex over the exact content bytes; `null` when absent.
+        sizeChars: { type: integer, minimum: 0 }
+        maxChars:
+          type: integer
+          minimum: 1
+          description: "Resolved `MAISTER_AGENT_MEMORY_MAX_CHARS`, so the drawer can render a live `sizeChars / max` indicator."
+        updatedAt: { type: string, format: date-time, nullable: true }
+    AgentMemoryConflictBody:
+      type: object
+      description: (ADR-152 — Designed) CAS-loss body carrying the current state to merge against.
+      required: [code, message, current]
+      properties:
+        code: { type: string, enum: [CONFLICT] }
+        message: { type: string }
+        current: { $ref: "#/components/schemas/AgentMemoryState" }
     AgentScheduleBody:
       type: object
       description: |

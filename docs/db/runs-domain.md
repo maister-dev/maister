@@ -157,6 +157,7 @@ erDiagram
         text promoted_head_sha "ADR-134 Implemented: final target delivery head, nullable"
         text merge_commit_sha "ADR-134 Implemented: non-FF/provider merge SHA, nullable"
         jsonb diff_stat "ADR-134 Implemented: cleaned {files,additions,deletions}, nullable"
+        text agent_memory_hash "ADR-152 0122: sha256 of the agent memory injected at spawn, nullable — NULL = this run injected none; survives the 7-day run-dir GC"
         timestamp started_at
         timestamp ended_at
     }

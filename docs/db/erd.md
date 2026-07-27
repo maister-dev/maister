@@ -568,6 +568,7 @@ erDiagram
         boolean enabled
         text runner_override_id FK "platform_acp_runners(id) SET NULL"
         jsonb config "NULL — per-instance config values; NULL ⇒ declared defaults (Implemented ADR-111, 0071)"
+        boolean memory_enabled "NOT NULL DEFAULT false — agent-memory axis, separate from Brain (ADR-152, 0122)"
         timestamp created_at
         timestamp updated_at
     }
@@ -792,6 +793,7 @@ erDiagram
         timestamp cost_reconciled_at "Implemented ADR-117 0084: durable system_sweep cost-reconcile attempt marker, nullable"
         jsonb promotion_hold "ADR-126 0089: {source,reason?,createdAt} auto-promotion hold, nullable (NULL = no hold)"
         timestamptz review_entered_at "ADR-126 0089: auto-promotion grace anchor, nullable"
+        text agent_memory_hash "ADR-152 0122: sha256 of the agent memory injected at spawn, nullable — NULL = none injected"
         timestamp started_at
         timestamp ended_at
     }

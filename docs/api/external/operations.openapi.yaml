@@ -96,6 +96,14 @@ tags:
       tokens and mirrored by the MCP facade. Recall returns the implemented
       owned/indexed union; clusters and proposals are implemented Sub-project C
       contracts.
+  - name: agent-memory
+    description: |
+      (ADR-152) Per-attachment agent memory — a single `memory.md` per
+      `(agent, project)` that the agent reads at launch and rewrites through a
+      content-hash CAS. A SEPARATE store from Project Brain: the
+      `agent_memory:write` scope and the `agent_project_links.memory_enabled`
+      flag gate it, and neither `memory:read`/`memory:write` nor
+      `can_read_brain`/`can_write_brain` grants it.
   - name: evaluations
     description: |
       (ADR-145, Implemented) Evaluation Lab evaluator facade. A judge attempt runs
@@ -1184,6 +1192,119 @@ paths:
           $ref: "#/components/responses/Conflict"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
+
+  /api/v1/ext/agent/memory:
+    get:
+      tags: [agent-memory]
+      summary: Read this agent's memory file for its bound project
+      description: |
+        (ADR-152) Scope `agent_memory:write` — v1 ships exactly ONE agent-memory
+        scope, and an agent that may maintain its memory may read it back. The
+        content is already injected into the agent's own prompt at launch, so
+        this route exposes nothing new; it exists for symmetry and diagnostics
+        and ships no MCP tool.
+
+        **No body-controlled identifier and no `slug` path segment.**
+        `projectId` and `agentId` come from the run-bound token, and the
+        project slug is a server-state lookup by `projectId`.
+
+        An absent file is NOT a 404: it returns `200` with `content: ""`,
+        `hash: null`, `sizeChars: 0`, `updatedAt: null`, which is exactly the
+        first-writer state (`ifHash: null`).
+      operationId: extAgentMemoryGet
+      security:
+        - projectToken: []
+      responses:
+        "200":
+          description: Current memory state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtAgentMemoryState"
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentMemoryForbidden"
+    post:
+      tags: [agent-memory]
+      summary: Replace this agent's memory file through a content-hash CAS
+      description: |
+        (ADR-152) Scope `agent_memory:write`, mapped to the dedicated
+        `writeAgentMemory` project action (minimum `member`) — never the
+        `readBoard` fallback. BOTH the scope and the per-attachment
+        `agent_project_links.memory_enabled` flag must pass; neither alone
+        authorizes a write.
+
+        **No body-controlled identifier and no `slug` path segment** (the one
+        MAIster facade tool without `slug` — the project comes from the
+        run-bound token). `content` and `ifHash` are payload, never locators:
+        neither reaches a path or a cross-resource lookup.
+
+        Ordering is read-current → compare CAS → atomic write → return the
+        **post-write** hash. `ifHash: null` is the first-writer form (an absent
+        file hashes to `null`). A stale `ifHash` returns `409 CONFLICT` whose
+        body carries the current `{content, hash}` so the caller can merge and
+        retry rather than clobber. Two concurrent writers leave the file
+        containing exactly one writer's bytes.
+
+        The write targets `.maister/<project-slug>/agents/…`, never the
+        worktree, so it works in every workspace mode including `none` and
+        leaves the read-only enforcement contour untouched.
+      operationId: extAgentMemoryWrite
+      security:
+        - projectToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  maxLength: 32768
+                  description: |
+                    Full replacement body. Capped by
+                    `MAISTER_AGENT_MEMORY_MAX_CHARS` (default `32768`
+                    characters); over-cap returns `422 CONFIG`.
+                ifHash:
+                  type: string
+                  nullable: true
+                  description: |
+                    The hash this write is based on. `null` (or omitted) is the
+                    first-writer form and succeeds only while the file is
+                    absent.
+            example:
+              content: "# Project notes\n\n- Tests run with `pnpm test:unit`.\n"
+              ifHash: null
+      responses:
+        "200":
+          description: Written. `hash` is the POST-write hash.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtAgentMemoryState"
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/AgentMemoryForbidden"
+        "409":
+          description: |
+            CAS loss (`CONFLICT`) — `ifHash` did not match the current on-disk
+            hash. The body carries the current state so the caller can merge.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtAgentMemoryConflictBody"
+        "422":
+          description: |
+            Body failed schema validation, or `content` exceeds
+            `MAISTER_AGENT_MEMORY_MAX_CHARS` (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
 
   /api/v1/ext/runs:
     post:
@@ -2615,6 +2736,19 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ExtErrorBody" }
+    AgentMemoryForbidden:
+      description: |
+        (ADR-152) Access refused (`UNAUTHORIZED`). The write path fails closed on
+        every authorization axis, and the body never reveals which one:
+
+          - the token is not an agent token, or carries no `agentId`;
+          - the agent has no `agent_project_links` row for the token's project
+            (detached);
+          - the attachment's `memory_enabled` is `false`;
+          - the token lacks `agent_memory:write`.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ExtErrorBody" }
     EmbeddingUnavailable:
       description: |
         (ADR-122) Transient embedding-provider outage after bounded retry
@@ -2638,6 +2772,42 @@ components:
         message:
           type: string
           description: Human-readable error message.
+
+    ExtAgentMemoryState:
+      type: object
+      description: |
+        (ADR-152) The current state of one agent's `memory.md` for its bound
+        project. An absent file is reported as `content: ""` with a `null`
+        `hash` and `updatedAt` — the first-writer state.
+      required: [content, hash, sizeChars, updatedAt]
+      additionalProperties: false
+      properties:
+        content:
+          type: string
+        hash:
+          type: string
+          nullable: true
+          description: sha256 hex over the exact content bytes; `null` when absent.
+        sizeChars:
+          type: integer
+          minimum: 0
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    ExtAgentMemoryConflictBody:
+      type: object
+      description: (ADR-152) CAS-loss body — carries the current state to merge against.
+      required: [code, message, current]
+      properties:
+        code:
+          type: string
+          enum: [CONFLICT]
+        message:
+          type: string
+        current:
+          $ref: "#/components/schemas/ExtAgentMemoryState"
 
     ExtEvaluationContext:
       type: object
@@ -3751,10 +3921,61 @@ components:
           nullable: true
           enum: [low, medium, high, critical]
 
+    ExtPromotionReadyItem:
+      type: object
+      description: |
+        (ADR-152) One `Review` flow run that is readiness-green and waiting only
+        on a human promote decision. Membership is a TWO-layer predicate:
+        **Layer 1 (mechanical)** `run_kind='flow'` ∧ `status='Review'` ∧
+        `isPhaseReady(readiness)` over an exported allow-list; **Layer 2
+        (operator-intent suppression)** additionally excludes
+        `runs.promotion_hold IS NOT NULL` and launched evaluation-lineage
+        participants. Layer 2 is a DELIBERATE divergence — a human `promoteRun`
+        would accept those runs (its hold/lineage refusals are conditional on
+        unattended attribution) and the pulse withholds them anyway.
+      required:
+        [runId, taskId, taskKey, taskTitle, targetBranch, readiness, inReviewSince]
+      additionalProperties: false
+      properties:
+        runId:
+          type: string
+          format: uuid
+        taskId:
+          type: string
+          format: uuid
+          nullable: true
+        taskKey:
+          type: string
+          nullable: true
+        taskTitle:
+          type: string
+          nullable: true
+        targetBranch:
+          type: string
+          nullable: true
+          description: |
+            `workspaces.target_branch`. `null` means the branch is resolved from
+            the task/project default at promote time.
+        readiness:
+          type: string
+          enum: [ready, overridden]
+          description: |
+            The rolled-up `ReadinessState`. Only `ready` and `overridden` can
+            appear here — `isPhaseReady` admits exactly those two, and
+            `overridden` outranks `ready` in `READINESS_PRIORITY`, so a run with
+            one waived blocking gate reports `overridden`.
+        inReviewSince:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            `runs.review_entered_at`. Ordering is `inReviewSince` ascending with
+            `runId` ascending as tiebreak; `null` sorts last.
+
     ExtActivityNeedsYouBlock:
       type: object
       description: Project-scoped pending human-attention snapshot.
-      required: [generatedAt, items]
+      required: [generatedAt, items, promotable]
       additionalProperties: false
       properties:
         generatedAt:
@@ -3764,11 +3985,82 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ExtNeedsYouItem"
+        promotable:
+          type: array
+          description: |
+            (ADR-152) Runs waiting on a promote decision. REQUIRED and always
+            emitted — `[]` when nothing qualifies, never omitted and never
+            `null`. A parallel array rather than a widened `ExtNeedsYouItem`,
+            whose `hitlRequestId` stays non-null for every existing consumer.
+          items:
+            $ref: "#/components/schemas/ExtPromotionReadyItem"
+
+    ExtPulseAgentItem:
+      type: object
+      description: |
+        (ADR-152) One `agent_project_links` row for the token-bound project.
+        Non-summonable agents are REPORTED with a reason, never filtered out.
+        Carries no memory content, size, or hash.
+      required:
+        [agentId, stem, displayName, enabled, summonable, summonBlockedReason]
+      additionalProperties: false
+      properties:
+        agentId:
+          type: string
+          description: Qualified agent id, `<packageName>:<stem>`.
+        stem:
+          type: string
+          description: The bare stem — the id minus its package prefix.
+        displayName:
+          type: string
+        enabled:
+          type: boolean
+          description: |
+            The **attachment** axis (`agent_project_links.enabled`), NOT
+            `agents.enabled`. A catalog-disabled agent on an enabled link
+            reports `enabled: true` with
+            `summonBlockedReason: "agent_disabled"`.
+        summonable:
+          type: boolean
+          description: True exactly when `summonBlockedReason` is `null`.
+        summonBlockedReason:
+          type: string
+          nullable: true
+          description: |
+            The highest-precedence failing conjunct of the ADR-151 summonability
+            predicate. Precedence is exactly the declared member order.
+          enum:
+            [
+              link_disabled,
+              agent_disabled,
+              quarantined,
+              trigger_missing,
+              mention_binding_missing,
+            ]
+
+    ExtActivityAgentsBlock:
+      type: object
+      description: |
+        (ADR-152) Full snapshot of the project's attached agents with
+        summonability. Shaped identically to `now`/`needsYou`.
+      required: [generatedAt, items]
+      additionalProperties: false
+      properties:
+        generatedAt:
+          type: string
+          format: date-time
+        items:
+          type: array
+          description: |
+            Exactly the project's `agent_project_links` rows — `[]` when nothing
+            is attached, never omitted.
+          items:
+            $ref: "#/components/schemas/ExtPulseAgentItem"
 
     ExtActivityPulseResponse:
       type: object
       description: Project-scoped assistant pulse.
-      required: [happened, now, needsYou]
+      required: [happened, now, needsYou, agents]
       additionalProperties: false
       properties:
         happened:
@@ -3777,6 +4069,8 @@ components:
           $ref: "#/components/schemas/ExtActivityNowBlock"
         needsYou:
           $ref: "#/components/schemas/ExtActivityNeedsYouBlock"
+        agents:
+          $ref: "#/components/schemas/ExtActivityAgentsBlock"
 
     ExtRunActivityKind:
       type: string

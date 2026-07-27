@@ -76,6 +76,7 @@ erDiagram
         jsonb config "NULL — per-instance config values; NULL ⇒ declared defaults (Implemented ADR-111, 0071)"
         boolean can_read_brain "NOT NULL DEFAULT false — gates memory recall (ADR-122, 0088)"
         boolean can_write_brain "NOT NULL DEFAULT false — gates memory retain, separate write axis (ADR-122, 0088)"
+        boolean memory_enabled "NOT NULL DEFAULT false — gates agent-memory injection + agent_memory_write; SEPARATE store from Brain (ADR-152, 0122)"
         integer schedules_revision "NOT NULL DEFAULT 1 — full-replacement CAS fence (ADR-139)"
         timestamptz created_at
         timestamptz updated_at
