@@ -7,6 +7,7 @@ import { useState } from "react";
 import { CodeEditor } from "@/components/flows/code-editor";
 import {
   AGENT_MODE_KINDS,
+  AGENT_MEMORY_KINDS,
   AGENT_RISK_TIER_KINDS,
   AGENT_TRIGGER_KINDS,
   AGENT_WORKSPACE_KINDS,
@@ -42,6 +43,7 @@ export interface FrontmatterArtifactEditorLabels {
   agentMode: string;
   agentTriggers: string;
   agentRiskTier: string;
+  agentMemory: string;
   agentRunner: string;
   agentRecommendedHeading: string;
   agentRecommendedRunner: string;
@@ -627,6 +629,13 @@ function SkillAgentFields({
             readOnly={readOnly}
             value={asText(fm.risk_tier)}
             onValue={editTextKey("risk_tier")}
+          />
+          <SelectField
+            label={labels.agentMemory}
+            options={AGENT_MEMORY_KINDS}
+            readOnly={readOnly}
+            value={asText(fm.memory)}
+            onValue={editTextKey("memory")}
           />
           <TextField
             label={labels.agentRunner}

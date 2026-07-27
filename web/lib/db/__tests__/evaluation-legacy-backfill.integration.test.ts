@@ -106,15 +106,15 @@ const RUBRIC = {
 async function makeRun(): Promise<string> {
   const runId = randomUUID();
 
-  await db.insert(schema.runs).values({
-    id: runId,
-    taskId,
-    projectId,
-    flowId,
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    flowVersion: "v1.0.0",
-  });
+  // Raw SQL rather than `db.insert(schema.runs)`: this database is stopped at
+  // an OLDER migration, while the drizzle `runs` object is the CURRENT schema
+  // and emits every column it knows (ADR-152 added `agent_memory_hash` at
+  // 0122). Naming columns explicitly decouples this fixture from any future
+  // additive `runs` column — the same reason `experiments` is inserted raw.
+  await db.execute(sql`
+    INSERT INTO runs (id, task_id, project_id, flow_id, flow_version)
+    VALUES (${runId}, ${taskId}, ${projectId}, ${flowId}, 'v1.0.0')
+  `);
 
   return runId;
 }

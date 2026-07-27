@@ -62,6 +62,8 @@ export type AttachedAgentRow = {
   // false.
   canReadBrain: boolean;
   canWriteBrain: boolean;
+  // (ADR-152) Per-link agent-memory axis — a SEPARATE store from Brain.
+  memoryEnabled: boolean;
   schedulesRevision: number;
   schedules: AttachScheduleView[];
   agent: {
@@ -136,6 +138,10 @@ function policySummary(row: AttachedAgentRow): string {
     parts.push(
       `brain:${row.canReadBrain ? "r" : ""}${row.canWriteBrain ? "w" : ""}`,
     );
+  }
+  // (ADR-152) the agent-memory axis, a sibling of brain:rw and NOT implied by it.
+  if (row.memoryEnabled) {
+    parts.push("mem");
   }
 
   return parts.length > 0 ? parts.join(" · ") : "—";
@@ -404,6 +410,12 @@ function rowFromAvailable(agent: AvailableAgentRow): AttachedAgentRow {
     config: null,
     canReadBrain: false,
     canWriteBrain: false,
+    // (ADR-152) NOT prefilled from the definition: the `agents` catalog row
+    // carries no `memory` column, so the client cannot see the recommendation
+    // without lying about it. `attachAgent` applies the effective definition's
+    // value server-side (D21'), and the row then renders the real one — which
+    // is why the Memory toggle is edit-only.
+    memoryEnabled: false,
     schedulesRevision: 1,
     schedules: [
       ...(rec?.cron

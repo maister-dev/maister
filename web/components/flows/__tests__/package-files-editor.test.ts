@@ -29,6 +29,7 @@ const FRONTMATTER_LABELS = {
   agentMode: "Mode",
   agentTriggers: "Triggers",
   agentRiskTier: "Risk tier",
+  agentMemory: "Agent memory",
   agentRunner: "Runner",
   agentRecommendedHeading: "Recommended bindings",
   agentRecommendedRunner: "Recommended runner",

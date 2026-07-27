@@ -116,6 +116,7 @@ export function frontmatterArtifactEditorLabels(
     agentMode: te("artifacts.agentMode"),
     agentTriggers: te("artifacts.agentTriggers"),
     agentRiskTier: te("artifacts.agentRiskTier"),
+    agentMemory: te("artifacts.agentMemory"),
     agentRunner: te("artifacts.agentRunner"),
     agentRecommendedHeading: te("artifacts.agentRecommendedHeading"),
     agentRecommendedRunner: te("artifacts.agentRecommendedRunner"),

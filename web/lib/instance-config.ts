@@ -77,6 +77,7 @@ export function localPackageLockMinutes(): number {
   return positiveIntFromEnv("MAISTER_LOCAL_PACKAGE_LOCK_MINUTES", 30);
 }
 
+const DEFAULT_AGENT_MEMORY_MAX_CHARS = 32_768;
 const DEFAULT_IMPORT_MAX_BYTES = 52_428_800; // 50 MiB
 const DEFAULT_IMPORT_MAX_ENTRIES = 2000;
 const DEFAULT_IMPORT_MAX_FILE_BYTES = 10_485_760; // 10 MiB
@@ -290,6 +291,16 @@ export function assistantActivityWaitingToolAfterSeconds(): number {
   return positiveIntFromEnv(
     "MAISTER_ASSISTANT_ACTIVITY_WAITING_TOOL_AFTER_SECONDS",
     DEFAULT_ASSISTANT_ACTIVITY_WAITING_TOOL_AFTER_SECONDS,
+  );
+}
+
+// ADR-152: the agent-memory cap, in CHARACTERS (prompt-budget units, matching
+// the Brain route's MAX_CONTENT_CHARS precedent). Over-cap on WRITE refuses
+// CONFIG; over-cap on READ degrades. Host/service env only per ADR-023.
+export function agentMemoryMaxChars(): number {
+  return positiveIntFromEnv(
+    "MAISTER_AGENT_MEMORY_MAX_CHARS",
+    DEFAULT_AGENT_MEMORY_MAX_CHARS,
   );
 }
 

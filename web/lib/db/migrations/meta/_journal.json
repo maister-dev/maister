@@ -827,6 +827,13 @@
       "when": 1785099793984,
       "tag": "0121_agent_mention_summons",
       "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1785161505423,
+      "tag": "0122_agent_memory_files",
+      "breakpoints": true
     }
   ]
 }

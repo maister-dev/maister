@@ -953,6 +953,10 @@ export const agentProjectLinks = pgTable(
     // opens retain, the memory-poisoning guard). can_propose_brain = Sub-project C.
     canReadBrain: boolean("can_read_brain").notNull().default(false),
     canWriteBrain: boolean("can_write_brain").notNull().default(false),
+    // ADR-152: a SEPARATE store from Brain. Neither can_read_brain nor
+    // can_write_brain implies it, and the `agent_memory:write` token scope
+    // alone does not authorize a write — both must pass.
+    memoryEnabled: boolean("memory_enabled").notNull().default(false),
     // ADR-140: fences full-replacement binding saves so a stale editor cannot
     // erase telemetry or bindings added after it loaded the attachment.
     schedulesRevision: integer("schedules_revision").notNull().default(1),
@@ -1901,6 +1905,14 @@ export const runs = pgTable(
       withTimezone: true,
       mode: "date",
     }),
+    // ADR-152: sha256 of the agent memory injected into THIS run's prompt at
+    // initial spawn; NULL = none injected (the honest seed for every pre-0122
+    // row and every flow/scratch run). The sibling memory-snapshot.md in the
+    // run dir is GC'd with that dir after 7 days, so the durable, queryable
+    // answer to "what did this agent remember when it acted" has to live here.
+    // Deliberately NOT folded into runner_snapshot, which resume/recover reads
+    // and which must stay runner identity only.
+    agentMemoryHash: text("agent_memory_hash"),
   },
   (t) => ({
     idxProjectStatus: index("runs_project_status_idx").on(

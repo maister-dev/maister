@@ -54,6 +54,8 @@ const patchBodySchema = z
     // write gates memory_retain (separate axis). Both default false.
     canReadBrain: z.boolean().optional(),
     canWriteBrain: z.boolean().optional(),
+    // ADR-152: per-link agent-memory axis — a SEPARATE store from Brain.
+    memoryEnabled: z.boolean().optional(),
     schedules: z.array(scheduleSchema).max(16).optional(),
     schedulesRevision: z.number().int().min(1).optional(),
   })

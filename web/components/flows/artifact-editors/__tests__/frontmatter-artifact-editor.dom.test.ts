@@ -33,6 +33,7 @@ const labels: FrontmatterArtifactEditorLabels = {
   agentMode: "Mode",
   agentTriggers: "Triggers",
   agentRiskTier: "Risk tier",
+  agentMemory: "Agent memory",
   agentRunner: "Runner",
   agentRecommendedHeading: "Recommended",
   agentRecommendedRunner: "Recommended runner",

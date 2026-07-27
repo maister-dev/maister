@@ -60,6 +60,10 @@ export type AttachedAgentView = {
   // never grants write; memory-poisoning guard). Both default false.
   canReadBrain: boolean;
   canWriteBrain: boolean;
+  // ADR-152: per-link agent-memory axis. A SEPARATE store from Brain — neither
+  // Brain axis implies it. Seeded on attach from the effective definition's
+  // `memory:` field, effective thereafter.
+  memoryEnabled: boolean;
   schedulesRevision: number;
   schedules: Array<{
     id: string;
@@ -234,6 +238,7 @@ export async function getProjectAgentsView(
     config: (link.config ?? null) as Record<string, unknown> | null,
     canReadBrain: Boolean(link.canReadBrain),
     canWriteBrain: Boolean(link.canWriteBrain),
+    memoryEnabled: Boolean(link.memoryEnabled),
     schedulesRevision: link.schedulesRevision as number,
     schedules: scheduleRows
       .filter((s) => s.agentId === agent.id)
@@ -297,6 +302,29 @@ export async function attachAgent(
     await validateRunnerOverride(_db, input.runnerOverrideId);
   }
 
+  // ADR-152 D21': the memory default is applied SERVER-side, not by the panel's
+  // client prefill — a bare POST bypasses `rowFromAvailable` entirely, and an
+  // attachment that looks configured but is not is worse than a failed attach.
+  // Ordering matters: this runs AFTER assertAgentPackageAttachable, which is
+  // what guarantees the project pin exists — reading first would surface pin
+  // problems as the wrong error. A resolver throw (pin divergence) therefore
+  // FAILS the attach rather than silently landing `false`.
+  const effective = await resolveEffectiveAgentDefinition(
+    { projectId: input.projectId, agentId: input.agentId },
+    _db,
+  );
+  const memoryEnabled = effective.parsed.memory === "enabled";
+
+  log.debug(
+    {
+      agentId: input.agentId,
+      projectId: input.projectId,
+      definitionDefault: effective.parsed.memory,
+      effective: memoryEnabled,
+    },
+    "[agents.attach] memory axis prefilled",
+  );
+
   const inserted = await _db
     .insert(agentProjectLinks)
     .values({
@@ -304,6 +332,7 @@ export async function attachAgent(
       projectId: input.projectId,
       enabled: input.enabled ?? true,
       runnerOverrideId: input.runnerOverrideId ?? null,
+      memoryEnabled,
     })
     .onConflictDoNothing()
     .returning({ id: agentProjectLinks.id });
@@ -339,6 +368,9 @@ export async function updateAgentLink(
       // gates retain (separate axis). Absent = untouched.
       canReadBrain?: boolean;
       canWriteBrain?: boolean;
+      // ADR-152: per-link agent-memory axis. Only an explicit true/false
+      // writes, mirroring the Brain axes — absent means untouched.
+      memoryEnabled?: boolean;
       schedules?: AgentScheduleInput[];
       schedulesRevision?: number;
     };
@@ -436,6 +468,10 @@ export async function updateAgentLink(
     if (input.patch.canReadBrain !== undefined) {
       set.canReadBrain = input.patch.canReadBrain;
     }
+    if (input.patch.memoryEnabled !== undefined) {
+      set.memoryEnabled = input.patch.memoryEnabled;
+    }
+
     if (input.patch.canWriteBrain !== undefined) {
       set.canWriteBrain = input.patch.canWriteBrain;
     }

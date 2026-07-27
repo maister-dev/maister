@@ -3749,6 +3749,7 @@
       "agentMode": "Режим (session | subagent)",
       "agentTriggers": "Триггеры",
       "agentRiskTier": "Уровень риска (read_only | standard | destructive)",
+      "agentMemory": "Память агента (none | enabled)",
       "agentRunner": "Раннер (id из каталога)",
       "agentRecommendedHeading": "Рекомендованные привязки — предзаполняют панель подключения; применяются только после Save.",
       "agentRecommendedRunner": "Рекомендованный раннер",
@@ -4357,10 +4358,22 @@
       "policy": "Политика выполнения",
       "replicates": "Реплики",
       "overlay": {
-        "rules": { "add": "Правила: добавить", "remove": "Правила: убрать" },
-        "skills": { "add": "Навыки: добавить", "remove": "Навыки: убрать" },
-        "mcps": { "add": "MCP: добавить", "remove": "MCP: убрать" },
-        "subagents": { "add": "Субагенты: добавить", "remove": "Субагенты: убрать" }
+        "rules": {
+          "add": "Правила: добавить",
+          "remove": "Правила: убрать"
+        },
+        "skills": {
+          "add": "Навыки: добавить",
+          "remove": "Навыки: убрать"
+        },
+        "mcps": {
+          "add": "MCP: добавить",
+          "remove": "MCP: убрать"
+        },
+        "subagents": {
+          "add": "Субагенты: добавить",
+          "remove": "Субагенты: убрать"
+        }
       },
       "reuse": "Повторно использовать рецепты",
       "preview": "Предпросмотр",

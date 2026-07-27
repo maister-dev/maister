@@ -35,6 +35,7 @@ const ATTACHED: AttachedAgentRow = {
   config: null,
   canReadBrain: true,
   canWriteBrain: false,
+  memoryEnabled: false,
   schedulesRevision: 1,
   schedules: [
     {
@@ -146,6 +147,7 @@ describe("AgentsAttachPanel (M34 D11)", () => {
           executionPolicyOverride: null,
           canReadBrain: false,
           canWriteBrain: false,
+          memoryEnabled: false,
         },
       ],
     });

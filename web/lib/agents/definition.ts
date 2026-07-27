@@ -55,6 +55,10 @@ export const AGENT_RISK_TIER_KINDS = [
 // workspace_ref is a free branch name in the schema; `trigger` is the special
 // resolve-from-event sentinel. Offered as Select options; other values kept.
 export const AGENT_WORKSPACE_REF_KINDS = ["trigger", "branch"] as const;
+// ADR-152: the agent-memory axis a package author recommends.
+export const AGENT_MEMORY_KINDS = ["none", "enabled"] as const;
+
+export type AgentMemoryKind = (typeof AGENT_MEMORY_KINDS)[number];
 
 const agentIdSchema = z
   .string()
@@ -293,6 +297,11 @@ export const agentDefinitionFrontmatterSchema = z
     hooks: hooksSettingsSchema.optional(),
     // ADR-111: declared agent-config parameters (generic config framework).
     config: z.array(configParamDeclSchema).optional(),
+    // ADR-152: the package author's RECOMMENDATION for the agent-memory axis.
+    // `attachAgent` applies it once as the server-side default; the stored
+    // `agent_project_links.memory_enabled` is effective thereafter, so a package
+    // upgrade never re-enables memory an operator turned off.
+    memory: z.enum(AGENT_MEMORY_KINDS).optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -357,6 +366,7 @@ export type ParsedAgentDefinition = {
   recommended: AgentRecommended | null;
   hooks: HooksSettings | null;
   config: AgentConfigParam[] | null;
+  memory: AgentMemoryKind;
   prompt: string;
 };
 
@@ -419,6 +429,7 @@ export function parseAgentDefinition(
     recommended: fm.recommended ?? null,
     hooks: fm.hooks ?? null,
     config: fm.config ?? null,
+    memory: fm.memory ?? "none",
     prompt: split.body,
   };
 }
@@ -439,6 +450,7 @@ export type AgentDefinitionInput = {
   recommended?: AgentRecommended | null;
   hooks?: HooksSettings | null;
   config?: AgentConfigParam[] | null;
+  memory?: AgentMemoryKind | null;
   prompt: string;
 };
 
@@ -463,6 +475,12 @@ export function renderAgentDefinition(input: AgentDefinitionInput): string {
     ...(input.hooks ? { hooks: input.hooks } : {}),
     ...(input.config && input.config.length > 0
       ? { config: input.config }
+      : {}),
+    // ADR-152: `none` is the parse default, so emitting it would add noise to
+    // every rendered file. Rendering it only when enabled keeps the round trip
+    // byte-stable in both directions.
+    ...(input.memory && input.memory !== "none"
+      ? { memory: input.memory }
       : {}),
   };
 

@@ -358,6 +358,94 @@ describe("parseAgentDefinition", () => {
   });
 });
 
+// T-C2a / REQ-C2 (ADR-152). The frontmatter schema is `.strict()`, so a package
+// shipping `memory:` is REFUSED — not ignored — until the field is known here.
+// And `renderAgentDefinition` self-validates by re-parsing its own output, so a
+// field added to the schema but not the renderer is silently DROPPED rather
+// than caught: the round-trip assertion below is that specific guard.
+describe("T-C2a — agent definition `memory` field", () => {
+  const WITH_MEMORY = VALID.replace(
+    "risk_tier: read_only",
+    "risk_tier: read_only\nmemory: enabled",
+  );
+
+  it("REQ-C2 AC1 — a definition declaring `memory: enabled` parses and surfaces on the parsed shape", () => {
+    expect(parseAgentDefinition("aif:triager", WITH_MEMORY).memory).toBe(
+      "enabled",
+    );
+  });
+
+  it("REQ-C2 AC1 — a definition omitting `memory` defaults to `none`", () => {
+    expect(parseAgentDefinition("aif:triager", VALID).memory).toBe("none");
+  });
+
+  it("REQ-C2 AC1 — an unknown `memory` value is refused with CONFIG", () => {
+    expectConfig(
+      () =>
+        parseAgentDefinition(
+          "aif:triager",
+          VALID.replace(
+            "risk_tier: read_only",
+            "risk_tier: read_only\nmemory: sometimes",
+          ),
+        ),
+      /memory/,
+    );
+  });
+
+  it("REQ-C2 AC2 — renderAgentDefinition round-trips `memory` byte-identically", () => {
+    const parsed = parseAgentDefinition("aif:triager", WITH_MEMORY);
+    const rendered = renderAgentDefinition({
+      id: parsed.id,
+      name: parsed.name,
+      description: parsed.description,
+      runner: parsed.runner,
+      workspace: parsed.workspace,
+      workspaceRef: parsed.workspaceRef,
+      mode: parsed.mode,
+      triggers: parsed.triggers,
+      capabilityProfile: parsed.capabilityProfile,
+      riskTier: parsed.riskTier,
+      flow: parsed.flow,
+      recommended: parsed.recommended,
+      hooks: parsed.hooks,
+      config: parsed.config,
+      memory: parsed.memory,
+      prompt: parsed.prompt,
+    });
+
+    expect(rendered).toContain("memory: enabled");
+    expect(parseAgentDefinition("aif:triager", rendered).memory).toBe(
+      "enabled",
+    );
+  });
+
+  it("REQ-C2 AC2 — `memory: none` is not emitted, and still round-trips to `none`", () => {
+    const parsed = parseAgentDefinition("aif:triager", VALID);
+    const rendered = renderAgentDefinition({
+      id: parsed.id,
+      name: parsed.name,
+      description: parsed.description,
+      runner: parsed.runner,
+      workspace: parsed.workspace,
+      workspaceRef: parsed.workspaceRef,
+      mode: parsed.mode,
+      triggers: parsed.triggers,
+      capabilityProfile: parsed.capabilityProfile,
+      riskTier: parsed.riskTier,
+      flow: parsed.flow,
+      recommended: parsed.recommended,
+      hooks: parsed.hooks,
+      config: parsed.config,
+      memory: parsed.memory,
+      prompt: parsed.prompt,
+    });
+
+    expect(rendered).not.toContain("memory:");
+    expect(parseAgentDefinition("aif:triager", rendered).memory).toBe("none");
+  });
+});
+
 describe("parseAgentDefinition config block (ADR-111)", () => {
   function withConfig(block: string[]): string {
     return VALID.replace(

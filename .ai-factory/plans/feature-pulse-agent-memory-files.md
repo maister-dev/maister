@@ -563,6 +563,21 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
 > change; the honest record is this baseline plus the zero-regression proof. Every
 > later phase re-proves the same way: compare failing-test NAME sets, never counts.
 > Evidence: `scratchpad/{baseline,mine}-int-fails.txt`.
+>
+> **⚠ The name-set check alone is NOT sufficient — hardened at Phase 3.** A
+> suite whose `beforeAll` throws reports its cases as **skipped**, not as named
+> failures, so a real regression can pass a failing-NAME diff untouched. Phase 3
+> caught exactly that: `runs.agent_memory_hash` broke two partial-migration
+> fixtures (`evaluation-legacy-backfill`, `migration-0120-experiment-drop`) that
+> insert into `runs` through the CURRENT drizzle object against a database
+> stopped at `0119`. Every later phase therefore compares three things:
+> failing-test NAMES, failed-SUITE names, and the **skipped count** (baseline 3).
+> Fix applied: those two fixtures now insert with explicit raw SQL, the
+> convention every other partial-migration test in `lib/db/__tests__` already
+> follows. Note the second-order find — the original drizzle insert passed
+> `runnerId`/`capabilityAgent`, which M42 moved off `runs`; drizzle had been
+> **silently dropping** both keys, so faithful raw SQL failed until they were
+> removed.
 
 ---
 
@@ -620,7 +635,7 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
 
 ### Phase 3 — B1/B2: configuration axis + on-disk store
 
-- [ ] **T16. Migration `0122_agent_memory_files` — the triple, TWO columns (REQ-C1, D23).**
+- [x] **T16. Migration `0122_agent_memory_files` — the triple, TWO columns (REQ-C1, D23).**
 
   ```sql
   ALTER TABLE "agent_project_links" ADD COLUMN "memory_enabled" boolean NOT NULL DEFAULT false;
@@ -631,7 +646,9 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
 
   *Verify (`T-C1`):* the triple exists (`.sql` + `_journal.json` entry idx 122 + `meta/0122_snapshot.json`); `_journal.json` `when` is strictly greater than 0121's; `pnpm --filter maister-web db:migrate` applies cleanly on a fresh DB **and** on a DB already at 0121. No RED/GREEN cycle — a migration is not behavior; T-C1's assertions live in `memory-lifecycle.integration.test.ts` and read the applied schema.
 
-- [ ] **T17. Definition frontmatter `memory: none | enabled` (REQ-C2).**
+- [x] **T17. Definition frontmatter `memory: none | enabled` (REQ-C2).**
+  *RED observed:* 4 behavioral failures on the definition half, incl. `Unrecognized key(s) in object: 'memory'` (the `.strict()` refusal V26 predicted). The ATTACH half was implementation-first — the four coupled sites had to move together to typecheck at all — so it was validated by a MUTATION CHECK instead: neutering the server default made exactly REQ-C2 AC3 fail.
+  *Deviation:* the client prefill does NOT read the definition value — the `agents` catalog carries no `memory` column and 0122 is fixed at two columns, so `rowFromAvailable` cannot see it without lying. The server default (D21ʹ) is the sole authority; the Memory toggle is therefore edit-only.
 
   **RED.**
   - `web/lib/agents/__tests__/definition.test.ts` (`unit`) — `T-C2a`: a definition carrying `memory: enabled` **parses** (today `.strict()` refuses it, V26), surfaces on `ParsedAgentDefinition`, and `renderAgentDefinition()` round-trips it **byte-identically** (⚠ the renderer self-validates by re-parsing its own output, so a schema-only change leaves this test failing on a *missing key*, which is exactly the silent-drop bug it guards); a definition omitting `memory` defaults to `none`.
@@ -649,7 +666,8 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
   *Logging (verbose):* `log.debug({agentId, projectId, definitionDefault, effective}, "[agents.attach] memory axis prefilled")`.
   *Depends on:* T16.
 
-- [ ] **T18. `web/lib/agents/memory-store.ts` — path, read, write, hash, cap (REQ-C3, REQ-C11).**
+- [x] **T18. `web/lib/agents/memory-store.ts` — path, read, write, hash, cap (REQ-C3, REQ-C11).**
+  *RED observed:* 17 behavioral failures — the whole adversarial injectivity table (`expected '' not to be ''`), path composition, refusals, and cap boundaries.
 
   **RED.** Write `web/lib/agents/__tests__/memory-store.test.ts` (`unit`):
   - `T-C3` / `REQ-C3 AC3` — **one `it.each` table** (§6.2) of adversarial id pairs asserting *no two distinct ids map to the same path*: `a:b/c` vs `a` + `b/c`; `a/b:c` vs `a` + `b/c`; components containing `..`, `%`, `/`, `:`, spaces, unicode; an empty stem; a stem containing further `:`. A naive `split(":")`-then-`join` collides on these; per-component encoding does not.
@@ -672,7 +690,8 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
   *Logging (verbose):* DEBUG on every read/write with `{agentId, projectSlug, sizeChars, hash}`; WARN on unreadable/over-cap read naming the reason; **never** log `content`.
   *Depends on:* T16.
 
-- [ ] **T19. Deployment wiring verification (REQ-C11 AC4).**
+- [x] **T19. Deployment wiring verification (REQ-C11 AC4).**
+  *Stated outcome:* NO compose change is owed. `compose.yml` is the repo's only compose file (no override/production overlays), declares exactly one service (`postgres`), has no `web` service and thus no env block to mirror; its header already records this rule for the sibling `MAISTER_ASSISTANT_ACTIVITY_*` vars per ADR-023.
   `.env.example` block + `docs/configuration.md` row were written in T8 — here, **verify** the reader resolves them end to end and confirm **no compose change is owed** (V23: `web` runs on the host, default compose is Postgres-only, ADR-023). Record that verification explicitly in the task notes rather than silently skipping compose — the skill-context deployment rule requires a stated outcome, not an absence.
   *Depends on:* T18.
   <!-- Commit checkpoint: T16–T19 -->
