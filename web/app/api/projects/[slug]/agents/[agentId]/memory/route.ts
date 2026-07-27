@@ -7,8 +7,8 @@ import { z } from "zod";
 
 import { agentsErrorResponse } from "@/lib/agents/admin-shared";
 import {
-  agentMemoryPath,
   assertAgentMemoryWithinCap,
+  clearAgentMemoryCas,
   readAgentMemoryRaw,
   writeAgentMemoryCas,
   type AgentMemoryCasDb,
@@ -41,6 +41,14 @@ const putBodySchema = z
     // blind Save would clobber a concurrent agent write.
     ifHash: z.string().min(1).nullable(),
   })
+  .strict();
+
+// ADR-152 D27: clearing carries the same required `ifHash` as saving. `null`
+// means "I expect no file", so clearing an already-absent file still succeeds
+// and DELETE stays idempotent. A body on DELETE follows the existing
+// studio/local-packages/[id]/files precedent.
+const deleteBodySchema = z
+  .object({ ifHash: z.string().min(1).nullable() })
   .strict();
 
 function serialize(state: AgentMemoryState) {
@@ -122,7 +130,11 @@ export async function GET(
 
     if (!lookup.ok) return notFound(lookup);
 
-    await requireProjectAction(lookup.projectId, "readBoard");
+    // ADR-152 D28: `readRepoFiles` (member), NOT `readBoard` (viewer). The agent
+    // writes this file with repo access, so it can hold copied or summarized
+    // source — reading it at viewer level would be a side channel around the
+    // ADR-053 boundary that keeps git-tracked file browsing above `readBoard`.
+    await requireProjectAction(lookup.projectId, "readRepoFiles");
 
     const state = await readAgentMemoryRaw(slug, agentId);
 
@@ -208,7 +220,7 @@ export async function PUT(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: RouteParams,
 ): Promise<NextResponse> {
   const { slug, agentId: rawAgentId } = await params;
@@ -224,21 +236,43 @@ export async function DELETE(
 
     await requireProjectAction(projectId, "editSettings");
 
-    const { unlink } = await import("node:fs/promises");
+    let raw: unknown;
 
     try {
-      await unlink(agentMemoryPath(slug, agentId));
+      raw = await req.json();
     } catch (err) {
-      const code = (err as { code?: string }).code;
+      throw new MaisterError(
+        "CONFIG",
+        `invalid JSON body: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
-      // Idempotent: clearing an already-absent file succeeds. ONLY the two
-      // "nothing is there" errnos are allow-listed. EISDIR is deliberately NOT
-      // among them — a directory at the memory path is a real anomaly, and
-      // swallowing it would answer 204 "cleared" while the path survives, which
-      // is exactly the lie the read path already WARNs about as `unreadable`.
-      if (code !== "ENOENT" && code !== "ENOTDIR") {
-        throw err;
-      }
+    const parsed = deleteBodySchema.safeParse(raw);
+
+    if (!parsed.success) {
+      throw new MaisterError("CONFIG", `invalid body: ${parsed.error.message}`);
+    }
+
+    // ADR-152 D27: compare-and-delete, same lock and same bar as the write CAS.
+    // A blind unlink would destroy a concurrent agent write with a 204 and no
+    // conflict signal — the exact clobber D18 refuses to let a blind Save do.
+    const result = await clearAgentMemoryCas(
+      getDb() as unknown as AgentMemoryCasDb,
+      slug,
+      agentId,
+      parsed.data.ifHash,
+    );
+
+    if (!result.ok) {
+      return NextResponse.json(
+        {
+          code: "CONFLICT",
+          message:
+            "agent memory changed since it was loaded — review the returned content before clearing again",
+          current: serialize(result.current),
+        },
+        { status: 409 },
+      );
     }
 
     log.info(

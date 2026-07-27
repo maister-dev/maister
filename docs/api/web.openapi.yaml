@@ -1891,7 +1891,10 @@ paths:
       tags: [projects]
       summary: (ADR-152 — Implemented) Read the agent's memory file for this project
       description: |
-        Project `readBoard` (`viewer`+). Returns the current `memory.md` state
+        Project `readRepoFiles` (`member`+) — deliberately NOT `readBoard`: the
+        agent writes this file with repo access, so it can hold copied or
+        summarized source that ADR-053 keeps from viewers. Returns the current
+        `memory.md` state
         for this `(agent, project)` attachment. An absent file is NOT a 404: it
         returns `200` with `content: ""`, `hash: null`, `sizeChars: 0`,
         `updatedAt: null` — the first-writer state. Identifiers: `slug` +
@@ -1980,10 +1983,15 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     delete:
       tags: [projects]
-      summary: (ADR-152 — Implemented) Clear the agent's memory file
+      summary: (ADR-152 — Implemented) Clear the agent's memory file (CAS)
       description: |
-        Project `admin`+ (`editSettings`). Removes `memory.md` for this
-        attachment. **Idempotent** — clearing an already-absent file succeeds.
+        Project `admin`+ (`editSettings`). **Compare-and-delete** (ADR-152 D27):
+        `ifHash` is required, exactly as on `PUT`, and the clear runs under the
+        same per-(project, agent) lock — a blind unlink would destroy a
+        concurrent agent write with no conflict signal, which is strictly worse
+        than the blind Save D18 already refuses. A stale `ifHash` returns `409`
+        carrying the current content. **Idempotent** — clearing an already-absent
+        file succeeds, because `ifHash: null` matches the absent state.
       operationId: deleteProjectAgentMemory
       parameters:
         - name: slug
@@ -1995,12 +2003,40 @@ paths:
           required: true
           schema:
             { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [ifHash]
+              properties:
+                ifHash:
+                  type: string
+                  nullable: true
+                  description: |
+                    The hash the operator loaded. `null` means "I expect no
+                    file", which is what keeps the clear idempotent.
       responses:
         "204": { description: Cleared (idempotent when already absent). }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404":
           description: Unknown project, or no attachment for this (project, agent).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: |
+            CAS loss (`CONFLICT`) — the file changed since the operator loaded
+            it. The body carries the current state so the clear is a decision,
+            not an accident.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentMemoryConflictBody" }
+        "422":
+          description: Invalid body (`CONFIG`) — `ifHash` is required.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

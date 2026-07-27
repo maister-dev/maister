@@ -1,7 +1,7 @@
 // ADR-152 T-C9a — the owner's view/edit/clear surface, against real Postgres.
 
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -40,7 +40,11 @@ let testDatabase: import("@/test-support/pg-container").StartedPostgresTestDb;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => testDatabase.db }));
 
-import { hashAgentMemory, writeAgentMemory } from "@/lib/agents/memory-store";
+import {
+  agentMemoryPath,
+  hashAgentMemory,
+  writeAgentMemory,
+} from "@/lib/agents/memory-store";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
@@ -185,14 +189,45 @@ describe("T-C9a / REQ-C9 — the owner memory surface", () => {
   it("REQ-C9 AC2 — DELETE clears the file and is IDEMPOTENT when already absent", async () => {
     await writeAgentMemory(SLUG, AGENT_ID, "gone soon");
 
-    expect((await DELETE(req("DELETE"), routeParams)).status).toBe(204);
+    expect(
+      (
+        await DELETE(
+          req("DELETE", { ifHash: hashAgentMemory("gone soon") }),
+          routeParams,
+        )
+      ).status,
+    ).toBe(204);
 
     const afterFirst = await GET(req("GET"), routeParams);
 
     await expect(afterFirst.json()).resolves.toMatchObject({ hash: null });
 
-    // Second clear on an already-absent file must still succeed.
-    expect((await DELETE(req("DELETE"), routeParams)).status).toBe(204);
+    // Second clear on an already-absent file: ifHash null matches the absent
+    // state, so idempotency survives the CAS.
+    expect(
+      (await DELETE(req("DELETE", { ifHash: null }), routeParams)).status,
+    ).toBe(204);
+  });
+
+  it("D27 — DELETE with a STALE ifHash returns 409 and leaves the file intact", async () => {
+    await writeAgentMemory(SLUG, AGENT_ID, "the agent just wrote this");
+
+    // The operator loaded the drawer before that write landed.
+    const res = await DELETE(
+      req("DELETE", { ifHash: "deadbeef" }),
+      routeParams,
+    );
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "CONFLICT",
+      current: { content: "the agent just wrote this" },
+    });
+
+    // The bytes survive — a blind unlink would have destroyed them.
+    await expect(
+      readFile(agentMemoryPath(SLUG, AGENT_ID), "utf8"),
+    ).resolves.toBe("the agent just wrote this");
   });
 
   it("REQ-C9 AC3 — memoryEnabled flows through the EXISTING aggregating PATCH, not a per-field route", async () => {
@@ -213,10 +248,29 @@ describe("T-C9a / REQ-C9 — the owner memory surface", () => {
     expect(rows[0]?.memoryEnabled).toBe(true);
   });
 
-  it("REQ-C9 — PUT and DELETE require editSettings; a viewer is refused", async () => {
+  it("D28 — GET requires readRepoFiles, so a member reads it but a viewer cannot", async () => {
     authMocks.requireProjectAction.mockImplementation(
       async (_projectId: string, action: string) => {
-        if (action === "editSettings") {
+        if (action === "readRepoFiles") {
+          throw new MaisterError("UNAUTHORIZED", "insufficient role");
+        }
+      },
+    );
+
+    expect((await GET(req("GET"), routeParams)).status).toBe(403);
+
+    authMocks.requireProjectAction.mockImplementation(async () => {});
+
+    expect((await GET(req("GET"), routeParams)).status).toBe(200);
+  });
+
+  it("REQ-C9 — PUT and DELETE require editSettings; a viewer is refused", async () => {
+    // A real viewer clears NEITHER bar: editSettings (admin) nor readRepoFiles
+    // (member). Modelling only editSettings would let the GET assertion below
+    // pass for a role that cannot actually reach this route.
+    authMocks.requireProjectAction.mockImplementation(
+      async (_projectId: string, action: string) => {
+        if (action === "editSettings" || action === "readRepoFiles") {
           throw new MaisterError("UNAUTHORIZED", "insufficient role");
         }
       },
@@ -226,9 +280,12 @@ describe("T-C9a / REQ-C9 — the owner memory surface", () => {
       (await PUT(req("PUT", { content: "x", ifHash: null }), routeParams))
         .status,
     ).toBe(403);
-    expect((await DELETE(req("DELETE"), routeParams)).status).toBe(403);
-    // GET clears only the readBoard bar, so a viewer still sees it.
-    expect((await GET(req("GET"), routeParams)).status).toBe(200);
+    expect(
+      (await DELETE(req("DELETE", { ifHash: null }), routeParams)).status,
+    ).toBe(403);
+    // ADR-152 D28: GET is readRepoFiles (member), NOT readBoard — the file can
+    // hold repo-derived content the ADR-053 boundary keeps from viewers.
+    expect((await GET(req("GET"), routeParams)).status).toBe(403);
   });
 
   it("404 — memory for an agent this project has not attached does not exist here", async () => {

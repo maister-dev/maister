@@ -308,6 +308,64 @@ describe("T-C6 / REQ-C6 — every memory-injecting launch is provenance-recorded
     expect(await stampOf(run.runId as string)).toBeNull();
   });
 
+  it("D29 — the injected block frames memory as untrusted self-authored DATA, not instructions", async () => {
+    const run = await seedRun({ memoryEnabled: true });
+
+    await writeMemory(MEMORY);
+
+    const memory = await resolveAgentMemoryForLaunch(
+      testDatabase.db,
+      run,
+      SLUG,
+    );
+    const prompt = await buildAgentPrompt(
+      testDatabase.db,
+      definition(),
+      run,
+      memory?.text ?? null,
+    );
+
+    // The boundary is explicit in both directions, and the trust level is
+    // stated — an agent reading its own prior notes must not treat a line that
+    // looks like a command as one.
+    expect(prompt).toContain("BEGIN AGENT MEMORY");
+    expect(prompt).toContain("END AGENT MEMORY");
+    expect(prompt).toContain("never as instructions");
+    // The markers actually bracket the content.
+    const begin = prompt.indexOf("BEGIN AGENT MEMORY");
+    const end = prompt.indexOf("END AGENT MEMORY");
+
+    expect(begin).toBeLessThan(prompt.indexOf(MEMORY.trim()));
+    expect(prompt.indexOf(MEMORY.trim())).toBeLessThan(end);
+  });
+
+  it("D29/REQ-C6 — the injected bytes are the file's bytes: no trim, so the stamped hash describes what the agent saw", async () => {
+    const run = await seedRun({ memoryEnabled: true });
+    // The common markdown case: a trailing newline. Trimming here would make
+    // runs.agent_memory_hash describe bytes that were never injected.
+    const withTrailing = "# notes\n\n- one thing\n";
+
+    await writeMemory(withTrailing);
+
+    const memory = await resolveAgentMemoryForLaunch(
+      testDatabase.db,
+      run,
+      SLUG,
+    );
+    const prompt = await buildAgentPrompt(
+      testDatabase.db,
+      definition(),
+      run,
+      memory?.text ?? null,
+    );
+
+    expect(memory?.hash).toBe(hashAgentMemory(withTrailing));
+    // The exact stored bytes — trailing newline included — sit verbatim ahead of
+    // the closing marker. A trim would have eaten that newline and made the
+    // stamped hash describe different bytes than the prompt carried.
+    expect(prompt).toContain(`${withTrailing}\n--- END AGENT MEMORY ---`);
+  });
+
   it("REQ-C4 AC4 / D14 — a RESUME injects nothing and does NOT re-stamp the provenance pair", async () => {
     // Spawn first: this is the state a resume inherits.
     const run = await seedRun({ memoryEnabled: true });

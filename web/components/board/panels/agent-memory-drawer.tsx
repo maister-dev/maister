@@ -133,11 +133,29 @@ export function AgentMemoryDrawer({
   // A failed clear must SAY so: silently reloading unchanged content reads as
   // "nothing happened" for a destructive action the operator just confirmed.
   const clear = async (): Promise<void> => {
+    if (!state) return;
     setBusy(true);
     setError(null);
 
     try {
-      const res = await fetch(endpoint, { method: "DELETE" });
+      // Compare-and-delete: the clear carries the hash this drawer loaded, so an
+      // agent write that landed while the confirmation was open loses to a 409
+      // rather than being silently destroyed.
+      const res = await fetch(endpoint, {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ifHash: state.hash }),
+      });
+
+      if (res.status === 409) {
+        const body = (await res.json()) as { current: MemoryState };
+
+        setState(body.current);
+        setError(labels.conflict);
+        setConfirmingClear(false);
+
+        return;
+      }
 
       if (!res.ok) {
         setError(labels.clearError);

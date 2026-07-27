@@ -79,9 +79,11 @@ with a `min-w`. Forms (the modal) stay narrow (520–760px).
   current content, which is surfaced in place with the agent's version, because
   a blind human Save must not clobber a concurrent agent write). **Clear** is
   destructive and goes through the **shared portaled `ConfirmDialog`**; a failed
-  clear reports its own error rather than silently reloading. Save is
-  deliberately NOT confirmed — it is reversible and CAS-guarded, while Clear is
-  neither. Accessibility comes from the shared `useModalFocusTrap` (focus trap,
+  clear reports its own error rather than silently reloading. Clear carries the
+  loaded `ifHash` too (ADR-152 D27), so an agent write that lands while the
+  confirmation is open wins with a 409 showing its content instead of being
+  destroyed. Save is deliberately NOT confirmed — it is reversible and
+  CAS-guarded, and Clear is guarded but not reversible. Accessibility comes from the shared `useModalFocusTrap` (focus trap,
   initial focus, focus restore, Esc, body scroll lock) plus `aria-labelledby`,
   `role="alert"` for errors, and `createPortal` to `document.body`. Behavior
   lives in
@@ -164,11 +166,14 @@ stateDiagram-v2
   `canReadBrain` + `canWriteBrain` (ADR-122), and `memoryEnabled`
   (ADR-152 — Implemented).
 - **Memory (ADR-152 — Implemented):** `GET | PUT | DELETE
-  /api/projects/{slug}/agents/{agentId}/memory`. `GET` is `readBoard` and
-  returns `200` even when the file is absent (`content: ""`, `hash: null`) —
-  the first-writer state, not a 404. `PUT` and `DELETE` require `editSettings`;
-  `PUT` carries `ifHash` and answers `409` with the current state on a stale
-  hash, `DELETE` is idempotent (`204`). An unknown project OR an unattached
+  /api/projects/{slug}/agents/{agentId}/memory`. `GET` requires
+  **`readRepoFiles` (member)** — NOT `readBoard` (ADR-152 D28): the agent writes
+  this file with repo access, so viewer-level reads would be a side channel
+  around the ADR-053 source-browsing boundary. It returns `200` even when the
+  file is absent (`content: ""`, `hash: null`) — the first-writer state, not a
+  404. `PUT` and `DELETE` require `editSettings` and BOTH carry `ifHash`,
+  answering `409` with the current state on a stale hash; `DELETE` stays
+  idempotent (`204`) because `ifHash: null` matches an absent file. An unknown project OR an unattached
   agent is `404` on all three — the attachment is the addressable resource here.
   `memoryEnabled` itself is NOT a per-field route — it rides the existing
   aggregating `PATCH /api/projects/{slug}/agents/{agentId}` in one transaction,

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 
 import { sql, type SQLWrapper } from "drizzle-orm";
@@ -228,6 +228,55 @@ export async function writeAgentMemoryCas(
       ok: true,
       state: { content, hash, sizeChars: content.length, updatedAt },
     };
+  });
+}
+
+// ADR-152 D27: clearing is a compare-and-DELETE on the same terms as the write
+// CAS, under the same lock. A blind unlink is exactly the clobber D18 refuses to
+// let a blind Save perform — an agent rewriting its memory while the operator has
+// the drawer open would otherwise lose that write to a 204 with no conflict
+// signal, and this file is its ONLY durable cross-run memory. Idempotency
+// survives: clearing an already-absent file is `ifHash: null` matching a `null`
+// current hash, which succeeds.
+export async function clearAgentMemoryCas(
+  db: AgentMemoryCasDb,
+  projectSlug: string,
+  agentId: string,
+  ifHash: string | null,
+): Promise<{ ok: true } | { ok: false; current: AgentMemoryState }> {
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(${AGENT_MEMORY_LOCK_NAMESPACE}::int, hashtext(${`${projectSlug}:${agentId}`})::int)`,
+    );
+
+    const current = await readAgentMemoryRaw(projectSlug, agentId);
+
+    if ((current.hash ?? null) !== (ifHash ?? null)) {
+      log.info(
+        { agentId, projectSlug, priorHash: current.hash, ifHash },
+        "[agents.memory] clear CAS lost",
+      );
+
+      return { ok: false, current };
+    }
+
+    try {
+      await unlink(agentMemoryPath(projectSlug, agentId));
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+
+      // ONLY the two "nothing is there" errnos are tolerated. EISDIR is a real
+      // anomaly: answering "cleared" while the path survives is the same lie the
+      // read path reports as `unreadable`.
+      if (code !== "ENOENT" && code !== "ENOTDIR") throw err;
+    }
+
+    log.debug(
+      { agentId, projectSlug, priorHash: current.hash },
+      "[agents.memory] cleared",
+    );
+
+    return { ok: true };
   });
 }
 

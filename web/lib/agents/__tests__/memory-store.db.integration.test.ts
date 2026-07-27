@@ -31,6 +31,7 @@ vi.mock("@/lib/runtime-root", () => ({
 
 import {
   agentMemoryPath,
+  clearAgentMemoryCas,
   hashAgentMemory,
   writeAgentMemoryCas,
   type AgentMemoryCasDb,
@@ -130,6 +131,53 @@ describe("REQ-C7 AC4 — writeAgentMemoryCas serializes concurrent writers", () 
 
     expect(onDisk).toBe(winner.state.content);
     expect(hashAgentMemory(onDisk)).toBe(winner.state.hash);
+  });
+
+  it("D27 — a clear racing a write cannot destroy it: one of the two loses the CAS", async () => {
+    const seed = await writeAgentMemoryCas(db, SLUG, AGENT_ID, "seed", null);
+    const seedHash = (seed as { ok: true; state: { hash: string } }).state.hash;
+
+    // The operator opened the drawer at `seed` and hit Clear; the agent wrote in
+    // the same instant, holding the same hash.
+    const [cleared, written] = await Promise.all([
+      clearAgentMemoryCas(db, SLUG, AGENT_ID, seedHash),
+      writeAgentMemoryCas(db, SLUG, AGENT_ID, "agent's new notes", seedHash),
+    ]);
+
+    expect([cleared.ok, written.ok].filter(Boolean)).toHaveLength(1);
+
+    // Which one takes the lock first is genuinely non-deterministic, so assert
+    // the invariant for BOTH orderings rather than the ordering that happens to
+    // win on an idle machine.
+    if (written.ok) {
+      // Write first: the clear is refused, and what it reports is the agent's
+      // brand-new content — precisely the bytes it would otherwise have
+      // destroyed, which is what makes the 409 actionable.
+      expect(cleared.ok).toBe(false);
+      expect(
+        (cleared as { ok: false; current: { content: string } }).current,
+      ).toMatchObject({ content: "agent's new notes" });
+      await expect(
+        readFile(agentMemoryPath(SLUG, AGENT_ID), "utf8"),
+      ).resolves.toBe("agent's new notes");
+    } else {
+      // Clear first: the file is gone, so the agent's write loses the CAS and is
+      // told the file is now absent rather than silently recreating it.
+      expect(cleared.ok).toBe(true);
+      expect(
+        (written as { ok: false; current: { hash: string | null } }).current
+          .hash,
+      ).toBeNull();
+      await expect(
+        readFile(agentMemoryPath(SLUG, AGENT_ID), "utf8"),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  });
+
+  it("D27 — clearing an already-absent file with ifHash null stays idempotent", async () => {
+    await expect(
+      clearAgentMemoryCas(db, SLUG, "cas-pkg:never-written", null),
+    ).resolves.toEqual({ ok: true });
   });
 
   it("the lock is per (project, agent): a different agent is not serialized behind it", async () => {

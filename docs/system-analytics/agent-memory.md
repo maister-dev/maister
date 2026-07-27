@@ -222,8 +222,10 @@ sequenceDiagram
   (REQ-C3, Implemented)
 - Memory MUST be injected only for `runs.run_kind = 'agent'`, only at initial
   spawn, and only into the composed base prompt — positioned after the config
-  block and before the task block, and carrying the maintenance instruction.
-  (REQ-C4, Implemented)
+  block and before the task block, carrying the maintenance instruction, and
+  framed as untrusted self-authored DATA between `BEGIN/END AGENT MEMORY`
+  markers. The stored bytes MUST be injected verbatim (no trimming), so the
+  provenance hash describes exactly what the agent saw. (REQ-C4, Implemented)
 - A disabled axis, an absent file, an unreadable file, or an over-cap file MUST
   each produce no MEMORY section and MUST NOT block or fail the launch;
   unreadable and over-cap MUST each emit a `log.warn` naming which failure
@@ -250,9 +252,12 @@ sequenceDiagram
   user-token path; this route's own authorization is agent-token kind + link row
   + `memory_enabled` + scope.) (REQ-C8, Implemented)
 - The owner MUST be able to read, replace and clear the file through
-  `GET | PUT | DELETE /api/projects/{slug}/agents/{agentId}/memory` with
-  `PUT` carrying `ifHash` and `DELETE` idempotent, and `memoryEnabled` MUST
-  flow through the existing aggregating
+  `GET | PUT | DELETE /api/projects/{slug}/agents/{agentId}/memory`; `GET` MUST
+  require `readRepoFiles` (member) rather than `readBoard`, because the file can
+  hold repo-derived content ADR-053 keeps from viewers; `PUT` and `DELETE` MUST
+  require `editSettings` and BOTH MUST carry `ifHash` (a clear is a
+  compare-and-delete, idempotent when `ifHash: null` matches an absent file);
+  and `memoryEnabled` MUST flow through the existing aggregating
   `PATCH /api/projects/{slug}/agents/{agentId}` rather than a new per-field
   route. (REQ-C9, Implemented)
 - Detach MUST make memory inert — no injection, write refused — while leaving
@@ -276,7 +281,8 @@ sequenceDiagram
 | CAS loss | 409 `MaisterError("CONFLICT")` whose body carries the current `{content, hash}` so the agent can merge and retry. The agent's bytes are discarded, never partially merged. |
 | Two genuinely concurrent writers | The advisory lock serializes them: the second observes the first's committed bytes, loses the hash comparison, and gets the 409 with the winner's content. The atomic tmp+rename additionally guarantees the file is never a partial or interleaved write. Both halves are required — without the lock the compare-then-write is a check-then-act and BOTH writers succeed. |
 | A flow-bound agent whose definition says `memory: enabled` | `attachAgent` lands `memory_enabled = false` and `updateAgentLink` refuses an explicit `true` with `MaisterError("CONFIG")`. The axis can never be switched on for an attachment that structurally cannot use it, from the UI or from a direct `PATCH`. |
-| Owner `DELETE` racing an agent write | `DELETE` is deliberately NOT CAS-guarded: it is an explicit, confirmed operator action on an admin-only route, and the documented contract is idempotency. An agent write landing in the same instant may therefore survive the clear; the operator sees the surviving content on the next open. |
+| Owner `DELETE` racing an agent write | Refused. `DELETE` is a compare-and-delete under the same lock as the write CAS, so a clear holding a stale `ifHash` answers `409` with the content it would have destroyed. Exactly one of a racing clear and write wins; the loser always learns why. |
+| A memory file that tells the agent to do something | The injected block is bracketed by `BEGIN/END AGENT MEMORY` markers and explicitly framed as reference data, so a line that reads like a command is a note about a command. This narrows, but does not eliminate, the fact that an agent authors its own later prompt context — see ADR-152 D29 for the accepted residual risk. |
 | A directory (or any non-file) at the memory path on `DELETE` | Surfaces as an error rather than a `204`. Only `ENOENT`/`ENOTDIR` mean "already absent"; answering "cleared" while the path survives would be the same lie the read path already reports as `unreadable`. |
 | Workspace mode `none` | Memory works normally — the store lives under `.maister/<slug>/agents/…`, never in a worktree, so the L1–L3 read-only enforcement contour is untouched. |
 | Detach | Memory becomes inert immediately (no injection, write 403) and the file survives untouched on disk. |

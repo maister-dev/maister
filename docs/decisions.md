@@ -13526,6 +13526,37 @@ _C · Agent memory files._
   window only within one Node worker. The regression test lives at the STORE
   layer (`memory-store.db.integration.test.ts`) because the route layer
   structurally cannot prove it.
+- **Clearing is a compare-and-DELETE, not an unlink** (D27, added after the
+  adversarial pass). `DELETE` carries the same required `ifHash` as `PUT` and
+  runs under the same per-`(project, agent)` lock. The asymmetry the first cut
+  shipped — CAS on save, blind unlink on clear — is indefensible once stated:
+  D18 exists because a blind human Save must not clobber a concurrent agent
+  write, and a blind human Clear destroys strictly more. Idempotency survives
+  unchanged, because `ifHash: null` matching a `null` current hash is exactly
+  the already-absent case. A body on `DELETE` follows the existing
+  `studio/local-packages/[id]/files` precedent.
+- **The owner read gate is `readRepoFiles` (member), not `readBoard` (viewer)**
+  (D28, added after the adversarial pass). The agent writes this file while
+  holding repo access, so it can contain copied or summarized source. Serving it
+  at viewer level made the route a side channel around ADR-053, which
+  deliberately keeps git-tracked file browsing above `readBoard` so a viewer
+  cannot browse source. The first cut not only shipped the weaker gate, it
+  pinned the weaker gate in a test. Write stays `editSettings`.
+- **The injected memory block is framed as untrusted, self-authored DATA**
+  (D29, added after the adversarial pass). Memory is written through a
+  free-form API and re-read as prompt context on every later run, so any run —
+  compromised or merely mistaken — can leave text that a future run would read
+  as first-class instructions. This is inherent to the feature, and the
+  alternatives (structured memory rendered as data, or an owner-approval gate
+  before reinjection) were rejected: both remove the unattended cross-run loop
+  the feature exists for (§10's loop acceptance). What is NOT inherent is
+  ambiguity, so the block now states the trust level explicitly and brackets the
+  content in `BEGIN/END AGENT MEMORY` markers. **Accepted residual risk:** an
+  agent that can write memory can influence its own later prompts within its
+  existing permissions; the memory file is per-`(agent, project)`, never shared
+  across agents or projects, the axis is off by default, and the owner can read
+  and clear it. Treat memory-enabled agents as trusted to the same degree as the
+  package that defines them.
 - **A flow-bound attachment cannot be switched on, in either direction** (D22,
   extended post-review). The disabled toggle is an affordance, not the boundary:
   `attachAgent` overrules a `memory: enabled` definition to `false` for a
