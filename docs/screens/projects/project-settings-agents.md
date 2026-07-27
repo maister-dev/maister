@@ -65,10 +65,10 @@ with a `min-w`. Forms (the modal) stay narrow (520–760px).
   Designed)** — a **`mem` chip** in the same axes cluster when
   `memoryEnabled` is set. No inline
   editing — the row carries data only; an action cluster on the right reads
-  left→right **Edit (⚙) · Memory (📄, ADR-152 — Designed) · Launch (▶) ·
+  left→right **Edit (⚙) · Memory (📄, ADR-152 — Implemented) · Launch (▶) ·
   Disable/Enable (toggle) · Detach (trash, danger tone)**, all icon buttons
   with `aria-label`.
-- **Memory drawer** (ADR-152 — Designed) — the row's Memory action opens a
+- **Memory drawer** (ADR-152 — Implemented) — the row's Memory action opens a
   **dedicated portaled drawer**, deliberately NOT the 520–760px instance-config
   modal: a memory file is a document up to
   `MAISTER_AGENT_MEMORY_MAX_CHARS` (default 32 768) characters and needs the
@@ -120,7 +120,7 @@ with a `min-w`. Forms (the modal) stay narrow (520–760px).
   - **Brain access** (ADR-122) — two toggles: **canReadBrain** (gates
     `memory_recall`) and **canWriteBrain** (gates `memory_retain`, a separate
     write axis — read never grants write). Both default off.
-  - **Memory** (ADR-152 — Designed) — a third toggle in the same section,
+  - **Memory** (ADR-152 — Implemented) — a third toggle in the same section,
     **`memoryEnabled`**, labelled explicitly as a **separate axis** from
     `canWriteBrain`: it gates the agent's own private `memory.md`, not Project
     Brain, and neither Brain axis implies it. Default off, seeded server-side on
@@ -155,8 +155,8 @@ stateDiagram-v2
   available: AgentSummary[] }` (member+). `AttachedAgent` now carries
   `branchBase` + `executionPolicyOverride` (ADR-106),
   `canReadBrain` + `canWriteBrain` (ADR-122), and `memoryEnabled`
-  (ADR-152 — Designed).
-- **Memory (ADR-152 — Designed):** `GET | PUT | DELETE
+  (ADR-152 — Implemented).
+- **Memory (ADR-152 — Implemented):** `GET | PUT | DELETE
   /api/projects/{slug}/agents/{agentId}/memory`. `GET` is `readBoard` and
   returns `200` even when the file is absent (`content: ""`, `hash: null`) —
   the first-writer state, not a 404. `PUT` and `DELETE` require `editSettings`;

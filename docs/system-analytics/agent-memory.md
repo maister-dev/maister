@@ -12,47 +12,47 @@ path derivation, launch-time injection and its provenance record, the
 content-hash CAS write path, and the owner's view/edit/clear surface. It does
 NOT own agent launch mechanics ([`agents.md`](agents.md)) or Project Brain
 ([`project-brain.md`](project-brain.md)) — those are a different store with a
-different owner, and the two axes never imply each other. (Designed — ADR-152)
+different owner, and the two axes never imply each other. (Implemented — ADR-152)
 
 ## Domain entities
 
 - **Memory axis** — `agent_project_links.memory_enabled boolean NOT NULL
   DEFAULT false`. The per-attachment operator switch. Independent of
   `can_read_brain` / `can_write_brain`. See
-  [`../db/agents-domain.md`](../db/agents-domain.md). (Designed)
+  [`../db/agents-domain.md`](../db/agents-domain.md). (Implemented)
 - **Definition memory field** — `memory: none | enabled` in the agent
   definition frontmatter (`agentDefinitionFrontmatterSchema`), default `none`.
   It is the package author's *recommendation*; `attachAgent` applies it once as
   the server-side default for a new attachment. The stored link value is
   effective thereafter — a package upgrade never re-enables memory an operator
-  turned off. (Designed)
+  turned off. (Implemented)
 - **Memory file** — `memory.md` at
   `.maister/<project-slug>/agents/<enc(packageName)>/<enc(stem)>/memory.md`
   under `runtimeRoot()`. Keyed by the qualified agent id
-  (`<packageName>:<stem>`), never by package revision. (Designed)
+  (`<packageName>:<stem>`), never by package revision. (Implemented)
 - **Component encoder `enc`** — keeps `[A-Za-z0-9._-]` verbatim and rewrites
   every other byte as `%XX` (uppercase hex). A component that encodes to `.` or
   `..` is refused. Because an encoded component can never contain `/`, the
-  `(packageName, stem)` → path map is injective. (Designed)
+  `(packageName, stem)` → path map is injective. (Implemented)
 - **Content hash** — `hashAgentMemory(content)`, sha256 hex over the exact
   content bytes. An absent file hashes to `null`. It is both the CAS token and
-  the provenance stamp. (Designed)
+  the provenance stamp. (Implemented)
 - **Memory snapshot** — `memory-snapshot.md`, written into the run dir
   (`runDirPath(runtimeRoot(), projectSlug, runId)`) on every launch that
   actually injected memory. Human-readable evidence, GC'd with the run dir
-  after 7 days. (Designed)
+  after 7 days. (Implemented)
 - **Provenance stamp** — `runs.agent_memory_hash text` (nullable). The durable
   half of the provenance pair: it survives the run-dir GC and is queryable.
-  `NULL` means "this run injected no memory". (Designed)
+  `NULL` means "this run injected no memory". (Implemented)
 - **Cap** — `MAISTER_AGENT_MEMORY_MAX_CHARS`, default `32768` characters, read
   through `agentMemoryMaxChars()`. Host/service env only per ADR-023; see
-  [`../configuration.md`](../configuration.md). (Designed)
+  [`../configuration.md`](../configuration.md). (Implemented)
 
 ## State machine
 
 The memory **file** as seen by a launch. `degraded` is a read-time verdict,
 not a stored state: the file on disk is unchanged, the launch simply carries no
-MEMORY section. (Designed)
+MEMORY section. (Implemented)
 
 ```mermaid
 stateDiagram-v2
@@ -69,7 +69,7 @@ stateDiagram-v2
 ```
 
 The **attachment** axis, which gates every read and write regardless of the
-file's own state. Detach never touches the file. (Designed)
+file's own state. Detach never touches the file. (Implemented)
 
 ```mermaid
 stateDiagram-v2
@@ -87,7 +87,7 @@ injection at launch, and `POST /api/v1/ext/agent/memory` refuses with 403.
 
 ## Process flows
 
-### Launch injection and provenance (Designed)
+### Launch injection and provenance (Implemented)
 
 Resolution happens at the **launch site**, not inside `buildAgentPrompt`,
 because the launch site's `opts.overridePrompt ?? …` discards the composed
@@ -125,7 +125,7 @@ sequenceDiagram
     end
 ```
 
-### Agent write through the content-hash CAS (Designed)
+### Agent write through the content-hash CAS (Implemented)
 
 The losing branch is the interesting one: it returns the current content so the
 agent can merge and retry rather than blindly clobber.
@@ -156,7 +156,7 @@ sequenceDiagram
     T-->>AG: result
 ```
 
-### Owner view, edit, and clear (Designed)
+### Owner view, edit, and clear (Implemented)
 
 CAS applies to the human too — a blind Save must not clobber a concurrent
 agent write.
@@ -191,13 +191,13 @@ sequenceDiagram
 - `agent_project_links.memory_enabled` MUST be the only switch for the memory
   axis; no code path MUST let `can_read_brain` / `can_write_brain` imply it or
   be implied by it, and a write MUST require BOTH the `agent_memory:write`
-  token scope and `memory_enabled = true`. (REQ-C1, Designed)
+  token scope and `memory_enabled = true`. (REQ-C1, Implemented)
 - `agentDefinitionFrontmatterSchema` MUST accept `memory: none | enabled`
   defaulting to `none`, `renderAgentDefinition()` MUST round-trip it
   byte-identically, and `attachAgent` MUST apply the effective definition's
   value server-side so a bare attach with no follow-up `PATCH` lands the right
   value; a definition-resolution failure MUST fail the attach, never land
-  `false` silently. (REQ-C2, Designed)
+  `false` silently. (REQ-C2, Implemented)
 - The memory path MUST be
   `.maister/<project-slug>/agents/<enc(packageName)>/<enc(stem)>/memory.md`,
   split on the qualified id's first `:`; no two distinct qualified ids MUST
@@ -205,47 +205,47 @@ sequenceDiagram
   `agents/` subtree, a component encoding to `.` or `..` MUST be refused, an id
   with no `:` MUST raise `MaisterError("CONFIG")` rather than fall back to a
   single level, and the path MUST NEVER include a package revision.
-  (REQ-C3, Designed)
+  (REQ-C3, Implemented)
 - Memory MUST be injected only for `runs.run_kind = 'agent'`, only at initial
   spawn, and only into the composed base prompt — positioned after the config
   block and before the task block, and carrying the maintenance instruction.
-  (REQ-C4, Designed)
+  (REQ-C4, Implemented)
 - A disabled axis, an absent file, an unreadable file, or an over-cap file MUST
   each produce no MEMORY section and MUST NOT block or fail the launch;
   unreadable and over-cap MUST each emit a `log.warn` naming which failure
-  occurred. (REQ-C5, Designed)
+  occurred. (REQ-C5, Implemented)
 - Every launch that injects memory MUST write `memory-snapshot.md` into the run
   dir via `atomicWriteText` AND stamp `runs.agent_memory_hash`; a launch taking
-  the `overridePrompt` branch MUST write neither. (REQ-C6, Designed)
+  the `overridePrompt` branch MUST write neither. (REQ-C6, Implemented)
 - A write MUST be a content-hash CAS: `ifHash === null` is the first-writer
   form, ordering MUST be read-current → compare → atomic write → return the
   post-write hash, a stale `ifHash` MUST return `MaisterError("CONFLICT")` with
   the current `{content, hash}`, and two concurrent writers MUST leave the file
-  containing exactly one writer's bytes. (REQ-C7, Designed)
+  containing exactly one writer's bytes. (REQ-C7, Implemented)
 - `POST /api/v1/ext/agent/memory` MUST take no body-controlled identifier —
   `projectId`, `agentId` and the audit `runId` come from the token binding and
   `projectSlug` from a `projects` lookup — MUST resolve its scope to a named
   `ProjectAction` (`writeAgentMemory`, minimum `member`) and never the
   `readBoard` fallback, and MUST target `.maister/<slug>/agents/…` rather than
   the worktree so it works in every workspace mode including `none`.
-  (REQ-C8, Designed)
+  (REQ-C8, Implemented)
 - The owner MUST be able to read, replace and clear the file through
   `GET | PUT | DELETE /api/projects/{slug}/agents/{agentId}/memory` with
   `PUT` carrying `ifHash` and `DELETE` idempotent, and `memoryEnabled` MUST
   flow through the existing aggregating
   `PATCH /api/projects/{slug}/agents/{agentId}` rather than a new per-field
-  route. (REQ-C9, Designed)
+  route. (REQ-C9, Implemented)
 - Detach MUST make memory inert — no injection, write refused — while leaving
   the file untouched; re-attach MUST revive the file and re-apply the
   definition default; a package re-pin or upgrade MUST preserve the file.
-  (REQ-C10, Designed)
+  (REQ-C10, Implemented)
 - `MAISTER_AGENT_MEMORY_MAX_CHARS` MUST be character-denominated with default
   `32768`, MUST fall back to the default with one WARN on an invalid or
   non-positive value, MUST refuse an over-cap **write** with
   `MaisterError("CONFIG")`, and MUST remain host/service env only — never a
-  compose variable. (REQ-C11, Designed)
+  compose variable. (REQ-C11, Implemented)
 - No assistant pulse block MUST carry memory content, size, or hash.
-  (REQ-C12, Designed)
+  (REQ-C12, Implemented)
 
 ## Edge cases
 
@@ -299,7 +299,7 @@ memory in the assistant pulse · package-shipped seed templates · a
   (`MAISTER_AGENT_MEMORY_MAX_CHARS`).
 - Screens: [`../screens/projects/project-settings-agents.md`](../screens/projects/project-settings-agents.md)
   (`mem` chip, memory drawer, Memory toggle).
-- Source (Designed): `web/lib/agents/memory-store.ts`,
+- Source (Implemented): `web/lib/agents/memory-store.ts`,
   `web/lib/agents/launch.ts`, `web/lib/agents/project-links.ts`,
   `web/lib/agents/definition.ts`, `web/lib/instance-config.ts`,
   `web/app/api/v1/ext/agent/memory/route.ts`,

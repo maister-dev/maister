@@ -176,13 +176,22 @@ export function AgentMemoryDrawer({
       aria-modal="true"
       className="fixed inset-0 z-50 flex justify-end bg-black/40"
       role="dialog"
-      onClick={(event) => {
-        if (event.target === event.currentTarget && !busy) onClose();
-      }}
     >
+      {/* The backdrop is its own button rather than a click handler on the
+          dialog: a non-interactive element must not carry mouse/keyboard
+          listeners, and this keeps the dismissal keyboard-reachable. Disabled
+          while busy, like the shared confirmation convention. */}
+      <button
+        aria-label={labels.close}
+        className="absolute inset-0 cursor-default"
+        disabled={busy}
+        tabIndex={-1}
+        type="button"
+        onClick={onClose}
+      />
       <div
         ref={panelRef}
-        className="flex h-full w-full max-w-[900px] flex-col gap-3 border-l border-line bg-paper p-5"
+        className="relative flex h-full w-full max-w-[900px] flex-col gap-3 border-l border-line bg-paper p-5"
       >
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -207,15 +216,14 @@ export function AgentMemoryDrawer({
         </div>
 
         {error ? (
-          <p
-            className="m-0 font-mono text-[11px] text-danger"
-            role="alert"
-          >
+          <p className="m-0 font-mono text-[11px] text-danger" role="alert">
             {error}
           </p>
         ) : null}
 
-        <p className={`m-0 font-mono text-[11px] ${overCap ? "text-danger" : "text-mute"}`}>
+        <p
+          className={`m-0 font-mono text-[11px] ${overCap ? "text-danger" : "text-mute"}`}
+        >
           {labels.size
             .replace("{size}", String(sizeOf))
             .replace("{max}", String(state?.maxChars ?? 0))}

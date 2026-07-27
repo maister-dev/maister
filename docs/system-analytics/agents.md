@@ -665,7 +665,7 @@ single-active-run guards.
   `task.triage_requeued` emitter), [`run-schedules.md`](run-schedules.md),
   [`agent-mentions.md`](agent-mentions.md) (`trigger_type='mention'` bindings
   and the directed `@<agentId>` summon branch, ADR-151).
-- **Agent memory:** [`agent-memory.md`](agent-memory.md) (ADR-152, Designed).
+- **Agent memory:** [`agent-memory.md`](agent-memory.md) (ADR-152, Implemented).
 - **Tasks surface:** [`tasks.md`](tasks.md) (simple-intent creation, verdict
   columns, `unconfigured`, card pre-launch editing).
 - **External surface:** [`external-operations.md`](external-operations.md) (triage

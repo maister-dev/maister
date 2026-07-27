@@ -6,7 +6,15 @@ import os from "node:os";
 import path from "node:path";
 
 import { NextRequest } from "next/server";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 const runtimeRootMock = vi.hoisted(() => ({ value: "/tmp/unset" }));
 const authMocks = vi.hoisted(() => ({
@@ -62,7 +70,9 @@ beforeAll(async () => {
   GET = mod.GET;
   PUT = mod.PUT;
   DELETE = mod.DELETE;
-  ({ PATCH } = await import("@/app/api/projects/[slug]/agents/[agentId]/route"));
+  ({ PATCH } = await import(
+    "@/app/api/projects/[slug]/agents/[agentId]/route"
+  ));
 }, 180_000);
 
 afterAll(async () => {
@@ -113,14 +123,14 @@ beforeEach(async () => {
   });
 });
 
-const routeParams = { params: Promise.resolve({ slug: SLUG, agentId: AGENT_ID }) };
+const routeParams = {
+  params: Promise.resolve({ slug: SLUG, agentId: AGENT_ID }),
+};
 
 function req(method: string, body?: unknown): NextRequest {
   return new NextRequest(
     `http://localhost/api/projects/${SLUG}/agents/${AGENT_ID}/memory`,
-    body === undefined
-      ? { method }
-      : { method, body: JSON.stringify(body) },
+    body === undefined ? { method } : { method, body: JSON.stringify(body) },
   );
 }
 
@@ -213,7 +223,8 @@ describe("T-C9a / REQ-C9 — the owner memory surface", () => {
     );
 
     expect(
-      (await PUT(req("PUT", { content: "x", ifHash: null }), routeParams)).status,
+      (await PUT(req("PUT", { content: "x", ifHash: null }), routeParams))
+        .status,
     ).toBe(403);
     expect((await DELETE(req("DELETE"), routeParams)).status).toBe(403);
     // GET clears only the readBoard bar, so a viewer still sees it.

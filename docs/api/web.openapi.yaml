@@ -1889,7 +1889,7 @@ paths:
   /api/projects/{slug}/agents/{agentId}/memory:
     get:
       tags: [projects]
-      summary: (ADR-152 — Designed) Read the agent's memory file for this project
+      summary: (ADR-152 — Implemented) Read the agent's memory file for this project
       description: |
         Project `readBoard` (`viewer`+). Returns the current `memory.md` state
         for this `(agent, project)` attachment. An absent file is NOT a 404: it
@@ -1923,7 +1923,7 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     put:
       tags: [projects]
-      summary: (ADR-152 — Designed) Replace the agent's memory file (CAS)
+      summary: (ADR-152 — Implemented) Replace the agent's memory file (CAS)
       description: |
         Project `admin`+ (`editSettings`). **CAS applies to the human too**
         (ADR-152 D18): a blind Save would clobber a concurrent agent write, so
@@ -1980,7 +1980,7 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     delete:
       tags: [projects]
-      summary: (ADR-152 — Designed) Clear the agent's memory file
+      summary: (ADR-152 — Implemented) Clear the agent's memory file
       description: |
         Project `admin`+ (`editSettings`). Removes `memory.md` for this
         attachment. **Idempotent** — clearing an already-absent file succeeds.
@@ -14682,7 +14682,7 @@ components:
     AgentMemoryState:
       type: object
       description: |
-        (ADR-152 — Designed) Current state of one agent's `memory.md` for a
+        (ADR-152 — Implemented) Current state of one agent's `memory.md` for a
         project. An absent file is reported as `content: ""` with `null` `hash`
         and `updatedAt` — the first-writer state.
       required: [content, hash, sizeChars, maxChars, updatedAt]
@@ -14701,7 +14701,7 @@ components:
         updatedAt: { type: string, format: date-time, nullable: true }
     AgentMemoryConflictBody:
       type: object
-      description: (ADR-152 — Designed) CAS-loss body carrying the current state to merge against.
+      description: (ADR-152 — Implemented) CAS-loss body carrying the current state to merge against.
       required: [code, message, current]
       properties:
         code: { type: string, enum: [CONFLICT] }

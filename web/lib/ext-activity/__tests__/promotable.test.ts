@@ -56,9 +56,7 @@ class FakeSelectQuery implements PromiseLike<QueryRows> {
     onfulfilled?:
       | ((value: QueryRows) => TResult1 | PromiseLike<TResult1>)
       | null,
-    onrejected?:
-      | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
-      | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
   ): PromiseLike<TResult1 | TResult2> {
     return Promise.resolve(this.rows).then(onfulfilled, onrejected);
   }
@@ -263,7 +261,10 @@ describe("listProjectPromotable", () => {
 
   it("REQ-A2 AC2 — drops a launched-lineage participant even though it is mechanically green", async () => {
     const client = makeClient([
-      [candidateRow({ runId: "run-plain" }), candidateRow({ runId: "run-lineage" })],
+      [
+        candidateRow({ runId: "run-plain" }),
+        candidateRow({ runId: "run-lineage" }),
+      ],
     ]);
 
     readiness({ "run-plain": "ready", "run-lineage": "ready" });

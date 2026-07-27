@@ -5393,9 +5393,9 @@ export const localPackages = pgTable(
     // journal across the DB + filesystem + git boundary. It is never projected
     // to a client; a non-null value blocks concurrent package mutations until
     // recovery deterministically completes or reports a conflict.
-    creationState: jsonb("creation_state").$type<
-      LocalPackageCreationState | null
-    >(),
+    creationState: jsonb(
+      "creation_state",
+    ).$type<LocalPackageCreationState | null>(),
   },
   (t) => ({
     defaultPerProject: uniqueIndex("local_packages_default_per_project")

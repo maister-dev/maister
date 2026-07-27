@@ -81,9 +81,7 @@ class FakeSelectQuery implements PromiseLike<QueryRows> {
     onfulfilled?:
       | ((value: QueryRows) => TResult1 | PromiseLike<TResult1>)
       | null,
-    onrejected?:
-      | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
-      | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
   ): PromiseLike<TResult1 | TResult2> {
     return Promise.resolve(this.rows).then(onfulfilled, onrejected);
   }
@@ -352,9 +350,10 @@ describe("assistant activity pulse service", () => {
       client: client as never,
     });
 
-    expect(
-      summonabilityMocks.listMentionCandidateAgents,
-    ).toHaveBeenCalledWith(client, "proj-1");
+    expect(summonabilityMocks.listMentionCandidateAgents).toHaveBeenCalledWith(
+      client,
+      "proj-1",
+    );
     expect(response.agents).toEqual({
       generatedAt: new Date("2026-07-27T12:00:00.000Z"),
       items: [],

@@ -175,9 +175,9 @@ describe("listMentionCandidateAgents (ADR-151)", () => {
     await link(id, projectId);
     await mentionBinding(id, projectId);
 
-    expect((await listMentionCandidateAgents(db, projectId))[0]?.summonable).toBe(
-      false,
-    );
+    expect(
+      (await listMentionCandidateAgents(db, projectId))[0]?.summonable,
+    ).toBe(false);
   });
 
   it("marks a quarantined agent non-summonable", async () => {
@@ -186,9 +186,9 @@ describe("listMentionCandidateAgents (ADR-151)", () => {
     await link(id, projectId);
     await mentionBinding(id, projectId);
 
-    expect((await listMentionCandidateAgents(db, projectId))[0]?.summonable).toBe(
-      false,
-    );
+    expect(
+      (await listMentionCandidateAgents(db, projectId))[0]?.summonable,
+    ).toBe(false);
   });
 
   it("marks an agent with no mention binding non-summonable", async () => {
@@ -196,9 +196,9 @@ describe("listMentionCandidateAgents (ADR-151)", () => {
 
     await link(id, projectId);
 
-    expect((await listMentionCandidateAgents(db, projectId))[0]?.summonable).toBe(
-      false,
-    );
+    expect(
+      (await listMentionCandidateAgents(db, projectId))[0]?.summonable,
+    ).toBe(false);
   });
 
   it("marks an agent whose only mention binding is disabled non-summonable", async () => {
@@ -207,9 +207,9 @@ describe("listMentionCandidateAgents (ADR-151)", () => {
     await link(id, projectId);
     await mentionBinding(id, projectId, false);
 
-    expect((await listMentionCandidateAgents(db, projectId))[0]?.summonable).toBe(
-      false,
-    );
+    expect(
+      (await listMentionCandidateAgents(db, projectId))[0]?.summonable,
+    ).toBe(false);
   });
 
   // The launch source stays `domain_event` (D2), so a definition that does not
@@ -220,9 +220,9 @@ describe("listMentionCandidateAgents (ADR-151)", () => {
     await link(id, projectId);
     await mentionBinding(id, projectId);
 
-    expect((await listMentionCandidateAgents(db, projectId))[0]?.summonable).toBe(
-      false,
-    );
+    expect(
+      (await listMentionCandidateAgents(db, projectId))[0]?.summonable,
+    ).toBe(false);
   });
 
   it("is scoped to the project — a sibling project's agent never appears", async () => {
@@ -250,9 +250,9 @@ describe("listMentionCandidateAgents (ADR-151)", () => {
     await link(id, otherProjectId);
     await mentionBinding(id, otherProjectId);
 
-    expect((await listMentionCandidateAgents(db, projectId))[0]?.summonable).toBe(
-      false,
-    );
+    expect(
+      (await listMentionCandidateAgents(db, projectId))[0]?.summonable,
+    ).toBe(false);
   });
 
   it("returns same-stem agents from different packages so a bare handle stays ambiguous", async () => {
@@ -283,7 +283,10 @@ describe("REQ-B4 — summonBlockedReason is a closed enum with deterministic pre
     const linkOff = await seedAgent({ stem: "c1" });
     const agentOff = await seedAgent({ stem: "c2", enabled: false });
     const quarantined = await seedAgent({ stem: "c3", quarantined: true });
-    const triggerMissing = await seedAgent({ stem: "c4", triggers: ["manual"] });
+    const triggerMissing = await seedAgent({
+      stem: "c4",
+      triggers: ["manual"],
+    });
     const bindingMissing = await seedAgent({ stem: "c5" });
 
     await link(linkOff, projectId, false);

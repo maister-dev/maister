@@ -835,7 +835,8 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
 
 ### Phase 7 — Lifecycle integration, the loop acceptance, and gates
 
-- [ ] **T27. Lifecycle + loop integration (REQ-C10, plus the end-to-end acceptance).**
+- [x] **T27. Lifecycle + loop integration (REQ-C10, plus the end-to-end acceptance).**
+  *Result:* 13/13, NO production code required — as this task predicted.
 
   **RED.** Write `web/lib/agents/__tests__/memory-lifecycle.integration.test.ts` — extending the file T17 started — with the cases no earlier phase could reach because they span *two* runs or *two* lifecycle events:
   1. `T-C1` — the migration's applied shape: `memory_enabled` defaults `false`; `agent_memory_hash` defaults `NULL`.
@@ -851,7 +852,10 @@ Analytics is an **input** to implementation, not a trailing sync. Every state tr
 
   *Runnability:* confirm with `vitest list` that every file this plan adds is matched by its project's `include` glob (V41) before calling any of them delivered. A test that does not execute is not a deliverable.
 
-- [ ] **T28. Full gate sweep + as-built spec sync.**
+- [x] **T28. Full gate sweep + as-built spec sync.**
+  *Recorded outcomes:* typecheck clean · web unit 7019/7019 · mcp 242/242 + `dist` rebuilt · `validate:docs:all` 392/392 mermaid + 742 anchors · `validate:contracts` green · redocly **3 errors + 25 warnings = exactly the enumerated baseline** · `eslint .` (check-only) **0 errors** (one a11y error of mine fixed; remaining warnings pre-existing) · integration 23 failed files / 63 failed / 3 skipped / 2 failed suites with an EMPTY regression diff on all three axes.
+  *§4 re-derived from the diff:* all 22 contract surfaces present. *§5 re-walked:* 21/22 REQ ids appear in test names; REQ-B3 has none BY DESIGN (its proof is "consumers unchanged") and is verified instead by a zero-line diff on `social/comments.ts` + `queries/task-detail.ts` with their 67 tests green.
+  *Known flake:* `test-support/__tests__/pg-container.test.ts` timed out once at 5000ms under load and passes in isolation; the file is not in this diff.
   Run and record output for each:
   ```bash
   pnpm --filter maister-web typecheck && pnpm --filter maister-web test:unit && pnpm --filter maister-web test:integration && pnpm --filter @maister/mcp build && pnpm --filter @maister/mcp typecheck && pnpm --filter @maister/mcp test && pnpm validate:docs && pnpm validate:contracts

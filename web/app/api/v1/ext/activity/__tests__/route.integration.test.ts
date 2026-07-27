@@ -428,9 +428,10 @@ describe("GET /api/v1/ext/activity", () => {
       agents: { items: Array<{ summonBlockedReason: string | null }> };
     };
 
-    expect(
-      body.agents.items.map((item) => item.summonBlockedReason),
-    ).toEqual([...reasons, null]);
+    expect(body.agents.items.map((item) => item.summonBlockedReason)).toEqual([
+      ...reasons,
+      null,
+    ]);
   });
 
   it("T-A1w / REQ-A1 AC1 — emits needsYou.promotable as [] rather than omitting it", async () => {

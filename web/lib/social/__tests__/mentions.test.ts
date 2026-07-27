@@ -223,9 +223,9 @@ describe("collectAgentMentionCandidates", () => {
   });
 
   it("opens on start-of-segment, whitespace, and an opening paren", () => {
-    expect(collectAgentMentionCandidates(segmentMarkdown("@a x @b (@c)"))).toEqual(
-      ["a", "b", "c"],
-    );
+    expect(
+      collectAgentMentionCandidates(segmentMarkdown("@a x @b (@c)")),
+    ).toEqual(["a", "b", "c"]);
   });
 
   it("ends the handle at the last alphanumeric", () => {
@@ -271,12 +271,13 @@ describe("resolveAgentMentions", () => {
   });
 
   it("carries write-time summonability, including false", () => {
-    expect(resolveAgentMentions(["core:reviewer"], AGENTS).get("core:reviewer"))
-      .toEqual({
-        id: "core:reviewer",
-        name: "Reviewer",
-        summonable: false,
-      });
+    expect(
+      resolveAgentMentions(["core:reviewer"], AGENTS).get("core:reviewer"),
+    ).toEqual({
+      id: "core:reviewer",
+      name: "Reviewer",
+      summonable: false,
+    });
   });
 
   it("leaves an unknown handle unresolved", () => {
@@ -322,7 +323,11 @@ describe("expandResolvedMentions with agent mentions", () => {
 
   it("expands a bare handle to its canonical id", () => {
     expect(
-      expandResolvedMentions(segmentMarkdown("ping @triager"), new Map(), agents),
+      expandResolvedMentions(
+        segmentMarkdown("ping @triager"),
+        new Map(),
+        agents,
+      ),
     ).toBe("ping [@core:triager](/agents/core:triager)");
   });
 
@@ -372,7 +377,9 @@ describe("expandResolvedMentions with agent mentions", () => {
     const body =
       "@triager `@triager` [@triager](http://x) text\n```\n@triager\n```\nend @triager";
 
-    expect(expandResolvedMentions(segmentMarkdown(body), new Map(), agents)).toBe(
+    expect(
+      expandResolvedMentions(segmentMarkdown(body), new Map(), agents),
+    ).toBe(
       "[@core:triager](/agents/core:triager) `@triager` [@triager](http://x) text\n```\n@triager\n```\nend [@core:triager](/agents/core:triager)",
     );
   });
@@ -380,16 +387,19 @@ describe("expandResolvedMentions with agent mentions", () => {
   // One pass, two token families: a stem that itself looks like KEY-N must not
   // be rewritten by the task-mention branch inside the agent handle.
   it("mixes KEY-N and @agent in one body without cross-rewriting", () => {
-    const mixed = resolveAgentMentions(["core:MAI-1"], [
-      {
-        id: "core:MAI-1",
-        stem: "MAI-1",
-        name: "Odd",
-        summonable: true,
-        blockedReason: null,
-        linkEnabled: true,
-      },
-    ]);
+    const mixed = resolveAgentMentions(
+      ["core:MAI-1"],
+      [
+        {
+          id: "core:MAI-1",
+          stem: "MAI-1",
+          name: "Odd",
+          summonable: true,
+          blockedReason: null,
+          linkEnabled: true,
+        },
+      ],
+    );
     const out = expandResolvedMentions(
       segmentMarkdown("fix MAI-1 with @core:MAI-1"),
       tasks,

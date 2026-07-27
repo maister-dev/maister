@@ -278,9 +278,9 @@ describe("parseAgentDefinition", () => {
       ["risk_tier: read_only", "recommended:", "  mention: true"].join("\n"),
     );
 
-    expect(parseAgentDefinition("aif:triager", withMention).recommended).toEqual(
-      { mention: true },
-    );
+    expect(
+      parseAgentDefinition("aif:triager", withMention).recommended,
+    ).toEqual({ mention: true });
 
     const withFalse = VALID.replace(
       "risk_tier: read_only",

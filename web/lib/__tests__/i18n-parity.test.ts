@@ -72,7 +72,11 @@ describe("T-C9b — agent-memory keys are complete in both catalogs", () => {
     const enNs = en.agentsAttach as Record<string, string>;
     const ruNs = ru.agentsAttach as Record<string, string>;
 
-    for (const key of ["memoryTitle", "memoryClearConfirm", "memoryFlowBound"]) {
+    for (const key of [
+      "memoryTitle",
+      "memoryClearConfirm",
+      "memoryFlowBound",
+    ]) {
       expect(ruNs[key]).not.toBe(enNs[key]);
     }
   });

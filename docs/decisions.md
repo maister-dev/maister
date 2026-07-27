@@ -176,7 +176,7 @@
 | [ADR-149](#adr-149-authored-capability-editor-session-edit-lock) | Authored-capability editor session edit-lock | Implemented | 2026-07-21 |
 | [ADR-150](#adr-150-experiments-cut-over-completion) | Experiments cut-over completion | Implemented | 2026-07-21 |
 | [ADR-151](#adr-151-agent-mentions-in-task-comments-as-directed-summons) | Agent mentions in task comments as directed summons | Implemented | 2026-07-26 |
-| [ADR-152](#adr-152-assistant-pulse-promotion-readiness--summonable-agent-metadata-and-per-attachment-agent-memory-files) | Assistant pulse promotion-readiness + summonable-agent metadata, and per-attachment agent memory files | Accepted | 2026-07-27 |
+| [ADR-152](#adr-152-assistant-pulse-promotion-readiness--summonable-agent-metadata-and-per-attachment-agent-memory-files) | Assistant pulse promotion-readiness + summonable-agent metadata, and per-attachment agent memory files | Implemented | 2026-07-27 |
 
 ---
 
@@ -13283,7 +13283,7 @@ picks its own owner via the lowest-`scheduleId` rule, and cannot be aimed.
 ### ADR-152: Assistant pulse promotion-readiness + summonable-agent metadata, and per-attachment agent memory files
 
 **Date:** 2026-07-27
-**Status:** Accepted
+**Status:** Implemented
 
 **Context:** The assistant-over-MCP loop (`assistant-activity.md`, v1 frozen
 2026-07-26) can already answer "what happened" and "who needs me", and

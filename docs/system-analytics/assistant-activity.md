@@ -2,7 +2,7 @@
 
 ## Status: Implemented (v1 contract frozen on 2026-07-26; as-built verified on 2026-07-27)
 
-**v1.1 additive extension (Designed — ADR-152):** the pulse gains
+**v1.1 additive extension (Implemented — ADR-152):** the pulse gains
 `needsYou.promotable` and a fourth top-level `agents` block. Both are REQUIRED
 and always emitted (`[]` when empty) with no compatibility shim, and the
 response schemas carry `additionalProperties: false`. That is safe only because
@@ -62,7 +62,7 @@ token model.
   readiness, inReviewSince}`; `targetBranch` is `workspaces.target_branch` and
   is nullable (`null` means "resolved from the task/project default at promote
   time"), `inReviewSince` is `runs.review_entered_at`. It is a sibling array of
-  `needsYou.items`, never a widened `NeedsYouItem`. (Designed — ADR-152)
+  `needsYou.items`, never a widened `NeedsYouItem`. (Implemented — ADR-152)
 - **Summonable-agent item** — an `agents.items` entry describing one
   `agent_project_links` row: `{agentId, stem, displayName, enabled, summonable,
   summonBlockedReason}`. `enabled` is the **attachment** axis
@@ -70,7 +70,7 @@ token model.
   is the closed enum `link_disabled | agent_disabled | quarantined |
   trigger_missing | mention_binding_missing` in that precedence order, and is
   `null` exactly when `summonable` is `true`. Behavior is owned by
-  [`agent-mentions.md`](agent-mentions.md). (Designed — ADR-152)
+  [`agent-mentions.md`](agent-mentions.md). (Implemented — ADR-152)
 - **Liveness thresholds** — host configuration read at request time:
   `MAISTER_ASSISTANT_ACTIVITY_WAITING_TOOL_AFTER_SECONDS` (default `90`),
   `MAISTER_ASSISTANT_ACTIVITY_SILENT_AFTER_SECONDS` (default `180`), and
@@ -148,7 +148,7 @@ Contract choices frozen for v1:
 - Omitting `since` bootstraps polling at the current fact-log tail instead of
   replaying historical backlog.
 
-Added in v1.1 (Designed — ADR-152):
+Added in v1.1 (Implemented — ADR-152):
 
 - `needsYou.promotable` and the top-level `agents` block are synthesized
   snapshots on the same terms as `now`/`needsYou` — always a full picture,
@@ -244,23 +244,23 @@ Replay rules:
   `promoteRun` would **accept** those runs (its hold and lineage refusals are
   conditional on unattended attribution), and the pulse withholds them anyway
   because a hold means an operator said stop and a lineage participant is
-  decided by its study. (Designed — ADR-152)
+  decided by its study. (Implemented — ADR-152)
 - The `agents` block MUST report **exactly** the project's
   `agent_project_links` rows — a non-summonable agent MUST be present with its
   `summonBlockedReason`, never filtered out — and `summonBlockedReason` MUST be
   the highest-precedence failing conjunct, deterministically, with
-  `summonBlockedReason === null` ⟺ `summonable === true`. (Designed — ADR-152)
+  `summonBlockedReason === null` ⟺ `summonable === true`. (Implemented — ADR-152)
 - A promotable item MUST NEVER duplicate an entry in `now.runs` (which admits
   only `Running | NeedsInput | NeedsInputIdle | HumanWorking`) or in
   `needsYou.items` (a `Review` run with an unanswered review-gate HITL is not
-  readiness-green). (Designed — ADR-152)
+  readiness-green). (Implemented — ADR-152)
 - Readiness for the pulse MUST be bulk-computed with exactly one
   `computeReadinessByRun` call per request over the candidate id set;
   `getRunReadiness` MUST NEVER be reachable from the pulse path.
-  (Designed — ADR-152)
+  (Implemented — ADR-152)
 - No pulse block MUST carry agent-memory content, size, or hash — this
   reinforces the existing "no file contents" rule for the newest agent-writable
-  store; see [`agent-memory.md`](agent-memory.md). (Designed — ADR-152)
+  store; see [`agent-memory.md`](agent-memory.md). (Implemented — ADR-152)
 
 ## Edge cases
 

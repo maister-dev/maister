@@ -7,7 +7,15 @@ import os from "node:os";
 import path from "node:path";
 
 import { NextRequest } from "next/server";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 const runtimeRootMock = vi.hoisted(() => ({ value: "/tmp/unset" }));
 const routeMocks = vi.hoisted(() => ({ verifyToken: vi.fn() }));
@@ -185,7 +193,9 @@ describe("T-C8a / REQ-C8 — the write path fails closed on every authorization 
 
   it("403 — the token lacks the agent_memory:write scope", async () => {
     await attach(true);
-    routeMocks.verifyToken.mockResolvedValue(agentActor({ scopes: ["runs:read"] }));
+    routeMocks.verifyToken.mockResolvedValue(
+      agentActor({ scopes: ["runs:read"] }),
+    );
 
     const res = await write({ content: "x", ifHash: null });
 
@@ -255,7 +265,9 @@ describe("T-C7a / REQ-C7 — the content-hash CAS", () => {
   it("REQ-C7 AC1 — ifHash:null against an EXISTING file loses (it is the first-writer form only)", async () => {
     await write({ content: "existing", ifHash: null });
 
-    expect((await write({ content: "clobber", ifHash: null })).status).toBe(409);
+    expect((await write({ content: "clobber", ifHash: null })).status).toBe(
+      409,
+    );
   });
 
   it("REQ-C7 AC4 — two genuinely CONCURRENT writes leave exactly one writer's bytes", async () => {
@@ -270,7 +282,7 @@ describe("T-C7a / REQ-C7 — the content-hash CAS", () => {
     const onDisk = await readFile(agentMemoryPath(SLUG, AGENT_ID), "utf8");
 
     // Exactly one payload, byte for byte — no interleaving, no partial write.
-    expect([("A".repeat(64)), ("B".repeat(64))]).toContain(onDisk);
+    expect(["A".repeat(64), "B".repeat(64)]).toContain(onDisk);
   });
 
   it("REQ-C8 AC3 — GET reports an absent file as the first-writer state, not a 404", async () => {

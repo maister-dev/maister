@@ -525,8 +525,8 @@ export async function updateAgentLink(
           ),
         );
       const existingIds = new Set<string>(
-        existingSchedules.map((schedule: Record<string, unknown>) =>
-          schedule.id as string,
+        existingSchedules.map(
+          (schedule: Record<string, unknown>) => schedule.id as string,
         ),
       );
       const receivedIds = new Set<string>();
@@ -560,8 +560,12 @@ export async function updateAgentLink(
           }
         }
 
-        if (schedule.values.triggerType === "event" && schedule.values.enabled) {
-          const kinds = (schedule.values.eventMatch as { kinds: string[] }).kinds;
+        if (
+          schedule.values.triggerType === "event" &&
+          schedule.values.enabled
+        ) {
+          const kinds = (schedule.values.eventMatch as { kinds: string[] })
+            .kinds;
 
           for (const kind of kinds) {
             if (enabledEventKinds.has(kind)) {

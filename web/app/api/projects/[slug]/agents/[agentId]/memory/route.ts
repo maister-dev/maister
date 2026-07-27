@@ -186,13 +186,21 @@ export async function PUT(
     }
 
     log.info(
-      { actorUserId: actor.id, agentId, projectId, sizeChars: parsed.data.content.length },
+      {
+        actorUserId: actor.id,
+        agentId,
+        projectId,
+        sizeChars: parsed.data.content.length,
+      },
       "[agents.memory] owner write",
     );
 
-    return NextResponse.json(serialize(await readAgentMemoryRaw(slug, agentId)), {
-      status: 200,
-    });
+    return NextResponse.json(
+      serialize(await readAgentMemoryRaw(slug, agentId)),
+      {
+        status: 200,
+      },
+    );
   } catch (err) {
     return notAttachedTo404(err) ?? agentsErrorResponse(err);
   }

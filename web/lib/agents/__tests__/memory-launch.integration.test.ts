@@ -15,7 +15,15 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 const runtimeRootMock = vi.hoisted(() => ({ value: "/tmp/unset" }));
 
@@ -23,9 +31,12 @@ vi.mock("@/lib/runtime-root", () => ({
   runtimeRoot: () => runtimeRootMock.value,
 }));
 
-import { parseAgentDefinition, renderAgentDefinition } from "@/lib/agents/definition";
 import { eq } from "drizzle-orm";
 
+import {
+  parseAgentDefinition,
+  renderAgentDefinition,
+} from "@/lib/agents/definition";
 import {
   applyAgentMemoryForLaunch,
   buildAgentPrompt,

@@ -121,8 +121,7 @@ export async function listMentionCandidateAgents(
       [!(row.triggers ?? []).includes("domain_event"), "trigger_missing"],
       [!bound.has(row.id), "mention_binding_missing"],
     ];
-    const blockedReason =
-      failed.find(([isFailing]) => isFailing)?.[1] ?? null;
+    const blockedReason = failed.find(([isFailing]) => isFailing)?.[1] ?? null;
 
     return {
       id: row.id,

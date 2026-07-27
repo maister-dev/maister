@@ -32,7 +32,9 @@ describe("T-C8b — agent_memory:write is registered across all five sites", () 
   });
 
   it("does NOT reuse the Brain write axis — one grant must not open two stores", () => {
-    expect(PROJECT_ACTION_BY_SCOPE["agent_memory:write"]).not.toBe("writeBrain");
+    expect(PROJECT_ACTION_BY_SCOPE["agent_memory:write"]).not.toBe(
+      "writeBrain",
+    );
     expect(PROJECT_ACTION_BY_SCOPE["memory:write"]).toBe("writeBrain");
   });
 });

@@ -64,7 +64,8 @@ const patchBodySchema = z
     message: "at least one field is required",
   })
   .refine(
-    (body) => body.schedules === undefined || body.schedulesRevision !== undefined,
+    (body) =>
+      body.schedules === undefined || body.schedulesRevision !== undefined,
     { message: "schedulesRevision is required when schedules are replaced" },
   );
 

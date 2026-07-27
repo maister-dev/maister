@@ -2,7 +2,15 @@ import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
 
 import { randomUUID } from "node:crypto";
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 // Spy wrappers around the REAL implementations: T-A3 asserts call counts while
 // the classifier still runs against real Postgres.
@@ -14,7 +22,8 @@ vi.mock("@/lib/queries/readiness-batch", async (importOriginal) => {
 });
 
 vi.mock("@/lib/queries/readiness", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/queries/readiness")>();
+  const actual =
+    await importOriginal<typeof import("@/lib/queries/readiness")>();
 
   return { ...actual, getRunReadiness: vi.fn(actual.getRunReadiness) };
 });
@@ -199,7 +208,7 @@ describe("T-A6 / REQ-A6 — the batched classifier and the merge guard agree on 
     }
   });
 
-  it("REQ-A6 AC2 — the `overridden` run is promotable, which a `state === \"ready\"` test would have dropped", async () => {
+  it('REQ-A6 AC2 — the `overridden` run is promotable, which a `state === "ready"` test would have dropped', async () => {
     const overriddenRunId = await seedReviewRun({ readiness: "overridden" });
     const readiness = await computeReadinessByRun(testDatabase.db, [
       overriddenRunId,
@@ -225,7 +234,11 @@ describe("T-A2b / REQ-A2 AC2 — Layer 2 withholds runs a human promote WOULD ac
 
     // The exclusion and its REASON are asserted separately, so this test
     // documents an intentional divergence rather than encoding one by accident.
-    const guard = await assertEvidenceReady(heldRunId, "review", testDatabase.db);
+    const guard = await assertEvidenceReady(
+      heldRunId,
+      "review",
+      testDatabase.db,
+    );
 
     expect(guard.ready).toBe(true);
 
@@ -321,6 +334,10 @@ describe("REQ-A2 AC1 / AC4 — the allow-list and the ordering hold against real
       db: testDatabase.db,
     });
 
-    expect(promotable.map((item) => item.runId)).toEqual([early, late, nullish]);
+    expect(promotable.map((item) => item.runId)).toEqual([
+      early,
+      late,
+      nullish,
+    ]);
   });
 });

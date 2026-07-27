@@ -123,7 +123,8 @@ export async function listProjectPromotable(
     client,
     candidates.map((row) => row.runId),
   );
-  const mechanical: Array<{ row: CandidateRow; readiness: ReadinessState }> = [];
+  const mechanical: Array<{ row: CandidateRow; readiness: ReadinessState }> =
+    [];
 
   for (const row of candidates) {
     const readiness = readinessByRun.get(row.runId);

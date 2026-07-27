@@ -8,10 +8,29 @@ import os from "node:os";
 import path from "node:path";
 
 import { and, eq, sql } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { renderAgentDefinition } from "@/lib/agents/definition";
-import { attachAgent } from "@/lib/agents/project-links";
+const runtimeRootMock = vi.hoisted(() => ({ value: "/tmp/unset" }));
+
+vi.mock("@/lib/runtime-root", () => ({
+  runtimeRoot: () => runtimeRootMock.value,
+}));
+
+import {
+  parseAgentDefinition,
+  renderAgentDefinition,
+} from "@/lib/agents/definition";
+import {
+  applyAgentMemoryForLaunch,
+  buildAgentPrompt,
+  resolveAgentMemoryForLaunch,
+} from "@/lib/agents/launch";
+import {
+  agentMemoryPath,
+  readAgentMemoryRaw,
+  writeAgentMemory,
+} from "@/lib/agents/memory-store";
+import { attachAgent, detachAgent } from "@/lib/agents/project-links";
 import * as schemaModule from "@/lib/db/schema";
 import {
   applyMainMigration,
@@ -24,15 +43,19 @@ import {
 const schema = schemaModule as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
+let runtimeRootDir: string;
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
     databaseName: "agent_memory_lifecycle_test",
   });
+  runtimeRootDir = await mkdtemp(path.join(os.tmpdir(), "maister-memlife-"));
+  runtimeRootMock.value = runtimeRootDir;
 }, 180_000);
 
 afterAll(async () => {
   await testDatabase?.stop();
+  await rm(runtimeRootDir, { force: true, recursive: true });
 });
 
 type ColumnRow = {
@@ -329,4 +352,318 @@ describe("T-C1 / REQ-C1 — migration 0122 applies additively", () => {
       await at0121.stop();
     }
   }, 180_000);
+});
+
+// --- T27: the cases that span TWO runs or TWO lifecycle events ---------------
+
+// A run row shaped exactly as a launch produces it. `triggerSource` is what a
+// mention summon stamps (ADR-151 keeps the source `domain_event`), and memory
+// resolution keys on (agentId, projectId, run_kind) — never on the trigger — so
+// this is the honest shape for the loop acceptance.
+async function seedAgentRun(
+  projectId: string,
+  agentId: string,
+  triggerSource: "manual" | "domain_event" = "manual",
+): Promise<Record<string, unknown>> {
+  const runId = randomUUID();
+
+  await testDatabase.db.insert(schema.runs).values({
+    id: runId,
+    projectId,
+    agentId,
+    runKind: "agent",
+    status: "Running",
+    flowVersion: "agent",
+    flowRevision: "manual",
+    triggerSource,
+  });
+
+  return { id: runId, runId, projectId, agentId, runKind: "agent" };
+}
+
+function keeperDefinition(agentId: string) {
+  return parseAgentDefinition(
+    agentId,
+    renderAgentDefinition({
+      id: agentId,
+      name: "Keeper",
+      description: "Keeps notes across runs.",
+      workspace: "none",
+      mode: "session",
+      triggers: ["manual", "domain_event"],
+      riskTier: "read_only",
+      memory: "enabled",
+      prompt: "You are the keeper.",
+    }),
+  );
+}
+
+async function slugOf(projectId: string): Promise<string> {
+  const rows = await testDatabase.db
+    .select({ slug: schema.projects.slug })
+    .from(schema.projects)
+    .where(eq(schema.projects.id, projectId));
+
+  return rows[0].slug as string;
+}
+
+describe("T27 — the cross-run loop this feature exists for", () => {
+  it("T27.2 — content written by run N is injected VERBATIM into run N+1's prompt", async () => {
+    const fx = await seedAttachable({ memory: "enabled" });
+
+    try {
+      await attachAgent(
+        { projectId: fx.projectId, agentId: fx.agentId },
+        testDatabase.db,
+      );
+
+      const slug = await slugOf(fx.projectId);
+      const notes =
+        "# Notes from run N\n\n- The build script is `pnpm build`.\n";
+
+      // Run N writes.
+      const runN = await seedAgentRun(fx.projectId, fx.agentId);
+
+      await writeAgentMemory(slug, fx.agentId, notes);
+      expect(runN).toBeTruthy();
+
+      // Run N+1 launches and reads it back.
+      const runNext = await seedAgentRun(fx.projectId, fx.agentId);
+      const text = await applyAgentMemoryForLaunch(
+        testDatabase.db,
+        runNext,
+        slug,
+        false,
+      );
+      const prompt = await buildAgentPrompt(
+        testDatabase.db,
+        keeperDefinition(fx.agentId),
+        runNext,
+        text,
+      );
+
+      expect(text).toBe(notes);
+      expect(prompt).toContain(notes.trim());
+    } finally {
+      await rm(fx.pkgRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("T27.3 — THE LOOP ACCEPTANCE: a mention-summoned run sees memory written by a previous run of the same attachment", async () => {
+    const fx = await seedAttachable({ memory: "enabled" });
+
+    try {
+      await attachAgent(
+        { projectId: fx.projectId, agentId: fx.agentId },
+        testDatabase.db,
+      );
+
+      const slug = await slugOf(fx.projectId);
+      const learned = "The reviewer prefers small diffs. See MAI-12.";
+
+      await seedAgentRun(fx.projectId, fx.agentId);
+      await writeAgentMemory(slug, fx.agentId, learned);
+
+      // The ADR-151 summon path: run_kind='agent', trigger_source='domain_event'.
+      const summoned = await seedAgentRun(
+        fx.projectId,
+        fx.agentId,
+        "domain_event",
+      );
+      const prompt = await buildAgentPrompt(
+        testDatabase.db,
+        keeperDefinition(fx.agentId),
+        summoned,
+        await applyAgentMemoryForLaunch(testDatabase.db, summoned, slug, false),
+      );
+
+      expect(prompt).toContain(learned);
+    } finally {
+      await rm(fx.pkgRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("T27.5 / REQ-C5+C8 — with memory OFF there is no MEMORY section AND the write gate refuses", async () => {
+    const fx = await seedAttachable({ memory: "none" });
+
+    try {
+      await attachAgent(
+        { projectId: fx.projectId, agentId: fx.agentId },
+        testDatabase.db,
+      );
+
+      const slug = await slugOf(fx.projectId);
+
+      await writeAgentMemory(slug, fx.agentId, "written out of band");
+
+      const run = await seedAgentRun(fx.projectId, fx.agentId);
+      const text = await applyAgentMemoryForLaunch(
+        testDatabase.db,
+        run,
+        slug,
+        false,
+      );
+      const prompt = await buildAgentPrompt(
+        testDatabase.db,
+        keeperDefinition(fx.agentId),
+        run,
+        text,
+      );
+
+      expect(text).toBeNull();
+      expect(prompt).not.toContain("## Agent memory");
+      // The same link flag the ext route consults — both halves of the
+      // conjunction refuse together.
+      expect((await linkRow(fx.projectId, fx.agentId))?.memoryEnabled).toBe(
+        false,
+      );
+    } finally {
+      await rm(fx.pkgRoot, { force: true, recursive: true });
+    }
+  });
+});
+
+describe("T-C10 / REQ-C10 — attachment lifecycle semantics", () => {
+  it("detach makes memory INERT while the file SURVIVES untouched", async () => {
+    const fx = await seedAttachable({ memory: "enabled" });
+
+    try {
+      await attachAgent(
+        { projectId: fx.projectId, agentId: fx.agentId },
+        testDatabase.db,
+      );
+
+      const slug = await slugOf(fx.projectId);
+
+      await writeAgentMemory(slug, fx.agentId, "survives detach");
+
+      await detachAgent(
+        { projectId: fx.projectId, agentId: fx.agentId },
+        testDatabase.db,
+      );
+
+      const run = await seedAgentRun(fx.projectId, fx.agentId);
+
+      // Inert: nothing resolves for a detached agent...
+      await expect(
+        resolveAgentMemoryForLaunch(testDatabase.db, run, slug),
+      ).resolves.toBeNull();
+      // ...but the bytes are still on disk.
+      expect((await readAgentMemoryRaw(slug, fx.agentId)).content).toBe(
+        "survives detach",
+      );
+    } finally {
+      await rm(fx.pkgRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("re-attach REVIVES the surviving file and re-applies the DEFINITION default", async () => {
+    const fx = await seedAttachable({ memory: "enabled" });
+
+    try {
+      await attachAgent(
+        { projectId: fx.projectId, agentId: fx.agentId },
+        testDatabase.db,
+      );
+
+      const slug = await slugOf(fx.projectId);
+
+      await writeAgentMemory(slug, fx.agentId, "still here");
+      await detachAgent(
+        { projectId: fx.projectId, agentId: fx.agentId },
+        testDatabase.db,
+      );
+      await attachAgent(
+        { projectId: fx.projectId, agentId: fx.agentId },
+        testDatabase.db,
+      );
+
+      const run = await seedAgentRun(fx.projectId, fx.agentId);
+
+      expect((await linkRow(fx.projectId, fx.agentId))?.memoryEnabled).toBe(
+        true,
+      );
+      await expect(
+        resolveAgentMemoryForLaunch(testDatabase.db, run, slug),
+      ).resolves.toMatchObject({ text: "still here" });
+    } finally {
+      await rm(fx.pkgRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("D19 SURPRISE — re-attaching a `memory: none` agent revives the file but leaves it INERT", async () => {
+    const fx = await seedAttachable({ memory: "none" });
+
+    try {
+      await attachAgent(
+        { projectId: fx.projectId, agentId: fx.agentId },
+        testDatabase.db,
+      );
+
+      const slug = await slugOf(fx.projectId);
+
+      await writeAgentMemory(slug, fx.agentId, "orphaned notes");
+      // An operator had turned it ON before detaching...
+      await testDatabase.db
+        .update(schema.agentProjectLinks)
+        .set({ memoryEnabled: true })
+        .where(eq(schema.agentProjectLinks.projectId, fx.projectId));
+      await detachAgent(
+        { projectId: fx.projectId, agentId: fx.agentId },
+        testDatabase.db,
+      );
+      await attachAgent(
+        { projectId: fx.projectId, agentId: fx.agentId },
+        testDatabase.db,
+      );
+
+      const run = await seedAgentRun(fx.projectId, fx.agentId);
+
+      // ...but re-attach re-applies the DEFINITION default, not the previous
+      // operator choice. The file is intact; it is simply not used. Correct by
+      // construction and deliberately surprising, hence pinned here.
+      expect((await linkRow(fx.projectId, fx.agentId))?.memoryEnabled).toBe(
+        false,
+      );
+      expect((await readAgentMemoryRaw(slug, fx.agentId)).content).toBe(
+        "orphaned notes",
+      );
+      await expect(
+        resolveAgentMemoryForLaunch(testDatabase.db, run, slug),
+      ).resolves.toBeNull();
+    } finally {
+      await rm(fx.pkgRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("REQ-C3 AC6 — a package RE-PIN preserves the file: the path is keyed by qualified id, never by revision", async () => {
+    const fx = await seedAttachable({ memory: "enabled" });
+
+    try {
+      await attachAgent(
+        { projectId: fx.projectId, agentId: fx.agentId },
+        testDatabase.db,
+      );
+
+      const slug = await slugOf(fx.projectId);
+      const before = agentMemoryPath(slug, fx.agentId);
+
+      await writeAgentMemory(slug, fx.agentId, "across versions");
+
+      // Re-pin: a new package revision at a NEW installed path.
+      await testDatabase.db
+        .update(schema.packageInstalls)
+        .set({ versionLabel: "v2.0.0", resolvedRevision: "rev-pkg-2" })
+        .where(eq(schema.packageInstalls.name, fx.agentId.split(":")[0]));
+
+      expect(agentMemoryPath(slug, fx.agentId)).toBe(before);
+      expect((await readAgentMemoryRaw(slug, fx.agentId)).content).toBe(
+        "across versions",
+      );
+      expect(before).not.toContain("v1.0.0");
+      expect(before).not.toContain("v2.0.0");
+    } finally {
+      await rm(fx.pkgRoot, { force: true, recursive: true });
+    }
+  });
 });

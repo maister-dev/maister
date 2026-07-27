@@ -122,7 +122,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     { scopeLabel: SCOPE, endpoint: ENDPOINT_GET, method: "GET", db },
     async (ctx: ExtCtx) => {
       try {
-        const target = await resolveAgentMemoryTarget(db, ctx.actor, ctx.projectId);
+        const target = await resolveAgentMemoryTarget(
+          db,
+          ctx.actor,
+          ctx.projectId,
+        );
 
         if (!target) return forbidden();
 
@@ -150,7 +154,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     { scopeLabel: SCOPE, endpoint: ENDPOINT_POST, method: "POST", db },
     async (ctx: ExtCtx) => {
       try {
-        const target = await resolveAgentMemoryTarget(db, ctx.actor, ctx.projectId);
+        const target = await resolveAgentMemoryTarget(
+          db,
+          ctx.actor,
+          ctx.projectId,
+        );
 
         if (!target) return forbidden();
 

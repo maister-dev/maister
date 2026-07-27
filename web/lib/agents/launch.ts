@@ -1812,7 +1812,10 @@ export async function applyAgentMemoryForLaunch(
   // Human-readable evidence beside the run's other artifacts. GC'd with the run
   // dir after 7 days, which is exactly why the hash below also lands on the row.
   await atomicWriteText(
-    path.join(runDirPath(runtimeRoot(), projectSlug, runId), "memory-snapshot.md"),
+    path.join(
+      runDirPath(runtimeRoot(), projectSlug, runId),
+      "memory-snapshot.md",
+    ),
     memory.text,
   );
   await _db
