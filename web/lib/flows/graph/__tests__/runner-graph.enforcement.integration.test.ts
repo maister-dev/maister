@@ -172,8 +172,12 @@ function makeSupervisorSpy(): SupervisorApi & {
   };
 }
 
-// ai_coding node declaring strict mcps — REFUSED on the M11c all-instructed
-// table (verdict refused → CONFIG, no agent can enforce mcps).
+// ai_coding node declaring strict skills — REFUSED on the ADR-130 table:
+// skills is `instructed` for every agent (not seam-interceptable), so the
+// static gate throws CONFIG. strict tools/mcps no longer refuse here — the
+// seam flip made them `enforced` for all agents, admission-gated by the async
+// evidence gate instead (EXECUTOR_UNAVAILABLE, covered in
+// enforcement-evidence.test.ts).
 const strictRefusalFlow = {
   schemaVersion: 1,
   name: "g",
@@ -184,7 +188,7 @@ const strictRefusalFlow = {
       type: "ai_coding",
       action: { prompt: "/aif-implement" },
       transitions: { success: "done" },
-      settings: { enforcement: { mcps: "strict" } },
+      settings: { enforcement: { skills: "strict" } },
     },
   ],
 };
@@ -209,7 +213,7 @@ const passFlow = {
 };
 
 describe("runGraph — per-node enforcement gate (3.5 / 3.6 / 2.2)", () => {
-  it("refuses a strict-mcps ai_coding node: attempt Failed errorCode=CONFIG, run Failed, NO supervisor spawn", async () => {
+  it("refuses a strict-skills ai_coding node: attempt Failed errorCode=CONFIG, run Failed, NO supervisor spawn", async () => {
     const seeded = await seedGraphRun(strictRefusalFlow);
     const api = makeSupervisorSpy();
 
@@ -252,7 +256,7 @@ describe("runGraph — per-node enforcement gate (3.5 / 3.6 / 2.2)", () => {
 
     expect(attempt?.enforcementSnapshot).not.toBeNull();
     expect(attempt!.enforcementSnapshot).toContainEqual({
-      class: "mcps",
+      class: "skills",
       declared: "strict",
       capability: "instructed",
       verdict: "refused",
@@ -274,8 +278,8 @@ describe("runGraph — per-node enforcement gate (3.5 / 3.6 / 2.2)", () => {
     );
 
     expect(attempt?.enforcementSnapshot).not.toBeNull();
-    // Every declared class resolves to `instructed` on the all-instructed
-    // table, never `refused`.
+    // Every class here is declared `instruct`, which resolves to `instructed`
+    // regardless of the agent's capability — never `refused`.
     const verdicts = (attempt!.enforcementSnapshot ?? []).map((e) => e.verdict);
 
     expect(verdicts.length).toBeGreaterThan(0);
