@@ -33,7 +33,10 @@ const DENY_PATTERNS: RegExp[] = [
   /PRIVATE/i,
 ];
 
-const DEFAULT_ALLOW_PATTERNS: RegExp[] = [
+// Shared with the child-process env seam (child-env.ts, ADR-153): the same
+// allow-list governs what {{ env.* }} exposes to templates AND what a spawned
+// cli/check/probe child inherits from the web process.
+export const DEFAULT_ALLOW_PATTERNS: RegExp[] = [
   /^LANG$/,
   /^LC_/,
   /^TZ$/,

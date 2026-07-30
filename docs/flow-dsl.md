@@ -1481,6 +1481,21 @@ Allow patterns: `LANG`, `LC_*`, `TZ`, `PATH`, `HOME`, `USER`, `SHELL`,
 `TERM`. Tests may inject extra allow patterns via the
 `envWhitelist: RegExp[]` arg of `buildContext()`.
 
+**Child process env
+([ADR-153](decisions.md#adr-153-flow-child-process-env-isolation--allow-listed-env-for-clicheckprobe-children),
+Implemented).** The bash child a `cli`/`check` node command, a
+`command_check` gate, or a `requirements[]` probe runs in does NOT inherit
+the web process env. It receives only the allow patterns above, plus
+`TMPDIR`, `SSH_AUTH_SOCK`, `NODE_ENV`, and the per-step transport vars the
+runner injects (`MAISTER_OUTPUT_FILE`). Web-tier secrets (`DB_URL`, provider
+keys) are never present in a flow command's environment — nor in anything it
+spawns. A command that needs an allow-listed host value can also read it
+directly (e.g. `$HOME`); values outside the allow-list can only arrive via
+`{{ env.* }}` interpolation, which the deny patterns above filter. The
+`MAISTER_CLI_INHERIT_ENV` host env var (see
+[configuration.md](configuration.md)) temporarily restores full inheritance
+for not-yet-migrated packages.
+
 ## Node output vars
 
 Structured node output is persisted in `node_attempts.vars`. Downstream

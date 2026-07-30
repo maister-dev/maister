@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import pino from "pino";
 
 import { MaisterError } from "@/lib/errors";
+import { childProcessEnv } from "@/lib/flows/child-env";
 
 const execFileAsync = promisify(execFile);
 
@@ -53,6 +54,9 @@ export async function checkFlowRequirements(
         cwd,
         signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
         maxBuffer: MAX_BUFFER,
+        // ADR-153: probes get the same allow-listed env as cli children —
+        // never the web tier's secrets.
+        env: childProcessEnv(),
       });
     } catch (err) {
       const e = err as NodeJS.ErrnoException & { killed?: boolean };

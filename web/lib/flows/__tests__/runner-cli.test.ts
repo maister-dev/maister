@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { runCliStep } from "@/lib/flows/runner-cli";
 
@@ -179,7 +179,7 @@ describe("runCliStep", () => {
     expect(result.stdout).toContain("of:unset");
   });
 
-  it("leaves the child env untouched when attempt is not provided (no transport provisioning)", async () => {
+  it("does not inject MAISTER_OUTPUT_FILE when attempt is not provided (no transport provisioning)", async () => {
     const result = await runCliStep(
       {
         id: "noout",
@@ -201,7 +201,7 @@ describe("runCliStep", () => {
     expect(result.stdout).toContain("of:unset");
   });
 
-  it("keeps inheriting the parent env when the transport is armed", async () => {
+  it("keeps allow-listed parent env (PATH) when the transport is armed", async () => {
     const result = await runCliStep(
       {
         id: "envkeep",
@@ -222,6 +222,69 @@ describe("runCliStep", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("path-ok");
+  });
+
+  describe("child env isolation (ADR-153)", () => {
+    const SENTINEL = "WEB_TIER_SENTINEL_SECRET";
+
+    beforeEach(() => {
+      vi.stubEnv(SENTINEL, "leak-me");
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    const run = (command: string, attempt?: number) =>
+      runCliStep(
+        { id: "envstep", type: "cli", command },
+        {
+          runtimeRoot: workDir,
+          projectSlug: "demo",
+          runId: "r1",
+          stepId: "envstep",
+          worktreePath,
+          context: ctxBase(),
+          timeoutMs: 5_000,
+          ...(attempt !== undefined ? { attempt } : {}),
+        },
+      );
+
+    it("withholds a web-tier secret env var from the child", async () => {
+      const result = await run('echo "s:${WEB_TIER_SENTINEL_SECRET:-absent}"');
+
+      expect(result.ok).toBe(true);
+      expect(result.stdout).toContain("s:absent");
+    });
+
+    it("withholds the secret when the output transport is armed, keeping MAISTER_OUTPUT_FILE", async () => {
+      const result = await run(
+        'echo "s:${WEB_TIER_SENTINEL_SECRET:-absent} of:${MAISTER_OUTPUT_FILE:-unset}"',
+        1,
+      );
+
+      expect(result.ok).toBe(true);
+      expect(result.stdout).toContain("s:absent");
+      expect(result.stdout).not.toContain("of:unset");
+    });
+
+    it("passes allow-listed vars (PATH, HOME) without the transport armed", async () => {
+      const result = await run(
+        'test -n "$PATH" && test -n "$HOME" && echo allow-ok',
+      );
+
+      expect(result.ok).toBe(true);
+      expect(result.stdout).toContain("allow-ok");
+    });
+
+    it("MAISTER_CLI_INHERIT_ENV=1 restores full env inheritance (compat)", async () => {
+      vi.stubEnv("MAISTER_CLI_INHERIT_ENV", "1");
+
+      const result = await run('echo "s:${WEB_TIER_SENTINEL_SECRET:-absent}"');
+
+      expect(result.ok).toBe(true);
+      expect(result.stdout).toContain("s:leak-me");
+    });
   });
 
   it("creates the run dir when armed so the command can write $MAISTER_OUTPUT_FILE", async () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
 import { checkFlowRequirements } from "@/lib/flows/requirements-check";
@@ -55,5 +55,43 @@ describe("checkFlowRequirements (ADR-091)", () => {
     expect(message).toContain("node>=20");
     // a passing probe is never listed as a failure
     expect(message).not.toContain("- passing:");
+  });
+
+  describe("probe env isolation (ADR-153)", () => {
+    const SENTINEL = "WEB_TIER_SENTINEL_SECRET";
+
+    beforeEach(() => {
+      vi.stubEnv(SENTINEL, "leak-me");
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("withholds a web-tier secret env var from probes while allow-listed vars pass", async () => {
+      // The secret-presence probe must FAIL (var invisible to the child) while
+      // the PATH probe passes — proving the allow-list, not an empty env.
+      let caught: unknown;
+
+      try {
+        await checkFlowRequirements(
+          [
+            {
+              name: "sees-secret",
+              probe: 'test -n "${WEB_TIER_SENTINEL_SECRET:-}"',
+            },
+            { name: "has-path", probe: 'test -n "$PATH"' },
+          ],
+          CWD,
+        );
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(MaisterError);
+      expect((caught as MaisterError).code).toBe("PRECONDITION");
+      expect((caught as MaisterError).message).toContain("sees-secret");
+      expect((caught as MaisterError).message).not.toContain("- has-path:");
+    });
   });
 });

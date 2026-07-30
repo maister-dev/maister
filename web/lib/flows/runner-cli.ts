@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 
 import pino from "pino";
 
+import { childProcessEnv } from "./child-env";
 import { cliOutputFilePath } from "./graph/node-output";
 import { renderStrict } from "./templating";
 
@@ -39,7 +40,7 @@ export type RunCliStepCtx = {
   timeoutMs?: number;
   // M26 P1 (ADR-063): set only when the node declares `output.result` — arms
   // the MAISTER_OUTPUT_FILE transport with the per-attempt filename. Absent =
-  // no transport provisioning (byte-identical pre-M26 child env).
+  // no transport provisioning (no MAISTER_OUTPUT_FILE in the child env).
   attempt?: number;
 };
 
@@ -112,9 +113,13 @@ export async function runCliStep(
       cwd: ctx.worktreePath,
       signal: AbortSignal.timeout(timeoutMs),
       maxBuffer: MAX_BUFFER,
-      ...(outputFile !== undefined
-        ? { env: { ...process.env, MAISTER_OUTPUT_FILE: outputFile } }
-        : {}),
+      // ADR-153: allow-listed env only — flow commands never see web-tier
+      // secrets. Serves cli/check nodes AND command_check gates (gates-exec).
+      env: childProcessEnv(
+        outputFile !== undefined
+          ? { MAISTER_OUTPUT_FILE: outputFile }
+          : undefined,
+      ),
     });
 
     stdout = String(result.stdout ?? "");
