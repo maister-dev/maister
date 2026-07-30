@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
 import {
@@ -402,9 +402,22 @@ describe("runFlow — workspace ownership regression (Codex critical)", () => {
 
     await runFlow(runIdA, { db, runtimeRoot: workspaceRoot });
 
-    // Completion of A promotes and runs B. Calling runFlow again here would
-    // create a second attempt and no longer exercise the scheduler handoff.
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    // Completion of A promotes and runs B fire-and-forget. Calling runFlow
+    // again here would create a second attempt and no longer exercise the
+    // scheduler handoff, so poll (bounded) until B's attempt reaches a
+    // terminal status — stdout is persisted in the same UPDATE as the
+    // status flip (ledger.ts markNodeSucceeded/markNodeFailed).
+    await vi.waitFor(
+      async () => {
+        const [attemptB] = await db
+          .select()
+          .from(nodeAttempts)
+          .where(eq(nodeAttempts.runId, runIdB));
+
+        expect(["Succeeded", "Failed"]).toContain(attemptB?.status);
+      },
+      { timeout: 5_000, interval: 50 },
+    );
 
     const attemptsA = await db
       .select()
