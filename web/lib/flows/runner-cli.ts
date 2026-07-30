@@ -2,10 +2,10 @@ import "server-only";
 
 import type { FlowContext, StepResult } from "./types";
 
-import { execFile } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
+import { StringDecoder } from "node:string_decoder";
 
 import pino from "pino";
 
@@ -13,16 +13,152 @@ import { childProcessEnv } from "./child-env";
 import { cliOutputFilePath } from "./graph/node-output";
 import { renderStrict } from "./templating";
 
-const execFileAsync = promisify(execFile);
-
 const log = pino({
   name: "flow-runner",
   level: process.env.LOG_LEVEL ?? "info",
 });
 
 const DEFAULT_TIMEOUT_MS = 300_000;
+// Host-wide ceiling for a node-declared `settings.timeoutMs` — one manifest
+// must not be able to hold a run's slot open for hours. Requests above the
+// ceiling clamp (warn-logged), they do not fail.
+const DEFAULT_MAX_TIMEOUT_MS = 3_600_000;
+// After the timeout SIGTERM, how long a trapped cleanup (e.g. a compose
+// teardown) may run before the whole group is SIGKILLed.
+const TIMEOUT_SIGKILL_GRACE_MS = 30_000;
 const MAX_BUFFER = 4 * 1024 * 1024;
 const COMMAND_PREVIEW_LEN = 200;
+
+function maxTimeoutMs(): number {
+  const raw = process.env.MAISTER_MAX_CLI_TIMEOUT_MS;
+  const parsed = raw ? Number.parseInt(raw, 10) : DEFAULT_MAX_TIMEOUT_MS;
+
+  if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_MAX_TIMEOUT_MS;
+
+  return parsed;
+}
+
+function killProcessGroup(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (child.pid === undefined) return;
+
+  try {
+    // `detached: true` made the child a group leader — the negative pid
+    // signals the whole tree (bash plus its grandchildren).
+    process.kill(-child.pid, signal);
+  } catch (err) {
+    // ESRCH: the group exited between the timer firing and the kill.
+    if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
+      log.warn(
+        { pid: child.pid, signal, err: (err as Error).message },
+        "process group kill failed",
+      );
+    }
+  }
+}
+
+type DetachedExecResult = {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  // Force-killed: our timeout fired or the output cap was exceeded.
+  aborted: boolean;
+};
+
+// `execFile` cannot create a process group (it forwards an explicit option
+// allowlist to `spawn` that drops `detached`), so the command is spawned by
+// hand: detached group leader, SIGTERM on timeout with a SIGKILL escalation
+// after the trap grace, and a final group sweep once bash itself exits.
+function execDetachedGroup(opts: {
+  command: string;
+  cwd: string;
+  timeoutMs: number;
+  env?: NodeJS.ProcessEnv;
+}): Promise<DetachedExecResult> {
+  return new Promise((resolve) => {
+    const child = spawn("bash", ["-c", opts.command], {
+      cwd: opts.cwd,
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      ...(opts.env !== undefined ? { env: opts.env } : {}),
+    });
+
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
+    let stdoutText = "";
+    let stderrText = "";
+    let bufferedBytes = 0;
+    let timedOut = false;
+    let overflowed = false;
+    let spawnError: Error | undefined;
+    let escalation: NodeJS.Timeout | undefined;
+
+    const collect =
+      (decoder: StringDecoder, append: (s: string) => void) =>
+      (chunk: Buffer) => {
+        bufferedBytes += chunk.length;
+
+        if (bufferedBytes > MAX_BUFFER) {
+          if (!overflowed) {
+            overflowed = true;
+            killProcessGroup(child, "SIGKILL");
+          }
+
+          return;
+        }
+
+        append(decoder.write(chunk));
+      };
+
+    child.stdout?.on(
+      "data",
+      collect(stdoutDecoder, (s) => {
+        stdoutText += s;
+      }),
+    );
+    child.stderr?.on(
+      "data",
+      collect(stderrDecoder, (s) => {
+        stderrText += s;
+      }),
+    );
+
+    const killTimer = setTimeout(() => {
+      timedOut = true;
+      killProcessGroup(child, "SIGTERM");
+      escalation = setTimeout(
+        () => killProcessGroup(child, "SIGKILL"),
+        TIMEOUT_SIGKILL_GRACE_MS,
+      );
+    }, opts.timeoutMs);
+
+    child.on("error", (err) => {
+      spawnError = err;
+    });
+
+    child.on("close", (code) => {
+      clearTimeout(killTimer);
+      if (escalation !== undefined) clearTimeout(escalation);
+      // A timed-out group may still hold members that ignored the TERM or
+      // that bash orphaned by exiting first — sweep them before reporting.
+      if (timedOut) killProcessGroup(child, "SIGKILL");
+
+      const aborted = timedOut || overflowed;
+
+      stdoutText += stdoutDecoder.end();
+      stderrText += stderrDecoder.end();
+
+      resolve({
+        stdout: stdoutText,
+        stderr:
+          stderrText === "" && spawnError !== undefined
+            ? spawnError.message
+            : stderrText,
+        exitCode: aborted ? -1 : (code ?? -1),
+        aborted,
+      });
+    });
+  });
+}
 
 export type CliStepLike = {
   id: string;
@@ -54,7 +190,15 @@ export async function runCliStep(
   step: CliStepLike,
   ctx: RunCliStepCtx,
 ): Promise<StepResult> {
-  const timeoutMs = ctx.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const requestedTimeoutMs = ctx.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeoutMs = Math.min(requestedTimeoutMs, maxTimeoutMs());
+
+  if (timeoutMs < requestedTimeoutMs) {
+    log.warn(
+      { runId: ctx.runId, stepId: ctx.stepId, requestedTimeoutMs, timeoutMs },
+      "cli timeout clamped to the MAISTER_MAX_CLI_TIMEOUT_MS ceiling",
+    );
+  }
 
   const resolved = renderStrict(
     step.command,
@@ -103,47 +247,19 @@ export async function runCliStep(
   }
 
   const startedAt = Date.now();
-  let stdout = "";
-  let stderr = "";
-  let exitCode = 0;
-  let aborted = false;
 
-  try {
-    const result = await execFileAsync("bash", ["-c", resolved], {
-      cwd: ctx.worktreePath,
-      signal: AbortSignal.timeout(timeoutMs),
-      maxBuffer: MAX_BUFFER,
-      // ADR-153: allow-listed env only — flow commands never see web-tier
-      // secrets. Serves cli/check nodes AND command_check gates (gates-exec).
-      env: childProcessEnv(
-        outputFile !== undefined
-          ? { MAISTER_OUTPUT_FILE: outputFile }
-          : undefined,
-      ),
-    });
-
-    stdout = String(result.stdout ?? "");
-    stderr = String(result.stderr ?? "");
-  } catch (err) {
-    const e = err as NodeJS.ErrnoException & {
-      stdout?: string | Buffer;
-      stderr?: string | Buffer;
-      code?: number | string;
-      killed?: boolean;
-    };
-
-    stdout = String(e.stdout ?? "");
-    stderr = String(e.stderr ?? e.message ?? "");
-
-    if (e.name === "AbortError" || e.code === "ABORT_ERR" || e.killed) {
-      aborted = true;
-      exitCode = -1;
-    } else if (typeof e.code === "number") {
-      exitCode = e.code;
-    } else {
-      exitCode = -1;
-    }
-  }
+  const { stdout, stderr, exitCode, aborted } = await execDetachedGroup({
+    command: resolved,
+    cwd: ctx.worktreePath,
+    timeoutMs,
+    // ADR-153: allow-listed env only — flow commands never see web-tier
+    // secrets. Serves cli/check nodes AND command_check gates (gates-exec).
+    env: childProcessEnv(
+      outputFile !== undefined
+        ? { MAISTER_OUTPUT_FILE: outputFile }
+        : undefined,
+    ),
+  });
 
   const durationMs = Date.now() - startedAt;
   const ok = !aborted && exitCode === 0;

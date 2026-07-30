@@ -17,9 +17,20 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await rm(workDir, { recursive: true, force: true });
   await rm(worktreePath, { recursive: true, force: true });
 });
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const ctxBase = (overrides: Partial<FlowContext> = {}): FlowContext => ({
   task: {
@@ -78,7 +89,7 @@ describe("runCliStep", () => {
     expect(result.errorCode).toBe("PRECONDITION");
   });
 
-  it("AbortSignal timeout marks step failed with PRECONDITION", async () => {
+  it("timeout marks step failed with PRECONDITION", async () => {
     const result = await runCliStep(
       { id: "slow", type: "cli", command: "sleep 5" },
       {
@@ -95,6 +106,58 @@ describe("runCliStep", () => {
     expect(result.ok).toBe(false);
     expect(result.errorCode).toBe("PRECONDITION");
     expect(result.durationMs ?? 0).toBeLessThan(2000);
+  });
+
+  it("clamps the requested timeout to the MAISTER_MAX_CLI_TIMEOUT_MS ceiling", async () => {
+    vi.stubEnv("MAISTER_MAX_CLI_TIMEOUT_MS", "200");
+
+    const result = await runCliStep(
+      { id: "ceil", type: "cli", command: "sleep 5" },
+      {
+        runtimeRoot: workDir,
+        projectSlug: "demo",
+        runId: "r1",
+        stepId: "ceil",
+        worktreePath,
+        context: ctxBase(),
+        timeoutMs: 60_000,
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.errorCode).toBe("PRECONDITION");
+    expect(result.durationMs ?? 0).toBeLessThan(2_000);
+  });
+
+  it("kills the whole process group on timeout — grandchildren do not survive", async () => {
+    const result = await runCliStep(
+      {
+        id: "tree",
+        type: "cli",
+        // The background sleep is bash's CHILD (a grandchild of the runner);
+        // its stdio is detached from the pipe so the exec promise settles on
+        // bash's death even when the grandchild survives.
+        command: 'sleep 30 >/dev/null 2>&1 & echo "gc:$!"; wait',
+      },
+      {
+        runtimeRoot: workDir,
+        projectSlug: "demo",
+        runId: "r1",
+        stepId: "tree",
+        worktreePath,
+        context: ctxBase(),
+        timeoutMs: 300,
+      },
+    );
+
+    expect(result.ok).toBe(false);
+
+    const grandchildPid = Number(/gc:(\d+)/.exec(result.stdout)?.[1]);
+
+    expect(grandchildPid).toBeGreaterThan(0);
+    await expect
+      .poll(() => isProcessAlive(grandchildPid), { timeout: 3_000 })
+      .toBe(false);
   });
 
   it("renders the command template before execution", async () => {

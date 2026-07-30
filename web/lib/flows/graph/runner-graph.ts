@@ -1489,9 +1489,15 @@ async function executeNodeAction(
     case "check":
       return runCliStep(
         { id: node.id, type: "cli", command: def.action.command },
-        // M26 (ADR-063): arm the MAISTER_OUTPUT_FILE transport only when the
-        // node declares output.result — no transport provisioning otherwise.
-        def.output?.result ? { ...common, attempt: ctx.attempt } : common,
+        {
+          ...common,
+          // M26 (ADR-063): arm the MAISTER_OUTPUT_FILE transport only when the
+          // node declares output.result — no transport provisioning otherwise.
+          ...(def.output?.result ? { attempt: ctx.attempt } : {}),
+          ...(def.settings?.timeoutMs !== undefined
+            ? { timeoutMs: def.settings.timeoutMs }
+            : {}),
+        },
       );
     case "ai_coding":
     case "judge":

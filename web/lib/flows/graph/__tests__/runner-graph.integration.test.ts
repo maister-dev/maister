@@ -179,6 +179,21 @@ const cliChain = {
   ],
 };
 
+const slowCheckFlow = {
+  schemaVersion: 1,
+  name: "g",
+  compat: { engine_min: "1.1.0" },
+  nodes: [
+    {
+      id: "slow",
+      type: "check",
+      action: { command: "sleep 5" },
+      settings: { timeoutMs: 300 },
+      transitions: { success: "done" },
+    },
+  ],
+};
+
 const reviewFlow = {
   schemaVersion: 1,
   name: "g",
@@ -256,6 +271,20 @@ describe("runGraph — traversal + ledger", () => {
     expect(attempts.find((a) => a.nodeId === "a")?.status).toBe("Succeeded");
     expect(attempts.find((a) => a.nodeId === "b")?.status).toBe("Succeeded");
     expect(attempts.every((a) => a.attempt === 1)).toBe(true);
+  });
+
+  it("honors settings.timeoutMs on a check node — command killed, run Failed", async () => {
+    const seeded = await seedGraphRun(slowCheckFlow);
+    const startedAt = Date.now();
+
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    expect(Date.now() - startedAt).toBeLessThan(4_500);
+    expect((await getRun(seeded.runId)).status).toBe("Failed");
+
+    const attempts = await getAttempts(seeded.runId);
+
+    expect(attempts.find((a) => a.nodeId === "slow")?.status).toBe("Failed");
   });
 
   it("pauses at a human review node, then approve advances to Review", async () => {

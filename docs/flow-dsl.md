@@ -1413,6 +1413,20 @@ concerns. Rework is expressed only through validated node `transitions`,
 `finish.human.decisions`, and `rework`; there is no linear step/guard subsystem.
 Blocking policy is implemented through graph gates and promotion readiness.
 
+**cli/check command timeout (Implemented).** A cli/check node's
+`action.command` runs under a wall-clock timeout: `settings.timeoutMs` when
+declared, else the `300000` ms default. The effective value is clamped to the
+host ceiling `MAISTER_MAX_CLI_TIMEOUT_MS`
+([`configuration.md`](configuration.md#environment-variables-server-tier),
+default 1 h) — a request above the ceiling clamps with a warn log, it never
+fails validation. The command is spawned as its own **process group**; on
+timeout the whole group is signalled (SIGTERM, then SIGKILL after a 30 s grace
+so a `trap`-based cleanup can finish), so grandchildren such as
+`docker compose` services do not outlive the node. A timed-out attempt fails
+with `exitCode: -1` and errorCode `PRECONDITION`. `command_check` gate
+commands always run under the default timeout — a node's `settings.timeoutMs`
+does not apply to its gates, and gates declare no timeout of their own.
+
 `criticality` (`low | medium | high | critical`) is an optional, write-once
 severity on graph HITL requests. Responder `confidence` is a response-time
 self-report (`0..1`) stored on `hitl_requests.human_confidence`; it is not a
