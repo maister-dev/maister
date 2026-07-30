@@ -3546,6 +3546,7 @@
         "hooks": "Guardrail hooks"
       },
       "timeoutMs": "Timeout (ms)",
+      "timeoutMsHint": "Default 300000 ms (5 min); values above the host ceiling MAISTER_MAX_CLI_TIMEOUT_MS (default 1 h) clamp at run time.",
       "environmentPolicy": "Environment policy",
       "failureClass": "Failure class",
       "decisions": "Decisions (comma-separated)",

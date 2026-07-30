@@ -158,6 +158,8 @@ const labels: NodeSideFormProps["labels"] = {
     hooks: "Guardrail hooks",
   },
   timeoutMs: "Timeout (ms)",
+  timeoutMsHint:
+    "Default 300000 ms (5 min); values above the host ceiling MAISTER_MAX_CLI_TIMEOUT_MS clamp at run time.",
   environmentPolicy: "Environment policy",
   failureClass: "Failure class",
   decisions: "Decisions",
@@ -547,6 +549,13 @@ describe("NodeSideForm — cli", () => {
     expect(html).toContain('data-testid="node-environment-policy"');
     expect(html).toContain('data-testid="node-failure-class"');
     expect(html).not.toContain('data-testid="node-action-prompt"');
+  });
+
+  it("shows the effective timeout default + host ceiling hint", () => {
+    const html = render(nodeById("build"));
+
+    expect(html).toContain('data-testid="node-timeout-ms-hint"');
+    expect(html).toContain("Default 300000 ms");
   });
 });
 

@@ -59,6 +59,7 @@ export function buildNodeSideFormLabels(te: Translator): NodeSideFormLabels {
       hooks: te("nodeForm.enforcement.hooks"),
     },
     timeoutMs: te("nodeForm.timeoutMs"),
+    timeoutMsHint: te("nodeForm.timeoutMsHint"),
     environmentPolicy: te("nodeForm.environmentPolicy"),
     failureClass: te("nodeForm.failureClass"),
     decisions: te("nodeForm.decisions"),

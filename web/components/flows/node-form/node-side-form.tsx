@@ -79,6 +79,7 @@ export type NodeSideFormLabels = {
     hooks: string;
   };
   timeoutMs: string;
+  timeoutMsHint: string;
   environmentPolicy: string;
   failureClass: string;
   decisions: string;
@@ -1018,6 +1019,12 @@ export function NodeSideForm({
                 setSetting("timeoutMs", v === "" ? undefined : Number(v))
               }
             />
+            <p
+              className="font-mono text-[10px] text-mute"
+              data-testid="node-timeout-ms-hint"
+            >
+              {labels.timeoutMsHint}
+            </p>
             <SelectField
               label={labels.environmentPolicy}
               options={["inherit", "clean", "whitelist"]}
