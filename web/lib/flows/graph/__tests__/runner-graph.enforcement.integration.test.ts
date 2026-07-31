@@ -273,10 +273,17 @@ describe("runGraph — per-node enforcement gate (3.5 / 3.6 / 2.2)", () => {
       supervisorApi: api,
     });
 
+    // The spy models a clean end-turn, so the run must finish Review with the
+    // node Succeeded — a CONFIG-Failed run here means a runner seam fell back
+    // to env getDb() (DB_URL is unset in vitest workers) instead of the
+    // injected db.
+    expect((await getRun(seeded.runId)).status).toBe("Review");
+
     const attempt = (await getAttempts(seeded.runId)).find(
       (a) => a.nodeId === "implement",
     );
 
+    expect(attempt?.status).toBe("Succeeded");
     expect(attempt?.enforcementSnapshot).not.toBeNull();
     // Every class here is declared `instruct`, which resolves to `instructed`
     // regardless of the agent's capability — never `refused`.

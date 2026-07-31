@@ -509,6 +509,9 @@ async function runOneGate(
           { id: gate.id, type: "agent", mode: "new-session", prompt },
           {
             ...common,
+            // Thread the caller's db — runner-agent's event-consumer seam must
+            // never fall back to env getDb() (a different connection).
+            db: ctx.db,
             executor: {
               id: loaded.executor.id,
               agent: loaded.executor.agent,

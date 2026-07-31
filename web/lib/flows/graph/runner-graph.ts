@@ -1566,6 +1566,10 @@ async function executeNodeAction(
           },
           {
             ...common,
+            // Thread the caller's db — runner-agent's resolved_prompt persist
+            // and event-consumer seams must never fall back to env getDb(),
+            // which would query a different connection.
+            db: ctx.db,
             // M34 (ADR-089): catalog-agent binding (ai_coding only).
             agentBinding:
               def.type === "ai_coding" &&
