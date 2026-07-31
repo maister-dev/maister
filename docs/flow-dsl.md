@@ -45,7 +45,7 @@ The graph-only cut-over started with engine 3.0.0: manifests require a non-empty
 top-level `nodes[]`. The parser and compiler reject any manifest containing
 `steps[]` with the locked migration message: `legacy steps[] flows are not
 supported since engine 3.0.0; republish the package with nodes[]`. The current
-host engine is `3.2.0`; graph packages remain compatible when their declared
+host engine is `3.3.0`; graph packages remain compatible when their declared
 `compat` range includes that version. They do not need to raise an open-ended
 historical `engine_min`.
 
@@ -1509,6 +1509,25 @@ directly (e.g. `$HOME`); values outside the allow-list can only arrive via
 `MAISTER_CLI_INHERIT_ENV` host env var (see
 [configuration.md](configuration.md)) temporarily restores full inheritance
 for not-yet-migrated packages.
+
+**`MAISTER_FLOW_DIR` — packaged-script execution
+([ADR-154](decisions.md#adr-154-maister_flow_dir-for-clicheck-node-actions--packaged-script-execution--engine-330),
+Implemented, engine >= 3.3.0).** A `cli`/`check` **node action** additionally
+receives `MAISTER_FLOW_DIR=<installed flow revision dir>` (the SHA-pinned
+install path), so a package can execute the script files it ships instead of
+inlining them into `action.command`:
+
+```yaml
+action:
+  command: 'bash "${MAISTER_FLOW_DIR:?env-e2e requires MAIster engine >= 3.3.0 (MAISTER_FLOW_DIR missing)}/scripts/run-e2e.sh" "maister-run-{{ run.id }}"'
+```
+
+The dir is **read-only by convention** (it is the shared installed revision —
+write to the worktree cwd or to `dirname "$MAISTER_OUTPUT_FILE"` instead).
+Scope v1 is node actions ONLY: `command_check` gates and `requirements[]`
+probes do NOT receive the var. A flow relying on it MUST declare
+`compat.engine_min >= 3.3.0`; the `:?` guard shown above converts an older
+engine into an actionable one-line failure.
 
 ## Node output vars
 

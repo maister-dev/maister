@@ -31,7 +31,7 @@ Project -> Flow package -> Task / Experiment / Scratch run -> External operation
   resolved immutable revision, manifest digest, compatibility, trust, setup,
   enablement, upgrade, rollback, and deprecation state.
 - **Flow** — the enabled package revision a project uses for a task. Engine
-  `3.2.0` executes only graph manifests with typed `nodes[]`, lifecycle
+  `3.3.0` executes only graph manifests with typed `nodes[]`, lifecycle
   sections, named transitions, gates, bounded rework, and typed settings;
   legacy top-level `steps[]` manifests are refused.
 - **Flow node** — one executable unit such as AI coding, CLI, check, judge,

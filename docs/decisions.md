@@ -178,6 +178,7 @@
 | [ADR-151](#adr-151-agent-mentions-in-task-comments-as-directed-summons) | Agent mentions in task comments as directed summons | Implemented | 2026-07-26 |
 | [ADR-152](#adr-152-assistant-pulse-promotion-readiness--summonable-agent-metadata-and-per-attachment-agent-memory-files) | Assistant pulse promotion-readiness + summonable-agent metadata, and per-attachment agent memory files | Implemented | 2026-07-27 |
 | [ADR-153](#adr-153-flow-child-process-env-isolation--allow-listed-env-for-clicheckprobe-children) | Flow child-process env isolation — allow-listed env for cli/check/probe children | Implemented | 2026-07-31 |
+| [ADR-154](#adr-154-maister_flow_dir-for-clicheck-node-actions--packaged-script-execution--engine-330) | `MAISTER_FLOW_DIR` for cli/check node actions — packaged-script execution + engine 3.3.0 | Implemented | 2026-07-31 |
 
 ---
 
@@ -13738,6 +13739,74 @@ Surfaced by the env-e2e flow package, which had to self-mitigate with
 - _`env -i` inside packages (status quo)_: rejected — inverts
   responsibility; every package author must remember platform hygiene, and
   one forgetful package leaks the whole web tier.
+
+---
+
+### ADR-154: `MAISTER_FLOW_DIR` for cli/check node actions — packaged-script execution + engine 3.3.0
+
+**Date:** 2026-07-31
+**Status:** Implemented
+
+**Context:** A flow package can ship script files, but **no mechanism reaches
+the package install dir from a node command**: skills/agents materialization is
+agent-session-only (copied into the worktree `.claude/`), and `./`-relative
+resolution covers only `settings.form_schema` and `output.result.schema` (both
+resolved engine-side against the installed revision, never exposed to the
+child). None of the 12 existing packages executes its own files from a
+`cli`/`check` command. Surfaced by the env-e2e package: its compose+Playwright
+lifecycle script (trap-guaranteed up→seed→test→capture→down) would otherwise
+have to be **inlined into `action.command`** — version-skew-free but
+unreviewable, untestable in the package repo, and duplicated across flows. The
+SHA-pinned install path is already resolved per run as
+`LoadedRun.flowInstallPath` (`web/lib/flows/graph/runner-core.ts` — installed
+revision path, or the system-cache path fallback).
+
+**Decision:**
+
+- **Inject `MAISTER_FLOW_DIR=<flowInstallPath>` into the child env of
+  `cli`/`check` NODE ACTIONS.** `executeNodeAction`
+  (`web/lib/flows/graph/runner-graph.ts`) threads `loaded.flowInstallPath` into
+  `RunCliStepCtx`; `runCliStep` (`web/lib/flows/runner-cli.ts`) folds it into
+  the ADR-153 `childProcessEnv(extra)` assembly next to `MAISTER_OUTPUT_FILE`.
+  The allow-list contract is unchanged — the var is per-step transport plumbing,
+  a host **path** into the read-only installed revision, not a secret.
+- **Scope v1 = node actions ONLY.** `command_check` gates (`gates-exec.ts`
+  builds its own `RunCliStepCtx` without the field) and ADR-091 requirement
+  probes (own spawn seam, run in the project repo BEFORE any flow context)
+  do NOT get the var. Single consumer need today; widening to gates/probes is
+  a deliberate follow-up decision, not a default.
+- **`MAISTER_ENGINE_VERSION` bumps `3.2.0 → 3.3.0`.** A package that executes
+  its own files via the var MUST declare `compat.engine_min >= 3.3.0`. On older
+  engines the var is absent — the canonical command guard
+  `"${MAISTER_FLOW_DIR:?<package> requires MAIster engine >= 3.3.0}"` turns
+  that into an actionable one-line failure instead of a confusing
+  file-not-found.
+- **Read-only by convention.** The value points into the shared system cache /
+  installed revision; scripts MUST treat it as read-only (writes belong in the
+  worktree cwd or `dirname "$MAISTER_OUTPUT_FILE"`).
+
+**Consequences:**
+
+- Packages ship real script files as the SSOT — reviewable, unit-testable in
+  the package repo, executed as
+  `bash "$MAISTER_FLOW_DIR/scripts/<name>.sh"`. env-e2e is the first consumer.
+- Unit tests pin injection (set when `flowInstallPath` present, absent
+  otherwise, gate path untouched); a Postgres-backed integration test executes
+  a file from the install dir through a real `check` node.
+- No DB migration (engine version is a code constant); no OpenAPI/AsyncAPI
+  delta (child-env contract is engine-internal, no HTTP surface).
+
+**Alternatives Considered:**
+
+- _Inline scripts in `action.command` (status quo)_: rejected — a ~200-line
+  lifecycle script inside YAML is unreviewable, untestable, and skew-prone the
+  moment two flows need it.
+- _Materialize `scripts/` into the worktree like skills_: rejected — pollutes
+  the user's worktree with platform files, copies per session, and needs GC;
+  the install dir already exists and is immutable per revision.
+- _A `{{ flow.dir }}` template var_: rejected — templating renders INTO the
+  command string (quoting/injection hazards on paths with spaces); an env var
+  composes with the `:?` guard and stays invisible to `renderStrict`.
 
 ---
 

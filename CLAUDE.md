@@ -101,7 +101,7 @@ These were earned in two review passes. Reopen them only with new evidence.
 
 ### 1. ACP-driven execution with hybrid HITL
 
-A Flow = a typed-node **graph** (`nodes[]`, current engine 3.2.0) — node
+A Flow = a typed-node **graph** (`nodes[]`, current engine 3.3.0) — node
 types `ai_coding | judge | cli | check | human | form | orchestrator`
 and `consensus`, wired by named `transitions` with bounded `rework` loops.
 Manifests with a top-level `steps` key are incompatible and must be
@@ -264,7 +264,7 @@ nodes:
       commentsVar: review_comments
 ```
 
-**The only runtime DSL is the typed-node graph (current engine `3.2.0`; the
+**The only runtime DSL is the typed-node graph (current engine `3.3.0`; the
 graph-only cut-over began at `3.0.0`).** Flows use
 `nodes:` with named
 `transitions`, bounded `rework`, typed `input.requires`/`output.produces`

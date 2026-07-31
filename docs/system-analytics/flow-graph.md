@@ -518,8 +518,21 @@ readiness interaction: [`readiness.md`](readiness.md).
 - A manifest declares a non-empty `nodes[]`; any `steps[]` key and any missing
   or empty `nodes[]` is refused with `MaisterError("CONFIG")`.
 - A graph flow's declared `compat` range MUST include the current host engine
-  `3.2.0`;
+  `3.3.0`;
   open-ended graph packages with an older `engine_min` remain compatible.
+- **(ADR-153/ADR-154 — Implemented)** A `cli`/`check` node action's bash child
+  runs with the **allow-listed** env only (never web-tier secrets), plus the
+  per-step transport vars the runner injects: `MAISTER_OUTPUT_FILE` (per-attempt,
+  only when the node declares `output.result`) and — engine >= `3.3.0` —
+  `MAISTER_FLOW_DIR` (the SHA-pinned installed-revision dir, read-only by
+  convention, **node actions only**: `command_check` gates and `requirements[]`
+  probes do NOT receive it). The command runs under `settings.timeoutMs`
+  (default 300 000 ms, clamped to the `MAISTER_MAX_CLI_TIMEOUT_MS` host ceiling,
+  default 1 h) as a **detached process group**: on timeout the whole group gets
+  SIGTERM, a trapped cleanup has a 30 s grace window, then SIGKILL sweeps the
+  group; combined stdout+stderr above the 4 MiB capture cap SIGKILLs the group
+  immediately (no grace) — long-output commands must redirect verbose output to
+  files and print bounded tails.
 - `node_attempts` is **append-only**: rework and retries never mutate a prior
   row; `attempt` auto-increments per `(run_id, node_id)` under
   `UNIQUE (run_id, node_id, attempt)`.
