@@ -1524,6 +1524,10 @@ action:
 
 The dir is **read-only by convention** (it is the shared installed revision —
 write to the worktree cwd or to `dirname "$MAISTER_OUTPUT_FILE"` instead).
+It is the **flow revision dir**, not the package root: install materializes
+the flow's subdir plus the package-root `schemas/` — so a package MUST ship
+node-executed scripts INSIDE the flow dir (`flows/<id>/scripts/…`), which the
+command then reaches as `$MAISTER_FLOW_DIR/scripts/…`.
 Scope v1 is node actions ONLY: `command_check` gates and `requirements[]`
 probes do NOT receive the var. A flow relying on it MUST declare
 `compat.engine_min >= 3.3.0`; the `:?` guard shown above converts an older

@@ -13784,6 +13784,11 @@ revision path, or the system-cache path fallback).
 - **Read-only by convention.** The value points into the shared system cache /
   installed revision; scripts MUST treat it as read-only (writes belong in the
   worktree cwd or `dirname "$MAISTER_OUTPUT_FILE"`).
+- **The dir is the FLOW revision dir, not the package root.** Install
+  materializes the flow's subdir plus the package-root `schemas/`
+  (`materializePackageRootSchemas`); other package-root dirs do not exist
+  there. A package therefore ships node-executed scripts INSIDE the flow dir
+  (`flows/<id>/scripts/…`) — reached as `$MAISTER_FLOW_DIR/scripts/…`.
 
 **Consequences:**
 
