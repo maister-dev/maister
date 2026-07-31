@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { runCliStep } from "@/lib/flows/runner-cli";
+import { runCliStep, type RunCliStepCtx } from "@/lib/flows/runner-cli";
 
 let workDir: string;
 let worktreePath: string;
@@ -347,6 +347,50 @@ describe("runCliStep", () => {
 
       expect(result.ok).toBe(true);
       expect(result.stdout).toContain("s:leak-me");
+    });
+  });
+
+  describe("flow install dir (ADR-154)", () => {
+    const run = (command: string, extra: Partial<RunCliStepCtx> = {}) =>
+      runCliStep(
+        { id: "fdstep", type: "cli", command },
+        {
+          runtimeRoot: workDir,
+          projectSlug: "demo",
+          runId: "r1",
+          stepId: "fdstep",
+          worktreePath,
+          context: ctxBase(),
+          timeoutMs: 5_000,
+          ...extra,
+        },
+      );
+
+    it("injects MAISTER_FLOW_DIR when ctx.flowInstallPath is set", async () => {
+      const result = await run('echo "fd:${MAISTER_FLOW_DIR:-unset}"', {
+        flowInstallPath: "/opt/maister/flows/env-e2e@v1",
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.stdout).toContain("fd:/opt/maister/flows/env-e2e@v1");
+    });
+
+    it("omits MAISTER_FLOW_DIR when ctx.flowInstallPath is unset (gate/probe path)", async () => {
+      const result = await run('echo "fd:${MAISTER_FLOW_DIR:-unset}"');
+
+      expect(result.ok).toBe(true);
+      expect(result.stdout).toContain("fd:unset");
+    });
+
+    it("coexists with the armed MAISTER_OUTPUT_FILE transport", async () => {
+      const result = await run(
+        'echo "fd:${MAISTER_FLOW_DIR:-unset} of:${MAISTER_OUTPUT_FILE:-unset}"',
+        { flowInstallPath: "/opt/pkg", attempt: 2 },
+      );
+
+      expect(result.ok).toBe(true);
+      expect(result.stdout).toContain("fd:/opt/pkg");
+      expect(result.stdout).not.toContain("of:unset");
     });
   });
 

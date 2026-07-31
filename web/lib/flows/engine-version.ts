@@ -53,7 +53,12 @@ const log = pino({
 // A package declaring `evaluationMethods` MUST `compat`-target an engine that
 // knows the entity; an engine below a method's `engine_min` refuses enablement
 // loudly (EVAL_METHOD_ENGINE_MIN, see lib/evaluations/method.ts).
-export const MAISTER_ENGINE_VERSION = "3.2.0";
+// Bumped 3.2.0 -> 3.3.0 for MAISTER_FLOW_DIR in the cli/check node-action
+// child env (ADR-154): packaged script files become executable from node
+// commands. A flow relying on the var MUST `compat.engine_min >= 3.3.0`
+// (older engines leave it unset — the documented `:?` command guard turns
+// that into an actionable failure).
+export const MAISTER_ENGINE_VERSION = "3.3.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.

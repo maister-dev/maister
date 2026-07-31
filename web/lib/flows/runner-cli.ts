@@ -178,6 +178,11 @@ export type RunCliStepCtx = {
   // the MAISTER_OUTPUT_FILE transport with the per-attempt filename. Absent =
   // no transport provisioning (no MAISTER_OUTPUT_FILE in the child env).
   attempt?: number;
+  // ADR-154: set only by NODE-ACTION dispatch (executeNodeAction) — injects
+  // MAISTER_FLOW_DIR (the SHA-pinned installed-revision dir) so a package can
+  // execute the script files it ships. Gates (gates-exec) and requirement
+  // probes never set it: scope v1 is node actions only.
+  flowInstallPath?: string;
 };
 
 function previewCommand(s: string): string {
@@ -248,6 +253,15 @@ export async function runCliStep(
 
   const startedAt = Date.now();
 
+  // Per-step transport vars, single-sourced: MAISTER_OUTPUT_FILE (ADR-063,
+  // armed per-attempt) + MAISTER_FLOW_DIR (ADR-154, node actions only).
+  const extraEnv: Record<string, string> = {
+    ...(outputFile !== undefined ? { MAISTER_OUTPUT_FILE: outputFile } : {}),
+    ...(ctx.flowInstallPath !== undefined
+      ? { MAISTER_FLOW_DIR: ctx.flowInstallPath }
+      : {}),
+  };
+
   const { stdout, stderr, exitCode, aborted } = await execDetachedGroup({
     command: resolved,
     cwd: ctx.worktreePath,
@@ -255,9 +269,7 @@ export async function runCliStep(
     // ADR-153: allow-listed env only — flow commands never see web-tier
     // secrets. Serves cli/check nodes AND command_check gates (gates-exec).
     env: childProcessEnv(
-      outputFile !== undefined
-        ? { MAISTER_OUTPUT_FILE: outputFile }
-        : undefined,
+      Object.keys(extraEnv).length > 0 ? extraEnv : undefined,
     ),
   });
 

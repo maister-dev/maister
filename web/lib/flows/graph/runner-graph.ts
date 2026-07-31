@@ -1497,6 +1497,9 @@ async function executeNodeAction(
           ...(def.settings?.timeoutMs !== undefined
             ? { timeoutMs: def.settings.timeoutMs }
             : {}),
+          // ADR-154: node actions get MAISTER_FLOW_DIR (packaged-script
+          // execution); gates/probes deliberately do not.
+          flowInstallPath: loaded.flowInstallPath,
         },
       );
     case "ai_coding":
