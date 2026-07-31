@@ -37,25 +37,18 @@ const schema = fullSchema as unknown as Record<string, any>;
 const FIXTURE_PATH = resolve(__dirname, "_fixtures/m26-output-flow");
 const SCHEMA = "./schemas/result.json";
 
-let container: StartedPostgresTestDb["container"];
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
-let originalDbUrl: string | undefined;
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
     databaseName: "maister_test",
   });
-  container = testDatabase.container;
 
   db = testDatabase.db;
-  originalDbUrl = process.env.DB_URL;
-  process.env.DB_URL = container.getConnectionUri();
 }, 180_000);
 
 afterAll(async () => {
-  if (originalDbUrl === undefined) delete process.env.DB_URL;
-  else process.env.DB_URL = originalDbUrl;
   await closeDb();
   await testDatabase?.stop();
 });

@@ -32,31 +32,18 @@ const execFileAsync = promisify(execFile);
 
 const schema = fullSchema as unknown as Record<string, any>;
 
-let container: StartedPostgresTestDb["container"];
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
-let originalDbUrl: string | undefined;
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
     databaseName: "maister_test",
   });
-  container = testDatabase.container;
 
   db = testDatabase.db;
-  // runner-agent's event consumer falls back to getDb() (requires DB_URL)
-  // when no db is threaded — needed by the M29 ai_coding restriction tests
-  // (mirrors calibrate-verdict-exec.integration.test.ts).
-  originalDbUrl = process.env.DB_URL;
-  process.env.DB_URL = container.getConnectionUri();
 }, 180_000);
 
 afterAll(async () => {
-  if (originalDbUrl === undefined) {
-    delete process.env.DB_URL;
-  } else {
-    process.env.DB_URL = originalDbUrl;
-  }
   await closeDb();
   await testDatabase?.stop();
 });

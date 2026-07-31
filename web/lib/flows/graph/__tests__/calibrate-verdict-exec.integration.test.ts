@@ -39,32 +39,18 @@ import {
 
 const schema = fullSchema as unknown as Record<string, any>;
 
-let container: StartedPostgresTestDb["container"];
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
-let originalDbUrl: string | undefined;
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
     databaseName: "calibrate_verdict_test",
   });
-  container = testDatabase.container;
 
   db = testDatabase.db;
-
-  // Set DB_URL for runner-agent to call getDb() when db context is unavailable.
-  // Gates-exec calls runAgentStep without passing db in context, so the agent
-  // runner falls back to getDb() which requires the env var.
-  originalDbUrl = process.env.DB_URL;
-  process.env.DB_URL = container.getConnectionUri();
 }, 180_000);
 
 afterAll(async () => {
-  if (originalDbUrl === undefined) {
-    delete process.env.DB_URL;
-  } else {
-    process.env.DB_URL = originalDbUrl;
-  }
   await closeDb();
   await testDatabase?.stop();
 });

@@ -36,32 +36,18 @@ const FIXTURE_PATH = resolve(__dirname, "_fixtures/m26-output-flow");
 const OPEN = "```json maister:output";
 const CLOSE = "```";
 
-let container: StartedPostgresTestDb["container"];
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
-let originalDbUrl: string | undefined;
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
     databaseName: "maister_test",
   });
-  container = testDatabase.container;
 
   db = testDatabase.db;
-
-  // Set DB_URL for runner-agent to call getDb() when db context is unavailable
-  // (executeNodeAction does not thread db into the agent ctx — mirrors
-  // calibrate-verdict-exec.integration.test.ts).
-  originalDbUrl = process.env.DB_URL;
-  process.env.DB_URL = container.getConnectionUri();
 }, 180_000);
 
 afterAll(async () => {
-  if (originalDbUrl === undefined) {
-    delete process.env.DB_URL;
-  } else {
-    process.env.DB_URL = originalDbUrl;
-  }
   await closeDb();
   await testDatabase?.stop();
 });
