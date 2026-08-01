@@ -155,7 +155,8 @@ describe("runGraph — MAISTER_FLOW_DIR packaged-script execution (ADR-154)", ()
     const manifest = {
       schemaVersion: 1,
       name: "flow-dir",
-      compat: { engine_min: "3.0.0" },
+      // ADR-154 floor gate: MAISTER_FLOW_DIR in the check command requires 3.3.0.
+      compat: { engine_min: "3.3.0" },
       nodes: [
         {
           id: "verify",

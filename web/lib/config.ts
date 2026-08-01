@@ -544,6 +544,10 @@ const REWORK_RESET_ENGINE_MIN = "2.1.0";
 // `collectContentArtifactIds` scan so load-time and runtime never drift.
 const ARTIFACT_INLINE_ENGINE_MIN = "2.2.0";
 
+// ADR-154: cli/check commands referencing MAISTER_FLOW_DIR depend on the
+// packaged-script install-dir injection that ships with engine 3.3.0.
+const FLOW_DIR_ENGINE_MIN = "3.3.0";
+
 const PLAN_REVIEW_ENGINE_MIN = "3.1.0";
 
 // ADR-120 (D12): `input.requires[].inline: true` is valid ONLY on prompt-bearing
@@ -743,6 +747,20 @@ function declaresReworkResetOrOnExhaustion(nodes: NodeDef[]): boolean {
 // floor.
 function declaresArtifactContentInjection(nodes: NodeDef[]): boolean {
   return nodes.some((n) => collectContentArtifactIds(n).length > 0);
+}
+
+// ADR-154: true when any cli/check node's action.command references
+// MAISTER_FLOW_DIR — the packaged-script materialization var that only
+// engines >= 3.3.0 inject. Scan covers node actions only (scope v1: gates
+// and requirement probes never receive the var; their misuse fails at
+// runtime through the command's own `:?` guard).
+function declaresFlowDirCommand(nodes: NodeDef[]): boolean {
+  return nodes.some(
+    (n) =>
+      (n.type === "cli" || n.type === "check") &&
+      typeof n.action?.command === "string" &&
+      n.action.command.includes("MAISTER_FLOW_DIR"),
+  );
 }
 
 function declaresPlanReview(nodes: NodeDef[]): boolean {
@@ -1106,6 +1124,29 @@ export function validateGraphManifest(
       throw new MaisterError(
         "CONFIG",
         `graph flow ${flowYamlPath} is declaring settings.hooks but engine_min "${engineMin}" < ${HOOKS_ENGINE_MIN} — bump compat.engine_min to ${HOOKS_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
+      );
+    }
+  }
+
+  // ADR-154: a cli/check action.command referencing MAISTER_FLOW_DIR needs
+  // the packaged-script injection from engine 3.3.0. Manifests not using the
+  // var stay valid at any engine_min.
+  if (declaresFlowDirCommand(nodes)) {
+    const ok = semverGte(engineMin, FLOW_DIR_ENGINE_MIN);
+
+    log.debug(
+      {
+        flowYamlPath,
+        declared: engineMin || "(unset)",
+        required: FLOW_DIR_ENGINE_MIN,
+        ok,
+      },
+      "[engine-gate] MAISTER_FLOW_DIR floor",
+    );
+    if (!ok) {
+      throw new MaisterError(
+        "CONFIG",
+        `graph flow ${flowYamlPath} references MAISTER_FLOW_DIR in a cli/check command but engine_min "${engineMin}" < ${FLOW_DIR_ENGINE_MIN} — bump compat.engine_min to ${FLOW_DIR_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
       );
     }
   }

@@ -1530,8 +1530,11 @@ node-executed scripts INSIDE the flow dir (`flows/<id>/scripts/…`), which the
 command then reaches as `$MAISTER_FLOW_DIR/scripts/…`.
 Scope v1 is node actions ONLY: `command_check` gates and `requirements[]`
 probes do NOT receive the var. A flow relying on it MUST declare
-`compat.engine_min >= 3.3.0`; the `:?` guard shown above converts an older
-engine into an actionable one-line failure.
+`compat.engine_min >= 3.3.0` — enforced at load time: the manifest loader
+scans cli/check `action.command` strings for `MAISTER_FLOW_DIR` and refuses
+with `CONFIG` below that floor (gate commands and probes are outside the
+scan). On engines that predate the gate the `:?` guard shown above converts
+the missing var into an actionable one-line failure.
 
 ## Node output vars
 

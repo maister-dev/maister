@@ -13776,8 +13776,13 @@ revision path, or the system-cache path fallback).
   do NOT get the var. Single consumer need today; widening to gates/probes is
   a deliberate follow-up decision, not a default.
 - **`MAISTER_ENGINE_VERSION` bumps `3.2.0 → 3.3.0`.** A package that executes
-  its own files via the var MUST declare `compat.engine_min >= 3.3.0`. On older
-  engines the var is absent — the canonical command guard
+  its own files via the var MUST declare `compat.engine_min >= 3.3.0` — and the
+  floor is **enforced at load time**: `loadFlowManifest` scans cli/check
+  `action.command` strings for `MAISTER_FLOW_DIR` and refuses (`CONFIG`) when
+  `engine_min` is below `3.3.0`, mirroring the ADR-120 template-scan precedent
+  (gate commands and requirement probes stay outside the scan — scope v1).
+  On engines that predate the gate the var is simply absent — the canonical
+  command guard
   `"${MAISTER_FLOW_DIR:?<package> requires MAIster engine >= 3.3.0}"` turns
   that into an actionable one-line failure instead of a confusing
   file-not-found.
