@@ -4,10 +4,7 @@ import { sql } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-// FIXME(any): drizzle-orm dual peer-dep variants — runtime works, cast silences
-// the type-only clash (matches emit-gate.integration.test.ts).
-import * as fullSchema from "@/lib/db/schema";
-import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import { schema, seedGraphRun } from "@/test-support/graph-run-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -26,8 +23,6 @@ import {
 //     and emits nothing — a double markGatePassed captures exactly one
 //     gate.decided. Cross-status moves (failed → overridden) still emit.
 // =============================================================================
-
-const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
@@ -81,34 +76,9 @@ async function seedRunWithNodeAttempt(): Promise<{
   runId: string;
   nodeAttemptId: string;
 }> {
-  const projectId = randomUUID();
-  const executorId = randomUUID();
-  const flowId = randomUUID();
-  const taskId = randomUUID();
-  const runId = randomUUID();
-  const nodeAttemptId = randomUUID();
-
-  await db.insert(schema.projects).values({
-    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
-    id: projectId,
-    slug: `proj-${projectId.slice(0, 8)}`,
-    name: "Test",
-    repoPath: `/tmp/proj-${projectId.slice(0, 8)}`,
-    maisterYamlPath: "/tmp/m.yaml",
-  });
-
-  await db
-    .insert(schema.platformAcpRunners)
-    .values(testPlatformRunnerRow(executorId, "claude"));
-
-  await db.insert(schema.flows).values({
-    id: flowId,
-    projectId,
-    flowRefId: "bugfix",
-    source: "github.com/x/y",
-    version: "v1.0.0",
-    installedPath: "/tmp/flows/bugfix",
-    manifest: {
+  const { projectId, runId } = await seedGraphRun(
+    db,
+    {
       schemaVersion: 1,
       name: "Bugfix",
       nodes: [
@@ -120,28 +90,15 @@ async function seedRunWithNodeAttempt(): Promise<{
         },
       ],
     },
-    schemaVersion: 1,
-  });
-
-  await db.insert(schema.tasks).values({
-    number: Number.parseInt(crypto.randomUUID().slice(0, 6), 16),
-    id: taskId,
-    projectId,
-    title: "Test task",
-    prompt: "do the thing",
-    flowId,
-  });
-
-  await db.insert(schema.runs).values({
-    id: runId,
-    taskId,
-    projectId,
-    flowId,
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    flowVersion: "v1.0.0",
-    status: "Running",
-  });
+    {
+      flowRefId: "bugfix",
+      runnerOnRun: true,
+      workspace: false,
+      task: { title: "Test task", prompt: "do the thing" },
+      run: { runnerSnapshot: null },
+    },
+  );
+  const nodeAttemptId = randomUUID();
 
   await db.insert(schema.nodeAttempts).values({
     id: nodeAttemptId,

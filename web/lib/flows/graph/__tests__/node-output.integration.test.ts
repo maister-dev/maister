@@ -2,29 +2,25 @@ import type { NodeAttempt, Run } from "@/lib/db/schema";
 import type { SupervisorApi } from "@/lib/flows/runner-agent";
 import type { SupervisorEvent } from "@/lib/supervisor-client";
 
-import { access, mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { randomUUID } from "node:crypto";
 
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import * as fullSchema from "@/lib/db/schema";
-import {
-  testPlatformRunnerRow,
-  testRunnerSnapshot,
-} from "@/lib/__tests__/runner-fixtures";
 import { loadFlowManifest } from "@/lib/config";
 import { closeDb } from "@/lib/db/client";
 import { runFlow } from "@/lib/flows/runner";
 import {
+  schema,
+  seedGraphRun as seedGraphRunShared,
+  type SeededGraphRun,
+} from "@/test-support/graph-run-seed";
+import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
-
-const schema = fullSchema as unknown as Record<string, any>;
 
 // M26 P1 (ADR-063) round-trip coverage, mapped to the frozen spec's AC matrix
 // (.ai-factory/specs/feature-m26-structured-output-run-context.md):
@@ -52,97 +48,15 @@ afterAll(async () => {
   await testDatabase?.stop();
 });
 
-type Seeded = {
-  runId: string;
-  slug: string;
-  runtimeRoot: string;
-  worktreePath: string;
-};
-
-// Mirrors runner-graph.integration.test.ts seeding, plus a flow_revisions row
-// whose installedPath points at the local fixture dir so loadRun resolves
-// output.result schema paths against it (the 7e981b3c local-fixture pattern).
-async function seedGraphRun(manifest: unknown): Promise<Seeded> {
-  const projectId = randomUUID();
-  const slug = `proj-${projectId.slice(0, 8)}`;
-  const executorId = randomUUID();
-  const flowId = randomUUID();
-  const flowRevisionId = randomUUID();
-  const taskId = randomUUID();
-  const runId = randomUUID();
-  const worktreePath = await mkdtemp(join(tmpdir(), "wt-"));
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "rt-"));
-
-  await db.insert(schema.projects).values({
-    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
-    id: projectId,
-    slug,
-    name: "Test",
-    repoPath: `/tmp/${slug}`,
-    maisterYamlPath: "/tmp/m.yaml",
-  });
-  await db
-    .insert(schema.platformAcpRunners)
-    .values(testPlatformRunnerRow(executorId, "claude"));
-  await db.insert(schema.flows).values({
-    id: flowId,
-    projectId,
+// Shared seeding plus a flow_revisions row whose installedPath points at
+// the local fixture dir so loadRun resolves output.result schema paths
+// against it (the 7e981b3c local-fixture pattern).
+function seedGraphRun(manifest: unknown): Promise<SeededGraphRun> {
+  return seedGraphRunShared(db, manifest, {
     flowRefId: "m26",
-    source: "github.com/x/y",
-    version: "v1.0.0",
     installedPath: FIXTURE_PATH,
-    manifest,
-    schemaVersion: 1,
+    flowRevision: true,
   });
-  await db.insert(schema.flowRevisions).values({
-    id: flowRevisionId,
-    flowRefId: "m26",
-    source: "github.com/x/y",
-    versionLabel: "v1.0.0",
-    resolvedRevision: randomUUID().replace(/-/g, ""),
-    manifestDigest: "test-digest",
-    manifest,
-    schemaVersion: 1,
-    installedPath: FIXTURE_PATH,
-    setupStatus: "not_required",
-    packageStatus: "Installed",
-    execTrust: "trusted",
-  });
-  await db.insert(schema.tasks).values({
-    number: Math.trunc(Math.random() * 1e9) + 1,
-    id: taskId,
-    projectId,
-    title: "t",
-    prompt: "p",
-    flowId,
-  });
-  await db.insert(schema.runs).values({
-    id: runId,
-    taskId,
-    projectId,
-    flowId,
-    flowRevisionId,
-    flowVersion: "v1.0.0",
-    status: "Running",
-  });
-  await db.insert(schema.runSessions).values({
-    id: randomUUID(),
-    runId,
-    sessionName: "default",
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId),
-  });
-  await db.insert(schema.workspaces).values({
-    id: randomUUID(),
-    runId,
-    projectId,
-    branch: "feature/test",
-    worktreePath,
-    parentRepoPath: `/tmp/${slug}`,
-  });
-
-  return { runId, slug, runtimeRoot, worktreePath };
 }
 
 async function getRun(runId: string): Promise<Run> {
@@ -169,7 +83,7 @@ async function getGateResults(runId: string): Promise<unknown[]> {
 }
 
 async function writeDecision(
-  seeded: Seeded,
+  seeded: SeededGraphRun,
   nodeId: string,
   decision: string,
 ): Promise<void> {

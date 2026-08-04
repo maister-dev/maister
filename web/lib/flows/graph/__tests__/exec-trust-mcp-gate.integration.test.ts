@@ -21,18 +21,12 @@ import { randomUUID } from "node:crypto";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import * as fullSchema from "@/lib/db/schema";
-import {
-  testPlatformRunnerRow,
-  testRunnerSnapshot,
-} from "@/lib/__tests__/runner-fixtures";
 import { runFlow } from "@/lib/flows/runner";
+import { schema, seedGraphRun } from "@/test-support/graph-run-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
-
-const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
@@ -70,94 +64,23 @@ const stdioMcpFlow = {
 };
 
 async function seedRun(execTrust: FlowRevisionExecTrust) {
-  const projectId = randomUUID();
-  const slug = `proj-${projectId.slice(0, 8)}`;
-  const executorId = randomUUID();
-  const flowId = randomUUID();
-  const revisionId = randomUUID();
-  const taskId = randomUUID();
-  const runId = randomUUID();
-  const worktreePath = await mkdtemp(join(tmpdir(), "wt-"));
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "rt-"));
   const installedPath = await mkdtemp(join(tmpdir(), "rev-"));
   // Unique per call: avoid (flow_ref_id, resolved_revision) collisions between
   // the two cases sharing one container. 40-char lowercase hex.
-  const flowRef = `g-${revisionId.slice(0, 8)}`;
-  const sha = (revisionId.replace(/-/g, "") + "0".repeat(8)).slice(0, 40);
+  const unique = randomUUID();
+  const flowRef = `g-${unique.slice(0, 8)}`;
+  const sha = (unique.replace(/-/g, "") + "0".repeat(8)).slice(0, 40);
 
-  await db.insert(schema.projects).values({
-    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
-    id: projectId,
-    slug,
-    name: "Test",
-    repoPath: `/tmp/${slug}`,
-    maisterYamlPath: "/tmp/m.yaml",
-  });
-  await db
-    .insert(schema.platformAcpRunners)
-    .values(testPlatformRunnerRow(executorId, "claude"));
-  await db.insert(schema.flowRevisions).values({
-    id: revisionId,
+  const seeded = await seedGraphRun(db, stdioMcpFlow, {
     flowRefId: flowRef,
-    source: "github.com/x/y",
-    versionLabel: "v1.0.0",
-    resolvedRevision: sha,
-    manifestDigest: `digest-${revisionId}`,
-    manifest: stdioMcpFlow,
-    schemaVersion: 1,
     installedPath,
-    setupStatus: "not_required",
-    packageStatus: "Installed",
-    execTrust,
+    flowRevision: { execTrust, resolvedRevision: sha, enabledOnFlow: true },
+    run: { flowRevision: sha },
   });
-  await db.insert(schema.flows).values({
-    id: flowId,
-    projectId,
-    flowRefId: flowRef,
-    source: "github.com/x/y",
-    version: "v1.0.0",
-    installedPath,
-    manifest: stdioMcpFlow,
-    schemaVersion: 1,
-    enabledRevisionId: revisionId,
-  });
-  await db.insert(schema.tasks).values({
-    number: Math.trunc(Math.random() * 1e9) + 1,
-    id: taskId,
-    projectId,
-    title: "t",
-    prompt: "p",
-    flowId,
-  });
-  await db.insert(schema.runs).values({
-    id: runId,
-    taskId,
-    projectId,
-    flowId,
-    flowVersion: "v1.0.0",
-    flowRevision: sha,
-    flowRevisionId: revisionId,
-    status: "Running",
-  });
-  await db.insert(schema.runSessions).values({
-    id: randomUUID(),
-    runId,
-    sessionName: "default",
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId),
-  });
-  await db.insert(schema.workspaces).values({
-    id: randomUUID(),
-    runId,
-    projectId,
-    branch: "feature/test",
-    worktreePath,
-    parentRepoPath: `/tmp/${slug}`,
-  });
+
   await db.insert(schema.capabilityRecords).values({
     id: randomUUID(),
-    projectId,
+    projectId: seeded.projectId,
     capabilityRefId: "github",
     kind: "mcp",
     label: "GitHub MCP (stdio)",
@@ -174,7 +97,7 @@ async function seedRun(execTrust: FlowRevisionExecTrust) {
     },
   });
 
-  return { runId, runtimeRoot };
+  return { runId: seeded.runId, runtimeRoot: seeded.runtimeRoot };
 }
 
 function makeSupervisorSpy(): SupervisorApi & {

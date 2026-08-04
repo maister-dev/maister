@@ -4,13 +4,6 @@ import { sql } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-// FIXME(any): drizzle-orm dual peer-dep variants — runtime works, cast silences
-// the type-only clash.
-import * as fullSchema from "@/lib/db/schema";
-import {
-  testPlatformRunnerRow,
-  testRunnerSnapshot,
-} from "@/lib/__tests__/runner-fixtures";
 import {
   failArtifact,
   getArtifactsForRun,
@@ -21,12 +14,11 @@ import {
   recordCurrentArtifact,
   supersedePrior,
 } from "@/lib/flows/graph/artifact-store";
+import { schema, seedGraphRun } from "@/test-support/graph-run-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
-
-const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
@@ -43,71 +35,31 @@ afterAll(async () => {
   await testDatabase?.stop();
 });
 
+const BUGFIX_MANIFEST = {
+  schemaVersion: 1,
+  name: "Bugfix",
+  nodes: [
+    {
+      id: "run",
+      type: "cli",
+      action: { command: "true" },
+      transitions: { success: "done" },
+    },
+  ],
+};
+
 async function seedRun(): Promise<{
   runId: string;
   nodeAttemptId: string;
 }> {
-  const projectId = randomUUID();
-  const executorId = randomUUID();
-  const flowId = randomUUID();
-  const taskId = randomUUID();
-  const runId = randomUUID();
-  const nodeAttemptId = randomUUID();
-
-  await db.insert(schema.projects).values({
-    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
-    id: projectId,
-    slug: `proj-${projectId.slice(0, 8)}`,
-    name: "Test",
-    repoPath: `/tmp/proj-${projectId.slice(0, 8)}`,
-    maisterYamlPath: "/tmp/m.yaml",
-  });
-
-  await db
-    .insert(schema.platformAcpRunners)
-    .values(testPlatformRunnerRow(executorId, "claude"));
-
-  await db.insert(schema.flows).values({
-    id: flowId,
-    projectId,
+  const { runId } = await seedGraphRun(db, BUGFIX_MANIFEST, {
     flowRefId: "bugfix",
-    source: "github.com/x/y",
-    version: "v1.0.0",
-    installedPath: "/tmp/flows/bugfix",
-    manifest: {
-      schemaVersion: 1,
-      name: "Bugfix",
-      nodes: [
-        {
-          id: "run",
-          type: "cli",
-          action: { command: "true" },
-          transitions: { success: "done" },
-        },
-      ],
-    },
-    schemaVersion: 1,
+    runnerOnRun: true,
+    workspace: false,
+    task: { title: "Test task", prompt: "do the thing" },
+    run: { status: "Pending" },
   });
-
-  await db.insert(schema.tasks).values({
-    number: Math.trunc(Math.random() * 1e9) + 1,
-    id: taskId,
-    projectId,
-    title: "Test task",
-    prompt: "do the thing",
-    flowId,
-  });
-
-  await db.insert(schema.runs).values({
-    id: runId,
-    taskId,
-    projectId,
-    flowId,
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId),
-    flowVersion: "v1.0.0",
-  });
+  const nodeAttemptId = randomUUID();
 
   await db.insert(schema.nodeAttempts).values({
     id: nodeAttemptId,

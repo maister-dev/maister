@@ -8,28 +8,24 @@
 
 import type { Run } from "@/lib/db/schema";
 
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import * as fullSchema from "@/lib/db/schema";
-import {
-  testPlatformRunnerRow,
-  testRunnerSnapshot,
-} from "@/lib/__tests__/runner-fixtures";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { runFlow } from "@/lib/flows/runner";
+import {
+  schema,
+  seedGraphRun,
+  type SeededGraphRun,
+} from "@/test-support/graph-run-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
-
-const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
@@ -46,79 +42,6 @@ afterAll(async () => {
   await testDatabase?.stop();
 });
 
-type Seeded = {
-  runId: string;
-  slug: string;
-  runtimeRoot: string;
-};
-
-async function seedGraphRun(manifest: unknown): Promise<Seeded> {
-  const projectId = randomUUID();
-  const slug = `proj-${projectId.slice(0, 8)}`;
-  const executorId = randomUUID();
-  const flowId = randomUUID();
-  const taskId = randomUUID();
-  const runId = randomUUID();
-  const worktreePath = await mkdtemp(join(tmpdir(), "wt-"));
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "rt-"));
-
-  await db.insert(schema.projects).values({
-    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
-    id: projectId,
-    slug,
-    name: "Test",
-    repoPath: `/tmp/${slug}`,
-    maisterYamlPath: "/tmp/m.yaml",
-  });
-  await db
-    .insert(schema.platformAcpRunners)
-    .values(testPlatformRunnerRow(executorId, "claude"));
-  await db.insert(schema.flows).values({
-    id: flowId,
-    projectId,
-    flowRefId: "g",
-    source: "github.com/x/y",
-    version: "v1.0.0",
-    installedPath: "/tmp/flows/g",
-    manifest,
-    schemaVersion: 1,
-  });
-  await db.insert(schema.tasks).values({
-    number: Math.trunc(Math.random() * 1e9) + 1,
-    id: taskId,
-    projectId,
-    title: "t",
-    prompt: "p",
-    flowId,
-  });
-  await db.insert(schema.runs).values({
-    id: runId,
-    taskId,
-    projectId,
-    flowId,
-    flowVersion: "v1.0.0",
-    status: "Running",
-  });
-  await db.insert(schema.runSessions).values({
-    id: randomUUID(),
-    runId,
-    sessionName: "default",
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId),
-  });
-  await db.insert(schema.workspaces).values({
-    id: randomUUID(),
-    runId,
-    projectId,
-    branch: "feature/test",
-    worktreePath,
-    parentRepoPath: `/tmp/${slug}`,
-  });
-
-  return { runId, slug, runtimeRoot };
-}
-
 async function getRun(runId: string): Promise<Run> {
   const rows = (await db
     .select()
@@ -129,7 +52,7 @@ async function getRun(runId: string): Promise<Run> {
 }
 
 async function writeDecision(
-  seeded: Seeded,
+  seeded: SeededGraphRun,
   nodeId: string,
   decision: string,
 ): Promise<void> {
@@ -154,7 +77,7 @@ describe("T4.4: review refusal when evidence not ready (integration)", () => {
     // This test validates the review refusal flow: when a human_review node
     // has a blocking artifact_required gate in pre_finish, and the required
     // artifact is missing/stale, approval is refused and the run stays in Review.
-    const seeded = await seedGraphRun({
+    const seeded = await seedGraphRun(db, {
       schemaVersion: 1,
       name: "g",
       compat: { engine_min: "1.1.0" },
@@ -219,7 +142,7 @@ describe("T4.4: review refusal when evidence not ready (integration)", () => {
   it("once required artifact becomes current, approval succeeds", async () => {
     // After a blocking artifact_required gate fails, once the artifact
     // is recorded and current, the gate should pass and approval should succeed.
-    const seeded = await seedGraphRun({
+    const seeded = await seedGraphRun(db, {
       schemaVersion: 1,
       name: "g",
       compat: { engine_min: "1.1.0" },
@@ -291,7 +214,7 @@ describe("T4.4: review refusal when evidence not ready (integration)", () => {
 // is the runner-side guard for the global requiredFor:[review] def-current rule.
 describe("F1: review-evidence guard without an explicit gate (integration)", () => {
   it("refuses approval when a requiredFor:[review] def has no current row", async () => {
-    const seeded = await seedGraphRun({
+    const seeded = await seedGraphRun(db, {
       schemaVersion: 1,
       name: "g",
       compat: { engine_min: "1.2.0" },
@@ -340,7 +263,7 @@ describe("F1: review-evidence guard without an explicit gate (integration)", () 
   });
 
   it("allows approval once the requiredFor:[review] def is current", async () => {
-    const seeded = await seedGraphRun({
+    const seeded = await seedGraphRun(db, {
       schemaVersion: 1,
       name: "g",
       compat: { engine_min: "1.2.0" },

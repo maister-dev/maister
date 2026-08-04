@@ -15,11 +15,6 @@ import { and, eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import * as fullSchema from "@/lib/db/schema";
-import {
-  testPlatformRunnerRow,
-  testRunnerSnapshot,
-} from "@/lib/__tests__/runner-fixtures";
 import {
   getArtifactsForRun,
   getCurrentArtifact,
@@ -27,12 +22,11 @@ import {
   recordArtifact,
   supersedePrior,
 } from "@/lib/flows/graph/artifact-store";
+import { schema, seedGraphRun } from "@/test-support/graph-run-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
-
-const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
@@ -50,31 +44,9 @@ afterAll(async () => {
 });
 
 async function seedRun(): Promise<string> {
-  const projectId = randomUUID();
-  const executorId = randomUUID();
-  const flowId = randomUUID();
-  const taskId = randomUUID();
-  const runId = randomUUID();
-
-  await db.insert(schema.projects).values({
-    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
-    id: projectId,
-    slug: `proj-${projectId.slice(0, 8)}`,
-    name: "Test",
-    repoPath: `/tmp/test-${projectId.slice(0, 8)}`,
-    maisterYamlPath: "/tmp/m.yaml",
-  });
-  await db
-    .insert(schema.platformAcpRunners)
-    .values(testPlatformRunnerRow(executorId, "claude"));
-  await db.insert(schema.flows).values({
-    id: flowId,
-    projectId,
-    flowRefId: "test",
-    source: "github.com/x/y",
-    version: "v1.0.0",
-    installedPath: "/tmp/flows/test",
-    manifest: {
+  const { runId } = await seedGraphRun(
+    db,
+    {
       schemaVersion: 1,
       name: "Test",
       nodes: [
@@ -99,35 +71,12 @@ async function seedRun(): Promise<string> {
         },
       ],
     },
-    schemaVersion: 1,
-  });
-  await db.insert(schema.tasks).values({
-    number: Math.trunc(Math.random() * 1e9) + 1,
-    id: taskId,
-    projectId,
-    title: "t",
-    prompt: "p",
-    flowId,
-  });
-  await db.insert(schema.runs).values({
-    id: runId,
-    taskId,
-    projectId,
-    flowId,
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId),
-    flowVersion: "v1.0.0",
-    status: "HumanWorking",
-  });
-  await db.insert(schema.workspaces).values({
-    id: randomUUID(),
-    runId,
-    projectId,
-    branch: "feature/test",
-    worktreePath: `/tmp/wt-${runId.slice(0, 8)}`,
-    parentRepoPath: `/tmp/repo-${projectId.slice(0, 8)}`,
-  });
+    {
+      flowRefId: "test",
+      runnerOnRun: true,
+      run: { status: "HumanWorking" },
+    },
+  );
 
   // Create node attempts for the work and review nodes so the tests can access them
   await db.insert(schema.nodeAttempts).values({

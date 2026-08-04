@@ -12,28 +12,26 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import * as fullSchema from "@/lib/db/schema";
-import {
-  testPlatformRunnerRow,
-  testRunnerSnapshot,
-} from "@/lib/__tests__/runner-fixtures";
 import { closeDb } from "@/lib/db/client";
 import { isRunContextWriteSafe } from "@/lib/flows/graph/run-context";
 import { runFlow } from "@/lib/flows/runner";
+import {
+  schema,
+  seedGraphRun as seedGraphRunShared,
+  type SeededGraphRun,
+} from "@/test-support/graph-run-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
 const execFileAsync = promisify(execFile);
-const schema = fullSchema as unknown as Record<string, any>;
 const FIXTURE_PATH = resolve(__dirname, "_fixtures/m26-output-flow");
 const SCHEMA = "./schemas/result.json";
 
@@ -53,94 +51,13 @@ afterAll(async () => {
   await testDatabase?.stop();
 });
 
-type Seeded = {
-  runId: string;
-  slug: string;
-  runtimeRoot: string;
-  worktreePath: string;
-};
-
-async function seedGraphRun(manifest: unknown): Promise<Seeded> {
-  const projectId = randomUUID();
-  const slug = `proj-${projectId.slice(0, 8)}`;
-  const executorId = randomUUID();
-  const flowId = randomUUID();
-  const flowRevisionId = randomUUID();
-  const taskId = randomUUID();
-  const runId = randomUUID();
-  const worktreePath = await mkdtemp(join(tmpdir(), "wt-"));
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "rt-"));
-
-  await db.insert(schema.projects).values({
-    taskKey: `T${randomUUID().slice(0, 8)}`.toUpperCase(),
-    id: projectId,
-    slug,
-    name: "Test",
-    repoPath: `/tmp/${slug}`,
-    maisterYamlPath: "/tmp/m.yaml",
-  });
-  await db
-    .insert(schema.platformAcpRunners)
-    .values(testPlatformRunnerRow(executorId, "claude"));
-  await db.insert(schema.flows).values({
-    id: flowId,
-    projectId,
+function seedGraphRun(manifest: unknown): Promise<SeededGraphRun> {
+  return seedGraphRunShared(db, manifest, {
     flowRefId: "m38",
-    source: "github.com/x/y",
-    version: "v1.0.0",
     installedPath: FIXTURE_PATH,
-    manifest,
-    schemaVersion: 1,
+    flowRevision: true,
+    task: { prompt: "fix the bug" },
   });
-  await db.insert(schema.flowRevisions).values({
-    id: flowRevisionId,
-    flowRefId: "m38",
-    source: "github.com/x/y",
-    versionLabel: "v1.0.0",
-    resolvedRevision: randomUUID().replace(/-/g, ""),
-    manifestDigest: "test-digest",
-    manifest,
-    schemaVersion: 1,
-    installedPath: FIXTURE_PATH,
-    setupStatus: "not_required",
-    packageStatus: "Installed",
-    execTrust: "trusted",
-  });
-  await db.insert(schema.tasks).values({
-    number: Math.trunc(Math.random() * 1e9) + 1,
-    id: taskId,
-    projectId,
-    title: "t",
-    prompt: "fix the bug",
-    flowId,
-  });
-  await db.insert(schema.runs).values({
-    id: runId,
-    taskId,
-    projectId,
-    flowId,
-    flowRevisionId,
-    flowVersion: "v1.0.0",
-    status: "Running",
-  });
-  await db.insert(schema.runSessions).values({
-    id: randomUUID(),
-    runId,
-    sessionName: "default",
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId),
-  });
-  await db.insert(schema.workspaces).values({
-    id: randomUUID(),
-    runId,
-    projectId,
-    branch: "feature/test",
-    worktreePath,
-    parentRepoPath: `/tmp/${slug}`,
-  });
-
-  return { runId, slug, runtimeRoot, worktreePath };
 }
 
 async function getRun(runId: string): Promise<Run> {

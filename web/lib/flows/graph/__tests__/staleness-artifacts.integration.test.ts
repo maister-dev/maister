@@ -8,8 +8,7 @@
 
 import type { ArtifactInstance, NodeAttempt } from "@/lib/db/schema";
 
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -17,11 +16,6 @@ import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import * as fullSchema from "@/lib/db/schema";
-import {
-  testPlatformRunnerRow,
-  testRunnerSnapshot,
-} from "@/lib/__tests__/runner-fixtures";
 import {
   getCurrentArtifact,
   getArtifactsForRun,
@@ -30,11 +24,14 @@ import {
 } from "@/lib/flows/graph/artifact-store";
 import { runFlow } from "@/lib/flows/runner";
 import {
+  schema,
+  seedGraphRun,
+  type SeededGraphRun,
+} from "@/test-support/graph-run-seed";
+import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
-
-const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
@@ -51,79 +48,6 @@ afterAll(async () => {
   await testDatabase?.stop();
 });
 
-type Seeded = {
-  runId: string;
-  slug: string;
-  runtimeRoot: string;
-};
-
-async function seedGraphRun(manifest: unknown): Promise<Seeded> {
-  const projectId = randomUUID();
-  const slug = `proj-${projectId.slice(0, 8)}`;
-  const executorId = randomUUID();
-  const flowId = randomUUID();
-  const taskId = randomUUID();
-  const runId = randomUUID();
-  const worktreePath = await mkdtemp(join(tmpdir(), "wt-"));
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "rt-"));
-
-  await db.insert(schema.projects).values({
-    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
-    id: projectId,
-    slug,
-    name: "Test",
-    repoPath: `/tmp/${slug}`,
-    maisterYamlPath: "/tmp/m.yaml",
-  });
-  await db
-    .insert(schema.platformAcpRunners)
-    .values(testPlatformRunnerRow(executorId, "claude"));
-  await db.insert(schema.flows).values({
-    id: flowId,
-    projectId,
-    flowRefId: "g",
-    source: "github.com/x/y",
-    version: "v1.0.0",
-    installedPath: "/tmp/flows/g",
-    manifest,
-    schemaVersion: 1,
-  });
-  await db.insert(schema.tasks).values({
-    number: Math.trunc(Math.random() * 1e9) + 1,
-    id: taskId,
-    projectId,
-    title: "t",
-    prompt: "p",
-    flowId,
-  });
-  await db.insert(schema.runs).values({
-    id: runId,
-    taskId,
-    projectId,
-    flowId,
-    flowVersion: "v1.0.0",
-    status: "Running",
-  });
-  await db.insert(schema.runSessions).values({
-    id: randomUUID(),
-    runId,
-    sessionName: "default",
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId),
-  });
-  await db.insert(schema.workspaces).values({
-    id: randomUUID(),
-    runId,
-    projectId,
-    branch: "feature/test",
-    worktreePath,
-    parentRepoPath: `/tmp/${slug}`,
-  });
-
-  return { runId, slug, runtimeRoot };
-}
-
 async function getAttempts(runId: string): Promise<NodeAttempt[]> {
   return (await db
     .select()
@@ -136,7 +60,7 @@ async function getArtifacts(runId: string): Promise<ArtifactInstance[]> {
 }
 
 async function writeDecision(
-  seeded: Seeded,
+  seeded: SeededGraphRun,
   nodeId: string,
   decision: string,
   extra: Record<string, unknown> = {},
@@ -159,7 +83,7 @@ async function writeDecision(
 
 describe("T4.1: artifact staleness on rework", () => {
   it("rework → downstream node's current artifacts are marked stale", async () => {
-    const seeded = await seedGraphRun({
+    const seeded = await seedGraphRun(db, {
       schemaVersion: 1,
       name: "g",
       compat: { engine_min: "1.1.0" },
@@ -251,7 +175,7 @@ describe("T4.1: artifact staleness on rework", () => {
   });
 
   it("after staling, recording a new artifact for the same def supersedes stale → current", async () => {
-    const seeded = await seedGraphRun({
+    const seeded = await seedGraphRun(db, {
       schemaVersion: 1,
       name: "g",
       compat: { engine_min: "1.1.0" },

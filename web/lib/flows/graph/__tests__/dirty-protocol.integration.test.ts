@@ -24,24 +24,17 @@ import {
   vi,
 } from "vitest";
 
-// FIXME(any): dual drizzle-orm peer-dep variants (store idiom).
-import * as fullSchema from "@/lib/db/schema";
-import {
-  testPlatformRunnerRow,
-  testRunnerSnapshot,
-} from "@/lib/__tests__/runner-fixtures";
 import { captureCheckpoint } from "@/lib/flows/graph/workspace-checkpoint";
 import {
   computeDirtySummary,
   resolveDirtyWorktree,
 } from "@/lib/runs/dirty-resolution";
 import { discardWorktree } from "@/lib/worktree";
+import { schema, seedGraphRun } from "@/test-support/graph-run-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
-
-const schema = fullSchema as unknown as Record<string, any>;
 
 const execFileAsync = promisify(execFile);
 
@@ -351,32 +344,9 @@ describe("resolveDirtyWorktree (service, X-2PC/X-ATOMIC)", () => {
     parentRepoPath: string;
     branch: string;
   }): Promise<{ runId: string; hitlId: string; projectId: string }> {
-    const projectId = randomUUID();
-    const executorId = randomUUID();
-    const flowId = randomUUID();
-    const taskId = randomUUID();
-    const runId = randomUUID();
-    const hitlId = randomUUID();
-
-    await db.insert(schema.projects).values({
-      taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
-      id: projectId,
-      slug: `proj-${projectId.slice(0, 8)}`,
-      name: "Test",
-      repoPath: args.parentRepoPath,
-      maisterYamlPath: "/tmp/m.yaml",
-    });
-    await db
-      .insert(schema.platformAcpRunners)
-      .values(testPlatformRunnerRow(executorId, "claude"));
-    await db.insert(schema.flows).values({
-      id: flowId,
-      projectId,
-      flowRefId: "bugfix",
-      source: "github.com/x/y",
-      version: "v1.0.0",
-      installedPath: "/tmp/flows/bugfix",
-      manifest: {
+    const seeded = await seedGraphRun(
+      db,
+      {
         schemaVersion: 1,
         name: "Bugfix",
         nodes: [
@@ -388,47 +358,31 @@ describe("resolveDirtyWorktree (service, X-2PC/X-ATOMIC)", () => {
           },
         ],
       },
-      schemaVersion: 1,
-    });
-    await db.insert(schema.tasks).values({
-      number: Number.parseInt(crypto.randomUUID().slice(0, 6), 16),
-      id: taskId,
-      projectId,
-      title: "Test task",
-      prompt: "do",
-      flowId,
-    });
-    await db.insert(schema.runs).values({
-      id: runId,
-      taskId,
-      projectId,
-      flowId,
-      runnerId: executorId,
-      capabilityAgent: "claude",
-      runnerSnapshot: testRunnerSnapshot(executorId),
-      flowVersion: "v1.0.0",
-      status: "NeedsInput",
-      currentStepId: "review",
-    });
-    await db.insert(schema.workspaces).values({
-      id: randomUUID(),
-      runId,
-      projectId,
-      branch: args.branch,
-      worktreePath: args.worktreePath,
-      parentRepoPath: args.parentRepoPath,
-      baseBranch: "main",
-    });
+      {
+        flowRefId: "bugfix",
+        repoPath: args.parentRepoPath,
+        runnerOnRun: true,
+        task: { title: "Test task", prompt: "do" },
+        run: { status: "NeedsInput", currentStepId: "review" },
+        workspace: {
+          branch: args.branch,
+          worktreePath: args.worktreePath,
+          baseBranch: "main",
+        },
+      },
+    );
+    const hitlId = randomUUID();
+
     await db.insert(schema.hitlRequests).values({
       id: hitlId,
-      runId,
+      runId: seeded.runId,
       stepId: "review",
       kind: "human",
       schema: { review: true },
       prompt: "Review?",
     });
 
-    return { runId, hitlId, projectId };
+    return { runId: seeded.runId, hitlId, projectId: seeded.projectId };
   }
 
   it("commit: snapshots the dirty worktree (tip moves), records the choice, gate stays open", async () => {

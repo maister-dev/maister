@@ -1,23 +1,21 @@
 import type { NodeAttempt, Run, HitlRequest } from "@/lib/db/schema";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import * as fullSchema from "@/lib/db/schema";
-import {
-  testPlatformRunnerRow,
-  testRunnerSnapshot,
-} from "@/lib/__tests__/runner-fixtures";
 import { closeDb } from "@/lib/db/client";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { runFlow } from "@/lib/flows/runner";
+import {
+  schema,
+  seedGraphRun as seedGraphRunShared,
+  type SeededGraphRun,
+} from "@/test-support/graph-run-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -26,8 +24,6 @@ import {
 // ADR-118 runtime: baseline-aware exhaustion + rework `onExhaustion` routing
 // (this file) and `resetTargets` re-baseline (added in Phase 5). The loop is
 // driven by a human-review rework decision (deterministic, HITL artifact).
-
-const schema = fullSchema as unknown as Record<string, any>;
 
 let container: StartedPostgresTestDb["container"];
 let testDatabase: StartedPostgresTestDb;
@@ -52,79 +48,16 @@ afterAll(async () => {
   await testDatabase?.stop();
 });
 
-type Seeded = { runId: string; slug: string; runtimeRoot: string };
-
-async function seedGraphRun(
+function seedGraphRun(
   manifest: unknown,
   opts: { executionPolicy?: ExecutionPolicy } = {},
-): Promise<Seeded> {
-  const projectId = randomUUID();
-  const slug = `proj-${projectId.slice(0, 8)}`;
-  const executorId = randomUUID();
-  const flowId = randomUUID();
-  const taskId = randomUUID();
-  const runId = randomUUID();
-  const worktreePath = await mkdtemp(join(tmpdir(), "wt-"));
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "rt-"));
-
-  await db.insert(schema.projects).values({
-    taskKey: `T${randomUUID().slice(0, 8)}`.toUpperCase(),
-    id: projectId,
-    slug,
-    name: "Test",
-    repoPath: `/tmp/${slug}`,
-    maisterYamlPath: "/tmp/m.yaml",
+): Promise<SeededGraphRun> {
+  return seedGraphRunShared(db, manifest, {
+    run:
+      opts.executionPolicy !== undefined
+        ? { executionPolicy: opts.executionPolicy }
+        : {},
   });
-  await db
-    .insert(schema.platformAcpRunners)
-    .values(testPlatformRunnerRow(executorId, "claude"));
-  await db.insert(schema.flows).values({
-    id: flowId,
-    projectId,
-    flowRefId: "g",
-    source: "github.com/x/y",
-    version: "v1.0.0",
-    installedPath: "/tmp/flows/g",
-    manifest,
-    schemaVersion: 1,
-  });
-  await db.insert(schema.tasks).values({
-    number: Math.trunc(Math.random() * 1e9) + 1,
-    id: taskId,
-    projectId,
-    title: "t",
-    prompt: "p",
-    flowId,
-  });
-  await db.insert(schema.runs).values({
-    id: runId,
-    taskId,
-    projectId,
-    flowId,
-    flowVersion: "v1.0.0",
-    status: "Running",
-    ...(opts.executionPolicy !== undefined
-      ? { executionPolicy: opts.executionPolicy }
-      : {}),
-  });
-  await db.insert(schema.runSessions).values({
-    id: randomUUID(),
-    runId,
-    sessionName: "default",
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId),
-  });
-  await db.insert(schema.workspaces).values({
-    id: randomUUID(),
-    runId,
-    projectId,
-    branch: "feature/test",
-    worktreePath,
-    parentRepoPath: `/tmp/${slug}`,
-  });
-
-  return { runId, slug, runtimeRoot };
 }
 
 async function getRun(runId: string): Promise<Run> {
@@ -151,7 +84,7 @@ async function getHitl(runId: string): Promise<HitlRequest[]> {
 }
 
 async function writeDecision(
-  seeded: Seeded,
+  seeded: SeededGraphRun,
   nodeId: string,
   decision: string,
   extra: Record<string, unknown> = {},
@@ -376,7 +309,7 @@ function resetLoopFlow(withReset: boolean) {
 
 // Drives the loop to onExhaustion -> human_final pausing for a retry decision.
 // Returns the seeded run at human_final NeedsInput (review has 2 attempts).
-async function driveToHumanFinal(withReset: boolean): Promise<Seeded> {
+async function driveToHumanFinal(withReset: boolean): Promise<SeededGraphRun> {
   const seeded = await seedGraphRun(resetLoopFlow(withReset), {
     executionPolicy: { preset: "supervised" },
   });

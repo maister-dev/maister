@@ -2,27 +2,16 @@ import type { NodeAttempt, Run } from "@/lib/db/schema";
 import type { SupervisorApi } from "@/lib/flows/runner-agent";
 import type { SupervisorEvent } from "@/lib/supervisor-client";
 
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { randomUUID } from "node:crypto";
-
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import * as fullSchema from "@/lib/db/schema";
-import {
-  testPlatformRunnerRow,
-  testRunnerSnapshot,
-} from "@/lib/__tests__/runner-fixtures";
 import { runFlow } from "@/lib/flows/runner";
+import { schema, seedGraphRun } from "@/test-support/graph-run-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
-
-const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
@@ -38,75 +27,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await testDatabase?.stop();
 });
-
-type Seeded = { runId: string; slug: string; runtimeRoot: string };
-
-async function seedGraphRun(manifest: unknown): Promise<Seeded> {
-  const projectId = randomUUID();
-  const slug = `proj-${projectId.slice(0, 8)}`;
-  const executorId = randomUUID();
-  const flowId = randomUUID();
-  const taskId = randomUUID();
-  const runId = randomUUID();
-  const worktreePath = await mkdtemp(join(tmpdir(), "wt-"));
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "rt-"));
-
-  await db.insert(schema.projects).values({
-    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
-    id: projectId,
-    slug,
-    name: "Test",
-    repoPath: `/tmp/${slug}`,
-    maisterYamlPath: "/tmp/m.yaml",
-  });
-  await db
-    .insert(schema.platformAcpRunners)
-    .values(testPlatformRunnerRow(executorId, "claude"));
-  await db.insert(schema.flows).values({
-    id: flowId,
-    projectId,
-    flowRefId: "g",
-    source: "github.com/x/y",
-    version: "v1.0.0",
-    installedPath: "/tmp/flows/g",
-    manifest,
-    schemaVersion: 1,
-  });
-  await db.insert(schema.tasks).values({
-    number: Math.trunc(Math.random() * 1e9) + 1,
-    id: taskId,
-    projectId,
-    title: "t",
-    prompt: "p",
-    flowId,
-  });
-  await db.insert(schema.runs).values({
-    id: runId,
-    taskId,
-    projectId,
-    flowId,
-    flowVersion: "v1.0.0",
-    status: "Running",
-  });
-  await db.insert(schema.runSessions).values({
-    id: randomUUID(),
-    runId,
-    sessionName: "default",
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId),
-  });
-  await db.insert(schema.workspaces).values({
-    id: randomUUID(),
-    runId,
-    projectId,
-    branch: "feature/test",
-    worktreePath,
-    parentRepoPath: `/tmp/${slug}`,
-  });
-
-  return { runId, slug, runtimeRoot };
-}
 
 async function getRun(runId: string): Promise<Run> {
   const rows = (await db
@@ -214,7 +134,7 @@ const passFlow = {
 
 describe("runGraph — per-node enforcement gate (3.5 / 3.6 / 2.2)", () => {
   it("refuses a strict-skills ai_coding node: attempt Failed errorCode=CONFIG, run Failed, NO supervisor spawn", async () => {
-    const seeded = await seedGraphRun(strictRefusalFlow);
+    const seeded = await seedGraphRun(db, strictRefusalFlow);
     const api = makeSupervisorSpy();
 
     await runFlow(seeded.runId, {
@@ -241,7 +161,7 @@ describe("runGraph — per-node enforcement gate (3.5 / 3.6 / 2.2)", () => {
   }, 60_000);
 
   it("writes node_attempts.enforcement_snapshot on the REFUSAL path (2.2)", async () => {
-    const seeded = await seedGraphRun(strictRefusalFlow);
+    const seeded = await seedGraphRun(db, strictRefusalFlow);
     const api = makeSupervisorSpy();
 
     await runFlow(seeded.runId, {
@@ -264,7 +184,7 @@ describe("runGraph — per-node enforcement gate (3.5 / 3.6 / 2.2)", () => {
   }, 60_000);
 
   it("writes node_attempts.enforcement_snapshot on the PASS path (2.2)", async () => {
-    const seeded = await seedGraphRun(passFlow);
+    const seeded = await seedGraphRun(db, passFlow);
     const api = makeSupervisorSpy();
 
     await runFlow(seeded.runId, {

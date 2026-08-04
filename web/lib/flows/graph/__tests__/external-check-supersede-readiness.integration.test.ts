@@ -15,16 +15,9 @@
 // ready), then reports passed@BBB (supersede). It asserts both readers treat the
 // gate as passed. RED until both readers dedup-to-latest-per-gateId.
 
-import { randomUUID } from "node:crypto";
-
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import * as fullSchema from "@/lib/db/schema";
-import {
-  testPlatformRunnerRow,
-  testRunnerSnapshot,
-} from "@/lib/__tests__/runner-fixtures";
 import { appendNodeAttempt, markNodeSucceeded } from "@/lib/flows/graph/ledger";
 import {
   createGateResult,
@@ -32,12 +25,11 @@ import {
 } from "@/lib/flows/graph/gate-store";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import { getRunReadiness } from "@/lib/queries/readiness";
+import { seedGraphRun } from "@/test-support/graph-run-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
-
-const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
@@ -55,53 +47,11 @@ afterAll(async () => {
 });
 
 async function seedRun(): Promise<{ runId: string; projectId: string }> {
-  const projectId = randomUUID();
-  const slug = `proj-${projectId.slice(0, 8)}`;
-  const executorId = randomUUID();
-  const flowId = randomUUID();
-  const taskId = randomUUID();
-  const runId = randomUUID();
-
-  await db.insert(schema.projects).values({
-    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
-    id: projectId,
-    slug,
-    name: "Test",
-    repoPath: `/tmp/${slug}`,
-    maisterYamlPath: "/tmp/m.yaml",
-  });
-  await db
-    .insert(schema.platformAcpRunners)
-    .values(testPlatformRunnerRow(executorId, "claude"));
-  await db.insert(schema.flows).values({
-    id: flowId,
-    projectId,
-    flowRefId: "g",
-    source: "github.com/x/y",
-    version: "v1.0.0",
-    installedPath: "/tmp/flows/g",
-    manifest: { schemaVersion: 1, name: "g", nodes: [] },
-    schemaVersion: 1,
-  });
-  await db.insert(schema.tasks).values({
-    number: Math.trunc(Math.random() * 1e9) + 1,
-    id: taskId,
-    projectId,
-    title: "t",
-    prompt: "p",
-    flowId,
-  });
-  await db.insert(schema.runs).values({
-    id: runId,
-    taskId,
-    projectId,
-    flowId,
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId, "claude"),
-    flowVersion: "v1.0.0",
-    status: "Review",
-  });
+  const { runId, projectId } = await seedGraphRun(
+    db,
+    { schemaVersion: 1, name: "g", nodes: [] },
+    { runnerOnRun: true, workspace: false, run: { status: "Review" } },
+  );
 
   return { runId, projectId };
 }

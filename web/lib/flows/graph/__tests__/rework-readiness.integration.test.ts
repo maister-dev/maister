@@ -14,23 +14,17 @@ import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import * as fullSchema from "@/lib/db/schema";
-import {
-  testPlatformRunnerRow,
-  testRunnerSnapshot,
-} from "@/lib/__tests__/runner-fixtures";
 import {
   markArtifactsStale,
   recordArtifact,
   supersedePrior,
 } from "@/lib/flows/graph/artifact-store";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
+import { schema, seedGraphRun } from "@/test-support/graph-run-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
-
-const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
@@ -64,71 +58,18 @@ type Seeded = {
 // A Review-status flow run with two node_attempts for the same node (attempt 1
 // + attempt 2 — the rework re-run). Lands in the OnReview in-flight column.
 async function seedReworkRun(): Promise<Seeded> {
-  const projectId = randomUUID();
-  const slug = `proj-${projectId.slice(0, 8)}`;
-  const executorId = randomUUID();
-  const flowId = randomUUID();
-  const taskId = randomUUID();
-  const runId = randomUUID();
   const attempt1Id = randomUUID();
   const attempt2Id = randomUUID();
+  const { projectId, runId } = await seedGraphRun(
+    db,
+    { schemaVersion: 1, name: "g", nodes: [] },
+    {
+      task: { status: "InFlight", stage: "Backlog" },
+      run: { status: "Review", currentStepId: "review" },
+      workspace: { branch: "maister/rework-1" },
+    },
+  );
 
-  await db.insert(schema.projects).values({
-    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
-    id: projectId,
-    slug,
-    name: "Test",
-    repoPath: `/tmp/${slug}`,
-    maisterYamlPath: "/tmp/m.yaml",
-  });
-  await db
-    .insert(schema.platformAcpRunners)
-    .values(testPlatformRunnerRow(executorId, "claude"));
-  await db.insert(schema.flows).values({
-    id: flowId,
-    projectId,
-    flowRefId: "g",
-    source: "github.com/x/y",
-    version: "v1.0.0",
-    installedPath: "/tmp/flows/g",
-    manifest: { schemaVersion: 1, name: "g", nodes: [] },
-    schemaVersion: 1,
-  });
-  await db.insert(schema.tasks).values({
-    number: Math.trunc(Math.random() * 1e9) + 1,
-    id: taskId,
-    projectId,
-    title: "t",
-    prompt: "p",
-    flowId,
-    status: "InFlight",
-    stage: "Backlog",
-  });
-  await db.insert(schema.runs).values({
-    id: runId,
-    taskId,
-    projectId,
-    flowId,
-    flowVersion: "v1.0.0",
-    status: "Review",
-    currentStepId: "review",
-  });
-  await db.insert(schema.runSessions).values({
-    id: randomUUID(),
-    runId,
-    sessionName: "default",
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId),
-  });
-  await db.insert(schema.workspaces).values({
-    id: randomUUID(),
-    runId,
-    projectId,
-    branch: "maister/rework-1",
-    worktreePath: `/tmp/${slug}/wt`,
-    parentRepoPath: `/tmp/${slug}`,
-  });
   await db.insert(schema.nodeAttempts).values({
     id: attempt1Id,
     runId,
