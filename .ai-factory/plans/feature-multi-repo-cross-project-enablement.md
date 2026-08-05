@@ -686,7 +686,7 @@ either direction.
 
 ### Phase 2 — F1 API + MCP surfaces
 
-- [ ] **T11 — Internal relations route: `toTaskKey` + dual RBAC.**
+- [x] **T11 — Internal relations route: `toTaskKey` + dual RBAC.**
   `web/app/api/projects/[slug]/tasks/[number]/relations/route.ts`.
   - Body: `toNumber` XOR `toTaskKey` (zod `.refine` — exactly one; both or neither → 400
     `CONFIG`). Keep `.strict()`.
@@ -700,7 +700,7 @@ either direction.
   `manageTaskRelations` · actor=auth-context.
   **Logging:** INFO on mutation now carries `{fromProjectId, toProjectId, crossProject}`.
 
-- [ ] **T12 — Ext relations route: `toTaskKey`, dual authorization, project-bound refusal.**
+- [x] **T12 — Ext relations route: `toTaskKey`, dual authorization, project-bound refusal.**
   `web/app/api/v1/ext/projects/[slug]/tasks/[taskId]/relations/route.ts`.
   - Same XOR body change.
   - Cross-project target + **project-bound** token (`actor.projectId !== null`, not
@@ -744,7 +744,7 @@ either direction.
   unknown args silently, so a schema-only change ships a facade that accepts `toTaskKey` and
   never sends it.
 
-- [ ] **T14 — RED: route tests, written before T11/T12 are implemented.**
+- [x] **T14 — RED: route tests, written before T11/T12 are implemented.**
   - Internal route — **unit**, and the file MUST live under
     `web/app/api/projects/[slug]/tasks/[number]/relations/__tests__/`. The unit project globs
     `app/**/__tests__/**/*.test.ts`; a file placed directly beside `route.ts` is **never

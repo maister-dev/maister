@@ -286,3 +286,262 @@ describe("ext relations ops", () => {
     expect(cycle.status).toBe(409);
   });
 });
+
+// ADR-155: cross-project targets addressed by the platform-unique KEY-N.
+describe("ext relations — cross-project targets (ADR-155)", () => {
+  const sib = {
+    projectId: "",
+    flowId: "",
+    taskId: "",
+    taskKey: "EXS",
+    memberId: "",
+    userToken: "",
+    archivedProjectId: "",
+    archivedTaskKey: "EXZ",
+  };
+
+  async function seedProject(
+    id: string,
+    slug: string,
+    taskKey: string,
+    archivedAt: Date | null,
+  ): Promise<string> {
+    const flowId = randomUUID();
+
+    await db.insert(schema.projects).values({
+      id,
+      slug,
+      name: slug,
+      repoPath: `/tmp/${slug}`,
+      maisterYamlPath: `/tmp/${slug}/maister.yaml`,
+      taskKey,
+      archivedAt,
+    });
+    await db.insert(schema.flows).values({
+      id: flowId,
+      projectId: id,
+      flowRefId: "bugfix",
+      source: "github.com/x/y",
+      version: "v1.0.0",
+      installedPath: "/tmp/flows/bugfix",
+      manifest: {
+        schemaVersion: 1,
+        name: "Bugfix",
+        nodes: [
+          {
+            id: "run",
+            type: "cli",
+            action: { command: "true" },
+            transitions: { success: "done" },
+          },
+        ],
+      },
+      schemaVersion: 1,
+    });
+
+    return flowId;
+  }
+
+  beforeAll(async () => {
+    sib.projectId = randomUUID();
+    sib.archivedProjectId = randomUUID();
+    sib.memberId = randomUUID();
+
+    sib.flowId = await seedProject(
+      sib.projectId,
+      "ext-relations-sibling",
+      sib.taskKey,
+      null,
+    );
+
+    const archivedFlowId = await seedProject(
+      sib.archivedProjectId,
+      "ext-relations-archived",
+      sib.archivedTaskKey,
+      new Date(),
+    );
+
+    await db.insert(schema.users).values({
+      id: sib.memberId,
+      email: `member-${sib.memberId.slice(0, 8)}@example.test`,
+      name: "Cross Member",
+      role: "member",
+      accountStatus: "active",
+    });
+
+    // A NULL-project user token carries the OWNER's RBAC, re-checked per
+    // request on both ends — so the owner must be a member of both projects.
+    for (const projectId of [fx.projectId, sib.projectId]) {
+      await db.insert(schema.projectMembers).values({
+        id: randomUUID(),
+        projectId,
+        userId: sib.memberId,
+        role: "admin",
+      });
+    }
+
+    const target = await createTask(
+      { title: "sibling target", prompt: "p", flowId: sib.flowId },
+      { projectId: sib.projectId, actorUserId: sib.memberId },
+      db,
+    );
+
+    sib.taskId = target.taskId;
+
+    await createTask(
+      { title: "archived target", prompt: "p", flowId: archivedFlowId },
+      { projectId: sib.archivedProjectId, actorUserId: null },
+      db,
+    );
+
+    const userToken = await issueToken(
+      {
+        projectId: null,
+        name: "cross-project user token",
+        tokenKind: "user",
+        ownerUserId: sib.memberId,
+        scopes: ["relations:read", "relations:create", "relations:delete"],
+      },
+      db,
+    );
+
+    sib.userToken = userToken.secret;
+  }, 120_000);
+
+  async function freshFromTask(title: string): Promise<string> {
+    const t = await createTask(
+      { title, prompt: "p", flowId: fx.flowId },
+      { projectId: fx.projectId, actorUserId: fx.ownerId },
+      db,
+    );
+
+    return t.taskId;
+  }
+
+  it("lets a NULL-project user token relate across projects via toTaskKey", async () => {
+    const fromTaskId = await freshFromTask("xproj ok");
+
+    const res = await POST(
+      request("POST", sib.userToken, {
+        kind: "blocks",
+        toTaskKey: `${sib.taskKey}-1`,
+      }),
+      routeParams(SLUG, fromTaskId),
+    );
+
+    expect(res.status).toBe(201);
+
+    const rows = await pool.query(
+      "select project_id, to_task_id from task_relations where from_task_id = $1",
+      [fromTaskId],
+    );
+
+    expect(rows.rows).toHaveLength(1);
+    // The row stays owned by the FROM-task's project (ADR-155 D3).
+    expect(rows.rows[0].project_id).toBe(fx.projectId);
+    expect(rows.rows[0].to_task_id).toBe(sib.taskId);
+  });
+
+  it("refuses a PROJECT-BOUND token crossing projects with 403 AND writes the audit row", async () => {
+    const fromTaskId = await freshFromTask("xproj denied");
+
+    const before = await pool.query(
+      "select count(*)::int as n from token_audit_log where status_code = 403",
+    );
+
+    const res = await POST(
+      request("POST", fx.fullToken, {
+        kind: "blocks",
+        toTaskKey: `${sib.taskKey}-1`,
+      }),
+      routeParams(SLUG, fromTaskId),
+    );
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ code: "UNAUTHORIZED" });
+
+    const after = await pool.query(
+      "select count(*)::int as n from token_audit_log where status_code = 403",
+    );
+
+    expect(after.rows[0].n).toBe(before.rows[0].n + 1);
+
+    const rows = await pool.query(
+      "select id from task_relations where from_task_id = $1",
+      [fromTaskId],
+    );
+
+    expect(rows.rows).toHaveLength(0);
+  });
+
+  it("404s when toTaskKey resolves into an ARCHIVED project", async () => {
+    const fromTaskId = await freshFromTask("xproj archived");
+
+    const res = await POST(
+      request("POST", sib.userToken, {
+        kind: "blocks",
+        toTaskKey: `${sib.archivedTaskKey}-1`,
+      }),
+      routeParams(SLUG, fromTaskId),
+    );
+
+    expect(res.status).toBe(404);
+  });
+
+  it("422s when both or neither target form is supplied", async () => {
+    const fromTaskId = await freshFromTask("xproj xor");
+
+    const both = await POST(
+      request("POST", fx.fullToken, {
+        kind: "blocks",
+        toNumber: fx.toNumber,
+        toTaskKey: `${sib.taskKey}-1`,
+      }),
+      routeParams(SLUG, fromTaskId),
+    );
+
+    expect(both.status).toBe(422);
+    expect(await both.json()).toMatchObject({ code: "CONFIG" });
+
+    const neither = await POST(
+      request("POST", fx.fullToken, { kind: "blocks" }),
+      routeParams(SLUG, fromTaskId),
+    );
+
+    expect(neither.status).toBe(422);
+  });
+
+  // D4b: opBodySchema is shared by POST and DELETE, so the missing `requires`
+  // kind made orchestrator-minted edges UNREMOVABLE over ext/MCP.
+  it("creates AND removes a `requires` edge over ext (the D4b hole)", async () => {
+    const fromTaskId = await freshFromTask("xproj requires");
+
+    const created = await POST(
+      request("POST", sib.userToken, {
+        kind: "requires",
+        toTaskKey: `${sib.taskKey}-1`,
+      }),
+      routeParams(SLUG, fromTaskId),
+    );
+
+    expect(created.status).toBe(201);
+
+    const removed = await DELETE(
+      request("DELETE", sib.userToken, {
+        kind: "requires",
+        toTaskKey: `${sib.taskKey}-1`,
+      }),
+      routeParams(SLUG, fromTaskId),
+    );
+
+    expect(removed.status).toBe(200);
+    expect(await removed.json()).toEqual({ ok: true, removed: true });
+
+    const rows = await pool.query(
+      "select id from task_relations where from_task_id = $1 and kind = 'requires'",
+      [fromTaskId],
+    );
+
+    expect(rows.rows).toHaveLength(0);
+  });
+});

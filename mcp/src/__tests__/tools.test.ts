@@ -1141,6 +1141,53 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     );
     expect(parsedBody(init)).toEqual({ kind: "blocks", toNumber: 7 });
   });
+
+  // ADR-155: dispatchTool destructures known keys, so a schema-only change
+  // ships a facade that ACCEPTS toTaskKey and silently never sends it.
+  it("relation_add FORWARDS toTaskKey and omits toNumber entirely", async () => {
+    mockOnce({ ok: true, created: true }, 201);
+
+    await dispatchTool({
+      name: "relation_add",
+      args: {
+        slug: "demo",
+        taskId: "task-1",
+        kind: "depends_on",
+        toTaskKey: "API-42",
+      },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    expect(parsedBody(lastRequest().init)).toEqual({
+      kind: "depends_on",
+      toTaskKey: "API-42",
+    });
+  });
+
+  it("relation_remove FORWARDS a requires edge addressed by toTaskKey", async () => {
+    mockOnce({ ok: true, removed: true }, 200);
+
+    await dispatchTool({
+      name: "relation_remove",
+      args: {
+        slug: "demo",
+        taskId: "task-1",
+        kind: "requires",
+        toTaskKey: "API-42",
+      },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { init } = lastRequest();
+
+    expect(init.method).toBe("DELETE");
+    expect(parsedBody(init)).toEqual({
+      kind: "requires",
+      toTaskKey: "API-42",
+    });
+  });
 });
 
 describe("dispatchTool — ADR-047 transport-auth invariant", () => {

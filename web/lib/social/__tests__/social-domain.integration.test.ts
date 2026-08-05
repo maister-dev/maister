@@ -23,6 +23,7 @@ import {
   getTaskRelations,
   removeTaskRelation,
 } from "@/lib/social/relations";
+import { resolveTaskByKeyRef } from "@/lib/social/task-lookup";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -335,7 +336,7 @@ describe("task relations (ADR-078 D4/D5)", () => {
     expect(activity).toHaveLength(1);
   });
 
-  it("rejects self-relations and cross-project relations with CONFIG", async () => {
+  it("rejects self-relations and a mis-owned from-end with CONFIG", async () => {
     const first = await seedPair("XPA");
     const second = await seedPair("XPB");
 
@@ -352,10 +353,13 @@ describe("task relations (ADR-078 D4/D5)", () => {
       ),
     ).rejects.toMatchObject({ code: "CONFIG" });
 
+    // ADR-155 superseded the same-project refusal: the surviving ownership rule
+    // is that the row belongs to the FROM-task's project, so a mis-owned
+    // projectId is the refusal — the to-end may legitimately differ.
     await expect(
       addTaskRelation(
         {
-          projectId: first.projectId,
+          projectId: second.projectId,
           fromTaskId: first.a.taskId,
           kind: "blocks",
           toTaskId: second.a.taskId,
@@ -1203,5 +1207,143 @@ describe("comment pipeline (ADR-078 D6/D7/D8/D9)", () => {
     expect(comments).toHaveLength(0);
     expect(activity).toHaveLength(0);
     expect(items).toHaveLength(0);
+  });
+});
+
+describe("cross-project relations (ADR-155)", () => {
+  const userActor = (id: string) => ({ type: "user" as const, id });
+
+  async function seedCrossPair(fromKey: string, toKey: string) {
+    const creator = await seedUser();
+    const src = await seedProject(fromKey);
+    const dst = await seedProject(toKey);
+    const a = await createTask(
+      { title: "task A", prompt: "p", flowId: src.flowId },
+      { projectId: src.projectId, actorUserId: creator },
+      db,
+    );
+    const b = await createTask(
+      { title: "task B", prompt: "p", flowId: dst.flowId },
+      { projectId: dst.projectId, actorUserId: creator },
+      db,
+    );
+
+    return { creator, src, dst, a, b };
+  }
+
+  it("creates a cross-project relation owned by the from-task's project", async () => {
+    const { creator, src, dst, a, b } = await seedCrossPair("XVA", "XVB");
+
+    await expect(
+      addTaskRelation(
+        {
+          projectId: src.projectId,
+          fromTaskId: a.taskId,
+          kind: "blocks",
+          toTaskId: b.taskId,
+          actor: userActor(creator),
+        },
+        db,
+      ),
+    ).resolves.toEqual({ created: true });
+
+    const rows = await rowsOf("task_relations", `from_task_id = '${a.taskId}'`);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].project_id).toBe(src.projectId);
+    expect(rows[0].project_id).not.toBe(dst.projectId);
+  });
+
+  it("renders each end with the counterpart's OWN task_key", async () => {
+    const { creator, src, a, b } = await seedCrossPair("XQA", "XQB");
+
+    await addTaskRelation(
+      {
+        projectId: src.projectId,
+        fromTaskId: a.taskId,
+        kind: "blocks",
+        toTaskId: b.taskId,
+        actor: userActor(creator),
+      },
+      db,
+    );
+
+    const ofA = await getTaskRelations(a.taskId, db);
+    const ofB = await getTaskRelations(b.taskId, db);
+
+    expect(ofA[0]).toMatchObject({
+      direction: "out",
+      other: { taskId: b.taskId, key: "XQB" },
+    });
+    expect(ofB[0]).toMatchObject({
+      direction: "in",
+      other: { taskId: a.taskId, key: "XQA" },
+    });
+  });
+
+  it("reports a cross-project blocker carrying the blocker's own KEY-N", async () => {
+    const { creator, src, a, b } = await seedCrossPair("XRA", "XRB");
+
+    await addTaskRelation(
+      {
+        projectId: src.projectId,
+        fromTaskId: a.taskId,
+        kind: "blocks",
+        toTaskId: b.taskId,
+        actor: userActor(creator),
+      },
+      db,
+    );
+
+    const blockers = await getOpenRelationBlockers([b.taskId], db);
+
+    expect(blockers.get(b.taskId)).toEqual([
+      { taskId: a.taskId, key: "XRA", number: 1 },
+    ]);
+  });
+
+  it("keeps `requires` success-gated across projects: Abandoned still blocks", async () => {
+    const { creator, dst, a, b } = await seedCrossPair("XSA", "XSB");
+
+    // B (project XSB) requires A (project XSA): A must SUCCEED to release B.
+    await addTaskRelation(
+      {
+        projectId: dst.projectId,
+        fromTaskId: b.taskId,
+        kind: "requires",
+        toTaskId: a.taskId,
+        actor: userActor(creator),
+      },
+      db,
+    );
+
+    await db
+      .update(schema.tasks)
+      .set({ status: "Abandoned" })
+      .where(eq(schema.tasks.id, a.taskId));
+
+    const blockers = await getOpenRelationBlockers([b.taskId], db);
+
+    expect(blockers.get(b.taskId)).toEqual([
+      { taskId: a.taskId, key: "XSA", number: 1 },
+    ]);
+  });
+
+  it("resolves a KEY-N ref against the platform-unique projects.task_key", async () => {
+    const { dst, b } = await seedCrossPair("XTA", "XTB");
+
+    const hit = await resolveTaskByKeyRef("XTB-1", db);
+
+    expect(hit).not.toBeNull();
+    expect(hit!.task.id).toBe(b.taskId);
+    expect(hit!.project.id).toBe(dst.projectId);
+    expect(hit!.project.taskKey).toBe("XTB");
+  });
+
+  it("returns null for an unknown key and for an unknown number", async () => {
+    await seedCrossPair("XUA", "XUB");
+
+    await expect(resolveTaskByKeyRef("NOSUCH-1", db)).resolves.toBeNull();
+    await expect(resolveTaskByKeyRef("XUB-9999", db)).resolves.toBeNull();
   });
 });

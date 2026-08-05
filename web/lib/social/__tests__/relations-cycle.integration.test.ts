@@ -210,3 +210,118 @@ describe("gating-relation cycle safety (ADR-121 §4.6)", () => {
     expect(count.rows[0].n).toBe(1);
   });
 });
+
+describe("cross-project gating relations (ADR-155)", () => {
+  it("AC-X1: refuses a 2-cycle whose legs live in different projects", async () => {
+    const pa = await seedProjectWithTasks(1);
+    const pb = await seedProjectWithTasks(1);
+    const [a] = pa.taskIds;
+    const [b] = pb.taskIds;
+
+    await expect(add(pa.projectId, a, "blocks", b)).resolves.toEqual({
+      created: true,
+    });
+    await expectConflict(add(pb.projectId, b, "blocks", a));
+  });
+
+  it("AC-X2: refuses a 4-project cycle under concurrent inserts (D1)", async () => {
+    // The regression that proves the lock is platform-wide, not per-project.
+    // Committed: A→B (locks project A) and C→D (locks project C). The racing
+    // pair B→C and D→A take DISJOINT per-project locks ({B} and {D}), so under
+    // per-project locking they run concurrently, each BFS misses the other's
+    // uncommitted leg, both commit, and A→B→C→D→A deadlocks every gated task
+    // in it forever. One platform-wide lock serializes them.
+    const [pa, pb, pc, pd] = await Promise.all([
+      seedProjectWithTasks(1),
+      seedProjectWithTasks(1),
+      seedProjectWithTasks(1),
+      seedProjectWithTasks(1),
+    ]);
+    const [a] = pa.taskIds;
+    const [b] = pb.taskIds;
+    const [c] = pc.taskIds;
+    const [d] = pd.taskIds;
+
+    await add(pa.projectId, a, "blocks", b);
+    await add(pc.projectId, c, "blocks", d);
+
+    // Warm every pool slot: a cold connection would serialize the racers by
+    // accident and let a per-project lock pass undetected.
+    await Promise.all(Array.from({ length: 4 }, () => pool.query("select 1")));
+
+    const results = await Promise.allSettled([
+      add(pb.projectId, b, "blocks", c),
+      add(pd.projectId, d, "blocks", a),
+    ]);
+
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(
+      ((rejected[0] as PromiseRejectedResult).reason as { code: string }).code,
+    ).toBe("CONFLICT");
+
+    const closed = await pool.query(
+      "select count(*)::int as n from task_relations where from_task_id = any($1::text[])",
+      [[b, d]],
+    );
+
+    expect(closed.rows[0].n).toBe(1);
+  });
+
+  it("AC-X3: refuses when the traversal exceeds GATING_BFS_MAX_NODES", async () => {
+    // A chain longer than the cap that closes NO cycle: without the bound the
+    // BFS walks it and accepts. Refusing is the safe direction — a false
+    // refusal is visible and recoverable, a missed cycle is a deadlock.
+    const CHAIN = 5100;
+    const projectId = randomUUID();
+    const slug = `cap-${projectId.slice(0, 8)}`;
+
+    await db.insert(schema.projects).values({
+      id: projectId,
+      slug,
+      name: `Cap ${slug}`,
+      repoPath: `/tmp/${slug}`,
+      taskKey: `K${projectId.slice(0, 8)}`.toUpperCase(),
+    });
+
+    await pool.query(
+      `insert into tasks (id, project_id, number, title, prompt)
+       select gen_random_uuid()::text, $1, g, 'cap' || g, 'p'
+       from generate_series(1, $2) as g`,
+      [projectId, CHAIN + 1],
+    );
+
+    const ids = (
+      await pool.query(
+        "select id from tasks where project_id = $1 order by number",
+        [projectId],
+      )
+    ).rows.map((r: { id: string }) => r.id) as string[];
+
+    const froms = ids.slice(1, CHAIN);
+    const tos = ids.slice(2, CHAIN + 1);
+
+    await pool.query(
+      `insert into task_relations
+         (id, project_id, from_task_id, kind, to_task_id, actor_type, actor_id)
+       select gen_random_uuid()::text, $1, f, 'blocks', t, 'user', 'tester'
+       from unnest($2::text[], $3::text[]) as x(f, t)`,
+      [projectId, froms, tos],
+    );
+
+    // ids[0] is outside the chain, so the BFS from ids[1] never reaches it.
+    try {
+      await add(projectId, ids[0], "blocks", ids[1]);
+      throw new Error(
+        "expected the node-cap refusal, but the edge was accepted",
+      );
+    } catch (err) {
+      expect(isMaisterError(err)).toBe(true);
+      expect((err as { code: string }).code).toBe("CONFLICT");
+      expect((err as Error).message).toContain("too large");
+    }
+  });
+});

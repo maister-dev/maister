@@ -612,7 +612,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   relation_add: {
     description:
-      "Add a typed relation from this task to another task (by per-project number). `duplicate_of` marks this task as a duplicate of the target — a non-blocking annotation used by triage dedup.",
+      "Add a typed relation from this task to another task. Address the target with EXACTLY ONE of `toNumber` (per-project number, same project only) or `toTaskKey` (platform-unique `KEY-N` such as `API-42`, which may name a task in ANOTHER project). `duplicate_of` marks this task as a duplicate of the target — a non-blocking annotation used by triage dedup. `requires` is SUCCESS-gated: unlike `depends_on` it does NOT release when the counterpart reaches `Abandoned` or `Failed`, so a wrong `requires` edge blocks its dependent until a human removes it — reach for `depends_on` when you want the self-healing kind.",
     inputSchema: {
       type: "object",
       properties: {
@@ -620,16 +620,23 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         taskId: { type: "string" },
         kind: {
           type: "string",
-          enum: ["blocks", "depends_on", "parent_of", "duplicate_of"],
+          enum: [
+            "blocks",
+            "depends_on",
+            "parent_of",
+            "requires",
+            "duplicate_of",
+          ],
         },
         toNumber: { type: "integer", minimum: 1 },
+        toTaskKey: { type: "string" },
       },
-      required: ["slug", "taskId", "kind", "toNumber"],
+      required: ["slug", "taskId", "kind"],
     },
   },
   relation_remove: {
     description:
-      "Remove a typed relation from this task (idempotent — missing relation is a no-op)",
+      "Remove a typed relation from this task (idempotent — missing relation is a no-op). Address the target with EXACTLY ONE of `toNumber` or `toTaskKey` (platform-unique `KEY-N`, may name another project's task). All five kinds are removable here, including the `requires` edges the orchestrator mints — removing one is the only way to unblock a dependent wedged behind a failed dependency.",
     inputSchema: {
       type: "object",
       properties: {
@@ -637,11 +644,18 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         taskId: { type: "string" },
         kind: {
           type: "string",
-          enum: ["blocks", "depends_on", "parent_of", "duplicate_of"],
+          enum: [
+            "blocks",
+            "depends_on",
+            "parent_of",
+            "requires",
+            "duplicate_of",
+          ],
         },
         toNumber: { type: "integer", minimum: 1 },
+        toTaskKey: { type: "string" },
       },
-      required: ["slug", "taskId", "kind", "toNumber"],
+      required: ["slug", "taskId", "kind"],
     },
   },
 };
@@ -1311,17 +1325,25 @@ function resolveRouting(
     }
     case "relation_add":
     case "relation_remove": {
-      const { slug, taskId, kind, toNumber } = args as {
+      const { slug, taskId, kind, toNumber, toTaskKey } = args as {
         slug: string;
         taskId: string;
         kind: string;
-        toNumber: number;
+        toNumber?: number;
+        toTaskKey?: string;
       };
+
+      // Sparse body: the route refuses both-or-neither, so forward exactly what
+      // the caller sent rather than materializing an undefined key.
+      const body: Record<string, unknown> = { kind };
+
+      if (toNumber !== undefined) body.toNumber = toNumber;
+      if (toTaskKey !== undefined) body.toTaskKey = toTaskKey;
 
       return {
         method: name === "relation_add" ? "POST" : "DELETE",
         path: `/api/v1/ext/projects/${slug}/tasks/${taskId}/relations`,
-        body: { kind, toNumber },
+        body,
       };
     }
     default:

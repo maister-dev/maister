@@ -60,41 +60,61 @@ function precedenceEdge(
   return { pred: toTaskId, succ: fromTaskId };
 }
 
-// Per-project advisory lock so two transactions racing to insert inverse gating
-// edges are serialized — the second waits, re-reads the now-committed first edge,
-// and its cycle check rejects (INV-6, no TOCTOU). Held until the top-level tx ends.
+// ONE platform-wide advisory lock for EVERY gating-kind insert (ADR-155 D1),
+// not a per-project lock and not a sorted per-project pair. Pairwise locking
+// only serializes cycles of length <= 3, where every edge pair shares an
+// endpoint project. A 4-cycle A→B→C→D→A escapes it: edges AB and CD lock
+// disjoint project sets and commit concurrently, then BC and DA lock the
+// disjoint sets {B,C} and {D,A} — BC's BFS needs the uncommitted D→A and DA's
+// needs the uncommitted B→C, so both pass and the cycle is permanent. Relation
+// creation is human/agent paced, so platform-wide serialization of a
+// sub-millisecond BFS costs nothing. Held until the top-level tx ends.
 // The namespace constant keeps this lock space disjoint from the scheduler.
 const RELATION_LOCK_NAMESPACE = 0x7461736b;
 
-async function takeProjectRelationLock(
-  tx: any,
-  projectId: string,
-): Promise<void> {
+// The gating graph is platform-global once relations may cross projects, so the
+// traversal needs a hard bound. On breach we REFUSE: a false refusal is visible
+// and recoverable, a missed cycle deadlocks every gated task in it forever.
+export const GATING_BFS_MAX_NODES = 5000;
+
+async function takeGatingRelationLock(tx: any): Promise<void> {
   await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(${RELATION_LOCK_NAMESPACE}::int, hashtext(${projectId})::int)`,
+    sql`SELECT pg_advisory_xact_lock(${RELATION_LOCK_NAMESPACE}::int, 0::int)`,
   );
 }
 
+type GatingCycleCheck = {
+  verdict: "clear" | "cycle" | "too_large";
+  visited: number;
+  rounds: number;
+};
+
 // Does adding the precedence edge `pred → succ` close a cycle? It does iff `succ`
-// can ALREADY reach `pred` over the existing project-scoped gating graph. The
-// BFS runs INSIDE the insert
-// tx after the advisory lock so the read sees a serialized, committed graph.
-async function wouldCloseGatingCycle(
+// can ALREADY reach `pred` over the existing gating graph, which spans every
+// project (ADR-155). The BFS runs INSIDE the insert tx after the advisory lock
+// so the read sees a serialized, committed graph.
+async function checkGatingCycle(
   tx: any,
-  projectId: string,
   pred: string,
   succ: string,
-): Promise<boolean> {
+): Promise<GatingCycleCheck> {
   const visited = new Set<string>();
   let frontier: string[] = [succ];
+  let rounds = 0;
 
   while (frontier.length > 0) {
-    if (frontier.includes(pred)) return true;
+    if (frontier.includes(pred))
+      return { verdict: "cycle", visited: visited.size, rounds };
 
     const fresh = frontier.filter((n) => !visited.has(n));
 
     for (const n of fresh) visited.add(n);
     if (fresh.length === 0) break;
+
+    if (visited.size > GATING_BFS_MAX_NODES)
+      return { verdict: "too_large", visited: visited.size, rounds };
+
+    rounds += 1;
 
     // Precedence successors: blocks(from→to) advances from→to; depends_on/requires
     // (from→to) advance to→from.
@@ -103,7 +123,6 @@ async function wouldCloseGatingCycle(
       .from(taskRelations)
       .where(
         and(
-          eq(taskRelations.projectId, projectId),
           eq(taskRelations.kind, "blocks"),
           inArray(taskRelations.fromTaskId, fresh),
         ),
@@ -114,7 +133,6 @@ async function wouldCloseGatingCycle(
       .from(taskRelations)
       .where(
         and(
-          eq(taskRelations.projectId, projectId),
           inArray(taskRelations.kind, ["depends_on", "requires"]),
           inArray(taskRelations.toTaskId, fresh),
         ),
@@ -125,7 +143,7 @@ async function wouldCloseGatingCycle(
       .filter((n) => !visited.has(n));
   }
 
-  return false;
+  return { verdict: "clear", visited: visited.size, rounds };
 }
 
 type RelationEnd = {
@@ -182,20 +200,25 @@ export async function addTaskRelation(
 
   const { from, to } = await resolveEnds(_db, input.fromTaskId, input.toTaskId);
 
-  // Same-project only in Stage 1 (ADR-078 D4) — a cross-table CHECK cannot
-  // express this, so the domain layer enforces it.
-  if (from.projectId !== input.projectId || to.projectId !== input.projectId) {
+  // ADR-155 D3: the row is owned by the FROM-task's project; the to-end may
+  // live in a different project. Supersedes ADR-083 clause 4's Stage-1
+  // same-project restriction (a cross-table CHECK cannot express either rule,
+  // so the domain layer enforces it).
+  if (from.projectId !== input.projectId) {
     throw new MaisterError(
       "CONFIG",
-      "relations are same-project only in Stage 1",
+      "a relation must be owned by the from-task's project",
     );
   }
 
+  const crossProject = from.projectId !== to.projectId;
+
   const created = await (_db as any).transaction(async (tx: any) => {
-    // ADR-121 §4.6: refuse a gating-kind edge that would close a cycle, evaluated
-    // INSIDE the tx under a per-project advisory lock (no TOCTOU, INV-6).
+    // ADR-121 §4.6 + ADR-155 D1/D2: refuse a gating-kind edge that would close a
+    // cycle, evaluated INSIDE the tx under the platform-wide advisory lock (no
+    // TOCTOU, INV-6).
     if (isGatingKind(input.kind)) {
-      await takeProjectRelationLock(tx, input.projectId);
+      await takeGatingRelationLock(tx);
 
       const { pred, succ } = precedenceEdge(
         input.kind,
@@ -203,9 +226,46 @@ export async function addTaskRelation(
         input.toTaskId,
       );
 
-      if (await wouldCloseGatingCycle(tx, input.projectId, pred, succ)) {
+      log.debug(
+        {
+          fromProjectId: from.projectId,
+          toProjectId: to.projectId,
+          crossProject,
+          kind: input.kind,
+        },
+        "relation cycle-check starting",
+      );
+
+      const check = await checkGatingCycle(tx, pred, succ);
+
+      if (check.verdict === "too_large") {
         log.warn(
-          { from: input.fromTaskId, kind: input.kind, to: input.toTaskId },
+          {
+            from: input.fromTaskId,
+            fromProjectId: from.projectId,
+            kind: input.kind,
+            to: input.toTaskId,
+            toProjectId: to.projectId,
+            visited: check.visited,
+            cap: GATING_BFS_MAX_NODES,
+          },
+          "relation refused: gating graph too large to verify",
+        );
+        throw new MaisterError(
+          "CONFLICT",
+          `gating graph too large to verify (> ${GATING_BFS_MAX_NODES} nodes)`,
+        );
+      }
+
+      if (check.verdict === "cycle") {
+        log.warn(
+          {
+            from: input.fromTaskId,
+            fromProjectId: from.projectId,
+            kind: input.kind,
+            to: input.toTaskId,
+            toProjectId: to.projectId,
+          },
           "relation cycle refused",
         );
         throw new MaisterError(
@@ -215,7 +275,13 @@ export async function addTaskRelation(
       }
 
       log.debug(
-        { from: input.fromTaskId, kind: input.kind, to: input.toTaskId },
+        {
+          from: input.fromTaskId,
+          kind: input.kind,
+          to: input.toTaskId,
+          visited: check.visited,
+          frontierRounds: check.rounds,
+        },
         "relation cycle-check passed",
       );
     }

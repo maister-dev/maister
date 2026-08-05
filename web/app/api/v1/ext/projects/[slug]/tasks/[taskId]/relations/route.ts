@@ -4,6 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { requireProjectActionForUser } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
@@ -12,7 +13,10 @@ import {
   getTaskRelations,
   removeTaskRelation,
 } from "@/lib/social/relations";
-import { resolveProjectTaskByNumber } from "@/lib/social/task-lookup";
+import {
+  resolveProjectTaskByNumber,
+  resolveTaskByKeyRef,
+} from "@/lib/social/task-lookup";
 import {
   handleExt,
   httpStatusForExtCode,
@@ -30,15 +34,84 @@ const ENDPOINT_RELATIONS_POST =
 const ENDPOINT_RELATIONS_DELETE =
   "DELETE /api/v1/ext/projects/[slug]/tasks/[taskId]/relations";
 
-// Mirrors the web route: `toNumber` is body-controlled but resolved STRICTLY
-// within the URL-param project via (project_id, number) — cross-project reach
-// is impossible by construction (ADR-078).
+// Mirrors the web route. `toNumber` is body-controlled but resolved STRICTLY
+// within the URL-param project via (project_id, number) — it cannot reach
+// another project. `toTaskKey` (ADR-155) deliberately can, and is gated below.
+//
+// This schema is shared by POST and DELETE, so the previously missing
+// `requires` kind meant an orchestrator-minted `requires` edge was visible
+// through relation_list but UNREMOVABLE over ext/MCP. `requires` is
+// success-gated — it does NOT release on `Abandoned`/`Failed` — so a wrong
+// edge blocks its dependent until someone removes it.
 const opBodySchema = z
   .object({
-    kind: z.enum(["blocks", "depends_on", "parent_of", "duplicate_of"]),
-    toNumber: z.number().int().min(1),
+    kind: z.enum([
+      "blocks",
+      "depends_on",
+      "parent_of",
+      "requires",
+      "duplicate_of",
+    ]),
+    toNumber: z.number().int().min(1).optional(),
+    toTaskKey: z
+      .string()
+      .regex(/^[A-Za-z][A-Za-z0-9]*-[0-9]+$/)
+      .optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (b) => (b.toNumber === undefined) !== (b.toTaskKey === undefined),
+    "provide exactly one of toNumber or toTaskKey",
+  );
+
+// ADR-155 D3: `toTaskKey` may land in another project, so the target end needs
+// its own authorization. A PROJECT-BOUND token holds no authority outside its
+// project and is refused; a NULL-project user token is RBAC re-checked on the
+// resolved target.
+//
+// The refusal is 403, deliberately NOT the existence-hidden 404 this surface
+// uses for URL-project scoping: the caller supplied a platform-unique key it
+// already holds, so hiding existence leaks nothing and only makes the refusal
+// unactionable. `handleExt` writes the failure audit for any >=400 we return.
+async function refuseCrossProjectTarget(
+  ctx: {
+    projectId: string;
+    actor: {
+      projectId: string | null;
+      tokenKind: string;
+      ownerUserId: string | null;
+    };
+  },
+  targetProjectId: string,
+): Promise<NextResponse | null> {
+  if (targetProjectId === ctx.projectId) return null;
+
+  if (ctx.actor.projectId !== null) {
+    return NextResponse.json(
+      {
+        code: "UNAUTHORIZED",
+        message:
+          "this token is bound to a single project and cannot relate to a task in another project",
+      },
+      { status: 403 },
+    );
+  }
+
+  if (ctx.actor.tokenKind === "user" && ctx.actor.ownerUserId !== null) {
+    await requireProjectActionForUser(
+      ctx.actor.ownerUserId,
+      targetProjectId,
+      "manageTaskRelations",
+    );
+
+    return null;
+  }
+
+  return NextResponse.json(
+    { code: "UNAUTHORIZED", message: "cross-project relation not permitted" },
+    { status: 403 },
+  );
+}
 
 type RouteParams = { params: Promise<{ slug: string; taskId: string }> };
 type TransactionalDb = {
@@ -147,14 +220,21 @@ async function handleMutation(
         );
       }
 
-      const to = await resolveProjectTaskByNumber(slug, body.toNumber, db);
+      const to =
+        body.toTaskKey === undefined
+          ? await resolveProjectTaskByNumber(slug, body.toNumber!, db)
+          : await resolveTaskByKeyRef(body.toTaskKey, db);
 
-      if (!to) {
+      if (!to || to.project.archivedAt !== null) {
         return NextResponse.json(
           { code: "NOT_FOUND", message: "relation target task not found" },
           { status: 404 },
         );
       }
+
+      const refusal = await refuseCrossProjectTarget(ctx, to.project.id);
+
+      if (refusal) return refusal;
 
       const actor = socialActorForToken(ctx.actor);
       const input = {
