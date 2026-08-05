@@ -9,12 +9,20 @@
  * The flow/agent integration suites could not catch it — they use a stub
  * SupervisorApi that never validates the payload.
  *
- * The assertions below MIRROR the supervisor schema. They are duplicated on
- * purpose: the web suite never collects `supervisor/src/**`, so a cross-package
- * import is not available. If `ContextMountSchema` changes, this test must change
- * with it — that coupling is the point.
+ * The decisive assertions run the REAL acceptor: `StartSessionRequestSchema` is
+ * imported straight out of `supervisor/src/types.ts` (it depends on nothing but
+ * `node:path` + `zod`, and both packages pin the same zod), so a change to
+ * `ContextMountSchema` fails THIS test rather than only production. A mirrored
+ * hand-copy would have been the weaker guard — it can agree with itself forever
+ * while drifting from the schema it claims to describe.
  */
 import { describe, expect, it } from "vitest";
+
+// The one deliberate cross-package import in the web suite. Not an accident and
+// not a layering violation to be "tidied": a contract test that does not execute
+// the real acceptor cannot detect drift, which is the entire failure mode that
+// let this bug through two green suites.
+import { StartSessionRequestSchema } from "../../../../supervisor/src/types";
 
 import {
   contextMountsToWire,
@@ -24,6 +32,16 @@ import {
 // supervisor/src/types.ts → ContextMountSchema
 const SUPERVISOR_WIRE_KEYS = ["slug", "path", "ref", "commit"] as const;
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+// The minimum StartSessionRequest the schema accepts, so `contextMounts` is the
+// only field under test.
+const BASE_REQUEST = {
+  runId: "run-1",
+  projectSlug: "web-app",
+  worktreePath: "/runtime/worktrees/web-app/run-1",
+  stepId: "implement",
+  executor: { id: "r1", agent: "claude", model: "claude-sonnet-4-6" },
+};
 
 function snapshot(
   overrides: Partial<ContextMountSnapshot> = {},
@@ -120,5 +138,69 @@ describe("contextMountsToWire — supervisor POST /sessions contract", () => {
 
   it("maps an empty snapshot to an empty array", () => {
     expect(contextMountsToWire([])).toEqual([]);
+  });
+});
+
+describe("the REAL supervisor acceptor (StartSessionRequestSchema)", () => {
+  it("REJECTS a raw snapshot — the shipped bug, pinned so it cannot return", () => {
+    const result = StartSessionRequestSchema.safeParse({
+      ...BASE_REQUEST,
+      contextMounts: [snapshot()],
+    });
+
+    expect(result.success).toBe(false);
+
+    const issues = result.success ? [] : result.error.issues;
+    const paths = issues.map((i) => i.path.join("."));
+
+    // Missing the two renamed fields…
+    expect(paths).toContain("contextMounts.0.path");
+    expect(paths).toContain("contextMounts.0.commit");
+    // …and `.strict()` rejects every snapshot-only key.
+    const unrecognized = issues.find((i) => i.code === "unrecognized_keys");
+
+    expect(unrecognized).toBeDefined();
+    expect(
+      (unrecognized as { keys?: string[] } | undefined)?.keys?.sort(),
+    ).toEqual(["committish", "mountPath", "projectId", "repoPath"]);
+  });
+
+  it("ACCEPTS the mapped wire payload", () => {
+    const result = StartSessionRequestSchema.safeParse({
+      ...BASE_REQUEST,
+      contextMounts: contextMountsToWire([snapshot()]),
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("ACCEPTS the supervisor maximum of 8 mapped mounts and rejects 9", () => {
+    const mounts = (n: number) =>
+      contextMountsToWire(
+        Array.from({ length: n }, (_, i) =>
+          snapshot({ slug: `sib-${i}`, mountPath: `/abs/sib-${i}` }),
+        ),
+      );
+
+    expect(
+      StartSessionRequestSchema.safeParse({
+        ...BASE_REQUEST,
+        contextMounts: mounts(8),
+      }).success,
+    ).toBe(true);
+    // CONTEXT_REPOS_MAX on the web side and `.max(8)` on the supervisor side are
+    // two independent constants; this is what keeps them agreeing.
+    expect(
+      StartSessionRequestSchema.safeParse({
+        ...BASE_REQUEST,
+        contextMounts: mounts(9),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("stays valid with no mounts at all (existing senders unaffected)", () => {
+    expect(StartSessionRequestSchema.safeParse(BASE_REQUEST).success).toBe(
+      true,
+    );
   });
 });

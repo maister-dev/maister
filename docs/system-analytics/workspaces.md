@@ -897,9 +897,15 @@ here is **Implemented**.
   [`reconciliation-gc.md`](reconciliation-gc.md) for why that placement is
   load-bearing rather than incidental.
 - **Mount snapshot** — `runs.context_mounts jsonb`, written at spawn as
-  `[{projectId, slug, repoPath, mountPath, committish}]`. The launch-time
+  `[{projectId, slug, repoPath, mountPath, committish, ref?}]`. The launch-time
   decision the terminal path and crash recovery read. A manifest or an
-  attachment can drift after launch; the snapshot cannot.
+  attachment can drift after launch; the snapshot cannot. This shape is
+  **DB-internal and never goes on the wire**: `contextMountsToWire` projects it
+  to the supervisor's `{slug, path, ref, commit}` contract at the `createSession`
+  boundary — the single place the request body is built, so the projection cannot
+  be forgotten by a future caller. `ref` is the branch name the launch resolved
+  (falling back to `committish` for legacy rows without it) and `commit` is the
+  resolved sha; the two are reported separately, so they must not be collapsed.
 - **Sibling repo** — the donor project's `projects.repo_path`. It owns the git
   metadata for every mount taken from it (`.git/worktrees/<name>`), which is why
   release is a two-sided operation.
@@ -977,8 +983,28 @@ new trust axis and change no capability class.
 | Layer | Mechanism | What it covers |
 | ----- | --------- | -------------- |
 | **L1** | the existing `readOnlySession` flag on the supervisor session request | `none` / `repo_read` **agent** runs **only**. A writable-worktree session — every flow `ai_coding` / `judge` / `orchestrator` run, and every `agent_workspace: worktree` agent run — **cannot** use it: a session-wide read-only would break the run's own work. L1 therefore covers none of the flow-node mount cases. |
-| **L2** | a supervisor-side **unconditional** path guard denying every write-class tool call whose resolved path is under any declared mount root, evaluated in the same permission handler as the guardrail-hook `pathGuard` and reusing that module's path resolver rather than a second hand-rolled one | every session that carries mounts, writable or not. **Unconditional whenever mounts exist** — deliberately NOT opt-in via `settings.hooks`, because the read-only contract is the mount's whole point, and an opt-in guard would make the contract a flow-author's choice. |
+| **L2** | a supervisor-side path guard denying every write-class tool call whose resolved path is under any declared mount root, evaluated in the same permission handler as the guardrail-hook `pathGuard` and comparing both the lexical and realpath-normalized forms so a symlinked ancestor cannot hide a path | every session that carries mounts, writable or not. **Unconditional whenever mounts exist** — deliberately NOT opt-in via `settings.hooks`, because the read-only contract is the mount's whole point, and an opt-in guard would make the contract a flow-author's choice. Bounded by adapter path reporting — see the `unverifiable` caveat below. |
 | **L3** | a terminal dirty-check per mount (`git status --porcelain`) → WARN + quarantine evidence in the one-transaction shape the ADR-090 dirty-watchdog already uses | detection after the fact. The mount is discarded regardless — it is detached with no branch, so nothing legitimate is lost. |
+
+**L2's position in the permission handler is load-bearing.** The guard runs
+**after** the M40 guardrail interceptor — so a denied write still feeds the
+`repetition` / `no_progress` liveness breakers instead of looping forever — and
+**before** `capability_guard` and the B1 auto-approve arm. The B1 ordering is the
+critical half: a session launched with `permissions=auto_approve` (every
+`unattended` run) auto-selects the allow option inline, so an L2 guard placed
+after B1 would be silently voided on exactly the runs that most need it. A
+refactor that moves this call is a read-only-contract regression even though
+nothing about the guard itself changed.
+
+**"Unconditional" has one honest bound: adapter path reporting.** The guard
+matches on `toolCall.locations`. When an adapter reports no location,
+`resolveContextMountDecision` returns `unverifiable` and the call **proceeds** —
+deliberately not a deny, since denying every unlocated write would break writes
+to the session's own worktree on the kind-only adapters (gemini / opencode /
+mimo). The supervisor WARNs once per session and L3 is the backstop for that
+window. So L2 is unconditional in *intent* and in *arming*, but its per-call
+coverage is exactly "write-class tool calls the adapter localizes" — not "all
+filesystem writes by the agent process".
 
 **Why L3 matters even though mounts are ephemeral.** `git worktree add --detach`
 writes a `.git` **file** into the mount that points into the **sibling's**
@@ -1017,9 +1043,14 @@ remove from a sibling repo that never registered it.
 - Release MUST no-op (`skippedLive`) while `runs.status` is in
   `CONTEXT_MOUNT_LIVE_RUN_STATUSES`, so a `pull_request` promotion that leaves
   the run in `Review` NEVER releases its mounts. (Implemented — ADR-157)
-- A session carrying context mounts MUST have every write-class tool call whose
-  resolved path is under a declared mount root denied at the supervisor
-  permission handler, unconditionally and independent of `settings.hooks`.
+- A session carrying context mounts MUST have every **localized** write-class
+  tool call whose resolved path is under a declared mount root denied at the
+  supervisor permission handler, armed unconditionally and independent of
+  `settings.hooks`; a call the adapter does not localize resolves
+  `unverifiable`, proceeds, and MUST WARN once per session.
+  (Implemented — ADR-157)
+- The L2 guard MUST run after the M40 guardrail interceptor and BEFORE the B1
+  auto-approve arm, so a `permissions=auto_approve` session can NEVER bypass it.
   (Implemented — ADR-157)
 - A mount whose `git status --porcelain` is non-empty at the terminal choke MUST
   raise a WARN with quarantine evidence and MUST still be removed.
@@ -1069,7 +1100,10 @@ remove from a sibling repo that never registered it.
 - Source: `web/lib/worktree.ts` (`addDetachedWorktree`, `removeWorktree`),
   `web/lib/context-mounts/service.ts` (resolve + materialize + release),
   `web/lib/context-mounts/launch.ts` (the snapshot write),
-  `web/lib/context-mounts/terminal.ts` (`releaseRunContextMounts`,
-  `CONTEXT_MOUNT_LIVE_RUN_STATUSES`, `checkContextMountDirt`).
+  `web/lib/context-mounts/types.ts` (`contextMountsToWire`, the snapshot→wire
+  projection), `web/lib/context-mounts/terminal.ts` (`releaseRunContextMounts`,
+  `CONTEXT_MOUNT_LIVE_RUN_STATUSES`, `checkContextMountDirt`),
+  `supervisor/src/context-mounts.ts` (`resolveContextMountDecision`, the L2
+  guard evaluated in `supervisor/src/acp-client.ts`).
 - Error taxonomy: [`../error-taxonomy.md`](../error-taxonomy.md)
   (`PRECONDITION`, `CONFIG` — reused; no new code).
