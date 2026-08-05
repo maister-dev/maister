@@ -14320,6 +14320,16 @@ _Decisions are numbered sequentially. Do not reuse numbers._
 
 ## TODO (tracked doc defects)
 
+- **`workspaces.md` auto-promotion-lanes status contradicts itself and ADR-126
+  (open, found 2026-08-05).** The `## Auto-promotion lanes` section ends
+  "Everything here is **Designed**", while its own header and
+  [ADR-126](#adr-126-auto-promotion-lanes) both say Implemented. Spotted
+  twice while writing the F3 mount sections that sit beside it; left untouched
+  because R9 forbids fixing an unrelated section in passing, and this is the
+  prescribed place to record it instead. One word, but it is the kind of stale
+  status tag R6 exists to prevent — a reader trusts the trailing sentence over
+  the header.
+
 - **acp-runner GET/POST/PATCH contract drift (resolved 2026-06-08).** Earlier the
   `web.openapi.yaml` admin acp-runner block documented `getAdminAcpRunners`
   returning `platformDefaultRunnerId` and
