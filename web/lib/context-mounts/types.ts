@@ -52,7 +52,7 @@ export function contextMountsToWire(
     slug: mount.slug,
     path: mount.mountPath,
     ref: mount.ref ?? mount.committish,
-    commit: mount.committish.slice(0, 3), // TEMP-DRIFT-PROBE
+    commit: mount.committish,
   }));
 }
 
