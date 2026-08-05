@@ -445,7 +445,7 @@ the existing supervisor `DELETE /sessions/:id` (no new supervisor route; the
 `DELETE` drives teardown so no permission deferred leaks), marks the node
 `Failed`, and ends the run terminal. Cost limits stay record-only.
 
-### Context-repo declaration to release (Designed — ADR-157)
+### Context-repo declaration to release (Implemented — ADR-157)
 
 `settings.context_repos` is declared in the manifest, gated at manifest load by
 the engine floor, and resolved **at launch** — slug to active project, `ref` to a
@@ -516,17 +516,17 @@ flowchart TD
   the watchdog. Cost caps remain record-only.
 - `settings.context_repos` MUST be accepted only on `ai_coding`, `judge`, and
   `orchestrator` nodes and MUST be rejected by the schema on every other node
-  type, including `cli` and `check`. (Designed — ADR-157)
+  type, including `cli` and `check`. (Implemented — ADR-157)
 - A manifest declaring `context_repos` with `compat.engine_min` below
   `CONTEXT_REPOS_ENGINE_MIN` MUST refuse at manifest load with
-  `MaisterError("CONFIG")` naming the required bump. (Designed — ADR-157)
-- `settings.context_repos` MUST hold at most 8 entries. (Designed — ADR-157)
+  `MaisterError("CONFIG")` naming the required bump. (Implemented — ADR-157)
+- `settings.context_repos` MUST hold at most 8 entries. (Implemented — ADR-157)
 - Removing `context_repos` from a manifest MUST clear the resolved value on the
   next install — the write path is SET/CLEAR symmetric and NEVER an
-  `if (!x) continue` skip loop. (Designed — ADR-157)
+  `if (!x) continue` skip loop. (Implemented — ADR-157)
 - Launching a node that declares `context_repos` MUST refuse
   `MaisterError("PRECONDITION")` naming the project when the launching user
-  lacks `readRepoFiles` on any referenced sibling project. (Designed — ADR-157)
+  lacks `readRepoFiles` on any referenced sibling project. (Implemented — ADR-157)
 
 ## Edge cases
 
@@ -546,13 +546,13 @@ flowchart TD
 - **Process dies after a refusal snapshot but before the run is marked terminal**
   → the M11a/M11b recovery sweep reconciles the run; the append-only snapshot is
   never double-written for the same attempt.
-- **(Designed — ADR-157) `context_repos` naming an unknown or archived sibling
+- **(Implemented — ADR-157) `context_repos` naming an unknown or archived sibling
   slug** → `MaisterError("PRECONDITION")` at launch, naming the offending slug;
   no mount and no worktree side-effect.
-- **(Designed — ADR-157) `context_repos[].ref` that does not resolve in the
+- **(Implemented — ADR-157) `context_repos[].ref` that does not resolve in the
   sibling repo** → `MaisterError("PRECONDITION")`. There is **no auto-fetch** —
   the same v1 rule ADR-090 applies to `workspace_ref`.
-- **(Designed — ADR-157) `context_repos` over the 8-entry max, or carrying an
+- **(Implemented — ADR-157) `context_repos` over the 8-entry max, or carrying an
   unknown key** → `MaisterError("CONFIG")` at schema parse, before the engine
   floor gate has anything to check.
 
@@ -573,7 +573,7 @@ flowchart TD
 - Errors: [error-taxonomy.md](error-taxonomy.md) (`CONFIG`,
   `EXECUTOR_UNAVAILABLE` M11c callers).
 - DSL: [flow-dsl.md](flow-dsl.md) (node `settings` block).
-- Context mounts (Designed — ADR-157): [`workspaces.md`](workspaces.md)
+- Context mounts (Implemented — ADR-157): [`workspaces.md`](workspaces.md)
   (mount path, `runs.context_mounts` snapshot, the three read-only enforcement
   layers, terminal release) and [`reconciliation-gc.md`](reconciliation-gc.md)
   (the GC backstop sweep and the reconciler scan-scope boundary). Engine floor

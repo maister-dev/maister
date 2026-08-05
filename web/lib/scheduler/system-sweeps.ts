@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { EphemeralAgentGcSummary } from "@/lib/gc/ephemeral-agent-gc";
+import type { ContextMountGcSummary } from "@/lib/gc/context-mount-gc";
 import type { AgentMaterializationGcSummary } from "@/lib/gc/agent-materialization-gc";
 import type { RevisionGcSummary } from "@/lib/gc/revision-gc";
 import type { WorkspaceGcSummary } from "@/lib/gc/workspace-gc";
@@ -14,6 +15,7 @@ import { runBrainDecaySweep } from "@/lib/brain/decay";
 import { runBrainReindexSweep } from "@/lib/brain/reindex";
 import { runCapabilitiesCleanupSweep } from "@/lib/capabilities/cleanup";
 import { runEphemeralAgentGcSweep } from "@/lib/gc/ephemeral-agent-gc";
+import { runContextMountGcSweep } from "@/lib/gc/context-mount-gc";
 import { runAgentMaterializationCleanupSweep } from "@/lib/gc/agent-materialization-gc";
 import { runRevisionGcSweep } from "@/lib/gc/revision-gc";
 import { runWorkspaceGcSweep } from "@/lib/gc/workspace-gc";
@@ -49,6 +51,10 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
   revision: RevisionGcSummary | null;
   capabilities: Awaited<ReturnType<typeof runCapabilitiesCleanupSweep>> | null;
   ephemeralAgent: EphemeralAgentGcSummary | null;
+  // ADR-157 (T32): the read-only sibling-repo context-mount backstop — reaps
+  // mounts whose owning run is terminal/absent (including the residual crash
+  // window where the launch snapshot was never committed).
+  contextMount: ContextMountGcSummary | null;
   agentMaterialization: AgentMaterializationGcSummary | null;
   // T2.3 (ADR-142): the Evaluation evidence sweep — recovers crashed captures
   // (orphan `preparing`) and finalizes unreferenced two-stage deletes.
@@ -74,6 +80,7 @@ type GcBundleResult = {
   revision: RevisionGcSummary | null;
   capabilities: SystemSweepSummary["capabilities"];
   ephemeralAgent: EphemeralAgentGcSummary | null;
+  contextMount: ContextMountGcSummary | null;
   agentMaterialization: AgentMaterializationGcSummary | null;
   evaluationEvidence: EvidenceSweepSummary | null;
   plainAgentDirectory: PlainAgentDirectoryGcSummary | null;
@@ -89,6 +96,7 @@ async function runGcBundle(): Promise<GcBundleResult> {
   let revision: RevisionGcSummary | null = null;
   let capabilities: SystemSweepSummary["capabilities"] = null;
   let ephemeralAgent: EphemeralAgentGcSummary | null = null;
+  let contextMount: ContextMountGcSummary | null = null;
   let agentMaterialization: AgentMaterializationGcSummary | null = null;
   let evaluationEvidence: EvidenceSweepSummary | null = null;
   let plainAgentDirectory: PlainAgentDirectoryGcSummary | null = null;
@@ -144,6 +152,16 @@ async function runGcBundle(): Promise<GcBundleResult> {
   }
 
   try {
+    contextMount = await runContextMountGcSweep();
+  } catch (err) {
+    const message = errorMessage(err);
+
+    errors.push(`context mount sweep failed: ${message}`);
+    bundleErrors.push(`context mount sweep failed: ${message}`);
+    log.error({ err: message }, "gc bundle context mount threw");
+  }
+
+  try {
     agentMaterialization = await runAgentMaterializationCleanupSweep();
   } catch (err) {
     const message = errorMessage(err);
@@ -189,6 +207,16 @@ async function runGcBundle(): Promise<GcBundleResult> {
       `${ephemeralAgent.failed} ephemeral -ro checkout(s) failed to remove (left for retry)`,
     );
   }
+  if (contextMount && contextMount.failed > 0) {
+    errors.push(
+      `${contextMount.failed} context mount(s) failed to remove (bounded retry armed)`,
+    );
+  }
+  if (contextMount && contextMount.poisoned > 0) {
+    errors.push(
+      `${contextMount.poisoned} context mount(s) permanently failed for operator review`,
+    );
+  }
   if (agentMaterialization && agentMaterialization.failed > 0) {
     errors.push(
       `${agentMaterialization.failed} agent materialization cleanup(s) failed (left for retry)`,
@@ -206,6 +234,7 @@ async function runGcBundle(): Promise<GcBundleResult> {
     revision,
     capabilities,
     ephemeralAgent,
+    contextMount,
     agentMaterialization,
     evaluationEvidence,
     plainAgentDirectory,
@@ -305,6 +334,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     revision: gc.revision,
     capabilities: gc.capabilities,
     ephemeralAgent: gc.ephemeralAgent,
+    contextMount: gc.contextMount,
     agentMaterialization: gc.agentMaterialization,
     evaluationEvidence: gc.evaluationEvidence,
     plainAgentDirectory: gc.plainAgentDirectory,

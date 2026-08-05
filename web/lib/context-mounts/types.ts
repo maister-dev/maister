@@ -23,7 +23,38 @@ export type ContextMountSnapshot = {
   repoPath: string;
   mountPath: string;
   committish: string;
+  // The ref the launch ASKED for (`decl.ref`, else the sibling's default
+  // branch). Distinct from `committish`, which is what that ref resolved to.
+  // Kept because the supervisor wire contract and the agent-facing prompt
+  // preamble both report `ref` and `commit` separately — a reader needs to know
+  // it got `main`, not only the sha `main` happened to point at. Optional for
+  // rows written before this field existed; readers fall back to `committish`.
+  ref?: string;
 };
+
+// The supervisor's `POST /sessions` contract (`ContextMountSchema` in
+// `supervisor/src/types.ts`) is `.strict()` and names its fields
+// `{slug, path, ref, commit}` — NOT the snapshot's
+// `{projectId, repoPath, mountPath, committish}`. Sending a snapshot verbatim is
+// rejected outright (unknown keys + missing required ones), so this projection is
+// mandatory at the wire boundary and lives here, beside the type it maps from.
+export type ContextMountWire = {
+  slug: string;
+  path: string;
+  ref: string;
+  commit: string;
+};
+
+export function contextMountsToWire(
+  snapshot: readonly ContextMountSnapshot[],
+): ContextMountWire[] {
+  return snapshot.map((mount) => ({
+    slug: mount.slug,
+    path: mount.mountPath,
+    ref: mount.ref ?? mount.committish,
+    commit: mount.committish,
+  }));
+}
 
 // Bounded so a manifest cannot ask a single session to check out an unbounded
 // number of sibling repos.

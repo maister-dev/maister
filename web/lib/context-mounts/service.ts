@@ -128,6 +128,7 @@ export async function resolveContextMounts(input: {
         sibling.slug,
       ),
       committish,
+      ref,
     });
   }
 

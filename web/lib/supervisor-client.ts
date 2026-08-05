@@ -19,6 +19,7 @@ import {
 import { z } from "zod";
 
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
+import { contextMountsToWire } from "@/lib/context-mounts/types";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 
 const logger = pino({
@@ -625,11 +626,20 @@ export async function createSession(
   logger.debug({ url, runId: input.runId }, "createSession");
   let res: Response;
 
+  // ADR-157: the supervisor's ContextMountSchema is `.strict()` and names its
+  // fields `{slug, path, ref, commit}`. Callers hold the DB snapshot shape
+  // (`{projectId, repoPath, mountPath, committish, …}`), so it MUST be projected
+  // here — the one place the body is built — or the request 400s on unknown keys.
+  const body =
+    input.contextMounts && input.contextMounts.length > 0
+      ? { ...input, contextMounts: contextMountsToWire(input.contextMounts) }
+      : input;
+
   try {
     res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(input),
+      body: JSON.stringify(body),
     });
   } catch (err) {
     throw networkErrorToMaister(err, "createSession");

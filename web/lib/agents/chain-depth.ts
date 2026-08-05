@@ -27,6 +27,37 @@ export type ChainDepth = {
   atCap: boolean;
 };
 
+// ADR-156: `boundRunId` is parsed from the run-bound token NAME, so it is
+// server-derived but NOT guaranteed to reference a live `runs` row — a token can
+// outlive its run row, or be minted by a path other than `issueAgentRunToken`.
+// Stamping it blindly violates `domain_events_run_id_runs_id_fk` and turns an
+// ordinary create into a 500.
+//
+// Degrading to null is the FAIL-CLOSED direction, not a loss: an agent-authored
+// event with a NULL `run_id` is treated as already AT the cap by
+// `resolveAgentChainDepth`, so an unattributable action can never extend a chain.
+export async function resolveProducingRunId(
+  boundRunId: string | null | undefined,
+  db?: Db,
+): Promise<string | null> {
+  if (!boundRunId) return null;
+
+  const _db = (db ?? getDb()) as unknown as { select: any };
+  const rows = (await _db
+    .select({ id: runs.id })
+    .from(runs)
+    .where(eq(runs.id, boundRunId))) as Array<{ id: string }>;
+
+  if (rows.length > 0) return boundRunId;
+
+  log.warn(
+    { boundRunId },
+    "token-bound run does not exist — emitting without run provenance (treated as chain-exhausted)",
+  );
+
+  return null;
+}
+
 // ADR-156 D7: how deep an agent→agent trigger chain this launch would be.
 //
 // A run launched from a domain event whose actor_type='agent' inherits the

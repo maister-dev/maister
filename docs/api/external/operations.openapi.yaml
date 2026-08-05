@@ -576,7 +576,7 @@ paths:
         Duplicates are idempotent no-ops. The relation actor is token-derived
         (`agent` for agent tokens).
 
-        **(Designed — ADR-155) Cross-project targets.** The alternative
+        **(Implemented — ADR-155) Cross-project targets.** The alternative
         `toTaskKey` addresses the counterpart by its platform-unique `KEY-N`
         and MAY resolve to a task in a different project. `task_relations`
         rows stay owned by the FROM-end project; only the to-end may differ.
@@ -607,10 +607,10 @@ paths:
                 summary: This task blocks task 5 of the same project
                 value: { kind: blocks, toNumber: 5 }
               crossProjectByKey:
-                summary: (Designed — ADR-155) This task depends on API-42
+                summary: (Implemented — ADR-155) This task depends on API-42
                 value: { kind: depends_on, toTaskKey: "API-42" }
               successGatedRequires:
-                summary: (Designed — ADR-155) Success-gated `requires` edge
+                summary: (Implemented — ADR-155) Success-gated `requires` edge
                 value: { kind: requires, toTaskKey: "API-42" }
       responses:
         "201":
@@ -628,7 +628,7 @@ paths:
           description: |
             Access refused (`UNAUTHORIZED`). The shared
             `HitlForbidden` cases apply (missing scope, wrong token kind), plus
-            **(Designed — ADR-155)** a project-bound token whose `toTaskKey`
+            **(Implemented — ADR-155)** a project-bound token whose `toTaskKey`
             resolves to a task in a DIFFERENT project, and a NULL-project user
             token whose owner lacks `manageTaskRelations` on the resolved
             target project.
@@ -644,7 +644,7 @@ paths:
         "404":
           description: |
             Task not found in the URL-param project, or the token's project
-            does not own it (existence-hidden). **(Designed — ADR-155)** Also
+            does not own it (existence-hidden). **(Implemented — ADR-155)** Also
             returned when `toTaskKey` resolves to nothing (unknown key or
             unknown number) or resolves into an ARCHIVED project.
           content:
@@ -654,7 +654,7 @@ paths:
           description: |
             (ADR-121) The gating-kind (`blocks`/`depends_on`/`requires`)
             relation would close a dependency cycle (`CONFLICT`), evaluated
-            inside the insert transaction. **(Designed — ADR-155)** The cycle
+            inside the insert transaction. **(Implemented — ADR-155)** The cycle
             check is platform-global and serialized by ONE platform-wide
             advisory lock (a per-project lock cannot see a cycle whose edges
             are spread over four projects), and it also refuses `CONFLICT`
@@ -665,7 +665,7 @@ paths:
         "422":
           description: |
             Request body failed schema validation (`CONFIG`) — including
-            **(Designed — ADR-155)** supplying BOTH `toNumber` and `toTaskKey`,
+            **(Implemented — ADR-155)** supplying BOTH `toNumber` and `toTaskKey`,
             or NEITHER (exactly one is required), and a `toTaskKey` that does
             not match `^[A-Za-z][A-Za-z0-9]*-[0-9]+$`.
           content:
@@ -679,7 +679,7 @@ paths:
         the web `deleteTaskRelation`). Missing relation is an idempotent
         no-op (`removed: false`).
 
-        **(Designed — ADR-155)** `toTaskKey` and the `requires` kind are
+        **(Implemented — ADR-155)** `toTaskKey` and the `requires` kind are
         accepted here on the same terms as on POST — the body schema is
         shared. Removal is the half that closes a real hole: `requires` is
         success-gated and never releases on `Abandoned`/`Failed`, so before
@@ -705,7 +705,7 @@ paths:
                 summary: Drop the `blocks` edge onto task 5
                 value: { kind: blocks, toNumber: 5 }
               crossProjectRequires:
-                summary: (Designed — ADR-155) Undo a wedged `requires` onto API-42
+                summary: (Implemented — ADR-155) Undo a wedged `requires` onto API-42
                 value: { kind: requires, toTaskKey: "API-42" }
       responses:
         "200":
@@ -722,7 +722,7 @@ paths:
         "403":
           description: |
             Access refused (`UNAUTHORIZED`) — the shared `HitlForbidden`
-            cases, plus **(Designed — ADR-155)** a project-bound token whose
+            cases, plus **(Implemented — ADR-155)** a project-bound token whose
             `toTaskKey` resolves into a different project, and a NULL-project
             user token whose owner lacks `manageTaskRelations` on the resolved
             target project. Deliberately 403 rather than the existence-hiding
@@ -733,7 +733,7 @@ paths:
         "404":
           description: |
             Task not found in the URL-param project, or the token's project
-            does not own it (existence-hidden). **(Designed — ADR-155)** Also
+            does not own it (existence-hidden). **(Implemented — ADR-155)** Also
             returned when `toTaskKey` resolves to nothing or resolves into an
             ARCHIVED project.
           content:
@@ -742,7 +742,7 @@ paths:
         "422":
           description: |
             Request body failed schema validation (`CONFIG`) — including
-            **(Designed — ADR-155)** supplying BOTH `toNumber` and `toTaskKey`,
+            **(Implemented — ADR-155)** supplying BOTH `toNumber` and `toTaskKey`,
             or NEITHER, and a malformed `toTaskKey`.
           content:
             application/json:
@@ -3467,7 +3467,7 @@ components:
         (M34 — Implemented) Relation create/remove body — mirrors the web
         route: the canonical direction is `(from = URL task, kind, to)`.
 
-        **(Designed — ADR-155)** The target end is addressed by EXACTLY ONE of
+        **(Implemented — ADR-155)** The target end is addressed by EXACTLY ONE of
         `toNumber` (per-project number, confined to the URL-param project) or
         `toTaskKey` (platform-unique `KEY-N`, may resolve to a DIFFERENT
         project). OpenAPI 3.0.3 has no XOR keyword, so the exclusivity is
@@ -3487,7 +3487,7 @@ components:
             (ADR-112) `duplicate_of` marks the URL task a duplicate of the
             target — a non-blocking dedup annotation used by triage.
 
-            **(Designed — ADR-155)** `requires` is settable here. The enum is
+            **(Implemented — ADR-155)** `requires` is settable here. The enum is
             now the SAME five kinds on every surface (internal route, this ext
             route, and the MCP `relation_add` / `relation_remove` tools);
             because this schema is shared by POST and DELETE, the previous
@@ -3508,7 +3508,7 @@ components:
           type: string
           pattern: '^[A-Za-z][A-Za-z0-9]*-[0-9]+$'
           description: |
-            **(Designed — ADR-155)** Platform-unique `KEY-N` address
+            **(Implemented — ADR-155)** Platform-unique `KEY-N` address
             (`projects.task_key` + `tasks.number`), case-insensitive on the key
             part. Mutually exclusive with `toNumber`. May name a task in
             ANOTHER project — see the route's 403/404 arms for the

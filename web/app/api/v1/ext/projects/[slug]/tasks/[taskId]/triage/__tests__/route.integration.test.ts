@@ -258,13 +258,17 @@ describe("POST /api/v1/ext/.../triage — agent verdict", () => {
     expect(audit.rows[0].actor_label).toBe(`agent:${AGENT_ID}`);
   });
 
-  it("enforces the fixed agent scope ceiling — task creation is outside the set", async () => {
+  // ADR-156 D6b MIGRATED this assertion: `tasks:create` joined
+  // AGENT_TOKEN_SCOPES, so an agent CAN now create a task — a same-project
+  // privilege expansion, not just a cross-project one. The ceiling still
+  // exists, it just moved; `tasks:update` is the nearest scope still outside it.
+  it("lets an agent create a task now that tasks:create is granted (ADR-156 D6b)", async () => {
     const res = await CREATE_TASK(
-      request("POST", fx.agentToken, { title: "rogue", prompt: "p" }),
+      request("POST", fx.agentToken, { title: "agent-authored", prompt: "p" }),
       { params: Promise.resolve({ slug: SLUG }) },
     );
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(201);
 
     const audit = await pool.query(
       `SELECT result, status_code FROM token_audit_log
@@ -273,7 +277,30 @@ describe("POST /api/v1/ext/.../triage — agent verdict", () => {
     );
 
     expect(audit.rows).toHaveLength(1);
-    expect(audit.rows[0]).toMatchObject({ result: "error", status_code: 403 });
+    expect(audit.rows[0]).toMatchObject({ result: "ok", status_code: 201 });
+  });
+
+  // The agent token here is minted with a name whose run row does not exist, so
+  // this also pins the fail-closed provenance guard: stamping a dangling
+  // boundRunId would violate domain_events_run_id_runs_id_fk and 500.
+  it("emits task.created with an agent actor and no dangling run provenance", async () => {
+    const res = await CREATE_TASK(
+      request("POST", fx.agentToken, { title: "provenance", prompt: "p" }),
+      { params: Promise.resolve({ slug: SLUG }) },
+    );
+
+    expect(res.status).toBe(201);
+
+    const { taskId } = (await res.json()) as { taskId: string };
+    const evt = await pool.query(
+      `SELECT actor_type, run_id FROM domain_events
+       WHERE kind = 'task.created' AND task_id = $1`,
+      [taskId],
+    );
+
+    expect(evt.rows).toHaveLength(1);
+    expect(evt.rows[0].actor_type).toBe("agent");
+    expect(evt.rows[0].run_id).toBeNull();
   });
 
   // The OpenAPI `verdict` example passes `flowId: "bugfix"` — a flow_ref_id, not

@@ -1045,7 +1045,7 @@ reformats ~60 unrelated files).
   **Logging:** INFO per mount `{runId, siblingSlug, committish, mountPath}`; WARN on
   refusal with the failing slug; DEBUG the resolved snapshot before persisting.
 
-- [ ] **T31 — Read-only enforcement (L2 + L3).**
+- [x] **T31 — Read-only enforcement (L2 + L3).**
   - **Supervisor contract:** add `contextMounts: z.array(worktreePathSchema).max(8).optional()`
     to `StartSessionRequestSchema` (`supervisor/src/types.ts`) — carrying
     `{slug, path, ref, commit}` per entry, not bare paths. Thread into `buildChildEnv`
@@ -1068,7 +1068,7 @@ reformats ~60 unrelated files).
   - Web-side, thread `contextMounts` through `web/lib/supervisor-client.ts` `CreateSessionInput`
     and the `runner-agent.ts` `createInput` (`:840-855`).
 
-- [ ] **T32 — Terminal release + GC backstop.**
+- [x] **T32 — Terminal release + GC backstop.**
   - Terminal choke: call `releaseContextMounts(run.context_mounts)` from the flow and agent
     terminal paths, reading the **snapshot**, never re-deriving from the manifest/link.
   - New backstop sweep in the `system_sweep` family reaping mounts under
@@ -1081,7 +1081,7 @@ reformats ~60 unrelated files).
   drives the real `runSchedulerTick({jobKind})` claim→dispatch path — a registration
   checklist nothing executes is an unverified claim.
 
-- [ ] **T33 — F3 tests + reconciler non-interference proof + deployment wiring.**
+- [x] **T33 — F3 tests + reconciler non-interference proof + deployment wiring.**
   - Integration: a flow run with one sibling mount materializes it at the right committish,
     the path is inside the prompt-confinement allow-set, and the terminal path removes it
     from the **sibling's** `git worktree list`.
@@ -1111,7 +1111,7 @@ reformats ~60 unrelated files).
 
 ### Phase 8 — F3 surface + close-out
 
-- [ ] **T34 — Renumber pass (mandatory, AFTER rebasing onto the integration target).**
+- [x] **T34 — Renumber pass (mandatory, AFTER rebasing onto the integration target).**
   Its own focused session, not a merge-time surprise.
   - Re-read `max(### ADR-NNN)` at the integration target's HEAD; renumber ADR-155/156/157
     and **every citation** (code comments, docs, migration comments, test names).
@@ -1131,7 +1131,7 @@ reformats ~60 unrelated files).
   ⚠ Project memory: e2e shares ports 3100/7788 and the `maister_e2e` DB across **all**
   worktrees — kill those ports first and prove a green baseline before adding cases.
 
-- [ ] **T36 — Documentation checkpoint (`/aif-docs`) + verify.**
+- [x] **T36 — Documentation checkpoint (`/aif-docs`) + verify.**
   Reconcile every Phase-0 artifact against what actually shipped; flip
   `Designed → Implemented` tags; update `CLAUDE.md` (root) — the Flow-engine version line
   `3.3.0 → 3.4.0`, the relation-kinds count, and a Current-Scope line for cross-project
@@ -1370,3 +1370,33 @@ different sides (the subset↔action-map guard) — one test, one owner, cited t
    behavior (the token is the authority there too), so tightening it
    cross-project only would be an inconsistency; tightening both is a scope
    change beyond this plan.
+
+7. **The plan's claim that `pnpm validate:docs` "only parses Mermaid" is wrong.**
+   `package.json` defines it as
+   `validate-docs-mermaid.mjs && validate-docs-adr-anchors.mjs`, so it DOES
+   resolve `[ADR-NNN](decisions.md#…)` anchors. What it does NOT validate is the
+   OpenAPI/AsyncAPI specs — that is `pnpm validate:contracts` (T7a's point
+   stands; only the stated reason was wrong).
+
+8. **`workspace_reconciliation_findings` is the WRONG store for the context-mount
+   GC marker**, despite `reconciliation-gc.md` implying it. Its `candidate_kind`
+   CHECK has only four values, and `loadDueReconciliationFindings` carries no
+   kind predicate — context-mount rows would be claimed and processed by the
+   *workspace reconciler itself*. The sweep keeps the ADR-142 semantics
+   (durable marker, bounded backoff, poison policy) in a purpose-built on-disk
+   marker under `<runDir>/context/.gc/` instead.
+
+9. **`WaitingOnChildren` belongs in the context-mount live allow-list**, which
+   `reconciliation-gc.md` originally omitted. A parked orchestrator WILL be woken
+   by a child-terminal event and resumed via `session/resume` into the same node,
+   so reaping its mounts mid-park hands the resumed coordinator paths that no
+   longer exist — the same argument the doc already makes for `Review`, in its
+   strongest form. Code and doc now agree.
+
+10. **Terminal release is wired at four chokes**, not every path that terminalizes
+    a run: the graph terminal chain, `finalizeAgentRun`, `markAbandoned`, and
+    `promoteRun`. Five long-tail paths (keepalive TTL abandon, orchestrator
+    cascade, `services/hitl.ts`, `services/agent-question.ts`, scratch discard)
+    have no shared choke and fall to the GC backstop within one `system_sweep`
+    tick — the same deferral the run's own worktree already relies on. Stated
+    rather than implied.

@@ -1786,7 +1786,7 @@ paths:
         which names sibling project slugs and is therefore authorized at write
         time (see below).
 
-        **(Designed — ADR-156/157)** Two multi-repo axes land on THIS aggregating
+        **(Implemented — ADR-156/157)** Two multi-repo axes land on THIS aggregating
         PATCH, in the same server transaction as everything above — never as
         per-field routes: `crossProjectReach` (the ADR-156 grant that lets an
         agent token minted for another project act in THIS one, over the
@@ -1836,7 +1836,7 @@ paths:
                 crossProjectReach:
                   type: boolean
                   description: |
-                    **(Designed — ADR-156)** Per-link cross-project reach grant.
+                    **(Implemented — ADR-156)** Per-link cross-project reach grant.
                     Default `false`. When `true`, an agent token minted for a
                     DIFFERENT project may act in THIS project, restricted to the
                     write-safe `CROSS_PROJECT_AGENT_SCOPES` subset intersected
@@ -1857,7 +1857,7 @@ paths:
                   nullable: true
                   maxItems: 8
                   description: |
-                    **(Designed — ADR-157)** Read-only sibling-repo context
+                    **(Implemented — ADR-157)** Read-only sibling-repo context
                     mounts this agent's runs materialize in this project, at
                     `<runDir>/context/<siblingSlug>/`. Explicit `null` (or `[]`)
                     clears the declaration — SET and CLEAR are symmetric, there
@@ -1930,7 +1930,7 @@ paths:
         "422":
           description: |
             Invalid cron expression / timezone / event kinds (`CONFIG`).
-            **(Designed — ADR-157)** Also `PRECONDITION` when a
+            **(Implemented — ADR-157)** Also `PRECONDITION` when a
             `contextRepos[].project` slug does not resolve to an active project,
             or the acting admin lacks `readRepoFiles` on a referenced sibling
             project — the message names the offending slug and the transaction
@@ -2799,7 +2799,7 @@ paths:
           - `toNumber` is body-controlled but resolved STRICTLY within the
             URL-param project via `(project_id, number)` — that arm cannot
             reach another project (unchanged).
-          - **(Designed — ADR-155)** `toTaskKey` is body-controlled and names a
+          - **(Implemented — ADR-155)** `toTaskKey` is body-controlled and names a
             CROSS-RESOURCE locator: it resolves against the platform-unique
             `projects.task_key`, so it may land in another project. The row
             stays owned by the FROM-end project (`task_relations.project_id`);
@@ -2833,10 +2833,10 @@ paths:
                 summary: This task blocks task 5
                 value: { kind: blocks, toNumber: 5 }
               crossProjectByKey:
-                summary: (Designed — ADR-155) This task depends on API-42
+                summary: (Implemented — ADR-155) This task depends on API-42
                 value: { kind: depends_on, toTaskKey: "API-42" }
               successGatedRequires:
-                summary: (Designed — ADR-155) Success-gated `requires` onto API-42
+                summary: (Implemented — ADR-155) Success-gated `requires` onto API-42
                 value: { kind: requires, toTaskKey: "API-42" }
       responses:
         "200":
@@ -2852,7 +2852,7 @@ paths:
         "400":
           description: |
             Invalid `kind`, self-relation (`toNumber` equals `{number}`),
-            or malformed body (`CONFIG`). **(Designed — ADR-155)** Also
+            or malformed body (`CONFIG`). **(Implemented — ADR-155)** Also
             returned when BOTH `toNumber` and `toTaskKey` are supplied, when
             NEITHER is (exactly one is required), or when `toTaskKey` does not
             match `^[A-Za-z][A-Za-z0-9]*-[0-9]+$`.
@@ -2864,7 +2864,7 @@ paths:
         "403":
           description: |
             The caller lacks `manageTaskRelations` (`member`) on the from-end
-            project, or **(Designed — ADR-155)** on the project the
+            project, or **(Implemented — ADR-155)** on the project the
             `toTaskKey` target RESOLVED into (`UNAUTHORIZED`). The target-side
             refusal carries the target project's normal refusal shape —
             existence is not hidden here, because the caller supplied a
@@ -2875,14 +2875,14 @@ paths:
         "404":
           description: |
             Project, task, or counterpart task (`toNumber`) not found in
-            this project. **(Designed — ADR-155)** Also returned when
+            this project. **(Implemented — ADR-155)** Also returned when
             `toTaskKey` resolves to nothing (unknown key or unknown number)
             or resolves into an ARCHIVED project.
         "409":
           description: |
             (ADR-121) The gating-kind (`blocks|depends_on|requires`) relation
             would close a dependency cycle (`CONFLICT`), evaluated inside the
-            insert transaction. **(Designed — ADR-155)** With cross-project
+            insert transaction. **(Implemented — ADR-155)** With cross-project
             edges the gating graph is platform-wide, so the check runs under
             ONE platform-wide advisory lock instead of a per-project one (a
             per-project lock cannot serialize a cycle whose edges span four
@@ -2900,7 +2900,7 @@ paths:
         an absent relation is an idempotent no-op. Writes `relation_removed`
         activity when a row was deleted.
 
-        **(Designed — ADR-155)** The handler is shared with POST, so
+        **(Implemented — ADR-155)** The handler is shared with POST, so
         `toTaskKey` and the dual `manageTaskRelations` check on the resolved
         target project apply identically here. Removal is the half that closes
         a real hole: `requires` is success-gated and never releases on
@@ -2928,7 +2928,7 @@ paths:
                 summary: Drop the `blocks` edge onto task 5
                 value: { kind: blocks, toNumber: 5 }
               crossProjectRequires:
-                summary: (Designed — ADR-155) Undo a wedged `requires` onto API-42
+                summary: (Implemented — ADR-155) Undo a wedged `requires` onto API-42
                 value: { kind: requires, toTaskKey: "API-42" }
       responses:
         "200":
@@ -2942,7 +2942,7 @@ paths:
                   ok: { type: boolean, enum: [true] }
         "400":
           description: |
-            Malformed body (`CONFIG`). **(Designed — ADR-155)** Includes BOTH
+            Malformed body (`CONFIG`). **(Implemented — ADR-155)** Includes BOTH
             `toNumber` and `toTaskKey` supplied, NEITHER supplied, or a
             `toTaskKey` that does not match
             `^[A-Za-z][A-Za-z0-9]*-[0-9]+$`.
@@ -2954,7 +2954,7 @@ paths:
         "403":
           description: |
             The caller lacks `manageTaskRelations` on the from-end project, or
-            **(Designed — ADR-155)** on the project the `toTaskKey` target
+            **(Implemented — ADR-155)** on the project the `toTaskKey` target
             RESOLVED into (`UNAUTHORIZED`).
           content:
             application/json:
@@ -2962,7 +2962,7 @@ paths:
         "404":
           description: |
             Project, task, or counterpart task not found in this project.
-            **(Designed — ADR-155)** Also returned when `toTaskKey` resolves
+            **(Implemented — ADR-155)** Also returned when `toTaskKey` resolves
             to nothing or resolves into an ARCHIVED project.
   /api/projects/{slug}/tasks/{number}/subscription:
     post:
@@ -15019,7 +15019,7 @@ components:
     TaskRelationBody:
       type: object
       description: |
-        Relation create/remove body. **(Designed — ADR-155)** The target end is
+        Relation create/remove body. **(Implemented — ADR-155)** The target end is
         addressed by EXACTLY ONE of `toNumber` (per-project number, confined to
         the URL-param project) or `toTaskKey` (platform-unique `KEY-N`, which
         may resolve into a DIFFERENT project). OpenAPI 3.0.3 has no XOR
@@ -15052,7 +15052,7 @@ components:
           pattern: '^[A-Za-z][A-Za-z0-9]*-[0-9]+$'
           example: "API-42"
           description: |
-            **(Designed — ADR-155)** Platform-unique `KEY-N` address
+            **(Implemented — ADR-155)** Platform-unique `KEY-N` address
             (`projects.task_key` + `tasks.number`; `projects.task_key` is
             NOT NULL UNIQUE, so `KEY-N` is a valid global address), matched
             case-insensitively on the key part. Mutually exclusive with

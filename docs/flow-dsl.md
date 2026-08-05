@@ -1509,7 +1509,7 @@ directly (e.g. `$HOME`); values outside the allow-list can only arrive via
 `{{ env.* }}` interpolation, which the deny patterns above filter. The
 `MAISTER_CLI_INHERIT_ENV` host env var (see
 [configuration.md](configuration.md)) temporarily restores full inheritance
-for not-yet-migrated packages. **(Designed — ADR-157)** `MAISTER_CONTEXT_REPOS`
+for not-yet-migrated packages. **(Implemented — ADR-157)** `MAISTER_CONTEXT_REPOS`
 is deliberately NOT on this allow-list: read-only sibling mounts are an
 ACP-session concept, so the var reaches the adapter child only — see
 [`settings.context_repos`](#settingscontext_repos--read-only-sibling-repo-mounts-designed--adr-157).
@@ -1665,7 +1665,7 @@ workspace previews the exact packet and target before fresh submission; the
 runner verifies/records the same packet digest when consuming it. This adds no
 DSL syntax and preserves the existing `commentsVar` transport.
 
-## `settings.context_repos` — read-only sibling-repo mounts (Designed — ADR-157)
+## `settings.context_repos` — read-only sibling-repo mounts (Implemented — ADR-157)
 
 **(Designed — [ADR-157](decisions.md#adr-157-read-only-sibling-repo-context-mounts),
 engine >= 3.4.0.)** A node may declare sibling projects whose repositories the

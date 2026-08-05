@@ -64,7 +64,7 @@ surface exists.
   polymorphic actor `{type: 'agent', id: agent_id}` (ADR-083's first agent
   writer) and `token_audit_log.actor_label` records `agent:<id>`. See
   [agents.md](agents.md).
-- **`tasks:create` joins `AGENT_TOKEN_SCOPES`** (Designed — ADR-156) — agents hold
+- **`tasks:create` joins `AGENT_TOKEN_SCOPES`** (Implemented — ADR-156) — agents hold
   no `tasks:create` in ANY project today (`web/types/token-scopes.ts:61-84`), so an
   agent cannot open a task anywhere. The route
   (`POST /api/v1/ext/projects/{slug}/tasks`, `scopeLabel: "tasks:create"`) and the
@@ -80,7 +80,7 @@ surface exists.
   ops), `agents:trigger` (the inbound `POST /api/agents/{agentId}/event`
   webhook trigger — the only token-authenticated route outside
   `/api/v1/ext`).
-- **`toTaskKey` — the cross-project relation locator** (Designed — ADR-155) —
+- **`toTaskKey` — the cross-project relation locator** (Implemented — ADR-155) —
   `POST|DELETE /api/v1/ext/projects/{slug}/tasks/{taskId}/relations` gains a body
   field `toTaskKey`, a platform-unique `KEY-N` address such as `"API-42"`, resolved
   against the globally-unique `projects.task_key` + `tasks.number`. It is
@@ -90,7 +90,7 @@ surface exists.
   strictly within the URL-param project — so `toTaskKey` is the single
   body-controlled cross-resource locator on this surface, and it is the field that
   carries the target-project authorization checks below.
-- **`requires` on the ext relations surface** (Designed — ADR-155) — `opBodySchema`
+- **`requires` on the ext relations surface** (Implemented — ADR-155) — `opBodySchema`
   (`web/app/api/v1/ext/projects/[slug]/tasks/[taskId]/relations/route.ts:38`)
   enumerates only `blocks | depends_on | parent_of | duplicate_of`; it gains
   `requires`, bringing ext to the same five kinds as the internal route. **The
@@ -102,7 +102,7 @@ surface exists.
   wrongly-minted edge blocks its dependent forever. A caller that wants the
   self-healing kind must reach for `depends_on`. See
   [orchestrator.md](orchestrator.md) and [social-board.md](social-board.md).
-- **`CROSS_PROJECT_AGENT_SCOPES`** (Designed — ADR-156) — the allow-list that lets
+- **`CROSS_PROJECT_AGENT_SCOPES`** (Implemented — ADR-156) — the allow-list that lets
   an agent token minted for project **A** act in project **B** at the ext-handler
   cross-project seam (`web/lib/tokens/ext-handler.ts:255-274` for the slug arm,
   `:358-377` for the `resolveProjectId` arm). Exactly: `tasks:read`,
@@ -195,7 +195,7 @@ surface exists.
   `flowId` → else `CONFIG`). See [triage.md](triage.md). (Implemented)
   - `relation_add` / `relation_remove` (scopes `relations:create` /
     `relations:delete`; `mcp/src/tools.ts:613-646` plus the `dispatchTool` bodies
-    at `:1304-1330`) (Designed — ADR-155): both `inputSchema`s gain
+    at `:1304-1330`) (Implemented — ADR-155): both `inputSchema`s gain
     `toTaskKey: { type: "string" }` as the alternative to
     `toNumber: { type: "integer", minimum: 1 }`, and both `kind` enums gain
     `requires` — yielding `{ slug, taskId, kind:
@@ -383,7 +383,7 @@ sequenceDiagram
     end
 ```
 
-### Cross-project relation mutation (Designed — ADR-155 / ADR-156)
+### Cross-project relation mutation (Implemented — ADR-155 / ADR-156)
 
 `handleExt` authorizes the **URL-param** project exactly as it does today. A
 `toTaskKey` that resolves outside that project is a second, body-supplied target

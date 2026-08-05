@@ -13826,7 +13826,7 @@ revision path, or the system-cache path fallback).
 ### ADR-155: Cross-project task relations
 
 **Date:** 2026-08-05
-**Status:** Designed
+**Status:** Implemented
 
 **Context:** `project = repo` stays locked, so multi-repo work is served by
 decomposing it into per-project tasks coordinated through the task graph. The
@@ -13989,7 +13989,7 @@ render-time-only inverse labels) stands.
 ### ADR-156: Cross-project agent facade reach
 
 **Date:** 2026-08-05
-**Status:** Designed
+**Status:** Implemented
 
 **Context:** ADR-155 makes a cross-project relation legal for a human, but a
 platform agent still cannot follow one. Agent tokens are minted per launch,
@@ -14130,7 +14130,7 @@ tokens, bounded by a chain-depth budget.
 ### ADR-157: Read-only sibling-repo context mounts
 
 **Date:** 2026-08-05
-**Status:** Designed
+**Status:** Implemented
 
 **Context:** With `project = repo` locked and cross-project coordination solved
 by ADR-155/156, one gap remains: an agent working in project A often needs to

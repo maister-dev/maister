@@ -984,7 +984,7 @@ agent_project_links {
                                    //   re-enables what an operator turned off).
                                    //   `false` is the honest default: a pre-existing
                                    //   attachment genuinely has no memory.
-  crossProjectReach,               // (Designed — ADR-156, migration 0123) boolean
+  crossProjectReach,               // (Implemented — ADR-156, migration 0123) boolean
                                    //   NOT NULL DEFAULT false — grants an agent token
                                    //   minted in ANOTHER project the right to act in
                                    //   THIS project, narrowed to
@@ -993,7 +993,7 @@ agent_project_links {
                                    //   Deny-by-default: `false` is the honest seed for
                                    //   every pre-0123 attachment, which genuinely has
                                    //   no reach.
-  contextRepos? (jsonb),           // (Designed — ADR-157, migration 0124) NULL —
+  contextRepos? (jsonb),           // (Implemented — ADR-157, migration 0124) NULL —
                                    //   declared read-only sibling repos for THIS
                                    //   attachment: [{project, ref?}], at most 8.
                                    //   NULL/absent ⇒ no mounts. The attachment is the
@@ -1429,7 +1429,7 @@ unread badge and inbox panel.
                                  //   provider-resolved PR merge; null for FF/rebase
   diffStat?,                     // ADR-134 (migration 0098): cleaned
                                  //   {files, additions, deletions}; final evidence only
-  agentChainDepth,               // (Designed — ADR-156, migration 0123) integer NOT
+  agentChainDepth,               // (Implemented — ADR-156, migration 0123) integer NOT
                                  //   NULL DEFAULT 0, snapshotted at launch. An agent
                                  //   run launched from a domain event whose
                                  //   actor_type='agent' inherits parentDepth + 1;
@@ -1441,7 +1441,7 @@ unread badge and inbox panel.
                                  //   A<->B trigger ping-pong terminates ACROSS and
                                  //   WITHIN projects. `0` is the honest seed for
                                  //   pre-0123 rows — no chain has been spent.
-  contextMounts?,                // (Designed — ADR-157, migration 0124) jsonb NULL —
+  contextMounts?,                // (Implemented — ADR-157, migration 0124) jsonb NULL —
                                  //   the LAUNCH SNAPSHOT of this run's read-only
                                  //   sibling mounts:
                                  //   [{projectId, slug, repoPath, mountPath,
@@ -3480,7 +3480,7 @@ Contract details — path derivation, the CAS write, degradation, and the owner
 surface — live in
 [`system-analytics/agent-memory.md`](system-analytics/agent-memory.md).
 
-## Cross-project agent reach + chain depth (Designed — ADR-156, migration `0123`)
+## Cross-project agent reach + chain depth (Implemented — ADR-156, migration `0123`)
 
 Two additive, constant-default columns, one migration, no backfill, no
 abort-guard and no `DELETE FROM`.
@@ -3505,7 +3505,7 @@ Contract details — the scope subset, the two enforcement points, and the audit
 shape — live in [`system-analytics/agents.md`](system-analytics/agents.md) and
 [`system-analytics/identity-access.md`](system-analytics/identity-access.md).
 
-## Read-only sibling context mounts (Designed — ADR-157, migration `0124`)
+## Read-only sibling context mounts (Implemented — ADR-157, migration `0124`)
 
 Two additive, nullable columns, one migration, no backfill, no abort-guard and
 no `DELETE FROM`.

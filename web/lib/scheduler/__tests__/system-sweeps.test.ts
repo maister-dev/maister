@@ -8,6 +8,7 @@ const runWorkspaceReconciliationSweepMock = vi.hoisted(() => vi.fn());
 const runRevisionGcSweepMock = vi.hoisted(() => vi.fn());
 const runCapabilitiesCleanupSweepMock = vi.hoisted(() => vi.fn());
 const runEphemeralAgentGcSweepMock = vi.hoisted(() => vi.fn());
+const runContextMountGcSweepMock = vi.hoisted(() => vi.fn());
 const runAgentMaterializationCleanupSweepMock = vi.hoisted(() => vi.fn());
 const runSyncRecoverySweepMock = vi.hoisted(() => vi.fn());
 const runBrainDecaySweepMock = vi.hoisted(() => vi.fn());
@@ -38,6 +39,9 @@ vi.mock("@/lib/capabilities/cleanup", () => ({
 }));
 vi.mock("@/lib/gc/ephemeral-agent-gc", () => ({
   runEphemeralAgentGcSweep: runEphemeralAgentGcSweepMock,
+}));
+vi.mock("@/lib/gc/context-mount-gc", () => ({
+  runContextMountGcSweep: runContextMountGcSweepMock,
 }));
 vi.mock("@/lib/gc/agent-materialization-gc", () => ({
   runAgentMaterializationCleanupSweep: runAgentMaterializationCleanupSweepMock,
@@ -116,6 +120,14 @@ describe("scheduler system sweeps", () => {
     runEphemeralAgentGcSweepMock
       .mockReset()
       .mockResolvedValue({ scanned: 0, removed: 0, live: 0, failed: 0 });
+    runContextMountGcSweepMock.mockReset().mockResolvedValue({
+      scanned: 0,
+      removed: 0,
+      live: 0,
+      skipped: 0,
+      failed: 0,
+      poisoned: 0,
+    });
     runAgentMaterializationCleanupSweepMock
       .mockReset()
       .mockResolvedValue({ scanned: 0, restored: 0, live: 0, failed: 0 });
@@ -137,11 +149,49 @@ describe("scheduler system sweeps", () => {
     expect(runRevisionGcSweepMock).toHaveBeenCalledTimes(1);
     expect(runCapabilitiesCleanupSweepMock).toHaveBeenCalledTimes(1);
     expect(runEphemeralAgentGcSweepMock).toHaveBeenCalledTimes(1);
+    expect(runContextMountGcSweepMock).toHaveBeenCalledTimes(1);
     expect(runAgentMaterializationCleanupSweepMock).toHaveBeenCalledTimes(1);
     expect(sweepEvaluationEvidenceMock).toHaveBeenCalledTimes(1);
     expect(runPlainAgentDirectoryGcSweepMock).toHaveBeenCalledTimes(1);
     expect(runSweepTickMock).toHaveBeenCalledTimes(1);
     expect(runReconcileSweepMock).toHaveBeenCalledTimes(1);
+  });
+
+  // ADR-157 (T32): the context-mount backstop is a REGISTERED member of the
+  // system_sweep bundle — its summary reaches the caller and a throw is reported,
+  // not swallowed. (Its claim→dispatch execution is proven separately in
+  // lib/gc/__tests__/context-mount-gc.integration.test.ts.)
+  it("reports the context mount backstop summary and surfaces a throw (207 contract)", async () => {
+    runContextMountGcSweepMock.mockResolvedValueOnce({
+      scanned: 3,
+      removed: 2,
+      live: 1,
+      skipped: 0,
+      failed: 0,
+      poisoned: 0,
+    });
+
+    const first = await import("../system-sweeps");
+    const clean = await first.runSystemSweep();
+
+    expect(clean.errors).toEqual([]);
+    expect(clean.contextMount).toEqual({
+      scanned: 3,
+      removed: 2,
+      live: 1,
+      skipped: 0,
+      failed: 0,
+      poisoned: 0,
+    });
+
+    runContextMountGcSweepMock.mockRejectedValueOnce(new Error("mount boom"));
+
+    const thrown = await first.runSystemSweep();
+
+    expect(
+      thrown.errors.some((e) => e.includes("context mount sweep failed")),
+    ).toBe(true);
+    expect(thrown.contextMount).toBeNull();
   });
 
   it("surfaces a thrown workspace sweep as an error (207 contract)", async () => {
@@ -168,6 +218,7 @@ describe("scheduler system sweeps", () => {
     expect(runRevisionGcSweepMock).toHaveBeenCalledTimes(1);
     expect(runCapabilitiesCleanupSweepMock).toHaveBeenCalledTimes(1);
     expect(runEphemeralAgentGcSweepMock).toHaveBeenCalledTimes(1);
+    expect(runContextMountGcSweepMock).toHaveBeenCalledTimes(1);
     expect(runAgentMaterializationCleanupSweepMock).toHaveBeenCalledTimes(1);
     expect(runSyncRecoverySweepMock).toHaveBeenCalledTimes(1);
     expect(sweepEvaluationEvidenceMock).toHaveBeenCalledTimes(1);

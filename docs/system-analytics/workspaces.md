@@ -865,7 +865,7 @@ flowchart TD
 - Error taxonomy: [`../error-taxonomy.md`](../error-taxonomy.md) (`CONFLICT` /
   `PRECONDITION` — the sweep reuses these; no new code).
 
-## Read-only sibling-repo context mounts (ADR-157, Designed)
+## Read-only sibling-repo context mounts (ADR-157, Implemented)
 
 ### Purpose
 
@@ -879,7 +879,7 @@ can *read*. The declaration surface, engine floor, and launch refusals live in
 [`flow-settings.md`](flow-settings.md) and
 [`agents.md`](agents.md) (R7); this section owns the **mount lifecycle**:
 path, creation, launch snapshot, enforcement layers, and release. Everything
-here is **Designed**.
+here is **Implemented**.
 
 ### Domain entities
 
@@ -937,12 +937,37 @@ permanently wedged. This mirrors the ADR-090 ephemeral `-ro` checkout path.
 
 ### Release
 
-Release runs at the terminal choke and reads `runs.context_mounts`, **never**
-the manifest or the attachment. For each snapshot entry it calls `removeWorktree`
-against **that sibling's** `repoPath`, then runs `git worktree prune` on every
-touched sibling repo. Both halves are required: without the sibling-side removal
-the sibling repo accumulates stale `.git/worktrees/<name>` registrations that no
-sweep in the consuming project will ever notice.
+Release reads `runs.context_mounts`, **never** the manifest or the attachment.
+For each snapshot entry it calls `removeWorktree` against **that sibling's**
+`repoPath`, then runs `git worktree prune` on every touched sibling repo. Both
+halves are required: without the sibling-side removal the sibling repo
+accumulates stale `.git/worktrees/<name>` registrations that no sweep in the
+consuming project will ever notice.
+
+**Release is status-gated, which is what makes it callable unconditionally.**
+`releaseRunContextMounts` returns `skippedLive: true` when `runs.status` is still
+in `CONTEXT_MOUNT_LIVE_RUN_STATUSES` — the same allow-list the GC backstop uses.
+Each call site therefore invokes it unconditionally right after its own terminal
+write, and a run that is not actually terminal no-ops: a `pull_request` promotion
+that leaves the run in `Review`, and an `ai_rebase_merge` deferred to the AI
+resolver, both release nothing. Reading "terminal release" without this gate
+would wrongly imply that promotion always releases.
+
+**Coverage is four chokes, not universal.** Release is wired at
+`runGraph`'s `Failed`/`Crashed` arms, `finalizeAgentRun`'s post-commit block,
+`markAbandoned`, and `promoteRun`. It is deliberately **not** wired at the
+long-tail terminalizers (the keep-alive sweeper's TTL abandon, orchestrator
+cascade, HITL and agent-question services, scratch discard) — there is no single
+choke there, and those runs' mounts are reclaimed by the GC backstop within one
+`system_sweep` tick. That is the same deferral the run's own worktree already
+relies on, not a gap.
+
+**The snapshot is never cleared.** `runs.context_mounts` stays as launch
+provenance after release, so a second release call is a no-op by design. This is
+why the dirty-check carries an explicit `gone` verdict alongside `clean`: without
+it, an already-removed mount path would make `git status` throw, be classified
+`indeterminate`, and produce a spurious L3 violation plus a spurious agent
+quarantine.
 
 ### Read-only enforcement — three layers, honestly labeled
 
@@ -980,22 +1005,25 @@ remove from a sibling repo that never registered it.
 - A context mount MUST be created at `<runDir>/context/<siblingSlug>/` via
   `addDetachedWorktree` against the **sibling's** `projects.repo_path` —
   detached, no branch — and MUST NEVER be placed under `worktreesRoot()`.
-  (Designed — ADR-157)
+  (Implemented — ADR-157)
 - `runs.context_mounts` MUST be written in the same transaction as the run
   insert and MUST be the ONLY input to terminal release and crash recovery;
   neither path may re-derive mounts from the manifest or the attachment.
-  (Designed — ADR-157)
+  (Implemented — ADR-157)
 - Terminal release MUST call `removeWorktree` against EACH sibling's
   `projects.repo_path` and then `git worktree prune` on every touched sibling
   repo, so no sibling accumulates a stale worktree registration.
-  (Designed — ADR-157)
+  (Implemented — ADR-157)
+- Release MUST no-op (`skippedLive`) while `runs.status` is in
+  `CONTEXT_MOUNT_LIVE_RUN_STATUSES`, so a `pull_request` promotion that leaves
+  the run in `Review` NEVER releases its mounts. (Implemented — ADR-157)
 - A session carrying context mounts MUST have every write-class tool call whose
   resolved path is under a declared mount root denied at the supervisor
   permission handler, unconditionally and independent of `settings.hooks`.
-  (Designed — ADR-157)
+  (Implemented — ADR-157)
 - A mount whose `git status --porcelain` is non-empty at the terminal choke MUST
   raise a WARN with quarantine evidence and MUST still be removed.
-  (Designed — ADR-157)
+  (Implemented — ADR-157)
 
 ### Edge cases
 
@@ -1022,7 +1050,7 @@ remove from a sibling repo that never registered it.
 
 - ADR:
   [ADR-157](../decisions.md#adr-157-read-only-sibling-repo-context-mounts)
-  (Designed).
+  (Implemented).
 - Declaration surfaces (R7 — not restated here):
   [`flow-settings.md`](flow-settings.md) (`settings.context_repos`, the
   `CONTEXT_REPOS_ENGINE_MIN` floor, launch refusals),
@@ -1039,6 +1067,9 @@ remove from a sibling repo that never registered it.
   [`../api/supervisor.openapi.yaml`](../api/supervisor.openapi.yaml),
   [`../supervisor.md`](../supervisor.md) (`MAISTER_CONTEXT_REPOS` child env).
 - Source: `web/lib/worktree.ts` (`addDetachedWorktree`, `removeWorktree`),
-  `web/lib/context-mounts/service.ts` (Designed).
+  `web/lib/context-mounts/service.ts` (resolve + materialize + release),
+  `web/lib/context-mounts/launch.ts` (the snapshot write),
+  `web/lib/context-mounts/terminal.ts` (`releaseRunContextMounts`,
+  `CONTEXT_MOUNT_LIVE_RUN_STATUSES`, `checkContextMountDirt`).
 - Error taxonomy: [`../error-taxonomy.md`](../error-taxonomy.md)
   (`PRECONDITION`, `CONFIG` — reused; no new code).

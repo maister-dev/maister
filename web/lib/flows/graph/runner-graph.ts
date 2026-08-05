@@ -161,6 +161,8 @@ import {
   revokeOrchestratorRunTokensForRun,
 } from "@/lib/agents/tokens";
 import { atomicWriteJson } from "@/lib/atomic";
+import { prepareContextMounts } from "@/lib/context-mounts/launch";
+import { releaseRunContextMounts } from "@/lib/context-mounts/terminal";
 import {
   createHitlAssignmentForRun,
   systemCloseActiveAssignmentsForRun,
@@ -1565,6 +1567,25 @@ async function executeNodeAction(
         );
       }
 
+      // ADR-157 (T30): read-only sibling-repo mounts. Resolve → consent →
+      // `git worktree add --detach` → snapshot on `runs.context_mounts`, all
+      // BEFORE the session spawns. A PRECONDITION refusal (unknown/archived
+      // sibling, unresolvable ref, missing `readRepoFiles`) propagates to the
+      // caller's markNodeFailed handler, so the node fails without an agent.
+      const contextMounts = await prepareContextMounts({
+        db: ctx.db,
+        runId: loaded.run.id,
+        consumingProjectSlug: loaded.projectSlug,
+        decls: capabilityBearingSettings(node.nodeType, node.settings)
+          ?.context_repos,
+        // D11: on the flow path the LAUNCHING user's read grant is the consent
+        // event — the run's creator, not the current request's session.
+        consent: {
+          kind: "launching-user",
+          userId: loaded.run.createdByUserId as string | null,
+        },
+      });
+
       const dispatchAgent = (): Promise<NodeResult> =>
         runAgentStep(
           {
@@ -1575,6 +1596,9 @@ async function executeNodeAction(
           },
           {
             ...common,
+            // ADR-157: the launch snapshot rides the session so the supervisor
+            // can inject MAISTER_CONTEXT_REPOS + arm the L2 write-deny guard.
+            contextMounts,
             // Thread the caller's db — runner-agent's resolved_prompt persist
             // and event-consumer seams must never fall back to env getDb(),
             // which would query a different connection.
@@ -4849,6 +4873,18 @@ export async function runGraph(
     log2.info({}, "runGraph ended Review");
     await deliverRunIfAutoReady(runId, db);
   }
+
+  // ADR-157 (T32): release this run's read-only sibling mounts once the terminal
+  // write above landed. Status-gated inside, so the `Review` exit is a no-op (a
+  // rework can re-open a session that still expects its mounts); the promote and
+  // abandon chokes release from their own paths, and the GC backstop reaps every
+  // remaining case by path shape.
+  await releaseRunContextMounts({ runId, db }).catch((err) => {
+    log2.warn(
+      { err: (err as Error).message },
+      "context mount release after runGraph exit failed — left to the GC backstop",
+    );
+  });
 
   // M37 (ADR-098): revoke the orchestrator's run-bound facade token on a
   // NON-park terminal (Review/Failed/Crashed). The NeedsInput/checkpoint park

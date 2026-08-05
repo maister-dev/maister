@@ -12,6 +12,7 @@ import {
   httpStatusForExtCode,
   recordRequiredTokenAudit,
 } from "@/lib/tokens/ext-handler";
+import { resolveProducingRunId } from "@/lib/agents/chain-depth";
 import { socialActorForToken, actorUserIdForToken } from "@/lib/tokens/verify";
 
 const ENDPOINT_TASKS = "POST /api/v1/ext/projects/[slug]/tasks";
@@ -82,8 +83,12 @@ export async function POST(
                 // `actor_type='system'` and the chain-depth cap never binds.
                 actor: socialActorForToken(ctx.actor),
                 // Server-derived from the deterministic `agent-run:<runId>`
-                // token name, never a request field.
-                producedByRunId: ctx.actor.boundRunId,
+                // token name, never a request field — and existence-checked, or
+                // a token outliving its run row FKs the emit into a 500.
+                producedByRunId: await resolveProducingRunId(
+                  ctx.actor.boundRunId,
+                  tx,
+                ),
               },
               tx,
             );

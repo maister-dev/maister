@@ -3,6 +3,7 @@ import "server-only";
 import type { CapabilityAgent } from "@/lib/config.schema";
 import type { ScratchAdapterLaunch } from "@/lib/db/schema";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
+import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
 import type { SessionEnforcementProfile } from "./enforcement-profile";
 import type { HooksConfig } from "./hooks-config";
 import type { FlowContext, StepResult } from "./types";
@@ -105,6 +106,10 @@ export type RunAgentStepCtx = {
   // ADR-130: derived capability-enforcement set (deriveSessionEnforcementProfile in
   // runGraph), threaded onto the session body so the capability_guard interceptor arms.
   enforcementProfile?: SessionEnforcementProfile;
+  // ADR-157: the launch snapshot of this run's read-only sibling-repo mounts —
+  // threaded to the supervisor so it can inject MAISTER_CONTEXT_REPOS, render the
+  // prompt preamble, and arm the L2 write-deny guard on the mount roots.
+  contextMounts?: ContextMountSnapshot[];
   db?: DbClientLike;
 };
 
@@ -852,6 +857,7 @@ async function runNewSession(
       autoApprovePermissions: ctx.autoApprovePermissions,
       hooksConfig: ctx.hooksConfig,
       enforcementProfile: ctx.enforcementProfile,
+      contextMounts: ctx.contextMounts,
     };
 
     if (ctx.resumeSessionId) {

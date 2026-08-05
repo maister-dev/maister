@@ -899,6 +899,22 @@ export async function markAbandoned(
     return { ok: false, reason: "status-guard-mismatch" };
   }
 
+  // ADR-157 (T32): an abandoned run's read-only sibling mounts are released from
+  // the launch snapshot on `runs.context_mounts`. Lazy import mirrors the
+  // ledger import above — keeps this leaf module out of the agent/social graph.
+  try {
+    const { releaseRunContextMounts } = await import(
+      "@/lib/context-mounts/terminal"
+    );
+
+    await releaseRunContextMounts({ runId, db });
+  } catch (err) {
+    log.warn(
+      { runId, err: err instanceof Error ? err.message : String(err) },
+      "context mount release on abandon failed — left to the GC backstop",
+    );
+  }
+
   log.info({ runId, to: "Abandoned" }, "run-state transition — abandoned");
   return { ok: true };
 }

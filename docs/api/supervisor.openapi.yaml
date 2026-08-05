@@ -1288,7 +1288,7 @@ components:
           type: array
           maxItems: 8
           description: |
-            (Designed — ADR-157) Read-only sibling-repo context mounts the web
+            (Implemented — ADR-157) Read-only sibling-repo context mounts the web
             tier already materialized for this session. Projected from the
             launch snapshot the run persists
             (`runs.context_mounts jsonb` —

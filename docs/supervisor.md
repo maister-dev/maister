@@ -185,7 +185,7 @@ override the adapter binary, `cwd`, run id, project slug, or worktree path.
 - `preArgs`: extra adapter arguments inserted before supervisor-managed args.
 - `postArgs`: extra adapter arguments appended after supervisor-managed args.
 
-#### `contextMounts[]` and `MAISTER_CONTEXT_REPOS` (Designed — ADR-157)
+#### `contextMounts[]` and `MAISTER_CONTEXT_REPOS` (Implemented — ADR-157)
 
 `contextMounts` is an optional array (max 8) of read-only sibling-repo context
 mounts the **web tier** already materialized for this session. Each entry is
@@ -726,7 +726,7 @@ child's env as `{ ...process.env, ...ccrLayer, ...executor.env,
 2. sidecar/provider layer — contains only allow-listed keys required by the
    adapter provisioner, with values resolved from env refs.
 3. isolated adapter config layer — generated paths such as `CODEX_HOME` or
-   capability profile env, never raw secret values. **(Designed — ADR-157)**
+   capability profile env, never raw secret values. **(Implemented — ADR-157)**
    `MAISTER_CONTEXT_REPOS` is derived into this layer from the first-class
    `contextMounts[]` request field, never from `executor.env`.
 4. `adapterLaunch.env` — run-scoped capability materializer output.

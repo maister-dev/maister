@@ -2040,12 +2040,31 @@ export async function promoteRun(
 ): Promise<PromoteRunResult> {
   const d = (db ?? getDb()) as Db;
   const run = await loadRun(d, runId);
+  const result =
+    run.runKind === "scratch"
+      ? await promoteScratchRun(runId, input, ctx, d)
+      : await promoteWorkspaceRun(runId, input, ctx, d);
 
-  if (run.runKind === "scratch") {
-    return promoteScratchRun(runId, input, ctx, d);
-  }
+  // ADR-157 (T32): a promoted run is terminal, so release its read-only sibling
+  // mounts. Status-gated inside — a `pull_request` promotion that leaves the run
+  // in `Review`, or an `ai_rebase_merge` deferred to the AI resolver, keeps them.
+  //
+  // LAZY import, matching `markAbandoned`: a static one widens this module's
+  // graph into the agent/social modules (via `quarantineAgentInTx`), which
+  // breaks callers that partially mock `@/lib/worktree` — promote.ts is reached
+  // by suites that mock only the two exports they use.
+  await import("@/lib/context-mounts/terminal")
+    .then(({ releaseRunContextMounts }) =>
+      releaseRunContextMounts({ runId, db: d }),
+    )
+    .catch((err: unknown) => {
+    log.warn(
+      { runId, err: err instanceof Error ? err.message : String(err) },
+      "context mount release after promotion failed — left to the GC backstop",
+    );
+  });
 
-  return promoteWorkspaceRun(runId, input, ctx, d);
+  return result;
 }
 
 // M37 (ADR-100): orchestrator-driven promotion of a reviewed child. Used by the

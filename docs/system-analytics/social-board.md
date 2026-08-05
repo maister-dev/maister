@@ -16,8 +16,7 @@ relations, and the `"blocked"` launchability gate are documented in
 [`tasks.md`](tasks.md); this file owns the comment/activity/subscription/
 inbox substrate plus the relation **write path**
 (`web/lib/social/relations.ts`) — row ownership, locking, cycle refusal, and
-the ADR-155 cross-project rules. (Implemented; cross-project relations —
-Designed)
+the ADR-155 cross-project rules. (Implemented, incl. cross-project relations)
 
 ## Domain entities
 
@@ -27,7 +26,7 @@ Designed)
 - **Task number** — `tasks.number`, per-project monotonic, allocated from
   `projects.next_task_number` in the `createTask` transaction. `KEY-N` =
   `task_key` + `number`. See [`tasks.md`](tasks.md).
-- **Relation row ownership** (ADR-155 — Designed) — a `task_relations` row is
+- **Relation row ownership** (ADR-155 — Implemented) — a `task_relations` row is
   owned by its **from-end**: `task_relations.project_id` is the from-task's
   project, and the to-task MAY live in a different project. Both endpoints are
   FKs to `tasks.id` and uniqueness is `(from_task_id, kind, to_task_id)`, so
@@ -184,7 +183,7 @@ recipient equals the session user; other users' items answer 404. The "Needs
 you (N)" badge is the single canonical `needsYou` count (see Expectations); see
 [`hitl.md`](hitl.md) for the HITL half.
 
-### Creating a relation, cross-project included (ADR-155 — Designed)
+### Creating a relation, cross-project included (ADR-155 — Implemented)
 
 Relation mutations take their target either as `toNumber` (resolved strictly
 inside the URL project, unchanged) or as the platform-global `toTaskKey`
@@ -284,54 +283,54 @@ sequenceDiagram
   `MaisterError("CONFLICT")` (HTTP 409), evaluated INSIDE the insert transaction
   under the gating advisory lock (no TOCTOU); `parent_of`/`duplicate_of` are
   non-gating and never cycle-checked. See [`task-queue.md`](task-queue.md).
-- **(ADR-155 — Designed)** A `task_relations` row's `project_id` MUST equal the
+- **(ADR-155 — Implemented)** A `task_relations` row's `project_id` MUST equal the
   from-task's project, and the to-task MAY belong to a different project.
-- **(ADR-155 — Designed)** Creating or removing a relation MUST require
+- **(ADR-155 — Implemented)** Creating or removing a relation MUST require
   `manageTaskRelations` on BOTH endpoint projects — the from-end on the URL
   project and the to-end re-checked on the resolved target project.
-- **(ADR-155 — Designed)** Every gating-kind insert MUST serialize on ONE
+- **(ADR-155 — Implemented)** Every gating-kind insert MUST serialize on ONE
   platform-wide advisory lock
   (`pg_advisory_xact_lock(RELATION_LOCK_NAMESPACE, 0)`) and NEVER on a
   per-project lock, because pairwise per-project locking only serializes cycles
   of length ≤ 3.
-- **(ADR-155 — Designed)** The gating cycle BFS MUST refuse with
+- **(ADR-155 — Implemented)** The gating cycle BFS MUST refuse with
   `MaisterError("CONFLICT")` when its traversal exceeds `GATING_BFS_MAX_NODES`
   (default 5000) rather than commit an unverified edge.
-- **(ADR-155 — Designed)** `toNumber` and `toTaskKey` MUST be mutually exclusive
+- **(ADR-155 — Implemented)** `toNumber` and `toTaskKey` MUST be mutually exclusive
   on every relation-mutation body: both present or neither present is
   `MaisterError("CONFIG")` — HTTP 400 on the internal route, 422 on the ext
   surface (`httpStatusForExtCode`) — refused before any endpoint resolution.
-- **(ADR-155 — Designed)** `getOpenRelationBlockers` MUST return each blocker's
+- **(ADR-155 — Implemented)** `getOpenRelationBlockers` MUST return each blocker's
   OWN `projects.task_key`, and the `blocked` chip MUST render that `KEY-N` —
   removing the named edge is the only mitigation for a wedged `requires`
   dependency.
-- **(ADR-155 — Designed)** `requires` MUST stay success-gated across projects: a
+- **(ADR-155 — Implemented)** `requires` MUST stay success-gated across projects: a
   dependency in another project keeps the dependent blocked while it is
   `Abandoned` or its latest run `Failed`, and only `Done` releases it.
-- **(ADR-155 — Designed)** Relations MAY cross projects but automation MUST NOT:
+- **(ADR-155 — Implemented)** Relations MAY cross projects but automation MUST NOT:
   `auto_launch_run_plan`, the abandon cascade
   (`getUnlaunchedAutoChildTaskIds`), and C2 admission's `parent_of` exclusion
   (`loadC2CandidateRows`) MUST all scope to the parent's own project — the
   launcher and the exclusion MUST stay a partition, or a cross-project-linked
   task is owned by neither. Board decomposition MUST render each child's OWN
   `KEY-N` and project slug rather than the current board's.
-- **(ADR-155 — Designed)** `resolveTaskByKeyRef` MUST resolve `KEY-N` against
+- **(ADR-155 — Implemented)** `resolveTaskByKeyRef` MUST resolve `KEY-N` against
   the platform-unique `projects.task_key`, MUST uppercase the key part before
   querying, and MUST return `null` — never throw — for a malformed,
   over-long, out-of-int4-range, or unknown ref without issuing a query.
-- **(ADR-155 — Designed)** `getTaskRelations` MUST render each end with the
+- **(ADR-155 — Implemented)** `getTaskRelations` MUST render each end with the
   COUNTERPART's own `projects.task_key`, never the reading task's.
-- **(ADR-155 — Designed)** A gating cycle MUST be refused identically whether
+- **(ADR-155 — Implemented)** A gating cycle MUST be refused identically whether
   its legs sit in one project or span several.
 
 ## Edge cases
 
-- **(ADR-155 — Designed) Relation whose `projectId` is not the from-task's
+- **(ADR-155 — Implemented) Relation whose `projectId` is not the from-task's
   project** — refused `MaisterError("CONFIG")`. The to-end may differ; the
   from-end defines row ownership and may not.
 - **Relation closes a gating cycle** — refused with `MaisterError("CONFLICT")`
   (409) at both the web and ext relations routes (ADR-121; the BFS is
-  platform-wide, not project-scoped, from ADR-155 — Designed).
+  platform-wide, not project-scoped, from ADR-155 — Implemented).
 - **Dangling `actor_id` (user deleted)** — rows survive (no FK); UI renders
   a "former user" fallback label. Not an error.
 - **Mention of a since-deleted task** — write-time resolution fails, the
@@ -369,7 +368,7 @@ sequenceDiagram
 - **Foreign inbox item id** — `PATCH …/read` on another user's item → 404
   (`PRECONDITION`), no information leak about existence.
 
-Relation-mutation refusals are an **allow-list** (ADR-155 — Designed): the
+Relation-mutation refusals are an **allow-list** (ADR-155 — Implemented): the
 mutation proceeds only when exactly one target field is supplied, the target
 resolves, the caller holds `manageTaskRelations` on both endpoint projects, and
 the gating BFS clears under the platform-wide lock. Every other outcome is one

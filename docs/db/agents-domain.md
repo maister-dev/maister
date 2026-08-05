@@ -27,7 +27,7 @@ column-level narrative.
 > fenced latest-attempt telemetry and `runs.agent_schedule_id` records the
 > binding that launched an agent run.
 >
-> **(Designed — ADR-156, migration `0123`; ADR-157, migration `0124`)** the
+> **(Implemented — ADR-156, migration `0123`; ADR-157, migration `0124`)** the
 > attachment gains two per-project axes — `cross_project_reach` (boolean NOT NULL
 > DEFAULT false) and `context_repos` (jsonb NULL). Both are additive with
 > pre-migration-honest seeds (no reach / no mounts), so neither needs a backfill.

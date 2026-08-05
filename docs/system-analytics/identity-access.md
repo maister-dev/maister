@@ -38,7 +38,7 @@ sign-out are wired in `web/`.
   `token_kind='user'`, `owner_user_id=<current user>`, and `project_id IS NULL`.
   Verification reuses this domain's live owner-state checks before any external
   operation may run.
-- **Agent tokens and the cross-project subset** (Designed — ADR-156) —
+- **Agent tokens and the cross-project subset** (Implemented — ADR-156) —
   `project_tokens` rows with `token_kind='agent'` are minted per agent launch,
   bound to exactly ONE project, named `agent-run:<runId>`, and carry the fixed
   `AGENT_TOKEN_SCOPES` set ([`agents.md`](agents.md)).
@@ -182,7 +182,7 @@ sequenceDiagram
     API-->>P: 204
 ```
 
-### Cross-project token authority (Designed — ADR-156)
+### Cross-project token authority (Implemented — ADR-156)
 
 `handleExt` refuses any project a bearer is not bound to, at two near-identical
 sites (the URL-slug arm and the `resolveProjectId` arm). Three token classes meet
@@ -201,7 +201,7 @@ flowchart TD
     P --> S[URL-addressed project: the same existence-hidden 404<br/>target named in the body, e.g. toTaskKey: UNAUTHORIZED 403 with its own audit row]
 ```
 
-**`CROSS_PROJECT_AGENT_SCOPES` — the admitted subset (Designed — ADR-156).**
+**`CROSS_PROJECT_AGENT_SCOPES` — the admitted subset (Implemented — ADR-156).**
 Intersected with the token's actual scopes at check time; membership here is
 necessary, never sufficient.
 
@@ -215,7 +215,7 @@ necessary, never sufficient.
 | `relations:create` | yes | mints the cross-project `blocks` / `depends_on` / `requires` edge |
 | `relations:delete` | yes | removing an edge it minted must not need a human on the far side |
 
-**Deliberate exclusions (Designed — ADR-156).** Every scope not in the table
+**Deliberate exclusions (Implemented — ADR-156).** Every scope not in the table
 above is refused by the allow-list; these are the ones whose exclusion is a
 decision rather than an accident.
 
@@ -230,7 +230,7 @@ decision rather than an accident.
 | `memory:read`, `memory:write` | Project Brain is a project-scoped knowledge store (ADR-122); its `can_read_brain` / `can_write_brain` link axes are grants inside ONE project |
 | `agent_memory:write` | the agent's own per-attachment `memory.md` is per-project by construction (ADR-152) |
 
-**`tasks:create` joins `AGENT_TOKEN_SCOPES` (Designed — ADR-156).** This is a
+**`tasks:create` joins `AGENT_TOKEN_SCOPES` (Implemented — ADR-156).** This is a
 SAME-project privilege expansion as well as a cross-project one: every agent in
 every project gains task creation the moment the grant lands, not only agents
 acting across projects. An *agent gains an op* change
@@ -243,7 +243,7 @@ exist. The mapping is load-bearing, not cosmetic: scope resolution ends in
 `?? "readBoard"`, so an unmapped write scope silently resolves to the
 viewer-level action.
 
-**A flowless agent-created task is not a defect (Designed — ADR-156).** A task an
+**A flowless agent-created task is not a defect (Implemented — ADR-156).** A task an
 agent creates with no `flowId` is a flowless simple-intent task, `unconfigured`
 until a triage verdict fills the flow — the existing ADR-112 path
 ([`tasks.md`](tasks.md)), needing no new work.
@@ -410,14 +410,14 @@ flowchart TD
 - A `project_tokens` row with a non-NULL `project_id` MUST NEVER be authorized
   against any other project; only NULL-`project_id` user tokens (RBAC re-checked
   per request on both ends) and reach-granted `token_kind='agent'` tokens may
-  cross. *(Designed — ADR-156.)*
+  cross. *(Implemented — ADR-156.)*
 - Every member of `CROSS_PROJECT_AGENT_SCOPES` MUST have a
   `PROJECT_ACTION_BY_SCOPE` entry, because an unmapped scope silently resolves to
-  the viewer-level `readBoard` action. *(Designed — ADR-156.)*
+  the viewer-level `readBoard` action. *(Implemented — ADR-156.)*
 - `tasks:create` MUST be a member of `AGENT_TOKEN_SCOPES` and MUST map to
   `PROJECT_ACTION_BY_SCOPE["tasks:create"] = "createTask"`, and the grant MUST
   apply to every agent token in every project, not only to cross-project calls.
-  *(Designed — ADR-156.)*
+  *(Implemented — ADR-156.)*
 
 ## Edge cases
 
@@ -459,7 +459,7 @@ flowchart TD
 - **Project-bound token addresses another project** -> existence-hidden 404 when
   the project is URL-addressed, or `MaisterError("UNAUTHORIZED", ...)` (403) with
   its own audit row when the cross-project target is named in the request body;
-  neither response reveals which scopes the token holds. `(Designed — ADR-156)`
+  neither response reveals which scopes the token holds. `(Implemented — ADR-156)`
 
 ## Linked artifacts
 

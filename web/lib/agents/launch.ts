@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { ContextRepoDecl } from "@/lib/context-mounts/types";
+
 import { randomUUID } from "node:crypto";
 import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
@@ -42,6 +44,8 @@ import {
 } from "@/lib/agents/effective";
 import { resolveFacadeLaunch } from "@/lib/agents/facade-launch";
 import { readAgentMemory } from "@/lib/agents/memory-store";
+import { prepareContextMounts } from "@/lib/context-mounts/launch";
+import { releaseRunContextMounts } from "@/lib/context-mounts/terminal";
 import { atomicWriteText } from "@/lib/atomic";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { runtimeRoot } from "@/lib/runtime-root";
@@ -2628,6 +2632,17 @@ export async function finalizeAgentRun(
       });
     }
 
+    // ADR-157 (T32): release this run's read-only sibling mounts from the SAME
+    // post-commit choke that releases the ephemeral `-ro` checkout. Reads the
+    // launch snapshot off `runs.context_mounts` and is status-gated inside, so a
+    // clean-exit `Review` (shared writable tree) keeps its mounts for the rework.
+    await releaseRunContextMounts({ runId, db: _db }).catch((err: unknown) => {
+      log.warn(
+        { runId, err: err instanceof Error ? err.message : String(err) },
+        "context mount release failed — left to the GC backstop",
+      );
+    });
+
     await promoteNextPending({ db: _db, pool: "agent" }).catch(
       (err: unknown) => {
         log.error(
@@ -3421,11 +3436,37 @@ export async function startAgentSession(
       );
     }
 
+    // ADR-157 (T30): read-only sibling-repo mounts for a platform-agent run. The
+    // declaration is the PROJECT ATTACHMENT's `context_repos` — the definition's
+    // `recommended` bindings are prefill for the attach dialog only and can never
+    // name a real project by themselves (package slugs are not portable).
+    // D11: no launching user exists here, so consent was the attach-time admin
+    // action (`authorizeContextRepos` on the attach route) — not re-checked.
+    // FLAT single-table read (V14): a multi-table select mis-maps same-named
+    // columns in the app runtime.
+    const contextRepoLinks = await _db
+      .select({ contextRepos: agentProjectLinks.contextRepos })
+      .from(agentProjectLinks)
+      .where(
+        and(
+          eq(agentProjectLinks.agentId, agent.id),
+          eq(agentProjectLinks.projectId, project.id),
+        ),
+      );
+    const contextMounts = await prepareContextMounts({
+      db: _db,
+      runId,
+      consumingProjectSlug: project.slug as string,
+      decls: contextRepoLinks[0]?.contextRepos as ContextRepoDecl[] | null,
+      consent: { kind: "attach-time" },
+    });
+
     const session = await api.createSession({
       runId,
       projectSlug: project.slug,
       worktreePath: cwd,
       stepId: "agent",
+      contextMounts,
       executor: runnerExecutorInput(snapshot),
       runner: runnerSupervisorInput({ snapshot }),
       adapterLaunch: mergeRunnerAdapterLaunch(

@@ -4,6 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { resolveProducingRunId } from "@/lib/agents/chain-depth";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
@@ -154,8 +155,13 @@ export async function POST(
               body: body.body,
               actor,
               // ADR-156: server-derived from the deterministic
-              // `agent-run:<runId>` token name, never a request field.
-              producedByRunId: ctx.actor.boundRunId,
+              // `agent-run:<runId>` token name, never a request field — and
+              // existence-checked, or a token outliving its run row FKs the
+              // emit into a 500.
+              producedByRunId: await resolveProducingRunId(
+                ctx.actor.boundRunId,
+                tx,
+              ),
               ...(actor.type === "system"
                 ? {
                     activityPayloadExtra: {
