@@ -864,3 +864,181 @@ flowchart TD
 - Config: [`../configuration.md`](../configuration.md) (`MAISTER_AUTO_PROMOTION`).
 - Error taxonomy: [`../error-taxonomy.md`](../error-taxonomy.md) (`CONFLICT` /
   `PRECONDITION` — the sweep reuses these; no new code).
+
+## Read-only sibling-repo context mounts (ADR-157, Designed)
+
+### Purpose
+
+A **context mount** is an ephemeral, detached, read-only checkout of *another*
+project's repo, materialized inside the consuming run's own run dir so an
+`ai_coding` / `judge` / `orchestrator` session (or a platform-agent run) can
+**read** a sibling repo while working in its own worktree. It is not a second
+workspace: no branch, no `workspaces` row, no promotion path, no cross-repo
+delivery. `project = repo` is unchanged — a mount only widens what one session
+can *read*. The declaration surface, engine floor, and launch refusals live in
+[`flow-settings.md`](flow-settings.md) and
+[`agents.md`](agents.md) (R7); this section owns the **mount lifecycle**:
+path, creation, launch snapshot, enforcement layers, and release. Everything
+here is **Designed**.
+
+### Domain entities
+
+- **Context-repo declaration** — `settings.context_repos` on an `ai_coding` /
+  `judge` / `orchestrator` node, or `agent_project_links.context_repos` on a
+  platform-agent attachment. Each entry is `{project: <slug>, ref?: <ref>}`,
+  at most 8. A declaration is an *intent*; it is never what the terminal path
+  reads.
+- **Mount root** — `<runDir>/context/<siblingSlug>/`, where `runDir =
+  .maister/<consuming-slug>/runs/<runId>/`. This is **outside**
+  `worktreesRoot()` and **inside** the existing prompt-confinement allow-set
+  (`worktreePath ∪ runDir ∪ repoPath`, assembled per session in the supervisor),
+  so **no supervisor confinement change is required** and the workspace
+  reconciler never sees the path — see
+  [`reconciliation-gc.md`](reconciliation-gc.md) for why that placement is
+  load-bearing rather than incidental.
+- **Mount snapshot** — `runs.context_mounts jsonb`, written at spawn as
+  `[{projectId, slug, repoPath, mountPath, committish}]`. The launch-time
+  decision the terminal path and crash recovery read. A manifest or an
+  attachment can drift after launch; the snapshot cannot.
+- **Sibling repo** — the donor project's `projects.repo_path`. It owns the git
+  metadata for every mount taken from it (`.git/worktrees/<name>`), which is why
+  release is a two-sided operation.
+
+### Mount lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> Declared: settings.context_repos on the node<br/>or agent_project_links.context_repos
+    Declared --> Refused: unknown or archived slug,<br/>unresolvable ref, missing readRepoFiles
+    Declared --> Resolved: slug to active project,<br/>ref to committish, read grant checked
+    Resolved --> Mounted: removeWorktree force, then addDetachedWorktree<br/>at runDir/context/siblingSlug
+    Mounted --> Snapshotted: runs.context_mounts written in the<br/>same transaction as the run insert
+    Snapshotted --> InUse: POST /sessions carries contextMounts<br/>write-class calls into a mount are denied
+    InUse --> Released: terminal choke reads the SNAPSHOT:<br/>dirty-check, removeWorktree per sibling,<br/>git worktree prune
+    Mounted --> Orphaned: crash before the snapshot commits
+    Snapshotted --> Orphaned: crash before the terminal choke runs
+    Orphaned --> Released: GC backstop reaps by path shape alone
+    Released --> [*]
+    Refused --> [*]
+```
+
+### Creation
+
+Mounts are created with the **existing, already-parameterized**
+`addDetachedWorktree({projectRepoPath: sibling.repoPath, worktreePath,
+committish})` — a detached checkout with **no branch**, pointed at the sibling's
+repo rather than the consuming project's. Nothing in that helper changes.
+
+Creation is **remove-first**: `removeWorktree(force)` on the mount path, then
+`addDetachedWorktree`. A crashed prior spawn of the *same* run leaves a mount
+path occupied, and `git worktree add` refuses an existing path with
+`PRECONDITION`; remove-first makes the respawn recoverable instead of
+permanently wedged. This mirrors the ADR-090 ephemeral `-ro` checkout path.
+
+### Release
+
+Release runs at the terminal choke and reads `runs.context_mounts`, **never**
+the manifest or the attachment. For each snapshot entry it calls `removeWorktree`
+against **that sibling's** `repoPath`, then runs `git worktree prune` on every
+touched sibling repo. Both halves are required: without the sibling-side removal
+the sibling repo accumulates stale `.git/worktrees/<name>` registrations that no
+sweep in the consuming project will ever notice.
+
+### Read-only enforcement — three layers, honestly labeled
+
+ADR-041's trust boundary is **untouched** by this feature; these layers add no
+new trust axis and change no capability class.
+
+| Layer | Mechanism | What it covers |
+| ----- | --------- | -------------- |
+| **L1** | the existing `readOnlySession` flag on the supervisor session request | `none` / `repo_read` **agent** runs **only**. A writable-worktree session — every flow `ai_coding` / `judge` / `orchestrator` run, and every `agent_workspace: worktree` agent run — **cannot** use it: a session-wide read-only would break the run's own work. L1 therefore covers none of the flow-node mount cases. |
+| **L2** | a supervisor-side **unconditional** path guard denying every write-class tool call whose resolved path is under any declared mount root, evaluated in the same permission handler as the guardrail-hook `pathGuard` and reusing that module's path resolver rather than a second hand-rolled one | every session that carries mounts, writable or not. **Unconditional whenever mounts exist** — deliberately NOT opt-in via `settings.hooks`, because the read-only contract is the mount's whole point, and an opt-in guard would make the contract a flow-author's choice. |
+| **L3** | a terminal dirty-check per mount (`git status --porcelain`) → WARN + quarantine evidence in the one-transaction shape the ADR-090 dirty-watchdog already uses | detection after the fact. The mount is discarded regardless — it is detached with no branch, so nothing legitimate is lost. |
+
+**Why L3 matters even though mounts are ephemeral.** `git worktree add --detach`
+writes a `.git` **file** into the mount that points into the **sibling's**
+`.git/worktrees/<name>`. An escaped write is therefore not confined to throwaway
+checkout content — it can reach the sibling repo's own metadata. L3 is the
+evidence that a bypass happened at all; without it a mount that was written to
+and then removed leaves no trace.
+
+### Ordering and the residual crash window
+
+Git side-effects run **before** the durable status write, and the snapshot is
+written in the **same transaction as the run insert**. That ordering leaves
+exactly one residual window: a crash **between mount creation and the snapshot
+commit** leaves an orphan directory that no row references. It is reaped by the
+GC backstop on **path shape alone** (`.maister/*/runs/*/context/*` with a
+terminal or absent owning run), which is why the backstop cannot be replaced by
+a snapshot-driven cleanup — see [`reconciliation-gc.md`](reconciliation-gc.md).
+The reverse ordering (snapshot first) would trade this window for a worse one: a
+recorded mount that was never created, which the terminal path would then try to
+remove from a sibling repo that never registered it.
+
+### Expectations
+
+- A context mount MUST be created at `<runDir>/context/<siblingSlug>/` via
+  `addDetachedWorktree` against the **sibling's** `projects.repo_path` —
+  detached, no branch — and MUST NEVER be placed under `worktreesRoot()`.
+  (Designed — ADR-157)
+- `runs.context_mounts` MUST be written in the same transaction as the run
+  insert and MUST be the ONLY input to terminal release and crash recovery;
+  neither path may re-derive mounts from the manifest or the attachment.
+  (Designed — ADR-157)
+- Terminal release MUST call `removeWorktree` against EACH sibling's
+  `projects.repo_path` and then `git worktree prune` on every touched sibling
+  repo, so no sibling accumulates a stale worktree registration.
+  (Designed — ADR-157)
+- A session carrying context mounts MUST have every write-class tool call whose
+  resolved path is under a declared mount root denied at the supervisor
+  permission handler, unconditionally and independent of `settings.hooks`.
+  (Designed — ADR-157)
+- A mount whose `git status --porcelain` is non-empty at the terminal choke MUST
+  raise a WARN with quarantine evidence and MUST still be removed.
+  (Designed — ADR-157)
+
+### Edge cases
+
+- **Mount path occupied by a crashed prior spawn of the same run** — creation is
+  remove-first (`removeWorktree(force)` then `addDetachedWorktree`), so the
+  respawn succeeds instead of raising `MaisterError("PRECONDITION")` on
+  "worktree path already exists".
+- **Crash between mount creation and snapshot commit** — an orphan directory
+  with no row referencing it; reaped by the GC backstop on path shape. The only
+  residual window in this lifecycle.
+- **`removeWorktree` fails at the terminal choke** (locked sibling worktree,
+  missing dir) — the terminal transition is NOT blocked; the mount stays on disk
+  and the GC backstop retries it under its own bounded-retry policy.
+- **Sibling project archived or its repo removed while a run holds a mount** —
+  release still targets the snapshotted `repoPath`; a failing `git worktree
+  prune` degrades to a WARN and the backstop retries, since a mount is never
+  authority for the sibling repo's state.
+- **A write reaches the mount despite L2** — L3's dirty-check raises the WARN +
+  quarantine evidence; removal proceeds. Detection, not prevention — L2 is the
+  prevention layer and its coverage claim is exactly "write-class tool calls at
+  the ACP seam", not "all filesystem writes by the agent process".
+
+### Linked artifacts
+
+- ADR:
+  [ADR-157](../decisions.md#adr-157-read-only-sibling-repo-context-mounts)
+  (Designed).
+- Declaration surfaces (R7 — not restated here):
+  [`flow-settings.md`](flow-settings.md) (`settings.context_repos`, the
+  `CONTEXT_REPOS_ENGINE_MIN` floor, launch refusals),
+  [`agents.md`](agents.md) (`agent_project_links.context_repos`, the workspace
+  axis and the ADR-090 read-only layers this reuses).
+- GC + reconciler boundary: [`reconciliation-gc.md`](reconciliation-gc.md)
+  (the backstop sweep, and why mounts are out of the workspace reconciler's
+  scan scope by path).
+- Enforcement seam: [`guardrail-hooks.md`](guardrail-hooks.md) (the permission
+  handler and the `path_guard` resolver L2 reuses).
+- DB: `runs.context_mounts` (migration `0124`) —
+  [`../db/runs-domain.md`](../db/runs-domain.md).
+- Supervisor wire: `contextMounts[]` on `POST /sessions` —
+  [`../api/supervisor.openapi.yaml`](../api/supervisor.openapi.yaml),
+  [`../supervisor.md`](../supervisor.md) (`MAISTER_CONTEXT_REPOS` child env).
+- Source: `web/lib/worktree.ts` (`addDetachedWorktree`, `removeWorktree`),
+  `web/lib/context-mounts/service.ts` (Designed).
+- Error taxonomy: [`../error-taxonomy.md`](../error-taxonomy.md)
+  (`PRECONDITION`, `CONFIG` — reused; no new code).

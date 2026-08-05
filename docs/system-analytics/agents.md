@@ -56,6 +56,17 @@ The launch gate is the three-term allow-list **attached + trusted + enabled**
 per-flow against `flow_revisions.installed_path` (a per-flow cache subdir that did
 not contain the package-root `maister-agents/`).
 
+**Cross-project reach + sibling context (Designed — ADR-156/157).** Two additive
+axes on the SAME attachment row, both deny-by-default and neither needing a new
+table: `cross_project_reach` lets an agent's per-launch token act inside a
+SIBLING project through the ext facade, bounded by the
+`CROSS_PROJECT_AGENT_SCOPES` allow-list and the `runs.agent_chain_depth` budget;
+`context_repos` mounts sibling repos read-only under the run dir so the session
+can read them. The scope subset and the token-authority rules live in
+[identity-access.md](identity-access.md); the flow-node half of the mounts lives
+in [flow-settings.md](flow-settings.md) + [workspaces.md](workspaces.md) (R7 —
+not restated here).
+
 ## Domain entities
 
 - **`agents`** (Implemented) — catalog projection over
@@ -92,6 +103,18 @@ not contain the package-root `maister-agents/`).
   token's `memory_recall`/`memory_clusters` and
   `memory_retain`/`memory_propose` access
   ([project-brain.md](project-brain.md)).
+  **(Designed — ADR-156)** `cross_project_reach boolean NOT NULL DEFAULT false`
+  is a further per-link axis beside `can_read_brain` / `can_write_brain` /
+  `memory_enabled`: on an ENABLED link in project B it admits an agent token
+  minted for ANY project into B, within `CROSS_PROJECT_AGENT_SCOPES` (migration
+  `0123`). The attachment IS the grant — the owner's per-project attach
+  confirmation is the consent event, so no separate grant table exists.
+  **(Designed — ADR-157)** `context_repos jsonb` (nullable, migration `0124`)
+  declares the read-only sibling repos a launch mounts. The ATTACHMENT is the
+  config point; the definition's `recommended.context_repos` is PREFILL ONLY —
+  package slugs are not portable across installations, so a definition can never
+  bind a real project by itself (the same convention as the ADR-089
+  `recommended` bindings).
 - **`agent_schedules`** (Implemented) — trigger bindings per (agent, project):
   `trigger_type='cron'` rows carry `cron_expr + timezone + next_fire_at +
   last_fired_at`; `trigger_type='event'` rows carry `event_match.kinds` (subset of
@@ -129,12 +152,24 @@ not contain the package-root `maister-agents/`).
   carrying `runs.agent_id` (the persona + policy source) — NOT a `run_kind='agent'`
   run. Task-bound agent runs never flip `tasks.status` and never bump
   `attempt_number`.
+  **(Designed — ADR-156/157)** two launch snapshots ride the run row:
+  `agent_chain_depth integer NOT NULL DEFAULT 0` (the trigger-chain budget,
+  migration `0123`) and `context_mounts jsonb` (the resolved
+  `[{projectId, slug, repoPath, mountPath, committish}]` mount set, migration
+  `0124`). Both are written at the run INSERT and READ — never re-derived — by
+  the reach, terminal, and recovery paths.
 - **Agent tokens** (Implemented) — `project_tokens` rows with `token_kind='agent'`
   + `agent_id`, issued per launch with the fixed scope set `tasks:read,
   tasks:update, tasks:triage, comments:read, comments:create, relations:read,
   relations:create, relations:delete, flows:read, runners:read`, revoked at
   terminal / link detach / link disable / GC. Token
   actor = `{ type: 'agent', id: agent_id }`.
+  **(Designed — ADR-156)** `tasks:create` joins `AGENT_TOKEN_SCOPES` — a
+  SAME-project privilege expansion as much as a cross-project one, since every
+  agent in every project gains task creation the moment the grant lands
+  ([identity-access.md](identity-access.md)). The token itself stays
+  single-project by binding (`project_tokens.project_id`, name
+  `agent-run:<runId>`); crossing is a per-request decision, never a second token.
 - **Triage verdict surface** (Implemented) — `tasks.flow_id` nullable +
   verdict columns; the `unconfigured` launchability value; the
   `task.triage_requeued` emitter. See [tasks.md](tasks.md).
@@ -470,6 +505,86 @@ launches a run itself (a system-authority tick does — see
 machine, the dedup/clarify/enqueue/tick-launch flows, and edge cases live in
 [`triage.md`](triage.md) (R7 — not restated here).
 
+### (l) Cross-project facade reach (Designed — ADR-156)
+
+The ext facade refuses any project a token is not bound to. `canAgentReachProject`
+is the third arm at both refusal sites in `ext-handler.ts` — it runs only for
+`token_kind='agent'` and only decides whether to CONTINUE; it never widens the
+scope check that already ran. The checks are ordered cheapest-first and every
+outcome is a single `reason`, so the WARN payload and the unit truth table share
+one vocabulary. The calling run comes from the token's deterministic
+`agent-run:<runId>` name (already parsed as `boundRunId`), never from a request
+field.
+
+```mermaid
+flowchart TD
+    REQ[ext request — token_kind=agent with agent_id<br/>addressed project ≠ the token's project_id] --> S{scopeLabel ∈ CROSS_PROJECT_AGENT_SCOPES?}
+    S -- no --> D1[reason=scope_not_in_subset]
+    S -- yes --> L{agent_project_links row for this agent in the TARGET project?}
+    L -- no --> D2[reason=no_link]
+    L -- yes --> E{that link enabled?}
+    E -- no --> D3[reason=link_disabled]
+    E -- yes --> R{cross_project_reach = true?}
+    R -- no --> D4[reason=reach_off]
+    R -- yes --> C{calling run agent_chain_depth &lt; MAISTER_MAX_AGENT_CHAIN_DEPTH?}
+    C -- no --> D5[reason=chain_depth_exhausted]
+    C -- yes --> OK[reason=ok — handleExt continues into work<br/>audit row: projectId = TARGET, actor label agent:id]
+    D1 --> H
+    D2 --> H
+    D3 --> H
+    D4 --> H
+    D5 --> H
+    H[existence-hidden 404 — never a 403: an agent must never be able to probe for project existence<br/>WARN carries the reason; audit row: projectId = TARGET, actor label agent:id]
+```
+
+### (m) Agent chain depth (Designed — ADR-156)
+
+One counter closes two mutual-triggering loops — cross-project ping-pong
+(A-agent acts in B, the B-side event triggers a B-agent, which acts in A) and the
+same-project A↔B pair that `tasks:create` opens (existing self-exclusion filters
+only an agent's OWN events). Depth is decided at launch, snapshotted, and read by
+both enforcement points.
+
+```mermaid
+flowchart TD
+    T{trigger source} -->|manual / cron / webhook / flow binding| Z[seed depth = 0]
+    T -->|domain_event| A{producing event actor_type = agent?}
+    A -- no --> Z
+    A -- yes --> RID{domain_events.run_id resolvable?}
+    RID -- no --> CAP
+    RID -- yes --> INH[depth = that run's agent_chain_depth + 1]
+    INH --> GATE{depth &lt; MAISTER_MAX_AGENT_CHAIN_DEPTH — default 2?}
+    GATE -- no --> CAP
+    GATE -- yes --> Z2[carry the computed depth]
+    Z --> SNAP
+    Z2 --> SNAP
+    CAP[ENFORCEMENT 1 — launch path: REFUSE, WARN, SKIP the candidate<br/>never throw: the domain-event consumer is idempotent, a throw redelivers the window forever<br/>a NULL run_id on an agent-authored event lands here — fail closed, never seed 0]
+    SNAP[INSERT runs — snapshot runs.agent_chain_depth, immutable for the run's lifetime]
+    SNAP --> REACH[ENFORCEMENT 2 — canAgentReachProject reads the snapshot on every cross-project call<br/>breach → existence-hidden 404 with reason=chain_depth_exhausted]
+```
+
+### (n) Agent-run context-mount lifecycle (Designed — ADR-157)
+
+An agent run mounts each declared sibling repo as a detached, read-only checkout
+under its OWN run dir — outside `worktreesRoot()`, so the sibling project's
+workspace reconciler never sees it, and inside the existing prompt-confinement
+allow-set, so the supervisor needs no confinement change. `L1` (`readOnlySession`)
+is available only to `workspace: none | repo_read` runs; a `worktree` run's own
+work would break under a session-wide read-only, so `L2`/`L3` carry it there.
+`MAISTER_CONTEXT_MOUNT_ENABLED=false` disables the whole path.
+
+```mermaid
+flowchart TD
+    DEC[DECLARE — agent_project_links.context_repos on the attachment<br/>write-time check: the admin holds readRepoFiles on every sibling; recommended is prefill only] --> RES{RESOLVE at launch<br/>slug → active project, ref → committish}
+    RES -- unknown or archived slug, or unresolvable ref --> PRE[MaisterError PRECONDITION naming the slug — no auto-fetch, no mount, no run]
+    RES -- ok --> MNT[MOUNT — addDetachedWorktree against the SIBLING repo at<br/>.maister/consuming-slug/runs/runId/context/sibling-slug/]
+    MNT --> SNAP[SNAPSHOT runs.context_mounts in the same tx as the run insert<br/>projectId, slug, repoPath, mountPath, committish]
+    SNAP --> USE[USE read-only — L1 readOnlySession for none/repo_read runs,<br/>L2 unconditional supervisor path guard over every mount root,<br/>MAISTER_CONTEXT_REPOS + the prompt preamble tell the agent the mounts exist]
+    USE --> TERM[TERMINAL — L3 dirty-check per mount, then releaseContextMounts reading runs.context_mounts:<br/>removeWorktree against each SIBLING repo, then git worktree prune]
+    TERM --> GC[GC BACKSTOP — system_sweep reaps .maister/*/runs/*/context/* whose owning run is terminal or absent]
+    MNT -. crash before the snapshot commits — the one accepted residual window .-> GC
+```
+
 ## Expectations
 
 - Identity MUST be package-qualified `<packageName>:<stem>` (packageName =
@@ -570,6 +685,28 @@ machine, the dedup/clarify/enqueue/tick-launch flows, and edge cases live in
   in this milestone. The agent `capability_profile` frontmatter (`{ mcps?: string[] }`)
   is the intended MCP-server allow-set source when that wiring lands; see
   [`guardrail-hooks.md`](guardrail-hooks.md) + [`flow-settings.md`](flow-settings.md).
+- An agent token minted for project A MUST reach project B only when an ENABLED
+  `agent_project_links` row for that agent exists in B with
+  `cross_project_reach = true`. *(Designed — ADR-156.)*
+- Cross-project reach MUST be limited to `CROSS_PROJECT_AGENT_SCOPES`, evaluated
+  as an ALLOW-LIST, so a scope later added to `TOKEN_SCOPES` or
+  `AGENT_TOKEN_SCOPES` never silently gains reach. *(Designed — ADR-156.)*
+- Every cross-project reach denial MUST be an existence-hidden 404 (never a 403)
+  and MUST be audited with `projectId` = the TARGET project and the actor label
+  `agent:<id>`. *(Designed — ADR-156.)*
+- `runs.agent_chain_depth` MUST be snapshotted at the run INSERT and MUST NEVER
+  be re-derived from a mutable projection afterwards. *(Designed — ADR-156.)*
+- An agent-authored domain event whose `domain_events.run_id` is NULL MUST be
+  treated as already at `MAISTER_MAX_AGENT_CHAIN_DEPTH` — fail closed, never
+  seed `0`. *(Designed — ADR-156.)*
+- A launch refused by the chain-depth cap MUST WARN and skip the candidate and
+  MUST NEVER throw, because the domain-event consumer is idempotent and a throw
+  redelivers the whole window forever. *(Designed — ADR-156.)*
+- A context mount MUST be read-only and MUST live under the run dir
+  (`.maister/<slug>/runs/<runId>/context/<siblingSlug>/`), never under
+  `worktreesRoot()`. *(Designed — ADR-157.)*
+- `runs.context_mounts` MUST be the sole source the terminal and recovery paths
+  read when releasing mounts. *(Designed — ADR-157.)*
 
 ## Edge cases
 
@@ -610,6 +747,20 @@ machine, the dedup/clarify/enqueue/tick-launch flows, and edge cases live in
 - **Providing package removed from the cache** → `resync` disables the catalog rows
   (attachments and run history keep their FK anchor); there is no agent delete
   endpoint — definitions leave through their package.
+- **Unknown or archived sibling slug in `context_repos` at resolve time** →
+  `MaisterError("PRECONDITION")` naming the slug; no mount is created and no run
+  starts. *(Designed — ADR-157.)*
+- **Sibling `ref` unresolvable in the sibling repo** →
+  `MaisterError("PRECONDITION")`; there is NO auto-fetch, matching the ADR-090
+  `workspace_ref` v1 rule. *(Designed — ADR-157.)*
+- **A project admin attaches `context_repos` naming a sibling they lack
+  `readRepoFiles` on** → `MaisterError("PRECONDITION")` at WRITE time on the
+  attach route, not at launch — the attach is the consent event, so an
+  unauthorized declaration must never be persisted. *(Designed — ADR-157.)*
+- **A mount is dirty at the terminal dirty-check** → WARN + quarantine evidence
+  in the same one-transaction shape as the ADR-090 dirty-watchdog; removal
+  proceeds regardless, since the mount is detached and carries no branch.
+  *(Designed — ADR-157.)*
 
 ## Implemented: worktree-agent delivery attribution (ADR-134)
 
@@ -653,7 +804,11 @@ single-active-run guards.
 - **Decisions:** [ADR-089](../decisions.md#adr-089-platform-agent-catalog-with-per-agent-runner-and-a-five-source-trigger-model),
   [ADR-090](../decisions.md#adr-090-agent-workspace-axis-with-three-layer-read-only-enforcement-and-quarantine),
   [ADR-106](../decisions.md#adr-106-package-based-platform-agents--package-identity-attachment-gating-optional-flow-enrichment-and-per-agent-runner-policy)
-  (package identity, gating, optional-flow, runner policy); boundary kept from
+  (package identity, gating, optional-flow, runner policy);
+  [ADR-156](../decisions.md#adr-156-cross-project-agent-facade-reach) (Designed —
+  cross-project facade reach, scope subset, agent chain depth),
+  [ADR-157](../decisions.md#adr-157-read-only-sibling-repo-context-mounts)
+  (Designed — read-only sibling context mounts); boundary kept from
   ADR-041/043 (materialize-only); policy axes ADR-095/101/102.
 - **DB:** [`db/agents-domain.md`](../db/agents-domain.md),
   [`db/runs-domain.md`](../db/runs-domain.md),
@@ -666,6 +821,16 @@ single-active-run guards.
   [`agent-mentions.md`](agent-mentions.md) (`trigger_type='mention'` bindings
   and the directed `@<agentId>` summon branch, ADR-151).
 - **Agent memory:** [`agent-memory.md`](agent-memory.md) (ADR-152, Implemented).
+- **Cross-project + sibling context (Designed):**
+  [`identity-access.md`](identity-access.md) (the `CROSS_PROJECT_AGENT_SCOPES`
+  subset, the `tasks:create` grant, token authority at the cross-project seam),
+  [`flow-settings.md`](flow-settings.md) + [`workspaces.md`](workspaces.md) (the
+  flow-node declaration and the mount mechanics),
+  [`reconciliation-gc.md`](reconciliation-gc.md) (why mounts are out of the
+  workspace reconciler's scan scope), [`social-board.md`](social-board.md)
+  (cross-project task relations, ADR-155). Planned source:
+  `web/lib/agents/cross-project-reach.ts`,
+  `web/lib/context-mounts/service.ts`.
 - **Tasks surface:** [`tasks.md`](tasks.md) (simple-intent creation, verdict
   columns, `unconfigured`, card pre-launch editing).
 - **External surface:** [`external-operations.md`](external-operations.md) (triage

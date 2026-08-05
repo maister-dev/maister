@@ -14,7 +14,10 @@ agent tokens through `socialActorForToken` (`web/lib/tokens/verify.ts`).
 Task numbering, typed
 relations, and the `"blocked"` launchability gate are documented in
 [`tasks.md`](tasks.md); this file owns the comment/activity/subscription/
-inbox substrate. (Implemented)
+inbox substrate plus the relation **write path**
+(`web/lib/social/relations.ts`) — row ownership, locking, cycle refusal, and
+the ADR-155 cross-project rules. (Implemented; cross-project relations —
+Designed)
 
 ## Domain entities
 
@@ -24,6 +27,19 @@ inbox substrate. (Implemented)
 - **Task number** — `tasks.number`, per-project monotonic, allocated from
   `projects.next_task_number` in the `createTask` transaction. `KEY-N` =
   `task_key` + `number`. See [`tasks.md`](tasks.md).
+- **Relation row ownership** (ADR-155 — Designed) — a `task_relations` row is
+  owned by its **from-end**: `task_relations.project_id` is the from-task's
+  project, and the to-task MAY live in a different project. Both endpoints are
+  FKs to `tasks.id` and uniqueness is `(from_task_id, kind, to_task_id)`, so
+  the schema already tolerates a cross-project row — Stage 1's restriction was
+  a domain check, not a constraint. ADR-155 supersedes exactly one sentence of
+  ADR-083 clause 4 ("same-project only in Stage 1"); canonical one-direction
+  rows, `UNIQUE(from_task_id, kind, to_task_id)`, the
+  `task_relations_no_self_check` CHECK, and render-time-only inverse labels all
+  stand. Cross-project addressing is possible because
+  `projects.task_key` is platform-unique (`.notNull().unique()`), which makes
+  `KEY-N` a valid global address. Kind vocabulary and the launchability gate
+  stay in [`tasks.md`](tasks.md).
 - **Actor pair** — `(actor_type, actor_id)` columns on every social table:
   `actor_type ∈ {user, agent, system}`,
   `CHECK ((actor_type = 'system') = (actor_id IS NULL))`, no FK to `users`
@@ -168,6 +184,47 @@ recipient equals the session user; other users' items answer 404. The "Needs
 you (N)" badge is the single canonical `needsYou` count (see Expectations); see
 [`hitl.md`](hitl.md) for the HITL half.
 
+### Creating a relation, cross-project included (ADR-155 — Designed)
+
+Relation mutations take their target either as `toNumber` (resolved strictly
+inside the URL project, unchanged) or as the platform-global `toTaskKey`
+(`KEY-N`) — exactly one of the two. The diagram traces the added steps: global
+target resolution, the second `manageTaskRelations` check on the resolved
+target project, the ONE platform-wide gating lock, and the now project-agnostic
+bounded cycle BFS. The row is still written with the from-task's `project_id`.
+
+```mermaid
+sequenceDiagram
+    actor U as Caller (web session or ext token)
+    participant R as Relations route
+    participant L as Task resolver
+    participant A as addTaskRelation (lib/social/relations.ts)
+    participant DB as Postgres
+
+    U->>R: POST relations, body kind + toNumber XOR toTaskKey
+    R->>R: zod strict body — exactly one target field, else CONFIG
+    R->>L: resolve from-task by URL project + number
+    alt toTaskKey supplied
+        L->>DB: resolveTaskByKeyRef — join projects.task_key + tasks.number
+        DB-->>L: to-task in ANY project, or null
+    else toNumber supplied
+        L->>DB: resolveProjectTaskByNumber within the URL project
+        DB-->>L: to-task in the SAME project, or null
+    end
+    L-->>R: resolved to-task, or 404 when unresolved or archived
+    R->>R: manageTaskRelations on the from-project
+    R->>R: manageTaskRelations on the to-project, else UNAUTHORIZED 403
+    R->>A: addTaskRelation with projectId = from-task project
+    A->>DB: BEGIN
+    A->>DB: pg_advisory_xact_lock over ONE platform-wide gating slot
+    A->>DB: bounded BFS over the platform gating graph, cap GATING_BFS_MAX_NODES
+    DB-->>A: cycle found or cap exceeded, else clear
+    A->>DB: INSERT task_relations + relation_added activity on the from-end
+    A->>DB: COMMIT
+    A-->>R: created flag
+    R-->>U: 201, or CONFLICT 409 on cycle or cap breach
+```
+
 ## Expectations
 
 - Every `task_activity` row MUST be written by the domain layer
@@ -225,13 +282,43 @@ you (N)" badge is the single canonical `needsYou` count (see Expectations); see
 - (ADR-121, Implemented) A gating-kind (`blocks|depends_on|requires`) relation
   whose insert would close a dependency cycle MUST be refused with
   `MaisterError("CONFLICT")` (HTTP 409), evaluated INSIDE the insert transaction
-  under a per-project advisory lock (no TOCTOU); `parent_of`/`duplicate_of` are
+  under the gating advisory lock (no TOCTOU); `parent_of`/`duplicate_of` are
   non-gating and never cycle-checked. See [`task-queue.md`](task-queue.md).
+- **(ADR-155 — Designed)** A `task_relations` row's `project_id` MUST equal the
+  from-task's project, and the to-task MAY belong to a different project.
+- **(ADR-155 — Designed)** Creating or removing a relation MUST require
+  `manageTaskRelations` on BOTH endpoint projects — the from-end on the URL
+  project and the to-end re-checked on the resolved target project.
+- **(ADR-155 — Designed)** Every gating-kind insert MUST serialize on ONE
+  platform-wide advisory lock
+  (`pg_advisory_xact_lock(RELATION_LOCK_NAMESPACE, 0)`) and NEVER on a
+  per-project lock, because pairwise per-project locking only serializes cycles
+  of length ≤ 3.
+- **(ADR-155 — Designed)** The gating cycle BFS MUST refuse with
+  `MaisterError("CONFLICT")` when its traversal exceeds `GATING_BFS_MAX_NODES`
+  (default 5000) rather than commit an unverified edge.
+- **(ADR-155 — Designed)** `toNumber` and `toTaskKey` MUST be mutually exclusive
+  on every relation-mutation body: both present or neither present is
+  `MaisterError("CONFIG")` — HTTP 400 on the internal route, 422 on the ext
+  surface (`httpStatusForExtCode`) — refused before any endpoint resolution.
+- **(ADR-155 — Designed)** `getOpenRelationBlockers` MUST return each blocker's
+  OWN `projects.task_key`, and the `blocked` chip MUST render that `KEY-N` —
+  removing the named edge is the only mitigation for a wedged `requires`
+  dependency.
+- **(ADR-155 — Designed)** `requires` MUST stay success-gated across projects: a
+  dependency in another project keeps the dependent blocked while it is
+  `Abandoned` or its latest run `Failed`, and only `Done` releases it.
+- **(ADR-155 — Designed)** Relations MAY cross projects but automation MUST NOT:
+  `auto_launch_run_plan` and the abandon cascade
+  (`getUnlaunchedAutoChildTaskIds`) MUST skip candidates whose project differs
+  from the parent run's, and board decomposition MUST render each child's OWN
+  `KEY-N` and project slug rather than the current board's.
 
 ## Edge cases
 
 - **Relation closes a gating cycle** — refused with `MaisterError("CONFLICT")`
-  (409) at both the web and ext relations routes (ADR-121).
+  (409) at both the web and ext relations routes (ADR-121; the BFS is
+  platform-wide, not project-scoped, from ADR-155 — Designed).
 - **Dangling `actor_id` (user deleted)** — rows survive (no FK); UI renders
   a "former user" fallback label. Not an error.
 - **Mention of a since-deleted task** — write-time resolution fails, the
@@ -269,9 +356,41 @@ you (N)" badge is the single canonical `needsYou` count (see Expectations); see
 - **Foreign inbox item id** — `PATCH …/read` on another user's item → 404
   (`PRECONDITION`), no information leak about existence.
 
+Relation-mutation refusals are an **allow-list** (ADR-155 — Designed): the
+mutation proceeds only when exactly one target field is supplied, the target
+resolves, the caller holds `manageTaskRelations` on both endpoint projects, and
+the gating BFS clears under the platform-wide lock. Every other outcome is one
+of these, in evaluation order:
+
+- **Self-relation (`fromTaskId === toTaskId`)** → `MaisterError("CONFIG")` —
+  400 on the internal route, 422 on the ext surface — backstopped by the
+  `task_relations_no_self_check` DB CHECK. (Implemented)
+- **Both `toNumber` and `toTaskKey`, or neither** → `MaisterError("CONFIG")` —
+  400 on the internal route, 422 on the ext surface (`httpStatusForExtCode`
+  maps `CONFIG` → 422 across all of `/api/v1/ext/*`) — from the route's
+  `.strict()` body schema, before any endpoint is resolved. (Designed)
+- **`toTaskKey` that does not resolve** — malformed ref, unknown `task_key`,
+  unknown number, or an archived target project → **404**;
+  `resolveTaskByKeyRef` returns `null` and never throws. (Designed)
+- **Caller lacks `manageTaskRelations` on the resolved target project** →
+  `MaisterError("UNAUTHORIZED")` (403). (Designed)
+- **Project-bound ext token (`actor.projectId !== null`) targeting a task in
+  another project** → `MaisterError("UNAUTHORIZED")` (403) with a
+  `token_audit_log` row written — deliberately NOT the existence-hidden 404 the
+  ext handler uses for project scoping, because the caller supplied a
+  globally-unique `KEY-N` and the refusal must be actionable. (Designed)
+- **Insert would close a gating cycle across any project** →
+  `MaisterError("CONFLICT")` (409), decided inside the insert transaction under
+  the platform-wide lock. (Designed)
+- **Gating BFS traversal exceeds `GATING_BFS_MAX_NODES`** →
+  `MaisterError("CONFLICT")` (409) + WARN; refusing is the safe direction
+  because a missed cycle deadlocks permanently. (Designed)
+
 ## Linked artifacts
 
-- ADR: [ADR-083](../decisions.md#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor).
+- ADRs: [ADR-083](../decisions.md#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor),
+  [ADR-155](../decisions.md#adr-155-cross-project-task-relations)
+  (cross-project task relations — Designed).
 - Sibling domains: [`agent-mentions.md`](agent-mentions.md) (`@<agentId>`
   resolution + directed summons, ADR-151),
   [`tasks.md`](tasks.md) (numbering, relations,

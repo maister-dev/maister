@@ -26,6 +26,13 @@ column-level narrative.
 > reconciled under `agent_project_links.schedules_revision`; bindings retain
 > fenced latest-attempt telemetry and `runs.agent_schedule_id` records the
 > binding that launched an agent run.
+>
+> **(Designed — ADR-156, migration `0123`; ADR-157, migration `0124`)** the
+> attachment gains two per-project axes — `cross_project_reach` (boolean NOT NULL
+> DEFAULT false) and `context_repos` (jsonb NULL). Both are additive with
+> pre-migration-honest seeds (no reach / no mounts), so neither needs a backfill.
+> The matching Run-side launch snapshots `runs.agent_chain_depth` and
+> `runs.context_mounts` are drawn in [`runs-domain.md`](runs-domain.md).
 
 ```mermaid
 erDiagram
@@ -77,6 +84,8 @@ erDiagram
         boolean can_read_brain "NOT NULL DEFAULT false — gates memory recall (ADR-122, 0088)"
         boolean can_write_brain "NOT NULL DEFAULT false — gates memory retain, separate write axis (ADR-122, 0088)"
         boolean memory_enabled "NOT NULL DEFAULT false — gates agent-memory injection + agent_memory_write; SEPARATE store from Brain (ADR-152, 0122)"
+        boolean cross_project_reach "Designed — NOT NULL DEFAULT false — lets an agent token minted in ANOTHER project act here, limited to CROSS_PROJECT_AGENT_SCOPES; the attachment IS the grant (ADR-156, 0123)"
+        jsonb context_repos "Designed — NULL — declared read-only sibling repos [{project, ref?}], max 8; NULL = no mounts (ADR-157, 0124)"
         integer schedules_revision "NOT NULL DEFAULT 1 — full-replacement CAS fence (ADR-139)"
         timestamptz created_at
         timestamptz updated_at

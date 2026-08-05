@@ -984,6 +984,24 @@ agent_project_links {
                                    //   re-enables what an operator turned off).
                                    //   `false` is the honest default: a pre-existing
                                    //   attachment genuinely has no memory.
+  crossProjectReach,               // (Designed — ADR-156, migration 0123) boolean
+                                   //   NOT NULL DEFAULT false — grants an agent token
+                                   //   minted in ANOTHER project the right to act in
+                                   //   THIS project, narrowed to
+                                   //   CROSS_PROJECT_AGENT_SCOPES. The attachment row
+                                   //   IS the grant; there is no separate reach table.
+                                   //   Deny-by-default: `false` is the honest seed for
+                                   //   every pre-0123 attachment, which genuinely has
+                                   //   no reach.
+  contextRepos? (jsonb),           // (Designed — ADR-157, migration 0124) NULL —
+                                   //   declared read-only sibling repos for THIS
+                                   //   attachment: [{project, ref?}], at most 8.
+                                   //   NULL/absent ⇒ no mounts. The attachment is the
+                                   //   config point (a project admin authorized on the
+                                   //   sibling writes it); the definition's
+                                   //   `recommended.context_repos` is prefill only,
+                                   //   because package slugs are not portable across
+                                   //   installations.
   createdAt, updatedAt
   // UNIQUE (agent_id, project_id)
 }
@@ -1411,6 +1429,26 @@ unread badge and inbox panel.
                                  //   provider-resolved PR merge; null for FF/rebase
   diffStat?,                     // ADR-134 (migration 0098): cleaned
                                  //   {files, additions, deletions}; final evidence only
+  agentChainDepth,               // (Designed — ADR-156, migration 0123) integer NOT
+                                 //   NULL DEFAULT 0, snapshotted at launch. An agent
+                                 //   run launched from a domain event whose
+                                 //   actor_type='agent' inherits parentDepth + 1;
+                                 //   every other trigger source (manual, cron,
+                                 //   webhook, flow-node binding) seeds 0. Capped at
+                                 //   MAISTER_MAX_AGENT_CHAIN_DEPTH (default 2) at BOTH
+                                 //   the cross-project reach check and the
+                                 //   agent-launch-from-an-agent-event path, so an
+                                 //   A<->B trigger ping-pong terminates ACROSS and
+                                 //   WITHIN projects. `0` is the honest seed for
+                                 //   pre-0123 rows — no chain has been spent.
+  contextMounts?,                // (Designed — ADR-157, migration 0124) jsonb NULL —
+                                 //   the LAUNCH SNAPSHOT of this run's read-only
+                                 //   sibling mounts:
+                                 //   [{projectId, slug, repoPath, mountPath,
+                                 //   committish}]. Terminal cleanup and crash recovery
+                                 //   read THIS row; they never re-derive the mount set
+                                 //   from a manifest or an attachment that can drift
+                                 //   after launch. NULL ⇒ no mounts declared.
   startedAt, endedAt?
 }
 ```
@@ -3441,6 +3479,55 @@ new and data-free).
 Contract details — path derivation, the CAS write, degradation, and the owner
 surface — live in
 [`system-analytics/agent-memory.md`](system-analytics/agent-memory.md).
+
+## Cross-project agent reach + chain depth (Designed — ADR-156, migration `0123`)
+
+Two additive, constant-default columns, one migration, no backfill, no
+abort-guard and no `DELETE FROM`.
+
+- `agent_project_links` += `cross_project_reach` (boolean NOT NULL DEFAULT
+  false) — grants an agent token minted in ANOTHER project the right to act in
+  THIS project, narrowed to `CROSS_PROJECT_AGENT_SCOPES`. The attachment row IS
+  the grant, so no new table is needed; described in full in the
+  `agent_project_links` block above.
+- `runs` += `agent_chain_depth` (integer NOT NULL DEFAULT 0) — the launch-time
+  snapshot of how many agent→agent trigger hops produced this run, capped at
+  `MAISTER_MAX_AGENT_CHAIN_DEPTH` (default 2) at both the cross-project reach
+  check and the agent-launch-from-an-agent-event path.
+
+Both defaults are safe **because they carry the right meaning for pre-migration
+rows**: `false` = no reach (deny-by-default), `0` = no chain spent. That is the
+distinction from the "looks populated but isn't" trap, which applies to defaults
+that *lie* about a decision the system never made — these state the decision the
+system would have made anyway.
+
+Contract details — the scope subset, the two enforcement points, and the audit
+shape — live in [`system-analytics/agents.md`](system-analytics/agents.md) and
+[`system-analytics/identity-access.md`](system-analytics/identity-access.md).
+
+## Read-only sibling context mounts (Designed — ADR-157, migration `0124`)
+
+Two additive, nullable columns, one migration, no backfill, no abort-guard and
+no `DELETE FROM`.
+
+- `agent_project_links` += `context_repos` (jsonb NULL) — the declared read-only
+  sibling repos for this attachment, `[{project, ref?}]`, at most 8. NULL is the
+  honest seed for every pre-`0124` attachment: absent means no mounts declared,
+  not "unknown".
+- `runs` += `context_mounts` (jsonb NULL) — the launch snapshot,
+  `[{projectId, slug, repoPath, mountPath, committish}]`, written in the same
+  transaction as the run insert. The terminal-cleanup and crash-recovery paths
+  read THIS column and never re-derive the mount set from a manifest or an
+  attachment that can drift after launch. NULL means the run mounted nothing,
+  which is true of every pre-`0124` row and of every run that declared no
+  siblings.
+
+Contract details — the mount path, the three read-only enforcement layers, the
+GC backstop, and the accepted crash window between mount creation and the
+snapshot commit — live in
+[`system-analytics/flow-settings.md`](system-analytics/flow-settings.md),
+[`system-analytics/agents.md`](system-analytics/agents.md), and
+[`system-analytics/reconciliation-gc.md`](system-analytics/reconciliation-gc.md).
 
 ## Planned roadmap persistence
 

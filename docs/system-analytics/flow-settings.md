@@ -78,6 +78,30 @@ in M11c.
 - **`enforcement_snapshot`** — append-only `node_attempts` jsonb column
   (migration `0013`) recording `{ class, declared, capability, verdict }[]` at
   launch / first attempt.
+- **`settings.context_repos`** (Designed —
+  [ADR-157](../decisions.md#adr-157-read-only-sibling-repo-context-mounts)) — a
+  typed node setting declaring **read-only sibling-repo context mounts**.
+  Available on `ai_coding`, `judge`, and `orchestrator` **only**: all three
+  dispatch to the same ACP-session arm in `runner-graph.ts`. `cli` and `check`
+  are **excluded** — they are not ACP sessions. Array of at most **8** entries:
+
+  ```yaml
+  settings:
+    context_repos:
+      - project: other-service   # project SLUG, resolved at launch
+        ref: main                 # optional; default = that project's default branch
+  ```
+
+  Engine floor `CONTEXT_REPOS_ENGINE_MIN = "3.4.0"` (`MAISTER_ENGINE_VERSION`
+  bumps `3.3.0 → 3.4.0`), enforced at **manifest load time**, mirroring the
+  ADR-154 `MAISTER_FLOW_DIR` floor gate in `web/lib/config.ts`: a manifest
+  declaring `context_repos` below the floor refuses with
+  `MaisterError("CONFIG")` and an actionable message naming the required bump.
+  `context_repos` is **not** a capability class — it carries no `enforcement`
+  intent, gets no `ENFORCEABILITY_BY_AGENT` column, and never appears in
+  `enforcement_snapshot`. Its read-only contract is carried by the three
+  mount-lifecycle layers in [`workspaces.md`](workspaces.md), not by the
+  strict/instruct table.
 
 ## State machine — per-class enforcement verdict
 
@@ -421,6 +445,33 @@ the existing supervisor `DELETE /sessions/:id` (no new supervisor route; the
 `DELETE` drives teardown so no permission deferred leaks), marks the node
 `Failed`, and ends the run terminal. Cost limits stay record-only.
 
+### Context-repo declaration to release (Designed — ADR-157)
+
+`settings.context_repos` is declared in the manifest, gated at manifest load by
+the engine floor, and resolved **at launch** — slug to active project, `ref` to a
+committish, and the launching user's `readRepoFiles` grant checked on **each**
+sibling project. A missing grant refuses the launch naming that project, before
+any worktree side-effect. The materialization, snapshot, and release halves of
+this path belong to [`workspaces.md`](workspaces.md); this diagram shows only
+where a declaration is accepted or refused.
+
+```mermaid
+flowchart TD
+    D[node declares settings.context_repos<br/>ai_coding, judge or orchestrator] --> L[manifest load: schema parse,<br/>then the engine floor gate]
+    L -->|over max 8 entries or unknown key| SR[refuse MaisterError CONFIG at schema parse]
+    L -->|engine_min below CONTEXT_REPOS_ENGINE_MIN| LR[refuse MaisterError CONFIG<br/>name the required bump]
+    L -->|shape valid and floor met| P[launch: resolve each project slug<br/>to an active project]
+    P -->|unknown or archived slug| PR[refuse PRECONDITION naming the slug]
+    P --> A{launching user holds readRepoFiles<br/>on this sibling project?}
+    A -->|no| AR[refuse PRECONDITION naming the project<br/>no mount, no worktree side-effect]
+    A -->|yes| C[resolve committish: literal ref,<br/>else sibling default branch]
+    C -->|unresolvable ref, no auto-fetch| CR[refuse PRECONDITION]
+    C --> M[materialize mount, snapshot runs.context_mounts,<br/>POST /sessions with contextMounts]
+    M --> U[ACP session reads the mounts<br/>write-class calls denied at the supervisor seam]
+    U --> T[terminal choke: dirty-check,<br/>remove per sibling, prune sibling repos]
+    T --> G[GC backstop reaps any orphan]
+```
+
 ## Expectations
 
 - A node `settings` block MUST be parsed into the typed per-node-type shape; the
@@ -463,6 +514,19 @@ the existing supervisor `DELETE /sessions/:id` (no new supervisor route; the
 - A run whose elapsed exceeds `limits.maxDurationMinutes` MUST be terminated
   `Failed`; a run under cap MUST NOT be killed; absence of `limits` MUST NOT arm
   the watchdog. Cost caps remain record-only.
+- `settings.context_repos` MUST be accepted only on `ai_coding`, `judge`, and
+  `orchestrator` nodes and MUST be rejected by the schema on every other node
+  type, including `cli` and `check`. (Designed — ADR-157)
+- A manifest declaring `context_repos` with `compat.engine_min` below
+  `CONTEXT_REPOS_ENGINE_MIN` MUST refuse at manifest load with
+  `MaisterError("CONFIG")` naming the required bump. (Designed — ADR-157)
+- `settings.context_repos` MUST hold at most 8 entries. (Designed — ADR-157)
+- Removing `context_repos` from a manifest MUST clear the resolved value on the
+  next install — the write path is SET/CLEAR symmetric and NEVER an
+  `if (!x) continue` skip loop. (Designed — ADR-157)
+- Launching a node that declares `context_repos` MUST refuse
+  `MaisterError("PRECONDITION")` naming the project when the launching user
+  lacks `readRepoFiles` on any referenced sibling project. (Designed — ADR-157)
 
 ## Edge cases
 
@@ -482,13 +546,24 @@ the existing supervisor `DELETE /sessions/:id` (no new supervisor route; the
 - **Process dies after a refusal snapshot but before the run is marked terminal**
   → the M11a/M11b recovery sweep reconciles the run; the append-only snapshot is
   never double-written for the same attempt.
+- **(Designed — ADR-157) `context_repos` naming an unknown or archived sibling
+  slug** → `MaisterError("PRECONDITION")` at launch, naming the offending slug;
+  no mount and no worktree side-effect.
+- **(Designed — ADR-157) `context_repos[].ref` that does not resolve in the
+  sibling repo** → `MaisterError("PRECONDITION")`. There is **no auto-fetch** —
+  the same v1 rule ADR-090 applies to `workspace_ref`.
+- **(Designed — ADR-157) `context_repos` over the 8-entry max, or carrying an
+  unknown key** → `MaisterError("CONFIG")` at schema parse, before the engine
+  floor gate has anything to check.
 
 ## Linked artifacts
 
 - ADRs: [ADR-031](decisions.md) (typed settings, carve (b)),
   [ADR-032](decisions.md) (refusal boundary), [ADR-008](decisions.md) (error
   taxonomy), [ADR-026/027/028](decisions.md) (graph manifest, ledger, gates),
-  [ADR-084](../decisions.md#adr-084-acp-adapter-families-for-gemini-cli-and-opencode).
+  [ADR-084](../decisions.md#adr-084-acp-adapter-families-for-gemini-cli-and-opencode),
+  [ADR-157](../decisions.md#adr-157-read-only-sibling-repo-context-mounts)
+  (Designed — read-only sibling-repo context mounts).
 - Schema / validation: `web/lib/config.schema.ts`, `web/lib/config.ts`.
 - Enforcement: `web/lib/flows/enforcement.ts`,
   `web/lib/flows/graph/compile.ts`, `web/lib/flows/graph/runner-graph.ts`.
@@ -498,3 +573,9 @@ the existing supervisor `DELETE /sessions/:id` (no new supervisor route; the
 - Errors: [error-taxonomy.md](error-taxonomy.md) (`CONFIG`,
   `EXECUTOR_UNAVAILABLE` M11c callers).
 - DSL: [flow-dsl.md](flow-dsl.md) (node `settings` block).
+- Context mounts (Designed — ADR-157): [`workspaces.md`](workspaces.md)
+  (mount path, `runs.context_mounts` snapshot, the three read-only enforcement
+  layers, terminal release) and [`reconciliation-gc.md`](reconciliation-gc.md)
+  (the GC backstop sweep and the reconciler scan-scope boundary). Engine floor
+  constant: `web/lib/flows/engine-version.ts` (`MAISTER_ENGINE_VERSION`) +
+  `web/lib/config.ts` (`CONTEXT_REPOS_ENGINE_MIN`, the load-time gate).

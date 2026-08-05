@@ -38,6 +38,15 @@ sign-out are wired in `web/`.
   `token_kind='user'`, `owner_user_id=<current user>`, and `project_id IS NULL`.
   Verification reuses this domain's live owner-state checks before any external
   operation may run.
+- **Agent tokens and the cross-project subset** (Designed — ADR-156) —
+  `project_tokens` rows with `token_kind='agent'` are minted per agent launch,
+  bound to exactly ONE project, named `agent-run:<runId>`, and carry the fixed
+  `AGENT_TOKEN_SCOPES` set ([`agents.md`](agents.md)).
+  `CROSS_PROJECT_AGENT_SCOPES` (`web/types/token-scopes.ts`) is the strict
+  subset of those scopes that MAY be exercised against a project the token is
+  not bound to. It is an allow-list — anything outside it is refused by default,
+  so a scope added to `TOKEN_SCOPES` or `AGENT_TOKEN_SCOPES` later never gains
+  cross-project reach by omission.
 - **User menu** — top-nav affordance that shows name, email, role, personal
   settings, password change, and sign-out.
 
@@ -172,6 +181,72 @@ sequenceDiagram
     API->>DB: UPDATE matching owner token SET revoked_at=now()
     API-->>P: 204
 ```
+
+### Cross-project token authority (Designed — ADR-156)
+
+`handleExt` refuses any project a bearer is not bound to, at two near-identical
+sites (the URL-slug arm and the `resolveProjectId` arm). Three token classes meet
+that seam and only two of them may ever cross. The agent arm's full predicate —
+the ordered checks and their `reason` values — lives in [`agents.md`](agents.md)
+flow (l) (R7 — not restated here).
+
+```mermaid
+flowchart TD
+    R[ext request — addressed project ≠ the token's binding] --> K{token class}
+    K -- user token with project_id NULL --> U[MAY cross — per-request RBAC re-check<br/>the owner must hold the mapped project action on the target project too]
+    K -- user or project token with project_id set --> P[REFUSED — a project-bound token has no authority outside its project]
+    K -- agent token --> A{canAgentReachProject}
+    A -- allowed --> C[continue — audit projectId = TARGET, actor label agent:id]
+    A -- denied --> D[existence-hidden 404 + WARN carrying the reason]
+    P --> S[URL-addressed project: the same existence-hidden 404<br/>target named in the body, e.g. toTaskKey: UNAUTHORIZED 403 with its own audit row]
+```
+
+**`CROSS_PROJECT_AGENT_SCOPES` — the admitted subset (Designed — ADR-156).**
+Intersected with the token's actual scopes at check time; membership here is
+necessary, never sufficient.
+
+| Scope | Admitted cross-project? | Rationale |
+| ----- | ----------------------- | --------- |
+| `tasks:read` | yes | reading the sibling's board is the minimum a coordinating agent needs |
+| `tasks:create` | yes | files the sibling-side task that a cross-repo decomposition requires; the new task is additive and never touches existing content |
+| `comments:read` | yes | reads the sibling thread it is about to answer |
+| `comments:create` | yes | the coordination channel itself — append-only, mutates nothing |
+| `relations:read` | yes | reads the gating graph, which spans both ends after ADR-155 |
+| `relations:create` | yes | mints the cross-project `blocks` / `depends_on` / `requires` edge |
+| `relations:delete` | yes | removing an edge it minted must not need a human on the far side |
+
+**Deliberate exclusions (Designed — ADR-156).** Every scope not in the table
+above is refused by the allow-list; these are the ones whose exclusion is a
+decision rather than an accident.
+
+| Scope | Why it never crosses |
+| ----- | -------------------- |
+| `runs:launch`, `runs:read`, `runs:delegate`, `runs:collect`, `runs:cancel`, `runs:promote`, `runs:sync` | every run op — none is in `AGENT_TOKEN_SCOPES` at all, so an agent drives execution in no project, its own included |
+| `tasks:update` | mutating a sibling's EXISTING task content from outside that project |
+| `tasks:triage` | same, for the verdict — a sibling's routing decision stays with that project's triager |
+| `hitl:request` | would create a HITL request in a project whose humans never opted into this agent |
+| `flows:read` | catalog disclosure — the sibling's installed flows |
+| `runners:read` | catalog disclosure — the sibling's enabled runners |
+| `memory:read`, `memory:write` | Project Brain is a project-scoped knowledge store (ADR-122); its `can_read_brain` / `can_write_brain` link axes are grants inside ONE project |
+| `agent_memory:write` | the agent's own per-attachment `memory.md` is per-project by construction (ADR-152) |
+
+**`tasks:create` joins `AGENT_TOKEN_SCOPES` (Designed — ADR-156).** This is a
+SAME-project privilege expansion as well as a cross-project one: every agent in
+every project gains task creation the moment the grant lands, not only agents
+acting across projects. An *agent gains an op* change
+moves three things together: the route's `scopeLabel`, that scope's
+`PROJECT_ACTION_BY_SCOPE` entry, and the `AGENT_TOKEN_SCOPES` grant. Here only
+the grant list changes — the route
+(`POST /api/v1/ext/projects/[slug]/tasks`, `scopeLabel: "tasks:create"`) and the
+mapping (`PROJECT_ACTION_BY_SCOPE["tasks:create"] = "createTask"`) already
+exist. The mapping is load-bearing, not cosmetic: scope resolution ends in
+`?? "readBoard"`, so an unmapped write scope silently resolves to the
+viewer-level action.
+
+**A flowless agent-created task is not a defect (Designed — ADR-156).** A task an
+agent creates with no `flowId` is a flowless simple-intent task, `unconfigured`
+until a triage verdict fills the flow — the existing ADR-112 path
+([`tasks.md`](tasks.md)), needing no new work.
 
 ### Password change from account settings (Implemented)
 
@@ -332,6 +407,17 @@ flowchart TD
   live `users` row with `account_status='active'` and
   `must_change_password=false`. (Implemented)
 - Deleting a user MUST invalidate authority on the next server request because `getSessionUser()` cannot resolve the live `users` row.
+- A `project_tokens` row with a non-NULL `project_id` MUST NEVER be authorized
+  against any other project; only NULL-`project_id` user tokens (RBAC re-checked
+  per request on both ends) and reach-granted `token_kind='agent'` tokens may
+  cross. *(Designed — ADR-156.)*
+- Every member of `CROSS_PROJECT_AGENT_SCOPES` MUST have a
+  `PROJECT_ACTION_BY_SCOPE` entry, because an unmapped scope silently resolves to
+  the viewer-level `readBoard` action. *(Designed — ADR-156.)*
+- `tasks:create` MUST be a member of `AGENT_TOKEN_SCOPES` and MUST map to
+  `PROJECT_ACTION_BY_SCOPE["tasks:create"] = "createTask"`, and the grant MUST
+  apply to every agent token in every project, not only to cross-project calls.
+  *(Designed — ADR-156.)*
 
 ## Edge cases
 
@@ -370,6 +456,10 @@ flowchart TD
 - **Hard-delete of a user with linked rows (runs, workspaces, etc.)** -> `MaisterError("PRECONDITION", ...)`; 409; admin is offered disable instead. `(Implemented)`
 - **Self-delete, self-disable, or self-demotion** -> `MaisterError("PRECONDITION", ...)`; 409. `(Implemented)`
 - **Admin removes last active global admin** -> `MaisterError("PRECONDITION", ...)`; 409. `(Implemented)`
+- **Project-bound token addresses another project** -> existence-hidden 404 when
+  the project is URL-addressed, or `MaisterError("UNAUTHORIZED", ...)` (403) with
+  its own audit row when the cross-project target is named in the request body;
+  neither response reveals which scopes the token holds. `(Designed — ADR-156)`
 
 ## Linked artifacts
 
@@ -388,6 +478,13 @@ flowchart TD
 - Error taxonomy: [`../error-taxonomy.md`](../error-taxonomy.md)
   (`UNAUTHENTICATED`, `UNAUTHORIZED`, `PASSWORD_CHANGE_REQUIRED`,
   `ACCOUNT_INACTIVE`).
+- Cross-project agent reach (Designed):
+  [ADR-156](../decisions.md#adr-156-cross-project-agent-facade-reach),
+  [`agents.md`](agents.md) (the reach predicate, the `runs.agent_chain_depth`
+  budget, the attachment grant), [`external-operations.md`](external-operations.md)
+  (the ext surface the subset is exercised through); source
+  `web/types/token-scopes.ts` + `web/lib/tokens/ext-handler.ts`, planned
+  `web/lib/agents/cross-project-reach.ts`.
 - Source: `web/auth.ts`, `web/auth.config.ts`, `web/lib/authz.ts`,
   `web/lib/users.ts`, `web/app/api/admin/users/route.ts`,
   `web/app/(app)/layout.tsx`, `web/components/chrome/user-menu.tsx`,

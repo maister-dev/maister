@@ -7,6 +7,12 @@
 > migration `0076_user_access_tokens.sql`. Locked decisions:
 > [ADR-040](../decisions.md#adr-040), [ADR-041](../decisions.md#adr-041),
 > [ADR-042](../decisions.md#adr-042).
+>
+> **Designed (M49):** cross-project relation addressing over `toTaskKey` plus the
+> `requires` kind on the ext relations route and the MCP facade
+> ([ADR-155](../decisions.md#adr-155-cross-project-task-relations)), and
+> opt-in cross-project reach for agent tokens at the ext-handler seam
+> ([ADR-156](../decisions.md#adr-156-cross-project-agent-facade-reach)).
 
 ## Purpose
 
@@ -58,11 +64,71 @@ surface exists.
   polymorphic actor `{type: 'agent', id: agent_id}` (ADR-083's first agent
   writer) and `token_audit_log.actor_label` records `agent:<id>`. See
   [agents.md](agents.md).
+- **`tasks:create` joins `AGENT_TOKEN_SCOPES`** (Designed — ADR-156) — agents hold
+  no `tasks:create` in ANY project today (`web/types/token-scopes.ts:61-84`), so an
+  agent cannot open a task anywhere. The route
+  (`POST /api/v1/ext/projects/{slug}/tasks`, `scopeLabel: "tasks:create"`) and the
+  mapping (`PROJECT_ACTION_BY_SCOPE["tasks:create"] = "createTask"`) already exist,
+  so only the grant list changes — but that grant is a **same-project privilege
+  expansion too**: every agent in every project gains task creation the moment it
+  lands, which is exactly what forces the `runs.agent_chain_depth` containment
+  below. A task an agent creates without a `flowId` is a flowless simple-intent
+  task and stays `unconfigured` until triage assigns a flow — the existing ADR-112
+  path, not a defect.
 - **New scopes** (M34 — Implemented) — `tasks:triage` (the triage verdict op),
   `relations:read` / `relations:create` / `relations:delete` (typed-relation
   ops), `agents:trigger` (the inbound `POST /api/agents/{agentId}/event`
   webhook trigger — the only token-authenticated route outside
   `/api/v1/ext`).
+- **`toTaskKey` — the cross-project relation locator** (Designed — ADR-155) —
+  `POST|DELETE /api/v1/ext/projects/{slug}/tasks/{taskId}/relations` gains a body
+  field `toTaskKey`, a platform-unique `KEY-N` address such as `"API-42"`, resolved
+  against the globally-unique `projects.task_key` + `tasks.number`. It is
+  **mutually exclusive** with the existing `toNumber`: exactly one MUST be present;
+  both or neither is a body-validation failure. `toNumber` keeps its
+  "cross-project reach impossible by construction" property — it stays resolved
+  strictly within the URL-param project — so `toTaskKey` is the single
+  body-controlled cross-resource locator on this surface, and it is the field that
+  carries the target-project authorization checks below.
+- **`requires` on the ext relations surface** (Designed — ADR-155) — `opBodySchema`
+  (`web/app/api/v1/ext/projects/[slug]/tasks/[taskId]/relations/route.ts:38`)
+  enumerates only `blocks | depends_on | parent_of | duplicate_of`; it gains
+  `requires`, bringing ext to the same five kinds as the internal route. **The
+  schema is shared by POST and DELETE**, so the missing kind today is not "cannot
+  create" — it is **"cannot REMOVE"**: a `requires` edge minted by the
+  orchestrator's `run_plan` is visible through `relation_list` yet unremovable over
+  ext or MCP. That is the dangerous half, because `requires` is **success-gated** —
+  it does NOT release when its dependency ends `Abandoned` or `Failed`, so a
+  wrongly-minted edge blocks its dependent forever. A caller that wants the
+  self-healing kind must reach for `depends_on`. See
+  [orchestrator.md](orchestrator.md) and [social-board.md](social-board.md).
+- **`CROSS_PROJECT_AGENT_SCOPES`** (Designed — ADR-156) — the allow-list that lets
+  an agent token minted for project **A** act in project **B** at the ext-handler
+  cross-project seam (`web/lib/tokens/ext-handler.ts:255-274` for the slug arm,
+  `:358-377` for the `resolveProjectId` arm). Exactly: `tasks:read`,
+  `tasks:create`, `comments:read`, `comments:create`, `relations:read`,
+  `relations:create`, `relations:delete` — read, comment, and relate. It is
+  evaluated as an **allow-list**, never as a deny-list, so a scope added to
+  `TOKEN_SCOPES` or `AGENT_TOKEN_SCOPES` later cannot silently acquire reach.
+  Deliberately excluded: every `runs:*` op, `tasks:update`, `tasks:triage`,
+  `hitl:request`, `flows:read`, `runners:read`, `memory:*`, and
+  `agent_memory:write`. Reach is admitted only when ALL three hold — (1) the agent
+  has an **enabled** `agent_project_links` row in the **target** project with
+  `cross_project_reach = true` (the owner's per-project attach confirmation is the
+  consent event; no new grant table), (2) the route's `scopeLabel` is in the subset
+  AND in the token's own scopes, and (3)
+  `runs.agent_chain_depth < MAISTER_MAX_AGENT_CHAIN_DEPTH` (default `2`).
+  Every denial keeps the existing **existence-hidden 404** — an agent must never be
+  able to probe whether a sibling project exists — accompanied by a WARN carrying
+  `reason: "no_link" | "link_disabled" | "reach_off" | "scope_not_in_subset" |
+  "chain_depth_exhausted"`, and the reasons stay indistinguishable from the
+  response. The failure audit row records the **target** project in
+  `token_audit_log.project_id` with `actor_label = agent:<id>`. Because
+  `projectActionForScope` ends in `?? "readBoard"`
+  (`ext-handler.ts:84-116`), every scope in the subset MUST also carry a
+  `PROJECT_ACTION_BY_SCOPE` entry — an unmapped write scope silently downgrades to
+  the viewer-level action. See [agents.md](agents.md) and
+  [identity-access.md](identity-access.md).
 - **New scopes** (M-triager — Implemented, ADR-112) — `flows:read` (the
   project's launchable flows a triage verdict may assign) and `runners:read`
   (the enabled platform ACP runners), both mapping to the `readBoard` project
@@ -127,6 +193,29 @@ surface exists.
   `triage_status='flagged'`, mutually exclusive with verdict fields → `CONFIG`)
   and `enqueue` (sets `launch_mode='auto'`, requires a verdict yielding a
   `flowId` → else `CONFIG`). See [triage.md](triage.md). (Implemented)
+  - `relation_add` / `relation_remove` (scopes `relations:create` /
+    `relations:delete`; `mcp/src/tools.ts:613-646` plus the `dispatchTool` bodies
+    at `:1304-1330`) (Designed — ADR-155): both `inputSchema`s gain
+    `toTaskKey: { type: "string" }` as the alternative to
+    `toNumber: { type: "integer", minimum: 1 }`, and both `kind` enums gain
+    `requires` — yielding `{ slug, taskId, kind:
+    "blocks"|"depends_on"|"parent_of"|"requires"|"duplicate_of", toNumber?,
+    toTaskKey? }` with `required: ["slug", "taskId", "kind"]` and exactly one
+    locator supplied. The tool **descriptions** change with the schema: the target
+    may be a per-project number OR a platform-unique `KEY-N`, and `requires` is
+    success-gated — it does NOT release on `Abandoned`/`Failed`, so a model that
+    wants the self-healing kind picks `depends_on`. `relation_list` is unchanged:
+    it already returns the counterpart's own `taskKey`, so a cross-project
+    counterpart already reads correctly.
+  - ⚠ **Operational — the facade runs `mcp/dist`, not `mcp/src`.** A `TOOL_SPECS`
+    change is not live until the bundle is rebuilt. `dispatchTool` must also be
+    extended to **forward** `toTaskKey`: it destructures known keys, so a
+    schema-only change ships a facade that advertises the field and silently drops
+    it. `mcp/src/__tests__/tool-contract.test.ts` (with its `TOOL_OP` map at `:96`)
+    anchors both `inputSchema`s to their operation in
+    `docs/api/external/operations.openapi.yaml` and is the drift guard; it is
+    written RED-first, so it must fail on the `toTaskKey` / `requires` drift before
+    `TOOL_SPECS` is touched.
 - **MCP memory tools** (ADR-122/127/128) — `memory_recall`, `memory_retain`,
   `memory_clusters`, and `memory_propose` join `TOOL_SPECS`/`resolveRouting` in
   `mcp/src/tools.ts`, following the
@@ -294,6 +383,53 @@ sequenceDiagram
     end
 ```
 
+### Cross-project relation mutation (Designed — ADR-155 / ADR-156)
+
+`handleExt` authorizes the **URL-param** project exactly as it does today. A
+`toTaskKey` that resolves outside that project is a second, body-supplied target
+and needs its own authorization, which differs by actor class. Note the deliberate
+asymmetry: the project-bound refusal is an **actionable 403**, because the caller
+supplied a globally-unique key and hiding the target would leave them with nothing
+to fix; the agent refusal stays an **existence-hidden 404**, because an agent must
+never be able to probe for project existence.
+
+```mermaid
+sequenceDiagram
+    actor C as Ext caller with token
+    participant EXT as ext relations route
+    participant H as handleExt
+    participant AZ as requireProjectActionForUser
+    participant R as canAgentReachProject
+    participant AU as token_audit_log
+
+    C->>EXT: POST or DELETE .../tasks/taskId/relations — kind + toNumber XOR toTaskKey
+    EXT->>H: authorize the URL-param project by slug — unchanged
+    alt both locators present, or neither
+        EXT->>AU: result=error status=422
+        EXT-->>C: 422 CONFIG
+    else toNumber
+        EXT->>EXT: resolveProjectTaskByNumber inside the URL project
+        EXT-->>C: unchanged same-project behavior
+    else toTaskKey resolving inside the URL project
+        EXT->>EXT: resolveTaskByKeyRef then proceed
+        EXT-->>C: unchanged same-project behavior
+    else toTaskKey resolving to a DIFFERENT project
+        alt project-bound token — actor.projectId is not null
+            EXT->>AU: result=error status=403 project_id=target
+            EXT-->>C: 403 UNAUTHORIZED — actionable, NOT existence-hidden
+        else NULL-project user token
+            EXT->>AZ: re-check manageTaskRelations on the TARGET project
+            AZ-->>EXT: allow, or the project normal refusal shape
+        else agent token
+            EXT->>R: enabled link + cross_project_reach + scope in subset + chain depth
+            R-->>EXT: grant, or deny carrying a reason
+            Note over EXT,AU: deny — existence-hidden 404 + WARN reason + audit on the target
+        end
+        EXT->>EXT: on allow — addTaskRelation or removeTaskRelation
+        EXT->>AU: result=ok project_id=target, inside the work transaction
+    end
+```
+
 ### Gate-report: gate flip, test_report artifact, review refusal
 
 The success path is atomic. A blocking `external_check` gate that is `pending`,
@@ -379,65 +515,58 @@ scope, audit, and MCP forwarding for that surface.
 
 ## Expectations
 
-- `project_tokens.token_hash` MUST be `sha256_hex(fullTokenString)` — never
-  bcrypt, never peppered. Plaintext MUST be returned exactly once at creation
-  and MUST NOT be stored, logged, or re-derivable. (Implemented)
-- Token verification MUST use `timingSafeEqual(sha256_hex(presented), row.token_hash)`
-  against the `prefix`-indexed row; timing-safe comparison is mandatory. (Implemented)
+- `project_tokens.token_hash` MUST be `sha256_hex(fullTokenString)` — never bcrypt,
+  never peppered — the plaintext MUST be returned exactly once at creation and
+  never stored, logged, or re-derivable, and verification MUST use
+  `timingSafeEqual(sha256_hex(presented), row.token_hash)` against the
+  `prefix`-indexed row. (Implemented)
 - A token whose `project_id` does not match the addressed resource's project MUST
   return 404 to existence-hide the resource, not 401. (Implemented)
-- Every `/api/v1/ext` route MUST require the matching route scope (`tasks:create`,
+- Every `/api/v1/ext` route MUST require its matching route scope (`tasks:create`,
   `tasks:read`, `tasks:update`, `runs:launch`, `runs:read`, `readiness:read`,
-  `gates:report`, `hitl:read`, or `hitl:respond` — plus `comments:read` /
-  `comments:create` for the ADR-078 comment routes, Implemented) unless the
-  token holds `*`.
-  Scope failures return 403 `UNAUTHORIZED`, write a failure `token_audit_log`
-  row, and MUST NOT reveal the token's held scopes. (Implemented)
-- User-owned tokens MUST store `token_kind='user'` and `owner_user_id`. External
-  task creation and run launch through such a token MUST set the resulting
-  `tasks.created_by_user_id` / `runs.created_by_user_id` to the owner. Project
-  tokens keep those user-attribution fields null. (Implemented)
-- A global personal token MUST store `project_id IS NULL` and MUST authorize each
-  per-resource call by deriving the target project from URL/server state and
-  checking the owner through `requireProjectActionForUser`. Body-provided project
-  ids MUST NOT expand authority. (Implemented)
-- A global personal token MUST fail closed when its owner row is missing,
-  inactive, or `must_change_password=true`. (Implemented)
-- `hitl:respond:human` MUST be granted explicitly; `*` MUST NOT satisfy human,
-  infra-recovery, or budget-breach HITL response. (Implemented)
+  `gates:report`, `hitl:read`, `hitl:respond`, `comments:read`, `comments:create`,
+  `relations:read`, `relations:create`, `relations:delete`, …), returning 403
+  `UNAUTHORIZED` with a failure `token_audit_log` row that MUST NOT reveal the
+  token's held scopes; `*` is the full-project-automation compatibility path and
+  MUST NOT satisfy `hitl:respond:human`, which MUST be granted explicitly.
+  (Implemented)
+- User-owned tokens MUST store `token_kind='user'` and `owner_user_id`, and
+  external task creation or run launch through one MUST set
+  `tasks.created_by_user_id` / `runs.created_by_user_id` to the owner while project
+  tokens keep those fields null. (Implemented)
+- A global personal token MUST store `project_id IS NULL`, MUST authorize each
+  per-resource call by deriving the target project from URL/server state (body
+  project ids MUST NOT expand authority) and checking the owner through
+  `requireProjectActionForUser`, and MUST fail closed when its owner row is
+  missing, inactive, or `must_change_password=true`. (Implemented)
 - Every `/api/v1/ext` call presenting an **identified** token MUST write exactly
-  one `token_audit_log` row — on success and on identified-token failures
-  (expired / revoked / wrong-project / validation). An **unidentifiable** token
-  (no `prefix` match or hash mismatch) returns 401 with NO audit row: it cannot be
-  attributed (`token_audit_log.token_id` is `NOT NULL`). (Implemented)
+  one `token_audit_log` row — on success and on identified-token failures (expired
+  / revoked / wrong-project / validation) — while an **unidentifiable** token (no
+  `prefix` match or hash mismatch) returns 401 with NO audit row because
+  `token_audit_log.token_id` is `NOT NULL`; those rows MUST cascade-delete with
+  their `project_tokens` row and MAY carry `project_id IS NULL` for global personal
+  calls. (Implemented)
 - The gate-report success path (gate UPDATE + `test_report` artifact INSERT +
-  success `token_audit_log` INSERT) MUST execute in a single `db.transaction`;
-  any failure MUST roll back all three writes. (Implemented)
-- A blocking `external_check` gate in `pending`, `failed`, `stale`, or `skipped` status MUST
-  cause `assertEvidenceReady(runId, "review")` to return `blocked`; the review
-  node MUST NOT complete its terminal non-rework transition unless the gate is
-  `overridden`. (Implemented)
-- `staleOnNewCommit !== false` on a passed gate MUST flip the gate to `stale`
-  when a new gate-report arrives with a different `commitSha`; this is
-  event-driven — there is NEVER a periodic sweeper. Concurrent reports for the
-  same run MUST be serialized (Postgres `SELECT ... FOR UPDATE` on the run row
-  inside the report transaction) so a double-delivered report for the SAME
-  `commitSha` updates one row in place instead of appending duplicate
-  superseding rows. (Implemented)
-- A gate-report on a terminal run (`runs.status` ∈ `Done`/`Abandoned`/
-  `Crashed`/`Failed`) MUST return 409 `CONFLICT` and mutate no gate or artifact
-  state — a late report cannot re-stale an already-decided run. (Implemented)
+  success `token_audit_log` INSERT) MUST execute in a single `db.transaction` that
+  rolls back all three on any failure, MUST serialize concurrent reports for the
+  same run with a `SELECT ... FOR UPDATE` on the run row so a double-delivered
+  report for the SAME `commitSha` updates one row in place, and MUST return 409
+  `CONFLICT` on a terminal run (`runs.status` ∈ `Done`/`Abandoned`/`Crashed`/
+  `Failed`) without mutating gate or artifact state. (Implemented)
+- A blocking `external_check` gate in `pending`, `failed`, `stale`, or `skipped`
+  MUST make `assertEvidenceReady(runId, "review")` return `blocked` so the review
+  node cannot complete its terminal non-rework transition unless the gate is
+  `overridden`, and `staleOnNewCommit !== false` MUST flip a passed gate to `stale`
+  when a report arrives with a different `commitSha` — event-driven, with NEVER a
+  periodic sweeper. (Implemented)
 - The Streamable-HTTP MCP transport MUST require a per-request inbound bearer
-  forwarded verbatim to `/api/v1/ext`; the MCP server MUST hold no ambient
-  token and MUST return 401 if no bearer is present. (Implemented)
-- The MCP facade's per-tool `inputSchema` is advisory only — the server
-  registers every tool with a passthrough `z.record` and does NOT validate args
-  against the declared schema. Before forwarding, the facade MUST coerce any
-  argument whose declared `inputSchema` type is `number` or `integer` from a
-  finite numeric string to a number (an LLM routinely emits `confidence: "0.8"`),
-  because the ext routes gate strictly with `z.number()`; a `null`, an
-  already-numeric value, or a non-numeric string MUST pass through unchanged so
-  genuinely invalid input still surfaces as `422 CONFIG`. (Implemented)
+  forwarded verbatim to `/api/v1/ext` (no ambient token, 401 when absent), and
+  because the per-tool `inputSchema` is advisory only — every tool is registered
+  with a passthrough `z.record` — the facade MUST coerce any argument whose
+  declared type is `number` or `integer` from a finite numeric string to a number
+  while passing `null`, already-numeric values, and non-numeric strings through
+  unchanged so genuinely invalid input still surfaces as `422 CONFIG`.
+  (Implemented)
 - `GET /api/v1/ext/activity` and `GET /api/v1/ext/runs/{runId}/activity` MUST
   stay thin external surfaces over the shared assistant-activity layer:
   project identity is derived from the token or run row, `runs:read` remains
@@ -445,12 +574,35 @@ scope, audit, and MCP forwarding for that surface.
   absolute paths, or supervisor-private handles.
 - Session-auth routes MUST NOT accept project tokens; `/api/v1/ext` routes MUST
   NOT accept session cookies. The two auth surfaces are mutually exclusive. (Implemented)
-- Token `scopes` are enforced on every `/api/v1/ext` route. The `*` wildcard is
-  the compatibility path for full-project automation. (Implemented)
-- `token_audit_log` rows MUST cascade-delete with their `project_tokens` row;
-  project-bound token deletion MUST cascade to token rows, while global personal
-  token audit rows may carry `project_id IS NULL`. (Implemented for
-  project-bound tokens; nullable target Implemented)
+- The ext relations `opBodySchema` MUST offer the same five kinds as the internal
+  route — `blocks | depends_on | parent_of | requires | duplicate_of` — on BOTH
+  `POST` and `DELETE`, so every kind the orchestrator can mint is also removable
+  over ext and MCP. (Designed)
+- `toNumber` and `toTaskKey` MUST be mutually exclusive on the relations body —
+  exactly one present — with both-present or neither-present returning `CONFIG`
+  (status 422 on this surface, per `httpStatusForExtCode`; the internal route
+  returns 400). (Designed)
+- A project-bound ext token (`actor.projectId !== null`) whose `toTaskKey` resolves
+  to a different project MUST be refused 403 `UNAUTHORIZED` with a failure
+  `token_audit_log` row recording the target project — deliberately NOT the
+  existence-hidden 404 used for URL-project scoping, because the caller supplied a
+  globally-unique key and the refusal must be actionable. (Designed)
+- A NULL-project user token MUST pass
+  `requireProjectActionForUser(ownerUserId, targetProjectId, "manageTaskRelations")`
+  on the TARGET project before a cross-project relation is created or removed.
+  (Designed)
+- An agent token MUST reach another project only when the route's scope is in
+  `CROSS_PROJECT_AGENT_SCOPES`, the agent holds an enabled `agent_project_links`
+  row in the target project with `cross_project_reach = true`, and
+  `runs.agent_chain_depth < MAISTER_MAX_AGENT_CHAIN_DEPTH`; every denial MUST stay
+  an existence-hidden 404 carrying a WARN with its `reason`. (Designed)
+- Every scope in `CROSS_PROJECT_AGENT_SCOPES` MUST have a `PROJECT_ACTION_BY_SCOPE`
+  entry, because `projectActionForScope` ends in `?? "readBoard"` and an unmapped
+  write scope silently resolves to the viewer-level action. (Designed)
+- MCP `TOOL_SPECS` for `relation_add` / `relation_remove` MUST mirror the ext
+  route's body schema — `toTaskKey` and the `requires` kind included — as asserted
+  by `mcp/src/__tests__/tool-contract.test.ts` against
+  `docs/api/external/operations.openapi.yaml`. (Designed)
 
 ## Edge cases
 
@@ -490,6 +642,36 @@ scope, audit, and MCP forwarding for that surface.
   otherwise 403. No body field can make another project visible.
 - **Global personal HITL inbox** → `GET /api/v1/ext/hitl` writes audit with
   `project_id IS NULL`; project and agent tokens get 403.
+- **Relations body carries both `toNumber` and `toTaskKey`, or neither** → 422
+  `CONFIG`; failure audit written; no relation mutation. (Designed)
+- **`toTaskKey` malformed, unknown, or archived** (does not parse as `KEY-N`, no
+  matching `projects.task_key`, no matching `tasks.number`, or the resolved project
+  is archived) → 404; failure audit written; no relation mutation. The malformed
+  case is a resolver `null`, never a throw. (Designed)
+- **Project-bound token with a cross-project `toTaskKey`** → 403 `UNAUTHORIZED`
+  with the audit row on the TARGET project. This is the one place the surface's
+  existence-hiding rule is deliberately not applied — ADR-155 records the
+  asymmetry, so a reviewer does not "fix" it back to 404. (Designed)
+- **Agent reach denied** (`no_link | link_disabled | reach_off |
+  scope_not_in_subset | chain_depth_exhausted`) → existence-hidden 404 + failure
+  audit on the target project + a WARN naming the reason; the five reasons MUST NOT
+  be distinguishable from the response, and the agent MUST NOT be able to infer
+  whether the project exists. (Designed)
+- **Agent token holds a scope outside `CROSS_PROJECT_AGENT_SCOPES`** (e.g.
+  `tasks:update`, `hitl:request`, `memory:read`) → the cross-project call is denied
+  `scope_not_in_subset` even with an enabled reach-granted link; same-project use of
+  that scope is unaffected. (Designed)
+- **`requires` edge wedges a board** → no `MaisterError`; this is a stuck state,
+  not a failure. `requires` never releases on `Abandoned`/`Failed`, so a wrongly
+  minted edge blocks its dependent indefinitely. The mitigation is visibility plus
+  removability: the `blocked` chip names the blocker's `KEY-N`, and the ext/MCP
+  `DELETE` path made available by the kind-parity change is what lets a caller undo
+  it at all. (Designed)
+- **MCP facade forwards a stale schema** → `dispatchTool` accepts `toTaskKey` but
+  drops it (unknown-key destructuring), or `mcp/dist` was not rebuilt after the
+  `mcp/src` edit → the ext route sees neither locator and returns 422 `CONFIG`.
+  `mcp/src/__tests__/tool-contract.test.ts` is the guard for both halves.
+  (Designed)
 
 ## Agent clarification request (Implemented — ADR-136)
 
@@ -506,7 +688,13 @@ a global personal token with exact `hitl:respond:human`; `*` is insufficient.
 
 - ADRs: [ADR-045](../decisions.md#adr-045) (external_check enforcement via review
   chokepoint), [ADR-046](../decisions.md#adr-046) (project API token model),
-  [ADR-047](../decisions.md#adr-047) (thin MCP facade).
+  [ADR-047](../decisions.md#adr-047) (thin MCP facade),
+  [ADR-155](../decisions.md#adr-155-cross-project-task-relations) (cross-project
+  task relations — `toTaskKey` addressing, kind parity, the deliberate
+  403-vs-404 asymmetry; Designed),
+  [ADR-156](../decisions.md#adr-156-cross-project-agent-facade-reach)
+  (cross-project agent facade reach — `CROSS_PROJECT_AGENT_SCOPES`, the
+  attachment-as-grant model, `runs.agent_chain_depth`; Designed).
 - DB ERD: [`../db/integrations-domain.md`](../db/integrations-domain.md),
   [`../db/erd.md`](../db/erd.md).
 - DB narrative: [`../database-schema.md`](../database-schema.md)

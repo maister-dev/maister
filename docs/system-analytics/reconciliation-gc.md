@@ -109,6 +109,14 @@ GC is the deferred removal that never destroys un-committed work.
   (M42 — no longer a `runs.acp_session_id` column join).
 - **Worktree set** — `listWorktrees(projectRepoPath)` paths, joined against
   `workspaces.worktree_path` (the "runs vs `git worktree list`" check).
+- **Context mount** (**Designed, ADR-157**) — an ephemeral detached read-only
+  checkout of a *sibling* project's repo at
+  `.maister/<consuming-slug>/runs/<runId>/context/<siblingSlug>/`. It carries
+  **no** `workspaces` row and lives **outside** `worktreesRoot()`, so neither the
+  row-backed workspace GC nor the disk-scanning workspace reconciler can see it —
+  the GC backstop sweep below is its only automatic cleanup. Its launch snapshot
+  is `runs.context_mounts`; its lifecycle is owned by
+  [`workspaces.md`](workspaces.md).
 - **Evaluation evidence snapshot** (**Implemented, ADR-142/144** —
   `evaluation_evidence_snapshots` rows; see
   [`../db/evaluations-domain.md`](../db/evaluations-domain.md)) — the
@@ -309,6 +317,84 @@ flowchart TD
     Remove --> Done([next row])
 ```
 
+### Context-mount GC backstop (Designed — ADR-157)
+
+A new sweep in the `system_sweep` family, modeled on
+`web/lib/gc/ephemeral-agent-gc.ts` (`runEphemeralAgentGcSweep`): scan the disk,
+join each candidate to its owning run, reap what no live run owns. It reaps
+mounts under `.maister/*/runs/*/context/*` whose owning run is **terminal or
+absent**, then runs `git worktree prune` on every touched sibling repo. The
+owning run id is read from the `runs/<runId>` path segment and the donor repo
+from resolving `<siblingSlug>` to that project's `projects.repo_path` — so the
+sweep needs **no** `runs.context_mounts` snapshot and reaps by **path shape
+alone**. That is deliberate: it is the only cleanup that can reach the residual
+crash window where a mount was created but its snapshot never committed.
+
+The live allow-list is `Pending | Running | NeedsInput | NeedsInputIdle |
+HumanWorking | Review`; anything outside it — or a missing `runs` row — means the
+terminal choke already ran or never will. `Review` is IN the set (unlike the
+agent-only `-ro` sweep it is modeled on) because a `Review` flow run can rework
+and re-open a session that still expects its mounts.
+
+Where it goes **beyond** the `-ro` sweep it copies: that sweep has no durable
+per-item state — it counts a `failed` and retries forever, so one permanently
+undeletable path is re-attempted on every tick. This backstop carries a
+**durable per-item attempt marker** in the ADR-142
+`workspace_reconciliation_findings` shape (`attempt_count`, `next_retry_at`,
+`state`), so a permanently-failing mount cannot starve the rest of the scan:
+
+- **Bounded retries with explicit backoff** — a transient failure sets
+  `next_retry_at` from an explicit backoff schedule and the item is skipped until
+  then; the attempt cap is a constant, not "retry forever".
+- **Poison-item policy** — a *deterministic* failure (a path that is not a
+  registered worktree of the named sibling, a sibling project row that no longer
+  exists, a malformed path shape) becomes a permanent `failed` with sanitized
+  error evidence recorded, surfaced for operator review and never re-attempted;
+  a *transient* failure (a locked worktree, a busy repo) gets the bounded retry.
+  The distinction is recorded on the marker, not inferred from a retry count.
+
+```mermaid
+flowchart TD
+    Tick([system_sweep tick]) --> Scan[scan .maister/*/runs/*/context/*<br/>one candidate per sibling mount]
+    Scan --> Own{owning run still live?}
+    Own -- yes --> Keep[leave in place]
+    Own -- "no: terminal or run row absent" --> Due{durable marker due?}
+    Due -- "no: backoff pending or permanently failed" --> Skip[skip this tick]
+    Due -- yes --> Claim[claim the marker and bump attempt_count]
+    Claim --> Rm[removeWorktree force against the sibling repo<br/>then git worktree prune]
+    Rm -- ok --> Res[resolve the marker]
+    Rm -- transient --> Back[set next_retry_at from the backoff schedule]
+    Rm -- "deterministic or attempt cap reached" --> Poison[mark failed permanently<br/>record sanitized error evidence]
+    Keep --> Next([next candidate])
+    Skip --> Next
+    Res --> Next
+    Back --> Next
+    Poison --> Next
+```
+
+#### Context mounts are out of the workspace reconciler's scan scope BY PATH
+
+This is a structural property of where mounts live, not a filter someone added,
+and it is the reason the mount path was chosen:
+
+- The workspace reconciler scans **only** `worktreesRoot()/<slug>/<entry>` —
+  exactly **two** path segments below the worktrees root
+  (`isSafeWorkspaceRelativePath`, `web/lib/gc/workspace-reconciler.ts`). A mount
+  at `.maister/<slug>/runs/<runId>/context/<siblingSlug>/` is not under
+  `worktreesRoot()` at all, so it never enters `listCandidates()`.
+- `loadTrustedProject` requires `project.repoPath === provenance.parentRepoPath`.
+  A sibling mount's parent repo is **by definition a different project's repo**,
+  so a mount that *did* land under `worktreesRoot()` could never satisfy that
+  identity check.
+
+**Consequence: moving context mounts under `worktreesRoot()` is a
+KNOWN-BREAKING change and must be treated as one.** Every mount would become a
+candidate whose provenance names a foreign parent repo, and each would resolve
+to a `quarantined:untrusted_candidate` finding — the reconciler would fill with
+quarantine rows for paths that are working exactly as designed. A future change
+that relocates mounts must therefore land with a matching reconciler scope
+change in the same commit, never on its own.
+
 ## Expectations
 
 - Reconcile is **allow-list `Running`-only**: a row whose `runs.status` is
@@ -370,6 +456,15 @@ flowchart TD
   `package_status='Removed'`, past `MAISTER_GC_AGE_DAYS`, with zero
   `runs.flow_revision_id` references and zero `flows.enabled_revision_id`
   references; it only removes (`rm installedPath`), never runs `setup.sh`.
+- Context mounts MUST stay OUT of the workspace reconciler's scan scope by
+  path: the reconciler scans only `worktreesRoot()/<slug>/<entry>` (exactly two
+  segments), so a live mount under `.maister/*/runs/*/context/*` MUST produce
+  zero findings and zero quarantines. (Designed — ADR-157)
+- The context-mount GC backstop MUST reap a mount whose owning run is terminal
+  or absent and MUST leave a live run's mount in place; every candidate MUST
+  carry a durable attempt marker with bounded retries, so a permanently-failing
+  mount is marked `failed` with recorded evidence and NEVER starves the rest of
+  the scan. (Designed — ADR-157)
 
 ## Edge cases
 
@@ -395,13 +490,26 @@ flowchart TD
   snapshot; archived-not-pruned re-runs preserve (idempotent `git branch
   -f`) then removes; pruned-not-marked sets `removed_at` (no-op removal on a
   missing path).
+- **(Designed, ADR-157) Orphan context mount from a crash before the snapshot
+  commit** — no `runs.context_mounts` entry references it, so it is reaped by
+  path shape alone. This is the case that forbids replacing the backstop with a
+  snapshot-driven cleanup.
+- **(Designed, ADR-157) Poison context mount** — a candidate whose removal fails
+  deterministically (path is not a registered worktree of the named sibling,
+  sibling project row gone, malformed path shape) is marked permanently `failed`
+  with sanitized evidence after its bounded retries, and the sweep continues with
+  the next candidate; it is never retried on every tick and never aborts the
+  sweep.
 
 ## Linked artifacts
 
 - ADRs: [ADR-033 Crash reconciliation model](../decisions.md#adr-033),
   [ADR-034 Crashed-run recovery semantics](../decisions.md#adr-034),
   [ADR-035 Graceful workspace GC (preserve-then-prune)](../decisions.md#adr-035),
-  [ADR-036 Flow-revision GC](../decisions.md#adr-036).
+  [ADR-036 Flow-revision GC](../decisions.md#adr-036),
+  [ADR-157 Read-only sibling-repo context mounts](../decisions.md#adr-157-read-only-sibling-repo-context-mounts)
+  (Designed — the context-mount GC backstop and the reconciler scan-scope
+  boundary).
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml)
   (`/api/runs/{runId}/recover`, `/api/runs/{runId}/discard`,
   `/api/runs/{runId}/archive`, `/api/runs/{runId}/drop`, `/api/cron/gc`).
@@ -423,6 +531,9 @@ flowchart TD
 - Source (Designed, M19): `web/lib/reconcile.ts`, `web/lib/runs/recover.ts`,
   `web/lib/gc/preserve.ts`, `web/lib/gc/workspace-gc.ts`,
   `web/lib/gc/revision-gc.ts`, `web/lib/scheduler/system-sweeps.ts`.
+- Context-mount backstop (Designed, ADR-157): modeled on
+  `web/lib/gc/ephemeral-agent-gc.ts`; scan-scope boundary asserted against
+  `web/lib/gc/workspace-reconciler.ts`.
 
 ## Reconcile classification (ADR-033)
 

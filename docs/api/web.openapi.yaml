@@ -1782,7 +1782,18 @@ paths:
         the agent's `agent_schedules` rows AND revokes live agent tokens.
         Identifiers: `slug` + `agentId` are url-params; `projectId` is server-state
         (derived from `slug`); body fields are config values, never cross-resource
-        ids.
+        ids — with the single **(Designed)** exception of `contextRepos[].project`,
+        which names sibling project slugs and is therefore authorized at write
+        time (see below).
+
+        **(Designed — ADR-156/157)** Two multi-repo axes land on THIS aggregating
+        PATCH, in the same server transaction as everything above — never as
+        per-field routes: `crossProjectReach` (the ADR-156 grant that lets an
+        agent token minted for another project act in THIS one, over the
+        write-safe scope subset) and `contextRepos` (the ADR-157 read-only
+        sibling-repo mounts this agent's runs materialize). The attachment is
+        the consent event for both: an agent run has no launching user, so the
+        project admin performing this PATCH is the human in the loop.
       operationId: patchProjectAgentLink
       parameters:
         - name: slug
@@ -1822,6 +1833,64 @@ paths:
                 memoryEnabled:
                   type: boolean
                   description: "(ADR-152) Per-link agent-memory axis — gates launch injection and `agent_memory_write`. A SEPARATE store from Brain: neither Brain axis implies it. Threaded through THIS aggregating PATCH, never a per-field route. An explicit `true` is refused with `422 CONFIG` for a flow-bound agent (its launch produces a `run_kind=flow` run that can never carry memory); `false` is always accepted so a mis-set link stays fixable."
+                crossProjectReach:
+                  type: boolean
+                  description: |
+                    **(Designed — ADR-156)** Per-link cross-project reach grant.
+                    Default `false`. When `true`, an agent token minted for a
+                    DIFFERENT project may act in THIS project, restricted to the
+                    write-safe `CROSS_PROJECT_AGENT_SCOPES` subset intersected
+                    with the token's own scopes (`tasks:read`, `tasks:create`,
+                    `comments:read`, `comments:create`, `relations:read`,
+                    `relations:create`, `relations:delete`). Every run op,
+                    `tasks:update`, `tasks:triage`, `hitl:request`,
+                    `flows:read`/`runners:read`, and the `memory:*` /
+                    `agent_memory:write` project-scoped stores are excluded and
+                    stay refused across the boundary. The reach check ALSO
+                    enforces `MAISTER_MAX_AGENT_CHAIN_DEPTH` against
+                    `runs.agent_chain_depth`; a breach denies with the
+                    existence-hiding 404 and an audited WARN
+                    (`reason: "chain_depth_exhausted"`). The link must be
+                    `enabled` for the grant to apply.
+                contextRepos:
+                  type: array
+                  nullable: true
+                  maxItems: 8
+                  description: |
+                    **(Designed — ADR-157)** Read-only sibling-repo context
+                    mounts this agent's runs materialize in this project, at
+                    `<runDir>/context/<siblingSlug>/`. Explicit `null` (or `[]`)
+                    clears the declaration — SET and CLEAR are symmetric, there
+                    is no "absent means keep" write loop. The agent definition's
+                    `recommended.context_repos` is PREFILL for this field only,
+                    never an implicit grant: package slugs are not portable
+                    across installations, so a definition can never bind a real
+                    project by itself.
+
+                    **Write-time authorization.** The acting admin must hold
+                    `readRepoFiles` on every referenced sibling project, and
+                    every `project` slug must resolve to an ACTIVE project;
+                    otherwise the whole PATCH is refused `422` /
+                    `PRECONDITION` naming the offending slug, and nothing is
+                    written. Authorization is checked HERE, not at launch — an
+                    agent run has no launching user to check.
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [project]
+                    properties:
+                      project:
+                        type: string
+                        minLength: 1
+                        description: Sibling project SLUG, resolved at launch.
+                      ref:
+                        type: string
+                        minLength: 1
+                        description: |
+                          Optional committish. Default — that project's default
+                          branch. Resolved at launch with NO auto-fetch; an
+                          unresolvable ref refuses the launch with
+                          `PRECONDITION`.
                 schedules:
                   type: array
                   items: { $ref: "#/components/schemas/AgentScheduleBody" }
@@ -1830,6 +1899,10 @@ paths:
               branchBase: develop
               executionPolicyOverride:
                 { autoApply: full, onBudgetBreach: terminate_restorable }
+              crossProjectReach: true
+              contextRepos:
+                - { project: api-gateway, ref: main }
+                - { project: shared-contracts }
               schedules:
                 - {
                     triggerType: cron,
@@ -1855,7 +1928,13 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "422":
-          description: Invalid cron expression / timezone / event kinds (`CONFIG`).
+          description: |
+            Invalid cron expression / timezone / event kinds (`CONFIG`).
+            **(Designed — ADR-157)** Also `PRECONDITION` when a
+            `contextRepos[].project` slug does not resolve to an active project,
+            or the acting admin lacks `readRepoFiles` on a referenced sibling
+            project — the message names the offending slug and the transaction
+            writes nothing.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -2708,14 +2787,28 @@ paths:
       description: |
         Requires `requireProjectAction("manageTaskRelations")` (`member`).
         Creates the canonical one-direction relation
-        `(from = task {number}, kind, to = task {toNumber})`. `kind` is
-        allow-list validated; `toNumber` is body-controlled but resolved
-        STRICTLY within the URL-param project via `(project_id, number)` —
-        cross-project reach is impossible by construction. Duplicate
-        relations are idempotent no-ops (`ON CONFLICT DO NOTHING`).
+        `(from = task {number}, kind, to)`. `kind` is allow-list validated.
+        Duplicate relations are idempotent no-ops (`ON CONFLICT DO NOTHING`).
         Inverse labels ("blocked by", "required by", "child of") are
         render-time only — to remove an inverse-rendered relation, address
         the counterpart task's route (the canonical `from` end).
+
+        The target end is addressed by EXACTLY ONE of `toNumber` or
+        `toTaskKey`:
+
+          - `toNumber` is body-controlled but resolved STRICTLY within the
+            URL-param project via `(project_id, number)` — that arm cannot
+            reach another project (unchanged).
+          - **(Designed — ADR-155)** `toTaskKey` is body-controlled and names a
+            CROSS-RESOURCE locator: it resolves against the platform-unique
+            `projects.task_key`, so it may land in another project. The row
+            stays owned by the FROM-end project (`task_relations.project_id`);
+            only the to-end may differ, and `manageTaskRelations` is re-checked
+            on the RESOLVED TARGET project in addition to the from-end check.
+
+        Relations may cross projects; the automation driven by them
+        (`auto_launch_run_plan`, the abandon cascade, board decomposition
+        links) stays same-project.
 
         Writes `relation_added` activity in the same transaction.
 
@@ -2739,6 +2832,12 @@ paths:
               blocks:
                 summary: This task blocks task 5
                 value: { kind: blocks, toNumber: 5 }
+              crossProjectByKey:
+                summary: (Designed — ADR-155) This task depends on API-42
+                value: { kind: depends_on, toTaskKey: "API-42" }
+              successGatedRequires:
+                summary: (Designed — ADR-155) Success-gated `requires` onto API-42
+                value: { kind: requires, toTaskKey: "API-42" }
       responses:
         "200":
           description: |
@@ -2753,23 +2852,42 @@ paths:
         "400":
           description: |
             Invalid `kind`, self-relation (`toNumber` equals `{number}`),
-            or malformed body (`CONFIG`).
+            or malformed body (`CONFIG`). **(Designed — ADR-155)** Also
+            returned when BOTH `toNumber` and `toTaskKey` are supplied, when
+            NEITHER is (exactly one is required), or when `toTaskKey` does not
+            match `^[A-Za-z][A-Za-z0-9]*-[0-9]+$`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: |
+            The caller lacks `manageTaskRelations` (`member`) on the from-end
+            project, or **(Designed — ADR-155)** on the project the
+            `toTaskKey` target RESOLVED into (`UNAUTHORIZED`). The target-side
+            refusal carries the target project's normal refusal shape —
+            existence is not hidden here, because the caller supplied a
+            platform-unique key and the refusal must be actionable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "404":
           description: |
             Project, task, or counterpart task (`toNumber`) not found in
-            this project.
+            this project. **(Designed — ADR-155)** Also returned when
+            `toTaskKey` resolves to nothing (unknown key or unknown number)
+            or resolves into an ARCHIVED project.
         "409":
           description: |
             (ADR-121) The gating-kind (`blocks|depends_on|requires`) relation
             would close a dependency cycle (`CONFLICT`), evaluated inside the
-            insert transaction under a per-project advisory lock.
+            insert transaction. **(Designed — ADR-155)** With cross-project
+            edges the gating graph is platform-wide, so the check runs under
+            ONE platform-wide advisory lock instead of a per-project one (a
+            per-project lock cannot serialize a cycle whose edges span four
+            projects), and it also refuses `CONFLICT` when the traversal
+            exceeds its node bound.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -2778,9 +2896,16 @@ paths:
       summary: (ADR-075, Implemented) Remove a typed relation from this task
       description: |
         Requires `requireProjectAction("manageTaskRelations")` (`member`).
-        Deletes the canonical row `(from = task {number}, kind,
-        to = task {toNumber})`. Removing an absent relation is an idempotent
-        no-op. Writes `relation_removed` activity when a row was deleted.
+        Deletes the canonical row `(from = task {number}, kind, to)`. Removing
+        an absent relation is an idempotent no-op. Writes `relation_removed`
+        activity when a row was deleted.
+
+        **(Designed — ADR-155)** The handler is shared with POST, so
+        `toTaskKey` and the dual `manageTaskRelations` check on the resolved
+        target project apply identically here. Removal is the half that closes
+        a real hole: `requires` is success-gated and never releases on
+        `Abandoned`/`Failed`, so a wrong edge blocks its dependent until a
+        human removes it from the board.
 
         Source: `web/app/api/projects/[slug]/tasks/[number]/relations/route.ts`.
       operationId: deleteTaskRelation
@@ -2798,6 +2923,13 @@ paths:
         content:
           application/json:
             schema: { $ref: "#/components/schemas/TaskRelationBody" }
+            examples:
+              blocks:
+                summary: Drop the `blocks` edge onto task 5
+                value: { kind: blocks, toNumber: 5 }
+              crossProjectRequires:
+                summary: (Designed — ADR-155) Undo a wedged `requires` onto API-42
+                value: { kind: requires, toTaskKey: "API-42" }
       responses:
         "200":
           description: Relation absent (deleted now, or never existed).
@@ -2809,13 +2941,29 @@ paths:
                 properties:
                   ok: { type: boolean, enum: [true] }
         "400":
-          $ref: "#/components/responses/Config"
+          description: |
+            Malformed body (`CONFIG`). **(Designed — ADR-155)** Includes BOTH
+            `toNumber` and `toTaskKey` supplied, NEITHER supplied, or a
+            `toTaskKey` that does not match
+            `^[A-Za-z][A-Za-z0-9]*-[0-9]+$`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: |
+            The caller lacks `manageTaskRelations` on the from-end project, or
+            **(Designed — ADR-155)** on the project the `toTaskKey` target
+            RESOLVED into (`UNAUTHORIZED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "404":
-          $ref: "#/components/responses/NotFound"
+          description: |
+            Project, task, or counterpart task not found in this project.
+            **(Designed — ADR-155)** Also returned when `toTaskKey` resolves
+            to nothing or resolves into an ARCHIVED project.
   /api/projects/{slug}/tasks/{number}/subscription:
     post:
       tags: [social-board]
@@ -14870,18 +15018,47 @@ components:
             write time; unresolved tokens stay literal.
     TaskRelationBody:
       type: object
-      required: [kind, toNumber]
+      description: |
+        Relation create/remove body. **(Designed — ADR-155)** The target end is
+        addressed by EXACTLY ONE of `toNumber` (per-project number, confined to
+        the URL-param project) or `toTaskKey` (platform-unique `KEY-N`, which
+        may resolve into a DIFFERENT project). OpenAPI 3.0.3 has no XOR
+        keyword, so exclusivity is expressed as a `oneOf` over the two
+        required-variants: both present matches both branches, neither present
+        matches none — either way invalid, and the route refuses 400 `CONFIG`.
+      required: [kind]
+      oneOf:
+        - required: [toNumber]
+        - required: [toTaskKey]
       properties:
         kind:
           type: string
-          enum: [blocks, depends_on, parent_of]
+          enum: [blocks, depends_on, parent_of, requires, duplicate_of]
+          description: |
+            Allow-list validated. `requires` is success-gated — unlike
+            `depends_on` it does NOT release when the counterpart reaches
+            `Abandoned`/`Failed`. `duplicate_of` is a non-blocking dedup
+            annotation (ADR-112). The same five kinds are accepted on the ext
+            route and the MCP `relation_add`/`relation_remove` tools.
         toNumber:
           type: integer
           minimum: 1
           description: |
             Counterpart task number, resolved STRICTLY within the URL-param
             project. Missing ⇒ 404. Equal to the URL `{number}` ⇒ 400
-            (`CONFIG`, self-relation).
+            (`CONFIG`, self-relation). Mutually exclusive with `toTaskKey`.
+        toTaskKey:
+          type: string
+          pattern: '^[A-Za-z][A-Za-z0-9]*-[0-9]+$'
+          example: "API-42"
+          description: |
+            **(Designed — ADR-155)** Platform-unique `KEY-N` address
+            (`projects.task_key` + `tasks.number`; `projects.task_key` is
+            NOT NULL UNIQUE, so `KEY-N` is a valid global address), matched
+            case-insensitively on the key part. Mutually exclusive with
+            `toNumber`. May resolve into another project — creating that
+            relation requires `manageTaskRelations` on BOTH the from-end and
+            the RESOLVED TARGET project.
     AssignmentReasonBody:
       type: object
       properties:

@@ -43,12 +43,15 @@ comment/activity/subscription/inbox substrate around tasks is owned by
   serializes concurrent creates), backstopped by
   `UNIQUE(project_id, number)`. Numbers are never reused — deletion leaves
   a hole. `KEY-N` = `task_key` + `-` + `number`.
-- **Relation** (Implemented, ADR-078) — `task_relations` row: canonical
+- **Relation** (Implemented, ADR-083 clause 4) — `task_relations` row: canonical
   one-direction `(from_task_id, kind, to_task_id)` with
-  `kind ∈ {blocks, depends_on, parent_of}`,
+  `kind ∈ {blocks, depends_on, parent_of, requires, duplicate_of}`
+  (`requires` added by ADR-098, `duplicate_of` by ADR-112),
   `UNIQUE(from_task_id, kind, to_task_id)`, no self-relations,
-  same-project only in Stage 1 (`CONFIG` on violation). Inverse labels
-  ("blocked by", "required by", "child of") are render-time only.
+  same-project only in Stage 1 (`CONFIG` on violation; the project axis is
+  lifted by ADR-155 — Designed, see [`social-board.md`](social-board.md)).
+  Inverse labels ("blocked by", "required by", "child of") are render-time
+  only.
 - **Launch verdict** (M34 — Implemented, ADR-089) — `tasks.flow_id` becomes
   NULLABLE (simple-intent creation: title + prompt suffice on both the web
   form and ext/MCP `task_create`) plus four verdict columns the triager or a
@@ -545,9 +548,11 @@ launchable`, held **even when `flow_id` is set** — and MUST be cleared only
   MUST be refused launch as `"blocked"` at EVERY entry point — internal
   `POST /api/runs`, ext `POST /api/v1/ext/runs`, and the schedules
   dispatcher — via the shared classifier, never via UI-only logic.
-- **(Implemented, ADR-078)** Relations MUST be same-project in Stage 1
-  (`MaisterError("CONFIG")` otherwise) and duplicate relation writes MUST
-  be idempotent no-ops.
+- **(Implemented, ADR-083 clause 4)** Duplicate relation writes MUST be
+  idempotent no-ops; the relation's project axis (same-project in Stage 1,
+  from-end ownership with a possibly foreign to-end under ADR-155 — Designed,
+  which supersedes only that sentence of the clause) is contracted in
+  [`social-board.md`](social-board.md).
 - Launch runs precondition checks (clean repo, branch free, worktree
   path free, executor registered) BEFORE inserting the `runs` row.
 - Global concurrency cap exceeded on Launch → run inserted as
@@ -596,8 +601,10 @@ Abandoned`. Failure to terminate the session does NOT block the task
   both tasks classify `blocked` until one relation is removed; the UI
   renders blockers as removable chips, so the state is always recoverable.
   No cycle detection in Stage 1.
-- **(Implemented, ADR-078) Cross-project or self relation** →
-  `MaisterError("CONFIG")` (400).
+- **(Implemented, ADR-083 clause 4) Self relation** → `MaisterError("CONFIG")`
+  (400 internal, 422 ext). A cross-project relation is refused the same way in
+  Stage 1 and allowed by ADR-155 (Designed) — see
+  [`social-board.md`](social-board.md).
 - **(Implemented, ADR-078) Hole-y numbering** — deleting a task leaves a
   permanent gap in `KEY-N`; `next_task_number` never decrements. Not an
   error.

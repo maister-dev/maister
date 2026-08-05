@@ -158,6 +158,8 @@ erDiagram
         text merge_commit_sha "ADR-134 Implemented: non-FF/provider merge SHA, nullable"
         jsonb diff_stat "ADR-134 Implemented: cleaned {files,additions,deletions}, nullable"
         text agent_memory_hash "ADR-152 0122: sha256 of the agent memory injected at spawn, nullable — NULL = this run injected none; survives the 7-day run-dir GC"
+        integer agent_chain_depth "ADR-156 0123 Designed: NOT NULL DEFAULT 0 — agent-to-agent trigger hops snapshotted at launch; an agent-authored domain event inherits parentDepth+1, every other trigger source seeds 0; capped at MAISTER_MAX_AGENT_CHAIN_DEPTH (default 2) across AND within projects"
+        jsonb context_mounts "ADR-157 0124 Designed: launch snapshot of read-only sibling mounts [{projectId,slug,repoPath,mountPath,committish}], nullable — terminal cleanup and crash recovery read THIS, never a manifest/link that can drift after launch; NULL = no mounts"
         timestamp started_at
         timestamp ended_at
     }
@@ -411,10 +413,10 @@ erDiagram
 
     TASK_RELATIONS {
         text id PK
-        text project_id FK
+        text project_id FK "the FROM-task's project — the row owner (ADR-155 Designed: to_task_id may live in a DIFFERENT project, so this is no longer the project of both ends)"
         text from_task_id FK
         text kind "blocks|depends_on|parent_of|requires|duplicate_of (duplicate_of: Implemented ADR-112, 0072, non-blocking)"
-        text to_task_id FK
+        text to_task_id FK "ADR-155 Designed: may point at a task in another project; no new column"
         text actor_type "user|agent|system"
         text actor_id "NULL iff actor_type=system"
         timestamp created_at

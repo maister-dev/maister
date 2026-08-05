@@ -179,6 +179,9 @@
 | [ADR-152](#adr-152-assistant-pulse-promotion-readiness--summonable-agent-metadata-and-per-attachment-agent-memory-files) | Assistant pulse promotion-readiness + summonable-agent metadata, and per-attachment agent memory files | Implemented | 2026-07-27 |
 | [ADR-153](#adr-153-flow-child-process-env-isolation--allow-listed-env-for-clicheckprobe-children) | Flow child-process env isolation — allow-listed env for cli/check/probe children | Implemented | 2026-07-31 |
 | [ADR-154](#adr-154-maister_flow_dir-for-clicheck-node-actions--packaged-script-execution--engine-330) | `MAISTER_FLOW_DIR` for cli/check node actions — packaged-script execution + engine 3.3.0 | Implemented | 2026-07-31 |
+| [ADR-155](#adr-155-cross-project-task-relations) | Cross-project task relations | Designed | 2026-08-05 |
+| [ADR-156](#adr-156-cross-project-agent-facade-reach) | Cross-project agent facade reach | Designed | 2026-08-05 |
+| [ADR-157](#adr-157-read-only-sibling-repo-context-mounts) | Read-only sibling-repo context mounts | Designed | 2026-08-05 |
 
 ---
 
@@ -13817,6 +13820,471 @@ revision path, or the system-cache path fallback).
 - _A `{{ flow.dir }}` template var_: rejected — templating renders INTO the
   command string (quoting/injection hazards on paths with spaces); an env var
   composes with the `:?` guard and stays invisible to `renderStrict`.
+
+---
+
+### ADR-155: Cross-project task relations
+
+**Date:** 2026-08-05
+**Status:** Designed
+
+**Context:** `project = repo` stays locked, so multi-repo work is served by
+decomposing it into per-project tasks coordinated through the task graph. The
+Stage-1 substrate confined that graph to one project: clause 4 (Relations) of
+[ADR-083](#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor)
+reads "Same-project only in Stage 1, enforced in the domain layer (cross-table
+CHECK is impossible) → `CONFIG`". That one domain check
+(`web/lib/social/relations.ts`) is the entire restriction; everything under it
+already tolerates cross-project rows — both FKs point at `tasks.id`, uniqueness
+is `(from_task_id, kind, to_task_id)`, `getOpenRelationBlockers` filters only on
+task ids + kind + counterpart status, `getTaskRelations` already resolves the
+counterpart's OWN `projects.task_key`, and `projects.task_key` is
+platform-unique, so `KEY-N` is already a valid global address. What is NOT
+already correct: the cycle BFS carries `eq(taskRelations.projectId, …)` on both
+legs, the gating advisory lock is per-project, and three automation cascades
+assume the counterpart lives in the same project.
+
+**Decision:** Lift the Stage-1 same-project restriction on `task_relations`.
+This supersedes **only** the "Same-project only in Stage 1" sentence of ADR-083
+Decision clause 4 — every other clause-4 semantic (canonical one-direction rows,
+`UNIQUE(from_task_id, kind, to_task_id)`, `CHECK (from_task_id <> to_task_id)`,
+render-time-only inverse labels) stands.
+
+- **From-end row ownership, dual RBAC.** `task_relations.project_id` remains the
+  **from-task's** project. The domain assertion changes from "both ends must
+  equal `input.projectId`" to "the from-end must equal `input.projectId`; the
+  to-end may differ". Creating a cross-project relation requires
+  `manageTaskRelations` on **both** projects: the internal route calls
+  `requireProjectAction` on the from-end **and** the to-end; the ext route
+  authorizes the URL-param project through `handleExt` and then authorizes the
+  **target** project explicitly. A **project-bound** token has no authority
+  outside its project, so cross-project targets are refused (`UNAUTHORIZED`) for
+  project-bound user and project tokens. Only NULL-project user tokens (RBAC
+  re-checked on both ends) and ADR-156 reach-granted agent tokens may cross.
+
+- **ONE platform-wide gating advisory lock — NOT sorted per-project pairs.**
+  `takeProjectRelationLock(tx, projectId)` is replaced by a single
+  `takeGatingRelationLock(tx)` —
+  `pg_advisory_xact_lock(RELATION_LOCK_NAMESPACE, 0)` — taken for **every**
+  gating-kind insert, cross-project or not. Locking both endpoint projects in
+  canonical sorted order is **insufficient**, and the counterexample is
+  load-bearing rationale: a future reader will otherwise "optimize" this back to
+  per-project locks. Take a 4-cycle across four projects `A→B→C→D→A`. Edges `AB`
+  and `CD` lock disjoint project sets and commit concurrently; neither closes a
+  cycle alone. Then edges `BC` and `DA` also lock disjoint sets — `{B,C}` and
+  `{D,A}` — and run concurrently. `BC`'s BFS asks "can C reach B?"; the path
+  needs `D→A`, still uncommitted. `DA`'s BFS asks "can A reach D?"; the path
+  needs `B→C`, still uncommitted. Each BFS misses the other's uncommitted leg,
+  both commit, a 4-cycle now exists, and every gated task in it is
+  **permanently deadlocked**. Pairwise locking serializes only cycles of length
+  ≤ 3, where every edge pair shares an endpoint project. Relation creation is
+  human/agent paced (order 1/min at the busiest), so platform-wide serialization
+  of a sub-millisecond BFS costs nothing; same-project inserts get strictly
+  stronger serialization than today.
+
+- **The cycle BFS becomes platform-global and bounded.** Dropping the
+  `project_id` predicate from both legs makes the gating graph platform-wide, so
+  the traversal takes a hard bound: `GATING_BFS_MAX_NODES`, default `5000`. On
+  breach the insert refuses with `CONFLICT` and a WARN. Refusing is the safe
+  direction for a cycle check — a false refusal is visible and recoverable, a
+  missed cycle is a permanent deadlock.
+
+- **`toTaskKey` addressing, with a deliberate existence-disclosure asymmetry.**
+  Relation-mutation bodies gain `toTaskKey` (e.g. `"API-42"`) as a
+  mutually-exclusive alternative to `toNumber`. Identifier trust: `slug` and
+  `number`/`taskId` stay `url-param`; `toNumber` stays `body-controlled` and
+  strictly confined to the URL project, so cross-project reach through it
+  remains impossible; `kind` stays `body-controlled` and enum-validated;
+  `toTaskKey` is `body-controlled` and **names a cross-resource locator** — it
+  resolves against the globally-unique `projects.task_key`, after which
+  `manageTaskRelations` is re-checked on the resolved target project and a
+  caller without it gets that project's normal refusal shape. Existence is
+  **not** hidden on this path, unlike the ext handler's existence-hiding project
+  404s. The asymmetry is deliberate: the caller supplied a globally-unique key,
+  so the refusal must be actionable — an opaque 404 against a key the caller
+  already holds teaches nothing and is indistinguishable from a typo.
+
+- **Kind parity on every surface, with an accepted `requires` risk.** All five
+  kinds — `blocks | depends_on | parent_of | requires | duplicate_of` — exist on
+  the internal route, on the ext route (**POST and DELETE**), and in the MCP
+  facade. The real hole was never "cannot create": the ext route's
+  `opBodySchema` is **shared by POST and DELETE**, so a missing `requires` meant
+  an orchestrator-minted `requires` edge was visible through `relation_list` and
+  **unremovable** over ext/MCP. `requires` is success-gated and never releases on
+  `Abandoned`/`Failed`, so a wrong edge blocks forever and a liberal agent can
+  wedge a board. That risk is **accepted**; the mitigation is **visibility**, not
+  a schema restriction — the `blocked` chip already names the blocker's `KEY-N`
+  and a human removes the relation from the board. **Keeping the `blocked` chip
+  actionable is therefore a contract**, not an implementation detail.
+
+- **Relations may cross projects; automation driven by them may not.** Three
+  cascade sites gate to same-project candidates with a WARN:
+  `auto_launch_run_plan` (add `projectId` to the parent-run select and skip
+  candidates whose project differs), `getUnlaunchedAutoChildTaskIds` (an abandon
+  cascade in project A must never mark tasks Abandoned in project B), and the
+  board decomposition `keyRef` (render the child's OWN `KEY-N` and slug, or the
+  card links to the wrong board). **Cross-project orchestrator DAGs are an
+  explicit non-goal.**
+
+- **Activity is mirrored on the from-end ONLY.** `relation_added` /
+  `relation_removed` activity is written for the from-task, never for the
+  to-task. The to-end board still shows the relation chip, because that read
+  path is task-id-keyed and already cross-project correct. Fanning activity to
+  the to-end is a later decision, not a gap this ADR leaves open.
+
+- **F1 ships NO kill switch — this is a one-way door.** Unlike ADR-156's
+  `cross_project_reach` (defaults `false`) and ADR-157's
+  `MAISTER_CONTEXT_MOUNT_ENABLED`, cross-project relations have no flag. Once
+  cross-project rows exist, reverting the code restores a project-scoped BFS
+  that **cannot see them**: cycles spanning projects go undetected while the
+  rows keep gating launchability. Rolling this back therefore means deleting the
+  cross-project rows first. Accepted, and written down here so it is not
+  discovered during a rollback.
+
+- **No new error code, no new wire surface.** Reuses `CONFIG`, `PRECONDITION`,
+  `CONFLICT`, and `UNAUTHORIZED`; adds no `domain_events` kind, no SSE event,
+  and no webhook envelope field, so there is no AsyncAPI change. The ext
+  relations route's only side effect is the DB write — there is no downstream
+  service call — so the two-phase-commit rule does not bind; a reviewer should
+  not go looking for one.
+
+**Consequences:**
+
+- A task in project A can block, depend on, parent, require, or duplicate a task
+  in project B, and both boards render the counterpart's own `KEY-N`. This is
+  the platform's answer to multi-repo work under the locked `project = repo`
+  model.
+- Every gating-kind relation insert on the platform now serializes on one
+  advisory lock. That is a deliberate throughput sacrifice for correctness at a
+  write rate measured in relations per minute.
+- The gating graph acquires a size ceiling: a platform whose gating component
+  exceeds `GATING_BFS_MAX_NODES` stops accepting new gating relations until it
+  is split or the bound is raised — a visible, recoverable failure by design.
+- Rollback is no longer symmetric with deployment (see the one-way door above).
+- `removeTaskRelation` needs no cross-project change — it deletes by the
+  `(from, kind, to)` triple.
+
+**Alternatives Considered:**
+
+- _Sorted per-project advisory lock pairs (the original request)_: rejected —
+  the 4-cycle counterexample above commits a permanent deadlock under disjoint
+  locks. Correctness beats a throughput optimization nobody needs.
+- _Unbounded platform-global BFS_: rejected — an unbounded traversal over a
+  user-growable graph is an availability risk on the write path; the bound fails
+  closed and is observable.
+- _Keeping `requires` off ext/MCP, or adding it to DELETE only_: rejected — two
+  different enums on one shared `opBodySchema` is added surface for a boundary
+  that is porous anyway (agents already hold `relations:create` and can mint the
+  gating `blocks`/`depends_on` kinds), and the DELETE-only middle leaves
+  creation asymmetric with the internal route.
+- _Cross-project automation cascades (orchestrator DAGs across projects)_:
+  rejected as an explicit non-goal — it lets one project's abandon decision
+  mutate another project's board without that project's operator in the loop.
+- _A `cross_project_relations` feature flag_: rejected — a flag whose "off"
+  position leaves already-written rows ungated is worse than no flag; it would
+  read as a safe rollback while silently disabling cycle detection.
+
+---
+
+### ADR-156: Cross-project agent facade reach
+
+**Date:** 2026-08-05
+**Status:** Designed
+
+**Context:** ADR-155 makes a cross-project relation legal for a human, but a
+platform agent still cannot follow one. Agent tokens are minted per launch,
+are single-project, and are named `agent-run:<runId>`; the ext handler refuses
+every cross-project call at one seam —
+`actor.projectId !== null && project.id !== actor.projectId` → an
+existence-hidden 404 (`web/lib/tokens/ext-handler.ts`, both the slug arm and the
+`resolveProjectId` arm). An agent that links `API-42` to `WEB-7` therefore
+cannot read `WEB-7`, comment on it, or later remove the edge it created.
+Separately, `tasks:create` is absent from `AGENT_TOKEN_SCOPES`, so no agent can
+create a task in **any** project today.
+
+**Decision:** Grant narrow, opt-in, write-safe cross-project reach to agent
+tokens, bounded by a chain-depth budget.
+
+- **Attachment-as-grant — no new table.** An agent token minted for project A
+  may act in project B **iff** the agent has an **enabled**
+  `agent_project_links` row in B whose new
+  `agent_project_links.cross_project_reach` flag is `true`
+  (`boolean NOT NULL DEFAULT false` — deny by default). No consent table is
+  introduced, because the owner's per-project attach confirmation is **already
+  the consent event**: attaching an agent to project B is an administrator
+  saying "this agent may act here". The flag is one more per-link axis beside
+  the existing `canReadBrain` / `canWriteBrain` / `memoryEnabled` axes on the
+  same unique `(agent_id, project_id)` row.
+
+- **The write-safe subset is exactly `CROSS_PROJECT_AGENT_SCOPES`**, intersected
+  with the token's actual scopes at check time: `tasks:read`, `tasks:create`,
+  `comments:read`, `comments:create`, `relations:read`, `relations:create`,
+  `relations:delete`. Excluded, each for its own reason:
+  - every run op (`runs:*`) — never in `AGENT_TOKEN_SCOPES` anyway; an agent
+    must not launch, stop, or promote work in a sibling project;
+  - `tasks:update` and `tasks:triage` — mutating a sibling's **existing** task
+    content or triage verdict from outside that project;
+  - `hitl:request` — would create a human-input request in a project whose
+    humans never opted into being interrupted by this agent;
+  - `flows:read` and `runners:read` — catalog disclosure across a project
+    boundary;
+  - `memory:*` and `agent_memory:write` — project-scoped knowledge stores;
+    cross-project reach must not quietly become a cross-project memory channel.
+
+- **Allow-list, never deny-list.** A scope absent from
+  `CROSS_PROJECT_AGENT_SCOPES` is refused by default, so a scope added to the
+  platform later cannot silently gain cross-project reach by omission.
+
+- **`tasks:create` joins `AGENT_TOKEN_SCOPES`.** This is a **same-project
+  privilege expansion, not only a cross-project one**: every agent in every
+  project gains task creation the moment the grant lands. An "agent gains an op"
+  change moves three things together — the route scope, the
+  `PROJECT_ACTION_BY_SCOPE` mapping, and the `AGENT_TOKEN_SCOPES` grant list.
+  The first two already exist (`POST /api/v1/ext/projects/[slug]/tasks` with
+  `scopeLabel: "tasks:create"`, and
+  `PROJECT_ACTION_BY_SCOPE["tasks:create"] = "createTask"`), so only the grant
+  list changes — verified at implementation time, never assumed. A task created
+  by an agent with no `flowId` is a **flowless simple-intent task**,
+  `unconfigured` until triage fills the flow: that is the existing ADR-112 path,
+  not a defect, and it is recorded here so "the agent created a task that will
+  not launch" is not read as one.
+
+- **`runs.agent_chain_depth integer NOT NULL DEFAULT 0`, snapshotted at launch,
+  capped by `MAISTER_MAX_AGENT_CHAIN_DEPTH` (default `2`).** One column kills
+  **both** mutual-triggering scenarios:
+  1. **cross-project ping-pong** — an A-agent acts in B, the B-side domain event
+     triggers a B-agent, it acts in A, and so on;
+  2. **same-project ping-pong**, opened by the `tasks:create` grant — agent A
+     creates a task → `task.created` → triggers agent B → creates a task →
+     triggers A → … The existing self-exclusion filters only an agent's **own**
+     events, so an A↔B pair loops freely.
+
+  An agent run launched from a domain event whose `actor_type = 'agent'`
+  inherits `parentDepth + 1`; every other trigger source (manual, cron, webhook,
+  flow-node binding) seeds `0`. Two enforcement points:
+  - the cross-project reach check (`canAgentReachProject`) — deny, return the
+    existence-hidden 404, write the audit row, and WARN with
+    `reason: "chain_depth_exhausted"`;
+  - the agent launch path from an agent-authored domain event — refuse the
+    launch, WARN, and **skip the candidate; NEVER throw**. The domain-event
+    consumer's idempotent contract means a throw redelivers the whole window
+    forever.
+
+- **The depth walk depends on `domain_events.run_id` provenance.**
+  Agent-authored `task.created` and `task.comment_added` are emitted today
+  **without `runId`**, so `domain_events.run_id` is NULL for exactly the two
+  kinds that drive the same-project loop and the parent-depth walk is
+  unresolvable. The fix stamps the producing run **server-side**: an agent
+  authenticates with a run-bound token whose name is deterministically
+  `agent-run:<runId>`, so the handler resolves the run from the token — never
+  from a request field. Until then, and for any emitter the fix does not cover,
+  **a NULL `run_id` on an agent-authored event is treated as being AT THE CAP —
+  fail closed.** Seeding `0` there is the fail-open that reopens the loop.
+
+- **Audit shape.** The actor label stays `agent:<id>`; the audit row records the
+  **target** project, so the trail shows where the agent acted rather than where
+  its token was minted.
+
+- **No new error code, no new wire surface.** Reuses `CONFIG`, `PRECONDITION`,
+  `CONFLICT`, and `UNAUTHORIZED`; adds no `domain_events` kind, no SSE event,
+  and no webhook envelope field, so there is no AsyncAPI change. Populating an
+  existing column on existing kinds is not a wire change.
+
+**Consequences:**
+
+- An agent can follow the cross-project relations ADR-155 lets it create: read
+  the sibling task, comment on it, and remove an edge it minted. It can never
+  launch a run, retriage, request HITL, or read memory across the boundary.
+- Deny-by-default holds twice over: no `cross_project_reach` flag is `true`
+  after the migration, and a scope outside the subset is refused even when the
+  flag is on.
+- Every agent in every project gains `tasks:create`. This is the widest
+  blast-radius line in this ADR, and it is the reason the chain-depth budget is
+  not optional.
+- Agent-to-agent trigger chains terminate within
+  `MAISTER_MAX_AGENT_CHAIN_DEPTH` hops, at the cost of refusing a legitimately
+  deep chain — visible in the WARN, tunable by the operator.
+- A refusal is indistinguishable from "project does not exist" to the agent
+  (existence-hidden 404), so an agent cannot probe for project existence by
+  scanning slugs.
+
+**Alternatives Considered:**
+
+- _A dedicated cross-project grant table_: rejected — it duplicates the consent
+  the attachment already records and adds a second place where "may this agent
+  act here?" can drift.
+- _Deny-listing the dangerous scopes_: rejected — a deny list rots; the next
+  scope added to the platform would gain cross-project reach by default.
+- _Per-call human approval (HITL) instead of a standing grant_: rejected for v1
+  — it puts a human in the loop of every sibling read, defeating the automation
+  the grant exists to enable; the standing grant is revocable in one toggle.
+- _A hop counter scoped to cross-project calls only_ (the original
+  `cross_project_hops`): rejected — it closes the cross-project loop and leaves
+  the same-project loop `tasks:create` opens wide open. One column, one
+  increment, and two enforcement points cover both.
+- _Trusting a request-supplied run id for the depth walk_: rejected — an agent
+  could reset its own depth to `0`; the run is resolved from the token name.
+
+---
+
+### ADR-157: Read-only sibling-repo context mounts
+
+**Date:** 2026-08-05
+**Status:** Designed
+
+**Context:** With `project = repo` locked and cross-project coordination solved
+by ADR-155/156, one gap remains: an agent working in project A often needs to
+**read** project B's code — an API contract, a shared type, a migration — and
+today it cannot see it at all. Multi-repo runs (N worktrees per run) are a
+rejected non-goal, so the answer is a read-only, ephemeral, per-run checkout of
+the sibling repo. The pieces already exist:
+`addDetachedWorktree({projectRepoPath, worktreePath, committish})` is fully
+parameterized and works unchanged against a sibling repo; the ephemeral
+read-only agent checkout has an established create → terminal-remove → GC
+backstop shape; and the prompt-confinement allow-set already contains the run
+dir.
+
+**Decision:** Ship declared, resolved-at-launch, read-only sibling-repo context
+mounts for ACP sessions, behind `MAISTER_CONTEXT_MOUNT_ENABLED` (default
+`true`).
+
+- **Declaration surfaces.** Flow nodes `ai_coding`, `judge`, and `orchestrator`
+  carry `settings.context_repos` (a list of `{project: <slug>, ref?: <ref>}`);
+  all three dispatch to the same ACP-session arm, so the marginal cost is three
+  zod schemas instead of one. `cli` and `check` are **excluded** — they are not
+  ACP sessions. The engine floor is `CONTEXT_REPOS_ENGINE_MIN = "3.4.0"` and
+  `MAISTER_ENGINE_VERSION` bumps `3.3.0 → 3.4.0`; a manifest declaring
+  `context_repos` below the floor refuses at **manifest load** with an
+  actionable message, mirroring the ADR-154 `MAISTER_FLOW_DIR` floor gate. For a
+  platform agent the config point is the **attachment** —
+  `agent_project_links.context_repos jsonb` — because an owner confirms it per
+  project; the definition's `recommended.context_repos` is **prefill only**,
+  because package slugs are not portable across installations and a definition
+  can therefore never bind a real project by itself.
+
+- **`MAISTER_CONTEXT_REPOS` is JSON.** The supervisor injects it into the ACP
+  child env as a first-class request-derived field (the
+  `MAISTER_CAPABILITY_PROFILE_PATH` precedent), alongside a prompt preamble
+  listing each mount's slug, path, ref, and read-only status:
+
+  ```
+  MAISTER_CONTEXT_REPOS=[{"slug":"api","path":"/abs/mount","ref":"main","commit":"<sha40>"}]
+  ```
+
+  A `:`-joined path list would have been shell-cheaper, but it throws away
+  exactly the two fields a consumer wants — the **slug** (which sibling a path
+  is) and the resolved **commit** (what was actually read). Cost: a shell
+  consumer needs `jq`; accepted, because the primary consumer is the agent,
+  which reads the prompt preamble anyway. **The var does NOT reach `cli`/`check`
+  children.** ADR-153 gives those an allow-listed env and
+  `MAISTER_CONTEXT_REPOS` is deliberately not on that list, matching the
+  node-type exclusion above; widening it is a separate ADR-153 change, not
+  something to slip in here.
+
+- **Mount path `<runDir>/context/<siblingSlug>/`**, where `runDir` is
+  `.maister/<consuming-slug>/runs/<runId>/`. The choice is reconciler-quarantine
+  reasoning, not aesthetics: the workspace reconciler scans **only**
+  `worktreesRoot()/<slug>/<entry>` — exactly two segments — and
+  `loadTrustedProject` requires
+  `project.repoPath === provenance.parentRepoPath`. A sibling mount's parent
+  repo is **by definition a different project's repo**, so a mount placed under
+  `worktreesRoot()` would guarantee a `quarantined:untrusted_candidate` finding
+  on every sweep. The run dir is outside that scan **and** already inside the
+  prompt-confinement allow-set, so **no supervisor confinement change is
+  required**. Moving mounts under `worktreesRoot()` later is a known-breaking
+  change.
+
+- **`runs.context_mounts jsonb` is the launch snapshot.** It records
+  `[{projectId, slug, repoPath, mountPath, committish}]` at spawn, in the same
+  transaction as the run insert. Terminal cleanup and crash recovery read the
+  **snapshot** — never re-derived from a manifest or an attachment row, either
+  of which can drift after launch. Release happens at the terminal choke
+  (`removeWorktree` against **each sibling's** repo path) **plus** a GC backstop
+  sweep in the `system_sweep` family that reaps mounts whose owning run is
+  terminal or absent and runs `git worktree prune` on every touched sibling
+  repo. Without that sibling-side removal the sibling repo accumulates stale
+  worktree registrations.
+
+- **Read-only enforcement is three layers, and L1 does not cover the main
+  case.** L1 is the existing `readOnlySession`, which is **unavailable to a
+  writable-worktree session** — a session-wide read-only would break the run's
+  own work — so it covers only `none`/`repo_read` agent runs. L2 is the
+  load-bearing layer: a supervisor-side **UNCONDITIONAL** path guard that denies
+  every write-class tool call whose resolved path lands under any declared mount
+  root, threaded on the session request alongside `hooksConfig` and evaluated in
+  the same permission handler. It is unconditional whenever mounts exist, not
+  opt-in through `settings.hooks`, because the read-only contract is the mount's
+  entire point. L3 is a terminal per-mount dirty check (`git status
+  --porcelain`) → WARN plus quarantine evidence; the mount is discarded
+  regardless, being detached with no branch. L3 matters even though mounts are
+  ephemeral: `git worktree add --detach` writes a `.git` **file** pointing into
+  the **sibling's** `.git/worktrees/<name>`, so an escaped write could touch the
+  sibling repo's metadata rather than only the throwaway checkout. **ADR-041 is
+  untouched** — this is not a change to capability enforcement.
+
+- **Consent is the launcher's read grant, or the attach-time admin action.** No
+  donor-side consent flag in v1 (single-owner installations). For a
+  **flow-node launch**, the launching user must hold `readRepoFiles` on each
+  sibling project; a missing grant refuses the launch with `PRECONDITION` naming
+  the project. For an **agent run** there is no launching user, so the
+  **attach-time** admin action is the consent event: `context_repos` is written
+  by a project admin who is separately authorized on the sibling, and that
+  authorization is checked at **write time on the attach route**, not at launch.
+
+- **One accepted residual crash window.** Git side-effects happen **before** the
+  durable status write, and the snapshot is written in the same transaction as
+  the run insert. A crash between mount creation and the snapshot commit leaves
+  an orphan directory no run row references; the GC backstop reaps it by path
+  shape alone (`.maister/*/runs/*/context/*` with no live owning run). This is
+  the **only** such window in the feature.
+
+- **No new error code, no new wire surface.** Reuses `CONFIG`, `PRECONDITION`,
+  `CONFLICT`, and `UNAUTHORIZED`; adds no `domain_events` kind, no SSE event,
+  and no webhook envelope field, so there is no AsyncAPI change. The supervisor
+  `POST /sessions` request gains a `contextMounts[]` field — an OpenAPI change
+  only.
+
+**Consequences:**
+
+- An `ai_coding`, `judge`, or `orchestrator` session — and a platform agent run
+  — can read a pinned commit of a sibling repo without a second workspace, a
+  submodule, or a meta-project entity.
+- Each mount costs one `git worktree add --detach` on the sibling repo plus its
+  removal; a sibling repo whose GC is stuck accumulates registrations until
+  `git worktree prune` runs, which is why the backstop is part of the design
+  rather than a follow-up.
+- Flow packages declaring `context_repos` require engine `>= 3.4.0`; older
+  engines refuse the manifest at load instead of silently ignoring the
+  declaration.
+- The read-only guarantee rests on L2, a supervisor-side deny invisible from the
+  flow side; its supervisor-runner test is part of the contract, not optional
+  coverage.
+- A sibling slug that is unknown or archived, or a ref that cannot be resolved,
+  refuses the launch with `PRECONDITION` — mounts never auto-fetch.
+
+**Alternatives Considered:**
+
+- _Mounts under `worktreesRoot()`_: rejected — guarantees a
+  `quarantined:untrusted_candidate` finding on every reconciler sweep, because a
+  mount's parent repo can never equal the scanning project's `repoPath`.
+- _Multi-repo runs (N worktrees per run)_: rejected as an explicit non-goal — it
+  forces coordinated cross-repo promotion, branch naming, and diff review, which
+  is a different product.
+- _A `:`-joined `MAISTER_CONTEXT_REPOS` path list_: rejected — drops the slug and
+  the resolved commit, the two fields any consumer actually needs.
+- _Passing mounts through `executor.env`_: rejected — that channel provisions
+  provider secrets; mounts are a first-class request field, like
+  `MAISTER_CAPABILITY_PROFILE_PATH`.
+- _Session-wide `readOnlySession` for every mounted session_: rejected —
+  impossible for a writable-worktree run, which must write its own worktree;
+  hence the per-path L2 guard.
+- _A donor-side "allow other projects to mount me" flag_: rejected for v1 —
+  single-owner installations, where the launcher's read grant and the
+  attach-time admin action already represent the owner's consent; revisit when
+  multi-tenant RBAC lands.
+- _Re-deriving mounts at terminal time from the manifest or attachment_:
+  rejected — the declaration can change after launch, so cleanup would miss a
+  mount or remove the wrong path; the launch snapshot is authoritative.
 
 ---
 

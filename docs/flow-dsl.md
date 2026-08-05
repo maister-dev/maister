@@ -45,9 +45,10 @@ The graph-only cut-over started with engine 3.0.0: manifests require a non-empty
 top-level `nodes[]`. The parser and compiler reject any manifest containing
 `steps[]` with the locked migration message: `legacy steps[] flows are not
 supported since engine 3.0.0; republish the package with nodes[]`. The current
-host engine is `3.3.0`; graph packages remain compatible when their declared
-`compat` range includes that version. They do not need to raise an open-ended
-historical `engine_min`.
+host engine is `3.4.0` (**Designed** — `MAISTER_ENGINE_VERSION` moves
+`3.3.0 → 3.4.0` for `settings.context_repos`, below); graph packages remain
+compatible when their declared `compat` range includes that version. They do not
+need to raise an open-ended historical `engine_min`.
 
 ```yaml
 nodes:
@@ -1508,7 +1509,10 @@ directly (e.g. `$HOME`); values outside the allow-list can only arrive via
 `{{ env.* }}` interpolation, which the deny patterns above filter. The
 `MAISTER_CLI_INHERIT_ENV` host env var (see
 [configuration.md](configuration.md)) temporarily restores full inheritance
-for not-yet-migrated packages.
+for not-yet-migrated packages. **(Designed — ADR-157)** `MAISTER_CONTEXT_REPOS`
+is deliberately NOT on this allow-list: read-only sibling mounts are an
+ACP-session concept, so the var reaches the adapter child only — see
+[`settings.context_repos`](#settingscontext_repos--read-only-sibling-repo-mounts-designed--adr-157).
 
 **`MAISTER_FLOW_DIR` — packaged-script execution
 ([ADR-154](decisions.md#adr-154-maister_flow_dir-for-clicheck-node-actions--packaged-script-execution--engine-330),
@@ -1660,6 +1664,71 @@ threads, and completed gate-chat turns. Its byte format is stable. The review
 workspace previews the exact packet and target before fresh submission; the
 runner verifies/records the same packet digest when consuming it. This adds no
 DSL syntax and preserves the existing `commentsVar` transport.
+
+## `settings.context_repos` — read-only sibling-repo mounts (Designed — ADR-157)
+
+**(Designed — [ADR-157](decisions.md#adr-157-read-only-sibling-repo-context-mounts),
+engine >= 3.4.0.)** A node may declare sibling projects whose repositories the
+session gets to **read** — the answer to "this change needs the API contract from
+the other repo" without giving the run a second writable workspace.
+`project = repo` is unchanged: one run still owns exactly one worktree.
+
+```yaml
+settings:
+  context_repos:
+    - project: other-service   # project SLUG, resolved at launch
+      ref: main                 # optional; default = that project's default branch
+```
+
+- `project` — a MAIster project **slug**, resolved at launch against the
+  registered projects. Unknown or archived → the launch is refused
+  `MaisterError("PRECONDITION")` naming the slug.
+- `ref` — optional committish (branch, tag, or sha). Absent ⇒ that project's
+  default branch. Resolution does **no auto-fetch**; an unresolvable ref refuses
+  the launch with `PRECONDITION`.
+- The array is capped at **8** entries.
+
+**Node types.** `context_repos` is accepted on **`ai_coding`, `judge`, and
+`orchestrator` only** — the three node types that dispatch to the same
+ACP-session arm. `cli` and `check` are **excluded by design**: they are not ACP
+sessions, and declaring the key on one is a schema rejection, not a silent
+no-op. (Consistently, the derived `MAISTER_CONTEXT_REPOS` env var never reaches
+a `cli`/`check` child — ADR-153 gives those an allow-listed env and this var is
+deliberately not on that list. See §env whitelist + secret blocklist.)
+
+**Engine floor.** `CONTEXT_REPOS_ENGINE_MIN = "3.4.0"`; `MAISTER_ENGINE_VERSION`
+moves `3.3.0 → 3.4.0`. The floor is enforced at **manifest load time**, mirroring
+the ADR-154 `MAISTER_FLOW_DIR` gate: a manifest declaring `context_repos` whose
+`compat.engine_min` is below `3.4.0` is refused with `MaisterError("CONFIG")`,
+and the message names the required bump. Flows that declare no `context_repos`
+stay valid at any `engine_min`.
+
+**Materialization + lifecycle.** Each declaration becomes a detached, read-only
+checkout at `<runDir>/context/<siblingSlug>/` — that is
+`.maister/<consuming-slug>/runs/<runId>/context/<siblingSlug>/`. That location is
+load-bearing twice over: it sits **outside** the worktrees root, so the sibling
+project's workspace reconciler never sees a foreign checkout as a stray
+worktree, and it sits **inside** the existing prompt-confinement allow-set, so no
+supervisor confinement change is implied. The resolved set is snapshotted on
+`runs.context_mounts` at launch; the terminal path and the GC backstop read that
+snapshot, never the manifest, which can drift after launch.
+
+**Read-only is enforced, not merely declared.** The supervisor receives the
+resolved set as the `contextMounts[]` field on `POST /sessions` and denies every
+write-class tool call resolving under a mount root, unconditionally, in the same
+permission handler that evaluates `hooks.pathGuard`. A terminal dirty-check per
+mount (`git status --porcelain`) records quarantine evidence if anything slipped
+through; the mount is discarded either way (it is detached, on no branch).
+Consent in v1 is the launching user's `readRepoFiles` grant on each sibling
+project — a missing grant refuses the launch with `PRECONDITION` naming the
+project. Platform-agent runs declare the same mounts through their project
+attachment instead, where the attaching admin is the consent event.
+
+See [`supervisor.md`](supervisor.md) for the wire field and the derived
+`MAISTER_CONTEXT_REPOS` child env var,
+[`configuration.md`](configuration.md) for `MAISTER_CONTEXT_MOUNT_ENABLED`, and
+[`system-analytics/flow-settings.md`](system-analytics/flow-settings.md) for the
+mount lifecycle state machine.
 
 ## See also
 

@@ -569,6 +569,8 @@ erDiagram
         text runner_override_id FK "platform_acp_runners(id) SET NULL"
         jsonb config "NULL — per-instance config values; NULL ⇒ declared defaults (Implemented ADR-111, 0071)"
         boolean memory_enabled "NOT NULL DEFAULT false — agent-memory axis, separate from Brain (ADR-152, 0122)"
+        boolean cross_project_reach "ADR-156 0123 Designed: NOT NULL DEFAULT false — the attachment IS the cross-project grant, limited to CROSS_PROJECT_AGENT_SCOPES"
+        jsonb context_repos "ADR-157 0124 Designed: NULL — declared read-only sibling repos [{project, ref?}], max 8; NULL = no mounts"
         timestamp created_at
         timestamp updated_at
     }
@@ -698,10 +700,10 @@ erDiagram
 
     TASK_RELATIONS {
         text id PK
-        text project_id FK
+        text project_id FK "the FROM-task's project — the row owner (ADR-155 Designed: to_task_id may live in a DIFFERENT project)"
         text from_task_id FK
         text kind "blocks|depends_on|parent_of|requires|duplicate_of (duplicate_of: Implemented ADR-112, 0072, non-blocking)"
-        text to_task_id FK
+        text to_task_id FK "ADR-155 Designed: may point at a task in another project; no new column"
         text actor_type "user|agent|system"
         text actor_id "NULL iff actor_type=system"
         timestamp created_at
@@ -794,6 +796,8 @@ erDiagram
         jsonb promotion_hold "ADR-126 0089: {source,reason?,createdAt} auto-promotion hold, nullable (NULL = no hold)"
         timestamptz review_entered_at "ADR-126 0089: auto-promotion grace anchor, nullable"
         text agent_memory_hash "ADR-152 0122: sha256 of the agent memory injected at spawn, nullable — NULL = none injected"
+        integer agent_chain_depth "ADR-156 0123 Designed: NOT NULL DEFAULT 0 — agent-to-agent trigger hops snapshotted at launch, capped at MAISTER_MAX_AGENT_CHAIN_DEPTH (default 2)"
+        jsonb context_mounts "ADR-157 0124 Designed: launch snapshot [{projectId,slug,repoPath,mountPath,committish}] of read-only sibling mounts, nullable — read by terminal cleanup and crash recovery"
         timestamp started_at
         timestamp ended_at
     }

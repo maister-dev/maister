@@ -116,6 +116,14 @@ Request body:
     "router": "ccr"                         // legacy compatibility while migration lands
   },
   "capabilityProfilePath": "/repos/myapp/.maister/runs/run-abc/profile.json",
+  "contextMounts": [                        // optional, Designed — ADR-157; max 8
+    {
+      "slug": "api",
+      "path": "/repos/myapp/.maister/myapp/runs/run-abc/context/api",
+      "ref": "main",
+      "commit": "0f1e2d3c4b5a69788796a5b4c3d2e1f001234567"
+    }
+  ],
   "adapterLaunch": {
     "env": { "MAISTER_CAPABILITY_PROFILE": "/repos/myapp/.maister/runs/run-abc/profile.json" },
     "preArgs": ["--config", "/repos/myapp/.maister/runs/run-abc/adapter.json"],
@@ -176,6 +184,65 @@ override the adapter binary, `cwd`, run id, project slug, or worktree path.
   merged after `executor.env` and must not be logged as values.
 - `preArgs`: extra adapter arguments inserted before supervisor-managed args.
 - `postArgs`: extra adapter arguments appended after supervisor-managed args.
+
+#### `contextMounts[]` and `MAISTER_CONTEXT_REPOS` (Designed — ADR-157)
+
+`contextMounts` is an optional array (max 8) of read-only sibling-repo context
+mounts the **web tier** already materialized for this session. Each entry is
+`{slug, path, ref, commit}`: the sibling project's slug, the absolute mount
+root, the committish it was resolved from, and the commit sha it is detached
+at. It is projected from the run's launch snapshot (`runs.context_mounts` —
+`[{projectId, slug, repoPath, mountPath, committish}]`); the supervisor never
+resolves a slug, a ref, or a repo path, and never creates or removes a
+worktree. Mount roots live under the run dir
+(`.maister/<slug>/runs/<runId>/context/<siblingSlug>/`), which is already inside
+the prompt content-block confinement allow-set, so mounts imply no confinement
+change. Malformed paths, `..` segments, and an over-length array are rejected
+with `409 PRECONDITION` like every other path field.
+
+It is a **first-class request field**, the same shape of thing as
+`capabilityProfilePath` — deliberately **not** an overload of `executor.env`,
+which is the provider-secret channel and stays that. From it the supervisor
+derives exactly one child environment variable:
+
+```
+MAISTER_CONTEXT_REPOS=[{"slug":"api","path":"/abs/mount","ref":"main","commit":"<sha40>"}]
+```
+
+A JSON array of exactly those objects. JSON rather than a `:`-joined path list
+because a path list throws away the two fields a consumer actually wants — the
+slug (which sibling a path is) and the resolved commit (what was actually read).
+A shell consumer needs `jq`; that cost is accepted because the primary consumer
+is the agent, which reads the prompt preamble.
+
+**It does NOT reach `cli`/`check` children.** Those run under the ADR-153
+allow-listed env, and `MAISTER_CONTEXT_REPOS` is deliberately not on that list —
+matching the DSL side, where `settings.context_repos` is accepted only on
+`ai_coding` / `judge` / `orchestrator` nodes. If a packaged script ever needs
+sibling paths, that is a separate ADR-153 allow-list change.
+
+**Prompt preamble.** Beyond the env var, the supervisor renders a preamble on
+the session's prompt listing each mount's **slug, absolute path, ref, and
+read-only status**. The env var serves scripts; the preamble is how the agent
+learns the mounts exist at all.
+
+**Read-only path guard (L2).** When `contextMounts` is non-empty the ACP
+permission handler denies, **unconditionally**, every write-class tool call
+whose resolved path lands under any mount root. It is evaluated in the same
+handler as `hooksConfig.pathGuard`, but it is not opt-in through
+`settings.hooks` — the read-only contract is the mount's whole point. It
+composes with `readOnlySession` (which covers only `none`/`repo_read` agent
+runs; a writable-worktree flow session cannot use a session-wide read-only
+without breaking its own work) and with `hooksConfig.pathGuard`; all three are
+pre-hoc denies and the strictest wins. The guard matters even though mounts are
+ephemeral: `git worktree add --detach` writes a `.git` **file** pointing into
+the sibling repo's `.git/worktrees/<name>`, so an escaped write could touch
+another project's repository metadata.
+
+Contract: `StartSessionRequest.contextMounts` in
+[`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml). DSL side:
+[`flow-dsl.md`](flow-dsl.md) §`settings.context_repos`. Kill switch
+`MAISTER_CONTEXT_MOUNT_ENABLED`: [`configuration.md`](configuration.md).
 
 (Resume is NOT a CLI argument: when `resumeSessionId` is set the supervisor
 restores the prior conversation via the ACP `session/resume` protocol call —
@@ -659,7 +726,9 @@ child's env as `{ ...process.env, ...ccrLayer, ...executor.env,
 2. sidecar/provider layer — contains only allow-listed keys required by the
    adapter provisioner, with values resolved from env refs.
 3. isolated adapter config layer — generated paths such as `CODEX_HOME` or
-   capability profile env, never raw secret values.
+   capability profile env, never raw secret values. **(Designed — ADR-157)**
+   `MAISTER_CONTEXT_REPOS` is derived into this layer from the first-class
+   `contextMounts[]` request field, never from `executor.env`.
 4. `adapterLaunch.env` — run-scoped capability materializer output.
    It wins on collision so a run-scoped MCP/settings profile can point the
    adapter at the materialized files for that one session.
