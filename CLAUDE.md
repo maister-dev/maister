@@ -101,7 +101,7 @@ These were earned in two review passes. Reopen them only with new evidence.
 
 ### 1. ACP-driven execution with hybrid HITL
 
-A Flow = a typed-node **graph** (`nodes[]`, current engine 3.3.0) — node
+A Flow = a typed-node **graph** (`nodes[]`, current engine 3.4.0) — node
 types `ai_coding | judge | cli | check | human | form | orchestrator`
 and `consensus`, wired by named `transitions` with bounded `rework` loops.
 Manifests with a top-level `steps` key are incompatible and must be
@@ -264,7 +264,7 @@ nodes:
       commentsVar: review_comments
 ```
 
-**The only runtime DSL is the typed-node graph (current engine `3.3.0`; the
+**The only runtime DSL is the typed-node graph (current engine `3.4.0`; the
 graph-only cut-over began at `3.0.0`).** Flows use
 `nodes:` with named
 `transitions`, bounded `rework`, typed `input.requires`/`output.produces`
@@ -363,6 +363,23 @@ which stays the local-promotion merge commit.
   `maister.yaml`) or `MAISTER_PROJECTS_DIR` env auto-discovery (**recursive**
   scan; every `maister.yaml` under the root gets registered, slug/repo
   collisions are rejected).
+- **Multi-repo enablement** (M49, ADR-155/156/157): `project = repo` STAYS.
+  Multi-repo work is decomposed into per-project tasks coordinated through the
+  task graph, plus read-only context sharing. Three axes: **cross-project task
+  relations** (any of the 5 kinds may span projects; the row is owned by the
+  from-task's project and every gating insert serializes on ONE platform-wide
+  advisory lock — per-project locking cannot catch a 4-cycle); **cross-project
+  agent facade reach** (opt-in per attachment via
+  `agent_project_links.cross_project_reach`, limited to the read/comment/relate
+  `CROSS_PROJECT_AGENT_SCOPES` allow-list, bounded by `runs.agent_chain_depth`
+  ≤ `MAISTER_MAX_AGENT_CHAIN_DEPTH`); and **read-only sibling-repo context
+  mounts** (`settings.context_repos` on `ai_coding`/`judge`/`orchestrator`,
+  engine floor 3.4.0, materialized under the run dir and snapshotted on
+  `runs.context_mounts`). **Relations may cross projects; the automation they
+  drive may not** — auto-launch, the abandon cascade, and C2 admission all stay
+  same-project. Explicit non-goals: multi-repo runs/workspaces, coordinated
+  cross-repo promotion, orchestrator cross-project delegation, a
+  meta-project/project-group entity, cross-project task moves.
 - **Flow plugin engine**: install plugins from `git URL + tag` to
   `~/.maister/flows/<id>@<tag>/` system cache; symlink into each consuming
   project's `.maister/<slug>/flows/`. Manifest (`flow.yaml`) is the source
@@ -440,7 +457,9 @@ Current Scope, these are **Implemented** today:
   only. → `social-board.md`
 - **Domain-event outbox / shared trigger bus** (M32, ADR-086):
   `domain_events` append-only fact log emitted in the SAME transaction as
-  the domain write (8-kind taxonomy v1: task/run-terminal/gate.failed,
+  the domain write (11-kind taxonomy: task.created/comment_added/
+  triage_requeued/clarification_answered, run.done/failed/crashed/abandoned/
+  review/escalated, gate.failed;
   polymorphic actor, xid8 commit horizon), per-consumer cursor dispatcher
   (`domain_event_dispatch` singleton on the M24 clock, CAS lease + fenced
   advance, at-least-once) with a permanent `noop` consumer. Webhooks

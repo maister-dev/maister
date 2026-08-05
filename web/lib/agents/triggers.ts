@@ -233,6 +233,7 @@ export async function dispatchDueAgentSchedules(
       });
 
       const outcome = outcomeForLaunch(result);
+
       await recordAgentScheduleOutcome({
         db: _db,
         scheduleId: row.id,
@@ -329,7 +330,8 @@ function clarificationAnswerTarget(
   event: DomainEventRow,
 ): ClarificationAnswerTarget | null {
   if (event.kind !== "task.clarification_answered") return null;
-  if (typeof event.taskId !== "string" || event.taskId.length === 0) return null;
+  if (typeof event.taskId !== "string" || event.taskId.length === 0)
+    return null;
 
   const payload = event.payload as Record<string, unknown>;
   const clarificationId = payload.clarificationId;
@@ -622,9 +624,7 @@ export function buildAgentTriggersConsumer(
             continue;
           }
 
-          if (
-            await chainDepthExhausted(_db, event.id, targetAgent.agentId)
-          ) {
+          if (await chainDepthExhausted(_db, event.id, targetAgent.agentId)) {
             continue;
           }
 
@@ -719,7 +719,9 @@ export function buildAgentTriggersConsumer(
 
         const matchingRows = rows
           .filter((row) => (row.eventMatch?.kinds ?? []).includes(event.kind))
-          .sort((left, right) => left.scheduleId.localeCompare(right.scheduleId));
+          .sort((left, right) =>
+            left.scheduleId.localeCompare(right.scheduleId),
+          );
         let ownerRunId: string | null = null;
         let ownerSelected = false;
 
@@ -740,7 +742,8 @@ export function buildAgentTriggersConsumer(
               fence,
               outcome: "suppressed",
               errorCode: "PRECONDITION",
-              errorMessage: "Self-actored event is not eligible for this binding",
+              errorMessage:
+                "Self-actored event is not eligible for this binding",
               now: new Date(),
             });
             continue;
@@ -780,6 +783,7 @@ export function buildAgentTriggersConsumer(
               db: _db,
             });
             const outcome = outcomeForLaunch(result);
+
             ownerRunId = outcome.runId;
             await recordAgentScheduleOutcome({
               db: _db,

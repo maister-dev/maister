@@ -4,15 +4,11 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  PROJECT_ACTION_BY_SCOPE,
-  // eslint-disable-next-line import/order
-} from "@/lib/tokens/ext-handler";
+import { PROJECT_ACTION_BY_SCOPE } from "@/lib/tokens/ext-handler";
 import {
   AGENT_TOKEN_SCOPES,
   CROSS_PROJECT_AGENT_SCOPES,
 } from "@/types/token-scopes";
-
 import { canAgentReachProject } from "@/lib/agents/cross-project-reach";
 
 type LinkRow = { enabled: boolean; crossProjectReach: boolean };
@@ -79,7 +75,9 @@ describe("canAgentReachProject truth table (ADR-156)", () => {
     await expect(
       canAgentReachProject({
         ...BASE,
-        db: stubDb({ link: { enabled: false, crossProjectReach: true } }) as never,
+        db: stubDb({
+          link: { enabled: false, crossProjectReach: true },
+        }) as never,
       }),
     ).resolves.toEqual({ allowed: false, reason: "link_disabled" });
   });
@@ -88,7 +86,9 @@ describe("canAgentReachProject truth table (ADR-156)", () => {
     await expect(
       canAgentReachProject({
         ...BASE,
-        db: stubDb({ link: { enabled: true, crossProjectReach: false } }) as never,
+        db: stubDb({
+          link: { enabled: true, crossProjectReach: false },
+        }) as never,
       }),
     ).resolves.toEqual({ allowed: false, reason: "reach_off" });
   });

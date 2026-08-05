@@ -89,6 +89,9 @@ describe("PATCH /api/projects/[slug]/agents/[agentId] cross-project reach (ADR-1
     expect(mocks.updateAgentLink).toHaveBeenCalledWith({
       projectId: "project-1",
       agentId: "core:triager",
+      // ADR-157: the acting operator rides along so the service can authorize
+      // `contextRepos` against each sibling project at WRITE time.
+      actorUserId: "user-1",
       patch: { crossProjectReach: true },
     });
   });
@@ -188,5 +191,92 @@ describe("PATCH /api/projects/[slug]/agents/[agentId] cross-project reach (ADR-1
 
     expect(res.status).toBe(403);
     expect(mocks.updateAgentLink).not.toHaveBeenCalled();
+  });
+});
+
+// ADR-157 T28/T29: `contextRepos` rides the same aggregating PATCH. SET/CLEAR
+// symmetry is the invariant this repo gets wrong most often — an
+// `if (!x) continue` write loop leaves the old value in place after the operator
+// removes the field, while every reader believes "absent = none". Both halves
+// plus absent-is-untouched are asserted.
+describe("PATCH /api/projects/[slug]/agents/[agentId] context repos (ADR-157)", () => {
+  it("forwards a declaration (SET)", async () => {
+    const res = await route.PATCH(
+      jsonRequest("PATCH", {
+        contextRepos: [{ project: "api-service", ref: "main" }],
+      }),
+      params(),
+    );
+
+    expect(res.status).toBe(200);
+    expect(lastPatch().contextRepos).toEqual([
+      { project: "api-service", ref: "main" },
+    ]);
+  });
+
+  it("forwards an explicit null (CLEAR) — the other half of the contract", async () => {
+    const res = await route.PATCH(
+      jsonRequest("PATCH", { contextRepos: null }),
+      params(),
+    );
+
+    expect(res.status).toBe(200);
+    expect(lastPatch().contextRepos).toBeNull();
+  });
+
+  it("omits the key entirely when absent, leaving the declaration untouched", async () => {
+    const res = await route.PATCH(
+      jsonRequest("PATCH", { enabled: true }),
+      params(),
+    );
+
+    expect(res.status).toBe(200);
+    expect(lastPatch()).not.toHaveProperty("contextRepos");
+  });
+
+  it("refuses more than 8 entries before any write", async () => {
+    const res = await route.PATCH(
+      jsonRequest("PATCH", {
+        contextRepos: Array.from({ length: 9 }, (_, i) => ({
+          project: `sib-${i}`,
+        })),
+      }),
+      params(),
+    );
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(mocks.updateAgentLink).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unknown key inside an entry before any write", async () => {
+    const res = await route.PATCH(
+      jsonRequest("PATCH", {
+        contextRepos: [{ project: "api-service", branch: "main" }],
+      }),
+      params(),
+    );
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(mocks.updateAgentLink).not.toHaveBeenCalled();
+  });
+
+  // There is no launching user for an agent run, so attach IS the consent
+  // event: the service authorizes each sibling at write time and the route
+  // must surface that as the domain refusal, not a 500.
+  it("surfaces the service's write-time PRECONDITION", async () => {
+    mocks.updateAgentLink.mockRejectedValue(
+      new MaisterError(
+        "PRECONDITION",
+        'contextRepos: you lack readRepoFiles on project "api-service"',
+      ),
+    );
+
+    const res = await route.PATCH(
+      jsonRequest("PATCH", { contextRepos: [{ project: "api-service" }] }),
+      params(),
+    );
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ code: "PRECONDITION" });
   });
 });

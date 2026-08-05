@@ -42,7 +42,10 @@ export async function resolveAgentChainDepth(input: {
 }): Promise<ChainDepth> {
   const cap = maxAgentChainDepth();
 
-  if (input.trigger.source !== "domain_event" || input.trigger.eventId == null) {
+  if (
+    input.trigger.source !== "domain_event" ||
+    input.trigger.eventId == null
+  ) {
     return { depth: 0, atCap: cap <= 0 };
   }
 

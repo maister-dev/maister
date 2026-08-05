@@ -274,10 +274,12 @@ describe("package skill materialization manifest", () => {
 
     await restoreAgentMaterialization(root, "run-1");
 
-    await expect(stat(unleasedTarget)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(readFile(path.join(foreignTarget, "SKILL.md"), "utf8")).resolves.toBe(
-      "foreign-owner",
-    );
+    await expect(stat(unleasedTarget)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(
+      readFile(path.join(foreignTarget, "SKILL.md"), "utf8"),
+    ).resolves.toBe("foreign-owner");
     await expect(stat(runRecord)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -408,9 +410,9 @@ describe("package skill materialization manifest", () => {
     await expect(restoreAgentMaterialization(root, "run-1")).rejects.toThrow(
       /symlinked path component/,
     );
-    await expect(readFile(path.join(validTarget, "SKILL.md"), "utf8")).resolves.toBe(
-      "keep",
-    );
+    await expect(
+      readFile(path.join(validTarget, "SKILL.md"), "utf8"),
+    ).resolves.toBe("keep");
     await expect(readFile(runRecord, "utf8")).resolves.toContain(
       '"state":"active"',
     );
@@ -541,9 +543,9 @@ describe("package skill materialization manifest", () => {
         materialize: async () => [],
       }),
     ).rejects.toThrow(/cwd is unsafe/);
-    await expect(restoreAgentMaterialization(linkedCwd, "run-1")).rejects.toThrow(
-      /cwd is unsafe/,
-    );
+    await expect(
+      restoreAgentMaterialization(linkedCwd, "run-1"),
+    ).rejects.toThrow(/cwd is unsafe/);
     await expect(
       stat(path.join(outside, AGENT_MATERIALIZATION_ROOT_RELATIVE)),
     ).rejects.toMatchObject({ code: "ENOENT" });

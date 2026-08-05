@@ -773,22 +773,19 @@ function declaresContextRepos(nodes: NodeDef[]): boolean {
       (n.type === "ai_coding" ||
         n.type === "judge" ||
         n.type === "orchestrator") &&
-      Array.isArray((n.settings as { context_repos?: unknown } | undefined)
-        ?.context_repos),
+      Array.isArray(
+        (n.settings as { context_repos?: unknown } | undefined)?.context_repos,
+      ),
   );
 }
 
 function declaresPlanReview(nodes: NodeDef[]): boolean {
   return nodes.some(
-    (node) =>
-      node.type === "human" && node.settings?.plan_review !== undefined,
+    (node) => node.type === "human" && node.settings?.plan_review !== undefined,
   );
 }
 
-function validatePlanReviewNodes(
-  nodes: NodeDef[],
-  flowYamlPath: string,
-): void {
+function validatePlanReviewNodes(nodes: NodeDef[], flowYamlPath: string): void {
   for (const node of nodes) {
     if (node.type !== "human" || node.settings?.plan_review === undefined) {
       continue;
@@ -1260,7 +1257,10 @@ export function validateGraphManifest(
     }
   }
 
-  if (declaresPlanReview(nodes) && !semverGte(engineMin, PLAN_REVIEW_ENGINE_MIN)) {
+  if (
+    declaresPlanReview(nodes) &&
+    !semverGte(engineMin, PLAN_REVIEW_ENGINE_MIN)
+  ) {
     throw new MaisterError(
       "CONFIG",
       `graph flow ${flowYamlPath} is declaring settings.plan_review but engine_min "${engineMin}" < ${PLAN_REVIEW_ENGINE_MIN} — bump compat.engine_min to ${PLAN_REVIEW_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,

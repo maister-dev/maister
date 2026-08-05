@@ -24,6 +24,7 @@ import {
   type AdapterRuntime,
 } from "./adapter-registry";
 import { type CcrManager, type CcrState } from "./ccr-manager";
+import { takeContextMountPreamble } from "./context-mounts";
 import { attachCost } from "./cost";
 import { attachHeartbeat } from "./heartbeat";
 import {
@@ -660,6 +661,22 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     // this prompt only.
     entry.record.readOnlyTurn = body.readOnlyTurn === true;
 
+    // ADR-157: ground the agent in its read-only sibling-repo mounts on the
+    // FIRST prompt of the session — MAISTER_CONTEXT_REPOS serves scripts, this
+    // preamble is how the agent learns the mounts exist. A respawn (resume)
+    // rebuilds the record, so a resumed session re-grounds once.
+    const mountPreamble = takeContextMountPreamble(entry.record);
+
+    if (mountPreamble) {
+      logger.info(
+        {
+          sessionId: req.params.id,
+          mounts: entry.record.contextMounts?.map((m) => m.slug),
+        },
+        "context-mount preamble prepended",
+      );
+    }
+
     let resp: Awaited<ReturnType<typeof sendPromptOnConnection>>;
 
     try {
@@ -673,6 +690,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           // Validated by SendPromptRequestSchema; cast to the SDK block type at
           // this trust boundary for verbatim forward (T5.4).
           contentBlocks: body.contentBlocks as acp.ContentBlock[] | undefined,
+          preamble: mountPreamble ?? undefined,
           isUserCancel: () => entry.record.cancelRequested === true,
         },
         logger,

@@ -310,9 +310,7 @@ describe("(a) task.created -> agent_triggers consumer enqueues a triager run", (
       [AGENT_ID],
     );
 
-    expect(rows.rows).toEqual([
-      { trigger_event_id: "5002", task_id: taskId },
-    ]);
+    expect(rows.rows).toEqual([{ trigger_event_id: "5002", task_id: taskId }]);
   });
 
   it("comments do not re-trigger the triager", async () => {

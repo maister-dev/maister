@@ -1,8 +1,9 @@
 import "server-only";
 
+import type { ContextRepoDecl } from "@/lib/context-mounts/types";
 import type { AgentExecutionPolicyRecommendation } from "@/lib/db/schema";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -11,6 +12,7 @@ import {
   resolveEffectiveAgentDefinition,
 } from "@/lib/agents/effective";
 import { validateInstanceConfig } from "@/lib/agents/config";
+import { requireProjectActionForUser } from "@/lib/authz";
 import { revokeAgentProjectTokens } from "@/lib/agents/tokens";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -23,8 +25,13 @@ import {
 } from "@/lib/run-schedules/cron";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { agentProjectLinks, agents, agentSchedules, platformAcpRunners } =
-  schemaModule as unknown as Record<string, any>;
+const {
+  agentProjectLinks,
+  agents,
+  agentSchedules,
+  platformAcpRunners,
+  projects,
+} = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -362,10 +369,65 @@ export async function attachAgent(
   return { linkId: inserted[0].id as string };
 }
 
+// ADR-157 D11: every declared sibling must be an ACTIVE registered project the
+// acting admin can actually read. Refuses PRECONDITION naming the offending
+// slug — a declaration that silently yields no mount at launch is worse than a
+// save that says why.
+async function authorizeContextRepos(
+  tx: unknown,
+  actorUserId: string | null | undefined,
+  decls: ContextRepoDecl[] | null,
+): Promise<ContextRepoDecl[] | null> {
+  if (decls === null || decls.length === 0) return null;
+
+  for (const decl of decls) {
+    const rows = (await (tx as { select: any })
+      .select({ id: projects.id })
+      .from(projects)
+      .where(
+        and(eq(projects.slug, decl.project), isNull(projects.archivedAt)),
+      )) as Array<{ id: string }>;
+    const sibling = rows[0];
+
+    if (!sibling) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `contextRepos: project "${decl.project}" is not a registered active project`,
+      );
+    }
+
+    if (!actorUserId) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `contextRepos: declaring "${decl.project}" requires an authenticated operator`,
+      );
+    }
+
+    try {
+      await requireProjectActionForUser(
+        actorUserId,
+        sibling.id,
+        "readRepoFiles",
+      );
+    } catch {
+      throw new MaisterError(
+        "PRECONDITION",
+        `contextRepos: you lack readRepoFiles on project "${decl.project}"`,
+      );
+    }
+  }
+
+  return decls;
+}
+
 export async function updateAgentLink(
   input: {
     projectId: string;
     agentId: string;
+    // ADR-157 D11: the acting operator, needed because contextRepos is
+    // authorized at WRITE time against each sibling project (there is no
+    // launching user for an agent run, so attach IS the consent event).
+    actorUserId?: string | null;
     patch: {
       enabled?: boolean;
       runnerOverrideId?: string | null;
@@ -384,6 +446,7 @@ export async function updateAgentLink(
       // ADR-156: per-link cross-project reach grant. Same idiom as the Brain
       // axes — explicit true grants, explicit false revokes, absent is untouched.
       crossProjectReach?: boolean;
+      contextRepos?: ContextRepoDecl[] | null;
       schedules?: AgentScheduleInput[];
       schedulesRevision?: number;
     };
@@ -520,6 +583,18 @@ export async function updateAgentLink(
     // a schedules replacement the CAS predicate fences the grant too.
     if (input.patch.crossProjectReach !== undefined) {
       set.crossProjectReach = input.patch.crossProjectReach;
+    }
+    // ADR-157 D11: there is no launching user for an agent run, so the ATTACH
+    // action is the consent event — authorization happens HERE, at write time,
+    // not at launch. SET and CLEAR are symmetric: an explicit null clears the
+    // declaration, an array replaces it wholesale, and an absent field leaves
+    // it untouched. Never an `if (!x) continue` skip.
+    if (input.patch.contextRepos !== undefined) {
+      set.contextRepos = await authorizeContextRepos(
+        tx,
+        input.actorUserId,
+        input.patch.contextRepos,
+      );
     }
 
     if (input.patch.canWriteBrain !== undefined) {

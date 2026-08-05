@@ -1003,14 +1003,14 @@ reformats ~60 unrelated files).
   next install must clear the resolved value — no `if (!x) continue` write loop. Both
   halves are mandatory tests.
 
-- [ ] **T28 — Attach-side declaration + write-time authorization.**
+- [x] **T28 — Attach-side declaration + write-time authorization.**
   `agent_project_links.context_repos` on the same aggregating PATCH as T24. At **write
   time**, verify the acting admin holds `readRepoFiles` on every referenced sibling project
   and that each slug resolves to an active project — refuse `PRECONDITION` naming the
   offending slug. `agents.recommended.context_repos` is read as **prefill only** in the
   attach modal (never an implicit grant), matching the ADR-089 `recommended` convention.
 
-- [ ] **T29 — Phase-6 tests.**
+- [x] **T29 — Phase-6 tests.**
   Manifest-load: declaring `context_repos` at `engine_min` 3.3.0 refuses; at 3.4.0 loads;
   unknown/over-max array refuses. **One case per node type** (`ai_coding`, `judge`,
   `orchestrator`) plus a negative case proving a `cli` node declaring `context_repos` is

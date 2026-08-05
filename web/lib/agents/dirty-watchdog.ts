@@ -50,8 +50,7 @@ const AGENT_MATERIALIZATION_MUTEX_FILES = [
   "mutex.sqlite-shm",
   "mutex.sqlite-wal",
 ] as const;
-const AGENT_MATERIALIZATION_INDEX_RELATIVE =
-  `${AGENT_MATERIALIZATION_ROOT_RELATIVE}/index.json`;
+const AGENT_MATERIALIZATION_INDEX_RELATIVE = `${AGENT_MATERIALIZATION_ROOT_RELATIVE}/index.json`;
 
 // ADR-090 L2 (materialize-only, ADR-041 boundary unchanged): instructed
 // deny rules for write-class tools. Best-effort instruction for well-behaved
@@ -350,9 +349,7 @@ function porcelainLinePaths(line: string): string[] {
 }
 
 function pathMatchesOwnedPath(changedPath: string, ownedPath: string): boolean {
-  return (
-    changedPath === ownedPath || changedPath.startsWith(`${ownedPath}/`)
-  );
+  return changedPath === ownedPath || changedPath.startsWith(`${ownedPath}/`);
 }
 
 // A rename touches both names. It is ignorable only when every name is
@@ -390,14 +387,13 @@ export async function checkRepoReadDirt(
 
   try {
     const recordedRunIds = await listAgentMaterializationRunIds(repoPath);
-    const materializationRunIds = [
-      ...new Set([...recordedRunIds, runId]),
-    ];
+    const materializationRunIds = [...new Set([...recordedRunIds, runId])];
     const pathsByRun = await Promise.all(
       materializationRunIds.map((materializationRunId) =>
         agentMaterializationPathsForRun(repoPath, materializationRunId),
       ),
     );
+
     ownedMaterializationPaths = [
       ...pathsByRun.flat(),
       ...materializationMetadataPaths(materializationRunIds),

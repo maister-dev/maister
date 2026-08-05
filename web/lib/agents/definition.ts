@@ -122,11 +122,7 @@ export function agentDefinitionArtifactPathForStem(stem: string): string {
   // traversal-shaped standalone segments must remain encoded in this
   // display-only path for malformed directory entries.
   const safeSegment =
-    stem === "."
-      ? "%2E"
-      : stem === ".."
-        ? "%2E%2E"
-        : encodeURIComponent(stem);
+    stem === "." ? "%2E" : stem === ".." ? "%2E%2E" : encodeURIComponent(stem);
 
   return `maister-agents/${safeSegment}.md`;
 }

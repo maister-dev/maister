@@ -194,12 +194,15 @@ function globToRegExp(glob: string): RegExp {
   return new RegExp(`^${re}$`);
 }
 
-// Resolve a toolCall path to a worktree-relative POSIX path, or null when it
-// escapes the worktree (an absolute path outside it, or a `..` traversal, or the
-// worktree root itself). An out-of-tree write is never in-lane.
-function toWorktreeRelative(worktreePath: string, p: string): string | null {
-  const abs = path.isAbsolute(p) ? p : path.resolve(worktreePath, p);
-  const rel = path.relative(worktreePath, abs);
+// Resolve a toolCall path to a root-relative POSIX path, or null when it escapes
+// the root (an absolute path outside it, or a `..` traversal, or the root
+// itself). An out-of-tree write is never in-lane. THE single containment
+// resolver: path_guard reads the relative path to match its globs, and the
+// ADR-157 context-mount guard reads only "not null" — two resolvers would
+// diverge.
+export function toRootRelative(root: string, p: string): string | null {
+  const abs = path.isAbsolute(p) ? p : path.resolve(root, p);
+  const rel = path.relative(root, abs);
 
   if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) return null;
 
@@ -235,7 +238,7 @@ export function resolvePathGuardDecision(args: {
     return { decision: "deny", reason: "kind_only_fallback" };
   }
 
-  const rel = toWorktreeRelative(worktreePath, writePath);
+  const rel = toRootRelative(worktreePath, writePath);
 
   // Out-of-tree writes are never in-lane, regardless of the allow-set.
   if (rel === null) return { decision: "deny", reason: "out_of_lane" };

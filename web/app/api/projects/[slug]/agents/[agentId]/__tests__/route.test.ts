@@ -81,6 +81,9 @@ describe("PATCH /api/projects/[slug]/agents/[agentId] config (ADR-111)", () => {
     expect(mocks.updateAgentLink).toHaveBeenCalledWith({
       projectId: "project-1",
       agentId: "core:triager",
+      // ADR-157: the acting operator now rides along so the service can
+      // authorize `contextRepos` against each sibling at write time.
+      actorUserId: "user-1",
       patch: {
         config: { auto_enqueue: "always", detect_duplicates: false },
       },
@@ -93,6 +96,9 @@ describe("PATCH /api/projects/[slug]/agents/[agentId] config (ADR-111)", () => {
     expect(mocks.updateAgentLink).toHaveBeenCalledWith({
       projectId: "project-1",
       agentId: "core:triager",
+      // ADR-157: the acting operator now rides along so the service can
+      // authorize `contextRepos` against each sibling at write time.
+      actorUserId: "user-1",
       patch: { config: null },
     });
   });
@@ -123,6 +129,9 @@ describe("PATCH /api/projects/[slug]/agents/[agentId] config (ADR-111)", () => {
     expect(mocks.updateAgentLink).toHaveBeenCalledWith({
       projectId: "project-1",
       agentId: "core:triager",
+      // ADR-157: the acting operator now rides along so the service can
+      // authorize `contextRepos` against each sibling at write time.
+      actorUserId: "user-1",
       patch: {
         enabled: true,
         branchBase: "develop",

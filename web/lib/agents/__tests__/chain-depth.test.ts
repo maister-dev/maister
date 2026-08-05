@@ -43,7 +43,10 @@ describe("resolveAgentChainDepth (ADR-156 D7)", () => {
     "seeds 0 for a %s trigger — a fresh chain, not a continuation",
     async (source) => {
       await expect(
-        resolveAgentChainDepth({ trigger: { source }, db: stubDb({}) as never }),
+        resolveAgentChainDepth({
+          trigger: { source },
+          db: stubDb({}) as never,
+        }),
       ).resolves.toEqual({ depth: 0, atCap: false });
     },
   );

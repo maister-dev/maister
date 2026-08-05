@@ -354,10 +354,7 @@ describe("project agent links (attach panel service)", () => {
           agentId: fx.agentId,
           patch: {
             schedulesRevision: await revision(),
-            schedules: [
-              { triggerType: "mention" },
-              { triggerType: "mention" },
-            ],
+            schedules: [{ triggerType: "mention" }, { triggerType: "mention" }],
           },
         },
         db,

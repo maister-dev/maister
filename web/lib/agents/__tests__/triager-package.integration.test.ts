@@ -223,10 +223,7 @@ async function linkAndBindFromRecommended(
   );
 
   // Seed the trigger binding from the definition's recommended.events.
-  const recommendedEvents = [
-    "task.created",
-    "task.triage_requeued",
-  ];
+  const recommendedEvents = ["task.created", "task.triage_requeued"];
 
   await pool.query(
     `INSERT INTO "agent_schedules" ("id", "agent_id", "project_id", "trigger_type", "event_match", "enabled")

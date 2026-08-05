@@ -339,9 +339,10 @@ describe("agent_triggers outbox consumer (ADR-086/087)", () => {
       }),
     ]);
 
-    const runs = await pool.query(`SELECT "id" FROM "runs" WHERE "agent_id" = $1`, [
-      mentionAgent,
-    ]);
+    const runs = await pool.query(
+      `SELECT "id" FROM "runs" WHERE "agent_id" = $1`,
+      [mentionAgent],
+    );
     const outcome = await pool.query(
       `SELECT "last_outcome", "last_attempt_at" FROM "agent_schedules" WHERE "agent_id" = $1`,
       [mentionAgent],
@@ -747,9 +748,11 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
     const { agentId, scheduleId } = await seedMentionAgent({ id: "m-launch" });
     const taskId = await seedTask();
 
-    await triggers.buildAgentTriggersConsumer({ db }).handle([
-      commentEvent({ id: 5001, taskId, mentionedAgentIds: [agentId] }),
-    ]);
+    await triggers
+      .buildAgentTriggersConsumer({ db })
+      .handle([
+        commentEvent({ id: 5001, taskId, mentionedAgentIds: [agentId] }),
+      ]);
 
     const runs = await pool.query(
       `SELECT "task_id", "trigger_event_id", "trigger_source", "status", "agent_schedule_id", "trigger_payload"
@@ -782,9 +785,11 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
   it("skips the whole branch when the event carries no task id", async () => {
     const { agentId, scheduleId } = await seedMentionAgent({ id: "m-notask" });
 
-    await triggers.buildAgentTriggersConsumer({ db }).handle([
-      commentEvent({ id: 5002, taskId: null, mentionedAgentIds: [agentId] }),
-    ]);
+    await triggers
+      .buildAgentTriggersConsumer({ db })
+      .handle([
+        commentEvent({ id: 5002, taskId: null, mentionedAgentIds: [agentId] }),
+      ]);
 
     expect(await runCount(agentId)).toBe(0);
     expect(await outcomeOf(scheduleId!)).toMatchObject({ last_outcome: null });
@@ -802,9 +807,11 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
     });
     const taskId = await seedTask();
 
-    await triggers.buildAgentTriggersConsumer({ db }).handle([
-      commentEvent({ id: 5003, taskId, mentionedAgentIds: [agentId] }),
-    ]);
+    await triggers
+      .buildAgentTriggersConsumer({ db })
+      .handle([
+        commentEvent({ id: 5003, taskId, mentionedAgentIds: [agentId] }),
+      ]);
 
     expect(await runCount(agentId)).toBe(0);
     expect(await suppressionRows(taskId)).toHaveLength(0);
@@ -884,9 +891,11 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
         [randomUUID(), projectId, taskId, agentId, status],
       );
 
-      await triggers.buildAgentTriggersConsumer({ db }).handle([
-        commentEvent({ id: 5006, taskId, mentionedAgentIds: [agentId] }),
-      ]);
+      await triggers
+        .buildAgentTriggersConsumer({ db })
+        .handle([
+          commentEvent({ id: 5006, taskId, mentionedAgentIds: [agentId] }),
+        ]);
 
       expect(await runCount(agentId)).toBe(2);
       expect(await suppressionRows(taskId)).toHaveLength(0);
@@ -930,7 +939,9 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
 
     await triggers
       .buildAgentTriggersConsumer({ db, launch })
-      .handle([commentEvent({ id: 5008, taskId, mentionedAgentIds: [agentId] })]);
+      .handle([
+        commentEvent({ id: 5008, taskId, mentionedAgentIds: [agentId] }),
+      ]);
 
     expect(await outcomeOf(scheduleId!)).toMatchObject({
       last_outcome: "queued",
@@ -1007,9 +1018,11 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
 
     const taskId = await seedTask();
 
-    await triggers.buildAgentTriggersConsumer({ db }).handle([
-      commentEvent({ id: 5011, taskId, mentionedAgentIds: [agentId] }),
-    ]);
+    await triggers
+      .buildAgentTriggersConsumer({ db })
+      .handle([
+        commentEvent({ id: 5011, taskId, mentionedAgentIds: [agentId] }),
+      ]);
 
     expect(await runCount(agentId)).toBe(1);
     expect(await outcomeOf(scheduleId!)).toMatchObject({

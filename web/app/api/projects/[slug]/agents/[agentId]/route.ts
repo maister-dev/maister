@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { contextRepoSchema } from "@/lib/config.schema";
 import { agentsErrorResponse } from "@/lib/agents/admin-shared";
 import { detachAgent, updateAgentLink } from "@/lib/agents/project-links";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
@@ -61,6 +62,9 @@ const patchBodySchema = z
     // `schedulesRevision` CAS predicate — so a stale editor cannot re-grant
     // reach off a view that has since changed.
     crossProjectReach: z.boolean().optional(),
+    // ADR-157: read-only sibling repos this attachment's runs may read.
+    // Nullable so an operator can CLEAR the declaration; absent leaves it.
+    contextRepos: z.array(contextRepoSchema).max(8).nullable().optional(),
     schedules: z.array(scheduleSchema).max(16).optional(),
     schedulesRevision: z.number().int().min(1).optional(),
   })
@@ -108,7 +112,7 @@ export async function PATCH(
   const { slug, agentId: rawAgentId } = await params;
 
   try {
-    await requireActiveSession();
+    const actor = await requireActiveSession();
     const agentId = decodeRouteParam(rawAgentId, "agentId");
 
     const project = await resolveProject(slug);
@@ -131,6 +135,7 @@ export async function PATCH(
     await updateAgentLink({
       projectId: project.id,
       agentId,
+      actorUserId: actor.id,
       patch: {
         ...rest,
         ...(configValues !== undefined ? { config: configValues } : {}),

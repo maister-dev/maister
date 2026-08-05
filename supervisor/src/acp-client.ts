@@ -19,6 +19,7 @@ import {
   getAdapterRuntime,
   resolveResumeAction,
 } from "./adapter-registry";
+import { resolveContextMountDecision } from "./context-mounts";
 import {
   classifyProgressUpdate,
   extractToolIdentity,
@@ -694,6 +695,46 @@ export async function createAcpConnection(
         }
       }
 
+      // ADR-157 (L2): read-only sibling-repo context mounts. UNCONDITIONAL
+      // whenever the session declares mounts — deliberately NOT opt-in through
+      // settings.hooks, because the read-only contract is the mount's whole
+      // point. Placed AFTER the M40 interceptor so a denied write still feeds the
+      // repetition / no_progress liveness breakers, and BEFORE capability_guard +
+      // B1 so auto-approve can never bypass it. Deny shape mirrors path_guard:
+      // the tool call is cancelled and the run continues.
+      if (record.contextMounts && record.contextMounts.length > 0) {
+        const mountDecision = await resolveContextMountDecision({
+          mounts: record.contextMounts,
+          toolCall: tc,
+        });
+
+        if (mountDecision.decision === "deny") {
+          logger.warn(
+            {
+              sessionId,
+              toolKind: tc.kind,
+              mountSlug: mountDecision.mount.slug,
+              mountPath: mountDecision.mount.path,
+              path: mountDecision.path,
+            },
+            "[context-mount] write denied — sibling-repo mount is read-only (L2)",
+          );
+
+          return { outcome: { outcome: "cancelled" } };
+        }
+
+        if (
+          mountDecision.decision === "unverifiable" &&
+          !record.contextMountFallbackWarned
+        ) {
+          record.contextMountFallbackWarned = true;
+          logger.warn(
+            { sessionId, toolKind: tc.kind, adapter: args.adapter },
+            "[context-mount] adapter omits toolCall.locations — write-class calls cannot be matched against mount roots (L3 dirty check backstops)",
+          );
+        }
+      }
+
       // ADR-130: capability_guard — enforce strict tools/mcps by tool identity.
       // Runs AFTER path_guard and BEFORE B1 so an out-of-profile call is denied even
       // on unattended/auto-approve sessions. Armed only when the session carries a
@@ -1142,6 +1183,10 @@ export async function sendPromptOnConnection(
     stepId: string;
     prompt: string;
     contentBlocks?: acp.ContentBlock[];
+    // ADR-157: rendered read-only context-mount preamble, PREPENDED as its own
+    // text block (the caller decides when — once per session). Absent → the
+    // prompt is byte-identical to a mount-less run.
+    preamble?: string;
     // Interrupt: when the turn ends with the `cancelled` stop reason and this
     // returns true, the cancel was operator-requested (session/cancel) — the
     // response is returned verbatim instead of throwing. A `cancelled` reason
@@ -1153,10 +1198,15 @@ export async function sendPromptOnConnection(
 ): Promise<acp.PromptResponse> {
   // T5.4: forward the web tier's assembled content blocks verbatim; otherwise
   // wrap the plain string into a single text block (verbatim-forward).
-  const prompt: acp.ContentBlock[] =
+  const body: acp.ContentBlock[] =
     args.contentBlocks && args.contentBlocks.length > 0
       ? args.contentBlocks
       : [{ type: "text", text: args.prompt }];
+  // ADR-157: the mount preamble is a PREPENDED block of its own — the caller's
+  // blocks are still forwarded verbatim, never rewritten.
+  const prompt: acp.ContentBlock[] = args.preamble
+    ? [{ type: "text", text: args.preamble }, ...body]
+    : body;
 
   logger.info(
     {

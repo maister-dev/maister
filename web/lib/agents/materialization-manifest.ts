@@ -1,6 +1,13 @@
 import "server-only";
 
-import { lstat, mkdir, readFile, readdir, realpath, rm } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+} from "node:fs/promises";
 import path from "node:path";
 
 import pino from "pino";
@@ -265,7 +272,9 @@ export async function assertSafeAgentMaterializationPath(
     path.isAbsolute(relativePath) ||
     relativePath.includes("\\") ||
     relativePath !== path.posix.normalize(relativePath) ||
-    relativePath.split("/").some((segment) => segment === "." || segment === "..")
+    relativePath
+      .split("/")
+      .some((segment) => segment === "." || segment === "..")
   ) {
     throw new MaisterError(
       "CONFIG",
@@ -630,8 +639,8 @@ export async function releaseAgentMaterialization(
         cwd,
         ownershipState: "released",
         restoredPathCount: removable.length,
-        preservedPathCount: [...preservedPaths].filter(
-          (relativePath) => record.paths.includes(relativePath),
+        preservedPathCount: [...preservedPaths].filter((relativePath) =>
+          record.paths.includes(relativePath),
         ).length,
         remainingLeaseCount: Object.keys(leases).length,
       },

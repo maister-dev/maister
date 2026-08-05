@@ -190,6 +190,31 @@ export type SessionEnforcementProfile = z.infer<
   typeof SessionEnforcementProfileSchema
 >;
 
+// ADR-157: ONE read-only sibling-repo context mount the web tier already
+// materialized for this session. A first-class request field (the
+// `capabilityProfilePath` precedent) — never an `executor.env` overload, which
+// is the provider-secret channel. The supervisor derives
+// `MAISTER_CONTEXT_REPOS` + the prompt preamble from it and denies write-class
+// tool calls resolving under `path`; it never resolves a slug or a ref, and
+// never creates or removes a worktree. Bounds mirror
+// `StartSessionRequest.contextMounts[]` in docs/api/supervisor.openapi.yaml.
+export const ContextMountSchema = z
+  .object({
+    slug: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "mount slug must be kebab-case"),
+    path: worktreePathSchema,
+    ref: z.string().min(1).max(255),
+    // 7..64 per the spec: an abbreviated sha and a sha-256 object id are both
+    // in-contract, so this deliberately carries no 40-hex pattern.
+    commit: z.string().min(7).max(64),
+  })
+  .strict();
+
+export type ContextMount = z.infer<typeof ContextMountSchema>;
+
 export const StartSessionRequestSchema = z
   .object({
     runId: z
@@ -285,6 +310,11 @@ export const StartSessionRequestSchema = z
     // ADR-130: derived capability-enforcement set (capability_guard). Optional;
     // present only for a session enforcing strict tools/mcps.
     enforcementProfile: SessionEnforcementProfileSchema.optional(),
+    // ADR-157: read-only sibling-repo context mounts (max 8). Non-empty arms
+    // three derived behaviors: `MAISTER_CONTEXT_REPOS` on the ACP child, the
+    // one-shot prompt preamble, and the UNCONDITIONAL write-class path guard in
+    // the permission handler.
+    contextMounts: z.array(ContextMountSchema).max(8).optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -577,6 +607,18 @@ export type SessionRecord = {
   // ADR-108 (M40): WARN-once-per-session guard for the kind-only path-guard
   // fallback (adapters that do not populate toolCall.locations).
   hookFallbackWarned?: boolean;
+  // ADR-157: the read-only sibling-repo mounts materialized for this session.
+  // Arms the UNCONDITIONAL L2 write guard in the permission handler (not opt-in
+  // via hooksConfig — read-only is the mount's whole point) and the prompt
+  // preamble. Absent/empty → both are inert.
+  contextMounts?: ContextMount[];
+  // ADR-157: the mount preamble is rendered onto the FIRST prompt of this
+  // session only. A resume rebuilds this record, so a respawn re-grounds.
+  contextMountPreambleSent?: boolean;
+  // ADR-157: WARN-once-per-session guard for a write-class call whose path the
+  // adapter never reported (no toolCall.locations) — the mount guard cannot
+  // verify such a call, and L3 (terminal dirty check) is the backstop.
+  contextMountFallbackWarned?: boolean;
   // Interrupt (session/cancel): set by POST /sessions/:id/cancel just before the
   // protocol-level cancel notification, so the in-flight prompt's `cancelled`
   // stop reason is classified as a user interrupt (turn ends, session stays

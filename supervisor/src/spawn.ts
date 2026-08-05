@@ -115,6 +115,15 @@ export function buildChildEnv(
     ...(request.capabilityProfilePath
       ? { MAISTER_CAPABILITY_PROFILE_PATH: request.capabilityProfilePath }
       : {}),
+    // ADR-157 (D8b): self-describing JSON array of the request's mounts — a
+    // `:`-joined path list would drop the slug and the resolved commit, the two
+    // fields a consumer wants. Request-derived like MAISTER_CAPABILITY_PROFILE_PATH
+    // above, never an executor.env overload. Omitted entirely when the session has
+    // no mounts (never an empty array). Reaches the ACP child ONLY — cli/check
+    // children run under the ADR-153 allow-list, which excludes this var.
+    ...(request.contextMounts && request.contextMounts.length > 0
+      ? { MAISTER_CONTEXT_REPOS: JSON.stringify(request.contextMounts) }
+      : {}),
     ...(request.adapterLaunch?.env ?? {}),
   };
 }
@@ -325,6 +334,9 @@ export async function spawnSession(
     // ADR-130: arm the capability_guard interceptor with the web-derived profile.
     // Counters start fresh (in-memory; a resume rebuilds this record from zero).
     enforcementProfile: request.enforcementProfile,
+    // ADR-157: arm the unconditional read-only mount guard + the prompt preamble
+    // with the mounts the web tier materialized for this session.
+    contextMounts: request.contextMounts,
     capabilityDenyCount: 0,
     capabilityPendingWriteIds: new Set<string>(),
     repeatCount: 0,
