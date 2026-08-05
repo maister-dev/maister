@@ -153,6 +153,9 @@ export async function POST(
               taskId,
               body: body.body,
               actor,
+              // ADR-156: server-derived from the deterministic
+              // `agent-run:<runId>` token name, never a request field.
+              producedByRunId: ctx.actor.boundRunId,
               ...(actor.type === "system"
                 ? {
                     activityPayloadExtra: {

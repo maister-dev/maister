@@ -69,6 +69,7 @@ function buildRow(over?: {
     canReadBrain: over?.canReadBrain ?? false,
     canWriteBrain: over?.canWriteBrain ?? false,
     memoryEnabled: false,
+    crossProjectReach: false,
     schedulesRevision: 1,
     schedules: [],
     agent: {

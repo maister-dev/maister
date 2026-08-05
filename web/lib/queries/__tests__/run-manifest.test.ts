@@ -53,7 +53,7 @@ describe("loadRunManifest — stored engine compatibility", () => {
       manifest: null,
       incompatibility: {
         kind: "engine_incompatible",
-        message: "engine 3.3.0 > engine_max 2.2.0",
+        message: "engine 3.4.0 > engine_max 2.2.0",
       },
     });
   });

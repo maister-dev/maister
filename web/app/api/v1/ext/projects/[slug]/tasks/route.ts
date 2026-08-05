@@ -12,7 +12,7 @@ import {
   httpStatusForExtCode,
   recordRequiredTokenAudit,
 } from "@/lib/tokens/ext-handler";
-import { actorUserIdForToken } from "@/lib/tokens/verify";
+import { socialActorForToken, actorUserIdForToken } from "@/lib/tokens/verify";
 
 const ENDPOINT_TASKS = "POST /api/v1/ext/projects/[slug]/tasks";
 const ENDPOINT_TASKS_GET = "GET /api/v1/ext/projects/[slug]/tasks";
@@ -77,6 +77,13 @@ export async function POST(
               {
                 projectId: ctx.projectId,
                 actorUserId: actorUserIdForToken(ctx.actor),
+                // ADR-156: an agent token cannot be expressed as an
+                // actorUserId — without this the emitted `task.created` is
+                // `actor_type='system'` and the chain-depth cap never binds.
+                actor: socialActorForToken(ctx.actor),
+                // Server-derived from the deterministic `agent-run:<runId>`
+                // token name, never a request field.
+                producedByRunId: ctx.actor.boundRunId,
               },
               tx,
             );

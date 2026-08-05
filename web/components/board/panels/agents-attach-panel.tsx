@@ -66,6 +66,9 @@ export type AttachedAgentRow = {
   canWriteBrain: boolean;
   // (ADR-152) Per-link agent-memory axis — a SEPARATE store from Brain.
   memoryEnabled: boolean;
+  // (ADR-156) Per-link cross-project reach grant — admits an agent token minted
+  // for ANOTHER project into this one, and only while the link is enabled.
+  crossProjectReach: boolean;
   schedulesRevision: number;
   schedules: AttachScheduleView[];
   agent: {
@@ -149,6 +152,13 @@ function policySummary(row: AttachedAgentRow): string {
   // (ADR-152) the agent-memory axis, a sibling of brain:rw and NOT implied by it.
   if (row.memoryEnabled) {
     parts.push("mem");
+  }
+  // (ADR-156) a cross-project grant is security-relevant, so it must be visible
+  // in the view-only row rather than only behind the edit popup. `reach!` when
+  // granted but inert (attachment disabled) — a grant that looks active and is
+  // not would be the dishonest reading.
+  if (row.crossProjectReach) {
+    parts.push(row.enabled ? "reach" : "reach!");
   }
 
   return parts.length > 0 ? parts.join(" · ") : "—";
@@ -462,6 +472,9 @@ function rowFromAvailable(agent: AvailableAgentRow): AttachedAgentRow {
     // value server-side (D21'), and the row then renders the real one — which
     // is why the Memory toggle is edit-only.
     memoryEnabled: false,
+    // (ADR-156) Deny-by-default on attach: reach is never prefilled from a
+    // definition — the admin's explicit grant in the modal is the consent event.
+    crossProjectReach: false,
     schedulesRevision: 1,
     schedules: [
       ...(rec?.cron

@@ -4,6 +4,7 @@ import {
   classifyFlowManifestShape,
   LEGACY_STEPS_REFUSAL_MESSAGE,
 } from "@/lib/flows/manifest-shape";
+import { CONTEXT_REPOS_MAX } from "@/lib/context-mounts/types";
 import { ADAPTER_IDS, PROVIDER_KINDS } from "@/lib/acp-runners/adapter-support";
 
 // Replicated from flow-paths.ts to avoid pulling the `server-only` constraint
@@ -731,6 +732,23 @@ export function allNodeMcpRefs(mcps: NodeMcpsConfig | undefined): string[] {
   return [...new Set([...required, ...additional])];
 }
 
+// ADR-157: read-only sibling-repo context mounts. `project` is a project SLUG
+// resolved at launch — never an id, because a declaration travels inside
+// portable flow packages that cannot know an installation's project ids.
+// Available on `ai_coding`, `judge`, and `orchestrator` only: all three dispatch
+// to the same ACP-session arm. `cli`/`check` are excluded by construction —
+// their settings schemas are `.strict()` and simply have no such key.
+export const contextRepoSchema = z
+  .object({
+    project: z.string().min(1),
+    ref: z.string().min(1).optional(),
+  })
+  .strict();
+
+export const contextReposSchema = z
+  .array(contextRepoSchema)
+  .max(CONTEXT_REPOS_MAX);
+
 export const aiCodingSettingsSchema = z
   .object({
     runner_type: z.literal("acp").default("acp"),
@@ -760,6 +778,7 @@ export const aiCodingSettingsSchema = z
     restrictions: z.array(z.string().min(1)).optional(),
     enforcement: enforcementMapSchema.optional(),
     hooks: hooksSettingsSchema.optional(),
+    context_repos: contextReposSchema.optional(),
   })
   .strict();
 
@@ -795,6 +814,7 @@ export const judgeSettingsSchema = z
     limits: settingsLimitsSchema.optional(),
     enforcement: enforcementMapSchema.optional(),
     hooks: hooksSettingsSchema.optional(),
+    context_repos: contextReposSchema.optional(),
   })
   .strict();
 

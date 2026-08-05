@@ -7,8 +7,8 @@ import {
 import { nodeOutputSchema } from "@/lib/config.schema";
 
 describe("config.schema — artifact produces[] fields", () => {
-  it("asserts MAISTER_ENGINE_VERSION is 3.3.0 for MAISTER_FLOW_DIR node-action injection (ADR-154)", () => {
-    expect(MAISTER_ENGINE_VERSION).toBe("3.3.0");
+  it("asserts MAISTER_ENGINE_VERSION is 3.4.0 for settings.context_repos sibling mounts (ADR-157)", () => {
+    expect(MAISTER_ENGINE_VERSION).toBe("3.4.0");
   });
 
   it("asserts GRAPH_MIN_ENGINE_VERSION remains 1.1.0", () => {

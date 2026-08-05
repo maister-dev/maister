@@ -56,6 +56,11 @@ const patchBodySchema = z
     canWriteBrain: z.boolean().optional(),
     // ADR-152: per-link agent-memory axis — a SEPARATE store from Brain.
     memoryEnabled: z.boolean().optional(),
+    // ADR-156: per-link cross-project reach grant. Rides THIS aggregating
+    // PATCH — and therefore the same transaction and the same
+    // `schedulesRevision` CAS predicate — so a stale editor cannot re-grant
+    // reach off a view that has since changed.
+    crossProjectReach: z.boolean().optional(),
     schedules: z.array(scheduleSchema).max(16).optional(),
     schedulesRevision: z.number().int().min(1).optional(),
   })
@@ -64,7 +69,8 @@ const patchBodySchema = z
     message: "at least one field is required",
   })
   .refine(
-    (body) => body.schedules === undefined || body.schedulesRevision !== undefined,
+    (body) =>
+      body.schedules === undefined || body.schedulesRevision !== undefined,
     { message: "schedulesRevision is required when schedules are replaced" },
   );
 

@@ -36,6 +36,7 @@ const ATTACHED: AttachedAgentRow = {
   canReadBrain: true,
   canWriteBrain: false,
   memoryEnabled: false,
+  crossProjectReach: false,
   schedulesRevision: 1,
   schedules: [
     {
@@ -114,6 +115,26 @@ describe("AgentsAttachPanel (M34 D11)", () => {
     expect(html).toContain("budget:terminate_restorable");
     // ADR-122: canReadBrain=true / canWriteBrain=false → the read-only chip.
     expect(html).toContain("brain:r");
+    // ADR-156: no cross-project grant → no reach chip at all.
+    expect(html).not.toContain("reach");
+  });
+
+  // ADR-156: a cross-project grant is security-relevant, so the view-only row
+  // must show it — a grant visible only behind the edit popup is not visible.
+  it("surfaces a cross-project reach grant in the policy column, honestly", () => {
+    const granted = render({
+      attached: [{ ...ATTACHED, crossProjectReach: true }],
+    });
+
+    expect(granted).toContain("reach");
+    expect(granted).not.toContain("reach!");
+
+    // Granted but inert (attachment disabled) must NOT read as active.
+    const inert = render({
+      attached: [{ ...ATTACHED, crossProjectReach: true, enabled: false }],
+    });
+
+    expect(inert).toContain("reach!");
   });
 
   it("renders each agent's effective MCPs resolved through bindings (ADR-129 T7.2)", () => {

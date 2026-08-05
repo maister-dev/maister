@@ -60,6 +60,16 @@ export const TOKEN_SCOPES = [
 // tokens — task/comment/triage/relations ops only.
 export const AGENT_TOKEN_SCOPES = [
   "tasks:read",
+  // ADR-156 D6b: agents may create tasks. This is a SAME-PROJECT privilege
+  // expansion as much as a cross-project one — every agent in every project
+  // gains it the moment this grant lands, which is what forced the
+  // `runs.agent_chain_depth` cap to cover same-project A↔B loops too. The other
+  // two legs of the agent-gains-an-op triple already exist: the route
+  // `POST /api/v1/ext/projects/[slug]/tasks` declares `scopeLabel:
+  // "tasks:create"` and `PROJECT_ACTION_BY_SCOPE` maps it to `createTask`.
+  // A task created with no flowId is a flowless simple-intent task —
+  // `unconfigured` until triage fills the flow (the existing ADR-112 path).
+  "tasks:create",
   // M-triager (ADR-112 §6.2): clarify mode sharpens the task title/prompt via
   // `task_update` before recording the verdict.
   "tasks:update",
@@ -81,6 +91,34 @@ export const AGENT_TOKEN_SCOPES = [
   // ADR-152: in the fixed agent-token set; the per-link memory_enabled axis
   // still gates the actual write.
   "agent_memory:write",
+] as const satisfies readonly (typeof TOKEN_SCOPES)[number][];
+
+// ADR-156 D6: the write-safe subset an agent token minted in ANOTHER project
+// may exercise here, intersected with the token's own scopes at check time.
+// This is an ALLOW-LIST, never a deny-list: a scope added to AGENT_TOKEN_SCOPES
+// later is refused cross-project by default and must be added here on purpose.
+//
+// Deliberately excluded, and why:
+//   runs:*             — never in AGENT_TOKEN_SCOPES anyway; an outside agent
+//                        must not spend another project's execution budget.
+//   tasks:update       — mutating a sibling's EXISTING task content from
+//   tasks:triage         outside; creating a new task is additive, editing is
+//                        not.
+//   hitl:request       — would create human-input demand in a project whose
+//                        humans never opted into this agent.
+//   flows:read         — catalog disclosure about a project the agent is not
+//   runners:read         attached to for execution.
+//   memory:read        — project-scoped knowledge stores, each gated by its own
+//   memory:write         per-link axis (can_read_brain / can_write_brain /
+//   agent_memory:write   memory_enabled) that reach does not imply.
+export const CROSS_PROJECT_AGENT_SCOPES = [
+  "tasks:read",
+  "tasks:create",
+  "comments:read",
+  "comments:create",
+  "relations:read",
+  "relations:create",
+  "relations:delete",
 ] as const satisfies readonly (typeof TOKEN_SCOPES)[number][];
 
 export const TOKEN_SCOPE_VALUES = [TOKEN_SCOPE_ALL, ...TOKEN_SCOPES] as const;

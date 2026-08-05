@@ -67,7 +67,12 @@ import {
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 import { cancelOpenAgentQuestionsForTaskInTransaction } from "@/lib/services/agent-question";
-import { gcAgeDays, worktreesRoot } from "@/lib/instance-config";
+import { resolveAgentChainDepth } from "@/lib/agents/chain-depth";
+import {
+  gcAgeDays,
+  maxAgentChainDepth,
+  worktreesRoot,
+} from "@/lib/instance-config";
 import { removeOwnedPlainAgentDirectory } from "@/lib/gc/plain-agent-directory-gc";
 import {
   loadActiveRunSession,
@@ -1251,9 +1256,36 @@ export async function launchAgentRun(
     "[ADR-111] resolved agent config snapshot",
   );
 
+  // ADR-156 D7: snapshotted at launch and NEVER re-derived — the enforcement
+  // path must read what this run actually spent, not a projection that can
+  // drift. The consumer checks `atCap` before calling; this refusal is the
+  // backstop for a caller that did not.
+  const chain = await resolveAgentChainDepth({
+    trigger: input.trigger,
+    db: _db,
+  });
+
+  if (chain.atCap) {
+    log.warn(
+      {
+        agentId: input.agentId,
+        projectId: input.projectId,
+        depth: chain.depth,
+        cap: maxAgentChainDepth(),
+        triggerEventId: input.trigger.eventId ?? null,
+      },
+      "agent launch refused: agent chain depth exhausted",
+    );
+    throw new MaisterError(
+      "PRECONDITION",
+      `agent "${input.agentId}": agent chain depth exhausted (${chain.depth} > ${maxAgentChainDepth()})`,
+    );
+  }
+
   const runRow = {
     id: runId,
     runKind: "agent" as const,
+    agentChainDepth: chain.depth,
     agentId: input.agentId,
     executionPolicy,
     agentConfig,

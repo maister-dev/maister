@@ -69,10 +69,16 @@ Fields common to every node: \`id\`, \`type\`, \`transitions\`, \`input\`, \`out
 - **ai_coding / orchestrator**: \`runner_type\`, \`runner\`, \`agent\`, \`model\`,
   \`thinkingEffort\`, \`mcps\`, \`tools\`, \`skills\`, \`settingsProfile\`,
   \`workspaceAccess\`, \`artifactAccess\`, \`permissionMode\`, \`limits\`,
-  \`restrictions\`, \`enforcement\`, \`hooks\` (orchestrator also: \`delegation\`).
+  \`restrictions\`, \`enforcement\`, \`hooks\`, \`context_repos\`
+  (orchestrator also: \`delegation\`).
 - **judge**: \`runner\`, \`mcps\`, \`tools\`, \`skills\`, \`restrictions\`,
-  \`permissionMode\`, \`thinkingEffort\`, \`limits\`, \`enforcement\`, \`hooks\`
-  (\`settings.model\` was REMOVED — judge is runner-bearing).
+  \`permissionMode\`, \`thinkingEffort\`, \`limits\`, \`enforcement\`, \`hooks\`,
+  \`context_repos\` (\`settings.model\` was REMOVED — judge is runner-bearing).
+- \`context_repos\` (engine_min >= 3.4.0, ADR-157) declares READ-ONLY sibling
+  repos this node's session may read: \`[{ project: <slug>, ref?: <branch> }]\`,
+  at most 8. Each is checked out detached under the run dir and every write into
+  it is denied. Available on ai_coding / judge / orchestrator ONLY — \`cli\` and
+  \`check\` are not ACP sessions and reject the key.
 - **human**: \`roles\`, \`assignees\`, \`decisions\`, \`allowFurtherTracks\`,
   \`allowTakeover\`, \`slaHours\`, \`stalenessHint\`, \`returnRequires\`,
   \`criticality\`, and optional \`plan_review\` (engine_min >= 3.1.0):

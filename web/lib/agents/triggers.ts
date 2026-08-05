@@ -6,6 +6,7 @@ import type { DomainEventRow } from "@/lib/db/schema";
 import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { resolveAgentChainDepth } from "@/lib/agents/chain-depth";
 import { launchAgentRun, type LaunchAgentRunResult } from "@/lib/agents/launch";
 import { MENTION_SUPPRESSION_STATUSES } from "@/lib/agents/summonability";
 import { getDb } from "@/lib/db/client";
@@ -116,6 +117,30 @@ function outcomeForLaunch(result: LaunchAgentRunResult): {
 // claim advances next_fire_at from NOW, so missed windows never backfill),
 // then launch. The tick doubles as the sanctioned recovery sweep for agent
 // runs stranded in Pending by a crash between claim and spawn.
+// ADR-156 D7: the second enforcement point. The depth is EVENT-derived, so this
+// asks one question per candidate launch — would this hop exceed the budget?
+// It SKIPS rather than throwing: the domain-event consumer is idempotent, and a
+// throw redelivers the whole window forever.
+async function chainDepthExhausted(
+  _db: Db,
+  eventId: number | string,
+  agentId: string,
+): Promise<boolean> {
+  const chain = await resolveAgentChainDepth({
+    trigger: { source: "domain_event", eventId: Number(eventId) },
+    db: _db,
+  });
+
+  if (chain.atCap) {
+    log.warn(
+      { eventId, agentId, depth: chain.depth, reason: "chain_depth_exhausted" },
+      "agent launch skipped: agent chain depth exhausted",
+    );
+  }
+
+  return chain.atCap;
+}
+
 export async function dispatchDueAgentSchedules(
   opts: { db?: Db; now?: Date; launch?: LaunchFn } = {},
 ): Promise<AgentTickSummary> {
@@ -460,6 +485,8 @@ async function summonMentionedAgents(input: {
         continue;
       }
 
+      if (await chainDepthExhausted(_db, event.id, agentId)) continue;
+
       const result = await launch({
         agentId,
         projectId: binding.projectId,
@@ -595,6 +622,12 @@ export function buildAgentTriggersConsumer(
             continue;
           }
 
+          if (
+            await chainDepthExhausted(_db, event.id, targetAgent.agentId)
+          ) {
+            continue;
+          }
+
           try {
             const result = await launch({
               agentId: targetAgent.agentId,
@@ -726,6 +759,8 @@ export function buildAgentTriggersConsumer(
             });
             continue;
           }
+
+          if (await chainDepthExhausted(_db, event.id, row.agentId)) continue;
 
           ownerSelected = true;
           try {

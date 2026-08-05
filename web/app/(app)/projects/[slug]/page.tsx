@@ -887,6 +887,7 @@ async function AgentsAttachPanelLoader({
         canReadBrain: row.canReadBrain,
         canWriteBrain: row.canWriteBrain,
         memoryEnabled: row.memoryEnabled,
+        crossProjectReach: row.crossProjectReach,
         schedulesRevision: row.schedulesRevision,
         schedules: row.schedules,
         agent: {

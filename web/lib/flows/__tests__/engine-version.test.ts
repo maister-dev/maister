@@ -7,8 +7,8 @@ import {
 } from "@/lib/flows/engine-version";
 
 describe("MAISTER_ENGINE_VERSION", () => {
-  it("is 3.3.0 for MAISTER_FLOW_DIR in the cli/check node-action child env (ADR-154)", () => {
-    expect(MAISTER_ENGINE_VERSION).toBe("3.3.0");
+  it("is 3.4.0 for settings.context_repos sibling mounts (ADR-157)", () => {
+    expect(MAISTER_ENGINE_VERSION).toBe("3.4.0");
   });
 });
 
@@ -19,7 +19,7 @@ describe("isEngineCompatible", () => {
   });
 
   it("is compatible when engine is within [min, max]", () => {
-    expect(isEngineCompatible("0.1.0", "3.3.0").compatible).toBe(true);
+    expect(isEngineCompatible("0.1.0", "3.4.0").compatible).toBe(true);
     expect(
       isEngineCompatible(MAISTER_ENGINE_VERSION, MAISTER_ENGINE_VERSION)
         .compatible,

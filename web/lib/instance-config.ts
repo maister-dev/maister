@@ -114,6 +114,7 @@ const DEFAULT_RECONCILE_SWEEP_INTERVAL_SECONDS = 60;
 const DEFAULT_RECONCILE_GRACE_SECONDS = 90;
 const DEFAULT_RALPH_MAX_ATTEMPTS = 5;
 const DEFAULT_AUTO_RETRY_MAX_ATTEMPTS = 3;
+const DEFAULT_MAX_AGENT_CHAIN_DEPTH = 2;
 const DEFAULT_PROMOTION_CLAIM_TIMEOUT_SECONDS = 300;
 const DEFAULT_ORCHESTRATOR_MAX_DEPTH = 3;
 const DEFAULT_ORCHESTRATOR_MAX_FANOUT = 16;
@@ -166,6 +167,29 @@ export function autoRetryMaxAttempts(): number {
   }
 
   return parsed;
+}
+
+// ADR-156 D7: how many agent→agent trigger hops a chain may spend, across
+// projects AND within one. Floor at 0 (a 0 cap disables agent-triggered agent
+// launches entirely, which is a legitimate operator choice).
+export function maxAgentChainDepth(): number {
+  const raw = process.env.MAISTER_MAX_AGENT_CHAIN_DEPTH;
+
+  if (!raw) return DEFAULT_MAX_AGENT_CHAIN_DEPTH;
+  const parsed = Number.parseInt(raw, 10);
+
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return DEFAULT_MAX_AGENT_CHAIN_DEPTH;
+  }
+
+  return parsed;
+}
+
+// ADR-157: kill-switch for read-only sibling-repo context mounts. When off,
+// declarations are ignored at launch and nothing is checked out — F3's escape
+// hatch, unlike F1 which ships none (see ADR-155's one-way-door note).
+export function contextMountEnabled(): boolean {
+  return process.env.MAISTER_CONTEXT_MOUNT_ENABLED !== "false";
 }
 
 // M19 Phase 1 (T1.C): how long after a run's endedAt its Abandoned/Done

@@ -819,7 +819,7 @@ reformats ~60 unrelated files).
 
 ### Phase 4 — F2 reach grant + ext-handler seam
 
-- [ ] **T19 — Migration 0123: reach grant + agent chain depth.**
+- [x] **T19 — Migration 0123: reach grant + agent chain depth.**
   **Generated, not hand-authored.** Order: edit `web/lib/db/schema.ts` **first**, then
   `pnpm --filter maister-web db:generate` (`drizzle-kit generate`) emits the triple —
   `web/lib/db/migrations/0123_<name>.sql` + the `_journal.json` entry +
@@ -843,7 +843,7 @@ reformats ~60 unrelated files).
   populated dev DB; `select count(*) from agent_project_links where cross_project_reach` = 0;
   `_journal.json`'s newest entry has a matching snapshot file and a monotonic `when`.
 
-- [ ] **T20 — Scope grant + subset + the reach predicate.**
+- [x] **T20 — Scope grant + subset + the reach predicate.**
   - `web/types/token-scopes.ts`: add **`tasks:create` to `AGENT_TOKEN_SCOPES`** (D6b) with a
     comment naming ADR-156 and the fact that this is a same-project expansion too. Verify
     the other two legs of the agent-gains-an-op triple already exist and do not assume it:
@@ -863,7 +863,7 @@ reformats ~60 unrelated files).
   **Logging:** DEBUG the full decision `{agentId, targetProjectId, scopeLabel, reason}` on
   every call; WARN on every deny.
 
-- [ ] **T21 — Wire the reach check into `ext-handler`.**
+- [x] **T21 — Wire the reach check into `ext-handler`.**
   `web/lib/tokens/ext-handler.ts` — a third arm in **both** cross-project refusal sites
   (`:255-274` slug, `:358-377` resolveProjectId): when `actor.tokenKind === "agent"` and
   `actor.agentId` is set and `canAgentReachProject(...)` allows, **continue** instead of
@@ -876,7 +876,7 @@ reformats ~60 unrelated files).
   assert that with a test rather than assuming it, since an unmapped scope silently resolves
   to viewer-level `readBoard`.
 
-- [ ] **T21a — Stamp the producing `run_id` on agent-authored `task.*` domain events.**
+- [x] **T21a — Stamp the producing `run_id` on agent-authored `task.*` domain events.**
   **Without this, D7's same-project arm cannot work — the loop D6b opens stays open.**
   Verified hole: `addTaskComment` calls `emitDomainEvent` **without `runId`**
   ([`web/lib/social/comments.ts:138`](web/lib/social/comments.ts:138)), so
@@ -899,7 +899,7 @@ reformats ~60 unrelated files).
   **RED first:** an integration test asserting `domain_events.run_id IS NOT NULL` for an
   agent-authored `task.comment_added`. It fails today; that failure is the hole.
 
-- [ ] **T22 — Seed `runs.agent_chain_depth` at launch + enforce it on the launch path.**
+- [x] **T22 — Seed `runs.agent_chain_depth` at launch + enforce it on the launch path.**
   **Depends on T21a** — the walk below reads `domain_events.run_id`, which T21a is what
   populates.
   `web/lib/agents/launch.ts` — at run insert, set `agentChainDepth` from the trigger: for
@@ -917,7 +917,7 @@ reformats ~60 unrelated files).
   This is a **launch-time decision the enforcement path reads** — it must be on the run row,
   not re-derived from a projection that can drift after launch.
 
-- [ ] **T23 — F2 tests.**
+- [x] **T23 — F2 tests.**
   Integration (`pnpm test:integration`): agent token from project A reaching B with a
   granted+enabled link succeeds for each subset scope; the same token is 404'd for a scope
   outside the subset; `enabled=false` link → 404; `cross_project_reach=false` → 404;
@@ -972,7 +972,7 @@ reformats ~60 unrelated files).
 
 ### Phase 6 — F3 declaration, schema, engine floor
 
-- [ ] **T26 — Migration 0124: context-repo declaration + launch snapshot.**
+- [x] **T26 — Migration 0124: context-repo declaration + launch snapshot.**
   Same generated flow as T19 — edit `schema.ts` first (typed
   `$type<ContextRepoDecl[]>()` / `$type<ContextMountSnapshot[]>()`), then
   `pnpm --filter maister-web db:generate`; never `--custom`, never hand-written SQL.
@@ -985,7 +985,7 @@ reformats ~60 unrelated files).
   Verify: journal newest entry ↔ matching snapshot, monotonic `when`; migrate on fresh and
   populated DBs.
 
-- [ ] **T27 — Flow DSL: `settings.context_repos` + engine bump to 3.4.0.**
+- [x] **T27 — Flow DSL: `settings.context_repos` + engine bump to 3.4.0.**
   - `web/lib/config.schema.ts`: `contextRepoSchema = z.object({ project: z.string().min(1),
     ref: z.string().min(1).optional() }).strict()`; attach `context_repos:
     z.array(...).max(8).optional()` to the **`ai_coding`, `judge`, and `orchestrator`** node
@@ -1023,7 +1023,7 @@ reformats ~60 unrelated files).
 
 ### Phase 7 — F3 materialization, enforcement, lifecycle
 
-- [ ] **T30 — Mount resolution + creation + launch snapshot.**
+- [x] **T30 — Mount resolution + creation + launch snapshot.**
   New `web/lib/context-mounts/service.ts`:
   - `resolveContextMounts({consumingProjectSlug, runId, decls, db})` → resolve each slug to
     an active project, resolve the committish (`ref` literal, else the sibling's default
@@ -1339,3 +1339,34 @@ different sides (the subset↔action-map guard) — one test, one owner, cited t
    Reaching 12 would mean deleting shipped `(Implemented)` acceptance criteria
    that have tests bound to them. R5a's own remedy is to split the file, which is
    an owner decision. Reported, not silently compressed.
+
+### Additional deviations found during implementation (Phases 4-7)
+
+4. **`createTask` could not express an agent actor at all.** It derived its actor
+   from `actorUserId` only, and `actorUserIdForToken` returns `null` for an agent
+   token — so every agent-created task emitted `task.created` with
+   `actor_type='system'`. That silently disarmed BOTH enforcement points D7
+   depends on: `resolveAgentChainDepth` keys on `actor_type='agent'`, and
+   `triggers.ts` self-exclusion compares `actorType === "agent" && actorId ===
+   agentId`. The loop `tasks:create` opens was therefore unbounded even with the
+   depth column in place, and an agent did not exclude its own task events.
+   Fixed by threading a `SocialActor` through `CreateTaskContext` and passing
+   `socialActorForToken(ctx.actor)` from the ext route; pinned by asserting
+   `actor_type='agent'` AND `run_id` on the emitted row. **`run_id` alone was not
+   enough — T21a as written closed only half the hole.**
+
+5. **`compose.yml` / `compose.production.yml` contain no web or supervisor
+   service block** — only Postgres is containerized (ADR-023; web and supervisor
+   run on the host via pnpm). The plan's deployment-touchpoint table asked for a
+   web `environment:` block that does not exist. The real touchpoints are
+   `.env.example` and the `docs/configuration.md` env table, both done.
+   `MAISTER_CONTEXT_REPOS` is deliberately NOT in `.env.example` as a settable
+   var — the supervisor derives it per child.
+
+6. **Deferred, owner decision (not a defect):** `canAgentReachProject` checks
+   `agent_project_links` only — never `agents.enabled` or `agents.quarantined_at`.
+   An admin disabling an agent row leaves a live run-bound token able to keep
+   reaching cross-project until that run ends. This MATCHES same-project
+   behavior (the token is the authority there too), so tightening it
+   cross-project only would be an inconsistency; tightening both is a scope
+   change beyond this plan.

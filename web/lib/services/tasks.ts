@@ -16,7 +16,11 @@ import {
   formatFlowRefError,
   resolveFlowRef,
 } from "@/lib/flows/resolve-flow-ref";
-import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
+import {
+  actorForUserId,
+  recordTaskActivity,
+  type SocialActor,
+} from "@/lib/social/activity";
 import {
   validateVerdictRefs,
   type PromotionMode,
@@ -56,6 +60,18 @@ export type CreateTaskInput = {
 export type CreateTaskContext = {
   projectId: string;
   actorUserId?: string | null;
+  // ADR-156: the run that authored this task, when one did. Without it
+  // `domain_events.run_id` is NULL for agent-authored `task.created` and the
+  // agent-chain-depth walk has nothing to resolve, so the cap never binds on
+  // the loop `tasks:create` opens.
+  producedByRunId?: string | null;
+  // ADR-156: the authoring actor when it is NOT a user. `actorUserId` alone
+  // cannot express an agent — it degrades to `{type:"system"}` — which made
+  // every agent-created task emit `task.created` with `actor_type='system'`.
+  // That silently disarmed BOTH the chain-depth walk (which keys on
+  // `actor_type='agent'`) and the trigger self-exclusion, leaving the loop
+  // `tasks:create` opens unbounded. Pass the token-derived actor here.
+  actor?: SocialActor;
 };
 
 export async function createTask(
@@ -175,7 +191,7 @@ export async function createTask(
       };
     }
 
-    const actor = actorForUserId(ctx.actorUserId);
+    const actor = ctx.actor ?? actorForUserId(ctx.actorUserId);
 
     await recordTaskActivity(tx, {
       taskId,
@@ -190,6 +206,7 @@ export async function createTask(
       kind: "task.created",
       projectId: ctx.projectId,
       taskId,
+      runId: ctx.producedByRunId ?? null,
       actor,
       payload: {
         taskKey: `${allocated[0].taskKey as string}-${allocatedNumber}`,

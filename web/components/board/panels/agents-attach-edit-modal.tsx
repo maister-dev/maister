@@ -122,7 +122,15 @@ export function AttachEditModal({
   const [canReadBrain, setCanReadBrain] = useState(row.canReadBrain);
   const [canWriteBrain, setCanWriteBrain] = useState(row.canWriteBrain);
   const [memoryEnabled, setMemoryEnabled] = useState(row.memoryEnabled);
+  // (ADR-156) Cross-project reach. The grant only applies to an ENABLED
+  // attachment, so the control follows the LIVE `enabled` state above rather
+  // than the persisted row: granting on an attachment the operator is switching
+  // off in the same save would be "grantable now, ineffective later".
+  const [crossProjectReach, setCrossProjectReach] = useState(
+    row.crossProjectReach,
+  );
   const flowBound = row.agent.flowRef !== null;
+  const reachInert = !enabled;
 
   function setConfigValue(key: string, value: unknown): void {
     setConfigValues((current) => ({ ...current, [key]: value }));
@@ -250,6 +258,12 @@ export function AttachEditModal({
         canReadBrain,
         canWriteBrain,
         ...(flowBound ? {} : { memoryEnabled }),
+        // (ADR-156) Always sent, never conditionally omitted: an explicit value
+        // both grants and revokes, so the saved state is exactly what the
+        // operator sees. While the attachment is disabled the control is inert,
+        // so this re-sends the stored value — it neither re-grants nor silently
+        // revokes a grant the operator never touched.
+        crossProjectReach,
         // (ADR-111) Fold the per-instance config into the SAME aggregating
         // PATCH; omit the field entirely when nothing is declared.
         ...(configSchema.length > 0 ? { configValues } : {}),
@@ -442,6 +456,53 @@ export function AttachEditModal({
                 {t("memoryFlowBound")}
               </p>
             ) : null}
+          </section>
+
+          {/* (ADR-156) Cross-project reach — a security grant, so the copy names
+              the whole admitted set AND what it never admits. */}
+          <section
+            className="flex flex-col gap-2"
+            data-testid="cross-project-section"
+          >
+            <span className={fieldLabel}>{t("crossProjectSection")}</span>
+            <label
+              className={`inline-flex items-center gap-2 font-mono text-[12px] ${
+                reachInert ? "text-mute" : "text-ink"
+              }`}
+            >
+              <input
+                checked={crossProjectReach}
+                data-testid="cross-project-reach"
+                disabled={reachInert}
+                type="checkbox"
+                onChange={(event) => setCrossProjectReach(event.target.checked)}
+              />
+              {t("crossProjectToggle")}
+            </label>
+            <p className="m-0 font-mono text-[11px] text-mute">
+              {t("crossProjectAdmits")}
+            </p>
+            <p className="m-0 font-mono text-[11px] text-mute">
+              {t("crossProjectDenies")}
+            </p>
+            {/* State as a glyph, never a word: ✓ while the grant is live, and
+                the amber reason whenever the control is inert — a disabled
+                control without its reason teaches nothing (D22). */}
+            <p
+              aria-live="polite"
+              className="m-0 font-mono text-[11px]"
+              data-testid="cross-project-state"
+            >
+              {reachInert ? (
+                <span className="text-amber-2">
+                  <span aria-hidden="true">⚠</span> {t("crossProjectInert")}
+                </span>
+              ) : crossProjectReach ? (
+                <span className="text-good">
+                  <span aria-hidden="true">✓</span> {t("crossProjectActive")}
+                </span>
+              ) : null}
+            </p>
           </section>
 
           {configSchema.length > 0 ? (

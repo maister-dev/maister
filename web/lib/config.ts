@@ -547,6 +547,7 @@ const ARTIFACT_INLINE_ENGINE_MIN = "2.2.0";
 // ADR-154: cli/check commands referencing MAISTER_FLOW_DIR depend on the
 // packaged-script install-dir injection that ships with engine 3.3.0.
 const FLOW_DIR_ENGINE_MIN = "3.3.0";
+const CONTEXT_REPOS_ENGINE_MIN = "3.4.0";
 
 const PLAN_REVIEW_ENGINE_MIN = "3.1.0";
 
@@ -760,6 +761,20 @@ function declaresFlowDirCommand(nodes: NodeDef[]): boolean {
       (n.type === "cli" || n.type === "check") &&
       typeof n.action?.command === "string" &&
       n.action.command.includes("MAISTER_FLOW_DIR"),
+  );
+}
+
+// ADR-157: which nodes may declare read-only sibling-repo mounts. Only the three
+// that dispatch to the ACP-session arm — `cli`/`check` are not sessions, and
+// their `.strict()` settings schemas reject the key outright.
+function declaresContextRepos(nodes: NodeDef[]): boolean {
+  return nodes.some(
+    (n) =>
+      (n.type === "ai_coding" ||
+        n.type === "judge" ||
+        n.type === "orchestrator") &&
+      Array.isArray((n.settings as { context_repos?: unknown } | undefined)
+        ?.context_repos),
   );
 }
 
@@ -1147,6 +1162,29 @@ export function validateGraphManifest(
       throw new MaisterError(
         "CONFIG",
         `graph flow ${flowYamlPath} references MAISTER_FLOW_DIR in a cli/check command but engine_min "${engineMin}" < ${FLOW_DIR_ENGINE_MIN} — bump compat.engine_min to ${FLOW_DIR_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
+      );
+    }
+  }
+
+  // ADR-157: a node declaring settings.context_repos needs the sibling-mount
+  // materialization from engine 3.4.0. Manifests not declaring it stay valid at
+  // any engine_min (mirrors the MAISTER_FLOW_DIR floor above).
+  if (declaresContextRepos(nodes)) {
+    const ok = semverGte(engineMin, CONTEXT_REPOS_ENGINE_MIN);
+
+    log.debug(
+      {
+        flowYamlPath,
+        declared: engineMin || "(unset)",
+        required: CONTEXT_REPOS_ENGINE_MIN,
+        ok,
+      },
+      "[engine-gate] context_repos floor",
+    );
+    if (!ok) {
+      throw new MaisterError(
+        "CONFIG",
+        `graph flow ${flowYamlPath} declares settings.context_repos but engine_min "${engineMin}" < ${CONTEXT_REPOS_ENGINE_MIN} — bump compat.engine_min to ${CONTEXT_REPOS_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
       );
     }
   }

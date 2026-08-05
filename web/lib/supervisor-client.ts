@@ -5,6 +5,7 @@ import type {
   PlatformUnavailableReason,
 } from "@/types/platform-status";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
+import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
 import type { SessionEnforcementProfile } from "@/lib/flows/enforcement-profile";
 import type { HooksConfig } from "@/lib/flows/hooks-config";
 
@@ -114,6 +115,11 @@ export type CreateSessionInput = {
   // write-class tool permission requests for the whole session. Used for
   // none/repo_read platform-agent runs.
   readOnlySession?: boolean;
+  // ADR-157 (L2): read-only sibling-repo checkouts this session may READ. The
+  // supervisor derives MAISTER_CONTEXT_REPOS for the ACP child from these and
+  // denies every write-class tool call resolving under a mount root —
+  // unconditionally, because L1 is unavailable to a writable-worktree session.
+  contextMounts?: ContextMountSnapshot[];
   // B1 (execution-policy permissions=auto_approve): the supervisor auto-selects
   // the allow option for every permission request in this session (below the
   // read-only layers). Derived from the run's execution_policy snapshot.

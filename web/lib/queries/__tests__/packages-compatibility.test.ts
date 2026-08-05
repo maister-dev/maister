@@ -77,7 +77,7 @@ describe("package compatibility resolver", () => {
 
     await expect(resolveCompatibility(INSTALL)).resolves.toEqual({
       compatible: false,
-      incompatibilityReason: "engine 3.3.0 < engine_min 4.0.0",
+      incompatibilityReason: "engine 3.4.0 < engine_min 4.0.0",
     });
   });
 });

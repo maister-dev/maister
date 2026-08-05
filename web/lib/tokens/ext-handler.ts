@@ -4,6 +4,8 @@ import type { ProjectAction } from "@/lib/authz";
 import type { TokenAuditInput } from "@/lib/tokens/audit";
 import type { TokenActor } from "@/lib/tokens/verify";
 
+import { canAgentReachProject } from "@/lib/agents/cross-project-reach";
+
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import pino from "pino";
@@ -113,6 +115,32 @@ export const PROJECT_ACTION_BY_SCOPE: Partial<Record<string, ProjectAction>> = {
 
 function projectActionForScope(scope: string): ProjectAction {
   return PROJECT_ACTION_BY_SCOPE[scope] ?? "readBoard";
+}
+
+// ADR-156: the two cross-project refusal sites below are near-identical, so the
+// reach exception lives in ONE helper — a future change cannot fix one and miss
+// the other. Returns true when a reach-granted agent token may continue;
+// everything else keeps the existing existence-hidden 404 (an agent must never
+// learn whether a sibling project exists).
+async function agentMayReach(
+  actor: TokenActor,
+  targetProjectId: string,
+  scopeLabel: string,
+  d: unknown,
+): Promise<boolean> {
+  if (actor.tokenKind !== "agent" || !actor.agentId) return false;
+
+  const decision = await canAgentReachProject({
+    agentId: actor.agentId,
+    targetProjectId,
+    scopeLabel,
+    // Server-derived from the deterministic `agent-run:<runId>` token name —
+    // never a request field.
+    callingRunId: actor.boundRunId,
+    db: d,
+  });
+
+  return decision.allowed;
 }
 
 // Canonical MaisterError `code` → HTTP status for the /api/v1/ext/* surface, so
@@ -252,7 +280,11 @@ export async function handleExt(
     targetProjectId = project.id;
     auditProjectId = project.id;
 
-    if (actor.projectId !== null && project.id !== actor.projectId) {
+    if (
+      actor.projectId !== null &&
+      project.id !== actor.projectId &&
+      !(await agentMayReach(actor, project.id, opts.scopeLabel, d))
+    ) {
       await recordRequiredTokenAudit(
         {
           tokenId: actor.tokenId,
@@ -355,7 +387,11 @@ export async function handleExt(
     targetProjectId = resolvedProjectId;
     auditProjectId = resolvedProjectId;
 
-    if (actor.projectId !== null && actor.projectId !== resolvedProjectId) {
+    if (
+      actor.projectId !== null &&
+      actor.projectId !== resolvedProjectId &&
+      !(await agentMayReach(actor, resolvedProjectId, opts.scopeLabel, d))
+    ) {
       await recordRequiredTokenAudit(
         {
           tokenId: actor.tokenId,

@@ -65,6 +65,11 @@ export async function addTaskComment(
     body: string;
     actor: SocialActor;
     activityPayloadExtra?: Record<string, unknown>;
+    // ADR-156: the run that authored this comment, when one did. Without it
+    // `domain_events.run_id` is NULL for agent-authored `task.comment_added`
+    // and the agent-chain-depth walk has nothing to resolve — the cap would
+    // never bind on exactly the kind that drives the same-project loop.
+    producedByRunId?: string | null;
   },
   db?: Db,
 ): Promise<AddTaskCommentResult> {
@@ -140,6 +145,7 @@ export async function addTaskComment(
       kind: "task.comment_added",
       projectId: task.projectId,
       taskId: task.id,
+      runId: input.producedByRunId ?? null,
       actor: input.actor,
       payload: {
         taskKey: `${task.taskKey}-${task.number}`,

@@ -4188,7 +4188,13 @@
     "memoryConflict": "The agent changed this file while you were editing. Its current content is shown — merge your changes and save again.",
     "memoryLoadError": "Agent memory could not be loaded.",
     "memoryToggle": "Memory (agent's own file — separate from Brain)",
-    "memoryFlowBound": "This agent drives a Flow; Flow runs do not carry agent memory."
+    "memoryFlowBound": "This agent drives a Flow; Flow runs do not carry agent memory.",
+    "crossProjectSection": "Cross-project reach",
+    "crossProjectToggle": "Let this agent act here when it runs in another project",
+    "crossProjectAdmits": "Admits only: read tasks · create tasks · read and post comments · create and delete task relations.",
+    "crossProjectDenies": "Never admits: starting or controlling runs, triage, editing existing tasks, HITL requests, the flow and runner catalogs, Project Brain, or agent memory.",
+    "crossProjectInert": "Applies only while this attachment is enabled — enable it above, or the grant stays inert.",
+    "crossProjectActive": "Grant is live for this project"
   },
   "autoPromotion": {
     "reason": {

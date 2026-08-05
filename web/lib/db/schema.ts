@@ -2,6 +2,10 @@ import type {
   DeliveryPolicy,
   StoredDeliveryPolicy,
 } from "@/lib/runs/delivery-policy";
+import type {
+  ContextMountSnapshot,
+  ContextRepoDecl,
+} from "@/lib/context-mounts/types";
 import type { BudgetState, ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { TaskQueueSettings } from "@/lib/tasks/queue-settings";
 import type {
@@ -957,6 +961,18 @@ export const agentProjectLinks = pgTable(
     // can_write_brain implies it, and the `agent_memory:write` token scope
     // alone does not authorize a write — both must pass.
     memoryEnabled: boolean("memory_enabled").notNull().default(false),
+    // ADR-156: lets an agent token minted in ANOTHER project act in this one,
+    // limited to CROSS_PROJECT_AGENT_SCOPES. The owner's per-project attach
+    // confirmation is the consent event, so the grant lives on the attachment
+    // rather than in a new table. DEFAULT false = deny-by-default, the honest
+    // meaning for every pre-0123 row.
+    crossProjectReach: boolean("cross_project_reach").notNull().default(false),
+    // ADR-157: read-only sibling repos this attachment's runs may READ. The
+    // ATTACHMENT is the config point because a project admin confirms it per
+    // project; the definition's `recommended.context_repos` is prefill only,
+    // since package slugs are not portable across installations. NULL = none
+    // declared (the honest meaning for every pre-0124 row).
+    contextRepos: jsonb("context_repos").$type<ContextRepoDecl[]>(),
     // ADR-140: fences full-replacement binding saves so a stale editor cannot
     // erase telemetry or bindings added after it loaded the attachment.
     schedulesRevision: integer("schedules_revision").notNull().default(1),
@@ -1913,6 +1929,19 @@ export const runs = pgTable(
     // Deliberately NOT folded into runner_snapshot, which resume/recover reads
     // and which must stay runner identity only.
     agentMemoryHash: text("agent_memory_hash"),
+    // ADR-156: how many agent→agent trigger hops this run is deep, snapshotted
+    // at launch and never re-derived. A run launched from a domain event whose
+    // actor_type='agent' inherits the producing run's depth + 1; every other
+    // trigger source seeds 0. Bounds BOTH the cross-project ping-pong and the
+    // same-project one that `tasks:create` opens (self-exclusion only filters
+    // an agent's OWN events, so an A↔B pair loops freely without this).
+    // DEFAULT 0 is the honest seed for every pre-0123 row: no chain spent.
+    agentChainDepth: integer("agent_chain_depth").notNull().default(0),
+    // ADR-157: what this launch actually mounted, snapshotted at spawn. The
+    // terminal release and crash recovery read THIS and never re-derive from the
+    // manifest or the attachment, either of which can change after launch and
+    // point cleanup at paths this run never created. NULL = no mounts.
+    contextMounts: jsonb("context_mounts").$type<ContextMountSnapshot[]>(),
   },
   (t) => ({
     idxProjectStatus: index("runs_project_status_idx").on(

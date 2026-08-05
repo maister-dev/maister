@@ -64,6 +64,9 @@ export type AttachedAgentView = {
   // Brain axis implies it. Seeded on attach from the effective definition's
   // `memory:` field, effective thereafter.
   memoryEnabled: boolean;
+  // ADR-156: per-link cross-project reach grant. On an ENABLED link it admits an
+  // agent token minted for ANOTHER project, bounded by CROSS_PROJECT_AGENT_SCOPES.
+  crossProjectReach: boolean;
   schedulesRevision: number;
   schedules: Array<{
     id: string;
@@ -239,6 +242,7 @@ export async function getProjectAgentsView(
     canReadBrain: Boolean(link.canReadBrain),
     canWriteBrain: Boolean(link.canWriteBrain),
     memoryEnabled: Boolean(link.memoryEnabled),
+    crossProjectReach: Boolean(link.crossProjectReach),
     schedulesRevision: link.schedulesRevision as number,
     schedules: scheduleRows
       .filter((s) => s.agentId === agent.id)
@@ -377,6 +381,9 @@ export async function updateAgentLink(
       // ADR-152: per-link agent-memory axis. Only an explicit true/false
       // writes, mirroring the Brain axes — absent means untouched.
       memoryEnabled?: boolean;
+      // ADR-156: per-link cross-project reach grant. Same idiom as the Brain
+      // axes — explicit true grants, explicit false revokes, absent is untouched.
+      crossProjectReach?: boolean;
       schedules?: AgentScheduleInput[];
       schedulesRevision?: number;
     };
@@ -506,6 +513,13 @@ export async function updateAgentLink(
     }
     if (input.patch.memoryEnabled !== undefined) {
       set.memoryEnabled = input.patch.memoryEnabled;
+    }
+    // ADR-156: not-null boolean (no clear) — an explicit true grants reach,
+    // an explicit false revokes it, and an absent field leaves the grant
+    // untouched. It shares the UPDATE below with `schedulesRevision`, so under
+    // a schedules replacement the CAS predicate fences the grant too.
+    if (input.patch.crossProjectReach !== undefined) {
+      set.crossProjectReach = input.patch.crossProjectReach;
     }
 
     if (input.patch.canWriteBrain !== undefined) {

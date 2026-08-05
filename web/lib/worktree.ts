@@ -1663,6 +1663,34 @@ export type RemoveWorktreeArgs = {
   force?: boolean;
 };
 
+// ADR-157: after removing a context mount from a SIBLING repo, prune that repo's
+// stale worktree registrations. Best-effort by contract — the caller treats a
+// failure as "the GC backstop will get it", so this never throws.
+export async function pruneWorktrees(projectRepoPath: string): Promise<void> {
+  const repo = validate(absolutePathSchema, projectRepoPath, "projectRepoPath");
+
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      "git",
+      ["-C", repo, "worktree", "prune"],
+      {
+        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+        maxBuffer: EXEC_MAX_BUFFER,
+      },
+    );
+
+    log.debug({ projectRepoPath: repo, stdout, stderr }, "pruneWorktrees done");
+  } catch (err) {
+    log.warn(
+      {
+        projectRepoPath: repo,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      "pruneWorktrees failed",
+    );
+  }
+}
+
 export async function removeWorktree(args: RemoveWorktreeArgs): Promise<void> {
   const repo = validate(
     absolutePathSchema,
