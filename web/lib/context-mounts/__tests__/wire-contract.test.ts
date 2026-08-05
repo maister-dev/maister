@@ -25,6 +25,7 @@ import { describe, expect, it } from "vitest";
 import { StartSessionRequestSchema } from "../../../../supervisor/src/types";
 
 import {
+  CONTEXT_REPOS_MAX,
   contextMountsToWire,
   type ContextMountSnapshot,
 } from "@/lib/context-mounts/types";
@@ -174,7 +175,14 @@ describe("the REAL supervisor acceptor (StartSessionRequestSchema)", () => {
     expect(result.success).toBe(true);
   });
 
-  it("ACCEPTS the supervisor maximum of 8 mapped mounts and rejects 9", () => {
+  // The mount cap is enforced TWICE across a package boundary: web
+  // `CONTEXT_REPOS_MAX` (imported by config.schema.ts, so the web side is DRY)
+  // and the supervisor's hardcoded `.max(8)`, which imports nothing from web.
+  // Driving both cases off CONTEXT_REPOS_MAX — never a literal 8 — is what makes
+  // this catch drift in BOTH directions: raising the web constant alone fails the
+  // accept case (the supervisor rejects the extra mounts), and raising the
+  // supervisor bound alone fails the reject case.
+  it("ACCEPTS exactly CONTEXT_REPOS_MAX mapped mounts and REJECTS one more", () => {
     const mounts = (n: number) =>
       contextMountsToWire(
         Array.from({ length: n }, (_, i) =>
@@ -185,15 +193,13 @@ describe("the REAL supervisor acceptor (StartSessionRequestSchema)", () => {
     expect(
       StartSessionRequestSchema.safeParse({
         ...BASE_REQUEST,
-        contextMounts: mounts(8),
+        contextMounts: mounts(CONTEXT_REPOS_MAX),
       }).success,
     ).toBe(true);
-    // CONTEXT_REPOS_MAX on the web side and `.max(8)` on the supervisor side are
-    // two independent constants; this is what keeps them agreeing.
     expect(
       StartSessionRequestSchema.safeParse({
         ...BASE_REQUEST,
-        contextMounts: mounts(9),
+        contextMounts: mounts(CONTEXT_REPOS_MAX + 1),
       }).success,
     ).toBe(false);
   });

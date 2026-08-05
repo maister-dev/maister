@@ -906,6 +906,10 @@ here is **Implemented**.
   be forgotten by a future caller. `ref` is the branch name the launch resolved
   (falling back to `committish` for legacy rows without it) and `commit` is the
   resolved sha; the two are reported separately, so they must not be collapsed.
+  The 8-mount bound is enforced by **two independent constants** across the
+  package boundary — web `CONTEXT_REPOS_MAX` (read by `config.schema.ts`) and the
+  supervisor's own `.max(8)`, which does not import it — so the two can only be
+  kept honest by a test that exercises both sides.
 - **Sibling repo** — the donor project's `projects.repo_path`. It owns the git
   metadata for every mount taken from it (`.git/worktrees/<name>`), which is why
   release is a two-sided operation.
@@ -1105,5 +1109,12 @@ remove from a sibling repo that never registered it.
   `CONTEXT_MOUNT_LIVE_RUN_STATUSES`, `checkContextMountDirt`),
   `supervisor/src/context-mounts.ts` (`resolveContextMountDecision`, the L2
   guard evaluated in `supervisor/src/acp-client.ts`).
+- Wire-contract guard: `web/lib/context-mounts/__tests__/wire-contract.test.ts`
+  imports and executes the supervisor's real `StartSessionRequestSchema`, so a
+  change to `ContextMountSchema` fails that test rather than only production. It
+  is self-maintaining by construction — the deliberate cross-package import is
+  the guard, not a layering violation to tidy away. It pins the raw-snapshot
+  rejection (the bug that shipped), the mapped-payload acceptance, and the
+  8-accepted / 9-rejected bound that couples the two independent max constants.
 - Error taxonomy: [`../error-taxonomy.md`](../error-taxonomy.md)
   (`PRECONDITION`, `CONFIG` — reused; no new code).
