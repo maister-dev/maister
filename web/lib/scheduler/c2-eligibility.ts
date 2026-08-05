@@ -93,9 +93,15 @@ export async function loadC2CandidateRows(db: Db): Promise<C2CandidateRow[]> {
         // delegation_spec.agentId (the agent target the auto-DAG launches).
         sql`(${tasks.delegationSpec} -> 'agentId') IS NULL`,
         // Belt for disjointness: never a parent_of child of an orchestrator.
+        // ADR-155: scoped to a SAME-PROJECT parent, because that is exactly the
+        // set auto_launch_run_plan owns. A cross-project parent_of edge is a
+        // human coordination link the auto-DAG deliberately skips, so excluding
+        // it here too would leave the task owned by neither admitter.
         sql`NOT EXISTS (
           SELECT 1 FROM task_relations tr
+          JOIN tasks parent_task ON parent_task.id = tr.from_task_id
           WHERE tr.to_task_id = ${tasks.id} AND tr.kind = 'parent_of'
+            AND parent_task.project_id = ${tasks.projectId}
         )`,
       ),
     )

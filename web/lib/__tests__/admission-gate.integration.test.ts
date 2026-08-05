@@ -19,6 +19,7 @@ import {
 } from "@/lib/domain-events/cutover";
 import { MaisterError } from "@/lib/errors";
 import { promoteNextPending } from "@/lib/scheduler";
+import { loadC2CandidateRows } from "@/lib/scheduler/c2-eligibility";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -330,6 +331,42 @@ describe("ADR-121 unified admission gate — C2 slot-free mint (T13)", () => {
     expect(res.promotedRunId).not.toBeNull();
     // Claim was set under the lock then cleared once the run row existed (F1).
     expect(await claimOf(taskId)).toBeNull();
+  });
+
+  // ADR-155: C2 admission and auto_launch_run_plan must PARTITION the task
+  // space. auto-launch owns only same-project parent_of children, so the C2
+  // exclusion is scoped the same way — otherwise a cross-project-linked task
+  // is owned by neither admitter and never launches.
+  it("excludes a SAME-project parent_of child but still admits a CROSS-project one", async () => {
+    const projectId = await seedProject();
+    const orchTaskId = await seedBacklogTask(projectId, "normal");
+    const sameProjectChild = await seedBacklogTask(projectId, "normal");
+
+    const siblingProjectId = await seedProject();
+    const crossProjectChild = await seedBacklogTask(siblingProjectId, "urgent");
+
+    for (const [parentId, childId] of [
+      [orchTaskId, sameProjectChild],
+      [orchTaskId, crossProjectChild],
+    ]) {
+      await db.insert(schema.taskRelations).values({
+        id: randomUUID(),
+        projectId,
+        fromTaskId: parentId,
+        kind: "parent_of",
+        toTaskId: childId,
+        actorType: "system",
+        actorId: null,
+      });
+    }
+
+    const rows = await loadC2CandidateRows(db);
+    const ids = rows.map((r) => r.taskId);
+
+    expect(ids).not.toContain(sameProjectChild);
+    expect(ids).toContain(crossProjectChild);
+    // The orchestrator task itself is unaffected (no incoming parent_of).
+    expect(ids).toContain(orchTaskId);
   });
 
   it("AC-G3b: a higher-criticality fresh task (C2) beats a lower-criticality Pending run (C1)", async () => {

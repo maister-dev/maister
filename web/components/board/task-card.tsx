@@ -179,7 +179,6 @@ export function TaskCard({
         <TaskDecomposition
           childTasks={card.childTasks}
           labels={decompositionLabels}
-          slug={slug}
         />
       ) : null}
       <div className="flex items-center justify-between gap-2 border-t border-dashed border-line-soft pt-2">

@@ -1067,6 +1067,57 @@ describe("getBoardData — orchestrator decomposition (integration)", () => {
     expect(noRun?.latestRunStatus).toBeNull();
   });
 
+  // ADR-155: a parent_of edge may cross projects. The card must render the
+  // CHILD's own KEY-N and slug — baking the board's task_key in names a task
+  // that does not exist and links to the wrong board.
+  it("a cross-project child carries the SIBLING's key and project slug", async () => {
+    const { projectId, taskKey, parentTaskId } = await seedDecomposition();
+
+    const siblingProjectId = randomUUID();
+    const siblingTaskId = randomUUID();
+    const siblingSlug = `sib-${siblingProjectId.slice(0, 8)}`;
+    const siblingKey = `SIB${siblingProjectId.slice(0, 6)}`.toUpperCase();
+
+    await db.insert(schema.projects).values({
+      taskKey: siblingKey,
+      id: siblingProjectId,
+      slug: siblingSlug,
+      name: "Sibling Project",
+      repoPath: `/tmp/${siblingSlug}`,
+      maisterYamlPath: `/tmp/${siblingSlug}/maister.yaml`,
+    });
+    await db.insert(schema.tasks).values({
+      number: 7,
+      id: siblingTaskId,
+      projectId: siblingProjectId,
+      title: "cross-project child",
+      prompt: "sibling work",
+      status: "Backlog",
+      stage: "Backlog",
+    });
+    await db.insert(schema.taskRelations).values({
+      id: randomUUID(),
+      // The row is owned by the FROM-task's project (ADR-155 D3).
+      projectId,
+      fromTaskId: parentTaskId,
+      kind: "parent_of",
+      toTaskId: siblingTaskId,
+      actorType: "system",
+      actorId: null,
+    });
+
+    const board = await getBoardData(projectId);
+    const parent = board.columns.Backlog.backlog.find(
+      (c) => c.taskId === parentTaskId,
+    );
+    const sibling = parent?.childTasks.find((c) => c.taskId === siblingTaskId);
+
+    expect(sibling).toBeDefined();
+    expect(sibling?.keyRef).toBe(`${siblingKey}-7`);
+    expect(sibling?.keyRef).not.toContain(taskKey);
+    expect(sibling?.projectSlug).toBe(siblingSlug);
+  });
+
   it("a task with no children carries an empty childTasks array", async () => {
     const { projectId, childNoRunId } = await seedDecomposition();
 

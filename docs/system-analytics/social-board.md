@@ -309,13 +309,26 @@ sequenceDiagram
   dependency in another project keeps the dependent blocked while it is
   `Abandoned` or its latest run `Failed`, and only `Done` releases it.
 - **(ADR-155 — Designed)** Relations MAY cross projects but automation MUST NOT:
-  `auto_launch_run_plan` and the abandon cascade
-  (`getUnlaunchedAutoChildTaskIds`) MUST skip candidates whose project differs
-  from the parent run's, and board decomposition MUST render each child's OWN
+  `auto_launch_run_plan`, the abandon cascade
+  (`getUnlaunchedAutoChildTaskIds`), and C2 admission's `parent_of` exclusion
+  (`loadC2CandidateRows`) MUST all scope to the parent's own project — the
+  launcher and the exclusion MUST stay a partition, or a cross-project-linked
+  task is owned by neither. Board decomposition MUST render each child's OWN
   `KEY-N` and project slug rather than the current board's.
+- **(ADR-155 — Designed)** `resolveTaskByKeyRef` MUST resolve `KEY-N` against
+  the platform-unique `projects.task_key`, MUST uppercase the key part before
+  querying, and MUST return `null` — never throw — for a malformed,
+  over-long, out-of-int4-range, or unknown ref without issuing a query.
+- **(ADR-155 — Designed)** `getTaskRelations` MUST render each end with the
+  COUNTERPART's own `projects.task_key`, never the reading task's.
+- **(ADR-155 — Designed)** A gating cycle MUST be refused identically whether
+  its legs sit in one project or span several.
 
 ## Edge cases
 
+- **(ADR-155 — Designed) Relation whose `projectId` is not the from-task's
+  project** — refused `MaisterError("CONFIG")`. The to-end may differ; the
+  from-end defines row ownership and may not.
 - **Relation closes a gating cycle** — refused with `MaisterError("CONFLICT")`
   (409) at both the web and ext relations routes (ADR-121; the BFS is
   platform-wide, not project-scoped, from ADR-155 — Designed).

@@ -10,7 +10,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
-import { addTaskRelation, type TaskRelationKind } from "@/lib/social/relations";
+import {
+  addTaskRelation,
+  GATING_BFS_MAX_NODES,
+  type TaskRelationKind,
+} from "@/lib/social/relations";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -275,7 +279,7 @@ describe("cross-project gating relations (ADR-155)", () => {
     // A chain longer than the cap that closes NO cycle: without the bound the
     // BFS walks it and accepts. Refusing is the safe direction — a false
     // refusal is visible and recoverable, a missed cycle is a deadlock.
-    const CHAIN = 5100;
+    const CHAIN = GATING_BFS_MAX_NODES + 100;
     const projectId = randomUUID();
     const slug = `cap-${projectId.slice(0, 8)}`;
 

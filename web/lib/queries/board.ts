@@ -87,6 +87,9 @@ export interface ChildTaskRef {
   keyRef: string;
   title: string;
   latestRunStatus: RunStatus | null;
+  // ADR-155: a child may live in another project, so the card must link to
+  // THAT project's board. Same-project children carry the board's own slug.
+  projectSlug: string;
 }
 
 export interface BacklogCard {
@@ -412,9 +415,15 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       childTaskId: tasks.id,
       childNumber: tasks.number,
       childTitle: tasks.title,
+      // ADR-155: the child's OWN project, not the board's — baking the board's
+      // task_key into a cross-project child's keyRef names a task that does
+      // not exist and links to the wrong board.
+      childTaskKey: projects.taskKey,
+      childProjectSlug: projects.slug,
     })
     .from(taskRelations)
     .innerJoin(tasks, eq(tasks.id, taskRelations.toTaskId))
+    .innerJoin(projects, eq(projects.id, tasks.projectId))
     .where(
       and(
         eq(taskRelations.kind, "parent_of"),
@@ -448,9 +457,10 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     list.push({
       taskId: rel.childTaskId,
       number: rel.childNumber,
-      keyRef: `${projectTaskKey}-${rel.childNumber}`,
+      keyRef: `${rel.childTaskKey}-${rel.childNumber}`,
       title: rel.childTitle,
       latestRunStatus: childLatestStatus.get(rel.childTaskId) ?? null,
+      projectSlug: rel.childProjectSlug,
     });
     childTasksByTask.set(rel.parentTaskId, list);
   }

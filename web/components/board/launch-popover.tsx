@@ -262,8 +262,11 @@ export function buildScheduledLaunchBody(args: {
   disambiguation: "earlier" | "later";
   launchRequest: Record<string, unknown>;
 } {
-  const { allowConcurrent: _allowConcurrent, taskId: _taskId, ...launchRequest } =
-    buildLaunchBody({ ...args, forceRelaunch: false });
+  const {
+    allowConcurrent: _allowConcurrent,
+    taskId: _taskId,
+    ...launchRequest
+  } = buildLaunchBody({ ...args, forceRelaunch: false });
 
   return {
     taskId: args.taskId,
@@ -531,8 +534,8 @@ export function LaunchPopover({
   const [busy, setBusy] = useState(false);
   const [scheduleMode, setScheduleMode] = useState(false);
   const [scheduledLocalTime, setScheduledLocalTime] = useState("");
-  const [scheduleTimezone, setScheduleTimezone] = useState(() =>
-    Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+  const [scheduleTimezone, setScheduleTimezone] = useState(
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
   );
   const [scheduleDisambiguation, setScheduleDisambiguation] = useState<
     "earlier" | "later"
@@ -1485,27 +1488,37 @@ export function LaunchPopover({
                     {scheduleMode ? (
                       <div className="grid gap-3 rounded-[8px] border border-amber-line bg-amber-soft p-3 md:grid-cols-2">
                         <label className="flex flex-col gap-1">
-                          <span className={fieldLabelClass}>{t("scheduleWhen")}</span>
+                          <span className={fieldLabelClass}>
+                            {t("scheduleWhen")}
+                          </span>
                           <input
                             aria-label={t("scheduleWhen")}
                             className="rounded border border-line bg-paper px-2 py-1.5 font-mono text-[12px] text-ink"
                             min={new Date().toISOString().slice(0, 16)}
                             type="datetime-local"
                             value={scheduledLocalTime}
-                            onChange={(event) => setScheduledLocalTime(event.target.value)}
+                            onChange={(event) =>
+                              setScheduledLocalTime(event.target.value)
+                            }
                           />
                         </label>
                         <label className="flex flex-col gap-1">
-                          <span className={fieldLabelClass}>{t("scheduleTimezone")}</span>
+                          <span className={fieldLabelClass}>
+                            {t("scheduleTimezone")}
+                          </span>
                           <input
                             aria-label={t("scheduleTimezone")}
                             className="rounded border border-line bg-paper px-2 py-1.5 font-mono text-[12px] text-ink"
                             value={scheduleTimezone}
-                            onChange={(event) => setScheduleTimezone(event.target.value)}
+                            onChange={(event) =>
+                              setScheduleTimezone(event.target.value)
+                            }
                           />
                         </label>
                         <label className="flex flex-col gap-1 md:col-span-2">
-                          <span className={fieldLabelClass}>{t("scheduleDst")}</span>
+                          <span className={fieldLabelClass}>
+                            {t("scheduleDst")}
+                          </span>
                           <select
                             aria-label={t("scheduleDst")}
                             className="rounded border border-line bg-paper px-2 py-1.5 font-mono text-[12px] text-ink"
@@ -1516,7 +1529,9 @@ export function LaunchPopover({
                               )
                             }
                           >
-                            <option value="earlier">{t("scheduleEarlier")}</option>
+                            <option value="earlier">
+                              {t("scheduleEarlier")}
+                            </option>
                             <option value="later">{t("scheduleLater")}</option>
                           </select>
                         </label>
@@ -1537,7 +1552,10 @@ export function LaunchPopover({
                                 : ""}
                             </p>
                           ) : (
-                            <p className="md:col-span-2 font-mono text-[10px] text-red-700" role="alert">
+                            <p
+                              className="md:col-span-2 font-mono text-[10px] text-red-700"
+                              role="alert"
+                            >
                               {t("schedulePreviewInvalid")}
                             </p>
                           )

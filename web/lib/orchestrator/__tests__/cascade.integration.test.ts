@@ -459,4 +459,55 @@ describe("cascadeAbandonRunTree (M37 T7.4)", () => {
 
     expect(liveAfter.rows[0].n).toBe(0);
   });
+
+  // ADR-155 D5: relations may cross projects, the automation they drive may
+  // not. An abandon cascade in project A must never mark a task Abandoned in
+  // project B — that is another board's work, cancelled without its consent.
+  it("never abandon-cascades a cross-project parent_of child", async () => {
+    const orchTaskId = await seedTask("manual");
+    const orchestratorRunId = await seedOrchestrator(orchTaskId);
+
+    const sameProjectChild = await seedTask("auto");
+
+    const siblingProjectId = randomUUID();
+    const siblingSlug = `casc-sib-${siblingProjectId.slice(0, 8)}`;
+    const siblingTaskId = randomUUID();
+
+    await (db as any).insert(schema.projects).values({
+      id: siblingProjectId,
+      slug: siblingSlug,
+      name: "Cascade Sibling",
+      repoPath: `/tmp/${siblingSlug}`,
+      maisterYamlPath: `/tmp/${siblingSlug}/maister.yaml`,
+      taskKey: `CSB${siblingProjectId.slice(0, 6)}`.toUpperCase(),
+    });
+    await (db as any).insert(schema.tasks).values({
+      number: 1,
+      id: siblingTaskId,
+      projectId: siblingProjectId,
+      title: "sibling as-plan task",
+      prompt: "p",
+      launchMode: "auto",
+    });
+
+    for (const childTaskId of [sameProjectChild, siblingTaskId]) {
+      await pool.query(
+        `INSERT INTO "task_relations" ("id", "project_id", "from_task_id", "kind", "to_task_id", "actor_type")
+         VALUES ($1, $2, $3, 'parent_of', $4, 'system')`,
+        [randomUUID(), projectId, orchTaskId, childTaskId],
+      );
+    }
+
+    const result = await cascadeAbandonRunTree(
+      orchestratorRunId,
+      orchTaskId,
+      "user_stopped",
+      { db },
+    );
+
+    // Only the same-project child is cascaded.
+    expect(result.abandonedTaskCount).toBe(1);
+    expect(await taskStatusOf(sameProjectChild)).toBe("Abandoned");
+    expect(await taskStatusOf(siblingTaskId)).toBe("Backlog");
+  });
 });

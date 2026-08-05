@@ -771,7 +771,7 @@ reformats ~60 unrelated files).
 
 ### Phase 3 — F1 cross-project cascade gates + read paths
 
-- [ ] **T15 — Gate `auto_launch_run_plan` to same-project candidates.**
+- [x] **T15 — Gate `auto_launch_run_plan` to same-project candidates.**
   `web/lib/domain-events/auto-launch.ts`. Add `projectId: runs.projectId` to the parent-run
   select (`:241-248`); before the launch (`:317`), skip when
   `candidate.projectId !== parent.projectId`.
@@ -779,7 +779,7 @@ reformats ~60 unrelated files).
   "auto-launch: cross-project as-plan candidate skipped (orchestrator DAGs are same-project)".
   The consumer's idempotent contract holds: skip, never throw.
 
-- [ ] **T16 — Gate the abandon cascade to same-project children.**
+- [x] **T16 — Gate the abandon cascade to same-project children.**
   `web/lib/queries/run.ts` `getUnlaunchedAutoChildTaskIds` (`:712-733`) — restrict children
   to the orchestrator task's own project.
   **Decision (KISS — do not re-litigate):** self-join `tasks` on the orchestrator end inside
@@ -787,7 +787,7 @@ reformats ~60 unrelated files).
   no call-site sweep.** Threading a `projectId` argument was the alternative; it moves the
   invariant to every caller, where the next new call site can forget it.
 
-- [ ] **T17 — Fix the board decomposition `keyRef` + link target.**
+- [x] **T17 — Fix the board decomposition `keyRef` + link target.**
   `web/lib/queries/board.ts:411-424,445-456` — join `projects` on the **child's** project and
   select its `taskKey` + `slug`; build `keyRef` from the child's own key. Extend
   `ChildTaskRef` (`:84-90`) with `projectSlug` and route the link in
@@ -797,7 +797,7 @@ reformats ~60 unrelated files).
   already resolves the counterpart's own key, so it needs **no** change; record that in the
   task notes so a reviewer does not "fix" it.
 
-- [ ] **T18 — Consumer-fanout sweep + tests.**
+- [x] **T18 — Consumer-fanout sweep + tests.**
   Grep every `parent_of` / `taskRelations` consumer once more against the Phase-3 change set
   and confirm each is either project-agnostic by design or explicitly gated:
   `lib/queries/board.ts`, `lib/queries/run.ts`, `lib/queries/task-detail.ts`,
@@ -1235,7 +1235,10 @@ planned test without a bullet.
 | `toNumber`/`toTaskKey` MUST be mutually exclusive (400 internal / 422 ext) | internal-route unit → both-present + neither-present | T14 |
 | `getOpenRelationBlockers` MUST return the blocker's OWN key; chip renders it | `social-domain.integration` → "reports a cross-project blocker carrying the blocker's own KEY-N" | T10 |
 | `requires` MUST stay success-gated across projects | `social-domain.integration` → "keeps `requires` success-gated across projects: Abandoned still blocks" | T10 |
-| relations MAY cross projects; automation MUST NOT | `run.integration` + `board.integration` → cross-project child not auto-launched, not abandon-cascaded, renders sibling KEY-N | T18 |
+| relations MAY cross projects; automation MUST NOT (launcher + C2 exclusion stay a partition) | `auto-launch.integration` "never auto-launches a cross-project as-plan candidate" · `cascade.integration` "never abandon-cascades a cross-project parent_of child" · `admission-gate.integration` "excludes a SAME-project parent_of child but still admits a CROSS-project one" · `board.integration` "a cross-project child carries the SIBLING's key and project slug" | T18 |
+| `resolveTaskByKeyRef` resolves against `projects.task_key`, uppercases, returns null (never throws) on malformed/over-long/out-of-range/unknown | `task-lookup.test.ts` (12 unit cases) + `social-domain.integration` "resolves a KEY-N ref…" / "returns null for an unknown key and for an unknown number" | T9/T10 |
+| `getTaskRelations` renders each end with the COUNTERPART's own key | `social-domain.integration` → "renders each end with the counterpart's OWN task_key" | T10 |
+| a gating cycle is refused identically same-project or cross-project | `relations-cycle.integration` → **AC-X1** cross-project 2-cycle | T10 |
 
 ### `system-analytics/external-operations.md` (ADR-155/156)
 
@@ -1297,7 +1300,16 @@ planned test without a bullet.
 | mounts MUST stay out of the reconciler's scan scope by path | reconciler non-interference → `quarantined === 0`, no finding names a mount | T33 |
 | GC backstop reaps orphaned mounts, leaves live ones, isolates poison items | GC integration + one real `runSchedulerTick({jobKind})` wiring-seam test | T32 |
 
-**Coverage: 38 bullets ↔ 38 owning tests, no unmapped row in either direction.**
+**Coverage: 41 bullets ↔ 41 owning tests, no unmapped row in either direction.**
+
+Corrected 2026-08-05 after the Phase-1/2 review: the first cut claimed 38↔38 but
+left five Phase-1 tests unmapped (`AC-X1`, the counterpart-key render, both
+`resolveTaskByKeyRef` integration cases, and the whole `task-lookup.test.ts`
+unit file), because `resolveTaskByKeyRef` had no Expectations bullet at all —
+only an Edge case. Three bullets were added to `social-board.md` rather than
+deleting the tests. The migrated "rejects self-relations and a mis-owned
+from-end" case maps to the new **Edge case** for a mis-owned `projectId`, not to
+an Expectations row (the matrix maps Expectations only).
 Shared owning tests are noted inline where two docs state the same invariant from
 different sides (the subset↔action-map guard) — one test, one owner, cited twice.
 

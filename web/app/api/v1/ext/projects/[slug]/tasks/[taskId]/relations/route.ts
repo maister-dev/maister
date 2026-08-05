@@ -4,7 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { requireProjectActionForUser } from "@/lib/authz";
+import { httpStatusForAuthz, requireProjectActionForUser } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
@@ -69,24 +69,65 @@ const opBodySchema = z
 // project and is refused; a NULL-project user token is RBAC re-checked on the
 // resolved target.
 //
-// The refusal is 403, deliberately NOT the existence-hidden 404 this surface
-// uses for URL-project scoping: the caller supplied a platform-unique key it
-// already holds, so hiding existence leaks nothing and only makes the refusal
-// unactionable. `handleExt` writes the failure audit for any >=400 we return.
+// For a HUMAN operator the refusal is 403, deliberately NOT the existence-hidden
+// 404 this surface uses for URL-project scoping: the caller supplied a
+// platform-unique key it already holds, so hiding existence leaks nothing and
+// only makes the refusal unactionable. Agent tokens are the exception — see the
+// enumeration-oracle note below.
+type CrossProjectCtx = {
+  projectId: string;
+  actor: {
+    tokenId: string;
+    actorLabel: string;
+    projectId: string | null;
+    tokenKind: string;
+    ownerUserId: string | null;
+  };
+};
+
 async function refuseCrossProjectTarget(
-  ctx: {
-    projectId: string;
-    actor: {
-      projectId: string | null;
-      tokenKind: string;
-      ownerUserId: string | null;
-    };
-  },
+  ctx: CrossProjectCtx,
   targetProjectId: string,
+  audit: { scopeUsed: string; endpoint: string; method: string; db: unknown },
 ): Promise<NextResponse | null> {
   if (targetProjectId === ctx.projectId) return null;
 
+  // The generic handler audits with the URL project (it cannot know the
+  // target), so the refusal writes its own row naming the project actually
+  // reached for. Both rows are wanted: one says which scope was exercised
+  // where, the other says what was attempted.
+  const auditRefusal = (statusCode: number) =>
+    recordRequiredTokenAudit(
+      {
+        tokenId: ctx.actor.tokenId,
+        projectId: targetProjectId,
+        actorLabel: ctx.actor.actorLabel,
+        scopeUsed: audit.scopeUsed,
+        endpoint: audit.endpoint,
+        method: audit.method,
+        result: "error",
+        statusCode,
+      },
+      audit.db,
+    );
+
+  // ADR-156: an agent must NEVER be able to probe whether a sibling project
+  // exists. A 403 here versus the 404 an unresolvable key returns would be a
+  // platform-wide enumeration oracle, so agent tokens get the SAME
+  // existence-hidden 404 either way. The actionable 403 below is for human
+  // operators, who already hold the key they supplied.
+  if (ctx.actor.tokenKind === "agent") {
+    await auditRefusal(404);
+
+    return NextResponse.json(
+      { code: "NOT_FOUND", message: "relation target task not found" },
+      { status: 404 },
+    );
+  }
+
   if (ctx.actor.projectId !== null) {
+    await auditRefusal(403);
+
     return NextResponse.json(
       {
         code: "UNAUTHORIZED",
@@ -98,14 +139,32 @@ async function refuseCrossProjectTarget(
   }
 
   if (ctx.actor.tokenKind === "user" && ctx.actor.ownerUserId !== null) {
-    await requireProjectActionForUser(
-      ctx.actor.ownerUserId,
-      targetProjectId,
-      "manageTaskRelations",
-    );
+    try {
+      await requireProjectActionForUser(
+        ctx.actor.ownerUserId,
+        targetProjectId,
+        "manageTaskRelations",
+      );
+    } catch (err) {
+      if (!isMaisterError(err)) throw err;
+
+      // `handleExt` catches only TokenAuthError, so an authz throw escaping
+      // here would surface as an unaudited 500.
+      const status =
+        httpStatusForAuthz(err.code) ?? httpStatusForExtCode(err.code);
+
+      await auditRefusal(status);
+
+      return NextResponse.json(
+        { code: err.code, message: err.message },
+        { status },
+      );
+    }
 
     return null;
   }
+
+  await auditRefusal(403);
 
   return NextResponse.json(
     { code: "UNAUTHORIZED", message: "cross-project relation not permitted" },
@@ -220,19 +279,27 @@ async function handleMutation(
         );
       }
 
+      // The archived check is scoped to the toTaskKey arm: `toNumber` resolves
+      // inside the URL project, whose archived state this route has never
+      // gated, and widening that here would break existing callers.
       const to =
         body.toTaskKey === undefined
           ? await resolveProjectTaskByNumber(slug, body.toNumber!, db)
           : await resolveTaskByKeyRef(body.toTaskKey, db);
 
-      if (!to || to.project.archivedAt !== null) {
+      if (!to || (body.toTaskKey !== undefined && to.project.archivedAt)) {
         return NextResponse.json(
           { code: "NOT_FOUND", message: "relation target task not found" },
           { status: 404 },
         );
       }
 
-      const refusal = await refuseCrossProjectTarget(ctx, to.project.id);
+      const refusal = await refuseCrossProjectTarget(ctx, to.project.id, {
+        scopeUsed: scopeLabel,
+        endpoint,
+        method,
+        db,
+      });
 
       if (refusal) return refusal;
 

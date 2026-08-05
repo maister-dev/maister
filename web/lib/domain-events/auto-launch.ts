@@ -242,6 +242,7 @@ export function buildAutoLaunchRunPlanConsumer(
           .select({
             id: runs.id,
             taskId: runs.taskId,
+            projectId: runs.projectId,
             rootRunId: runs.rootRunId,
           })
           .from(runs)
@@ -282,6 +283,24 @@ export function buildAutoLaunchRunPlanConsumer(
 
         for (const candidate of candidates) {
           try {
+            // ADR-155 D5: relations may cross projects, the automation they
+            // drive may not. Orchestrator DAGs stay same-project — a
+            // cross-project parent_of edge is a human's coordination link, not
+            // a launch instruction. Skip, never throw: the consumer's
+            // idempotent contract means a throw redelivers the window forever.
+            if (candidate.projectId !== parent.projectId) {
+              log.warn(
+                {
+                  eventId: event.id,
+                  taskId: candidate.taskId,
+                  candidateProjectId: candidate.projectId,
+                  parentProjectId: parent.projectId,
+                },
+                "auto-launch: cross-project as-plan candidate skipped (orchestrator DAGs are same-project)",
+              );
+              continue;
+            }
+
             const spec = candidate.delegationSpec;
 
             if (!spec || !spec.agentId) {

@@ -10,6 +10,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { issueAgentRunToken } from "@/lib/agents/tokens";
 import { createTask } from "@/lib/services/tasks";
 import { issueToken } from "@/lib/tokens/issue";
 import {
@@ -446,7 +447,8 @@ describe("ext relations — cross-project targets (ADR-155)", () => {
     const fromTaskId = await freshFromTask("xproj denied");
 
     const before = await pool.query(
-      "select count(*)::int as n from token_audit_log where status_code = 403",
+      "select count(*)::int as n from token_audit_log where status_code = 403 and project_id = $1",
+      [sib.projectId],
     );
 
     const res = await POST(
@@ -460,8 +462,11 @@ describe("ext relations — cross-project targets (ADR-155)", () => {
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ code: "UNAUTHORIZED" });
 
+    // The refusal names the project actually reached for — the generic handler
+    // can only audit the URL project, so this row is the one that matters.
     const after = await pool.query(
-      "select count(*)::int as n from token_audit_log where status_code = 403",
+      "select count(*)::int as n from token_audit_log where status_code = 403 and project_id = $1",
+      [sib.projectId],
     );
 
     expect(after.rows[0].n).toBe(before.rows[0].n + 1);
@@ -472,6 +477,104 @@ describe("ext relations — cross-project targets (ADR-155)", () => {
     );
 
     expect(rows.rows).toHaveLength(0);
+  });
+
+  // An authz throw inside `work` escapes handleExt (it catches only
+  // TokenAuthError), so an unguarded requireProjectActionForUser surfaces as an
+  // unaudited 500 instead of the documented 403.
+  it("403s (never 500) when the NULL-project token's owner lacks rights on the TARGET", async () => {
+    const stranger = randomUUID();
+
+    await db.insert(schema.users).values({
+      id: stranger,
+      email: `stranger-${stranger.slice(0, 8)}@example.test`,
+      name: "No Sibling Rights",
+      role: "member",
+      accountStatus: "active",
+    });
+    // Member of the URL project ONLY — no membership in the sibling.
+    await db.insert(schema.projectMembers).values({
+      id: randomUUID(),
+      projectId: fx.projectId,
+      userId: stranger,
+      role: "admin",
+    });
+
+    const token = await issueToken(
+      {
+        projectId: null,
+        name: "stranger user token",
+        tokenKind: "user",
+        ownerUserId: stranger,
+        scopes: ["relations:create"],
+      },
+      db,
+    );
+
+    const fromTaskId = await freshFromTask("xproj stranger");
+    const res = await POST(
+      request("POST", token.secret, {
+        kind: "blocks",
+        toTaskKey: `${sib.taskKey}-1`,
+      }),
+      routeParams(SLUG, fromTaskId),
+    );
+
+    expect(res.status).toBe(403);
+    expect(res.status).not.toBe(500);
+
+    const audited = await pool.query(
+      "select count(*)::int as n from token_audit_log where token_id = $1 and project_id = $2",
+      [token.tokenId, sib.projectId],
+    );
+
+    expect(audited.rows[0].n).toBeGreaterThan(0);
+  });
+
+  // ADR-156: 403-vs-404 on a cross-project target would let an agent probe for
+  // project existence platform-wide. Agents get the existence-hidden 404 both
+  // when the key resolves elsewhere and when it resolves to nothing.
+  it("gives an AGENT token an existence-hidden 404, never the actionable 403", async () => {
+    const agentId = "pkg:xproj-probe";
+
+    await pool.query(
+      `insert into agents
+         (id, package_name, version_label, origin, name, description, workspace,
+          mode, triggers, risk_tier, source_path)
+       values ($1, 'pkg', 'v1.0.0', 'git', 'probe', 'd', 'none', 'session',
+               '["manual"]'::jsonb, 'read_only', '/tmp/a.md')
+       on conflict (id) do nothing`,
+      [agentId],
+    );
+
+    const agentToken = await issueAgentRunToken({
+      agentId,
+      projectId: fx.projectId,
+      runId: randomUUID(),
+      db,
+    });
+
+    const fromTaskId = await freshFromTask("xproj agent");
+
+    const existing = await POST(
+      request("POST", agentToken.secret, {
+        kind: "blocks",
+        toTaskKey: `${sib.taskKey}-1`,
+      }),
+      routeParams(SLUG, fromTaskId),
+    );
+    const missing = await POST(
+      request("POST", agentToken.secret, {
+        kind: "blocks",
+        toTaskKey: "NOSUCHKEY-1",
+      }),
+      routeParams(SLUG, fromTaskId),
+    );
+
+    // Indistinguishable — that is the whole point.
+    expect(existing.status).toBe(404);
+    expect(missing.status).toBe(404);
+    expect(await existing.json()).toEqual(await missing.json());
   });
 
   it("404s when toTaskKey resolves into an ARCHIVED project", async () => {

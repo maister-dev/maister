@@ -21,7 +21,6 @@ export interface TaskDecompositionLabels {
 
 export interface TaskDecompositionProps {
   childTasks: ChildTaskRef[];
-  slug: string;
   labels: TaskDecompositionLabels;
 }
 
@@ -32,7 +31,6 @@ export interface TaskDecompositionProps {
 // no children, so this assumes a non-empty list.
 export function TaskDecomposition({
   childTasks,
-  slug,
   labels,
 }: TaskDecompositionProps): ReactElement {
   return (
@@ -71,7 +69,7 @@ export function TaskDecomposition({
               />
               <Link
                 className="flex-none rounded border border-line bg-ivory px-1 py-px font-mono text-[9.5px] font-bold tracking-[0.05em] text-mute hover:border-amber hover:text-amber"
-                href={`/projects/${slug}/tasks/${child.number}`}
+                href={`/projects/${child.projectSlug}/tasks/${child.number}`}
               >
                 {child.keyRef}
               </Link>

@@ -103,6 +103,8 @@ async function checkGatingCycle(
   let rounds = 0;
 
   while (frontier.length > 0) {
+    // `visited` has not yet absorbed this frontier, so the counters undercount
+    // by one level on the cycle path — they are diagnostics, never a decision.
     if (frontier.includes(pred))
       return { verdict: "cycle", visited: visited.size, rounds };
 

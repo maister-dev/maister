@@ -90,7 +90,9 @@ export async function resolveProjectTaskByNumber(
   };
 }
 
-const KEY_REF_PATTERN = /^([A-Za-z][A-Za-z0-9]*)-(\d+)$/;
+// Bounded to match TASK_KEY_REGEX's 2-10 char key: an unbounded pattern lets a
+// megabyte-long ref through every gate and into a database query.
+const KEY_REF_PATTERN = /^([A-Za-z][A-Za-z0-9]{1,9})-(\d{1,10})$/;
 
 // tasks.number is int4; a ref above the ceiling is unresolvable by definition
 // and must not reach the comparison as an out-of-range literal.

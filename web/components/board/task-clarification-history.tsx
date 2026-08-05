@@ -25,8 +25,7 @@ function answeredHistory(
         clarification.answer !== null,
     )
     .toSorted(
-      (left, right) =>
-        left.seq - right.seq || left.id.localeCompare(right.id),
+      (left, right) => left.seq - right.seq || left.id.localeCompare(right.id),
     );
 }
 

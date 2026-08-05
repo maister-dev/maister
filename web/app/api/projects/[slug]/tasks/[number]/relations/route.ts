@@ -128,7 +128,9 @@ async function handleRelationMutation(
         ? await resolveProjectTaskByNumber(slug, body.toNumber!)
         : await resolveTaskByKeyRef(body.toTaskKey);
 
-    if (!to || to.project.archivedAt !== null) {
+    // Scoped to the toTaskKey arm: `toNumber` resolves inside the URL project,
+    // whose archived state this route has never gated.
+    if (!to || (body.toTaskKey !== undefined && to.project.archivedAt)) {
       return NextResponse.json({ message: "not found" }, { status: 404 });
     }
 

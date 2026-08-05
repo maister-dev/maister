@@ -39,13 +39,14 @@ function child(over: Partial<ChildTaskRef> = {}): ChildTaskRef {
     keyRef: "TST-12",
     title: "Child work item",
     latestRunStatus: "Running",
+    projectSlug: "proj",
     ...over,
   };
 }
 
 function render(childTasks: ChildTaskRef[]): string {
   return renderToStaticMarkup(
-    createElement(TaskDecomposition, { childTasks, labels, slug: "proj" }),
+    createElement(TaskDecomposition, { childTasks, labels }),
   );
 }
 
@@ -81,5 +82,23 @@ describe("TaskDecomposition", () => {
     expect(html).toContain('data-run-status="none"');
     expect(html).toContain('data-run-tone="pending"');
     expect(html).toContain("no run");
+  });
+
+  // ADR-155: a cross-project child must show its OWN key and link to ITS
+  // board. Rendering the current board's slug points at a task that does not
+  // exist there.
+  it("links a cross-project child to the sibling's board with the sibling's key", () => {
+    const html = render([
+      child({
+        taskId: "c-42",
+        number: 42,
+        keyRef: "API-42",
+        projectSlug: "api-service",
+      }),
+    ]);
+
+    expect(html).toContain("API-42");
+    expect(html).toContain('href="/projects/api-service/tasks/42"');
+    expect(html).not.toContain('href="/projects/proj/tasks/42"');
   });
 });

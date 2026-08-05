@@ -443,7 +443,6 @@ export function FlightCard({
           <TaskDecomposition
             childTasks={card.childTasks}
             labels={labels.decomposition}
-            slug={slug}
           />
         </div>
       ) : null}

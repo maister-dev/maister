@@ -1337,8 +1337,11 @@ function resolveRouting(
       // the caller sent rather than materializing an undefined key.
       const body: Record<string, unknown> = { kind };
 
-      if (toNumber !== undefined) body.toNumber = toNumber;
-      if (toTaskKey !== undefined) body.toTaskKey = toTaskKey;
+      // `!= null` not `!== undefined`: models routinely emit an explicit null
+      // for an unused optional, and the route's XOR refine treats a present
+      // null as "supplied" — forwarding it would 422 a valid call.
+      if (toNumber != null) body.toNumber = toNumber;
+      if (toTaskKey != null) body.toTaskKey = toTaskKey;
 
       return {
         method: name === "relation_add" ? "POST" : "DELETE",

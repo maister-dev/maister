@@ -38,6 +38,7 @@ import {
   notInArray,
   sql,
 } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { cache } from "react";
 import pino from "pino";
 
@@ -715,14 +716,26 @@ export async function getUnlaunchedAutoChildTaskIds(
 ): Promise<string[]> {
   const client = database ?? db();
 
+  // ADR-155 D5: a parent_of edge may now cross projects, but an abandon
+  // cascade in project A must never mark tasks Abandoned in project B. The
+  // orchestrator end is self-joined so the predicate lives in the query — a
+  // threaded projectId argument would move the invariant to every call site,
+  // where the next new one can forget it.
+  const orchestratorTask = alias(tasks, "orchestrator_task");
+
   const rows = await client
     .select({ id: tasks.id })
     .from(taskRelations)
     .innerJoin(tasks, eq(tasks.id, taskRelations.toTaskId))
+    .innerJoin(
+      orchestratorTask,
+      eq(orchestratorTask.id, taskRelations.fromTaskId),
+    )
     .where(
       and(
         eq(taskRelations.kind, "parent_of"),
         eq(taskRelations.fromTaskId, orchestratorTaskId),
+        eq(tasks.projectId, orchestratorTask.projectId),
         eq(tasks.launchMode, "auto"),
         notInArray(tasks.status, ["Done", "Abandoned"]),
         sql`NOT EXISTS (SELECT 1 FROM ${runs} WHERE ${runs.taskId} = ${tasks.id})`,

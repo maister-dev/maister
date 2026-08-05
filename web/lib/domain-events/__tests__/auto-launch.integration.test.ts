@@ -446,6 +446,55 @@ describe("auto_launch_run_plan consumer", () => {
     expect(await runCount(taskB)).toBe(1);
   });
 
+  // ADR-155 D5: a parent_of edge may cross projects, but an orchestrator DAG
+  // may not. A cross-project as-plan candidate is a human's coordination link,
+  // not a launch instruction — skip it (never throw: the consumer's idempotent
+  // contract means a throw redelivers the window forever).
+  it("never auto-launches a cross-project as-plan candidate", async () => {
+    const { parentRunId, orchTaskId } = await seedOrchestrator();
+    const sameProject = await seedAsPlanTask({ orchTaskId, title: "same" });
+
+    const siblingProjectId = randomUUID();
+    const siblingSlug = `al-sib-${siblingProjectId.slice(0, 8)}`;
+    const siblingTaskId = randomUUID();
+
+    await pool.query(
+      `INSERT INTO "projects" ("id", "slug", "name", "repo_path", "maister_yaml_path", "task_key")
+       VALUES ($1, $2, 'Auto-launch Sibling', $3, $4, $5)`,
+      [
+        siblingProjectId,
+        siblingSlug,
+        `/tmp/${siblingSlug}`,
+        `/tmp/${siblingSlug}/maister.yaml`,
+        `ALS${siblingProjectId.slice(0, 6)}`.toUpperCase(),
+      ],
+    );
+    await pool.query(
+      `INSERT INTO "tasks" ("id", "project_id", "number", "title", "prompt", "status", "stage", "attempt_number", "launch_mode", "delegation_spec")
+       VALUES ($1, $2, 1, 'cross-project as-plan', 'p', 'Backlog', 'Backlog', 1, 'auto', $3::jsonb)`,
+      [siblingTaskId, siblingProjectId, JSON.stringify({ agentId: workerAgentId })],
+    );
+    // The relation row stays owned by the FROM-task's project (ADR-155 D3).
+    await pool.query(
+      `INSERT INTO "task_relations" ("id", "project_id", "from_task_id", "kind", "to_task_id", "actor_type")
+       VALUES ($1, $2, $3, 'parent_of', $4, 'system')`,
+      [randomUUID(), projectId, orchTaskId, siblingTaskId],
+    );
+
+    const event = await emitChildTerminal({
+      parentRunId,
+      childTaskId: sameProject,
+      outcome: "Done",
+    });
+
+    const consumer = buildAutoLaunchRunPlanConsumer({ db });
+
+    // Completes normally — the skip must not throw.
+    await consumer.handle([event]);
+
+    expect(await runCount(siblingTaskId)).toBe(0);
+  });
+
   // C3 (real two-racer): two dispatcher workers handling the same terminal event
   // CONCURRENTLY must launch the released dependent exactly once — the hasAnyRun
   // guard + the (agent_id, trigger_event_id) unique index together, not in-loop
