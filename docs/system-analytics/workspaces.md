@@ -908,8 +908,11 @@ here is **Implemented**.
   resolved sha; the two are reported separately, so they must not be collapsed.
   The 8-mount bound is enforced by **two independent constants** across the
   package boundary — web `CONTEXT_REPOS_MAX` (read by `config.schema.ts`) and the
-  supervisor's own `.max(8)`, which does not import it — so the two can only be
-  kept honest by a test that exercises both sides.
+  supervisor's own `.max(8)`, which does not import it — so the two are reconciled
+  ONLY by the wire-contract guard below. A genuinely shared constant would be
+  structurally better but needs the supervisor to import from web or from a third
+  shared module; that packaging decision is open, and until it lands the guard is
+  load-bearing rather than belt-and-braces.
 - **Sibling repo** — the donor project's `projects.repo_path`. It owns the git
   metadata for every mount taken from it (`.git/worktrees/<name>`), which is why
   release is a two-sided operation.
@@ -1115,6 +1118,9 @@ remove from a sibling repo that never registered it.
   is self-maintaining by construction — the deliberate cross-package import is
   the guard, not a layering violation to tidy away. It pins the raw-snapshot
   rejection (the bug that shipped), the mapped-payload acceptance, and the
-  8-accepted / 9-rejected bound that couples the two independent max constants.
+  cardinality bound in **both** drift directions: the accept and reject cases are
+  derived from `CONTEXT_REPOS_MAX` rather than a literal `8`, so raising the web
+  constant alone fails the accept case and raising the supervisor bound alone
+  fails the reject case.
 - Error taxonomy: [`../error-taxonomy.md`](../error-taxonomy.md)
   (`PRECONDITION`, `CONFIG` — reused; no new code).

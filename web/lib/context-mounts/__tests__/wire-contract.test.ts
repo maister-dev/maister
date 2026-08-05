@@ -127,14 +127,18 @@ describe("contextMountsToWire — supervisor POST /sessions contract", () => {
     }
   });
 
-  it("preserves order and cardinality (the supervisor caps at 8)", () => {
-    const eight = Array.from({ length: 8 }, (_, i) =>
+  // Deliberately makes NO claim about the cap — the bound coupling is the
+  // CONTEXT_REPOS_MAX-driven case below. A name asserting "the supervisor caps at
+  // 8" would go stale into a lie the moment either bound moved, while still
+  // passing: the same defect as an assertion that never executes what it claims.
+  it("preserves order and cardinality across the projection", () => {
+    const many = Array.from({ length: 3 }, (_, i) =>
       snapshot({ slug: `sib-${i}`, mountPath: `/abs/sib-${i}` }),
     );
-    const wire = contextMountsToWire(eight);
+    const wire = contextMountsToWire(many);
 
-    expect(wire).toHaveLength(8);
-    expect(wire.map((m) => m.slug)).toEqual(eight.map((m) => m.slug));
+    expect(wire).toHaveLength(many.length);
+    expect(wire.map((m) => m.slug)).toEqual(many.map((m) => m.slug));
   });
 
   it("maps an empty snapshot to an empty array", () => {
