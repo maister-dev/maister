@@ -96,19 +96,24 @@ async function handleRelationMutation(
 ): Promise<NextResponse> {
   const { slug, number } = await params;
 
-  let body: z.infer<typeof bodySchema>;
-
   try {
-    body = bodySchema.parse(await req.json());
-  } catch (err) {
-    return errorResponse(
-      new MaisterError("CONFIG", `invalid body: ${(err as Error).message}`),
-      slug,
-    );
-  }
-
-  try {
+    // Auth-first: the session gate is the FIRST await, ahead of req.json() and
+    // the Zod parse. Parsing first answers an UNAUTHENTICATED caller with a
+    // CONFIG (422) carrying the body schema — including the ADR-155 `toTaskKey`
+    // shape and the exactly-one-of refine message — where it owes a 401.
     const user = await requireActiveSession();
+
+    let body: z.infer<typeof bodySchema>;
+
+    try {
+      body = bodySchema.parse(await req.json());
+    } catch (err) {
+      return errorResponse(
+        new MaisterError("CONFIG", `invalid body: ${(err as Error).message}`),
+        slug,
+      );
+    }
+
     const taskNumber = parseTaskNumber(number);
 
     if (taskNumber === null) {

@@ -183,3 +183,61 @@ describe("relations route — dual RBAC on the resolved target (ADR-155 D3)", ()
     expect(requireProjectActionSpy).toHaveBeenCalledTimes(1);
   });
 });
+
+// Auth-first: the session gate must be the FIRST await, ahead of req.json()
+// and the Zod parse. Before this, an unauthenticated caller sending a
+// malformed body got CONFIG/400 describing the body schema — including the
+// ADR-155 `toTaskKey` shape — where it was owed a 401.
+describe("relations route — auth-first ordering", () => {
+  function unauthenticated() {
+    requireActiveSessionSpy.mockRejectedValue(
+      new MaisterError("UNAUTHENTICATED", "no session"),
+    );
+  }
+
+  it("401s an unauthenticated caller sending a MALFORMED body, never 400/CONFIG", async () => {
+    unauthenticated();
+
+    // Both target forms at once — the exact body that used to short-circuit
+    // into CONFIG before the session was ever checked.
+    const res = await POST(
+      req({ kind: "blocks", toNumber: 5, toTaskKey: "BETA-7" }),
+      routeParams(),
+    );
+
+    expect(res.status).toBe(401);
+    await expect(res.json()).resolves.not.toMatchObject({ code: "CONFIG" });
+  });
+
+  it("401s on DELETE too — both verbs share the handler", async () => {
+    unauthenticated();
+
+    const res = await DELETE(req({ nope: true }, "DELETE"), routeParams());
+
+    expect(res.status).toBe(401);
+  });
+
+  it("does not read the request body at all when unauthenticated", async () => {
+    unauthenticated();
+
+    const request = req({ kind: "blocks", toTaskKey: "BETA-7" });
+    const jsonSpy = vi.spyOn(request, "json");
+
+    const res = await POST(request, routeParams());
+
+    expect(res.status).toBe(401);
+    expect(jsonSpy).not.toHaveBeenCalled();
+    expect(resolveByKeyRefSpy).not.toHaveBeenCalled();
+  });
+
+  // The authenticated path must keep its original CONFIG contract.
+  it("still returns CONFIG/400 for a malformed body once authenticated", async () => {
+    const res = await POST(
+      req({ kind: "blocks", toNumber: 5, toTaskKey: "BETA-7" }),
+      routeParams(),
+    );
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ code: "CONFIG" });
+  });
+});
