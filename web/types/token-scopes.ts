@@ -111,6 +111,11 @@ export const AGENT_TOKEN_SCOPES = [
 //   memory:read        — project-scoped knowledge stores, each gated by its own
 //   memory:write         per-link axis (can_read_brain / can_write_brain /
 //   agent_memory:write   memory_enabled) that reach does not imply.
+//
+// Membership is necessary but not always sufficient: `relations:delete` is
+// narrowed AT THE OPERATION to edges the calling agent authored (see
+// removeTaskRelation's `onlyAuthoredBy`). Being on this list means "may be
+// exercised across the boundary", not "unrestricted once across".
 export const CROSS_PROJECT_AGENT_SCOPES = [
   "tasks:read",
   "tasks:create",

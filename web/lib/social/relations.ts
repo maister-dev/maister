@@ -345,6 +345,16 @@ export async function removeTaskRelation(
     kind: TaskRelationKind;
     toTaskId: string;
     actor: SocialActor;
+    // ADR-156: when set, the delete matches ONLY a relation this exact actor
+    // authored. The cross-project reach grant is justified by "an agent may
+    // remove the edge it created" — without this the same grant would let an
+    // outside agent drop ANY edge in the target project, and a dropped
+    // `blocks`/`requires` silently un-gates that project's launches.
+    //
+    // Expressed as extra AND-terms on the DELETE's own WHERE rather than a
+    // preceding SELECT: a check-then-act would race a concurrent re-author,
+    // and 0 rows deleted already means "no such relation" to every caller.
+    onlyAuthoredBy?: { actorType: "agent"; actorId: string };
   },
   db?: Db,
 ): Promise<{ removed: boolean }> {
@@ -359,6 +369,12 @@ export async function removeTaskRelation(
           eq(taskRelations.fromTaskId, input.fromTaskId),
           eq(taskRelations.kind, input.kind),
           eq(taskRelations.toTaskId, input.toTaskId),
+          ...(input.onlyAuthoredBy
+            ? [
+                eq(taskRelations.actorType, input.onlyAuthoredBy.actorType),
+                eq(taskRelations.actorId, input.onlyAuthoredBy.actorId),
+              ]
+            : []),
         ),
       )
       .returning({ id: taskRelations.id });

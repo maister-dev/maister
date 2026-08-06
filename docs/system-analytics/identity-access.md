@@ -213,7 +213,7 @@ necessary, never sufficient.
 | `comments:create` | yes | the coordination channel itself — append-only, mutates nothing |
 | `relations:read` | yes | reads the gating graph, which spans both ends after ADR-155 |
 | `relations:create` | yes | mints the cross-project `blocks` / `depends_on` / `requires` edge |
-| `relations:delete` | yes | removing an edge it minted must not need a human on the far side |
+| `relations:delete` | yes, **self-authored only** | removing an edge it minted must not need a human on the far side — but only edges it minted: the DELETE carries `actor_type='agent' AND actor_id=<caller>`, so a human- or other-agent-authored `blocks`/`requires` edge cannot be dropped from outside (a blocked delete returns the same `removed:false` as a missing one) |
 
 **Deliberate exclusions (Implemented — ADR-156).** Every scope not in the table
 above is refused by the allow-list; these are the ones whose exclusion is a

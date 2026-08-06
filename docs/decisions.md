@@ -14019,7 +14019,17 @@ tokens, bounded by a chain-depth budget.
 - **The write-safe subset is exactly `CROSS_PROJECT_AGENT_SCOPES`**, intersected
   with the token's actual scopes at check time: `tasks:read`, `tasks:create`,
   `comments:read`, `comments:create`, `relations:read`, `relations:create`,
-  `relations:delete`. Excluded, each for its own reason:
+  `relations:delete` — which is itself **narrowed to self-authored edges**: a
+  reach-granted token may delete only a relation it authored
+  (`task_relations.actor_type = 'agent'` AND `actor_id` = the calling agent),
+  enforced as extra AND-terms on the DELETE's own `WHERE` rather than a
+  preceding SELECT, so it cannot race a concurrent re-author and a blocked
+  delete is indistinguishable from a missing one (`200 {removed:false}`). The
+  grant is justified by "an agent may remove the edge it created"; unnarrowed,
+  the same grant would let an outside agent drop a `blocks`/`requires` edge and
+  silently un-gate the target project's launches. A SAME-project agent token is
+  unaffected — it already holds `manageTaskRelations` there. Excluded, each for
+  its own reason:
   - every run op (`runs:*`) — never in `AGENT_TOKEN_SCOPES` anyway; an agent
     must not launch, stop, or promote work in a sibling project;
   - `tasks:update` and `tasks:triage` — mutating a sibling's **existing** task

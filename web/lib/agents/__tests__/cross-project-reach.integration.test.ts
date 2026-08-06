@@ -641,3 +641,198 @@ describe("ADR-156 D7 arm (b) — the same-project chain tasks:create opened", ()
     expect(event.rows[0].actor_id).toBe(AGENT_ID);
   });
 });
+
+// ADR-156 narrowing: the reach grant is justified by "an agent may remove the
+// edge it CREATED". Without a self-authored constraint the same grant lets an
+// outside agent drop ANY edge in the target project — and a dropped
+// `blocks`/`requires` silently un-gates that project's launches. The constraint
+// rides the DELETE's own WHERE, so a blocked delete is indistinguishable from
+// "no such relation" (200 `removed:false`), keeping the existence-hidden shape.
+describe("ADR-156 cross-project relations:delete is limited to self-authored edges", () => {
+  // `task_relations_actor_pair_check` enforces `(actor_type='system') =
+  // (actor_id is null)`, so a human-authored fixture edge needs a REAL user row.
+  const rel = {
+    targetB: "",
+    targetBNumber: 0,
+    homeB: "",
+    homeBNumber: 0,
+    humanId: "",
+  };
+
+  let relationsDELETE: typeof import("@/app/api/v1/ext/projects/[slug]/tasks/[taskId]/relations/route").DELETE;
+
+  async function taskNumber(taskId: string): Promise<number> {
+    const r = await pool.query(`SELECT "number" FROM "tasks" WHERE "id" = $1`, [
+      taskId,
+    ]);
+
+    return r.rows[0].number as number;
+  }
+
+  async function seedRelation(
+    projectId: string,
+    fromTaskId: string,
+    toTaskId: string,
+    kind: string,
+    actorType: "agent" | "user",
+    actorId: string | null,
+  ): Promise<void> {
+    await pool.query(
+      `INSERT INTO "task_relations"
+         ("id", "project_id", "from_task_id", "kind", "to_task_id",
+          "actor_type", "actor_id")
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT DO NOTHING`,
+      [randomUUID(), projectId, fromTaskId, kind, toTaskId, actorType, actorId],
+    );
+  }
+
+  async function relationExists(
+    fromTaskId: string,
+    kind: string,
+  ): Promise<boolean> {
+    const r = await pool.query(
+      `SELECT 1 FROM "task_relations"
+       WHERE "from_task_id" = $1 AND "kind" = $2`,
+      [fromTaskId, kind],
+    );
+
+    return r.rows.length > 0;
+  }
+
+  beforeAll(async () => {
+    const { createTask } = await import("@/lib/services/tasks");
+
+    rel.humanId = randomUUID();
+    await pool.query(
+      `INSERT INTO "users" ("id", "email", "name", "role", "account_status")
+       VALUES ($1, $2, 'Relation Author', 'member', 'active')`,
+      [rel.humanId, `rel-${rel.humanId.slice(0, 8)}@example.test`],
+    );
+
+    rel.targetB = (
+      await createTask(
+        { title: "target B", prompt: "p" },
+        { projectId: fx.target, actorUserId: null },
+        db,
+      )
+    ).taskId;
+    rel.homeB = (
+      await createTask(
+        { title: "home B", prompt: "p" },
+        { projectId: fx.home, actorUserId: null },
+        db,
+      )
+    ).taskId;
+    rel.targetBNumber = await taskNumber(rel.targetB);
+    rel.homeBNumber = await taskNumber(rel.homeB);
+
+    ({ DELETE: relationsDELETE } = await import(
+      "@/app/api/v1/ext/projects/[slug]/tasks/[taskId]/relations/route"
+    ));
+  }, 60_000);
+
+  it("lets the reaching agent delete an edge IT authored in the target project", async () => {
+    await setLink(fx.target, { enabled: true, reach: true });
+    await setCallingDepth(0);
+    await seedRelation(
+      fx.target,
+      fx.taskTarget,
+      rel.targetB,
+      "blocks",
+      "agent",
+      AGENT_ID,
+    );
+
+    const res = await relationsDELETE(
+      request("DELETE", fx.token, {
+        kind: "blocks",
+        toNumber: rel.targetBNumber,
+      }),
+      taskParams(SLUG_TARGET, fx.taskTarget),
+    );
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ removed: true });
+    expect(await relationExists(fx.taskTarget, "blocks")).toBe(false);
+  });
+
+  it("refuses to delete a HUMAN-authored edge, and leaves the row intact", async () => {
+    await setLink(fx.target, { enabled: true, reach: true });
+    await setCallingDepth(0);
+    await seedRelation(
+      fx.target,
+      fx.taskTarget,
+      rel.targetB,
+      "requires",
+      "user",
+      rel.humanId,
+    );
+
+    const res = await relationsDELETE(
+      request("DELETE", fx.token, {
+        kind: "requires",
+        toNumber: rel.targetBNumber,
+      }),
+      taskParams(SLUG_TARGET, fx.taskTarget),
+    );
+
+    // Existence-hidden: the same 200 `removed:false` a missing edge produces.
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ removed: false });
+    // The gating edge survives — this is the un-gating the narrowing prevents.
+    expect(await relationExists(fx.taskTarget, "requires")).toBe(true);
+  });
+
+  it("refuses an edge authored by a DIFFERENT agent", async () => {
+    await setLink(fx.target, { enabled: true, reach: true });
+    await setCallingDepth(0);
+    await seedRelation(
+      fx.target,
+      fx.taskTarget,
+      rel.targetB,
+      "depends_on",
+      "agent",
+      "aif:someone-else",
+    );
+
+    const res = await relationsDELETE(
+      request("DELETE", fx.token, {
+        kind: "depends_on",
+        toNumber: rel.targetBNumber,
+      }),
+      taskParams(SLUG_TARGET, fx.taskTarget),
+    );
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ removed: false });
+    expect(await relationExists(fx.taskTarget, "depends_on")).toBe(true);
+  });
+
+  // The narrowing must be REACH-specific. An agent acting in its OWN project
+  // holds `manageTaskRelations` there and keeps the unrestricted behaviour —
+  // over-restricting would be a silent capability regression for every
+  // same-project agent.
+  it("does NOT restrict a same-project agent token deleting a human-authored edge", async () => {
+    await seedRelation(
+      fx.home,
+      fx.taskHome,
+      rel.homeB,
+      "requires",
+      "user",
+      rel.humanId,
+    );
+
+    const res = await relationsDELETE(
+      request("DELETE", fx.token, {
+        kind: "requires",
+        toNumber: rel.homeBNumber,
+      }),
+      taskParams(SLUG_HOME, fx.taskHome),
+    );
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ removed: true });
+    expect(await relationExists(fx.taskHome, "requires")).toBe(false);
+  });
+});

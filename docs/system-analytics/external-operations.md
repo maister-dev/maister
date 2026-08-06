@@ -110,6 +110,11 @@ surface exists.
   `relations:create`, `relations:delete` — read, comment, and relate. It is
   evaluated as an **allow-list**, never as a deny-list, so a scope added to
   `TOKEN_SCOPES` or `AGENT_TOKEN_SCOPES` later cannot silently acquire reach.
+  `relations:delete` carries one extra restriction the others do not: across a
+  project boundary it matches **only edges the calling agent authored**
+  (`actor_type='agent' AND actor_id=<caller>` as AND-terms on the DELETE), so
+  reach cannot be used to drop a human-authored gating edge and un-gate the
+  target project. Same-project agent tokens keep the unrestricted behaviour.
   Deliberately excluded: every `runs:*` op, `tasks:update`, `tasks:triage`,
   `hitl:request`, `flows:read`, `runners:read`, `memory:*`, and
   `agent_memory:write`. Reach is admitted only when ALL three hold — (1) the agent

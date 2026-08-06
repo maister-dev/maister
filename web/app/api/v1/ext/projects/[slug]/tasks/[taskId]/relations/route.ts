@@ -304,12 +304,33 @@ async function handleMutation(
       if (refusal) return refusal;
 
       const actor = socialActorForToken(ctx.actor);
+      // ADR-156: an agent token that reached this project through the
+      // cross-project grant (its own project differs from the one it is acting
+      // in) may only delete edges it authored itself — the grant is justified
+      // by "remove the edge it created", not by authority over the project's
+      // whole relation graph. Same-project agent tokens and user tokens are
+      // untouched: they already hold `manageTaskRelations` here.
+      const reachAgentId =
+        ctx.actor.tokenKind === "agent" &&
+        ctx.actor.agentId !== null &&
+        ctx.actor.projectId !== null &&
+        ctx.actor.projectId !== ctx.projectId
+          ? ctx.actor.agentId
+          : null;
       const input = {
         projectId: ctx.projectId,
         fromTaskId: taskId,
         kind: body.kind,
         toTaskId: to.task.id,
         actor,
+        ...(mode === "remove" && reachAgentId !== null
+          ? {
+              onlyAuthoredBy: {
+                actorType: "agent" as const,
+                actorId: reachAgentId,
+              },
+            }
+          : {}),
       };
 
       try {

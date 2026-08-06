@@ -686,6 +686,15 @@ paths:
         this change an orchestrator-minted `requires` edge could not be
         undone over ext/MCP at all. The dual authorization and the 403
         project-bound refusal below are identical to POST.
+
+        **(Implemented — ADR-156)** An AGENT token acting ACROSS a project
+        boundary through the cross-project reach grant may remove only edges
+        it authored itself (`actor_type='agent'` and `actor_id` = the calling
+        agent). The constraint rides the DELETE's own predicate, so a refused
+        removal is reported as the ordinary idempotent `removed: false` and
+        stays indistinguishable from a missing relation — an outside agent
+        never learns whether the edge exists. Same-project agent tokens and
+        user tokens are unaffected.
       operationId: extRemoveTaskRelation
       parameters:
         - { name: slug, in: path, required: true, schema: { type: string } }
