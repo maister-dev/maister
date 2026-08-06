@@ -36,6 +36,19 @@ vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
 const fx = { projectId: "", agentId: "test-pkg:platform-helper" };
 
+// ADR-156: read the grant straight off the COLUMN. The view projection is
+// already covered elsewhere; what is not covered is that the aggregating PATCH
+// actually lands (and withholds) the persisted value real Postgres stores.
+async function readReachColumn(): Promise<boolean> {
+  const rows = await pool.query(
+    `SELECT cross_project_reach FROM agent_project_links
+     WHERE agent_id = $1 AND project_id = $2`,
+    [fx.agentId, fx.projectId],
+  );
+
+  return rows.rows[0].cross_project_reach as boolean;
+}
+
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
     databaseName: "agent_links_test",
@@ -723,5 +736,174 @@ describe("project agent links (attach panel service)", () => {
     const view = await getProjectAgentsView(fx.projectId, db);
 
     expect(view.attached[0].config).toEqual({ intake_mode: "clarify" });
+  });
+
+  // ADR-156 (T24/T25): the cross-project reach grant against the real column.
+  // The route test covers the wire→service forwarding; this covers what Postgres
+  // ends up holding, including the "absent means untouched" half that a
+  // `!== undefined` idiom gets wrong the moment someone rewrites it as `if (x)`.
+  it("PATCH grants, revokes, and never silently drops cross_project_reach (ADR-156)", async () => {
+    await detachAgent(
+      { projectId: fx.projectId, agentId: fx.agentId },
+      db,
+    ).catch(() => undefined);
+    await attachAgent({ projectId: fx.projectId, agentId: fx.agentId }, db);
+
+    // A fresh attach never carries reach — the column is NOT NULL DEFAULT false
+    // and `attachAgent` has no grant path at all.
+    expect(await readReachColumn()).toBe(false);
+
+    // GRANT.
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: { crossProjectReach: true },
+      },
+      db,
+    );
+
+    expect(await readReachColumn()).toBe(true);
+
+    const view = await getProjectAgentsView(fx.projectId, db);
+
+    expect(view.attached[0].crossProjectReach).toBe(true);
+
+    // An UNRELATED patch must leave the grant standing. Ridden alongside a real
+    // field change so this proves omission-is-untouched, not "no UPDATE ran".
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: { branchBase: "develop" },
+      },
+      db,
+    );
+
+    expect(await readReachColumn()).toBe(true);
+
+    // REVOKE with an explicit false.
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: { crossProjectReach: false },
+      },
+      db,
+    );
+
+    expect(await readReachColumn()).toBe(false);
+
+    // Untouched in the other direction too — an omitted field never re-grants.
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: { branchBase: null },
+      },
+      db,
+    );
+
+    expect(await readReachColumn()).toBe(false);
+  });
+
+  // ADR-156: the grant rides the SAME UPDATE as `schedules_revision`, so a
+  // schedules replacement that loses the revision race must not land it. This
+  // case covers the STALE-EDITOR guard: the client sent a revision that no
+  // longer matches, which the pre-transaction check refuses outright.
+  it("refuses a stale-revision schedules replacement without landing the grant (ADR-156)", async () => {
+    await detachAgent(
+      { projectId: fx.projectId, agentId: fx.agentId },
+      db,
+    ).catch(() => undefined);
+    await attachAgent({ projectId: fx.projectId, agentId: fx.agentId }, db);
+
+    const { schedulesRevision } = (await getProjectAgentsView(fx.projectId, db))
+      .attached[0];
+
+    await expect(
+      updateAgentLink(
+        {
+          projectId: fx.projectId,
+          agentId: fx.agentId,
+          patch: {
+            crossProjectReach: true,
+            schedulesRevision: schedulesRevision - 1,
+            schedules: [{ triggerType: "mention" }],
+          },
+        },
+        db,
+      ),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    expect(await readReachColumn()).toBe(false);
+  });
+
+  // ADR-156: and this case covers the CAS predicate itself — the guard the
+  // stale-editor check above can never reach. Here the supplied revision is
+  // FRESH (the pre-check passes) and a concurrent writer bumps the row between
+  // updateAgentLink's read and its UPDATE, so only the `schedules_revision`
+  // equality on the UPDATE can fence the grant. Without it, the last writer
+  // would win and silently land cross-project reach.
+  it("fences the grant on the CAS predicate when a concurrent writer bumps the revision (ADR-156)", async () => {
+    await detachAgent(
+      { projectId: fx.projectId, agentId: fx.agentId },
+      db,
+    ).catch(() => undefined);
+    await attachAgent({ projectId: fx.projectId, agentId: fx.agentId }, db);
+
+    const { schedulesRevision } = (await getProjectAgentsView(fx.projectId, db))
+      .attached[0];
+
+    // The interleave: bump the revision on a separate connection at the moment
+    // updateAgentLink opens its transaction — after it has already read the link.
+    // FIXME(any): the injected `Db` is `any` (dual drizzle-orm peer-dep variants).
+    const racingDb = new Proxy(db as any, {
+      get(target: any, prop: string | symbol) {
+        if (prop === "transaction") {
+          return async (fn: unknown): Promise<unknown> => {
+            await pool.query(
+              `UPDATE agent_project_links
+                 SET schedules_revision = schedules_revision + 1
+               WHERE agent_id = $1 AND project_id = $2`,
+              [fx.agentId, fx.projectId],
+            );
+
+            return target.transaction(fn);
+          };
+        }
+
+        const value = Reflect.get(target, prop);
+
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+
+    await expect(
+      updateAgentLink(
+        {
+          projectId: fx.projectId,
+          agentId: fx.agentId,
+          patch: {
+            crossProjectReach: true,
+            schedulesRevision,
+            schedules: [{ triggerType: "mention" }],
+          },
+        },
+        racingDb,
+      ),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    // The whole transaction rolled back: no grant, and the mention binding the
+    // same patch carried never landed either.
+    expect(await readReachColumn()).toBe(false);
+
+    const schedules = await pool.query(
+      `SELECT count(*)::int AS n FROM agent_schedules
+       WHERE agent_id = $1 AND project_id = $2`,
+      [fx.agentId, fx.projectId],
+    );
+
+    expect(schedules.rows[0].n).toBe(0);
   });
 });
