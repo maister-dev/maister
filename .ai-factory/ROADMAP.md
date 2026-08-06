@@ -683,6 +683,33 @@
   the standardization routes/UI landed with the ADR-150 cut-over; calibration/
   longitudinal read models and package-upgrade regression suites remain.
 
+- [x] **M49. Multi-repo cross-project enablement** — let one owner run related
+  work across several private repositories without giving up `project = repo`,
+  which STAYS. Multi-repo work is decomposed into per-project tasks coordinated
+  through the task graph plus read-only context sharing, along three axes:
+  **cross-project task relations** (any of the 5 kinds may span projects; the row
+  is owned by the from-task's project and every gating insert serializes on ONE
+  platform-wide advisory lock — per-project locking cannot catch a 4-cycle),
+  **cross-project agent facade reach** (opt-in per attachment via
+  `agent_project_links.cross_project_reach`, limited to the read/comment/relate
+  `CROSS_PROJECT_AGENT_SCOPES` allow-list, bounded by `runs.agent_chain_depth`
+  ≤ `MAISTER_MAX_AGENT_CHAIN_DEPTH`, every denial existence-hidden as 404), and
+  **read-only sibling-repo context mounts** (`settings.context_repos` on
+  `ai_coding`/`judge`/`orchestrator`, engine floor 3.4.0, materialized under the
+  run dir and snapshotted on `runs.context_mounts`). The governing rule is
+  **relations may cross projects; the automation they drive may not** —
+  auto-launch, the abandon cascade, and C2 admission all stay same-project.
+  ADR-155/156/157; migrations 0123/0124. Explicit non-goals: multi-repo
+  runs/workspaces, coordinated cross-repo promotion, orchestrator cross-project
+  delegation, a meta-project/project-group entity, cross-project task moves.
+  Status: implemented and gate-green (web unit 7122, supervisor 494, mcp 245),
+  unmerged. Open follow-ups: the `relations:delete` cross-project scope is
+  broader than ADR-156's self-authored-edge justification; agent-authored
+  cross-project edge CREATION stays refused pending a decision; the
+  `CONTEXT_REPOS_MAX` shared-constant duplication across the web/supervisor
+  package boundary is an open packaging decision.
+  (see `.ai-factory/plans/feature-multi-repo-cross-project-enablement.md`)
+
 ## Completed
 
 | Milestone                                                                    | Date       |
