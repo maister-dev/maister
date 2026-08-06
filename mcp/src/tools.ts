@@ -600,7 +600,12 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
     },
   },
   relation_list: {
-    description: "List a task's typed relations",
+    description:
+      "List a task's typed relations. A relation may point at a task in ANOTHER " +
+      "project; when you are not authorized to read that project the row still " +
+      "carries the counterpart's taskKey and number but returns title=null, " +
+      "status=null and redacted=true. That is a permission boundary, not missing " +
+      "data — do not retry it.",
     inputSchema: {
       type: "object",
       properties: {

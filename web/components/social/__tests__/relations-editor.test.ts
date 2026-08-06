@@ -42,6 +42,7 @@ const relations: TaskRelationView[] = [
     kind: "blocks",
     other: {
       taskId: "t2",
+      projectId: "p1",
       key: "MAI",
       number: 2,
       title: "Other",
@@ -54,6 +55,7 @@ const relations: TaskRelationView[] = [
     kind: "depends_on",
     other: {
       taskId: "t3",
+      projectId: "p1",
       key: "MAI",
       number: 3,
       title: "Third",

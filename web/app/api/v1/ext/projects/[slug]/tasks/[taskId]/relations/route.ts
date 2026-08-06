@@ -4,6 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { canAgentReachProject } from "@/lib/agents/cross-project-reach";
 import { httpStatusForAuthz, requireProjectActionForUser } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -82,6 +83,8 @@ type CrossProjectCtx = {
     projectId: string | null;
     tokenKind: string;
     ownerUserId: string | null;
+    agentId: string | null;
+    boundRunId: string | null;
   };
 };
 
@@ -111,12 +114,32 @@ async function refuseCrossProjectTarget(
       audit.db,
     );
 
-  // ADR-156: an agent must NEVER be able to probe whether a sibling project
-  // exists. A 403 here versus the 404 an unresolvable key returns would be a
-  // platform-wide enumeration oracle, so agent tokens get the SAME
-  // existence-hidden 404 either way. The actionable 403 below is for human
-  // operators, who already hold the key they supplied.
+  // ADR-156: an agent crosses projects through the reach grant, and
+  // `relations:create`/`relations:delete` are BOTH in
+  // `CROSS_PROJECT_AGENT_SCOPES` — so a granted agent must be allowed through
+  // here. An earlier revision returned an unconditional 404 for every agent
+  // token, which hid the enumeration oracle but also made the granted path
+  // unreachable: the feature the subset exists to enable could never fire.
+  //
+  // Every DENIAL stays the existence-hidden 404 the oracle argument requires:
+  // indistinguishable from the 404 an unresolvable key returns, so an agent
+  // still cannot probe for project existence. Only the ALLOW branch differs.
   if (ctx.actor.tokenKind === "agent") {
+    const decision = ctx.actor.agentId
+      ? await canAgentReachProject({
+          agentId: ctx.actor.agentId,
+          targetProjectId,
+          // The operation's own scope, so `relations:create` and
+          // `relations:delete` are checked independently rather than as one
+          // blanket "relations" capability.
+          scopeLabel: audit.scopeUsed,
+          callingRunId: ctx.actor.boundRunId,
+          db: audit.db,
+        })
+      : ({ allowed: false, reason: "no_link" } as const);
+
+    if (decision.allowed) return null;
+
     await auditRefusal(404);
 
     return NextResponse.json(
@@ -172,6 +195,74 @@ async function refuseCrossProjectTarget(
   );
 }
 
+// ADR-155 + ADR-156: a relation may cross projects, so this GET can surface a
+// FOREIGN task's title and status to a caller authorized only on the URL
+// project. The edge itself must stay visible — ADR-155 makes the `blocked`
+// chip's `KEY-N` the ONLY mitigation for a wedged `requires` edge, so hiding
+// the row would break a stated contract. The CONTENT is what needs gating.
+//
+// So an unauthorized foreign counterpart keeps its address (`taskKey`,
+// `number`) and loses its content (`title`, `status` → null) behind an explicit
+// `redacted` flag — a structured signal the consumer can branch on, never an
+// in-band placeholder string.
+//
+// Decisions are memoized per project: a task with N relations into the same
+// sibling must not cost N authorization round-trips.
+function makeCounterpartAuthorizer(
+  ctx: CrossProjectCtx,
+  db: unknown,
+): (projectId: string) => Promise<boolean> {
+  const cache = new Map<string, Promise<boolean>>();
+
+  return (projectId: string) => {
+    if (projectId === ctx.projectId) return Promise.resolve(true);
+
+    const hit = cache.get(projectId);
+
+    if (hit) return hit;
+
+    const decide = (async (): Promise<boolean> => {
+      if (ctx.actor.tokenKind === "agent") {
+        if (!ctx.actor.agentId) return false;
+
+        const decision = await canAgentReachProject({
+          agentId: ctx.actor.agentId,
+          targetProjectId: projectId,
+          scopeLabel: "relations:read",
+          callingRunId: ctx.actor.boundRunId,
+          db,
+        });
+
+        return decision.allowed;
+      }
+
+      // A project-bound user/project token holds no authority outside its own
+      // project, so a foreign counterpart is always redacted for it.
+      if (ctx.actor.projectId !== null) return false;
+
+      if (ctx.actor.tokenKind === "user" && ctx.actor.ownerUserId) {
+        try {
+          await requireProjectActionForUser(
+            ctx.actor.ownerUserId,
+            projectId,
+            "readBoard",
+          );
+
+          return true;
+        } catch {
+          return false;
+        }
+      }
+
+      return false;
+    })();
+
+    cache.set(projectId, decide);
+
+    return decide;
+  };
+}
+
 type RouteParams = { params: Promise<{ slug: string; taskId: string }> };
 type TransactionalDb = {
   transaction<T>(scope: (tx: unknown) => Promise<T>): Promise<T>;
@@ -215,18 +306,26 @@ export async function GET(
       }
 
       const rows = await getTaskRelations(taskId, db);
+      const mayRead = makeCounterpartAuthorizer(ctx, db);
       // ExtRelationView: `role` says which end the URL task is.
-      const relations = rows.map((row) => ({
-        kind: row.kind,
-        role: row.direction === "out" ? "from" : "to",
-        other: {
-          taskId: row.other.taskId,
-          number: row.other.number,
-          taskKey: row.other.key,
-          title: row.other.title,
-          status: row.other.status,
-        },
-      }));
+      const relations = await Promise.all(
+        rows.map(async (row) => {
+          const visible = await mayRead(row.other.projectId);
+
+          return {
+            kind: row.kind,
+            role: row.direction === "out" ? "from" : "to",
+            other: {
+              taskId: row.other.taskId,
+              number: row.other.number,
+              taskKey: row.other.key,
+              title: visible ? row.other.title : null,
+              status: visible ? row.other.status : null,
+              redacted: !visible,
+            },
+          };
+        }),
+      );
 
       return NextResponse.json({ relations }, { status: 200 });
     },

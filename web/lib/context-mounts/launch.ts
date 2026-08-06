@@ -35,9 +35,19 @@ const log = pino({
 // — a project admin already authorized the sibling when writing
 // `agent_project_links.context_repos` (authorizeContextRepos), and re-checking
 // here would only be able to check the wrong identity.
+//
+// An agent-driven flow run (`runs.agent_id` set on a `run_kind='flow'` run) has
+// NEITHER form: `launchAgentDrivenFlowRun` launches with `actorUserId: null`, so
+// there is no launching user to hold `readRepoFiles`, and the node's
+// `context_repos` came from the FLOW PACKAGE — not from the admin action on
+// `agent_project_links.context_repos` that is the agent path's consent event.
+// Borrowing the driving agent's attachment here would grant sibling reads no
+// human ever approved: exactly the authorization laundering D11 exists to
+// prevent. So the combination is refused explicitly rather than consented to.
 export type ContextMountConsent =
   | { kind: "launching-user"; userId: string | null | undefined }
-  | { kind: "attach-time" };
+  | { kind: "attach-time" }
+  | { kind: "agent-driven-flow"; agentId: string };
 
 export type PrepareContextMountsArgs = {
   db: Db;
@@ -136,6 +146,29 @@ export async function prepareContextMounts(
     );
 
     return [];
+  }
+
+  // Refused BEFORE resolution: no consent form exists for this launch (see
+  // ContextMountConsent), so resolving siblings and checking out repos would only
+  // do work for a launch that cannot legally proceed. It sits AFTER the
+  // kill-switch on purpose — with mounts disabled there is nothing to consent to,
+  // and an agent-driven flow whose nodes declare `context_repos` must still run.
+  if (args.consent.kind === "agent-driven-flow") {
+    const slugs = decls.map((d) => d.project);
+
+    log.warn(
+      {
+        runId: args.runId,
+        agentId: args.consent.agentId,
+        declared: slugs,
+      },
+      "context mounts refused: an agent-driven flow run has neither ADR-157 D11 consent form",
+    );
+
+    throw new MaisterError(
+      "PRECONDITION",
+      `context_repos: node-declared sibling mounts (${slugs.join(", ")}) are unsupported on an agent-driven flow run (driving agent "${args.consent.agentId}") — such a run has no launching user to hold readRepoFiles, and a flow package's declaration is not an admin's attach-time grant. Either declare context_repos on that agent's project attachment and launch the agent as a standalone run, or launch this flow as a user who holds readRepoFiles on each sibling project.`,
+    );
   }
 
   const snapshot = await resolveContextMounts({

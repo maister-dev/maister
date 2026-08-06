@@ -577,6 +577,164 @@ describe("ext relations — cross-project targets (ADR-155)", () => {
     expect(await existing.json()).toEqual(await missing.json());
   });
 
+  // The adversarial-review finding: the denial test above passed against an
+  // unconditional agent 404, which ALSO made the granted path unreachable.
+  // `relations:create`/`relations:delete` are in CROSS_PROJECT_AGENT_SCOPES
+  // precisely so a reach-granted agent can do this, so the allow branch needs
+  // its own coverage — a deny-only suite cannot tell "correctly refused" from
+  // "feature does not work".
+  async function seedReachGrantedAgent(
+    agentId: string,
+    targetProjectId: string,
+    opts: { reach?: boolean; enabled?: boolean } = {},
+  ): Promise<string> {
+    await pool.query(
+      `insert into agents
+         (id, package_name, version_label, origin, name, description, workspace,
+          mode, triggers, risk_tier, source_path)
+       values ($1, 'pkg', 'v1.0.0', 'git', 'granted', 'd', 'none', 'session',
+               '["manual"]'::jsonb, 'read_only', '/tmp/a.md')
+       on conflict (id) do nothing`,
+      [agentId],
+    );
+    await pool.query(
+      `insert into agent_project_links
+         (id, agent_id, project_id, enabled, cross_project_reach)
+       values ($1, $2, $3, $4, $5)
+       on conflict (agent_id, project_id) do update
+         set enabled = excluded.enabled,
+             cross_project_reach = excluded.cross_project_reach`,
+      [
+        randomUUID(),
+        agentId,
+        targetProjectId,
+        opts.enabled ?? true,
+        opts.reach ?? true,
+      ],
+    );
+
+    // The token's run must EXIST with a real depth: `canAgentReachProject` reads
+    // `runs.agent_chain_depth` and fails closed (`chain_depth_exhausted`) when
+    // the row is absent. A random runId therefore yields a 404 that looks like
+    // "reach denied" but is really "unattributable reach" — which is correct
+    // behavior, and exactly why the fixture has to seed the run.
+    const runId = randomUUID();
+
+    await pool.query(
+      `INSERT INTO "runs"
+         ("id", "run_kind", "agent_id", "trigger_source", "project_id",
+          "flow_version", "flow_revision", "status", "agent_chain_depth")
+       VALUES ($1, 'agent', $2, 'manual', $3, 'agent', 'manual', 'Running', 0)`,
+      [runId, agentId, fx.projectId],
+    );
+
+    const token = await issueAgentRunToken({
+      agentId,
+      projectId: fx.projectId,
+      runId,
+      db,
+    });
+
+    return token.secret;
+  }
+
+  it("lets a REACH-GRANTED agent create AND remove a cross-project relation", async () => {
+    const secret = await seedReachGrantedAgent(
+      "pkg:xproj-granted",
+      sib.projectId,
+    );
+    const fromTaskId = await freshFromTask("xproj granted agent");
+    const body = { kind: "blocks", toTaskKey: `${sib.taskKey}-1` };
+
+    const add = await POST(
+      request("POST", secret, body),
+      routeParams(SLUG, fromTaskId),
+    );
+
+    expect(add.status).toBe(201);
+
+    // DELETE shares `refuseCrossProjectTarget`, so the grant must admit the
+    // remove too — an agent able to create but not remove would leave a
+    // success-gated `requires` edge unremovable, the D4b hole all over again.
+    const remove = await DELETE(
+      request("DELETE", secret, body),
+      routeParams(SLUG, fromTaskId),
+    );
+
+    expect(remove.status).toBe(200);
+  });
+
+  it("still 404s a granted agent whose link is DISABLED", async () => {
+    const secret = await seedReachGrantedAgent(
+      "pkg:xproj-disabled",
+      sib.projectId,
+      { enabled: false },
+    );
+    const fromTaskId = await freshFromTask("xproj disabled link");
+
+    const add = await POST(
+      request("POST", secret, {
+        kind: "blocks",
+        toTaskKey: `${sib.taskKey}-1`,
+      }),
+      routeParams(SLUG, fromTaskId),
+    );
+
+    expect(add.status).toBe(404);
+  });
+
+  // The second review finding: GET authorized only the URL project, so a
+  // foreign counterpart's title and status leaked to any caller who could read
+  // the near end. The EDGE stays visible (ADR-155 needs its KEY-N actionable);
+  // the CONTENT is gated behind an explicit `redacted` flag.
+  it("redacts a foreign counterpart's content for an agent without reach, keeping its address", async () => {
+    const granted = await seedReachGrantedAgent(
+      "pkg:xproj-read-granted",
+      sib.projectId,
+    );
+    const fromTaskId = await freshFromTask("xproj read gating");
+
+    await POST(
+      request("POST", granted, {
+        kind: "blocks",
+        toTaskKey: `${sib.taskKey}-1`,
+      }),
+      routeParams(SLUG, fromTaskId),
+    );
+
+    const grantedList = await GET(
+      request("GET", granted),
+      routeParams(SLUG, fromTaskId),
+    );
+    const grantedRow = (
+      (await grantedList.json()) as { relations: Array<any> }
+    ).relations.find((r) => r.other.taskKey === sib.taskKey);
+
+    expect(grantedRow.other.redacted).toBe(false);
+    expect(grantedRow.other.title).not.toBeNull();
+
+    // Same relation, an agent with NO grant on the sibling.
+    const ungranted = await seedReachGrantedAgent(
+      "pkg:xproj-read-ungranted",
+      sib.projectId,
+      { reach: false },
+    );
+    const ungrantedList = await GET(
+      request("GET", ungranted),
+      routeParams(SLUG, fromTaskId),
+    );
+    const ungrantedRow = (
+      (await ungrantedList.json()) as { relations: Array<any> }
+    ).relations.find((r) => r.other.taskKey === sib.taskKey);
+
+    // The edge and its address survive; the content does not.
+    expect(ungrantedRow).toBeDefined();
+    expect(ungrantedRow.other.taskKey).toBe(sib.taskKey);
+    expect(ungrantedRow.other.redacted).toBe(true);
+    expect(ungrantedRow.other.title).toBeNull();
+    expect(ungrantedRow.other.status).toBeNull();
+  });
+
   it("404s when toTaskKey resolves into an ARCHIVED project", async () => {
     const fromTaskId = await freshFromTask("xproj archived");
 

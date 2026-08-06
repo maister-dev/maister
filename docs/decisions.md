@@ -179,9 +179,9 @@
 | [ADR-152](#adr-152-assistant-pulse-promotion-readiness--summonable-agent-metadata-and-per-attachment-agent-memory-files) | Assistant pulse promotion-readiness + summonable-agent metadata, and per-attachment agent memory files | Implemented | 2026-07-27 |
 | [ADR-153](#adr-153-flow-child-process-env-isolation--allow-listed-env-for-clicheckprobe-children) | Flow child-process env isolation — allow-listed env for cli/check/probe children | Implemented | 2026-07-31 |
 | [ADR-154](#adr-154-maister_flow_dir-for-clicheck-node-actions--packaged-script-execution--engine-330) | `MAISTER_FLOW_DIR` for cli/check node actions — packaged-script execution + engine 3.3.0 | Implemented | 2026-07-31 |
-| [ADR-155](#adr-155-cross-project-task-relations) | Cross-project task relations | Designed | 2026-08-05 |
-| [ADR-156](#adr-156-cross-project-agent-facade-reach) | Cross-project agent facade reach | Designed | 2026-08-05 |
-| [ADR-157](#adr-157-read-only-sibling-repo-context-mounts) | Read-only sibling-repo context mounts | Designed | 2026-08-05 |
+| [ADR-155](#adr-155-cross-project-task-relations) | Cross-project task relations | Implemented | 2026-08-05 |
+| [ADR-156](#adr-156-cross-project-agent-facade-reach) | Cross-project agent facade reach | Implemented | 2026-08-05 |
+| [ADR-157](#adr-157-read-only-sibling-repo-context-mounts) | Read-only sibling-repo context mounts | Implemented | 2026-08-05 |
 
 ---
 
@@ -14329,6 +14329,16 @@ _Decisions are numbered sequentially. Do not reuse numbers._
 ---
 
 ## TODO (tracked doc defects)
+
+- **`operations.openapi.yaml` fails `redocly lint` on one pre-existing error
+  (open, found 2026-08-05).** `#/components/schemas/ExtActivityRunSnapshot/
+  properties/lastAction` sets `nullable: true` beside an `allOf` with no sibling
+  `type`, which the `nullable-type-sibling` rule rejects. Predates the
+  multi-repo branch — proved by stashing that branch's only edit to the file and
+  re-running, which reports the identical single error. `pnpm validate:contracts`
+  (the repo's own gate) passes, so this is invisible to CI; it surfaces only when
+  following docs/CLAUDE.md's "zero errors" redocly instruction by hand. One-line
+  fix, left alone here because R9 forbids touching an unrelated schema in passing.
 
 - **`workspaces.md` auto-promotion-lanes status contradicts itself and ADR-126
   (open, found 2026-08-05).** The `## Auto-promotion lanes` section ends

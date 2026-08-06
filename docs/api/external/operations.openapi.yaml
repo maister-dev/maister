@@ -3542,15 +3542,41 @@ components:
           enum: [from, to]
         other:
           type: object
-          required: [taskId, number, title, status]
+          required: [taskId, number, title, status, redacted]
           properties:
             taskId: { type: string, format: uuid }
             number: { type: integer, minimum: 1 }
             taskKey: { type: string }
-            title: { type: string }
+            title:
+              type: string
+              nullable: true
+              description: |
+                `null` when `redacted` is true — see below.
             status:
               type: string
-              enum: [Backlog, InFlight, Done, Abandoned]
+              nullable: true
+              enum: [Backlog, InFlight, Done, Abandoned, null]
+              description: |
+                `null` when `redacted` is true.
+            redacted:
+              type: boolean
+              description: |
+                (Implemented — ADR-155/156) True when this counterpart lives in
+                a DIFFERENT project that the caller is not authorized to read,
+                in which case `title` and `status` are `null`.
+
+                A relation may cross projects, so this list can surface a
+                foreign task. The EDGE and its address (`taskKey` + `number`)
+                are always returned — ADR-155 makes the `blocked` chip's
+                `KEY-N` the only mitigation for a wedged success-gated
+                `requires` edge, so hiding the row would break that contract.
+                The CONTENT is what is gated.
+
+                Authorization per counterpart project: same project as the URL
+                → visible; agent token → the ADR-156 reach grant evaluated for
+                `relations:read`; NULL-project user token → the owner's
+                `readBoard`; project-bound user/project token → always redacted
+                outside its own project.
 
     ExtCreateCommentBody:
       type: object

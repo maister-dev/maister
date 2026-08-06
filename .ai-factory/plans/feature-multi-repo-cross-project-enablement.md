@@ -1131,7 +1131,7 @@ reformats ~60 unrelated files).
   ⚠ Project memory: e2e shares ports 3100/7788 and the `maister_e2e` DB across **all**
   worktrees — kill those ports first and prove a green baseline before adding cases.
 
-- [x] **T36 — Documentation checkpoint (`/aif-docs`) + verify.**
+- [~] **T36 — Documentation checkpoint (`/aif-docs`) + verify.** *(docs reconciled and all four runners + both validators green; NOT closed — its phase-exit depends on T35, which is unwritten)*
   Reconcile every Phase-0 artifact against what actually shipped; flip
   `Designed → Implemented` tags; update `CLAUDE.md` (root) — the Flow-engine version line
   `3.3.0 → 3.4.0`, the relation-kinds count, and a Current-Scope line for cross-project
@@ -1400,3 +1400,67 @@ different sides (the subset↔action-map guard) — one test, one owner, cited t
     have no shared choke and fall to the GC backstop within one `system_sweep`
     tick — the same deferral the run's own worktree already relies on. Stated
     rather than implied.
+
+### Post-review corrections (adversarial review, 2026-08-05)
+
+An adversarial Codex review over the full branch raised five findings. **All five
+were verified in source before any edit** and all five were real:
+
+1. **[high] A granted agent could never mutate a cross-project relation.** The
+   enumeration-oracle fix returned an unconditional 404 for EVERY agent token in
+   `refuseCrossProjectTarget`, so the `relations:create`/`relations:delete`
+   entries in `CROSS_PROJECT_AGENT_SCOPES` were unreachable — the feature the
+   subset exists to enable could not fire. The existing test asserted only the
+   denial, so it passed. Fixed by consulting `canAgentReachProject` with the
+   operation's own scope; every DENIAL still returns the existence-hidden 404, so
+   the oracle stays closed. **A deny-only test cannot distinguish "correctly
+   refused" from "feature broken" — that is what let this ship.**
+2. **[high] The relations GET leaked foreign task content.** It authorized only
+   the URL project, then returned the counterpart's title and status for a
+   cross-project relation. Fixed by redacting content (`title`/`status` → null)
+   behind an explicit `redacted` flag while KEEPING the address, because ADR-155
+   makes the `blocked` chip's `KEY-N` the only mitigation for a wedged `requires`
+   edge — hiding the row would break a stated contract. Wire change specced in
+   `operations.openapi.yaml`; the MCP `relation_list` description now explains a
+   null title so a model does not read it as missing data and retry.
+3. **[high] A chain-cap refusal leaked an allocated worktree and branch.** The
+   gate ran after `addWorktree` but before the compensating cleanup.
+4. **[high] An agent-driven flow run with node-level `context_repos` could never
+   start** — `actorUserId: null` versus `launching-user` consent.
+5. **[medium] Status markers overstated readiness** — the ADR index table still
+   said `Designed` (the 121-tag flip matched prose forms, not table cells), and
+   T36 was ticked while T35 is unwritten.
+
+Findings 1 and 2 are the same class as the three already recorded above: **an
+assertion that never executes the thing it describes.** That is now five
+instances in one feature.
+
+Pre-existing, flagged not fixed (unrelated to this plan):
+`npx @redocly/cli lint docs/api/external/operations.openapi.yaml` fails on ONE
+error in `ExtActivityRunSnapshot.lastAction` (`nullable` with no sibling `type`),
+present before this branch — proved by stashing this branch's edit and
+re-running. `pnpm validate:contracts`, the repo's own gate, passes.
+
+**Sibling sweep for finding 2 (recorded, per the fix-skill's fix-the-class rule).**
+`getTaskRelations` / `getTaskRelationsByTaskIds` have exactly three consumers:
+
+| Consumer | Classification |
+| -------- | -------------- |
+| `app/api/v1/ext/.../relations/route.ts` | **FIXED** — token surface, where ADR-156's reach model governs |
+| `lib/queries/task-detail.ts:346` | **INTENTIONALLY EXCLUDED** — see below |
+| `lib/queries/board.ts:406` | **INTENTIONALLY EXCLUDED** — see below |
+
+The two internal consumers serve an authenticated human holding `readBoard` on
+the URL project, and they DO surface a cross-project counterpart's title. That is
+deliberate, not an oversight: ADR-155 makes the `blocked` chip's `KEY-N` the only
+mitigation for a wedged success-gated `requires` edge and states that keeping the
+chip actionable is a contract — and coordinating decomposed work across projects
+is the entire point of F1. ADR-156's reach model is scoped to AGENT tokens, not
+human sessions.
+
+⚠ **Owner decision worth revisiting:** a project-A member who is NOT a member of
+project B can currently read B's task TITLE through a cross-project relation chip.
+ADR-155's contract only requires the `KEY-N` address to be actionable — the title
+goes beyond it. Tightening the human surface to address-only would be a UX
+regression on the feature as asked for, so it is NOT changed here, but it is a
+real disclosure boundary and it is recorded rather than assumed.

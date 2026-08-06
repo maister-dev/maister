@@ -520,6 +520,11 @@ export type TaskRelationView = {
   kind: TaskRelationKind;
   other: {
     taskId: string;
+    // ADR-156: the counterpart's OWNING project. A cross-project relation puts a
+    // foreign task's title and status in this view, so every caller that
+    // projects it onto a wire must be able to tell which rows are foreign and
+    // authorize (or redact) them. Without this field that check is impossible.
+    projectId: string;
     key: string;
     number: number;
     title: string;
@@ -538,6 +543,7 @@ export async function getTaskRelations(
       id: taskRelations.id,
       kind: taskRelations.kind,
       otherId: tasks.id,
+      otherProjectId: tasks.projectId,
       number: tasks.number,
       key: projects.taskKey,
       title: tasks.title,
@@ -553,6 +559,7 @@ export async function getTaskRelations(
       id: taskRelations.id,
       kind: taskRelations.kind,
       otherId: tasks.id,
+      otherProjectId: tasks.projectId,
       number: tasks.number,
       key: projects.taskKey,
       title: tasks.title,
@@ -571,6 +578,7 @@ export async function getTaskRelations(
       kind: row.kind,
       other: {
         taskId: row.otherId,
+        projectId: row.otherProjectId,
         key: row.key,
         number: row.number,
         title: row.title,
@@ -597,6 +605,7 @@ export async function getTaskRelationsByTaskIds(
       id: taskRelations.id,
       kind: taskRelations.kind,
       otherId: tasks.id,
+      otherProjectId: tasks.projectId,
       number: tasks.number,
       key: projects.taskKey,
       title: tasks.title,
@@ -613,6 +622,7 @@ export async function getTaskRelationsByTaskIds(
       id: taskRelations.id,
       kind: taskRelations.kind,
       otherId: tasks.id,
+      otherProjectId: tasks.projectId,
       number: tasks.number,
       key: projects.taskKey,
       title: tasks.title,
@@ -635,6 +645,7 @@ export async function getTaskRelationsByTaskIds(
       kind: row.kind,
       other: {
         taskId: row.otherId,
+        projectId: row.otherProjectId,
         key: row.key,
         number: row.number,
         title: row.title,

@@ -1046,6 +1046,38 @@ export async function launchAgentRun(
     }
   }
 
+  // ADR-156 D7: snapshotted at launch and NEVER re-derived — the enforcement
+  // path must read what this run actually spent, not a projection that can
+  // drift. The consumer checks `atCap` before calling; this refusal is the
+  // backstop for a caller that did not.
+  //
+  // Resolved HERE, beside the other cheap preconditions, because it is a pure DB
+  // read that GATES an irreversible side-effect: the worktree + branch allocation
+  // below. Refusing after `addWorktree` left a directory and a branch ref behind
+  // with no `runs`/`workspaces` row for GC to key on, so every repeated refusal
+  // leaked disk and pre-claimed the next launch's path.
+  const chain = await resolveAgentChainDepth({
+    trigger: input.trigger,
+    db: _db,
+  });
+
+  if (chain.atCap) {
+    log.warn(
+      {
+        agentId: input.agentId,
+        projectId: input.projectId,
+        depth: chain.depth,
+        cap: maxAgentChainDepth(),
+        triggerEventId: input.trigger.eventId ?? null,
+      },
+      "agent launch refused: agent chain depth exhausted",
+    );
+    throw new MaisterError(
+      "PRECONDITION",
+      `agent "${input.agentId}": agent chain depth exhausted (${chain.depth} > ${maxAgentChainDepth()})`,
+    );
+  }
+
   let worktreePath: string | null = null;
   let branch: string | null = null;
   let baseCommit: string | null = null;
@@ -1170,10 +1202,27 @@ export async function launchAgentRun(
         }
       }
 
-      await ensureWorktreeProvenance({
-        worktreePath,
-        metadata: { runId: provenanceRunId },
-      });
+      // Same leak class as the chain-depth gate above, and the ONE step here
+      // that cannot be hoisted before the allocation — it verifies provenance ON
+      // the created tree. Its PRECONDITION/CONFLICT throws sit before the
+      // insert's compensating cleanup, so an allocator that fails here would
+      // strand a tree with no `runs`/`workspaces` row. The `allocatedWorktree`
+      // guard keeps F3 intact: a reused (sibling-owned) or orphan-claimed dir is
+      // never removed.
+      try {
+        await ensureWorktreeProvenance({
+          worktreePath,
+          metadata: { runId: provenanceRunId },
+        });
+      } catch (err) {
+        if (allocatedWorktree) {
+          await removeWorktree({
+            projectRepoPath: ctx.project.repoPath,
+            worktreePath,
+          }).catch(() => undefined);
+        }
+        throw err;
+      }
 
       // M37 (ADR-102): record the allocator-vs-reuser decision for the shared
       // tree. The allocator/claimer owns the single `workspaces` row (UNIQUE
@@ -1259,32 +1308,6 @@ export async function launchAgentRun(
     },
     "[ADR-111] resolved agent config snapshot",
   );
-
-  // ADR-156 D7: snapshotted at launch and NEVER re-derived — the enforcement
-  // path must read what this run actually spent, not a projection that can
-  // drift. The consumer checks `atCap` before calling; this refusal is the
-  // backstop for a caller that did not.
-  const chain = await resolveAgentChainDepth({
-    trigger: input.trigger,
-    db: _db,
-  });
-
-  if (chain.atCap) {
-    log.warn(
-      {
-        agentId: input.agentId,
-        projectId: input.projectId,
-        depth: chain.depth,
-        cap: maxAgentChainDepth(),
-        triggerEventId: input.trigger.eventId ?? null,
-      },
-      "agent launch refused: agent chain depth exhausted",
-    );
-    throw new MaisterError(
-      "PRECONDITION",
-      `agent "${input.agentId}": agent chain depth exhausted (${chain.depth} > ${maxAgentChainDepth()})`,
-    );
-  }
 
   const runRow = {
     id: runId,

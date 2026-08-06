@@ -1579,11 +1579,21 @@ async function executeNodeAction(
         decls: capabilityBearingSettings(node.nodeType, node.settings)
           ?.context_repos,
         // D11: on the flow path the LAUNCHING user's read grant is the consent
-        // event — the run's creator, not the current request's session.
-        consent: {
-          kind: "launching-user",
-          userId: loaded.run.createdByUserId as string | null,
-        },
+        // event — the run's creator, not the current request's session. An
+        // AGENT-driven flow run has no launching user at all (the graph runner
+        // only loads flow runs, so `run.agentId` here IS the driving agent), and
+        // the flow package's declaration is not the agent path's attach-time
+        // grant — that combination carries no consent and is refused, not
+        // consented to on the agent's behalf.
+        consent: loaded.run.agentId
+          ? {
+              kind: "agent-driven-flow",
+              agentId: loaded.run.agentId as string,
+            }
+          : {
+              kind: "launching-user",
+              userId: loaded.run.createdByUserId as string | null,
+            },
       });
 
       const dispatchAgent = (): Promise<NodeResult> =>
