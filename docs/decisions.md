@@ -182,6 +182,7 @@
 | [ADR-155](#adr-155-cross-project-task-relations) | Cross-project task relations | Implemented | 2026-08-05 |
 | [ADR-156](#adr-156-cross-project-agent-facade-reach) | Cross-project agent facade reach | Implemented | 2026-08-05 |
 | [ADR-157](#adr-157-read-only-sibling-repo-context-mounts) | Read-only sibling-repo context mounts | Implemented | 2026-08-05 |
+| [ADR-158](#adr-158-russian-user-manual-with-screenshots-under-docsrumanual) | Russian user manual with screenshots under `docs/ru/manual/` | Implemented | 2026-08-12 |
 
 ---
 
@@ -14295,6 +14296,52 @@ mounts for ACP sessions, behind `MAISTER_CONTEXT_MOUNT_ENABLED` (default
 - _Re-deriving mounts at terminal time from the manifest or attachment_:
   rejected — the declaration can change after launch, so cleanup would miss a
   mount or remove the wrong path; the launch snapshot is authoritative.
+
+---
+
+### ADR-158: Russian user manual with screenshots under `docs/ru/manual/`
+
+**Date:** 2026-08-12
+**Status:** Implemented
+
+**Context:** R1 whitelists Markdown, Mermaid, and YAML in `docs/` and
+explicitly requires an ADR before PNG screenshots or PDF appear anywhere in
+the tree. R8 allows Russian-language product guides under `docs/ru/` when the
+user explicitly requests them. The owner requested a self-contained Russian
+user manual illustrated with real UI screenshots and buildable into a single
+PDF for distribution.
+
+**Decision:** `docs/ru/manual/` is a scoped carve-out from R1:
+
+- PNG screenshots of the product UI are allowed in
+  `docs/ru/manual/images/` only. They are reference illustrations for the
+  human-facing manual, not contract artifacts — English `docs/` stays
+  screenshot-free and canonical, and Mermaid remains the only diagramming
+  language outside this subtree.
+- The manual is a set of numbered Markdown chapters plus `style.css` and
+  `build.sh`; the script assembles chapters into one HTML (pandoc,
+  `--embed-resources`) and prints it to PDF with headless Chrome.
+- Only sources are committed (Markdown, CSS, PNG, script). The generated
+  HTML/PDF land in `docs/ru/manual/build/`, which is gitignored.
+- Screenshots are captured at a fixed viewport, light theme, RU locale, and
+  the manual states its capture date — staleness is accepted and visible.
+
+**Consequences:**
+
+- Binary PNGs enter git history — bounded (one curated set per capture pass,
+  ~15–25 images), and only under the one subtree named here.
+- Screenshots will drift from the evolving UI; the stated capture date makes
+  the drift honest, and re-capture is a mechanical pass over the same paths.
+
+**Alternatives Considered:**
+
+- _Manual outside the repo_: rejected — loses versioning next to the
+  `docs/ru/` pages it derives from.
+- _pandoc + LaTeX PDF path_: rejected — multi-GB toolchain plus Cyrillic font
+  setup for output headless Chrome (already present) produces from the same
+  HTML.
+- _Committing the built PDF_: rejected — regenerable artifact, would bloat
+  history on every re-capture.
 
 ---
 

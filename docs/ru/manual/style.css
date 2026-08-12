@@ -1,0 +1,140 @@
+@page {
+  size: A4;
+  margin: 18mm 16mm;
+}
+
+html {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+body {
+  font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 10.5pt;
+  line-height: 1.55;
+  color: #1c1c1e;
+  margin: 0;
+}
+
+/* Title page */
+header#title-block-header {
+  break-after: page;
+  padding-top: 34vh;
+  text-align: center;
+}
+h1.title {
+  font-size: 27pt;
+  margin: 0 0 0.3em;
+  border: none;
+}
+p.subtitle {
+  font-size: 13pt;
+  color: #555;
+  margin: 0 0 2em;
+}
+p.date {
+  font-size: 10pt;
+  color: #888;
+}
+
+/* Table of contents */
+nav#TOC {
+  break-after: page;
+}
+nav#TOC > ul {
+  padding-left: 0;
+}
+nav#TOC ul {
+  list-style: none;
+}
+nav#TOC > ul > li {
+  margin: 0.35em 0;
+  font-weight: 600;
+}
+nav#TOC > ul > li li {
+  font-weight: 400;
+}
+nav#TOC a {
+  color: #1c1c1e;
+}
+
+h1 {
+  break-before: page;
+  font-size: 17pt;
+  border-bottom: 2px solid #e0e0e0;
+  padding-bottom: 5px;
+  margin-top: 0;
+}
+h2 {
+  font-size: 13pt;
+  margin-top: 1.3em;
+  break-after: avoid;
+}
+
+figure {
+  margin: 0.9em 0;
+  text-align: center;
+  break-inside: avoid;
+}
+figure img {
+  max-width: 100%;
+  border: 1px solid #d6d6d6;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+figcaption {
+  font-size: 8.5pt;
+  color: #6b6b6b;
+  margin-top: 5px;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 9.5pt;
+  margin: 0.7em 0;
+  break-inside: avoid;
+}
+th,
+td {
+  border: 1px solid #ccc;
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+th {
+  background: #f2f2f2;
+}
+
+code {
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 9pt;
+  background: #f5f5f5;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+pre {
+  background: #f7f7f7;
+  border: 1px solid #e2e2e2;
+  border-radius: 6px;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  break-inside: avoid;
+}
+pre code {
+  background: none;
+  padding: 0;
+}
+
+a {
+  color: #0b57d0;
+  text-decoration: none;
+}
+
+ul,
+ol {
+  padding-left: 1.4em;
+}
+li {
+  margin: 0.15em 0;
+}

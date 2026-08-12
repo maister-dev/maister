@@ -50,3 +50,6 @@ next-env.d.ts
 
 # M9 design-handoff screenshots (binary; reference only)
 .ai-factory/references/m9-design/project/screenshots/
+
+# RU user manual build output (ADR-158): generated HTML + PDF, sources are committed
+docs/ru/manual/build/
