@@ -1281,6 +1281,11 @@ export const flowYamlV1Schema = graphOnlyManifestInputSchema.pipe(
         .strict()
         .optional(),
       nodes: z.array(nodeSchema).min(1),
+      // ADR-159: the node an operator's rework claim re-enters the graph at.
+      // Compile-time only — never persisted to a DB column, so the SET/CLEAR
+      // symmetry rule does not apply. Cross-referenced against `nodes` and
+      // engine-gated in validateGraphManifest (flow-level, not per-node).
+      reentry: z.string().min(1).optional(),
       // Additive presentation metadata (ADR-064); runner/engine never reads it.
       presentation: flowPresentationSchema.optional(),
       // ADR-091: launch-time host/runtime requirements (e.g. an external CLI the

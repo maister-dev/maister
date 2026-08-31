@@ -9,7 +9,7 @@ import {
 } from "@/lib/domain-events/taxonomy";
 
 describe("domain-event taxonomy", () => {
-  it("contains exactly the 11 taxonomy kinds (ADR-086, ADR-136, run.review, and B3 run.escalated)", () => {
+  it("contains exactly the 13 taxonomy kinds (ADR-086, ADR-136, run.review, B3 run.escalated, ADR-159 rework round-trip)", () => {
     expect([...DOMAIN_EVENT_KINDS]).toEqual([
       "task.created",
       "task.comment_added",
@@ -21,8 +21,23 @@ describe("domain-event taxonomy", () => {
       "run.abandoned",
       "run.review",
       "run.escalated",
+      "run.rework_claimed",
+      "run.rework_returned",
       "gate.failed",
     ]);
+  });
+
+  // ADR-159: a claim/return is a lifecycle fact, NOT a settled child. Adding
+  // either to the settled set would make an orchestrator collect a claimed
+  // child as if it had finished — the same hazard `parent_run_id IS NULL`
+  // guards at the claim route, arriving by a different door.
+  it("the rework round-trip kinds are neither terminal nor settled", () => {
+    for (const kind of ["run.rework_claimed", "run.rework_returned"]) {
+      expect(isDomainEventKind(kind)).toBe(true);
+      expect(isRunTerminalEventKind(kind)).toBe(false);
+      expect(isRunSettledEventKind(kind)).toBe(false);
+      expect([...RUN_SETTLED_EVENT_KINDS]).not.toContain(kind);
+    }
   });
 
   // M37 (ADR-100): the settled set = terminal kinds + run.review.

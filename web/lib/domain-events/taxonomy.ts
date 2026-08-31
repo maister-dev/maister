@@ -16,8 +16,18 @@ export const DOMAIN_EVENT_KINDS = [
   // it wakes a parked orchestrator so it can collect/promote/rework, and it
   // drives as-plan auto-promote. Emitted only when the run has a parent_run_id.
   "run.review",
-  // Execution-policy axis (B3): a run escalated for human attention.
+  // Execution-policy axis (B3): a run escalated for human attention. ADR-160's
+  // operator node interrupt REUSES this kind with `reason: "node_interrupt"` —
+  // an operator pausing a node is an escalation like any other, so it needs no
+  // taxonomy entry and no CHECK change.
   "run.escalated",
+  // ADR-159: an operator took a finished `Review` run back for rework, and
+  // returned it. Distinct lifecycle facts (not escalations), so unlike the
+  // interrupt they DO get their own kinds — migration `0125` widens the CHECK.
+  // Deliberately absent from RUN_TERMINAL_EVENT_KINDS / RUN_SETTLED_EVENT_KINDS
+  // below: a claim must never make an orchestrator treat a child as settled.
+  "run.rework_claimed",
+  "run.rework_returned",
   "gate.failed",
 ] as const;
 

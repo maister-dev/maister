@@ -25,6 +25,9 @@ const EXPECTED_TYPES = [
   "run.started",
   "run.needs_input",
   "run.escalated",
+  // ADR-159 operator rework round-trip.
+  "run.rework_claimed",
+  "run.rework_returned",
   "hitl.requested",
   "hitl.responded",
   "run.review",
@@ -61,8 +64,8 @@ describe("WEBHOOK_API_VERSION", () => {
 });
 
 describe("WEBHOOK_EVENT_TYPES", () => {
-  it("has exactly the 16 listed types in order", () => {
-    expect(WEBHOOK_EVENT_TYPES).toHaveLength(16);
+  it("has exactly the 18 listed types in order", () => {
+    expect(WEBHOOK_EVENT_TYPES).toHaveLength(18);
     expect([...WEBHOOK_EVENT_TYPES]).toEqual([...EXPECTED_TYPES]);
   });
 
@@ -194,6 +197,25 @@ describe("buildEnvelopePayload — per-type data shapes pass through unchanged",
       data: { nodeId: "review", onStuck: "escalate" },
     },
     {
+      type: "run.rework_claimed",
+      data: {
+        ownerUserId: "88888888-8888-4888-8888-888888888888",
+        anchorNodeId: "review",
+        reentryNodeId: "checks",
+        reentrySource: "takeover_transition",
+      },
+    },
+    {
+      type: "run.rework_returned",
+      data: {
+        ownerUserId: "88888888-8888-4888-8888-888888888888",
+        reentryNodeId: "checks",
+        returnedCommitCount: 3,
+        fastForwarded: true,
+        remote: "origin",
+      },
+    },
+    {
       type: "hitl.requested",
       data: {
         hitlRequestId: "44444444-4444-4444-8444-444444444444",
@@ -247,7 +269,7 @@ describe("buildEnvelopePayload — per-type data shapes pass through unchanged",
     { type: "ping", data: { message: "MAIster webhook ping" } },
   ];
 
-  it("covers all 16 types in the table", () => {
+  it("covers all 18 types in the table", () => {
     expect(cases.map((c) => c.type)).toEqual([...EXPECTED_TYPES]);
   });
 

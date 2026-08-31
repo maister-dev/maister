@@ -548,6 +548,8 @@ const ARTIFACT_INLINE_ENGINE_MIN = "2.2.0";
 // packaged-script install-dir injection that ships with engine 3.3.0.
 const FLOW_DIR_ENGINE_MIN = "3.3.0";
 const CONTEXT_REPOS_ENGINE_MIN = "3.4.0";
+// ADR-159: the flow-level `reentry` key. Gated on the MANIFEST, not on `nodes`.
+const REENTRY_ENGINE_MIN = "3.5.0";
 
 const PLAN_REVIEW_ENGINE_MIN = "3.1.0";
 
@@ -1004,6 +1006,11 @@ function declaresMutationAssertions(nodes: NodeDef[]): boolean {
   return false;
 }
 
+// ADR-159: flow-level, so it reads the manifest rather than the node list.
+function declaresReentry(manifest: FlowYamlV1): boolean {
+  return typeof manifest.reentry === "string" && manifest.reentry.length > 0;
+}
+
 // Cross-reference + cycle + engine validation for a graph (`nodes[]`) manifest
 // (ADR-026). zod has already validated node/gate shape; this enforces the
 // graph-level invariants that zod cannot express.
@@ -1182,6 +1189,39 @@ export function validateGraphManifest(
       throw new MaisterError(
         "CONFIG",
         `graph flow ${flowYamlPath} declares settings.context_repos but engine_min "${engineMin}" < ${CONTEXT_REPOS_ENGINE_MIN} — bump compat.engine_min to ${CONTEXT_REPOS_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
+      );
+    }
+  }
+
+  // ADR-159: the flow-level `reentry` key names the node an operator's rework
+  // claim re-enters the graph at. Gated on the MANIFEST — the key is flow-level,
+  // not per-node — so a manifest that never declares it stays valid at any
+  // engine_min and compiles byte-identically to before.
+  if (declaresReentry(manifest)) {
+    const ok = semverGte(engineMin, REENTRY_ENGINE_MIN);
+
+    log.debug(
+      {
+        flowYamlPath,
+        declared: engineMin || "(unset)",
+        required: REENTRY_ENGINE_MIN,
+        ok,
+      },
+      "[engine-gate] reentry floor",
+    );
+    if (!ok) {
+      throw new MaisterError(
+        "CONFIG",
+        `graph flow ${flowYamlPath} declares reentry but engine_min "${engineMin}" < ${REENTRY_ENGINE_MIN} — bump compat.engine_min to ${REENTRY_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
+      );
+    }
+
+    const reentry = manifest.reentry as string;
+
+    if (!nodes.some((n) => n.id === reentry)) {
+      throw new MaisterError(
+        "CONFIG",
+        `graph flow ${flowYamlPath} declares reentry "${reentry}" but no node with that id exists`,
       );
     }
   }

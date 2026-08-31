@@ -63,7 +63,7 @@ const log = pino({
 // under the run dir and exposed to the ACP session. A flow declaring the
 // setting MUST `compat.engine_min >= 3.4.0`; the floor is enforced at manifest
 // load, so an older engine refuses loudly instead of silently ignoring it.
-export const MAISTER_ENGINE_VERSION = "3.4.0";
+export const MAISTER_ENGINE_VERSION = "3.5.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.

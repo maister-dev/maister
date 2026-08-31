@@ -57,6 +57,13 @@ export interface InspectorActionPolicyInput {
   diffTruncated: boolean;
   reviewedTargetCommit: string | null;
   deliveryMode: "local" | "pull_request" | null;
+  // ADR-159: `owner_user_id` of an OPEN rework claim, and the acting user. When
+  // they match on a `HumanWorking` run with a present workspace, the policy
+  // opens `exportBranch` to the owner — which is what makes snapshot / handoff
+  // / handoff-metadata reachable during a claim. Optional so existing callers
+  // keep today's behaviour (no carve-out) unchanged.
+  reworkClaimOwnerUserId?: string | null;
+  viewerUserId?: string | null;
 }
 
 function endpointFor(input: {
@@ -142,6 +149,8 @@ export function deriveInspectorActions(
     hasWorkspace: input.hasWorkspace,
     workspaceRemoved: input.workspaceRemoved,
     workspaceArchived: input.workspaceArchived,
+    claimOwnerUserId: input.reworkClaimOwnerUserId ?? null,
+    viewerUserId: input.viewerUserId ?? null,
   });
   const lifecycleById = new Map(lifecycle.map((item) => [item.id, item]));
   const stop = lifecycleById.get("stop");

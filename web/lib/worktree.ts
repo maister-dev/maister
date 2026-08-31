@@ -3222,6 +3222,117 @@ async function isAncestor(
   }
 }
 
+// ADR-159: fast-forward the run WORKTREE's checked-out branch to a remote-
+// tracking ref, and report the outcome truthfully. Fast-forward only — no
+// merge, no rebase, no conflict resolution.
+//
+// Divergence is PROVEN with `merge-base --is-ancestor` before it is claimed,
+// never inferred from `merge --ff-only`'s exit code: that command also exits
+// non-zero for a dirty tree, and reading its failure as "diverged" would report
+// a provably false divergence between two SHAs in a perfect fast-forward
+// relationship (the exact defect ADR-141 already paid for).
+export type FastForwardOutcome =
+  | { kind: "up_to_date"; sha: string }
+  | { kind: "fast_forwarded"; before: string; after: string }
+  | {
+      kind: "diverged";
+      command: string;
+      localSha: string;
+      remoteSha: string;
+      aheadBy: number;
+      behindBy: number;
+    };
+
+export async function fastForwardWorktreeToRef(
+  worktree: string,
+  ref: string,
+): Promise<FastForwardOutcome> {
+  const wt = validate(absolutePathSchema, worktree, "worktree");
+  const target = validate(gitRefSchema, ref, "ref");
+  const command = `git -C ${wt} merge --ff-only ${target}`;
+
+  const localSha = (await runGit(wt, ["rev-parse", "--verify", "HEAD"])).stdout.trim();
+  const remoteSha = (
+    await runGit(wt, ["rev-parse", "--verify", `${target}^{commit}`])
+  ).stdout.trim();
+
+  if (localSha === remoteSha) {
+    log.debug({ worktree: wt, ref: target, sha: localSha }, "ffWorktree up-to-date");
+
+    return { kind: "up_to_date", sha: localSha };
+  }
+
+  if (!(await isAncestor(wt, localSha, remoteSha))) {
+    const [aheadBy, behindBy] = await revListLeftRightCounts(
+      wt,
+      remoteSha,
+      localSha,
+    );
+
+    log.warn(
+      { worktree: wt, ref: target, command, localSha, remoteSha, aheadBy, behindBy },
+      "ffWorktree refused — not a fast-forward",
+    );
+
+    return { kind: "diverged", command, localSha, remoteSha, aheadBy, behindBy };
+  }
+
+  try {
+    await runGit(wt, ["merge", "--ff-only", "--", target]);
+  } catch (err) {
+    // Proven fast-forwardable above, so this is not divergence — the usual
+    // cause is uncommitted work in the worktree.
+    throw new MaisterError(
+      "PRECONDITION",
+      `cannot fast-forward ${wt} to ${target} even though it is a fast-forward — the worktree may have uncommitted changes: ${errorText(err) || asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+
+  log.info(
+    { worktree: wt, ref: target, before: localSha, after: remoteSha },
+    "ffWorktree fast-forwarded",
+  );
+
+  return { kind: "fast_forwarded", before: localSha, after: remoteSha };
+}
+
+// `git rev-list --left-right --count A...B` → [commits only in A, only in B].
+async function revListLeftRightCounts(
+  repo: string,
+  left: string,
+  right: string,
+): Promise<[number, number]> {
+  const { stdout } = await runGit(repo, [
+    "rev-list",
+    "--left-right",
+    "--count",
+    `${left}...${right}`,
+  ]);
+  const [a, b] = stdout.trim().split(/\s+/).map((n) => Number.parseInt(n, 10));
+
+  return [Number.isFinite(a) ? a : 0, Number.isFinite(b) ? b : 0];
+}
+
+// Whether a remote-tracking ref exists locally (post-fetch). A branch with no
+// upstream is a NO-OP success for the ADR-159 ingest, not a failure — the
+// purely-local edit loop must still return.
+export async function remoteTrackingRefExists(
+  worktree: string,
+  ref: string,
+): Promise<boolean> {
+  const wt = validate(absolutePathSchema, worktree, "worktree");
+  const r = validate(gitRefSchema, ref, "ref");
+
+  try {
+    await runGit(wt, ["rev-parse", "--verify", `${r}^{commit}`]);
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // The absolute per-worktree git dir. A linked worktree's `.git` is a FILE
 // pointing into the main repo's `.git/worktrees/<name>`, and the rebase/merge
 // state lives there — `--absolute-git-dir` resolves it regardless.

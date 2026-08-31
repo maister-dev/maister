@@ -64,6 +64,10 @@ export type FlowGraph = {
   entry: string;
   order: string[];
   nodes: Map<string, CompiledNode>;
+  // ADR-159: the node an operator's rework claim re-enters at, when the flow
+  // declares one. `null` means the claim falls through to the ledger-derived
+  // link of the re-entry chain. Compile-time only — never persisted.
+  reentry: string | null;
   // M42 (ADR-114): the run's session set — every distinct session a
   // runner-bearing node belongs to, keyed by session name.
   sessions: Map<string, CompiledSession>;
@@ -402,6 +406,7 @@ function compileGraph(
   graphNodes: NodeDef[],
   flowVerdictCalibration: FlowYamlV1["verdict_calibration"],
   manifestSessions: FlowYamlV1["sessions"],
+  manifestReentry: string | undefined,
 ): FlowGraph {
   const order = graphNodes.map((n) => n.id);
   const nodes = new Map<string, CompiledNode>();
@@ -491,7 +496,20 @@ function compileGraph(
     });
   }
 
-  return { entry: graphNodes[0].id, order, nodes, sessions };
+  // ADR-159: re-assert here as well as in validateGraphManifest — authored
+  // drafts reach compileManifest without going through the loader's gates.
+  if (manifestReentry !== undefined && !nodes.has(manifestReentry)) {
+    throw new MaisterError(
+      "CONFIG",
+      `flow declares reentry "${manifestReentry}" but no node with that id exists`,
+    );
+  }
+
+  const reentry = manifestReentry ?? null;
+
+  log.debug({ reentry, resolved: reentry !== null }, "[compile] reentry resolved");
+
+  return { entry: graphNodes[0].id, order, nodes, sessions, reentry };
 }
 
 // Compile a validated graph-only manifest into its runtime traversal model.
@@ -500,6 +518,7 @@ export function compileManifest(manifest: FlowYamlV1): FlowGraph {
     manifest.nodes,
     manifest.verdict_calibration,
     manifest.sessions,
+    manifest.reentry,
   );
 }
 

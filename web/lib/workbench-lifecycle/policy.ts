@@ -42,6 +42,13 @@ export type WorkbenchLifecyclePolicyInput = {
   hasWorkspace: boolean;
   workspaceRemoved: boolean;
   workspaceArchived: boolean;
+  // ADR-159: `owner_user_id` of an OPEN rework claim (`decision =
+  // 'review_rework_claim'`), else null. An M11b takeover leaves this null, so
+  // it never opens the carve-out below.
+  claimOwnerUserId: string | null;
+  // The acting user, for the owner comparison. Null for an anonymous/system
+  // derivation, which never matches.
+  viewerUserId: string | null;
 };
 
 const ACTION_ORDER: WorkbenchLifecycleActionId[] = [
@@ -100,11 +107,40 @@ function isWorktreeActionAllowed(args: WorkbenchLifecyclePolicyInput): boolean {
   return WORKTREE_ACTION_STATUSES.has(args.runStatus);
 }
 
+// ADR-159: the ONE hole in the `human-owned` wall. `exportBranch` is the single
+// action opened, and only to the claim owner on a present workspace — but it is
+// what makes snapshotCommit / handoffBranch / handoff-metadata reachable during
+// a claim, since all three gate on `requireActionAllowed(ctx, "exportBranch")`.
+// That coupling is deliberate: the claim exists so the operator can get the
+// branch out to another machine and push fixes back.
+function ownsOpenReworkClaim(args: WorkbenchLifecyclePolicyInput): boolean {
+  const owner = args.claimOwnerUserId;
+  const viewer = args.viewerUserId;
+
+  // Compare only two REAL ids. A `!== null` pair would let two absent values
+  // (`undefined === undefined` from a caller that omits the fields) match each
+  // other and open the carve-out on any HumanWorking run.
+  return (
+    typeof owner === "string" &&
+    owner.length > 0 &&
+    typeof viewer === "string" &&
+    owner === viewer &&
+    args.hasWorkspace &&
+    !args.workspaceRemoved
+  );
+}
+
 export function deriveWorkbenchLifecycleActions(
   args: WorkbenchLifecyclePolicyInput,
 ): WorkbenchLifecycleAction[] {
   if (args.runStatus === "HumanWorking") {
-    return disabledActions("human-owned");
+    if (!ownsOpenReworkClaim(args)) return disabledActions("human-owned");
+
+    // stop/archive/drop stay refused even for the owner: the run is mid-handoff
+    // and removing its worktree under the operator editing it is never right.
+    return ACTION_ORDER.map((id) =>
+      action(id, id === "exportBranch", "human-owned"),
+    );
   }
 
   if (isStopAllowed(args)) {

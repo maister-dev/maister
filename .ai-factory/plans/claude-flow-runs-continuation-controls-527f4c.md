@@ -556,7 +556,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
 > red fails the phase; a pre-existing red is quarantined by an explicit `exclude`/`.skip` with a reason
 > and a tracked follow-up, never tolerated silently.
 
-- [ ] **Task 6: Add the flow-level `reentry` field end-to-end (schema → compile → engine floor).**
+- [x] **Task 6: Add the flow-level `reentry` field end-to-end (schema → compile → engine floor).**
   Files: `web/lib/config.schema.ts` (add `reentry: z.string().min(1).optional()` beside `nodes`, in
   the `.passthrough()` graph manifest object — A15); `web/lib/config.ts` (add
   `const REENTRY_ENGINE_MIN = "3.5.0"`, a `declaresReentry(manifest)` predicate, and the `semverGte`
@@ -573,7 +573,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   at ANY `engine_min` (byte-identical to today).
   *Depends on:* 4.
 
-- [ ] **Task 7: Implement `resolveReentryNode(runId, graph, db)` — the D5 chain.**
+- [x] **Task 7: Implement `resolveReentryNode(runId, graph, db)` — the D5 chain.**
   New module `web/lib/runs/reentry.ts`. Returns a discriminated result:
   `{ok: true, nodeId, source: 'manifest' | 'takeover_transition'}` or
   `{ok: false, reason: 'no_reentry_declared'}`. Step 2 reads the ledger
@@ -587,7 +587,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   graph → falls through to disabled, never throws".
   *Depends on:* 6.
 
-- [ ] **Task 8: Open the lifecycle owner carve-out.**
+- [x] **Task 8: Open the lifecycle owner carve-out.**
   Files: `web/lib/workbench-lifecycle/policy.ts` — extend `WorkbenchLifecyclePolicyInput` with
   `claimOwnerUserId: string | null` and `viewerUserId: string | null`; when
   `runStatus === 'HumanWorking'` **and** `viewerUserId === claimOwnerUserId` **and** the workspace is
@@ -604,7 +604,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   workspace-presence matrix, including the regression case "HumanWorking + non-owner ⇒ all disabled".
   *Depends on:* 3.
 
-- [ ] **Task 9: Implement `POST /api/runs/{runId}/rework-claim/claim`.**
+- [x] **Task 9: Implement `POST /api/runs/{runId}/rework-claim/claim`.**
   New route `web/app/api/runs/[runId]/rework-claim/claim/route.ts` + service in
   `web/lib/runs/rework-claim.ts`. Order of operations, all cheap deterministic preconditions BEFORE
   any mutation:
@@ -635,7 +635,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   WARN on every refusal with the code.
   *Depends on:* 7.
 
-- [ ] **Task 10: Implement fast-forward-only origin ingest (`web/lib/runs/rework-claim-ingest.ts`).**
+- [x] **Task 10: Implement fast-forward-only origin ingest (`web/lib/runs/rework-claim-ingest.ts`).**
   `fetch <remote>` with **no refspec** (matching ADR-141, so `<remote>/<branch>` really is refreshed),
   then `git merge --ff-only <remote>/<branch>` inside the worktree. Also FF the same-head handoff
   branch when `getWorkbenchHandoffMetadata`-derived handoff metadata names one and it is strictly
@@ -649,7 +649,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   `{runId, remote, branch, before, after, fastForwarded}`; WARN with the full failing command on non-FF.
   *Depends on:* 9.
 
-- [ ] **Task 11: Implement `POST /api/runs/{runId}/rework-claim/return` — two-phase commit.**
+- [x] **Task 11: Implement `POST /api/runs/{runId}/rework-claim/return` — two-phase commit.**
   New route + service. Structure copied from the M11b return route (which is the reference
   implementation for the ordering), with the FF ingest spliced in:
   - **Phase 1 (intent)**: `FOR UPDATE` on the run row; assert `status === 'HumanWorking'`; assert
@@ -679,7 +679,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   code on each refusal; ERROR on the 503 path with the underlying message.
   *Depends on:* 10, 11A (defined immediately below — read it first).
 
-- [ ] **Task 11A: Make `markDownstreamStale` ignore claim rows — shared, unconditional (D10).**
+- [x] **Task 11A: Make `markDownstreamStale` ignore claim rows — shared, unconditional (D10).**
   `web/lib/flows/graph/ledger.ts`: when choosing the per-node latest attempt for staling, select the
   latest attempt **with `owner_user_id IS NULL`**. A claim row is a human-handoff marker, not a node
   execution, and must never shield the node's real last execution from the staler. No flag, no
@@ -708,7 +708,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   are ≥ their pre-change values (never fewer — the fix only ever stales more).
   *Depends on:* 9.
 
-- [ ] **Task 11B: Emit `run.rework_claimed` / `run.rework_returned` (D11) + migration `0125`.**
+- [x] **Task 11B: Emit `run.rework_claimed` / `run.rework_returned` (D11) + migration `0125`.**
   Follow the extension rule written in `web/lib/domain-events/taxonomy.ts`'s own header — all four
   parts, or none:
   1. **Taxonomy**: add both kinds to `DOMAIN_EVENT_KINDS`. Neither is a run-terminal or run-settled
@@ -761,7 +761,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   a rejected claim writes none; the CHECK rejects an unknown kind.
   *Depends on:* 11.
 
-- [ ] **Task 11C: Apply and verify migration `0125` on the dev database.**
+- [x] **Task 11C: Apply and verify migration `0125` on the dev database.**
   Nothing in this plan runs the migrator, and an unapplied migration is a live failure mode here —
   not a formality. Run `pnpm --filter maister-web db:migrate` (the main lineage; the **brain**
   lineage `db:migrate:brain` is untouched by this change — confirm and say so rather than running it

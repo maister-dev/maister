@@ -16,6 +16,8 @@ function input(
     hasWorkspace: true,
     workspaceRemoved: false,
     workspaceArchived: false,
+    claimOwnerUserId: null,
+    viewerUserId: null,
     ...over,
   };
 }

@@ -140,6 +140,9 @@ export function lifecycleActionsForScratchDetail(
     hasWorkspace: detail.workspace !== null,
     workspaceRemoved: detail.workspace?.removedAt !== null,
     workspaceArchived: false,
+    // ADR-159: a scratch run can never hold a rework claim (flow-only).
+    claimOwnerUserId: null,
+    viewerUserId: null,
   })
     .filter((action) => action.enabled)
     .map((action) => action.id);

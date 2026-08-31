@@ -98,6 +98,21 @@ function mapDomainEvent(row: DomainEventActivityRow): DomainEventMapping {
         action: { verb: "escalate", object: "run", outcome: "needs attention" },
         summary: `run ${row.runId ?? ""} escalated`.trim(),
       };
+    // ADR-159: the operator rework round-trip. `PulseEventKind` is an alias of
+    // `DomainEventKind`, so these cases are load-bearing — without them this
+    // exhaustive switch stops compiling the moment the taxonomy widens.
+    case "run.rework_claimed":
+      return {
+        salience: "high",
+        action: { verb: "claim", object: "run", outcome: "taken for rework" },
+        summary: `run ${row.runId ?? ""} was taken back for rework`.trim(),
+      };
+    case "run.rework_returned":
+      return {
+        salience: "high",
+        action: { verb: "return", object: "run", outcome: "returned to flow" },
+        summary: `run ${row.runId ?? ""} was returned to the flow`.trim(),
+      };
     case "gate.failed": {
       const gateId = stringField(row.payload, "gateId");
 

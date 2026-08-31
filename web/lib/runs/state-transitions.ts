@@ -403,6 +403,69 @@ export async function markReworkFromReview(
 // converges to ONE winner (loser → CONFLICT at the caller). Touches NO runs
 // session column (M42 dropped it); the caller wraps this in the FOR-UPDATE
 // promotion fence + cap gate. Clears keepalive/checkpoint so the run reads live.
+// ADR-159: the rework claim's status CAS. Exact-allow-list `WHERE
+// status='Review'` — a set CAS would silently permit within-set transitions.
+// This runs FIRST inside the claim transaction so a concurrent loser is refused
+// here and never reaches the UNIQUE(run_id, node_id, attempt) insert.
+export async function markReworkClaimFromReview(
+  runId: string,
+  userId: string,
+  opts: StateTransitionOptions = {},
+): Promise<StateTransitionResult> {
+  const db = opts.db ?? getDb();
+  const rows = await db
+    .update(runs)
+    .set({ status: "HumanWorking" })
+    .where(and(eq(runs.id, runId), eq(runs.status, "Review")))
+    .returning({ id: runs.id });
+
+  if (rows.length === 0) {
+    log.warn(
+      { runId, userId, from: "Review", to: "HumanWorking" },
+      "markReworkClaimFromReview: status-guard mismatch — concurrent claim/promote/sync won",
+    );
+
+    return { ok: false, reason: "status-guard-mismatch" };
+  }
+
+  log.info(
+    { runId, userId, from: "Review", to: "HumanWorking" },
+    "run-state transition — rework claim taken from Review",
+  );
+
+  return { ok: true };
+}
+
+// ADR-159: release a rework claim back to Review — NOT NeedsInput, because this
+// provenance has no review HITL to re-open.
+export async function markReviewFromReworkClaim(
+  runId: string,
+  opts: StateTransitionOptions = {},
+): Promise<StateTransitionResult> {
+  const db = opts.db ?? getDb();
+  const rows = await db
+    .update(runs)
+    .set({ status: "Review" })
+    .where(and(eq(runs.id, runId), eq(runs.status, "HumanWorking")))
+    .returning({ id: runs.id });
+
+  if (rows.length === 0) {
+    log.warn(
+      { runId, from: "HumanWorking", to: "Review" },
+      "markReviewFromReworkClaim: status-guard mismatch — concurrent return/abandon won",
+    );
+
+    return { ok: false, reason: "status-guard-mismatch" };
+  }
+
+  log.info(
+    { runId, from: "HumanWorking", to: "Review" },
+    "run-state transition — rework claim released back to Review",
+  );
+
+  return { ok: true };
+}
+
 export async function markSyncFromReview(
   runId: string,
   opts: StateTransitionOptions = {},

@@ -7,8 +7,8 @@ import {
 } from "@/lib/flows/engine-version";
 
 describe("MAISTER_ENGINE_VERSION", () => {
-  it("is 3.4.0 for settings.context_repos sibling mounts (ADR-157)", () => {
-    expect(MAISTER_ENGINE_VERSION).toBe("3.4.0");
+  it("is 3.5.0 for the flow-level `reentry` key (ADR-159)", () => {
+    expect(MAISTER_ENGINE_VERSION).toBe("3.5.0");
   });
 });
 
@@ -19,7 +19,9 @@ describe("isEngineCompatible", () => {
   });
 
   it("is compatible when engine is within [min, max]", () => {
-    expect(isEngineCompatible("0.1.0", "3.4.0").compatible).toBe(true);
+    expect(
+      isEngineCompatible("0.1.0", MAISTER_ENGINE_VERSION).compatible,
+    ).toBe(true);
     expect(
       isEngineCompatible(MAISTER_ENGINE_VERSION, MAISTER_ENGINE_VERSION)
         .compatible,

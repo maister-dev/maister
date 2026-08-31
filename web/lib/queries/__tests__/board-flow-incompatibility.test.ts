@@ -42,14 +42,14 @@ describe("boardFlowIncompatibility", () => {
       }),
     ).toEqual({
       kind: "engine_incompatible",
-      reason: "engine 3.4.0 < engine_min 4.0.0",
+      reason: "engine 3.5.0 < engine_min 4.0.0",
     });
   });
 
   it("honors the revision's persisted engine range before its manifest cache", () => {
     expect(boardFlowIncompatibility(graphManifest, "4.0.0", null)).toEqual({
       kind: "engine_incompatible",
-      reason: "engine 3.4.0 < engine_min 4.0.0",
+      reason: "engine 3.5.0 < engine_min 4.0.0",
     });
   });
 });

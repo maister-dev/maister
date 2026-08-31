@@ -1724,11 +1724,19 @@ graph at a server-resolved re-entry node.
   helper skip owner-held rows moves staling in the fail-closed direction
   (strictly more evidence re-run), which is the safe direction for a readiness
   gate. It is applied unconditionally rather than behind a flag because two
-  behaviours for one invariant is how the next reader gets it wrong. The same
-  shielding applies in principle to ADR-030 takeover rows, whose claim lands on
-  the `human_review` node; that node's gates are deferred to node finish, so
-  whether it was exploitable in practice was settled **by test, not by argument**
-  — see `T-A14`, whose observed result is recorded with the implementation.
+  behaviours for one invariant is how the next reader gets it wrong.
+- **The ADR-030 takeover shape was affected too — measured, not argued.** `T-A14`
+  seeds an executed attempt carrying a `passed` gate, appends a takeover claim
+  row at the same node with NO `decision` marker (the ADR-030 shape), and calls
+  `markDownstreamStale`. Before the fix it observed `passed` where `stale` was
+  required, identically to the ADR-159 shape in `T-A13`. So this change closes a
+  **live latent defect in M11b**, not merely a hazard introduced by this feature.
+  It was latent rather than reported because no existing M11b assertion covered a
+  `passed` gate surviving a takeover round-trip: the full M11b suite (26 tests
+  across `takeover.integration`, `takeover-lifecycle-fixes`, `takeover-resume`,
+  `takeover-artifacts`, and `board-takeover`) passes **unchanged** after the fix,
+  so no assertion migration was required. `T-A14` is retained as the regression
+  fence.
 - Accepted residual crash windows, each recovered rather than prevented:
   - **CA1** — claim tx committed, response lost. The claim IS the durable
     intent; the UI re-reads it and a retry loses the CAS with `CONFLICT`.

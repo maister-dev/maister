@@ -10,6 +10,9 @@ export const WEBHOOK_EVENT_TYPES = [
   "run.started",
   "run.needs_input",
   "run.escalated",
+  // ADR-159 operator rework round-trip.
+  "run.rework_claimed",
+  "run.rework_returned",
   "hitl.requested",
   "hitl.responded",
   "run.review",

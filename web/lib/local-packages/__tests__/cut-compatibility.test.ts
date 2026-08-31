@@ -46,7 +46,7 @@ describe("local package cut compatibility", () => {
       ]),
     ).toEqual({
       compatible: false,
-      incompatibilityReason: "engine 3.4.0 < engine_min 4.0.0",
+      incompatibilityReason: "engine 3.5.0 < engine_min 4.0.0",
     });
   });
 

@@ -205,7 +205,7 @@ describe("loadRun — per-session set (M42)", () => {
     ).rejects.toMatchObject({
       code: "CONFIG",
       message:
-        "flow manifest in flow revision revision-1 is incompatible with this MAIster engine: engine 3.4.0 < engine_min 4.0.0",
+        "flow manifest in flow revision revision-1 is incompatible with this MAIster engine: engine 3.5.0 < engine_min 4.0.0",
     });
   });
 });

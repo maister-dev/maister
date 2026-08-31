@@ -15,6 +15,11 @@ import { and, eq, gt, inArray, isNull, notInArray } from "drizzle-orm";
 import pino from "pino";
 
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
+import { getSessionUser } from "@/lib/authz";
+import {
+  REVIEW_REWORK_CLAIM_DECISION,
+  getActiveTakeover,
+} from "@/lib/flows/graph/ledger";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -124,6 +129,12 @@ export type LifecycleContext = {
   project: LifecycleProject;
   run: LifecycleRun;
   workspace: LifecycleWorkspace | null;
+  // ADR-159: `owner_user_id` of an OPEN rework claim on this run
+  // (`node_attempts.decision = 'review_rework_claim'`, `ended_at IS NULL`),
+  // else null. An M11b takeover leaves it null and opens no carve-out.
+  reworkClaimOwnerUserId?: string | null;
+  // The acting user, for the owner comparison in the policy.
+  viewerUserId?: string | null;
 };
 
 export type RecordArchiveInput = {
@@ -385,6 +396,8 @@ function isEnabled(
     hasWorkspace: ctx.workspace !== null,
     workspaceRemoved: ctx.workspace?.removedAt !== null,
     workspaceArchived: ctx.workspace?.archivedBranch !== null,
+    claimOwnerUserId: ctx.reworkClaimOwnerUserId ?? null,
+    viewerUserId: ctx.viewerUserId ?? null,
   }).find((candidate) => candidate.id === id);
 
   return action?.enabled === true;
@@ -402,6 +415,8 @@ function requireActionAllowed(
     hasWorkspace: ctx.workspace !== null,
     workspaceRemoved: ctx.workspace?.removedAt !== null,
     workspaceArchived: ctx.workspace?.archivedBranch !== null,
+    claimOwnerUserId: ctx.reworkClaimOwnerUserId ?? null,
+    viewerUserId: ctx.viewerUserId ?? null,
   }).find((candidate) => candidate.id === id);
 
   if (action?.enabled) return;
@@ -1944,10 +1959,22 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
     );
   }
 
+  // ADR-159: an OPEN rework claim opens the owner carve-out in the policy. An
+  // ADR-030 takeover writes no `decision`, so it never matches and keeps
+  // today's all-actions-disabled behaviour.
+  const activeClaim = await getActiveTakeover(runId, client);
+  const reworkClaimOwnerUserId =
+    activeClaim?.decision === REVIEW_REWORK_CLAIM_DECISION
+      ? activeClaim.ownerUserId
+      : null;
+  const viewer = await getSessionUser();
+
   return {
     project,
     run: { ...run, projectId },
     workspace: workspaceRows[0] ?? null,
+    reworkClaimOwnerUserId,
+    viewerUserId: viewer?.id ?? null,
   };
 }
 

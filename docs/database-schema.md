@@ -3141,15 +3141,23 @@ only). No UPDATE/DELETE application paths; future pruning MUST honor
 {
   id,                              // bigint GENERATED ALWAYS AS IDENTITY PK —
                                    //   dispatch ordering key
-  kind,                            // one of 10 taxonomy kinds (CHECK):
+  kind,                            // one of 13 taxonomy kinds (CHECK):
                                    //   task.created | task.comment_added |
-                                   //   task.triage_requeued | run.done |
-                                   //   run.failed | run.crashed |
+                                   //   task.triage_requeued |
+                                   //   task.clarification_answered |
+                                   //   run.done | run.failed | run.crashed |
                                    //   run.abandoned | run.review |
-                                   //   run.escalated | gate.failed
+                                   //   run.escalated | run.rework_claimed |
+                                   //   run.rework_returned | gate.failed
                                    //   run.review added by migration 0060
                                    //   (ADR-100): settled, NOT terminal —
                                    //   a delegated child reaching Review
+                                   //   run.rework_claimed/run.rework_returned
+                                   //   added by migration 0125 (ADR-159): the
+                                   //   operator rework round-trip — NEITHER is
+                                   //   terminal nor settled. ADR-160's node
+                                   //   interrupt reuses run.escalated instead,
+                                   //   so it needed no CHECK change.
   projectId,                       // NOT NULL, FK -> projects.id (cascade)
   taskId?,                         // NULL, FK -> tasks.id (cascade) — task.* kinds
   runId?,                          // NULL, FK -> runs.id (cascade) — run.*/gate.* kinds

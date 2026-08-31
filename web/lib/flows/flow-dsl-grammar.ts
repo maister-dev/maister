@@ -27,8 +27,19 @@ name: my-flow
 runner_profiles:
   claude-code: { capability_agent: claude, adapter: claude, model: claude-sonnet-4-6, provider: { kind: anthropic } }
 compat: { engine_min: 3.0.0 }   # graph-only authoring baseline
+reentry: verify                  # optional; engine_min >= 3.5.0 (ADR-159)
 nodes: [ ... ]                   # required and non-empty
 \`\`\`
+
+- \`reentry\` (engine_min >= 3.5.0, ADR-159) is a FLOW-LEVEL key naming the node
+  an operator's rework claim re-enters the graph at after a finished \`Review\`
+  run is taken back for correction. It MUST name a node id present in
+  \`nodes[]\` or the manifest fails to compile (CONFIG). It is the first link of
+  a three-step chain — declared \`reentry\`, else the last executed \`human\`
+  node's \`transitions.takeover\` target, else the claim is refused — so
+  declaring it WINS over a present takeover transition, and it is what makes a
+  flow with no \`human\` node claimable at all. Compile-time only: it is never
+  persisted to a DB column, and an operator can never override it.
 
 ## Node types (discriminated by \`type\`)
 

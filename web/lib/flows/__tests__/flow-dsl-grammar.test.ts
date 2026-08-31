@@ -196,6 +196,18 @@ describe("buildFlowDslGrammar drift guard", () => {
     expect(lower).toContain("fails to compile"); // undefined session ref
   });
 
+  it("documents the ADR-159 flow-level `reentry` key and its floor", () => {
+    // `reentry` is a MANIFEST key, not a node settings key, so the Zod-shape
+    // guard above cannot see it — assert the grammar mirrors the loader's
+    // contract directly. Drift in the floor or the resolution order fails here.
+    expect(grammar).toContain("reentry");
+    expect(grammar).toContain("3.5.0");
+    const lower = grammar.toLowerCase();
+
+    expect(lower).toContain("rework claim"); // what the key is for
+    expect(lower).toContain("takeover"); // the second link of the chain
+  });
+
   it("documents the consensus compile-time output contract", () => {
     // validateConsensusOutputs (config.ts) hard-requires these exact produced
     // artifacts via a superRefine the Zod-shape guard above cannot see — so

@@ -848,6 +848,13 @@
       "when": 1785938896775,
       "tag": "0124_purple_bloodscream",
       "breakpoints": true
+    },
+    {
+      "idx": 125,
+      "version": "7",
+      "when": 1785938897775,
+      "tag": "0125_rework_claim_domain_events",
+      "breakpoints": true
     }
   ]
 }
