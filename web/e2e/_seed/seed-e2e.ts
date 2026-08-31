@@ -351,6 +351,16 @@ const REOPEN_BRANCH = "maister/e2e-reopen";
 // reaching Review), and there is no open HITL. That is the exact state a rework
 // claim starts from — and why the anchor and the re-entry node must both be
 // derived from the LEDGER rather than from a cursor.
+// --- ADR-160 fixture: a run PARKED by an operator node interrupt -----------
+// `plan` ran and finished; `implement` was interrupted mid-turn and is parked
+// NeedsInput with a `node_interrupt` HITL. This is the state the four-option
+// card renders from — and `plan` in the ledger is what makes `restart_from`
+// eligible at all (targets are ledger-derived, never topological).
+const ADR160_SLUG = "e2e-node-interrupt";
+const ADR160_BRANCH = "maister/e2e-node-interrupt";
+const ADR160_NODE = "implement";
+const ADR160_EARLIER = "plan";
+
 const ADR159_SLUG = "e2e-rework-claim";
 const ADR159_BRANCH = "maister/e2e-rework-claim";
 const ADR159_REENTRY_NODE = "checks";
@@ -2425,6 +2435,126 @@ async function seedAdr159ReworkClaimFixture(
     hitlRequestId: ids.reviewAttempt,
     projectSlug: ADR159_SLUG,
     branch: ADR159_BRANCH,
+    worktreePath,
+  };
+}
+
+// ADR-160: a flow run parked by an operator node interrupt.
+async function seedAdr160NodeInterruptFixture(
+  pool: Pool,
+  userId: string,
+): Promise<FixtureRecord> {
+  const ids = {
+    project: randomUUID(),
+    runner: randomUUID(),
+    flow: randomUUID(),
+    task: randomUUID(),
+    run: randomUUID(),
+    workspace: randomUUID(),
+    member: randomUUID(),
+    planAttempt: randomUUID(),
+    parkedAttempt: randomUUID(),
+    hitl: randomUUID(),
+  };
+  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const worktreePath = `${repoPath}/.worktrees/e2e-node-interrupt`;
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [ADR160_SLUG]);
+
+  mkdirSync(path.dirname(repoPath), { recursive: true });
+  await provisionWorktree(repoPath, worktreePath, ADR160_BRANCH);
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, 'main', $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
+    [
+      ids.project,
+      ADR160_SLUG,
+      "MAIster E2E Node Interrupt",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO platform_acp_runners
+       (id, adapter, capability_agent, model, provider, permission_policy,
+        readiness_status, readiness_reasons, enabled)
+     VALUES ($1, 'claude', 'claude', 'claude-sonnet-4-6',
+        '{"kind":"anthropic"}'::jsonb, 'default', 'Ready', '[]'::jsonb, true)
+     ON CONFLICT (id) DO NOTHING`,
+    [ids.runner],
+  );
+  await pool.query(
+    `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
+    [
+      ids.flow,
+      ids.project,
+      "github.com/maister/maister-flow-aif",
+      `/tmp/maister-e2e/flows/aif-node-interrupt@v0.0.1`,
+      JSON.stringify(M11B_MANIFEST),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'InFlight', 'Backlog')`,
+    [ids.task, ids.project, "E2E node interrupt", "do the thing", ids.flow],
+  );
+  await pool.query(
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, 'NeedsInput', $5, 'v0.0.1', now())`,
+    [ids.run, ids.task, ids.project, ids.flow, ADR160_NODE],
+  );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.run,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
+  await pool.query(
+    `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [ids.workspace, ids.run, ids.project, ADR160_BRANCH, worktreePath, repoPath],
+  );
+
+  // `plan` finished; `implement` is the parked attempt the operator interrupted.
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, started_at, ended_at)
+     VALUES ($1, $2, $3, 'ai_coding', 1, 'Succeeded', now() - interval '20 minutes', now() - interval '19 minutes')`,
+    [ids.planAttempt, ids.run, ADR160_EARLIER],
+  );
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, started_at)
+     VALUES ($1, $2, $3, 'ai_coding', 1, 'NeedsInput', now() - interval '2 minutes')`,
+    [ids.parkedAttempt, ids.run, ADR160_NODE],
+  );
+  await pool.query(
+    `INSERT INTO hitl_requests (id, run_id, step_id, kind, schema, prompt)
+     VALUES ($1, $2, $3, 'node_interrupt', $4, $5)`,
+    [
+      ids.hitl,
+      ids.run,
+      ADR160_NODE,
+      JSON.stringify({
+        kind: "node_interrupt",
+        nodeId: ADR160_NODE,
+        decisions: ["resume", "restart_node", "restart_from", "stop"],
+        workspacePolicies: ["keep", "rewind-to-node-checkpoint", "fresh-attempt"],
+      }),
+      "You interrupted \"implement\" mid-turn. Resume it as-is, restart it, restart from an earlier node, or stop the run.",
+    ],
+  );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.member, ids.project, userId],
+  );
+
+  return {
+    runId: ids.run,
+    hitlRequestId: ids.hitl,
+    projectSlug: ADR160_SLUG,
+    branch: ADR160_BRANCH,
     worktreePath,
   };
 }
@@ -7283,6 +7413,7 @@ async function main(): Promise<void> {
     const m11a = await seedM11aFixture(pool, admin.id);
     const m11b = await seedM11bFixture(pool, admin.id);
     const adr159 = await seedAdr159ReworkClaimFixture(pool, admin.id);
+    const adr160 = await seedAdr160NodeInterruptFixture(pool, admin.id);
     const runSync = await seedSyncFixture(pool, admin.id);
     const prReopen = await seedReopenFixture(pool, admin.id);
     const m12 = await seedM12EvidenceFixture(pool, admin.id);
@@ -7498,6 +7629,7 @@ You answer when summoned by an @mention.
         m11a,
         m11b,
         adr159,
+        adr160,
         runSync,
         prReopen,
         m12,

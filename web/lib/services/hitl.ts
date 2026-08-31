@@ -4888,6 +4888,56 @@ async function handleNodeInterruptResponse(args: {
     );
   }
 
+  // Apply the workspace policy BEFORE the ledger transaction, against the
+  // TARGET's checkpoint_ref — the M30 rework X-ATOMIC ordering. A crash between
+  // the two is idempotent on retry: re-deciding re-applies against the same
+  // ref. A missing checkpoint_ref degrades to `keep` with a WARN; it is never
+  // guessed, because rewinding to the wrong commit would destroy the operator's
+  // work rather than merely failing.
+  let effectiveWorkspacePolicy = workspacePolicy;
+
+  if (workspacePolicy !== "keep") {
+    const targetCheckpointRef = (
+      ledger.filter(
+        (r: { nodeId: string }) => r.nodeId === targetNodeId,
+      ) as Array<{ checkpointRef: string | null }>
+    )
+      .map((r) => r.checkpointRef)
+      .filter((ref): ref is string => typeof ref === "string" && ref.length > 0)
+      .at(-1);
+    // `runs` has no worktree_path — it lives on `workspaces`.
+    const workspaceRows = await db
+      .select({ worktreePath: workspaces.worktreePath })
+      .from(workspaces)
+      .where(eq(workspaces.runId, runId));
+    const worktreePath = workspaceRows[0]?.worktreePath as
+      | string
+      | null
+      | undefined;
+
+    if (!targetCheckpointRef || !worktreePath) {
+      log.warn(
+        { runId, targetNodeId, workspacePolicy },
+        "[node-interrupt] no checkpoint_ref for the target — degrading workspace policy to keep",
+      );
+      effectiveWorkspacePolicy = "keep";
+    } else {
+      const { applyWorkspacePolicy } = await import(
+        "@/lib/flows/graph/workspace-checkpoint"
+      );
+
+      await applyWorkspacePolicy({
+        policy: effectiveWorkspacePolicy as never,
+        worktreePath,
+        checkpointRef: targetCheckpointRef,
+      });
+      log.info(
+        { runId, targetNodeId, workspacePolicy: effectiveWorkspacePolicy },
+        "[node-interrupt] workspace policy applied against the target checkpoint",
+      );
+    }
+  }
+
   const outcome = await db.transaction(async (tx: any) => {
     const locked = await lockHitlRow(tx, hitlRequestId);
 
@@ -4918,7 +4968,7 @@ async function handleNodeInterruptResponse(args: {
         respondedAt: new Date(),
         response: {
           optionId,
-          workspacePolicy,
+          workspacePolicy: effectiveWorkspacePolicy,
           targetNodeId,
           ...(typeof body.correction === "string" && body.correction.length > 0
             ? { correction: body.correction.slice(0, OPERATOR_CORRECTION_MAX) }
@@ -4933,7 +4983,7 @@ async function handleNodeInterruptResponse(args: {
       parked.id,
       {
         decision: OPERATOR_INTERRUPT_DECISION,
-        workspacePolicy: workspacePolicy as never,
+        workspacePolicy: effectiveWorkspacePolicy as never,
       },
       tx,
     );

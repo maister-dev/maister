@@ -253,7 +253,7 @@ new provenance to the run machine:
    re-open in this provenance, so the release target is the status the run came
    from, and the freed slot is handed to `promoteNextPending`.
 
-### ADR-160 `Running → NeedsInput` by operator node interrupt (Designed)
+### ADR-160 `Running → NeedsInput` by operator node interrupt (Implemented)
 
 An operator may pause a live agent node mid-turn. The transition is the ordinary
 `Running → NeedsInput` park — the same one an agent-requested permission takes —

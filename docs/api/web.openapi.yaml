@@ -7032,7 +7032,7 @@ paths:
           `NeedsInput → Running` and respawns), returning 202
           `{ runStatus: "NeedsInput", state: "resume-in-progress" }`. Idempotent:
           a same-payload retry whose prior resume handoff was lost re-drives it.
-        - **node_interrupt** (ADR-160 — Designed): a human-only four-way fork
+        - **node_interrupt** (ADR-160 — Implemented): a human-only four-way fork
           answering an operator node interrupt. Human-actor-only (a machine/agent
           token is rejected 403 at the shared chokepoint, before any mutation);
           no ext-API and no MCP surface. `optionId` is allow-listed to
@@ -8278,7 +8278,7 @@ paths:
       tags: [run-continuation]
       summary: (ADR-160) Interrupt a live agent node and park for a corrective restart
       description: |
-        (ADR-160 — Designed.)
+        (ADR-160 — Implemented.)
 
         Pauses ONE live agent node mid-turn and parks the run `NeedsInput` with a
         `node_interrupt` HITL carrying a server-owned option set. This is a soft

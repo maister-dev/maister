@@ -408,3 +408,40 @@ describe("respondToHitl node_interrupt integration", () => {
     ).rejects.toMatchObject({ code: "PRECONDITION" });
   });
 });
+
+// ---------------------------------------------------------------------------
+// T-B7 — workspace-policy degrade (AC-B7)
+// ---------------------------------------------------------------------------
+
+describe("T-B7 ADR-160 — a missing checkpoint_ref degrades to keep", () => {
+  // Degrading is the SAFE direction: rewinding to a guessed commit would
+  // destroy the operator's work, whereas keeping the tree merely does less.
+  it("records `keep` when the target has no checkpoint_ref", async () => {
+    const projectId = await seedProject("ni-degrade");
+    const { runId, hitlRequestId, parkedAttemptId } =
+      await seedParkedRun(projectId);
+
+    // No workspaces row and no checkpoint_ref anywhere in the ledger.
+    const res = await respondToHitl(
+      {
+        runId,
+        hitlRequestId,
+        body: {
+          optionId: "restart_node",
+          workspacePolicy: "rewind-to-node-checkpoint",
+        },
+      },
+      userActor,
+      { db },
+    );
+
+    expect(res.status).toBe(202);
+
+    const attempt = await getAttempt(parkedAttemptId);
+
+    // The EFFECTIVE policy is recorded, not the requested one — the ledger must
+    // not claim a rewind that never happened.
+    expect(attempt.workspacePolicy).toBe("keep");
+    expect((await getHitl(hitlRequestId)).response.workspacePolicy).toBe("keep");
+  });
+});

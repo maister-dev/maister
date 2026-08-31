@@ -346,7 +346,7 @@ staled, so the flow's own gates re-validate the human's commits. See
 [`run-continuation.md`](run-continuation.md) and
 [`flow-dsl.md`](../flow-dsl.md).
 
-**Operator restarts are outside the rework epoch (ADR-160 — Designed).** An
+**Operator restarts are outside the rework epoch (ADR-160 — Implemented).** An
 operator node interrupt closes the parked attempt `Reworked` with
 `node_attempts.decision = 'operator_interrupt'`, which makes `runGraph` append a
 fresh attempt — the same mechanism a declared rework uses. It is deliberately

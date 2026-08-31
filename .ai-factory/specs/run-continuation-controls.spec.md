@@ -1,6 +1,16 @@
 # Run Continuation Controls — handoff round-trip + soft node interrupt (ADR-159 / ADR-160)
 
-Status: SDD freeze for Phase 0. No production code is implemented by this spec.
+Status: **Implemented (ADR-159 / ADR-160).** Both features are shipped; every
+`REQ-*` below is satisfied and every `AC-*` names a green test (see the plan's
+AC conformance walks for Phase 1+2 and Phase 3+4).
+
+Amendments made during implementation, each recorded inline where it applies:
+(1) the `continuation` block moved from a non-existent `GET /api/runs/{runId}`
+route to the RSC run-detail read model; (2) domain events land in the
+`ExtPulseEventKind` mirror rather than `web-runs.asyncapi.yaml`, which is the
+per-run SSE bridge — and that correction surfaced a fourth taxonomy
+registration point (`mapDomainEvent`'s exhaustive switch) that the freeze had
+not anticipated.
 Date: 2026-08-31
 Branch: `claude/flow-runs-continuation-controls-527f4c`
 

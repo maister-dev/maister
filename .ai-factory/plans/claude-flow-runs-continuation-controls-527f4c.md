@@ -1143,7 +1143,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   refusal message, the safety-cap message, the `cli`/`check` deferral message.
   *Depends on:* 26.
 
-- [ ] **Task 28: Feature-B test-integrity audit + edge-case sweep.**
+- [x] **Task 28: Feature-B test-integrity audit + edge-case sweep.**
   Same five-step audit as Task 17, over the `T-B*` set: **runnability** (`vitest list` for both
   projects, including the new `web/app/api/runs/[runId]/node-interrupt/__tests__/**` family);
   **traceability closure** (every `AC-B*` green, every `T-B*` id greppable in its `describe`/`it`);
@@ -1160,7 +1160,46 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   *Verify:* the same four written lists as Task 17.
   *Depends on:* 20, 21, 22, 23, 24, 25.
 
-- [ ] **Task 29: Feature-B e2e + docs as-built + mandatory docs checkpoint.**
+  **AUDIT RESULT.**
+
+  **(a) Unglobbed files — none.** The two new families
+  (`lib/runs/__tests__/node-interrupt*.{test,integration.test}.ts`,
+  `lib/services/__tests__/hitl-node-interrupt.integration.test.ts`,
+  `components/runs/__tests__/node-interrupt-controls.test.ts`) are matched by
+  existing `lib/**` and `components/**` globs and were proven to RUN, not merely
+  to exist.
+
+  **(b) ACs without a green test — none, after one implementation gap was
+  closed.** The audit found that the response handler stored the operator's
+  `workspacePolicy` but never APPLIED it — a declared behaviour with no code
+  behind it. Worse, the first fix read `worktree_path` off the `runs` row, where
+  it does not exist, so the policy would have silently degraded to `keep`
+  100% of the time and the "degrade" test would have passed for the wrong
+  reason. `applyWorkspacePolicy` now runs pre-transaction against the target's
+  `checkpoint_ref` (M30 X-ATOMIC ordering) with the path read from `workspaces`,
+  and the ledger records the EFFECTIVE policy so it can never claim a rewind
+  that did not happen.
+
+  **(c) Overlap pruned — none removed.** `T-B1` is asserted twice on purpose and
+  at different altitudes: as a pure predicate over the interruptible node types,
+  and at the service seam where `cli`/`check` must name the deferral. Neither
+  subsumes the other.
+
+  **(d) Triviality pruned — none removed.** The `T-B10` "byte-identical to the
+  two-argument form" case looks tautological but is the back-compat fence for
+  every existing flow, and the `T-B11` "does not leave retryCount inflated" case
+  exists precisely to fail if a future refactor filters only one counter.
+
+  **(e) Honesty correction.** `T-B3` was initially labelled as covering the CB1
+  crash window. It does not: it exercises the ADMISSION guard (the door a real
+  race reaches first) and proves no orphan HITL is left behind. The CB1
+  convergence — checkpoint delivered, park tx never committed, the runner's own
+  `STEP_CHECKPOINTED` handler parking the node — is INHERITED UNCHANGED from
+  `escalateHookTrip`; this feature adds no code on that path and ADR-108's suite
+  owns it. The test name and comment now say exactly that rather than
+  overclaiming.
+
+- [x] **Task 29: Feature-B e2e + docs as-built + mandatory docs checkpoint.**
   Playwright spec `web/e2e/node-interrupt.spec.ts`: running agent node → Interrupt → card shows the
   four options → Restart this node with a correction → the node re-runs.
   Flip every Phase-0 Feature-B doc tag `Designed → Implemented`; run `/aif-docs` for the mandatory
@@ -1177,6 +1216,29 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   `pnpm validate:docs` · `pnpm validate:docs:adr` · **`pnpm validate:contracts`** · both AC walks.
   *Turns green:* AC-B13.
   *Depends on:* 28, 27.
+
+  **AC CONFORMANCE WALK (AC-B1..B13) — every AC names its green test.**
+
+  | AC | Green test | Project |
+  | --- | --- | --- |
+  | AC-B1 | `T-B1` — interruptible-type predicate (unit) + the `cli`/`check` service refusal naming the deferral (integ) | unit + integ |
+  | AC-B2 | `T-B2` — an `EXECUTOR_UNAVAILABLE` checkpoint re-throws: run still `Running`, no HITL row, no orphan needs-input.json; a non-503 failure still proceeds to the pause | integ |
+  | AC-B3 | `T-B3` — a node that completed first leaves no orphan HITL (admission door). CB1's convergence is inherited unchanged from `escalateHookTrip` — stated, not overclaimed | integ |
+  | AC-B4 | `T-B4` — a machine/agent token is refused at the chokepoint BEFORE any mutation | integ |
+  | AC-B5 | `T-B5` — the four options, the default, ledger-derived `restart_from` targets, de-duplication, the interrupted node excluded, and the cap disabling both restarts while leaving resume/stop | unit |
+  | AC-B6 | `T-B6` — `restart_node` closes the attempt `Reworked`/`operator_interrupt` and stores the correction as the HITL response, which the runner reads back as a fenced prompt append (consumed once) | integ |
+  | AC-B7 | `T-B7` — a missing `checkpoint_ref` degrades to `keep`, and the LEDGER records the effective policy rather than the requested one | integ |
+  | AC-B8 | `T-B8` — `restart_from` parks the cursor at the earlier node; a target with no prior attempt is refused (no forward skips) | integ |
+  | AC-B9 | `T-B9` — `resume` leaves the parked attempt untouched (same attempt, context preserved); answering twice is idempotent via the already-delivered branch | integ |
+  | AC-B10 | `T-B10` — N operator restarts do not advance the rework epoch; a genuine rework still exhausts at `maxLoops + 1` total visits; zero restarts is byte-identical | unit |
+  | AC-B11 | `T-B11` — a restart-only run has `correctionRate === 0`; a mixed run counts only genuine reworks; the single-sided-exclusion trap is pinned explicitly | unit |
+  | AC-B12 | `T-B12` — the park is an ordinary `NeedsInput` park, idled by status alone (the sweeper and reconcile never read `hitl_requests.kind`) | integ |
+  | AC-B13 | `e2e/adr160-node-interrupt.spec.ts` — parked card → four options → progressive disclosure offering the ledger-derived target → restart with a correction → 202 `restart-scheduled` → the card is consumed | e2e |
+
+  **Non-goals re-verified as still holding:** no ext-API / MCP surface for
+  `node_interrupt`; no forward skips; no multi-node batch restarts; `cli`/`check`
+  interrupts refused with a named deferral; no new `runs.status`, no new
+  `node_attempts` status value, no new `MaisterError` code, and no adapter fork.
   <!-- Commit checkpoint: Commit 7 (Tasks 26-29) -->
 
 ---

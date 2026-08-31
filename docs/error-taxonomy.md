@@ -444,7 +444,7 @@ and `ACCOUNT_INACTIVE`; ADR-101 added `BUDGET_EXCEEDED`; ADR-122 added
 >   branch non-fast-forwardable — the last carries `{command, localSha,
 >   remoteSha, aheadBy, behindBy, instructions[]}` as advisory detail so the UI
 >   can render a copyable block. **`PRECONDITION` → HTTP 409 (ADR-160,
->   Designed):** an interrupt refused by any admission term — the run is not
+>   Implemented):** an interrupt refused by any admission term — the run is not
 >   `Running`, not a flow run, has no `Running` node attempt, or the node is
 >   `cli`/`check` (the message names the deferral explicitly; interrupting a
 >   detached process group is out of v1 scope).
@@ -452,13 +452,13 @@ and `ACCOUNT_INACTIVE`; ADR-101 added `BUDGET_EXCEEDED`; ADR-122 added
 >   CAS lost to a concurrent claimer; the global concurrency cap was full at
 >   claim time (**never** queued as `Pending` — the scheduler cannot start a
 >   human); a return against a dirty worktree or with a zero-commit range.
->   **(ADR-160, Designed):** the `Running → NeedsInput` CAS lost to the node's
+>   **(ADR-160, Implemented):** the `Running → NeedsInput` CAS lost to the node's
 >   own completion, or a restart refused because the run already holds
 >   `MAISTER_MAX_OPERATOR_RESTARTS` attempts carrying
 >   `decision='operator_interrupt'`.
 > - **`UNAUTHORIZED` → HTTP 403 (ADR-159, Implemented):** a return or release
 >   attempted by an actor other than the claim's `owner_user_id`. **(ADR-160,
->   Designed):** a machine/agent token answering a `node_interrupt` HITL —
+>   Implemented):** a machine/agent token answering a `node_interrupt` HITL —
 >   refused at the `respondToHitl` chokepoint before any mutation, the same
 >   human-actor-only posture as `hook_trip`.
 > - **`CONFIG` → HTTP 400 (ADR-159, Implemented):** a flow manifest declaring the
@@ -466,7 +466,7 @@ and `ACCOUNT_INACTIVE`; ADR-101 added `BUDGET_EXCEEDED`; ADR-122 added
 >   absent from the compiled graph (the message names the id).
 > - **`EXECUTOR_UNAVAILABLE` → HTTP 503 (ADR-159, Implemented):** the return's
 >   single ledger transaction failed — the run stays `HumanWorking` with the
->   claim open and the operation is fully retryable. **(ADR-160, Designed):**
+>   claim open and the operation is fully retryable. **(ADR-160, Implemented):**
 >   the pre-transaction `checkpointSession` was undeliverable; it **re-throws
 >   with no mutation**, so the run stays `Running` and there is no split-brain.
 >

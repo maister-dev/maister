@@ -1,10 +1,12 @@
 # Run continuation domain
 
-> **Status: Feature A (ADR-159) Implemented; Feature B (ADR-160) Designed.**
-> The rework claim — eligibility, claim/return/release, fast-forward-only
+> **Status: Implemented (ADR-159 / ADR-160).** Both halves are shipped — the
+> `Review` rework claim (eligibility, claim/return/release, fast-forward-only
 > ingest, re-entry resolution, the owner carve-out, and the claim/return domain
-> events (migration `0125`) — is shipped. The operator node interrupt lands in
-> Phases 3–4 and stays tagged `(Designed)` below until then.
+> events behind migration `0125`) and the operator node interrupt (the
+> `node_interrupt` HITL, the server-owned option matrix, the corrective
+> restart, and the accounting rules that keep it out of the rework budget and
+> both correction counters).
 
 ## Purpose
 
@@ -14,7 +16,7 @@ hands. **(A) Rework claim** (Implemented — [ADR-159](../decisions.md#adr-159-r
 takes a run that reached `Review`, hands its existing worktree to a human, ingests
 whatever they push back by fast-forward only, and re-enters the graph at a
 server-resolved node so the flow's own gates re-validate the new commits.
-**(B) Node interrupt** (Designed — [ADR-160](../decisions.md#adr-160-operator-node-interrupt-with-corrective-restart))
+**(B) Node interrupt** (Implemented — [ADR-160](../decisions.md#adr-160-operator-node-interrupt-with-corrective-restart))
 pauses one live agent node mid-turn and offers a corrective restart. The domain
 boundary is the operator's re-entry into a run's own graph: eligibility, the claim
 ledger row, the fast-forward ingest, re-entry resolution, the interrupt option
@@ -41,11 +43,11 @@ Implemented), promotion ([`readiness.md`](readiness.md)), or workspace removal
 - **Flow-level `reentry` field** (Implemented) — an optional manifest key beside
   `nodes`, engine floor `3.5.0`, compile-validated against the graph. Compile-time
   only; never persisted to a DB column. See [`flow-dsl.md`](../flow-dsl.md).
-- **Node interrupt request** (Designed) — a `hitl_requests` row with
+- **Node interrupt request** (Implemented) — a `hitl_requests` row with
   `kind='node_interrupt'` plus its `assignments` row with
   `action_kind='node_interrupt'`. Neither column has a DB CHECK; both enums live
   in the Drizzle `text(..., { enum: [...] })` type.
-- **Operator restart attempt** (Designed) — a `node_attempts` row closed
+- **Operator restart attempt** (Implemented) — a `node_attempts` row closed
   `Reworked` with `decision='operator_interrupt'`. Excluded from
   `rework.maxLoops` accounting and from both Observatory correction counters.
 - **Domain events** (Implemented for ADR-159; ADR-160 reuses `run.escalated`) — `run.rework_claimed` and `run.rework_returned`
@@ -70,7 +72,7 @@ stateDiagram-v2
     Review --> [*]: promote
 ```
 
-Feature B — the soft node interrupt (Designed):
+Feature B — the soft node interrupt (Implemented):
 
 ```mermaid
 stateDiagram-v2
@@ -126,7 +128,7 @@ sequenceDiagram
     R->>R: queueMicrotask(runFlow)
 ```
 
-Node interrupt and its option matrix (Designed). The option set is server-owned
+Node interrupt and its option matrix (Implemented). The option set is server-owned
 and delivered on the existing `availableOptions` channel:
 
 ```mermaid
@@ -180,18 +182,18 @@ flowchart TD
   close the claim row, and free the slot via `promoteNextPending`. *(Implemented)*
 - A node interrupt MUST be admitted only on a `Running` flow run whose current node
   has a `status='Running'` attempt and is `ai_coding | judge | orchestrator`;
-  `cli` and `check` MUST refuse `MaisterError("PRECONDITION")`. *(Designed)*
+  `cli` and `check` MUST refuse `MaisterError("PRECONDITION")`. *(Implemented)*
 - `restart_from` targets MUST be ledger-derived — nodes with at least one prior
   attempt in this run — and a target with no prior attempt MUST be refused; the
   operator correction MUST reach the agent as a fenced prompt append, never through
-  `commentsVar` and never through Mustache. *(Designed)*
+  `commentsVar` and never through Mustache. *(Implemented)*
 - `node_attempts` rows closed with `decision='operator_interrupt'` MUST be excluded
   from the `rework.maxLoops` effective count and from **both** Observatory
-  counters, and MUST be bounded per run by `MAISTER_MAX_OPERATOR_RESTARTS`. *(Designed)*
+  counters, and MUST be bounded per run by `MAISTER_MAX_OPERATOR_RESTARTS`. *(Implemented)*
 
 ## Edge cases
 
-Refusal matrix — each row is phrased as the allow-list the code uses (Designed):
+Refusal matrix — each row is phrased as the allow-list the code uses (Implemented):
 
 | Condition | Code | HTTP | Surface |
 | --- | --- | --- | --- |
@@ -217,7 +219,7 @@ Refusal matrix — each row is phrased as the allow-list the code uses (Designed
 | `restart_from` target has no prior attempt in this run | `PRECONDITION` | 409 | hitl respond — no forward skips |
 | `MAISTER_MAX_OPERATOR_RESTARTS` reached | `CONFLICT` | 409 | hitl respond |
 
-Crash windows — accepted residuals, each recovered rather than prevented (Designed):
+Crash windows — accepted residuals, each recovered rather than prevented (Implemented):
 
 | Window | Durable state | Recovery |
 | --- | --- | --- |
@@ -231,7 +233,7 @@ Crash windows — accepted residuals, each recovered rather than prevented (Desi
 | **CB4** workspace policy applied, ledger tx not committed | worktree rewound | Idempotent — re-deciding re-applies against the same `checkpoint_ref`. |
 | **CB5** interrupted run idled then abandoned at 24 h | terminal | Inherited `hook_trip` behaviour; both sweeper passes include `node_interrupt`. |
 
-Degradations that are not refusals (Designed): a `checkpoint_ref` missing at
+Degradations that are not refusals (Implemented): a `checkpoint_ref` missing at
 restart time degrades to workspace policy `keep` with a WARN and is never guessed;
 gates staled by a return move through the ordinary `gate_results` lifecycle and
 throw nothing.

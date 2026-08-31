@@ -65,7 +65,7 @@ run history and previously recorded HITL evidence remain readable.
     `hook_trip_abandoned`). Human-actor-only (like
     `human`/`infra_recovery`/`budget_breach`): a machine/agent token can never
     dismiss its own trip. `path_guard` is deny-and-continue and never escalates.
-  - `node_interrupt` — **(ADR-160 — Designed)** opened by
+  - `node_interrupt` — **(ADR-160 — Implemented)** opened by
     `POST /api/runs/{runId}/node-interrupt` when an operator pauses a live agent
     node mid-turn. Admitted only on a `Running` flow run whose current node has a
     `status='Running'` attempt and is `ai_coding | judge | orchestrator`; `cli`
@@ -391,7 +391,7 @@ idempotency marker** — never set before the git/ledger side-effect completes. 
 git-op failure in Phase 2 leaves the run `HumanWorking` with no ledger write and
 no status flip (409 `CONFLICT`, retryable).
 
-### Operator node interrupt — server-owned option matrix (ADR-160 — Designed)
+### Operator node interrupt — server-owned option matrix (ADR-160 — Implemented)
 
 The `node_interrupt` card's options are derived on the server and delivered on
 the existing `availableOptions` channel (`run.ts` / `hitl.ts` /
@@ -763,10 +763,10 @@ fields:
 budget_breach | hook_trip | node_interrupt` (on `hitl_requests.kind`); the three
   core kinds map to wire per the three-kinds table verbatim, and the four
   engine- or operator-opened kinds (`infra_recovery`, `budget_breach` — ADR-101;
-  `hook_trip` — ADR-108; `node_interrupt` — ADR-160, Designed) park
+  `hook_trip` — ADR-108; `node_interrupt` — ADR-160) park
   `NeedsInput` with the worktree kept and are Human-actor-only (a token actor
   NEVER answers them).
-- **(ADR-160 — Designed)** A `node_interrupt` request MUST idle to
+- **(ADR-160 — Implemented)** A `node_interrupt` request MUST idle to
   `NeedsInputIdle` and be abandoned at 24 h exactly like `hook_trip`, MUST NEVER
   be classified `Crashed` by the recovery sweep, and its `availableOptions` MUST
   be derived server-side — the client NEVER re-derives which options are

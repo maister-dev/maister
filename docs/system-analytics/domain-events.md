@@ -50,7 +50,7 @@ observe its failed child; success-gated dependents do not launch.
   budget axis reuses this SAME kind (no new kind) with `reason=budget_exceeded`
   in its `payload` when a run/task-scope budget escalates to a `budget_breach`
   HITL.
-  **(ADR-160 — Designed)** the operator node interrupt ALSO reuses
+  **(ADR-160 — Implemented)** the operator node interrupt ALSO reuses
   `run.escalated` (no new kind) with `reason=node_interrupt` in its `payload`.
   **(ADR-159 — Implemented)** `run.rework_claimed` and `run.rework_returned` are the
   two genuinely new kinds: an operator taking a finished `Review` run back for
