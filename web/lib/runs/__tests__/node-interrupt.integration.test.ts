@@ -308,3 +308,124 @@ describe("escalateNodeInterrupt", () => {
     expect(await hitlRowsFor(runId)).toHaveLength(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// T-B6 (AC-B6), retrieval half — the correction reaches the RESTARTED attempt
+// and only that one.
+// ---------------------------------------------------------------------------
+//
+// The store half is covered by the respondToHitl suite. This is the other half
+// the AC actually claims: the runner must READ the correction back at
+// prompt-build time for the restarted attempt, and the attempt AFTER it must
+// see none. Consume-once is implemented without a mutable flag — a correction
+// applies only while the target node has exactly ONE attempt started after the
+// response — so this asserts the predicate, not just that a value was written.
+
+describe("T-B6 — loadPendingOperatorCorrection (consume-once retrieval)", () => {
+  const CORRECTION = "You edited the wrong module — start from src/api.";
+
+  async function seedAnsweredInterrupt(
+    slug: string,
+    opts: { targetNodeId?: string } = {},
+  ): Promise<{ runId: string; respondedAt: Date }> {
+    const { runId } = await seedRunningRun(slug);
+    const respondedAt = new Date(Date.now() - 30_000);
+
+    // Production ordering: the PARKED attempt always predates the answer (the
+    // operator answers an already-parked node). seedRunningRun stamps its
+    // attempt at `now`, so push it behind the response or the consume-once
+    // predicate would count it as a post-response attempt.
+    await (db as any)
+      .update(schema.nodeAttempts)
+      .set({ startedAt: new Date(respondedAt.getTime() - 60_000) })
+      .where(eq(schema.nodeAttempts.runId, runId));
+
+    await (db as any).insert(schema.hitlRequests).values({
+      id: randomUUID(),
+      runId,
+      stepId: NODE,
+      kind: "node_interrupt",
+      prompt: "interrupted",
+      schema: { kind: "node_interrupt", nodeId: NODE },
+      response: {
+        optionId: "restart_node",
+        workspacePolicy: "keep",
+        targetNodeId: opts.targetNodeId ?? NODE,
+        correction: CORRECTION,
+      },
+      respondedAt,
+    });
+
+    return { runId, respondedAt };
+  }
+
+  async function appendAttempt(
+    runId: string,
+    startedAt: Date,
+    attempt: number,
+  ): Promise<void> {
+    await (db as any).insert(schema.nodeAttempts).values({
+      id: randomUUID(),
+      runId,
+      nodeId: NODE,
+      nodeType: "ai_coding",
+      attempt,
+      status: "Running",
+      startedAt,
+    });
+  }
+
+  it("returns the correction to the FIRST attempt started after the response", async () => {
+    const { loadPendingOperatorCorrection } = await import(
+      "@/lib/runs/node-interrupt"
+    );
+    const { runId, respondedAt } = await seedAnsweredInterrupt("ni-corr-first");
+
+    // The restarted attempt, appended by runGraph after the Reworked close.
+    await appendAttempt(runId, new Date(respondedAt.getTime() + 5_000), 2);
+
+    expect(await loadPendingOperatorCorrection(db, runId, NODE)).toBe(
+      CORRECTION,
+    );
+  });
+
+  // Consume-once: once a LATER attempt exists, the correction has been spent and
+  // must not leak forward into an unrelated visit.
+  it("returns null once a second attempt has started (consumed)", async () => {
+    const { loadPendingOperatorCorrection } = await import(
+      "@/lib/runs/node-interrupt"
+    );
+    const { runId, respondedAt } = await seedAnsweredInterrupt("ni-corr-spent");
+
+    await appendAttempt(runId, new Date(respondedAt.getTime() + 5_000), 2);
+    await appendAttempt(runId, new Date(respondedAt.getTime() + 10_000), 3);
+
+    expect(await loadPendingOperatorCorrection(db, runId, NODE)).toBeNull();
+  });
+
+  // A correction is owed to its TARGET node only — a restart_from correction
+  // must not be picked up by the node the operator interrupted.
+  it("returns null for a node the correction does not target", async () => {
+    const { loadPendingOperatorCorrection } = await import(
+      "@/lib/runs/node-interrupt"
+    );
+    const { runId, respondedAt } = await seedAnsweredInterrupt("ni-corr-other", {
+      targetNodeId: "plan",
+    });
+
+    await appendAttempt(runId, new Date(respondedAt.getTime() + 5_000), 2);
+
+    expect(await loadPendingOperatorCorrection(db, runId, NODE)).toBeNull();
+  });
+
+  // The overwhelmingly common path: a run that was never interrupted pays
+  // nothing and gets nothing appended.
+  it("returns null when the run was never interrupted", async () => {
+    const { loadPendingOperatorCorrection } = await import(
+      "@/lib/runs/node-interrupt"
+    );
+    const { runId } = await seedRunningRun("ni-corr-none");
+
+    expect(await loadPendingOperatorCorrection(db, runId, NODE)).toBeNull();
+  });
+});
