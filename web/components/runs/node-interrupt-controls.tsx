@@ -9,11 +9,8 @@ import {
   StopIcon,
 } from "@heroicons/react/24/outline";
 import clsx from "clsx";
-import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { useState, useTransition } from "react";
-
-import { readApiError } from "@/lib/api-error";
+import { useState } from "react";
 
 export type NodeInterruptOptionId =
   | "resume"
@@ -27,8 +24,6 @@ export type NodeInterruptWorkspacePolicy =
   | "fresh-attempt";
 
 export interface NodeInterruptControlsProps {
-  runId: string;
-  hitlRequestId: string;
   interruptedNodeId: string;
   // Server-owned. The client renders what it is given and never re-derives
   // which options are available.
@@ -41,6 +36,12 @@ export interface NodeInterruptControlsProps {
   // Ledger-derived: nodes with >= 1 prior attempt in THIS run.
   restartTargets: Array<{ nodeId: string; recommended: boolean }>;
   canAct: boolean;
+  // Presentational: the host owns the request, the busy flag, and the error, so
+  // this widget answers through the SAME respond path as every other HITL kind
+  // instead of keeping a second copy of it.
+  onRespond: (payload: Record<string, unknown>) => void;
+  busy?: boolean;
+  error?: string | null;
 }
 
 const ICONS: Record<NodeInterruptOptionId, typeof PlayIcon> = {
@@ -51,20 +52,16 @@ const ICONS: Record<NodeInterruptOptionId, typeof PlayIcon> = {
 };
 
 export function NodeInterruptControls({
-  runId,
-  hitlRequestId,
   interruptedNodeId,
   options,
   defaultOptionId,
   restartTargets,
   canAct,
+  onRespond,
+  busy = false,
+  error = null,
 }: NodeInterruptControlsProps): ReactElement {
   const t = useTranslations("nodeInterrupt");
-  const tApiErrors = useTranslations("apiErrors");
-  const router = useRouter();
-  const [pending, startTransition] = useTransition();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [correction, setCorrection] = useState("");
   const [workspacePolicy, setWorkspacePolicy] =
     useState<NodeInterruptWorkspacePolicy>("keep");
@@ -73,45 +70,21 @@ export function NodeInterruptControls({
     restartTargets[0]?.nodeId ?? "",
   );
 
-  const disabled = busy || pending || !canAct;
+  const disabled = busy || !canAct;
 
-  async function respond(optionId: NodeInterruptOptionId): Promise<void> {
-    setBusy(true);
-    setError(null);
-
-    try {
-      const res = await fetch(
-        `/api/runs/${runId}/hitl/${hitlRequestId}/respond`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            optionId,
-            ...(optionId === "restart_node" || optionId === "restart_from"
-              ? {
-                  workspacePolicy,
-                  ...(correction.trim().length > 0
-                    ? { correction: correction.trim() }
-                    : {}),
-                }
+  function respond(optionId: NodeInterruptOptionId): void {
+    onRespond({
+      optionId,
+      ...(optionId === "restart_node" || optionId === "restart_from"
+        ? {
+            workspacePolicy,
+            ...(correction.trim().length > 0
+              ? { correction: correction.trim() }
               : {}),
-            ...(optionId === "restart_from" ? { targetNodeId } : {}),
-          }),
-        },
-      );
-
-      if (!res.ok) {
-        setError(await readApiError(res, tApiErrors));
-
-        return;
-      }
-
-      startTransition(() => router.refresh());
-    } catch {
-      setError(tApiErrors("requestFailed"));
-    } finally {
-      setBusy(false);
-    }
+          }
+        : {}),
+      ...(optionId === "restart_from" ? { targetNodeId } : {}),
+    });
   }
 
   const byId = Object.fromEntries(options.map((o) => [o.optionId, o]));
@@ -134,7 +107,7 @@ export function NodeInterruptControls({
         disabled={off}
         title={opt?.disabledReason ?? undefined}
         type="button"
-        onClick={() => void respond(optionId)}
+        onClick={() => respond(optionId)}
       >
         <Icon aria-hidden className="size-4" />
         {label}

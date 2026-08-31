@@ -212,3 +212,64 @@ describe("RunHitlResponse — agent clarification wiring", () => {
     expect(html).not.toContain("run.confidenceLabel");
   });
 });
+
+// ADR-160 finding-2 fence: before the shared branch existed, a `node_interrupt`
+// row reaching the inbox or board card fell through to the raw JSON textarea —
+// the operator had to hand-type `{"optionId":"restart_node"}` to answer an
+// interrupt they had just raised. The four options must render wherever the
+// server supplies the matrix, not only on run detail.
+describe("RunHitlResponse — node interrupt wiring (ADR-160)", () => {
+  const MATRIX = {
+    interruptedNodeId: "implement",
+    defaultOptionId: "restart_node" as const,
+    options: [
+      { optionId: "resume" as const, enabled: true, disabledReason: null },
+      {
+        optionId: "restart_node" as const,
+        enabled: true,
+        disabledReason: null,
+      },
+      {
+        optionId: "restart_from" as const,
+        enabled: true,
+        disabledReason: null,
+      },
+      { optionId: "stop" as const, enabled: true, disabledReason: null },
+    ],
+    restartTargets: [{ nodeId: "plan", recommended: true }],
+  };
+
+  it("renders the interrupt options instead of the raw JSON fallback", () => {
+    const html = render({
+      kind: "node_interrupt",
+      schema: null,
+      nodeInterrupt: MATRIX,
+    });
+
+    expect(html).toContain("nodeInterrupt.restartNode");
+    expect(html).toContain("nodeInterrupt.resume");
+    expect(html).toContain("nodeInterrupt.stop");
+    expect(html).toContain("nodeInterrupt.correctionLabel");
+    // The JSON escape hatch must NOT be what an interrupt is answered through.
+    expect(html).not.toContain("hitl-json-response");
+  });
+
+  it("names the interrupted node from the server matrix", () => {
+    const html = render({
+      kind: "node_interrupt",
+      schema: null,
+      nodeInterrupt: { ...MATRIX, interruptedNodeId: "judge-plan" },
+    });
+
+    expect(html).toContain("nodeInterrupt.interrupted");
+  });
+
+  // Degrade, never crash: a row whose matrix the server could not supply still
+  // renders the generic responder rather than throwing.
+  it("falls back to the JSON responder when no matrix is supplied", () => {
+    const html = render({ kind: "node_interrupt", schema: null });
+
+    expect(html).toContain("hitl-json-response");
+    expect(html).not.toContain("nodeInterrupt.restartNode");
+  });
+});

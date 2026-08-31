@@ -1,4 +1,5 @@
 import type { HitlOption } from "@/lib/queries/hitl";
+import type { NodeInterruptControlsProps } from "@/components/runs/node-interrupt-controls";
 import type { ReactElement } from "react";
 import type {
   BudgetBreachAvailableOption,
@@ -15,6 +16,17 @@ import {
   TrashIcon,
 } from "@heroicons/react/24/outline";
 import clsx from "clsx";
+
+import { NodeInterruptControls } from "@/components/runs/node-interrupt-controls";
+
+// Structural mirror of the server's NodeInterruptOptionMatrix. Declared from
+// the widget's own prop types rather than imported from the server-only
+// `lib/runs/node-interrupt`, so this client module keeps no server dependency;
+// the shapes are reconciled by typecheck where the DTO is passed in.
+export type NodeInterruptOptionMatrixView = Pick<
+  NodeInterruptControlsProps,
+  "interruptedNodeId" | "defaultOptionId" | "options" | "restartTargets"
+>;
 
 export interface HitlDecisionControlsLabels {
   criticalityLabel: string;
@@ -281,6 +293,8 @@ export interface HitlDecisionControlsProps {
   budgetCeiling?: string;
   budgetProgress?: BudgetBreachProgressDto | null;
   availableOptions?: BudgetBreachAvailableOption[];
+  // ADR-160: the server-owned interrupt matrix. Absent on every other kind.
+  nodeInterrupt?: NodeInterruptOptionMatrixView | null;
   claimStage?: BudgetBreachClaimStage | null;
   budgetParkMode?: BudgetBreachParkMode;
   budgetBranchName?: string;
@@ -295,6 +309,7 @@ export interface HitlDecisionControlsProps {
   onBudgetCeilingChange?: (v: string) => void;
   onBudgetRaise?: () => void;
   onBudgetRestart?: () => void;
+  onNodeInterrupt?: (payload: Record<string, unknown>) => void;
   onBudgetParkModeChange?: (v: BudgetBreachParkMode) => void;
   onBudgetBranchNameChange?: (v: string) => void;
   onBudgetPark?: () => void;
@@ -975,6 +990,7 @@ export function HitlDecisionControls({
   budgetCeiling,
   budgetProgress,
   availableOptions,
+  nodeInterrupt,
   claimStage,
   budgetParkMode,
   budgetBranchName,
@@ -989,6 +1005,7 @@ export function HitlDecisionControls({
   onBudgetCeilingChange,
   onBudgetRaise,
   onBudgetRestart,
+  onNodeInterrupt,
   onBudgetParkModeChange,
   onBudgetBranchNameChange,
   onBudgetPark,
@@ -1496,6 +1513,16 @@ export function HitlDecisionControls({
             ) : null}
           </div>
         </div>
+      ) : kind === "node_interrupt" && nodeInterrupt && onNodeInterrupt ? (
+        <NodeInterruptControls
+          busy={disabled}
+          canAct={!disabled}
+          defaultOptionId={nodeInterrupt.defaultOptionId}
+          interruptedNodeId={nodeInterrupt.interruptedNodeId}
+          options={nodeInterrupt.options}
+          restartTargets={nodeInterrupt.restartTargets}
+          onRespond={onNodeInterrupt}
+        />
       ) : kind === "hook_trip" && hookTrip ? (
         <div className="flex flex-col gap-3" data-testid="hook-trip-card">
           <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-amber">

@@ -374,6 +374,7 @@ export function HitlCard({
                 criticality={item.criticality}
                 hitlRequestId={item.hitlRequestId}
                 kind={item.kind}
+                nodeInterrupt={item.nodeInterrupt}
                 options={item.options}
                 runId={item.runId}
                 schema={item.schema}

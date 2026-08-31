@@ -39,7 +39,10 @@ import {
 } from "@/lib/runs/active-run-session";
 import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
 import { isInboxVisibleHitlRow, mapRowsToHitlItems } from "@/lib/queries/hitl";
-import { resolveStages } from "@/lib/queries/hitl-stage";
+import {
+  resolveNodeInterruptMatrices,
+  resolveStages,
+} from "@/lib/queries/hitl-stage";
 import * as schema from "@/lib/db/schema";
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
@@ -1284,12 +1287,17 @@ export async function getCrossProjectHitlInbox(
   );
 
   const stagesByHitlId = await resolveStages(client, visibleRows);
+  const nodeInterruptByHitlId = await resolveNodeInterruptMatrices(
+    client,
+    visibleRows,
+  );
   const baseItems = mapRowsToHitlItems(
     visibleRows,
     assignmentsByHitlId,
     actorsById,
     stagesByHitlId,
     now,
+    nodeInterruptByHitlId,
   );
 
   const items: CrossProjectHitlItem[] = baseItems.map((item, idx) => {

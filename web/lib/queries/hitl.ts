@@ -12,8 +12,13 @@ import {
   activeSessionCapabilityAgent,
   activeSessionRunnerSnapshot,
 } from "@/lib/runs/active-run-session";
-import { resolveStages, type StageChip } from "@/lib/queries/hitl-stage";
+import {
+  resolveNodeInterruptMatrices,
+  resolveStages,
+  type StageChip,
+} from "@/lib/queries/hitl-stage";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
+import { type NodeInterruptOptionMatrix } from "@/lib/runs/node-interrupt";
 import {
   budgetBreachClaimStage,
   getBudgetBreachAvailableOptions,
@@ -58,12 +63,7 @@ export async function getHitlRequestsForRun(
   const runRows = await client
     .select({ id: runs.id, status: runs.status })
     .from(runs)
-    .where(
-      and(
-        eq(runs.id, runId),
-        eq(runs.projectId, projectId),
-      ),
-    );
+    .where(and(eq(runs.id, runId), eq(runs.projectId, projectId)));
 
   const run = runRows[0];
 
@@ -126,6 +126,10 @@ export interface HitlItem {
   prompt: string;
   options: HitlOption[];
   availableOptions?: BudgetBreachAvailableOption[];
+  // ADR-160: the server-owned option matrix for a pending operator interrupt.
+  // Present ONLY on `node_interrupt` rows; without it the card falls back to a
+  // raw JSON textarea and the interrupt is effectively unanswerable here.
+  nodeInterrupt?: NodeInterruptOptionMatrix;
   claimStage?: BudgetBreachClaimStage | null;
   time: string;
   // Absolute ISO 8601 counterpart of the relative `time` — the external
@@ -262,6 +266,7 @@ export function mapRowsToHitlItems(
   >,
   stagesByHitlId: Map<string, StageChip>,
   now: Date,
+  nodeInterruptByHitlId: Map<string, NodeInterruptOptionMatrix> = new Map(),
 ): HitlItem[] {
   return rows.map((row) => {
     const assignment = assignmentsByHitlId.get(row.hitlRequestId) ?? null;
@@ -330,6 +335,9 @@ export function mapRowsToHitlItems(
           : extractOptions(row.kind, row.rawSchema),
       ...(budgetAvailableOptions !== undefined
         ? { availableOptions: budgetAvailableOptions }
+        : {}),
+      ...(nodeInterruptByHitlId.has(row.hitlRequestId)
+        ? { nodeInterrupt: nodeInterruptByHitlId.get(row.hitlRequestId) }
         : {}),
       claimStage,
       time: relativeTime(row.createdAt, now),
@@ -439,12 +447,17 @@ export async function getHitlInbox(
   );
 
   const stagesByHitlId = await resolveStages(client, visibleRows);
+  const nodeInterruptByHitlId = await resolveNodeInterruptMatrices(
+    client,
+    visibleRows,
+  );
   const items = mapRowsToHitlItems(
     visibleRows,
     assignmentsByHitlId,
     actorsById,
     stagesByHitlId,
     now,
+    nodeInterruptByHitlId,
   );
 
   return {

@@ -7037,8 +7037,11 @@ paths:
           token is rejected 403 at the shared chokepoint, before any mutation);
           no ext-API and no MCP surface. `optionId` is allow-listed to
           `resume | restart_node | restart_from | stop`, and the SAME option set
-          is exposed server-derived on `availableOptions` in the pending-HITL
-          read models — the client never re-derives availability.
+          is exposed server-derived on `nodeInterrupt` (the option matrix, plus
+          the `interruptedNodeId` it was raised at) in EVERY pending-HITL read
+          model — run detail, the HITL inbox, and the cross-project portfolio
+          inbox all resolve it through one loader, so the client never re-derives
+          availability and no surface falls back to a raw JSON response body.
           - `resume` → leave the run awaiting and `scheduleResume(runId)`; the
             runner owns `NeedsInput → Running` and the agent continues the SAME
             attempt via `session/resume`, so context is preserved. Returns 202.
@@ -7049,6 +7052,11 @@ paths:
             differs from the interrupted node, park the cursor at the target, and
             `scheduleResume`. `runGraph` then appends a FRESH attempt. Returns 202.
           - `stop` → delegates to the existing terminal stop; no new semantics.
+            Returns 200 `{ runStatus: "Review" }`. The response marker commits in
+            its own transaction and the teardown runs after it, so a retry whose
+            prior teardown was lost re-drives the stop from the already-delivered
+            branch (200 with `idempotent: true`) while the run is still
+            stoppable, and is a no-op once it has parked.
 
           Additional body fields, all allow-listed:
           `workspacePolicy ∈ {keep, rewind-to-node-checkpoint, fresh-attempt}`;

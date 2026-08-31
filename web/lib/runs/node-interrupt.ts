@@ -14,10 +14,19 @@ import { atomicWriteJson } from "@/lib/atomic";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { compileManifest } from "@/lib/flows/graph/compile";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { markNodeNeedsInput } from "@/lib/flows/graph/ledger";
+import {
+  getNodeAttemptsForRun,
+  markNodeNeedsInput,
+  OPERATOR_INTERRUPT_DECISION,
+} from "@/lib/flows/graph/ledger";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
-import { runtimeRoot as configuredRuntimeRoot } from "@/lib/instance-config";
+import {
+  runtimeRoot as configuredRuntimeRoot,
+  maxOperatorRestarts,
+} from "@/lib/instance-config";
+import { loadRunManifest } from "@/lib/queries/run-manifest";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -71,6 +80,11 @@ export type NodeInterruptRestartTarget = {
 };
 
 export type NodeInterruptOptionMatrix = {
+  // The node the operator interrupted, taken from the HITL row's `step_id`.
+  // Carried on the matrix so every surface labels the interrupt from the SAME
+  // server-derived value — `runs.current_step_id` advances independently and
+  // would name the wrong node once the run moves on.
+  interruptedNodeId: string;
   defaultOptionId: NodeInterruptOptionId;
   options: Array<{
     optionId: NodeInterruptOptionId;
@@ -392,6 +406,7 @@ export function deriveNodeInterruptOptions(args: {
     : null;
 
   return {
+    interruptedNodeId: args.interruptedNodeId,
     defaultOptionId: "restart_node",
     options: [
       { optionId: "resume", enabled: true, disabledReason: null },
@@ -497,4 +512,80 @@ export async function loadPendingOperatorCorrection(
   );
 
   return correction;
+}
+
+/**
+ * ADR-160: the ONE place the pending-interrupt option matrix is assembled.
+ *
+ * The matrix is ledger-derived and manifest-enriched, so every surface that
+ * offers the operator an answer — run detail, the HITL inbox, the board card —
+ * has to run the same two reads. Deriving it per surface is how one of them
+ * ends up rendering a raw JSON textarea instead of the four options; routing
+ * every reader through here is what keeps them in step.
+ *
+ * Both reads are paid ONLY when an interrupt is actually pending; every other
+ * run short-circuits to an empty map. Manifest enrichment is presentation-only
+ * (`recommended` flags), so an unreadable manifest degrades to an un-flagged
+ * matrix with a WARN rather than failing the render.
+ */
+export async function loadNodeInterruptMatrices(args: {
+  runId: string;
+  pending: ReadonlyArray<{ id: string; kind: string; stepId: string | null }>;
+  db?: Db;
+}): Promise<Map<string, NodeInterruptOptionMatrix>> {
+  const matrices = new Map<string, NodeInterruptOptionMatrix>();
+  const interrupts = args.pending.filter(
+    (p): p is { id: string; kind: string; stepId: string } =>
+      p.kind === "node_interrupt" && typeof p.stepId === "string",
+  );
+
+  if (interrupts.length === 0) return matrices;
+
+  const d = args.db ?? getDb();
+  const ledgerRows: Array<{ nodeId: string; decision: string | null }> =
+    (await getNodeAttemptsForRun(args.runId, d)) as Array<{
+      nodeId: string;
+      decision: string | null;
+    }>;
+  const ledgerNodeIds = ledgerRows.map((r) => r.nodeId);
+  const operatorRestartCount = ledgerRows.filter(
+    (r) => r.decision === OPERATOR_INTERRUPT_DECISION,
+  ).length;
+  const reworkTargetsByNode = new Map<string, readonly string[]>();
+
+  try {
+    const loadedManifest = await loadRunManifest(args.runId, d);
+
+    if (loadedManifest?.manifest) {
+      for (const [nodeId, compiled] of compileManifest(loadedManifest.manifest)
+        .nodes) {
+        const targets = compiled.rework?.allowedTargets;
+
+        if (targets) reworkTargetsByNode.set(nodeId, targets);
+      }
+    }
+  } catch (err) {
+    log.warn(
+      {
+        runId: args.runId,
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "[node-interrupt] could not resolve declared rework targets",
+    );
+  }
+
+  for (const pending of interrupts) {
+    matrices.set(
+      pending.id,
+      deriveNodeInterruptOptions({
+        interruptedNodeId: pending.stepId,
+        ledgerNodeIds,
+        declaredReworkTargets: reworkTargetsByNode.get(pending.stepId),
+        operatorRestartCount,
+        maxOperatorRestarts: maxOperatorRestarts(),
+      }),
+    );
+  }
+
+  return matrices;
 }

@@ -394,9 +394,27 @@ no status flip (409 `CONFLICT`, retryable).
 ### Operator node interrupt — server-owned option matrix (ADR-160 — Implemented)
 
 The `node_interrupt` card's options are derived on the server and delivered on
-the existing `availableOptions` channel (`run.ts` / `hitl.ts` /
-`inbox-context.ts`), the same one `budget_breach` uses. The client renders what
-it is given and never re-derives availability.
+a dedicated `nodeInterrupt` field of the pending-HITL DTOs — the matrix plus the
+`interruptedNodeId` it was raised at. It rides its own channel rather than
+`budget_breach`'s `availableOptions` because it carries per-option
+`enabled`/`disabledReason` and a ledger-derived `restartTargets` list that the
+flat option list cannot express.
+
+Every read model resolves it through ONE loader,
+`loadNodeInterruptMatrices` (`lib/runs/node-interrupt.ts`), batched per run by
+`resolveNodeInterruptMatrices` (`lib/queries/hitl-stage.ts`) for the inbox
+surfaces:
+
+| Read model | Surface | Resolves via |
+| --- | --- | --- |
+| `queries/run.ts` | run detail | `loadNodeInterruptMatrices` directly |
+| `queries/hitl.ts` | per-project HITL inbox | `resolveNodeInterruptMatrices` |
+| `queries/portfolio.ts` | cross-project inbox | `resolveNodeInterruptMatrices` |
+
+Both reads (ledger + manifest) are paid only when an interrupt is actually
+pending. The client renders what it is given and never re-derives availability;
+a surface that did not receive a matrix degrades to the generic JSON responder
+rather than guessing the option set.
 
 | Option | Effect | Availability |
 | --- | --- | --- |

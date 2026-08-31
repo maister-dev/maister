@@ -6,6 +6,10 @@ import pino from "pino";
 
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { resolveManifest } from "@/lib/flows/graph/current-node-kind";
+import {
+  loadNodeInterruptMatrices,
+  type NodeInterruptOptionMatrix,
+} from "@/lib/runs/node-interrupt";
 
 export interface StageChip {
   // The originating HITL node id (`hitl_requests.step_id`) — free, always present.
@@ -84,4 +88,48 @@ export async function resolveStages(
   }
 
   return result;
+}
+
+/**
+ * ADR-160: batch the pending-interrupt option matrices for a page of inbox
+ * rows, keyed by `hitl_request_id`.
+ *
+ * Sits beside `resolveStages` because it has the same shape — an async
+ * enrichment the pure row mapper cannot perform — and because both inbox
+ * callers already pre-fetch stages right before mapping. Grouped by run so a
+ * page holding several interrupts of one run pays the ledger read once.
+ */
+export async function resolveNodeInterruptMatrices(
+  db: Db,
+  rows: ReadonlyArray<{
+    hitlRequestId: string;
+    runId: string;
+    kind: string;
+    stepId: string | null;
+  }>,
+): Promise<Map<string, NodeInterruptOptionMatrix>> {
+  const byRun = new Map<
+    string,
+    Array<{ id: string; kind: string; stepId: string | null }>
+  >();
+
+  for (const row of rows) {
+    if (row.kind !== "node_interrupt") continue;
+    const bucket = byRun.get(row.runId) ?? [];
+
+    bucket.push({ id: row.hitlRequestId, kind: row.kind, stepId: row.stepId });
+    byRun.set(row.runId, bucket);
+  }
+
+  const resolved = new Map<string, NodeInterruptOptionMatrix>();
+
+  for (const [runId, pending] of byRun) {
+    const matrices = await loadNodeInterruptMatrices({ runId, pending, db });
+
+    for (const [hitlRequestId, matrix] of matrices) {
+      resolved.set(hitlRequestId, matrix);
+    }
+  }
+
+  return resolved;
 }

@@ -7,10 +7,6 @@ vi.mock("next-intl", () => ({
     `${namespace}.${key}`,
 }));
 
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: vi.fn() }),
-}));
-
 import {
   NodeInterruptControls,
   type NodeInterruptControlsProps,
@@ -20,8 +16,6 @@ import {
 // renders what it is given and never re-derives availability.
 
 const base: NodeInterruptControlsProps = {
-  runId: "run-1",
-  hitlRequestId: "hitl-1",
   interruptedNodeId: "implement",
   defaultOptionId: "restart_node",
   options: [
@@ -35,6 +29,7 @@ const base: NodeInterruptControlsProps = {
     { nodeId: "checks", recommended: false },
   ],
   canAct: true,
+  onRespond: () => {},
 };
 
 function render(over: Partial<NodeInterruptControlsProps> = {}): string {

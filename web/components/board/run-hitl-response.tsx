@@ -19,6 +19,7 @@ import { useTranslations } from "next-intl";
 
 import {
   HitlDecisionControls,
+  type NodeInterruptOptionMatrixView,
   budgetBreachFromSchema,
   consensusHitlFromSchema,
   formFieldsFromSchema,
@@ -64,6 +65,8 @@ export interface RunHitlResponseProps {
     | "decision_request";
   options: HitlOption[];
   availableOptions?: BudgetBreachAvailableOption[];
+  // ADR-160: the server-owned interrupt matrix, passed straight through.
+  nodeInterrupt?: NodeInterruptOptionMatrixView | null;
   budgetProgress?: BudgetBreachProgressDto | null;
   claimStage?: BudgetBreachClaimStage | null;
   schema: unknown;
@@ -84,6 +87,7 @@ export function RunHitlResponse({
   kind,
   options,
   availableOptions,
+  nodeInterrupt,
   budgetProgress,
   claimStage,
   schema,
@@ -502,6 +506,7 @@ export function RunHitlResponse({
         jsonValue={json}
         kind={kind}
         labels={labels}
+        nodeInterrupt={nodeInterrupt}
         options={options}
         reviewCounts={reviewCounts}
         reviewSchema={reviewSchema}
@@ -518,6 +523,7 @@ export function RunHitlResponse({
         onDecision={handleDecision}
         onFormFieldChange={handleFormFieldChange}
         onJsonChange={setJson}
+        onNodeInterrupt={(payload) => void post(payload)}
         onOption={(optionId) => void post({ optionId })}
         onSendBack={handleSendBack}
         onSubmitForm={submitForm}

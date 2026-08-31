@@ -23,7 +23,6 @@ import {
 } from "@/components/board/panels/flow-settings-panel";
 import { RunHitlResponse } from "@/components/board/run-hitl-response";
 import { RunTakeoverActions } from "@/components/board/run-takeover-actions";
-import { NodeInterruptControls } from "@/components/runs/node-interrupt-controls";
 import { NodeInterruptTrigger } from "@/components/runs/node-interrupt-trigger";
 import { RunContinuationActions } from "@/components/runs/run-continuation-actions";
 import {
@@ -1658,27 +1657,6 @@ export default async function RunDetailLayout({
                       status={detail.pendingHitl.assignmentStatus}
                     />
                   </div>
-                  {/* ADR-160: the operator node interrupt's four options.
-                      Availability is SERVER-owned (`nodeInterrupt`), so the
-                      client renders what it is given and never re-derives it. */}
-                  {detail.pendingHitl?.kind === "node_interrupt" &&
-                  detail.pendingHitl.nodeInterrupt ? (
-                    <div className="mb-4">
-                      <NodeInterruptControls
-                        canAct={canAct}
-                        defaultOptionId={
-                          detail.pendingHitl.nodeInterrupt.defaultOptionId
-                        }
-                        hitlRequestId={detail.pendingHitl.hitlRequestId}
-                        interruptedNodeId={detail.currentStepId ?? ""}
-                        options={detail.pendingHitl.nodeInterrupt.options}
-                        restartTargets={
-                          detail.pendingHitl.nodeInterrupt.restartTargets
-                        }
-                        runId={detail.runId}
-                      />
-                    </div>
-                  ) : null}
                   {detail.pendingHitl &&
                   (detail.pendingHitl.kind === "human" ||
                     detail.pendingHitl.kind === "form") ? (
@@ -1757,6 +1735,7 @@ export default async function RunDetailLayout({
                           criticality={detail.pendingHitl.criticality}
                           hitlRequestId={detail.pendingHitl.hitlRequestId}
                           kind={detail.pendingHitl.kind}
+                          nodeInterrupt={detail.pendingHitl.nodeInterrupt}
                           options={detail.pendingHitl.options}
                           reviewCounts={reviewGateCounts}
                           runId={detail.runId}
@@ -1784,6 +1763,7 @@ export default async function RunDetailLayout({
                       criticality={detail.pendingHitl.criticality}
                       hitlRequestId={detail.pendingHitl.hitlRequestId}
                       kind={detail.pendingHitl.kind}
+                      nodeInterrupt={detail.pendingHitl.nodeInterrupt}
                       options={detail.pendingHitl.options}
                       reviewCounts={reviewGateCounts}
                       runId={detail.runId}
@@ -1848,6 +1828,7 @@ export default async function RunDetailLayout({
                 criticality={pendingHitl.criticality}
                 hitlRequestId={pendingHitl.hitlRequestId}
                 kind={pendingHitl.kind}
+                nodeInterrupt={pendingHitl.nodeInterrupt}
                 options={pendingHitl.options}
                 reviewCounts={
                   pendingHitl.kind === "human" ? reviewGateCounts : null
