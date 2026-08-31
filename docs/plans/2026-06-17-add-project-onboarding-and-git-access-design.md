@@ -1,7 +1,7 @@
 # Project onboarding + git-access redesign
 
 - **Date:** 2026-06-17
-- **Status:** Design — pending owner review (Q2 + phasing open, §14)
+- **Status:** Shipped (P1+P2+P3, ADR-093).
 - **Scope:** the "Add project" screen ([new-project-form.tsx](../../web/components/projects/new-project-form.tsx)),
   its route ([POST /api/projects](../../web/app/api/projects/route.ts)), the clone
   helper ([repo-source.ts](../../web/lib/repo-source.ts)), and new per-project

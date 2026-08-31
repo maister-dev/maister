@@ -653,34 +653,6 @@ clobbers the sibling — see `writeAdapterSmokeCache` merge):
   reported name (no case-folding); allow-sets are authored in the adapter's tool
   naming (`Read`/`Edit`/`Bash`, `mcp__server__tool`).
 
-## Linked artifacts
-
-- **ADR:** [ADR-108](../decisions.md#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation);
-  [ADR-130](../decisions.md#adr-130-adapter-agnostic-capability-enforcement-at-the-acp-seam) (`capability_guard`).
-- **Wire:** [`supervisor.openapi.yaml`](../api/supervisor.openapi.yaml) (`StartSessionRequest.hooksConfig` + `StartSessionRequest.enforcementProfile`),
-  [`supervisor-sse.asyncapi.yaml`](../api/async/supervisor-sse.asyncapi.yaml) +
-  [`web-runs.asyncapi.yaml`](../api/async/web-runs.asyncapi.yaml) (`session.hook_trip` `rule` enum incl. `capability_guard`),
-  [`outbound-webhooks.asyncapi.yaml`](../api/async/outbound-webhooks.asyncapi.yaml) (`DataRunEscalated.reason`).
-- **Schema:** [`database-schema.md`](../database-schema.md) + [`db/hitl-domain.md`](../db/hitl-domain.md) +
-  [`db/erd.md`](../db/erd.md) (`hook_trip`, migration `0066`).
-- **DSL / settings / config:** [`flow-dsl.md`](../flow-dsl.md), [`flow-settings.md`](flow-settings.md),
-  [`configuration.md`](../configuration.md) (env vars).
-- **Related domains:** [`execution-policy.md`](execution-policy.md) (preset + `onStuck`),
-  [`hitl.md`](hitl.md) (HITL respond), [`runs.md`](runs.md) (checkpoint/resume).
-- **Source (Designed):** `supervisor/src/acp-client.ts` (interceptor),
-  `supervisor/src/types.ts` (`SessionRecord` counters),
-  `web/lib/runs/keepalive-sweeper.ts` (`actBudgetEscalate` precedent),
-  `web/lib/capabilities/agent-map.ts` + `web/lib/capabilities/materialize.ts` (native backend),
-  `web/lib/flows/enforcement.ts` (`ENFORCEABILITY_BY_AGENT`).
-- **Source (`capability_guard` — ADR-130, Implemented):**
-  `supervisor/src/guardrail-hooks.ts` (`resolveCapabilityGuardDecision` + tool-identity extractor),
-  `supervisor/src/acp-client.ts` (interceptor branch + D5 sentinel),
-  `supervisor/src/adapter-smoke-cache.ts` + `supervisor/scripts/smoke-acp-adapter.ts` (`capabilityEnforcement` dimension + probe),
-  `web/lib/flows/enforcement-profile.ts` (`deriveSessionEnforcementProfile` + `resolveEscalationThreshold` + `foldEnforcementProfileIntoDigest`),
-  `web/lib/flows/enforcement-evidence.ts` (`assertEnforcementEvidence`),
-  `web/lib/flows/graph/runner-graph.ts` (derive→fold→persist `enforcementProfile`, thread to `createInput`, evidence gate) + `web/lib/flows/runner-agent.ts` (`enforcementProfile` in ctx),
-  `web/lib/flows/enforcement.ts` (`ENFORCEABILITY_BY_AGENT` `tools`/`mcps`/`hooks` → `enforced`).
-
 ## Phase-0 spec audit (T0.5 — `capability_guard` ADR-130, EXIT GATE)
 
 Adversarial self-review of all Phase-0 artifacts (ADR-130, this SDD, `flow-settings.md`,
@@ -749,3 +721,31 @@ three doc-only reconciliations folded back:
   the launch-refusal stays m11c scenario B. The "Enforced" settings-panel verdict is
   unit-covered (`flow-settings-view` / `flow-settings-panel`); it now renders behind the
   run-inspector Flow tab, so it is not re-driven e2e.
+## Linked artifacts
+
+- **ADR:** [ADR-108](../decisions.md#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation);
+  [ADR-130](../decisions.md#adr-130-adapter-agnostic-capability-enforcement-at-the-acp-seam) (`capability_guard`).
+- **Wire:** [`supervisor.openapi.yaml`](../api/supervisor.openapi.yaml) (`StartSessionRequest.hooksConfig` + `StartSessionRequest.enforcementProfile`),
+  [`supervisor-sse.asyncapi.yaml`](../api/async/supervisor-sse.asyncapi.yaml) +
+  [`web-runs.asyncapi.yaml`](../api/async/web-runs.asyncapi.yaml) (`session.hook_trip` `rule` enum incl. `capability_guard`),
+  [`outbound-webhooks.asyncapi.yaml`](../api/async/outbound-webhooks.asyncapi.yaml) (`DataRunEscalated.reason`).
+- **Schema:** [`database-schema.md`](../database-schema.md) + [`db/hitl-domain.md`](../db/hitl-domain.md) +
+  [`db/erd.md`](../db/erd.md) (`hook_trip`, migration `0066`).
+- **DSL / settings / config:** [`flow-dsl.md`](../flow-dsl.md), [`flow-settings.md`](flow-settings.md),
+  [`configuration.md`](../configuration.md) (env vars).
+- **Related domains:** [`execution-policy.md`](execution-policy.md) (preset + `onStuck`),
+  [`hitl.md`](hitl.md) (HITL respond), [`runs.md`](runs.md) (checkpoint/resume).
+- **Source (Designed):** `supervisor/src/acp-client.ts` (interceptor),
+  `supervisor/src/types.ts` (`SessionRecord` counters),
+  `web/lib/runs/keepalive-sweeper.ts` (`actBudgetEscalate` precedent),
+  `web/lib/capabilities/agent-map.ts` + `web/lib/capabilities/materialize.ts` (native backend),
+  `web/lib/flows/enforcement.ts` (`ENFORCEABILITY_BY_AGENT`).
+- **Source (`capability_guard` — ADR-130, Implemented):**
+  `supervisor/src/guardrail-hooks.ts` (`resolveCapabilityGuardDecision` + tool-identity extractor),
+  `supervisor/src/acp-client.ts` (interceptor branch + D5 sentinel),
+  `supervisor/src/adapter-smoke-cache.ts` + `supervisor/scripts/smoke-acp-adapter.ts` (`capabilityEnforcement` dimension + probe),
+  `web/lib/flows/enforcement-profile.ts` (`deriveSessionEnforcementProfile` + `resolveEscalationThreshold` + `foldEnforcementProfileIntoDigest`),
+  `web/lib/flows/enforcement-evidence.ts` (`assertEnforcementEvidence`),
+  `web/lib/flows/graph/runner-graph.ts` (derive→fold→persist `enforcementProfile`, thread to `createInput`, evidence gate) + `web/lib/flows/runner-agent.ts` (`enforcementProfile` in ctx),
+  `web/lib/flows/enforcement.ts` (`ENFORCEABILITY_BY_AGENT` `tools`/`mcps`/`hooks` → `enforced`).
+

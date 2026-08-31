@@ -1,13 +1,5 @@
 # Projects domain
 
-## M43 registration cut-over (Implemented)
-
-Project registration classifies every installed Flow member before finalizing
-the project. A legacy steps[] member maps to FLOW_INSTALL/502 with the engine-3
-remediation. Registration compensation removes project, membership and flow
-projections plus slug-scoped artifacts; shared-cache compensation retains its
-existing semantics. No project is left partially usable.
-
 ## Purpose
 
 A **project** is a single registered git repository that MAIster
@@ -20,6 +12,14 @@ manifest is **absent**, registration atomically bootstraps a minimal v2 manifest
 and then uses the same validation path.
 The domain boundary covers project lifecycle (register, archive) and the
 immediate fanout that lifecycle triggers.
+
+## M43 registration cut-over (Implemented)
+
+Project registration classifies every installed Flow member before finalizing
+the project. A legacy steps[] member maps to FLOW_INSTALL/502 with the engine-3
+remediation. Registration compensation removes project, membership and flow
+projections plus slug-scoped artifacts; shared-cache compensation retains its
+existing semantics. No project is left partially usable.
 
 ## Domain entities
 

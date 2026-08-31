@@ -443,6 +443,13 @@ never `console.log`; secrets never logged):
 All logs use the module-local pino logger per the existing pattern
 (`import pino from "pino"`, e.g. `web/lib/flows/graph/gates-exec.ts`).
 
+## Plan-review snapshots (Implemented — ADR-137)
+
+`plan-document` and `plan-review` are copied from runner-confined staging paths
+into immutable per-attempt storage, SHA-256 hashed, and recorded before a review
+opens. The source JSON never supplies its own artifact identity or provenance.
+Stale/superseded artifact instances cannot be approved or used to create a new
+decision child.
 ## Linked artifacts
 
 - ADRs: [ADR-037](../decisions.md#adr-037-typed-artifact-model),
@@ -490,10 +497,3 @@ All logs use the module-local pino logger per the existing pattern
   (collect + inject wiring), `web/lib/config.ts` + `web/lib/config.schema.ts`
   (engine 2.2.0 floor + `inline` grammar + D12 node-type restriction).
 
-## Plan-review snapshots (Implemented — ADR-137)
-
-`plan-document` and `plan-review` are copied from runner-confined staging paths
-into immutable per-attempt storage, SHA-256 hashed, and recorded before a review
-opens. The source JSON never supplies its own artifact identity or provenance.
-Stale/superseded artifact instances cannot be approved or used to create a new
-decision child.

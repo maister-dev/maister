@@ -1,13 +1,5 @@
 # HITL domain
 
-## ADR-142 removed-workspace boundary (Implemented)
-
-Archive must preflight unanswered actionable HITL and refuse without a side
-effect. It never resolves, deletes, or fabricates a HITL response. After an
-explicit workspace removal, HITL/review/gate-chat/rework entry points repeat a
-server-side workspace-presence guard and return `PRECONDITION`; the retained
-run history and previously recorded HITL evidence remain readable.
-
 ## Purpose
 
 **HITL** — human-in-the-loop — covers every transition where a run
@@ -15,6 +7,14 @@ needs an operator decision before it can continue. HITL is not a
 sidecar feature; it is a first-class state of a run. The domain spans
 three kinds of human ask, the lifecycle that surrounds them, and the
 artifact protocol used when the worker is checkpointed.
+
+## ADR-142 removed-workspace boundary (Implemented)
+
+Archive must preflight unanswered actionable HITL and refuse without a side
+effect. It never resolves, deletes, or fabricates a HITL response. After an
+explicit workspace removal, HITL/review/gate-chat/rework entry points repeat a
+server-side workspace-presence guard and return `PRECONDITION`; the retained
+run history and previously recorded HITL evidence remain readable.
 
 ## Domain entities
 
@@ -1194,6 +1194,14 @@ sequenceDiagram
   [`../api/web.openapi.yaml`](../api/web.openapi.yaml), and
   [`../api/external/operations.openapi.yaml`](../api/external/operations.openapi.yaml).
 
+## Plan-review decision children (Implemented — ADR-137)
+
+`decision_request` is a child of a graph-human parent, not an agent question
+or a standalone Inbox entity. It exposes only server-allowed options and is
+idempotent by `(run, source artifact, decision id)`. Nonfinal answers keep the
+parent pending; the final answer atomically prepares the declared rework. A
+parent rework system-closes unresolved children under the same parent/sibling
+lock. Gate chat remains attached to the parent and never resolves a child.
 ## Linked artifacts
 
 - ADRs: [ADR-006 Hybrid HITL](../decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume),
@@ -1229,11 +1237,3 @@ sequenceDiagram
   `mcp/src/tools.ts`.
 - SDD: [`../../.ai-factory/specs/feature-user-access-tokens.md`](../../.ai-factory/specs/feature-user-access-tokens.md).
 
-## Plan-review decision children (Implemented — ADR-137)
-
-`decision_request` is a child of a graph-human parent, not an agent question
-or a standalone Inbox entity. It exposes only server-allowed options and is
-idempotent by `(run, source artifact, decision id)`. Nonfinal answers keep the
-parent pending; the final answer atomically prepares the declared rework. A
-parent rework system-closes unresolved children under the same parent/sibling
-lock. Gate chat remains attached to the parent and never resolves a child.

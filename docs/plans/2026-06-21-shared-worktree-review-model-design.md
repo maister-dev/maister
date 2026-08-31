@@ -1,6 +1,6 @@
 # Design request: shared-worktree review/promote ownership model
 
-> **Status:** Planning request (Phase 2). The implementation is GATED off; this doc
+> **Status:** Shipped as ADR-102 (current truth: `../system-analytics/orchestrator.md`). Originally a gated-off Phase-2 planning request; this doc
 > captures the problem + the decisions a `/aif-plan` pass must resolve before code.
 > **Milestone:** follow-up to M37 (orchestrator engine, ADR-098/099/100).
 > **Origin:** Codex adversarial-review Finding 2 (2026-06-21). Also tracked as the

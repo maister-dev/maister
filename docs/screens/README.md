@@ -194,6 +194,7 @@ flowchart TD
 | [`runs/scratch-run.md`](runs/scratch-run.md) | Scratch run detail | `/scratch-runs/{runId}` | Implemented |
 | [`runs/run-inspector.md`](runs/run-inspector.md) | Run inspector block | shared | Implemented |
 | [`runs/workbench.md`](runs/workbench.md) | Run workbench block | shared | Implemented (Timeline/Evidence tabs + collapsible Files/Diff) |
+| [`components.md`](components.md) | Shared UI primitives (Tabs, chips/badges, card shells) | shared | Implemented |
 
 Going forward, **each screen work-item updates its screens doc** in the same
 phase that ships the screen. New screens add a row here and a file following the

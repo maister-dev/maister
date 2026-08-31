@@ -672,6 +672,14 @@ guarantee that holds.
   refuses to do. A manual `drop` also bypasses the GC evidence hold, which
   gates only the sweep.
 
+## Known documentation debt
+
+Not introduced by ADR-150 and deliberately out of its scope:
+
+- [`../db/erd.md`](../db/erd.md) does not carry entity blocks for the 18
+  evaluation tables added after it was written; only the domain ERD does.
+- [`../db/README.md`](../db/README.md)'s index is stale with respect to the
+  evaluation domain files.
 ## Linked artifacts
 
 - **ADRs** — [ADR-142](../decisions.md#adr-142-evaluation-study-domain-and-legacy-experiment-compatibility)
@@ -696,11 +704,3 @@ guarantee that holds.
   `dispatcher/fsm.ts`, `aggregation/tournament.ts`, `membership.ts`),
   `web/lib/db/schema.ts:2067-3305`.
 
-## Known documentation debt
-
-Not introduced by ADR-150 and deliberately out of its scope:
-
-- [`../db/erd.md`](../db/erd.md) does not carry entity blocks for the 18
-  evaluation tables added after it was written; only the domain ERD does.
-- [`../db/README.md`](../db/README.md)'s index is stale with respect to the
-  evaluation domain files.

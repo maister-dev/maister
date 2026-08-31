@@ -1,5 +1,7 @@
 # M8 spike findings (T1) — cancel→checkpoint→resume→re-issue
 
+> **Status: Historical spike report (M8 worker lifecycle, 2026-05-29). Kept for the checkpoint/resume measurements; summary of the M0/M8 spike lineage lives in root `CLAUDE.md` §ACP Spike Findings.**
+
 **Date**: 2026-05-29
 **Branch**: `feature/m8-worker-lifecycle`
 **Scope**: T1 of the M8 task plan (`.ai-factory/plans/feature-m8-worker-lifecycle.md`).

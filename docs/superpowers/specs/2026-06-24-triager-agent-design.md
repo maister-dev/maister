@@ -1,7 +1,7 @@
 # Design — Triager Agent + Generic Agent-Config Framework
 
 - **Date:** 2026-06-24
-- **Status:** Draft (pre-implementation design spec)
+- **Status:** Shipped (ADR-111/112); normative background for `../../system-analytics/triage.md`. §11 future items triaged 2026-08-31: embedding dedup + event-driven auto-launch → roadmap Backlog; PRD-as-flow-node closed.
 - **Author:** brainstorming session (owner + Claude)
 - **Graduates to:** two ADRs (agent-config framework; triager agent) + a new
   `docs/system-analytics/triage.md` domain doc, at implementation time.

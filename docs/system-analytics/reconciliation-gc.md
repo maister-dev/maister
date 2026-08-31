@@ -1,5 +1,19 @@
 # Reconciliation and GC domain
 
+## Purpose
+
+This domain (**Designed, M19**) covers two recovery-and-cleanup concerns
+that sit below the live run machine. **Crash reconciliation** detects a
+stranded `Running` run — a runner loop gone after a Next.js or supervisor
+restart, or a session-less node left dangling — and classifies it into
+re-attach, re-dispatch, skip, or `Crashed`. **Graceful workspace and
+revision GC** reclaims disk for terminal runs and unreferenced flow
+revisions on a graceful, preserve-then-prune schedule. The boundary: the
+live mid-stream crash path (`Running → Crashed` inside an active session
+via `session.crashed`/`session.exited`) is owned by the runner and is NOT
+re-implemented here; reconciliation is the out-of-band recovery sweep, and
+GC is the deferred removal that never destroys un-committed work.
+
 ## ADR-142 workspace cleanup contract (Implemented)
 
 The M19 behavior below is the shipped baseline. ADR-142 changes only the
@@ -53,20 +67,6 @@ and enter normal terminal preserve/prune GC after restart.
 > [`sessions.md`](sessions.md) /
 > [ADR-114](../decisions.md#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth).
 > Flipped to as-built in M42 Phase 7.
-
-## Purpose
-
-This domain (**Designed, M19**) covers two recovery-and-cleanup concerns
-that sit below the live run machine. **Crash reconciliation** detects a
-stranded `Running` run — a runner loop gone after a Next.js or supervisor
-restart, or a session-less node left dangling — and classifies it into
-re-attach, re-dispatch, skip, or `Crashed`. **Graceful workspace and
-revision GC** reclaims disk for terminal runs and unreferenced flow
-revisions on a graceful, preserve-then-prune schedule. The boundary: the
-live mid-stream crash path (`Running → Crashed` inside an active session
-via `session.crashed`/`session.exited`) is owned by the runner and is NOT
-re-implemented here; reconciliation is the out-of-band recovery sweep, and
-GC is the deferred removal that never destroys un-committed work.
 
 ## Domain entities
 
@@ -516,6 +516,25 @@ change in the same commit, never on its own.
   the next candidate; it is never retried on every tick and never aborts the
   sweep.
 
+## Reconcile classification (ADR-033)
+
+For each run at reconcile time, gather: `run.status`, `run.runKind`,
+`run.acpSessionId`, `run.currentStepId`, the workspace `worktreePath`, the
+**node type of `currentStepId`** (from the run's pinned graph
+`flow_revisions.manifest`), `worktreeExists` (path ∈ `listWorktrees`),
+`liveSession` (`acpSessionId` ∈ live `listSessions` map). Then:
+
+| Run state | Condition | Action | Reason |
+|-----------|-----------|--------|--------|
+| status ∉ `{Running}` | any | **SKIP** | reconcile is **allow-list `Running`-only**; `NeedsInput`/`NeedsInputIdle`/`HumanWorking`/terminal owned by other sweeps |
+| `Running` | worktree MISSING | **CRASH** (`crashRunningRun`, reason `worktree-gone`) | the "runs vs `git worktree list`" check; cannot continue |
+| `Running` | worktree present, `liveSession` present | **RE-ATTACH** (`scheduleResumedSessionDrive`) or re-dispatch `runFlow` | live agent session with no attached runner (post web restart) — not crashed |
+| `Running` | worktree present, no `acpSessionId` match but a LIVE session exists for this `(runId, currentStepId)` | **SKIP** (reason `live-session-by-step`) | an agent node's prompt is in-flight — `acp_session_id` persists only AFTER it returns, so the active `run_sessions` row's is still null; the node is genuinely running and must NOT be crashed (the bug this guards) or re-attached (double-drive) |
+| `Running` | worktree present, no live session, current node is a **retry-safe gate eval** (`check`/`judge`/`guard`/`human`/`form`/null — read-only) | **RE-DISPATCH** `runFlow` (CAS-guarded) | safe re-run of a read-only evaluation; avoids the forbidden false-positive crash on a gate executing between sessions |
+| `Running` | worktree present, no live session, current node is **`cli`** (arbitrary side effects, NOT retry-safe) | **CRASH** (`crashRunningRun`, reason `cli-not-retry-safe`) | CAS prevents concurrent runners, NOT re-run idempotency (Codex F4); a half-run `cli` may have partial file/network side effects — never silently re-run. Recoverable via explicit human Recover **only** when the node config declares `retry_safe: true` (accepted-risk re-dispatch); otherwise discard-only. |
+| `Running` | worktree present, no live session, current node is **agent**, **recently started** (`resume_started_at` OR latest `node_attempts.started_at` within `MAISTER_RECONCILE_GRACE_SECONDS`) | **SKIP** (grace window) | a launch/recover is still spinning its ACP session up — do NOT crash an in-flight session |
+| `Running` | worktree present, no live session, current node is **agent**, **past grace** | **CRASH** (`crashRunningRun`, reason `agent-session-gone`) | recoverability computed at UI render from `acpSessionId` presence; auto-resume of a mid-turn agent is unsafe → explicit human Recover |
+| `Running`, `runKind='scratch'` | session gone, past grace | **CRASH** via `markScratchCrashed` (sets both `runs.status` and `scratchRuns.dialogStatus`) | scratch parity |
 ## Linked artifacts
 
 - ADRs: [ADR-033 Crash reconciliation model](../decisions.md#adr-033),
@@ -552,22 +571,3 @@ change in the same commit, never on its own.
   modeled on `web/lib/gc/ephemeral-agent-gc.ts`; scan-scope boundary asserted
   against `web/lib/gc/workspace-reconciler.ts`.
 
-## Reconcile classification (ADR-033)
-
-For each run at reconcile time, gather: `run.status`, `run.runKind`,
-`run.acpSessionId`, `run.currentStepId`, the workspace `worktreePath`, the
-**node type of `currentStepId`** (from the run's pinned graph
-`flow_revisions.manifest`), `worktreeExists` (path ∈ `listWorktrees`),
-`liveSession` (`acpSessionId` ∈ live `listSessions` map). Then:
-
-| Run state | Condition | Action | Reason |
-|-----------|-----------|--------|--------|
-| status ∉ `{Running}` | any | **SKIP** | reconcile is **allow-list `Running`-only**; `NeedsInput`/`NeedsInputIdle`/`HumanWorking`/terminal owned by other sweeps |
-| `Running` | worktree MISSING | **CRASH** (`crashRunningRun`, reason `worktree-gone`) | the "runs vs `git worktree list`" check; cannot continue |
-| `Running` | worktree present, `liveSession` present | **RE-ATTACH** (`scheduleResumedSessionDrive`) or re-dispatch `runFlow` | live agent session with no attached runner (post web restart) — not crashed |
-| `Running` | worktree present, no `acpSessionId` match but a LIVE session exists for this `(runId, currentStepId)` | **SKIP** (reason `live-session-by-step`) | an agent node's prompt is in-flight — `acp_session_id` persists only AFTER it returns, so the active `run_sessions` row's is still null; the node is genuinely running and must NOT be crashed (the bug this guards) or re-attached (double-drive) |
-| `Running` | worktree present, no live session, current node is a **retry-safe gate eval** (`check`/`judge`/`guard`/`human`/`form`/null — read-only) | **RE-DISPATCH** `runFlow` (CAS-guarded) | safe re-run of a read-only evaluation; avoids the forbidden false-positive crash on a gate executing between sessions |
-| `Running` | worktree present, no live session, current node is **`cli`** (arbitrary side effects, NOT retry-safe) | **CRASH** (`crashRunningRun`, reason `cli-not-retry-safe`) | CAS prevents concurrent runners, NOT re-run idempotency (Codex F4); a half-run `cli` may have partial file/network side effects — never silently re-run. Recoverable via explicit human Recover **only** when the node config declares `retry_safe: true` (accepted-risk re-dispatch); otherwise discard-only. |
-| `Running` | worktree present, no live session, current node is **agent**, **recently started** (`resume_started_at` OR latest `node_attempts.started_at` within `MAISTER_RECONCILE_GRACE_SECONDS`) | **SKIP** (grace window) | a launch/recover is still spinning its ACP session up — do NOT crash an in-flight session |
-| `Running` | worktree present, no live session, current node is **agent**, **past grace** | **CRASH** (`crashRunningRun`, reason `agent-session-gone`) | recoverability computed at UI render from `acpSessionId` presence; auto-resume of a mid-turn agent is unsafe → explicit human Recover |
-| `Running`, `runKind='scratch'` | session gone, past grace | **CRASH** via `markScratchCrashed` (sets both `runs.status` and `scratchRuns.dialogStatus`) | scratch parity |

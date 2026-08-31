@@ -1,5 +1,7 @@
 # Flow Studio Redesign — Implementation Plan
 
+> **Status: Shipped — Phase B = M35, Phase C = M36; git write-back landed as ADR-113/132. Current truth: `../system-analytics/flow-studio.md`.**
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the unbalanced, flows-only `/flows` page with a unified **Studio** section that surfaces sources, packages (grouped by package), and a merged package-detail view — over the *existing* backend — as the foundation the editor redesign (Phase B) and the editable-local-package backend (Phase C) build on.

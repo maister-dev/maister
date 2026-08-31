@@ -1,6 +1,6 @@
 # Flow Package Viewer + Local Editing — Design
 
-> **Status: Designed (brainstorm, 2026-06-20).** Extends and *completes* the
+> **Status: Shipped (all 5 milestones; current truth `../system-analytics/local-packages.md`).** Extends and *completes* the
 > half-built Flow Studio **Phase C** (editable local packages). Owner-approved
 > direction; this doc is the spec the implementation plan is written from.
 > When this disagrees with code after build, code wins — update this doc.

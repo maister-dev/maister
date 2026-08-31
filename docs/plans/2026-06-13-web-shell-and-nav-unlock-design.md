@@ -1,7 +1,7 @@
 # Web shell hardening & nav unlock — design
 
 - **Date:** 2026-06-13
-- **Status:** Draft (input for `/aif-plan`)
+- **Status:** Shipped (WI-1…WI-6); the `supported_agents` readiness-gating follow-up shipped 2026-08-31.
 - **Tier:** `web/` only. No `supervisor/` changes. No DB migration (MCP
   readiness reuses existing columns).
 - **Branch:** `claude/elegant-panini-e53b2f` (off `main` `0282235f`, M33 in,

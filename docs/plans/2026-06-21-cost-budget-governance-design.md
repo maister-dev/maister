@@ -1,6 +1,6 @@
 # Cost-budget governance — execution-policy spend axis (planning request)
 
-> **Status: Design / planning request (2026-06-21).** Feeds `/aif-plan`.
+> **Status: Shipped (ADR-101, migration 0061; `budget_ceiling_override` folded into `budget_state` as-built).** §9 carve-outs (USD price table, `maxCostUsd` flip) tracked in root CLAUDE.md Phase 2.
 > First-place "loop-engineering" feature: the enforcing **spend-rail** the
 > already-shipped autonomy (`unattended` preset + `ralph_loop` + the M37
 > orchestrator swarm) runs **without** today.

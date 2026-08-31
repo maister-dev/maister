@@ -1,5 +1,15 @@
 # Flows domain
 
+## Purpose
+
+A **Flow** is a versioned plugin bundle that describes how to execute
+one kind of task — bugfix, feature, spec-kit, review, etc. It ships as
+a git repository with a manifest (`flow.yaml` v1), shipped CLIs, an
+optional `setup.sh`, and a graph-node YAML DSL. MAIster orchestrates
+the graph; it does NOT design Flows itself. Multi-flow **packages** that group
+several Flows + capability content under one import are **(Implemented)** in
+[`packages.md`](packages.md) (ADR-088).
+
 ## M43 graph-only compatibility contract (Implemented)
 
 Engine 3.0.0 accepts only manifests with a non-empty nodes array and no
@@ -10,16 +20,6 @@ nodes[]”. Stored legacy revisions remain inspectable but cannot be enabled,
 selected by lifecycle mutation, or launched. Malformed graph data and
 engine-bound incompatibility remain distinct typed classifications; mutation
 boundaries reject them with `CONFIG`, while read models remain renderable.
-
-## Purpose
-
-A **Flow** is a versioned plugin bundle that describes how to execute
-one kind of task — bugfix, feature, spec-kit, review, etc. It ships as
-a git repository with a manifest (`flow.yaml` v1), shipped CLIs, an
-optional `setup.sh`, and a graph-node YAML DSL. MAIster orchestrates
-the graph; it does NOT design Flows itself. Multi-flow **packages** that group
-several Flows + capability content under one import are **(Implemented)** in
-[`packages.md`](packages.md) (ADR-088).
 
 ## Domain entities
 
@@ -254,6 +254,12 @@ flowchart LR
 - **Node output token cost exceeds guard cap** — metric only,
   no kill. Phase 2 adds enforcement.
 
+## Plan-review capability validation (Implemented — ADR-137)
+
+Flow compilation owns `settings.plan_review` validation: `human` type, engine
+floor 3.1.0, declared current artifacts, positive decision-rework bound, exact
+parent outcomes, and a Flow-declared rework target. This is reusable manifest
+semantics, not a convention tied to a `plan_review` node name or prompt text.
 ## Linked artifacts
 
 - ADRs: [ADR-010 Flow Engine v2](../decisions.md#adr-010-flow-engine-v2-plugin-packaging--step-dsl),
@@ -266,9 +272,3 @@ flowchart LR
 - Schemas: `web/lib/config.schema.ts` (graph-only node union).
 - Source: `web/lib/config.ts` (`loadFlowManifest`).
 
-## Plan-review capability validation (Implemented — ADR-137)
-
-Flow compilation owns `settings.plan_review` validation: `human` type, engine
-floor 3.1.0, declared current artifacts, positive decision-rework bound, exact
-parent outcomes, and a Flow-declared rework target. This is reusable manifest
-semantics, not a convention tied to a `plan_review` node name or prompt text.

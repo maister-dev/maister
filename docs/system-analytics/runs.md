@@ -1,5 +1,12 @@
 # Runs domain
 
+## Purpose
+
+A **run** is one execution attempt of a task through a Flow. It owns
+the ACP session, the worktree, and the per-run artifacts on disk. The
+runs domain is the heart of MAIster's state machine; every other
+domain projects state onto it.
+
 ## ADR-142 workspace-presence guard (Implemented)
 
 `runs.status` remains the execution-history source of truth. If the associated
@@ -37,13 +44,6 @@ so list/detail/reconcile reads remain bounded as the immutable event log grows.
 > Canonical: [`sessions.md`](sessions.md) /
 > [ADR-114](../decisions.md#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth).
 > Flipped to as-built in M42 Phase 7.
-
-## Purpose
-
-A **run** is one execution attempt of a task through a Flow. It owns
-the ACP session, the worktree, and the per-run artifacts on disk. The
-runs domain is the heart of MAIster's state machine; every other
-domain projects state onto it.
 
 ## Domain entities
 
@@ -1116,6 +1116,17 @@ supersedes outstanding active questions inside its launch transaction and
 records that successor run as provenance. V1 does not checkpoint or resume the
 asking ACP session.
 
+## Plan-review decision recovery (Implemented — ADR-137)
+
+Plan-review decision pauses stay in `NeedsInput` or `NeedsInputIdle`. On Node
+startup and on the existing reconciliation sweep, the handoff repair scans only
+persisted Plan-review parent responses for the current review step and current
+artifact. Before `responded_at`, it rewrites the deterministic parent input
+then completes delivery; after `responded_at`, it retries only the missing graph
+wake. The final idle handoff claims capacity under the scheduler lock, changes
+only to `NeedsInput`, and invokes `runFlow()`; at the cap it stays
+`NeedsInputIdle` with `resume_requested_at`. It must not call ACP permission
+resume or depend on supervisor availability.
 ## Linked artifacts
 
 - ADRs: [ADR-006 Hybrid HITL](../decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume),
@@ -1136,14 +1147,3 @@ asking ACP session.
 - Source: `web/lib/db/schema.ts` (runs table),
   `supervisor/src/heartbeat.ts`, `supervisor/src/spawn.ts`.
 
-## Plan-review decision recovery (Implemented — ADR-137)
-
-Plan-review decision pauses stay in `NeedsInput` or `NeedsInputIdle`. On Node
-startup and on the existing reconciliation sweep, the handoff repair scans only
-persisted Plan-review parent responses for the current review step and current
-artifact. Before `responded_at`, it rewrites the deterministic parent input
-then completes delivery; after `responded_at`, it retries only the missing graph
-wake. The final idle handoff claims capacity under the scheduler lock, changes
-only to `NeedsInput`, and invokes `runFlow()`; at the cap it stays
-`NeedsInputIdle` with `resume_requested_at`. It must not call ACP permission
-resume or depend on supervisor availability.

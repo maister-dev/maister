@@ -1,5 +1,7 @@
 # Implementation Plan — Flow Studio Node-Editor Reference Pickers (Parts A & B)
 
+> **Status: Shipped (Phases 0/A/B/C).**
+
 > Handoff deliverable. Authored 2026-06-26 to be executed in a separate session.
 > Covers the two "structured-output / reference" reworks discussed alongside the
 > AI-dock UI fixes: (A) consensus participant/synthesizer source picker, and

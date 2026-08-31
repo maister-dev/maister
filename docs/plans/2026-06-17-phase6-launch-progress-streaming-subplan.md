@@ -1,5 +1,7 @@
 # Phase 6 sub-plan — Launch progress streaming (FR-F1/F2)
 
+> **Status: Shipped (incl. T6.3 board-loader streaming).**
+
 > Parent plan: `.ai-factory/plans/feature-unified-capability-composer.md` (Phase 6).
 > Spec: `docs/plans/2026-06-16-unified-capability-composer-design.md` §F (FR-F1/F2).
 > Status: **RATIFIED 2026-06-17 — Option 2 (streaming POST), flow launch T6.3 IN-PHASE, SSE framing. Implementing.**

@@ -1,5 +1,7 @@
 # Project Packages Tab Consolidation — Implementation Plan
 
+> **Status: Shipped (Tasks 1–7).**
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Collapse a project's redundant **Flows** + **Packages** tabs into one **Packages** tab — keep the attached-packages list, add project-owned local packages as rows, replace the weak per-flow card section with rich per-package contents (flow cards + an element-count line), and route package detail to the Studio view.

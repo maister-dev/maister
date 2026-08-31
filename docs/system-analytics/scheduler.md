@@ -1,5 +1,13 @@
 # Scheduler service domain
 
+## Purpose
+
+This domain (**Implemented, M24**) covers MAIster's unified background clock: a
+stateless, authorized Next.js tick route that claims due jobs, runs bounded
+handlers, and records attempts. It generalizes the existing GC cron route into
+one polymorphic scheduler without moving scheduling into the supervisor and
+without turning recovery sweeps into live-path polling.
+
 ## ADR-142 workspace cleanup contract (Implemented)
 
 `system_sweep.default` becomes the single periodic owner of workspace cleanup.
@@ -11,14 +19,6 @@ bundle runs and persists the exact aggregate summary; a loser returns
 reconciliation, row-backed GC, disk-only reconciliation, and reconstructible
 agent-directory cleanup with isolated per-item failures. No compatibility path
 may call a GC bundle directly or create a second scheduler state machine.
-
-## Purpose
-
-This domain (**Implemented, M24**) covers MAIster's unified background clock: a
-stateless, authorized Next.js tick route that claims due jobs, runs bounded
-handlers, and records attempts. It generalizes the existing GC cron route into
-one polymorphic scheduler without moving scheduling into the supervisor and
-without turning recovery sweeps into live-path polling.
 
 ## Domain entities
 

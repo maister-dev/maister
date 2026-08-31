@@ -140,7 +140,15 @@
 ## Scope Labels
 
 `Implemented`, `Designed`, and `Phase 2` are planning labels, not hard
-blockers. Large features such as Flow designer UI, background agents,
-Telegram, AI-Judge, guard enforcement, trust UI, extra executors, and
-team/RBAC support need an explicit plan and contract updates before
-implementation.
+blockers. Anything on the root `CLAUDE.md` "Phase 2 Candidates" list
+(continuous agents, Telegram/notifiers, full Kanban, plugin sandboxing, …)
+needs an explicit plan and contract updates before implementation.
+
+## Docs to read
+
+`docs/CLAUDE.md` is the entry point for the whole docs tree (rules R1-R9 +
+artifact glossary). Per task area: architecture — `docs/architecture.md` +
+the ADR log `docs/decisions.md` (hub; full records in `docs/decisions/`);
+domain behavior — `docs/system-analytics/<domain>.md` (index in that dir's
+README); error contract — `docs/error-taxonomy.md`; configuration —
+`docs/configuration.md`.

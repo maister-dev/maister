@@ -34,3 +34,11 @@
 - Indexes go in migrations, not in ad-hoc `CREATE INDEX` statements. Index any column used in `WHERE`, `ORDER BY`, or join conditions on the hot paths.
 - For destructive operations (drop column, drop table, type change) generate a new migration that runs in two steps: deploy backwards-compatible schema first, then remove the old shape after the app rolls.
 - Wrap multi-statement updates in a Drizzle transaction (`db.transaction(async (tx) => ...)`). Long-running operations (worktree, subprocess) stay outside the transaction — only the DB writes go inside.
+
+## Docs to read
+
+- `docs/database-schema.md` — narrative column/index/cascade reference.
+- `docs/db/` — generated consolidated ERD (`erd.dbml`, regenerate via
+  `pnpm --filter maister-web db:erd`) + per-domain Mermaid ERDs.
+- Migration rules: two lineages (main `web/lib/db/migrations`, brain
+  `web/lib/db/brain-migrations`); journal `when` must stay monotonic.

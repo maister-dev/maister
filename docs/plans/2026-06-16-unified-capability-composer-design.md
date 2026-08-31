@@ -1,7 +1,7 @@
 # Unified Capability Composer & Multi-Agent Materialization — Design / Requirements
 
 - **Date:** 2026-06-16
-- **Status:** Approved design (converged in brainstorming 2026-06-16) — requirements spec for SDD/TDD planning
+- **Status:** Shipped (composer + per-adapter materialization); the §8 promotion-UX question stays open (icebox).
 - **Owner:** Albert Kanishchev
 - **Method:** Spec-first (SDD). Requirements below are numbered (FR-*) and carry acceptance criteria so tests can be written **before** implementation (TDD: red → green → refactor).
 

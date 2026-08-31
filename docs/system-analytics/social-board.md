@@ -398,6 +398,12 @@ of these, in evaluation order:
   `MaisterError("CONFLICT")` (409) + WARN; refusing is the safe direction
   because a missed cycle deadlocks permanently. (Designed)
 
+## Inbox projection boundary (Implemented — ADR-137)
+
+Open Plan-review decision children project as actionable Inbox work from the
+same `hitl_requests` and assignments substrate. They do not create `inbox_items`
+or alter social unread/read counts; once answered or system-closed, the card
+disappears from the projection.
 ## Linked artifacts
 
 - ADRs: [ADR-083](../decisions.md#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor),
@@ -417,9 +423,3 @@ of these, in evaluation order:
   `web/lib/queries/activity.ts`, `web/app/api/projects/[slug]/tasks/[number]/*`,
   `web/app/api/inbox/*`.
 
-## Inbox projection boundary (Implemented — ADR-137)
-
-Open Plan-review decision children project as actionable Inbox work from the
-same `hitl_requests` and assignments substrate. They do not create `inbox_items`
-or alter social unread/read counts; once answered or system-closed, the card
-disappears from the projection.

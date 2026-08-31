@@ -1,5 +1,7 @@
 # Project Brain — Target Architecture & Requirements (design spec)
 
+> **Status: Shipped — sub-projects A/B/C all landed (ADR-122/127/128). Cited from the ADR log as the design spec; as-built truth: `../system-analytics/project-brain.md`.**
+
 > Design-time spec. As-built behavior diverges in places —
 > `docs/system-analytics/project-brain.md` is authoritative. Sub-project B/C
 > delivery pins live in

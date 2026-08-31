@@ -1,7 +1,7 @@
 # Execution-control policy (unattended handoff) — design
 
 - **Date:** 2026-06-18
-- **Status:** Draft (brainstorm), pending `/aif-plan`
+- **Status:** Shipped (ADR-095; budget axis followed as ADR-101). Current truth: `../system-analytics/execution-policy.md`.
 - **Scope:** web + supervisor + one migration. Touches the launch path and the
   graph engine. No new adapter binaries.
 - **ADR:** next-free (≥ ADR-093) — assign at implementation; do not hard-pin

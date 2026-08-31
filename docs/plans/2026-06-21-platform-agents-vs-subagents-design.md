@@ -1,5 +1,7 @@
 # Platform-agents vs capability subagents — separation + structural editor
 
+> **Status: Shipped (registry scans `maister-agents/`; platform-agent inventory in attachments).**
+
 Date: 2026-06-21
 Status: implemented 2026-06-21 (package-side scope; `/agents` catalog untouched
 per the non-goals). Note: the structural agent editor already existed

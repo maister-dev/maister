@@ -1,12 +1,5 @@
 # Project Brain domain (A+B+C: Foundation, Consultant, Improvement Bridge)
 
-## M43 Postgres-only provisioning and event filter (Implemented)
-
-Brain stays separately provisioned through its own Postgres migration lineage.
-Engine 3 uses the Postgres-only database client and retains the schema-applied
-assertion. A run.failed event with the M43 cut-over reason and source is not
-harvested and does not enqueue source reindex work.
-
 ## Purpose
 
 The **Project Brain** (ADR-122, ADR-127, ADR-128) is MAIster's per-project,
@@ -33,6 +26,13 @@ machine ([runs.md](runs.md)), the M25 authored catalog, project file serving, or
 the scheduler clock ([scheduler.md](scheduler.md)). Indexed sources remain
 pointers to canonical truth; all write-back enters C proposals, authored drafts,
 or board tasks.
+
+## M43 Postgres-only provisioning and event filter (Implemented)
+
+Brain stays separately provisioned through its own Postgres migration lineage.
+Engine 3 uses the Postgres-only database client and retains the schema-applied
+assertion. A run.failed event with the M43 cut-over reason and source is not
+harvested and does not enqueue source reindex work.
 
 ## Domain entities
 

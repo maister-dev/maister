@@ -1,7 +1,7 @@
 # Run & Task context visibility — design
 
 - **Date:** 2026-06-16
-- **Status:** Approved (brainstorm), pending `/aif-plan`
+- **Status:** Shipped (migration 0053, identity-first run card).
 - **Scope:** web only + one migration. No deploy, no supervisor change.
 
 ## Problem

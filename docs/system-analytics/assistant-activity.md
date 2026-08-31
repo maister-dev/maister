@@ -1,16 +1,5 @@
 # Assistant activity domain
 
-## Status: Implemented (v1 contract frozen on 2026-07-26; as-built verified on 2026-07-27)
-
-**v1.1 additive extension (Implemented — ADR-152):** the pulse gains
-`needsYou.promotable` and a fourth top-level `agents` block. Both are REQUIRED
-and always emitted (`[]` when empty) with no compatibility shim, and the
-response schemas carry `additionalProperties: false`. That is safe only because
-**nothing validates HTTP responses against
-[`../api/external/operations.openapi.yaml`](../api/external/operations.openapi.yaml)** —
-the repo's contract test compares MCP tool *inputSchemas* against request
-params — so spec and server MUST ship in the same commit.
-
 ## Purpose
 
 This domain defines the assistant-facing "what happened / what is happening"
@@ -24,6 +13,17 @@ DTOs, salience filtering, cursor semantics, liveness truth table, and project
 isolation for assistant clients. Out of scope: new runtime collection,
 supervisor protocol changes, raw ACP passthrough, and any new platform-wide
 token model.
+
+## Status: Implemented (v1 contract frozen on 2026-07-26; as-built verified on 2026-07-27)
+
+**v1.1 additive extension (Implemented — ADR-152):** the pulse gains
+`needsYou.promotable` and a fourth top-level `agents` block. Both are REQUIRED
+and always emitted (`[]` when empty) with no compatibility shim, and the
+response schemas carry `additionalProperties: false`. That is safe only because
+**nothing validates HTTP responses against
+[`../api/external/operations.openapi.yaml`](../api/external/operations.openapi.yaml)** —
+the repo's contract test compares MCP tool *inputSchemas* against request
+params — so spec and server MUST ship in the same commit.
 
 ## Domain entities
 

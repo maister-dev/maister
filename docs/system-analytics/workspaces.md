@@ -620,39 +620,6 @@ authority. Before a v2 candidate can be rescued or removed, the reconciler
 independently proves its root containment, canonical Git registration, database
 absence, no live session, grace expiry, and final lease fence.
 
-## Linked artifacts
-
-- ADRs: [ADR-011 Workspace lifecycle](../decisions.md#adr-011-workspace-lifecycle-via-git-worktree),
-  [ADR-012 Local promotion merge policy](../decisions.md#adr-012-local-promotion-merge-policy---no-ff-abort-on-conflict),
-  [ADR-058 Branch targeting + shared promotion + promote-time readiness re-gate](../decisions.md#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve)
-  (Implemented, M18),
-  [ADR-049 PR promotion via a hybrid provider `PrAdapter`](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant)
-  (Implemented, M18),
-  [ADR-140 PR lifecycle tracking](../decisions.md#adr-140-pr-lifecycle-tracking)
-  (Implemented),
-  [ADR-141 Branch sync with AI conflict resolver and reopen](../decisions.md#adr-141-branch-sync-with-ai-conflict-resolver-and-reopen)
-  (Implemented).
-- ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (workspaces table — base/
-  target/promotion claim columns from M18, lifecycle operation claim columns
-  from M27 and ADR-142, and the Implemented ADR-140 PR-state columns + ADR-141
-  `run_sync_attempts` ledger).
-- Config reference: [`../configuration.md`](../configuration.md)
-  (`promotion.mode`, `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS`).
-- Related: [`runs.md`](runs.md) (flow `Review → Done` promotion path),
-  [`branch-sync.md`](branch-sync.md) (Implemented — PR lifecycle scan, target
-  sync, AI conflict resolver, reopen; ADR-140/141),
-  [`projects.md`](projects.md),
-  [`git-integration.md`](git-integration.md) (push + provider PR dispatch),
-  [`workbench-lifecycle.md`](workbench-lifecycle.md) (operator stop/archive/
-  drop/snapshot/export/handoff actions),
-  [`artifacts.md`](artifacts.md) (promotion `commit_set`/`diff` artifact),
-  [`workbench.md`](workbench.md) (M22 — the worktree is the **tracked-file
-  source** for the read-only file-tree + base→run diff).
-- Source: `web/lib/worktree.ts`; scratch recovery routes under
-  `web/app/api/scratch-runs/[runId]/recover/`. **(Implemented, M18)**
-  `web/lib/runs/promote.ts` (shared `promoteRun`), `web/lib/runs/pr-adapter.ts`.
-  Full Flow reconciliation remains designed.
-
 ## Auto-promotion lanes (ADR-126, Implemented)
 
 ### Purpose
@@ -1124,3 +1091,36 @@ remove from a sibling repo that never registered it.
   fails the reject case.
 - Error taxonomy: [`../error-taxonomy.md`](../error-taxonomy.md)
   (`PRECONDITION`, `CONFIG` — reused; no new code).
+## Linked artifacts
+
+- ADRs: [ADR-011 Workspace lifecycle](../decisions.md#adr-011-workspace-lifecycle-via-git-worktree),
+  [ADR-012 Local promotion merge policy](../decisions.md#adr-012-local-promotion-merge-policy---no-ff-abort-on-conflict),
+  [ADR-058 Branch targeting + shared promotion + promote-time readiness re-gate](../decisions.md#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve)
+  (Implemented, M18),
+  [ADR-049 PR promotion via a hybrid provider `PrAdapter`](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant)
+  (Implemented, M18),
+  [ADR-140 PR lifecycle tracking](../decisions.md#adr-140-pr-lifecycle-tracking)
+  (Implemented),
+  [ADR-141 Branch sync with AI conflict resolver and reopen](../decisions.md#adr-141-branch-sync-with-ai-conflict-resolver-and-reopen)
+  (Implemented).
+- ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (workspaces table — base/
+  target/promotion claim columns from M18, lifecycle operation claim columns
+  from M27 and ADR-142, and the Implemented ADR-140 PR-state columns + ADR-141
+  `run_sync_attempts` ledger).
+- Config reference: [`../configuration.md`](../configuration.md)
+  (`promotion.mode`, `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS`).
+- Related: [`runs.md`](runs.md) (flow `Review → Done` promotion path),
+  [`branch-sync.md`](branch-sync.md) (Implemented — PR lifecycle scan, target
+  sync, AI conflict resolver, reopen; ADR-140/141),
+  [`projects.md`](projects.md),
+  [`git-integration.md`](git-integration.md) (push + provider PR dispatch),
+  [`workbench-lifecycle.md`](workbench-lifecycle.md) (operator stop/archive/
+  drop/snapshot/export/handoff actions),
+  [`artifacts.md`](artifacts.md) (promotion `commit_set`/`diff` artifact),
+  [`workbench.md`](workbench.md) (M22 — the worktree is the **tracked-file
+  source** for the read-only file-tree + base→run diff).
+- Source: `web/lib/worktree.ts`; scratch recovery routes under
+  `web/app/api/scratch-runs/[runId]/recover/`. **(Implemented, M18)**
+  `web/lib/runs/promote.ts` (shared `promoteRun`), `web/lib/runs/pr-adapter.ts`.
+  Full Flow reconciliation remains designed.
+

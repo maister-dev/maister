@@ -1,16 +1,5 @@
 # Packages domain
 
-## M43 package compatibility (Implemented)
-
-Direct Flow-package installation maps legacy members to FLOW_INSTALL/502.
-Admin package ingestion maps member-manifest validation to CONFIG/422 while
-transport clone/copy failures remain FLOW_INSTALL. Enable, upgrade and
-rollback refuse a legacy target with CONFIG/422 and never change the enabled
-revision pointer or cached manifest. A graph member whose declared engine range
-excludes this host remains inspectable but receives the distinct typed
-`engine_incompatible` reason at stored/executable boundaries. Reads return
-typed incompatibility.
-
 ## Purpose
 
 Packages are the multi-flow distribution unit above the per-revision install
@@ -27,6 +16,17 @@ versions, and the `maister.yaml packages[]` bootstrap + write-back contract
 local sources, the by-kind update-available carve, and the per-source publish
 base branch. Per-revision install/trust mechanics stay in
 [`flow-packages.md`](flow-packages.md) and are referenced, not restated.
+
+## M43 package compatibility (Implemented)
+
+Direct Flow-package installation maps legacy members to FLOW_INSTALL/502.
+Admin package ingestion maps member-manifest validation to CONFIG/422 while
+transport clone/copy failures remain FLOW_INSTALL. Enable, upgrade and
+rollback refuse a legacy target with CONFIG/422 and never change the enabled
+revision pointer or cached manifest. A graph member whose declared engine range
+excludes this host remains inspectable but receives the distinct typed
+`engine_incompatible` reason at stored/executable boundaries. Reads return
+typed incompatibility.
 
 ## Domain entities
 
@@ -285,6 +285,12 @@ The existing global-admin route remains authoritative and keeps its request
 payload and trust fan-out semantics unchanged if attachments change between
 the read and confirmation. Cancel sends no trust request.
 
+## Plan-review package releases (Implemented — ADR-137)
+
+The AIF release is `aif/v2.5.0` (`e25937f`) and the superpowers release is
+`superpowers/v1.2.0` (`0fecf20`). Each source declares engine 3.1.0 and its
+artifact contract; historic tags, installs, and SHA-pinned runs remain
+unchanged.
 ## Linked artifacts
 
 - Decision: [`../decisions.md` ADR-088](../decisions.md#adr-088-multi-flow-package-management)
@@ -307,9 +313,3 @@ the read and confirmation. Cancel sends no trust request.
   release `aif/v2.5.0` at `e25937f`); consumption notes in
   [`../flow-aif-plugin.md`](../flow-aif-plugin.md).
 
-## Plan-review package releases (Implemented — ADR-137)
-
-The AIF release is `aif/v2.5.0` (`e25937f`) and the superpowers release is
-`superpowers/v1.2.0` (`0fecf20`). Each source declares engine 3.1.0 and its
-artifact contract; historic tags, installs, and SHA-pinned runs remain
-unchanged.

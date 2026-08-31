@@ -17,41 +17,63 @@ Every file in this folder follows the structure defined in
 
 ## Domains
 
+One row per file — this table is the **canonical index** of the folder
+(`pnpm validate:docs` fails when a file here is missing from it).
+
 | Domain | File | What it covers |
 | ------ | ---- | -------------- |
-| Identity and access | [`identity-access.md`](identity-access.md) | Users, Auth.js sessions, RBAC gates, user menu, personal settings, password changes. |
-| Projects | [`projects.md`](projects.md) | Registration, slug derivation, archival, Flow plugin install on register. |
-| Flow packages | [`flow-packages.md`](flow-packages.md) | Package revision lifecycle, trust, compatibility, enablement, upgrade, rollback. |
-| Flows | [`flows.md`](flows.md) | Plugin packaging, typed-node graph DSL, runner resolution. |
-| Flow settings | [`flow-settings.md`](flow-settings.md) | Typed node settings, launch refusal boundaries, and capability-materialization handoff. |
-| Consensus node | [`consensus.md`](consensus.md) | First-class `consensus` graph node: read-only draft fan-out, rotational cross-verification, unanimous material-axis tally, HITL resolution, and synthesized plan artifact output. |
-| Capabilities | [`capabilities.md`](capabilities.md) | Capability registry refs, agent-aware mappings, and runner-owned materialization. |
-| Tasks | [`tasks.md`](tasks.md) | Board lifecycle (Backlog ↔ InFlight ↔ Done ↔ Abandoned), 1:N task ↔ run, retry loop. |
-| Project automations | [`project-automations.md`](project-automations.md) | Implemented one-time task launches, aggregate project view, durable reservation/recovery, and agent-binding telemetry boundaries (ADR-139). |
-| Social board | [`social-board.md`](social-board.md) | `KEY-N` comments with mention expansion, domain-written activity, subscriptions, per-recipient inbox, polymorphic actor pair (ADR-083). |
-| Runs | [`runs.md`](runs.md) | Run state machine, ACP keep-alive + checkpoint/resume, crash recovery. |
-| Scratch runs | [`scratch-runs.md`](scratch-runs.md) | Manual coding-agent dialog workspaces outside the task board, visible in active workspaces. |
-| Executors | [`executors.md`](executors.md) | Executor identity, env-router vs CCR, per-step override resolution. |
-| Workspaces | [`workspaces.md`](workspaces.md) | Worktree lifecycle, promotion policy, reconciliation on startup. |
-| Workbench lifecycle | [`workbench-lifecycle.md`](workbench-lifecycle.md) | Stop, archive, drop, snapshot commit, export, and handoff actions for visible workbenches. |
-| HITL | [`hitl.md`](hitl.md) | Three HITL kinds (permission / form / human), keep-alive activity tracking. |
-| Assistant activity | [`assistant-activity.md`](assistant-activity.md) | Assistant pulse + per-run semantic activity feed over `domain_events`, transcript projection, HITL/clarification asks, and synthesized liveness. |
-| Review comments | [`review-comments.md`](review-comments.md) | Line-anchored review threads on the gate diff, placement, rework compose into `commentsVar`, loop-exhaustion guard (ADR-072). |
-| Assignments | [`assignments.md`](assignments.md) | M13 role-owned work queue, actor identities, claim/release/take-over lifecycle. |
-| Artifacts | [`artifacts.md`](artifacts.md) | Typed evidence artifacts, validity, projections, and graph inputs. |
-| Readiness | [`readiness.md`](readiness.md) | Promotion-gating readiness over blocking gates, verdict calibration, and the unified readiness summary (M15). |
-| Reconciliation and GC | [`reconciliation-gc.md`](reconciliation-gc.md) | Crash reconciliation, recovery/discard, workspace preservation, and revision garbage collection. |
-| External operations | [`external-operations.md`](external-operations.md) | API tokens, external gate reports, and thin MCP facade for CI/scripts/agents. |
-| Instance configuration | [`instance-config.md`](instance-config.md) | Read-only host roots (`MAISTER_REPOS_ROOT`, `MAISTER_WORKTREES_ROOT`), host-tool status, admin `/settings`. |
-| Git integration | [`git-integration.md`](git-integration.md) | Provider detection, host-credential clone/init/remote, non-interactive git, URL redaction. |
-| Test infrastructure | [`test-infrastructure.md`](test-infrastructure.md) | Testcontainers ownership, migration lineages, Docker boundary, and E2E teardown. |
-
-## What this folder is NOT
-
-- Not the place for ADRs (those live in [`../decisions.md`](../decisions.md)).
-- Not the place for API specs (those live in [`../api/`](../api/)).
-- Not the place for the canonical DB schema (that lives in
-  [`../database-schema.md`](../database-schema.md) and [`../db/`](../db/)).
-
-This folder is the **analyst's view** of how each domain behaves —
-diagrams and bullets, with prose only as glue.
+| Acp runners | [`acp-runners.md`](acp-runners.md) | Platform ACP runner catalog CRUD on `/settings`: create/edit/delete + default + enable/disable, usage-guarded hard delete, readiness recompute (ADR-065). |
+| Agent memory | [`agent-memory.md`](agent-memory.md) | Agent memory files (ADR-152, Implemented): per-attachment `memory_enabled` axis, injective on-disk `memory.md` store, launch-time injection with a `runs.agent_memory_hash` provenance stamp, content-hash CAS write path, and the owner's view/edit/clear surface. |
+| Agent mentions | [`agent-mentions.md`](agent-mentions.md) | Agent mentions in task comments (ADR-151, Implemented): write-time `@<agentId>` resolution/expansion, `agent_schedules` mention binding, summonability predicate, and the additive directed-summon branch of the `agent_triggers` consumer. |
+| Agents | [`agents.md`](agents.md) | Platform agents (ADR-089/090, Implemented; ADR-106 package-keyed agents + migration 0068, Implemented): `.md` catalog + per-agent runner chain, five trigger sources, workspace axis with 3-layer read-only enforcement + quarantine, triage Q&A loop, ephemeral agent tokens. |
+| Artifacts | [`artifacts.md`](artifacts.md) | Typed artifacts + evidence graph: artifact_instances index, validity FSM, runner-inline + projector write paths, review refusal (M12). |
+| Assignments | [`assignments.md`](assignments.md) | Flow roles, actors, role-owned work queue; assignment events (ADR-040, M13). |
+| Assistant activity | [`assistant-activity.md`](assistant-activity.md) | Machine-facing pulse over ext/MCP: promotion-readiness + run-activity feed for assistants (v1 contract frozen 2026-07-26). |
+| Branch sync | [`branch-sync.md`](branch-sync.md) | Branch sync + AI conflict resolver (ADR-140/141, Implemented): operator-driven sync-with-target, resolver-backed `ai_rebase_merge`, PR-lifecycle polling, and `Done→Review` reopen when a PR conflicts. |
+| Capabilities | [`capabilities.md`](capabilities.md) | Capability registry refs, agent-aware mappings, runner-owned materialization. |
+| Capability catalog | [`capability-catalog.md`](capability-catalog.md) | Selectable capability catalog: records, refs, per-kind config, import pipeline, catalog UI (M25). |
+| Consensus node | [`consensus.md`](consensus.md) | Consensus node (ADR-109, Implemented — M41): first-class `consensus` graph node with governed read-only draft fan-out, rotational cross-verification, unanimous material-axis tally, human resolution, and synthesized `plan` artifact output. |
+| Domain events | [`domain-events.md`](domain-events.md) | Domain-event outbox / shared trigger bus (ADR-086): same-transaction emission, 8-kind taxonomy v1, per-consumer cursor dispatcher with xid8 commit horizon on the M24 clock, webhooks-takeover path. |
+| Evaluations | [`evaluations.md`](evaluations.md) | Evaluation Lab (ADR-142..147 + ADR-150, Implemented): Studies, observed + launched participants, immutable evidence, package-sourced methods, judge executions/aggregation incl. pairwise tournaments, human verdicts, controlled-launch recipes/preflight/batches, and human-approved recipe standardization. |
+| Execution policy | [`execution-policy.md`](execution-policy.md) | Flow execution-control policy (ADR-095/101, Implemented): preset + 10 composable autonomy axes (A self-correction / B escalation / C output shaping / budget spend governance), immutable launch snapshot, fail-closed resolvers (budget fails open), no-blind-ship guard. |
+| Executors | [`executors.md`](executors.md) | Executor identity, model routing (env-router vs CCR). |
+| External operations | [`external-operations.md`](external-operations.md) | `/api/v1/ext/*` REST surface + project tokens + MCP facade; HITL-over-MCP; audit (M16/M17). |
+| Flow graph | [`flow-graph.md`](flow-graph.md) | Flow graph v1: node lifecycle, `node_attempts` ledger, gate execution, staleness, review-driven rework (M11a). |
+| Flow packages | [`flow-packages.md`](flow-packages.md) | Package revision lifecycle, trust, compatibility, enablement, upgrade, rollback (M10+). |
+| Flow settings | [`flow-settings.md`](flow-settings.md) | Node typed settings, declared `enforcement` intent, static `ENFORCEABILITY_BY_AGENT`, launch-time refusal boundary, time-limit watchdog, settings-visibility UI (M11c). |
+| Flow Studio | [`flow-studio.md`](flow-studio.md) | Studio surfaces: sources/packages/editor/local workspace; authoring, publish, validation gates (M27/M35/M39). |
+| Flows | [`flows.md`](flows.md) | Flow plugin packaging, typed-node graph DSL, runner resolution. |
+| Git integration | [`git-integration.md`](git-integration.md) | Provider detection + host-credential, provider-neutral git ops. |
+| Guardrail hooks | [`guardrail-hooks.md`](guardrail-hooks.md) | Guardrail/hook engine (ADR-108 Implemented — M40; ADR-130 `capability_guard` Implemented): per-tool-call supervisor ACP-seam interceptor (`path_guard` / `repetition` / `no_progress` / `capability_guard`), `hook_trip` HITL escalation, two-tier unattended default, `NativeHookMaterializer` seam, adapter-agnostic capability enforcement (`tools`/`mcps` allow-lists, evidence-gated per adapter). |
+| HITL | [`hitl.md`](hitl.md) | Human input loop (permission + form + human-review). |
+| Identity and access | [`identity-access.md`](identity-access.md) | Users, Auth.js sessions, RBAC gates, account settings. |
+| Instance configuration | [`instance-config.md`](instance-config.md) | Read-only host roots, host-tool status, admin `/settings` page. |
+| Local packages | [`local-packages.md`](local-packages.md) | Editable local packages (ADR-096 base; ADR-105 Stream A, Implemented): platform-scoped git-backed working dir, session edit-lock, cut-version into `package_installs`, member-level fork/apply, fork lineage for the Phase-2 PR-back. Fork↔upstream loop (ADR-132, Implemented): `try_once` per-run pin, cut multi-adopt, divergence view, synthetic 3-way upstream sync, `kind:local` sources, publish base branch + upstream-moved refusal. |
+| Manual takeover | [`manual-takeover.md`](manual-takeover.md) | Manual takeover (local worktree handoff): `HumanWorking`, claim/return, downstream staleness, run-detail timeline (M11b). |
+| MCP management | [`mcp-management.md`](mcp-management.md) | MCP Management v2 (ADR-129): project bindings, requirements ledger, hub, probe, overlay validation. |
+| Model catalog | [`model-catalog.md`](model-catalog.md) | Model discovery + application: supervisor-side resolver (ACP probe / provider API / curated GLM / CCR sources), in-memory TTL cache, passive harvest, per-adapter model pinning + mismatch advisory (ADR-076). |
+| Observatory | [`observatory.md`](observatory.md) | Read-only Observatory metrics: correction rate, Autonomy Score, and repeatable signal clusters (M23). |
+| Orchestrator | [`orchestrator.md`](orchestrator.md) | Orchestrator engine (ADR-098/099/100, Implemented): supervisory `orchestrator` node + run-tree (`parent_run_id`/`root_run_id`) + delegation toolset + `requires` success-gated task-DAG + `WaitingOnChildren` idle-checkpoint wait/resume. |
+| Outbound webhooks | [`outbound-webhooks.md`](outbound-webhooks.md) | Outbound webhooks: transactional-outbox capture, 16-type taxonomy + envelope v1, singleton-drainer fanout/delivery, HMAC signing, retry/replay/ping, delivery FSM (ADR-077). |
+| Packages | [`packages.md`](packages.md) | Multi-flow package management (ADR-088, Implemented): platform package sources + discovery, `maister-package.yaml`, package installs, project attachments, package-level trust, local versions, `packages[]` write-back. |
+| Project automations | [`project-automations.md`](project-automations.md) | One-time scheduled task launches, durable reservation/recovery, aggregate view (ADR-139). |
+| Project brain | [`project-brain.md`](project-brain.md) | Project Brain A/B/C (ADR-122/127/128, Implemented): owned-tier memory, Consultant indexed sources/chunks, cross-tier recall and snapshots, source reindex consumer, clusters/proposals, autonomy counters, docs-as-code projection, `memory_recall`/`memory_retain`/`memory_clusters`/`memory_propose` MCP tools, P7 ambient, and 4-layer enablement. |
+| Project membership | [`project-membership.md`](project-membership.md) | Project membership management: roster, add/change-role/remove, manageMembers action, no last-owner guard (M-admin-surface). |
+| Projects | [`projects.md`](projects.md) | Project registration, Flow plugin install. |
+| Readiness | [`readiness.md`](readiness.md) | Readiness policy: promotion-gating over blocking gates, verdict calibration, unified readiness summary (M15). |
+| Reconciliation and GC | [`reconciliation-gc.md`](reconciliation-gc.md) | Crash reconciliation + workspace/revision GC (preserve-then-prune, TTL ramp, cron route) — M19. |
+| Review comments | [`review-comments.md`](review-comments.md) | Line-anchored review-comment threads on the gate diff: placement, rework compose into `commentsVar`, loop-exhaustion guard (ADR-072). |
+| Run schedules | [`run-schedules.md`](run-schedules.md) | User-facing cron schedules: `run_schedules` table, the seeded `run_schedule.dispatcher` job on the M24 tick, overlap policy × cap matrix, trigger-now, launchability classifier (M28). |
+| Runs | [`runs.md`](runs.md) | Run state machine, ACP keep-alive + checkpoint. |
+| Scheduler | [`scheduler.md`](scheduler.md) | One polymorphic cron clock (M24): job kinds, leases, dispatcher consumers, cadences. |
+| Scratch runs | [`scratch-runs.md`](scratch-runs.md) | Ad-hoc conversational ACP sessions in managed worktrees (`run_kind=scratch`) on the run/HITL/diff/promote substrate. |
+| Sessions | [`sessions.md`](sessions.md) | Flow runner & session model (ADR-114, Implemented — M42): unified `flowRunnerConfigSchema`, `default`/solo/named sessions, `run_sessions` as the sole run-runner source of truth, per-project connect-time slot bindings, checkpoint→`session/resume` session switch, supervisor `sessionName` attribution. |
+| Social board | [`social-board.md`](social-board.md) | Social board substrate (ADR-083, Implemented): task comments with expanded `KEY-N` mentions, domain-written activity, auto-subscriptions, per-recipient inbox, polymorphic actor pair. |
+| Studio AI assistant | [`studio-ai-assistant.md`](studio-ai-assistant.md) | Flow Studio AI authoring assistant (ADR-097/110): read-only ACP session emitting validated in-place edit actions; Commit/Discard boundary. |
+| Task queue | [`task-queue.md`](task-queue.md) | Priority-ordered dependency-draining admission (ADR-121): criticality dictionary, unified admission funnel, cap-safe resume, cycle-safe relations, advisory confidence, operator pause. |
+| Tasks | [`tasks.md`](tasks.md) | Backlog/board lifecycle, task ↔ run 1:N. |
+| Test infrastructure | [`test-infrastructure.md`](test-infrastructure.md) | Test database infrastructure (ADR-135, Implemented): Testcontainers ownership, bare/main/Brain lineages, and E2E lifecycle. |
+| Triage | [`triage.md`](triage.md) | Triager agent loop (ADR-111/112): verdict ops, Q&A over task comments, simple-intent tasks, auto-launch. |
+| Workbench lifecycle | [`workbench-lifecycle.md`](workbench-lifecycle.md) | Workbench lifecycle actions (M27): stop, archive, drop, snapshot commit, export, handoff branch, and the sync lifecycle-claim interaction (ADR-141). |
+| Workbench | [`workbench.md`](workbench.md) | Workbench visibility (M22): flow-graph view + live node-status coloring, git-tracked file-tree, base→run diff, authored layout in `flow.yaml` (ADR-064). |
+| Workspaces | [`workspaces.md`](workspaces.md) | Worktree lifecycle, promotion policy, reconciliation. |

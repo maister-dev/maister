@@ -1,7 +1,7 @@
 # Flow execution-control policy — axis map & phased plan
 
 - **Date:** 2026-06-18
-- **Status:** Draft (brainstorm) — **v2**, reframed per owner feedback
+- **Status:** Shipped — all A/B/C/spend axes. Current truth: `../system-analytics/execution-policy.md`.
   (2026-06-18): composable axes confirmed; model reorganised around
   *self-correct → escalate*; `auto-abandon` dropped (persistent sessions);
   check-relaxation reconciled with the rework loop. Axis defaults triaged

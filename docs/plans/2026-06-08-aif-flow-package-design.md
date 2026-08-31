@@ -1,7 +1,7 @@
 # AIF Flow Package — Design
 
 - **Date:** 2026-06-08
-- **Status:** Approved design — open questions resolved 2026-06-08; implementation plan next
+- **Status:** Shipped (as-built deltas of 2026-06-09 inside). §10 deferred list fully triaged 2026-08-31: `aif-loop`/`aif-qa`/`aif-dev-light`/`aif-autonomous` shipped as flows (`aif/v2.6.0`); AskUserQuestion passthrough, codex-parity nuance, inline per-step budget closed; connect-time init prompt → roadmap Backlog.
 - **Owner:** Albert Kanishchev
 - **Scope decision:** build everything in one pass before dogfooding (no phasing).
 

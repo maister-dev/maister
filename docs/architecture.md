@@ -272,7 +272,7 @@ These components are implemented unless the status column says otherwise:
 | `lib/acp-runners` | `web/lib/acp-runners/*` | Platform runner catalog, sidecar references, usage checks, Flow remaps, and `resolveRunner()` precedence (launch override → step target → project Flow default → platform Flow default → project default → platform default). | Implemented |
 | `lib/worktree` | `web/lib/worktree.ts` | `git worktree add/remove/list` wrapper, project-scoped paths. | Implemented |
 | `lib/scheduler` | `web/lib/scheduler.ts` | Global concurrency cap, Pending queue, auto-promote on slot free. | Implemented |
-| `app/api/projects/[slug]/tasks/route.ts` | Route Handler | Create tasks → `Backlog`. | Designed |
+| `app/api/projects/[slug]/tasks/route.ts` | Route Handler | Create tasks → `Backlog`. | Implemented |
 | `app/api/runs/route.ts` | Route Handler | Precondition + ACP runner resolution (delegates to `lib/acp-runners/resolve`, snapshots runner identity) + worktree add + supervisor `POST /sessions`. | Implemented |
 | `app/api/runs/[runId]/stream/route.ts` | Route Handler | SSE bridge tailing `run.events.jsonl`. | Implemented |
 | `app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route.ts` | Route Handler | Two-phase HITL response, permission delivery, atomic input artifact, runner wake-up. | Implemented |
@@ -418,6 +418,15 @@ only coupling surface is the HTTP+SSE wire described in
 multi-host the operator sets `MAISTER_SUPERVISOR_URL` on the web tier
 to the supervisor's external address.
 
+## Typed Plan-review artifact boundary (Implemented — ADR-137)
+
+The graph runner, not ACP or the browser, captures and validates the confined
+plan document and `plan-review.json` outputs. It persists immutable artifact
+instances before one atomic parent/child HITL creation transaction. A final
+decision uses the normal graph input artifact and `runFlow()` recovery path;
+it does not add a supervisor protocol or a run status. Cross-tier events expose
+only IDs, counts, and state, never plan or answer bodies.
+
 ## Where to read next
 
 - API contracts: [`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml),
@@ -428,12 +437,3 @@ to the supervisor's external address.
   [`system-analytics/`](system-analytics/).
 - Local dev: [`getting-started.md`](getting-started.md).
 - Supervisor prose reference: [`supervisor.md`](supervisor.md).
-
-## Typed Plan-review artifact boundary (Implemented — ADR-137)
-
-The graph runner, not ACP or the browser, captures and validates the confined
-plan document and `plan-review.json` outputs. It persists immutable artifact
-instances before one atomic parent/child HITL creation transaction. A final
-decision uses the normal graph input artifact and `runFlow()` recovery path;
-it does not add a supervisor protocol or a run status. Cross-tier events expose
-only IDs, counts, and state, never plan or answer bodies.

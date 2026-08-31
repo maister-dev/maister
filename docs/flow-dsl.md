@@ -1163,7 +1163,7 @@ HITL, but it **never deletes** the original failed/stale verdict.
 > does not block merge in M11a. Promotion readiness (refusing merge on a missing/
 > failed/stale required gate) is the M15/M18 readiness policy described below.
 
-## Planned M12: typed artifacts and evidence graph
+## Typed artifacts and evidence graph (M12 — Implemented)
 
 Flow graph nodes can declare typed artifacts as inputs and outputs. Runtime
 records artifact metadata in the database and keeps payloads in the run
@@ -1346,7 +1346,7 @@ in [`configuration.md`](configuration.md). Rationale lives in
 [ADR-063](decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7)
 — not restated here.
 
-## Planned M15: readiness policy and verdict calibration
+## Readiness policy and verdict calibration (M15 — Implemented)
 
 > **Re-scoped (ADR-028).** M11a annexed gate _execution_ — the kinds, status
 > lifecycle, structured verdicts, blocking/advisory modes, staleness, and

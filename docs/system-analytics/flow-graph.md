@@ -1,5 +1,18 @@
 # Flow graph domain
 
+## Purpose
+
+The **flow graph** domain is the execution-model foundation: a validated **node
+graph**, an append-only **`node_attempts`** ledger, **gate execution**, and a
+**review-driven rework loop**. Its boundary is the *runtime* of a single run's
+traversal — how a node enters, acts, gates, finishes, and transitions, and how a
+reviewer's `rework` decision jumps the pointer back and re-stales downstream
+work. Package install/trust/enablement is [`flows.md`](flows.md) /
+[`flow-packages.md`](flow-packages.md); the run status machine and
+keep-alive/checkpoint are [`runs.md`](runs.md); the human-ask protocol is
+[`hitl.md`](hitl.md); promotion readiness is M15/M18. Engine 3 accepts only
+`nodes[]` manifests, so this domain governs every Flow run.
+
 ## M43 graph-only execution contract (Implemented)
 
 Engine 3.0.0 removes linear compilation, linear guards and the linear runner.
@@ -24,19 +37,6 @@ resolved only from node attempts.
 > [ADR-027](../decisions.md#adr-027-append-only-node_attempts-run-ledger),
 > [ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped),
 > [ADR-029](../decisions.md#adr-029-split-m11-into-m11a--m11b--m11c).
-
-## Purpose
-
-The **flow graph** domain is the execution-model foundation: a validated **node
-graph**, an append-only **`node_attempts`** ledger, **gate execution**, and a
-**review-driven rework loop**. Its boundary is the *runtime* of a single run's
-traversal — how a node enters, acts, gates, finishes, and transitions, and how a
-reviewer's `rework` decision jumps the pointer back and re-stales downstream
-work. Package install/trust/enablement is [`flows.md`](flows.md) /
-[`flow-packages.md`](flow-packages.md); the run status machine and
-keep-alive/checkpoint are [`runs.md`](runs.md); the human-ask protocol is
-[`hitl.md`](hitl.md); promotion readiness is M15/M18. Engine 3 accepts only
-`nodes[]` manifests, so this domain governs every Flow run.
 
 ## Domain entities
 
@@ -813,6 +813,17 @@ flowchart TD
   [`hitl.md`](hitl.md), [`review-comments.md`](review-comments.md), and
   [`../flow-dsl.md`](../flow-dsl.md).
 
+## Typed Plan-review gate (Implemented — ADR-137)
+
+A `human` node with `settings.plan_review` captures a strict V1 companion
+artifact before `runReviewHuman()` creates a forced pause. The parent review
+stores immutable provenance and a bounded decision-cycle count. The count is
+derived only from prior Plan-review parents for the same graph node
+(`hitl_requests.step_id`), never from another Plan-review node in the run;
+blockers create child `decision_request` HITLs in the same transaction. The
+parent can only approve a clean review or rework; no auto-pass, notify-only, or
+takeover branch exists for this capability. Exhaustion fails `PRECONDITION`
+before card creation.
 ## Linked artifacts
 
 - ADRs:
@@ -862,14 +873,3 @@ flowchart TD
   (`node_attempts`, `gate_results`).
 ```
 
-## Typed Plan-review gate (Implemented — ADR-137)
-
-A `human` node with `settings.plan_review` captures a strict V1 companion
-artifact before `runReviewHuman()` creates a forced pause. The parent review
-stores immutable provenance and a bounded decision-cycle count. The count is
-derived only from prior Plan-review parents for the same graph node
-(`hitl_requests.step_id`), never from another Plan-review node in the run;
-blockers create child `decision_request` HITLs in the same transaction. The
-parent can only approve a clean review or rework; no auto-pass, notify-only, or
-takeover branch exists for this capability. Exhaustion fails `PRECONDITION`
-before card creation.

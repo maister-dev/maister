@@ -24,3 +24,11 @@
 - ESLint warnings count: do not commit code that adds new warnings. `no-console`, `react/jsx-sort-props`, `import/order`, `padding-line-between-statements`, `unused-imports/no-unused-imports`, and `react/self-closing-comp` are enforced auto-fixable rules.
 - Do not ship `console.log` in committed code. Add a server-side logger boundary when needed; the frontend should surface errors via toasts/UI, not the console.
 - API keys and tokens are server-only. Never read from `process.env` inside a Client Component or pass them as props from a Server Component to a Client Component.
+
+## Docs to read
+
+- `web/CLAUDE.md` — the web-slice contract (stack, RBAC, data-management page
+  patterns, UI affordance conventions).
+- `docs/screens/README.md` — per-screen reference; update the matching
+  `screens/*` doc when you change a screen.
+- `docs/system-analytics/<domain>.md` — behavior contracts the UI surfaces.

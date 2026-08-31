@@ -1,13 +1,5 @@
 # Scratch runs domain
 
-## ADR-142 workspace removal (Implemented)
-
-Scratch Discard joins the shared fenced preserve-first protocol and returns the
-common lifecycle-removal DTO. It removes an owned worktree only after durable
-preservation evidence and then retains the run as `Abandoned`; uploaded/runtime
-artifacts remain retained. A scratch run with `removed_at` has retained history
-but no Recover, Files/Diff, branch export, or other worktree-backed action.
-
 ## Purpose
 
 A **scratch run** is a manually started coding-agent workspace outside the task
@@ -15,6 +7,14 @@ board. It gives the operator a conversation-style ACP runner session inside a
 MAIster-managed worktree, while keeping branch state, uploaded context,
 capability choices, HITL, diff review, and active workspace visibility under
 the same web, database, supervisor, and worktree contracts as Flow runs.
+
+## ADR-142 workspace removal (Implemented)
+
+Scratch Discard joins the shared fenced preserve-first protocol and returns the
+common lifecycle-removal DTO. It removes an owned worktree only after durable
+preservation evidence and then retains the run as `Abandoned`; uploaded/runtime
+artifacts remain retained. A scratch run with `removed_at` has retained history
+but no Recover, Files/Diff, branch export, or other worktree-backed action.
 
 ## Domain entities
 

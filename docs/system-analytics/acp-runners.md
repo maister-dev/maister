@@ -1,5 +1,21 @@
 # Platform ACP runner catalog domain
 
+## Purpose
+
+The platform ACP runner catalog is the admin-owned, host-scoped registry of
+launchable agent runtimes (`platform_acp_runners`). It answers a single
+question: _which adapter + model + provider + permission policy combinations
+may a run use on this host?_ This domain owns the **CRUD lifecycle** of that
+catalog — create, read, update, delete, enable/disable, and platform-default
+selection — exposed on the admin-gated `/settings` page. It does NOT own runner
+**resolution** at launch (see [executors.md](executors.md)), readiness
+**evaluation** (see [readiness.md](readiness.md)), the host-roots/host-tools
+surface of the same page (see [instance-config.md](instance-config.md)), or model
+**discovery/application** for the `model` field (see
+[model-catalog.md](model-catalog.md), ADR-076). The
+decision record for the delete guard and the in-`/settings` CRUD surface is
+[ADR-065](../decisions.md#adr-065).
+
 ## ADR-142 workspace lifecycle boundary (Implemented)
 
 ACP/session operations remain live-execution concerns. Archive refuses a run
@@ -16,22 +32,6 @@ leaves the parked run and present worktree retryable rather than reviving ACP.
 > Canonical: [`sessions.md`](sessions.md) /
 > [ADR-114](../decisions.md#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth).
 > Flipped to as-built in M42 Phase 7.
-
-## Purpose
-
-The platform ACP runner catalog is the admin-owned, host-scoped registry of
-launchable agent runtimes (`platform_acp_runners`). It answers a single
-question: _which adapter + model + provider + permission policy combinations
-may a run use on this host?_ This domain owns the **CRUD lifecycle** of that
-catalog — create, read, update, delete, enable/disable, and platform-default
-selection — exposed on the admin-gated `/settings` page. It does NOT own runner
-**resolution** at launch (see [executors.md](executors.md)), readiness
-**evaluation** (see [readiness.md](readiness.md)), the host-roots/host-tools
-surface of the same page (see [instance-config.md](instance-config.md)), or model
-**discovery/application** for the `model` field (see
-[model-catalog.md](model-catalog.md), ADR-076). The
-decision record for the delete guard and the in-`/settings` CRUD surface is
-[ADR-065](../decisions.md#adr-065).
 
 ## Domain entities
 

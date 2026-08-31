@@ -1,13 +1,5 @@
 # Domain-event outbox domain
 
-## M43 cut-over event (Implemented)
-
-Each migration-0093 CAS winner emits exactly one existing run.failed event with
-reason legacy_steps_engine_3_cutover and source upgrade_cutover. A shared
-predicate suppresses Ralph relaunch, configured-agent triggers, Brain harvest
-and source reindex. Cost reconciliation may consume it; a graph parent may
-observe its failed child; success-gated dependents do not launch.
-
 ## Purpose
 
 The domain-event outbox (**Implemented**, ADR-086, M32) is MAIster's shared
@@ -23,6 +15,14 @@ keep their own outbox until re-pointed — [outbound-webhooks.md](outbound-webho
 the run state machine ([runs.md](runs.md)), the social-board audit feed
 (`task_activity` stays the user-facing activity log, ADR-083), or the clock it
 borrows ([scheduler.md](scheduler.md)).
+
+## M43 cut-over event (Implemented)
+
+Each migration-0093 CAS winner emits exactly one existing run.failed event with
+reason legacy_steps_engine_3_cutover and source upgrade_cutover. A shared
+predicate suppresses Ralph relaunch, configured-agent triggers, Brain harvest
+and source reindex. Cost reconciliation may consume it; a graph parent may
+observe its failed child; success-gated dependents do not launch.
 
 ## Domain entities
 

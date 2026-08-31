@@ -48,97 +48,30 @@ truth). The fix is to update docs in the same PR.
 
 ### Data layer (`db/`)
 
-| File | What it answers |
-| ---- | ---------------- |
-| [`db/erd.md`](db/erd.md) | Consolidated-ERD wrapper: how to view/regenerate `db/erd.dbml`. |
-| [`db/erd.dbml`](db/erd.dbml) | Full generated DBML ERD across both Drizzle lineages (ADR-159). Never hand-edit. |
-| [`db/projects-domain.md`](db/projects-domain.md) | Projects + Executors + Flows ERD. |
-| [`db/runs-domain.md`](db/runs-domain.md) | Tasks + Runs + Workspaces ERD. |
-| [`db/hitl-domain.md`](db/hitl-domain.md) | HITL Requests ERD + form-schema shape. |
-| [`db/artifacts-domain.md`](db/artifacts-domain.md) | Artifact instances + projection cursors ERD. |
-| [`db/webhooks.md`](db/webhooks.md) | Webhook subscriptions + events outbox + deliveries + attempts ERD, plus the `webhooks_enabled` settings column (ADR-077). |
-| [`db/domain-events.md`](db/domain-events.md) | Domain-event outbox ERD: `domain_events` fact log + per-consumer cursor rows (ADR-086). |
-| [`db/agents-domain.md`](db/agents-domain.md) | Platform-agent ERD: `agents` catalog index, `agent_project_links`, `agent_schedules` trigger bindings, runs/tasks/tokens alters (ADR-089/090). |
-| [`db/brain-domain.md`](db/brain-domain.md) | Project Brain ERD (ADR-122/127/128, Implemented): owned items, indexed sources/chunks, embeddings, snapshots, index jobs, edges, project config, proposals, proposal decision stats, shared enablement alters, per-generation HNSW expression indexes, partial UNIQUEs, and project-CASCADE/SET-NULL chain. |
-| [`db/evaluations-domain.md`](db/evaluations-domain.md) | Evaluation Lab ERD (ADR-142..147, Implemented — migrations `0107`–`0114`): neutral Study/participant/recipe model, package-sourced method revisions + admin panels/profiles/overrides, immutable evidence snapshots/items, execution FSM + objective checks/metrics + judge attempts/criteria/aggregate/reviews, append-only human verdicts, per-Study event log, controlled-launch batches, scheduled suites, recipe standardization, and the parity-asserting legacy Experiment backfill (payloads summarized; legacy tables dropped in `0120`, ADR-150). |
-| [`database-schema.md`](database-schema.md) | Narrative DB reference (columns, indexes, cascade chain). |
+The canonical per-file index is [`db/README.md`](db/README.md)
+(gate-enforced complete; R7 — do not duplicate it here). Highlights: the
+consolidated ERD is **generated DBML** ([`db/erd.dbml`](db/erd.dbml),
+ADR-159 — never hand-edit; [`db/erd.md`](db/erd.md) is its wrapper);
+per-domain ERDs are hand-maintained Mermaid; the narrative column/index/
+cascade reference is [`database-schema.md`](database-schema.md).
 
 ### System analysis (`system-analytics/`)
 
 Domain-grouped analyst artifacts: state machines, sequence diagrams, use
-cases, process flows. One file per domain.
-
-| File | Domain |
-| ---- | ------ |
-| [`system-analytics/identity-access.md`](system-analytics/identity-access.md) | Users, Auth.js sessions, RBAC gates, account settings. |
-| [`system-analytics/projects.md`](system-analytics/projects.md) | Project registration, Flow plugin install. |
-| [`system-analytics/flows.md`](system-analytics/flows.md) | Flow plugin packaging, typed-node graph DSL, runner resolution. |
-| [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md) | Flow graph v1: node lifecycle, `node_attempts` ledger, gate execution, staleness, review-driven rework (M11a). |
-| [`system-analytics/tasks.md`](system-analytics/tasks.md) | Backlog/board lifecycle, task ↔ run 1:N. |
-| [`system-analytics/task-queue.md`](system-analytics/task-queue.md) | Priority-ordered dependency-draining admission (ADR-121): criticality dictionary, unified admission funnel, cap-safe resume, cycle-safe relations, advisory confidence, operator pause. |
-| [`system-analytics/runs.md`](system-analytics/runs.md) | Run state machine, ACP keep-alive + checkpoint. |
-| [`system-analytics/executors.md`](system-analytics/executors.md) | Executor identity, model routing (env-router vs CCR). |
-| [`system-analytics/workspaces.md`](system-analytics/workspaces.md) | Worktree lifecycle, promotion policy, reconciliation. |
-| [`system-analytics/reconciliation-gc.md`](system-analytics/reconciliation-gc.md) | Crash reconciliation + workspace/revision GC (preserve-then-prune, TTL ramp, cron route) — M19. |
-| [`system-analytics/hitl.md`](system-analytics/hitl.md) | Human input loop (permission + form + human-review). |
-| [`system-analytics/review-comments.md`](system-analytics/review-comments.md) | Line-anchored review-comment threads on the gate diff: placement, rework compose into `commentsVar`, loop-exhaustion guard (ADR-072). |
-| [`system-analytics/manual-takeover.md`](system-analytics/manual-takeover.md) | Manual takeover (local worktree handoff): `HumanWorking`, claim/return, downstream staleness, run-detail timeline (M11b). |
-| [`system-analytics/flow-settings.md`](system-analytics/flow-settings.md) | Node typed settings, declared `enforcement` intent, static `ENFORCEABILITY_BY_AGENT`, launch-time refusal boundary, time-limit watchdog, settings-visibility UI (M11c). |
-| [`system-analytics/artifacts.md`](system-analytics/artifacts.md) | Typed artifacts + evidence graph: artifact_instances index, validity FSM, runner-inline + projector write paths, review refusal (M12). |
-| [`system-analytics/readiness.md`](system-analytics/readiness.md) | Readiness policy: promotion-gating over blocking gates, verdict calibration, unified readiness summary (M15). |
-| [`system-analytics/execution-policy.md`](system-analytics/execution-policy.md) | Flow execution-control policy (ADR-095/101, Implemented): preset + 10 composable autonomy axes (A self-correction / B escalation / C output shaping / budget spend governance), immutable launch snapshot, fail-closed resolvers (budget fails open), no-blind-ship guard. |
-| [`system-analytics/observatory.md`](system-analytics/observatory.md) | Read-only Observatory metrics: correction rate, Autonomy Score, and repeatable signal clusters (M23). |
-| [`system-analytics/instance-config.md`](system-analytics/instance-config.md) | Read-only host roots, host-tool status, admin `/settings` page. |
-| [`system-analytics/git-integration.md`](system-analytics/git-integration.md) | Provider detection + host-credential, provider-neutral git ops. |
-| [`system-analytics/workbench.md`](system-analytics/workbench.md) | Workbench visibility (M22): flow-graph view + live node-status coloring, git-tracked file-tree, base→run diff, authored layout in `flow.yaml` (ADR-064). |
-| [`system-analytics/workbench-lifecycle.md`](system-analytics/workbench-lifecycle.md) | Workbench lifecycle actions (M27): stop, archive, drop, snapshot commit, export, handoff branch, and the sync lifecycle-claim interaction (ADR-141). |
-| [`system-analytics/project-membership.md`](system-analytics/project-membership.md) | Project membership management: roster, add/change-role/remove, manageMembers action, no last-owner guard (M-admin-surface). |
-| [`system-analytics/acp-runners.md`](system-analytics/acp-runners.md) | Platform ACP runner catalog CRUD on `/settings`: create/edit/delete + default + enable/disable, usage-guarded hard delete, readiness recompute (ADR-065). |
-| [`system-analytics/run-schedules.md`](system-analytics/run-schedules.md) | User-facing cron schedules: `run_schedules` table, the seeded `run_schedule.dispatcher` job on the M24 tick, overlap policy × cap matrix, trigger-now, launchability classifier (M28). |
-| [`system-analytics/model-catalog.md`](system-analytics/model-catalog.md) | Model discovery + application: supervisor-side resolver (ACP probe / provider API / curated GLM / CCR sources), in-memory TTL cache, passive harvest, per-adapter model pinning + mismatch advisory (ADR-076). |
-| [`system-analytics/outbound-webhooks.md`](system-analytics/outbound-webhooks.md) | Outbound webhooks: transactional-outbox capture, 16-type taxonomy + envelope v1, singleton-drainer fanout/delivery, HMAC signing, retry/replay/ping, delivery FSM (ADR-077). |
-| [`system-analytics/social-board.md`](system-analytics/social-board.md) | Social board substrate (ADR-083, Implemented): task comments with expanded `KEY-N` mentions, domain-written activity, auto-subscriptions, per-recipient inbox, polymorphic actor pair. |
-| [`system-analytics/agent-mentions.md`](system-analytics/agent-mentions.md) | Agent mentions in task comments (ADR-151, Implemented): write-time `@<agentId>` resolution/expansion, `agent_schedules` mention binding, summonability predicate, and the additive directed-summon branch of the `agent_triggers` consumer. |
-| [`system-analytics/agent-memory.md`](system-analytics/agent-memory.md) | Agent memory files (ADR-152, Implemented): per-attachment `memory_enabled` axis, injective on-disk `memory.md` store, launch-time injection with a `runs.agent_memory_hash` provenance stamp, content-hash CAS write path, and the owner's view/edit/clear surface. |
-| [`system-analytics/domain-events.md`](system-analytics/domain-events.md) | Domain-event outbox / shared trigger bus (ADR-086): same-transaction emission, 8-kind taxonomy v1, per-consumer cursor dispatcher with xid8 commit horizon on the M24 clock, webhooks-takeover path. |
-| [`system-analytics/packages.md`](system-analytics/packages.md) | Multi-flow package management (ADR-088, Implemented): platform package sources + discovery, `maister-package.yaml`, package installs, project attachments, package-level trust, local versions, `packages[]` write-back. |
-| [`system-analytics/local-packages.md`](system-analytics/local-packages.md) | Editable local packages (ADR-096 base; ADR-105 Stream A, Implemented): platform-scoped git-backed working dir, session edit-lock, cut-version into `package_installs`, member-level fork/apply, fork lineage for the Phase-2 PR-back. Fork↔upstream loop (ADR-132, Implemented): `try_once` per-run pin, cut multi-adopt, divergence view, synthetic 3-way upstream sync, `kind:local` sources, publish base branch + upstream-moved refusal. |
-| [`system-analytics/agents.md`](system-analytics/agents.md) | Platform agents (ADR-089/090, Implemented; ADR-106 package-keyed agents + migration 0068, Implemented): `.md` catalog + per-agent runner chain, five trigger sources, workspace axis with 3-layer read-only enforcement + quarantine, triage Q&A loop, ephemeral agent tokens. |
-| [`system-analytics/orchestrator.md`](system-analytics/orchestrator.md) | Orchestrator engine (ADR-098/099/100, Implemented): supervisory `orchestrator` node + run-tree (`parent_run_id`/`root_run_id`) + delegation toolset + `requires` success-gated task-DAG + `WaitingOnChildren` idle-checkpoint wait/resume. |
-| [`system-analytics/guardrail-hooks.md`](system-analytics/guardrail-hooks.md) | Guardrail/hook engine (ADR-108 Implemented — M40; ADR-130 `capability_guard` Implemented): per-tool-call supervisor ACP-seam interceptor (`path_guard` / `repetition` / `no_progress` / `capability_guard`), `hook_trip` HITL escalation, two-tier unattended default, `NativeHookMaterializer` seam, adapter-agnostic capability enforcement (`tools`/`mcps` allow-lists, evidence-gated per adapter). |
-| [`system-analytics/consensus.md`](system-analytics/consensus.md) | Consensus node (ADR-109, Implemented — M41): first-class `consensus` graph node with governed read-only draft fan-out, rotational cross-verification, unanimous material-axis tally, human resolution, and synthesized `plan` artifact output. |
-| [`system-analytics/sessions.md`](system-analytics/sessions.md) | Flow runner & session model (ADR-114, Implemented — M42): unified `flowRunnerConfigSchema`, `default`/solo/named sessions, `run_sessions` as the sole run-runner source of truth, per-project connect-time slot bindings, checkpoint→`session/resume` session switch, supervisor `sessionName` attribution. |
-| [`system-analytics/project-brain.md`](system-analytics/project-brain.md) | Project Brain A/B/C (ADR-122/127/128, Implemented): owned-tier memory, Consultant indexed sources/chunks, cross-tier recall and snapshots, source reindex consumer, clusters/proposals, autonomy counters, docs-as-code projection, `memory_recall`/`memory_retain`/`memory_clusters`/`memory_propose` MCP tools, P7 ambient, and 4-layer enablement. |
-| [`system-analytics/evaluations.md`](system-analytics/evaluations.md) | Evaluation Lab (ADR-142..147 + ADR-150, Implemented): Studies, observed + launched participants, immutable evidence, package-sourced methods, judge executions/aggregation incl. pairwise tournaments, human verdicts, controlled-launch recipes/preflight/batches, and human-approved recipe standardization. |
-| [`system-analytics/test-infrastructure.md`](system-analytics/test-infrastructure.md) | Test database infrastructure (ADR-135, Implemented): Testcontainers ownership, bare/main/Brain lineages, and E2E lifecycle. |
-| [`system-analytics/branch-sync.md`](system-analytics/branch-sync.md) | Branch sync + AI conflict resolver (ADR-140/141, Implemented): operator-driven sync-with-target, resolver-backed `ai_rebase_merge`, PR-lifecycle polling, and `Done→Review` reopen when a PR conflicts. |
+cases, process flows, expectations, edge cases. One file per domain,
+structured per §R5. The canonical per-file index with one-line
+descriptions is
+[`system-analytics/README.md`](system-analytics/README.md)
+(gate-enforced complete; R7 — do not duplicate it here).
 
 ### Screen reference (`screens/`)
 
 Screenshot-free reference of the user-facing screens and shared chrome — one
 file per screen / block / chrome element. Describes the **surface** (layout,
 roles, navigation, states); links to `system-analytics/*` for behavior (R7).
-See [`screens/README.md`](screens/README.md) for the index, global nav/IA map,
-per-doc template, and the classification rule.
-
-| File | What it answers |
-| ---- | ---------------- |
-| [`screens/README.md`](screens/README.md) | Screens index, global nav/IA map, per-doc template, classification rule. |
-| [`screens/chrome/left-rail.md`](screens/chrome/left-rail.md) | Left rail: nav sections, runners readiness, active workspaces, launch, Needs-you badge. |
-| [`screens/chrome/active-workspaces.md`](screens/chrome/active-workspaces.md) | Active-workspaces block: compact live-run rows, state dot, flow/issue/runner chips, hover icon actions, scratch rename. |
-| [`screens/chrome/status-bar.md`](screens/chrome/status-bar.md) | Footer status bar: single-source supervisor status. |
-| [`screens/chrome/top-nav.md`](screens/chrome/top-nav.md) | Top nav: breadcrumb, locale/theme/user menu. |
-| [`screens/chrome/launch-dialog.md`](screens/chrome/launch-dialog.md) | Launch dialog: scratch/launch popover, Cmd/Ctrl+K. |
-| [`screens/inbox.md`](screens/inbox.md) | Unified `/inbox` screen (needs-you HITL + mentions). |
-| [`screens/mcps.md`](screens/mcps.md) | Platform MCP catalog `/mcps` (admin): CRUD + readiness, plus trust action + used-by (ADR-130). |
-| [`screens/projects/project-mcps-hub.md`](screens/projects/project-mcps-hub.md) | Project MCP hub `/projects/{slug}?tab=mcps`: 3-source list, requirements ledger, match/connect/overlay, test-connection (ADR-129). |
-| [`screens/projects/add-project.md`](screens/projects/add-project.md) | Add-project form `/projects/new`: onboarding mode selector, live name/task-key prefill, classified clone-error remediation (ADR-093). |
-| [`screens/projects/project-settings-git.md`](screens/projects/project-settings-git.md) | Project Settings → Git (block): remotes table + add/edit/remove + push/fetch, persist-config action + banner (ADR-093). |
-| [`screens/projects/project-settings-agents.md`](screens/projects/project-settings-agents.md) | Project Settings → Agents (block): attach/enable agents from attached packages, cron/event triggers, runner override, autoApply/onBudgetBreach, branch base (M39, ADR-106). |
-| [`screens/projects/project-evaluations.md`](screens/projects/project-evaluations.md) | Evaluation Lab: Studies list, Study Lab, controlled-launch dialog, and verdict under `/projects/{slug}/evaluations` (M46–M48, ADR-142..147/150). |
-| [`screens/studio/README.md`](screens/studio/README.md) | Flow Studio redesign area (overview · sources · packages · package detail · editor · local workspace), `/studio/*`. |
-| [`screens/studio/editor.md`](screens/studio/editor.md) | Flow editor surface (Phase B): 3-pane canvas + properties panel + top-bar drawers, node visual scheme, hideable rail. |
-| [`screens/studio/sources.md`](screens/studio/sources.md) | Package sources (admin): kind toggle git/local, local-path validation, per-source base branch, re-check (ADR-132). |
+The canonical index, global nav/IA map, per-doc template, and classification
+rule live in [`screens/README.md`](screens/README.md) (gate-enforced
+complete; do not duplicate it here).
 
 ### Cross-cutting reference
 
@@ -151,6 +84,16 @@ per-doc template, and the classification rule.
 | [`flow-installer.md`](flow-installer.md) | Flow plugin install pipeline. |
 | [`flow-aif-plugin.md`](flow-aif-plugin.md) | Bundled `aif` Flow plugin. |
 | [`deployment.md`](deployment.md) | Production VPS install: systemd, Postgres, reverse proxy, git auth. |
+
+### Planning & historical layers
+
+| Path | What lives there |
+| ---- | ---------------- |
+| [`plans/`](plans/README.md) | Dated design docs that fed implementation. Historical records with mandatory kept-current `Status` headers; index in `plans/README.md`. |
+| [`pv/`](pv/) | Product-vision working docs (roadmap rationale, feature briefs). Each carries a status banner; `improvement-roadmap.md` is fully historical. |
+| [`spikes/`](spikes/) | Dated spike reports (plus `kaa-maister-m8-spike-findings-20260529.md` at the docs root, kept for its measurements). |
+| [`superpowers/`](superpowers/) | Brainstorm→spec→plan outputs of the superpowers workflow; all shipped, headers current. |
+| [`ru/`](ru/README.md) | Russian operator/user documentation (separate audience product per R8; EN docs stay canonical for architecture/API). |
 
 ## Rules
 
@@ -322,6 +265,7 @@ Before any docs PR merges, the diff MUST pass:
 | Mermaid blocks | `pnpm validate:docs` (repo root) | Parses every changed `docs/**/*.md` block via `mermaid.parse()` AND fails blocks over 50,000 chars (renderer `maxTextSize`); exits non-zero on any error. Use `pnpm validate:docs:all` to check the entire `docs/` tree regardless of git status. The Claude Code Stop hook in `.claude/settings.json` runs this gate automatically before the agent finishes a turn. |
 | ADR anchors | `pnpm validate:docs` | Every `decisions.md#adr-NNN` link must resolve to a real `### ADR-NNN:` header. |
 | Relative links | `pnpm validate:docs` (`validate:docs:links[:all]`) | Every relative markdown link in changed `docs/**/*.md` must resolve to an existing file/dir. |
+| Canonical indexes | `pnpm validate:docs` | Every `.md` under `system-analytics/`, `db/`, `screens/`, `plans/` must be linked from that directory's README (the canonical index). |
 | Consolidated ERD | `pnpm validate:docs` (`pnpm --filter maister-web db:erd --check`) | Regenerates the DBML from the Drizzle schemas and fails when `db/erd.dbml` drifted (ADR-159). |
 | OpenAPI 3.0.3 | `npx @redocly/cli lint <file>` or [editor.swagger.io](https://editor.swagger.io) | Zero errors; warnings reviewed. |
 | AsyncAPI 2.6.0 | `npx @asyncapi/cli validate <file>` | Zero errors. |

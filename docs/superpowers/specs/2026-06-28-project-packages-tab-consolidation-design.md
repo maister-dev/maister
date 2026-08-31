@@ -1,7 +1,7 @@
 # Project Packages Tab Consolidation — Design
 
 - **Date:** 2026-06-28
-- **Status:** Approved (brainstorm) — pending written-spec review
+- **Status:** Shipped (Tasks 1–7 of the sibling plan).
 - **Scope:** `web/` UI + queries only. No `supervisor/`, no DB migration, no
   API/contract change, no new ADR.
 
