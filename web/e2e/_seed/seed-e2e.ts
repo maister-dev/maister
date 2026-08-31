@@ -345,6 +345,17 @@ const REOPEN_BRANCH = "maister/e2e-reopen";
 
 // --- M11b fixture: graph run paused at a takeover-capable review node --------
 
+// --- ADR-159 fixture: a FINISHED graph run sitting in Review ----------------
+// Same graph shape as m11b, but the run has already reached `Review`: the human
+// node ran and approved, `current_step_id` is NULL (what runGraph writes on
+// reaching Review), and there is no open HITL. That is the exact state a rework
+// claim starts from — and why the anchor and the re-entry node must both be
+// derived from the LEDGER rather than from a cursor.
+const ADR159_SLUG = "e2e-rework-claim";
+const ADR159_BRANCH = "maister/e2e-rework-claim";
+const ADR159_REENTRY_NODE = "checks";
+const ADR159_REVIEW_NODE = "review";
+
 const M11B_SLUG = "e2e-m11b";
 const M11B_BRANCH = "maister/e2e-takeover";
 const M11B_REENTRY_NODE = "checks";
@@ -2292,6 +2303,128 @@ async function seedM11bFixture(
     hitlRequestId: ids.hitl,
     projectSlug: M11B_SLUG,
     branch: M11B_BRANCH,
+    worktreePath,
+  };
+}
+
+// ADR-159: a Review-status run with a finished ledger and a passed gate on the
+// re-entry node — the gate that MUST go stale when the claim is returned.
+async function seedAdr159ReworkClaimFixture(
+  pool: Pool,
+  userId: string,
+): Promise<FixtureRecord> {
+  const ids = {
+    project: randomUUID(),
+    runner: randomUUID(),
+    flow: randomUUID(),
+    task: randomUUID(),
+    run: randomUUID(),
+    workspace: randomUUID(),
+    member: randomUUID(),
+    implAttempt: randomUUID(),
+    checksAttempt: randomUUID(),
+    reviewAttempt: randomUUID(),
+    gate: randomUUID(),
+  };
+  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const worktreePath = `${repoPath}/.worktrees/e2e-rework-claim`;
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [ADR159_SLUG]);
+
+  mkdirSync(path.dirname(repoPath), { recursive: true });
+  await provisionWorktree(repoPath, worktreePath, ADR159_BRANCH);
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, 'main', $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
+    [
+      ids.project,
+      ADR159_SLUG,
+      "MAIster E2E Rework Claim",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO platform_acp_runners
+       (id, adapter, capability_agent, model, provider, permission_policy,
+        readiness_status, readiness_reasons, enabled)
+     VALUES ($1, 'claude', 'claude', 'claude-sonnet-4-6',
+        '{"kind":"anthropic"}'::jsonb, 'default', 'Ready', '[]'::jsonb, true)
+     ON CONFLICT (id) DO NOTHING`,
+    [ids.runner],
+  );
+  await pool.query(
+    `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
+    [
+      ids.flow,
+      ids.project,
+      "github.com/maister/maister-flow-aif",
+      `/tmp/maister-e2e/flows/aif-rework-claim@v0.0.1`,
+      JSON.stringify(M11B_MANIFEST),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'InFlight', 'Backlog')`,
+    [ids.task, ids.project, "E2E rework claim", "do the thing", ids.flow],
+  );
+  // Review with a NULL cursor — the state runGraph leaves behind.
+  await pool.query(
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, 'Review', NULL, 'v0.0.1', now())`,
+    [ids.run, ids.task, ids.project, ids.flow],
+  );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.run,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
+  await pool.query(
+    `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [ids.workspace, ids.run, ids.project, ADR159_BRANCH, worktreePath, repoPath],
+  );
+
+  // A FINISHED ledger: implement → checks (+ passed gate) → review, all closed,
+  // with started_at strictly in the past so the claim row that follows is the
+  // newest row (hasPendingTakeoverResume compares against it).
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, started_at, ended_at)
+     VALUES ($1, $2, 'implement', 'ai_coding', 1, 'Succeeded', now() - interval '30 minutes', now() - interval '29 minutes')`,
+    [ids.implAttempt, ids.run],
+  );
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, started_at, ended_at)
+     VALUES ($1, $2, $3, 'check', 1, 'Succeeded', now() - interval '20 minutes', now() - interval '19 minutes')`,
+    [ids.checksAttempt, ids.run, ADR159_REENTRY_NODE],
+  );
+  await pool.query(
+    `INSERT INTO gate_results (id, run_id, node_attempt_id, gate_id, kind, mode, status, ended_at)
+     VALUES ($1, $2, $3, 'lint', 'command_check', 'blocking', 'passed', now() - interval '19 minutes')`,
+    [ids.gate, ids.run, ids.checksAttempt],
+  );
+  // The human node RAN and finished — no open HITL, which is what makes this a
+  // Review run rather than an M11b takeover candidate.
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, decision, started_at, ended_at)
+     VALUES ($1, $2, $3, 'human', 1, 'Succeeded', 'approve', now() - interval '10 minutes', now() - interval '9 minutes')`,
+    [ids.reviewAttempt, ids.run, ADR159_REVIEW_NODE],
+  );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.member, ids.project, userId],
+  );
+
+  return {
+    runId: ids.run,
+    // No open HITL in this fixture; the field is part of the shared record shape.
+    hitlRequestId: ids.reviewAttempt,
+    projectSlug: ADR159_SLUG,
+    branch: ADR159_BRANCH,
     worktreePath,
   };
 }
@@ -7149,6 +7282,7 @@ async function main(): Promise<void> {
 
     const m11a = await seedM11aFixture(pool, admin.id);
     const m11b = await seedM11bFixture(pool, admin.id);
+    const adr159 = await seedAdr159ReworkClaimFixture(pool, admin.id);
     const runSync = await seedSyncFixture(pool, admin.id);
     const prReopen = await seedReopenFixture(pool, admin.id);
     const m12 = await seedM12EvidenceFixture(pool, admin.id);
@@ -7363,6 +7497,7 @@ You answer when summoned by an @mention.
       byKey: {
         m11a,
         m11b,
+        adr159,
         runSync,
         prReopen,
         m12,

@@ -322,7 +322,7 @@ channel into the re-entered loop's prompt. A target with zero prior attempts is 
 no-op. A crash after commit self-heals: the next `appendNodeAttempt` reads the
 persisted baseline.
 
-**Flow-level `reentry` and the re-entry chain (ADR-159 — Designed).** A finished
+**Flow-level `reentry` and the re-entry chain (ADR-159 — Implemented).** A finished
 `Review` run has no cursor — `runGraph` writes `current_step_id: null` on reaching
 `Review` — so a rework claim cannot resume "where it left off" and must resolve a
 re-entry node from durable state. The compiler carries an optional flow-level

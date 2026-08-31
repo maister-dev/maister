@@ -15,7 +15,6 @@ import { and, eq, gt, inArray, isNull, notInArray } from "drizzle-orm";
 import pino from "pino";
 
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
-import { getSessionUser } from "@/lib/authz";
 import {
   REVIEW_REWORK_CLAIM_DECISION,
   getActiveTakeover,
@@ -164,7 +163,10 @@ export type RecordDropInput = {
 };
 
 export type WorkbenchLifecycleDeps = {
-  requireActiveSession: () => Promise<void>;
+  // Returns the authenticated user when the binding has one. ADR-159 uses it
+  // as the `viewerUserId` for the lifecycle owner carve-out, so the session is
+  // read exactly once, at the boundary that already authenticates.
+  requireActiveSession: () => Promise<{ id: string } | void>;
   loadContext: (runId: string) => Promise<LifecycleContext>;
   authorize: (projectId: string, action: LifecycleAction) => Promise<void>;
   listSessions: () => Promise<SupervisorSessionRecord[]>;
@@ -813,9 +815,11 @@ export async function archiveWorkbench(
 ): Promise<ArchiveWorkbenchResult> {
   const deps = depsFromOptions(options);
 
-  await deps.requireActiveSession();
+  const sessionUser = await deps.requireActiveSession();
 
   const ctx = await deps.loadContext(runId);
+
+  ctx.viewerUserId = sessionUser?.id ?? null;
 
   await deps.authorize(ctx.run.projectId, "recoverRun");
 
@@ -973,9 +977,11 @@ export async function getWorkbenchHandoffMetadata(
 ): Promise<HandoffMetadataResult> {
   const deps = depsFromOptions(options);
 
-  await deps.requireActiveSession();
+  const sessionUser = await deps.requireActiveSession();
 
   const ctx = await deps.loadContext(runId);
+
+  ctx.viewerUserId = sessionUser?.id ?? null;
 
   await deps.authorize(ctx.run.projectId, "promoteRun");
   requireActionAllowed(ctx, "exportBranch", {
@@ -1025,9 +1031,11 @@ export async function snapshotWorkbenchCommit(
 ): Promise<SnapshotWorkbenchCommitResult> {
   const deps = depsFromOptions(args);
 
-  await deps.requireActiveSession();
+  const sessionUser = await deps.requireActiveSession();
 
   const ctx = await deps.loadContext(runId);
+
+  ctx.viewerUserId = sessionUser?.id ?? null;
 
   await deps.authorize(ctx.run.projectId, "promoteRun");
   requireActionAllowed(ctx, "exportBranch", {
@@ -1107,9 +1115,11 @@ export async function createWorkbenchHandoffBranch(
 ): Promise<CreateWorkbenchHandoffBranchResult> {
   const deps = depsFromOptions(args);
 
-  await deps.requireActiveSession();
+  const sessionUser = await deps.requireActiveSession();
 
   const ctx = await deps.loadContext(runId);
+
+  ctx.viewerUserId = sessionUser?.id ?? null;
 
   await deps.authorize(ctx.run.projectId, "promoteRun");
   requireActionAllowed(ctx, "exportBranch", {
@@ -1302,9 +1312,11 @@ async function removeWorkbench(
 ): Promise<DropWorkbenchResult> {
   const deps = depsFromOptions(options);
 
-  await deps.requireActiveSession();
+  const sessionUser = await deps.requireActiveSession();
 
   const ctx = await deps.loadContext(runId);
+
+  ctx.viewerUserId = sessionUser?.id ?? null;
 
   await deps.authorize(ctx.run.projectId, "recoverRun");
 
@@ -1460,9 +1472,11 @@ export async function exportWorkbenchBranch(
 ): Promise<ExportWorkbenchBranchResult> {
   const deps = depsFromOptions(args);
 
-  await deps.requireActiveSession();
+  const sessionUser = await deps.requireActiveSession();
 
   const ctx = await deps.loadContext(runId);
+
+  ctx.viewerUserId = sessionUser?.id ?? null;
 
   await deps.authorize(ctx.run.projectId, "promoteRun");
   requireActionAllowed(ctx, "exportBranch");
@@ -1565,9 +1579,11 @@ export async function stopFlowWorkbench(
 ): Promise<StopFlowWorkbenchResult> {
   const deps = depsFromOptions(options);
 
-  await deps.requireActiveSession();
+  const sessionUser = await deps.requireActiveSession();
 
   const ctx = await deps.loadContext(runId);
+
+  ctx.viewerUserId = sessionUser?.id ?? null;
 
   await deps.authorize(ctx.run.projectId, "recoverRun");
 
@@ -1755,9 +1771,11 @@ export async function stopWorkbenchRun(
 ): Promise<StopWorkbenchRunResult> {
   const deps = depsFromOptions(options);
 
-  await deps.requireActiveSession();
+  const sessionUser = await deps.requireActiveSession();
 
   const ctx = await deps.loadContext(runId);
+
+  ctx.viewerUserId = sessionUser?.id ?? null;
 
   await deps.authorize(ctx.run.projectId, "recoverRun");
 
@@ -1777,6 +1795,10 @@ export async function stopWorkbenchRunForToken(
   const deps = depsFromOptions(options);
   const ctx = await deps.loadContext(runId);
 
+  // Token authority, no browser session: there is no viewer, so the ADR-159
+  // owner carve-out can never open for this path.
+  ctx.viewerUserId = null;
+
   if (ctx.run.projectId !== args.projectId) {
     throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
   }
@@ -1792,9 +1814,11 @@ export async function stopThenArchive(
 ): Promise<StopThenArchiveResult> {
   const deps = depsFromOptions(options);
 
-  await deps.requireActiveSession();
+  const sessionUser = await deps.requireActiveSession();
 
   const ctx = await deps.loadContext(runId);
+
+  ctx.viewerUserId = sessionUser?.id ?? null;
 
   await deps.authorize(ctx.run.projectId, "recoverRun");
 
@@ -1812,9 +1836,11 @@ export async function stopThenDrop(
 ): Promise<StopThenDropResult> {
   const deps = depsFromOptions(options);
 
-  await deps.requireActiveSession();
+  const sessionUser = await deps.requireActiveSession();
 
   const ctx = await deps.loadContext(runId);
+
+  ctx.viewerUserId = sessionUser?.id ?? null;
 
   await deps.authorize(ctx.run.projectId, "recoverRun");
 
@@ -1967,14 +1993,14 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
     activeClaim?.decision === REVIEW_REWORK_CLAIM_DECISION
       ? activeClaim.ownerUserId
       : null;
-  const viewer = await getSessionUser();
-
+  // `viewerUserId` is deliberately NOT read here: a DB loader must not reach
+  // for the request session. Entry points attach it from the user their own
+  // `requireActiveSession()` already authenticated.
   return {
     project,
     run: { ...run, projectId },
     workspace: workspaceRows[0] ?? null,
     reworkClaimOwnerUserId,
-    viewerUserId: viewer?.id ?? null,
   };
 }
 

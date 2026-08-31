@@ -38,11 +38,11 @@ observe its failed child; success-gated dependents do not launch.
   consumer: `{ consumer_id (PK), cursor_event_id, lease_expires_at?,
   last_dispatched_at?, last_error?, consecutive_failures }`. Claim/advance
   mechanics below. See [db/domain-events.md](../db/domain-events.md).
-- **Kind taxonomy** — 11 kinds Implemented, **13 with ADR-159 (Designed)**:
+- **Kind taxonomy** (Implemented) — exactly 13 kinds:
   `task.created`, `task.comment_added`, `task.triage_requeued`,
   `task.clarification_answered`, `run.done`,
   `run.failed`, `run.crashed`, `run.abandoned`, `run.review`, `run.escalated`,
-  `run.rework_claimed` (Designed), `run.rework_returned` (Designed),
+  `run.rework_claimed` (Implemented), `run.rework_returned` (Implemented),
   `gate.failed`. `run.review` (ADR-100) is the settled-not-terminal signal a
   delegated child emits on reaching Review (wakes a parked orchestrator).
   `run.escalated` is the execution-policy B3 on-stuck signal (emitted when a
@@ -52,7 +52,7 @@ observe its failed child; success-gated dependents do not launch.
   HITL.
   **(ADR-160 — Designed)** the operator node interrupt ALSO reuses
   `run.escalated` (no new kind) with `reason=node_interrupt` in its `payload`.
-  **(ADR-159 — Designed)** `run.rework_claimed` and `run.rework_returned` are the
+  **(ADR-159 — Implemented)** `run.rework_claimed` and `run.rework_returned` are the
   two genuinely new kinds: an operator taking a finished `Review` run back for
   rework, and returning it. Both are emitted with `actor_type='user'` inside the
   SAME transaction as their domain write, and **neither belongs to

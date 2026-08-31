@@ -47,9 +47,8 @@ The graph-only cut-over started with engine 3.0.0: manifests require a non-empty
 top-level `nodes[]`. The parser and compiler reject any manifest containing
 `steps[]` with the locked migration message: `legacy steps[] flows are not
 supported since engine 3.0.0; republish the package with nodes[]`. The current
-host engine is `3.4.0` (Implemented); it moves to `3.5.0` (**Designed** —
-`MAISTER_ENGINE_VERSION` `3.4.0 → 3.5.0` for the flow-level `reentry` key,
-below). Graph packages remain
+host engine is `3.5.0` (Implemented — `MAISTER_ENGINE_VERSION` moved
+`3.4.0 → 3.5.0` for the flow-level `reentry` key, below). Graph packages remain
 compatible when their declared `compat` range includes that version. They do not
 need to raise an open-ended historical `engine_min`.
 
@@ -1042,7 +1041,7 @@ remediation string). Probes run with runner authority, like `command_check`
 gates — only trusted flows reach this path. See
 [ADR-091](decisions.md#adr-091-flow-requirements-launch-precondition).
 
-## Flow `reentry` (ADR-159 — Designed)
+## Flow `reentry` (ADR-159 — Implemented)
 
 A flow may declare, at the **top level beside `nodes`**, the node an operator's
 [rework claim](system-analytics/run-continuation.md) re-enters the graph at when

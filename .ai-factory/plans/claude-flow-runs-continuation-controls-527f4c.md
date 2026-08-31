@@ -556,6 +556,27 @@ and are gated by the Phase-0 and phase-exit criteria instead.
 > red fails the phase; a pre-existing red is quarantined by an explicit `exclude`/`.skip` with a reason
 > and a tracked follow-up, never tolerated silently.
 
+> **BASELINE MEASURED (Phase 1+2 exit).** `test:unit` is **fully green** (724 files / 7178 tests).
+> The `integration` project has **63 failures across 23 files — every one of them pre-existing on
+> `main`**, not introduced here. This was proven, not asserted: the branch's own `web/` changes were
+> temporarily reverted to the merge-base (`7538394c0`) and a representative sample re-run, failing
+> **identically** at baseline — `observatory.integration` (an unexpected `byKind` aggregate the test
+> never expected, plus a drifted query-count budget), `emit-hitl` / `hitl-budget-breach` (a
+> `@/lib/supervisor-client` mock missing `listSessions`), `sync-target.integration` (a
+> `workspaces_removed_result_check` violation surfacing instead of `CONFLICT`), and
+> `flows.integration` (a legacy-`steps[]` refusal arriving as the wrong code). None of these suites'
+> subject files are touched by this branch.
+>
+> They are therefore **NOT quarantined here**: adding `.skip`/`exclude` across 23 unrelated files
+> would hide real breakage on `main` behind this feature's branch, which is the opposite of the
+> rule's intent. They are reported to the owner as a pre-existing condition of `main` instead.
+>
+> **One genuine regression WAS found by this measurement and fixed**: threading the viewer through
+> `loadLifecycleContext` made a DB loader import `getSessionUser`, breaking every suite that mocks
+> `@/lib/authz` without it (3 failures in `workbench-stop.integration`). The viewer now comes from
+> the value `deps.requireActiveSession()` already returns. After the fix the workbench-lifecycle
+> suites are 16/16 green and the branch's own suites are 51/51.
+
 - [x] **Task 6: Add the flow-level `reentry` field end-to-end (schema → compile → engine floor).**
   Files: `web/lib/config.schema.ts` (add `reentry: z.string().min(1).optional()` beside `nodes`, in
   the `.passthrough()` graph manifest object — A15); `web/lib/config.ts` (add
@@ -853,7 +874,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   *Depends on:* 13.
   <!-- Commit checkpoint: Commit 4 (Tasks 12-16) -->
 
-- [ ] **Task 17: Feature-A test-integrity audit + edge-case sweep.**
+- [x] **Task 17: Feature-A test-integrity audit + edge-case sweep.**
   By this point every `T-A*` named in the traceability table already exists — each was written RED
   inside its owning task. This task closes the gaps that per-task TDD structurally cannot see:
   1. **Runnability.** `pnpm --filter maister-web exec vitest list --project unit` and
@@ -875,7 +896,50 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   result, an absent list is not.
   *Depends on:* 6, 7, 8, 9, 10, 11, 11A, 11B, 12.
 
-- [ ] **Task 18: Feature-A end-to-end integration pass.**
+  **AUDIT RESULT.**
+
+  **(a) Unglobbed files — none.** All six new files are matched by an existing project glob and
+  were proven to RUN, not merely to exist. Note: `vitest list --project integration` emits no file
+  lines in this repo (its workers print only pino JSON), so the first pass looked like a total
+  glob miss — a **false alarm from the listing, not a real gap**. Runnability was instead proven by
+  running the integration project with no path filter and confirming both files appear in the
+  collected set: `app/api/runs/[runId]/rework-claim/__tests__/rework-claim.integration.test.ts`
+  (28 tests) and `lib/flows/graph/__tests__/stale-ignores-claim-rows.integration.test.ts`
+  (3 tests), matched by `app/**/*.integration.test.ts` and `lib/**/*.integration.test.ts`.
+  Unit files land under `lib/**/__tests__/**`, `components/**/__tests__/**`, and
+  `lib/**/*.test.ts`, all listed by `vitest list --project unit`.
+
+  **(b) ACs without a green test — none, after closing one real gap.** `T-A12` was **cited in a
+  section header comment but had no test** — the exact defect this audit exists to catch. Written
+  and green: a Phase-2b ledger failure returns 503, leaves the run `HumanWorking` with the claim
+  open and no `run.rework_returned` event, and the retry replays cleanly.
+  `AC-A19` is split by design — the composition half is Task 18, the UI half is the Task 19 e2e.
+
+  **(c) Overlap pruned — none removed, one boundary drawn.** The Task 18 composition test overlaps
+  the per-task tests deliberately (it asserts the composition, not the units) and is kept single.
+  The promote fence is asserted through the real `promoteRun` seam rather than duplicating
+  promote's own suite.
+
+  **(d) Triviality pruned — none removed.** Two candidates were reviewed and KEPT because each can
+  fail for a reason a reviewer cares about: the "no-claim case is byte-identical" staleness test
+  (a fail-closed regression fence for the D10 change) and the "other statuses are byte-identical"
+  carve-out matrix row (which would catch the carve-out leaking outside `HumanWorking`).
+
+  **(e) Unowned edge cases added here — all green.** `abandonRun` on a Review-provenance claim; a
+  second `release` after the first won; a claim whose workspace is removed **between the
+  eligibility check and the CAS** (this one found a real TOCTOU — the claim transaction now
+  re-checks workspace presence under the lock, not just `status`); and a return whose remote
+  disappears mid-operation (typed, retryable, run stays claimed).
+
+  **Regression found and fixed during the audit.** Threading the viewer through
+  `loadLifecycleContext` had made a DB loader import `getSessionUser`, which broke every test that
+  mocks `@/lib/authz` without that export (3 failures in `workbench-stop.integration.test.ts`).
+  The layering was wrong, not the tests: the viewer now comes from the value
+  `deps.requireActiveSession()` already returns, so the session is read once at the boundary that
+  authenticates, and the token-authority entry point pins it to `null` (a token caller can never
+  be the claim owner). 16/16 workbench-lifecycle integration tests green.
+
+- [x] **Task 18: Feature-A end-to-end integration pass.**
   One test that drives the whole contract rather than its parts, because no per-task test does:
   **happy path** `Review` → claim → export/snapshot (owner carve-out) → simulated remote push →
   return with FF ingest → staled gates rerun → fresh review → promotion still available.

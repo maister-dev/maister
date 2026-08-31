@@ -124,7 +124,7 @@ body values. JSONL and other runtime-artifact retention are unchanged.
 | live scratch dialog (`Starting`, `WaitingForUser`, `Running`, `NeedsInput`) | yes via scratch stop | no                        | no                         | no     |
 | live agent (`Running` / `NeedsInput` / `NeedsInputIdle`)                    | yes -> `Abandoned`   | no                        | no                         | no     |
 | `HumanWorking` (non-owner, or an ADR-030 takeover)                          | no                   | no                        | no                         | no     |
-| `HumanWorking` holding an ADR-159 rework claim, viewed by the claim owner    | no                   | no                        | no                         | yes (Designed) |
+| `HumanWorking` holding an ADR-159 rework claim, viewed by the claim owner    | no                   | no                        | no                         | yes (Implemented) |
 | `Review`                                                                    | no-op hidden         | yes                       | yes                        | yes    |
 | `Crashed`                                                                   | no                   | yes while worktree exists | yes                        | yes    |
 | `Done`                                                                      | no                   | yes until pruned          | yes, status remains `Done` | yes    |
@@ -144,7 +144,7 @@ see [`branch-sync.md`](branch-sync.md). The combined
 they compose the existing `stop` (live) and `archive`/`drop` (parked) actions
 server-side so the operator clicks once.
 
-### ADR-159 rework-claim owner carve-out (Designed)
+### ADR-159 rework-claim owner carve-out (Implemented)
 
 `HumanWorking` disables **every** action with the reason `human-owned`. The
 ADR-159 rework claim pokes exactly one hole in that, and only for one actor:

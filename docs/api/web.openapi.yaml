@@ -7861,7 +7861,7 @@ paths:
       tags: [run-continuation]
       summary: (ADR-159) Claim a finished Review run for rework
       description: |
-        (ADR-159 — Designed.)
+        (ADR-159 — Implemented.)
 
         Takes a run that has reached `Review` back into human hands so the
         operator can correct it and re-enter the graph. The run transitions
@@ -8028,7 +8028,7 @@ paths:
       tags: [run-continuation]
       summary: (ADR-159) Return a rework-claimed run to the graph
       description: |
-        (ADR-159 — Designed.)
+        (ADR-159 — Implemented.)
 
         Returns a `HumanWorking` run held under a rework claim. The route
         fast-forwards the worktree from the remote, records the returned commit
@@ -8204,7 +8204,7 @@ paths:
       tags: [run-continuation]
       summary: (ADR-159) Release a rework claim without changes
       description: |
-        (ADR-159 — Designed.)
+        (ADR-159 — Implemented.)
 
         Releases a rework claim the operator decided not to act on. The run
         returns to **`Review`** — not `NeedsInput`, because in this provenance

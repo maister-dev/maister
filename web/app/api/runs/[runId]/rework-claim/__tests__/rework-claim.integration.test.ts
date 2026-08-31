@@ -1178,3 +1178,269 @@ describe("ADR-159 — run-detail continuation block is server-owned", () => {
     await s.cleanup();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 18 — the composition pass (AC-A19, server half)
+// ---------------------------------------------------------------------------
+//
+// One test that drives the WHOLE contract rather than its parts, because no
+// per-task test does: Review -> claim -> owner carve-out -> work pushed from
+// elsewhere -> return with FF ingest -> staled evidence -> cursor parked at the
+// re-entry. Overlap with the per-task tests is INTENDED here: this asserts the
+// composition, not the units. Deliberately kept single — a second whole-path
+// test would be overlap rather than coverage.
+
+describe("AC-A19 (server half) — Review -> claim -> return composition", () => {
+  it("carries a run from Review through a remote-pushed fix back into the graph", async () => {
+    const s = await seed();
+
+    const executedAttempt = (
+      await db
+        .select()
+        .from(nodeAttempts)
+        .where(
+          and(
+            eq(nodeAttempts.runId, s.runId),
+            eq(nodeAttempts.nodeId, REENTRY_NODE),
+          ),
+        )
+    )[0];
+    const gateId = randomUUID();
+
+    await db.insert(schema.gateResults).values({
+      id: gateId,
+      runId: s.runId,
+      nodeAttemptId: executedAttempt.id,
+      gateId: "checks",
+      kind: "command_check",
+      blocking: true,
+      status: "passed",
+    });
+
+    const { getRunDetail } = await import("@/lib/queries/run");
+
+    expect((await getRunDetail(s.runId))?.continuation.reworkClaimAvailable).toBe(
+      true,
+    );
+
+    await claimAs(s);
+
+    const afterClaim = await getRunDetail(s.runId);
+
+    expect(afterClaim?.status).toBe("HumanWorking");
+    expect(afterClaim?.continuation.claim?.ownerUserId).toBe(s.ownerId);
+
+    // The owner carve-out is what makes the export/snapshot/handoff loop
+    // reachable during a claim.
+    const { deriveWorkbenchLifecycleActions } = await import(
+      "@/lib/workbench-lifecycle/policy"
+    );
+    const ownerActions = deriveWorkbenchLifecycleActions({
+      runKind: "flow",
+      runStatus: "HumanWorking",
+      scratchDialogStatus: null,
+      hasWorkspace: true,
+      workspaceRemoved: false,
+      workspaceArchived: false,
+      claimOwnerUserId: s.ownerId,
+      viewerUserId: s.ownerId,
+    });
+
+    expect(ownerActions.find((a) => a.id === "exportBranch")?.enabled).toBe(true);
+
+    const remote = await attachRemote(s);
+    const clone = await mkdtemp(path.join(tmpdir(), "rwc-e2e-clone-"));
+
+    await execFileAsync("git", ["clone", "-b", s.branch, remote, clone]);
+    await execFileAsync("git", ["-C", clone, "config", "user.email", "t@t.dev"]);
+    await execFileAsync("git", ["-C", clone, "config", "user.name", "T"]);
+    await writeFile(path.join(clone, "fix.txt"), "the human's fix\n");
+    await execFileAsync("git", ["-C", clone, "add", "."]);
+    await execFileAsync("git", ["-C", clone, "commit", "-m", "human fix"]);
+    await execFileAsync("git", ["-C", clone, "push"]);
+
+    const res = await returnPOST(returnReq(s.runId, { remote: "origin" }), {
+      params: Promise.resolve({ runId: s.runId }),
+    });
+
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+
+    expect(body.fastForwarded).toBe(true);
+    expect(body.returnedCommitCount).toBeGreaterThanOrEqual(1);
+
+    const afterReturn = await readRun(s.runId);
+
+    expect(afterReturn.status).toBe("Running");
+    expect(afterReturn.currentStepId).toBe(REENTRY_NODE);
+
+    // The prior passed gate is stale, so the flow's own gates re-validate the
+    // human's commits rather than inheriting a green verdict.
+    const gate = (
+      await db
+        .select()
+        .from(schema.gateResults)
+        .where(eq(schema.gateResults.id, gateId))
+    )[0];
+
+    expect(gate.status).toBe("stale");
+
+    const claim = (await claimRows(s.runId))[0];
+
+    expect(claim.endedAt).not.toBeNull();
+    expect(claim.returnedDiff).toBeTruthy();
+
+    const kinds = (await domainEventsFor(s.runId)).map((e) => e.kind);
+
+    expect(kinds).toEqual(["run.rework_claimed", "run.rework_returned"]);
+
+    await rm(clone, { recursive: true, force: true });
+    await rm(remote, { recursive: true, force: true });
+    await s.cleanup();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 17 — edge cases no single task owned, plus T-A12
+// ---------------------------------------------------------------------------
+
+describe("T-A12 / Task 17 — failure and race edges", () => {
+  // T-A12 (AC-A12): a Phase-2b ledger failure must roll back FULLY, return 503,
+  // leave the run HumanWorking with the claim open, and replay cleanly on retry.
+  it("T-A12 — a ledger-tx failure returns 503, keeps HumanWorking, and retries cleanly", async () => {
+    const s = await seed();
+
+    await claimAs(s);
+    await commitInWorktree(s.worktreePath, "fix.txt", "x\n", "fix");
+
+    // Fail exactly the return's Phase-2b transaction — Phase 1 (intent) must
+    // still run, so only the SECOND transaction throws.
+    let seenFirst = false;
+
+    dbRef.value = new Proxy(db as any, {
+      get(target, prop, receiver) {
+        if (prop === "transaction") {
+          return async (...args: any[]) => {
+            if (!seenFirst) {
+              seenFirst = true;
+
+              return (target as any).transaction(...args);
+            }
+
+            throw new Error("simulated ledger failure");
+          };
+        }
+
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    let res;
+
+    try {
+      res = await returnPOST(returnReq(s.runId), {
+        params: Promise.resolve({ runId: s.runId }),
+      });
+    } finally {
+      dbRef.value = db;
+    }
+
+    expect(res.status).toBe(503);
+    expect((await res.json()).code).toBe("EXECUTOR_UNAVAILABLE");
+
+    // Nothing durable moved: the run is still claimed and retryable.
+    expect((await readRun(s.runId)).status).toBe("HumanWorking");
+
+    const claim = (await claimRows(s.runId))[0];
+
+    expect(claim.endedAt).toBeNull();
+    expect(claim.returnedDiff).toBeNull();
+    expect(await domainEventsFor(s.runId)).toHaveLength(1); // the claim only
+
+    // The retry replays cleanly — the FF is idempotent and the ledger commits.
+    const retry = await returnPOST(returnReq(s.runId), {
+      params: Promise.resolve({ runId: s.runId }),
+    });
+
+    expect(retry.status).toBe(200);
+    expect((await readRun(s.runId)).status).toBe("Running");
+
+    await s.cleanup();
+  });
+
+  // Skill-context rule: a claim tx re-checks EVERY precondition an out-of-band
+  // transaction can write, not just `status`. The eligibility pass runs outside
+  // the tx, so an archive/drop committing in between must not land a claim on a
+  // removed worktree.
+  it("refuses when the workspace is removed between the eligibility check and the CAS", async () => {
+    const s = await seed();
+
+    let firstTx = true;
+
+    dbRef.value = new Proxy(db as any, {
+      get(target, prop, receiver) {
+        if (prop === "transaction") {
+          return async (...args: any[]) => {
+            if (firstTx) {
+              firstTx = false;
+              // `workspaces_removed_result_check` requires a paired
+              // removal_kind, so mirror what a real archive/drop writes.
+              await db
+                .update(workspaces)
+                .set({ removedAt: new Date(), removalKind: "drop" })
+                .where(eq(workspaces.runId, s.runId));
+            }
+
+            return (target as any).transaction(...args);
+          };
+        }
+
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    let res;
+
+    try {
+      res = await claimPOST(claimReq(s.runId), {
+        params: Promise.resolve({ runId: s.runId }),
+      });
+    } finally {
+      dbRef.value = db;
+    }
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("PRECONDITION");
+    expect((await readRun(s.runId)).status).toBe("Review");
+    expect(await claimRows(s.runId)).toHaveLength(0);
+
+    await s.cleanup();
+  });
+
+  // A remote that vanishes mid-operation is a transport failure, not a domain
+  // one: it must be typed and retryable, and must not half-apply.
+  it("keeps the run claimed when the remote disappears mid-return", async () => {
+    const s = await seed();
+
+    await claimAs(s);
+    await commitInWorktree(s.worktreePath, "fix.txt", "x\n", "fix");
+
+    const remote = await attachRemote(s);
+
+    await rm(remote, { recursive: true, force: true });
+
+    const res = await returnPOST(returnReq(s.runId, { remote: "origin" }), {
+      params: Promise.resolve({ runId: s.runId }),
+    });
+
+    expect([409, 503]).toContain(res.status);
+    expect((await res.json()).code).toMatch(
+      /EXECUTOR_UNAVAILABLE|PRECONDITION|CONFLICT/,
+    );
+    expect((await readRun(s.runId)).status).toBe("HumanWorking");
+    expect((await claimRows(s.runId))[0].endedAt).toBeNull();
+
+    await s.cleanup();
+  });
+});

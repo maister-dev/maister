@@ -9,6 +9,8 @@ import {
   ensureUserActor,
 } from "@/lib/assignments/service";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import { eq } from "drizzle-orm";
+
 import { getDb } from "@/lib/db/client";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -24,7 +26,11 @@ import { resolveReentryNode } from "@/lib/runs/reentry";
 import { assertReworkClaimEligible } from "@/lib/runs/rework-claim";
 import { markReworkClaimFromReview } from "@/lib/runs/state-transitions";
 import { countLiveRuns, maxConcurrentRunsCap } from "@/lib/scheduler";
+import * as schemaModule from "@/lib/db/schema";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+
+// FIXME(any): dual drizzle-orm peer-dep variants.
+const { workspaces } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants — Db handle.
 type Db = any;
@@ -192,6 +198,25 @@ export async function POST(
           throw new MaisterError(
             "CONFLICT",
             `concurrency cap full (${liveCount}/${cap}) — free a slot or stop another run`,
+          );
+        }
+
+        // Re-check the workspace UNDER the lock, not just the status. The
+        // eligibility pass above ran outside this transaction, so an archive /
+        // drop / retention GC committing in between would otherwise let a claim
+        // land on a removed worktree — one TOCTOU per un-rechecked precondition.
+        const freshWorkspace = await tx
+          .select({ removedAt: workspaces.removedAt })
+          .from(workspaces)
+          .where(eq(workspaces.runId, runId));
+
+        if (
+          freshWorkspace.length === 0 ||
+          freshWorkspace[0].removedAt !== null
+        ) {
+          throw new MaisterError(
+            "PRECONDITION",
+            "the run workspace was removed — nothing to take for rework",
           );
         }
 

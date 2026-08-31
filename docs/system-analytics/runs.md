@@ -223,7 +223,7 @@ machine:
    `loadActiveRunSessionsByRunId` (`run_sessions`), skipping rows with no active
    `acp_session_id` — so `HumanWorking` is excluded by construction.
 
-### ADR-159 `HumanWorking` gains a second provenance: the Review rework claim (Designed)
+### ADR-159 `HumanWorking` gains a second provenance: the Review rework claim (Implemented)
 
 `HumanWorking` is now reachable from **two** statuses. The M11b claim above
 enters from `NeedsInput` at a parked `human_review` node; the ADR-159 **rework

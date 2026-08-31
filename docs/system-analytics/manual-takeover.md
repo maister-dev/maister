@@ -272,7 +272,7 @@ linear run renders an empty-but-valid timeline (no crash).
   → `Crashed`" sweep is REJECTED — it would false-positive on a legitimately
   session-less `command_check` gate executing after the return.
 
-## Review-run rework claim (ADR-159 — Designed)
+## Review-run rework claim (ADR-159 — Implemented)
 
 [ADR-159](../decisions.md#adr-159-review-run-rework-claim-with-fast-forward-only-handoff-round-trip)
 adds a **second** way into `HumanWorking`, from `Review` instead of `NeedsInput`.
@@ -296,7 +296,7 @@ delta, so neither file restates the other.
 
 **Differs from M11b:**
 
-| Axis | M11b takeover (Implemented) | ADR-159 rework claim (Designed) |
+| Axis | M11b takeover (Implemented) | ADR-159 rework claim (Implemented) |
 | --- | --- | --- |
 | Entry status | `NeedsInput` at a parked `human_review` node | `Review`, after the graph finished |
 | Concurrency | enters from an already-counted status — no cap change | `Review` is slot-free, so the claim **acquires** a slot and re-checks the cap under the run-row lock; cap-full ⇒ `CONFLICT`, never `Pending` |

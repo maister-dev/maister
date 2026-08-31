@@ -1,14 +1,16 @@
 # Run continuation domain
 
-> **Status: Designed (ADR-159 / ADR-160).** Contracts accepted; the code lands in
-> Phases 1–4 of the run-continuation-controls plan. Implementation-status tags
-> below are flipped to `(Implemented)` as each phase completes.
+> **Status: Feature A (ADR-159) Implemented; Feature B (ADR-160) Designed.**
+> The rework claim — eligibility, claim/return/release, fast-forward-only
+> ingest, re-entry resolution, the owner carve-out, and the claim/return domain
+> events (migration `0125`) — is shipped. The operator node interrupt lands in
+> Phases 3–4 and stays tagged `(Designed)` below until then.
 
 ## Purpose
 
 **Run continuation** covers the two operator-initiated ways to put an already-
 launched flow run back under the graph's control after it has left the agent's
-hands. **(A) Rework claim** (Designed — [ADR-159](../decisions.md#adr-159-review-run-rework-claim-with-fast-forward-only-handoff-round-trip))
+hands. **(A) Rework claim** (Implemented — [ADR-159](../decisions.md#adr-159-review-run-rework-claim-with-fast-forward-only-handoff-round-trip))
 takes a run that reached `Review`, hands its existing worktree to a human, ingests
 whatever they push back by fast-forward only, and re-enters the graph at a
 server-resolved node so the flow's own gates re-validate the new commits.
@@ -25,18 +27,18 @@ Implemented), promotion ([`readiness.md`](readiness.md)), or workspace removal
 
 ## Domain entities
 
-- **Rework claim** (Designed) — a run transition `Review → HumanWorking`
+- **Rework claim** (Implemented) — a run transition `Review → HumanWorking`
   (`runs.status`). Session-less; **acquires** a concurrency slot, because
   `countLiveRuns` counts `Running|NeedsInput|HumanWorking` and `Review` is
   slot-free.
-- **Claim attempt row** (Designed) — a takeover-shaped `node_attempts` row
+- **Claim attempt row** (Implemented) — a takeover-shaped `node_attempts` row
   appended at the **last executed node**, carrying `owner_user_id` and
   `decision='review_rework_claim'`. That `decision` value is the only thing
   distinguishing it from an ADR-030 takeover row. Persisted in
   [`db/runs-domain.md`](../db/runs-domain.md).
-- **Re-entry node** (Designed) — the graph node the run resumes at, resolved
+- **Re-entry node** (Implemented) — the graph node the run resumes at, resolved
   server-side by the ordered chain in *Process flows*. Never operator-chosen.
-- **Flow-level `reentry` field** (Designed) — an optional manifest key beside
+- **Flow-level `reentry` field** (Implemented) — an optional manifest key beside
   `nodes`, engine floor `3.5.0`, compile-validated against the graph. Compile-time
   only; never persisted to a DB column. See [`flow-dsl.md`](../flow-dsl.md).
 - **Node interrupt request** (Designed) — a `hitl_requests` row with
@@ -46,14 +48,14 @@ Implemented), promotion ([`readiness.md`](readiness.md)), or workspace removal
 - **Operator restart attempt** (Designed) — a `node_attempts` row closed
   `Reworked` with `decision='operator_interrupt'`. Excluded from
   `rework.maxLoops` accounting and from both Observatory correction counters.
-- **Domain events** (Designed) — `run.rework_claimed` and `run.rework_returned`
+- **Domain events** (Implemented for ADR-159; ADR-160 reuses `run.escalated`) — `run.rework_claimed` and `run.rework_returned`
   (migration `0125` extends `domain_events_kind_check` to 13 kinds). The interrupt
   reuses the existing `run.escalated` with `reason='node_interrupt'`. See
   [`domain-events.md`](domain-events.md).
 
 ## State machine
 
-Feature A — the rework claim round-trip (Designed):
+Feature A — the rework claim round-trip (Implemented):
 
 ```mermaid
 stateDiagram-v2
@@ -86,7 +88,7 @@ stateDiagram-v2
 
 ## Process flows
 
-Re-entry resolution — ordered, server-state only (Designed). It is ledger-derived
+Re-entry resolution — ordered, server-state only (Implemented). It is ledger-derived
 because `runGraph` writes `current_step_id: null` on reaching `Review`:
 
 ```mermaid
@@ -102,7 +104,7 @@ flowchart TD
 ```
 
 Return — two-phase commit, all git reads and refusals before any ledger write
-(Designed):
+(Implemented):
 
 ```mermaid
 sequenceDiagram
@@ -151,31 +153,31 @@ flowchart TD
 - A rework claim MUST be admitted only when `runs.status='Review'`,
   `run_kind='flow'`, `parent_run_id IS NULL`, `workspace_mode <> 'shared'`, the
   run is not a launched evaluation participant, and the workspace exists with
-  `removed_at IS NULL`; any status not named here is refused by default. *(Designed)*
+  `removed_at IS NULL`; any status not named here is refused by default. *(Implemented)*
 - The claim MUST re-check the global concurrency cap inside the claim transaction
   under the run-row lock and return `MaisterError("CONFLICT")` when full; it MUST
-  NEVER queue the run as `Pending`. *(Designed)*
+  NEVER queue the run as `Pending`. *(Implemented)*
 - The `Review → HumanWorking` CAS MUST commit before the claim row insert, so a
   concurrent loser is refused at the CAS and never reaches the
-  `UNIQUE(run_id, node_id, attempt)` violation. *(Designed)*
+  `UNIQUE(run_id, node_id, attempt)` violation. *(Implemented)*
 - The re-entry node MUST be resolved from server state only — manifest `reentry`,
   else the last executed `human` node's compiled `transitions.takeover`, else
-  refuse — and MUST NEVER be accepted from the request body. *(Designed)*
+  refuse — and MUST NEVER be accepted from the request body. *(Implemented)*
 - While `runs.status='HumanWorking'`, `exportBranch` MUST be available to the
   actor matching `owner_user_id` and to no one else; every other lifecycle action
-  MUST stay refused with `human-owned`. *(Designed)*
+  MUST stay refused with `human-owned`. *(Implemented)*
 - Return ingest MUST be fetch plus `merge --ff-only`; divergence MUST refuse
   `MaisterError("PRECONDITION")` and leave branch, ledger, and `runs.status`
-  unchanged, and a missing remote or absent upstream MUST be a no-op success. *(Designed)*
+  unchanged, and a missing remote or absent upstream MUST be a no-op success. *(Implemented)*
 - Return MUST write no AFTER-side marker until `recordTakeoverReturn`, the
   artifacts, `markDownstreamStale`, the `Running` CAS, and the re-entry cursor all
   commit in one transaction; a rollback MUST surface
-  `MaisterError("EXECUTOR_UNAVAILABLE")` with the run still `HumanWorking`. *(Designed)*
+  `MaisterError("EXECUTOR_UNAVAILABLE")` with the run still `HumanWorking`. *(Implemented)*
 - `markDownstreamStale` MUST select, per node, the latest `node_attempts` row with
   `owner_user_id IS NULL`, so a claim row NEVER shields a node's real last
-  execution from gate staling — for every caller, unconditionally. *(Designed)*
+  execution from gate staling — for every caller, unconditionally. *(Implemented)*
 - Release without changes MUST return the run to `Review` (never `NeedsInput`),
-  close the claim row, and free the slot via `promoteNextPending`. *(Designed)*
+  close the claim row, and free the slot via `promoteNextPending`. *(Implemented)*
 - A node interrupt MUST be admitted only on a `Running` flow run whose current node
   has a `status='Running'` attempt and is `ai_coding | judge | orchestrator`;
   `cli` and `check` MUST refuse `MaisterError("PRECONDITION")`. *(Designed)*
