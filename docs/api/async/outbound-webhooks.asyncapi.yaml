@@ -309,11 +309,13 @@ components:
 
     WebhookEventType:
       type: string
-      description: The 16 curated outbound event types.
+      description: The 18 curated outbound event types.
       enum:
         - run.started
         - run.needs_input
         - run.escalated
+        - run.rework_claimed
+        - run.rework_returned
         - hitl.requested
         - hitl.responded
         - run.review
@@ -422,6 +424,8 @@ components:
             - $ref: "#/components/schemas/DataRunStarted"
             - $ref: "#/components/schemas/DataRunNeedsInput"
             - $ref: "#/components/schemas/DataRunEscalated"
+            - $ref: "#/components/schemas/DataRunReworkClaimed"
+            - $ref: "#/components/schemas/DataRunReworkReturned"
             - $ref: "#/components/schemas/DataHitlRequested"
             - $ref: "#/components/schemas/DataHitlResponded"
             - $ref: "#/components/schemas/DataRunReview"
@@ -476,8 +480,14 @@ components:
       properties:
         reason:
           type: string
-          enum: [budget_exceeded, hook_trip]
-          description: Budget-escalate or hook-trip variant.
+          enum: [budget_exceeded, hook_trip, node_interrupt]
+          description: |
+            Budget-escalate, hook-trip, or operator node-interrupt variant.
+            `node_interrupt` (ADR-160, Designed) deliberately REUSES this kind
+            rather than adding one: an operator pausing a node is an escalation
+            like any other. ADR-159's claim/return, by contrast, are distinct
+            lifecycle facts and get their own kinds — the asymmetry is a
+            decision, not an omission.
         scope:
           type: string
           enum: [run, task, tree]
@@ -498,6 +508,61 @@ components:
           type: string
           enum: [path_guard, repetition, no_progress]
           description: Guardrail rule that tripped (hook-trip variant).
+
+    DataRunReworkClaimed:
+      type: object
+      description: >-
+        `run.rework_claimed` (ADR-159, Designed) — an operator took a finished
+        `Review` run back for rework. Emitted in the SAME transaction as the
+        `Review → HumanWorking` CAS and the claim `node_attempts` row (ADR-086
+        exactly-once). NOT run-terminal and NOT run-settled: a claim must never
+        make an orchestrator treat a child as settled.
+      additionalProperties: false
+      required: [ownerUserId, reentryNodeId, reentrySource]
+      properties:
+        ownerUserId:
+          type: string
+          description: The claiming user — the actor is `user`, never `system`.
+        reentryNodeId:
+          type: string
+          description: Server-resolved graph node the run will re-enter at.
+        reentrySource:
+          type: string
+          enum: [manifest, takeover_transition]
+          description: Which link of the re-entry chain produced `reentryNodeId`.
+        anchorNodeId:
+          type: string
+          nullable: true
+          description: Last executed node the claim row was appended at.
+
+    DataRunReworkReturned:
+      type: object
+      description: >-
+        `run.rework_returned` (ADR-159, Designed) — the claim owner returned the
+        run to the graph. Emitted in the SAME transaction as the return's single
+        ledger write (record + artifacts + staleness + the `HumanWorking →
+        Running` CAS + the cursor park). NOT run-terminal and NOT run-settled.
+      additionalProperties: false
+      required: [ownerUserId, reentryNodeId, returnedCommitCount, fastForwarded]
+      properties:
+        ownerUserId:
+          type: string
+          description: The returning user, matched against the claim's owner.
+        reentryNodeId:
+          type: string
+          description: Node the run resumed at; it and its downstream were staled.
+        returnedCommitCount:
+          type: integer
+          description: Commits recorded on the claim row.
+        fastForwarded:
+          type: boolean
+          description: >-
+            Whether the fast-forward ingest advanced the branch. `false` is a
+            success — already up to date, or no remote/upstream.
+        remote:
+          type: string
+          nullable: true
+          description: Remote fetched from, when one was resolved.
 
     DataHitlRequested:
       type: object

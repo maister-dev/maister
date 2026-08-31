@@ -322,6 +322,55 @@ channel into the re-entered loop's prompt. A target with zero prior attempts is 
 no-op. A crash after commit self-heals: the next `appendNodeAttempt` reads the
 persisted baseline.
 
+**Flow-level `reentry` and the re-entry chain (ADR-159 — Designed).** A finished
+`Review` run has no cursor — `runGraph` writes `current_step_id: null` on reaching
+`Review` — so a rework claim cannot resume "where it left off" and must resolve a
+re-entry node from durable state. The compiler carries an optional flow-level
+`reentry: <nodeId>` (validated against `nodes[]`, `CONFIG` on an unknown id,
+engine floor `3.5.0`) into the compile result beside `entry` / `order` / `nodes` /
+`sessions`, and `resolveReentryNode` consumes it as the first of three ordered
+steps:
+
+1. the compiled `reentry`, if the manifest declared one → `source: 'manifest'`;
+2. otherwise the **last executed `human` node** in this run's `node_attempts`
+   ledger whose compiled `transitions.takeover` names a node present in the graph
+   → `source: 'takeover_transition'`;
+3. otherwise the claim is refused — no re-entry is invented, and the refusal
+   names the relaunch escape hatch.
+
+Step 2 is ledger-derived rather than cursor-derived for the reason above, and a
+`transitions.takeover` naming a node absent from the compiled graph falls through
+to step 3 rather than throwing — a stale target disables the action, it does not
+break the run. On return, the re-entry node and everything `downstreamOf` it are
+staled, so the flow's own gates re-validate the human's commits. See
+[`run-continuation.md`](run-continuation.md) and
+[`flow-dsl.md`](../flow-dsl.md).
+
+**Operator restarts are outside the rework epoch (ADR-160 — Designed).** An
+operator node interrupt closes the parked attempt `Reworked` with
+`node_attempts.decision = 'operator_interrupt'`, which makes `runGraph` append a
+fresh attempt — the same mechanism a declared rework uses. It is deliberately
+**not** the same accounting event:
+
+- The effective count becomes
+  `effective = nodeAttemptNumber − (rework_baseline ?? 0) − operatorInterruptCount(runId, nodeId)`,
+  where the operator count is that node's closed attempts carrying
+  `decision='operator_interrupt'`. A run with zero operator restarts computes
+  byte-identically to today, so the back-compat property above is preserved.
+- **Why exclude:** `rework.maxLoops` expresses the flow author's tolerance for
+  *automated* rework loops. An operator stepping in to correct a wandering agent
+  is human intervention, not a failed iteration; charging it to the budget would
+  let a reviewer exhaust a flow's rework allowance by helping it.
+- The bound is not removed, only moved: operator restarts are capped per run by
+  `MAISTER_MAX_OPERATOR_RESTARTS` (default `10`), which refuses further restarts
+  with `MaisterError("CONFLICT")`.
+- The same rows are excluded from **both** Observatory correction counters —
+  `reworkCount` (status `Reworked`) and `retryCount` (`max(attempt) − 1` per
+  `(run, node)`). An operator restart advances both, so excluding one alone would
+  still report a fabricated correction rate. See
+  [`observatory.md`](observatory.md) and
+  [`run-continuation.md`](run-continuation.md).
+
 **Two `maxLoops`.** The loop node's `maxLoops` bounds iterations per round; the
 human node's own `rework.maxLoops` bounds the number of reset rounds (each human
 rework increments the human node's `gateAttempt`). The human node's own exhaustion

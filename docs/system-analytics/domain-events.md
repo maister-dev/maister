@@ -38,10 +38,11 @@ observe its failed child; success-gated dependents do not launch.
   consumer: `{ consumer_id (PK), cursor_event_id, lease_expires_at?,
   last_dispatched_at?, last_error?, consecutive_failures }`. Claim/advance
   mechanics below. See [db/domain-events.md](../db/domain-events.md).
-- **Kind taxonomy** (Implemented) — exactly 11 kinds:
+- **Kind taxonomy** — 11 kinds Implemented, **13 with ADR-159 (Designed)**:
   `task.created`, `task.comment_added`, `task.triage_requeued`,
   `task.clarification_answered`, `run.done`,
   `run.failed`, `run.crashed`, `run.abandoned`, `run.review`, `run.escalated`,
+  `run.rework_claimed` (Designed), `run.rework_returned` (Designed),
   `gate.failed`. `run.review` (ADR-100) is the settled-not-terminal signal a
   delegated child emits on reaching Review (wakes a parked orchestrator).
   `run.escalated` is the execution-policy B3 on-stuck signal (emitted when a
@@ -49,11 +50,26 @@ observe its failed child; success-gated dependents do not launch.
   budget axis reuses this SAME kind (no new kind) with `reason=budget_exceeded`
   in its `payload` when a run/task-scope budget escalates to a `budget_breach`
   HITL.
+  **(ADR-160 — Designed)** the operator node interrupt ALSO reuses
+  `run.escalated` (no new kind) with `reason=node_interrupt` in its `payload`.
+  **(ADR-159 — Designed)** `run.rework_claimed` and `run.rework_returned` are the
+  two genuinely new kinds: an operator taking a finished `Review` run back for
+  rework, and returning it. Both are emitted with `actor_type='user'` inside the
+  SAME transaction as their domain write, and **neither belongs to
+  `RUN_TERMINAL_EVENT_KINDS` or `RUN_SETTLED_EVENT_KINDS`** — adding them there
+  would make an orchestrator treat a claimed child as settled. They cost
+  migration `0125` (a CHECK-only rewrite of `domain_events_kind_check` from 11 to
+  13 kinds, the same shape `0099_agent_human_ask.sql` used).
   `task.triage_requeued` was registered with no emitter; its emitter is the
   "Send to triage" action (Implemented — `triage_status = NULL` + emit +
   `triage_requeued` activity in one transaction, ADR-089). Extension rule:
   one taxonomy entry + emit site(s) in the owning domain transaction + one
-  doc row + a CHECK update via migration.
+  doc row + a CHECK update via migration — **plus a fourth point discovered by
+  ADR-159**: `PulseEventKind` is a type alias of `DomainEventKind`, so
+  `mapDomainEvent` in `web/lib/ext-activity/domain-events.ts` (an exhaustive
+  `switch` with no `default` arm) and its
+  `docs/api/external/operations.openapi.yaml` `ExtPulseEventKind` mirror move
+  with every new kind.
   **(Implemented, ADR-098)** The four run-terminal kinds (`run.done`,
   `run.failed`, `run.crashed`, `run.abandoned`) have their `payload`
   **widened** with `parent_run_id` (the emitting run's `runs.parent_run_id`;

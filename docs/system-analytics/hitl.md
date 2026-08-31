@@ -22,7 +22,7 @@ run history and previously recorded HITL evidence remain readable.
 - **Assignment** — `assignments` row (ADR-040) linked by `hitl_request_id`; this is
   the inbox and ownership primitive for open HITL work. `hitl_requests` still
   owns the payload and `responded_at` marker.
-- **Kind** — `'permission' | 'form' | 'human' | 'infra_recovery' | 'budget_breach' | 'hook_trip'`
+- **Kind** — `'permission' | 'form' | 'human' | 'infra_recovery' | 'budget_breach' | 'hook_trip' | 'node_interrupt'`
   (on `hitl_requests.kind`):
   - `permission` — binary approve/deny via ACP
     `session/request_permission`.
@@ -65,6 +65,23 @@ run history and previously recorded HITL evidence remain readable.
     `hook_trip_abandoned`). Human-actor-only (like
     `human`/`infra_recovery`/`budget_breach`): a machine/agent token can never
     dismiss its own trip. `path_guard` is deny-and-continue and never escalates.
+  - `node_interrupt` — **(ADR-160 — Designed)** opened by
+    `POST /api/runs/{runId}/node-interrupt` when an operator pauses a live agent
+    node mid-turn. Admitted only on a `Running` flow run whose current node has a
+    `status='Running'` attempt and is `ai_coding | judge | orchestrator`; `cli`
+    and `check` nodes refuse `PRECONDITION` naming the deferral. Reuses
+    `escalateHookTrip`'s mechanics exactly — checkpoint pre-transaction
+    (`EXECUTOR_UNAVAILABLE` re-throws with **no** mutation), `needs-input.json`
+    written pre-transaction and unlinked on failure, then ONE transaction parks
+    `NeedsInput` with the worktree KEPT. It emits `run.escalated` with
+    `reason='node_interrupt'`, reusing the existing domain-event kind rather than
+    adding one. The human answers one of four **server-owned** options —
+    `resume`, `restart_node` (default), `restart_from`, `stop` — delivered on the
+    same `availableOptions` channel `budget_breach` uses; see the option matrix
+    below. Human-actor-only (like `human`/`infra_recovery`/`budget_breach`/
+    `hook_trip`), enforced at the `respondToHitl` chokepoint before any mutation,
+    with **no ext-API and no MCP surface**. `nodeId`, `nodeAttemptId`, and the
+    supervisor session id are all server-state, never body fields.
 - **Form schema** — JSON Schema-like object with required
   `schemaVersion: integer`. Field types: `string | number | boolean |
 enum | array`.
@@ -373,6 +390,48 @@ The `status='Running'` flip plus the takeover row's `ended_at` is the **AFTER-si
 idempotency marker** — never set before the git/ledger side-effect completes. A
 git-op failure in Phase 2 leaves the run `HumanWorking` with no ledger write and
 no status flip (409 `CONFLICT`, retryable).
+
+### Operator node interrupt — server-owned option matrix (ADR-160 — Designed)
+
+The `node_interrupt` card's options are derived on the server and delivered on
+the existing `availableOptions` channel (`run.ts` / `hitl.ts` /
+`inbox-context.ts`), the same one `budget_breach` uses. The client renders what
+it is given and never re-derives availability.
+
+| Option | Effect | Availability |
+| --- | --- | --- |
+| `resume` | `scheduleResume(runId)`; the runner owns `NeedsInput → Running` and the agent continues the **same** attempt via `session/resume`, keeping context | always |
+| `restart_node` (**default**) | Close the parked attempt `Reworked` with `decision='operator_interrupt'`; `runGraph` appends a **fresh** attempt at the same node | always |
+| `restart_from` | Same, targeting an earlier node, plus `markDownstreamStale` from the target | only when ≥1 other node has a prior attempt in this run |
+| `stop` | Delegates to the existing `stopWorkbenchRun` terminal stop — no new stop semantics | always |
+
+Three rules bind the matrix:
+
+- **`restart_from` targets are ledger-derived, never topological.** The static
+  graph has cycles, so "earlier" is not derivable from the manifest. The eligible
+  set is exactly the nodes with at least one prior `node_attempts` row in THIS
+  run; a target outside it is refused `PRECONDITION`. **Forward skips are out of
+  scope** — skipping a node would bypass the artifacts it produces. Nodes that
+  are also declared rework targets are flagged `recommended` for the UI, but that
+  is presentation, not permission.
+- **The correction is a prompt append, not a template variable.** The operator's
+  free text is appended server-side as a fenced, labelled block — the same
+  channel as the run-context pointer line — so it works on any node type, needs
+  no `commentsVar` declaration, and can never throw a strict-mode
+  unknown-variable `CONFIG` into the run. It is captured in
+  `node_attempts.resolved_prompt` and applies to the restarted attempt only.
+- **The restart mechanism is the `Reworked` close.** Because the closing row is
+  `Reworked` rather than `NeedsInput`, `resumingThisNode` is false, so
+  `reusesCurrentAttempt` is false and `runGraph` appends a fresh attempt. The
+  workspace policy is applied against the target's `checkpoint_ref` **before**
+  the ledger transaction (the M30 rework ordering); a missing `checkpoint_ref`
+  degrades to `keep` with a WARN and is never guessed.
+
+Attempts closed with `decision='operator_interrupt'` are excluded from the flow's
+`rework.maxLoops` budget and from both Observatory correction counters, and are
+bounded per run by `MAISTER_MAX_OPERATOR_RESTARTS` (default `10`, `CONFLICT` on
+breach). See [`run-continuation.md`](run-continuation.md) and
+[`flow-graph.md`](flow-graph.md).
 
 ### Gate-chat at HITL pauses + workspace-neutrality (Implemented)
 
@@ -701,11 +760,17 @@ fields:
 ## Expectations
 
 - HITL kind is exactly `permission | form | human | infra_recovery |
-budget_breach | hook_trip` (on `hitl_requests.kind`); the three core kinds map
-  to wire per the three-kinds table verbatim, and the three engine-opened kinds
-  (`infra_recovery`, `budget_breach` — ADR-101; `hook_trip` — ADR-108) park
+budget_breach | hook_trip | node_interrupt` (on `hitl_requests.kind`); the three
+  core kinds map to wire per the three-kinds table verbatim, and the four
+  engine- or operator-opened kinds (`infra_recovery`, `budget_breach` — ADR-101;
+  `hook_trip` — ADR-108; `node_interrupt` — ADR-160, Designed) park
   `NeedsInput` with the worktree kept and are Human-actor-only (a token actor
   NEVER answers them).
+- **(ADR-160 — Designed)** A `node_interrupt` request MUST idle to
+  `NeedsInputIdle` and be abandoned at 24 h exactly like `hook_trip`, MUST NEVER
+  be classified `Crashed` by the recovery sweep, and its `availableOptions` MUST
+  be derived server-side — the client NEVER re-derives which options are
+  available, and `restart_from` targets come from the ledger, never the graph.
 - Every HITL request is persisted as a `hitl_requests` row before the
   run transitions to `NeedsInput`; UI never derives HITL state from
   supervisor in-memory state.

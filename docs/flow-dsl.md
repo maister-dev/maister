@@ -47,8 +47,9 @@ The graph-only cut-over started with engine 3.0.0: manifests require a non-empty
 top-level `nodes[]`. The parser and compiler reject any manifest containing
 `steps[]` with the locked migration message: `legacy steps[] flows are not
 supported since engine 3.0.0; republish the package with nodes[]`. The current
-host engine is `3.4.0` (**Designed** — `MAISTER_ENGINE_VERSION` moves
-`3.3.0 → 3.4.0` for `settings.context_repos`, below); graph packages remain
+host engine is `3.4.0` (Implemented); it moves to `3.5.0` (**Designed** —
+`MAISTER_ENGINE_VERSION` `3.4.0 → 3.5.0` for the flow-level `reentry` key,
+below). Graph packages remain
 compatible when their declared `compat` range includes that version. They do not
 need to raise an open-ended historical `engine_min`.
 
@@ -1040,6 +1041,59 @@ Fields: `name` (required), `probe` (required shell command), `hint` (optional
 remediation string). Probes run with runner authority, like `command_check`
 gates — only trusted flows reach this path. See
 [ADR-091](decisions.md#adr-091-flow-requirements-launch-precondition).
+
+## Flow `reentry` (ADR-159 — Designed)
+
+A flow may declare, at the **top level beside `nodes`**, the node an operator's
+[rework claim](system-analytics/run-continuation.md) re-enters the graph at when
+a finished `Review` run is taken back for correction:
+
+```yaml
+schemaVersion: 1
+name: Bugfix
+compat:
+  engine_min: 3.5.0
+reentry: verify          # must name a node id present in nodes[]
+nodes:
+  - id: implement
+    type: ai_coding
+    transitions:
+      success: verify
+  - id: verify
+    type: check
+    transitions:
+      success: review
+  - id: review
+    type: human
+    transitions:
+      approve: done
+```
+
+- **It is the first link in a three-step resolution chain**, not the only one.
+  The claim resolves its re-entry node as: (1) this `reentry` key; else (2) the
+  last executed `human` node in the run's ledger whose compiled
+  `transitions.takeover` names a node present in the graph; else (3) the claim is
+  refused, pointing the operator at launching a new run from the branch. Declaring
+  `reentry` therefore **wins over** a present takeover transition, and is the way
+  a flow with no `human` node becomes claimable at all.
+- **Compile-validated.** `reentry` naming a node id absent from `nodes[]` is
+  refused at load with `CONFIG` naming the offending id — the same treatment as
+  an unknown transition target.
+- **Engine floor.** Declaring `reentry` requires `compat.engine_min >= 3.5.0`,
+  else `CONFIG`; `MAISTER_ENGINE_VERSION` bumps `3.4.0 → 3.5.0`. The gate is on
+  the **manifest**, not on `nodes` — the key is flow-level. Flows without
+  `reentry` stay valid at any `engine_min` and compile byte-identically to today.
+- **Compile-time only — never persisted to a DB column.** It participates in the
+  compiled graph and nowhere else, so the YAML→DB SET/CLEAR symmetry rule does
+  not apply to it: republishing a manifest with `reentry` removed simply
+  recompiles without it, with no stale column left behind and nothing to reset.
+- **The operator can never override it.** Re-entry is resolved from server state
+  only; no route accepts a re-entry node from the request body.
+- Round-trip preserved by Flow Studio: authoring a draft and publishing it must
+  not drop the key, even though v1 ships no Studio editor for it.
+
+See [ADR-159](decisions.md#adr-159-review-run-rework-claim-with-fast-forward-only-handoff-round-trip)
+and [`system-analytics/run-continuation.md`](system-analytics/run-continuation.md).
 
 ## Gate execution (Implemented)
 

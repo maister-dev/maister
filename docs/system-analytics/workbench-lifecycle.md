@@ -123,7 +123,8 @@ body values. JSONL and other runtime-artifact retention are unchanged.
 | `NeedsInput` / `NeedsInputIdle`                                             | yes -> `Review`      | no                        | no                         | no     |
 | live scratch dialog (`Starting`, `WaitingForUser`, `Running`, `NeedsInput`) | yes via scratch stop | no                        | no                         | no     |
 | live agent (`Running` / `NeedsInput` / `NeedsInputIdle`)                    | yes -> `Abandoned`   | no                        | no                         | no     |
-| `HumanWorking`                                                              | no                   | no                        | no                         | no     |
+| `HumanWorking` (non-owner, or an ADR-030 takeover)                          | no                   | no                        | no                         | no     |
+| `HumanWorking` holding an ADR-159 rework claim, viewed by the claim owner    | no                   | no                        | no                         | yes (Designed) |
 | `Review`                                                                    | no-op hidden         | yes                       | yes                        | yes    |
 | `Crashed`                                                                   | no                   | yes while worktree exists | yes                        | yes    |
 | `Done`                                                                      | no                   | yes until pruned          | yes, status remains `Done` | yes    |
@@ -142,6 +143,30 @@ see [`branch-sync.md`](branch-sync.md). The combined
 **Stop & archive** / **Stop & drop** below are not new policy actions either:
 they compose the existing `stop` (live) and `archive`/`drop` (parked) actions
 server-side so the operator clicks once.
+
+### ADR-159 rework-claim owner carve-out (Designed)
+
+`HumanWorking` disables **every** action with the reason `human-owned`. The
+ADR-159 rework claim pokes exactly one hole in that, and only for one actor:
+
+- **Scope.** When `runStatus === 'HumanWorking'` **and** the viewer matches the
+  claim's `owner_user_id` **and** the workspace is present and not removed,
+  `exportBranch` is enabled. `stop`, `archive`, and `drop` stay `human-owned`
+  for the owner too — the run is mid-handoff, and removing its worktree under
+  the operator editing it is never the right default.
+- **Why one flag opens four surfaces.** `snapshotWorkbenchCommit`,
+  `createWorkbenchHandoffBranch`, and `getWorkbenchHandoffMetadata` all gate on
+  `requireActionAllowed(ctx, "exportBranch")`, so enabling that single action is
+  what makes the whole export/snapshot/handoff loop reachable during a claim.
+  That coupling is deliberate and load-bearing: the claim exists precisely so the
+  operator can get the branch out to another machine and push fixes back.
+- **Non-owner is refused identically to no-claim.** A different member viewing a
+  claimed run sees `human-owned` on all four, so the carve-out can never be used
+  to race the owner. The policy input carries `claimOwnerUserId` and
+  `viewerUserId`; every other status × owner combination keeps today's derived
+  action set byte-for-byte.
+- **The M11b takeover is unchanged.** Its claim row carries no
+  `decision='review_rework_claim'`, so it does not open the carve-out.
 
 ## Combined stop + worktree ops
 

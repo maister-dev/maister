@@ -124,6 +124,8 @@ tags:
     description: M13 role-owned work queue and assignment ownership.
   - name: takeover
     description: Manual takeover — local worktree handoff (M11b, ADR-030).
+  - name: run-continuation
+    description: Run continuation — Review rework claim with fast-forward-only handoff round-trip, and the operator node interrupt (ADR-159/160).
   - name: review-comments
     description: Line-anchored review-comment threads on the review-gate diff (Implemented, ADR-072).
   - name: flow-packages
@@ -7030,6 +7032,42 @@ paths:
           `NeedsInput → Running` and respawns), returning 202
           `{ runStatus: "NeedsInput", state: "resume-in-progress" }`. Idempotent:
           a same-payload retry whose prior resume handoff was lost re-drives it.
+        - **node_interrupt** (ADR-160 — Designed): a human-only four-way fork
+          answering an operator node interrupt. Human-actor-only (a machine/agent
+          token is rejected 403 at the shared chokepoint, before any mutation);
+          no ext-API and no MCP surface. `optionId` is allow-listed to
+          `resume | restart_node | restart_from | stop`, and the SAME option set
+          is exposed server-derived on `availableOptions` in the pending-HITL
+          read models — the client never re-derives availability.
+          - `resume` → leave the run awaiting and `scheduleResume(runId)`; the
+            runner owns `NeedsInput → Running` and the agent continues the SAME
+            attempt via `session/resume`, so context is preserved. Returns 202.
+          - `restart_node` (**default**) / `restart_from` → close the parked
+            attempt `Reworked` with `decision='operator_interrupt'`, apply the
+            operator's `workspacePolicy` against the target's `checkpoint_ref`
+            **before** the ledger transaction, stale downstream when the target
+            differs from the interrupted node, park the cursor at the target, and
+            `scheduleResume`. `runGraph` then appends a FRESH attempt. Returns 202.
+          - `stop` → delegates to the existing terminal stop; no new semantics.
+
+          Additional body fields, all allow-listed:
+          `workspacePolicy ∈ {keep, rewind-to-node-checkpoint, fresh-attempt}`;
+          `targetNodeId` (only with `restart_from`) validated against a
+          **ledger-derived** set — the nodes with ≥1 prior attempt in THIS run,
+          because the static graph has cycles. A `targetNodeId` that exists in the
+          graph but has no prior attempt is refused `PRECONDITION`: **forward
+          skips are out of scope**. `correction` is optional free text,
+          length-capped, appended to the restarted attempt's prompt verbatim
+          inside a fence — it is NEVER interpolated as a template, never routed
+          through `commentsVar`, and never passed through Mustache, so it works on
+          any node type and cannot throw a strict-mode `CONFIG` into the run.
+
+          A missing `checkpoint_ref` degrades to `workspacePolicy: keep` with a
+          WARN — never a guess. Attempts closed `operator_interrupt` are excluded
+          from `rework.maxLoops` and from both Observatory counters, and are
+          bounded per run by `MAISTER_MAX_OPERATOR_RESTARTS` (`CONFLICT` on
+          breach). Like `hook_trip`, the already-delivered retry branch re-drives
+          `scheduleResume` rather than double-applying.
         - **budget_breach** (ADR-125): a human-only four-way fork with
           `optionId: "raise" | "restart" | "park" | "abandon"`. Legacy
           `{optionId:"raise", raiseTo:N}` and bare `{optionId:"abandon"}`
@@ -7815,6 +7853,552 @@ paths:
             threw mid-side-effect. The run stays `HumanWorking` (status NOT flipped);
             the `FOR UPDATE` re-read on retry finds it still `HumanWorking` and
             replays.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/rework-claim/claim:
+    post:
+      tags: [run-continuation]
+      summary: (ADR-159) Claim a finished Review run for rework
+      description: |
+        (ADR-159 — Designed.)
+
+        Takes a run that has reached `Review` back into human hands so the
+        operator can correct it and re-enter the graph. The run transitions
+        `Review → HumanWorking`; the EXISTING worktree path + run branch are
+        exposed. No new branch, target, PR, remote, or supervisor session is
+        created.
+
+        This is NOT the M11b takeover (`/takeover/claim`), which enters from
+        `NeedsInput` at a parked `human_review` node. Both produce
+        `HumanWorking`; they are told apart by `node_attempts.decision`, which is
+        `review_rework_claim` here and unwritten there.
+
+        Requires project membership at `member` or above
+        (`requireProjectAction("answerHitl")`), checked AFTER
+        `requireActiveSession()` and the run→project lookup, so a malformed flow
+        revision stays invisible to non-members.
+
+        **Eligibility is an allow-list** — a status not named is refused by
+        default: `runs.status='Review'`, `run_kind='flow'`,
+        `parent_run_id IS NULL`, `workspace_mode <> 'shared'`, the run is not a
+        launched evaluation participant, and the workspace exists with
+        `removed_at IS NULL`. `run_kind='agent'` is refused **explicitly and
+        early** — an agent run carries no `node_attempts` rows, so there is no
+        node to anchor the claim on and no graph to re-enter; the message names
+        branch sync and relaunch instead.
+
+        The global concurrency cap is re-checked **inside** the claim
+        transaction under the run row lock, because `Review` is slot-free and
+        `HumanWorking` is not — the claim ACQUIRES a slot. A cap-full claim
+        returns 409 `CONFLICT` and is **never** queued as `Pending`.
+
+        The status CAS (`UPDATE runs SET status='HumanWorking' WHERE id=:id AND
+        status='Review'`) commits BEFORE the claim-row insert, so a concurrent
+        loser is refused at the CAS and never reaches the
+        `UNIQUE(run_id, node_id, attempt)` violation.
+
+        **Identifier trust (per-route).** No body-controlled field — the body is
+        empty:
+
+        | Identifier | Source | Trust |
+        | ---------- | ------ | ----- |
+        | `runId` | path parameter, route-shape validated | `url-param` |
+        | `userId` (claim owner) | Auth.js session | `auth-context` |
+        | `projectId` | DB join from the run row | `server-state` |
+        | `worktreePath`, `branch` | `workspaces` row | `server-state` |
+        | re-entry node id | compiled manifest `reentry`, else the ledger's last executed `human` node `transitions.takeover` | `server-state` |
+
+        The re-entry node is resolved from server state only; an operator can
+        NEVER choose it.
+
+        No new `MaisterError` code (ADR-008 closed union): each eligibility term
+        and an unresolved re-entry → `PRECONDITION`; a lost CAS or a full cap →
+        `CONFLICT`.
+      operationId: claimReworkClaim
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: |
+            Claim recorded. The run is now `HumanWorking`; the response carries
+            the checkout context and the resolved re-entry node.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [worktreePath, branch, ownerUserId, reentryNodeId, reentrySource]
+                properties:
+                  worktreePath:
+                    type: string
+                    description: Existing `workspaces.worktree_path` (server-state).
+                  branch:
+                    type: string
+                    description: Existing `workspaces.branch` — the run branch (no new branch).
+                  ownerUserId:
+                    type: string
+                    description: The claiming user (`users.id` from the Auth.js session).
+                  reentryNodeId:
+                    type: string
+                    description: Graph node the run will resume at on return (server-resolved).
+                  reentrySource:
+                    type: string
+                    enum: [manifest, takeover_transition]
+                    description: Which link of the resolution chain produced `reentryNodeId`.
+              examples:
+                claimedViaManifest:
+                  summary: Claim succeeded, re-entry from the flow-level `reentry` key
+                  value:
+                    worktreePath: /repos/my-app/.maister/my-app/runs/abc/worktree
+                    branch: maister/task-42-attempt-1
+                    ownerUserId: 8f1c2e34-0000-4000-8000-000000000000
+                    reentryNodeId: verify
+                    reentrySource: manifest
+                claimedViaTakeover:
+                  summary: Claim succeeded, re-entry derived from the ledger
+                  value:
+                    worktreePath: /repos/my-app/.maister/my-app/runs/abc/worktree
+                    branch: maister/task-42-attempt-1
+                    ownerUserId: 8f1c2e34-0000-4000-8000-000000000000
+                    reentryNodeId: checks
+                    reentrySource: takeover_transition
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Run not found, or not visible to the caller's projects.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: |
+            One of (`MaisterErrorBody`):
+            - the run is not `Review` (`PRECONDITION`);
+            - `run_kind` is not `flow` — an agent run has no `node_attempts` to
+              anchor a claim on; use branch sync or relaunch (`PRECONDITION`);
+            - the run is an orchestrator child (`parent_run_id` set), which would
+              un-settle a parked parent (`PRECONDITION`);
+            - `workspace_mode='shared'`, or the run is a launched evaluation
+              participant (`PRECONDITION`);
+            - the workspace is absent or `removed_at` is set (`PRECONDITION`);
+            - no re-entry node could be resolved — the message names the
+              "launch a new run from this branch" escape hatch (`PRECONDITION`);
+            - the global concurrency cap is full; the claim is refused, never
+              queued as `Pending` (`CONFLICT`);
+            - a concurrent claim won the `Review → HumanWorking` CAS first
+              (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+              examples:
+                notReview:
+                  summary: PRECONDITION — wrong status
+                  value:
+                    code: PRECONDITION
+                    message: "run is not in Review (status: Running)"
+                agentRunKind:
+                  summary: PRECONDITION — agent runs are structurally excluded
+                  value:
+                    code: PRECONDITION
+                    message: "only flow runs can be taken for rework — an agent run has no graph to re-enter; use branch sync or launch a new run from this branch"
+                noReentry:
+                  summary: PRECONDITION — re-entry unresolved
+                  value:
+                    code: PRECONDITION
+                    message: "this flow declares no re-entry node and no takeover transition — launch a new run from this branch instead"
+                capFull:
+                  summary: CONFLICT — no free slot
+                  value:
+                    code: CONFLICT
+                    message: "concurrency cap full — free a slot or stop another run"
+                casLost:
+                  summary: CONFLICT — concurrent claim
+                  value:
+                    code: CONFLICT
+                    message: "run was claimed concurrently"
+  /api/runs/{runId}/rework-claim/return:
+    post:
+      tags: [run-continuation]
+      summary: (ADR-159) Return a rework-claimed run to the graph
+      description: |
+        (ADR-159 — Designed.)
+
+        Returns a `HumanWorking` run held under a rework claim. The route
+        fast-forwards the worktree from the remote, records the returned commit
+        set and diff, stales the re-entry node and everything downstream so the
+        flow's own gates re-validate the human's commits, flips the run
+        `HumanWorking → Running`, parks the cursor at the re-entry node, and
+        resumes the graph runner there.
+
+        **Two-phase commit.** Every git read and every refusal precedes any
+        ledger write; no AFTER-side marker is written until one transaction
+        commits `recordTakeoverReturn` + artifacts + `markDownstreamStale` + the
+        `Running` CAS + the cursor. A rollback therefore leaves the run
+        `HumanWorking` with the claim open, and the whole operation is
+        retryable.
+
+        **Ingest is fast-forward only** (`git fetch <remote>` with no refspec,
+        then `git merge --ff-only <remote>/<branch>`). Divergence refuses with
+        the failing command, both SHAs, ahead/behind counts, and copyable git
+        instructions, and mutates nothing. A missing remote or a branch with no
+        upstream is a **no-op success**, so a purely local edit loop still
+        returns. Merge, rebase, and AI conflict resolution are out of scope; the
+        escape hatch is export → resolve elsewhere → push → return.
+
+        Requires the session user to equal the claim's recorded `owner_user_id`.
+        A claim that is an M11b takeover rather than a `review_rework_claim` is
+        refused — it must use `/takeover/return`.
+
+        **Identifier trust (per-route).**
+
+        | Identifier | Source | Trust |
+        | ---------- | ------ | ----- |
+        | `runId` | path parameter, route-shape validated | `url-param` |
+        | owner identity | Auth.js session, compared against `node_attempts.owner_user_id` | `auth-context` + `server-state` |
+        | `remote` | request body | `body-controlled` → validated against the `listRemotes()` **allow-list**; unknown → `PRECONDITION` |
+        | `baseRef`, `branch`, `worktreePath`, `parentRepoPath` | `workspaces` / `runs` rows | `server-state` |
+        | re-entry node id | compiled manifest / ledger | `server-state` |
+
+        No new `MaisterError` code (ADR-008 closed union): not `HumanWorking`,
+        wrong claim provenance, unknown remote, or non-fast-forward →
+        `PRECONDITION`; dirty worktree, zero-commit return, or a lost CAS →
+        `CONFLICT`; a failed ledger transaction → `EXECUTOR_UNAVAILABLE` (503,
+        retryable).
+      operationId: returnReworkClaim
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                remote:
+                  type: string
+                  description: |
+                    Git remote to fetch before the fast-forward. Validated against
+                    the worktree's actual remotes (`listRemotes()`); an unknown
+                    name is refused `PRECONDITION`. Omitted ⇒ the configured
+                    default; absent remote ⇒ no-op success.
+            examples:
+              default:
+                summary: Use the default remote
+                value: {}
+              explicitRemote:
+                summary: Fetch from a named remote
+                value: { remote: origin }
+      responses:
+        "200":
+          description: |
+            Return recorded. The run is `Running` with its cursor at the re-entry
+            node; the staled gates rerun over the returned commits.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [ok, runStatus, returnedCommitCount, fastForwarded]
+                properties:
+                  ok: { type: boolean }
+                  runStatus:
+                    type: string
+                    enum: [Running]
+                  returnedCommitCount:
+                    type: integer
+                    description: Commits in `base..branch` recorded on the claim row.
+                  fastForwarded:
+                    type: boolean
+                    description: |
+                      Whether the ingest actually advanced the branch. `false` is
+                      a success — the branch was already up to date, or the
+                      remote/upstream was absent.
+              examples:
+                returnedAfterPush:
+                  summary: Fixes pushed from another machine were fast-forwarded in
+                  value: { ok: true, runStatus: Running, returnedCommitCount: 3, fastForwarded: true }
+                returnedLocalOnly:
+                  summary: Purely local edits, nothing to fetch
+                  value: { ok: true, runStatus: Running, returnedCommitCount: 1, fastForwarded: false }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          description: |
+            The caller is not the claim owner (`UNAUTHORIZED`). Owner-only, like
+            the M11b takeover return.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "404":
+          description: Run not found, or not visible to the caller's projects.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: |
+            One of (`MaisterErrorBody`):
+            - the run is not `HumanWorking`, or holds no open claim
+              (`PRECONDITION`);
+            - the open claim is an M11b takeover, not a `review_rework_claim` —
+              use `/takeover/return` (`PRECONDITION`);
+            - `remote` is not in the worktree's remote allow-list
+              (`PRECONDITION`);
+            - the branch is not fast-forwardable from the remote; `details`
+              carries `{command, localSha, remoteSha, aheadBy, behindBy,
+              instructions[]}` and nothing was mutated (`PRECONDITION`);
+            - the worktree is dirty, or the return carries zero commits — no
+              ledger write happened (`CONFLICT`);
+            - the `HumanWorking → Running` CAS lost (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+              examples:
+                nonFastForward:
+                  summary: PRECONDITION — divergence, with copyable remediation
+                  value:
+                    code: PRECONDITION
+                    message: "branch has diverged from origin/maister/task-42-attempt-1 — fast-forward only"
+                    details:
+                      command: "git merge --ff-only origin/maister/task-42-attempt-1"
+                      localSha: 4f2a9c1
+                      remoteSha: 9b7e330
+                      aheadBy: 2
+                      behindBy: 5
+                      instructions:
+                        - "git -C <worktree> fetch origin"
+                        - "git -C <worktree> rebase origin/maister/task-42-attempt-1"
+                        - "git -C <worktree> push --force-with-lease"
+                dirtyWorktree:
+                  summary: CONFLICT — uncommitted work
+                  value:
+                    code: CONFLICT
+                    message: "worktree has uncommitted changes — commit or stash before returning"
+                emptyReturn:
+                  summary: CONFLICT — nothing to validate
+                  value:
+                    code: CONFLICT
+                    message: "no commits to return — release the claim instead"
+        "503":
+          description: |
+            The single ledger transaction failed (`EXECUTOR_UNAVAILABLE`). The run
+            is still `HumanWorking` with the claim open and the fast-forward
+            already applied; a retry replays cleanly because the FF is idempotent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/rework-claim/release:
+    post:
+      tags: [run-continuation]
+      summary: (ADR-159) Release a rework claim without changes
+      description: |
+        (ADR-159 — Designed.)
+
+        Releases a rework claim the operator decided not to act on. The run
+        returns to **`Review`** — not `NeedsInput`, because in this provenance
+        there is no review HITL to re-open — the claim row is closed via
+        `endActiveTakeover`, the assignment is completed, and the freed
+        concurrency slot is handed to `promoteNextPending`.
+
+        Owner-only, like the return. A second release after the first won is
+        refused at the CAS.
+
+        **Identifier trust (per-route).** No body-controlled field — the body is
+        empty:
+
+        | Identifier | Source | Trust |
+        | ---------- | ------ | ----- |
+        | `runId` | path parameter, route-shape validated | `url-param` |
+        | owner identity | Auth.js session, compared against `node_attempts.owner_user_id` | `auth-context` + `server-state` |
+
+        No new `MaisterError` code (ADR-008 closed union): not `HumanWorking` or
+        wrong claim provenance → `PRECONDITION`; a lost CAS → `CONFLICT`.
+      operationId: releaseReworkClaim
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Claim released; the run is back in `Review` and the slot is free.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [ok, runStatus]
+                properties:
+                  ok: { type: boolean }
+                  runStatus:
+                    type: string
+                    enum: [Review]
+              examples:
+                released:
+                  summary: Released back to Review
+                  value: { ok: true, runStatus: Review }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          description: The caller is not the claim owner (`UNAUTHORIZED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "404":
+          description: Run not found, or not visible to the caller's projects.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: |
+            One of (`MaisterErrorBody`):
+            - the run is not `HumanWorking`, or the open claim is not a
+              `review_rework_claim` (`PRECONDITION`);
+            - the `HumanWorking → Review` CAS lost to a concurrent
+              release/return/abandon (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/node-interrupt:
+    post:
+      tags: [run-continuation]
+      summary: (ADR-160) Interrupt a live agent node and park for a corrective restart
+      description: |
+        (ADR-160 — Designed.)
+
+        Pauses ONE live agent node mid-turn and parks the run `NeedsInput` with a
+        `node_interrupt` HITL carrying a server-owned option set. This is a soft
+        halt, not a stop: the worktree is KEPT and the graph is not terminated.
+
+        Mechanics are `escalateHookTrip`'s (ADR-108), reused verbatim:
+        `checkpointSession` runs **before** the transaction — an
+        `EXECUTOR_UNAVAILABLE` checkpoint **re-throws with no mutation** (503,
+        no split-brain), any other checkpoint failure logs and proceeds because
+        the session is already gone. `needs-input.json` is written
+        pre-transaction and unlinked if the transaction throws. Then ONE
+        transaction performs the CAS `Running → NeedsInput`,
+        `markNodeNeedsInput`, the HITL insert, the assignment,
+        `run.needs_input` (webhook), and `run.escalated` with
+        `reason='node_interrupt'` (domain event — the existing kind is reused,
+        so no taxonomy entry and no CHECK migration).
+
+        **Admission is an allow-list**: `runs.status='Running'`,
+        `run_kind='flow'`, the current node has a `node_attempts` row with
+        `status='Running'`, and the node type is `ai_coding | judge |
+        orchestrator`. `cli` and `check` nodes are refused with a
+        `PRECONDITION` **naming the deferral** — interrupting a detached process
+        group mid-command is deliberately out of v1 scope.
+
+        Answer the resulting HITL through
+        `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond`. It is
+        human-actor-only: a machine/agent token is refused at the shared
+        chokepoint before any mutation, and there is **no ext-API and no MCP
+        surface**.
+
+        **Identifier trust (per-route).** No body-controlled field — the body is
+        empty:
+
+        | Identifier | Source | Trust |
+        | ---------- | ------ | ----- |
+        | `runId` | path parameter, route-shape validated | `url-param` |
+        | `userId` | Auth.js session | `auth-context` |
+        | `projectId` | DB join from the run row | `server-state` |
+        | `nodeId`, `nodeAttemptId` | the run's active `node_attempts` row | `server-state` |
+        | `supervisorSessionId` | `run_sessions` | `server-state` |
+
+        No new `MaisterError` code (ADR-008 closed union): an unmet admission
+        term → `PRECONDITION`; a CAS lost to the node's own completion →
+        `CONFLICT`; an undeliverable checkpoint → `EXECUTOR_UNAVAILABLE`.
+      operationId: interruptNode
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "202":
+          description: |
+            Node checkpointed and the run parked. Answer the returned HITL to
+            resume, restart, or stop.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [ok, runStatus, hitlRequestId]
+                properties:
+                  ok: { type: boolean }
+                  runStatus:
+                    type: string
+                    enum: [NeedsInput]
+                  hitlRequestId:
+                    type: string
+                    format: uuid
+                    description: The `node_interrupt` request to answer.
+              examples:
+                parked:
+                  summary: Interrupt accepted
+                  value:
+                    ok: true
+                    runStatus: NeedsInput
+                    hitlRequestId: 3d90b6aa-0000-4000-8000-000000000000
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Run not found, or not visible to the caller's projects.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: |
+            One of (`MaisterErrorBody`):
+            - the run is not `Running`, or `run_kind` is not `flow`
+              (`PRECONDITION`);
+            - no `node_attempts` row with `status='Running'` exists for the
+              current node (`PRECONDITION`);
+            - the current node is `cli` or `check` — interrupting a detached
+              process group is deferred, and the message says so
+              (`PRECONDITION`);
+            - the `Running → NeedsInput` CAS lost, typically to the node's own
+              completion; no HITL row is orphaned (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+              examples:
+                cliNodeDeferred:
+                  summary: PRECONDITION — node type out of scope for v1
+                  value:
+                    code: PRECONDITION
+                    message: "cannot interrupt a cli node — only agent-executed nodes (ai_coding, judge, orchestrator) can be interrupted; stop the run instead"
+                casLostToCompletion:
+                  summary: CONFLICT — the node finished first
+                  value:
+                    code: CONFLICT
+                    message: "node completed before the interrupt was applied"
+        "503":
+          description: |
+            The pre-transaction `checkpointSession` was undeliverable
+            (`EXECUTOR_UNAVAILABLE`). Nothing was mutated — the run is still
+            `Running`, no HITL row exists, and no `needs-input.json` was left
+            behind. Retryable.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -20856,7 +21440,7 @@ components:
     WebhookEventType:
       type: string
       description: |
-        (ADR-077) The curated outbound event taxonomy (16 types), mirroring
+        (ADR-077) The curated outbound event taxonomy (18 types), mirroring
         `lib/webhooks/taxonomy.ts` in order. The full per-type `data` shapes are
         in `async/outbound-webhooks.asyncapi.yaml`. This enum feeds live
         subscription request bodies, so a missing member is not cosmetic — it
@@ -20865,6 +21449,8 @@ components:
         - run.started
         - run.needs_input
         - run.escalated
+        - run.rework_claimed
+        - run.rework_returned
         - hitl.requested
         - hitl.responded
         - run.review

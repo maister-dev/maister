@@ -93,16 +93,47 @@ shared `Unauthenticated` / `Forbidden` / `MaisterErrorBody` components. A new
 | `/api/runs/{runId}/node-interrupt` | POST (empty body) | `202` `{ok, runStatus:"NeedsInput", hitlRequestId}` | `401` · `403` · `404` · `409` `PRECONDITION` (REQ-B1 terms) / `CONFLICT` (CAS lost) · `503` (checkpoint undeliverable) |
 | `/api/runs/{runId}/hitl/{id}/respond` | POST (extended) | existing | adds `optionId ∈ {resume, restart_node, restart_from, stop}`, `workspacePolicy`, `targetNodeId`, `correction` |
 
-`GET /api/runs/{runId}` gains a `continuation` block: `{claim, reworkClaimAvailable,
-disabledReason, reentryNodeId, reentrySource}`.
+**Amended 2026-08-31 during Phase 0 (SDD rule 4).** The Phase-0 freeze named
+`GET /api/runs/{runId}` as the carrier of the `continuation` block. **That route
+does not exist**: run detail is an RSC read model produced by
+`getRunDetail` in `web/lib/queries/run.ts` and consumed by
+`web/app/(app)/runs/[runId]/layout.tsx`; it is never projected as an HTTP
+response DTO. The `continuation` block — `{claim, reworkClaimAvailable,
+disabledReason, reentryNodeId, reentrySource}` — is therefore added to that
+**read model**, and has **no OpenAPI surface**. Availability stays server-owned
+either way (the requirement the freeze was expressing), mirroring the
+`budget_breach` `availableOptions` precedent at `run.ts:449-455`. No REQ or AC
+changes; Task 13's target was already `web/lib/queries/run.ts`.
 
 **No new `MaisterError` code.** Reuse `PRECONDITION` (409), `CONFLICT` (409), `UNAUTHORIZED`
 (403), `CONFIG` (400), `EXECUTOR_UNAVAILABLE` (503); `docs/error-taxonomy.md` gains cell
 entries only.
 
-Events land in `docs/api/async/web-runs.asyncapi.yaml` (domain events) and
-`docs/api/async/outbound-webhooks.asyncapi.yaml` (webhook types). All five files are covered
-by `pnpm validate:contracts`.
+**Amended 2026-08-31 during Phase 0 (SDD rule 4).** The freeze said domain
+events land in `docs/api/async/web-runs.asyncapi.yaml`. **They do not**: that
+file describes the per-run **SSE bridge** (`GET /api/runs/{runId}/stream`), and
+there is no AsyncAPI for the `domain_events` outbox — it is an internal
+append-only fact log with an in-process dispatcher, contracted by
+`web/lib/domain-events/taxonomy.ts` + the `domain_events_kind_check` CHECK +
+[`docs/system-analytics/domain-events.md`](../../docs/system-analytics/domain-events.md).
+The wire surfaces that DO move, all verified present and now updated:
+
+| Surface | Change |
+| --- | --- |
+| `docs/api/async/outbound-webhooks.asyncapi.yaml` | `WebhookEventType` 16 → 18; new `DataRunReworkClaimed` / `DataRunReworkReturned` payload schemas wired into the `data` `oneOf`; `DataRunEscalated.reason` gains `node_interrupt` |
+| `docs/api/web.openapi.yaml` | `WebhookEventType` 16 → 18 — load-bearing, it validates live subscription bodies |
+| `docs/api/external/operations.openapi.yaml` | `ExtPulseEventKind` 11 → 13 — this is the **domain-event** taxonomy mirror |
+
+**Newly identified registration point (feeds REQ-A10 / Task 11B).**
+`PulseEventKind` is a type *alias* of `DomainEventKind`, and `mapDomainEvent` in
+`web/lib/ext-activity/domain-events.ts` is an **exhaustive switch with no
+`default` arm**. Adding a taxonomy kind therefore breaks that switch's
+exhaustiveness at compile time. It is a **fourth** registration point beyond
+taxonomy + emit sites + CHECK, and it moves in the same change — the Task-11B
+instruction to "verify, do not assume" that dispatch sites are kind-agnostic
+found a real one.
+
+All contract files are covered by `pnpm validate:contracts`.
 
 ## DB contract — migration `0125`
 

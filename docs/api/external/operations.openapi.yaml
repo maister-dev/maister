@@ -3954,6 +3954,13 @@ components:
 
     ExtPulseEventKind:
       type: string
+      description: |
+        Mirrors `DOMAIN_EVENT_KINDS` in `web/lib/domain-events/taxonomy.ts` and
+        the `domain_events_kind_check` DB constraint. Adding a taxonomy kind
+        widens `PulseEventKind` (a type alias of `DomainEventKind`), which makes
+        the exhaustive `mapDomainEvent` switch in
+        `web/lib/ext-activity/domain-events.ts` non-exhaustive — so this enum,
+        that switch, and the CHECK migration all move together.
       enum:
         - task.created
         - task.comment_added
@@ -3965,6 +3972,8 @@ components:
         - run.abandoned
         - run.review
         - run.escalated
+        - run.rework_claimed
+        - run.rework_returned
         - gate.failed
 
     ExtActivityPulseItem:

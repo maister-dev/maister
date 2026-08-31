@@ -127,6 +127,10 @@ stateDiagram-v2
     HumanWorking --> NeedsInput: release<br/>(no changes, review HITL re-opens)
     HumanWorking --> Abandoned: abandon
 
+    Review --> HumanWorking: rework claim<br/>(ADR-159, cap-gated, top-level flow runs only)
+    HumanWorking --> Review: release of a rework claim<br/>(ADR-159, no review HITL to re-open)
+    Running --> NeedsInput: operator node interrupt<br/>(ADR-160, node_interrupt HITL)
+
     Running --> Review: agent exits 0
     Running --> Review: operator stop<br/>(workbench lifecycle)
     Running --> Crashed: heartbeat dead<br/>no checkpoint
@@ -218,6 +222,48 @@ machine:
    `runs.status='NeedsInput'` and then resolves the acp handle post-query via
    `loadActiveRunSessionsByRunId` (`run_sessions`), skipping rows with no active
    `acp_session_id` — so `HumanWorking` is excluded by construction.
+
+### ADR-159 `HumanWorking` gains a second provenance: the Review rework claim (Designed)
+
+`HumanWorking` is now reachable from **two** statuses. The M11b claim above
+enters from `NeedsInput` at a parked `human_review` node; the ADR-159 **rework
+claim** enters from `Review`, after the graph has already finished. The status,
+its fences, and its cap accounting are identical — only the provenance differs,
+and it is carried on the ledger, not on a new status value. Full domain detail
+lives in [`run-continuation.md`](run-continuation.md). Four invariants bind the
+new provenance to the run machine:
+
+1. **The provenance marker is `node_attempts.decision`.** A rework claim appends
+   a takeover-shaped row at the **last executed node** carrying
+   `decision='review_rework_claim'`; an M11b takeover writes no `decision` on its
+   claim row. Every `HumanWorking` consumer that needs to tell them apart reads
+   that column — never the entry status, which is not retained.
+2. **`Review → HumanWorking` ACQUIRES a slot.** `Review` is slot-free
+   (`countLiveRuns` counts `Running|NeedsInput|HumanWorking`), so unlike the M11b
+   claim — which enters from the already-counted `NeedsInput` — a rework claim
+   can be refused when the host is saturated. The cap is therefore re-checked
+   **inside** the claim transaction under the run-row lock, and a cap-full claim
+   returns `MaisterError("CONFLICT")` and is **never** queued as `Pending`.
+3. **Only top-level flow runs are eligible.** `SETTLED_RUN_STATUSES` includes
+   `Review`, so claiming a delegated child would un-settle an orchestrator parent
+   that may already have completed; `parent_run_id IS NULL` is what prevents it.
+   `run_kind='agent'` is refused explicitly because agent runs carry no
+   `node_attempts` rows at all, leaving nothing to anchor the claim on.
+4. **Release returns to `Review`, not `NeedsInput`.** There is no review HITL to
+   re-open in this provenance, so the release target is the status the run came
+   from, and the freed slot is handed to `promoteNextPending`.
+
+### ADR-160 `Running → NeedsInput` by operator node interrupt (Designed)
+
+An operator may pause a live agent node mid-turn. The transition is the ordinary
+`Running → NeedsInput` park — the same one an agent-requested permission takes —
+entered by an operator instead of the agent, and carrying a `node_interrupt` HITL
+whose option set is server-owned. It reuses `escalateHookTrip`'s mechanics
+verbatim (checkpoint pre-transaction, one park transaction) and adds no
+`runs.status` value and no `node_attempts` status value. The keep-alive idle path,
+the 24 h `NeedsInputIdle → Abandoned` sweep, and the reconcile classifier treat it
+exactly like a `hook_trip` park. See [`hitl.md`](hitl.md) for the kind and
+[`run-continuation.md`](run-continuation.md) for the option matrix.
 
 ### Reconcile-driven `Running → Crashed` + hybrid Recover (Implemented)
 

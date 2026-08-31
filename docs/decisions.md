@@ -201,6 +201,8 @@
 | [ADR-157](#adr-157-read-only-sibling-repo-context-mounts) | Read-only sibling-repo context mounts | Implemented | 2026-08-05 |
 | [ADR-158](#adr-158-russian-user-manual-with-screenshots-under-docsrumanual) | Russian user manual with screenshots under `docs/ru/manual/` | Implemented | 2026-08-12 |
 | [ADR-159](#adr-159-dbml-as-the-format-of-the-generated-consolidated-erd) | DBML as the format of the generated consolidated ERD | Implemented | 2026-08-31 |
+| [ADR-160](#adr-160-review-run-rework-claim-with-fast-forward-only-handoff-round-trip) | Review-run rework claim with fast-forward-only handoff round-trip | Accepted | 2026-08-31 |
+| [ADR-161](#adr-161-operator-node-interrupt-with-corrective-restart) | Operator node interrupt with corrective restart | Accepted | 2026-08-31 |
 
 ---
 
@@ -1623,6 +1625,268 @@ Full record: [`decisions/adr-158.md`](decisions/adr-158.md)
 **Date:** 2026-08-31
 
 Full record: [`decisions/adr-159.md`](decisions/adr-159.md)
+
+---
+
+### ADR-159: Review-run rework claim with fast-forward-only handoff round-trip
+
+**Date:** 2026-08-31
+**Status:** Accepted
+
+**Context:** A flow run that reaches `runs.status='Review'` has finished its
+graph. A human who then finds problems — while testing the branch, after an
+export/handoff to a local checkout, or after pushing fixes from another machine
+— has no way to bring the SAME run back into the graph so the flow's own gates
+re-validate those commits. The only exits today are promote (accept it as-is),
+abandon, or launch a brand-new run from the branch, which discards the run's
+evidence graph and its readiness history. ADR-030's manual takeover solves the
+adjacent problem for a run parked at a `human_review` node, but it cannot start
+from `Review`: that status has no HITL to answer and no `current_step_id`.
+
+**Decision:** A **rework claim** returns a `Review` run to `HumanWorking`,
+lets the operator work the existing worktree by hand, and returns it into the
+graph at a server-resolved re-entry node.
+
+- **Eligibility is an allow-list**, admitted only when ALL hold: `status='Review'`,
+  `run_kind='flow'`, `parent_run_id IS NULL`, `workspace_mode <> 'shared'`, the
+  run is not a launched evaluation participant, and the workspace exists with
+  `removed_at IS NULL`. A status not named here is refused by default. The
+  concurrency cap is re-checked **inside** the claim transaction under the run
+  row lock; cap-full returns `CONFLICT` and is **never** queued as `Pending`,
+  because the scheduler cannot "start" a human.
+- **`run_kind='agent'` is excluded, although ADR-141 branch sync admits it.**
+  The predicates look alike and are not. Sync is a **branch** operation: it needs
+  a worktree and a branch, which an agent run has. A rework claim is a **graph
+  re-entry** operation. Agent runs carry no `node_attempts` rows at all — their
+  `stepId` is the constant `"agent"` — so there is no node to anchor the claim
+  row on, no re-entry node to resolve, nothing for the staler to stale, and no
+  `runGraph` traversal to resume. The refusal is explicit and early, naming
+  branch sync and relaunch as the alternatives, rather than letting the caller
+  fall through to a confusing "no re-entry declared" later.
+- **The claim is a run status, not a lifecycle claim.** The
+  `lifecycle_operation_*` slot is a **lease** (`promotionClaimTimeoutSeconds()`,
+  default 300 s, renewed by a heartbeat at ¼ window) sized for machine work; a
+  human-paced claim would expire mid-edit and be reclaimed under the operator.
+  Mutual exclusion therefore comes from `runs.status='HumanWorking'`, which
+  already refuses promote, sync, archive, drop, export, snapshot, and handoff.
+- **Provenance lives on the ledger, not on a new status.** No `runs.status`
+  value is added. The claim appends one takeover-shaped `node_attempts` row at
+  the **last executed node**, carrying `owner_user_id` and
+  `decision='review_rework_claim'`, which is what distinguishes it from an
+  ADR-030 takeover. The status CAS commits **before** that insert, so a
+  concurrent loser is refused at the CAS and never reaches the
+  `UNIQUE(run_id, node_id, attempt)` violation.
+- **The re-entry node is server-resolved, never operator-chosen**, by an ordered
+  chain: (1) the flow-level manifest `reentry` field; (2) the last executed
+  `human` node in the ledger whose compiled `transitions.takeover` names a node
+  present in the graph; (3) unresolved ⇒ the action is refused with a reason
+  pointing at "launch a new run from this branch". The chain is ledger-derived
+  because `runGraph` writes `current_step_id: null` on reaching `Review`.
+- **Ingest on return is fetch + fast-forward only.** `git fetch <remote>` with
+  no refspec, then `git merge --ff-only <remote>/<branch>`. Divergence or non-FF
+  refuses `PRECONDITION` carrying the failing command, both SHAs, ahead/behind
+  counts, and copyable git instructions, and mutates nothing. A missing remote
+  or absent upstream is a no-op success, so the purely-local loop still works.
+- **A carve-out opens exactly one lifecycle action to the claim owner.** During
+  `HumanWorking`, `exportBranch` is enabled for the viewer that matches
+  `owner_user_id` — which is what makes `snapshotCommit`, `handoffBranch`, and
+  the handoff metadata reachable, since all three gate on it. Every other action
+  and every other actor stays `human-owned`-disabled.
+- **`markDownstreamStale` now ignores claim rows, unconditionally and for every
+  caller.** When choosing the per-node latest attempt to stale from, it selects
+  the latest attempt **with `owner_user_id IS NULL`**. See the dedicated
+  consequence below — this is a correction, not a new feature.
+- **Claim and return each emit one `domain_events` row** — `run.rework_claimed`
+  and `run.rework_returned` — in the SAME transaction as the domain write
+  (ADR-086 exactly-once), with `actor_type='user'`, plus the matching outbound
+  webhook. Neither kind is run-terminal or run-settled: adding them to
+  `RUN_SETTLED_EVENT_KINDS` would let an orchestrator treat a claim as a settled
+  child. This costs migration `0125`, a CHECK-only rewrite of
+  `domain_events_kind_check` from 11 to 13 kinds.
+- **Release without changes returns the run to `Review`**, not `NeedsInput` —
+  there is no review HITL to re-open in this provenance — closes the claim row,
+  and calls `promoteNextPending` because the slot is freed.
+
+**Consequences:**
+
+- `Review → HumanWorking` **acquires** a concurrency slot: `countLiveRuns`
+  counts `Running|NeedsInput|HumanWorking` and `Review` is slot-free. A claim
+  can therefore be refused when the host is saturated, which is why the cap is
+  re-checked under the lock rather than pre-checked.
+- `SETTLED_RUN_STATUSES` includes `Review`, so a claimed child would un-settle
+  an orchestrator parent that may already have completed. `parent_run_id IS NULL`
+  is what prevents this, and it is asserted by a refusal test rather than assumed.
+- **The shared staleness fix corrects a real defect class, not just a Feature-A
+  edge case.** Because the claim row is appended at the last executed node — by
+  construction downstream of any re-entry — `latestAttemptByNode` would have
+  returned the claim row for that node on **every** claim, shielding its `passed`
+  gates from staling and letting stale evidence survive a re-review. Making the
+  helper skip owner-held rows moves staling in the fail-closed direction
+  (strictly more evidence re-run), which is the safe direction for a readiness
+  gate. It is applied unconditionally rather than behind a flag because two
+  behaviours for one invariant is how the next reader gets it wrong. The same
+  shielding applies in principle to ADR-030 takeover rows, whose claim lands on
+  the `human_review` node; that node's gates are deferred to node finish, so
+  whether it was exploitable in practice was settled **by test, not by argument**
+  — see `T-A14`, whose observed result is recorded with the implementation.
+- Accepted residual crash windows, each recovered rather than prevented:
+  - **CA1** — claim tx committed, response lost. The claim IS the durable
+    intent; the UI re-reads it and a retry loses the CAS with `CONFLICT`.
+  - **CA2** — fetch/FF succeeded, ledger tx not started. The FF is a no-op on
+    retry; the operator re-clicks Return.
+  - **CA3** — return committed but `runFlow` never dispatched. Recovered by the
+    existing `runTakeoverReturnRecoverySweep` with no new sweep, because its
+    predicate is exactly the `hasPendingTakeoverResume` probe, which is agnostic
+    to the takeover row's own node.
+  - **CA4** — partial ledger write. Impossible: record, artifacts, staleness,
+    the `Running` CAS, and the cursor park are ONE transaction. A rollback
+    surfaces as `EXECUTOR_UNAVAILABLE` 503 with the run still `HumanWorking`.
+- No new `MaisterError` code; `docs/error-taxonomy.md` gains cell entries only.
+
+**Alternatives Considered:**
+
+- _Hold the `lifecycle_operation_name` lease for the claim_: rejected — it is a
+  300 s renewable lease designed for machine-paced work, and a human claim would
+  be reclaimed mid-edit.
+- _A new `runs.status` value (e.g. `ReworkClaimed`)_: rejected — every consumer
+  of the run status (board columns, portfolio, rails, scheduler cap, five
+  sweeps, promote/sync fences) would need a new branch, when `HumanWorking`
+  already carries exactly the right semantics and fences.
+- _Merge, rebase, or the ADR-141 AI resolver on ingest_: rejected for v1 —
+  fast-forward-only keeps the operation total and auditable, and the escape
+  hatch (export → resolve elsewhere → push → return) already exists. Routing
+  conflicts through the ADR-141 resolver is recorded as a future enhancement.
+- _Let the operator choose the re-entry node_: rejected — it is a
+  body-controlled cross-resource locator into graph traversal, and the two
+  server-derived sources cover the real cases.
+- _Reuse the ADR-141 sync eligibility predicate verbatim_: rejected — see the
+  `agent` exclusion above. Reusing a predicate across two concerns without
+  re-deriving each term is the failure mode this project has already paid for.
+- _Scope the staleness fix behind a Feature-A flag_: rejected — the shielding is
+  the general case for this caller, so a flag would make correctness opt-in for
+  the one caller that always needs it.
+
+---
+
+### ADR-160: Operator node interrupt with corrective restart
+
+**Date:** 2026-08-31
+**Status:** Accepted
+
+**Context:** When a live agent node goes off-track mid-turn, the only lever is
+stopping the whole run, which parks it in `Review` and is terminal for the
+graph. There is no way to pause one node, tell the agent what it got wrong, and
+re-run that node — or to jump back to an earlier node — outside the rework
+points the flow author declared in advance. ADR-108's `hook_trip` already
+implements the soft-halt mechanics (checkpoint, park, HITL, resume) for a
+guardrail trip; what is missing is an operator-initiated entry to the same
+machinery plus a corrective-restart response.
+
+**Decision:** An **operator node interrupt** parks a running agent node into
+`NeedsInput` with a `node_interrupt` HITL carrying a server-owned option set.
+
+- **Admission is an allow-list**: `status='Running'`, `run_kind='flow'`, the
+  current node has a `node_attempts` row with `status='Running'`, and the node
+  is agent-executed (`ai_coding | judge | orchestrator`). `cli` and `check`
+  nodes refuse `PRECONDITION` naming the deferral — interrupting a detached
+  process group mid-command is deliberately out of v1 scope. `nodeId`,
+  `nodeAttemptId`, and `supervisorSessionId` are all server-state; none is a
+  body field.
+- **The mechanics are `escalateHookTrip`'s, reused rather than re-derived**:
+  checkpoint the session **before** the transaction (an `EXECUTOR_UNAVAILABLE`
+  checkpoint re-throws with no mutation; any other failure logs and proceeds,
+  because the session is already gone), write `needs-input.json` pre-transaction
+  and unlink it if the transaction throws, then ONE transaction performs the
+  CAS `Running → NeedsInput`, `markNodeNeedsInput`, the HITL insert, the
+  assignment, the `run.needs_input` webhook, and a `run.escalated` domain event
+  with `reason='node_interrupt'`. Reusing the existing `run.escalated` kind is
+  why Feature B needs no taxonomy entry and no CHECK migration, while ADR-159's
+  claim/return do — an asymmetry that is a decision, not an omission: a claim is
+  a distinct lifecycle fact for external subscribers, an interrupt is an
+  escalation like every other escalation.
+- **`node_attempts` stays append-only and its status enum gains no value.**
+- **The option set is server-owned** and delivered on the existing
+  `availableOptions` channel already used by `budget_breach`: `resume`,
+  `restart_node` (the default), `restart_from`, and `stop`. The client never
+  re-derives availability.
+- **`restart_from`'s eligible targets are ledger-derived** — nodes with at least
+  one prior attempt in THIS run — because the static graph has cycles and the
+  set is therefore not derivable from topology. A target with no prior attempt
+  is refused: forward skips are out of scope. Nodes that are declared rework
+  targets are flagged `recommended` for the UI, but the flag is presentation,
+  not permission.
+- **A restart closes the parked attempt as `Reworked` with
+  `decision='operator_interrupt'`**, applies the operator's workspace policy
+  against the target's `checkpoint_ref` **before** the ledger transaction, and
+  stales downstream when the target differs from the interrupted node. Because
+  the closing row is `Reworked` rather than `NeedsInput`, `runGraph` appends a
+  **fresh** attempt instead of reusing the current one — that is the mechanism
+  the whole design rests on, and it is pinned by test. A missing `checkpoint_ref`
+  degrades to `keep` with a WARN; it is never guessed.
+- **The operator's correction reaches the agent as a server-side fenced prompt
+  append**, mirroring the run-context pointer line, and is captured in
+  `node_attempts.resolved_prompt`. It is deliberately **not** routed through
+  `commentsVar` and never passes through Mustache: the append works on any node
+  type, needs no renderer validation, and cannot throw a strict-mode
+  unknown-variable error into the run.
+- **Operator restarts never burn the flow's `rework.maxLoops` budget.** Attempts
+  closed with `decision='operator_interrupt'` are subtracted from the node's
+  effective attempt count, so a run with zero operator restarts behaves
+  byte-identically to today. A separate global `MAISTER_MAX_OPERATOR_RESTARTS`
+  (default 10) bounds them per run and refuses with `CONFLICT`.
+- **The same exclusion applies to BOTH Observatory counters** — `reworkCount`
+  (rows with status `Reworked`) and `retryCount` (`max(attempt) - 1` per
+  `(run, node)`). Excluding one alone leaves the correction metric inflated,
+  because an operator restart currently increments both.
+- **`node_interrupt` is human-actor-only**, enforced at the `respondToHitl`
+  chokepoint before any mutation, with no ext-API and no MCP surface — the same
+  posture as `hook_trip`.
+
+**Consequences:**
+
+- A `node_interrupt` park is an ordinary `NeedsInput` park: it idles to
+  `NeedsInputIdle` on the keep-alive sweep, is abandoned at 24 h, and must never
+  be classified `Crashed` by reconcile. Every `hook_trip` consumer site is
+  mirrored or explicitly recorded as not-mirrored.
+- Accepted residual crash windows:
+  - **CB1** — checkpoint delivered, park transaction never committed. The
+    `needs-input.json` is unlinked in the catch and the runner observes
+    `session.exited.reason=checkpoint` → `STEP_CHECKPOINTED` → its own
+    `markNodeNeedsInput` and park, converging on the same state. Asserted by
+    test rather than assumed.
+  - **CB2** — checkpoint returned `EXECUTOR_UNAVAILABLE`. Nothing mutated; 503,
+    run stays `Running`, no split-brain.
+  - **CB3** — restart recorded but `runFlow` not dispatched. The HITL
+    already-delivered self-heal branch re-drives `scheduleResume`.
+  - **CB4** — workspace policy applied, ledger transaction not committed.
+    Idempotent: re-deciding re-applies against the same `checkpoint_ref`.
+  - **CB5** — an interrupted run swept to `NeedsInputIdle` and then abandoned at
+    24 h. Normal `hook_trip` behaviour, deliberately inherited.
+- No new `MaisterError` code and no new `runs.status` value; the closed union is
+  reused and `docs/error-taxonomy.md` gains cell entries only.
+
+**Alternatives Considered:**
+
+- _Deliver the correction through `commentsVar`_: rejected — it only works on
+  nodes whose author declared the variable, requires ADR-138 renderer
+  validation, and `renderStrict` throws `CONFIG` into the run on a missing
+  variable, converting an operator's typo into a failed node.
+- _A new `node_attempts` status value for "operator-interrupted"_: rejected —
+  `Reworked` + a `decision` marker carries the provenance without touching an
+  enum that five subsystems branch on, and keeps the ledger append-only.
+- _Let operator restarts consume `rework.maxLoops`_: rejected — the budget
+  expresses the flow author's tolerance for automated rework loops, not for
+  human intervention; conflating them would let an operator exhaust a flow's
+  rework budget by helping it.
+- _Excluding operator restarts from `reworkCount` only_: rejected — `retryCount`
+  is derived from `max(attempt) - 1`, which an operator restart also advances,
+  so a single-sided exclusion still reports a fabricated correction rate.
+- _Allowing `restart_from` to target any graph node_: rejected — forward skips
+  would let an operator jump past nodes that produce required artifacts,
+  defeating the typed input/output enforcement.
+- _An ext-API / MCP surface for the interrupt_: rejected for v1 — it is a human
+  judgement call about a live agent, and `hook_trip` already sets the
+  human-actor-only precedent.
 
 ---
 

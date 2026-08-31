@@ -187,7 +187,7 @@ Reserved numbers). Feature B's interrupt reuses the existing `run.escalated` kin
 | `POST /api/runs/{runId}/rework-claim/return` (new) | `docs/api/web.openapi.yaml` + new domain doc |
 | `POST /api/runs/{runId}/node-interrupt` (new) | `docs/api/web.openapi.yaml` + `docs/system-analytics/hitl.md` |
 | `POST /api/runs/{runId}/hitl/{id}/respond` — new `node_interrupt` kind + body fields (`workspacePolicy`, `targetNodeId`, `correction`) | `docs/api/web.openapi.yaml` + `docs/system-analytics/hitl.md` |
-| `GET /api/runs/{runId}` DTO — new `continuation` block (claim state, re-entry, available options) | `docs/api/web.openapi.yaml` |
+| Run-detail **read model** (`getRunDetail`, RSC — **not** an HTTP route; the spec's `GET /api/runs/{runId}` was amended) — new `continuation` block (claim state, re-entry, available options) | none — no OpenAPI surface; covered by `docs/system-analytics/run-continuation.md` |
 | New HITL kind `node_interrupt` | `docs/system-analytics/hitl.md` "Three kinds" + kinds table + Expectations |
 | New assignment `action_kind` `node_interrupt` | `docs/system-analytics/hitl.md`, `docs/db/runs-domain.md` |
 | Flow DSL flow-level `reentry` | `docs/flow-dsl.md` + `web/lib/config.schema.ts` + **`web/lib/flows/flow-dsl-grammar.ts`** (in-code SSOT shipped as the `/flow-authoring` skill) + its drift-guard test |
@@ -439,7 +439,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   an ADR's rationale (R7 — cite, don't duplicate).
   *Depends on:* none. **Nothing else in this plan may start until this is frozen.**
 
-- [ ] **Task 1: Write ADR-159 and ADR-160 headers + bodies in `docs/decisions.md`.**
+- [x] **Task 1: Write ADR-159 and ADR-160 headers + bodies in `docs/decisions.md`.**
   ADR-159 "Review-run rework claim with fast-forward-only handoff round-trip" (Status: Accepted);
   ADR-160 "Operator node interrupt with corrective restart" (Status: Accepted).
   Each MUST record: the eligibility allow-list (D3) **including why `agent` is excluded although
@@ -454,7 +454,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   *Verify:* `grep -c '^### ADR-159' docs/decisions.md` = 1, same for 160; anchor-check script green.
   *Logging:* n/a (docs).
 
-- [ ] **Task 2: Create `docs/system-analytics/run-continuation.md`** — the new domain doc. It owns
+- [x] **Task 2: Create `docs/system-analytics/run-continuation.md`** — the new domain doc. It owns
   BOTH features and cross-links `manual-takeover.md` rather than duplicating M11b.
   **`docs/CLAUDE.md` compliance is the acceptance criterion, not a style note:**
   - **R5** — exactly these sections, in this order: Purpose · Domain entities · State machine ·
@@ -476,7 +476,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   diagram maps to a named function that Phase 1/3 will create.
   *Depends on:* 0, 1.
 
-- [ ] **Task 3: Update the existing domain docs.**
+- [x] **Task 3: Update the existing domain docs.**
   - `docs/system-analytics/runs.md` — add `Review --> HumanWorking: rework claim (ADR-159, cap-gated,
     top-level only)` and `Running --> NeedsInput: operator node interrupt (ADR-160)` to the state
     diagram; extend the `HumanWorking` invariants section with the Review provenance.
@@ -510,7 +510,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   match `decisions.md`'s ADR-142 title.
   *Depends on:* none (can run first; independent of the feature).
 
-- [ ] **Task 4: Specify the flow-DSL `reentry` field.**
+- [x] **Task 4: Specify the flow-DSL `reentry` field.**
   - `docs/flow-dsl.md` — flow-level `reentry: <nodeId>`, compile-validated, engine floor **3.5.0**,
     engine-floor table updated, with an example. State explicitly that `reentry` is **compile-time
     only and never persisted to a DB column**, so the YAML→DB SET/CLEAR symmetry rule does not apply;
@@ -518,7 +518,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   - `docs/system-analytics/flow-graph.md` — how `reentry` participates in D5.
   *Depends on:* 2.
 
-- [ ] **Task 5: Specify the API + event contracts (concrete, convention-conforming).**
+- [x] **Task 5: Specify the API + event contracts (concrete, convention-conforming).**
   `docs/api/web.openapi.yaml` — four new path objects (`rework-claim/claim`, `rework-claim/return`,
   `rework-claim/release`, `node-interrupt`), the extended `hitl/{id}/respond` body, and the new
   `continuation` block on the run-detail DTO. **Mirror the shape of the existing
@@ -736,9 +736,19 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   4. **Docs row**: `docs/system-analytics/domain-events.md` kind table **and** the ERD pair —
      `docs/database-schema.md` **and** `docs/db/domain-events.md`. Updating one is not updating the
      other; both must name the new CHECK contents.
+  5. **Fourth registration point — FOUND during Task 5, not hypothetical.**
+     `web/lib/ext-activity/types.ts` declares `PulseEventKind = DomainEventKind` (an alias, not a
+     separate list), and `mapDomainEvent` in `web/lib/ext-activity/domain-events.ts` is an
+     **exhaustive `switch` with no `default` arm**. Widening `DOMAIN_EVENT_KINDS` therefore breaks
+     that switch's exhaustiveness at compile time. Add a `case` for BOTH new kinds with an
+     appropriate `salience` / `action` / `summary`, and mirror them in
+     `docs/api/external/operations.openapi.yaml` `ExtPulseEventKind` (**done in Task 5**) — that enum
+     IS the domain-event taxonomy mirror, not a webhook one.
   Also confirm the permanent `noop` consumer and the per-consumer cursor dispatcher need no
-  registration change for a new kind (they are kind-agnostic) — **verify, do not assume**; if any
-  dispatch site enumerates kinds, that is a fourth registration point and it moves here.
+  registration change for a new kind (they are kind-agnostic) — **verify, do not assume**. The
+  webhook mirrors (`outbound-webhooks.asyncapi.yaml` payload schemas + `oneOf`, and BOTH
+  `WebhookEventType` enums) are already updated by Task 5; Task 11B adds the matching
+  `web/lib/webhooks/taxonomy.ts` entries so the enums and the code agree.
   *Logging (verbose):* DEBUG the emit with kind + payload keys (never secrets); the existing outbox
   INFO line is sufficient for delivery.
   **RED first:** `T-A16` (4 cases) fails against the un-migrated DB with a CHECK violation — that is
