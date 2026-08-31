@@ -2577,6 +2577,19 @@
       "toolCount": "{name} ×{count}"
     }
   },
+  "runContinuation": {
+    "takeForRework": "Take for rework",
+    "returnToFlow": "Return to flow",
+    "release": "Release",
+    "checkoutContext": "Checkout context",
+    "branch": "Branch",
+    "copy": "Copy",
+    "copyInstructions": "Copy commands",
+    "notOwner": "This run is claimed by another user — only the claim owner can return or release it.",
+    "reentryAt": "Re-enters the flow at {node}",
+    "nonFastForwardTitle": "Branch has diverged",
+    "nonFastForwardBody": "The return is fast-forward only. Your branch is {aheadBy} commit(s) ahead and {behindBy} behind the remote. Resolve it in the worktree, push, then return again."
+  },
   "evidence": {
     "title": "Evidence graph",
     "empty": "No evidence yet for this run.",

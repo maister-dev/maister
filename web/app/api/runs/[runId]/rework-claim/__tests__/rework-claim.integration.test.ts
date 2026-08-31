@@ -984,3 +984,197 @@ describe("T-A16 ADR-159 — claim/return domain events", () => {
     await s.cleanup();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Consumer fanout (T-A18) — the Feature-A column of the fanout table
+// ---------------------------------------------------------------------------
+
+describe("T-A18 ADR-159 — promote/sync fences and abandon, both directions", () => {
+  // A7: promoteRun and assertSyncEligible each require status==='Review', so
+  // HumanWorking is ALREADY fenced against both — no new fence code. Assert it
+  // rather than assuming it.
+  it("promote refuses while the run is HumanWorking", async () => {
+    const s = await seed();
+
+    await claimAs(s);
+
+    const { promoteRun } = await import("@/lib/runs/promote");
+
+    // Driven through the real service seam so the refusal REASON is asserted,
+    // not merely that something threw.
+    await expect(
+      promoteRun(
+        s.runId,
+        {},
+        {
+          sessionUser: { id: s.ownerId },
+          authorize: async () => undefined,
+        },
+        db,
+      ),
+    ).rejects.toThrow(/must be Review/);
+
+    expect((await readRun(s.runId)).status).toBe("HumanWorking");
+
+    await s.cleanup();
+  });
+
+  it("sync refuses while the run is HumanWorking", async () => {
+    const s = await seed();
+
+    await claimAs(s);
+
+    const { assertSyncEligible } = await import("@/lib/runs/sync-target");
+
+    expect(() =>
+      assertSyncEligible(
+        {
+          status: "HumanWorking",
+          runKind: "flow",
+          parentRunId: null,
+          workspaceMode: null,
+          isLaunchedLineage: false,
+        },
+        { removedAt: null },
+      ),
+    ).toThrowError(/Review/);
+
+    await s.cleanup();
+  });
+
+  // The other direction: once promote or sync has taken the run out of Review,
+  // a claim is refused by its own allow-list.
+  it.each([["Running"], ["Done"]])(
+    "a claim refuses once the run has left Review (status %s)",
+    async (status) => {
+      const s = await seed();
+
+      await db.update(runs).set({ status }).where(eq(runs.id, s.runId));
+      sessionRef.value = { user: { id: s.ownerId, role: "member" } };
+
+      const res = await claimPOST(claimReq(s.runId), {
+        params: Promise.resolve({ runId: s.runId }),
+      });
+
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("PRECONDITION");
+
+      await s.cleanup();
+    },
+  );
+
+  // abandonRun's releaseHumanWorking path flips HumanWorking -> NeedsInput and
+  // then Abandoned inside ONE transaction, so the intermediate status is never
+  // observable and the terminal outcome is identical for both provenances. The
+  // claim row must still be closed.
+  it("abandon terminalizes a Review-provenance claim and closes the claim row", async () => {
+    const s = await seed();
+
+    await claimAs(s);
+
+    const abandonPOST = (await import("../../abandon/route")).POST;
+    const res = await abandonPOST(
+      new NextRequest(
+        new Request(`http://localhost/api/runs/${s.runId}/abandon`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+      { params: Promise.resolve({ runId: s.runId }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect((await readRun(s.runId)).status).toBe("Abandoned");
+
+    const rows = await claimRows(s.runId);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].endedAt).not.toBeNull();
+
+    await s.cleanup();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Server-owned continuation availability (extends T-A8) — ADR-159 / REQ-A4, A5
+// ---------------------------------------------------------------------------
+
+describe("ADR-159 — run-detail continuation block is server-owned", () => {
+  async function continuationFor(runId: string) {
+    const { getRunDetail } = await import("@/lib/queries/run");
+    const detail = await getRunDetail(runId);
+
+    return detail?.continuation;
+  }
+
+  it("offers the claim on an eligible Review run, with the resolved re-entry", async () => {
+    const s = await seed();
+    const c = await continuationFor(s.runId);
+
+    expect(c?.reworkClaimAvailable).toBe(true);
+    expect(c?.disabledReason).toBeNull();
+    expect(c?.reentryNodeId).toBe(REENTRY_NODE);
+    expect(c?.reentrySource).toBe("takeover_transition");
+    expect(c?.claim).toBeNull();
+
+    await s.cleanup();
+  });
+
+  it("carries the open claim (anchored on the LAST EXECUTED node) once claimed", async () => {
+    const s = await seed();
+
+    await claimAs(s);
+
+    const c = await continuationFor(s.runId);
+
+    expect(c?.claim).not.toBeNull();
+    expect(c?.claim?.ownerUserId).toBe(s.ownerId);
+    // The anchor is the last executed node, NOT the re-entry node.
+    expect(c?.claim?.anchorNodeId).toBe(REVIEW_NODE);
+    expect(c?.reworkClaimAvailable).toBe(false);
+    expect(c?.disabledReason).toBe("already claimed for rework");
+
+    await s.cleanup();
+  });
+
+  it("carries a typed reason instead of availability for an ineligible run", async () => {
+    const parent = await seed();
+    const child = await seed({ parentRunId: parent.runId });
+    const c = await continuationFor(child.runId);
+
+    expect(c?.reworkClaimAvailable).toBe(false);
+    expect(c?.disabledReason?.toLowerCase()).toContain("orchestrator");
+    expect(c?.reentryNodeId).toBeNull();
+
+    await child.cleanup();
+    await parent.cleanup();
+  });
+
+  // The pointer the UI turns into "launch a new run from this branch".
+  it("names the relaunch escape hatch when no re-entry can be resolved", async () => {
+    const s = await seed();
+
+    // Drop the human node's takeover transition from the pinned manifest.
+    const noTakeover = {
+      ...fixtureManifest,
+      nodes: fixtureManifest.nodes.map((n: any) =>
+        n.id === REVIEW_NODE
+          ? { ...n, transitions: { approve: "done" } }
+          : n,
+      ),
+    };
+
+    await db
+      .update(flows)
+      .set({ manifest: noTakeover })
+      .where(eq(flows.projectId, s.projectId));
+
+    const c = await continuationFor(s.runId);
+
+    expect(c?.reworkClaimAvailable).toBe(false);
+    expect(c?.disabledReason?.toLowerCase()).toContain("launch a new run");
+    expect(c?.reentryNodeId).toBeNull();
+
+    await s.cleanup();
+  });
+});

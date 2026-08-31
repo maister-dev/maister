@@ -57,6 +57,13 @@ import { classifyRecover } from "@/lib/runs/recover-classify";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import * as schema from "@/lib/db/schema";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import {
+  getNodeAttemptsForRun,
+  REVIEW_REWORK_CLAIM_DECISION,
+} from "@/lib/flows/graph/ledger";
+import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
+import { resolveReentryNode } from "@/lib/runs/reentry";
+import { assertReworkClaimEligible } from "@/lib/runs/rework-claim";
 import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
 import { buildSettingsView } from "@/lib/flows/settings-view";
 import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
@@ -216,7 +223,164 @@ export interface RunDetail {
     warning: RunnerResolutionWarning;
   }>;
   cutoverFailure: GraphOnlyCutoverFailure | null;
+  // ADR-159: the rework-claim surface. Availability is SERVER-OWNED (mirroring
+  // the `budget_breach` availableOptions precedent) so the client never
+  // re-derives eligibility; when unavailable it carries a typed reason the UI
+  // turns into the "launch a new run from this branch" pointer.
+  continuation: RunContinuation;
 }
+
+// ADR-159: derive the run-detail continuation block. Availability is decided
+// here, server-side, so the client never re-derives eligibility — the same
+// contract the `budget_breach` `availableOptions` channel already follows.
+async function deriveRunContinuation(args: {
+  // FIXME(any): dual drizzle-orm peer-dep variants — Db handle.
+  client: any;
+  runId: string;
+  row: {
+    status: string;
+    runKind: string;
+    parentRunId?: string | null;
+    workspaceMode?: string | null;
+    workspaceId?: string | null;
+    removedAt?: Date | null;
+    projectId?: string | null;
+  };
+  activeClaimRow: {
+    ownerUserId: string | null;
+    nodeId: string;
+    startedAt: Date | null;
+    decision?: string | null;
+  } | null;
+}): Promise<RunContinuation> {
+  const { client, runId, row, activeClaimRow } = args;
+
+  const claim =
+    activeClaimRow &&
+    activeClaimRow.ownerUserId !== null &&
+    activeClaimRow.decision === REVIEW_REWORK_CLAIM_DECISION
+      ? {
+          ownerUserId: activeClaimRow.ownerUserId,
+          anchorNodeId: activeClaimRow.nodeId,
+          claimedAt: activeClaimRow.startedAt ?? null,
+        }
+      : null;
+
+  const unavailable = (reason: string): RunContinuation => ({
+    claim,
+    reworkClaimAvailable: false,
+    disabledReason: reason,
+    reentryNodeId: null,
+    reentrySource: null,
+  });
+
+  // Cheap gates first: everything below needs a manifest parse and a DB probe.
+  if (row.runKind !== "flow") {
+    return unavailable(
+      "only flow runs can be taken for rework — use branch sync, or launch a new run from this branch",
+    );
+  }
+  if (row.status !== "Review" && row.status !== "HumanWorking") {
+    return unavailable(`run must be Review to take for rework (is ${row.status})`);
+  }
+
+  let isLaunchedLineage = false;
+
+  try {
+    isLaunchedLineage = await isLaunchedLineageRun(client, runId);
+  } catch (err) {
+    // Degrade loudly rather than crashing the whole run-detail render: an
+    // unreadable probe must not be indistinguishable from a healthy `false`.
+    log.warn(
+      { runId, err: err instanceof Error ? err.message : String(err) },
+      "[continuation] launched-lineage probe failed — treating as ineligible",
+    );
+
+    return unavailable("could not evaluate rework eligibility");
+  }
+
+  try {
+    assertReworkClaimEligible(
+      {
+        // A claimed run is already HumanWorking; report availability against
+        // the status it was claimed FROM so the panel reads consistently.
+        status: claim !== null ? "Review" : row.status,
+        runKind: row.runKind,
+        parentRunId: row.parentRunId ?? null,
+        workspaceMode: row.workspaceMode ?? null,
+        isLaunchedLineage,
+      },
+      row.workspaceId ? { removedAt: row.removedAt ?? null } : null,
+    );
+  } catch (err) {
+    return unavailable(
+      err instanceof Error ? err.message : "not eligible for rework",
+    );
+  }
+
+  let reentry;
+
+  try {
+    const loadedManifest = await loadRunManifest(runId, client);
+
+    if (!loadedManifest?.manifest) {
+      return unavailable("the run has no pinned flow manifest to re-enter");
+    }
+
+    reentry = resolveReentryNode(
+      compileManifest(loadedManifest.manifest),
+      await getNodeAttemptsForRun(runId, client),
+    );
+  } catch (err) {
+    log.warn(
+      { runId, err: err instanceof Error ? err.message : String(err) },
+      "[continuation] manifest/re-entry resolution failed",
+    );
+
+    return unavailable("could not resolve a re-entry node for this run");
+  }
+
+  if (!reentry.ok) {
+    return unavailable(
+      "this flow declares no re-entry node and no executed human node offers a takeover transition — launch a new run from this branch instead",
+    );
+  }
+
+  log.debug(
+    {
+      runId,
+      status: row.status,
+      claimed: claim !== null,
+      reentryNodeId: reentry.nodeId,
+      reentrySource: reentry.source,
+    },
+    "[continuation] derived",
+  );
+
+  return {
+    claim,
+    reworkClaimAvailable: claim === null,
+    disabledReason: claim === null ? null : "already claimed for rework",
+    reentryNodeId: reentry.nodeId,
+    reentrySource: reentry.source,
+  };
+}
+
+export type RunContinuationClaim = {
+  ownerUserId: string;
+  anchorNodeId: string;
+  claimedAt: Date | null;
+};
+
+export type RunContinuation = {
+  // Non-null only while an ADR-159 rework claim is open (an ADR-030 takeover
+  // leaves it null — the two are told apart by `node_attempts.decision`).
+  claim: RunContinuationClaim | null;
+  reworkClaimAvailable: boolean;
+  disabledReason: string | null;
+  reentryNodeId: string | null;
+  reentrySource: "manifest" | "takeover_transition" | null;
+};
 
 // Pure recoverability predicate (no db/clock) so it is fully unit-testable.
 // `currentNodeKind` + `retrySafe` are resolved by the caller from the run's
@@ -266,6 +430,11 @@ export const getRunDetail = cache(async function getRunDetail(
       status: runs.status,
       startedAt: runs.startedAt,
       runKind: runs.runKind,
+      // ADR-159: eligibility terms the continuation block gates on. Without
+      // them the derivation reads `null` and would offer a claim on an
+      // orchestrator child or a shared-tree run.
+      parentRunId: runs.parentRunId,
+      workspaceMode: runs.workspaceMode,
       agentId: runs.agentId,
       currentStepId: runs.currentStepId,
       resumeTargetStepId: runs.resumeTargetStepId,
@@ -349,18 +518,28 @@ export const getRunDetail = cache(async function getRunDetail(
   });
 
   const activeTakeoverRows = await client
-    .select({ ownerUserId: nodeAttempts.ownerUserId })
+    .select({
+      ownerUserId: nodeAttempts.ownerUserId,
+      nodeId: nodeAttempts.nodeId,
+      startedAt: nodeAttempts.startedAt,
+      decision: nodeAttempts.decision,
+    })
     .from(nodeAttempts)
     .where(
       and(
         eq(nodeAttempts.runId, runId),
         isNull(nodeAttempts.endedAt),
-        eq(nodeAttempts.nodeType, "human"),
+        // ADR-159: NOT filtered to `human`. An M11b takeover claims the parked
+        // human_review node, but a rework claim anchors on the LAST EXECUTED
+        // node — usually `check` or `ai_coding` — so a nodeType filter would
+        // read its owner as null and silently disable every owner-gated action.
+        // `owner_user_id IS NOT NULL` is the claim predicate; the type is not.
+        isNotNull(nodeAttempts.ownerUserId),
       ),
     )
     .orderBy(desc(nodeAttempts.attempt));
-  const takeoverOwnerUserId =
-    activeTakeoverRows.find((r) => r.ownerUserId !== null)?.ownerUserId ?? null;
+  const activeClaimRow = activeTakeoverRows[0] ?? null;
+  const takeoverOwnerUserId = activeClaimRow?.ownerUserId ?? null;
 
   const hitlRows = await client
     .select({
@@ -521,6 +700,18 @@ export const getRunDetail = cache(async function getRunDetail(
     );
   }
 
+  // ADR-159: server-owned continuation availability. The eligibility + re-entry
+  // resolution are only meaningful for a flow run that is in Review (claimable)
+  // or already HumanWorking (claimed), so the manifest parse and the
+  // launched-lineage probe are paid ONLY on that path — every other status
+  // resolves to "unavailable" from the row alone.
+  const continuation = await deriveRunContinuation({
+    client,
+    runId,
+    row,
+    activeClaimRow,
+  });
+
   return {
     runId: row.runId,
     // The inner join on projects guarantees a project here; a project-less
@@ -571,6 +762,7 @@ export const getRunDetail = cache(async function getRunDetail(
     effectiveRemovalAt: ttl.effectiveRemovalAt,
     archived: ttl.archived,
     pruned: ttl.pruned,
+    continuation,
     lifecycleActions: lifecycleActionsForWorkspace({
       runKind: row.runKind,
       runStatus: row.status,

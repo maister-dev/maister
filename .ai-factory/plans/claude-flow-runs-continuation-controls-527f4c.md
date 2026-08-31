@@ -776,7 +776,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   *Depends on:* 11B.
   <!-- Commit checkpoint: Commit 3 (Tasks 6-11, 11A, 11B, 11C) -->
 
-- [ ] **Task 12: Feature-A consumer fanout sweep.**
+- [x] **Task 12: Feature-A consumer fanout sweep.**
   Work the Feature-A column of the fanout table above, **by grep, not by memory**: `rg 'HumanWorking'
   web/` and classify every hit into {board read model, portfolio read model, rail query, scheduler cap,
   each sweep's candidate filter, each state/precondition guard, `abandonRun`, `deriveWorkbenchLifecycleActions`,
@@ -787,7 +787,36 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   *Deliverable:* a checklist in the PR body enumerating every `HumanWorking` consumer and its verdict.
   *Depends on:* 11.
 
-- [ ] **Task 13: Extend the run-detail read model with a `continuation` block.**
+  **RESULT — every `HumanWorking` consumer, by `rg 'HumanWorking' web/` (42 files; tests,
+  i18n catalogs, and a historical migration excluded).** No consumer needed a code change: the
+  Review provenance is carried on `node_attempts.decision`, not on the status, so every reader
+  that branches on `runs.status` sees exactly what it saw for an M11b takeover.
+
+  | Consumer | Site | Verdict |
+  | --- | --- | --- |
+  | Board read model | `queries/board.ts:287`, `board.ts:77` | unchanged — a claimed run renders in the `humanworking` derived column for BOTH provenances, which is correct |
+  | Board progress | `queries/board-progress.ts:89,116` | unchanged — buckets `HumanWorking` with `Running` |
+  | Portfolio (cross-project) | `queries/portfolio.ts:81,90,217,222` | unchanged — stays visible while holding a slot, surfaced like `NeedsInput` |
+  | Runs list / rail | `queries/runs-list.ts:21` | unchanged — in the active set |
+  | Rail lifecycle actions | `queries/portfolio.ts:275` | **changed (Task 8)** — pinned to `null/null`, so the rail keeps showing no actions; the carve-out is a run-detail affordance |
+  | Scheduler cap | `scheduler.ts:158,188` | unchanged — already counts `HumanWorking`; that a claim ACQUIRES a slot is asserted by **T-A4** |
+  | `runResumeRecoverySweep` | `runs/resume-recovery.ts:72` | unchanged — filters `NeedsInput`, so `HumanWorking` is excluded by construction |
+  | `runTakeoverReturnRecoverySweep` | `resume-recovery.ts:320` | unchanged — its `hasPendingTakeoverResume` probe is node-agnostic; reaching a Review-claim return is asserted by **T-A17** |
+  | Keep-alive sweeper | `runs/keepalive-sweeper.ts` | unchanged — **no `HumanWorking` mention at all**, so a claim is never idled |
+  | HITL response guards | `services/hitl.ts:139,828,2695,2739,3598` | unchanged — `HumanWorking` is already excluded from delivery and already counted as an active sibling run |
+  | `abandonRun` | `app/api/runs/[runId]/abandon/route.ts:143` | unchanged — `releaseHumanWorking` flips to `NeedsInput` and `markAbandoned` to `Abandoned` in ONE transaction, so the intermediate status is never observable and the terminal outcome is identical; the claim row is still closed. Asserted in **T-A18** |
+  | `promoteRun` | `runs/promote.ts:612` | unchanged — already fenced by `status==='Review'` (A7); asserted **both directions** in **T-A18** |
+  | `syncRunTarget` | `runs/sync-target.ts:169` | unchanged — same fence; asserted in **T-A18** |
+  | `deriveWorkbenchLifecycleActions` | `workbench-lifecycle/policy.ts` | **changed (Task 8)** — owner carve-out for `exportBranch` only |
+  | Inspector actions | `runs/inspector-actions.ts:138` | **changed (Task 8)** — optional owner/viewer threaded through; absent ⇒ today's behaviour |
+  | Orchestrator settled accounting | `runs/run-status-sets.ts` | unchanged — excluded by `parent_run_id IS NULL`; asserted by **T-A5** |
+  | Observatory | `queries/observatory-core.ts:241,464` | unchanged — **verified, not assumed**: `recordTakeoverReturn` writes only `base_ref`/`returned_commits`/`returned_diff`/`ended_at`, never `status='Reworked'`, so a claim/return produces no counted row |
+  | Launchability | `runs/launchability.ts:40,56` | unchanged — `HumanWorking ⇒ "busy"`, correct for both provenances |
+  | `recoverRun` | `runs/recover.ts:172` | unchanged — `HumanWorking` in the live-status guard set |
+  | Run detail / board UI | `app/(app)/runs/[runId]/layout.tsx`, `components/board/*` | Task 14 (UI) |
+  | Status tone, live inspector, summonability, usage, ephemeral-agent GC, package attach, catch-up sweep, context-mount terminal, budget-breach fork, scratch service | various | unchanged — each treats `HumanWorking` as one live/claimed status with no provenance dependency |
+
+- [x] **Task 13: Extend the run-detail read model with a `continuation` block.**
   `web/lib/queries/run.ts` — add `continuation: { claim: {...} | null, reworkClaimAvailable: boolean,
   disabledReason: string | null, reentryNodeId: string | null, reentrySource: ... }`. The
   availability decision is **server-owned** (mirroring the `budget_breach` `availableOptions`
@@ -798,7 +827,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
 
 ## Phase 2 — Feature A UI, i18n, tests, docs
 
-- [ ] **Task 14: UI — claim / return / release affordances.**
+- [x] **Task 14: UI — claim / return / release affordances.**
   `web/components/runs/review-panel.tsx` (and the run-detail lifecycle menu in
   `web/app/(app)/runs/[runId]/layout.tsx`): add **icon + label** buttons (per `web/CLAUDE.md` UI
   affordance conventions — never text-only; success renders as a green check glyph, never the word
@@ -811,14 +840,14 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   claimed-by-me / claimed-by-someone-else / non-FF-error rendering.
   *Depends on:* 13.
 
-- [ ] **Task 15: i18n — EN + RU.** Add every new string to BOTH `web/messages/en.json` and
+- [x] **Task 15: i18n — EN + RU.** Add every new string to BOTH `web/messages/en.json` and
   `web/messages/ru.json` (both currently 4538 lines — they must stay key-identical). Covers: action
   labels, all disabled reasons, every refusal message surfaced to the user, the non-FF instruction
   block, and the re-entry source labels.
   *Verify:* the existing key-parity test/lint passes; no hardcoded English in the new components.
   *Depends on:* 14.
 
-- [ ] **Task 16: Deployment wiring (Feature A).** Feature A adds **no** env var — record that
+- [x] **Task 16: Deployment wiring (Feature A).** Feature A adds **no** env var — record that
   explicitly in `docs/configuration.md` so the absence is a decision, not an omission. (The Feature-B
   env var lands in Task 25.) Confirm no compose/Dockerfile change is required and state why.
   *Depends on:* 13.

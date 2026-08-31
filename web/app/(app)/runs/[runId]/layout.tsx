@@ -23,6 +23,7 @@ import {
 } from "@/components/board/panels/flow-settings-panel";
 import { RunHitlResponse } from "@/components/board/run-hitl-response";
 import { RunTakeoverActions } from "@/components/board/run-takeover-actions";
+import { RunContinuationActions } from "@/components/runs/run-continuation-actions";
 import {
   RunTimeline,
   type TimelineEntry,
@@ -1834,7 +1835,12 @@ export default async function RunDetailLayout({
             />
           ) : null}
 
-          {isHumanWorking ? (
+          {/* ADR-159: a rework claim renders its OWN handoff panel (FF ingest,
+              release-to-Review, non-fast-forward remediation). The M11b panel
+              stays for a takeover claim — they are told apart by
+              `continuation.claim`, which is non-null only for the ADR-159
+              provenance. */}
+          {isHumanWorking && detail.continuation.claim === null ? (
             <section className="mt-6 rounded-[14px] border border-[color-mix(in_oklab,var(--accent-4)_30%,var(--line))] bg-accent-4-soft/30 p-5">
               <h2 className="mb-3 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-accent-4 before:content-['']">
                 {t("handoff")}
@@ -1847,6 +1853,28 @@ export default async function RunDetailLayout({
                 mode="working"
                 runId={detail.runId}
                 worktreePath={detail.worktreePath}
+              />
+            </section>
+          ) : null}
+
+          {detail.continuation.claim !== null ||
+          detail.continuation.reworkClaimAvailable ||
+          (detail.status === "Review" &&
+            detail.continuation.disabledReason !== null) ? (
+            <section className="mt-6 rounded-[14px] border border-[color-mix(in_oklab,var(--accent-4)_30%,var(--line))] bg-accent-4-soft/30 p-5">
+              <h2 className="mb-3 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-accent-4 before:content-['']">
+                {t("handoff")}
+              </h2>
+              <RunContinuationActions
+                branch={detail.branch}
+                canAct={canAct}
+                claimOwnerUserId={detail.continuation.claim?.ownerUserId ?? null}
+                disabledReason={detail.continuation.disabledReason}
+                reentryNodeId={detail.continuation.reentryNodeId}
+                reworkClaimAvailable={detail.continuation.reworkClaimAvailable}
+                runId={detail.runId}
+                viewerUserId={user.id}
+                worktreePath={displayWorktreePath ?? detail.worktreePath}
               />
             </section>
           ) : null}
