@@ -1245,7 +1245,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
 
 ## Phase 5 — Integration hygiene
 
-- [ ] **Task 30: ADR renumber pass (its own focused session, AFTER rebasing onto main).**
+- [x] **Task 30: ADR renumber pass (its own focused session, AFTER rebasing onto main).**
   Re-read `max(### ADR-NNN)` from `git show main:docs/decisions.md`; if a parallel branch has taken
   159/160, renumber **both** ADRs and every citation — including prose forms (`grep -rn 'ADR-159\|ADR-160'`
   across `docs/`, `web/`, `supervisor/`, `.ai-factory/`) and the decisions index table. Re-run the ADR
@@ -1255,6 +1255,39 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   back into this plan's reserved-numbers table.
   *Verify:* `git diff main...HEAD --stat` shows no duplicate ADR header; anchor check green; suite green.
   *Depends on:* 29.
+
+  **RESULT — rebase is a no-op; ONE collision found and left for the second lander.**
+
+  - **`main` has not moved** since this branch was cut (`main` == the merge-base,
+    `7538394c0`), so the rebase Task 30 is predicated on is a no-op and the
+    renumber trigger has not fired.
+  - **`max(### ADR-NNN)` on main = 158** and **`max(_journal idx)` on main = 124**,
+    so `ADR-159`, `ADR-160`, and migration `0125` are all still correct against main.
+  - Branch diff contains exactly one `ADR-159` header and one `ADR-160` header
+    (no duplicates); the ADR anchor check resolves 780 links; the migration is a
+    complete triple with a monotonic `when`.
+
+  **⚠ MERGE OBLIGATION (owner decision — deliberately NOT resolved here).**
+  The unmerged sibling branch **`claude/docs-optimization-agents-4e0e21`**
+  (last commit `f17409172`, 2026-09-01) also claims **ADR-159**, for *"DBML as
+  the format of the generated consolidated ERD"*. It claims **no** migration
+  ≥ `0125`, so `0125` is uncontested and only the ADR numbers are at stake.
+
+  Per this project's integration convention — rebase + fast-forward, and
+  **whichever branch lands SECOND renumbers** — this is not resolvable from
+  inside either branch while both are unmerged: renumbering pre-emptively would
+  either be wasted work or collide again if the sibling renumbers too. So:
+
+  - If **this** branch merges first → nothing to do; the sibling renumbers its
+    ADR-159 to 161.
+  - If the **sibling** merges first → renumber **both** ADRs here (159→161,
+    160→162) and every citation, including the `decisions.md` index rows and the
+    prose forms. The sweep is
+    `rg -n 'ADR-159|ADR-160' docs/ web/ supervisor/ .ai-factory/`, and the anchor
+    slugs (`#adr-159-review-run-rework-claim-...`,
+    `#adr-160-operator-node-interrupt-...`) move with the headings. Re-run
+    `pnpm validate:docs:adr:all` afterwards — it resolves link targets and will
+    catch any citation the sweep missed.
 
 ---
 
