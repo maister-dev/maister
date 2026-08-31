@@ -1,8 +1,15 @@
+import type { McpDiagnosticsInput } from "@/lib/mcp/readiness";
 import type { SupervisorDiagnosticsStatus } from "@/lib/supervisor-client";
 
 import { describe, expect, it } from "vitest";
 
 import { evaluateMcpReadiness } from "@/lib/mcp/readiness";
+
+function diagWithAdapters(
+  adapters: { id: string; available: boolean }[],
+): McpDiagnosticsInput {
+  return { kind: "ready", diagnostics: { envRefs: [], adapters } };
+}
 
 function readyDiag(
   envRefs: { name: string; present: boolean }[],
@@ -101,5 +108,73 @@ describe("evaluateMcpReadiness", () => {
     );
 
     expect(result.status).toBe("Unknown");
+  });
+
+  it("is NotReady when none of the declared supported agents' adapters are available", () => {
+    const result = evaluateMcpReadiness(
+      {
+        transport: "stdio",
+        command: "npx",
+        envKeys: [],
+        headerKeys: [],
+        supportedAgents: ["gemini", "mimo"],
+      },
+      diagWithAdapters([
+        { id: "claude", available: true },
+        { id: "gemini", available: false },
+        { id: "mimo", available: false },
+      ]),
+    );
+
+    expect(result.status).toBe("NotReady");
+    expect(result.reasons).toContain(
+      "no supported adapter available: gemini, mimo",
+    );
+  });
+
+  it("is Ready when at least one supported agent's adapter is available", () => {
+    const result = evaluateMcpReadiness(
+      {
+        transport: "stdio",
+        command: "npx",
+        envKeys: [],
+        headerKeys: [],
+        supportedAgents: ["claude", "gemini"],
+      },
+      diagWithAdapters([
+        { id: "claude", available: true },
+        { id: "gemini", available: false },
+      ]),
+    );
+
+    expect(result).toEqual({ status: "Ready", reasons: [] });
+  });
+
+  it("is NotReady with a generic reason when no agents are declared and no adapter is available", () => {
+    const result = evaluateMcpReadiness(
+      { transport: "stdio", command: "npx", envKeys: [], headerKeys: [] },
+      diagWithAdapters([
+        { id: "claude", available: false },
+        { id: "codex", available: false },
+      ]),
+    );
+
+    expect(result.status).toBe("NotReady");
+    expect(result.reasons).toContain("no adapter available");
+  });
+
+  it("skips the adapter gate when diagnostics report no adapters", () => {
+    const result = evaluateMcpReadiness(
+      {
+        transport: "stdio",
+        command: "npx",
+        envKeys: [],
+        headerKeys: [],
+        supportedAgents: ["gemini"],
+      },
+      diagWithAdapters([]),
+    );
+
+    expect(result).toEqual({ status: "Ready", reasons: [] });
   });
 });

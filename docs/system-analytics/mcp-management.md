@@ -216,7 +216,10 @@ sequenceDiagram
 
 `evaluateMcpReadiness(row, diagnostics)` (`web/lib/mcp/readiness.ts`) derives
 `readiness_status`/`readiness_reasons` from transport config × supervisor
-`/diagnostics` env references, invoked on every `POST`/`PATCH
+`/diagnostics` env references × supported-agent adapter availability (a server
+none of whose `supported_agents` map to an `available` adapter is `NotReady`;
+undeclared agents mean "all adapters"; diagnostics reporting no adapters skip
+the gate), invoked on every `POST`/`PATCH
 /api/admin/mcp-servers`. v2 extends the same evaluator over project/package
 `capability_records` material + diagnostics envRefs, caching into
 `material.readiness`. It reads only `env:NAME` names — never a secret value.

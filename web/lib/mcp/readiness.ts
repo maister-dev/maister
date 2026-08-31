@@ -1,12 +1,29 @@
-import type { SupervisorDiagnosticsStatus } from "@/lib/supervisor-client";
-
 export type McpReadinessInput = {
   readonly transport: "stdio" | "sse" | "http";
   readonly command?: string | null;
   readonly url?: string | null;
   readonly envKeys?: readonly string[];
   readonly headerKeys?: readonly string[];
+  readonly supportedAgents?: readonly string[] | null;
 };
+
+// Structural view of `SupervisorDiagnosticsStatus` narrowed to what MCP
+// readiness reads (mirrors the local `DiagnosticsInput` pattern in
+// lib/acp-runners/readiness.ts). The full client type stays assignable.
+export type McpDiagnosticsInput =
+  | {
+      readonly kind: "ready";
+      readonly diagnostics: {
+        readonly envRefs: readonly { name: string; present: boolean }[];
+        readonly adapters?: readonly { id: string; available: boolean }[];
+      };
+    }
+  | {
+      readonly kind: "unavailable";
+      readonly reason: string;
+      readonly message: string;
+    }
+  | null;
 
 export type McpReadinessResult = {
   readonly status: "Unknown" | "Ready" | "NotReady";
@@ -18,13 +35,13 @@ function envRefName(ref: string): string {
 }
 
 // Mirrors lib/acp-runners/readiness.ts `evaluateRunnerReadiness` for platform MCP
-// servers: transport config × supervisor `/diagnostics` env references.
-// Recomputed on every write (POST/PATCH), never on DELETE. Diagnostics
-// unavailable → Unknown (env refs cannot be verified). Pure; no I/O, no secrets
-// (only `env:NAME` names are read).
+// servers: transport config × supervisor `/diagnostics` env references ×
+// supported-agent adapter availability. Recomputed on every write (POST/PATCH),
+// never on DELETE. Diagnostics unavailable → Unknown (env refs cannot be
+// verified). Pure; no I/O, no secrets (only `env:NAME` names are read).
 export function evaluateMcpReadiness(
   row: McpReadinessInput,
-  diagnostics: SupervisorDiagnosticsStatus | null,
+  diagnostics: McpDiagnosticsInput,
 ): McpReadinessResult {
   if (!diagnostics || diagnostics.kind !== "ready") {
     const reason =
@@ -51,6 +68,31 @@ export function evaluateMcpReadiness(
     const ref = envRefs.find((item) => item.name === name);
 
     if (!ref?.present) reasons.push(`env ref missing: ${name}`);
+  }
+
+  // A server no available adapter can host is not usable whatever its own
+  // config says: gate on adapter availability for the declared supported
+  // agents (undeclared = supports every adapter, per lib/mcp/projection.ts).
+  // Older supervisors that report no adapters skip the check.
+  const adapters = diagnostics.diagnostics.adapters;
+
+  if (adapters && adapters.length > 0) {
+    const declared =
+      row.supportedAgents && row.supportedAgents.length > 0
+        ? row.supportedAgents
+        : null;
+    const supported = declared ?? adapters.map((adapter) => adapter.id);
+    const anyAvailable = adapters.some(
+      (adapter) => adapter.available && supported.includes(adapter.id),
+    );
+
+    if (!anyAvailable) {
+      reasons.push(
+        declared
+          ? `no supported adapter available: ${declared.join(", ")}`
+          : "no adapter available",
+      );
+    }
   }
 
   return {

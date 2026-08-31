@@ -54,7 +54,7 @@ trusted. The **used by N** column counts projects referencing the server
 stateDiagram-v2
     [*] --> Unknown: created or edited while supervisor diagnostics unavailable
     [*] --> Ready: transport config valid and all env refs present
-    [*] --> NotReady: missing command or url, or an env ref is absent
+    [*] --> NotReady: missing command or url, an env ref is absent, or no supported agent's adapter is available
     Ready --> NotReady: edit drops a required field or env ref
     NotReady --> Ready: edit fixes the config
     Unknown --> Ready: re-saved once diagnostics return
