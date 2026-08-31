@@ -783,6 +783,12 @@
 - [ ] Combined `Stop & *` rail actions for `runKind=agent` rows (rail-actions design out-of-scope note).
 - [ ] Non-Flow per-kind Studio authoring + its host E2E coverage (studio-package-authoring Stream A follow-up).
 - [ ] Evaluation calibration read models + package-upgrade regression Studies (M48 remainder; longitudinal shipped).
+- [ ] `version_binding: latest` resolution — `resolveEffectiveFlowRevision` is a passthrough today, both bindings resolve identically (`web/lib/flows/lifecycle.ts:230`; audit §A5).
+- [ ] `workspaceAccess` delivery to the supervisor seam on the FLOW path — agent path has L1/L2/L3, flow nodes ship `instructed`-only (`web/lib/flows/enforcement.ts:51`; audit §A6).
+- [ ] `risk_tier=destructive` agent gate decision — hard-refused "until ADR-041"; decide whether ADR-130 `capability_guard` satisfies the precondition (`web/lib/agents/launch.ts:390`; audit §A26).
+- [ ] Human-facing run-summary / attention digest — machine pulse exists, human surface absent (audit §A1; overlaps the unlanded Tact-0 standup-digest agent, reserved ADR-123).
+- [ ] Webhook outbox consolidation onto `domain_events` — two parallel outboxes today (audit §A12).
+- [ ] Studio AI assistant hunk/patch operations (full-file only today; audit §A13) · flow-target run schedules (task-per-fire; §A14) · run-history pagination past the 10-cap (§A15) · Brain RU lexical config knob (§A16) · image/PlantUML/BPMN viewers in the workbench (§A19) · gate-agent HITL/checkpoint branch + `skill_check` capability scoping (§A24/25) · live checkpoint→`session/resume` CI lane (§A8) · gemini/opencode/mimo resume smoke flip (§A7).
 
 ### Triage outcomes 2026-08-31 (owner decisions — do not re-open without new evidence)
 
