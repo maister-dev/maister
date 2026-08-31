@@ -53,7 +53,7 @@ cache; `platform_acp_runners.model` stays free text.
   renders: `{ groups: [{ source; label; status; reason?; models: [{ id;
   displayName? }] }]; resolvedAt; ttlSeconds }`. (Implemented)
 - **Application channel** — how the configured model is pinned: **claude** via the
-  M14/ADR-043 `settings.local.json { model, availableModels }` materialization;
+  ADR-043 `settings.local.json { model, availableModels }` materialization;
   **codex** via ACP `unstable_setSessionModel`. ADR-084 extends this to
   adapter metadata: Gemini/OpenCode/MiMo may use `unstable_setSessionModel` only after
   initialize capability smoke proves support; otherwise they emit advisory-only
@@ -243,7 +243,7 @@ sequenceDiagram
 ## Expectations
 
 The steady-state acceptance contract. Each bullet is one testable invariant.
-(All **Implemented** at M29. Discovery + application are CI-tested against
+(All **Implemented**. Discovery + application are CI-tested against
 mocks — mock ACP adapter, stubbed CCR, mocked provider fetch, stub-supervisor;
 live-provider / live-agent verification is pending, consistent with the ACP
 spike baseline.)

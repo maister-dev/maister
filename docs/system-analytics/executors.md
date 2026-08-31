@@ -1,13 +1,13 @@
 # ACP runners domain
 
-> **M42 — Unified runner & session model (Implemented).** Manifest runner intent
+> **Unified runner & session model (Implemented).** Manifest runner intent
 > uses ONE `flowRunnerConfigSchema` (reuses `capability_agent` /
 > `permission_policy`, adds `effort` / `env`); resolution is **per session/slot**
 > (binding → auto-match → the `default`-session project-flow/platform-flow/
 > project/platform chain) and snapshotted in `run_sessions`, not a single per-run
 > runner. Canonical: [`sessions.md`](sessions.md) /
 > [ADR-114](../decisions.md#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth).
-> Flipped to as-built in M42 Phase 7.
+> Flipped to as-built in ADR-114 Phase 7.
 
 ## Purpose
 
@@ -160,7 +160,7 @@ flowchart LR
 
 Resolution returns `{ runnerId, tier }`, where `tier` is one of
 `launchOverride`, `stepTarget`, `binding`, `autoMatch`, `projectFlowDefault`,
-`platformFlowDefault`, `projectDefault`, or `platformDefault` (M42 adds the
+`platformFlowDefault`, `projectDefault`, or `platformDefault` (ADR-114 adds the
 per-slot `binding` / `autoMatch` tiers).
 
 ## Flow load and attach remapping

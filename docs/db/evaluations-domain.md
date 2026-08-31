@@ -1,9 +1,9 @@
 # Evaluation Lab domain ERD (Implemented — ADR-142..147, migrations `0107`–`0114`)
 
-The Evaluation Lab (M46–M48) tables: the neutral Study/participant/recipe
+The Evaluation Lab tables: the neutral Study/participant/recipe
 model, package-sourced Methodologies + admin Panels/Profiles, immutable
-evidence, multi-judge execution → aggregation → human verdict, the M47
-controlled-launch batch intent (ADR-146), and the M48 suite / recipe-
+evidence, multi-judge execution → aggregation → human verdict, the
+controlled-launch batch intent (ADR-146), and the suite / recipe-
 standardization ledgers (ADR-147). Narrative field detail and invariants live
 in [`../database-schema.md`](../database-schema.md) §Evaluation Lab tables;
 behavior co-evolves in `system-analytics/`.

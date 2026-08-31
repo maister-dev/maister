@@ -10,10 +10,11 @@ reviewer's `rework` decision jumps the pointer back and re-stales downstream
 work. Package install/trust/enablement is [`flows.md`](flows.md) /
 [`flow-packages.md`](flow-packages.md); the run status machine and
 keep-alive/checkpoint are [`runs.md`](runs.md); the human-ask protocol is
-[`hitl.md`](hitl.md); promotion readiness is M15/M18. Engine 3 accepts only
+[`hitl.md`](hitl.md); promotion readiness is [`readiness.md`](readiness.md).
+Engine 3 accepts only
 `nodes[]` manifests, so this domain governs every Flow run.
 
-## M43 graph-only execution contract (Implemented)
+## Graph-only execution contract (ADR-131 — Implemented)
 
 Engine 3.0.0 removes linear compilation, linear guards and the linear runner.
 node_attempts becomes the sole execution ledger. Graph node gates,
@@ -21,17 +22,18 @@ pre_finish.gates, readiness gates and gate-result history are unchanged. The
 public template namespace steps.<nodeId>.* remains an authoring name and is
 resolved only from node attempts.
 
-> **Status: Implemented (M11a).** Everything in this file is the M11a Flow graph
+> **Status: Implemented.** Everything in this file is the Flow graph
 > v1 execution model, shipped on the `feature/m11a-flow-graph-lifecycle` branch.
 > Sub-parts owned by
-> later milestones are tagged inline: manual takeover / `human_edit` → **M11b**;
-> node `settings` enforcement → **M11c** (the `hooks` guardrail capability class
-> → **M40**, see [`guardrail-hooks.md`](guardrail-hooks.md)); typed artifact
-> instances + the `artifact_required` gate → **M12**; `external_check` ingestion → **M16**;
-> promotion-gating readiness policy → **M15**; first-class `consensus` node →
-> **M41 Implemented**, see [`consensus.md`](consensus.md); per-node runner config
+> other domains are tagged inline: manual takeover / `human_edit` → **ADR-030**;
+> node `settings` enforcement → **ADR-031/032** (the `hooks` guardrail capability
+> class → **ADR-108**, see [`guardrail-hooks.md`](guardrail-hooks.md)); typed
+> artifact instances + the `artifact_required` gate → **ADR-037/038**;
+> `external_check` ingestion → **ADR-045/046/047**;
+> promotion-gating readiness policy → **ADR-048**; first-class `consensus` node →
+> **Implemented — ADR-109**, see [`consensus.md`](consensus.md); per-node runner config
 > (`settings.runner`), node `session:` / top-level `sessions:` grouping, and
-> `judge` as a runner-bearing node → **M42 Implemented**, see
+> `judge` as a runner-bearing node → **Implemented — ADR-114**, see
 > [`sessions.md`](sessions.md). Decisions:
 > [ADR-026](../decisions.md#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump),
 > [ADR-027](../decisions.md#adr-027-append-only-node_attempts-run-ledger),
@@ -41,10 +43,11 @@ resolved only from node attempts.
 ## Domain entities
 
 - **Node** — a typed unit of work in a graph manifest (`nodes[]`):
-  `ai_coding | cli | check | judge | human | form`, plus the M41 Implemented
-  `consensus` node. Carries `input.requires?`,
-  `output.produces?` (typed artifact decls, **M12**), a type-specific `action`,
-  `pre_finish.gates?`, `finish` (auto or `human`), `transitions`, and `rework?`.
+  `ai_coding | cli | check | judge | human | form`, plus the Implemented
+  `consensus` node (ADR-109). Carries `input.requires?`,
+  `output.produces?` (typed artifact decls, **ADR-037/038**), a type-specific
+  `action`, `pre_finish.gates?`, `finish` (auto or `human`), `transitions`, and
+  `rework?`.
 - **FlowGraph** — the normalized in-memory graph produced by `compileManifest`:
   nodes + adjacency + entry node.
 - **Node attempt** — `node_attempts` row; one immutable record per execution of a
@@ -59,10 +62,10 @@ resolved only from node attempts.
 - **Decision** — a declared human outcome on a `finish.human` node (e.g.
   `approve`, `rework`); maps through `transitions` to a target node id.
 - **Workspace policy** — declared rework worktree treatment: `keep` (no-op),
-  `rewind-to-node-checkpoint`, `fresh-attempt`. **(M30 — Implemented, ADR-079)** all
-  three execute against a per-attempt node checkpoint; pre-M30 only `keep` ran and
-  the other two were validated + recorded but not executed.
-- **Node checkpoint** — **(M30 — Implemented, ADR-079)** a namespaced dangling git
+  `rewind-to-node-checkpoint`, `fresh-attempt`. **(Implemented, ADR-079)** all
+  three execute against a per-attempt node checkpoint; before ADR-079 only `keep`
+  ran and the other two were validated + recorded but not executed.
+- **Node checkpoint** — **(Implemented, ADR-079)** a namespaced dangling git
   ref `refs/maister/checkpoints/<runId>/<nodeAttemptId>` capturing HEAD + tracked
   + untracked (ignored excluded) before each `ai_coding`/`cli` attempt, parented
   on the current branch tip and recorded on `node_attempts.checkpoint_ref`; the
@@ -95,7 +98,7 @@ stateDiagram-v2
 
 ## State machine — gate result (verdict axis)
 
-A gate result is lowercase — the M15 gate-verdict vocabulary
+A gate result is lowercase — the gate-verdict vocabulary
 ([ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped)).
 
 ```mermaid
@@ -104,7 +107,7 @@ stateDiagram-v2
     pending --> running: dispatch by kind
     running --> passed: command exit 0 / verdict ok
     running --> failed: non-zero exit / unparseable verdict
-    running --> skipped: artifact_required (TODO M12)
+    running --> skipped: artifact_required (legacy stub path, pre-ADR-037)
     pending --> passed: external_check report (POST .../gates/{gateId}/report)
     pending --> failed: external_check report (POST .../gates/{gateId}/report)
     passed --> stale: markDownstreamStale on rework
@@ -141,7 +144,7 @@ flowchart TD
     Append --> Act[run action<br/>cli / agent / check / judge / human / form]
     Act -- form node, first visit --> FormHitl[emit form HITL<br/>run NeedsInput]
     FormHitl -- operator submits values --> Validate
-    Act --> Validate{output.result declared?<br/>M26}
+    Act --> Validate{output.result declared?}
     Validate -- no --> Gates[run pre_finish.gates in order]
     Validate -- yes, valid --> FoldVars[fold validated payload into vars]
     Validate -- yes, invalid --> FailCfg[markNodeFailed CONFIG]
@@ -163,18 +166,19 @@ flowchart TD
     More -- terminal --> Done([run Review / Done])
 ```
 
-The `Validate` decision and its three branches are the **M26 post-action seam**
-(below). For nodes without `output.result` the seam is a no-op and traversal is
-unchanged.
+The `Validate` decision and its three branches are the **structured-output
+post-action seam** (below). For nodes without `output.result` the seam is a
+no-op and traversal is unchanged.
 
-### Structured output validate seam (M26 — Implemented)
+### Structured output validate seam (Implemented — ADR-063)
 
-> **Status (M26 — Implemented, P1.)** Opt-in schema-validated structured output, folded
+> **Status (Implemented, P1.)** Opt-in schema-validated structured output, folded
 > into the existing `node_attempts.vars`. Decision:
 > [ADR-063](../decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7);
 > frozen SSOT:
 > `../../.ai-factory/specs/feature-m26-structured-output-run-context.md`. DSL
-> field + transport contract: [`../flow-dsl.md`](../flow-dsl.md) §M26. Env wiring:
+> field + transport contract: [`../flow-dsl.md`](../flow-dsl.md) §structured
+> node output (`output.result`). Env wiring:
 > [`../configuration.md`](../configuration.md).
 
 After a node's action **succeeds** and **before** `pre_finish.gates` run, when the
@@ -193,9 +197,10 @@ folds the validated object into the attempt's `vars`. A node **without**
 2. **Enforce `MAISTER_NODE_OUTPUT_MAX_BYTES`** (default 256 KiB) on the raw
    payload bytes.
 3. **`JSON.parse`** defensively.
-4. **Validate** against the declared `formSchemaSchema` `./path`. M26 **adds** a
-   nested `object` type to that grammar (flat today: `string \| number \| boolean
-   \| enum \| array`) — net-new work, still no `ajv` and no new dep.
+4. **Validate** against the declared `formSchemaSchema` `./path`. This channel
+   **adds** a nested `object` type to that grammar (flat before: `string \|
+   number \| boolean \| enum \| array`) — net-new work, still no `ajv` and no
+   new dep.
 5. **On success,** fold the validated object into the attempt's `vars`, persisted
    by the **existing single** `markNodeSucceeded(..., { vars })` UPDATE — no new
    write, no new crash window. A downstream node then resolves
@@ -209,9 +214,9 @@ folds the validated object into the attempt's `vars`. A node **without**
    `markNodeFailed` here leaks nothing. Payload absent while `required: false` →
    `vars` stays `{}` and the node proceeds.
 
-### Dynamic routing — `decide` + `on_mismatch` (M38 — Implemented)
+### Dynamic routing — `decide` + `on_mismatch` (Implemented)
 
-> **Status (M38 — Implemented.)** Output/verdict-driven outcome at the single
+> **Status (Implemented.)** Output/verdict-driven outcome at the single
 > transition site + an opt-in malformed-output rework loop. Decision:
 > [ADR-103](../decisions.md#adr-103-output-driven-dynamic-routing-decide--onmismatch-rework--engine-170);
 > frozen SSOT: `../../.ai-factory/specs/feature-m26-structured-output-run-context.md`
@@ -219,8 +224,9 @@ folds the validated object into the attempt's `vars`. A node **without**
 
 At the **single outcome site** (the `Pick[evaluate transitions]` step above), the
 runner computes the transition outcome. Without `decide` the outcome is the
-hardcoded `"success"` (action) or the human decision — byte-identical to M11a. With
-a node-level `decide` block the outcome is computed dynamically, then fed to the
+hardcoded `"success"` (action) or the human decision — byte-identical to the
+pre-`decide` engine. With a node-level `decide` block the outcome is computed
+dynamically, then fed to the
 **unchanged** `resolveTransition` / staleness / rework fan-out:
 
 ```mermaid
@@ -253,7 +259,7 @@ flowchart TD
   (defense in depth over the compile-time check that every *producible* outcome ⊆
   transitions keys).
 
-**`on_mismatch` — engine-initiated rework on validation failure.** When the M26
+**`on_mismatch` — engine-initiated rework on validation failure.** When the
 structured-output validate seam fails (`!structuredOutput.ok`) AND the node declares
 `output.result.on_mismatch`, the runner drives the **existing rework path** (same
 `markNodeReworked` → `markDownstreamStale` → `pendingInjectedVars` sequence as
@@ -261,7 +267,7 @@ human-driven rework) from a non-`human` node, bounded by `rework.maxLoops`, with
 validation-error text (`structuredOutput.reason`) injected via `commentsVar`.
 `on_mismatch: retry` re-targets the **same** node (self re-run, no own-id in
 `transitions`/`allowedTargets` needed); `on_mismatch: <outcome>` routes via
-`transitions[<outcome>]` (∈ `rework.allowedTargets`). Absent → today's M26 hard
+`transitions[<outcome>]` (∈ `rework.allowedTargets`). Absent → the seam's hard
 `CONFIG` fail. Exhaustion **fails closed**: an always-malformed node halts at
 `maxLoops + 1` attempts with a `Failed` run (`CONFIG`) via the loop-top
 `rework.maxLoops` backstop — the escalate/ship execution-policy arms are NOT applied
@@ -321,14 +327,14 @@ human node's own `rework.maxLoops` bounds the number of reset rounds (each human
 rework increments the human node's `gateAttempt`). The human node's own exhaustion
 uses the standard A1 path (default `escalate` re-pauses it) → no recursion.
 
-### Run-context file (M26 — Implemented M38)
+### Run-context file (Implemented)
 
-> **Status (P7 — Implemented in M38.)** A session-independent JSON blackboard
+> **Status (P7 — Implemented.)** A session-independent JSON blackboard
 > projecting run-level state, injected as a pointer into each agent node's prompt.
 > Decisions:
 > [ADR-063](../decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7)
 > (Designed), [ADR-103](../decisions.md#adr-103-output-driven-dynamic-routing-decide--onmismatch-rework--engine-170)
-> (built this milestone).
+> (Implemented).
 
 `run.json` lives at `<worktreePath>/.maister/run.json`, written via
 `atomicWriteJson` **inside the agent's worktree cwd** so both `claude` and `codex`
@@ -340,7 +346,7 @@ info/exclude`). That file lives in the **shared common git dir**, so the exclude
 removal — benign because `.maister/` is MAIster's runtime dir and is never committed.
 So `run.json` never enters `git status` or the base→run diff. The
 run logs (`<stepId>.log`, `run.events.jsonl`, `cost.jsonl`) stay at `<runDir>`;
-only `run.json` lives in the worktree. Its shape (M26 hardcoded "all"):
+only `run.json` lives in the worktree. Its shape (currently hardcoded "all"):
 
 ```json
 {
@@ -441,13 +447,13 @@ the same packet; legacy/non-review response two-phase commit and
 format + guard rules:
 [`review-comments.md`](review-comments.md).
 
-### Workspace policy execution + node checkpoints (M30 — Implemented)
+### Workspace policy execution + node checkpoints (Implemented)
 
-**(M30 — Implemented, [ADR-079](../decisions.md#adr-079-node-workspacepolicy-execution-and-checkpoint-capture)).**
-Closes the M11b execution deferral: the runner captures a node checkpoint before
-every `ai_coding`/`cli` attempt and applies the rework `workspacePolicy` against
-it. `keep` is a no-op; `rewind-to-node-checkpoint` and `fresh-attempt` actually
-execute (pre-M30 they were parsed and recorded only).
+**(Implemented, [ADR-079](../decisions.md#adr-079-node-workspacepolicy-execution-and-checkpoint-capture)).**
+Closes the original execution deferral: the runner captures a node checkpoint
+before every `ai_coding`/`cli` attempt and applies the rework `workspacePolicy`
+against it. `keep` is a no-op; `rewind-to-node-checkpoint` and `fresh-attempt`
+actually execute (before ADR-079 they were parsed and recorded only).
 
 ```mermaid
 flowchart TD
@@ -488,7 +494,7 @@ flowchart TD
     K -- ai_judgment --> AI[agent session new-session<br/>parse structured verdict]
     K -- skill_check --> SK[slash command via agent<br/>best-effort, TODO M14 scoping]
     K -- human_review --> HR[emit review HITL]
-    K -- artifact_required --> AR[executed — presence + validity, M12]
+    K -- artifact_required --> AR[executed — presence + validity]
     K -- external_check --> EC[pending; flipped by external report endpoint]
     CC --> Mode{mode?}
     AI --> Mode
@@ -497,8 +503,8 @@ flowchart TD
     Mode -- advisory --> Cont[record verdict, continue]
 ```
 
-**(M29 — Implemented) Mutation assertions on `artifact_required`.** The
-`artifact_required` executor (Implemented since M12 — it checks every
+**(Implemented) Mutation assertions on `artifact_required`.** The
+`artifact_required` executor (Implemented — it checks every
 `inputArtifacts` def has a `validity='current'` instance) gains optional
 post-condition assertions: after the input-presence check, a gate declaring
 `must_touch`/`must_not_touch` evaluates git-diff path sets (node-scoped range
@@ -539,7 +545,8 @@ readiness interaction: [`readiness.md`](readiness.md).
 - Templating `steps.<id>.output`/`.vars`/`.exitCode` resolves the
   **highest-`attempt`** `node_attempts` row.
 - Rework is a **node-pointer move within `runs.status = 'Running'`** — never a
-  new run status; there is no `HumanWorking` in M11a (that is M11b).
+  new run status; there is no `HumanWorking` here (that is manual takeover —
+  ADR-030).
 - `runs.current_step_id` carries the **node id**; the fail-closed resume check
   (unknown id in the pinned
   manifest → `Crashed` + `CONFIG`) applies to the compiled graph.
@@ -555,30 +562,30 @@ readiness interaction: [`readiness.md`](readiness.md).
   manifest-derived allow-list stored on the `hitl_requests` row at creation time
   (server-state); an undeclared decision is refused **before** any artifact write
   or state mutation.
-- **(M30 — Implemented, ADR-079)** Before each `ai_coding`/`cli` attempt the runner
+- **(Implemented, ADR-079)** Before each `ai_coding`/`cli` attempt the runner
   captures a node checkpoint (HEAD + tracked + untracked, ignored excluded) as a
   dangling ref parented on the current tip and records
   `node_attempts.checkpoint_ref`; the checkpoint commit MUST NOT be reachable from
   the run branch (the promoted history stays clean).
-- **(M30 — Implemented, ADR-079)** `rewind-to-node-checkpoint` resets to `<ck>^` and
+- **(Implemented, ADR-079)** `rewind-to-node-checkpoint` resets to `<ck>^` and
   overlays the captured tree **unstaged** (captured-untracked return untracked,
   attempt-created untracked survive, attempt commits discarded); `fresh-attempt`
   resets to `<ck>^` + `git clean -fd` (KEEPS ignored files) + re-runs launch
   materialization; `keep` is a no-op. The engine NEVER runs
   `git reset --hard <checkpoint>`.
-- **(M30 — Implemented, ADR-079)** Checkpoint apply is worktree-scoped
+- **(Implemented, ADR-079)** Checkpoint apply is worktree-scoped
   (`-C <worktreePath>`) and MUST NOT touch run artifacts at
   `runtimeRoot/.maister/<slug>/runs/<runId>/`; a containment assertion hard-blocks
   the policy unless `MAISTER_RUNTIME_ROOT` resolves outside the worktree's
   `repo_path`.
-- **(M30 — Implemented, ADR-080)** A node with `retry_policy` auto-retries on a failure
+- **(Implemented, ADR-080)** A node with `retry_policy` auto-retries on a failure
   whose `MaisterError.code` is in the node's `on_errors` allow-list
   `{SPAWN, EXECUTOR_UNAVAILABLE, CHECKPOINT, ACP_PROTOCOL}` while attempts remain;
   each retry is a fresh-session `node_attempts` row with `auto_retry = true`, applies
   the node's `workspace` policy first, respects the global concurrency cap, and never
   bypasses gates. Exhausting `attempts` ends in normal failure + a distinct
   exhaustion signal.
-- **(M30 — Implemented, ADR-081)** A rework dispatch resolves `session_policy`
+- **(Implemented, ADR-081)** A rework dispatch resolves `session_policy`
   highest-wins (rework-transition → node → flow `defaults` → engine default
   `resume`); `resume` resumes the prior attempt's `acp_session_id`, falling back to a
   fresh session with `node_attempts.session_fallback = true` when unresumable; the
@@ -607,9 +614,10 @@ readiness interaction: [`readiness.md`](readiness.md).
   the human comment is present in `L`'s next resolved prompt; the re-baseline
   `UPDATE`(s) commit in the SAME transaction as `markNodeReworked` +
   `markDownstreamStale` (AC-7/AC-9).
-- M11a `gate_results` **feed but do not gate promotion**; refusing a merge on an
-  unsatisfied required gate is the M15/M18 readiness policy, not M11a.
-- **(M26 — Implemented)** A node declaring `output.result` MUST have its payload
+- Graph `gate_results` **feed but do not gate promotion**; refusing a merge on
+  an unsatisfied required gate is the readiness policy (ADR-048), not this
+  domain.
+- **(Implemented)** A node declaring `output.result` MUST have its payload
   acquired by execution mechanism (agent → last ` ```json maister:output ` block in
   the 1 MiB-capped `result.stdout`, a block past that cap treated as absent; cli →
   per-attempt `MAISTER_OUTPUT_FILE`), size-capped at
@@ -622,7 +630,7 @@ readiness interaction: [`readiness.md`](readiness.md).
   `end_turn`, so no ACP deferred is open and `markNodeFailed` leaks nothing) — while
   a node WITHOUT `output.result` stays byte-identical to today (`vars: {}`) and
   requires `compat.engine_min >= 1.3.0`.
-- **(M34 — Implemented, ADR-089)** An `ai_coding` node declaring `settings.agent`
+- **(Implemented, ADR-089)** An `ai_coding` node declaring `settings.agent`
   MUST require `compat.engine_min >= 1.5.0` (`CONFIG` otherwise) and MUST
   resolve the catalog agent at compile/launch (`CONFIG` when unknown or when
   the agent's `triggers` lacks `flow`); `mode=session` substitutes the agent
@@ -632,7 +640,7 @@ readiness interaction: [`readiness.md`](readiness.md).
   `EXECUTOR_UNAVAILABLE` before spawn. See
   [`../flow-dsl.md`](../flow-dsl.md) §Node `agent` binding and
   [`agents.md`](agents.md).
-- **(P7 — Implemented M38, ADR-103)** `run.json` MUST exist per run at
+- **(P7 — Implemented, ADR-103)** `run.json` MUST exist per run at
   `<worktreePath>/.maister/run.json`, separate from logs (which stay at `<runDir>`),
   with `.maister/` in `WORKTREE_EXCLUDE_PATTERNS` (materialized into the repo's git
   exclude `$(git rev-parse --git-path info/exclude)` **before** the first write,
@@ -644,7 +652,7 @@ readiness interaction: [`readiness.md`](readiness.md).
   never depend on it, every agent node's prompt MUST carry the `[Run context: <abs
   path>]` pointer on its `new-session` dispatch, and it MUST NOT contain any value
   sourced from `context.env`.
-- **(M38 — Implemented, ADR-103)** A node with no `decide` MUST route
+- **(Implemented, ADR-103)** A node with no `decide` MUST route
   byte-identically to today (`"success"` / human decision); a `decide:{from:output.<path>}`
   routes on `String(getPath(vars, <path>))` and MUST declare `output.result`; a
   `decide:{from:verdict}` routes via the `cases`/`default` table and MUST declare
@@ -652,7 +660,7 @@ readiness interaction: [`readiness.md`](readiness.md).
   routing verdict (not hard-fail) with NO author `mode: advisory`. A `decide`-chosen
   outcome ∉ `node.transitions` keys MUST be refused at runtime with
   `MaisterError("CONFIG")`; the missing-producer cases are refused at compile/load.
-- **(M38 — Implemented, ADR-103)** A node declaring `output.result.on_mismatch` MUST
+- **(Implemented, ADR-103)** A node declaring `output.result.on_mismatch` MUST
   also declare `rework.commentsVar` (compile-enforced — the error is injected there)
   and, on structured-output validation failure, enter the bounded rework path
   (`on_mismatch: retry` = self-target; `<outcome>` = `transitions[<outcome>]` ∈
@@ -669,28 +677,28 @@ readiness interaction: [`readiness.md`](readiness.md).
 - **Unknown gate kind** → `CONFIG`.
 - **Cycle without `rework.maxLoops`** (graph cycle detection) → `CONFIG`.
 - **Unsupported workspace policy** → `CONFIG`.
-- **(M38 — Implemented, ADR-103) `decide:{from:verdict}` node with zero or >1
+- **(Implemented, ADR-103) `decide:{from:verdict}` node with zero or >1
   `ai_judgment`/`skill_check` gate** → `CONFIG` at compile/load (no verdict to
   route on, or an ambiguous last-gate-wins verdict).
-- **(M38 — Implemented, ADR-103) `decide:{from:output.<path>}` node without
+- **(Implemented, ADR-103) `decide:{from:output.<path>}` node without
   `output.result`** → `CONFIG` at compile/load (no `vars` for the path to resolve).
-- **(M38 — Implemented, ADR-103) `output.result.on_mismatch` without
+- **(Implemented, ADR-103) `output.result.on_mismatch` without
   `rework.commentsVar`** → `CONFIG` at compile/load (the validation error would
   have nowhere to inject — the rework would re-run blind).
-- **(M30 — Implemented, ADR-079) Crash between checkpoint capture and attempt** → the
+- **(Implemented, ADR-079) Crash between checkpoint capture and attempt** → the
   dangling `refs/maister/checkpoints/*` ref is orphaned; harmless and GC'd by the
   worktree sweeper, reconcile tolerates it.
-- **(M30 — Implemented, ADR-079) Git failure during checkpoint capture/apply** →
+- **(Implemented, ADR-079) Git failure during checkpoint capture/apply** →
   `MaisterError("CHECKPOINT")` (existing code, no new taxonomy member).
-- **(M30 — Implemented, ADR-079) `MAISTER_RUNTIME_ROOT` resolves inside a
+- **(Implemented, ADR-079) `MAISTER_RUNTIME_ROOT` resolves inside a
   `repo_path`** → the policy is hard-blocked before any git mutation (a
   non-ignored artifacts path could otherwise be reached by `git clean -fd`).
-- **(M30 — Implemented, ADR-080) `retry_policy.on_errors` carries a non-retryable
+- **(Implemented, ADR-080) `retry_policy.on_errors` carries a non-retryable
   code** (`PRECONDITION`/`CONFIG`/`CONFLICT`/unknown) → `CONFIG` at manifest load
   (allow-list `{SPAWN, EXECUTOR_UNAVAILABLE, CHECKPOINT, ACP_PROTOCOL}`).
-- **(M30 — Implemented, ADR-080) `retry_policy` on a node that is not `ai_coding`/`cli`,
+- **(Implemented, ADR-080) `retry_policy` on a node that is not `ai_coding`/`cli`,
   or `attempts < 1`** → `CONFIG` at manifest load.
-- **(M30 — Implemented, ADR-081) Rework `session_policy: resume` but the prior session
+- **(Implemented, ADR-081) Rework `session_policy: resume` but the prior session
   is gone/unresumable** → fall back to a fresh session + `session_fallback = true`
   (observable), never a hard failure.
 - **Human `decisions` targeting an undeclared transition** → `CONFIG` at load.
@@ -704,18 +712,19 @@ readiness interaction: [`readiness.md`](readiness.md).
   raw prose kept as evidence — **not** a thrown domain code
   ([ADR-008](../decisions.md#adr-008-typed-error-taxonomy-maistererror) closed
   union).
-- **`artifact_required` gate** → **executed since M12** (presence + validity + `must_touch`/`must_not_touch` per ADR-074; historically stubbed as `skipped` + WARN before M12) (no artifact
-  instances until M12). **`external_check` gate** → starts `pending`; an external
+- **`artifact_required` gate** → **executed** (presence + validity + `must_touch`/`must_not_touch` per ADR-074; historically stubbed as `skipped` + WARN before typed
+  artifact instances existed — ADR-037/038). **`external_check` gate** → starts `pending`; an external
   runner flips it via `POST /api/v1/ext/runs/{runId}/gates/{gateId}/report`, which
   drives the gate `pending → passed|failed`, records a `test_report` artifact, and
-  gates review through `assertEvidenceReady` (M16).
-- **Untrusted revision** → launch is refused by the M10 trust precondition
+  gates review through `assertEvidenceReady`.
+- **Untrusted revision** → launch is refused by the package-revision trust
+  precondition
   ([ADR-021](../decisions.md#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility))
   **before** any gate command/agent runs — no gate side-effect occurs.
 - **Node `settings` block present** → preserved as opaque passthrough (never
   silently stripped), `SETTINGS_NOT_ENFORCED_WARN` fires once; enforcement is
-  M11c.
-- **(M26 — Implemented) Structured-output validation failures** at the post-action
+  the typed `settings` layer (ADR-031/032).
+- **(Implemented) Structured-output validation failures** at the post-action
   seam, each → attempt `Failed` + `MaisterError("CONFIG")`, run unpromotable:
   missing fenced block (agent) or absent `MAISTER_OUTPUT_FILE` (cli) while
   `required: true`; a `maister:output` block pushed past the 1 MiB `result.stdout`
@@ -723,42 +732,42 @@ readiness interaction: [`readiness.md`](readiness.md).
   against the resolved `formSchemaSchema`; payload oversize past
   `MAISTER_NODE_OUTPUT_MAX_BYTES`. The seam runs after `end_turn`, so no ACP
   deferred is open on this path.
-- **(M26 — Implemented) Stale per-attempt cli output file** → a rework attempt N that
+- **(Implemented) Stale per-attempt cli output file** → a rework attempt N that
   does not re-write `output-<nodeId>-N.json` MUST NOT inherit attempt N-1's file;
   the per-attempt filename isolates it (absent-while-`required` → `CONFIG`,
   absent-while-optional → `vars: {}`).
-- **(M26 — Implemented) Node with no `output.result`** → the validate seam is a
-  no-op; the attempt is byte-identical to pre-M26 (`vars: {}`), no transport is
-  provisioned, and no `CONFIG` can arise from the seam.
-- **(M26 — Implemented) Bare triple-backtick line inside the sentinel payload** →
+- **(Implemented) Node with no `output.result`** → the validate seam is a
+  no-op; the attempt is byte-identical to the pre-seam behavior (`vars: {}`), no
+  transport is provisioned, and no `CONFIG` can arise from the seam.
+- **(Implemented) Bare triple-backtick line inside the sentinel payload** →
   a line consisting of ` ``` ` inside the block's JSON closes the fence early,
   so the remainder parses as invalid JSON → attempt fails `CONFIG`. Known v1
   limitation of the line-based fence grammar: keep payload string values free
   of standalone ` ``` ` lines (e.g. escape newlines). Not silent corruption —
   always a loud `CONFIG`.
-- **(M26 — Implemented) Node id used in the cli transport path** → `node.id` is
+- **(Implemented) Node id used in the cli transport path** → `node.id` is
   embedded in the `MAISTER_OUTPUT_FILE` filename, so it must be a valid
   filename segment (`[A-Za-z0-9._-]+`); an id carrying a path separator fails
   the attempt with `MaisterError("CONFIG")` at the seam (escape-guard,
   mirrors `resolveOutputResultSchema`) and the transport is never armed.
-- **(M29 — Implemented) Mutation assertions with git unavailable at gate time** →
+- **(Implemented) Mutation assertions with git unavailable at gate time** →
   blocking gate FAILS with reason `"git unavailable — cannot evaluate mutation
   assertions"`; advisory gate WARNs and records `evaluated: false` in the
   `mutation_report`. A node-start head capture missing (legacy run) → the
   `must_touch` range falls back to the cumulative branch range with
   `basis: "cumulative-fallback"` recorded — never a hard error.
-- **(M26 — Implemented) `array` field element shape is unconstrained** → an
+- **(Implemented) `array` field element shape is unconstrained** → an
   `{ type: "array" }` output field validates only `Array.isArray`; the grammar has
   no `items` slot, so element type is not checked and any array (incl. mixed/empty)
   passes. Phase-2 `items?` is the candidate. Not a `CONFIG` — an accepted
   loose-validation gap.
-- **(M26 — Implemented) Bad `output.result.schema` path** → fresh package installs
+- **(Implemented) Bad `output.result.schema` path** → fresh package installs
   require the canonical root `./schemas/<name>.json` form and validate the exact
   document before the revision becomes usable. `validateGraphManifest` still does
   not read filesystem documents, so a legacy already-installed revision can surface
   a missing/non-JSON/malformed schema as a run-time `CONFIG` at the post-action
   seam.
-- **(M26 — Implemented) `enum` field declared with no `options`** → validation matches
+- **(Implemented) `enum` field declared with no `options`** → validation matches
   the value against an empty option list, so **every** value fails and the attempt
   fails `CONFIG` at the seam. A schema-authoring footgun (pre-existing in the
   `formSchemaSchema` grammar, now reachable via `output.result`); declare
@@ -831,39 +840,39 @@ before card creation.
   [ADR-027 node_attempts ledger](../decisions.md#adr-027-append-only-node_attempts-run-ledger),
   [ADR-028 Gate execution](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped),
   [ADR-029 M11 split](../decisions.md#adr-029-split-m11-into-m11a--m11b--m11c),
-  [ADR-063 Structured output + run-context (M26 — P1 Implemented, P7 Designed→Implemented M38)](../decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7),
-  [ADR-103 Output-driven dynamic routing (`decide`) + `on_mismatch` + engine 1.7.0 + P7 (M38 — Implemented)](../decisions.md#adr-103-output-driven-dynamic-routing-decide--onmismatch-rework--engine-170),
-  [ADR-074 Mutation sensor on `artifact_required` (M29 — Implemented)](../decisions.md#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates),
-  [ADR-079 workspacePolicy execution + node checkpoints (M30 — Implemented)](../decisions.md#adr-079-node-workspacepolicy-execution-and-checkpoint-capture),
-  [ADR-080 Node-level retry policy (M30 — Implemented)](../decisions.md#adr-080-node-level-retry-policy),
-  [ADR-081 Rework session policy (M30 — Implemented)](../decisions.md#adr-081-rework-session-policy-with-resume-by-default),
-  [ADR-109 Consensus node (M41 — Implemented)](../decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution).
-- Spec (M26 — P1 Implemented, P7 + Wave-2 routing Implemented M38):
+  [ADR-063 Structured output + run-context (P1 Implemented, P7 Designed→Implemented)](../decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7),
+  [ADR-103 Output-driven dynamic routing (`decide`) + `on_mismatch` + engine 1.7.0 + P7 (Implemented)](../decisions.md#adr-103-output-driven-dynamic-routing-decide--onmismatch-rework--engine-170),
+  [ADR-074 Mutation sensor on `artifact_required` (Implemented)](../decisions.md#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates),
+  [ADR-079 workspacePolicy execution + node checkpoints (Implemented)](../decisions.md#adr-079-node-workspacepolicy-execution-and-checkpoint-capture),
+  [ADR-080 Node-level retry policy (Implemented)](../decisions.md#adr-080-node-level-retry-policy),
+  [ADR-081 Rework session policy (Implemented)](../decisions.md#adr-081-rework-session-policy-with-resume-by-default),
+  [ADR-109 Consensus node (Implemented)](../decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution).
+- Spec (P1 Implemented, P7 + Wave-2 routing Implemented):
   `../../.ai-factory/specs/feature-m26-structured-output-run-context.md` (frozen SSOT).
-- Spec (M41 — Implemented):
+- Spec (Implemented):
   `../../.ai-factory/specs/feature-m41-consensus-node.md` (frozen SSOT).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md),
   narrative [`../database-schema.md`](../database-schema.md).
 - DSL: [`../flow-dsl.md`](../flow-dsl.md) §Flow graph node lifecycle, §Gate
-  execution, §M26 (`output.result`).
+  execution, §structured node output (`output.result`).
 - Config: [`../configuration.md`](../configuration.md) §Package contract +
   compatibility (engine bump).
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml) (`respond` review
   decision).
 - Related: [`runs.md`](runs.md), [`hitl.md`](hitl.md), [`flows.md`](flows.md),
-  [`consensus.md`](consensus.md) (M41 — first-class consensus graph node),
-  [`workbench.md`](workbench.md) (M22 — the read-only graph **view** + live
+  [`consensus.md`](consensus.md) (first-class consensus graph node — ADR-109),
+  [`workbench.md`](workbench.md) (the read-only graph **view** + live
   node-status coloring that renders this topology),
   [`review-comments.md`](review-comments.md) (Implemented — ADR-072: composed
   `commentsVar` payload, review-gate `{maxLoops, gateAttempt}` schema fields,
   loop-exhaustion validate rule).
-- **(Designed, M27)** The read-only M22 graph view now has an **editor write
+- **(Designed)** The read-only workbench graph view now has an **editor write
   path**: canvas edits serialize the manifest, run `validateGraphManifest` +
   `compileManifest` as a hard-gate (invalid manifest → `CONFIG`, not persisted),
-  then PATCH the draft via the M25 `draft_version` CAS. Publishing the authored
-  flow bridges it into `flows` + `flow_revisions` via
+  then PATCH the draft via the authored-catalog `draft_version` CAS. Publishing
+  the authored flow bridges it into `flows` + `flow_revisions` via
   `installAuthoredFlowPackageBridge`. See
-  [`workbench.md`](workbench.md) §M27 and
+  [`workbench.md`](workbench.md) and
   [`../system-analytics/flow-studio.md`](flow-studio.md) + ADR-067.
 - Source (Implemented): `web/lib/config.schema.ts` (node/gate schema),
   `web/lib/config.ts` (`loadFlowManifest`),

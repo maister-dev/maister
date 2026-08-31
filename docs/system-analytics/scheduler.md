@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This domain (**Implemented, M24**) covers MAIster's unified background clock: a
+This domain (**Implemented**) covers MAIster's unified background clock: a
 stateless, authorized Next.js tick route that claims due jobs, runs bounded
 handlers, and records attempts. It generalizes the existing GC cron route into
 one polymorphic scheduler without moving scheduling into the supervisor and
@@ -22,19 +22,19 @@ may call a GC bundle directly or create a second scheduler state machine.
 
 ## Domain entities
 
-- **Scheduler job** (`scheduler_jobs`, Implemented, M24) — durable schedule
+- **Scheduler job** (`scheduler_jobs`, Implemented) — durable schedule
   definition for one `job_kind`, fixed interval, target payload, next fire time,
   failure counters, and disable state.
-- **Scheduler job run** (`scheduler_job_runs`, Implemented, M24) — attempt ledger
+- **Scheduler job run** (`scheduler_job_runs`, Implemented) — attempt ledger
   with claim token, terminal status, lease expiry, summary, and error fields.
-- **Agent trigger bindings** (`agent_schedules`, M34 — Implemented rework of the
-  dead M24 bridge) — per-(agent, project) trigger rows: cron rows
-  (`cron_expr` + `timezone` + `next_fire_at`, claimed atomically by the
-  dispatcher below) and event rows (`event_match.kinds` consumed by the
-  `agent_triggers` outbox consumer). The M24 columns `agent_ref` (text),
-  `scheduler_job_id`, and `desired_state` are dropped. See
+- **Agent trigger bindings** (`agent_schedules`, Implemented — ADR-089 rework
+  of the dead original scheduler bridge) — per-(agent, project) trigger rows:
+  cron rows (`cron_expr` + `timezone` + `next_fire_at`, claimed atomically by
+  the dispatcher below) and event rows (`event_match.kinds` consumed by the
+  `agent_triggers` outbox consumer). The original bridge columns `agent_ref`
+  (text), `scheduler_job_id`, and `desired_state` are dropped. See
   [agents.md](agents.md).
-- **`agent_tick` dispatcher** (`agent_tick.dispatcher` job, M34 — Implemented,
+- **`agent_tick` dispatcher** (`agent_tick.dispatcher` job, Implemented,
   ADR-089) — the ONE seeded `agent_tick` job (60s cadence, attempt budget
   hardcoded 1 — singleton like the other dispatchers; the
   `MAISTER_MAX_CONCURRENT_AGENTS` env var is repurposed as the agent-RUN
@@ -46,10 +46,10 @@ may call a GC bundle directly or create a second scheduler state machine.
   sanctioned recovery sweep for stranded `Pending` agent runs.
   `createSchedulerJobSchema` now rejects `agent_tick` (seeded-singleton
   precedent: `run_schedule`, `domain_event_dispatch`).
-- **Tick route** (`GET`/`POST /api/cron/tick`, Implemented, M24) — token-guarded
+- **Tick route** (`GET`/`POST /api/cron/tick`, Implemented) — token-guarded
   clock entry point. It may filter by `jobKind`.
-- **GC compatibility route** (`GET`/`POST /api/cron/gc`, Implemented M19,
-  compatibility extension Implemented M24) — keeps current response semantics and
+- **GC compatibility route** (`GET`/`POST /api/cron/gc`, Implemented,
+  compatibility extension Implemented) — keeps current response semantics and
   runs the GC bundle (workspace + revision GC + capabilities cleanup +
   ephemeral-agent cleanup + terminal/missing-run agent-materialization retry +
   the ADR-142 evaluation-evidence sweep)
@@ -87,12 +87,12 @@ may call a GC bundle directly or create a second scheduler state machine.
   launches agent runs — this kind launches ordinary triaged FLOW tasks. See
   [triage.md](triage.md).
 - **Scheduler admin** (`/admin/scheduler` page + `/api/admin/scheduler-jobs[/{jobId}]`,
-  Implemented, M24/M28) — admin-only scheduler
+  Implemented) — admin-only scheduler
   management. The refined surface separates Engine jobs from Task schedules,
   keeps task schedules read-only with project links, and edits scheduler
   targets through typed fields instead of a primary raw-JSON textarea.
 - **Run-schedule dispatcher** (`run_schedule.dispatcher` job, `job_kind =
-  'run_schedule'`, Implemented, M28) — the ONE seeded job whose handler claims due
+  'run_schedule'`, Implemented) — the ONE seeded job whose handler claims due
   `run_schedules` rows and fires them through `launchRun`. Cron expressions and
   overlap policy live in the `run_schedules` table, NOT in `scheduler_jobs` —
   see [`run-schedules.md`](run-schedules.md). `createSchedulerJobSchema`
@@ -106,7 +106,7 @@ may call a GC bundle directly or create a second scheduler state machine.
   summaries separately report claimed, launched, retried, failed, late,
   and truncated one-time-intent counts. See
   [`project-automations.md`](project-automations.md).
-- **Target payloads** (`scheduler_jobs.target`, Implemented, M24/M28) —
+- **Target payloads** (`scheduler_jobs.target`, Implemented) —
   per-kind JSON payload persisted for engine handlers. `command`
   targets are either `http_ping` (`url`, optional `timeoutMs`) or
   `console_ping` (`host`, optional `timeoutMs`). `flow_run` targets use a
@@ -193,7 +193,7 @@ may call a GC bundle directly or create a second scheduler state machine.
   while its watched trigger revision equals `last_trigger_revision`; the
   default tick passes no `resolveTrigger`, so a regression suite scans once per
   definition version until a package-catalog resolver is threaded through.
-  Suites ride the M24 clock — there is NO second scheduler.
+  Suites ride the polymorphic scheduler clock — there is NO second scheduler.
 
 ## State machine
 
@@ -319,29 +319,29 @@ flowchart TD
   attempt leases.
 - `scheduler_jobs.cadence_interval_seconds` MUST be the only `scheduler_jobs`
   cadence model — cron expressions live exclusively in `run_schedules`
-  (Implemented, M28; see [`run-schedules.md`](run-schedules.md)).
+  (Implemented; see [`run-schedules.md`](run-schedules.md)).
 - A due job MUST produce at most one unexpired `Claimed` or `Running` attempt.
 - Clock outage catch-up MUST run one attempt only and never backfill missed
   fixed-interval periods.
 - The tick service MUST idempotently seed `system_sweep.default` with a 60-second
   cadence so the recovery sweep is live after migration without hand-authored
   SQL; it MUST likewise seed `run_schedule.dispatcher` (60-second cadence,
-  `max_failures` 3; Implemented, M28), `webhook_delivery.default`
+  `max_failures` 3; Implemented, ADR-071), `webhook_delivery.default`
   (60-second cadence; Implemented, ADR-077), `domain_event_dispatch.default`
   (60-second cadence; Implemented, ADR-086), `agent_tick.dispatcher`
-  (60-second cadence; M34 — Implemented, ADR-089), and
+  (60-second cadence; Implemented, ADR-089), and
   `auto_launch_triaged.default` (60-second cadence; Implemented, ADR-112), and
   `auto_promote.default` (60-second cadence; Implemented, ADR-126), and
   `evaluation_dispatch.dispatcher` + `evaluation_suite_scan.dispatcher`
   (60-second cadence each; Implemented, ADR-142/ADR-147).
 - Atomic claim MUST enforce per-kind budgets in SQL before an attempt is created:
   `command` uses `MAISTER_MAX_CONCURRENT_COMMANDS`; `agent_tick` is a hardcoded
-  budget of 1 (singleton dispatcher; M34 — Implemented — its former
+  budget of 1 (singleton dispatcher; Implemented — its former
   `MAISTER_MAX_CONCURRENT_AGENTS` attempt budget is repurposed as the
   agent-run budget at `tryStartRun`, see [agents.md](agents.md)); `flow_run`
   remains delegated to the existing
   Flow run launch/concurrency path; `run_schedule` is a hardcoded budget of 1
-  (serial dispatcher, like `system_sweep`; Implemented, M28); `webhook_delivery`
+  (serial dispatcher, like `system_sweep`; Implemented, ADR-071); `webhook_delivery`
   is a hardcoded budget of 1 (singleton drainer; Implemented, ADR-077);
   `domain_event_dispatch` is a hardcoded budget of 1 (singleton dispatcher;
   Implemented, ADR-086); `auto_launch_triaged` is a hardcoded budget of 1
@@ -349,7 +349,7 @@ flowchart TD
   `evaluation_suite_scan` are each a hardcoded budget of 1 (singleton
   dispatchers; Implemented, ADR-142/ADR-147).
 - `agent_tick` MUST be the seeded `agent_tick.dispatcher` singleton only —
-  `createSchedulerJobSchema` rejects the kind (M34 — Implemented; the M24
+  `createSchedulerJobSchema` rejects the kind (Implemented; the earlier
   "stub without a launcher records `Skipped`/`PRECONDITION`" seam is
   superseded by the real launcher). A claimed cron row MUST fire exactly
   once per due window (atomic `next_fire_at` claim) and a missed window
@@ -458,11 +458,11 @@ flowchart TD
   [`../db/scheduler-domain.md`](../db/scheduler-domain.md), and
   [`../db/erd.md`](../db/erd.md).
 - ADR: [ADR-060](../decisions.md#adr-060-unified-scheduler-clock-and-polymorphic-job-budgets).
-- User-facing run schedules (Implemented, M28): [`run-schedules.md`](run-schedules.md) +
+- User-facing run schedules (Implemented): [`run-schedules.md`](run-schedules.md) +
   [ADR-071](../decisions.md#adr-071-user-facing-run-schedules-on-the-m24-clock).
 - Domain-event dispatcher (Implemented, ADR-086): [`domain-events.md`](domain-events.md).
 - Triaged-task launcher (Implemented, ADR-112): [`triage.md`](triage.md).
-- Platform-agent triggers (M34 — Implemented, ADR-089): [`agents.md`](agents.md).
+- Platform-agent triggers (Implemented, ADR-089): [`agents.md`](agents.md).
 - Existing recovery/GC domain: [`reconciliation-gc.md`](reconciliation-gc.md).
 - Implemented: [ADR-134](../decisions.md#adr-134-observatory-agentization-and-commit-provenance)
   and [`observatory.md`](observatory.md).

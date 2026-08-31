@@ -1,6 +1,6 @@
 # Add project
 
-## M43 legacy Flow refusal (Implemented)
+## Cut-over legacy Flow refusal (ADR-131 — Implemented)
 
 If any package member contains steps[], registration preserves every entered
 field and focuses a role=alert summary with FLOW_INSTALL and the engine-3
@@ -9,7 +9,7 @@ project remains.
 
 - **Type:** screen (admin).
 - **Route:** `/projects/new` (global admin only).
-- **Status:** Implemented (M21 URL-clone) · onboarding modes + prefill + classified
+- **Status:** Implemented (URL-clone) · onboarding modes + prefill + classified
   clone errors **Designed** ([ADR-093](../../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)).
 - **Source:** `web/components/projects/new-project-form.tsx`, posting to
   `web/app/api/projects/route.ts`.

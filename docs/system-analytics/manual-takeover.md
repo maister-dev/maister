@@ -1,20 +1,21 @@
 # Manual takeover domain
 
-> **Status: Implemented in M11b.** Claim/return routes, migration `0011`
+> **Status: Implemented (ADR-030).** Claim/return routes, migration `0011`
 > (`node_attempts` takeover columns), and the `HumanWorking` status are all
-> shipped. Implementation-status tags below reflect HEAD-after-M11b.
+> shipped. Implementation-status tags below reflect HEAD after the takeover
+> slice landed.
 
 ## Purpose
 
-**Manual takeover** is a LOCAL worktree handoff (M11b — Implemented). A reviewer
-parked at an M11a `human_review` node claims the run, edits its **existing**
+**Manual takeover** is a LOCAL worktree handoff (Implemented). A reviewer
+parked at a `human_review` node claims the run, edits its **existing**
 worktree by hand on the same host, then returns it for re-validation. The domain
 boundary is the takeover lifecycle (claim → human edit → return / release /
-abandon), the read-only git ops that capture the human's work, the reuse of M11a
-staleness to force a rerun, and the run-detail **timeline read model** that
-renders the whole history. It does **not** cover branch targeting, PR promotion,
-or the `merge`/`human_edit` node types (all **M18**), nor typed artifact
-instances (**M12**). The locked decision is
+abandon), the read-only git ops that capture the human's work, the reuse of
+graph-engine staleness to force a rerun, and the run-detail **timeline read
+model** that renders the whole history. It does **not** cover branch targeting,
+PR promotion, or the `merge`/`human_edit` node types (all promotion-slice
+concerns), nor typed artifact instances (**ADR-037/038**). The locked decision is
 [ADR-030](../decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status).
 
 ## Domain entities
@@ -22,7 +23,7 @@ instances (**M12**). The locked decision is
 - **Takeover claim** — a run transition `NeedsInput → HumanWorking`
   (`runs.status`). Session-less by design; holds a concurrency slot and a
   worktree.
-- **Manual takeover assignment** — M13 `assignments` row with
+- **Manual takeover assignment** — an `assignments` row (ADR-040) with
   `action_kind='manual_takeover'`, created and claimed by the takeover actor
   after the `HumanWorking` CAS succeeds.
 - **Takeover attempt** — the `node_attempts` row of the `human_review` node that
@@ -32,9 +33,9 @@ instances (**M12**). The locked decision is
 - **Exposed worktree** — the existing `workspaces.worktree_path` on the existing
   run branch `workspaces.branch`. No new branch/target is created. See
   [`workspaces.md`](workspaces.md).
-- **Owner** — `users.id` recorded in `node_attempts.owner_user_id` at claim. In
-  M11b the owner is any project member with the `answerHitl` action; role-gated
-  claim is **M13**.
+- **Owner** — `users.id` recorded in `node_attempts.owner_user_id` at claim.
+  The owner is any project member with the `answerHitl` action; role-gated
+  claim belongs to the assignments slice (**ADR-040**).
 - **Base ref** — the `merge-base` of the run branch and the project default
   branch, resolved server-side by `resolveBaseRef`. The `<base>` of both ranges.
 - **Validation re-entry node** — the `human_review` node's
@@ -62,7 +63,7 @@ stateDiagram-v2
 
 `HumanWorking` is a REAL `runs.status` value (not an in-`Running` pointer move),
 counts against the global cap, and is excluded from the startup recovery sweep —
-see the four invariants in [`runs.md`](runs.md#m11b-manual-takeover-status-humanworking-implemented).
+see the four invariants in [`runs.md`](runs.md#manual-takeover-status-humanworking-implemented).
 
 ## Process flows
 
@@ -137,10 +138,10 @@ flowchart LR
 ```
 
 The explicit `reentryNode` inclusion is REQUIRED because the as-built
-`downstreamOf` (in `web/lib/flows/graph/runner-graph.ts`, exported by M11b)
+`downstreamOf` (exported from `web/lib/flows/graph/runner-graph.ts`)
 **excludes its start node**, but the re-entry is a gate-bearing node whose prior
 PASS validated *pre-takeover* code and MUST flip stale. `markDownstreamStale` is
-the M11a 2-arg helper; no new staleness machinery is added.
+the existing graph-engine 2-arg helper; no new staleness machinery is added.
 
 ### Timeline read model — current vs stale (Implemented)
 
@@ -148,17 +149,17 @@ the M11a 2-arg helper; no new staleness machinery is added.
 read model over the append-only ledger:
 
 - **Node attempts** — every `node_attempts` row (highest-attempt-wins ordering
-  matches M11a templating), with `decision`, `rework_from_node`, `acp_session_id`
+  matches graph templating), with `decision`, `rework_from_node`, `acp_session_id`
   checkpoint refs, and the takeover columns `owner_user_id` / `returned_commits` /
   `returned_diff` / `base_ref`.
 - **Gates** — joined `gate_results` (`kind` / `mode` / `status` / `verdict`),
   each flagged **current** or **stale** (`status='stale'`).
 - **Handoff block** — for a takeover attempt: owner, elapsed time (from the
   takeover attempt `started_at`), branch, the returned commit list, and the
-  returned raw diff (rendered in a `<pre>`, no syntax highlighting per the M9
-  deferral).
+  returned raw diff (rendered in a `<pre>`, no syntax highlighting per the
+  standing deferral).
 
-The page reads M11a `node_attempts` + `gate_results` + the M11b takeover columns;
+The page reads `node_attempts` + `gate_results` + the takeover columns;
 it never recomputes status from supervisor in-memory state. A minimal/legacy
 linear run renders an empty-but-valid timeline (no crash).
 
@@ -178,7 +179,7 @@ linear run renders an empty-but-valid timeline (no crash).
   `Running`/`NeedsInput` through BOTH scheduler cap-check predicates.
 - `HumanWorking` is session-less and is NEVER classified `Crashed` by
   `runResumeRecoverySweep` (its SELECT filters `status='NeedsInput'`).
-- **(M30 — Implemented, ADR-081)** Rework `session_policy` resolution does NOT affect
+- **(Implemented, ADR-081)** Rework `session_policy` resolution does NOT affect
   the takeover-return path: a returned takeover has no live agent session to resume,
   so downstream re-validation always dispatches a fresh session regardless of
   `session_policy`; takeover claim/return semantics are unchanged.
@@ -186,12 +187,12 @@ linear run renders an empty-but-valid timeline (no crash).
   and `ownerUserId` are ALL derived from server-state — NEVER a body field.
 - Return is allowed ONLY when `runs.status='HumanWorking'` AND the session user
   equals `node_attempts.owner_user_id`; otherwise 409 `PRECONDITION` (wrong
-  state) or 403 `UNAUTHORIZED` (non-owner). Owner-only is hard in M11b; "take
-  over stale work" by another user is **M13**.
+  state) or 403 `UNAUTHORIZED` (non-owner). Owner-only is hard; "take over
+  stale work" by another user is the assignments slice (**ADR-040**).
 - Return is a two-phase commit: the AFTER-side marker
   (`status='Running'` + takeover `ended_at`) is set ONLY after `git log`/`git
   diff` + `recordTakeoverReturn` + `markDownstreamStale` all succeed.
-- M13 assignment completion is part of that after-side transaction: the manual
+- Assignment completion is part of that after-side transaction: the manual
   takeover assignment is completed only after artifacts, staleness, cursor, and
   `Running` status have committed.
 - A dirty worktree on return (`git status --porcelain=v1 --untracked-files=all`
@@ -211,7 +212,7 @@ linear run renders an empty-but-valid timeline (no crash).
   `transitions.takeover` target (`checks`), never `implement`, never `human_edit`.
 - Return records the returned commit set + raw diff MINIMALLY as text on the
   takeover `node_attempts` row (`returned_commits`, `returned_diff`, `base_ref`);
-  it creates NO typed artifact instances (M12).
+  it creates NO typed artifact instances.
 - Release without changes returns the run to `NeedsInput` (the original review
   HITL re-opens); abandon of a `HumanWorking` run runs `releaseHumanWorking`
   then the standard abandon transition and frees the slot via
@@ -264,7 +265,7 @@ linear run renders an empty-but-valid timeline (no crash).
   AND that has NO subsequent re-entry (`checks`) `node_attempts` row — i.e. the
   post-return resume never progressed. **Action: RE-DISPATCH the graph runner**
   (resume at `runs.current_step_id` = the `transitions.takeover` re-entry). This
-  is SAFE because M11a's resume is CAS-guarded and therefore idempotent: if a
+  is SAFE because the graph runner's resume is CAS-guarded and idempotent: if a
   runner is already live the re-dispatch loses the claim and no-ops; if the resume
   pointer is genuinely stale the existing fail-closed path
   (`runner-graph.ts:379`) writes `Crashed`. A naive "`Running` + no live session
@@ -279,14 +280,14 @@ linear run renders an empty-but-valid timeline (no crash).
   [ADR-008 Typed error taxonomy](../decisions.md#adr-008-typed-error-taxonomy-maistererror),
   [ADR-027 node_attempts ledger](../decisions.md#adr-027-append-only-node_attempts-run-ledger),
   [ADR-029 Split M11](../decisions.md#adr-029-split-m11-into-m11a--m11b--m11c),
-  [ADR-081 Rework session policy (M30 — Implemented)](../decisions.md#adr-081-rework-session-policy-with-resume-by-default).
+  [ADR-081 Rework session policy (Implemented)](../decisions.md#adr-081-rework-session-policy-with-resume-by-default).
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml)
   (`/api/runs/{runId}/takeover/claim`, `.../takeover/return`,
   `/api/runs/{runId}/abandon`).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (`node_attempts` takeover
   columns), [`../database-schema.md`](../database-schema.md).
 - Related: [`runs.md`](runs.md), [`hitl.md`](hitl.md),
-  [`flow-graph.md`](flow-graph.md) (M11a ledger/staleness/rework),
+  [`flow-graph.md`](flow-graph.md) (ledger/staleness/rework),
   [`workspaces.md`](workspaces.md) (worktree + read-only git ops),
   [`../flow-dsl.md`](../flow-dsl.md) (`transitions.takeover` wiring).
 - Source: `web/lib/worktree.ts` (`logRange`/`diffRange`/`resolveBaseRef`),

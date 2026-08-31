@@ -1,6 +1,6 @@
 # Flow Studio domain
 
-> **Status: Implemented (M27 Stage 1).** The editor write path, the
+> **Status: Implemented (Stage 1).** The editor write path, the
 > authored→executable bridge with the two-axis trust gate, `version_binding`
 > resolve-at-launch, the resolved-capability-set snapshot (in-flight
 > immutability), and the MCP management surfaces described here have shipped.
@@ -9,7 +9,7 @@
 ## Purpose
 
 The **Flow Studio** domain covers in-app authoring and executable resolution for
-flows: turning the read-only M22 workbench graph view into a graph editor that
+flows: turning the read-only workbench graph view into a graph editor that
 persists validated authored drafts, publishing those drafts through an
 executable bridge that creates runnable `flows` / `flow_revisions` rows, managing
 the two independent trust axes (`flows.trustStatus` and
@@ -103,7 +103,7 @@ in-app and bridge states.
 stateDiagram-v2
     [*] --> Draft: create / open authored cap (kind=flow)
     Draft --> Draft: PATCH /draft (validateGraphManifest gate, CAS)
-    Draft --> Published: POST publish-local (M25 revision commit)
+    Draft --> Published: POST publish-local (revision commit)
     Published --> Bridged: installAuthoredFlowPackageBridge\ntrustsStatus=trusted_by_policy\nexec_trust=untrusted
     Bridged --> ExecTrusted: POST trust-executable\nexec_trust=trusted
     ExecTrusted --> SetupDone: runRevisionSetup runs setup.sh (sentinel once)
@@ -228,7 +228,7 @@ follows the same usage-guard and dup-id rules as ADR-065.
 > decision [ADR-075](../decisions.md#adr-075). This part makes an INSTALLED
 > (git-pinned, immutable) flow package browsable + forkable and gives its
 > bundled artifacts real editors. **No migration, no engine bump, no new
-> `runs.status` / `MaisterError` code.** The sections below ADD to the M27
+> `runs.status` / `MaisterError` code.** The sections below ADD to the
 > Stage-1 contract above; they do not change it.
 
 ### Scope (Implemented)
@@ -236,7 +236,7 @@ follows the same usage-guard and dup-id rules as ADR-065.
 **Track 0** — view an installed package's read-only graph (compiled from the DB
 `manifest`) + raw `flow.yaml` + every bundled artifact file (read from disk at
 `flow_revisions.installed_path`), kill the decoy `cursor-pointer` cards, and add
-"Fork to edit" (immutable revisions always fork to an M25 authored draft with
+"Fork to edit" (immutable revisions always fork to an authored-catalog draft with
 `source_flow_ref_id` lineage). **Track 1** — a derived file tree + per-kind
 artifact editors (skill/rule/agent frontmatter forms, shell editor + heuristic
 lint, `form_schema` builder with live preview), per-kind content validation wired
@@ -721,7 +721,7 @@ list (`gate-form.tsx`).
   OpenAPI (ADR-066 RSC-reads precedent) — see [`flow-packages.md`](flow-packages.md).
 - **ADR-065 (Implemented):** [`../decisions.md#adr-065`](../decisions.md#adr-065-platform-acp-runner-crud-in-settings--hard-delete-blocked-by-any-usage-reference) — admin CRUD pattern mirrored for `platform_mcp_servers`.
 - **ADR-064 (Implemented):** authored layout in `flow.yaml` `presentation` section — consumed by the editor, described in [`workbench.md`](workbench.md).
-- **ADR-061 (Implemented):** [`../decisions.md#adr-061`](../decisions.md#adr-061-local-authored-capability-catalog-lifecycle) — local authored capability catalog lifecycle (reused M25 draft/CAS).
+- **ADR-061 (Implemented):** [`../decisions.md#adr-061`](../decisions.md#adr-061-local-authored-capability-catalog-lifecycle) — local authored capability catalog lifecycle (reused draft/CAS).
 - **ERDs:**
   [`../db/capabilities-domain.md`](../db/capabilities-domain.md),
   [`../db/projects-domain.md`](../db/projects-domain.md),
@@ -730,7 +730,7 @@ list (`gate-form.tsx`).
   `web/lib/flows.ts` (`installAuthoredFlowPackageBridge`, `runRevisionSetup`), `web/lib/flows/lifecycle.ts` (`resolveEffectiveFlowRevision`),
   `web/lib/catalog/authored-service.ts` (`updateAuthoredDraft`, CAS logic),
   `web/lib/capabilities/resolver.ts` (winner-picking precedence),
-  `web/lib/capabilities/materialize.ts` (MCP materialization, reused M14),
+  `web/lib/capabilities/materialize.ts` (MCP materialization, reused),
   `web/lib/services/runs.ts` (`launchRun` insertion points).
 - **OpenAPI routes (Implemented):**
   `PATCH /api/projects/{slug}/catalog/caps/{capId}/draft`,

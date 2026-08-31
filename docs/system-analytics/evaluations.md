@@ -15,7 +15,8 @@ preflight, launch batches, judge panels/profiles, evidence snapshots,
 aggregation (scalar and pairwise), and human-approved recipe standardization.
 
 It **excludes**: automatic promotion of a winner (no machine standardizes or
-promotes — ADR-147), a second scheduler clock (suites reuse the M24 tick), new
+promotes — ADR-147), a second scheduler clock (suites reuse the scheduler
+tick), new
 execution runtimes, and the retired Experiment surface (ADR-150; the legacy
 `experiments` tables and `/experiments` routes are removed, and the former
 `experiments.md` doc is deleted with them).
@@ -331,7 +332,7 @@ Study scoping comes from the partial unique index on
 resolved live contracts it returns every refusal and warning with no side
 effect. The route assembles the live contracts and calls it before submit; the
 same core runs again before the first worktree side effect, so an incompatible
-recipe never forks a branch. M47's scope allows exact-compatible contracts
+recipe never forks a branch. The current scope allows exact-compatible contracts
 only — every check is exact-or-superset, never a lossy coercion.
 
 `PREFLIGHT_REFUSAL_CODES` (`preflight.ts:64-80`) is exactly 15 values:

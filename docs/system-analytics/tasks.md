@@ -52,7 +52,7 @@ comment/activity/subscription/inbox substrate around tasks is owned by
   lifted by ADR-155 — Implemented, see [`social-board.md`](social-board.md)).
   Inverse labels ("blocked by", "required by", "child of") are render-time
   only.
-- **Launch verdict** (M34 — Implemented, ADR-089) — `tasks.flow_id` becomes
+- **Launch verdict** (Implemented, ADR-089) — `tasks.flow_id` becomes
   NULLABLE (simple-intent creation: title + prompt suffice on both the web
   form and ext/MCP `task_create`) plus four verdict columns the triager or a
   human fills: `runner_id` (FK SET NULL — board Launch passes it as the
@@ -72,7 +72,7 @@ comment/activity/subscription/inbox substrate around tasks is owned by
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Backlog: create task<br/>(title + prompt; flow optional — M34)
+    [*] --> Backlog: create task<br/>(title + prompt; flow optional)
     Backlog --> InFlight: Launch click<br/>(preconditions pass,<br/>run created)
     InFlight --> InFlight: latest run terminates<br/>Failed | Crashed | Abandoned<br/>(retry eligibility is derived)
     InFlight --> Done: latest run merged<br/>(terminal)
@@ -131,7 +131,7 @@ sequenceDiagram
     UI-->>U: card appears in Backlog column
 ```
 
-### Create a task from external operations (M16 — Implemented)
+### Create a task from external operations (Implemented)
 
 ```mermaid
 sequenceDiagram
@@ -235,7 +235,7 @@ with scratch — see [`scratch-runs.md`](scratch-runs.md) and `web.openapi.yaml`
 `classifyTaskLaunchability` gains optional relation context and a
 `"blocked"` classification with precedence
 `target_terminal > crashed > busy > blocked > launchable` — relations gate
-_launching_ only, they never mask an active run's state. (M34 — Implemented,
+_launching_ only, they never mask an active run's state. (Implemented —
 ADR-089) a flowless task adds the `"unconfigured"` classification between
 `blocked` and `launchable` (`… > blocked > unconfigured > launchable`):
 launch is refused with `PRECONDITION` at every entry point, the schedules
@@ -282,7 +282,7 @@ relation is removed; the UI always renders blockers as removable chips.
 
 The triager never launches a run itself; it sets the enqueue _intent_
 (`tasks.launch_mode = 'auto'`), and a system-authority sweep job
-(`auto_launch_triaged`) on the M24 polymorphic scheduler clock performs the
+(`auto_launch_triaged`) on the polymorphic scheduler clock performs the
 launch through the standard `launchRun` choke point. Each tick finds and
 launches every candidate that is `triaged` + `launch_mode = 'auto'` + has a
 `flow_id` + classifies `launchable` (no live run, not an orchestrator
@@ -299,7 +299,7 @@ dependency-release → give-up state machine.
 
 ```mermaid
 flowchart TD
-    Tick[auto_launch_triaged tick<br/>M24 clock] --> Scan[SELECT tasks WHERE<br/>triage_status='triaged'<br/>AND launch_mode='auto'<br/>AND flow_id IS NOT NULL]
+    Tick[auto_launch_triaged tick<br/>scheduler clock] --> Scan[SELECT tasks WHERE<br/>triage_status='triaged'<br/>AND launch_mode='auto'<br/>AND flow_id IS NOT NULL]
     Scan --> Live{live run for task?}
     Live -- yes --> Skip[skip — idempotent,<br/>no double launch]
     Live -- no --> Plan{orchestrator as-plan?<br/>parent_of + delegation_spec}
@@ -516,7 +516,7 @@ Review | Crashed`.
   via ADR-141 reopen, which returns the task to `InFlight` (never `Backlog`)
   together with its run's `Done → Review` flip.
 - Title and prompt are non-empty at creation.
-- **(M34 — Implemented)** A task without `flow_id` MUST classify as
+- **(Implemented)** A task without `flow_id` MUST classify as
   `unconfigured` and MUST be refused launch (`PRECONDITION`) at every entry
   point until a flow is set (triage verdict, card popover PATCH, or task
   update); `triage_status` MUST be written only by the ext triage op
@@ -529,14 +529,14 @@ Review | Crashed`.
 launchable`, held **even when `flow_id` is set** — and MUST be cleared only
   by a human (remove `duplicate_of` / re-send to triage); the
   `auto_launch_triaged` tick MUST NEVER launch a `flagged` task.
-- **(M34 — Implemented)** `PATCH /api/projects/{slug}/tasks/{number}` MUST
+- **(Implemented)** `PATCH /api/projects/{slug}/tasks/{number}` MUST
   update verdict fields in ONE transaction with explicit-`null` CLEAR
   semantics, validating `flowId`/`runnerId` against server-state allow-lists.
-- **(M16 + token actor-scope support — Implemented)** External task creation
+- **(External operations + token actor-scope support — Implemented)** External task creation
   uses the same validation as the UI and records the API token in
   `token_audit_log`. User-owned tokens also set `tasks.created_by_user_id` to
   the token owner; project tokens leave it null.
-- **(M16 — Implemented)** The thin MCP facade can create/list/get/update tasks only
+- **(Implemented)** The thin MCP facade can create/list/get/update tasks only
   through the same domain path as the API; it cannot bypass token scopes,
   assignment rules, or run launch preconditions.
 - **(Implemented, ADR-078)** `tasks.number` MUST be unique per project
@@ -575,7 +575,7 @@ launchable`, held **even when `flow_id` is set** — and MUST be cleared only
 - **Empty title or prompt** → `PRECONDITION` (400).
 - **`flow_id` not registered for this project** → `PRECONDITION`.
 - **Launch attempt on a flowless (`unconfigured`) task** → `PRECONDITION`
-  (M34 — Implemented); the schedules dispatcher records `skipped_unconfigured`.
+  (Implemented); the schedules dispatcher records `skipped_unconfigured`.
 - **Selected Flow has no enabled package revision** → launch options return
   `no_revision`; `POST /api/runs` fails fast before any worktree/run/workspace
   side effect.

@@ -1,7 +1,7 @@
 # Project Settings → Agents
 
 - **Name / route:** Project Settings → **Agents** block · `/projects/{slug}?tab=settings` (Agents section)
-- **Status:** Implemented (M39, ADR-106)
+- **Status:** Implemented (ADR-106)
 - **Source:** `web/components/board/panels/agents-attach-panel.tsx` +
   `web/components/board/panels/agents-attach-edit-modal.tsx` — a second instance
   of the data-management-page pattern (precedent: admin

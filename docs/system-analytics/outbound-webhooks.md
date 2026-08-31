@@ -18,7 +18,7 @@ machine itself ([runs.md](runs.md)), the background clock it borrows
 stream (ADR-022) — webhook events are CURATED lifecycle facts, never raw
 `session/update` noise.
 
-## M43 webhook behavior (Implemented)
+## Cut-over webhook behavior (ADR-131 — Implemented)
 
 D2 uses the existing run.failed webhook event. Public data stays exactly
 errorCode=CONFIG; internal reason/source fields are not added to the AsyncAPI

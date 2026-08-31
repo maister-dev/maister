@@ -2,24 +2,26 @@
 
 ## Purpose
 
-This domain (**Implemented, M25**) covers the local data model and read/write
+This domain (**Implemented**) covers the local data model and read/write
 groundwork for MAIster-authored rules, skills, and flows. It complements the
-Implemented M14 capability registry/import pipeline without changing git
+Implemented capability registry/import pipeline without changing git
 install, trust, setup, Flow package enablement, or runtime materialization.
 
 ## Domain entities
 
-- **Authored capability** (`authored_capabilities`, Implemented, M25) — stable
+- **Authored capability** (`authored_capabilities`, Implemented) — stable
   project-local identity for `rule`, `skill`, or `flow`, keyed by
   `(project_id, kind, slug)`.
-- **Authored capability revision** (`authored_capability_revisions`, Implemented,
-  M25) — versioned draft/published/archive snapshot with `draft_version`,
+- **Authored capability revision** (`authored_capability_revisions`,
+  Implemented) — versioned draft/published/archive snapshot with `draft_version`,
   lifecycle, canonical content hash, body, and manifest.
-- **Capability projection** (`capability_records`, Implemented M14, authored
-  projection Implemented M25) — published authored rule/skill rows appear as
-  `source='project'` with `material.origin='authored'`.
-- **Capability import** (`capability_imports`, Implemented M14) — git-pinned
-  import ledger; M25 reads beside it but never mutates it from authored edits.
+- **Capability projection** (`capability_records`, Implemented with the
+  registry/import pipeline; authored projection Implemented here) — published
+  authored rule/skill rows appear as `source='project'` with
+  `material.origin='authored'`.
+- **Capability import** (`capability_imports`, Implemented) — git-pinned
+  import ledger; this domain reads beside it but never mutates it from
+  authored edits.
 
 ## Adapter compatibility widening (Designed, ADR-084/ADR-085)
 
@@ -204,7 +206,7 @@ different objects in one place:
 - **Authored Flow content** — editable local catalog content stored under
   `authored_capabilities` / `authored_capability_revisions`.
 - **Installed Flow package attachment** — executable project attachment backed
-  by M10 `flow_revisions` + `flows.enabled_revision_id`.
+  by the package-lifecycle `flow_revisions` + `flows.enabled_revision_id`.
 
 These objects are not interchangeable. Publishing authored content makes it
 visible in the local catalog; it does not install, trust, enable, launch, or run
@@ -249,7 +251,7 @@ gates are unchanged — only the editing widget changes.
 | `Draft: valid`                    | Editable authored package content that passes manifest and package validation. | Save, edit, publish local, export.                     | None until publish/export is chosen.                                                   |
 | `Published local catalog content` | Immutable project-local authored revision.                                     | Inspect, create a new draft, export.                   | No install cache write, no symlink, no setup, no launch enablement.                    |
 | `Exported portable package`       | Git-ready directory containing `flow.yaml` and typed package files.            | Commit, copy, import elsewhere, hand to install flow.  | No execution. It is bytes only.                                                        |
-| `Installed executable package`    | M10 package revision installed from a source/ref.                              | Trust, enable, upgrade, rollback, remove.              | Eligible for launch only after trust, setup, compatibility, and enablement gates pass. |
+| `Installed executable package`    | Package revision (ADR-021) installed from a source/ref.                        | Trust, enable, upgrade, rollback, remove.              | Eligible for launch only after trust, setup, compatibility, and enablement gates pass. |
 | `Enabled project attachment`      | Project Flow id points at an installed revision for new runs.                  | Launch tasks, disable, rollback, upgrade.              | New runs snapshot the enabled revision.                                                |
 
 ## Authoring permissions
@@ -404,7 +406,8 @@ Local publish, export, installer bridge, and launch require:
 - package file kinds are supported.
 - project-context references resolve on install/load/launch paths that provide
   project role and capability registries.
-- setup/script artifacts remain inert until M10 trust/setup/enablement.
+- setup/script artifacts remain inert until the package-lifecycle
+  trust/setup/enablement (ADR-021).
 
 Invalid authored packages remain drafts and must be visibly non-runnable.
 
@@ -419,7 +422,7 @@ Invalid authored packages remain drafts and must be visibly non-runnable.
 | Admin publishes `{ foo: bar }`.                          | Refused before publication because it is not a valid Flow package.                                                                    |
 | Admin exports a valid authored package.                  | A portable directory is written through temp + rename; no setup hook runs.                                                            |
 | Admin imports an AIF flow dir (`maister-plugins/packages/aif/flows/<id>`). | Draft authored package contains the flow + schema artifacts of that dir (the bundle ships separately under `capability/`).            |
-| Operator wants to launch authored content.               | They must export/install/trust/enable through the M10 package lifecycle first.                                                        |
+| Operator wants to launch authored content.               | They must export/install/trust/enable through the package lifecycle (ADR-021) first.                                                  |
 
 ## First-slice acceptance
 
@@ -439,7 +442,7 @@ state renders through message keys. Raw enum strings are not user-facing copy.
 
 ## Expectations
 
-- `Published` in M25 MUST mean project-local visibility only; external catalog
+- `Published` today MUST mean project-local visibility only; external catalog
   publication is a later state/table.
 - Draft updates MUST require matching `draft_version` and fail stale writes with
   `CONFLICT`.
@@ -459,7 +462,7 @@ state renders through message keys. Raw enum strings are not user-facing copy.
   be refused with `CONFLICT`.
 - Authored flow publish MUST NOT mutate `flows`, `flow_revisions`, project
   enablement, install caches, or setup status.
-- Authored content MUST NOT run executable hooks in M25.
+- Authored content MUST NOT run executable hooks today.
 - Existing git-installed capability imports MUST remain read-only from authored
   catalog routes.
 - Authored Flow creation, editing, publishing, import, and export MUST use
@@ -481,9 +484,9 @@ state renders through message keys. Raw enum strings are not user-facing copy.
   rows, and flipping `capabilityAgent` MUST change only `surfaceForm`/`supported`
   and subagent inclusion, never the underlying membership set. (Designed, FR-B2/FR-B3)
 
-## Authored flow → executable bridge (Designed, M27)
+## Authored flow → executable bridge (Implemented — ADR-068)
 
-**(Designed, M27)** M27 extends the ADR-061 catalog-only boundary: a published authored `flow` can now become **executable** without a manual export+install cycle. The in-app publish-local route calls `installAuthoredFlowPackageBridge(trusted_by_policy)`, which bridges the authored catalog revision directly into a `flows` + `flow_revisions` row (`trustStatus=trusted_by_policy`, `exec_trust=untrusted`). The catalog-only invariant (publish ≠ enable) is preserved: the bridged revision still requires an explicit `exec_trust` flip before `runRevisionSetup` or an MCP stdio `command` can run. Logic-trust alone (`trustStatus=trusted_by_policy`) never executes setup.sh. See ADR-068 and [`flow-packages.md`](flow-packages.md) §M27.
+**(Designed — ADR-068)** The bridge extends the ADR-061 catalog-only boundary: a published authored `flow` can now become **executable** without a manual export+install cycle. The in-app publish-local route calls `installAuthoredFlowPackageBridge(trusted_by_policy)`, which bridges the authored catalog revision directly into a `flows` + `flow_revisions` row (`trustStatus=trusted_by_policy`, `exec_trust=untrusted`). The catalog-only invariant (publish ≠ enable) is preserved: the bridged revision still requires an explicit `exec_trust` flip before `runRevisionSetup` or an MCP stdio `command` can run. Logic-trust alone (`trustStatus=trusted_by_policy`) never executes setup.sh. See ADR-068 and [`flow-packages.md`](flow-packages.md) §"Version binding and authored→executable bridge".
 
 ## Edge cases
 
@@ -499,7 +502,7 @@ state renders through message keys. Raw enum strings are not user-facing copy.
   `ARCHIVED` capability return `404`; a failed refresh returns `409` `CONFLICT`
   `edit_lock_not_held`.
 - Authored flow publish returns local catalog data only; attempts to execute it
-  through Flow package enablement remain a later milestone.
+  through Flow package enablement remain later work.
 - Adding Gemini/OpenCode/MiMo to the agent union does not backfill old capability
   rows; operators must edit or republish records to declare compatibility unless
   a future migration explicitly says otherwise.

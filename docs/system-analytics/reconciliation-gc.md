@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This domain (**Designed, M19**) covers two recovery-and-cleanup concerns
+This domain (**Designed**) covers two recovery-and-cleanup concerns
 that sit below the live run machine. **Crash reconciliation** detects a
 stranded `Running` run — a runner loop gone after a Next.js or supervisor
 restart, or a session-less node left dangling — and classifies it into
@@ -16,7 +16,7 @@ GC is the deferred removal that never destroys un-committed work.
 
 ## ADR-142 workspace cleanup contract (Implemented)
 
-The M19 behavior below is the shipped baseline. ADR-142 changes only the
+The behavior below is the shipped baseline. ADR-142 changes only the
 workspace cleanup boundary: automatic row-backed GC selects the disposable
 set `{Done, Abandoned}` and never selects `Review`, `Crashed`, or `Failed`.
 All row-backed removal paths use a renewable lifecycle claim that fences every
@@ -50,7 +50,7 @@ candidate-level failures remain in its summary and use their individual durable
 retry or quarantine state. Runtime JSONL, transcripts, evidence, and run rows
 are not GC targets.
 
-## M43 one-time cut-over versus recurring repair (Implemented)
+## One-time cut-over versus recurring repair (ADR-131 — Implemented)
 
 Migration 0094 is the only owner of unfinished-linear-run terminalization. It
 runs while web and supervisor are stopped and is not a recurring reconcile
@@ -59,14 +59,14 @@ the durable D2 event; it does not change a run or emit an event. Reconcile never
 recovers or redispatches these explained Failed rows. Workspaces are retained
 and enter normal terminal preserve/prune GC after restart.
 
-> **M42 — Unified runner & session model (Implemented).** Reconcile / resume /
+> **Unified runner & session model (Implemented).** Reconcile / resume /
 > recover read the per-session `run_sessions` snapshot (incl. `acp_session_id`)
 > instead of `runs.acp_session_id`; classification is session- and
 > `run_kind`-aware and must cover partial `run_sessions` insert,
 > spawned-but-unpersisted `acp_session_id`, and mid-run session switch. Canonical:
 > [`sessions.md`](sessions.md) /
 > [ADR-114](../decisions.md#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth).
-> Flipped to as-built in M42 Phase 7.
+> Flipped to as-built in Phase 7 of that work.
 
 ## Domain entities
 
@@ -74,13 +74,13 @@ and enter normal terminal preserve/prune GC after restart.
   (allow-list). It can transition a run to `Crashed`; GC reads terminal
   runs (`Abandoned`/`Done`). See [`runs.md`](runs.md).
 - **Resume-in-flight marker** — `runs.resume_started_at` (timestamptz, null
-  by default; **Designed, M19**, migration 0015). Stamped by Recover before
+  by default; **Designed**, migration 0015). Stamped by Recover before
   the supervisor side-effect; anchors the reconcile grace window. Cleared on
   first progress, on terminal write, or by the runner's single-winner CAS-clear
   (`UPDATE runs SET resume_started_at = NULL WHERE id = ? AND resume_started_at
   IS NOT NULL`).
 - **Recover target node** — `runs.resume_target_step_id` (text, null by
-  default; **Implemented, M19**, migration 0016). The node id retained at crash
+  default; **Implemented**, migration 0016). The node id retained at crash
   time: `crashRunningRun` copies `current_step_id → resume_target_step_id` and
   nulls `current_step_id` (clean-terminal read preserved). Recover resolves the
   node kind + `retry_safe` from this column (falling back to `current_step_id`
@@ -91,7 +91,7 @@ and enter normal terminal preserve/prune GC after restart.
   `retry_safe: true` (`ai_coding` ignores it — recovered via `session/resume`). See
   [`../flow-dsl.md`](../flow-dsl.md).
 - **Workspace** — `workspaces` row / git worktree. GC entities added by
-  migration 0015 (**Designed, M19**):
+  migration 0015 (**Designed**):
   - `scheduled_removal_at` (timestamptz, null) — GC deadline (cleared on
     reopen, ADR-141), stamped at the `Abandoned`/`Done` transition.
   - `archived_branch` (text, null) — name of the preserved archive ref
@@ -106,7 +106,7 @@ and enter normal terminal preserve/prune GC after restart.
   `acp_session_id` with `status: 'live' | 'exited' | 'crashed'`. The
   reconcile classifier (`reconcile.ts`) matches this against each run's ACTIVE
   `run_sessions` `acp_session_id`, resolved via `loadActiveRunSessionsByRunId`
-  (M42 — no longer a `runs.acp_session_id` column join).
+  (no longer a `runs.acp_session_id` column join).
 - **Worktree set** — `listWorktrees(projectRepoPath)` paths, joined against
   `workspaces.worktree_path` (the "runs vs `git worktree list`" check).
 - **Context mount** (**Implemented, ADR-157**) — an ephemeral detached read-only
@@ -137,7 +137,7 @@ and enter normal terminal preserve/prune GC after restart.
 
 The run reconcile axis (allow-list `Running`-only) and the workspace GC
 lifecycle (terminal → countdown → archived → pruned). Both are
-**Designed, M19**.
+**Designed**.
 
 ```mermaid
 stateDiagram-v2
@@ -172,7 +172,7 @@ there is no `gc_state` enum column.
 
 ## Process flows
 
-### Startup reconcile (Implemented, M19)
+### Startup reconcile (Implemented)
 
 Runs once on Node boot from `web/instrumentation.ts`, AFTER the two
 existing recovery sweeps (`runResumeRecoverySweep`,
@@ -201,7 +201,7 @@ flowchart TD
     Act -- skip --> Noop[no action]
 ```
 
-### Periodic reconcile sweep (Implemented, M19)
+### Periodic reconcile sweep (Implemented)
 
 A `globalThis`-singleton timer
 (`setInterval(...).unref()`, `MAISTER_RECONCILE_SWEEP_INTERVAL_SECONDS`,
@@ -228,7 +228,7 @@ flowchart TD
     Sess -- yes --> Reatt[RE-ATTACH]
 ```
 
-### Operator Recover — hybrid resume / re-dispatch (Implemented, M19)
+### Operator Recover — hybrid resume / re-dispatch (Implemented)
 
 Operator-driven Recover (`POST /api/runs/{runId}/recover`) classifies the
 `Crashed` run with `classifyRecover(run, nodeKind, retrySafe)` over the
@@ -247,7 +247,7 @@ crash time; `current_step_id` is nulled on crash), falling back to
 An agent node continues the prior agent session via the ACP `session/resume`
 call on `acpSessionId` (`createSession({ resumeSessionId })` +
 `scheduleResumedSessionDrive`) — the
-same mechanism M8 idle-resume uses, and the continuation is exercised in CI
+same mechanism idle-resume uses, and the continuation is exercised in CI
 against the mock ACP adapter. A session-less node carries no resumable session
 and is re-dispatched via `runFlow` **only** when its manifest config declares
 `retry_safe: true` (re-running a session-less node repeats its side effects —
@@ -265,14 +265,14 @@ single-winner via a CAS-clear of the
 in-flight marker (`UPDATE runs SET resume_started_at = NULL WHERE id = ? AND
 resume_started_at IS NOT NULL`): the winner drives, the loser bails.
 
-### Cron GC route (Implemented M19; compatibility wrapper Implemented M24)
+### Cron GC route (Implemented; compatibility wrapper Implemented)
 
 `GET`/`POST /api/cron/gc` runs the unified `system_sweep` service on demand,
 guarded by a constant-time `X-Maister-Cron-Token` comparison.
 
-M24 keeps this route as a compatibility wrapper over the unified scheduler
+The route is kept as a compatibility wrapper over the unified scheduler
 `system_sweep` service. The response shape and `200`/`207`/`401`/`503` behavior
-remain the M19 GC contract; new external cron integrations should prefer
+remain the original GC contract; new external cron integrations should prefer
 `/api/cron/tick`. The shared GC bundle both entry points run includes the
 ADR-142 evaluation-evidence sweep (orphan `preparing` recovery + two-stage
 reference-guarded `pending_delete → deleted` finalize — see Domain entities
@@ -291,11 +291,11 @@ flowchart TD
     Sum -- yes --> R207[207 JSON summary]
 ```
 
-### Preserve-then-prune (Implemented, M19)
+### Preserve-then-prune (Implemented)
 
 The destructive-safety core: every removal is gated on preserve success;
-GC archives a branch, it never merges to main/target (that is M18
-promotion).
+GC archives a branch, it never merges to main/target (that is the shared
+promotion service).
 
 ```mermaid
 flowchart TD
@@ -456,7 +456,7 @@ change in the same commit, never on its own.
   untracked changes are snapshot-committed and pointed at archive branch
   `maister/archive/<runId>`; removal MUST be gated on preserve success and a
   preserve failure MUST skip the row (never force-remove unpreserved state).
-- Operator archive/drop actions (M27) reuse the same preserve-before-remove
+- Operator archive/drop actions reuse the same preserve-before-remove
   invariant immediately from the workbench lifecycle UI. Background GC remains
   schedule-driven; user-initiated drop is claim-serialized through
   `workspaces.lifecycle_operation_*` and still refuses removal when preservation
@@ -562,7 +562,7 @@ For each run at reconcile time, gather: `run.status`, `run.runKind`,
 - Related domains: [`runs.md`](runs.md), [`workspaces.md`](workspaces.md),
   [`workbench-lifecycle.md`](workbench-lifecycle.md),
   [`flow-packages.md`](flow-packages.md), [`flow-graph.md`](flow-graph.md).
-- Source (Implemented, M19): `web/lib/reconcile.ts`, `web/lib/runs/recover.ts`,
+- Source (Implemented): `web/lib/reconcile.ts`, `web/lib/runs/recover.ts`,
   `web/lib/gc/preserve.ts`, `web/lib/gc/workspace-gc.ts`,
   `web/lib/gc/revision-gc.ts`, `web/lib/scheduler/system-sweeps.ts`.
 - Context-mount backstop (ADR-157): `web/lib/gc/context-mount-gc.ts` (the sweep +

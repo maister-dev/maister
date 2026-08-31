@@ -10,7 +10,7 @@ the graph; it does NOT design Flows itself. Multi-flow **packages** that group
 several Flows + capability content under one import are **(Implemented)** in
 [`packages.md`](packages.md) (ADR-088).
 
-## M43 graph-only compatibility contract (Implemented)
+## Graph-only compatibility contract (ADR-131 — Implemented)
 
 Engine 3.0.0 accepts only manifests with a non-empty nodes array and no
 top-level steps key. A present steps key, including an empty array or a
@@ -210,23 +210,25 @@ flowchart LR
 - Gate kinds are `command_check | skill_check |
   ai_judgment | external_check | artifact_required | human_review`; each gate has
   `mode: blocking | advisory` and status `pending | running | passed |
-  failed | stale | skipped | overridden`. M11a **executes**
+  failed | stale | skipped | overridden`. The graph engine **executes**
   `command_check`/`ai_judgment`/`human_review` and `skill_check` (best-effort,
-  no capability scoping until M14); `artifact_required` executes as of M12 and
-  `external_check` executes as of M16 (report ingestion via the operations API).
+  no capability scoping until capability materialization — ADR-041/044);
+  `artifact_required` executes (Implemented — ADR-037/038) and `external_check`
+  executes (Implemented — ADR-045/046/047; report ingestion via the operations
+  API).
   See [`flow-graph.md`](flow-graph.md) §Gate execution.
-- **(M16 — Implemented)** `external_check` gates are satisfied through the
+- **(Implemented)** `external_check` gates are satisfied through the
   token-authenticated operations API or the thin MCP facade. Reports become
   typed gate artifacts and participate in readiness, staleness, review, and
   promotion refusal like native gate results.
 - **(Planned)** Internal skill/command gates, such as `/aif-review` or
   project QA/checklist skills, run through the same capability materialization
   and artifact recording path as AI nodes when they use an agent session.
-- **(Planned M15/M18)** Review and merge refuse when any required blocking gate
-  is missing, pending, running, failed, stale, or skipped — M11a records
-  `gate_results` but does not gate promotion on them. **(M11a — Designed)**
-  Overrides require a declared `human_review` decision and never delete the
-  failed evidence (override-without-erasure).
+- **(Implemented — readiness + merge enforcement, ADR-048/ADR-058)** Review and merge refuse
+  when any required blocking gate is missing, pending, running, failed, stale,
+  or skipped — the graph engine records `gate_results` but does not gate
+  promotion on them. **(Designed)** Overrides require a declared `human_review`
+  decision and never delete the failed evidence (override-without-erasure).
 - Templating in `prompt` is Mustache-style and resolves session context, task
   fields, highest-attempt node output vars through the stable `steps.<nodeId>`
   namespace, and executor metadata.
@@ -265,7 +267,7 @@ semantics, not a convention tied to a `plan_review` node name or prompt text.
 - ADRs: [ADR-010 Flow Engine v2](../decisions.md#adr-010-flow-engine-v2-plugin-packaging--step-dsl),
   [ADR-026 Graph manifest](../decisions.md#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump),
   [ADR-029 M11 split](../decisions.md#adr-029-split-m11-into-m11a--m11b--m11c).
-- Graph execution (M11a): [`flow-graph.md`](flow-graph.md).
+- Graph execution: [`flow-graph.md`](flow-graph.md).
 - Package lifecycle: [`flow-packages.md`](flow-packages.md).
 - Config reference: [`../configuration.md`](../configuration.md) §`flow.yaml v1`.
 - ERD: [`../db/projects-domain.md`](../db/projects-domain.md) (flows table).

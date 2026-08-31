@@ -1,6 +1,6 @@
 # Package viewer — `/studio/packages/{ref}` + detail surfaces
 
-## M43 stored legacy package state (Implemented)
+## Cut-over stored legacy package state (ADR-131 — Implemented)
 
 Incompatible installed/stored content remains read-only and inspectable. Legacy
 `steps[]` content carries the locked nodes[] republish remediation; a graph
@@ -15,7 +15,7 @@ Attach, enable, upgrade-to and launch controls are disabled.
   - `/studio/packages/{ref}/skills/{...path}` — skill bundle browser.
   - `/studio/packages/{ref}/agents/{stem}` — agent detail.
   - `/studio/packages/{ref}/subagents/{stem}` — subagent detail.
-- **Status:** **Implemented** (M36 Flow Package Viewer,
+- **Status:** **Implemented** (Flow Package Viewer,
   Phase 1), with the local-fork rework path now wired. Supersedes the chip-list
   bill-of-materials and the deferred-to-Phase-B embedded canvas in the [area
   README](./README.md) §"Surfaces / 4. Package detail".

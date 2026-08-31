@@ -21,9 +21,10 @@ reconciliation on host or process restart.
   (`resolveBaseCommit`), recorded as `workspaces.base_commit` and passed as the
   `startPoint` to `git worktree add`. The run branch forks from this exact commit.
 - **Target branch** — branch selected for promotion. Defaults to the base
-  branch but can differ for engineer-controlled workflows. For **flow** runs M18
-  relaxes the scratch hard-lock that pinned the target to the base
-  (`assertPromotionTargetAllowed`). Must exist (validated on launch and promote).
+  branch but can differ for engineer-controlled workflows. For **flow** runs
+  branch targeting (ADR-058) relaxes the scratch hard-lock that pinned the
+  target to the base (`assertPromotionTargetAllowed`). Must exist (validated on
+  launch and promote).
 - **Promotion mode** — `local_merge | pull_request` (`workspaces.promotion_mode`).
   Resolved at launch from the override chain (launch override > project
   `promotion.mode` > default `local_merge`); a per-run snapshot, not live-synced.
@@ -31,9 +32,9 @@ reconciliation on host or process restart.
   project default -> launch override -> promote-time override. It supersedes
   `promotion_mode` for new Flow runs while preserving legacy compatibility:
   `local_merge` maps to `strategy=merge`, `pull_request` maps to
-  `strategy=pull_request`. Scratch runs keep legacy M18 promotion semantics in
-  this slice.
-- **Durable promotion claim (Implemented, M18)** — the serialization point for
+  `strategy=pull_request`. Scratch runs keep the legacy promotion semantics
+  (ADR-058) in this slice.
+- **Durable promotion claim (Implemented)** — the serialization point for
   idempotent promotion, held on the workspace row (1:1 with the run):
   - `promotion_state` — `none | claiming | done | failed | reopened`. CAS'd to `claiming`
     in a short tx **committed BEFORE any side-effect**; the single concurrency
@@ -46,7 +47,7 @@ reconciliation on host or process restart.
     `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS` (default 300) is reclaimable.
   - `promotion_owner_user_id` — actor who claimed the promotion.
   - `pr_url` / `pr_number` — recorded on a successful `pull_request` promotion
-    (**Implemented, M18**); `pr_url` is also the
+    (**Implemented**); `pr_url` is also the
     idempotency key that turns a re-promote into a PR update rather than a
     duplicate.
   - `promoted_at` — set in the finalize tx alongside `runs.status = Done`.
@@ -58,7 +59,7 @@ reconciliation on host or process restart.
 - **Active workspace row** — Implemented. A visible run/workspace row with
   branch or scratch name, run kind, executor profile, launched-by user, status
   label, status dot, relative time, and run/scratch detail link.
-- **Read-only range git ops (M11b — Implemented)** — `logRange`
+- **Read-only range git ops (Implemented)** — `logRange`
   (`git log <base>..<branch>`), `diffRange` (`git diff <base>..<branch>`), and
   `resolveBaseRef` (`git merge-base <mainBranch> <branch>`) in
   `web/lib/worktree.ts`, used by the manual-takeover return to capture the
@@ -112,9 +113,9 @@ stateDiagram-v2
     Removed --> [*]
 ```
 
-### M19 graceful GC lifecycle (Designed)
+### Graceful GC lifecycle (Implemented)
 
-M19 ([ADR-035](../decisions.md#adr-035)) refines the terminal tail of the
+[ADR-035](../decisions.md#adr-035) refines the terminal tail of the
 lifecycle above into a **preserve-then-prune** countdown. On the `Abandoned`/
 `Done` transition the run stamps `workspaces.scheduled_removal_at = ended_at +
 MAISTER_GC_AGE_DAYS` (default 14); the worktree then sits in a TTL countdown,
@@ -159,14 +160,14 @@ sequenceDiagram
     W->>DB: INSERT workspaces { run_id, project_id, branch, base_branch, base_commit, target_branch, worktree_path, parent_repo_path }
 ```
 
-### Promote on Review — shared service over both run kinds (Implemented, M18)
+### Promote on Review — shared service over both run kinds (Implemented)
 
-Promotion is the product action after `Review`. M18
-([ADR-058](../decisions.md#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve))
+Promotion is the product action after `Review`.
+[ADR-058](../decisions.md#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve)
 introduces a **shared `promoteRun` service** that drives **both** scratch and
 flow run kinds for `local_merge`; the `pull_request` mode
 ([ADR-049](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant))
-is **Implemented (M18)**. Both modes terminate at the existing
+is **Implemented**. Both modes terminate at the existing
 `Done` (no new `runs.status`). The service is retry-safe through a **durable
 promotion claim**: a fresh `promotion_attempt_id` is minted and
 `promotion_state` is CAS'd to `claiming` in a short transaction **committed
@@ -175,7 +176,7 @@ held**, then a finalize transaction **keyed on the attempt token** flips `Done`.
 The claim — not a held row lock — is the single serialization point
 (§ *Concurrent promote & stale-claim reclaim* below).
 
-#### `local_merge` promotion (Implemented, M18)
+#### `local_merge` promotion (Implemented)
 
 ```mermaid
 sequenceDiagram
@@ -216,7 +217,7 @@ sequenceDiagram
     end
 ```
 
-#### `pull_request` promotion (Implemented, M18)
+#### `pull_request` promotion (Implemented)
 
 ```mermaid
 sequenceDiagram
@@ -250,7 +251,7 @@ sequenceDiagram
     end
 ```
 
-#### Promotion outcomes (Implemented, M18; both `local_merge` and `pull_request` rows)
+#### Promotion outcomes (Implemented; both `local_merge` and `pull_request` rows)
 
 | Outcome | HTTP | Run / claim effect |
 |---------|------|--------------------|
@@ -282,7 +283,7 @@ type DeliveryPolicy = {
 };
 ```
 
-Promotion still uses the M18 durable claim and per-attempt token. Policy changes
+Promotion still uses the durable claim and per-attempt token. Policy changes
 only choose the side-effect path and the default UI selection:
 
 | Strategy | Side effect | Claim/finalize model |
@@ -304,13 +305,13 @@ stays `Review`, the policy degrades to manual for that run, and the UI shows the
 typed reason. The run-detail banner can cancel auto-delivery by CAS-ing the run
 snapshot from `auto_on_ready` to `manual`; project defaults are untouched.
 
-#### Concurrent promote & stale-claim reclaim (Implemented, M18)
+#### Concurrent promote & stale-claim reclaim (Implemented)
 
 The durable claim + per-attempt token guarantees **exactly one side-effect** per
 promotion even under concurrency and crash. Two mechanisms compose: the
 attempt-token CAS prevents a **double finalize**; the stored `pr_url` (+ a
-provider query) prevents a **double side-effect** for PR mode (**Implemented,
-M18**). A `local_merge` re-merge of an already-merged
+provider query) prevents a **double side-effect** for PR mode
+(**Implemented**). A `local_merge` re-merge of an already-merged
 source is a no-op (`Already up to date`).
 
 ```mermaid
@@ -334,7 +335,7 @@ background sweeper):
   while the run is still `Review`, `promotion_state = claiming`. Once the claim
   ages past `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS`, a re-promote reclaims it;
   the re-merge is a no-op and the attempt finalizes `Done`.
-- **`pull_request`** (**Implemented, M18**) — the PR may
+- **`pull_request`** (**Implemented**) — the PR may
   be pushed/created while `pr_url` is not yet stored, `promotion_state =
   claiming`. The reclaiming re-promote's `createOrUpdatePr` detects the existing
   PR for `(run branch → target)` via the provider (`gh pr list --head` / `glab
@@ -370,7 +371,7 @@ flowchart TD
     NeedsInputIdle -- no --> Crash
 ```
 
-> M19 ([ADR-033](../decisions.md#adr-033)) makes this reconcile **allow-list
+> [ADR-033](../decisions.md#adr-033) makes this reconcile **allow-list
 > `Running`-only** and adds a grace guard plus a retry-safety split (read-only
 > `check`/`judge` gate nodes re-dispatch; `cli` nodes crash). The
 > "runs vs `git worktree list`" branch becomes the `worktree-gone → Crashed`
@@ -415,7 +416,7 @@ flowchart LR
 
 ### Preserve-then-prune GC (Implemented)
 
-M19 ([ADR-035](../decisions.md#adr-035)) replaces the single-step removal above
+[ADR-035](../decisions.md#adr-035) replaces the single-step removal above
 with a graceful, destructive-safe sweep delivered by the claimed
 `system_sweep.default` scheduler job. The token-guarded cron route only makes
 that job due; it does not run a second cleanup implementation. The candidate select uses the
@@ -440,7 +441,7 @@ flowchart TD
     Remove --> Done([next row])
 ```
 
-### M19 worktree TTL color ramp (Designed)
+### Worktree TTL color ramp (Implemented)
 
 Read models surface a derived `ttlState` for `Abandoned`/`Done` workspaces so
 the portfolio rail, board, and run-detail can render a countdown to GC removal.
@@ -488,24 +489,24 @@ flowchart LR
 - Local promotion merge policy is `git merge --no-ff` ONLY; conflict always
   invokes `git merge --abort`, leaves the run in `Review`, and creates a
   manual-resolution assignment.
-- **(Implemented, M18)** A **flow** run MUST be promotable from `Review` through
+- **(Implemented)** A **flow** run MUST be promotable from `Review` through
   the shared `promoteRun` service; `local_merge` finalizes at the existing `Done`
   (no new `runs.status`) and the scratch path stays behavior-identical
   (regression-pinned). `pull_request` also finalizes at `Done`.
-- **(Implemented, M18)** Promotion MUST be idempotent: a fresh `promotion_attempt_id`
+- **(Implemented)** Promotion MUST be idempotent: a fresh `promotion_attempt_id`
   is minted and `promotion_state` is CAS'd to `claiming` and **committed BEFORE**
   any git/PR side-effect; the finalize tx is keyed on that token so a superseded
   attempt writes NOTHING. `pr_url` is the PR dedup key (re-promote
   updates, never duplicates).
-- **(Implemented, M18)** Two concurrent promotes of the same run MUST yield exactly
+- **(Implemented)** Two concurrent promotes of the same run MUST yield exactly
   ONE side-effect — one `Done`, one `409 CONFLICT`; a `claiming` claim older than
   `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS` is reclaimable and re-minting the
   token blocks a crashed/slow original from double-finalizing.
-- **(Implemented, M18)** Promotion MUST refuse `PRECONDITION` (no claim, run stays
+- **(Implemented)** Promotion MUST refuse `PRECONDITION` (no claim, run stays
   `Review`) when readiness is not ready/stale (`assertEvidenceReady(runId,
   "review")`, overridden gates satisfy it) or when the target advanced since
   review (`reviewedTargetCommit` ≠ live target HEAD) unless `allowTargetDrift`.
-- **(Implemented, M18)** Pull-request promotion is provider-dispatched through the
+- **(Implemented)** Pull-request promotion is provider-dispatched through the
   hybrid `PrAdapter` (github→`gh`, gitlab→`glab`, gitea+gitverse→Gitea REST API,
   generic→`PRECONDITION`); PR creation MUST be idempotent (existing PR updated, not
   duplicated). The provider boundary (`gh`/`glab` exec + Gitea-API `fetch`) is
@@ -516,16 +517,16 @@ flowchart LR
   explicit recover route for crashed scratch sessions.
 - GC removes worktrees of runs in `Done | Abandoned` older than 7 d;
   GC failures log and continue without setting `removed_at`.
-- **(Implemented, M19)** GC MUST select terminal candidates by
+- **(Implemented)** GC MUST select terminal candidates by
   `COALESCE(workspaces.scheduled_removal_at, runs.ended_at + MAISTER_GC_AGE_DAYS) <= now()`
   (default age 14 d) and MUST preserve before pruning: dirty tracked + untracked
   state is snapshot-committed onto `maister/archive/<runId>`, and
   `removeOwnedWorktree` runs ONLY when preserve succeeds. See
   [`reconciliation-gc.md`](reconciliation-gc.md).
-- **(Implemented, M19)** GC MUST NOT merge into main/target; preservation is the
+- **(Implemented)** GC MUST NOT merge into main/target; preservation is the
   archive branch (+ optional push when `MAISTER_GC_ARCHIVE_PUSH=true`, default
   `false`) only.
-- **(Implemented, M27)** Operator archive/drop/export/snapshot/handoff actions
+- **(Implemented)** Operator archive/drop/export/snapshot/handoff actions
   use the same workspace row and preserve/remove helpers but are explicit UI
   lifecycle actions, not background GC. Their allow-list, durable operation
   claim, and trust boundary live in
@@ -542,7 +543,7 @@ flowchart LR
 - Each project group MUST expose a scratch launch `+` action with that project
   preselected and MUST show launched-by display when `runs.created_by_user_id`
   or legacy scratch creator metadata is available.
-- **(Implemented, M11b)** The manual-takeover return reads the EXISTING worktree
+- **(Implemented)** The manual-takeover return reads the EXISTING worktree
   through read-only range ops (`logRange`/`diffRange`/`resolveBaseRef`) ONLY; it
   creates NO new branch/target/PR and performs no push, merge, or
   checkout-switch (the worktree is already on the run branch). A failed git op
@@ -564,29 +565,29 @@ flowchart LR
   (Phase 2 will define).
 - **`CONFLICT`** — `git merge --no-ff` exited non-zero. Run stays
   `Review`, worktree stays Active, parent repo is restored via
-  `git merge --abort`. **(Implemented, M18)** a stale-claim reclaim that finalizes
+  `git merge --abort`. **(Implemented)** a stale-claim reclaim that finalizes
   after a same-user re-mint also surfaces `CONFLICT` ("superseded by a newer
   attempt") and writes nothing.
 - **`git worktree remove` fails** (locked worktree, missing dir) — GC
   logs and continues; row stays without `removed_at`. Operator can
   force-cleanup manually.
-- **(Implemented, M18) Concurrent promotions of the same run** — serialized by the
+- **(Implemented) Concurrent promotions of the same run** — serialized by the
   durable `promotion_state` claim keyed on `promotion_attempt_id` (committed
   before the side-effect); exactly one finalizes `Done`, the other gets `409
   CONFLICT`. Supersedes the prior single-writer assumption.
-- **(Implemented, M18) Target advanced since review (drift)** — `reviewedTargetCommit`
-  ≠ live target HEAD → `PRECONDITION`. **(Implemented, M18)** the panel re-renders against
+- **(Implemented) Target advanced since review (drift)** — `reviewedTargetCommit`
+  ≠ live target HEAD → `PRECONDITION`. **(Implemented)** the panel re-renders against
   the new HEAD and offers "Promote anyway" (`allowTargetDrift`).
-- **(Implemented, M18) Crash between claim and finalize** — a durable
+- **(Implemented) Crash between claim and finalize** — a durable
   `promotion_state='claiming'` row; reclaimable past
   `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS`, the idempotent side-effect makes the
   re-promote a no-op (local merge) — or a PR update (provider query) for
   `pull_request` — then it finalizes `Done`.
-- **(Implemented, M18) Legacy pre-M18 workspace (null branch metadata)** — promote
+- **(Implemented) Legacy pre-ADR-058 workspace (null branch metadata)** — promote
   derives fallbacks (`target_branch ?? project.default_branch`, diff base via
   `resolveBaseRef`) or refuses `PRECONDITION` ("relaunch to promote"); never a
   silent null into git.
-- **(Implemented, M27) Concurrent lifecycle action** — archive/drop/export/
+- **(Implemented) Concurrent lifecycle action** — archive/drop/export/
   snapshot/handoff are serialized by `workspaces.lifecycle_operation_*`. A
   losing claim returns `409 CONFLICT`; a transient push failure leaves the
   operation retryable rather than marking promotion done.
@@ -961,7 +962,7 @@ new trust axis and change no capability class.
 | **L3** | a terminal dirty-check per mount (`git status --porcelain`) → WARN + quarantine evidence in the one-transaction shape the ADR-090 dirty-watchdog already uses | detection after the fact. The mount is discarded regardless — it is detached with no branch, so nothing legitimate is lost. |
 
 **L2's position in the permission handler is load-bearing.** The guard runs
-**after** the M40 guardrail interceptor — so a denied write still feeds the
+**after** the guardrail interceptor (ADR-108) — so a denied write still feeds the
 `repetition` / `no_progress` liveness breakers instead of looping forever — and
 **before** `capability_guard` and the B1 auto-approve arm. The B1 ordering is the
 critical half: a session launched with `permissions=auto_approve` (every
@@ -1023,7 +1024,7 @@ remove from a sibling repo that never registered it.
   `settings.hooks`; a call the adapter does not localize resolves
   `unverifiable`, proceeds, and MUST WARN once per session.
   (Implemented — ADR-157)
-- The L2 guard MUST run after the M40 guardrail interceptor and BEFORE the B1
+- The L2 guard MUST run after the guardrail interceptor and BEFORE the B1
   auto-approve arm, so a `permissions=auto_approve` session can NEVER bypass it.
   (Implemented — ADR-157)
 - A mount whose `git status --porcelain` is non-empty at the terminal choke MUST
@@ -1096,17 +1097,17 @@ remove from a sibling repo that never registered it.
 - ADRs: [ADR-011 Workspace lifecycle](../decisions.md#adr-011-workspace-lifecycle-via-git-worktree),
   [ADR-012 Local promotion merge policy](../decisions.md#adr-012-local-promotion-merge-policy---no-ff-abort-on-conflict),
   [ADR-058 Branch targeting + shared promotion + promote-time readiness re-gate](../decisions.md#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve)
-  (Implemented, M18),
+  (Implemented),
   [ADR-049 PR promotion via a hybrid provider `PrAdapter`](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant)
-  (Implemented, M18),
+  (Implemented),
   [ADR-140 PR lifecycle tracking](../decisions.md#adr-140-pr-lifecycle-tracking)
   (Implemented),
   [ADR-141 Branch sync with AI conflict resolver and reopen](../decisions.md#adr-141-branch-sync-with-ai-conflict-resolver-and-reopen)
   (Implemented).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (workspaces table — base/
-  target/promotion claim columns from M18, lifecycle operation claim columns
-  from M27 and ADR-142, and the Implemented ADR-140 PR-state columns + ADR-141
-  `run_sync_attempts` ledger).
+  target/promotion claim columns from ADR-058, lifecycle operation claim columns
+  from the workbench lifecycle and ADR-142, and the Implemented ADR-140
+  PR-state columns + ADR-141 `run_sync_attempts` ledger).
 - Config reference: [`../configuration.md`](../configuration.md)
   (`promotion.mode`, `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS`).
 - Related: [`runs.md`](runs.md) (flow `Review → Done` promotion path),
@@ -1117,10 +1118,10 @@ remove from a sibling repo that never registered it.
   [`workbench-lifecycle.md`](workbench-lifecycle.md) (operator stop/archive/
   drop/snapshot/export/handoff actions),
   [`artifacts.md`](artifacts.md) (promotion `commit_set`/`diff` artifact),
-  [`workbench.md`](workbench.md) (M22 — the worktree is the **tracked-file
+  [`workbench.md`](workbench.md) (the worktree is the **tracked-file
   source** for the read-only file-tree + base→run diff).
 - Source: `web/lib/worktree.ts`; scratch recovery routes under
-  `web/app/api/scratch-runs/[runId]/recover/`. **(Implemented, M18)**
+  `web/app/api/scratch-runs/[runId]/recover/`. **(Implemented)**
   `web/lib/runs/promote.ts` (shared `promoteRun`), `web/lib/runs/pr-adapter.ts`.
   Full Flow reconciliation remains designed.
 

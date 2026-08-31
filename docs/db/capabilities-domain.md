@@ -1,12 +1,12 @@
 # Capabilities domain ERD
 
 Tables for the capability registry, git-pinned capability imports, and the
-per-node-attempt materialization plan introduced by M14. See
+per-node-attempt materialization plan introduced by ADR-041. See
 [`../system-analytics/capabilities.md`](../system-analytics/capabilities.md)
 for behavior and the import lifecycle FSM, and
 [`../database-schema.md`](../database-schema.md) for the column-level narrative.
 
-> **Status: Implemented (M14).** Migration `0019_m14_capability_materialization`
+> **Status: Implemented.** Migration `0019_m14_capability_materialization`
 > (additive, forward-only, no down-migration) adds `capability_imports` and
 > `node_attempts.materialization_plan`. `capability_records` is Implemented (migration `0012`).
 > See ADR-041, ADR-042, ADR-043 in [`../decisions.md`](../decisions.md).
@@ -14,21 +14,21 @@ for behavior and the import lifecycle FSM, and
 The diagram below covers three entities:
 
 - **`CAPABILITY_RECORDS`** — the existing project-visible registry catalog
-  (Implemented, migration `0012`). M25 authored rule/skill projections are
+  (Implemented, migration `0012`). Authored rule/skill projections (ADR-061) are
   Implemented to write authored-origin rows here with `source='project'` and
   `material.origin='authored'`.
 - **`CAPABILITY_IMPORTS`** — the new git-pinned import ledger, one row per
-  `(project, capabilityRefId, resolvedRevision)` (Implemented, M14).
+  `(project, capabilityRefId, resolvedRevision)` (Implemented).
 - **`NODE_ATTEMPTS.materialization_plan`** — the new nullable jsonb column on
   the existing `node_attempts` table that stores the per-node resolved and
-  materialized profile snapshot (Implemented, M14). The column itself belongs to
+  materialized profile snapshot (Implemented). The column itself belongs to
   [`runs-domain.md`](runs-domain.md); it is drawn here because its content is
   the capability domain's primary output.
 
 ```mermaid
 erDiagram
     PROJECTS ||--o{ CAPABILITY_RECORDS : "project catalog"
-    PROJECTS ||--o{ CAPABILITY_IMPORTS : "git-pinned imports (M14)"
+    PROJECTS ||--o{ CAPABILITY_IMPORTS : "git-pinned imports (ADR-043)"
     CAPABILITY_IMPORTS ||--o{ CAPABILITY_RECORDS : "ingested on install"
 
     CAPABILITY_RECORDS {
@@ -93,7 +93,7 @@ registration (`upsertCapabilitiesFromConfig`).
   project B. Binding rows themselves live in `project_mcp_bindings` (see
   [`projects-domain.md`](projects-domain.md)), never overloaded onto this table.
 - `kind` — discriminates the record shape. `agent_definition` and `env_profile`
-  are **Designed (M14)** kinds ingested from the new `capability_imports[]` and
+  are **Designed (ADR-041)** kinds ingested from the new `capability_imports[]` and
   the `capabilities.agent_definitions[]` / `capabilities.env_profiles[]` blocks
   in `maister.yaml`. The other kinds are Implemented.
 - `material` — the jsonb capability body. Secret values (env-profile credentials,
@@ -102,17 +102,17 @@ registration (`upsertCapabilitiesFromConfig`).
 - `selectable` — set to `false` when the CLEAR pass removes an entry; re-enabled
   when re-added. Historic profile snapshots (e.g. `scratch_capability_profiles`)
   retain their snapshot and are not retroactively invalidated.
-- `material.origin` — absent for config/import-owned rows today. M25 authored
-  projections set `origin='authored'` plus `authoredCapabilityId`,
+- `material.origin` — absent for config/import-owned rows today. Authored
+  projections (ADR-061) set `origin='authored'` plus `authoredCapabilityId`,
   `authoredRevisionId`, `body`, `manifest`, and `schemaVersion`; the immutable
   content hash is stored in `capability_records.revision`. SET/CLEAR code MUST
   exclude these rows when resyncing `maister.yaml`, because config-owned and
   authored local rows both use `source='project'`.
 - `enforceability` — `enforced | instructed | unsupported` for the selected
-  executor agent. M14 begins flipping cells from `instructed` to `enforced` as
+  executor agent. The materialization layer begins flipping cells from `instructed` to `enforced` as
   native materialization is spike-verified (see ADR-042).
 
-## Column notes — `capability_imports` (Implemented, M14)
+## Column notes — `capability_imports` (Implemented)
 
 `capability_imports` mirrors `flow_revisions` (migration `0010`). It is the
 durable ledger for each git-pinned capability package fetched from a
@@ -153,7 +153,7 @@ durable ledger for each git-pinned capability package fetched from a
 | --------------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `capability_imports_project_ref_revision_uq` UNIQUE | `(project_id, capability_ref_id, resolved_revision)` | One row per (project, import id, resolved git SHA). Content-addressable: the same SHA from two different tags shares one row. |
 
-## `node_attempts.materialization_plan` jsonb (Implemented, M14)
+## `node_attempts.materialization_plan` jsonb (Implemented)
 
 This nullable jsonb column on the **existing** `node_attempts` table (Implemented,
 migration `0019`) records the complete resolved and materialized capability
@@ -231,9 +231,9 @@ runs
 ```
 
 The `materialization_plan` cleanup substate is reclaimed with the worktree by the
-M19 workspace GC (ADR-035/036) as a backstop when the in-flow cleanup seams miss.
+workspace GC (ADR-035/036) as a backstop when the in-flow cleanup seams miss.
 
-## `authored_capabilities.source_flow_ref_id` (Designed, M27)
+## `authored_capabilities.source_flow_ref_id` (Designed)
 
 NEW nullable column `source_flow_ref_id text NULL` on `authored_capabilities` (migration `0033+`).
 Links an authored `flow`-kind draft that was created by editing an *installed* flow back to its
@@ -252,4 +252,4 @@ consolidated ERD; see [`erd.md`](erd.md) for the entity block.
 - ADRs: [ADR-041](../decisions.md), [ADR-042](../decisions.md), [ADR-043](../decisions.md).
 - Authored catalog extension: [`../system-analytics/capability-catalog.md`](../system-analytics/capability-catalog.md),
   [ADR-061](../decisions.md#adr-061-local-authored-capability-catalog-lifecycle).
-- Source (Implemented, M14): migration `0019_m14_capability_materialization`.
+- Source (Implemented): migration `0019_m14_capability_materialization`.

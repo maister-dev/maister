@@ -1,6 +1,6 @@
-# External operations domain (M16)
+# External operations domain
 
-> **Status: Implemented (M16), expanded by migration `0031_token_actor_scope_support.sql`.**
+> **Status: Implemented, expanded by migration `0031_token_actor_scope_support.sql`.**
 > Project API tokens, user-owned tokens, route-scope enforcement, token audit log,
 > the `/api/v1/ext` external REST surface, the `external_check` gate report loop,
 > and the thin MCP facade. Global personal API tokens are **Implemented** by
@@ -8,7 +8,7 @@
 > [ADR-040](../decisions.md#adr-040), [ADR-041](../decisions.md#adr-041),
 > [ADR-042](../decisions.md#adr-042).
 >
-> **Designed (M49):** cross-project relation addressing over `toTaskKey` plus the
+> **Designed:** cross-project relation addressing over `toTaskKey` plus the
 > `requires` kind on the ext relations route and the MCP facade
 > ([ADR-155](../decisions.md#adr-155-cross-project-task-relations)), and
 > opt-in cross-project reach for agent tokens at the ext-handler seam
@@ -36,7 +36,7 @@ Domain boundary: token lifecycle management (issue/verify/revoke), the
 `token_audit_log` write path, the `/api/v1/ext` versioned external surface,
 the `external_check` gate-report→artifact→review-refusal loop, global personal
 token authorization, and the MCP transport-scoped auth model. Out of scope:
-promotion (M18), readiness DSL calibration (M15), and platform-wide tokens.
+promotion, readiness DSL calibration, and platform-wide tokens.
 Platform tokens remain a design question until a platform-authenticated external
 surface exists.
 
@@ -53,7 +53,7 @@ surface exists.
   broad project API wildcard except it does not imply `hitl:respond:human`.
   See [`../db/integrations-domain.md`](../db/integrations-domain.md).
   (Implemented)
-- **Agent tokens** (M34 — Implemented, ADR-089) — `token_kind='agent'` rows with
+- **Agent tokens** (Implemented, ADR-089) — `token_kind='agent'` rows with
   an `agent_id` FK: per-LAUNCH ephemeral credentials for platform-agent runs.
   Issued at agent-run spawn with exactly the fixed scope set `tasks:read,
   tasks:update, tasks:triage, comments:read, comments:create, relations:read,
@@ -75,7 +75,7 @@ surface exists.
   below. A task an agent creates without a `flowId` is a flowless simple-intent
   task and stays `unconfigured` until triage assigns a flow — the existing ADR-112
   path, not a defect.
-- **New scopes** (M34 — Implemented) — `tasks:triage` (the triage verdict op),
+- **New scopes** (Implemented) — `tasks:triage` (the triage verdict op),
   `relations:read` / `relations:create` / `relations:delete` (typed-relation
   ops), `agents:trigger` (the inbound `POST /api/agents/{agentId}/event`
   webhook trigger — the only token-authenticated route outside
@@ -180,14 +180,14 @@ surface exists.
   whose status starts `pending` and is driven to `passed`/`failed` by the
   gate-report endpoint. (Implemented)
 - **`assertEvidenceReady`** — the review chokepoint guard
-  (`web/lib/flows/graph/evidence-readiness.ts`) extended in M16 to treat
+  (`web/lib/flows/graph/evidence-readiness.ts`) extended to treat
   a blocking `external_check` in `pending`, `failed`, `stale`, or `skipped` as NOT ready.
   (Implemented)
 - **MCP facade (`@maister/mcp`)** — standalone `mcp/` workspace package; external
   tools, each a thin REST client of `/api/v1/ext`; zero DB or web coupling.
   (Implemented) ADR-078 adds `comment_create` / `comment_list` over the ext
-  comment routes, following the `hitl_*` idiom. (Implemented) M34 (Implemented,
-  ADR-089) adds `triage_set` (the triager's verdict op over
+  comment routes, following the `hitl_*` idiom. (Implemented) ADR-089
+  (Implemented) adds `triage_set` (the triager's verdict op over
   `POST .../tasks/{taskId}/triage`) and `relation_add` / `relation_remove` /
   `relation_list` over the ext relation routes. Personal tokens add stdio
   fallback `MAISTER_ACCESS_TOKEN` and the `hitl_inbox` tool. (Implemented)

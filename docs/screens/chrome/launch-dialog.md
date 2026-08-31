@@ -1,6 +1,6 @@
 # Launch dialog
 
-## M43 incompatible revision state (Implemented)
+## Cut-over incompatible revision state (ADR-131 — Implemented)
 
 An incompatible stored revision remains visible with its exact compatibility
 reason: the locked graph-only remediation for legacy `steps[]`, or the declared

@@ -13,7 +13,7 @@ and then uses the same validation path.
 The domain boundary covers project lifecycle (register, archive) and the
 immediate fanout that lifecycle triggers.
 
-## M43 registration cut-over (Implemented)
+## Registration cut-over (ADR-131 — Implemented)
 
 Project registration classifies every installed Flow member before finalizing
 the project. A legacy steps[] member maps to FLOW_INSTALL/502 with the engine-3
@@ -31,8 +31,8 @@ existing semantics. No project is left partially usable.
 - **Flow package enablement** — project pointer to the package revision new
   runs should use. Current implementation installs git-cloned plugins under
   the MAIster flow cache and symlinks them into the project's `.maister/`
-  subtree; planned M10 separates immutable package revisions from project
-  enablement. See [`flow-packages.md`](flow-packages.md) and [`flows.md`](flows.md).
+  subtree; the planned revision lifecycle (ADR-021) separates immutable
+  package revisions from project enablement. See [`flow-packages.md`](flow-packages.md) and [`flows.md`](flows.md).
 - **`repo_url`** — nullable origin URL captured at register time (the clone
   source, or the existing repo's `origin`). Provider metadata, not a gate.
 - **`provider`** — nullable auto-detected host tag
@@ -66,7 +66,7 @@ stateDiagram-v2
     end note
 ```
 
-Status: **Registration Implemented (M9)** — `POST /api/projects` is live
+Status: **Registration Implemented** — `POST /api/projects` is live
 (admin-only; see [`../api/web.openapi.yaml`](../api/web.openapi.yaml) and
 `web/app/api/projects/route.ts`). **Archive** remains **Designed**: the schema
 supports it (`projects.archived_at`) but no `DELETE /api/projects/[slug]` route
@@ -168,7 +168,7 @@ LAST registration step (after the manifest validates and the project is
 committed), reverting the created `.git` on any failure. On a clone we created,
 a downstream register failure removes the clone (the route's outer compensation).
 
-### Register a project (Implemented M9)
+### Register a project (Implemented)
 
 ```mermaid
 sequenceDiagram
@@ -276,7 +276,7 @@ flowchart TD
   `CONFIG`.
 - Flow plugin install is idempotent on `{id}@{tag}` — cache hit at
   `~/.maister/flows/<id>@<tag>/` short-circuits the clone.
-- **(Planned M10)** Project registration or `maister.yaml` refresh discovers
+- **(Planned — ADR-021)** Project registration or `maister.yaml` refresh discovers
   desired Flow packages, but install, trust, setup, and enablement are explicit
   lifecycle actions in the UI. Active runs keep their snapshotted package
   revision after upgrade or rollback.

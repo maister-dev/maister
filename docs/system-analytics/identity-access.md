@@ -8,7 +8,7 @@ project or run actions. The domain boundary ends at project-specific
 authorization decisions; per-project roster management lives in
 [`project-membership.md`](project-membership.md).
 
-Status: **Implemented (M9+)** — credentials auth, admin-approved account
+Status: **Implemented** — credentials auth, admin-approved account
 activation, DB-authoritative roles/status, forced password change, the signed-in
 user menu, personal settings, normal password changes, admin password reset, and
 sign-out are wired in `web/`.

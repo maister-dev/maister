@@ -1,13 +1,13 @@
 # Scheduler domain ERD
 
-Tables for the unified scheduler clock introduced by M24. See
+Tables for the unified scheduler clock introduced by ADR-060. See
 [`../system-analytics/scheduler.md`](../system-analytics/scheduler.md) for the
 job lifecycle, tick route, and catch-up policy.
 
-> **Status: Implemented (M24).** Migration `0027_m24_scheduler_service` adds these
+> **Status: Implemented.** Migration `0027_m24_scheduler_service` adds these
 > tables and indexes.
 >
-> **`run_schedules`: Implemented (M28).** Migration `0038_run_schedules` adds the
+> **`run_schedules`: Implemented.** Migration `0038_run_schedules` adds the
 > user-facing cron schedule table fired by the seeded `run_schedule.dispatcher`
 > job — see [`../system-analytics/run-schedules.md`](../system-analytics/run-schedules.md)
 > and [ADR-071](../decisions.md#adr-071-user-facing-run-schedules-on-the-m24-clock).
@@ -23,7 +23,7 @@ erDiagram
     SCHEDULER_JOBS ||--o{ SCHEDULER_JOB_RUNS : "attempts"
     PROJECTS ||--o{ AGENT_SCHEDULES : "project agent schedules"
     AGENTS ||--o{ AGENT_SCHEDULES : "trigger bindings"
-    PROJECTS ||--o{ RUN_SCHEDULES : "project schedules (M28)"
+    PROJECTS ||--o{ RUN_SCHEDULES : "project schedules (ADR-071)"
     TASKS ||--o{ RUN_SCHEDULES : "target task"
     RUNS ||--o{ RUN_SCHEDULES : "last launched run (nullable)"
     PLATFORM_ACP_RUNNERS ||--o{ RUN_SCHEDULES : "optional runner override"
@@ -172,10 +172,10 @@ erDiagram
 | `scheduler_job_runs_lease_idx`      | `(status, lease_expires_at)` | Stuck-attempt reaper                   |
 | `agent_schedules_project_agent_idx` | `(project_id, agent_id)`     | Project agent schedule lookup          |
 | `agent_schedules_due_cron_idx`      | `(trigger_type, enabled, next_fire_at)` | Due cron schedule scan        |
-| `run_schedules_project_idx` (M28)   | `(project_id)`               | Project schedules list                 |
-| `run_schedules_task_idx` (M28)      | `(task_id)`                  | Per-task schedule lookup               |
-| `run_schedules_due_idx` (M28)       | `(enabled, next_fire_at)`    | Dispatcher due-scan                    |
-| `run_schedules_last_run_idx` (M28)  | `(last_run_id)`              | FK SET NULL + last-run status join     |
+| `run_schedules_project_idx`   | `(project_id)`               | Project schedules list                 |
+| `run_schedules_task_idx`      | `(task_id)`                  | Per-task schedule lookup               |
+| `run_schedules_due_idx`       | `(enabled, next_fire_at)`    | Dispatcher due-scan                    |
+| `run_schedules_last_run_idx`  | `(last_run_id)`              | FK SET NULL + last-run status join     |
 | `scheduled_task_launches_project_idx` (ADR-139) | `(project_id, updated_at)` | Bounded project listing |
 | `scheduled_task_launches_due_idx` (ADR-139) | `(next_attempt_at, id)` partial for `Scheduled`/`RetryWaiting` | Bounded one-time due scan |
 | `scheduled_task_launches_creator_key_uq` (ADR-139) | `(project_id, created_by_user_id, idempotency_key)` UNIQUE | Same-key replay/conflict boundary |

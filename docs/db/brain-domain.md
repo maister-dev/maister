@@ -218,7 +218,7 @@ erDiagram
 | `platform_runtime_settings` | += `embedding_base_url` (text, NULL), `embedding_model` (text, NULL), `embedding_dimensions` (integer, NULL), `embedding_api_key_ref` (text, NULL — `env:NAME` ref only), `distill_base_url` (text, NULL), `distill_model` (text, NULL), `distill_api_key_ref` (text, NULL — `env:NAME` ref only). Singleton row. |
 | `projects` | += `brain_enabled` (boolean, NOT NULL DEFAULT false). Enable-gate refuses `CONFIG` unless platform embedding + `distill_model` are set. |
 | `agent_project_links` | += `can_read_brain` (boolean, NOT NULL DEFAULT false — gates recall/clusters), `can_write_brain` (boolean, NOT NULL DEFAULT false — gates retain/propose, separate write axis). `can_propose_brain` remains deferred; C reuses `can_write_brain`. |
-| `runs` | += `brain_context` (boolean, NULL — null = off (default) in A, a flow/agent-level default is reserved; the persisted launch-time decision. `runs.runner_snapshot` no longer exists post-M42, so a dedicated column is required). |
+| `runs` | += `brain_context` (boolean, NULL — null = off (default) in A, a flow/agent-level default is reserved; the persisted launch-time decision. `runs.runner_snapshot` no longer exists since the ADR-114 `run_sessions` split, so a dedicated column is required). |
 
 ## Keys and constraints
 

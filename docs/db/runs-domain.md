@@ -1,6 +1,6 @@
 # Runs domain ERD
 
-## M43 runs-domain transition (Implemented)
+## Cut-over runs-domain transition (ADR-131 — Implemented)
 
 The post-0093/0094 runs domain has no STEP_RUNS entity or fallback join.
 NODE_ATTEMPTS exclusively supplies graph progress, activity, templating and
@@ -20,7 +20,7 @@ full edge set is in [`erd.md`](erd.md)). See
 [`../system-analytics/runs.md`](../system-analytics/runs.md),
 [`../system-analytics/workspaces.md`](../system-analytics/workspaces.md), and
 [`../system-analytics/scratch-runs.md`](../system-analytics/scratch-runs.md).
-M41 adds the designed `consensus_round_verdicts` ledger for consensus-node
+ADR-109 adds the designed `consensus_round_verdicts` ledger for consensus-node
 cross-verification; behavior lives in
 [`../system-analytics/consensus.md`](../system-analytics/consensus.md).
 
@@ -51,18 +51,18 @@ erDiagram
     RUNS }o--o| WORKSPACES : "own or shared worktree"
     RUNS o|--o{ WORKSPACE_RECONCILIATION_FINDINGS : "ADR-142 optional correlation"
     WORKSPACES o|--o{ WORKSPACE_RECONCILIATION_FINDINGS : "ADR-142 optional correlation"
-    RUNS ||--o{ RUNS : "run-tree delegation (parent_run_id, M37)"
-    RUNS ||--|{ RUN_SESSIONS : "per-session runner state (M42 Implemented)"
-    PLATFORM_ACP_RUNNERS ||--o{ RUN_SESSIONS : "session runner (M42 Implemented, SET NULL)"
-    RUNS ||--o{ NODE_ATTEMPTS : "per-node attempt (M11a)"
+    RUNS ||--o{ RUNS : "run-tree delegation (parent_run_id, ADR-098)"
+    RUNS ||--|{ RUN_SESSIONS : "per-session runner state (Implemented ADR-114)"
+    PLATFORM_ACP_RUNNERS ||--o{ RUN_SESSIONS : "session runner (Implemented ADR-114, SET NULL)"
+    RUNS ||--o{ NODE_ATTEMPTS : "per-node attempt (ADR-027)"
     RUNS ||--o{ RUN_SYNC_ATTEMPTS : "sync attempts (ADR-141, 0106)"
     RUNS ||--o| RUN_COST_ROLLUPS : "derived token rollup (ADR-085)"
-    RUNS ||--o{ GATE_RESULTS : "per-run gates (M11a)"
-    NODE_ATTEMPTS ||--o{ GATE_RESULTS : "gate verdicts (M11a)"
-    NODE_ATTEMPTS ||--o{ CONSENSUS_ROUND_VERDICTS : "consensus verification rows (M41)"
+    RUNS ||--o{ GATE_RESULTS : "per-run gates (ADR-028)"
+    NODE_ATTEMPTS ||--o{ GATE_RESULTS : "gate verdicts (ADR-028)"
+    NODE_ATTEMPTS ||--o{ CONSENSUS_ROUND_VERDICTS : "consensus verification rows (ADR-109)"
     NODE_ATTEMPTS ||--o{ NODE_ATTEMPT_COST_ROLLUPS : "derived token rollups (ADR-085)"
-    USERS ||--o{ NODE_ATTEMPTS : "takeover owner (M11b, SET NULL)"
-    USERS ||--o{ WORKSPACES : "promotion owner (M18, nullable)"
+    USERS ||--o{ NODE_ATTEMPTS : "takeover owner (ADR-030, SET NULL)"
+    USERS ||--o{ WORKSPACES : "promotion owner (0021, nullable)"
     RUNS ||--o| SCRATCH_RUNS : "scratch metadata"
     TASKS ||--o{ SCRATCH_RUNS : "optional link"
     SCRATCH_RUNS ||--o{ SCRATCH_MESSAGES : "dialog ledger"
@@ -87,16 +87,16 @@ erDiagram
         integer number "ADR-078 Implemented: per-project, UNIQUE (project_id, number)"
         text title
         text prompt
-        text flow_id FK "M34: NULLABLE — unconfigured until triaged"
+        text flow_id FK "ADR-089: NULLABLE — unconfigured until triaged"
         text status "Backlog|InFlight|Done|Abandoned"
         integer attempt_number "starts at 1"
-        text triage_status "M34: 'triaged' | NULL; += 'flagged' = held/needs-review (Implemented ADR-112; app-level text-enum widening, no DB CHECK / no migration)"
-        text runner_id FK "M34: verdict runner, SET NULL"
-        text target_branch "M34: verdict branch, nullable"
-        text promotion_mode "M34: local_merge|pull_request, nullable"
-        text launch_mode "M37: auto|manual nullable — as-plan child task (ADR-098, 0060)"
+        text triage_status "ADR-089: 'triaged' | NULL; += 'flagged' = held/needs-review (Implemented ADR-112; app-level text-enum widening, no DB CHECK / no migration)"
+        text runner_id FK "ADR-089: verdict runner, SET NULL"
+        text target_branch "ADR-089: verdict branch, nullable"
+        text promotion_mode "ADR-089: local_merge|pull_request, nullable"
+        text launch_mode "auto|manual nullable — as-plan child task (ADR-098, 0060)"
         timestamp launch_armed_at "ADR-112 (0073): enqueue-intent boundary, nullable — auto_launch_triaged retry cap counts only flow runs started at/after this"
-        jsonb delegation_spec "M37: as-plan delegation spec for run_plan children (ADR-098, 0060)"
+        jsonb delegation_spec "as-plan delegation spec for run_plan children (ADR-098, 0060)"
         jsonb execution_policy "migration 0055: per-task default execution policy, nullable"
         text priority "ADR-121 (0087): low|normal|high|urgent, NOT NULL default normal, CHECK"
         numeric triage_confidence "ADR-121 (0087): advisory 0..1, nullable, CHECK"
@@ -108,31 +108,31 @@ erDiagram
 
     RUNS {
         text id PK
-        text run_kind "flow|scratch|agent (DEFAULT flow; agent M34)"
-        text agent_id FK "M34: agents(id) SET NULL — kind=agent only"
-        text trigger_source "M34/ADR-139: manual|cron|domain_event|webhook|flow|scheduled"
-        bigint trigger_event_id "M34: domain_events.id claim key"
-        jsonb trigger_payload "M34: webhook/event context, <= 32 KB"
+        text run_kind "flow|scratch|agent (DEFAULT flow; agent — ADR-089)"
+        text agent_id FK "ADR-089: agents(id) SET NULL — kind=agent only"
+        text trigger_source "ADR-089/ADR-139: manual|cron|domain_event|webhook|flow|scheduled"
+        bigint trigger_event_id "ADR-089: domain_events.id claim key"
+        jsonb trigger_payload "ADR-089: webhook/event context, <= 32 KB"
         text scheduled_launch_id FK "ADR-139: scheduled_task_launches(id) SET NULL, UNIQUE when set"
         text agent_schedule_id FK "ADR-139: agent_schedules(id) SET NULL"
-        text agent_workspace "M34: none|repo_read|worktree (migration 0052) effective-axis snapshot"
+        text agent_workspace "ADR-090: none|repo_read|worktree (migration 0052) effective-axis snapshot"
         text task_id FK "nullable for scratch"
-        text project_id FK "NULLABLE (M36 0059): NULL for the project-less local-package assistant run"
-        text local_package_id FK "M36 0059: local_packages SET via CASCADE; set iff project-less (launch snapshot)"
+        text project_id FK "NULLABLE (0059): NULL for the project-less local-package assistant run"
+        text local_package_id FK "0059: local_packages SET via CASCADE; set iff project-less (launch snapshot)"
         text flow_id FK "nullable for scratch"
-        text runner_id FK "M42 Implemented (0082): moved to run_sessions.runner_id (FK+index relocated)"
-        text runner_resolution_tier "M42 Implemented (0082): moved to run_sessions"
-        text capability_agent "M42 Implemented (0082): moved to run_sessions"
-        jsonb runner_snapshot "M42 Implemented (0082): moved to run_sessions"
-        text parent_run_id FK "M37: runs(id) SET NULL — orchestrator delegator (ADR-098, 0060)"
-        text root_run_id FK "M37: runs(id) — run-tree root (ADR-098, 0060)"
-        jsonb delegation_snapshot "M37: {agentDefinitionId,revisionId} only (ADR-098, 0060)"
-        text launch_mode "M37: auto|manual nullable (ADR-098, 0060)"
-        boolean persistent "M37: addressable long-lived child, DEFAULT false (ADR-099, 0060)"
-        text addressable_key "M37: star-routing key, unique per tree when persistent (ADR-099, 0060)"
-        text workspace_mode "M37: own|shared run-tree worktree, nullable (ADR-099, 0060)"
+        text runner_id FK "Implemented ADR-114 (0082): moved to run_sessions.runner_id (FK+index relocated)"
+        text runner_resolution_tier "Implemented ADR-114 (0082): moved to run_sessions"
+        text capability_agent "Implemented ADR-114 (0082): moved to run_sessions"
+        jsonb runner_snapshot "Implemented ADR-114 (0082): moved to run_sessions"
+        text parent_run_id FK "runs(id) SET NULL — orchestrator delegator (ADR-098, 0060)"
+        text root_run_id FK "runs(id) — run-tree root (ADR-098, 0060)"
+        jsonb delegation_snapshot "{agentDefinitionId,revisionId} only (ADR-098, 0060)"
+        text launch_mode "auto|manual nullable (ADR-098, 0060)"
+        boolean persistent "addressable long-lived child, DEFAULT false (ADR-099, 0060)"
+        text addressable_key "star-routing key, unique per tree when persistent (ADR-099, 0060)"
+        text workspace_mode "own|shared run-tree worktree, nullable (ADR-099, 0060)"
         text status "Pending|Running|NeedsInput|NeedsInputIdle|HumanWorking|WaitingOnChildren|Review|Crashed|Done|Abandoned|Failed"
-        text acp_session_id "resume handle (ACP session/resume); M42 Implemented (0082): moved to run_sessions (per session)"
+        text acp_session_id "resume handle (ACP session/resume); Implemented ADR-114 (0082): moved to run_sessions (per session)"
         text current_step_id "runner cursor"
         text flow_version "tag snapshot; scratch sentinel"
         text flow_revision "git SHA snapshot; manual sentinel"
@@ -140,11 +140,11 @@ erDiagram
         text created_by_user_id FK "nullable launch/audit owner"
         timestamp checkpoint_at "when graceful checkpoint happened"
         timestamp keepalive_until "30min sliding window in NeedsInput"
-        timestamp resume_started_at "Recover in-flight marker + reconcile grace anchor (M19)"
+        timestamp resume_started_at "Recover in-flight marker + reconcile grace anchor"
         timestamp resume_requested_at "ADR-121 (0087): idle HITL answered, awaiting a slot (C3 FIFO key)"
         timestamp queue_admitted_at "ADR-121 (0087): auto-drain origin marker, NULL = manual/scratch/resume"
-        text resume_target_step_id "node id retained at crash time for Recover; current_step_id is nulled on crash (M19, 0016)"
-        jsonb resolved_capability_set "M27 Designed: frozen capability snapshot at launch; runner reads this, never live catalog"
+        text resume_target_step_id "node id retained at crash time for Recover; current_step_id is nulled on crash (0016)"
+        jsonb resolved_capability_set "ADR-069 Designed: frozen capability snapshot at launch; runner reads this, never live catalog"
         jsonb delivery_policy_snapshot "ADR-085 Designed: resolved policy at launch"
         jsonb execution_policy "migration 0055: resolved execution policy {preset,overrides} at launch"
         jsonb budget_state "ADR-101 0061: per-run mutable {ceilingOverride?,notified?} raise-and-resume override + per-scope warn rung, nullable"
@@ -166,14 +166,14 @@ erDiagram
 
     RUN_SESSIONS {
         text id PK
-        text run_id FK "M42 Implemented: runs(id) CASCADE; UNIQUE(run_id, session_name)"
-        text session_name "M42: 'default' (implicit/scratch/agent) | solo | named"
-        text runner_id FK "M42: platform_acp_runners(id) SET NULL — FK+index relocated off runs"
-        text runner_resolution_tier "M42: winning precedence tier"
-        text capability_agent "M42: ADAPTER_IDS"
-        jsonb runner_snapshot "M42: frozen launch profile"
-        text acp_session_id "M42: per-session ACP session/resume handle"
-        text resolution_source "M42: concrete source audit (slot_key | chain scope | launch-dialog)"
+        text run_id FK "Implemented ADR-114: runs(id) CASCADE; UNIQUE(run_id, session_name)"
+        text session_name "ADR-114: 'default' (implicit/scratch/agent) | solo | named"
+        text runner_id FK "ADR-114: platform_acp_runners(id) SET NULL — FK+index relocated off runs"
+        text runner_resolution_tier "ADR-114: winning precedence tier"
+        text capability_agent "ADR-114: ADAPTER_IDS"
+        jsonb runner_snapshot "ADR-114: frozen launch profile"
+        text acp_session_id "ADR-114: per-session ACP session/resume handle"
+        text resolution_source "ADR-114: concrete source audit (slot_key | chain scope | launch-dialog)"
         jsonb resolution_warning "nullable RunnerResolutionWarning for soft model/provider fallback"
         timestamp created_at
         timestamp updated_at
@@ -208,29 +208,29 @@ erDiagram
         text parent_repo_path
         timestamp created_at
         timestamp removed_at
-        timestamp scheduled_removal_at "GC prune deadline (M19)"
-        text archived_branch "preserved archive ref name (M19)"
-        timestamp archived_at "when archive branch created (M19)"
-        text base_branch "M18 0021 run base branch (null pre-M18)"
-        text base_commit "M18 0021 base commit forked from (null pre-M18)"
-        text target_branch "M18 0021 promotion target branch"
-        text promotion_mode "M18 0021 local_merge|pull_request"
-        text pr_url "M18 0021 populated on PR-mode promotion"
-        integer pr_number "M18 0021"
+        timestamp scheduled_removal_at "GC prune deadline"
+        text archived_branch "preserved archive ref name"
+        timestamp archived_at "when archive branch created"
+        text base_branch "0021 run base branch (null pre-0021)"
+        text base_commit "0021 base commit forked from (null pre-0021)"
+        text target_branch "0021 promotion target branch"
+        text promotion_mode "0021 local_merge|pull_request"
+        text pr_url "0021 populated on PR-mode promotion"
+        integer pr_number "0021"
         text pr_state "open|merged|closed, NULL=never checked (ADR-140, 0105)"
         boolean pr_has_conflicts "NULL=unknown"
         timestamp pr_merged_at
         text pr_merge_commit_sha "provider merge commit — NOT runs.merge_commit_sha"
-        timestamp promoted_at "M18 0021"
-        text promotion_state "M18 0021 none|claiming|done|failed|reopened (reopened: ADR-141 reopen path, app-level, no CHECK) (NOT NULL DEFAULT none)"
+        timestamp promoted_at "0021"
+        text promotion_state "0021 none|claiming|done|failed|reopened (reopened: ADR-141 reopen path, app-level, no CHECK) (NOT NULL DEFAULT none)"
         text promotion_lane "ADR-126 0089: auto lane class docs|tests|deps|config, nullable (NULL = manual)"
-        timestamp promotion_claimed_at "M18 0021 durable-claim timestamp"
-        text promotion_owner_user_id FK "M18 0021 users.id, nullable"
-        text promotion_attempt_id "M18 0021 per-attempt CAS-identity token"
-        text lifecycle_operation_state "M27 0032 none|claiming|failed (NOT NULL DEFAULT none)"
-        timestamp lifecycle_operation_claimed_at "M27 0032 durable lifecycle claim timestamp"
-        text lifecycle_operation_attempt_id "M27 0032 per-attempt CAS token"
-        text lifecycle_operation_name "M27 0032 archive|drop|exportBranch|snapshotCommit|handoffBranch|sync (sync: ADR-141 sync claim, app-level, no CHECK)"
+        timestamp promotion_claimed_at "0021 durable-claim timestamp"
+        text promotion_owner_user_id FK "0021 users.id, nullable"
+        text promotion_attempt_id "0021 per-attempt CAS-identity token"
+        text lifecycle_operation_state "0032 none|claiming|failed (NOT NULL DEFAULT none)"
+        timestamp lifecycle_operation_claimed_at "0032 durable lifecycle claim timestamp"
+        text lifecycle_operation_attempt_id "0032 per-attempt CAS token"
+        text lifecycle_operation_name "0032 archive|drop|exportBranch|snapshotCommit|handoffBranch|sync (sync: ADR-141 sync claim, app-level, no CHECK)"
     }
 
     RUN_SYNC_ATTEMPTS {
@@ -290,17 +290,17 @@ erDiagram
         text status "Pending|Running|Succeeded|Failed|NeedsInput|Reworked|Stale"
         text decision "human decision on finish"
         text workspace_policy "keep|rewind-to-node-checkpoint|fresh-attempt"
-        text checkpoint_ref "M30 0040: node checkpoint ref, rewind base is the checkpoint parent"
-        boolean auto_retry "M30 0040: DEFAULT false; true when this attempt is an auto-retry (retry_policy)"
-        text session_policy "M30 0040: effective rework session policy snapshot resume|new_session"
-        boolean session_fallback "M30 0040: DEFAULT false; true when resume fell back to new_session"
+        text checkpoint_ref "0040: node checkpoint ref, rewind base is the checkpoint parent"
+        boolean auto_retry "0040: DEFAULT false; true when this attempt is an auto-retry (retry_policy)"
+        text session_policy "0040: effective rework session policy snapshot resume|new_session"
+        boolean session_fallback "0040: DEFAULT false; true when resume fell back to new_session"
         text rework_from_node "origin node on rework re-entry"
-        text owner_user_id FK "M11b 0011 takeover owner (users.id SET NULL)"
-        text base_ref "M11b 0011 merge-base SHA for returned range"
-        text returned_commits "M11b 0011 raw git log base..branch"
-        text returned_diff "M11b 0011 raw git diff base..branch"
-        jsonb enforcement_snapshot "M11c 0013 append-only verdict audit"
-        jsonb materialization_plan "M14 0019 Implemented: resolved profile snapshot + cleanup substate"
+        text owner_user_id FK "0011 takeover owner (users.id SET NULL)"
+        text base_ref "0011 merge-base SHA for returned range"
+        text returned_commits "0011 raw git log base..branch"
+        text returned_diff "0011 raw git diff base..branch"
+        jsonb enforcement_snapshot "0013 append-only verdict audit"
+        jsonb materialization_plan "0019 Implemented: resolved profile snapshot + cleanup substate"
         text acp_session_id
         text stdout "truncated to 1 MiB"
         text resolved_prompt "0053 captured resolved agent prompt; nullable, pre-0053 rows null"
@@ -321,8 +321,8 @@ erDiagram
         text mode "blocking|advisory"
         text status "pending|running|passed|failed|stale|skipped|overridden"
         jsonb verdict "verdict|confidence|reasons|recommendedAction"
-        jsonb input_artifact_refs "M12 artifact ids"
-        text output_artifact_ref "M12 artifact id"
+        jsonb input_artifact_refs "typed-artifact ids (ADR-037)"
+        text output_artifact_ref "typed-artifact id (ADR-037)"
         jsonb stale_from "node ids whose rework stales this"
         text overridden_by "hitl_requests.id of override"
         timestamp created_at
@@ -348,8 +348,8 @@ erDiagram
 
     SCRATCH_RUNS {
         text run_id PK
-        text project_id FK "NULLABLE (M36 0059): exactly one of project_id / local_package_id (CHECK)"
-        text local_package_id FK "M36 0059: local_packages CASCADE; the project-less owner"
+        text project_id FK "NULLABLE (0059): exactly one of project_id / local_package_id (CHECK)"
+        text local_package_id FK "0059: local_packages CASCADE; the project-less owner"
         text name
         text initial_prompt
         text work_mode "auto|plan_first|manual_approval"
@@ -465,26 +465,26 @@ erDiagram
     }
 ```
 
-> **(M11a — Implemented, migration `0010`.)** `NODE_ATTEMPTS` and `GATE_RESULTS`
+> **(Implemented, migration `0010`.)** `NODE_ATTEMPTS` and `GATE_RESULTS`
 > shipped on the `feature/m11a-flow-graph-lifecycle` branch.
 > `node_attempts` is the append-only execution ledger. See
 > [`../system-analytics/flow-graph.md`](../system-analytics/flow-graph.md) and
 > [ADR-027](../decisions.md#adr-027-append-only-node_attempts-run-ledger) /
 > [ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped).
 
-> **(M41 — Implemented, migration `0070`.)** `CONSENSUS_ROUND_VERDICTS` records
+> **(Implemented, migration `0070`.)** `CONSENSUS_ROUND_VERDICTS` records
 > per-round verifier rows for `consensus` node attempts. Its unique key
 > `(node_attempt_id, round, verifier_key, target_key)` lets recovery reuse
 > completed cross-verification sessions instead of spawning them again. Rows
 > cascade from both `RUNS` and `NODE_ATTEMPTS`.
 
-> **(M11b — migration `0011`, additive.)** The
+> **(Implemented, migration `0011`, additive.)** The
 > `RUNS.status` enum gains `HumanWorking` (manual takeover claim), and
 > `NODE_ATTEMPTS` gains four nullable takeover columns — `owner_user_id`
 > (FK → `users.id`, `ON DELETE SET NULL`), `base_ref`, `returned_commits`,
 > `returned_diff` — populated ONLY on the takeover attempt of a `human_review`
 > node. Raw `git log`/`git diff` text is stored minimally; typed `commit_set`/
-> `diff` artifact instances are **M12**. See
+> `diff` artifact instances belong to the **typed artifact model (ADR-037)**. See
 > [`../system-analytics/manual-takeover.md`](../system-analytics/manual-takeover.md)
 > and [ADR-030](../decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status).
 
@@ -516,31 +516,31 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
 - `runs_kind_task_idx` on `(run_kind, task_id)` — board/latest
   attempt queries that explicitly filter `run_kind = 'flow'` and exclude
   scratch rows with nullable `task_id`.
-- `runs_parent_run_id_idx` on `(parent_run_id)` — **(M37, Implemented)**
+- `runs_parent_run_id_idx` on `(parent_run_id)` — **(Implemented)**
   orchestrator run-tree child lookups (`parent_run_id` FK → `runs`,
   ON DELETE SET NULL).
-- `runs_root_run_id_idx` on `(root_run_id)` — **(M37, Implemented)**
+- `runs_root_run_id_idx` on `(root_run_id)` — **(Implemented)**
   whole-tree queries from the run-tree root.
 - `runs_root_addressable_key_uq` partial UNIQUE on
   `(root_run_id, addressable_key) WHERE persistent = true` —
-  **(M37, Implemented, migration 0060, ADR-099)** one persistent child per
+  **(Implemented, migration 0060, ADR-099)** one persistent child per
   `addressable_key` within a run-tree; backs star-routed messaging address
   resolution.
 - `runs_agent_trigger_event_unique` partial UNIQUE on
   `(agent_id, trigger_event_id) WHERE trigger_event_id IS NOT NULL` —
-  **(M34)** the outbox→spawn no-dup claim: at-least-once event
+  **(Implemented)** the outbox→spawn no-dup claim: at-least-once event
   redelivery converges to exactly one agent run (ADR-089). See
   [agents-domain.md](agents-domain.md).
 - `scratch_runs_project_status_idx` on `(project_id, dialog_status)` — active
-  scratch workspace lists. **(M36 0057)** made **partial**
+  scratch workspace lists. **(migration 0057)** made **partial**
   (`WHERE project_id IS NOT NULL`) so the project-less local-package assistant
   rows never widen it; the primary key on `run_id` covers detail joins.
 - `scratch_runs_local_package_idx` on `(local_package_id, dialog_status)`
-  partial (`WHERE local_package_id IS NOT NULL`) — **(M36 0059)** active
+  partial (`WHERE local_package_id IS NOT NULL`) — **(migration 0059)** active
   local-package assistant lists.
 - `scratch_runs_owner_xor_check` CHECK
-  `(project_id IS NOT NULL) <> (local_package_id IS NOT NULL)` — **(M36 0059,
-  ADR-097)** a scratch run is owned by exactly one of a project / a local
+  `(project_id IS NOT NULL) <> (local_package_id IS NOT NULL)` — **(migration
+  0059, ADR-097)** a scratch run is owned by exactly one of a project / a local
   package (never both, never neither). `runs.local_package_id` is the matching
   launch snapshot (FK `local_packages`, `ON DELETE CASCADE`).
 - `run_messages_run_node_attempt_sequence_uq` on `(run_id, node_attempt_id,
@@ -560,18 +560,18 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
 - **(ADR-141, migration 0106, Implemented)** `run_sync_attempts_run_attempt_uq` on
   `(run_id, attempt)` UNIQUE — append-only, one row per sync attempt; the sync
   claim tx allocates `max(attempt)+1` so concurrent launches converge to one row.
-- **(M11a)** `node_attempts_run_step_attempt_uq` on `(run_id, node_id,
+- **(ADR-027)** `node_attempts_run_step_attempt_uq` on `(run_id, node_id,
   attempt)` — append-only one row per (run, node, attempt); rework never
   mutates a prior row.
-- **(M11a)** `node_attempts_run_idx` on `(run_id)` — templating
+- **(ADR-027)** `node_attempts_run_idx` on `(run_id)` — templating
   highest-attempt-wins reads.
-- **(M11a)** `gate_results_run_idx` on `(run_id)` and
+- **(ADR-028)** `gate_results_run_idx` on `(run_id)` and
   `gate_results_node_attempt_idx` on `(node_attempt_id)` — per-run and
   per-node-attempt gate lookups.
-- **(M41)** `consensus_round_verdicts_attempt_round_pair_uq` on
+- **(ADR-109)** `consensus_round_verdicts_attempt_round_pair_uq` on
   `(node_attempt_id, round, verifier_key, target_key)` UNIQUE — idempotent
   consensus verifier replay.
-- **(M41)** `consensus_round_verdicts_run_idx` on `(run_id)` and
+- **(ADR-109)** `consensus_round_verdicts_run_idx` on `(run_id)` and
   `consensus_round_verdicts_node_attempt_idx` on `(node_attempt_id)` — per-run
   consensus audit and node-attempt verdict lookups.
 - **(ADR-078, Implemented)** `tasks_project_number_uq` on `(project_id,
@@ -615,7 +615,7 @@ task back to `Backlog`. Only explicit user `Discard` sends a task to
 ```
 Pending -> Running -> Review -> Done (promotion succeeds)
                   \-> NeedsInput <-> NeedsInputIdle -> Abandoned
-                  \-> NeedsInput -> HumanWorking -> Running (return, M11b)
+                  \-> NeedsInput -> HumanWorking -> Running (return — takeover)
                                                 \-> NeedsInput (release)
                                                 \-> Abandoned (abandon)
                   \-> WaitingOnChildren -> Running (child runs settled)
@@ -658,7 +658,7 @@ only for explicit HITL or permission waits.
 - `RUNS.created_by_user_id` is nullable for legacy rows and records launched-by
   display/audit ownership for new Flow and scratch launches. Scratch v1
   authorization remains project-role based.
-- `RUNS.resolved_capability_set` **(Designed, M27)**: frozen at launch by `launchRun`; the runner reads this snapshot, never the live catalog. Shape: `{ flowRevisionId, flowOrigin, capabilities: {refId,kind,sha}[], mcps: {refId,sha,scope}[] }`. An edit or publish during a run must NOT mutate this field. **(ADR-129 Designed)** each `mcps[]` entry additionally records `provenance: 'binding'|'precedence'` (+ optional `boundTarget:{kind,id}`); the field is optional so pre-migration runs read it absent.
+- `RUNS.resolved_capability_set` **(Designed — ADR-069)**: frozen at launch by `launchRun`; the runner reads this snapshot, never the live catalog. Shape: `{ flowRevisionId, flowOrigin, capabilities: {refId,kind,sha}[], mcps: {refId,sha,scope}[] }`. An edit or publish during a run must NOT mutate this field. **(ADR-129 Designed)** each `mcps[]` entry additionally records `provenance: 'binding'|'precedence'` (+ optional `boundTarget:{kind,id}`); the field is optional so pre-migration runs read it absent.
 - `RUNS.withheld_mcps` **(Designed, ADR-129)**: nullable run-level sink of MCPs excluded from the executable set — `{refId, transport, reason, scope}[]` where `reason ∈ {platform-untrusted, exec-untrusted-stdio}`. Populated for BOTH flow launches (mirroring per-node `node_attempts.materialization_plan.withheldMcps`) and agent launches (which persist no materialization_plan). Read by the run-detail panel; never contains a secret value. Kills the prior silent warn-log-only downgrade.
 - `SCRATCH_RUNS ||--o{ SCRATCH_MESSAGES` — append-only dialog ledger with
   monotonic sequence per run.
@@ -672,7 +672,7 @@ only for explicit HITL or permission waits.
 - `SCRATCH_ATTACHMENTS.storage_path` is server-internal. Public APIs expose
   uploaded-file display metadata and the rootless artifact reference stored in
   `value`, never absolute filesystem roots.
-- **(M11a — Designed)** `node_attempts` and `gate_results` are now drawn above
+- **(Designed)** `node_attempts` and `gate_results` are now drawn above
   (migration `0010`). The remaining graph-maturity tables — artifacts, artifact
   edges, assignments, external operation events — are still future work and not
   drawn until their migrations exist.
@@ -685,7 +685,7 @@ standalone origin for audit and authorization. The source run is marked `Done`
 only after confirmed termination. A later task-bound standalone launch may set
 `superseded_by_run_id`; this snapshot does not cascade away with the source.
 
-> **(M14 — Implemented, migration `0019`, additive.)** `NODE_ATTEMPTS` gains
+> **(Implemented, migration `0019`, additive.)** `NODE_ATTEMPTS` gains
 > `materialization_plan` (jsonb, nullable) — the resolved capability profile
 > snapshot written once at the time the node transitions to `Running`. The
 > column holds `{ profileDigest, resolvedRevisions, materializedFiles,

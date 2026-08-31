@@ -9,7 +9,7 @@ and a per-recipient inbox. All four social tables
 (`task_comments`, `task_activity`, `task_subscribers`, `inbox_items`)
 carry a polymorphic actor model (`user | agent | system`); Stage 1 wrote
 only `user`/`system` actors — the `agent` actor goes live with the
-platform-agent substrate (M34/ADR-089), written by per-launch ephemeral
+platform-agent substrate (ADR-089), written by per-launch ephemeral
 agent tokens through `socialActorForToken` (`web/lib/tokens/verify.ts`).
 Task numbering, typed
 relations, and the `"blocked"` launchability gate are documented in
@@ -52,8 +52,8 @@ the ADR-155 cross-project rules. (Implemented, incl. cross-project relations)
   triage_requeued, agent_quarantined, experiment_concluded,
   run_pr_merged, evaluation_decided, agent_summon_suppressed}` and a jsonb
   `payload`
-  (`triage_set`/`triage_requeued`/`agent_quarantined` added by M34 platform
-  agents; `experiment_concluded` by ADR-124; `run_pr_merged` added by
+  (`triage_set`/`triage_requeued`/`agent_quarantined` added by ADR-089
+  platform agents; `experiment_concluded` by ADR-124; `run_pr_merged` added by
   ADR-140/141's `pr_state_scan` merged edge; `evaluation_decided` by
   ADR-142's human verdict mirror; `agent_summon_suppressed` by ADR-151's
   mention branch — see [`agent-mentions.md`](agent-mentions.md)). Written
@@ -242,7 +242,7 @@ sequenceDiagram
   (Phase 2). (Implemented; `agent_summon_suppressed` — Implemented, ADR-151)
 - Every social-table row MUST satisfy `actor_type ∈ {user, agent, system}`
   and `(actor_type = 'system') = (actor_id IS NULL)`; Stage 1 wrote only
-  `user`/`system`, while M34 platform agents write `actor_type = 'agent'`
+  `user`/`system`, while platform agents (ADR-089) write `actor_type = 'agent'`
   rows via per-launch ephemeral agent tokens (`socialActorForToken`).
   (Implemented)
 - `addTaskComment` MUST run resolution, comment insert, activity writes,
@@ -350,7 +350,7 @@ sequenceDiagram
 - **Mutual blocks (`A blocks B` + `B blocks A`)** — both unlaunchable until
   one relation is removed; always recoverable in UI. Owned by
   [`tasks.md`](tasks.md).
-- **`requires` success-gate (M37 — Implemented)** — the orchestrator auto-DAG
+- **`requires` success-gate (Implemented)** — the orchestrator auto-DAG
   wires child tasks with the `requires` relation kind (ADR-098): unlike
   `depends_on`/`blocks` (which release on `Done` **and** `Abandoned`),
   `requires` releases the dependent ONLY on `Done`; `Failed`/`Abandoned`

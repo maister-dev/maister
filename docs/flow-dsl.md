@@ -6,7 +6,7 @@ Flow plugins, plus how the runner interprets it.
 Package install, trust, enablement, upgrade, rollback, and removal are tracked
 separately from the DSL itself. See
 [`system-analytics/flow-packages.md`](system-analytics/flow-packages.md) for
-the planned M10 package lifecycle.
+the package lifecycle (ADR-021).
 
 Authored Flows use the same `flow.yaml` DSL. The platform `/flows` editor may
 store invalid draft YAML while an author is working, but publish/export/install
@@ -25,15 +25,17 @@ The reserved ids `__proto__`, `constructor`, and `prototype` are invalid.
 
 ## Flow graph node lifecycle (Implemented)
 
-> **Status (M11a).** Flow graph v1 — the `nodes[]` manifest, node-lifecycle
+> **Status.** Flow graph v1 — the `nodes[]` manifest, node-lifecycle
 > compile, the append-only `node_attempts` ledger, the review-driven rework
-> loop, and gate execution — is **Implemented** in M11a, shipped on the
-> `feature/m11a-flow-graph-lifecycle` branch. Sub-parts owned by later
-> milestones are tagged
-> inline: the node `settings` block → **Implemented (M11c subset)** (typed
+> loop, and gate execution — is **Implemented**, shipped on the
+> `feature/m11a-flow-graph-lifecycle` branch. Sub-parts that landed
+> separately are tagged
+> inline: the node `settings` block → **Implemented (typed-settings subset)** (typed
 > shape + launch-time enforcement boundary; capability-reference resolution and
-> per-session materialization are **M14 (Implemented)**); typed artifact instances
-> (`input.requires` / `output.produces`) → **M12**. Decisions:
+> per-session materialization are **Implemented** — capability materialization,
+> ADR-041/044); typed artifact instances
+> (`input.requires` / `output.produces`) → **Implemented** (typed artifacts,
+> ADR-037/038). Decisions:
 > [ADR-026](decisions.md#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump),
 > [ADR-027](decisions.md#adr-027-append-only-node_attempts-run-ledger),
 > [ADR-028](decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped),
@@ -60,11 +62,11 @@ nodes:
         - steps.plan.output
         - artifact: plan-summary
           kind: generic_file
-    # settings: Implemented (M11c subset) — typed per-node-type shape, validated
+    # settings: Implemented — typed per-node-type shape, validated
     # at compile time; OPTIONAL. The per-class `enforcement` intent gates launch
-    # (strict on a class the build cannot enforce → refusal). M11c resolves NO
+    # (strict on a class the build cannot enforce → refusal). the settings layer resolves NO
     # capability refs and materializes NOTHING — ref resolution + per-session
-    # materialization are M14 (Implemented).
+    # materialization are Implemented (ADR-041/044).
     settings:
       runner_type: acp
       runner: claude-code
@@ -79,7 +81,7 @@ nodes:
         - no-global-installs
         - no-secret-env
       permissionMode: ask
-      hooks: # M40 (Designed — ADR-108); requires compat.engine_min >= 1.8.0
+      hooks: # guardrail hooks (ADR-108); requires compat.engine_min >= 1.8.0
         repetition: { max: 5 } # liveness breaker — consecutive identical calls
         noProgress: { maxTurns: 15 } # liveness breaker — turns without an edit
         pathGuard:
@@ -143,14 +145,14 @@ nodes:
       approve: review
       rework: implement
       takeover:
-        checks # M11b (Implemented): takeover returns to a real
+        checks # (Implemented): takeover returns to a real
         # validation node (`checks`) so the gates rerun over
         # the human's commits — NOT `implement`, which could clobber them.
     rework:
       allowedTargets: [implement]
-      # (M30 — Implemented, ADR-076) all three execute against the node's
+      # (Implemented, ADR-076) all three execute against the node's
       # pre-attempt checkpoint: keep (no-op), rewind-to-node-checkpoint,
-      # fresh-attempt. Pre-M30 only keep ran.
+      # fresh-attempt. Originally only keep ran.
       workspacePolicies: [keep, rewind-to-node-checkpoint, fresh-attempt]
       maxLoops: 3
       commentsVar: review_comments
@@ -185,16 +187,17 @@ node repeats its side effects (accepted-risk). `ai_coding` nodes ignore
 [ADR-034](decisions.md#adr-034-crashed-run-recovery-semantics-hybrid---resume--re-dispatch-durable-marker-first-cap-re-admission)
 and [`system-analytics/reconciliation-gc.md`](system-analytics/reconciliation-gc.md).
 
-**Node `settings` — Implemented (M11c subset).** The `settings` block is parsed
+**Node `settings` — Implemented (typed-settings subset).** The `settings` block is parsed
 into a typed, per-node-type discriminated shape and validated at compile time
-(the M11a opaque passthrough and the `SETTINGS_NOT_ENFORCED_WARN` no longer
+(the original opaque passthrough and the `SETTINGS_NOT_ENFORCED_WARN` no longer
 exist). It is **OPTIONAL on every node type except `form`** — a settings-less
 node validates and runs unchanged, and absence of `settings` NEVER triggers a
 refusal. The sole exception is the `form` (intake) node, whose `settings` is
 **required** because its `settings.form_schema` (the JSON form doc it collects
-against) is mandatory. **M11c
+against) is mandatory. **The typed-settings layer
 performs no materialization**: it neither resolves capability references nor
-writes any per-session settings file (those are M14, below).
+writes any per-session settings file (those are capability materialization,
+below).
 
 **`form` (intake) node — Implemented (T4).** A `form` node is the one node type
 with **no `action`**: it collects values against its required
@@ -212,7 +215,7 @@ SLA/staleness hints, and return requirements. CLI/check/judge nodes constrain
 commands, environment policy, artifact inputs/outputs, timeout, and failure
 classification.
 
-**Per-class `enforcement` intent (M11c).** Each of the seven capability classes —
+**Per-class `enforcement` intent.** Each of the seven capability classes —
 `mcps`, `tools`, `skills`, `restrictions`, `permissionMode`, `workspaceAccess`,
 `hooks` (the last Designed — ADR-108) —
 carries an optional `enforcement` intent of `strict | instruct | off`, default
@@ -225,11 +228,11 @@ agent can enforce the class at all, or `MaisterError("EXECUTOR_UNAVAILABLE")`
 when some agent can but the resolved one cannot. **No new error code** is
 introduced ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror)
 closed union). The full truth table, the frozen `ENFORCEABILITY_BY_AGENT` seed
-(all-`instructed` in M11c), and the refusal allow-list are specified in
+(originally all-`instructed`), and the refusal allow-list are specified in
 [`system-analytics/flow-settings.md`](system-analytics/flow-settings.md);
 rationale is in [ADR-032](decisions.md#adr-032-settings-enforcement-refusal-boundary).
 
-**`hooks` capability class (Designed — ADR-108, M40).** A seventh capability class
+**`hooks` capability class (Designed — ADR-108).** A seventh capability class
 `hooks` declares the per-tool-call guardrail rules enforced at the supervisor↔ACP
 seam — `repetition` (consecutive-identical-call cap), `noProgress`
 (turns-without-edit cap), and `pathGuard.allowedPaths` (an opt-in writable set).
@@ -243,7 +246,7 @@ liveness breakers auto-arm (caps 5 / 15 from `MAISTER_HOOK_*`) unless the node s
 `hooks.disabled: true`; `path_guard` is always opt-in. Full design:
 [`system-analytics/guardrail-hooks.md`](system-analytics/guardrail-hooks.md).
 
-**M14 (Implemented) — registry-resolved refs and native materialization.**
+**Capability materialization (Implemented) — registry-resolved refs and native materialization.**
 Every `settings.mcps[]`, `settings.skills[]`, `settings.restrictions[]`,
 `settings.settingsProfile`, and `settings.tools.{claude|codex}[]` entry is
 validated at project-load and run-launch time against the project capability
@@ -251,15 +254,15 @@ registry (`capability_records`). An unknown ref, or a ref present in the
 registry but not supported for the selected executor agent, is rejected with
 `MaisterError("CONFIG")` before any worktree/run side-effect (see ADR-041 and
 [`configuration.md`](configuration.md) §cross-reference-checks). This validation
-is the "carve-b" boundary — a stub existed in M11c but resolution was deferred.
+is the "carve-b" boundary — originally a stub, with resolution deferred.
 
 The resolved profile is agent-aware: the same abstract tool id (e.g.
 `tools: [shell]`) maps to different concrete Claude or Codex tool names via
-`web/lib/capabilities/agent-map.ts`. M14 also flips `ENFORCEABILITY_BY_AGENT`
+`web/lib/capabilities/agent-map.ts`. The materialization layer also flips `ENFORCEABILITY_BY_AGENT`
 cells `instructed → enforced` as spike-verified materialization lands (the
 contract only ever tightens, never loosens — see ADR-042).
 
-**M27 (Implemented) — node `settings.mcps` required vs additional distinction.**
+**Node `settings.mcps` required vs additional distinction (Implemented).**
 `settings.mcps` is extended to discriminate REQUIRED from ADDITIONAL MCP refs.
 A bare `string[]` remains back-compat (treated as `additional`). The explicit form:
 
@@ -280,7 +283,7 @@ sessions the resolved MCP profile is shared across nodes via the existing
 [`configuration.md`](configuration.md) §MCP capability template and
 [`system-analytics/flow-studio.md`](system-analytics/flow-studio.md).
 
-**M27 (Implemented) — flow-package top-level `mcps?` declaration.**
+**Flow-package top-level `mcps?` declaration (Implemented).**
 A `flow.yaml` may declare `mcps?` at the top level to list the capability ref-ids
 the flow package requires as MCP capabilities. This is validated by the
 `validateGraphManifest` hard-gate: an unknown ref (not present in any
@@ -312,7 +315,7 @@ mid-session require a declared session boundary"). This is enforced by comparing
 `node_attempts.materialization_plan.profileDigest` across the session scope
 (see ADR-041, AC #5 and #9).
 
-The M14 runner enforces the resolved profile at the AI session scope. For a
+The runner enforces the resolved profile at the AI session scope. For a
 per-node session, the profile is effectively node-scoped: before the node
 starts, the runner materializes only that node's allowed skills, MCP config,
 adapter `settings.json` or equivalent settings file, environment profile, and
@@ -321,9 +324,10 @@ long-living ACP session, skills, MCPs, settings, and tool restrictions are
 session-wide: every AI node inside that session must share the same resolved
 capability profile. If a later node needs different capabilities, the Flow must
 declare a new session boundary unless the adapter supports explicit safe profile
-swap. None of this materialization runs in M11c.
+swap. None of this materialization is part of the typed-settings validation
+layer.
 
-**Review-driven rework — M11a (Implemented).** Human review does not execute
+**Review-driven rework (Implemented).** Human review does not execute
 arbitrary `goto_step`. The Flow declares allowed decisions and targets; the
 reviewer chooses one allowed decision, adds structured instructions, and chooses
 an allowed workspace policy. The submitted decision is validated against the
@@ -349,7 +353,7 @@ ADR-138 review rework, the same packet also includes completed gate-chat turns
 and is previewed/fingerprint-verified before claim. Format and guard rules:
 [`system-analytics/review-comments.md`](system-analytics/review-comments.md).
 
-**Manual takeover — M11b local-handoff subset (Implemented).** Manual takeover is
+**Manual takeover — local-handoff subset (Implemented).** Manual takeover is
 a LOCAL worktree handoff ([ADR-030](decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status)),
 NOT a `human_edit` node type. It is a run-state transition off the existing
 `human_review` node: the reviewer's `takeover` decision drives
@@ -358,26 +362,26 @@ worktree path + run branch (`workspaces.branch` — no new branch/target/PR/push
 remote), the reviewer commits in place on the same host, and a UI **Return**
 records the returned commit set (`git log <base>..<branch>`) + raw diff
 (`git diff <base>..<branch>`) on the takeover `node_attempts` row, marks the
-`transitions.takeover` validation node (`checks`) + its downstream STALE (M11a
+`transitions.takeover` validation node (`checks`) + its downstream STALE (via
 `markDownstreamStale`), and resumes the runner so those gates rerun and a fresh
 `human_review` gate is produced. The run-detail **timeline** (the runs domain)
 renders owner, elapsed time, branch, returned commits, returned diff, stale-vs-
 current gates, and rerun results in one view. See
 [`system-analytics/manual-takeover.md`](system-analytics/manual-takeover.md) and
-[`system-analytics/runs.md`](system-analytics/runs.md#m11b-manual-takeover-status-humanworking-implemented).
+[`system-analytics/runs.md`](system-analytics/runs.md#manual-takeover-status-humanworking-implemented).
 
 Two halves remain deferred:
 
-- **Typed `commit_set` / `diff` artifact instances — M12 (Designed).** M11b
+- **Typed `commit_set` / `diff` artifact instances (Designed).** Manual takeover
   records raw `git log`/`git diff` TEXT in the ledger only; the typed artifact
-  instances + evidence-graph explorer land with the M12 artifact graph (below).
+  instances + evidence-graph explorer land with the typed-artifact graph (below).
 - **Additional node types.** Engine 3.0.0 does not reserve `human_edit` or
   `merge` node types. Add a type to the schema, compiler, runner, contracts,
   and this reference together before documenting it as available.
 
-## Sessions and the unified runner config (M42 — Implemented)
+## Sessions and the unified runner config (Implemented)
 
-**(M42 — Implemented, ADR-114; requires `compat.engine_min >= 2.0.0`.)** One
+**(Implemented, ADR-114; requires `compat.engine_min >= 2.0.0`.)** One
 **unified runner config** replaces the three divergent runner shapes
 (`runner_profiles` values, per-node `settings.runner`, consensus
 participant/synthesizer runner). Its fields: `runner_type`, `capability_agent`,
@@ -431,9 +435,9 @@ nodes:
     session: review                       # joins the named 'review' session
 ```
 
-## Node `retry_policy` (M30 — Implemented)
+## Node `retry_policy` (Implemented)
 
-**(M30 — Implemented, [ADR-080](decisions.md#adr-080-node-level-retry-policy).)** An
+**(Implemented, [ADR-080](decisions.md#adr-080-node-level-retry-policy).)** An
 optional `retry_policy` on `ai_coding` / `cli` nodes auto-retries the node on
 transient infrastructure failures without bouncing the run to a human.
 
@@ -470,16 +474,16 @@ distinct exhaustion signal. `retry_policy` is valid ONLY on `ai_coding` / `cli`
 [ADR-081](decisions.md#adr-081-rework-session-policy-with-resume-by-default)
 `session_policy` / `defaults`) requires `compat.engine_min >= 1.4.0`, else
 `CONFIG`; `MAISTER_ENGINE_VERSION` bumps `1.3.0 → 1.4.0` (see
-[`configuration.md`](configuration.md) §M30 engine bump). Flows using none of
+[`configuration.md`](configuration.md) §Engine floors). Flows using none of
 these keys stay valid at any `engine_min`.
 
-## Node `agent` binding (M34 — Implemented)
+## Node `agent` binding (Implemented)
 
-**(M34 — Implemented, [ADR-089](decisions.md#adr-089-platform-agent-catalog-with-per-agent-runner-and-a-five-source-trigger-model).)**
+**(Implemented, [ADR-089](decisions.md#adr-089-platform-agent-catalog-with-per-agent-runner-and-a-five-source-trigger-model).)**
 An optional `agent: <agent-id>` on `ai_coding` node settings binds the node to
 a catalog agent — `maister-agents/<stem>.md` inside a flow package (dir converged
-in M39 — ADR-105), referenced by its
-package-qualified id `<packageName>:<stem>` (M39 — ADR-106; was `<flowRefId>:<stem>`,
+per ADR-105), referenced by its
+package-qualified id `<packageName>:<stem>` (ADR-106; was `<flowRefId>:<stem>`,
 ADR-089; no bare-stem same-package sugar in v1) — instead of relying solely on the
 inline prompt.
 
@@ -518,10 +522,10 @@ nodes:
 `compat.engine_min >= 1.5.0`, else `CONFIG`; `MAISTER_ENGINE_VERSION` bumps
 `1.4.0 → 1.5.0`. Flows without the key stay valid at any `engine_min`.
 
-## Platform-agent `.md` frontmatter (M34 — Implemented; M39 additions Implemented — ADR-106)
+## Platform-agent `.md` frontmatter (Implemented; package-authoring additions Implemented — ADR-106)
 
 A platform agent is `maister-agents/<stem>.md` at a package ROOT; its catalog id
-is `<packageName>:<stem>` (M39, ADR-106). The frontmatter is parsed by
+is `<packageName>:<stem>` (ADR-106). The frontmatter is parsed by
 `agentDefinitionFrontmatterSchema` (`web/lib/agents/definition.ts`) — **strict**:
 an unknown key is refused with `MaisterError("CONFIG")` (ADR-089; the dead
 `scope`/`project` keys are refused loudly). Parsing never executes the body.
@@ -551,7 +555,7 @@ recommended:                        # optional — SEEDS the attach panel + per-
 The agent persona / system prompt (the body; MUST be non-empty).
 ```
 
-**M39 additions (Implemented — ADR-106).**
+**ADR-106 additions (Implemented).**
 
 - **`flow`** (top-level, optional, capabilityRefId-shaped) — the same-package flow
   the agent drives, projected to the `agents.flow_ref` column. It MUST be a member
@@ -584,16 +588,16 @@ The agent persona / system prompt (the body; MUST be non-empty).
   package agents from the providing pinned package's manifest capability roots,
   not through `capability_profile`.
 
-**Cross-field rules** (Implemented + M39): `mode=subagent` allows ONLY the `flow`
+**Cross-field rules** (Implemented): `mode=subagent` allows ONLY the `flow`
 trigger; `workspace_ref` is valid ONLY with `workspace=repo_read`; `triggers` must
 not repeat; `recommended.cron` is server-validated (expr + IANA timezone) at
 registration. `recommended` only SEEDS defaults — the per-project instance
 (`agent_project_links`: `enabled`, `runner_override_id`, `branch_base`,
 `execution_policy_override`, `schedules`) overrides every field.
 
-## Node `orchestrator` (M37 — Implemented)
+## Node `orchestrator` (Implemented)
 
-**(M37 — Implemented, [ADR-098](decisions.md#adr-098-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume).)**
+**(Implemented, [ADR-098](decisions.md#adr-098-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume).)**
 `type: orchestrator` is a long-lived **SUPERVISORY** node, not a run-to-terminal
 step. The flow **parks** on it: the node spawns and coordinates **child Runs**,
 idle-checkpoints while blocked (run status `WaitingOnChildren`, which holds **no**
@@ -624,7 +628,7 @@ nodes:
 - **Capability settings** — an `orchestrator` node **inherits the `ai_coding`
   capability settings shape** (`runner`, `model`, `thinkingEffort`, `mcps`,
   `tools`, `skills`, `permissionMode`, `limits`, `restrictions`, `enforcement`,
-  …); the same registry resolution (M14) and per-class `enforcement` intent
+  …); the same registry resolution and per-class `enforcement` intent
   apply.
 - **`delegation` sub-block** (optional) — `max_fanout` (the per-plan task cap for
   `run_plan`) and `max_depth` (the run-tree recursion bound). When omitted they
@@ -653,7 +657,7 @@ materialized into the orchestrator session's ACP `mcpServers` for
   worktree directly — the reviewer-isolation contract).
 - `run_cancel` — cancel a child run.
 
-Children are **catalog-resolved governed Runs** (M34 effective definition through
+Children are **catalog-resolved governed Runs** (the effective definition through
 the project's enabled + trusted catalog, ADR-089/090; never runtime-authored) —
 each is a real Run with a worktree, gates, promotion, the concurrency cap, and a
 launch-time snapshot. They form a run-tree via `runs.parent_run_id` /
@@ -669,17 +673,17 @@ orchestrator node debuts at `1.6.0`, the new engine floor). Flows without an
 > **Persistent-swarm Layer 2 is Implemented (ADR-099).** Addressable long-lived
 > child sessions (`runs.persistent`/`addressable_key`, re-messaged via
 > `run_message`), star-routed messaging through the orchestrator, shared-vs-own
-> worktree modes (`workspace_mode`), and per-agent read-only enforcement ship in
-> M37 (**Implemented — see
+> worktree modes (`workspace_mode`), and per-agent read-only enforcement ship
+> as part of Layer 2 (**Implemented — see
 > [ADR-099](decisions.md#adr-099-persistent-swarm-layer-2--addressable-sessions-star-routed-messaging-worktree-modes-per-agent-read-only)**).
 > The one carve-out remains **path-scoped** write enforcement ("tester edits only
 > tests"): a `strict` path-scope declaration is still refused (`CONFIG`) until the
 > deferred policy layer lands — maister enforces read-only-vs-full only, so
 > path-scope ships `instructed`-only **(Phase 2)**.
 
-## Node `consensus` (M41 — Implemented)
+## Node `consensus` (Implemented)
 
-**(M41 — Implemented, [ADR-109](decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution).)**
+**(Implemented, [ADR-109](decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution).)**
 `type: consensus` is an engine-owned supervisory node for high-stakes planning
 or review decisions where one agent answer is not enough. It fans out read-only
 draft child runs, parks the parent as `WaitingOnChildren`, cross-verifies drafts
@@ -730,7 +734,7 @@ nodes:
 - **`participants[]`** — 2..`MAISTER_MAX_ORCHESTRATOR_FANOUT` read-only draft
   authors. Each entry declares exactly one stable `id` plus either `agent` or
   `runner`; stale runtime resolution fails with `PRECONDITION`, not fallback.
-- **`workspace.mode`** — defaults to `repo_read`. M41 forbids writable competing
+- **`workspace.mode`** — defaults to `repo_read`. v1 forbids writable competing
   code drafts; participant overrides may stay read-only only.
 - **`material_axes[]`** — non-empty author-declared booleans verifiers must cover.
   Consensus is reached only when every verifier returns `verdict: "agree"` and
@@ -771,9 +775,9 @@ unknown verdict strings count as `disagree` and are persisted in
 `MaisterError("CONFIG")`. Flows without a `consensus` node stay valid at their
 existing engine floor.
 
-## Node `decide` dynamic routing (M38 — Implemented)
+## Node `decide` dynamic routing (Implemented)
 
-**(M38 — Implemented, [ADR-103](decisions.md#adr-103-output-driven-dynamic-routing-decide--onmismatch-rework--engine-170).)**
+**(Implemented, [ADR-103](decisions.md#adr-103-output-driven-dynamic-routing-decide--onmismatch-rework--engine-170).)**
 By default a non-`human` node finishes with the outcome `"success"` and follows
 `transitions.success`. A node-level **`decide`** block lets it instead route on
 **its own structured output** (`from: output.<dot.path>`) or on a gate/judge
@@ -847,10 +851,10 @@ else the manifest is refused at load (`CONFIG`); `MAISTER_ENGINE_VERSION` bumps
 `1.6.0 → 1.7.0`. Flows without `decide` (and without `on_mismatch`) stay valid at
 any `engine_min`.
 
-## `output.result.on_mismatch` malformed-output rework (M38 — Implemented)
+## `output.result.on_mismatch` malformed-output rework (Implemented)
 
-**(M38 — Implemented, [ADR-103](decisions.md#adr-103-output-driven-dynamic-routing-decide--onmismatch-rework--engine-170).)**
-When a node's structured output fails validation (M26 P1), the default is a hard
+**(Implemented, [ADR-103](decisions.md#adr-103-output-driven-dynamic-routing-decide--onmismatch-rework--engine-170).)**
+When a node's structured output fails validation (ADR-063 P1), the default is a hard
 `CONFIG` fail. `output.result.on_mismatch` opts the node into an **engine-initiated
 rework loop** instead — bounded by `rework.maxLoops`, with the validation-error text
 injected into the node's `commentsVar` so the agent's next attempt sees what to fix.
@@ -878,7 +882,7 @@ nodes:
   `transitions`/`rework.allowedTargets`.
 - **`on_mismatch: <outcome>`** — routes via `transitions[<outcome>]` to another node
   that MUST be ∈ `rework.allowedTargets`; requires a `rework` block.
-- **Absent (default)** — today's M26 hard `CONFIG` fail, unchanged.
+- **Absent (default)** — today's hard `CONFIG` fail, unchanged.
 
 `maxLoops` exhaustion **fails closed**: an always-malformed node halts at
 `maxLoops + 1` attempts with a `Failed` run (`CONFIG`, via the loop-top
@@ -962,9 +966,9 @@ re-pauses it — "rounds spent, approve or end") → no recursion, naturally bou
 See [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md) for the
 baseline-aware attempt counting and routing semantics.
 
-## Rework `session_policy` (M30 — Implemented)
+## Rework `session_policy` (Implemented)
 
-**(M30 — Implemented, [ADR-081](decisions.md#adr-081-rework-session-policy-with-resume-by-default).)**
+**(Implemented, [ADR-081](decisions.md#adr-081-rework-session-policy-with-resume-by-default).)**
 `session_policy` controls whether a rework re-uses the prior attempt's agent
 session (keeping the critique context) or starts fresh.
 
@@ -984,7 +988,7 @@ nodes:
 - **Values** — `resume | new_session`.
 - **Resolution (highest wins)** — rework-transition `rework.session_policy` → node
   `session_policy` → flow `defaults.session_policy` → engine default **`resume`** (a
-  deliberate flip from the pre-M30 implicit `new_session`).
+  deliberate flip from the earlier implicit `new_session`).
 - **`resume`** resumes the prior attempt's `acp_session_id` via the
   [ADR-006](decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume) idle
   checkpoint / ACP `session/resume` path (the ~$0.28 respawn buys back the critique
@@ -1037,29 +1041,30 @@ remediation string). Probes run with runner authority, like `command_check`
 gates — only trusted flows reach this path. See
 [ADR-091](decisions.md#adr-091-flow-requirements-launch-precondition).
 
-## Gate execution (M11a — Implemented)
+## Gate execution (Implemented)
 
-> **Status (M11a).** Gate execution is **Implemented** in M11a (per
+> **Status.** Gate execution is **Implemented** (per
 > [ADR-028](decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped)).
 > The gate STATUS lifecycle, structured
 > verdicts, blocking/advisory modes, staleness propagation, and
-> override-without-erasure live here, not in M15. M15 (below) keeps only the
+> override-without-erasure live here, not in the readiness layer. Readiness
+> (below) keeps only the
 > readiness-policy DSL, verdict calibration, and `external_check` ingestion.
 
 A node's `pre_finish.gates` run in declared order before the node can finish.
-Each gate writes a `gate_results` row. Gate kinds and their M11a execution
+Each gate writes a `gate_results` row. Gate kinds and their execution
 status:
 
-| kind                | purpose                                                                                                               | M11a                                                                                                                                                                  |
+| kind                | purpose                                                                                                               | execution                                                                                                                                                                  |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `command_check`     | Runs formatter, test, lint, typecheck, build, or custom command via `bash -c`; exit 0 = `passed`, else `failed`.      | **Executes**                                                                                                                                                          |
 | `ai_judgment`       | Produces a structured model verdict over the diff/logs/requirements via an agent session (defaults to `new-session`). | **Executes**                                                                                                                                                          |
 | `human_review`      | Captures approve/rework decisions through the review HITL.                                                            | **Executes**                                                                                                                                                          |
-| `skill_check`       | Runs an internal slash command (e.g. `/aif-review`) via an agent session.                                             | **Executes (best-effort)** — no capability scoping until M14                                                                                                          |
-| `artifact_required` | Verifies required evidence exists and is current.                                                                     | **Stubbed** → `skipped` + WARN + `TODO(M12)` (needs M12 artifact instances)                                                                                           |
-| `external_check`    | Waits for CI / another system to report through the operations API.                                                   | **Executes (M16)** → report ingestion via `POST /api/v1/ext/runs/{runId}/gates/{gateId}/report` flips `pending → passed\|failed` and records a `test_report` artifact |
+| `skill_check`       | Runs an internal slash command (e.g. `/aif-review`) via an agent session.                                             | **Executes (best-effort)** — no capability scoping until capability materialization (ADR-041)                                                                                                          |
+| `artifact_required` | Verifies required evidence exists and is current.                                                                     | **Executes** — presence + validity, plus `must_touch`/`must_not_touch` mutation assertions (ADR-037/ADR-074)                                                                                           |
+| `external_check`    | Waits for CI / another system to report through the operations API.                                                   | **Executes** → report ingestion via `POST /api/v1/ext/runs/{runId}/gates/{gateId}/report` flips `pending → passed\|failed` and records a `test_report` artifact |
 
-### `gates[].external` block (M16 — Implemented)
+### `gates[].external` block (Implemented)
 
 `external_check` gates accept an optional additive `external` block. Old manifests without it remain valid; **no engine-version bump** is required.
 
@@ -1079,9 +1084,9 @@ status:
 
 The block is meaningful only for `kind: external_check`. Placing it on any other gate kind is a manifest validation error (`CONFIG`).
 
-### `gates[].must_touch` / `gates[].must_not_touch` mutation assertions (M29 — Implemented)
+### `gates[].must_touch` / `gates[].must_not_touch` mutation assertions (Implemented)
 
-> **Status (M29 — Implemented).** Deterministic post-condition assertions over the
+> **Status (Implemented).** Deterministic post-condition assertions over the
 > run worktree's git diff, valid ONLY on `kind: artifact_required` gates.
 > Rationale, range semantics, and the `mutation_report` shape are normative in
 > [ADR-074](decisions.md#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates)
@@ -1102,7 +1107,7 @@ The block is meaningful only for `kind: external_check`. Placing it on any other
 | field            | type                     | meaning                                                                                                                                                                                                                       |
 | ---------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `must_touch?`    | `string[]` (min 1 glob)  | The gate FAILS when the **node-scoped** diff range (since this node's first attempt started; cumulative fallback when no start capture exists) touches NONE of the globs. Matched with `picomatch`, `dot: true`, repo-relative POSIX paths. |
-| `must_not_touch?`| `"restrictions"` literal | The gate FAILS when the **cumulative** branch diff (merge-base vs main → HEAD) touches any `paths` entry of the node's resolved M14 restriction set. Restrictions without `paths` are reported `unmatchable`, never failed on. |
+| `must_not_touch?`| `"restrictions"` literal | The gate FAILS when the **cumulative** branch diff (merge-base vs main → HEAD) touches any `paths` entry of the node's resolved restriction set. Restrictions without `paths` are reported `unmatchable`, never failed on. |
 
 Both assertions evaluate under the gate's existing `mode`
 (`blocking | advisory`). Declaring either field on any other gate kind is a
@@ -1112,7 +1117,7 @@ ALWAYS records a `mutation_report` artifact (pass AND fail; see
 unavailable at gate time a blocking gate FAILS (a sensor that cannot sense must
 not pass); an advisory gate records `evaluated: false`.
 
-**Restriction `paths` (capability config, M29 — Implemented).** A `restriction`
+**Restriction `paths` (capability config — Implemented).** A `restriction`
 capability gains an optional machine-readable subset:
 
 ```yaml
@@ -1124,14 +1129,14 @@ paths: # optional; the subset the mutation sensor can check
   - "web/lib/db/migrations/**"
 ```
 
-The same record feeds M14 instruction materialization AND this sensor (single
+The same record feeds instruction materialization AND this sensor (single
 source of truth; ADR-041 strict enforcement reads the same field later).
 `paths` is capability config, not graph-manifest surface — additive, no engine
 floor.
 
 **Engine gate — no bump.** `MAISTER_ENGINE_VERSION` stays `1.3.0`. The existing
-`compat.engine_min >= 1.3.0` manifest check (introduced for `output.result`,
-M26) is **widened**: a manifest declaring `must_touch`/`must_not_touch` OR a
+`compat.engine_min >= 1.3.0` manifest check (introduced for `output.result`)
+is **widened**: a manifest declaring `must_touch`/`must_not_touch` OR a
 gate `output.kind: mutation_report` is rejected with `MaisterError("CONFIG")`
 unless `compat.engine_min >= 1.3.0`. Flows using neither feature stay valid at
 any `engine_min`.
@@ -1150,7 +1155,7 @@ UI readiness reads the typed result. An unparseable verdict is recorded as
 `MaisterError` code** is thrown
 ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union).
 
-**Staleness.** When a reviewer reworks (or returns a manual takeover — M11b,
+**Staleness.** When a reviewer reworks (or returns a manual takeover —
 Implemented), `markDownstreamStale` flips dependent `gate_results`
 `passed → stale`; a stale blocking gate must rerun before the node can finish
 again.
@@ -1159,11 +1164,11 @@ again.
 `human_review` decision; it sets the gate `overridden` and records the deciding
 HITL, but it **never deletes** the original failed/stale verdict.
 
-> **M11a gates feed but do NOT gate promotion.** Writing a `gate_results` row
-> does not block merge in M11a. Promotion readiness (refusing merge on a missing/
-> failed/stale required gate) is the M15/M18 readiness policy described below.
+> **Gates feed but do NOT gate promotion.** Writing a `gate_results` row
+> does not block merge by itself. Promotion readiness (refusing merge on a missing/
+> failed/stale required gate) is the readiness / merge-enforcement policy described below.
 
-## Typed artifacts and evidence graph (M12 — Implemented)
+## Typed artifacts and evidence graph (Implemented)
 
 Flow graph nodes can declare typed artifacts as inputs and outputs. Runtime
 records artifact metadata in the database and keeps payloads in the run
@@ -1185,8 +1190,8 @@ produces. Each entry:
 | `schema?`      | string                                 | Optional schema id/ref describing the payload shape.                                                                                           |
 | `path?`        | string                                 | Optional run-relative / worktree path to the payload.                                                                                          |
 | `ref?`         | string                                 | Optional git ref (used by `commit_set` / `diff`).                                                                                              |
-| `visibility?`  | `internal` \| `shared`                 | Who may read the artifact. **Declared/recorded in M12; access enforcement is M14.**                                                            |
-| `retention?`   | `run` \| `ephemeral`                   | Lifetime policy. **Declared/recorded in M12; enforcement is M14.**                                                                             |
+| `visibility?`  | `internal` \| `shared`                 | Who may read the artifact. **Declared/recorded here; access enforcement lives in capability materialization (ADR-041).**                                                            |
+| `retention?`   | `run` \| `ephemeral`                   | Lifetime policy. **Declared/recorded here; enforcement lives in capability materialization (ADR-041).**                                                                             |
 | `requiredFor?` | (`"review"` \| `"merge"`)[]            | Phases this artifact blocks if missing/stale. It is a field ON a `produces[]` entry, so the artifact is always produced by the declaring node. |
 
 **`input.requires[]`.** A node's `input` block declares the typed artifacts it
@@ -1289,9 +1294,9 @@ benchmark datasets, rich preview sandboxing, cross-run artifact reuse, full
 payload-schema validation for every artifact kind, provider-specific CI apps,
 and CI ingestion beyond the generic external gate report contract.
 
-## M26: structured node output channel (`output.result`) (P1 Implemented)
+## Structured node output channel (`output.result`) (Implemented — ADR-063 P1)
 
-> **Status (M26 — P1 Implemented; the run-context file (P7) stays Designed).** Opt-in schema-validated structured output for
+> **Status (P1 Implemented; the run-context file (P7) stays Designed).** Opt-in schema-validated structured output for
 > every graph node type, folded into the existing `node_attempts.vars` channel.
 > Decision: [ADR-063](decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7);
 > frozen SSOT:
@@ -1302,11 +1307,11 @@ and CI ingestion beyond the generic external gate report contract.
 
 Today only `human`/HITL nodes write a structured result into
 `node_attempts.vars`; `ai_coding`/`cli`/`check`/`judge` nodes leave `vars: {}`.
-M26 lets any graph node emit a **schema-validated** structured result into that
+`output.result` lets any graph node emit a **schema-validated** structured result into that
 same `vars` channel, declared **opt-in** per node. A node without `output.result`
 behaves byte-identically to today (no transport provisioning, no parsing).
 
-**`output.result`.** A new field on a node's `output` block, **sibling of the M12
+**`output.result`.** A new field on a node's `output` block, **sibling of
 `output.produces[]`**:
 
 ```yaml
@@ -1314,14 +1319,14 @@ output:
   result:
     schema: ./schemas/plan-output.json # canonical package-root schema reference
     required: false # default false
-  produces: # M12, unchanged
+  produces: # unchanged
     - id: plan-summary
       kind: generic_file
 ```
 
 | field       | type    | meaning                                                                                                                                                                                                                                                                                                                                     |
 | ----------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schema`    | string  | A **package-root schema reference** (not inline): canonical `./schemas/<name>.json`, with the legacy bare form normalized. Every install path rejects non-root, escaping, missing, malformed, or grammar-invalid references before the revision is usable; runtime resolves the same file from the installed flow revision's `schemas/` directory. M26 **adds** a nested `object` type to that grammar (flat today: `string \| number \| boolean \| enum \| array`) — net-new work, still no `ajv` and no new dep. |
+| `schema`    | string  | A **package-root schema reference** (not inline): canonical `./schemas/<name>.json`, with the legacy bare form normalized. Every install path rejects non-root, escaping, missing, malformed, or grammar-invalid references before the revision is usable; runtime resolves the same file from the installed flow revision's `schemas/` directory. The structured-output channel **adds** a nested `object` type to that grammar (flat today: `string \| number \| boolean \| enum \| array`) — net-new work, still no `ajv` and no new dep. |
 | `required?` | boolean | Default `false`. When `true`, an absent payload fails the attempt; when `false`, an absent payload leaves `vars: {}` and the node proceeds.                                                                                                                                                                                                 |
 
 **Per-node-type output transport.** Transport is chosen by the node's execution
@@ -1346,11 +1351,11 @@ in [`configuration.md`](configuration.md). Rationale lives in
 [ADR-063](decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7)
 — not restated here.
 
-## Readiness policy and verdict calibration (M15 — Implemented)
+## Readiness policy and verdict calibration (Implemented)
 
-> **Re-scoped (ADR-028).** M11a annexed gate _execution_ — the kinds, status
+> **Re-scoped (ADR-028).** The graph engine annexed gate _execution_ — the kinds, status
 > lifecycle, structured verdicts, blocking/advisory modes, staleness, and
-> override-without-erasure now live under **Gate execution (M11a)** above. M15
+> override-without-erasure now live under **Gate execution** above. This section
 > keeps only the readiness-policy DSL, verdict calibration, and `external_check`
 > ingestion.
 
@@ -1360,18 +1365,18 @@ default limits, but the Flow declares which gates are required for its delivery
 process, and the readiness policy decides when a run may promote.
 
 Review and merge refuse when any required blocking gate is missing, pending,
-running, failed, stale, or skipped. **M11a records gate results but does not
+running, failed, stale, or skipped. **Gate execution records gate results but does not
 enforce this promotion-gating** — refusing a merge on an unsatisfied required
-gate is the M15/M18 readiness check. Human override stays a declared
+gate is the readiness / merge-enforcement check. Human override stays a declared
 `human_review` decision that produces a human-note artifact and never deletes
-the failed evidence (override-without-erasure itself ships in M11a).
+the failed evidence (override-without-erasure itself ships with gate execution).
 
 Verdict calibration tunes confidence thresholds per gate / Flow. `external_check`
 ingestion — the report contract that lets CI or another external system satisfy
-a `pending` gate — is delivered with the M16 operations API (see the M16
-operations-API section below); M15 owns the readiness policy that consumes it.
+a `pending` gate — is delivered with the external operations API (see the
+operations-API section below); the readiness policy that consumes it lives here.
 
-## External operations API and MCP facade (M16 — Implemented)
+## External operations API and MCP facade (Implemented)
 
 Flow plugins may declare `external_check` gates when evidence must arrive from
 outside the runner: CI, a local script, a repository-hosted check, or another
@@ -1403,7 +1408,7 @@ result; list and respond to HITL requests) where the token is authorized. The
 two HITL tools — `hitl_list` and `hitl_respond` — are backed by the
 `GET /api/v1/ext/runs/{runId}/hitl` (`hitl:read`) and
 `POST /api/v1/ext/runs/{runId}/hitl/{hitlRequestId}/respond` (`hitl:respond`)
-ext routes (Implemented — M17). MCP tools never bypass Flow validation,
+ext routes (Implemented). MCP tools never bypass Flow validation,
 token authorization, readiness, or artifact recording.
 
 ## Node actions, review, and gates
@@ -1583,8 +1588,8 @@ driver are implemented.
 In a graph flow the review-driven rework loop is a **node-
 pointer move inside `Running`**, not a new run status: a `rework` decision on a
 review node sets the node pointer back to the rework target, marks downstream
-gates stale, and continues — there is no `HumanWorking` status in M11a (that is
-M11b). The full node lifecycle state machine lives in
+gates stale, and continues — the rework loop itself involves no `HumanWorking`
+status (that belongs to manual takeover). The full node lifecycle state machine lives in
 [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md).
 
 ## Example minimal `flow.yaml`
@@ -1608,7 +1613,7 @@ local-dev --flow-id greet --project <slug>`.
 Launch a run: `POST /api/runs` with `{ taskId }` (after seeding a task
 that references this flow).
 
-## Package contract fields (M10)
+## Package contract fields (ADR-021)
 
 Beyond `steps`, a `flow.yaml` may declare optional package-contract fields
 (ADR-021): `compat: { engine_min, engine_max }`, and the opaque string lists
@@ -1616,7 +1621,7 @@ Beyond `steps`, a `flow.yaml` may declare optional package-contract fields
 `flow_revisions.contract`, digested into `flow_revisions.manifest_digest`, and
 shown in the Flow Packages UI. Only `compat` + `schemaVersion` are enforced at
 enablement/launch (`web/lib/flows/engine-version.ts`); the lists are opaque
-until M11+ gives them runtime meaning. See
+until later engine work gives them runtime meaning. See
 [`configuration.md`](configuration.md) and
 [`system-analytics/flow-packages.md`](system-analytics/flow-packages.md).
 
@@ -1638,7 +1643,7 @@ Supported authored package artifact kinds:
 | `schema`           | JSON schema such as HITL form schemas.                      |
 | `template`         | Text templates used by scripts or agents.                   |
 | `readme`           | Human package documentation.                                |
-| `setup`            | Setup hook content; executed only by M10 trust-gated setup. |
+| `setup`            | Setup hook content; executed only by trust-gated package setup. |
 | `asset`            | Unclassified portable text files retained during import.    |
 
 Before publish/export, package file paths must be safe relative text paths with

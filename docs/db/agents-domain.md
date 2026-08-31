@@ -1,6 +1,6 @@
 # Platform agents ERD
 
-Tables for the M34 platform-agent substrate (ADR-089/ADR-090): the agent
+Tables for the platform-agent substrate (ADR-089/ADR-090): the agent
 catalog index, project attachments, trigger bindings, plus the agent-shaped
 columns added to `runs`, `tasks`, and `project_tokens`. See
 [`../system-analytics/agents.md`](../system-analytics/agents.md) for process
@@ -8,19 +8,20 @@ flows and [`../database-schema.md`](../database-schema.md) for the
 column-level narrative.
 
 > **Status: Implemented.** Migration `0049_platform_agents.sql` adds `agents` +
-> `agent_project_links`, reworks the dead M24 `agent_schedules` shape in
+> `agent_project_links`, reworks the dead scheduler-clock-era `agent_schedules`
+> shape (ADR-060) in
 > place, and alters `runs` / `tasks` / `project_tokens`;
 > `0051_agents_package_source.sql` reshapes `agents` to package provenance
 > (drops `scope`/`project_id`, adds `flow_ref_id`/`version_label`/`origin`/
 > `recommended`/`workspace_ref` — ADR-089 rework).
 >
-> **(Implemented — ADR-106, migration `0068`)** M39 re-keys the catalog per-package:
+> **(Implemented — ADR-106, migration `0068`)** the catalog is re-keyed per-package:
 > `agents.flow_ref_id` → `package_name` (NOT NULL, = `package_installs.name`),
 > reindex `agents_flow_ref_idx` → `agents_package_name_idx`, add `agents.flow_ref`
 > + `agents.branch_base`, extend `recommended` with `executionPolicy`, and add
 > `agent_project_links.branch_base` + `agent_project_links.execution_policy_override`.
-> The ERD/tables below show the post-0068 shape; the M34 columns they replace are
-> noted inline.
+> The ERD/tables below show the post-0068 shape; the pre-0068 columns they
+> replace are noted inline.
 >
 > **(Implemented — ADR-139, migration `0104`)** stable agent schedule IDs are
 > reconciled under `agent_project_links.schedules_revision`; bindings retain
@@ -58,7 +59,7 @@ erDiagram
         text workspace_ref "NULL — trigger|branch; repo_read only"
         text mode "session|subagent"
         jsonb triggers "NOT NULL — subset of manual|cron|domain_event|webhook|flow"
-        jsonb capability_profile "NULL — M14 shape"
+        jsonb capability_profile "NULL — ADR-041 capability-profile shape"
         text risk_tier "read_only|standard|destructive"
         jsonb recommended "NULL — runner/branch_base/cron/events/executionPolicy seed (ADR-106)"
         text flow_ref "NULL — same-package flow the agent drives (ADR-106)"
@@ -92,7 +93,7 @@ erDiagram
     }
 
     AGENT_SCHEDULES {
-        text id PK "uuid — reworked in place from the dead M24 shape"
+        text id PK "uuid — reworked in place from the dead scheduler-era shape"
         text agent_id FK "NOT NULL -> agents(id) CASCADE (was text agent_ref)"
         text project_id FK "NOT NULL -> projects(id) CASCADE"
         text trigger_type "cron|event|mention (mention: ADR-151, no migration - plain text, no value CHECK)"
@@ -113,7 +114,7 @@ erDiagram
     }
 ```
 
-Dropped from the M24 shape (zero readers/writers existed): `agent_ref`
+Dropped from the prior scheduler-era shape (zero readers/writers existed): `agent_ref`
 (text), `scheduler_job_id` (per-schedule job bridge — replaced by the seeded
 singleton `agent_tick.dispatcher`), `desired_state` (`continuous` is the
 future Mγ stage).
@@ -184,7 +185,7 @@ under the new `package_name` key.
 - Process flows: [`../system-analytics/agents.md`](../system-analytics/agents.md).
 - Global ERD: [`erd.md`](erd.md); run columns also in [`runs-domain.md`](runs-domain.md).
 - Narrative: [`../database-schema.md`](../database-schema.md).
-- Decision records: ADR-089, ADR-090, ADR-106 (M39 per-package re-key) in
+- Decision records: ADR-089, ADR-090, ADR-106 (per-package re-key) in
   [`../decisions.md`](../decisions.md).
 - Source (Implemented): `web/lib/db/schema.ts` (migration `0049_platform_agents.sql`);
-  M39 reshape `web/lib/db/migrations/0068_m39_package_agents.sql` (Implemented — ADR-106).
+  per-package reshape `web/lib/db/migrations/0068_m39_package_agents.sql` (Implemented — ADR-106).

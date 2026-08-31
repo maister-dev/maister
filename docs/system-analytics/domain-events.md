@@ -2,10 +2,11 @@
 
 ## Purpose
 
-The domain-event outbox (**Implemented**, ADR-086, M32) is MAIster's shared
+The domain-event outbox (**Implemented**, ADR-086) is MAIster's shared
 **trigger bus**: an immutable, append-only log of curated domain facts
 (`domain_events`), written from the domain layer in the SAME transaction as the
-state change, and a per-consumer cursor dispatcher running on the M24 clock.
+state change, and a per-consumer cursor dispatcher running on the polymorphic
+scheduler clock.
 Multiple independent consumers — the implemented `agent_triggers` dispatcher,
 the outbound-webhooks drainer (after its later re-point), notifiers — each consume
 the same log at their own pace with at-least-once delivery and cursor catch-up
@@ -16,7 +17,7 @@ the run state machine ([runs.md](runs.md)), the social-board audit feed
 (`task_activity` stays the user-facing activity log, ADR-083), or the clock it
 borrows ([scheduler.md](scheduler.md)).
 
-## M43 cut-over event (Implemented)
+## Cut-over event (ADR-131 — Implemented)
 
 Each migration-0093 CAS winner emits exactly one existing run.failed event with
 reason legacy_steps_engine_3_cutover and source upgrade_cutover. A shared
@@ -41,7 +42,7 @@ observe its failed child; success-gated dependents do not launch.
   `task.created`, `task.comment_added`, `task.triage_requeued`,
   `task.clarification_answered`, `run.done`,
   `run.failed`, `run.crashed`, `run.abandoned`, `run.review`, `run.escalated`,
-  `gate.failed`. `run.review` (M37, ADR-100) is the settled-not-terminal signal a
+  `gate.failed`. `run.review` (ADR-100) is the settled-not-terminal signal a
   delegated child emits on reaching Review (wakes a parked orchestrator).
   `run.escalated` is the execution-policy B3 on-stuck signal (emitted when a
   human gate cannot auto-pass; migration `0056`). **(ADR-101 — Implemented)** the
@@ -49,17 +50,17 @@ observe its failed child; success-gated dependents do not launch.
   in its `payload` when a run/task-scope budget escalates to a `budget_breach`
   HITL.
   `task.triage_requeued` was registered with no emitter; its emitter is the
-  M34 "Send to triage" action (Implemented — `triage_status = NULL` + emit +
+  "Send to triage" action (Implemented — `triage_status = NULL` + emit +
   `triage_requeued` activity in one transaction, ADR-089). Extension rule:
   one taxonomy entry + emit site(s) in the owning domain transaction + one
   doc row + a CHECK update via migration.
-  **(M37 — Implemented, ADR-098)** The four run-terminal kinds (`run.done`,
+  **(Implemented, ADR-098)** The four run-terminal kinds (`run.done`,
   `run.failed`, `run.crashed`, `run.abandoned`) have their `payload`
   **widened** with `parent_run_id` (the emitting run's `runs.parent_run_id`;
   `null` for a parentless run) without adding a kind — letting the
   orchestrator consumers route a child-terminal fact to its parent
   orchestrator and to any dependent auto-tasks.
-  **(M37 — Implemented, ADR-100, migration 0060)** One new kind `run.review`
+  **(Implemented, ADR-100, migration 0060)** One new kind `run.review`
   is added (the CHECK extended to 9 kinds): a DELEGATED child reaching
   `Review` (a diff awaiting the coordinator). It is **settled but NOT
   terminal** (`Review → Done` via promote / `Review → Running` via rework),
@@ -74,7 +75,8 @@ observe its failed child; success-gated dependents do not launch.
   the `agent_triggers` consumer's additive mention branch; see
   [agent-mentions.md](agent-mentions.md).
 - **`domain_event_dispatch` job kind** (Implemented) — singleton dispatcher on
-  the M24 clock (one seeded `domain_event_dispatch.default` job, cadence 60s,
+  the polymorphic scheduler clock (one seeded `domain_event_dispatch.default`
+  job, cadence 60s,
   budget `domainEventDispatch: 1`, not user-creatable). See
   [scheduler.md](scheduler.md).
 - **Consumer registry + `noop` consumer** (Implemented) — code-owned
@@ -82,7 +84,7 @@ observe its failed child; success-gated dependents do not launch.
   entry declares `{ id, startFrom: "beginning" | "now", handle(events) }`. v1
   ships exactly one permanently-registered `noop` consumer (`startFrom: "now"`)
   as the live proof of the seam and an ops liveness signal.
-- **`agent_triggers` consumer** (M34 — Implemented, ADR-089) — the first real
+- **`agent_triggers` consumer** (Implemented, ADR-089) — the first real
   consumer (`startFrom: "now"`): matches each event's kind + project against
   enabled `agent_schedules` event rows joined to enabled
   `agent_project_links`, skips events actored by the matched agent itself
@@ -90,7 +92,7 @@ observe its failed child; success-gated dependents do not launch.
   the `Pending` agent run under the partial UNIQUE
   `(agent_id, trigger_event_id)` — at-least-once redelivery converges to
   exactly one run. See [agents.md](agents.md).
-- **`auto_launch_run_plan` consumer** (M37 — Implemented, ADR-098/097) — the
+- **`auto_launch_run_plan` consumer** (Implemented, ADR-098/097) — the
   as-plan DAG consumer (`startFrom: "now"`) reacting to the SETTLED set
   (run-terminal kinds + `run.review`). Using the `parent_run_id` widened onto
   each settled payload, it: (1) **advances the producer task** — a successful
@@ -107,7 +109,7 @@ observe its failed child; success-gated dependents do not launch.
   conflict leaves the child in `Review`, logged; manual as-run children are
   coordinator-driven via `run_promote`, not promoted here). It branches on
   `run_kind`/parent-linkage BEFORE acting. See [orchestrator.md](orchestrator.md).
-- **`orchestrator_resume` consumer** (M37 — Implemented, ADR-098/097) — the
+- **`orchestrator_resume` consumer** (Implemented, ADR-098/097) — the
   parked-coordinator wake consumer (`startFrom: "now"`), a SIBLING of
   `auto_launch_run_plan` and the ONLY consumer that wakes the parent. It
   reacts to the SETTLED set (run-terminal kinds + `run.review`): a child that
@@ -255,7 +257,7 @@ flowchart TD
   any future pruning MUST honor `min(cursor_event_id)` across registered
   consumers (no pruning in this stage).
 - `domain_events.kind` MUST be one of the 11 taxonomy kinds (CHECK-enforced);
-  `task.triage_requeued` MUST be emitted only by the M34 "Send to triage"
+  `task.triage_requeued` MUST be emitted only by the "Send to triage"
   action (Implemented) — no other emitter.
 - The dispatch read window MUST be exactly `id > cursor_event_id AND tx_id <
   pg_snapshot_xmin(pg_current_snapshot()) ORDER BY id LIMIT batch` — a
@@ -267,7 +269,7 @@ flowchart TD
   at claim; a zombie advance after lease reap + reclaim MUST no-op.
 - Delivery MUST be at-least-once: a handler failure or a crash before advance
   MUST redeliver the same window on a later tick; consumers MUST be idempotent.
-  **(M37 — Implemented, ADR-098/097)** the orchestrator engine registers TWO
+  **(Implemented, ADR-098/097)** the orchestrator engine registers TWO
   sibling consumers reacting to the SETTLED set (run-terminal kinds +
   `run.review`), each branching on `run_kind`/parent-linkage first:
   `auto_launch_run_plan` MUST clear `requires` blockers (released only on a
@@ -296,10 +298,10 @@ flowchart TD
   `addTaskComment`, `runPass2`) MUST emit the domain event in their existing or
   newly-wrapped transaction.
 - `domain_events.payload` MUST carry ids, keys, titles, and statuses only —
-  never secrets, env values, tokens, or raw agent output. **(M37 — Implemented,
+  never secrets, env values, tokens, or raw agent output. **(Implemented —
   ADR-098)** the four run-terminal payloads MUST additionally carry
   `parent_run_id` (the emitting run's `runs.parent_run_id`, `null` when
-  parentless) WITHOUT introducing a new kind. **(M37 — Implemented, ADR-100,
+  parentless) WITHOUT introducing a new kind. **(Implemented — ADR-100,
   migration 0060)** the settled-not-terminal `run.review` kind MUST be emitted
   ONLY for a child with a parent and MUST carry `parent_run_id`.
 
@@ -338,7 +340,7 @@ pre-existing `task.triage_requeued` event instead.
 ## Linked artifacts
 
 - **Decision:** [ADR-086](../decisions.md#adr-086-domain-event-outbox-as-the-shared-trigger-bus).
-- **Orchestrator consumers (M37 — Implemented):** [ADR-098](../decisions.md#adr-098-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume)
+- **Orchestrator consumers (Implemented):** [ADR-098](../decisions.md#adr-098-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume)
   / [ADR-100](../decisions.md#adr-100-delegated-child-review-settle--promoterework)
   — the `auto_launch_run_plan` + `orchestrator_resume` sibling consumers, the
   run-terminal `parent_run_id` payload widening, the settled-not-terminal
@@ -348,7 +350,7 @@ pre-existing `task.triage_requeued` event instead.
 - **DB:** [`db/domain-events.md`](../db/domain-events.md) and
   [`database-schema.md`](../database-schema.md) — the two tables (migration
   `0046`).
-- **First real consumer (M34 — Implemented):** [`agents.md`](agents.md) — the
+- **First real consumer (Implemented):** [`agents.md`](agents.md) — the
   `agent_triggers` consumer and the triage Q&A loop.
 - **Background clock:** [`scheduler.md`](scheduler.md) — the
   `domain_event_dispatch` job kind, `domainEventDispatch: 1` budget, and the

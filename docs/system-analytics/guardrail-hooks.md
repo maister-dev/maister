@@ -1,8 +1,8 @@
-# Guardrail / hook engine (ADR-108, M40 — Implemented; `capability_guard` ADR-130 — Implemented)
+# Guardrail / hook engine (ADR-108 — Implemented; `capability_guard` ADR-130 — Implemented)
 
-> Status: **[ADR-108](../decisions.md#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation)** (M40). Contract frozen; **P1–P5 implemented** (capability class + migration 0066 + two-tier default; universal supervisor 3-rule interceptor; web hook-trip escalation + per-run_kind resume + `hook_trip` HITL; native claude `PreToolUse` path-guard backend — live fires+denies confirmation deferred; Studio node-settings `hooks` editor + 7th-class settings-panel tag + `hook_trip` HITL resume/abort affordance with timeline surfacing; seeded `m40-guardrail-hooks` e2e). **P6: e2e + full gate sweep done (green); dogfood ralph-loop dropped (the universal + native layers stand on unit/integration/e2e coverage; the live native-hook fires/denies confirmation is the one residual); rebased onto main + renumbered (ADR-108 / migration 0066) 2026-06-24.**
+> Status: **[ADR-108](../decisions.md#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation)**. Contract frozen; **P1–P5 implemented** (capability class + migration 0066 + two-tier default; universal supervisor 3-rule interceptor; web hook-trip escalation + per-run_kind resume + `hook_trip` HITL; native claude `PreToolUse` path-guard backend — live fires+denies confirmation deferred; Studio node-settings `hooks` editor + 7th-class settings-panel tag + `hook_trip` HITL resume/abort affordance with timeline surfacing; seeded `m40-guardrail-hooks` e2e). **P6: e2e + full gate sweep done (green); dogfood ralph-loop dropped (the universal + native layers stand on unit/integration/e2e coverage; the live native-hook fires/denies confirmation is the one residual); rebased onto main + renumbered (ADR-108 / migration 0066) 2026-06-24.**
 >
-> **[ADR-130](../decisions.md#adr-130-adapter-agnostic-capability-enforcement-at-the-acp-seam) — `capability_guard` (M14 enforcement flip, Implemented).** A fourth,
+> **[ADR-130](../decisions.md#adr-130-adapter-agnostic-capability-enforcement-at-the-acp-seam) — `capability_guard` (capability-materialization enforcement flip, Implemented).** A fourth,
 > **derived-only** rule kind `capability_guard` extends this same seam to enforce
 > `enforcement.<class>: strict` on `tools` / `mcps` via tool-identity allow-lists,
 > evidence-gated per adapter. It carries a new `enforcementProfile` on
@@ -69,9 +69,10 @@ optional claude-native backend delivered through a clean seam.
   allowServers: string[] }; enforcedClasses: ("tools"|"mcps")[]; escalationThreshold:
   number }` (`escalationThreshold` = N, web-resolved from
   `MAISTER_CAPABILITY_DENY_ESCALATION_THRESHOLD`, delivered on the profile so the
-  supervisor stays config-free — the M40 `repetition.max` pattern). Distinct from
-  the M14 `capabilityProfilePath` (child-env only) and the platform-agent
-  `capability_profile` frontmatter — the name collision is deliberately avoided.
+  supervisor stays config-free — the ADR-108 `repetition.max` pattern). Distinct
+  from the capability-materialization `capabilityProfilePath` (child-env only)
+  and the platform-agent `capability_profile` frontmatter — the name collision
+  is deliberately avoided.
 - **`capabilityDenyCount`** _(capability_guard — ADR-130)_ — a per-session counter
   on the in-memory `SessionRecord` (`supervisor/src/types.ts`). Counts consecutive
   out-of-profile denials; reset to 0 on any in-profile call; the Nth
@@ -287,7 +288,7 @@ flowchart TD
 ```
 
 `capability_guard` _(ADR-130)_ slots **after `path_guard`, before B1** — same
-rationale as the M40 rules: it must win over auto-approve so an out-of-profile call
+rationale as the ADR-108 rules: it must win over auto-approve so an out-of-profile call
 is denied even on unattended/auto-approve sessions. It runs **only** when
 `record.enforcementProfile` is present, and only decides calls it *governs* (a
 strict-`tools` call whose identity resolves; an MCP call when `mcps` is strict);
@@ -296,7 +297,7 @@ preserved for every non-enforced class. In-profile calls and out-of-profile deni
 both resolve the RPC **synchronously inside `requestPermission`** — no
 `pendingPermissions.register` runs for them, so no deferred leaks. Any throw inside
 profile evaluation falls through to a logged deny + release (never an unresolved
-RPC — the M40 deferred-release invariant).
+RPC — the ADR-108 deferred-release invariant).
 
 Write-path extraction is adapter-agnostic: `toolCall.locations[0].path` (the
 standardized ACP field — verified for claude, schema-backed for codex), with a
@@ -337,7 +338,7 @@ resumes through the same agent-permission-HITL path that already drives it.
   Enforcement is 100% supervisor-side; the native registry resolves a **no-op**
   for every adapter. This layer is complete on its own.
 - **Native claude backend (P4, Implemented)** — `resolveNativeHookMaterializer`
-  registers a `claude` materializer that FOLDS a `PreToolUse` hook into the M14
+  registers a `claude` materializer that FOLDS a `PreToolUse` hook into the
   `<worktree>/.claude/settings.local.json` via the SINGLE existing writer
   (`mapProfileToAgentArtifacts` → `materializeCapabilityProfile`) — the `hooks`
   key rides the same file, so the ownership-marker / reclaim / cleanup protocol is
@@ -368,7 +369,7 @@ resumes through the same agent-permission-HITL path that already drives it.
 
 ## `capability_guard` mechanics + evidence gate (Implemented — ADR-130)
 
-**Tool identity at the seam.** The M40 seam narrows a tool call to `kind` +
+**Tool identity at the seam.** The ADR-108 seam narrows a tool call to `kind` +
 `locations[].path`. `capability_guard` additionally reads the tool **name** and, for
 MCP calls, the server **namespace** — extracted (single-sourced in one supervisor
 helper) from `_meta.claudeCode.toolName ?? title` (the same fields
@@ -472,7 +473,7 @@ clobbers the sibling — see `writeAdapterSmokeCache` merge):
   confirmation for real adapters is this operator ritual; until an adapter's
   `capabilityEnforcement` dimension is cached `ok`, a strict `tools`/`mcps` launch on
   it **refuses** with a diagnostic naming the missing evidence (never a false-enforce).
-- **M40 native-hook residual folded here (Resolved-Decision 5).** The one M40 residual
+- **ADR-108 native-hook residual folded here (Resolved-Decision 5).** The one ADR-108 residual
   — "a claude `PreToolUse` path-guard hook fires + denies in a real agent run" — is the
   **same** operator action (run a live agent, observe the seam), so it rides this ritual:
   when caching `capabilityEnforcement` for claude live, also confirm the native
@@ -515,7 +516,7 @@ clobbers the sibling — see `writeAdapterSmokeCache` merge):
   `MAISTER_HOOK_DEFAULT_WRITABLE_PATHS`, else the worktree root.
 - A node/agent declaring `hooks` MUST require `compat.engine_min >= 1.8.0`; a
   `strict` `enforcement.hooks` MUST be refused at launch (`hooks` is `instructed`
-  in `ENFORCEABILITY_BY_AGENT`, the M11c boundary; ADR-041 stays frozen).
+  in `ENFORCEABILITY_BY_AGENT`, the typed-settings boundary; ADR-041 stays frozen).
 - The native (claude) materializer MUST cover only `path_guard`, derive
   `allowedPaths` from the same resolved `hooksConfig.pathGuard`, and degrade to
   documented-N/A (no dead code) when the adapter does not honor settings-file
@@ -596,7 +597,7 @@ clobbers the sibling — see `writeAdapterSmokeCache` merge):
 - **Invalid `hooks` block at compile/load** (negative caps, empty
   `allowedPaths`, unknown lifecycle) → `MaisterError("CONFIG")` with the field
   path.
-- **`enforcement.hooks: strict`** → launch refused at the M11c boundary
+- **`enforcement.hooks: strict`** → launch refused at the typed-settings boundary
   (`CONFIG` / `EXECUTOR_UNAVAILABLE`), no agent spawned, no leaked deferred.
 - **Native + supervisor both cover path_guard on a claude run** → no
   double-count / double-escalate: the native hook denies inline before the
@@ -662,7 +663,7 @@ T0.6 REQ matrix). **Zero open items** — this gate authorizes Phase 1. T5.5 re-
 against the shipped code as a drift check.
 
 - **Fullness** — ✅ Every capability class has `{mechanism, expectation, acceptance,
-  edge-cases}`: `tools`/`mcps` (capability_guard allow-lists), `hooks` (M40 seam),
+  edge-cases}`: `tools`/`mcps` (capability_guard allow-lists), `hooks` (ADR-108 seam),
   and each of `skills`/`restrictions`/`permissionMode`/`workspaceAccess` carries a
   documented-instructed reason in the flipped table + `capabilities.md` mechanism
   table. Every REQ-1..27 has an AC and a planned test; no "TBD".

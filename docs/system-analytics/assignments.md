@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Assignments** are the M13 durable work-ownership layer for every human-visible
+**Assignments** are the durable work-ownership layer (ADR-040) for every human-visible
 wait. They make pending work queryable and claimable without changing the run
 state machine. An assignment may be owned by a human user today; the actor model
 also supports API-token systems, internal agents, and system actors for future
@@ -107,8 +107,8 @@ sequenceDiagram
   take-over route is used.
 - Retryable supervisor or file-write failures keep the assignment claimed and
   the HITL row retryable.
-- API-token and internal-agent actors are modeled for attribution only; M13 does
-  not add token-authenticated assignment write routes.
+- API-token and internal-agent actors are modeled for attribution only; this
+  domain does not add token-authenticated assignment write routes.
 
 ## Linked artifacts
 

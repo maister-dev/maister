@@ -25,8 +25,8 @@ Domain boundary: the policy type + preset table + resolvers
 (`web/lib/runs/execution-policy.ts`), the launch resolution/snapshot/authz
 (`web/lib/services/runs.ts`), and the per-axis enforcement sites in the flow
 engine, the supervisor, and the promote/delivery path. Out of scope: gate
-_execution_ (M11a — [`flow-graph.md`](flow-graph.md)), readiness
-(M15 — [`readiness.md`](readiness.md)), the delivery policy's merge _mechanics_
+_execution_ ([`flow-graph.md`](flow-graph.md)), readiness
+([`readiness.md`](readiness.md)), the delivery policy's merge _mechanics_
 (ADR-058/077 — [`outbound-webhooks.md`](outbound-webhooks.md) /
 [`workspaces.md`](workspaces.md)), and the HITL substrate
 ([`hitl.md`](hitl.md)).

@@ -22,16 +22,16 @@ platform agents use natively.
 Boundary: this domain owns the `brain_*` tables, harvest/index/proposal services,
 embedding-provider registry, and 4-layer enablement. It does NOT own the
 `domain_events` fact log ([domain-events.md](domain-events.md)), the run state
-machine ([runs.md](runs.md)), the M25 authored catalog, project file serving, or
+machine ([runs.md](runs.md)), the authored catalog, project file serving, or
 the scheduler clock ([scheduler.md](scheduler.md)). Indexed sources remain
 pointers to canonical truth; all write-back enters C proposals, authored drafts,
 or board tasks.
 
-## M43 Postgres-only provisioning and event filter (Implemented)
+## Postgres-only provisioning and event filter (ADR-131 — Implemented)
 
 Brain stays separately provisioned through its own Postgres migration lineage.
 Engine 3 uses the Postgres-only database client and retains the schema-applied
-assertion. A run.failed event with the M43 cut-over reason and source is not
+assertion. A run.failed event with the ADR-131 cut-over reason and source is not
 harvested and does not enqueue source reindex work.
 
 ## Domain entities
@@ -68,7 +68,7 @@ harvested and does not enqueue source reindex work.
   (queued|running|completed|failed), progress, resumable_cursor, created_at }`.
   Enqueued by settings/enable reconciliation, manual source reindex, and the
   `brain_source_reindex` domain-event consumer; consumed by the reindex worker
-  on the M24 tick. `resumable_cursor` is progress/observability metadata
+  on the scheduler tick. `resumable_cursor` is progress/observability metadata
   (`{lastItemId, error}` on failed owned reindex, or event cursor metadata for
   source jobs) — resume derives from the missing-generation worklist and source
   coverage checks, not the cursor.
@@ -392,7 +392,7 @@ autonomy allows a low-risk catalog proposal; it never publishes or writes repo
 files. The improver runs from the external core package with workspace `none`,
 mode `session`, risk tier `read_only`, cron/manual triggers, and ADR-111 config defaults for
 `min_recurrence`, `kinds`, and `max_proposals_per_run`. Rule/skill/flow
-acceptance creates unpublished M25 authored catalog drafts, links the proposal,
+acceptance creates unpublished authored catalog drafts, links the proposal,
 and requires catalog permission. Rejection records a human-authored reason. ADR,
 roadmap, and state projection require the project task-creation gate, create a
 Backlog task with drafted target path/content, link `brain_proposals.task_id`,
@@ -600,7 +600,7 @@ implemented in this branch unless a bullet explicitly names a later deferral.)*
 - **Harvest feed:** [`domain-events.md`](domain-events.md) — the `memory_harvest`
   consumer on the `domain_events` bus (ADR-086).
 - **Background clock:** [`scheduler.md`](scheduler.md) — the decay + reindex sweeps
-  folded into `runSystemSweep()` on the M24 tick.
+  folded into `runSystemSweep()` on the scheduler tick.
 - **Ambient host:** [`flow-graph.md`](flow-graph.md) / P7 run-context — `writeRunContext`
   → `.maister/run.json` (flow runs only).
 - **MCP facade / ext API:** [`external-operations.md`](external-operations.md) —

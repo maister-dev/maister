@@ -3,8 +3,8 @@
 ## Purpose
 
 An **agent mention** is an `@<agentId>` handle inside a task comment that
-summons a platform agent to that task. It joins the M31 social-board comment
-substrate ([`social-board.md`](social-board.md)) to the M34 platform-agent
+summons a platform agent to that task. It joins the social-board comment
+substrate ([`social-board.md`](social-board.md)) to the platform-agent
 substrate ([`agents.md`](agents.md)) through the ADR-086 domain-event bus
 ([`domain-events.md`](domain-events.md)): the comment write resolves and
 expands handles, the `task.comment_added` event carries the resolved ids, and

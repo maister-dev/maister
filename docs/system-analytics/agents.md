@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Platform agents (M34, ADR-089/090) are first-class `.md`-defined actors — a
+Platform agents (Implemented — ADR-089/090) are first-class `.md`-defined actors — a
 triager, reviewers, monitors, coders — shipped as `maister-agents/<stem>.md`
 files INSIDE flow packages (same trust contour, versioning, and Studio authoring
 path), projected into a platform catalog, attached to projects, executed on the
@@ -20,7 +20,7 @@ the run state machine ([runs.md](runs.md)), the execution-policy axis model
 or capability enforcement (materialize-only per ADR-041/043 —
 [flow-settings.md](flow-settings.md)).
 
-**Status convention.** M39 (ADR-106) re-keyed agent identity from per-flow to
+**Status convention.** ADR-106 re-keyed agent identity from per-flow to
 **per-package** and added optional same-package flow enrichment, a per-agent
 runner policy, branch base, and trigger-toggle coupling. Those pieces are tagged
 **(Implemented — ADR-106)** below. At HEAD the runtime IS the **per-package**
@@ -39,7 +39,7 @@ subagent schema types the known Claude-Code fields
 passthrough (contrast the strict platform-agent schema, where unknown → `CONFIG`);
 the New-Subagent template uses `model: inherit` with `tools` omitted.
 
-**Canonical platform-agent directory (M39 Stream A — Implemented, ADR-105).** The
+**Canonical platform-agent directory (Implemented — ADR-105).** The
 registry/effective-definition/lifecycle read paths converged onto package-root
 `maister-agents/<stem>.md` — the same directory the Studio viewer/BOM/attach read.
 Root `agents/` is no longer a platform-agent location (existing `agents/`-shipping
@@ -52,7 +52,7 @@ is `package_name` (= `package_installs.name`), the id is `<packageName>:<stem>`,
 and the EFFECTIVE definition for a launch in project P resolves through P's
 ATTACHED install of that package → `package_installs.installed_path/maister-agents/<stem>.md`.
 The launch gate is the three-term allow-list **attached + trusted + enabled**
-(below). This closes the F4 split: under M34 a package-root agent was registered
+(below). This closes the F4 split: before ADR-106 a package-root agent was registered
 per-flow against `flow_revisions.installed_path` (a per-flow cache subdir that did
 not contain the package-root `maister-agents/`).
 
@@ -192,7 +192,7 @@ stateDiagram-v2
 
 ## Process flows
 
-### (a) Registration / re-sync — per package (Implemented — ADR-106; supersedes the M34 per-flow scan)
+### (a) Registration / re-sync — per package (Implemented — ADR-106; supersedes the original per-flow scan)
 
 Definitions ship inside flow packages; package-level registration runs at the end
 of `installPackageRevision` AFTER the member flow installs, scanning the PACKAGE

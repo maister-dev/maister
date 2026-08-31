@@ -36,7 +36,7 @@ exposed publicly. Only `:443` (and `:22`) face the internet.
 - **OS**: any modern Linux with systemd.
 - **Node 24** ([ADR-015](decisions.md#adr-015-pnpm-workspace-node-24)) installed system-wide (e.g. NodeSource), then `corepack enable` to provide `pnpm`.
 - **git** and **Docker** (Docker only runs Postgres here).
-- **Agent adapters** ship as workspace dependencies — `pnpm install` provides `claude-agent-acp` and `codex-acp` under `node_modules/.bin`. **No `gh` or other provider CLI is required for core operation** (clone, worktree, `local_merge` promotion). **Optional (Implemented, [ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)):** the `gh` CLI, when present and authed, enables auto-token for `github.com` HTTPS clones — best-effort, never required. **Exception (Implemented, M18 — ADR-049):** `pull_request` promotion runs in the web tier and needs, per the run's provider, `gh`/`glab` on `PATH` (github/gitlab) **or** `GITEA_TOKEN`/`GITVERSE_TOKEN` in the web-tier env (gitea/gitverse), **plus** a git push credential helper. The **default compose does not provision** these — it is a host-operator concern ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)). `local_merge` promotion needs none of them. See [`configuration.md`](configuration.md) for the per-provider table.
+- **Agent adapters** ship as workspace dependencies — `pnpm install` provides `claude-agent-acp` and `codex-acp` under `node_modules/.bin`. **No `gh` or other provider CLI is required for core operation** (clone, worktree, `local_merge` promotion). **Optional (Implemented, [ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)):** the `gh` CLI, when present and authed, enables auto-token for `github.com` HTTPS clones — best-effort, never required. **Exception (Implemented — ADR-049):** `pull_request` promotion runs in the web tier and needs, per the run's provider, `gh`/`glab` on `PATH` (github/gitlab) **or** `GITEA_TOKEN`/`GITVERSE_TOKEN` in the web-tier env (gitea/gitverse), **plus** a git push credential helper. The **default compose does not provision** these — it is a host-operator concern ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)). `local_merge` promotion needs none of them. See [`configuration.md`](configuration.md) for the per-provider table.
 - A dedicated unprivileged user **`maister`** that owns the checkout, the agent credentials (`~/.claude`, `~/.codex`), and the git credentials.
 
 ```bash
@@ -146,7 +146,7 @@ capability imports are cached system-wide under `~/.maister/flows/` and
 host-run deployment these live on the operator's filesystem (no container
 mount). Auto-trust policy for capability imports is set via
 `MAISTER_TRUSTED_CAPABILITY_SOURCE_PREFIXES` (see `configuration.md`).
-**Editable local packages (M36, ADR-096)** keep their git-backed working dirs
+**Editable local packages (ADR-096)** keep their git-backed working dirs
 under `MAISTER_LOCAL_PACKAGES_ROOT` (default `~/.maister/local`) — host-only,
 **not** a container/compose mount
 ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)),
@@ -278,7 +278,7 @@ sudo systemctl restart maister-supervisor maister-web
 
 Restart `maister-supervisor` during a quiet window: it drops its in-memory ACP
 session registry, so `Running` runs orphan until startup reconciliation lands
-(ROADMAP M19).
+(ADR-033..036).
 
 ## 12. Backup
 
@@ -499,7 +499,7 @@ LEFT JOIN step_runs ON step_runs.run_id = terminal_legacy.id;
 Inventory logs contain counts and identifiers only. Never print manifest bodies
 or database credentials.
 
-- **Supervisor restart orphans live runs** until M19 reconciliation. `Restart=always` recovers the process, not in-flight sessions.
+- **Supervisor restart orphans live runs** until startup reconciliation (ADR-033..036). `Restart=always` recovers the process, not in-flight sessions.
 - **Single host only.** Multi-host (supervisor on a separate machine) needs durable HTTP replay from `run.events.jsonl` — deferred ([ADR-022](decisions.md#adr-022-structured-run-data-projection--runeventsjsonl-is-the-event-log-postgres-holds-derived-read-models)).
 - **No managed git secrets.** Provider auth lives in the host's SSH/credential config, not in MAIster ([ADR-025](decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots)). Git auth is **host-ambient** — ssh-agent/keys, the credential helper, optional `gh`, and the one-off Add-project token (Implemented, [ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)). **Persist-config push and remote push/fetch reuse this same host-ambient auth** — there is no managed credential store, and on an auth failure the action returns an advisory without rolling back the local commit / DB state.
 

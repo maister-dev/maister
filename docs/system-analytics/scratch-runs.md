@@ -26,7 +26,7 @@ but no Recover, Files/Diff, branch export, or other worktree-backed action.
   `task_id`, nullable `flow_id`, nullable `flow_revision_id`,
   `flow_version = "scratch"`, `flow_revision = "manual"`, and
   `created_by_user_id`.
-- **Project-less local-package assistant run** (M36 Phase 5, ADR-097) -
+- **Project-less local-package assistant run** (ADR-097) -
   Implemented. A scratch run rooted at a local-package `working_dir` with
   **no project and no managed worktree**: `runs.project_id` and
   `scratch_runs.project_id` are **NULL**, `scratch_runs.local_package_id`
@@ -105,13 +105,13 @@ but no Recover, Files/Diff, branch export, or other worktree-backed action.
 - **Active workspace group** - Implemented. The left rail groups active Flow and
   scratch workspaces by project and each project header exposes a `+` launcher
   action preselecting that project.
-- **Shared workbench lifecycle actions** - Implemented (M27). Scratch detail
+- **Shared workbench lifecycle actions** - Implemented. Scratch detail
   uses the same visible lifecycle component as Flow workbenches for stopped and
   terminal workspaces. Live scratch stop still uses the scratch stop route;
   stopped scratch drop goes through the shared preserve-first run workbench
   drop route.
 
-## Scratch detail UI hierarchy (Planned M35)
+## Scratch detail UI hierarchy (Implemented)
 
 The scratch detail rework keeps the conversation as the primary surface and
 adds the same run shell, inspector, and secondary workbench used by
@@ -527,7 +527,7 @@ messages.
 - SSE contract: [`../api/async/web-runs.asyncapi.yaml`](../api/async/web-runs.asyncapi.yaml).
 - DB references: [`../db/runs-domain.md`](../db/runs-domain.md),
   [`../database-schema.md`](../database-schema.md).
-- **Reused by (M30 — Implemented, ADR-078):** gate-chat at HITL pauses reuses this
+- **Reused by (Implemented, ADR-078):** gate-chat at HITL pauses reuses this
   chat/projector substrate (`web/lib/scratch-runs/events.ts` table-agnostic seam)
   bound to `gate_chat_messages`; see [`hitl.md`](hitl.md) §Gate-chat.
 - Source areas: `web/app/api/scratch-runs/*`,

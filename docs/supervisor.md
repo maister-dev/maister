@@ -47,9 +47,9 @@ runs. The supervisor isolates that failure mode and can run on a
 different host than the web tier — only the HTTP+SSE wire is shared.
 
 The architectural decision and its trade-offs live in
-[`ARCHITECTURE.md`](../.ai-factory/ARCHITECTURE.md). The M0 spike findings
+[`ARCHITECTURE.md`](../.ai-factory/ARCHITECTURE.md). The ACP spike findings
 (package versions, cross-process resume cost) live in
-the M0 spike findings (historical doc removed; summary in root `CLAUDE.md` §ACP Spike Findings).
+root `CLAUDE.md` §ACP Spike Findings (historical doc removed).
 
 ## HTTP API
 
@@ -129,14 +129,14 @@ Request body:
     "preArgs": ["--config", "/repos/myapp/.maister/runs/run-abc/adapter.json"],
     "postArgs": []
   },
-  "resumeSessionId": "uuid-abc"             // optional, M8 path (resumed via the ACP session/resume call, NOT a CLI flag)
+  "resumeSessionId": "uuid-abc"             // optional, checkpoint-resume path (resumed via the ACP session/resume call, NOT a CLI flag)
 }
 ```
 
 (Note: prompts are sent separately via `POST /sessions/:id/prompt`
-since M5 — the body field is gone.)
+— the body field is gone.)
 
-(Note: `readOnlySession` (M34, ADR-090) and `hooksConfig` (Designed — ADR-108)
+(Note: `readOnlySession` (ADR-090) and `hooksConfig` (Designed — ADR-108)
 are optional behavioral-policy fields beside the launch fields; both arbitrate
 ACP permission requests pre-hoc at the supervisor seam. A `hooksConfig` trip
 emits the `session.hook_trip` SSE event. Supervisor `/diagnostics` reports both
@@ -371,9 +371,9 @@ not `session.crashed`, even on non-zero exit codes.
 
 Server-Sent Events. One event per child stdout line plus the terminal
 event. Newer clients can set `Last-Event-ID:` to skip events they already
-received — M3 honors it via a per-session in-memory ring buffer
+received — honored via a per-session in-memory ring buffer
 (capped at 1000 entries); full log-file replay (for older terminal events
-after the registry GC'd the entry) lands in M7+M9.
+after the registry GC'd the entry) lands with the web tier's log-file tail bridge.
 
 Event grammar:
 
@@ -398,8 +398,8 @@ Payload shapes (`SessionEvent` union):
   "exitCode": 1 | null, "signal": "SIGSEGV" | null }
 ```
 
-The stream closes automatically after the terminal event. M3 treats
-each `line` as opaque JSONL — the web tier (M7+) will parse it into
+The stream closes automatically after the terminal event. Each `line` is
+treated as opaque JSONL — the web tier parses it into
 structured ACP `session/update` events.
 
 ### `GET /sessions`
@@ -409,13 +409,13 @@ stepId, status (`live | exited | crashed`), pid, startedAt, exitedAt,
 exitCode, signal, logPath, monotonicId. Used by `lib/reconcile.ts` and
 admin views.
 
-### `POST /sessions/:id/checkpoint` _(Implemented M8)_
+### `POST /sessions/:id/checkpoint` _(Implemented)_
 
 Real graceful-checkpoint endpoint. Body is `{}` strictly (Zod-validated
 empty object; unknown keys → 409 PRECONDITION). For each open
 pending-permission deferred owned by the session, the supervisor
 calls `pendingPermissions.cancel(sessionId, requestId, "checkpoint")`
-— the same wire-level outcome shape M7's operator-cancel produces,
+— the same wire-level outcome shape the operator-cancel path produces,
 plus a supervisor-side `reason` marker that propagates onto the
 `session.exited` event. The supervisor then `markIntentionalShutdown`s
 the session with `reason="checkpoint"`, SIGTERMs the child, and waits
@@ -451,7 +451,7 @@ calls this endpoint, which:
 3. SIGTERMs the child with `MAISTER_KILL_GRACE_MS` grace.
 4. On 200 the web sweeper runs `markCheckpointed(runId)` →
    `NeedsInputIdle` and `releaseSlotOnIdle` → `promoteNextPending`.
-5. **Web-runner obligation (M8 Codex review fix #1).** The web
+5. **Web-runner obligation (checkpoint/resume Codex review fix #1).** The web
    runner-agent (`web/lib/flows/runner-agent.ts`) consumes the SSE
    stream concurrently with `sendPrompt`. When it observes
    `session.exited.reason="checkpoint"`, it MUST suppress step success
@@ -484,11 +484,11 @@ against the new requestId; the original `hitl_requests` row's
 `respondedAt` is set with audit
 `{originalRequestId, reissuedRequestId, deliveredViaResume: true}`.
 
-Each respawn costs ~$0.28 of `cache_creation_input_tokens` per the M0
-spike — keep-alive is the cost lever, not just UX. Resumed sessions'
+Each respawn costs ~$0.28 of `cache_creation_input_tokens` per the ACP
+spike findings — keep-alive is the cost lever, not just UX. Resumed sessions'
 `cost.jsonl` entries carry `resumed: true` for ops attribution.
 
-### `POST /sessions/:id/input` _(M7+)_
+### `POST /sessions/:id/input`
 
 Permission-only HITL surface. Body is a Zod-validated discriminated
 union on `action`:
@@ -597,7 +597,7 @@ session routing through CCR.
   returns `state: "idle"`.
 - `409 { code: "PRECONDITION" }` — CCR manager not wired.
 
-### Run-scoped durable event log: `<runId>/run.events.jsonl` _(M7+)_
+### Run-scoped durable event log: `<runId>/run.events.jsonl`
 
 Every `SessionEvent` (`session.line`, `session.update`,
 `session.permission_request`, `session.exited`, `session.crashed`)
@@ -643,7 +643,7 @@ JSON at the HTTP boundary.
 | ---------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `PRECONDITION`         | 409 (or 404 for unknown session) | Validation failure, duplicate sessionId.                                                                                                                                                                                                 |
 | `SPAWN`                | 500                              | `child_process.spawn` failed (ENOENT, EACCES…).                                                                                                                                                                                          |
-| `EXECUTOR_UNAVAILABLE` | 503                              | CCR-related failure for `router=ccr` executors (config missing / malformed JSON / daemon failed to become ready / identity mismatch / `ANTHROPIC_AUTH_TOKEN` missing). Also reserved for future resource-cap rejections. Implemented M6. |
+| `EXECUTOR_UNAVAILABLE` | 503                              | CCR-related failure for `router=ccr` executors (config missing / malformed JSON / daemon failed to become ready / identity mismatch / `ANTHROPIC_AUTH_TOKEN` missing). Also reserved for future resource-cap rejections. Implemented. |
 | `ACP_PROTOCOL`         | 500                              | Wire-level failure while opening a session, sending a prompt, or delivering permission input.                                                                                                                                            |
 | `CHECKPOINT`           | 500                              | Checkpoint or resume contract failure.                                                                                                                                                                                                   |
 | `CRASH`                | 500                              | Reserved for heartbeat-promoted crash conditions.                                                                                                                                                                                        |
@@ -673,9 +673,9 @@ bounded depth 8). When found, it appends a record to
 ```
 
 `cache_creation_input_tokens` is the load-bearing field for ops:
-the M0 spike findings (summary in root `CLAUDE.md` §ACP Spike Findings) measured
+the ACP spike findings (summary in root `CLAUDE.md` §ACP Spike Findings) measured
 ~$0.28 of cache-creation tokens per cross-process respawn. The 30-min
-keep-alive window (M8) is the lever that controls this.
+keep-alive window is the lever that controls this.
 
 Records with no token fields are dropped (no `service_tier`-only rows).
 JSON parse failures are silently skipped — the supervisor never crashes
@@ -694,7 +694,7 @@ docker compose; production overrides go in `.env`.
 | `MAISTER_HEARTBEAT_INTERVAL_MS`   | `5000`                                                                             | Orphan-child detection interval.                                                                                                                                                                            |
 | `MAISTER_KILL_GRACE_MS`           | `5000`                                                                             | SIGTERM → SIGKILL grace per child on DELETE and graceful shutdown.                                                                                                                                          |
 | `MAISTER_SHUTDOWN_GRACE_MS`       | `15000`                                                                            | Total wall-clock budget for graceful supervisor shutdown.                                                                                                                                                   |
-| `MAISTER_KEEPALIVE_MINUTES`       | `30`                                                                               | NeedsInput keep-alive window (minutes). Bounds the pending-permission deferred timeout (M7) AND the web-side sweeper-driven NeedsInput → NeedsInputIdle transition (M8). Bumped by every web activity ping. |
+| `MAISTER_KEEPALIVE_MINUTES`       | `30`                                                                               | NeedsInput keep-alive window (minutes). Bounds the pending-permission deferred timeout AND the web-side sweeper-driven NeedsInput → NeedsInputIdle transition. Bumped by every web activity ping. |
 | `ANTHROPIC_BASE_URL`              | `https://api.anthropic.com`                                                        | Process-wide default for Claude-compatible adapters. Platform runners should prefer typed provider config plus env refs.                                                                                    |
 | `ANTHROPIC_AUTH_TOKEN`            | unset                                                                              | Required when `ANTHROPIC_BASE_URL` points at a third-party (z.ai GLM, OpenRouter, …).                                                                                                                       |
 | `MAISTER_CCR_AUTH_TOKEN`          | unset                                                                              | Default env ref for `ccr-default` sidecars. Missing when referenced → 503 `EXECUTOR_UNAVAILABLE` at spawn.                                                                                                  |
@@ -913,7 +913,7 @@ through a `PassThrough` so both consumers see every chunk.
 - **`lastEventId` replay is bounded to the in-memory ring buffer** (1000
   entries per session). Older terminal events after the 30 s post-exit
   grace period are gone. The web tier's eventual log-file tail bridge
-  (M7+M9) fills that gap.
+  fills that gap.
 - **No Cursor / Aider executors** — the supervisor supports the code-owned ACP
   adapter families `claude`, `codex`, `gemini`, `opencode`, and `mimo`.
   Gemini, OpenCode, and MiMo remain gated by binary diagnostics and
@@ -927,5 +927,5 @@ through a `PassThrough` so both consumers see every chunk.
 - [Configuration](configuration.md) — `maister.yaml` v2 + env vars
 - [Error Taxonomy](error-taxonomy.md) — `MaisterError` codes the web tier raises after translation
 - ACP Pivot Revision (2026-05-25, historical doc removed) — the multi-runner design that motivated the supervisor split
-- M0 Spike Findings — adapter package versions and cross-process resume cost; summary in root `CLAUDE.md` §ACP Spike Findings
+- ACP Spike Findings — adapter package versions and cross-process resume cost; summary in root `CLAUDE.md` §ACP Spike Findings
 - [Architecture](../.ai-factory/ARCHITECTURE.md) — dependency rules; the supervisor↔web wire contract

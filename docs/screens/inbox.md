@@ -145,7 +145,7 @@ The card reuses `run.*` (criticality / HITL decision) and `board.*` (assignment)
 labels; node-type and gate-status are shown by icon, not text, so no `stage.*` /
 `gate.*` keys exist.
 
-M41 adds consensus-specific keys under the existing card/control namespaces:
+The consensus node adds consensus-specific keys under the existing card/control namespaces:
 draft labels, round labels, disagreement summary, `pickDraft`, `provideResolution`,
 `rerunRound`, `abortConsensus`, and validation text for required human
 resolution. EN + RU parity is required.

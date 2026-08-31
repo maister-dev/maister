@@ -30,8 +30,8 @@ or the orchestrator task-DAG it stays disjoint from ([orchestrator.md](orchestra
 
 The triager itself is a single **platform agent** shipped as
 `maister-agents/triager.md` in a core package inside the `maister-plugins` repo,
-configured per project instance; ~80% of its substrate already exists from M34
-(see [agents.md](agents.md)). This doc adds the three real gaps: discovery,
+configured per project instance; ~80% of its substrate already exists in the
+platform-agent layer (see [agents.md](agents.md)). This doc adds the three real gaps: discovery,
 dedup modelling, and the flow-task auto-launcher.
 
 ## Domain entities
@@ -41,7 +41,7 @@ dedup modelling, and the flow-task auto-launcher.
   `triggers: [domain_event, manual]`,
   `recommended.events: [task.created, task.triage_requeued, task.comment_added]`.
   No `flow:` field ⇒ standalone `run_kind='agent'` session on the agent budget.
-  Catalogued and launched on the M34 substrate ([agents.md](agents.md)).
+  Catalogued and launched on the platform-agent substrate ([agents.md](agents.md)).
 - **Agent-config declaration** (Implemented) — the optional `config:` array in an
   agent's `.md` frontmatter: typed params (`boolean | enum | string | number`)
   with `default`/`label`/`description`. Parsed + strictly validated in
@@ -74,7 +74,7 @@ dedup modelling, and the flow-task auto-launcher.
   0072). NON-blocking by construction: `getOpenRelationBlockers` queries only
   `blocks`/`depends_on`/`requires`. See [social-board.md](social-board.md).
 - **`auto_launch_triaged` job** (Implemented) — a `systemManaged` singleton sweep on
-  the M24 polymorphic scheduler clock (budget 1, 60 s cadence) that launches
+  the polymorphic scheduler clock (budget 1, 60 s cadence) that launches
   triaged + auto-enqueued flow tasks once launchable. See
   [scheduler.md](scheduler.md).
 - **Discovery MCP tools** (Implemented) — `flow_list` + `runner_list`, read-only
@@ -150,7 +150,8 @@ flowchart TD
 
 ### (b) `auto_launch_triaged` tick — dependency release + give-up
 
-A `systemManaged` singleton sweep on the M24 clock (budget 1, 60 s). Each tick
+A `systemManaged` singleton sweep on the polymorphic scheduler clock (budget 1,
+60 s). Each tick
 finds candidates and launches them through the standard `launchRun` choke point.
 Reusing `classifyTaskLaunchability` + `getOpenRelationBlockers` means a task
 blocked by a dependency stays `triaged + blocked` and **launches itself once the
@@ -201,7 +202,7 @@ flowchart TD
 ## Expectations
 
 - The triager MUST run `workspace: none`, `mode: session`, `risk_tier: read_only`
-  on the M34 platform-agent substrate, with NO `runs:launch` scope and NO
+  on the platform-agent substrate, with NO `runs:launch` scope and NO
   `flow:` field (standalone `run_kind='agent'` session).
 - An agent `config:` declaration MUST validate strictly in
   `web/lib/agents/definition.ts` (unknown type, enum without `values`, duplicate
@@ -372,7 +373,7 @@ triage activity. Other agents retain the target-only clarification event.
   precedence, board chip), [social-board.md](social-board.md) (`duplicate_of`,
   non-blocking).
 - **Scheduler:** [scheduler.md](scheduler.md) (`auto_launch_triaged` job kind on
-  the M24 clock).
+  the polymorphic scheduler clock).
 - **External surface + MCP:** [external-operations.md](external-operations.md)
   (`flow_list`/`runner_list`, scopes, triage `flag`/`enqueue`).
 - **HTTP:** [`../api/external/operations.openapi.yaml`](../api/external/operations.openapi.yaml)

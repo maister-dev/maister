@@ -9,11 +9,11 @@ to the exact immutable package revision they launched with.
 
 **Status:** the runtime pinning primitives (`runs.flow_revision` snapshot +
 content-addressed cache, `systemCachePath(flow_ref_id, revision)`) are
-**Implemented** (M4–M8). The multi-revision model, lifecycle operations, trust
-review, compatibility enforcement, and the Flow Packages UI are **M10** — see
+**Implemented**. The multi-revision model, lifecycle operations, trust
+review, compatibility enforcement, and the Flow Packages UI are **Implemented** — see
 [ADR-021](../decisions.md#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility)
 for the decision, schema model, trust policy, and the microsoft/apm evaluation.
-M25's authored capability catalog is deliberately separate: locally Published
+The authored capability catalog is deliberately separate: locally Published
 authored flows are catalog content only and do not mutate `flow_revisions`,
 `flows.enablement_state`, install caches, trust decisions, or `setup.sh`
 execution. See
@@ -29,7 +29,8 @@ mechanics are unchanged by it.
 ## Authored package boundary
 
 The platform `/flows` section manages both authored catalog content and installed
-Flow package attachments, but the execution boundary remains M10:
+Flow package attachments, but the execution boundary remains the ADR-021
+revision lifecycle:
 
 1. **Authored draft** — DB-authored package content. It may be invalid and is
    editable.
@@ -38,9 +39,9 @@ Flow package attachments, but the execution boundary remains M10:
 3. **Exported portable package** — a git-ready directory with `flow.yaml` plus
    typed package artifacts (`asset`, `skill`, `rule`, `script`,
    `agent_definition`, `schema`, `template`, `readme`, `setup`).
-4. **Installed executable package revision** — M10 `flow_revisions` row created
+4. **Installed executable package revision** — the `flow_revisions` row created
    by install/fetch/copy and validated before enablement.
-5. **Enabled project attachment** — M10 `flows.enabled_revision_id` pointer used
+5. **Enabled project attachment** — the `flows.enabled_revision_id` pointer used
    by new runs.
 
 An authored Flow never skips from step 2 to step 5. The bridge, when
@@ -231,10 +232,10 @@ sequenceDiagram
     DB-->>UI: new runs use older revision
 ```
 
-### M19 flow-revision GC (Designed)
+### Flow-revision GC (Implemented)
 
 `removeRevision` sets `package_status='Removed'` under a dual-FK guard but
-leaves the installed bytes on disk. M19 ([ADR-036](../decisions.md#adr-036))
+leaves the installed bytes on disk. [ADR-036](../decisions.md#adr-036)
 adds an automatic sweep that deletes the row and removes the install path once
 a `Removed` revision is past `MAISTER_GC_AGE_DAYS` and still unreferenced. It
 re-asserts the same guards under `FOR UPDATE`; it only removes (`rm
@@ -252,13 +253,13 @@ flowchart TD
     Delete --> Done([next row])
 ```
 
-## Version binding and authored→executable bridge (Designed, M27)
+## Version binding and authored→executable bridge (Implemented; `latest` resolution pending)
 
-**(Designed, M27)** `flows.version_binding` (`pinned | latest`, default `latest`) controls
+**(Designed)** `flows.version_binding` (`pinned | latest`, default `latest`) controls
 how `launchRun` resolves the effective revision at launch time (ADR-068/068; see
 [`flow-studio.md`](flow-studio.md)):
 
-- `pinned` → use `flows.enabled_revision_id` (the M10 pointer, unchanged).
+- `pinned` → use `flows.enabled_revision_id` (the enablement pointer, unchanged).
 - `latest` → resolve the newest **PUBLISHED** `flow_revisions` row for the
   `flow_ref_id`, **never a draft**; authored-origin revision wins on tie when an
   authored and a git revision share the same newest published timestamp.
@@ -267,17 +268,17 @@ The resolved revision is passed through the existing trust / setup / engine-comp
 guards, then snapshotted into `runs.resolved_capability_set` (immutable for the
 run's lifetime; a mid-run publish cannot mutate an in-flight run).
 
-**(Designed, M27)** The **authored→executable bridge** (`installAuthoredFlowPackageBridge`) turns an authored `flow` draft into a runnable `flows` + `flow_revisions` row. It is called by the in-app publish-local route and parameterized with `trustStatus=trusted_by_policy` and `exec_trust=untrusted` on the produced `flow_revisions` row. Two independent trust axes govern execution:
+**(Designed)** The **authored→executable bridge** (`installAuthoredFlowPackageBridge`) turns an authored `flow` draft into a runnable `flows` + `flow_revisions` row. It is called by the in-app publish-local route and parameterized with `trustStatus=trusted_by_policy` and `exec_trust=untrusted` on the produced `flow_revisions` row. Two independent trust axes govern execution:
 
-- `flows.trustStatus` (LOGIC, existing M10): `untrusted | trusted | trusted_by_policy`. Gates launch precondition #9.
-- `flow_revisions.exec_trust` (EXECUTABLE, new M27): `untrusted | trusted`. Gates `runRevisionSetup` (setup.sh) AND MCP stdio `command` spawn. An explicit `POST trust-executable` flip is required — logic-trust alone never runs setup.sh or an MCP stdio command.
+- `flows.trustStatus` (LOGIC, pre-existing): `untrusted | trusted | trusted_by_policy`. Gates launch precondition #9.
+- `flow_revisions.exec_trust` (EXECUTABLE, new — ADR-069): `untrusted | trusted`. Gates `runRevisionSetup` (setup.sh) AND MCP stdio `command` spawn. An explicit `POST trust-executable` flip is required — logic-trust alone never runs setup.sh or an MCP stdio command.
 
 See ADR-068 (`version_binding`), ADR-069 (`exec_trust`), and [`flow-studio.md`](flow-studio.md).
 
 ## Expectations
 
-- Current M4 loader remains the low-level installer, but M10 adds product
-  lifecycle state above it.
+- The pre-existing loader remains the low-level installer, but the ADR-021
+  lifecycle layer adds product lifecycle state above it.
 - Tags are user-facing pins. Resolved git SHA for git sources, local package
   content digest for local/authored sources, and manifest digest are runtime
   truth.
@@ -303,7 +304,7 @@ See ADR-068 (`version_binding`), ADR-069 (`exec_trust`), and [`flow-studio.md`](
 - Rollback changes project enablement only. It does not mutate existing runs or
   delete the newer package revision.
 - Package removal is refused while any run references the revision.
-- **(Implemented, M19)** Flow-revision GC MUST delete a `flow_revisions` row and
+- **(Implemented)** Flow-revision GC MUST delete a `flow_revisions` row and
   its install path ONLY when `package_status='Removed'`, past
   `MAISTER_GC_AGE_DAYS`, with zero `runs.flow_revision_id` and zero
   `flows.enabled_revision_id` references re-asserted under `FOR UPDATE`; it only
@@ -346,7 +347,7 @@ manifest + install path from that pinned revision.
   before workspace creation.
 - **Remove referenced revision** -> `PRECONDITION`; keep revision until no run
   references it.
-- **(Implemented, M19) GC of a still-referenced `Removed` revision** -> the FK
+- **(Implemented) GC of a still-referenced `Removed` revision** -> the FK
   re-assert under `FOR UPDATE` finds a reference and the sweep SKIPS the row,
   leaving the bytes until it is genuinely unreferenced. No error raised.
 - **Rollback target incompatible with current project config** ->

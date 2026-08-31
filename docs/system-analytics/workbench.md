@@ -1,13 +1,13 @@
 # Workbench visibility domain
 
-> **Status: Implemented (M22).** This file is the M22 contract for the per-run
+> **Status: Implemented.** This file is the contract for the per-run
 > **workbench**: a flow-graph VIEW with live node-status coloring, a read-only
 > git-tracked file browser, and the base→run diff — all three tracks shipped.
 > Three independent tracks:
 > **A — flow-graph view** ([ADR-064](../decisions.md#adr-064-authored-flow-graph-layout-in-the-flowyaml-presentation-section),
 > [ADR-052](../decisions.md#adr-052-live-node-status-coloring-via-sse-triggered-graph-status-refetch)),
 > **B — file-tree** ([ADR-053](../decisions.md#adr-053-workbench-file-tree-git-tracked-only-member-gated-reads)),
-> **C — diff** (reuses M18). Renderer: [ADR-039](../decisions.md#adr-039-xyflowreact--dagrejsdagre-as-the-evidence-graph-renderer).
+> **C — diff** (reuses the review diff). Renderer: [ADR-039](../decisions.md#adr-039-xyflowreact--dagrejsdagre-as-the-evidence-graph-renderer).
 > No-polling reaffirms [ADR #1 / ADR-007](../decisions.md#adr-007-sse-pipe-to-disk-for-step-output).
 
 > **Diff rendering upgrade (Implemented, [ADR-066](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror)).**
@@ -18,7 +18,7 @@
 > `readBoard` gate are unchanged. (The authored-Flow CodeMirror editor slice
 > remains Designed.)
 
-> **M35 run detail rework (Implemented).** The workbench stays read-only and now
+> **Run detail rework (Implemented).** The workbench stays read-only and now
 > renders on the shared run shell for both flow/agent and **scratch** runs.
 > Scratch runs surface only the **Files** + **Diff** tabs (no flow timeline or
 > evidence graph) and moved from a dialog-owned raw `<pre>` diff to the same
@@ -29,7 +29,7 @@
 
 ## Purpose
 
-The **workbench** domain is M22's run-inspection surface and M35's shared
+The **workbench** domain is the run-inspection surface and the shared
 secondary run inspector: it makes a run's files, diff, evidence, and timeline
 legible without leaving the control plane. Its boundary is **read-only** — it
 visualizes the compiled flow graph and colors nodes by live status in the
@@ -69,7 +69,7 @@ or export the visible workbench live in
   `{kind:"text", content} | {kind:"too-large", size} | {kind:"binary"}`, capped
   at `MAISTER_WORKBENCH_MAX_FILE_BYTES`.
 - **Workbench diff** — the `base..branch` raw diff + a changed-files summary
-  (`git diff --name-status`), for any run state (extends the M18 review surface).
+  (`git diff --name-status`), for any run state (extends the review surface).
 
 ## State machine — node color (view axis, derived)
 
@@ -104,8 +104,8 @@ state to transition:
    ignored (no phantom node); a node with no entry keeps its dagre seed.
 
 Editing the authored layout (drag-to-arrange) is a flow-editor concern on the
-source `flow.yaml`, not a workbench write. **(Designed, M27)** ADR-064 is now
-read+write: the M27 flow-graph editor authors the `presentation` section (node
+source `flow.yaml`, not a workbench write. **(Designed)** ADR-064 is now
+read+write: the Flow Studio flow-graph editor authors the `presentation` section (node
 `{id, x, y, width, height, color}`) as part of canvas edits serialized on save.
 The workbench read path (rendering the authored layout) is unchanged. See
 [`flow-studio.md`](flow-studio.md).
@@ -149,7 +149,7 @@ flowchart TD
 ### Lazy tracked file-tree expand + open
 
 The `…/files` tree expand and the file **open + render** path are both
-Implemented (M22 + ADR-066): selecting a file is a `?file=` soft-navigation that
+Implemented (ADR-053 + ADR-066): selecting a file is a `?file=` soft-navigation that
 the server component validates (`repoRelPathSchema`), authorizes
 (`readRepoFiles`), and reads via `readBlob`, then renders with server-side Shiki
 — the standalone `…/files/content` route was retired. The size / binary /
@@ -177,8 +177,8 @@ flowchart TD
 
 ### Run diff render (Track C)
 
-Flow runs render through `@git-diff-view/react` (Implemented, ADR-066). The M35
-target upgrades scratch runs to the same prepared diff DTO and renderer instead
+Flow runs render through `@git-diff-view/react` (Implemented, ADR-066). The
+run-detail rework upgrades scratch runs to the same prepared diff DTO and renderer instead
 of the dialog-owned raw `pre`. At an open review gate the same diff surface
 additionally hosts line-anchored review-comment threads (composer, inline thread
 cards, collapsible Outdated list — Implemented, ADR-072); see
@@ -192,7 +192,7 @@ flowchart LR
     Kind -- flow --> FB["base = workspaces.base_commit ?? resolveBaseRef, readBoard"]
     SB --> SRange["diffRunWorkspace base..branch + prepared files/perFile DTO"]
     FB --> FRange["diffRunWorkspace base..branch + diffNameStatus (per-file +/- server-side)"]
-    SRange --> SDV["shared git-diff-view renderer (M35 target)"]
+    SRange --> SDV["shared git-diff-view renderer (run-detail rework)"]
     FRange --> DV["git-diff-view split/inline via ?diffview=; collapsible hunks; server-built Shiki bundle (Implemented, ADR-066)"]
 ```
 
@@ -236,10 +236,10 @@ flowchart LR
   route was retired, ADR-066).
 - The workbench diff is run-scoped (`base..branch` only) and gated `readBoard`
   (`viewer`) for flow runs / `readScratchRun` for scratch runs; it adds NO new
-  `runs.status` value and reuses the M18 diff response shape plus a `files` summary.
+  `runs.status` value and reuses the review diff response shape plus a `files` summary.
   Flow runs render split/inline via `@git-diff-view/react` (`?diffview=`) with
   per-file `additions`/`deletions` computed server-side (Implemented, ADR-066).
-  The M35 scratch rework preserves the raw `diff` string for migration but adds
+  The run-detail scratch rework preserves the raw `diff` string for migration but adds
   the same prepared `files`/`perFile` shape so scratch uses the shared Diff tab.
 - An oversized diff (over the `EXEC_MAX_BUFFER` 4 MiB bound) degrades to a bounded
   prefix carrying `truncated: true` on the `…/diff` response and the review-panel
@@ -348,7 +348,7 @@ flowchart LR
 - Related: [`flow-graph.md`](flow-graph.md) (execution model the view renders),
   [`runs.md`](runs.md) (run state / diff), [`workspaces.md`](workspaces.md)
   (worktree the tree reads).
-- Source (Implemented, M22; layout reworked per ADR-064):
+- Source (Implemented; layout reworked per ADR-064):
   `web/lib/queries/flow-graph-view.ts`, `web/lib/queries/run-node-status.ts`,
   `web/lib/flows/graph/presentation-layout.ts`,
   `web/lib/board/flow-graph-view-layout.ts`,

@@ -2,25 +2,25 @@
 
 ## Purpose
 
-This domain (**Implemented, M28**) covers user-facing recurring schedules: a
+This domain (**Implemented — ADR-071**) covers user-facing recurring schedules: a
 per-project, member-gated `run_schedules` row that launches a REAL Flow run
 for its task on a cron expression (5-field, IANA timezone) with an overlap
 policy (`skip | queue_one | start_anyway`), pause/resume, trigger-now, and
-last-fire feedback. Fires are driven by the EXISTING M24 scheduler tick
+last-fire feedback. Fires are driven by the EXISTING polymorphic scheduler tick
 through ONE seeded dispatcher job — no second clock, no new timer, no cap
 change. The boundary excludes `agent_tick` scheduling (E4), event/webhook
 triggers, and flow-target schedules that mint a task per fire (Phase 2).
 
 ## Domain entities
 
-- **Run schedule** (`run_schedules`, Implemented, M28) — durable per-project
+- **Run schedule** (`run_schedules`, Implemented) — durable per-project
   schedule: target task, `cron_expr` + `timezone`, `overlap_policy`,
   `enabled`, precomputed `next_fire_at`, non-stacking `queue_one_pending`
   catch-up flag, and last-fire feedback (`last_fired_at`,
   `last_fire_outcome`, `last_fire_error`, `last_run_id`). ERD:
   [`../db/scheduler-domain.md`](../db/scheduler-domain.md).
 - **Schedule dispatcher job** (`scheduler_jobs` row `run_schedule.dispatcher`,
-  Implemented, M28) — the ONE seeded engine job (`job_kind = 'run_schedule'`,
+  Implemented) — the ONE seeded engine job (`job_kind = 'run_schedule'`,
   60s cadence, budget 1, `max_failures` 3) whose handler claims due schedule
   rows. Disabling it on `/admin/scheduler` is the global kill switch.
 - **Fire** — one dispatch decision for one schedule row: either a launch
@@ -30,11 +30,11 @@ triggers, and flow-target schedules that mint a task per fire (Phase 2).
 skipped_target_terminal | skipped_crashed | launch_failed |
 incompatible_disabled | dispatching`,
   plus `skipped_blocked` (Implemented, ADR-078 — task has open relation
-  blockers) and `skipped_unconfigured` (M34 — Implemented, ADR-089 — the task
+  blockers) and `skipped_unconfigured` (Implemented, ADR-089 — the task
   has no flow yet; simple-intent tasks await a triage verdict or a human
   filling the launch fields), and `skipped_flagged` (Implemented, ADR-112 — a
   triage-held task is not eligible for unattended execution).
-- **Launchability classifier** (`classifyTaskLaunchability`, Implemented, M28) —
+- **Launchability classifier** (`classifyTaskLaunchability`, Implemented) —
   shared single source of truth for "can this task launch", encoding the
   board retry rule (latest run `Failed | Abandoned` → launchable, attempt
   N+1). Used by `launchRun` itself and by the dispatcher's policy decision.
@@ -42,12 +42,12 @@ incompatible_disabled | dispatching`,
   the aggregate view for `readBoard`, including the existing recurring
   `manageSchedules` affordances (member). `?tab=schedules` remains a
   compatibility alias.
-- **Task schedules overview** (`/admin/scheduler`, Implemented, M28) — read-only
+- **Task schedules overview** (`/admin/scheduler`, Implemented) — read-only
   global-admin overview of `run_schedules` joined to owning project, target
   task, and last run. It links to `/runs/{lastRunId}` when a last run exists,
   and to `/projects/{slug}?tab=automations` for edits instead of creating global
   schedule CRUD.
-- **Schedule presets** (project Automations tab, Implemented, M28) — UI
+- **Schedule presets** (project Automations tab, Implemented) — UI
   affordance for common 5-field cron expressions (hourly, daily, weekdays,
   weekly, custom). Presets write the same `cron_expr` string as manual input
   and do not change dispatch semantics.
@@ -79,7 +79,7 @@ order) is the DQ7 matrix:
 | `busy` (active run on the task)                                | `skipped_task_busy`       | flag + `catchup_queued`                                             | `skipped_task_busy` — a second concurrent run per task is structurally impossible; `start_anyway` overrides only the CAP dimension |
 | `flagged` (triage-held task)                                   | `skipped_flagged`         | `skipped_flagged` (existing flag kept)                              | `skipped_flagged` — a human must clear the hold first                                                                              |
 | `blocked` (Implemented, ADR-078 — open relation blockers)      | `skipped_blocked`         | `skipped_blocked` (existing flag kept — fires once unblocked)       | `skipped_blocked` — relations gate launching under every policy                                                                    |
-| `unconfigured` (M34 — Implemented, ADR-089 — task has no flow) | `skipped_unconfigured`    | `skipped_unconfigured` (existing flag kept — fires once configured) | `skipped_unconfigured` — a flowless task cannot launch under any policy                                                            |
+| `unconfigured` (Implemented, ADR-089 — task has no flow) | `skipped_unconfigured`    | `skipped_unconfigured` (existing flag kept — fires once configured) | `skipped_unconfigured` — a flowless task cannot launch under any policy                                                            |
 | cap full (task launchable)                                     | `skipped_cap`             | flag + `catchup_queued`                                             | `launchRun` → run lands `Pending` + queue position (`queued_pending`)                                                              |
 | free                                                           | launch                    | launch (+ clear flag)                                               | launch                                                                                                                             |
 
@@ -121,13 +121,13 @@ The visible project tab is renamed from **Schedules** to **Automations**.
 
 ### Dispatcher tick (single-claim due-OR-catchup)
 
-The M24 tick claims the `run_schedule.dispatcher` job; the handler then
+The polymorphic scheduler tick claims the `run_schedule.dispatcher` job; the handler then
 claims schedule rows in one query and runs the two-phase fire pipeline per
 row.
 
 ```mermaid
 flowchart TD
-    Tick[M24 tick claims run_schedule.dispatcher] --> Claim[tx1: SELECT FOR UPDATE SKIP LOCKED<br/>enabled AND due OR queue_one_pending<br/>not freshly dispatching within 300s<br/>JOIN projects: archived_at IS NULL<br/>LIMIT 10 ORDER BY next_fire_at]
+    Tick[scheduler tick claims run_schedule.dispatcher] --> Claim[tx1: SELECT FOR UPDATE SKIP LOCKED<br/>enabled AND due OR queue_one_pending<br/>not freshly dispatching within 300s<br/>JOIN projects: archived_at IS NULL<br/>LIMIT 10 ORDER BY next_fire_at]
     Claim --> Decide[read task + latest run + countLiveRuns<br/>+ slots reserved earlier in the batch<br/>decision per overlap matrix]
     Decide -- skip or catchup_queued --> NonLaunch[write final outcome + flag<br/>advance next_fire_at from now]
     NonLaunch --> Commit1[COMMIT tx1 — done]
@@ -208,7 +208,7 @@ flowchart TD
 - Schedule launchability MUST be tested separately from manual launchability;
   `Done`, `Review`, and `Crashed` manual relaunch support MUST NOT make due
   schedules start those tasks unless this document is updated first.
-- The M24 tick MUST remain the only clock: exactly one seeded
+- The polymorphic scheduler tick MUST remain the only clock: exactly one seeded
   `run_schedule.dispatcher` job (60s cadence, budget 1) fires schedules; no
   new timer, no `fs.watch`, no polling of run state.
 - `scheduler_jobs.cadence_interval_seconds` MUST remain the only engine

@@ -19,7 +19,7 @@ run history and previously recorded HITL evidence remain readable.
 ## Domain entities
 
 - **HITL request** — `hitl_requests` row. FK to `runs`.
-- **Assignment** — M13 `assignments` row linked by `hitl_request_id`; this is
+- **Assignment** — `assignments` row (ADR-040) linked by `hitl_request_id`; this is
   the inbox and ownership primitive for open HITL work. `hitl_requests` still
   owns the payload and `responded_at` marker.
 - **Kind** — `'permission' | 'form' | 'human' | 'infra_recovery' | 'budget_breach' | 'hook_trip'`
@@ -73,34 +73,34 @@ enum | array`.
   `low | medium | high | critical`. Written ONCE at creation from the `human`
   node/step's `criticality` field; never updated after the row is inserted.
   Surfaces as a badge on the HITL form and as a sort key in the inbox (critical
-  first). (Implemented — M17)
+  first). (Implemented)
 - **`human_confidence`** — responder self-reported certainty at response time.
   Real in `[0,1]`; stored on `hitl_requests.human_confidence` (real, nullable)
   and echoed in `hitl_requests.response` jsonb as `{ confidence }`. Validated
   server-side: values outside `[0,1]` are rejected with 422. Written in the
   Phase-1 transaction of `respondToHitl`. Distinct from
-  `GateVerdict.calibration.confidence` (M15 AI-judge machine confidence on
+  `GateVerdict.calibration.confidence` (ADR-048 AI-judge machine confidence on
   `gate_results.verdict`): `human_confidence` annotates a human decision;
-  it does NOT re-gate readiness. (Implemented — M17)
+  it does NOT re-gate readiness. (Implemented)
 - **`needs-input.json`** — artifact written when a checkpointable
   structured-form request is raised.
 - **`input-<stepId>.json`** — atomic-written response payload.
-- **`dirty_summary`** — **(M30 — Implemented, ADR-082)** computed when a review gate
+- **`dirty_summary`** — **(Implemented, ADR-082)** computed when a review gate
   opens (`statusPorcelain`, incl. untracked): file list + staged/unstaged/untracked
   counts. Carried on the gate/HITL payload; a dirty worktree never blocks the gate.
-- **`review_tip_sha`** — **(M30 — Implemented, ADR-082)** branch tip SHA stamped per
+- **`review_tip_sha`** — **(Implemented, ADR-082)** branch tip SHA stamped per
   review-gate visit on `hitl_requests.review_tip_sha`; the base for the
   `since-last-review` diff scope.
-- **`dirty_resolution`** — **(M30 — Implemented, ADR-082)** the reviewer's chosen
+- **`dirty_resolution`** — **(Implemented, ADR-082)** the reviewer's chosen
   dirty-worktree treatment on `hitl_requests.dirty_resolution`:
   `commit | discard | proceed` (nullable).
-- **Diff scope** — **(M30 — Implemented, ADR-082)** the `scope` query param on
+- **Diff scope** — **(Implemented, ADR-082)** the `scope` query param on
   `GET /api/runs/{runId}/diff`: `run | since-last-review | last-node | uncommitted`.
-- **Gate-chat message** — **(M30 — Implemented, ADR-078)** a `gate_chat_messages` row:
+- **Gate-chat message** — **(Implemented, ADR-078)** a `gate_chat_messages` row:
   an answer-only Q&A turn between a reviewer (`role=user`) and the parked agent
   (`role=agent`) at a HITL pause. Carries `hitl_request_id`, `node_id`,
   `gate_attempt`, `body`, `acp_session_id`, `seq`, and `mutation_reverted`.
-- **Chat checkpoint** — **(M30 — Implemented, ADR-078)** the single L3 neutrality
+- **Chat checkpoint** — **(Implemented, ADR-078)** the single L3 neutrality
   baseline ref `refs/maister/chat-checkpoints/<runId>/<hitlRequestId>` (bounded at 1,
   captured at the first chat turn) via the ADR-079 checkpoint machinery.
 - **Delivery-policy conflict assignment** — **(Implemented, ADR-087)** an
@@ -317,7 +317,7 @@ consumption the runner composes the open comment threads into the node's
 `comments` summary). Domain detail:
 [`review-comments.md`](review-comments.md).
 
-### `takeover` decision → manual handoff (M11b — Implemented)
+### `takeover` decision → manual handoff (Implemented)
 
 The `human_review` node's `takeover` decision is **not** an artifact-write HITL
 response like `approve`/`rework`. It drives a **run-state transition**
@@ -374,9 +374,9 @@ idempotency marker** — never set before the git/ledger side-effect completes. 
 git-op failure in Phase 2 leaves the run `HumanWorking` with no ledger write and
 no status flip (409 `CONFLICT`, retryable).
 
-### Gate-chat at HITL pauses + workspace-neutrality (M30 — Implemented)
+### Gate-chat at HITL pauses + workspace-neutrality (Implemented)
 
-**(M30 — Implemented, [ADR-078](../decisions.md#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality).)**
+**(Implemented, [ADR-078](../decisions.md#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality).)**
 At a `human`/`form` pause a reviewer can ask the parked agent an answer-only
 question through **gate-chat**, persisted to `gate_chat_messages`. Chat NEVER
 resolves the HITL and NEVER flips the run to `Running`.
@@ -448,9 +448,9 @@ read-only restriction, else the agent may refuse legitimate edits. Rework compos
 ([ADR-072](../decisions.md#adr-072-pr-grade-review-comments--review_comments-table-snapshot-anchoring-runner-side-rework-compose-open-gate-guard))
 folds the chat history into `commentsVar`.
 
-### Review-diff completeness — dirty-state protocol + scope switcher (M30 — Implemented)
+### Review-diff completeness — dirty-state protocol + scope switcher (Implemented)
 
-**(M30 — Implemented, [ADR-082](../decisions.md#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher).)**
+**(Implemented, [ADR-082](../decisions.md#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher).)**
 When a review gate opens, the runner computes `dirtySummary` via `statusPorcelain`
 (incl. untracked) — **no auto-commit**. A dirty worktree does NOT block the gate;
 the summary rides on the gate/HITL payload so the reviewer sees uncommitted work
@@ -500,7 +500,7 @@ hidden/disabled with a reason, never an error. Consumer-project review gates lis
 launch-materialized capability bundles in `dirtySummary` — known v1 noise
 (ADR-079); the dogfood project is unaffected (its skills/agents are repo-local).
 
-### Cross-project Inbox block and numeric badge (Implemented — M17)
+### Cross-project Inbox block and numeric badge (Implemented — ADR-057)
 
 The portfolio home (`app/(app)/page.tsx`) renders a full cross-project
 Inbox block listing every pending `HitlItem` across all projects visible
@@ -583,7 +583,7 @@ sequenceDiagram
 ### HITL-over-MCP — hitl_list, hitl_inbox, and hitl_respond
 
 Status: `hitl_list` / `hitl_respond` for permission/form HITL are Implemented
-in M17. `hitl_inbox` and global personal-token human response are Implemented
+(ADR-055). `hitl_inbox` and global personal-token human response are Implemented
 by migration `0076_user_access_tokens.sql`.
 
 External token-scoped agents query and answer pending HITL via MCP tools
@@ -709,37 +709,37 @@ budget_breach | hook_trip` (on `hitl_requests.kind`); the three core kinds map
 - Every HITL request is persisted as a `hitl_requests` row before the
   run transitions to `NeedsInput`; UI never derives HITL state from
   supervisor in-memory state.
-- Every new permission/form/human wait creates an open M13 assignment; legacy
+- Every new permission/form/human wait creates an open assignment (ADR-040); legacy
   HITL rows without assignments remain readable as compatibility data, but new
   inbox ownership/counts prefer assignments.
-- **(M30 — Implemented, ADR-082)** A dirty worktree at a review gate NEVER blocks the
+- **(Implemented, ADR-082)** A dirty worktree at a review gate NEVER blocks the
   gate; `dirtySummary` (from `statusPorcelain`, incl. untracked) rides on the gate
   payload and the reviewer's `commit | discard | proceed` choice is recorded on
   `hitl_requests.dirty_resolution` + audit in one transaction.
-- **(M30 — Implemented, ADR-082)** Discard runs `git clean -fd` (never `-fdx`) scoped
+- **(Implemented, ADR-082)** Discard runs `git clean -fd` (never `-fdx`) scoped
   `-C <worktree>` with a `.maister/`-containment assert and re-materialization; it
   MUST NOT touch `.maister/`. Every executed dirty-resolution deletes the gate-chat
   checkpoint ref so the ADR-078 L3 sensor re-anchors.
-- **(M30 — Implemented, ADR-082)** `GET /api/runs/{runId}/diff?scope=` accepts exactly
+- **(Implemented, ADR-082)** `GET /api/runs/{runId}/diff?scope=` accepts exactly
   `run | since-last-review | last-node | uncommitted` (allow-list); a missing-base
   scope is hidden/disabled with a reason, never an error; `uncommitted` renders via
   a temp `GIT_INDEX_FILE` and MUST NOT mutate the real index.
-- **(M30 — Implemented, ADR-082)** `hitl_requests.review_tip_sha` is stamped with the
+- **(Implemented, ADR-082)** `hitl_requests.review_tip_sha` is stamped with the
   branch tip (`headCommit`) at each review-gate visit; it is the base for the
   `since-last-review` scope.
-- **(M30 — Implemented, ADR-078)** Gate-chat is available iff `runs.status ∈
+- **(Implemented, ADR-078)** Gate-chat is available iff `runs.status ∈
 {NeedsInput, NeedsInputIdle}` AND the open HITL `kind ∈ {human, form}` AND the
   run's active `run_sessions.acp_session_id ≠ null`; `permission`-kind and
   `HumanWorking` are excluded.
-- **(M30 — Implemented, ADR-078)** A gate-chat turn NEVER resolves the HITL, NEVER
+- **(Implemented, ADR-078)** A gate-chat turn NEVER resolves the HITL, NEVER
   writes `hitl_requests.responded_at`, and NEVER drives the run `→Running`; on
   `NeedsInputIdle` it may drive `Idle→NeedsInput` (chat-resume) and then re-idle.
-- **(M30 — Implemented, ADR-078)** The L3 mutation sensor captures ONE baseline at the
+- **(Implemented, ADR-078)** The L3 mutation sensor captures ONE baseline at the
   first chat turn, runs unconditionally + fail-closed on every turn, reverts any
   detected mutation to that baseline, sets `gate_chat_messages.mutation_reverted =
 true`, and emits an audit signal — even under permissive runners where L2 is a
   no-op; the baseline ref is GC'd on HITL resolve and deleted by any dirty-resolution.
-- **(M30 — Implemented, ADR-078)** Chat input is NEVER Mustache-evaluated; the L1
+- **(Implemented, ADR-078)** Chat input is NEVER Mustache-evaluated; the L1
   preamble is server-side; the chat-prompt `stepId` marker uses a dash
   (`gate-chat-<hitlRequestId>`), never a colon.
 - **(Implemented)** A run in `NeedsInput` extends `keepalive_until` by
@@ -774,7 +774,7 @@ boolean | enum | array`; unknown type refused with `CONFIG` at Flow
   contract as `form` (stored as `hitl_requests.kind = "human"`). The response
   carries a declared decision, comments, and optional workspace policy; the
   runner follows only the server-stored transition allow-list.
-- **(Implemented — M17)** A conflicting re-submit on an already-claimed
+- **(Implemented)** A conflicting re-submit on an already-claimed
   `hitl_requests` row (different payload, `respondedAt IS NULL`) MUST
   return 409 before any artifact or supervisor side-effect runs.
   A same-payload retry on a delivered row (`respondedAt IS NOT NULL`)
@@ -802,17 +802,17 @@ boolean | enum | array`; unknown type refused with `CONFIG` at Flow
   missing diff/worktree → `diff:null`, missing cost rollup →
   `source:"no-data"` instead of fake zero, missing gate/ledger data →
   `unknown`/zero counts.
-- **(Implemented — M17)** `hitl_requests.criticality` MUST be written
+- **(Implemented)** `hitl_requests.criticality` MUST be written
   once at creation from the flow-author-declared `human` node/step
   `criticality` field (`low | medium | high | critical`) and MUST NOT
   be updated after insertion.
-- **(Implemented — M17)** `hitl_requests.human_confidence` MUST be a
+- **(Implemented)** `hitl_requests.human_confidence` MUST be a
   real in `[0,1]`; values outside that range MUST be rejected
   server-side with 422. `human_confidence` and `criticality` ANNOTATE
   a human decision; they MUST NOT re-gate readiness. The escalate-to-
   human decision stays the Flow's `human_review` gate, never the
   external actor's.
-- **(Implemented — M17)** A token or internal-agent actor MUST NOT
+- **(Implemented)** A token or internal-agent actor MUST NOT
   satisfy a `hitl_requests.kind = "human"` request;
   `respondToHitl` MUST return 403 (`UNAUTHORIZED`) for any
   `actor.kind !== "user"` when `hitlRow.kind = "human"` (D7).
@@ -820,7 +820,7 @@ boolean | enum | array`; unknown type refused with `CONFIG` at Flow
   personal token with exact `hitl:respond:human` is the Implemented exception: the
   external route converts it to `HitlActor.kind="user"` before calling
   `respondToHitl`.
-- **(Implemented — M17)** Both HITL ext routes (`GET …/hitl` scope
+- **(Implemented)** Both HITL ext routes (`GET …/hitl` scope
   `hitl:read`, `POST …/hitl/{id}/respond` scope `hitl:respond`) MUST
   enforce `handleExt({requireScope:true})`: the route's `scopeLabel`
   MUST be in `actor.scopes` or equal `"*"`; absent scope MUST return 403. A token actor MUST NOT create or skip a gate; gate placement
@@ -868,7 +868,7 @@ boolean | enum | array`; unknown type refused with `CONFIG` at Flow
   recoverable via the standard `acp_session_id` resume on next launch —
   no separate reconciliation needed. Depends on checkpoint/resume
   landing the `session/resume` re-spawn path.
-- **(Implemented M8 — Codex review fix #1)** When the supervisor
+- **(Implemented — checkpoint/resume Codex review fix #1)** When the supervisor
   cancels a pending permission as part of a checkpoint flow (sweeper or
   `POST /sessions/:id/checkpoint`), the adapter resolves the deferred
   with `{outcome: "cancelled"}` and returns `stopReason: "end_turn"`
@@ -885,7 +885,7 @@ boolean | enum | array`; unknown type refused with `CONFIG` at Flow
   checkpoint mid-permission would race the sweeper's idle transition
   and the step could be marked succeeded with an un-replayed
   permission.
-- **(Implemented M8 — Codex review fix #2)** Claimed-but-undelivered
+- **(Implemented — checkpoint/resume Codex review fix #2)** Claimed-but-undelivered
   HITL intents (`hitl_requests.response IS NOT NULL AND respondedAt
 IS NULL` joined to `runs.status='NeedsInput'`) are recovered on web
   boot via `web/lib/runs/resume-recovery.ts:runResumeRecoverySweep`.
@@ -895,7 +895,7 @@ IS NULL` joined to `runs.status='NeedsInput'`) are recovered on web
   to `NeedsInputIdle` (status-guarded; intent preserved). Supervisor
   5xx during recovery → skip-this-boot, the keep-alive sweeper's
   24 h TTL is the long-term safety net. Always-on, no flag.
-- **(Implemented M8 — Codex review fix #3)** Every resume-driver
+- **(Implemented — checkpoint/resume Codex review fix #3)** Every resume-driver
   terminal transition (`completeResumedStepAndHandoff` last-step
   `Review`, `failResumedRun`, `crashResumedRun`) calls
   `promoteNextPending` after a successful status-guarded write —
@@ -931,20 +931,20 @@ type}`; the stage `type` MUST be resolved by compiling each distinct flow
   same-payload retry is idempotent (200 + re-queue resume); a
   different-payload retry is rejected with 409 BEFORE any artifact
   or supervisor side-effect runs.
-- **(M30 — Implemented, ADR-082) Discard path escapes the worktree** → the
+- **(Implemented, ADR-082) Discard path escapes the worktree** → the
   `.maister/`-containment assert hard-fails the discard with a mapped 409
   (`CONFLICT`/`PRECONDITION`); the gate stays open and no `dirty_resolution` is
   recorded.
-- **(M30 — Implemented, ADR-082) Diff scope base ref missing** (pre-feature run,
+- **(Implemented, ADR-082) Diff scope base ref missing** (pre-feature run,
   first review visit, no completed agent node yet) → that scope is hidden/disabled
   with a reason; the default `run` scope always resolves. Never an error.
-- **(M30 — Implemented, ADR-078) Gate-chat on a `permission`-kind pause or
+- **(Implemented, ADR-078) Gate-chat on a `permission`-kind pause or
   `HumanWorking` run** → unavailable; the UI shows a disabled empty-state, not a chat
   box (the session is mid-prompt-turn or human-owned).
-- **(M30 — Implemented, ADR-078) Idle gate-chat respawn fails** → the chat prompt's
+- **(Implemented, ADR-078) Idle gate-chat respawn fails** → the chat prompt's
   deferred is released, the turn errors without resolving the HITL, and the run stays
   `NeedsInputIdle` (never a partial `→Running`).
-- **(M30 — Implemented, ADR-078) Agent mutates the workspace during a chat turn** → L3
+- **(Implemented, ADR-078) Agent mutates the workspace during a chat turn** → L3
   reverts to the first-turn baseline, marks `mutation_reverted=true`, and emits an
   audit signal; the turn's answer still renders with a revert notice.
 - **Supervisor restart while the user response is in-flight** —
@@ -965,22 +965,22 @@ type}`; the stage `type` MUST be resolved by compiling each distinct flow
 - **Project, agent, or project-scoped user token calls ext HITL respond on a
   `human`-kind request** — `respondToHitl` returns
   `MaisterError("UNAUTHORIZED")` → HTTP 403 (D7). Response body MUST NOT reveal
-  which HITL kind triggered the refusal. (Implemented — M17)
+  which HITL kind triggered the refusal. (Implemented)
 - **Global personal token calls human HITL respond without exact
   `hitl:respond:human`** → HTTP 403 even when the token has `*`. Failure audit
   written with the run's server-derived `project_id`. (Implemented)
 - **Token missing `hitl:read` or `hitl:respond` scope** →
   `handleExt({requireScope:true})` returns 403. Response MUST NOT
-  leak which scopes the token holds (D8). (Implemented — M17)
+  leak which scopes the token holds (D8). (Implemented)
 - **Project or agent token calls `GET /api/v1/ext/hitl`** → HTTP 403; the
   cross-project inbox is personal-token-only. (Implemented)
 - **Global personal token owner loses project access before response** → HTTP
   403 or existence-hidden 404 per route family; no HITL row is claimed and the
   audit row records the server-derived target project. (Implemented)
 - **Ext HITL route called with a `runId` from a different project** →
-  existence-hide: 404, not 403. (Implemented — M17)
+  existence-hide: 404, not 403. (Implemented)
 - **`human_confidence` body value outside `[0,1]`** → server-side Zod
-  validation fails → 422 (`NEEDS_INPUT`). (Implemented — M17)
+  validation fails → 422 (`NEEDS_INPUT`). (Implemented)
 - **Graph review `rework` decision at an exhausted loop**
   (`schema.gateAttempt > schema.maxLoops`) → 422 (`NEEDS_INPUT`) at validate
   time — no artifact write, no state mutation; the reviewer can still
@@ -990,10 +990,10 @@ type}`; the stage `type` MUST be resolved by compiling each distinct flow
   never fires on the resume re-entry processing a decision at the final
   allowed visit). (Implemented — ADR-072)
 
-## M8 — live vs idle HITL response paths
+## Live vs idle HITL response paths
 
 The `POST /api/runs/:runId/hitl/:hitlRequestId/respond` route branches
-on the locked `runs.status` read inside the M7 atomic-claim transaction:
+on the locked `runs.status` read inside the atomic-claim transaction:
 
 ```
                  lockedRun.status?
@@ -1024,7 +1024,7 @@ on the locked `runs.status` read inside the M7 atomic-claim transaction:
 
 | Phase | Layer                                   | DB write                                                                                                                                        | Side-effect                                                       |
 | ----- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| 1     | web route                               | M7 atomic-claim: `UPDATE hitl_requests SET response=:intent WHERE id=:id AND respondedAt IS NULL` (FOR UPDATE)                                  | none                                                              |
+| 1     | web route                               | atomic-claim: `UPDATE hitl_requests SET response=:intent WHERE id=:id AND respondedAt IS NULL` (FOR UPDATE)                                  | none                                                              |
 | 2     | web route → `resumeRun(runId)`          | inside `markResumed`: `UPDATE runs SET status='NeedsInput', keepalive_until=now+N, checkpoint_at=null WHERE id=:id AND status='NeedsInputIdle'` | `POST /sessions` to supervisor with `resumeSessionId`             |
 | 3     | runner-agent permission_request handler | `UPDATE hitl_requests SET respondedAt=now(), response=<merged>`                                                                                 | `POST /sessions/:id/input` to supervisor with the new `requestId` |
 
@@ -1041,7 +1041,7 @@ within the runner-agent's event loop over the next 5-60 s.
   (respondedAt set): 200 idempotent.
 - Retry after terminal `Failed` (Phase 2 failed terminally):
   410 `{terminal:true}`.
-- Retry with different payload: 409 (M7 CAS rule).
+- Retry with different payload: 409 (the atomic-claim CAS rule).
 
 ### Resume failures
 
@@ -1206,13 +1206,13 @@ lock. Gate chat remains attached to the parent and never resolves a child.
 
 - ADRs: [ADR-006 Hybrid HITL](../decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume),
   [ADR-008 Typed error taxonomy](../decisions.md#adr-008-typed-error-taxonomy-maistererror),
-  ADR-054 (HITL assessment taxonomy — `criticality`/`human_confidence`; Implemented — M17),
-  ADR-055 (HITL response service + HITL-over-MCP + token-actor + D7/D8 gates; Implemented — M17),
-  ADR-056 (flat-runner `on_reject` atomic repark; Implemented — M17),
-  ADR-057 (HITL hybrid-surface composition — cross-project inbox; Implemented — M17),
-  [ADR-066 Diff rendering stack](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror) (M30 scope-switcher reuse),
-  [ADR-082 Review-diff completeness (M30 — Implemented)](../decisions.md#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher),
-  [ADR-078 Gate-chat + workspace-neutrality (M30 — Implemented)](../decisions.md#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality).
+  ADR-054 (HITL assessment taxonomy — `criticality`/`human_confidence`; Implemented),
+  ADR-055 (HITL response service + HITL-over-MCP + token-actor + D7/D8 gates; Implemented),
+  ADR-056 (flat-runner `on_reject` atomic repark; Implemented),
+  ADR-057 (HITL hybrid-surface composition — cross-project inbox; Implemented),
+  [ADR-066 Diff rendering stack](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror) (ADR-082 scope-switcher reuse),
+  [ADR-082 Review-diff completeness (Implemented)](../decisions.md#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher),
+  [ADR-078 Gate-chat + workspace-neutrality (Implemented)](../decisions.md#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality).
 - ERD: [`../db/hitl-domain.md`](../db/hitl-domain.md).
 - Config reference: [`../configuration.md`](../configuration.md)
   §`form_schema versioning`;
@@ -1223,7 +1223,7 @@ lock. Gate chat remains attached to the parent and never resolves a child.
 - Related: [`runs.md`](runs.md), [`flows.md`](flows.md),
   [`external-operations.md`](external-operations.md),
   [`assistant-activity.md`](assistant-activity.md),
-  [`flow-graph.md`](flow-graph.md) (M11a review decisions),
+  [`flow-graph.md`](flow-graph.md) (graph review decisions),
   [`review-comments.md`](review-comments.md) (Implemented — ADR-072:
   line-anchored review threads, `{maxLoops, gateAttempt}` schema fields,
   loop-exhaustion refusal).

@@ -2,7 +2,7 @@
 
 - **Type:** screen (admin).
 - **Route:** `/admin/scheduler` (global admin only).
-- **Status:** Implemented (M24 scheduler admin; M28 cockpit, typed target
+- **Status:** Implemented (scheduler admin; ADR-071 cockpit, typed target
   editor, task schedules overview, and ADR-139 one-time diagnostics).
 - **Source:** `web/app/(app)/admin/scheduler/page.tsx`,
   `web/components/admin/scheduler-jobs-table.tsx`,

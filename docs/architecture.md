@@ -45,7 +45,7 @@ C4Context
 **Personas.**
 
 - **Operator** — primary persona. One human running several projects.
-  Credentials auth + global/project RBAC shipped in M9 (`web/lib/authz.ts`);
+  Credentials auth + global/project RBAC are implemented (`web/lib/authz.ts`);
   still effectively single-operator (no team invites yet).
 - *(Phase 2)* Small-team member — receives HITL items via the same UI.
 
@@ -122,7 +122,7 @@ C4Container
 | `claude-agent-acp` | Implemented | `@agentclientprotocol/claude-agent-acp@0.37.0` | ACP adapter wrapping Claude Agent SDK. One process per session. |
 | `codex-acp` | Implemented | `@agentclientprotocol/codex-acp@0.0.44` | ACP adapter bundling Codex. One process per session. |
 | CCR daemon | Implemented | `@musistudio/claude-code-router@2.0.0` (MIT) | Multi-provider Anthropic-compatible proxy. Supervisor-owned: lazy `ensureRunning()` on first `router=ccr` spawn, graceful shutdown on supervisor SIGTERM/SIGINT, one daemon per supervisor process. |
-| MCP facade (`mcp/`) | Implemented | `@maister/mcp` — `@modelcontextprotocol/sdk`, Node | Standalone workspace package exposing external MCP tools as a thin REST client of `/api/v1/ext`, incl. `hitl_inbox`, `hitl_list`, and `hitl_respond` (M17/M39, ADR-055). Streamable-HTTP (default, remote): forwards per-request inbound bearer to the REST layer; no ambient token. stdio (local): reads `MAISTER_PROJECT_TOKEN`, then `MAISTER_ACCESS_TOKEN` as fallback. Zero DB/web coupling. See ADR-047. |
+| MCP facade (`mcp/`) | Implemented | `@maister/mcp` — `@modelcontextprotocol/sdk`, Node | Standalone workspace package exposing external MCP tools as a thin REST client of `/api/v1/ext`, incl. `hitl_inbox`, `hitl_list`, and `hitl_respond` (ADR-055). Streamable-HTTP (default, remote): forwards per-request inbound bearer to the REST layer; no ambient token. stdio (local): reads `MAISTER_PROJECT_TOKEN`, then `MAISTER_ACCESS_TOKEN` as fallback. Zero DB/web coupling. See ADR-047. |
 
 **Inter-container contracts.**
 

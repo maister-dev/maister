@@ -6,7 +6,7 @@ The **project membership** domain covers per-project roster management:
 listing members, searching platform users as add candidates, adding a user
 with a role, changing an existing member's role, and removing a member.
 The domain boundary ends at routing labels assigned to Flow nodes —
-per-node role routing in `project_flow_roles` (M13) is out of scope.
+per-node role routing in `project_flow_roles` is out of scope.
 
 Status: **Implemented** — ADR-062, migration 0029; service
 (`web/lib/project-members.ts`), routes (`/api/projects/{slug}/members*`), and

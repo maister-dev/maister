@@ -20,9 +20,9 @@ See [ADR-025](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-loca
   deprecated `MAISTER_WORKTREE_ROOT` is accepted as a fallback. Resolved
   by `worktreesRoot()`.
 - **Host-tool status** — presence + version of host CLIs `git`, `gh`, and
-  (Implemented, M18) `glab`, probed by `hostToolStatus()` → `HostTool[]`. `git` is
+  (Implemented) `glab`, probed by `hostToolStatus()` → `HostTool[]`. `git` is
   required by the git-ops layer.
-- **PR-mode host prerequisites (Implemented, M18)** — credential **model B** (host
+- **PR-mode host prerequisites (Implemented)** — credential **model B** (host
   credentials + provider tooling on the host, no in-platform secret storage).
   `gh`/`glab` are **required-for-PR-mode**, per provider: a `github` project's
   `pull_request` promotion needs `gh` on PATH, a `gitlab` project needs `glab`;
@@ -72,7 +72,7 @@ sequenceDiagram
         P->>IC: hostToolStatus()
         IC->>HOST: git --version
         IC->>HOST: gh --version
-        IC->>HOST: glab --version (Implemented M18)
+        IC->>HOST: glab --version (Implemented)
         IC-->>P: [{git, available, version}, {gh, ...}, {glab, ...}]
         P-->>U: render reposRoot / worktreesRoot / host tools (read-only)
     end
@@ -92,19 +92,19 @@ Status: **Implemented** — `web/lib/instance-config.ts` +
 - The `/settings` page renders host-tool and root details only for an
   `admin`; every other caller gets the forbidden branch with no host
   details.
-- `hostToolStatus()` reports `git`, `gh`, and (Implemented, M18) `glab` presence +
+- `hostToolStatus()` reports `git`, `gh`, and (Implemented) `glab` presence +
   version; a probe failure degrades to `{ available: false, version: null }` and
   never throws.
 - `gh`/`glab` are informational for `local_merge` and for any run that never
   promotes via PR — their absence MUST NOT block launch, `local_merge`
   promotion, or any non-PR flow.
-- **(Implemented, M18)** `gh`/`glab` become **required-for-PR-mode** per provider:
+- **(Implemented)** `gh`/`glab` become **required-for-PR-mode** per provider:
   a `pull_request` promotion of a `github` run REQUIRES `gh` on PATH, a `gitlab`
   run REQUIRES `glab`, and a `gitea`/`gitverse` run REQUIRES the host-env
   `GITEA_TOKEN`/`GITVERSE_TOKEN`; a missing prerequisite refuses that promotion
   with `PRECONDITION` (run stays `Review`) — it never blocks anything else.
 - No instance-config value is a secret; none is logged, streamed, or sent
-  to a non-admin client. **(Implemented, M18)** `GITEA_TOKEN`/`GITVERSE_TOKEN` are
+  to a non-admin client. **(Implemented)** `GITEA_TOKEN`/`GITVERSE_TOKEN` are
   read server-side only and MUST NEVER be rendered on `/settings`, logged, or
   streamed.
 
@@ -114,14 +114,14 @@ Status: **Implemented** — `web/lib/instance-config.ts` +
   any actual git operation fails downstream with `PRECONDITION`
   (`assertGitAvailable`, see [`git-integration.md`](git-integration.md)).
 - **`gh`/`glab` absent** → reported as unavailable in Settings; no impact on
-  launch or `local_merge`. **(Implemented, M18)** impact ONLY when a matching
+  launch or `local_merge`. **(Implemented)** impact ONLY when a matching
   `github`/`gitlab` run promotes via `pull_request` — that promotion is refused
   `PRECONDITION` (run stays `Review`); the same holds for an unset
   `GITEA_TOKEN`/`GITVERSE_TOKEN` on a `gitea`/`gitverse` run.
 - **Non-admin opens `/settings`** → forbidden branch; roots and host-tool
   status are not resolved or rendered.
 
-## Platform MCP server admin (Implemented, M27)
+## Platform MCP server admin (Implemented)
 
 The `/settings` page hosts a **platform MCP server admin panel**, mirroring the
 ACP runner admin panel ([acp-runners.md](acp-runners.md), ADR-065). An admin
@@ -140,9 +140,9 @@ detail, state machine, and expectations are in
 
 - ADRs: [ADR-025 Project repo onboarding](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots),
   [ADR-049 PR promotion via a hybrid provider `PrAdapter`](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant)
-  (Implemented, M18 — gh/glab + Gitea-API token become required-for-PR),
+  (Implemented — gh/glab + Gitea-API token become required-for-PR),
   [ADR-065](../decisions.md#adr-065) (admin CRUD surface pattern; MCP panel mirrors ACP runner panel),
-  [ADR-070](../decisions.md#adr-070) (platform MCP admin CRUD, Implemented M27).
+  [ADR-070](../decisions.md#adr-070) (platform MCP admin CRUD, Implemented).
 - Config reference: [`../configuration.md`](../configuration.md) §Environment
   variables.
 - Related domains: [`projects.md`](projects.md),

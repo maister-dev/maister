@@ -1,7 +1,7 @@
-# Scoped capability materialization (M14)
+# Scoped capability materialization
 
-> **Status: Implemented (M14).** Materialization and delivery are **Implemented
-> (M14)** — the import pipeline, carve-b reference validation, agent-aware name
+> **Status: Implemented.** Materialization and delivery are **Implemented** —
+> the import pipeline, carve-b reference validation, agent-aware name
 > mapping (`agent-map`), per-session native materialization (`materialize`), ACP
 > `newSession params.mcpServers` delivery, the `node_attempts.materialization_plan`
 > ledger, scoped cleanup, and the run-detail capability view have all shipped to
@@ -21,13 +21,13 @@
 > (import reuses the flow-install pipeline),
 > [ADR-044](../decisions.md#adr-044-capability-delivery-via-settingslocaljson--acp-newsession-cli-flag-mechanism-disproven)
 > (delivery via `settings.local.json` + ACP `newSession`). Extends
-> [flow-settings.md](flow-settings.md) (M11c), which froze the
+> [flow-settings.md](flow-settings.md), which froze the
 > `ENFORCEABILITY_BY_AGENT` table this domain flips.
 
 ## Purpose
 
 This domain covers how a Flow run turns the **declared** node capability
-settings of M11c ([ADR-031](../decisions.md#adr-031-node-typed-settings-schema-carve-b))
+settings ([ADR-031](../decisions.md#adr-031-node-typed-settings-schema-carve-b))
 into **materialized, scoped, and — where proven — enforced** runtime boundaries.
 It owns four things: (1) the **project capability registry** —
 `capability_records` populated from `maister.yaml` plus git-pinned
@@ -50,29 +50,29 @@ sources, cross-project capability promotion, codex enforced mapping
 
 ## Domain entities
 
-- **Capability record** (`capability_records`, Implemented (M14) for the Flow-run
-  wiring; the table itself ships from M11/scratch). One row per declared
+- **Capability record** (`capability_records`, Implemented for the Flow-run
+  wiring; the table itself ships from the scratch era). One row per declared
   capability in a project. `kind ∈ {mcp, skill, rule, setting, restriction, tool,
   agent_definition, env_profile}`; `source ∈ {platform, project, flow-package}`;
   `enforceability ∈ {enforced, instructed, unsupported}`. Env values are redacted
-  to key-names on ingest (R-SECRET). M14 ingests two previously-unwired kinds —
-  `agent_definition` (from `maister.yaml agent_definitions[]`) and `env_profile`
-  (from `env_profiles[]`) — generically. See
+  to key-names on ingest (R-SECRET). This domain ingests two previously-unwired
+  kinds — `agent_definition` (from `maister.yaml agent_definitions[]`) and
+  `env_profile` (from `env_profiles[]`) — generically. See
   [`../db/capabilities-domain.md`](../db/capabilities-domain.md).
-- **Capability import** (`capability_imports`, **NEW** — Implemented (M14)). One row
+- **Capability import** (`capability_imports`, **NEW** — Implemented). One row
   per `(projectId, capabilityRefId, resolvedRevision)`, mirroring
   `flow_revisions`: `source`, `versionTag`, `resolvedRevision` (40-hex SHA),
   `manifestDigest`, `manifest` (jsonb), `installedPath`, `setupStatus`,
   `packageStatus`, `trustStatus`, `createdAt`/`updatedAt`. Records a git-pinned
   capability package fetched into `~/.maister/capabilities/<id>@<sha[:12]>/`.
   Migration `0019`. See [`../db/capabilities-domain.md`](../db/capabilities-domain.md).
-- **Resolved capability profile** (Implemented (M14)). The in-memory output of
+- **Resolved capability profile** (Implemented). The in-memory output of
   `resolveCapabilityProfile` — a deterministic, agent-support-gated selection of
   per-kind capabilities plus a `profileDigest` (stable across runs, changes when
   a resolved capability revision changes). For Flow runs it is NOT persisted in
   its own table; it is folded into the materialization plan (AD-2). The scratch
   path keeps using `scratch_capability_profiles` (scratch-only, unchanged).
-- **Agent materialization** (M14; delivery mechanism Implemented + CI-verified,
+- **Agent materialization** (delivery mechanism Implemented + CI-verified,
   enforcement still gated — see
   [ADR-044](../decisions.md#adr-044-capability-delivery-via-settingslocaljson--acp-newsession-cli-flag-mechanism-disproven)).
   The pure output of `web/lib/capabilities/agent-map.ts`
@@ -87,23 +87,23 @@ sources, cross-project capability promotion, codex enforced mapping
   `process.env` — secrets never reach the worktree, the wire, or the DB (no
   `.mcp.json`, no `adapterLaunch.env` secret values). The ONLY adapter-specific
   knowledge in the codebase. claude is materialized; codex returns empty
-  (`{ settingsLocal: null, mcpServers: [], skills: [] }`, `instructed`-only this
-  milestone).
+  (`{ settingsLocal: null, mcpServers: [], skills: [] }`, `instructed`-only at
+  this stage).
 - **Materialization plan** (`node_attempts.materialization_plan` jsonb, **NEW** —
-  Designed (M14), migration `0019`). The ledger record of what was resolved and
+  Designed, migration `0019`). The ledger record of what was resolved and
   materialized for one node attempt (AD-1):
   `{ profileDigest, resolvedRevisions:[{refId,kind,sha}], materializedFiles:[paths],
   enforcedClasses, instructedClasses, refusedClasses, cleanup:{status,error?,at} }`.
   Mirrors the existing `enforcement_snapshot` column; NOT an `artifact_instances`
   kind. See [`../db/runs-domain.md`](../db/runs-domain.md).
-- **Enforcement class** (Designed (M14) for the flip; defined in M11c). One of the
+- **Enforcement class** (Designed for the flip; defined by ADR-031). One of the
   six capability-bearing classes `mcps, tools, skills, restrictions,
   permissionMode, workspaceAccess`, each carrying an `enforcement` intent
   `strict | instruct | off`.
 
 ## State machines
 
-### (a) Import lifecycle (Designed (M14))
+### (a) Import lifecycle (Designed)
 
 A `capability_imports` row tracks three independent dimensions: `packageStatus`
 (the fetch/install lifecycle), `setupStatus` (whether `setup.sh` has run), and
@@ -140,7 +140,7 @@ Setup execution is **physically separate** from fetch
 runs it ONLY when `trustStatus ∈ {trusted, trusted_by_policy}` AND
 `setupStatus ∈ {pending, failed}` (idempotently re-runnable).
 
-### (b) Per-node profile lifecycle (Designed (M14))
+### (b) Per-node profile lifecycle (Designed)
 
 For one `ai_coding`/`judge` node attempt, the capability profile moves through
 resolve → materialize → active → cleaned, with restore on resume and a recoverable
@@ -172,9 +172,10 @@ from the persisted plan, never re-resolved (immutability — AD-1).
 
 ## Process flows
 
-### Resolve → materialize → spawn → cleanup (Designed (M14))
+### Resolve → materialize → spawn → cleanup (Designed)
 
-The runner-owned hot path for one AI node, after the M11c enforcement gate passes.
+The runner-owned hot path for one AI node, after the typed-settings enforcement
+gate passes.
 
 ```mermaid
 sequenceDiagram
@@ -197,7 +198,7 @@ sequenceDiagram
     Note over R,FS: on scope end (success/fail/checkpoint/abandon): rm node dir, record cleanup
 ```
 
-### Import: fetch → trust → setup (Designed (M14))
+### Import: fetch → trust → setup (Designed)
 
 Mirrors the flow-install pipeline; fetch and execute are physically separate.
 
@@ -216,7 +217,7 @@ flowchart TD
     F --> K[upsertCapabilitiesFromConfig: ingest into capability_records]
 ```
 
-### Trust-confirm route — two-phase order (Designed (M14))
+### Trust-confirm route — two-phase order (Designed)
 
 `POST /api/projects/[slug]/capabilities/[capabilityRefId]/trust`. Identifiers:
 `slug` (url-param → project server-state), `capabilityRefId` (url-param,
@@ -247,9 +248,9 @@ sequenceDiagram
     end
 ```
 
-## Launch/runtime enforcement refusal — ALLOW-LIST (Designed (M14))
+## Launch/runtime enforcement refusal — ALLOW-LIST (Designed)
 
-The boundary stays the M11c machinery
+The boundary stays the typed-settings machinery
 ([ADR-032](../decisions.md#adr-032-settings-enforcement-refusal-boundary)):
 `evaluateNodeEnforcement` + `assertNodeLaunchable`, fired at BOTH the launch
 precondition (`POST /api/runs`) and the per-node runtime build
@@ -272,11 +273,11 @@ cell.
 | --------- | ------------------------------- | --------- |
 | `tools` | `capability_guard` **tool-name allow-list** at the ACP seam (identity from `_meta.claudeCode.toolName ?? title`) | **enforced** (all adapters; evidence-gated at launch) |
 | `mcps` | `capability_guard` **MCP-server allow-list** at the ACP seam (server from `mcp__<server>__<tool>`) | **enforced** (all adapters; evidence-gated at launch) |
-| `hooks` | supervisor guardrail interceptor (M40, ADR-108) | **enforced** (all adapters; label corrected) |
+| `hooks` | supervisor guardrail interceptor (ADR-108) | **enforced** (all adapters; label corrected) |
 | `skills` | materialized skill/instruction files — not tool calls | instructed (permanent — not seam-interceptable) |
 | `restrictions` | path-based `mustNotTouch` deny-sets → post-hoc `mutation-check` gate | instructed (permanent — a path deny-set is not a tool-identity allow-list) |
 | `permissionMode` | `settings.local.json` `permissions.defaultMode` (claude-only, unverified) | instructed (permanent — 3-valued enum, not a tool-identity allow-list) |
-| `workspaceAccess` | M34 L1–L3 read-only stack (agent runs only; not wired to the flow seam) | instructed (follow-up — flow-node `workspaceAccess → readOnlySession` not yet delivered) |
+| `workspaceAccess` | the platform-agent L1–L3 read-only stack (agent runs only; not wired to the flow seam) | instructed (follow-up — flow-node `workspaceAccess → readOnlySession` not yet delivered) |
 
 The contract only ever tightens (`instructed → enforced`), never loosens. A `strict`
 declaration on a still-`instructed` class refuses with `MaisterError("CONFIG")` (no
@@ -351,8 +352,8 @@ materialization target"; this section states only what this domain requires.
 
 ## Expectations
 
-These are the steady-state invariants the M14 code MUST satisfy (Designed (M14) —
-they hold once the milestone lands, not before).
+These are the steady-state invariants the materialization code MUST satisfy
+(Designed — they hold once that work lands, not before).
 
 - A node-settings capability ref (`mcps/skills/restrictions/settingsProfile/tools`)
   that names no `capability_records` row in the project registry MUST be refused
@@ -395,12 +396,12 @@ they hold once the milestone lands, not before).
 - Cleanup MUST be recoverable: post-terminal seams (abandon route, crash
   reconciler) MUST NEVER throw `CRASH`; a failure MUST record
   `materialization_plan.cleanup.failed` and stay operator-visible until the strict
-  cleanup sweeper or the M19 worktree GC reclaims the dir.
+  cleanup sweeper or the worktree GC reclaims the dir.
 - Reusing a `slash-in-existing` session for a second AI node MUST be permitted iff
   its `materialization_plan.profileDigest` equals the new node's resolved digest;
   a mismatch MUST start a fresh session at a declared boundary or refuse with
   `MaisterError("CONFIG")`.
-- **(Designed, M27)** `resolveCapabilityProfile` MUST emit exactly ONE winner per
+- **(Designed)** `resolveCapabilityProfile` MUST emit exactly ONE winner per
   `(kind, capability_ref_id)` using the precedence **project > platform >
   flow-package** across ALL capability kinds; a lower-precedence record with the
   same `(kind, refId)` MUST be shadowed (not merged, not emitted as a duplicate).
@@ -420,7 +421,7 @@ they hold once the milestone lands, not before).
   changes mid-session require a declared session boundary").
 - **Cleanup failure** → the node dir `rm` fails (e.g. busy FS); the seam records
   `cleanup.failed` + ERROR-logs and does NOT throw (post-terminal seams never
-  raise `CRASH`); the strict cleanup sweeper removes it later, and the M19
+  raise `CRASH`); the strict cleanup sweeper removes it later, and the
   worktree GC is the final backstop. Surfaced as a cleanup-failed indicator in the
   run-detail capability view.
 - **Unsupported-agent downgrade** → a capability resolved for an agent that does
@@ -459,7 +460,7 @@ they hold once the milestone lands, not before).
   (flow lifecycle + setup.sh deferral),
   [ADR-008](../decisions.md#adr-008-typed-error-taxonomy-maistererror) (error
   taxonomy).
-- Companion spec: [flow-settings.md](flow-settings.md) (M11c — the frozen
+- Companion spec: [flow-settings.md](flow-settings.md) (the frozen
   `ENFORCEABILITY_BY_AGENT` table and `evaluateNodeEnforcement` truth table this
   domain flips).
 - DB: [database-schema.md](../database-schema.md) (narrative),
@@ -473,7 +474,7 @@ they hold once the milestone lands, not before).
   `MAISTER_TRUSTED_CAPABILITY_SOURCE_PREFIXES`).
 - DSL: [flow-dsl.md](../flow-dsl.md) (node-settings refs now registry-resolved).
 - Errors: [error-taxonomy.md](../error-taxonomy.md) (`CONFIG`,
-  `EXECUTOR_UNAVAILABLE`, `FLOW_INSTALL` M14 callers).
+  `EXECUTOR_UNAVAILABLE`, `FLOW_INSTALL` capability-materialization callers).
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml) (capability
   trust-confirm route).
 - Source (Designed — paths the code will live at): `web/lib/capabilities/{types,

@@ -2,7 +2,7 @@
 
 # Database Schema
 
-## M43 destructive schema transition (Implemented)
+## Destructive schema transition (ADR-131 — Implemented)
 
 Migration 0094 first atomically terminalizes every actionable legacy linear
 Flow run, closes its open lifecycle stores and emits one run.failed event per
@@ -42,19 +42,19 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `projects`                    | Registered repos. `slug` + `repo_path` both UNIQUE. Can reference a platform default runner override. **(ADR-085 — Designed, migration `0047`)** stores the delivery-policy default used by run launches.                                                                                                                    | (root)                                                                     |
 | `platform_router_sidecars`    | Platform-managed router sidecars such as CCR. Stores typed config refs, lifecycle, readiness, and no raw secrets.                                                                                                                                                                                                           | (root)                                                                     |
 | `platform_acp_runners`        | Platform ACP runner catalog. Stores adapter id, derived capability agent, model, provider shape, permission policy, readiness, sidecar ref, and enablement.                                                                                                                                                                  | optional `platform_router_sidecars.id`                                      |
-| `platform_mcp_servers`        | **(M27 — Designed)** Platform-admin-managed MCP server catalog. Stores transport shape, env-var name refs only (no secret values), supported-agent list, trust status, and readiness. Mirrors `platform_acp_runners` in admin CRUD surface.                                                                                  | (root — no FK)                                                              |
+| `platform_mcp_servers`        | **(Designed — ADR-070)** Platform-admin-managed MCP server catalog. Stores transport shape, env-var name refs only (no secret values), supported-agent list, trust status, and readiness. Mirrors `platform_acp_runners` in admin CRUD surface.                                                                                  | (root — no FK)                                                              |
 | `platform_runtime_settings`   | Singleton platform runtime row with the required default runner id.                                                                                                                                                                                                                                                         | `platform_acp_runners.id`                                                  |
-| `flows`                       | Current installed Flow pointer per project, tag-pinned. Planned M10 splits immutable package revisions from project enablement.                                                                                                                                                                                            | `projects.id`                                                              |
+| `flows`                       | Current installed Flow pointer per project, tag-pinned. A planned split (ADR-021) separates immutable package revisions from project enablement.                                                                                                                                                                                            | `projects.id`                                                              |
 | `project_flow_runner_defaults` | Per-project Flow attachment runner default. `runner_id = null` means inherit project default.                                                                                                                                                                                                                              | `projects.id`, `flows.id`, optional `platform_acp_runners.id`              |
-| `flow_runner_remaps`          | Per-slot binding records keyed `(project_id, flow_revision_id, slot_key)` mapping each unbound session / consensus runner slot to a platform runner. **(M42 — Implemented, ADR-114, migration `0081`)** re-keys this from the per-step `(…, step_id, source_runner_id)` shape.                                                                                                                                                                | optional `projects.id`, `flow_revisions.id`, optional `platform_acp_runners.id` |
+| `flow_runner_remaps`          | Per-slot binding records keyed `(project_id, flow_revision_id, slot_key)` mapping each unbound session / consensus runner slot to a platform runner. **(Implemented, ADR-114, migration `0081`)** re-keys this from the per-step `(…, step_id, source_runner_id)` shape.                                                                                                                                                                | optional `projects.id`, `flow_revisions.id`, optional `platform_acp_runners.id` |
 | `capability_records`          | Project-visible registry for selectable MCP servers, skills, tools, agent settings, restrictions, and launch mappings.                                                                                                                                                                                                     | `projects.id`                                                              |
 | `project_mcp_bindings`        | **(ADR-129 — Designed, migration `0093`)** Explicit binding of a capability `ref_id` → concrete MCP target per project (`platform`/`project`/`package`); enabled binding wins over precedence, disabled = opt-out, absent = grandfather. UNIQUE `(project_id, ref_id)`; per-project env-slot overlay (names only).             | `projects.id` (CASCADE)                                                    |
-| `project_flow_roles`          | **(M13 — Implemented, migration `0018`)** Project-scoped Flow routing labels; not auth roles.                                                                                                                                                                                                                              | `projects.id`                                                              |
-| `actor_identities`            | **(M13 — Implemented, migration `0018`)** Stable attribution identities for users, API-token systems, internal agents, and system events.                                                                                                                                                                                  | `projects.id`, optional `users.id`                                         |
+| `project_flow_roles`          | **(Implemented, migration `0018`)** Project-scoped Flow routing labels; not auth roles.                                                                                                                                                                                                                              | `projects.id`                                                              |
+| `actor_identities`            | **(Implemented, migration `0018`)** Stable attribution identities for users, API-token systems, internal agents, and system events.                                                                                                                                                                                  | `projects.id`, optional `users.id`                                         |
 | `tasks`                       | Board cards. Status `Backlog\|InFlight\|Done\|Abandoned`. Stage `Backlog\|Prepare`.                                                                                                                                                                                                                                        | `projects.id`                                                              |
-| `runs`                        | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"`. Runner state (`runner_id`, `runner_resolution_tier`, `capability_agent`, `runner_snapshot`, `acp_session_id`) moved OFF this row (dropped in migration `0082`) to the per-session `run_sessions` table. **(M42 — Implemented, ADR-114, migrations `0080`–`0082`.)** **(ADR-085 — Designed, migration `0047`)** snapshots resolved delivery policy. **(ADR-134 — Implemented, migration `0098`)** adds final promoted-delivery evidence. | `tasks.id`, `projects.id`, `flows.id`, optional `platform_acp_runners.id` |
+| `runs`                        | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"`. Runner state (`runner_id`, `runner_resolution_tier`, `capability_agent`, `runner_snapshot`, `acp_session_id`) moved OFF this row (dropped in migration `0082`) to the per-session `run_sessions` table. **(Implemented, ADR-114, migrations `0080`–`0082`.)** **(ADR-085 — Designed, migration `0047`)** snapshots resolved delivery policy. **(ADR-134 — Implemented, migration `0098`)** adds final promoted-delivery evidence. | `tasks.id`, `projects.id`, `flows.id`, optional `platform_acp_runners.id` |
 | `evaluation_studies`          | **(ADR-142 — Implemented, migrations `0107`/`0110`)** Neutral Evaluation Study container (one project + one task). Status `draft\|open\|decided\|archived`; readiness/active-eval count are derived. `legacy_experiment_id` UNIQUE + `legacy_snapshot` preserve a migrated Experiment.                                          | `projects.id`, `tasks.id` (RESTRICT), optional `users.id`                  |
-| `evaluation_recipes`          | **(ADR-142 — Implemented, migration `0107`)** Immutable Study recipe definition (M46 = legacy variant config; M47 = typed controlled recipe). `definition_digest`; tombstone-after-launch. UNIQUE `(study_id, key)`.                                                                                                            | `evaluation_studies.id`                                                    |
+| `evaluation_recipes`          | **(ADR-142 — Implemented, migration `0107`)** Immutable Study recipe definition (legacy variant config or typed controlled recipe). `definition_digest`; tombstone-after-launch. UNIQUE `(study_id, key)`.                                                                                                            | `evaluation_studies.id`                                                    |
 | `evaluation_participants`     | **(ADR-142 — Implemented, migration `0107`)** Study participant with immutable `source_type` (`observed`/`launched`) provenance; copied `run_identity` survives Run deletion (`run_id` SET NULL). Partial UNIQUE `(study_id, run_id)` on live rows; tombstone via `removed_at`. **(ADR-146 — `0112`)** adds `batch_item_id` (SET NULL, partial UNIQUE) — the controlled-launch adoption anchor.                                                  | `evaluation_studies.id`, optional `runs.id`, `evaluation_recipes.id`, `evaluation_launch_batch_items.id`      |
 | `evaluation_method_revisions` | **(ADR-143 — Implemented, migration `0108`)** Immutable package-projected Evaluation Method revision (`qualified_id`, digests, `compat`), mutable `activation`; derived health. UNIQUE `(package_install_id, method_id)`; package-install delete RESTRICTed while referenced.                                                     | `package_installs.id` (RESTRICT)                                          |
 | `evaluation_judge_panels`     | **(ADR-145 — Implemented, migration `0108`)** Mutable admin Judge Panel (role→package-agent bindings + policy) with optimistic `revision`; snapshotted at execution start.                                                                                                                                                     | optional `users.id`                                                       |
@@ -73,42 +73,42 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `evaluation_events`           | **(ADR-144 — Implemented, migration `0109`)** Replayable per-Study SSE event log; bounded ids/status/counts only. UNIQUE `(study_id, sequence)`.                                                                                                                                                                               | `evaluation_studies.id`, optional `evaluation_executions.id`             |
 | `evaluation_launch_batches`   | **(ADR-146 — Implemented, migration `0112`)** Durable controlled-launch batch intent persisted before any run-launch side effect; status `queued\|launching\|completed\|partial\|failed` + CAS `version`; Study-scoped partial UNIQUE `(study_id, idempotency_key)` with `request_digest` conflict guard.                          | `evaluation_studies.id` (CASCADE), optional `users.id`                    |
 | `evaluation_launch_batch_items` | **(ADR-146 — Implemented, migration `0112`)** One durable item per `(batch_id, recipe_id, replicate_ordinal)` (UNIQUE) with a `queued→launching→launched\|failed` CAS FSM, bounded `attempt`/`error_reason`, and SET-NULL launched run/participant refs.                                                                       | `evaluation_launch_batches.id` (CASCADE), `evaluation_recipes.id` (RESTRICT), optional `runs.id`, `evaluation_participants.id` |
-| `evaluation_suites`           | **(ADR-147 — Implemented, migration `0113`)** Versioned scheduled/regression suite parent outside the one-task Study boundary; immutable-per-version `definition` + `definition_digest`, `version` bumped per edit, `last_trigger_revision` regression trigger; driven by the M24 clock.                                          | `projects.id` (CASCADE), optional `users.id`                              |
+| `evaluation_suites`           | **(ADR-147 — Implemented, migration `0113`)** Versioned scheduled/regression suite parent outside the one-task Study boundary; immutable-per-version `definition` + `definition_digest`, `version` bumped per edit, `last_trigger_revision` regression trigger; driven by the polymorphic scheduler clock.                                          | `projects.id` (CASCADE), optional `users.id`                              |
 | `evaluation_suite_studies`    | **(ADR-147 — Implemented, migration `0113`)** Immutable suite-scan-round → generated one-task Study link (`suite_version`, deterministic `scan_key`); UNIQUE `(suite_id, task_id, scan_key)` is the at-least-once scan dedup unit.                                                                                                | `evaluation_suites.id` (CASCADE), `evaluation_studies.id` (CASCADE), `tasks.id` (RESTRICT) |
 | `evaluation_standardized_recipes` | **(ADR-147 — Implemented, migration `0114`)** Append-only human-approved recipe-standardization ledger: `standardize\|rollback` revisions per `(project_id, slot)` (UNIQUE revision), copied self-contained `definition` + digest, SET-NULL source provenance, `rolled_back_to_revision`.                                     | `projects.id` (CASCADE), optional `evaluation_studies.id`, `evaluation_recipes.id`, `evaluation_human_verdicts.id`, `users.id` |
 | `workspaces`                  | `git worktree` instances tied to a run.                                                                                                                                                                                                                                                                                    | `runs.id`, `projects.id`                                                   |
-| `scratch_runs`                | Scratch-only metadata: dialog status, name, plan mode, links, branch base, target, and supervisor session. **(M36 `0059`, ADR-097)** `project_id` is NULLABLE; `local_package_id` is the project-less owner of a docked-assistant run (CHECK: exactly one of the two).                                                          | `runs.id`, optional `projects.id`, `local_packages.id`, `users.id`, optional `tasks.id` |
+| `scratch_runs`                | Scratch-only metadata: dialog status, name, plan mode, links, branch base, target, and supervisor session. **(ADR-097, migration `0059`)** `project_id` is NULLABLE; `local_package_id` is the project-less owner of a docked-assistant run (CHECK: exactly one of the two).                                                          | `runs.id`, optional `projects.id`, `local_packages.id`, `users.id`, optional `tasks.id` |
 | `run_messages`                | Run-kind-agnostic transcript ledger (generalized from `scratch_messages`, migration `0085`). Append/upsert message rows with monotonic `sequence`; nullable `node_attempt_id` attributes a flow node session's transcript (NULL for scratch / single-session). Unique `(run_id, node_attempt_id, sequence)` `NULLS NOT DISTINCT` keeps scratch's `(run_id, sequence)` invariant. | `runs.id`, optional `node_attempts.id`                                     |
 | `scratch_attachments`         | Text note, file path, or issue URL attachments attached to a scratch run or message.                                                                                                                                                                                                                                       | `scratch_runs.run_id`, optional `run_messages.id`                          |
 | `scratch_capability_profiles` | Launch-time MCP/skill/rule/settings/restriction snapshot and materialized profile path.                                                                                                                                                                                                                                    | `scratch_runs.run_id`                                                      |
-| `node_attempts`               | Append-only per-node-attempt ledger for the graph runner. **(M11b, migration `0011`)** adds takeover columns (`owner_user_id`, `base_ref`, `returned_commits`, `returned_diff`). **(M11c, migration `0013`)** adds the nullable, append-only `enforcement_snapshot` verdict audit. **(migration `0053`)** adds the nullable per-attempt `resolved_prompt` capture. **(M41, migration `0070`)** adds node type `consensus`. **(ADR-118 — Implemented, migration `0086`)** adds the nullable `rework_baseline integer` (attempt number at which the node's current rework epoch began; `NULL ⇒ 0`; effective attempts = `attempt − (rework_baseline ?? 0)`). | `runs.id`, `users.id` (takeover owner, M11b)                               |
+| `node_attempts`               | Append-only per-node-attempt ledger for the graph runner. **(ADR-030, migration `0011`)** adds takeover columns (`owner_user_id`, `base_ref`, `returned_commits`, `returned_diff`). **(ADR-032, migration `0013`)** adds the nullable, append-only `enforcement_snapshot` verdict audit. **(migration `0053`)** adds the nullable per-attempt `resolved_prompt` capture. **(ADR-109, migration `0070`)** adds node type `consensus`. **(ADR-118 — Implemented, migration `0086`)** adds the nullable `rework_baseline integer` (attempt number at which the node's current rework epoch began; `NULL ⇒ 0`; effective attempts = `attempt − (rework_baseline ?? 0)`). | `runs.id`, `users.id` (takeover owner)                               |
 | `run_cost_rollups`            | **(ADR-087 — Implemented, migration `0047`; `by_runner` ADR-117, migration `0083`)** Derived token rollup per run, reconciled from `.maister/<project>/runs/<runId>/cost.jsonl`. Stores token totals by kind, resume-tax totals, per-model breakdown (`by_model`), per-runner breakdown (`by_runner`, keyed `"<adapter>/<model>"`), and source cursor; no duration columns.                                                                                | `runs.id`, `projects.id`, optional `flows.id`, optional `tasks.id`         |
 | `node_attempt_cost_rollups`   | **(ADR-085 — Designed, migration `0047`)** Derived token rollup per graph node attempt/model, reconciled from enriched supervisor cost records stamped with `nodeAttemptId`.                                                                                                                                                | `runs.id`, `projects.id`, `node_attempts.id`                               |
 | `repo_delivery_rollups`       | **(ADR-134 — Implemented, migration `0098`)** Cached, path-cleaned daily target-branch delivery denominator, written only by the scheduled repository scanner and read by project Observatory.                                                                                                                         | `projects.id`                                                               |
-| `gate_results`                | **(M11a — Designed, migration `0010`)** Gate execution verdicts (`command_check`/`ai_judgment`/`human_review`/…).                                                                                                                                                                                                          | `runs.id`, `node_attempts.id`                                              |
-| `consensus_round_verdicts`    | **(M41 — Implemented, migration `0070`)** Per-round cross-verification verdict ledger for `consensus` nodes. Unique by node attempt, round, verifier, and target; malformed verifier output is persisted as failed-closed disagree evidence.                                                                                | `runs.id`, `node_attempts.id`                                              |
-| `artifact_instances`          | **(M12 — Implemented, migration `0015`)** Typed evidence index (diff/log/report/judgment/note/commit_set/checkpoint/preview/plan; + `mutation_report`, M29 — text column, no migration). Deterministic upsert PK.                                                                                                                                                                  | `runs.id`, `node_attempts.id`, self-ref `superseded_by_id`                 |
-| `artifact_projection_cursors` | **(M12 — Implemented, migration `0015`)** One projector cursor per run over `run.events.jsonl`. UNIQUE `(run_id, scope)`.                                                                                                                                                                                                  | `runs.id`                                                                  |
-| `hitl_requests`               | HITL prompts emitted during a run (M11a adds review-decision columns).                                                                                                                                                                                                                                                     | `runs.id`                                                                  |
+| `gate_results`                | **(Designed, migration `0010`)** Gate execution verdicts (`command_check`/`ai_judgment`/`human_review`/…).                                                                                                                                                                                                          | `runs.id`, `node_attempts.id`                                              |
+| `consensus_round_verdicts`    | **(Implemented, migration `0070`)** Per-round cross-verification verdict ledger for `consensus` nodes. Unique by node attempt, round, verifier, and target; malformed verifier output is persisted as failed-closed disagree evidence.                                                                                | `runs.id`, `node_attempts.id`                                              |
+| `artifact_instances`          | **(Implemented, migration `0015`)** Typed evidence index (diff/log/report/judgment/note/commit_set/checkpoint/preview/plan; + `mutation_report`, ADR-074 — text column, no migration). Deterministic upsert PK.                                                                                                                                                                  | `runs.id`, `node_attempts.id`, self-ref `superseded_by_id`                 |
+| `artifact_projection_cursors` | **(Implemented, migration `0015`)** One projector cursor per run over `run.events.jsonl`. UNIQUE `(run_id, scope)`.                                                                                                                                                                                                  | `runs.id`                                                                  |
+| `hitl_requests`               | HITL prompts emitted during a run (the graph engine adds review-decision columns).                                                                                                                                                                                                                                                     | `runs.id`                                                                  |
 | `review_comments`             | **(ADR-072 — Implemented, migration `0039`)** Line-anchored, 1-level-threaded review comments drafted at an open review gate. Root rows carry the anchor (`file_path`/`side`/`line`/`line_content`) + `open\|resolved` status; replies carry none (DB CHECK). | `runs.id`, `hitl_requests.id`, self-ref `parent_id`; `users.id` SET NULL (author/resolver) |
-| `gate_chat_messages`          | **(M30 — Implemented, migration `0041`)** Answer-only gate-chat turns at a `human`/`form` HITL pause (`role` user/agent, `seq` per pause, `mutation_reverted` L3 flag). Never resolves the HITL, never drives `→Running`. | `runs.id`, `hitl_requests.id` (cascade); `users.id` SET NULL (author) |
-| `assignments`                 | **(M13 — Implemented, migration `0018`)** Claimable work state for HITL, review, manual takeover, merge-conflict waits, and later external waits. Runtime creation and board/run-detail surfaces are wired for the implemented wait classes.                                                                               | `projects.id`, `runs.id`, optional `tasks.id`, optional `hitl_requests.id` |
-| `assignment_events`           | **(M13 — Implemented, migration `0018`)** Append-only assignment lifecycle and ownership event ledger.                                                                                                                                                                                                                     | `assignments.id`, `projects.id`, `runs.id`, optional `actor_identities.id` |
-| `capability_imports`          | **(M14 — Implemented, migration `0019`)** Git-pinned capability import ledger. Mirrors `flow_revisions`. UNIQUE `(project_id, capability_ref_id, resolved_revision)`. Two-phase install (`Installing → Installed/Failed`). Trust-gated `setup.sh`. **(Implemented, ADR-088)** gains nullable `package_install_id` FK.                                                                              | `projects.id`                                                              |
+| `gate_chat_messages`          | **(Implemented, migration `0041`)** Answer-only gate-chat turns at a `human`/`form` HITL pause (`role` user/agent, `seq` per pause, `mutation_reverted` L3 flag). Never resolves the HITL, never drives `→Running`. | `runs.id`, `hitl_requests.id` (cascade); `users.id` SET NULL (author) |
+| `assignments`                 | **(Implemented, migration `0018`)** Claimable work state for HITL, review, manual takeover, merge-conflict waits, and later external waits. Runtime creation and board/run-detail surfaces are wired for the implemented wait classes.                                                                               | `projects.id`, `runs.id`, optional `tasks.id`, optional `hitl_requests.id` |
+| `assignment_events`           | **(Implemented, migration `0018`)** Append-only assignment lifecycle and ownership event ledger.                                                                                                                                                                                                                     | `assignments.id`, `projects.id`, `runs.id`, optional `actor_identities.id` |
+| `capability_imports`          | **(Implemented, migration `0019`)** Git-pinned capability import ledger. Mirrors `flow_revisions`. UNIQUE `(project_id, capability_ref_id, resolved_revision)`. Two-phase install (`Installing → Installed/Failed`). Trust-gated `setup.sh`. **(Implemented, ADR-088)** gains nullable `package_install_id` FK.                                                                              | `projects.id`                                                              |
 | `package_sources`             | **(Implemented — ADR-088, migration `0048`)** Platform package-source catalog: source URL/path (UNIQUE), enabled flag, cached `discovered` snapshot jsonb, `last_checked_at`. **(ADR-132, `0097`)** `kind` (`git`\|`local`, default `git`) + `base_branch` (nullable publish PR base).                                                                              | —                                                                          |
 | `package_installs`            | **(Implemented — ADR-088, migration `0048`)** Immutable installed package revisions. UNIQUE `(source_url, name, resolved_revision)`. Manifest + content inventory jsonb; two-phase `package_status`; package-level `trust_status`.                                                                              | —                                                                          |
 | `project_package_attachments` | **(Implemented — ADR-088, migration `0048`)** Per-project package enablement. UNIQUE `(project_id, package_name)`. FK to `package_installs` (restrict) + `projects` (cascade).                                                                              | `projects.id`, `package_installs.id`                                       |
-| `local_packages`              | **(Implemented — ADR-096, migration `0057`)** Flow Studio Phase C editable local packages (Variant B): git-backed `working_dir` (server-only), `slug` UNIQUE, `status`, fork lineage (`source_install_id`/`source_repo_url`/`source_ref`/`branch_name`), `last_cut_install_id`, session lock (`locked_by_*`/`lock_expires_at`). **(M36, migration `0058`)** `project_id` (FK `projects`, CASCADE, nullable) + `is_default` for the per-project default virtual package (partial-unique `(project_id) WHERE is_default`). **(ADR-132, `0097`)** `sync_state` jsonb (nullable durable upstream-sync intent). **(Canonical Create Flow, `0115`)** `creation_state` jsonb (nullable private DB/filesystem/git operation journal; non-null blocks mutable package operations until recovery). | `package_installs.id`, `users.id`, `projects.id`                           |
-| `flow_graph_layouts`          | **(Removed — migration `0030`, ADR-064.)** Was a per-project graph-view position store (M22, migration `0024`); superseded by the authored `flow.yaml` `presentation` section. No table.                                                                                            | —                             |
-| `scheduler_jobs`              | **(M24 — Implemented, migration `0027`)** Durable fixed-interval scheduler job definitions. **(ADR-134 — Implemented, migration `0098`)** adds the system-managed per-project `repo_delivery_scan` kind. Atomic due-job claim advances `next_run_at` and creates one attempt.                                                                                                      | optional `projects.id`                                                     |
-| `scheduler_job_runs`          | **(M24 — Implemented, migration `0027`)** Scheduler attempt ledger with status, lease expiry, summary, and error fields. Expired `Claimed`/`Running` attempts are reaped before new claims.                                                                                                                                         | `scheduler_jobs.id`                                                        |
-| `agent_schedules`             | **(M24 table, reworked M34 — Implemented, migration `0049`; ADR-139 telemetry, `0104`)** Per-agent cron/event trigger bindings. The dead M24 `agent_ref`/`scheduler_jobs.id`/`desired_state` columns were dropped; now a real `agent_id` FK plus `trigger_type` (`cron\|event`), `cron_expr`/`timezone`/`next_fire_at` (cron rows), `event_match` jsonb (event rows), and fenced safe latest-attempt telemetry. Fired by the seeded `agent_tick.dispatcher` and the `agent_triggers` domain-event consumer. | `projects.id`, `agents.id`, optional `runs.id`                    |
-| `run_schedules`               | **(M28 — Implemented, migration `0038`)** User-facing cron schedules: 5-field `cron_expr` + IANA `timezone`, overlap policy (`skip\|queue_one\|start_anyway`), precomputed `next_fire_at`, non-stacking `queue_one_pending` catch-up flag, last-fire feedback. Fired by the seeded `run_schedule.dispatcher` job (ADR-071).            | `projects.id`, `tasks.id`, optional `platform_acp_runners.id`, `runs.id`, `users.id` |
+| `local_packages`              | **(Implemented — ADR-096, migration `0057`)** Flow Studio Phase C editable local packages (Variant B): git-backed `working_dir` (server-only), `slug` UNIQUE, `status`, fork lineage (`source_install_id`/`source_repo_url`/`source_ref`/`branch_name`), `last_cut_install_id`, session lock (`locked_by_*`/`lock_expires_at`). **(Migration `0058`)** `project_id` (FK `projects`, CASCADE, nullable) + `is_default` for the per-project default virtual package (partial-unique `(project_id) WHERE is_default`). **(ADR-132, `0097`)** `sync_state` jsonb (nullable durable upstream-sync intent). **(Canonical Create Flow, `0115`)** `creation_state` jsonb (nullable private DB/filesystem/git operation journal; non-null blocks mutable package operations until recovery). | `package_installs.id`, `users.id`, `projects.id`                           |
+| `flow_graph_layouts`          | **(Removed — migration `0030`, ADR-064.)** Was a per-project graph-view position store (migration `0024`); superseded by the authored `flow.yaml` `presentation` section. No table.                                                                                            | —                             |
+| `scheduler_jobs`              | **(Implemented, migration `0027`)** Durable fixed-interval scheduler job definitions. **(ADR-134 — Implemented, migration `0098`)** adds the system-managed per-project `repo_delivery_scan` kind. Atomic due-job claim advances `next_run_at` and creates one attempt.                                                                                                      | optional `projects.id`                                                     |
+| `scheduler_job_runs`          | **(Implemented, migration `0027`)** Scheduler attempt ledger with status, lease expiry, summary, and error fields. Expired `Claimed`/`Running` attempts are reaped before new claims.                                                                                                                                         | `scheduler_jobs.id`                                                        |
+| `agent_schedules`             | **(Scheduler-clock table reworked for platform agents — Implemented, migration `0049`; ADR-139 telemetry, `0104`)** Per-agent cron/event trigger bindings. The dead original `agent_ref`/`scheduler_jobs.id`/`desired_state` columns were dropped; now a real `agent_id` FK plus `trigger_type` (`cron\|event`), `cron_expr`/`timezone`/`next_fire_at` (cron rows), `event_match` jsonb (event rows), and fenced safe latest-attempt telemetry. Fired by the seeded `agent_tick.dispatcher` and the `agent_triggers` domain-event consumer. | `projects.id`, `agents.id`, optional `runs.id`                    |
+| `run_schedules`               | **(Implemented, migration `0038`)** User-facing cron schedules: 5-field `cron_expr` + IANA `timezone`, overlap policy (`skip\|queue_one\|start_anyway`), precomputed `next_fire_at`, non-stacking `queue_one_pending` catch-up flag, last-fire feedback. Fired by the seeded `run_schedule.dispatcher` job (ADR-071).            | `projects.id`, `tasks.id`, optional `platform_acp_runners.id`, `runs.id`, `users.id` |
 | `scheduled_task_launches`     | **(ADR-139 — Implemented, migration `0104`)** Recoverable one-time task-launch intent with immutable task display snapshot, local-time/UTC contract, revision fence, safe outcome, and retry/claim state. It is driven by the existing `run_schedule.dispatcher`, never by the supervisor. | `projects.id`, optional `tasks.id`, optional `users.id` |
 | `scheduled_task_launch_attempts` | **(ADR-139 — Implemented, migration `0104`)** Durable pre-Git reservation: fixed Run identity, task attempt number, managed branch/path, request hash, and claim fence. | `scheduled_task_launches.id` |
 | `scheduled_task_launch_events` | **(ADR-139 — Implemented, migration `0104`)** Append-only safe audit ledger for intent creation, claim, retry, cancellation, launch, and terminal failure. | `scheduled_task_launches.id` |
-| `authored_capabilities`       | **(M25 — Implemented, migration `0028`)** Project-local authored rule/skill/flow identity with draft/published pointers and archive state. UNIQUE `(project_id, kind, slug)`. **(ADR-149 — Implemented, migration `0118`)** session edit-lock columns (`locked_by_user_id` FK `users` SET NULL, `locked_by_session`, `lock_expires_at`; nullable, no new index; twin of `local_packages`). | `projects.id`, `users.id`                                                  |
-| `authored_capability_revisions` | **(M25 — Implemented, migration `0028`)** Draft/Published/Archived revision snapshots with `draft_version`, canonical content hash, body, manifest, and immutable published revisions.                                                                                                                                                | `authored_capabilities.id`                                                 |
+| `authored_capabilities`       | **(Implemented, migration `0028`)** Project-local authored rule/skill/flow identity with draft/published pointers and archive state. UNIQUE `(project_id, kind, slug)`. **(ADR-149 — Implemented, migration `0118`)** session edit-lock columns (`locked_by_user_id` FK `users` SET NULL, `locked_by_session`, `lock_expires_at`; nullable, no new index; twin of `local_packages`). | `projects.id`, `users.id`                                                  |
+| `authored_capability_revisions` | **(Implemented, migration `0028`)** Draft/Published/Archived revision snapshots with `draft_version`, canonical content hash, body, manifest, and immutable published revisions.                                                                                                                                                | `authored_capabilities.id`                                                 |
 | `webhook_subscriptions`       | **(Implemented, ADR-077, migration `0041`)** Operator-configured delivery endpoints. `project_id = NULL` = platform scope; non-null = project scope. Secrets stored as `env:NAME` refs only. Usage-guarded DELETE.                                                                                                                              | optional `projects.id`                                                     |
 | `webhook_events`              | **(Implemented, ADR-077, migration `0041`)** Transactional outbox. One row per curated lifecycle event, written in the same transaction as the triggering state transition. `fanout_at IS NULL` is the fanout cursor.                                                                                                                           | `projects.id`, `runs.id`                                                   |
 | `webhook_deliveries`          | **(Implemented, ADR-077, migration `0041`)** Per-subscription delivery state. UNIQUE `(subscription_id, event_id)`. Status `pending` to `delivered` or `dead`. Retry: up to 8 attempts over ~41.5 h.                                                                                                                                          | `webhook_events.id`, `webhook_subscriptions.id`                            |
@@ -120,7 +120,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `inbox_items`                 | **(ADR-083 — Implemented, migration `0043`)** Per-recipient inbox fanned out from comment/mention events; `read_at` read marker; `source_ref` jsonb.                                                                                                                                                                                    | `projects.id`, `tasks.id`                                                  |
 ## `users`
 
-(Introduced in M9 — migration `0004_petite_gamora.sql`.)
+(Introduced with the auth layer — migration `0004_petite_gamora.sql`.)
 
 ```ts
 {
@@ -177,7 +177,7 @@ the user to `/change-password` until they set a new password (cleared by the
 
 ## `accounts`
 
-(Introduced in M9 — Drizzle adapter contract for Auth.js v5.)
+(Introduced with the auth layer — Drizzle adapter contract for Auth.js v5.)
 
 ```ts
 {
@@ -188,12 +188,12 @@ the user to `/change-password` until they set a new password (cleared by the
 }
 ```
 
-Stores OAuth provider account links. MAIster M9 ships credentials-only;
+Stores OAuth provider account links. MAIster ships credentials-only auth;
 this table is populated by Auth.js when OAuth providers are added (Phase 2).
 
 ## `sessions`
 
-(Introduced in M9 — Drizzle adapter contract for Auth.js v5.)
+(Introduced with the auth layer — Drizzle adapter contract for Auth.js v5.)
 
 ```ts
 {
@@ -205,7 +205,7 @@ this table is populated by Auth.js when OAuth providers are added (Phase 2).
 
 ## `verification_tokens`
 
-(Introduced in M9 — Drizzle adapter contract for Auth.js v5.)
+(Introduced with the auth layer — Drizzle adapter contract for Auth.js v5.)
 
 ```ts
 {
@@ -217,7 +217,7 @@ this table is populated by Auth.js when OAuth providers are added (Phase 2).
 
 ## `project_members`
 
-(Introduced in M9 — migration `0004_petite_gamora.sql`.)
+(Introduced with the auth layer — migration `0004_petite_gamora.sql`.)
 
 ```ts
 {
@@ -258,7 +258,7 @@ as implicit `owner` of every project.
   maisterYamlPath?,              // nullable for legacy DB-only rows;
                                  //   new registration bootstraps maister.yaml
   defaultRunnerId?,              // platform runner override; null = inherit
-  promotionMode?,                // M18 (text, migration 0021) project-default
+  promotionMode?,                // (text, migration 0021) project-default
                                  //   promotion mode (local_merge | pull_request);
                                  //   source for the launch-time override chain (§3.4)
   deliveryPolicyDefault?,        // ADR-085 (jsonb, migration 0047) project-default
@@ -379,9 +379,9 @@ shape validation is application-owned. Migration
 Migration `0045` also backfills rows that exactly matched the old all-adapter
 default; custom compatibility choices are not rewritten.
 
-## `platform_mcp_servers` (Designed, M27)
+## `platform_mcp_servers` (Designed)
 
-**(M27 — Designed, migration `0033+`.)** Platform-admin-managed MCP server
+**(Designed, migration `0033+`.)** Platform-admin-managed MCP server
 catalog. Mirrors `platform_acp_runners` in admin CRUD surface and usage-guard
 semantics. Secrets are stored **only** as `env:NAME` references — values are
 never stored and are resolved supervisor-side.
@@ -463,7 +463,7 @@ migrations `0044` and `0045`; existing custom rows are not silently widened.
 
 ## `project_flow_roles`
 
-(M13, migration `0018`.)
+(Implemented, migration `0018`.)
 
 ```ts
 {
@@ -486,7 +486,7 @@ re-adding the same ref reactivates it instead of creating a second logical role.
 
 ## `actor_identities`
 
-(M13, migration `0018`.)
+(Implemented, migration `0018`.)
 
 ```ts
 {
@@ -504,7 +504,7 @@ re-adding the same ref reactivates it instead of creating a second logical role.
 }
 ```
 
-M13 web routes resolve Auth.js sessions to `kind = 'user'`. API-token,
+Web routes resolve Auth.js sessions to `kind = 'user'`. API-token,
 internal-agent, and system actors are modeled for attribution and external
 operation ingress. The partial unique index
 `actor_identities_project_user_uq` applies only to `kind = 'user'`, giving one
@@ -539,14 +539,14 @@ their owner `userId` attribution separately.
                                  //   the ENABLED revision; refreshed on
                                  //   enable/upgrade/rollback)
   schemaVersion,
-  enabledRevisionId?,            // M10 FK -> flow_revisions.id (set null);
+  enabledRevisionId?,            // FK -> flow_revisions.id (set null);
                                  //   the project's currently enabled revision
-  enablementState,               // M10 enum: Installed | Enabled |
+  enablementState,               // enum: Installed | Enabled |
                                  //   UpdateAvailable | Deprecated | Disabled |
                                  //   Failed (default Installed)
-  trustStatus,                   // M10 enum: untrusted | trusted |
+  trustStatus,                   // enum: untrusted | trusted |
                                  //   trusted_by_policy (default untrusted)
-  versionBinding,                // (M27 — Designed, migration 0033+)
+  versionBinding,                // (Designed, migration 0033+)
                                  //   'pinned' | 'latest' (DEFAULT 'latest').
                                  //   pinned → resolves flows.enabled_revision_id;
                                  //   latest → newest PUBLISHED flow_revisions row
@@ -558,14 +558,14 @@ their owner `userId` attribution separately.
 
 UNIQUE `(projectId, flowRefId)`.
 
-M10 (ADR-021) repurposed `flows` as the project **enablement pointer**:
+ADR-021 repurposed `flows` as the project **enablement pointer**:
 `source/version/revision/installedPath/manifest/schemaVersion` are a
 denormalized cache of the _enabled_ revision; runtime byte authority is
 `flow_revisions` via `runs.flow_revision_id`.
 
 ## `flow_graph_layouts` (removed — ADR-064)
 
-**Dropped in migration `0030`.** This M22 table (migration `0024`, ADR-051) held
+**Dropped in migration `0030`.** This table (migration `0024`, ADR-051) held
 per-project flow-graph node positions written by a runtime drag-persist route.
 [ADR-064](decisions.md#adr-064-authored-flow-graph-layout-in-the-flowyaml-presentation-section)
 moved authored node positions into the `flow.yaml` `presentation` section
@@ -576,7 +576,7 @@ and no layout write route; layout editing is a flow-editor concern on the source
 
 ## `flow_revisions`
 
-Immutable, globally content-addressed Flow package revision (M10, ADR-021).
+Immutable, globally content-addressed Flow package revision (ADR-021).
 Shared across projects — the system cache `~/.maister/flows/<id>@<sha>/` is not
 project-scoped.
 
@@ -594,12 +594,12 @@ project-scoped.
   schemaVersion,
   engineMin?, engineMax?,        // compat range (enforced at enablement)
   contract (jsonb)?,             // { capabilities, gates, artifacts,
-                                 //   external_ops } — opaque in M10
+                                 //   external_ops } — opaque contract lists
   installedPath,                 // ~/.maister/flows/<id>@<short_sha>/
   setupStatus,                   // not_required | pending | done | failed
   packageStatus,                 // GLOBAL lifecycle: Discovered | Installing |
                                  //   Installed | Failed | Removed
-  execTrust,                     // (M27 — Designed, migration 0033+)
+  execTrust,                     // (Designed, migration 0033+)
                                  //   'untrusted' | 'trusted' (DEFAULT 'untrusted').
                                  //   Second independent trust axis — EXECUTABLE.
                                  //   Gates runRevisionSetup (setup.sh) AND MCP
@@ -639,7 +639,7 @@ Multi-flow package grouping above the per-revision substrate. Process contract:
   `manifest_digest`, `installed_path`, `package_status`
   (`Installing|Installed|Failed|Removed`, two-phase), `trust_status`
   (package-level decision; fan-out writes member rows), timestamps. UNIQUE
-  `(source_url, name, resolved_revision)`. **(M39 Stream B — Implemented, ADR-107,
+  `(source_url, name, resolved_revision)`. **(Implemented — ADR-107,
   migration `0074`)** `source_local_package_id` (FK `local_packages`, SET NULL) +
   `source_commit_sha` (nullable) — the back-link a centralized cut records (the
   local package + its working-dir HEAD it was cut from) so a project's attached
@@ -677,13 +677,13 @@ Editable local packages (Flow Studio Phase C, Variant B). Process contract:
   edit lock (mirrors `runs.keepalive_until`): `locked_by_user_id` (FK `users`,
   SET NULL), `locked_by_session`, `lock_expires_at` (nullable; acquired on
   editor open, refreshed by keep-alive, lazy stale-takeover, no sweeper).
-  `created_by` (FK `users`, SET NULL), timestamps. **(M36, migration `0058`)**
+  `created_by` (FK `users`, SET NULL), timestamps. **(Migration `0058`)**
   `project_id` (FK `projects`, CASCADE; **nullable** — NULL for named,
   platform-scoped packages) + `is_default` (bool, default `false`): the
   per-project default "virtual" local package element-level forks land in. A
   partial-unique index `local_packages_default_per_project` on `(project_id)
-  WHERE is_default` enforces at most one default per project. **(M39 Stream B —
-  Implemented, ADR-113, migration `0074`)** `last_pushed_branch` / `last_pr_url`
+  WHERE is_default` enforces at most one default per project. **(Implemented —
+  ADR-113, migration `0074`)** `last_pushed_branch` / `last_pr_url`
   (both nullable) — the PR-to-source publish result (the stable
   `maister/<pkg-slug>` branch last pushed + the opened PR URL).
   **(ADR-132, migration `0097`)** `sync_state` (jsonb, nullable) — durable
@@ -742,7 +742,7 @@ UNIQUE `(projectId, source, kind, capabilityRefId)`. Index
 `capability_records_project_kind_idx` supports launch-options lookups by
 project/kind/selectability.
 
-M25 authored catalog projection writes authored rule/skill rows here as
+The authored-catalog projection writes authored rule/skill rows here as
 `source='project'` with `material.origin='authored'`,
 `material.authoredCapabilityId`, `material.revisionId`, and
 `material.contentHash`. Because config-owned project rows also use
@@ -750,7 +750,7 @@ M25 authored catalog projection writes authored rule/skill rows here as
 `material.origin='authored'`; same-kind/slug collisions with non-authored
 project rows are refused before publish.
 
-## Scheduler tables (Implemented, M24)
+## Scheduler tables (Implemented)
 
 See [`db/scheduler-domain.md`](db/scheduler-domain.md) for the ERD and
 [`system-analytics/scheduler.md`](system-analytics/scheduler.md) for the
@@ -760,7 +760,7 @@ state machine.
 scheduler_jobs {
   id, projectId?,
   jobKind: 'system_sweep' | 'command' | 'agent_tick' | 'flow_run'
-         | 'run_schedule'           // M28 — singleton dispatcher
+         | 'run_schedule'           // singleton dispatcher
          | 'webhook_delivery'       // ADR-077 — singleton drainer
          | 'domain_event_dispatch', // ADR-086 — singleton dispatcher
          | 'auto_launch_triaged'    // ADR-112 — singleton dispatcher
@@ -768,7 +768,7 @@ scheduler_jobs {
          | 'repo_delivery_scan',    // ADR-134 — per-project scanner
          | 'pr_state_scan',         // ADR-140 — per-project scanner
   target,                         // jsonb; validated per jobKind
-  cadenceIntervalSeconds,          // fixed-interval only in M24
+  cadenceIntervalSeconds,          // fixed-interval only at introduction
   nextRunAt, lastFiredAt?,
   disabledAt?,
   budgetKey?,
@@ -787,8 +787,8 @@ scheduler_job_runs {
   errorCode?, errorMessage?
 }
 
-agent_schedules {                  // M34 rework (migration 0049) —
-  id, projectId,                   //   the M24 shape was dead code (zero readers)
+agent_schedules {                  // rework (migration 0049) —
+  id, projectId,                   //   the original bridge shape was dead code (zero readers)
   agentId,                         // FK -> agents.id CASCADE (was text agentRef)
   triggerType: 'cron' | 'event'    // 'manual'/'continuous' dropped (Mγ later)
              | 'mention',          // ADR-151 (Implemented) — @<agentId> summon grant;
@@ -819,7 +819,7 @@ attempt. `agent_schedules` is indexed on `(project_id, agent_id)` and
 `(trigger_type, enabled, next_fire_at)` for project lookups and the cron
 dispatcher scan.
 
-## Run schedule tables (Implemented, M28)
+## Run schedule tables (Implemented)
 
 See [`db/scheduler-domain.md`](db/scheduler-domain.md) for the ERD,
 [`system-analytics/run-schedules.md`](system-analytics/run-schedules.md) for
@@ -914,14 +914,14 @@ time. See [`db/scheduler-domain.md`](db/scheduler-domain.md) for the ERD and
 [`system-analytics/project-automations.md`](system-analytics/project-automations.md)
 for state, recovery, and privacy rules.
 
-## Platform agent tables (Implemented — ADR-089/ADR-090, migrations `0049`/`0050`/`0051`; M39 package re-key Implemented — ADR-106, migration `0068`)
+## Platform agent tables (Implemented — ADR-089/ADR-090, migrations `0049`/`0050`/`0051`; package re-key Implemented — ADR-106, migration `0068`)
 
-The M34 agent catalog (package-source rework): `maister-agents/<stem>.md`
+The platform-agent catalog (package-source rework): `maister-agents/<stem>.md`
 definitions INSIDE flow packages (the catalog/registry/effective read paths
-converged onto `maister-agents/` in M39 — ADR-105), projected into the index from
+converged onto `maister-agents/` — ADR-105), projected into the index from
 each package's newest Installed revision; attachments and per-project overrides;
 trigger bindings.
-**(Implemented — ADR-106, migration `0068`)** M39 re-keys the catalog from per-flow
+**(Implemented — ADR-106, migration `0068`)** The rework re-keys the catalog from per-flow
 to **per-package**: `flow_ref_id` → `package_name` (= `package_installs.name`), id
 `<packageName>:<stem>`, registration scanning the package root
 `package_installs.installed_path/maister-agents/`, plus new columns `flow_ref`
@@ -944,7 +944,7 @@ agents {
   workspaceRef?,                   // 'trigger' | branch (repo_read only)
   mode: 'session' | 'subagent',
   triggers (jsonb),                // subset of manual|cron|domain_event|webhook|flow
-  capabilityProfile? (jsonb),      // M14 shape; materialize-only (ADR-041 boundary)
+  capabilityProfile? (jsonb),      // shape; materialize-only (ADR-041 boundary)
   riskTier: 'read_only' | 'standard' | 'destructive',
   recommended? (jsonb),            // {runner?, branch_base?, cron?{expr,timezone}, events?,
                                    //   executionPolicy?{autoApply,onBudgetBreach}} — seed/pre-fill (ADR-106)
@@ -1023,7 +1023,7 @@ and `agent_schedules` CASCADE-delete; `runs.agent_id` is `ON DELETE SET NULL`
 (startup reconcile + admin `POST /api/admin/agents/resync`) repopulates the
 catalog from installed packages.
 
-## Authored catalog tables (Implemented, M25)
+## Authored catalog tables (Implemented)
 
 See [`system-analytics/capability-catalog.md`](system-analytics/capability-catalog.md).
 
@@ -1035,7 +1035,7 @@ authored_capabilities {
   originType?, originRefId?,
   currentDraftRevisionId?,
   currentPublishedRevisionId?,
-  sourceFlowRefId?,              // (M27 — Designed, migration 0033+)
+  sourceFlowRefId?,              // (Designed, migration 0033+)
                                  //   nullable text. Links an authored flow-kind
                                  //   draft (created by editing an installed flow)
                                  //   to its originating flows.flow_ref_id. When
@@ -1076,15 +1076,15 @@ draft updates increment `draft_version` and stale callers receive `CONFLICT`.
   id, projectId, title, prompt,
   number,                        // ADR-083 (Implemented, 0043): per-project monotonic,
                                  //   UNIQUE (project_id, number); KEY-N = task_key-number
-  flowId?,                       // FK -> flows.id; NULLABLE (M34,
+  flowId?,                       // FK -> flows.id; NULLABLE (agent runs,
                                  //   migration 0049) — simple-intent tasks are
                                  //   created flowless and classify `unconfigured`
                                  //   until a triage verdict or the launch popover
                                  //   fills the flow
   status: 'Backlog' | 'InFlight' | 'Done' | 'Abandoned',
-  stage: 'Backlog' | 'Prepare',  // M9 board column (DEFAULT 'Backlog')
+  stage: 'Backlog' | 'Prepare',  // board column (DEFAULT 'Backlog')
   attemptNumber,                 // monotonic per task, starts at 1
-  triageStatus?,                 // M34: 'triaged' | NULL (untriaged);
+  triageStatus?,                 // 'triaged' | NULL (untriaged);
                                  //   stamped by the ext triage op, cleared by
                                  //   "Send to triage".
                                  //   (Implemented — ADR-112) Drizzle text enum
@@ -1092,15 +1092,15 @@ draft updates increment `draft_version` and stale callers receive `CONFLICT`.
                                  //   only; plain 'text' col, no DB CHECK — no
                                  //   migration); 'flagged' = held / needs human
                                  //   review (dup or unroutable), not launchable
-  runnerId?,                     // M34: verdict runner, FK SET NULL;
+  runnerId?,                     // verdict runner, FK SET NULL;
                                  //   board Launch passes it as launchOverride
-  targetBranch?,                 // M34: verdict target branch (text)
-  promotionMode?,                // M34: 'local_merge' | 'pull_request'
-  launchMode?,                   // M37 (Implemented, ADR-098, migration 0060):
+  targetBranch?,                 // verdict target branch (text)
+  promotionMode?,                // 'local_merge' | 'pull_request'
+  launchMode?,                   // (Implemented, ADR-098, migration 0060):
                                  //   'auto' | 'manual'; nullable. Stamped on
                                  //   `run_plan`-emitted as-plan child tasks so the
                                  //   auto-launcher and cancel-cascade key on it.
-  delegationSpec?,               // M37 (Implemented, ADR-098, migration 0060): jsonb
+  delegationSpec?,               // (Implemented, ADR-098, migration 0060): jsonb
                                  //   NULL. The as-plan delegation spec (target +
                                  //   resolved settings) captured for a child task
                                  //   submitted via `run_plan`.
@@ -1127,7 +1127,7 @@ draft updates increment `draft_version` and stale callers receive `CONFLICT`.
 }
 ```
 
-`stage` was added in M9 (migration `0004_petite_gamora.sql`). It drives
+`stage` was added by migration `0004_petite_gamora.sql`. It drives
 the board's sub-column within the Backlog bucket (`Backlog` = unstarted,
 `Prepare` = marked for preparation). It is independent of `status`
 (which is the lifecycle axis). Default is `'Backlog'`.
@@ -1279,54 +1279,54 @@ unread badge and inbox panel.
 {
   id,
   runKind: 'flow' | 'scratch'
-         | 'agent',              // M34 (migration 0049); DEFAULT 'flow'
-  agentId?,                      // M34: FK -> agents.id SET NULL;
+         | 'agent',              // (migration 0049); DEFAULT 'flow'
+  agentId?,                      // FK -> agents.id SET NULL;
                                  //   set iff runKind='agent'
-  triggerSource?,                // M34: 'manual' | 'cron'
+  triggerSource?,                // 'manual' | 'cron'
                                  //   | 'domain_event' | 'webhook' | 'flow'
                                  //   | 'scheduled' (ADR-139)
-  triggerEventId?,               // M34: bigint domain_events.id —
+  triggerEventId?,               // bigint domain_events.id —
                                  //   partial-UNIQUE claim key (agent_id,
                                  //   trigger_event_id) for outbox no-dup
-  triggerPayload?,               // M34: jsonb webhook/event context,
+  triggerPayload?,               // jsonb webhook/event context,
                                  //   bounded <= 32 KB at the boundary
   scheduledLaunchId?,            // ADR-139 (0104): FK -> scheduled_task_launches.id
                                  //   SET NULL; UNIQUE when set, so one intent
                                  //   can link exactly one normal Run
   agentScheduleId?,              // ADR-139 (0104): FK -> agent_schedules.id
                                  //   SET NULL; agent binding provenance
-  agentWorkspace?,               // M34 (migration 0052): 'none' | 'repo_read'
+  agentWorkspace?,               // (migration 0052): 'none' | 'repo_read'
                                  //   | 'worktree' — snapshot of the run's
                                  //   effective workspace axis at spawn;
                                  //   terminal L3 enforcement gates off this,
                                  //   not the mutable catalog index
   taskId?,                       // nullable for scratch runs
-  projectId?,                    // M36 (migration 0059): NULLABLE — NULL for the
+  projectId?,                    // (migration 0059): NULLABLE — NULL for the
                                  //   project-less local-package assistant run
                                  //   (ADR-097); set for every other run
-  localPackageId?,               // M36 (migration 0059): FK -> local_packages.id
+  localPackageId?,               // (migration 0059): FK -> local_packages.id
                                  //   CASCADE; set iff project-less scratch run
                                  //   (launch-time snapshot read by terminal/read
                                  //   paths)
   flowId?,                       // nullable for scratch runs
-  runnerId,                      // M42 (Implemented, 0080-0082): moved to run_sessions (dropped 0082)
-  runnerResolutionTier,          // M42 (Implemented, 0080-0082): moved to run_sessions (dropped 0082)
-  capabilityAgent,               // M42 (Implemented, 0080-0082): moved to run_sessions (dropped 0082)
-  runnerSnapshot,                // M42 (Implemented, 0080-0082): moved to run_sessions (dropped 0082)
+  runnerId,                      // (Implemented, 0080-0082): moved to run_sessions (dropped 0082)
+  runnerResolutionTier,          // (Implemented, 0080-0082): moved to run_sessions (dropped 0082)
+  capabilityAgent,               // (Implemented, 0080-0082): moved to run_sessions (dropped 0082)
+  runnerSnapshot,                // (Implemented, 0080-0082): moved to run_sessions (dropped 0082)
   status: 'Pending' | 'Running' | 'NeedsInput' | 'NeedsInputIdle'
-        | 'HumanWorking'         // M11b manual-takeover claim (migration 0011, additive)
-        | 'WaitingOnChildren'    // M37 (Implemented, ADR-098, migration 0060) orchestrator
-                                 //   and M41 consensus parked on child drafts;
+        | 'HumanWorking'         // manual-takeover claim (migration 0011, additive)
+        | 'WaitingOnChildren'    // (Implemented, ADR-098, migration 0060) orchestrator
+                                 //   and consensus parked on child drafts;
                                  //   holds NO scheduler slot
         | 'Review' | 'Crashed' | 'Done' | 'Abandoned' | 'Failed',
-  acpSessionId?,                 // resume handle; M42 (Implemented, 0080): moves to
+  acpSessionId?,                 // resume handle; (Implemented, 0080): moves to
                                  //   run_sessions (one acp_session_id per session)
   currentStepId?,                // id of the step the runner is on
   flowVersion,                   // Flow tag snapshot; "scratch" sentinel for
                                  //   scratch runs
   flowRevision,                  // Flow git SHA snapshot; "manual" sentinel
                                  //   for scratch runs
-  flowRevisionId?,               // M10 FK -> flow_revisions.id (set null).
+  flowRevisionId?,               // FK -> flow_revisions.id (set null).
                                  //   The pinned immutable revision; the runner
                                  //   resolves manifest + installed_path from
                                  //   THIS row, so upgrade/rollback of the
@@ -1337,7 +1337,7 @@ unread badge and inbox panel.
   createdByUserId?,              // nullable FK -> users.id; launch/audit owner
   checkpointAt?,                 // when graceful checkpoint happened
   keepaliveUntil?,               // 30-min sliding window in NeedsInput
-  resumeStartedAt?,              // M19 (timestamptz, migration 0015) durable
+  resumeStartedAt?,              // (timestamptz, migration 0015) durable
                                  //   Recover in-flight marker + reconcile grace
                                  //   anchor; see below
   resumeRequestedAt?,            // ADR-121 (timestamptz, migration 0087) NULL; set
@@ -1349,10 +1349,10 @@ unread badge and inbox panel.
                                  //   funnel-minted runs. The precise per-project
                                  //   liveAuto counter (INV-9). NULL ⇒ manual / scratch
                                  //   / resume (incl. ADR-119 force-relaunch).
-  resumeTargetStepId?,           // M19 (text, migration 0016) node id retained
+  resumeTargetStepId?,           // (text, migration 0016) node id retained
                                  //   at crash time for Recover; current_step_id
                                  //   is nulled on crash; see below
-  resolvedCapabilitySet?,        // (M27 — Designed, migration 0033+)
+  resolvedCapabilitySet?,        // (Designed, migration 0033+)
                                  //   jsonb NULL. Frozen at launch by launchRun;
                                  //   the runner reads this snapshot, never the
                                  //   live catalog. An edit or publish during a run
@@ -1382,7 +1382,7 @@ unread badge and inbox panel.
                                  //   scope/meter; notified[scope] makes WARN once-per
                                  //   -band idempotent (escalate/terminate idempotency
                                  //   is runs.status-derived). The run-tree index
-                                 //   runs_root_run_id_idx already exists (M37) — 0061
+                                 //   runs_root_run_id_idx already exists — 0061
                                  //   adds ONLY this column.
   agentConfig?,                  // (Implemented — ADR-111, migration 0071): jsonb NULL.
                                  //   IMMUTABLE resolved agent-config snapshot taken
@@ -1395,31 +1395,31 @@ unread badge and inbox panel.
                                  //   this run (stamped on every outcome). Decouples
                                  //   the sweep candidate set from rollup row state
                                  //   (no starvation; pre-0083 by_runner backfill).
-  parentRunId?,                  // M37 (Implemented, ADR-098, migration 0060):
+  parentRunId?,                  // (Implemented, ADR-098, migration 0060):
                                  //   FK -> runs.id ON DELETE SET NULL; the
                                  //   orchestrator run that delegated this child
                                  //   (as-run / as-task). NULL for top-level runs.
-  rootRunId?,                    // M37 (Implemented, ADR-098, migration 0060):
+  rootRunId?,                    // (Implemented, ADR-098, migration 0060):
                                  //   FK -> runs.id; the run-tree root (self for a
                                  //   top-level run). NULL on pre-migration rows.
-  delegationSnapshot?,           // M37 (Implemented, ADR-098, migration 0060): jsonb
+  delegationSnapshot?,           // (Implemented, ADR-098, migration 0060): jsonb
                                  //   NULL. Launch-time effective agent-definition of
                                  //   the catalog-resolved child — ONLY
                                  //   { agentDefinitionId, revisionId }. The resolved
                                  //   runner stays in runnerSnapshot, never duplicated
                                  //   here (skill-context rule 207).
-  launchMode?,                   // M37 (Implemented, ADR-098, migration 0060):
+  launchMode?,                   // (Implemented, ADR-098, migration 0060):
                                  //   'auto' | 'manual'; nullable
-  persistent,                    // M37 (Implemented, ADR-099, migration 0060):
+  persistent,                    // (Implemented, ADR-099, migration 0060):
                                  //   boolean NOT NULL DEFAULT false; an addressable
                                  //   long-lived child kept alive across child-terminal
                                  //   events for star-routed messaging (Phase 2 swarm
                                  //   layer-2 substrate).
-  addressableKey?,               // M37 (Implemented, ADR-099, migration 0060):
+  addressableKey?,               // (Implemented, ADR-099, migration 0060):
                                  //   text NULL; the star-routing address. UNIQUE per
                                  //   run-tree via the partial index
                                  //   runs_root_addressable_key_uq (WHERE persistent).
-  workspaceMode?,                // M37 (Implemented, ADR-099, migration 0060):
+  workspaceMode?,                // (Implemented, ADR-099, migration 0060):
                                  //   'own' | 'shared'; nullable. 'shared' joins the
                                  //   run-tree root worktree (delegated child only —
                                  //   a top-level 'shared' run is refused CONFIG).
@@ -1479,7 +1479,7 @@ on terminal transitions (`Review` / `Failed`). Scratch dialog state is stored in
 write the authenticated caller for active-workspace launched-by display and
 audit; v1 authorization remains project-role based, not owner-exclusive.
 
-**(M19 — Designed, migration `0015`, additive.)** `resumeStartedAt`
+**(Designed, migration `0015`, additive.)** `resumeStartedAt`
 (`timestamptz`, nullable) is the durable Recover in-flight marker and the
 reconcile grace anchor. The Recover path stamps it in the same transaction
 that flips `Crashed -> Running` (or `Crashed -> Pending` when the
@@ -1492,7 +1492,7 @@ The runner clears it to `NULL` on first progress; `crashRunningRun` also clears
 it so a re-crashed row stays clean. Cascade: lives on `runs`, dropped with the
 run row.
 
-**(M19 — Implemented, migration `0016`, additive.)** `resumeTargetStepId`
+**(Implemented, migration `0016`, additive.)** `resumeTargetStepId`
 (`text`, nullable) is the node id retained at crash time for operator Recover.
 `crashRunningRun` copies `currentStepId → resumeTargetStepId` and nulls
 `currentStepId`, so the clean-terminal read of `currentStepId` is preserved
@@ -1517,12 +1517,12 @@ and any promote-time override. The field is immutable after launch except for
 the explicit cancel action, which performs a CAS update from
 `trigger='auto_on_ready'` to `trigger='manual'` while the run is still in
 `Review`. Legacy rows with null snapshots read through the same compatibility
-mapping as `projects.deliveryPolicyDefault`; scratch runs keep the M18
+mapping as `projects.deliveryPolicyDefault`; scratch runs keep the existing
 `workspaces.promotionMode` behavior in this slice.
 
-## `run_sessions` (Implemented — M42, ADR-114, migration `0080`)
+## `run_sessions` (Implemented — ADR-114, migration `0080`)
 
-**(M42 — Implemented, ADR-114, migration `0080`.)** Per-`(run, session)` runner
+**(Implemented, ADR-114, migration `0080`.)** Per-`(run, session)` runner
 state — the SOLE source of truth for a run's runner(s). Migration `0080` only
 CREATEs this table; the run-level `runs.{runner_id, runner_resolution_tier,
 capability_agent, runner_snapshot, acp_session_id}` columns are dropped later in
@@ -1568,7 +1568,7 @@ stop, gate-chat, and diagnostics still target the correct ACP session).
   the selected runner id; provider secrets, env, auth tokens, API keys, sidecar
   auth refs, and full provider objects are never stored.
 
-### `flow_runner_remaps` per-slot binding refactor (M42)
+### `flow_runner_remaps` per-slot binding refactor (ADR-114)
 
 Migration `0081` re-keys `flow_runner_remaps` from per-step
 `(project_id, flow_revision_id, step_id, source_runner_id)` to per-slot
@@ -1587,7 +1587,7 @@ UI **after** the upgrade succeeds.
 
 ## Evaluation Lab tables (Implemented — ADR-142..147, migrations `0107`–`0114`)
 
-The Evaluation Lab (M46–M48) evolves the task-bound Experiment Studio into a
+The Evaluation Lab evolves the task-bound Experiment Studio into a
 project-level, package-sourced, multi-judge evaluation system. The full ERD and
 per-table field detail live in [`db/evaluations-domain.md`](db/evaluations-domain.md);
 this section names the invariants the columns encode. Eight migrations:
@@ -1672,7 +1672,7 @@ this section names the invariants the columns encode. Eight migrations:
   `task_activity.event_kind` admits `evaluation_decided` — the social-board
   mirror of a conclusive human verdict. Never rejects existing rows.
 
-- **Controlled-launch batches (`0112`, M47 — ADR-146).**
+- **Controlled-launch batches (`0112` — ADR-146).**
   `evaluation_launch_batches` is a durable controlled-launch batch intent
   persisted BEFORE any run-launch side effect, so a crash mid-fan-out leaves a
   recoverable intent, never a silent partial batch: status
@@ -1690,21 +1690,21 @@ this section names the invariants the columns encode. Eight migrations:
   anchor, with a partial UNIQUE on non-NULL values so a re-driven item adopts
   its existing participant instead of duplicating it.
 
-- **Evaluation suites (`0113`, M48 — ADR-147).** `evaluation_suites` is the
+- **Evaluation suites (`0113` — ADR-147).** `evaluation_suites` is the
   versioned scheduled/regression suite parent that sits OUTSIDE the one-task
   Study boundary: `kind` `scheduled|regression` (CHECK), an
   immutable-per-version `definition` (task set + profile + trigger) with
   `definition_digest` and a `version` bumped on any edit (longitudinal drift
   attribution), `enabled`, and `last_trigger_revision` so a `regression` suite
-  fires only when the watched package revision actually changed. The M24
-  scheduler drives it — no second clock. `evaluation_suite_studies` is the
+  fires only when the watched package revision actually changed. The polymorphic
+  scheduler clock drives it — no second clock. `evaluation_suite_studies` is the
   immutable link from a suite scan round to each generated one-task Study,
   recording `suite_version` and a deterministic `scan_key`; UNIQUE
   `(suite_id, task_id, scan_key)` is the dedup unit, so an at-least-once
   re-scan never generates a duplicate Study. `task_id` is RESTRICT;
   suite/Study deletes cascade.
 
-- **Recipe standardization (`0114`, M48 — ADR-147).**
+- **Recipe standardization (`0114` — ADR-147).**
   `evaluation_standardized_recipes` is the append-only audit ledger of
   human-approved recipe standardizations — never automatic winner promotion.
   Each row is one revision of a `(project_id, slot)` project default (UNIQUE
@@ -1880,22 +1880,22 @@ numerator.
   id, runId, projectId,
   branch, worktreePath (UNIQUE), parentRepoPath,
   createdAt, removedAt?,
-  scheduledRemovalAt?,           // M19 (timestamptz, migration 0015) when GC
+  scheduledRemovalAt?,           // (timestamptz, migration 0015) when GC
                                  //   will prune; see below
-  archivedBranch?,               // M19 (text, migration 0015) preserved
+  archivedBranch?,               // (text, migration 0015) preserved
                                  //   archive ref name
-  archivedAt?,                   // M19 (timestamptz, migration 0015) when the
+  archivedAt?,                   // (timestamptz, migration 0015) when the
                                  //   archive branch was created
-  baseBranch?,                   // M18 (text, migration 0021) run base branch;
-                                 //   null on pre-M18 rows
-  baseCommit?,                   // M18 (text, migration 0021) base commit the
-                                 //   worktree forked from; null on pre-M18 rows
-  targetBranch?,                 // M18 (text, migration 0021) promotion target
-  promotionMode?,                // M18 (text, migration 0021)
+  baseBranch?,                   // (text, migration 0021) run base branch;
+                                 //   null on pre-0021 rows
+  baseCommit?,                   // (text, migration 0021) base commit the
+                                 //   worktree forked from; null on pre-0021 rows
+  targetBranch?,                 // (text, migration 0021) promotion target
+  promotionMode?,                // (text, migration 0021)
                                  //   local_merge | pull_request
-  prUrl?,                        // M18 (text, migration 0021) populated on
+  prUrl?,                        // (text, migration 0021) populated on
                                  //   PR-mode promotion (Phase 3)
-  prNumber?,                     // M18 (integer, migration 0021)
+  prNumber?,                     // (integer, migration 0021)
   prState?,                      // ADR-140 (Implemented, migration 0105) open |
                                  //   merged | closed; NULL = never scanned
   prHasConflicts?,               // ADR-140 (Implemented, migration 0105) boolean;
@@ -1904,22 +1904,22 @@ numerator.
   prMergeCommitSha?,             // ADR-140 (Implemented, migration 0105) PROVIDER
                                  //   merge commit (provenance only; NOT the
                                  //   delivery scanner's runs.mergeCommitSha)
-  promotedAt?,                   // M18 (timestamptz, migration 0021)
-  promotionState,                // M18 (text NOT NULL DEFAULT 'none', migration
+  promotedAt?,                   // (timestamptz, migration 0021)
+  promotionState,                // (text NOT NULL DEFAULT 'none', migration
                                  //   0021) none | claiming | done | failed;
                                  //   + reopened (ADR-141, Implemented; app-level, no CHECK)
-  promotionClaimedAt?,           // M18 (timestamptz, migration 0021)
+  promotionClaimedAt?,           // (timestamptz, migration 0021)
                                  //   durable-claim timestamp
-  promotionOwnerUserId?,         // M18 (text, migration 0021) FK -> users.id,
+  promotionOwnerUserId?,         // (text, migration 0021) FK -> users.id,
                                  //   nullable
-  promotionAttemptId?            // M18 (text, migration 0021) per-attempt
+  promotionAttemptId?            // (text, migration 0021) per-attempt
                                  //   CAS-identity token (opaque), nullable
-  lifecycleOperationState,       // M27 (text NOT NULL DEFAULT 'none', migration
+  lifecycleOperationState,       // (text NOT NULL DEFAULT 'none', migration
                                  //   0032) none | claiming | failed
-  lifecycleOperationClaimedAt?,   // M27 (timestamptz, migration 0032)
-  lifecycleOperationAttemptId?,   // M27 (text, migration 0032) per-attempt
+  lifecycleOperationClaimedAt?,   // (timestamptz, migration 0032)
+  lifecycleOperationAttemptId?,   // (text, migration 0032) per-attempt
                                  //   CAS-identity token, nullable
-  lifecycleOperationName?         // M27 (text, migration 0032)
+  lifecycleOperationName?         // (text, migration 0032)
                                  //   archive | drop | exportBranch |
                                  //   snapshotCommit | handoffBranch |
                                  //   sync (ADR-141, Implemented; TS-only 6th op)
@@ -1938,7 +1938,7 @@ rows referring to one workspace. `worktreePath` remains globally unique across
 the host. ADR-134 stores final delivery evidence on the root `runs` row, never
 on the shared workspace.
 
-**(M18 — Implemented, migration `0021`, additive.)**
+**(Implemented, migration `0021`, additive.)**
 Branch/promotion columns record the run ledger so branch-targeted promotion is
 explained without relying on naming conventions: `baseBranch`, `baseCommit`
 (the commit the worktree forked from), `targetBranch`, `promotionMode`
@@ -1957,7 +1957,7 @@ git/PR side-effect; the finalize transaction writes only when the stored
 `promotionAttemptId` still matches the attempt's minted token, so a superseded
 (stale-reclaimed) attempt can never double-finalize.
 
-**(M27 — Implemented, migration `0032`, additive.)** The
+**(Implemented, migration `0032`, additive.)** The
 `lifecycleOperation*` columns serialize workbench archive, drop, export,
 snapshot commit, and handoff-branch side effects. `lifecycleOperationState`
 defaults to `none`; `claiming` is used while one HTTP request owns the git or
@@ -2037,7 +2037,7 @@ the non-negative-attempt and resolved-state/timestamp pairing checks. The
 migrations create an empty ledger: they never scan the host,
 deletes a path, or converts legacy provenance into authority during migration.
 
-**(M19 — Designed, migration `0015`, additive.)** Three nullable GC columns
+**(Designed, migration `0015`, additive.)** Three nullable GC columns
 drive the worktree TTL lifecycle. `scheduledRemovalAt` (`timestamptz`) is the
 GC deadline, stamped on the terminal `Abandoned`/`Done` transition as
 `runs.ended_at + MAISTER_GC_AGE_DAYS`; the GC sweep and the TTL color-ramp read
@@ -2114,10 +2114,10 @@ agent path drives `Review→Running→…→Review`. Behavior:
 ```ts
 {
   runId,                         // PK + FK -> runs.id
-  projectId?,                    // FK -> projects.id; M36 (migration 0059)
+  projectId?,                    // FK -> projects.id; (migration 0059)
                                  //   NULLABLE — NULL for a project-less
                                  //   local-package assistant run (ADR-097)
-  localPackageId?,               // M36 (migration 0059): FK -> local_packages.id
+  localPackageId?,               // (migration 0059): FK -> local_packages.id
                                  //   CASCADE; the project-less owner. CHECK:
                                  //   exactly one of projectId / localPackageId
   name?,
@@ -2148,7 +2148,7 @@ agent path drives `Review→Running→…→Review`. Behavior:
 `WaitingForUser`; `runs.status` remains the shared lifecycle enum. The mapping
 is defined in [`system-analytics/scratch-runs.md`](system-analytics/scratch-runs.md).
 
-**Project-less local-package variant (M36, migration 0059, ADR-097).** A docked
+**Project-less local-package variant (migration 0059, ADR-097).** A docked
 AI authoring assistant run sets `localPackageId` and leaves `projectId` NULL —
 it is rooted at a local-package `working_dir` with no project and no
 `workspaces` row (it runs in the existing git-backed working dir;
@@ -2274,27 +2274,27 @@ One immutable row per node execution; `attempt` auto-increments per
   decision?,                                // human decision recorded on finish
   workspacePolicy?,                         // 'keep' | 'rewind-to-node-checkpoint'
                                             //   | 'fresh-attempt'
-  checkpointRef?,                           // (M30 — Implemented, ADR-076, migration
+  checkpointRef?,                           // (Implemented, ADR-076, migration
                                             //   0040) refs/maister/checkpoints/
                                             //   <runId>/<nodeAttemptId>; rewind
                                             //   target is <ck>^ (pre-attempt tip)
-  autoRetry,                                // (M30 — Implemented, ADR-080, 0041)
+  autoRetry,                                // (Implemented, ADR-080, 0041)
                                             //   boolean DEFAULT false; true when
                                             //   this attempt is an auto-retry
-  sessionPolicy?,                           // (M30 — Implemented, ADR-081, 0041)
+  sessionPolicy?,                           // (Implemented, ADR-081, 0041)
                                             //   effective rework session policy
                                             //   snapshot: 'resume' | 'new_session'
-  sessionFallback,                          // (M30 — Implemented, ADR-081, 0041)
+  sessionFallback,                          // (Implemented, ADR-081, 0041)
                                             //   boolean DEFAULT false; resume fell
                                             //   back to new_session
   reworkFromNode?,                          // origin node when this attempt is a
                                             //   rework re-entry
-  ownerUserId?,                             // M11b takeover owner (FK -> users.id,
+  ownerUserId?,                             // takeover owner (FK -> users.id,
                                             //   ON DELETE SET NULL); takeover attempt only
-  baseRef?,                                 // M11b merge-base SHA of the returned range
-  returnedCommits?,                         // M11b raw `git log <base>..<branch>` text
-  returnedDiff?,                            // M11b raw `git diff <base>..<branch>` text
-  enforcementSnapshot?,                     // M11c (jsonb, migration 0013) append-only
+  baseRef?,                                 // merge-base SHA of the returned range
+  returnedCommits?,                         // raw `git log <base>..<branch>` text
+  returnedDiff?,                            // raw `git diff <base>..<branch>` text
+  enforcementSnapshot?,                     // (jsonb, migration 0013) append-only
                                             //   per-capability-class verdict audit array
   acpSessionId?,                            // ACP session id (agent/judge nodes)
   stdout?,                                  // truncated to 1 MiB by the writer
@@ -2312,23 +2312,24 @@ UNIQUE constraint `(runId, nodeId, attempt)` — append-only; rework never mutat
 a prior row. Indexed on `(runId)` for templating highest-attempt-wins reads.
 Cascade: `ON DELETE CASCADE` from `runs.id`.
 
-**(M11b — migration `0011`, additive to `0010`.)** The four
+**(Migration `0011`, additive to `0010`.)** The four
 takeover columns — `ownerUserId` (FK → `users.id`, `ON DELETE SET NULL`),
 `baseRef`, `returnedCommits`, `returnedDiff` — are nullable and populated ONLY on
 the takeover attempt of a `human_review` node. Raw `git log`/`git diff` text is
-stored minimally; typed `commit_set`/`diff` artifact instances are **M12**. The
+stored minimally; typed `commit_set`/`diff` artifact instances belong to the
+**typed artifact model** (ADR-037). The
 index is unchanged (`node_attempts_run_idx` on `(runId)`). See
 [`system-analytics/manual-takeover.md`](system-analytics/manual-takeover.md) and
 [ADR-030](decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status).
 
-**(M11c — migration `0013`, additive to `0011`.)** `enforcementSnapshot`
+**(Migration `0013`, additive to `0011`.)** `enforcementSnapshot`
 (jsonb, nullable) is an **append-only** audit record written once at launch /
 first attempt and never mutated. It holds the resolved per-capability-class
 verdicts as an array of `{ class, declared, capability, verdict }` where
 `class ∈ {mcps, tools, skills, restrictions, permissionMode, workspaceAccess}`,
 `declared ∈ {strict, instruct, off}`, `capability ∈ {enforced, instructed,
 unsupported}`, and `verdict ∈ {enforced, instructed, refused}`. It is written on
-**both** the launch pass path and the refusal path, and is read by the M11c
+**both** the launch pass path and the refusal path, and is read by the
 run-detail settings panel. Because it is an audit snapshot rather than a mutable
 mirror of a `maister.yaml` field, the config-state SET/CLEAR round-trip rule does
 not apply. See
@@ -2337,7 +2338,7 @@ ADR-032 in [`decisions.md`](decisions.md).
 
 ## `gate_results`
 
-**(M11a — Designed, migration `0010`.)** One row per gate execution
+**(Designed, migration `0010`.)** One row per gate execution
 ([ADR-028](decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped)).
 Holds the structured verdict and the full status lifecycle.
 
@@ -2354,8 +2355,8 @@ Holds the structured verdict and the full status lifecycle.
                                             // lowercase; gate-verdict vocabulary
   verdict (jsonb)?,                         // { verdict, confidence, reasons,
                                             //   recommendedAction }
-  inputArtifactRefs (jsonb)?,               // referenced input artifact ids (M12)
-  outputArtifactRef?,                       // produced artifact id (M12)
+  inputArtifactRefs (jsonb)?,               // referenced input artifact ids
+  outputArtifactRef?,                       // produced artifact id
   staleFrom (jsonb)?,                       // node ids whose rework stales this
   overriddenBy?,                            // hitl_requests.id of the override
   createdAt, endedAt?
@@ -2368,13 +2369,13 @@ An unparseable `ai_judgment` verdict is `status='failed'` with raw prose kept in
 `verdict` — **no new `MaisterError` code**
 ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror)). Indexed on
 `(runId)` and `(nodeAttemptId)`. Cascade: `ON DELETE CASCADE` from `runs.id`.
-M41 consensus cross-verification does not overload `gate_results`; it writes to
+Consensus cross-verification does not overload `gate_results`; it writes to
 [`consensus_round_verdicts`](#consensus_round_verdicts) because verifier/target
 identity and round replay are part of the consensus recovery contract.
 
 ## `consensus_round_verdicts`
 
-**(M41 — Implemented, migration `0070`.)** Append-only/idempotent ledger for
+**(Implemented, migration `0070`.)** Append-only/idempotent ledger for
 `consensus` node cross-verification rounds
 ([ADR-109](decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution)).
 Each row records one verifier's parsed verdict about one target draft. It is
@@ -2409,7 +2410,7 @@ does not repay finished verification sessions. Indexed on `(runId)` and
 
 ## `artifact_instances`
 
-**(M12 — Implemented, migration `0015`.)** Typed evidence index — one row per
+**(Implemented, migration `0015`.)** Typed evidence index — one row per
 diff, log, report, judgment, note, commit set, checkpoint, preview, or plan
 produced during a run. See [`db/artifacts-domain.md`](db/artifacts-domain.md) for the ERD
 and [`system-analytics/artifacts.md`](system-analytics/artifacts.md) for the
@@ -2427,8 +2428,8 @@ validity FSM.
   kind: 'diff' | 'log' | 'test_report' | 'lint_report'
       | 'ai_judgment' | 'human_note' | 'commit_set'
       | 'checkpoint' | 'preview' | 'generic_file'
-      | 'mutation_report'                    // M29 (ADR-074) — text column, no migration
-      | 'plan',                              // M41 consensus synthesized answer artifact
+      | 'mutation_report'                    // (ADR-074) — text column, no migration
+      | 'plan',                              // consensus synthesized answer artifact
   producer: 'runner' | 'projector' | 'takeover' | 'gate' | 'human',
   locator (jsonb),                          // discriminated union, server-written only:
                                             //   git-range{ baseCommit, headRef }
@@ -2440,14 +2441,14 @@ validity FSM.
                                             //            feedbackFingerprint? }
   uri?,                                     // optional human/direct display ref
   hash?,                                    // content hash (head SHA / file digest);
-                                            //   first written by the M29 gate producer
+                                            //   first written by the mutation-sensor gate producer
                                             //   (sha256 of the mutation_report locator text)
   sizeBytes?,                               // integer, nullable; first written by the
-                                            //   M29 gate producer (report byte length)
+                                            //   gate producer (report byte length)
   validity: 'current' | 'stale' | 'superseded'
           | 'failed' | 'skipped',          // DEFAULT 'current'
   requiredFor (jsonb)?,                     // ('review' | 'merge')[] — declared,
-                                            //   not enforced until M14
+                                            //   not enforced until capability materialization
   visibility: 'internal' | 'shared',        // DEFAULT 'internal'
   retention: 'run' | 'ephemeral',           // DEFAULT 'run'
   monotonicId?,                             // supervisor event id (projector rows);
@@ -2467,7 +2468,7 @@ projector replay **upsert** idempotently (`onConflictDoUpdate`):
 | Runner-inline default (kind-scoped) | `run:<nodeAttemptId>:default:<kind>`  | `run:na_abc123:default:log` |
 | Runner-internal composed rework comments (ADR-072) | `run:<nodeAttemptId>:adr071:rework-comments` | `run:na_abc123:adr071:rework-comments` |
 | Projector-derived                   | `proj:<runId>:<monotonicId>`          | `proj:run_xyz789:42`        |
-| Gate mutation report, undeclared output (M29) | `run:<nodeAttemptId>:mutation:<gateId>` | `run:na_abc123:mutation:impl-mutation` |
+| Gate mutation report, undeclared output | `run:<nodeAttemptId>:mutation:<gateId>` | `run:na_abc123:mutation:impl-mutation` |
 
 `monotonicId` is **run-global** across the single per-run `run.events.jsonl`
 log, so each projector `id` is unique across the entire run's event stream.
@@ -2480,7 +2481,7 @@ superseded row's pointer null.
 
 ## `artifact_projection_cursors`
 
-**(M12 — Implemented, migration `0015`.)** One projector cursor **per run**
+**(Implemented, migration `0015`.)** One projector cursor **per run**
 ([ADR-038](decisions.md) per-run-scope correction). Tracks how far the artifact
 projector has consumed the run's `run.events.jsonl`.
 
@@ -2507,7 +2508,7 @@ secondary scope without a schema change. Cascade: `ON DELETE CASCADE` from
 
 ## `project_tokens`
 
-**(M16 — Implemented, migration `0020_m16_api_tokens.sql`; expanded by
+**(Implemented, migration `0020_m16_api_tokens.sql`; expanded by
 `0031_token_actor_scope_support.sql`; expanded by
 `0076_user_access_tokens.sql`.)** Project-scoped API tokens and
 user-owned project tokens that grant external callers (CI, scripts, personal
@@ -2528,10 +2529,10 @@ migration `0063`: they reuse this table with
                                             //   ON DELETE CASCADE
   name,                                     // NOT NULL; human-readable label
   tokenKind,                                // NOT NULL DEFAULT 'project'; 'project' | 'user'
-                                            //   | 'agent' (M34, migration 0049)
+                                            //   | 'agent' (migration 0049)
   ownerUserId?,                             // nullable FK -> users.id, ON DELETE SET NULL;
                                             //   set for user-owned tokens
-  agentId?,                                 // M34: nullable FK -> agents.id,
+  agentId?,                                 // nullable FK -> agents.id,
                                             //   ON DELETE CASCADE; CHECK (tokenKind='agent')
                                             //   = (agentId IS NOT NULL). Agent tokens are
                                             //   per-launch ephemeral: issued at agent-run
@@ -2604,7 +2605,7 @@ enforce `(token_kind = 'agent') = (agent_id IS NOT NULL)`.
 
 ## `token_audit_log`
 
-**(M16 — Implemented, migration `0020_m16_api_tokens.sql`.)** Append-only audit
+**(Implemented, migration `0020_m16_api_tokens.sql`.)** Append-only audit
 record for every `/api/v1/ext` call made with an **identified** token — every
 success plus identified-token failures (expired / revoked / wrong-project /
 validation). `token_id` is `NOT NULL`: a request whose token cannot be
@@ -2659,26 +2660,26 @@ token itself is deleted.
                                  //   { requestId, options, toolCall,
                                  //     supervisorSessionId }
   prompt, response (jsonb)?,
-  decision?,                     // (M11a — Designed) review decision claimed
+  decision?,                     // (Designed) review decision claimed
                                  //   from response.decision (e.g. approve|rework)
-  workspacePolicy?,              // (M11a — Designed) chosen rework workspace policy
-  reworkTarget?,                 // (M11a — Designed) resolved rework target node
-  criticality?,                  // (M17 — Implemented, 0024) flow-declared severity
+  workspacePolicy?,              // (Designed) chosen rework workspace policy
+  reworkTarget?,                 // (Designed) resolved rework target node
+  criticality?,                  // (Implemented, 0024) flow-declared severity
                                  //   low|medium|high|critical; write-once at creation
-  humanConfidence?,              // (M17 — Implemented, 0024) real 0..1 responder
+  humanConfidence?,              // (Implemented, 0024) real 0..1 responder
                                  //   self-report; written at respond time; also
                                  //   echoed into response as { confidence }
-  reviewTipSha?,                 // (M30 — Implemented, 0040) branch tip SHA stamped
+  reviewTipSha?,                 // (Implemented, 0040) branch tip SHA stamped
                                  //   per review-gate visit; base for the
                                  //   since-last-review diff scope (ADR-079)
-  dirtyResolution?,              // (M30 — Implemented, 0040) 'commit'|'discard'
+  dirtyResolution?,              // (Implemented, 0040) 'commit'|'discard'
                                  //   |'proceed' reviewer dirty-worktree choice
                                  //   (nullable; ADR-079)
   respondedAt?, createdAt
 }
 ```
 
-**(M11a — Designed.)** For a graph `human_review` HITL the runner enriches
+**(Designed.)** For a graph `human_review` HITL the runner enriches
 `schema` (jsonb) at creation with the manifest-derived allow-list
 `{ allowedDecisions, transitions, reworkTargets, workspacePolicies }`
 (server-state). The reviewer's `decision`/`comments`/`workspacePolicy` ride
@@ -2697,7 +2698,7 @@ the validated decision/transition allow-list. `kind=form` captures structured
 input for a graph `form` node. Rework is executed only through graph
 transitions and the append-only attempt ledger.
 
-**(M17 — Implemented, migration `0025`.)** Two additive assessment columns (ADR-054):
+**(Implemented, migration `0025`.)** Two additive assessment columns (ADR-054):
 
 - `criticality` (`text`, nullable) — flow-author-declared severity, app-layer
   enum `low | medium | high | critical`. **Write-once**: copied from the `human`
@@ -2707,7 +2708,7 @@ transitions and the append-only attempt ledger.
   in `[0, 1]`, written in the respond service's Phase-1 transaction and **also
   echoed into the `response` jsonb** as `{ confidence: <number> }`. `NULL` while
   the row is open. The `0..1` bound is enforced server-side. This is the *human*
-  responder's self-report and is **distinct from** the M15 AI-judge
+  responder's self-report and is **distinct from** the AI-judge
   `GateVerdict.confidence` carried on `gate_results.verdict` (machine confidence);
   the two are never conflated. Neither column re-gates readiness — escalate-to-human
   stays the Flow's `human_review` gate (ADR-024 clause closed by ADR-054).
@@ -2772,7 +2773,7 @@ rework intent, preserving direct ownership and race safety.
 
 ## `gate_chat_messages`
 
-**(M30 — Implemented, [ADR-078](decisions.md#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality), migration `0041`.)**
+**(Implemented, [ADR-078](decisions.md#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality), migration `0041`.)**
 Answer-only gate-chat turns between a reviewer and the parked agent at a
 `human`/`form` HITL pause. See
 [`system-analytics/hitl.md`](system-analytics/hitl.md) §Gate-chat.
@@ -2904,7 +2905,7 @@ injected value byte-identical to the raw review summary.
 
 ## `assignments`
 
-(M13, migration `0018`.)
+(Implemented, migration `0018`.)
 
 ```ts
 {
@@ -2939,14 +2940,14 @@ injected value byte-identical to the raw review summary.
 ```
 
 The persistence contract is implemented; full automatic creation for every
-HITL/takeover path and UI read models are M13 follow-up tasks in progress.
+HITL/takeover path and UI read models are follow-up tasks in progress.
 `runs.status` remains the scheduler and concurrency authority; assignment
 status is claimable-work state only. UNIQUE `hitlRequestId` gives one
 assignment per HITL wait when the row is linked to `hitl_requests`.
 
 ## `assignment_events`
 
-(M13, migration `0018`.)
+(Implemented, migration `0018`.)
 
 ```ts
 {
@@ -2965,7 +2966,7 @@ assignment per HITL wait when the row is linked to `hitl_requests`.
 }
 ```
 
-Events are append-only. Current M13 services write
+Events are append-only. Current services write
 `created`/`claimed`/`released`/`taken_over`/`responded`/`returned`/`completed`/`cancelled`/`system_closed`
 events in the same DB transaction as the corresponding assignment state change.
 
@@ -3147,7 +3148,7 @@ only). No UPDATE/DELETE application paths; future pruning MUST honor
                                    //   run.abandoned | run.review |
                                    //   run.escalated | gate.failed
                                    //   run.review added by migration 0060
-                                   //   (M37, ADR-100): settled, NOT terminal —
+                                   //   (ADR-100): settled, NOT terminal —
                                    //   a delegated child reaching Review
   projectId,                       // NOT NULL, FK -> projects.id (cascade)
   taskId?,                         // NULL, FK -> tasks.id (cascade) — task.* kinds
@@ -3536,8 +3537,8 @@ class tables in the current Drizzle schema. They should land as additive
 migrations; do not overload current JSON blobs until the implementation plan
 explicitly chooses that as a temporary bridge.
 
-> **M11a promotion.** `node_attempts` and `gate_results` are no longer "planned"
-> — they are **Implemented in M11a** (migration `0010`) and documented as first-class
+> **Graph-engine promotion.** `node_attempts` and `gate_results` are no longer "planned"
+> — they are **Implemented** (migration `0010`) and documented as first-class
 > tables above. They remain in the list below struck through for traceability;
 > the rest stay future work.
 
@@ -3545,23 +3546,23 @@ explicitly chooses that as a temporary bridge.
 | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
 | `flow_package_revisions`                                                                        | Immutable Flow package revisions: source, version label, resolved SHA, manifest digest, compatibility, trust, setup, package contract summary.                                                                         | project or system cache          |
 | `project_flow_enablements`                                                                      | Project pointer to the package revision new runs should use; enables upgrade/rollback without mutating old runs.                                                                                                       | `projects.id`, package revision  |
-| ~~`node_attempts`~~ → **M11a (Implemented)**                                                    | Graph-node attempts, lifecycle status, decision/rework/staleness state. See [`node_attempts`](#node_attempts) above.                                                                                                   | `runs.id`                        |
-| ~~`artifacts`~~ → **M12 (Implemented) as `artifact_instances` + `artifact_projection_cursors`** | Typed evidence index for diffs, logs, reports, AI judgments, human notes, commit sets, checkpoints, previews; plus the per-run projector cursor. See [`artifact_instances`](#artifact_instances) above.                | `runs.id`, `node_attempts.id`    |
+| ~~`node_attempts`~~ → **Implemented**                                                    | Graph-node attempts, lifecycle status, decision/rework/staleness state. See [`node_attempts`](#node_attempts) above.                                                                                                   | `runs.id`                        |
+| ~~`artifacts`~~ → **Implemented as `artifact_instances` + `artifact_projection_cursors`** | Typed evidence index for diffs, logs, reports, AI judgments, human notes, commit sets, checkpoints, previews; plus the per-run projector cursor. See [`artifact_instances`](#artifact_instances) above.                | `runs.id`, `node_attempts.id`    |
 | `artifact_edges`                                                                                | Dependency graph between task inputs, node attempts, artifacts, gates, and stale/current evidence.                                                                                                                     | `artifacts.id`                   |
-| ~~`gate_results`~~ → **M11a (Implemented)**                                                     | Gate execution verdicts + status lifecycle. See [`gate_results`](#gate_results) above. M15 adds the readiness policy that consumes them.                                                                               | `runs.id`, `node_attempts.id`    |
-| ~~`assignments`~~ → **M13 (Implemented)**                                                       | Claimable work persistence, runtime assignment creation, assignment actions, and run-detail ledger history landed as `assignments` + `assignment_events` in migration `0018`. See [`assignments`](#assignments) above. | `runs.id`, optional task         |
+| ~~`gate_results`~~ → **Implemented**                                                     | Gate execution verdicts + status lifecycle. See [`gate_results`](#gate_results) above. The readiness policy (ADR-048) consumes them.                                                                               | `runs.id`, `node_attempts.id`    |
+| ~~`assignments`~~ → **Implemented**                                                       | Claimable work persistence, runtime assignment creation, assignment actions, and run-detail ledger history landed as `assignments` + `assignment_events` in migration `0018`. See [`assignments`](#assignments) above. | `runs.id`, optional task         |
 | `api_tokens`                                                                                    | Hashed project-scoped service tokens with scopes, expiry, revocation, created-by, last-used metadata.                                                                                                                  | `projects.id`                    |
 | `external_operation_events`                                                                     | Audit/ledger records for token or MCP actions: task create, run launch, artifact attach, gate report, readiness read.                                                                                                  | `projects.id`, optional run/task |
 | Planned object | Why it exists | Likely parent |
 | -------------- | ------------- | ------------- |
 | `flow_package_revisions` | Immutable Flow package revisions: source, version label, resolved SHA, manifest digest, compatibility, trust, setup, package contract summary. | project or system cache |
 | `project_flow_enablements` | Project pointer to the package revision new runs should use; enables upgrade/rollback without mutating old runs. | `projects.id`, package revision |
-| ~~`node_attempts`~~ → **M11a (Implemented)** | Graph-node attempts, lifecycle status, decision/rework/staleness state. See [`node_attempts`](#node_attempts) above. | `runs.id` |
-| ~~`artifacts`~~ → **M12 (Implemented) as `artifact_instances` + `artifact_projection_cursors`** | Typed evidence index for diffs, logs, reports, AI judgments, human notes, commit sets, checkpoints, previews; plus the per-run projector cursor. See [`artifact_instances`](#artifact_instances) above. | `runs.id`, `node_attempts.id` |
+| ~~`node_attempts`~~ → **Implemented** | Graph-node attempts, lifecycle status, decision/rework/staleness state. See [`node_attempts`](#node_attempts) above. | `runs.id` |
+| ~~`artifacts`~~ → **Implemented as `artifact_instances` + `artifact_projection_cursors`** | Typed evidence index for diffs, logs, reports, AI judgments, human notes, commit sets, checkpoints, previews; plus the per-run projector cursor. See [`artifact_instances`](#artifact_instances) above. | `runs.id`, `node_attempts.id` |
 | `artifact_edges` | Dependency graph between task inputs, node attempts, artifacts, gates, and stale/current evidence. | `artifacts.id` |
-| ~~`gate_results`~~ → **M11a (Implemented)** | Gate execution verdicts + status lifecycle. See [`gate_results`](#gate_results) above. M15 adds the readiness policy that consumes them. | `runs.id`, `node_attempts.id` |
+| ~~`gate_results`~~ → **Implemented** | Gate execution verdicts + status lifecycle. See [`gate_results`](#gate_results) above. The readiness policy (ADR-048) consumes them. | `runs.id`, `node_attempts.id` |
 | `assignments` | Claimable human work: permission, form, review, manual takeover, conflict resolution, external waits. | `runs.id`, optional task |
-| ~~`api_tokens`~~ → **M16 (Implemented) as `project_tokens` + `token_audit_log`** | Hashed project-scoped service tokens + per-call audit log. See [`project_tokens`](#project_tokens) and [`token_audit_log`](#token_audit_log) above. | `projects.id`, `users.id` |
+| ~~`api_tokens`~~ → **Implemented as `project_tokens` + `token_audit_log`** | Hashed project-scoped service tokens + per-call audit log. See [`project_tokens`](#project_tokens) and [`token_audit_log`](#token_audit_log) above. | `projects.id`, `users.id` |
 
 Launch-time snapshots remain mandatory for every mutable surface: Flow package
 revision, capability profile revision, branch target, gate policy, and executor
@@ -3578,20 +3579,20 @@ users
   ├── accounts           (FK userId, cascade)
   ├── sessions           (FK userId, cascade)
   ├── project_members    (FK userId, cascade)
-  ├── node_attempts.owner_user_id (FK userId, SET NULL)  ← M11b takeover owner
+  ├── node_attempts.owner_user_id (FK userId, SET NULL)  ← takeover owner
   └── review_comments.author_user_id / .resolved_by_user_id (FK userId, SET NULL)  ← ADR-072
 
 projects
   ├── project_members    (FK projectId, cascade)
   ├── flows              (FK projectId, cascade)
   ├── capability_records (FK projectId, cascade)
-  ├── capability_imports (FK projectId, cascade)      ← M14 Implemented
-  ├── project_flow_roles (FK projectId, cascade)      ← M13
-  ├── actor_identities   (FK projectId, cascade)      ← M13
-  ├── agent_project_links (FK projectId, cascade)     ← M34 project attachments for package-owned agents
+  ├── capability_imports (FK projectId, cascade)      ← Implemented
+  ├── project_flow_roles (FK projectId, cascade)      ←
+  ├── actor_identities   (FK projectId, cascade)      ←
+  ├── agent_project_links (FK projectId, cascade)     ← project attachments for package-owned agents
   │     └── agents             (FK via agentId; package-owned catalog rows)
-  ├── agent_schedules     (FK projectId, cascade)     ← M34 schedules for attached agents
-  ├── project_tokens.agent_id (FK agentId, cascade)   ← M34 ephemeral agent tokens
+  ├── agent_schedules     (FK projectId, cascade)     ← schedules for attached agents
+  ├── project_tokens.agent_id (FK agentId, cascade)   ← ephemeral agent tokens
   ├── runs.agent_id       (FK agentId, SET NULL)      ← history survives catalog deletes
   ├── tasks              (FK projectId, cascade)
   │     ├── task_relations   (FK fromTaskId / toTaskId, cascade)   ← ADR-083
@@ -3601,38 +3602,38 @@ projects
   │     ├── inbox_items      (FK taskId,   cascade)                ← ADR-083
   │     └── runs         (FK taskId,    cascade)
   │           ├── workspaces      (FK runId,        cascade)
-  │           ├── run_sessions    (FK runId,        cascade)       ← M42 ADR-114
+  │           ├── run_sessions    (FK runId,        cascade)       ← ADR-114
   │           ├── run_cost_rollups (FK runId,       cascade)       ← ADR-085
-  │           ├── node_attempts   (FK runId,        cascade)   ← M11a
+  │           ├── node_attempts   (FK runId,        cascade)   ←
   │           │     ├── gate_results      (FK nodeAttemptId, cascade)
-  │           │     ├── consensus_round_verdicts (FK nodeAttemptId, cascade) ← M41
+  │           │     ├── consensus_round_verdicts (FK nodeAttemptId, cascade) ←
   │           │     ├── node_attempt_cost_rollups (FK nodeAttemptId, cascade) ← ADR-085
-  │           │     └── artifact_instances (FK nodeAttemptId, cascade)   ← M12
-  │           ├── gate_results    (FK runId,        cascade)   ← M11a (also direct)
-  │           ├── consensus_round_verdicts (FK runId, cascade) ← M41 (also direct)
-  │           ├── artifact_instances (FK runId,     cascade)   ← M12 (also direct)
+  │           │     └── artifact_instances (FK nodeAttemptId, cascade)   ←
+  │           ├── gate_results    (FK runId,        cascade)   ← (also direct)
+  │           ├── consensus_round_verdicts (FK runId, cascade) ← (also direct)
+  │           ├── artifact_instances (FK runId,     cascade)   ← (also direct)
   │           │     └── artifact_instances.superseded_by_id (self-ref, SET NULL)
-  │           ├── artifact_projection_cursors (FK runId, cascade)        ← M12
+  │           ├── artifact_projection_cursors (FK runId, cascade)        ←
   │           ├── hitl_requests   (FK runId,        cascade)
-  │           │     ├── assignments (FK hitlRequestId, cascade)          ← M13
+  │           │     ├── assignments (FK hitlRequestId, cascade)          ←
   │           │     └── review_comments (FK hitlRequestId, cascade)      ← ADR-072
   │           ├── review_comments (FK runId,        cascade)             ← ADR-072 (also direct)
   │           │     └── review_comments.parent_id (self-ref, cascade — root delete drops replies)
-  │           ├── assignments     (FK runId,        cascade)             ← M13
+  │           ├── assignments     (FK runId,        cascade)             ←
   │           │     └── assignment_events (FK assignmentId, cascade)
   │           ├── run_messages    (FK runId -> runs.id, cascade; optional node_attempt_id)
   │           │     └── scratch_attachments   (optional message FK)
   │           └── scratch_runs    (FK runId,        cascade)
   │                 ├── scratch_attachments         (run FK)
   │                 └── scratch_capability_profiles
-  ├── project_tokens     (nullable FK projectId, cascade; NULL personal tokens)  ← M16, 0063 Implemented
+  ├── project_tokens     (nullable FK projectId, cascade; NULL personal tokens)  ←, 0063 Implemented
   │     └── token_audit_log  (FK tokenId, cascade)
-  ├── token_audit_log    (nullable FK projectId, SET NULL)  ← M16, 0063 Implemented (also direct)
+  ├── token_audit_log    (nullable FK projectId, SET NULL)  ←, 0063 Implemented (also direct)
   ├── runs               (FK projectId, cascade)  ← also direct
   ├── run_cost_rollups   (FK projectId, cascade)  ← also direct, ADR-085
   ├── node_attempt_cost_rollups (FK projectId, cascade)  ← also direct, ADR-085
-  ├── assignments         (FK projectId, cascade)  ← also direct, M13
-  ├── assignment_events   (FK projectId, cascade)  ← also direct, M13
+  ├── assignments         (FK projectId, cascade)  ← also direct
+  ├── assignment_events   (FK projectId, cascade)  ← also direct
   ├── workspaces         (FK projectId, cascade)  ← also direct
   ├── webhook_subscriptions (FK project_id, cascade; NULL rows = platform scope)  ← ADR-077
   │     └── webhook_deliveries  (FK subscription_id, cascade)
@@ -3667,29 +3668,29 @@ Created via Drizzle:
 | `runs`                | `runs_task_idx`                         | `(taskId)`                        | Latest-attempt lookups                                             |
 | `runs`                | `runs_project_status_kind_idx`          | `(projectId, status, runKind)`    | Active workspace queries across Flow and scratch runs.             |
 | `runs`                | `runs_kind_task_idx`                    | `(runKind, taskId)`               | Board/latest-attempt lookups that explicitly exclude scratch runs. |
-| `runs`                | `runs_parent_run_id_idx`                | `(parentRunId)`                   | **(M37, Implemented)** orchestrator run-tree child lookups.        |
-| `runs`                | `runs_root_run_id_idx`                  | `(rootRunId)`                     | **(M37, Implemented)** whole-tree queries from the run-tree root.  |
-| `runs`                | `runs_root_addressable_key_uq`          | `(rootRunId, addressableKey)` UNIQUE WHERE `persistent` | **(M37, Implemented, migration 0060)** one persistent child per `addressableKey` within a run-tree (star-routing). |
-| `runs`                | `runs_auto_task_uq`                     | `(taskId)` UNIQUE WHERE `launch_mode='auto'` | **(M37, Implemented, migration 0060, ADR-100)** one auto-DAG run per task — the DB backstop behind the auto-launcher's `hasAnyRun` belt (concurrent dedup via `onConflictDoNothing`). |
+| `runs`                | `runs_parent_run_id_idx`                | `(parentRunId)`                   | **(Implemented)** orchestrator run-tree child lookups.        |
+| `runs`                | `runs_root_run_id_idx`                  | `(rootRunId)`                     | **(Implemented)** whole-tree queries from the run-tree root.  |
+| `runs`                | `runs_root_addressable_key_uq`          | `(rootRunId, addressableKey)` UNIQUE WHERE `persistent` | **(Implemented, migration 0060)** one persistent child per `addressableKey` within a run-tree (star-routing). |
+| `runs`                | `runs_auto_task_uq`                     | `(taskId)` UNIQUE WHERE `launch_mode='auto'` | **(Implemented, migration 0060, ADR-100)** one auto-DAG run per task — the DB backstop behind the auto-launcher's `hasAnyRun` belt (concurrent dedup via `onConflictDoNothing`). |
 | `runs`                | `runs_ended_at_idx`                     | `(endedAt)` PARTIAL WHERE `ended_at IS NOT NULL` | **(ADR-117, Implemented, migration 0083)** bounded `order by ended_at limit n` scan for the `system_sweep` cost-rollup backstop reconcile. |
 | `scratch_runs`        | `scratch_runs_project_status_idx`       | `(projectId, dialogStatus)`       | Project scratch workspace lists.                                   |
 | `scratch_attachments` | `scratch_attachments_run_idx`           | `(runId)`                         | Run-level attachment lookup.                                       |
 | `scratch_attachments` | `scratch_attachments_message_idx`       | `(messageId)`                     | Message attachment lookup.                                         |
-| `node_attempts`       | `node_attempts_run_step_attempt_uq`     | `(runId, nodeId, attempt)` UNIQUE | **(M11a)** Append-only one row per (run, node, attempt)            |
-| `node_attempts`       | `node_attempts_run_idx`                 | `(runId)`                         | **(M11a)** Templating highest-attempt-wins union                   |
+| `node_attempts`       | `node_attempts_run_step_attempt_uq`     | `(runId, nodeId, attempt)` UNIQUE | **(ADR-027)** Append-only one row per (run, node, attempt)            |
+| `node_attempts`       | `node_attempts_run_idx`                 | `(runId)`                         | **(ADR-027)** Templating highest-attempt-wins union                   |
 | `run_cost_rollups`    | `run_cost_rollups_run_pk`               | `(runId)` PRIMARY KEY             | **(ADR-085)** One derived token rollup per run                     |
 | `run_cost_rollups`    | `run_cost_rollups_project_flow_idx`     | `(projectId, flowId)`             | **(ADR-085)** Observatory cost dimension by project/Flow           |
 | `node_attempt_cost_rollups` | `node_attempt_cost_rollups_attempt_model_uq` | `(nodeAttemptId, model)` UNIQUE | **(ADR-085)** One model rollup per node attempt                    |
 | `node_attempt_cost_rollups` | `node_attempt_cost_rollups_run_attempt_idx` | `(runId, nodeAttemptId)`      | **(ADR-085)** Run timeline cost joins                              |
-| `gate_results`        | `gate_results_run_idx`                  | `(runId)`                         | **(M11a)** Per-run gate lookups                                    |
-| `gate_results`        | `gate_results_node_attempt_idx`         | `(nodeAttemptId)`                 | **(M11a)** Gates for a node attempt                                |
-| `consensus_round_verdicts` | `consensus_round_verdicts_attempt_round_pair_uq` | `(nodeAttemptId, round, verifierKey, targetKey)` UNIQUE | **(M41)** Idempotent verifier replay per consensus round |
-| `consensus_round_verdicts` | `consensus_round_verdicts_run_idx` | `(runId)` | **(M41)** Per-run consensus audit lookup |
-| `consensus_round_verdicts` | `consensus_round_verdicts_node_attempt_idx` | `(nodeAttemptId)` | **(M41)** Verdict rows for a node attempt |
-| `artifact_instances`  | `artifact_instances_run_idx`            | `(runId)`                         | **(M12)** Evidence index for a run                                 |
-| `artifact_instances`  | `artifact_instances_node_attempt_idx`   | `(nodeAttemptId)`                 | **(M12)** All artifacts for a node attempt                         |
-| `artifact_instances`  | `artifact_instances_run_kind_idx`       | `(runId, kind)`                   | **(M12)** Filter by kind                                           |
-| `artifact_instances`  | `artifact_instances_run_validity_idx`   | `(runId, validity)`               | **(M12)** Filter by validity                                       |
+| `gate_results`        | `gate_results_run_idx`                  | `(runId)`                         | **(ADR-028)** Per-run gate lookups                                    |
+| `gate_results`        | `gate_results_node_attempt_idx`         | `(nodeAttemptId)`                 | **(ADR-028)** Gates for a node attempt                                |
+| `consensus_round_verdicts` | `consensus_round_verdicts_attempt_round_pair_uq` | `(nodeAttemptId, round, verifierKey, targetKey)` UNIQUE | **(ADR-109)** Idempotent verifier replay per consensus round |
+| `consensus_round_verdicts` | `consensus_round_verdicts_run_idx` | `(runId)` | **(ADR-109)** Per-run consensus audit lookup |
+| `consensus_round_verdicts` | `consensus_round_verdicts_node_attempt_idx` | `(nodeAttemptId)` | **(ADR-109)** Verdict rows for a node attempt |
+| `artifact_instances`  | `artifact_instances_run_idx`            | `(runId)`                         | **(ADR-037)** Evidence index for a run                                 |
+| `artifact_instances`  | `artifact_instances_node_attempt_idx`   | `(nodeAttemptId)`                 | **(ADR-037)** All artifacts for a node attempt                         |
+| `artifact_instances`  | `artifact_instances_run_kind_idx`       | `(runId, kind)`                   | **(ADR-037)** Filter by kind                                           |
+| `artifact_instances`  | `artifact_instances_run_validity_idx`   | `(runId, validity)`               | **(ADR-037)** Filter by validity                                       |
 | `hitl_requests`       | `hitl_requests_run_idx`                 | `(runId)`                         | Pending HITL panel                                                 |
 | `gate_chat_turns`     | `gate_chat_turns_hitl_state_idx`         | `(hitlRequestId, state)` | **(ADR-138 Implemented)** response claim and packet lifecycle lookup |
 | `gate_chat_turns`     | `gate_chat_turns_pending_hitl_uq`        | `(hitlRequestId)` UNIQUE WHERE `state='pending'` | **(ADR-138 Implemented)** one active chat turn per HITL              |
@@ -3724,23 +3725,23 @@ Created via Drizzle:
 | `scratch_runs` | `scratch_runs_project_status_idx` | `(projectId, dialogStatus)` | Project scratch workspace lists. |
 | `scratch_attachments` | `scratch_attachments_run_idx` | `(runId)` | Run-level attachment lookup. |
 | `scratch_attachments` | `scratch_attachments_message_idx` | `(messageId)` | Message attachment lookup. |
-| `node_attempts` | `node_attempts_run_step_attempt_uq` | `(runId, nodeId, attempt)` UNIQUE | **(M11a)** Append-only one row per (run, node, attempt) |
-| `node_attempts` | `node_attempts_run_idx` | `(runId)` | **(M11a)** Templating highest-attempt-wins union |
-| `gate_results` | `gate_results_run_idx` | `(runId)` | **(M11a)** Per-run gate lookups |
-| `gate_results` | `gate_results_node_attempt_idx` | `(nodeAttemptId)` | **(M11a)** Gates for a node attempt |
-| `consensus_round_verdicts` | `consensus_round_verdicts_attempt_round_pair_uq` | `(nodeAttemptId, round, verifierKey, targetKey)` UNIQUE | **(M41)** Idempotent verifier replay per consensus round |
-| `consensus_round_verdicts` | `consensus_round_verdicts_run_idx` | `(runId)` | **(M41)** Per-run consensus audit lookup |
-| `consensus_round_verdicts` | `consensus_round_verdicts_node_attempt_idx` | `(nodeAttemptId)` | **(M41)** Verdict rows for a node attempt |
-| `artifact_instances` | `artifact_instances_run_idx` | `(runId)` | **(M12)** Evidence index for a run |
-| `artifact_instances` | `artifact_instances_node_attempt_idx` | `(nodeAttemptId)` | **(M12)** All artifacts for a node attempt |
-| `artifact_instances` | `artifact_instances_run_kind_idx` | `(runId, kind)` | **(M12)** Filter by kind |
-| `artifact_instances` | `artifact_instances_run_validity_idx` | `(runId, validity)` | **(M12)** Filter by validity |
-| `project_tokens` | `project_tokens_prefix_idx` | `(prefix)` | **(M16)** Fast prefix lookup during token verification |
-| `project_tokens` | `project_tokens_project_idx` | `(projectId)` | **(M16)** List project-bound tokens for a project |
+| `node_attempts` | `node_attempts_run_step_attempt_uq` | `(runId, nodeId, attempt)` UNIQUE | **(ADR-027)** Append-only one row per (run, node, attempt) |
+| `node_attempts` | `node_attempts_run_idx` | `(runId)` | **(ADR-027)** Templating highest-attempt-wins union |
+| `gate_results` | `gate_results_run_idx` | `(runId)` | **(ADR-028)** Per-run gate lookups |
+| `gate_results` | `gate_results_node_attempt_idx` | `(nodeAttemptId)` | **(ADR-028)** Gates for a node attempt |
+| `consensus_round_verdicts` | `consensus_round_verdicts_attempt_round_pair_uq` | `(nodeAttemptId, round, verifierKey, targetKey)` UNIQUE | **(ADR-109)** Idempotent verifier replay per consensus round |
+| `consensus_round_verdicts` | `consensus_round_verdicts_run_idx` | `(runId)` | **(ADR-109)** Per-run consensus audit lookup |
+| `consensus_round_verdicts` | `consensus_round_verdicts_node_attempt_idx` | `(nodeAttemptId)` | **(ADR-109)** Verdict rows for a node attempt |
+| `artifact_instances` | `artifact_instances_run_idx` | `(runId)` | **(ADR-037)** Evidence index for a run |
+| `artifact_instances` | `artifact_instances_node_attempt_idx` | `(nodeAttemptId)` | **(ADR-037)** All artifacts for a node attempt |
+| `artifact_instances` | `artifact_instances_run_kind_idx` | `(runId, kind)` | **(ADR-037)** Filter by kind |
+| `artifact_instances` | `artifact_instances_run_validity_idx` | `(runId, validity)` | **(ADR-037)** Filter by validity |
+| `project_tokens` | `project_tokens_prefix_idx` | `(prefix)` | **(ADR-046)** Fast prefix lookup during token verification |
+| `project_tokens` | `project_tokens_project_idx` | `(projectId)` | **(ADR-046)** List project-bound tokens for a project |
 | `project_tokens` | `project_tokens_owner_idx` | `(ownerUserId)` | User-owned token audit joins |
 | `project_tokens` | `project_tokens_owner_created_idx` | `(ownerUserId, createdAt)` | **(0063 Implemented)** List account-level personal tokens |
-| `token_audit_log` | `token_audit_token_idx` | `(tokenId)` | **(M16)** Per-token audit trail |
-| `token_audit_log` | `token_audit_project_created_idx` | `(projectId, createdAt)` | **(M16, 0063 Implemented)** Chronological audit log per project; NULL rows are global/deleted-target rows |
+| `token_audit_log` | `token_audit_token_idx` | `(tokenId)` | **(ADR-046)** Per-token audit trail |
+| `token_audit_log` | `token_audit_project_created_idx` | `(projectId, createdAt)` | **(ADR-046, 0063 Implemented)** Chronological audit log per project; NULL rows are global/deleted-target rows |
 | `hitl_requests` | `hitl_requests_run_idx` | `(runId)` | Pending HITL panel |
 | `gate_chat_turns` | `gate_chat_turns_hitl_state_idx` | `(hitlRequestId, state)` | **(ADR-138 Implemented)** response claim and packet lifecycle lookup |
 | `gate_chat_turns` | `gate_chat_turns_pending_hitl_uq` | `(hitlRequestId)` UNIQUE WHERE `state='pending'` | **(ADR-138 Implemented)** one active chat turn per HITL |

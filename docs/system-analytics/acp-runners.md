@@ -25,13 +25,13 @@ After `removed_at`, runner/recovery entry points refuse before calling ACP. A
 combined Stop & Archive/Drop stops first; a later preservation/removal failure
 leaves the parked run and present worktree retryable rather than reviving ACP.
 
-> **M42 — Unified runner & session model (Implemented).** Runner bindings move from
+> **Unified runner & session model (Implemented).** Runner bindings move from
 > the per-step `flow_runner_remaps` to **per-slot** > `(project_id, flow_revision_id, slot_key)` rows set at flow-connect / first
 > launch, covering every session and consensus slot (never deduped by intent);
 > the resolved host runner is snapshotted per session in `run_sessions`.
 > Canonical: [`sessions.md`](sessions.md) /
 > [ADR-114](../decisions.md#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth).
-> Flipped to as-built in M42 Phase 7.
+> Flipped to as-built in ADR-114 Phase 7.
 
 ## Domain entities
 
@@ -486,7 +486,7 @@ sequenceDiagram
   [instance-config.md](instance-config.md) (host roots / host tools on the same
   page), [capability-catalog.md](capability-catalog.md),
   [model-catalog.md](model-catalog.md) (model discovery + application, ADR-076).
-  **(Designed, M27)** The platform MCP server admin CRUD (`platform_mcp_servers`
+  **(Designed)** The platform MCP server admin CRUD (`platform_mcp_servers`
   table, `/api/admin/mcp-servers` routes, settings panel) mirrors this runner
   CRUD pattern precisely — same usage-guard delete, same `onConflictDoNothing`
   duplicate-id protection, same `env:NAME` secret policy, same `admin`-only gate

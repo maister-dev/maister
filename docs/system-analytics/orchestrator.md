@@ -2,14 +2,15 @@
 
 ## Purpose
 
-The orchestrator engine (**Implemented**, ADR-098/ADR-099, M37) gives a running
+The orchestrator engine (**Implemented**, ADR-098/ADR-099) gives a running
 agent governed **dynamic delegation**: an `orchestrator` flow node is a
 long-lived supervisory step that spawns and coordinates child Runs, parks
 (idle-checkpoints) while they execute, and reaches a terminal verdict only when
 the agent declares the goal met. Every delegated unit stays a real, governed Run
 (worktree, gates, promotion, board visibility, concurrency cap); dynamism lives
 only in *coordination*, never in bypassing governance, and children are
-catalog-resolved (the M34 effective definition — [agents.md](agents.md)), never
+catalog-resolved (the platform-agent effective definition —
+[agents.md](agents.md)), never
 runtime-authored. Boundary: this domain owns the `orchestrator` node lifecycle,
 the run-tree (`runs.parent_run_id`/`root_run_id`), the `WaitingOnChildren` run
 status, the delegation toolset over the MCP facade (`run_delegate` / `run_plan` /
@@ -19,7 +20,7 @@ run state machine ([runs.md](runs.md)), the outbox mechanics
 ([domain-events.md](domain-events.md)), the social-relation substrate it writes
 through ([social-board.md](social-board.md)), the scheduler cap
 ([scheduler.md](scheduler.md)), the catalog/trust resolution it consumes
-([agents.md](agents.md)), the M41 consensus protocol
+([agents.md](agents.md)), the consensus protocol
 ([consensus.md](consensus.md)), or capability enforcement (materialize-only per
 ADR-041/ADR-043 — [flow-settings.md](flow-settings.md)). The shared-worktree
 tree-level review/promote ownership model (re-enabling `workspace_mode: shared` for
@@ -71,7 +72,8 @@ Expectations/Edge-cases carry that tag.
 ## State machine
 
 The orchestrator-run execution axis. The base run FSM is in [runs.md](runs.md);
-this diagram shows only the `WaitingOnChildren` wait/resume cycle that M37 adds.
+this diagram shows only the `WaitingOnChildren` wait/resume cycle that the
+orchestrator engine adds.
 All transitions Implemented.
 
 ```mermaid
@@ -224,7 +226,7 @@ promoted once. The allocator (first) child owns the tree `workspaces` row; a
 workspace_mode='shared')`, re-checks under lock that every shared sibling is settled,
 merges once, and flips ALL shared children `Review → Done` in one transaction. The
 settled-gate and the merge run BEFORE the cross-tree settle flip; exactly-once falls
-out of the M18 durable-claim CAS plus the `status === 'Review'` re-check.
+out of the promotion durable-claim CAS plus the `status === 'Review'` re-check.
 
 ```mermaid
 flowchart TD
@@ -232,7 +234,7 @@ flowchart TD
     P --> RES[resolve tree workspace by root_run_id + workspace_mode=shared]
     RES --> GATE{all shared siblings settled?<br/>none in Running/NeedsInput/NeedsInputIdle/<br/>HumanWorking/Pending/WaitingOnChildren}
     GATE -- a sibling still writable --> PRE[PRECONDITION 409<br/>merge nothing, all stay Review]
-    GATE -- yes --> CLAIM{M18 durable-claim CAS<br/>on the shared workspaces row}
+    GATE -- yes --> CLAIM{promotion durable-claim CAS<br/>on the shared workspaces row}
     CLAIM -- lost / nothing in Review --> NOOP[CONFLICT or PRECONDITION 409<br/>idempotent no-op]
     CLAIM -- won --> MERGE[git merge tree branch ONCE]
     MERGE -- conflict --> CONF[CONFLICT 409<br/>ALL shared children STAY Review<br/>no sibling flipped, human resolves]
@@ -286,7 +288,7 @@ flowchart TD
   ANY shared sibling is in a writable status (`Running | NeedsInput |
   NeedsInputIdle | HumanWorking | Pending | WaitingOnChildren`, the complement of
   `SETTLED_RUN_STATUSES`), then MUST merge ONCE and CAS-flip ALL shared children
-  of the tree `Review → Done` in one transaction (exactly-once via the M18
+  of the tree `Review → Done` in one transaction (exactly-once via the promotion
   durable-claim CAS on the shared `workspaces` row + the `status === 'Review'`
   re-check; a tree merge conflict returns `CONFLICT` and flips NO sibling); opening
   ANY shared child's diff MUST resolve that tree workspace (run-diff route +
@@ -423,7 +425,7 @@ flowchart TD
   (closed error union — no new code).
 - **Flow DSL + engine:** [`../flow-dsl.md`](../flow-dsl.md) (`orchestrator` node
   type, `1.6.0` floor, delegation semantics).
-- **Related graph nodes:** [`consensus.md`](consensus.md) (M41 Implemented —
+- **Related graph nodes:** [`consensus.md`](consensus.md) (Implemented —
   reuses governed child run-tree mechanics but owns its own fan-out,
   verification, tally, and HITL protocol; no orchestrator delegation toolset is
   exposed to consensus participants).

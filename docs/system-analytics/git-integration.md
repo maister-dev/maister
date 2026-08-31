@@ -10,15 +10,15 @@ consumes it (see [`projects.md`](projects.md)). The layer is host-credential
 only: clone/push use the host's SSH key or git credential helper and MAIster
 holds zero git provider secrets (credential **model B**). See
 [ADR-025](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots).
-M18 extends this layer with `git push` and **conditional, provider-dispatched
-PR creation** for `pull_request` promotion (**Implemented (M18)**) — see
+The layer also covers `git push` and **conditional, provider-dispatched
+PR creation** for `pull_request` promotion (**Implemented**) — see
 [ADR-049](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant).
 
 ## Domain entities
 
 - **Provider tag** — `github | gitlab | gitea | gitverse | generic`,
   derived from the URL host by `detectProvider()`. Metadata for web links and,
-  from M18, the **PR-mode dispatch key**; GitVerse is Gitea-family.
+  since ADR-049, the **PR-mode dispatch key**; GitVerse is Gitea-family.
 - **Host credentials** — the OS user's SSH key (`~/.ssh`) or git
   credential helper. Owned by the host, never by MAIster.
 - **Generic git-ops layer** — the provider-neutral operations in
@@ -48,16 +48,16 @@ PR creation** for `pull_request` promotion (**Implemented (M18)**) — see
   `projects.repo_path`; adding/setting `origin` syncs `projects.repo_url` +
   `provider` (`detectProvider`). Backs the single collection route
   `GET/POST/PATCH/DELETE /api/projects/{slug}/remotes`.
-- **Branch push (`pushBranch`)** — **Implemented (M18)**. Pushes the run branch
+- **Branch push (`pushBranch`)** — **Implemented (ADR-049)**. Pushes the run branch
   to the configured remote via the host git credential helper (no MAIster
   secret). Used by `pull_request` promotion before PR creation.
 - **Workbench lifecycle git helpers (`listRemotes`, `headCommit`,
   `localBranchExists`, `remoteBranchExists`, `createBranchAtHead`)** —
-  **Implemented (M27)**. Used by workbench snapshot/handoff/export actions.
+  **Implemented**. Used by workbench snapshot/handoff/export actions.
   They validate remote and branch names before invoking git, keep the current
   MAIster worktree on its server-owned run branch, and never create or update a
   provider PR.
-- **`PrAdapter` (provider PR dispatch)** — **Implemented (M18)**. One interface,
+- **`PrAdapter` (provider PR dispatch)** — **Implemented (ADR-049)**. One interface,
   three implementations selected by the project's provider tag:
   `github`→`GhCliAdapter` (`gh` CLI), `gitlab`→`GlabCliAdapter` (`glab` CLI),
   `gitea`+`gitverse`→a shared `GiteaApiAdapter` (Gitea-compatible REST API,
@@ -239,7 +239,7 @@ sequenceDiagram
 Status: **Designed (ADR-093)** — `web/lib/git-remotes.ts` over `worktree.ts`
 remote primitives; route `web/app/api/projects/[slug]/remotes/route.ts`.
 
-### Push + provider-dispatched PR creation (Implemented, M18)
+### Push + provider-dispatched PR creation (Implemented)
 
 `pull_request` promotion pushes the run branch (host credentials) and then
 dispatches PR creation on the project's provider tag. The CLI adapters shell
@@ -283,7 +283,7 @@ sequenceDiagram
     end
 ```
 
-Status: **Implemented (M18)** — `web/lib/worktree.ts` (`pushBranch`) +
+Status: **Implemented** — `web/lib/worktree.ts` (`pushBranch`) +
 `web/lib/runs/pr-adapter.ts` (`GhCliAdapter`, `GlabCliAdapter`,
 `GiteaApiAdapter`). Wired by the shared promotion service in
 [`workspaces.md`](workspaces.md).
@@ -296,7 +296,7 @@ Status: **Implemented (M18)** — `web/lib/worktree.ts` (`pushBranch`) +
 > Gitea-API compatibility was confirmed: `gitverse` rides the shared
 > `GiteaApiAdapter`; only the token var (`GITVERSE_TOKEN`) and `apiBase` differ.
 
-### Workbench snapshot and handoff git operations (Implemented, M27)
+### Workbench snapshot and handoff git operations (Implemented)
 
 Workbench lifecycle actions reuse the same host-credential model but do not
 mean promotion. `snapshot-commit` writes one commit on the run branch;
@@ -325,7 +325,7 @@ sequenceDiagram
     LC-->>UI: pushed ref + checkout commands
 ```
 
-Status: **Implemented (M27)** — `web/lib/workbench-lifecycle/service.ts` +
+Status: **Implemented** — `web/lib/workbench-lifecycle/service.ts` +
 `web/lib/worktree.ts`. Branch/remote/path inputs are validated by typed helper
 schemas, and secret-bearing remote output is redacted before errors surface.
 
@@ -419,15 +419,15 @@ delegating to the shared sync resolver core (`web/lib/runs/sync-target.ts`).
   an error message.
 - Provider detection is best-effort metadata and NEVER gates cloning;
   `detectProvider()` returns `generic` on any unrecognized host.
-- **(Implemented, M18)** `gh`/`glab` and the Gitea REST API are invoked ONLY for
+- **(Implemented)** `gh`/`glab` and the Gitea REST API are invoked ONLY for
   `pull_request` promotion, dispatched on the provider tag: `github`→`gh`,
   `gitlab`→`glab`, `gitea`+`gitverse`→Gitea REST API, `generic`→`PRECONDITION`
   unsupported. `local_merge` promotion and every clone/worktree/merge path
   NEVER invoke a provider CLI or PR API.
-- **(Implemented, M18)** PR creation MUST be idempotent: an existing PR for
+- **(Implemented)** PR creation MUST be idempotent: an existing PR for
   `(run branch → target)` is updated, never duplicated; the run's stored
   `pr_url` plus a provider query are the dedup keys.
-- **(Implemented, M18)** `git push` and PR creation MUST use host credentials /
+- **(Implemented)** `git push` and PR creation MUST use host credentials /
   host-env provider tokens only (credential model B); no provider secret is
   stored by MAIster, and tokens / secret-bearing URLs are NEVER logged.
 - **(Implemented, ADR-093)** A failed clone MUST keep `code = "PRECONDITION"` and
@@ -448,20 +448,20 @@ delegating to the shared sync resolver core (`web/lib/runs/sync-target.ts`).
   choice, not a MAIster-managed secret); the Add-Project form warns when
   credentials are present and recommends host SSH keys / a credential helper.
 - **Self-hosted GitLab / Gitea host** → classified as `generic`; cloning is
-  unaffected (provider is metadata only). **(Implemented, M18)** a `generic`
+  unaffected (provider is metadata only). **(Implemented)** a `generic`
   provider cannot use `pull_request` promotion (`PRECONDITION`); `local_merge`
   is always available.
 - **Cloned default branch ≠ `project.main_branch`** → not caught here;
   surfaces at Launch when the run branch base is resolved.
-- **(Implemented, M18) PR-mode prerequisite missing** → `gh`/`glab` absent on PATH
+- **(Implemented) PR-mode prerequisite missing** → `gh`/`glab` absent on PATH
   (github/gitlab) or `GITEA_TOKEN`/`GITVERSE_TOKEN` unset (gitea-family), or no
   configured remote → `PRECONDITION`; the run stays `Review`.
-- **(Implemented, M18) push rejected / PR-API 5xx** → transient →
+- **(Implemented) push rejected / PR-API 5xx** → transient →
   `EXECUTOR_UNAVAILABLE` (HTTP 503); the promotion is idempotently retryable.
-- **(Implemented, M27) workbench handoff remote missing or branch collision** →
+- **(Implemented) workbench handoff remote missing or branch collision** →
   `PRECONDITION`/`CONFLICT` (HTTP 409); the workbench remains in its current
   state and no provider PR is created.
-- **(Implemented, M27) handoff remote check or push transiently fails** →
+- **(Implemented) handoff remote check or push transiently fails** →
   `EXECUTOR_UNAVAILABLE` (HTTP 503); the lifecycle claim is left retryable and
   the operator can re-run the action.
 - **(Implemented, ADR-093) clone fails on SSH auth** (`Permission denied
@@ -522,7 +522,7 @@ metadata fails closed.
 
 - ADRs: [ADR-025 Project repo onboarding](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots),
   [ADR-049 PR promotion via a hybrid provider `PrAdapter`](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant)
-  (Implemented, M18),
+  (Implemented),
   [ADR-093 Project onboarding — optional `maister.yaml`, host-ambient git auth, onboarding modes, advisory clone reasons](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)
   (Implemented),
   [ADR-140 PR lifecycle tracking](../decisions.md#adr-140-pr-lifecycle-tracking)
@@ -542,8 +542,8 @@ metadata fails closed.
   [`workbench-lifecycle.md`](workbench-lifecycle.md) (snapshot, export, and
   handoff operations), and [`branch-sync.md`](branch-sync.md) (PR-state reads,
   sync push, resolver-backed `ai_rebase_merge`).
-- Source: `web/lib/repo-source.ts`; **(Implemented, M18)** `web/lib/worktree.ts`
-  (`pushBranch`), `web/lib/runs/pr-adapter.ts`; **(Implemented, M27)**
+- Source: `web/lib/repo-source.ts`; **(Implemented)** `web/lib/worktree.ts`
+  (`pushBranch`), `web/lib/runs/pr-adapter.ts`; **(Implemented)**
   `web/lib/worktree.ts` (`listRemotes`, `headCommit`, branch collision helpers,
   `createBranchAtHead`); **(Implemented, ADR-093)** `web/lib/repo-source.ts`
   (`classifyGitError`, token/askpass clone, `detectGhAuth`),

@@ -1,23 +1,24 @@
-# Flow node settings & the enforcement boundary (M11c)
+# Flow node settings & the enforcement boundary
 
-> **M42 — Unified runner & session model (Implemented).** Node `settings.runner`
+> **Unified runner & session model (Implemented).** Node `settings.runner`
 > uses the unified `flowRunnerConfigSchema` and resolves through the node's
 > **session** runner; `judge` becomes a runner-bearing node and
 > `judge.settings.model` is removed entirely. Canonical:
 > [`sessions.md`](sessions.md) /
 > [ADR-114](../decisions.md#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth).
-> Flipped to as-built in M42 Phase 7.
+> Flipped to as-built in Phase 7 of the ADR-114 work.
 
-> **Status:** Implemented (M11c subset). M14 materialization **Implemented through
-> Phase 4.5** (delivery mechanism built + CI-verified). The `instructed → enforced`
+> **Status:** Implemented (typed-settings subset — ADR-031/032). Capability
+> materialization (ADR-041/044) is **Implemented through Phase 4.5** (delivery
+> mechanism built + CI-verified). The `instructed → enforced`
 > flip is **Implemented — [ADR-130](../decisions.md#adr-130-adapter-agnostic-capability-enforcement-at-the-acp-seam)**
 > (`capability_guard`, this branch).
 >
 > The typed settings schema, node-level shape validation, the launch-time
 > **refusal boundary**, the `enforcement_snapshot` audit record, the time-limit
-> watchdog, and the run-detail visibility panel are **Implemented** in M11c.
+> watchdog, and the run-detail visibility panel are **Implemented**.
 > Capability-reference resolution against a registry (carve-b), agent-aware
-> mapping, and per-session native materialization are **Implemented (M14)** — see
+> mapping, and per-session native materialization are **Implemented** — see
 > ADR-041 / ADR-042 / ADR-043 in [`decisions.md`](../decisions.md). Capability config
 > is now genuinely **delivered** to the claude agent via
 > `<worktree>/.claude/settings.local.json` (`tools` → `permissions.allow`,
@@ -27,13 +28,13 @@
 >
 > **ADR-130 enforcement flip (Implemented — `capability_guard`).** ADR-042's
 > deferred, claude-first, per-cell live spike is superseded by an
-> **adapter-agnostic** enforcement point: the M40 supervisor↔ACP-seam interceptor
+> **adapter-agnostic** enforcement point: the supervisor↔ACP-seam interceptor
 > (ADR-108) gains a derived-only `capability_guard` rule that enforces
 > `enforcement.<class>: strict` on `tools` / `mcps` via tool-identity allow-lists.
 > Consequently `ENFORCEABILITY_BY_AGENT` flips **`tools` and `mcps` → `enforced`
 > for ALL five adapters** (the interceptor is adapter-agnostic; **per-adapter
 > admission moves to an async launch evidence gate**, not the static table), and
-> the `hooks` cell is corrected to `enforced` (it has been seam-enforced since M40).
+> the `hooks` cell is corrected to `enforced` (seam-enforced since ADR-108).
 > The four remaining classes stay `instructed` with **documented** reasons — each
 > lacks a tool-identity seam mechanism (see the flipped table + rationale below).
 > There is **no migration** and **no engine bump**. The old "do NOT flip cells /
@@ -51,11 +52,12 @@ This domain covers how a Flow graph node's typed `settings` block is parsed,
 validated, evaluated against MAIster's *current* enforcement capability, and
 either allowed to launch or **refused before launch** — with the resolved
 verdicts made visible in the run-detail UI and snapshotted for audit. The
-boundary is honest about the M11c↔M14 split: M11c gates launch on a **static**
-table and never silently weakens a declared `strict` requirement; M14 later
-*materializes* capabilities and flips classes from `instructed` to `enforced`.
-Scope is the `web/` tier only — the supervisor `spawn.ts` env layer is unchanged
-in M11c.
+boundary is honest about the settings↔materialization split: the typed-settings
+layer (ADR-031/032) gates launch on a **static** table and never silently
+weakens a declared `strict` requirement; the materialization layer (ADR-041/044)
+later *materializes* capabilities and flips classes from `instructed` to
+`enforced`. Scope is the `web/` tier only — the supervisor `spawn.ts` env layer
+is unchanged by the typed-settings layer.
 
 ## Domain entities
 
@@ -66,7 +68,7 @@ in M11c.
   `flow_revisions.manifest` (persisted; see [runs-domain ERD](../db/runs-domain.md)).
 - **Capability class** — one of the seven capability-bearing settings subject to
   the `enforcement` intent: `mcps`, `tools`, `skills`, `restrictions`,
-  `permissionMode`, `workspaceAccess`, `hooks` (`hooks` Implemented — ADR-108, M40;
+  `permissionMode`, `workspaceAccess`, `hooks` (`hooks` Implemented — ADR-108;
   see "Hook engine capability class" below).
 - **`enforcement` intent** — per-class `strict | instruct | off`, default
   `instruct`, declared by the flow author in `settings.enforcement`.
@@ -138,7 +140,7 @@ false-enforce (ADR-032). The remaining four classes stay `instructed`, each for 
 `TODO(M14)` remains.
 
 > **MCP note (ADR-130, 2026-07-11).** Per-session MCP config **is** materialized
-> today (M14 delivers it via `settings.local.json` + ACP `mcpServers`), so the
+> today (delivered via `settings.local.json` + ACP `mcpServers`, ADR-044), so the
 > `mcps` cells being `instructed` reflect only the un-flipped *enforcement of
 > declared limits*, not a missing materialization path. Orthogonally, MCP
 > Management v2 makes `platform_mcp_servers.trust_status` **load-bearing at
@@ -171,7 +173,7 @@ export const ENFORCEABILITY_BY_AGENT: EnforceabilityTable = {
     restrictions: "instructed",    // path-based mustNotTouch deny-sets (mutation-check gate), not tool identity
     permissionMode: "instructed",  // claude-only defaultMode delivery, end-to-end constraint unverified (spike 0.10)
     workspaceAccess: "instructed", // not delivered to the seam on the flow path (no readOnlySession); follow-up
-    hooks: "enforced",             // supervisor-enforced at the ACP seam since M40 (ADR-108); label corrected by ADR-130
+    hooks: "enforced",             // supervisor-enforced at the ACP seam (ADR-108); label corrected by ADR-130
   },
   codex: {
     mcps: "enforced",
@@ -220,7 +222,7 @@ The schema and table changes are atomic SDD/TDD work:
 ### Spike 0.10 verdict (permissionMode)
 
 **Verdict: `permissionMode` stays `instructed` — by ADR-130 design, not a
-tool-identity seam class.** The M11c `--permission-mode` CLI mechanism was disproven
+tool-identity seam class.** The original `--permission-mode` CLI mechanism was disproven
 against `claude-agent-acp@0.37.0` (the adapter ignores those flags); `permissionMode`
 is delivered via `<worktree>/.claude/settings.local.json` `permissions.defaultMode`
 (`ask→default`/`allow→bypassPermissions`/`deny→plan`, see ADR-044). It is **not**
@@ -304,8 +306,8 @@ EN + RU keys.
 
 ## Hook engine capability class (Implemented — ADR-108)
 
-The **seventh** capability class `hooks` ([ADR-108](../decisions.md#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation),
-M40) declares the per-tool-call guardrail rules (`path_guard` / `repetition` /
+The **seventh** capability class `hooks` ([ADR-108](../decisions.md#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation))
+declares the per-tool-call guardrail rules (`path_guard` / `repetition` /
 `no_progress`) enforced at the supervisor↔ACP seam. Full design:
 [`guardrail-hooks.md`](guardrail-hooks.md). Engine floor: a node/agent declaring
 `hooks` requires `compat.engine_min >= 1.8.0`.
@@ -322,7 +324,7 @@ all `enforced` — corrected by ADR-130):
 | `mimo`     | enforced |
 
 **Why `enforced` now (ADR-130 correction).** The supervisor's hook interceptor has
-enforced `hooks` *deterministically* at the ACP seam since M40. ADR-108 modeled it
+enforced `hooks` *deterministically* at the ACP seam since it landed. ADR-108 modeled it
 `instructed` as an honest under-claim — because at that time no peer capability class
 was seam-`enforced`, and flipping `hooks` alone would have reopened the then-frozen
 ADR-041 flip. ADR-130 opens that flip for `tools`/`mcps` via the same seam, so the
@@ -341,7 +343,7 @@ and [`execution-policy.md`](execution-policy.md).
 **Supervisor-vs-native split + materialization.** All three rules are enforced
 universally supervisor-side. A claude-only `NativeHookMaterializer` (spike-gated)
 may *additionally* write a `PreToolUse` path-guard hook into
-`<worktree>/.claude/settings.local.json` (the same M14 channel that delivers
+`<worktree>/.claude/settings.local.json` (the same channel that delivers
 `tools` / `permissionMode`, ADR-044), covering only `path_guard` and degrading to
 documented-N/A if the bundled adapter does not honor settings-file hooks. The
 native hook's `allowedPaths` derive from the same resolved `hooksConfig.pathGuard`
@@ -440,7 +442,7 @@ sequenceDiagram
 
 Agent-agnostic, inherently enforced, NOT subject to the strict/instruct table.
 The existing keep-alive / scheduler sweep computes elapsed from the active
-`node_attempts.started_at` (full-µs, per the M11b fix) and on cap terminates via
+`node_attempts.started_at` (full-µs, per the precision fix) and on cap terminates via
 the existing supervisor `DELETE /sessions/:id` (no new supervisor route; the
 `DELETE` drives teardown so no permission deferred leaks), marks the node
 `Failed`, and ends the run terminal. Cost limits stay record-only.
@@ -475,7 +477,7 @@ flowchart TD
 ## Expectations
 
 - A node `settings` block MUST be parsed into the typed per-node-type shape; the
-  M11a opaque passthrough and `SETTINGS_NOT_ENFORCED_WARN` MUST NOT exist.
+  original opaque passthrough and `SETTINGS_NOT_ENFORCED_WARN` MUST NOT exist.
 - A node with no `settings` MUST validate and run unchanged; absence of
   `settings` NEVER triggers a refusal.
 - Launch MUST proceed iff every `strict` capability-bearing setting on every
@@ -504,8 +506,8 @@ flowchart TD
   `human.decisions[]` absent from `transitions`. AI-coding nodes use
   `settings.runner` as the portable runner target; project/platform remapping
   happens when the Flow is loaded or attached.
-- M11c MUST NOT validate MCP/tool/skill/agent/restriction *registry* references
-  (M14) nor `human` role refs against a registry (M13).
+- The typed-settings layer MUST NOT validate MCP/tool/skill/agent/restriction
+  *registry* references nor `human` role refs against a registry.
 - The trust gate MUST run before the enforcement evaluator: an `untrusted`
   revision carrying `enforcement: strict` is refused on trust first.
 - The run-detail panel MUST render each `ai_coding`/`judge` node's classes tagged
@@ -531,11 +533,12 @@ flowchart TD
 ## Edge cases
 
 - **`strict` on a class the build can only instruct** → refused at launch,
-  `MaisterError("CONFIG")` (400). The M11c default for every class.
+  `MaisterError("CONFIG")` (400). The original default for every class.
 - **`strict` on a class enforced for one agent, unsupported for the resolved
-  agent** → `MaisterError("EXECUTOR_UNAVAILABLE")` (503). M14-era / test-injected.
-- **`untrusted` revision with `enforcement: strict`** → refused on the M10 trust
-  gate (`PRECONDITION`) before the evaluator runs.
+  agent** → `MaisterError("EXECUTOR_UNAVAILABLE")` (503). Materialization-era /
+  test-injected.
+- **`untrusted` revision with `enforcement: strict`** → refused on the ADR-021
+  trust gate (`PRECONDITION`) before the evaluator runs.
 - **`enforcement` key on a node type that has no such class** (e.g. `mcps` on
   `human`) → rejected by node-level validation, `MaisterError("CONFIG")`.
 - **Per-node executor override smuggling an unenforceable class** → caught by the
@@ -544,7 +547,7 @@ flowchart TD
   any other non-enforced cell; no adapter-specific fallback, warning-only pass,
   or implicit downgrade is allowed.
 - **Process dies after a refusal snapshot but before the run is marked terminal**
-  → the M11a/M11b recovery sweep reconciles the run; the append-only snapshot is
+  → the recovery sweep reconciles the run; the append-only snapshot is
   never double-written for the same attempt.
 - **(Implemented — ADR-157) `context_repos` naming an unknown or archived sibling
   slug** → `MaisterError("PRECONDITION")` at launch, naming the offending slug;
@@ -571,7 +574,7 @@ flowchart TD
 - DB: [database-schema.md](../database-schema.md),
   [db/runs-domain.md](../db/runs-domain.md) (`node_attempts.enforcement_snapshot`).
 - Errors: [error-taxonomy.md](../error-taxonomy.md) (`CONFIG`,
-  `EXECUTOR_UNAVAILABLE` M11c callers).
+  `EXECUTOR_UNAVAILABLE` settings-enforcement callers).
 - DSL: [flow-dsl.md](../flow-dsl.md) (node `settings` block).
 - Context mounts (Implemented — ADR-157): [`workspaces.md`](workspaces.md)
   (mount path, `runs.context_mounts` snapshot, the three read-only enforcement

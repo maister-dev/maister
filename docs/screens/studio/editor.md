@@ -1,6 +1,6 @@
 # Flow editor (Studio)
 
-## M43 local Flow compatibility state (Implemented)
+## Cut-over local Flow compatibility state (ADR-131 — Implemented)
 
 Raw YAML containing steps[] remains open for manual rewriting. A visible
 blocking validation panel carries the exact reason: the engine-3 remediation,
@@ -78,14 +78,14 @@ collapsible app rail ([`../chrome/left-rail.md`](../chrome/left-rail.md)):
    Per-file Save lives in the Files / YAML editor; the visible blocking
    validation panel disables Commit state and Publish for an incompatible Flow.
 2. **Canvas (dominant, full height)** — the `FlowEditorToolbar` palette (Add
-   node ×6 after M41 `consensus` / Add gate ×6 / Remove), color-coded node cards (icon chip + status
+   node ×6 including `consensus` / Add gate ×6 / Remove), color-coded node cards (icon chip + status
    chip), named-outcome handles, dashed amber rework edges, `<MiniMap>` +
    `<Controls>`. Drag persists `presentation` x/y (ADR-064).
 3. **Right properties panel (collapsible, ~440–500 px on desktop)** — grouped
    under **Identity · Behavior · Runner · Gates · Routing · Transitions ·
    Presentation** + `EditorValidationSummary`. Selecting a node happens on the
    canvas; nothing selected → flow/package-level settings. The **Routing** group
-   is the M38 `decide` sub-panel (below).
+   is the `decide` sub-panel (below).
 4. **Drawers / toggles** — `[Files]` and `[Diff]` use the existing package-file
    and diff surfaces. `[YAML]` replaces the center canvas with the selected
    flow.yaml in CodeEditor. Invalid YAML does not blank the canvas; the last valid
@@ -101,7 +101,7 @@ icon shape is the primary type signal; the status chip (run/preview only) compos
 with it. Blocking gates render a solid chip, advisory an outline; rework /
 back-edges render dashed + amber.
 
-### Dynamic routing — `decide` sub-panel (M38 — Implemented)
+### Dynamic routing — `decide` sub-panel (Implemented)
 
 The **Routing** group in the properties panel edits the node's `decide` table
 (ADR-103). It is offered when the node can produce a routable signal — it declares
@@ -130,12 +130,12 @@ declared `output` transition keys; these are already transition keys, compile-en
 rework amber-dashed, a `deny`/`fail` verdict branch red). The read-only
 `FlowGraphView` twin inherits the same outcome-labeled edges.
 
-### Package authoring IA (M39 Stream A — Implemented; Canonical Create Flow — Implemented)
+### Package authoring IA (Stream A — Implemented; Canonical Create Flow — Implemented)
 
 Stream A reworks the `/studio/edit/{id}/{path}` local-package editor for
 correctness and first-class kinds (behavior SSOT:
 [`../../system-analytics/local-packages.md`](../../system-analytics/local-packages.md)
-§"M39 Stream A"). Deltas over the Phase B/C editor above:
+§"Package-authoring Stream A"). Deltas over the Phase B/C editor above:
 
 - **Package-home landing.** With no flow file selected, the editor shows a package
   **overview** — the `PackageManifestForm` (`maister-package.yaml`, new `manifest`
@@ -232,7 +232,7 @@ linking the sync entry above; without lineage it shows manual-reconcile
 guidance (inspect/delete the remote `maister/<slug>` branch). Publish never
 offers force.
 
-### Consensus node properties (M41 — Implemented)
+### Consensus node properties (Implemented)
 
 The `consensus` node is authorable through the same canvas and right-panel
 surface, not a bespoke wizard. The toolbar adds one consensus node type with the
@@ -387,8 +387,8 @@ Behavior SSOT: [`../../system-analytics/flow-studio.md`](../../system-analytics/
 ## i18n
 
 `flowEditor` (top-bar labels, drawer labels, rail toggle, node/gate visual
-labels, the existing node-form / toolbar / validation keys, the M38
-`flowEditor.nodeForm.decide*` routing-panel keys, and M41
+labels, the existing node-form / toolbar / validation keys, the
+`flowEditor.nodeForm.decide*` routing-panel keys, and the
 `flowEditor.nodeForm.consensus*` participant/axis/round/synthesizer/output keys,
 reference-picker keys under `flowEditor.nodeForm.schemaRef*`, and the
 `flowEditor.nodeForm.{promptComposer,multiSelect,stringList}*` structured-control
@@ -403,9 +403,9 @@ parity required.
   [#adr-092](../../decisions.md#adr-092) (unified Studio + editable-local-package
   direction),
   [#adr-103](../../decisions.md#adr-103-output-driven-dynamic-routing-decide--onmismatch-rework--engine-170)
-  (M38 `decide` routing panel + outcome-labeled edges),
+  (`decide` routing panel + outcome-labeled edges),
   [#adr-109](../../decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution)
-  (M41 consensus node),
+  (consensus node),
   [#adr-132](../../decisions.md#adr-132-forked-package-loop--ephemeral-pins-package-experiment-axis-local-sources-upstream-sync)
   (divergence drawer, sync banner, publish sync-first refusal).
 - Spec: [`../../../.ai-factory/specs/feature-flow-studio-editor.md`](../../../.ai-factory/specs/feature-flow-studio-editor.md).

@@ -1,6 +1,6 @@
 # Local packages workspace — `/studio/local`
 
-## M43 compatibility state (Implemented)
+## Cut-over compatibility state (ADR-131 — Implemented)
 
 The workspace keeps local packages with a legacy, malformed, or
 engine-range-incompatible Flow inspectable and keeps **Open YAML** available.

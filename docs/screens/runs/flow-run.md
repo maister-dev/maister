@@ -8,7 +8,7 @@ Promotion with one localized unavailable explanation. Archive and Drop remain
 distinct confirmations; their shared response reports retained status,
 idempotency, preservation outcome, and optional archive branch.
 
-## M43 terminalized legacy run (Implemented)
+## Cut-over terminalized legacy run (ADR-131 — Implemented)
 
 A migration-terminalized run shows a persistent Failed cut-over banner with
 timestamp, reason legacy_steps_engine_3_cutover, and links to retained
@@ -234,7 +234,7 @@ screen doc describes the surface.
 
 `run`, `workbench`, `evidence`, and `readiness`.
 
-M41 adds consensus labels under the existing `run` and `evidence` namespaces:
+The consensus node adds consensus labels under the existing `run` and `evidence` namespaces:
 participant draft, verifier, target, round, agreement reached, no consensus,
 human resolution, consensus plan, debate log, and bounded excerpt labels. EN +
 RU parity is required.

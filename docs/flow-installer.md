@@ -8,7 +8,7 @@ symlink it into the project's `.maister/` subtree, and upsert the row
 into the `flows` table. The runner consumes installed bundles through
 the content-addressed cache.
 
-M25 authored catalog flows are not Flow plugin installs. A locally Published
+Authored catalog flows are not Flow plugin installs. A locally Published
 authored flow remains inert catalog content until a later packaging/publication
 milestone creates a real Flow package revision; this installer does not read or
 execute authored drafts.
@@ -58,8 +58,9 @@ mutate the bytes of a still-running flow — the SHA-pinned directory remains
 intact and the runner keeps reading from it until the run completes or is
 discarded.
 
-Planned M10 moves the mutable project pointer out of the package revision
-record: package revisions become immutable rows, while project enablement
+The planned package revision lifecycle (ADR-021) moves the mutable project
+pointer out of the package revision record: package revisions become
+immutable rows, while project enablement
 selects which installed revision new runs should use. That unlocks explicit
 install, trust, enable, upgrade, rollback, disable, and removal UX without
 weakening the run pinning contract above.

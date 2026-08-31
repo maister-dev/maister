@@ -7,7 +7,7 @@ The board receives workspace presence alongside latest-run status. An archived
 launch. It never renders a worktree action for a removed workspace; direct
 server routes, not this visual state, enforce the guard.
 
-## M43 incompatible task state (Implemented)
+## Cut-over incompatible task state (ADR-131 — Implemented)
 
 A task bound to an incompatible revision stays visible and shows its typed
 reason beside the disabled launch affordance. The board derives it from the

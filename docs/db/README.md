@@ -24,15 +24,15 @@ Two kinds of view live here (ADR-159):
 | [`projects-domain.md`](projects-domain.md) | Projects + Executors + Flows. |
 | [`runs-domain.md`](runs-domain.md) | Tasks + Runs + Workspaces + scratch-run tables. |
 | [`hitl-domain.md`](hitl-domain.md) | HITL Requests + review-comment threads (ADR-072) + form-schema shape. |
-| [`artifacts-domain.md`](artifacts-domain.md) | Typed artifact instances + projection cursors (M12). |
-| [`assignments-domain.md`](assignments-domain.md) | M13 Flow roles, actors, assignments, and assignment events. |
-| [`capabilities-domain.md`](capabilities-domain.md) | Capability records + git-pinned imports + materialization plan column (M14, Implemented). |
+| [`artifacts-domain.md`](artifacts-domain.md) | Typed artifact instances + projection cursors. |
+| [`assignments-domain.md`](assignments-domain.md) | Flow roles, actors, assignments, and assignment events (ADR-040). |
+| [`capabilities-domain.md`](capabilities-domain.md) | Capability records + git-pinned imports + materialization plan column (Implemented). |
 | [`domain-events.md`](domain-events.md) | Domain-event outbox: `domain_events` fact log + per-consumer cursors (ADR-086, Implemented). |
 | [`agents-domain.md`](agents-domain.md) | Platform-agent tables: `agents` catalog, `agent_project_links`, `agent_schedules` (ADR-089/090). |
 | [`brain-domain.md`](brain-domain.md) | Project Brain lineage tables (ADR-122/127/128). |
 | [`evaluations-domain.md`](evaluations-domain.md) | Evaluation Lab tables (ADR-142..147, ADR-150). |
-| [`integrations-domain.md`](integrations-domain.md) | Project tokens + token audit log (M16). |
-| [`scheduler-domain.md`](scheduler-domain.md) | Scheduler jobs + run schedules + scheduled task launches (M24/M28, ADR-139). |
+| [`integrations-domain.md`](integrations-domain.md) | Project tokens + token audit log. |
+| [`scheduler-domain.md`](scheduler-domain.md) | Scheduler jobs + run schedules + scheduled task launches (ADR-060/071, ADR-139). |
 | [`webhooks.md`](webhooks.md) | Webhook subscriptions + events outbox + deliveries + attempts (ADR-077). |
 
 ## Cardinality notation

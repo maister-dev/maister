@@ -107,7 +107,7 @@ large code-review surfaces sit in one expandable block.
    crashes, recoveries, promotions, token/cost chunks, and returned human work.
 2. **Evidence** - artifact graph, logs, reports, AI judgments, human notes,
    commit sets, checkpoints, previews, plans, payload states, and filters.
-   Evidence explains why a run is ready or blocked. M41 consensus adds a
+   Evidence explains why a run is ready or blocked. The consensus node adds a
    `plan` artifact kind for `consensus_plan`, keeps `debate_log` as
    `human_note`, and links verifier rows/draft child runs without exposing
    unbounded draft bodies inline.
@@ -168,7 +168,7 @@ Content-level states:
 | Evidence | empty, loading payload, payload gone, payload error |
 | Timeline | empty, live, terminal snapshot |
 
-### Consensus evidence (M41 — Implemented)
+### Consensus evidence (Implemented)
 
 Consensus evidence uses the existing Evidence tab and artifact routes:
 
@@ -224,7 +224,7 @@ and [`../../system-analytics/branch-sync.md`](../../system-analytics/branch-sync
 ## i18n
 
 `workbench`, `evidence`, `run`, and review-comment keys under `workbench.diff`.
-M41 adds `plan` artifact-kind labels, consensus verifier/target labels, round
+The consensus node adds `plan` artifact-kind labels, consensus verifier/target labels, round
 labels, and parse-status labels. EN + RU parity required.
 
 ## Flow Review Workspace (Implemented — ADR-138)

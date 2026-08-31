@@ -109,9 +109,9 @@ Rules:
 - Admin APIs and UI may show secret ref names and readiness reason codes, but
   never raw token values or generated config bodies.
 
-### MCP capability template — `platform_mcp_servers` (Designed, M27)
+### MCP capability template — `platform_mcp_servers` (Designed)
 
-**(Designed, M27)** Platform MCP servers are stored in the `platform_mcp_servers`
+**(Designed — ADR-065)** Platform MCP servers are stored in the `platform_mcp_servers`
 table (admin-only CRUD, mirrors `platform_acp_runners`). The transport field is
 discriminated:
 
@@ -131,11 +131,11 @@ secret-ref policy used by `platform_acp_runners` (ADR-044 + ADR-065).
 `exec_trust` on the `flow_revisions` row gates MCP stdio `command` spawn: a revision
 with `exec_trust=untrusted` MUST NOT spawn a stdio MCP command even if `trustStatus`
 is `trusted_by_policy` (logic-trust alone is insufficient — see
-[`system-analytics/flow-packages.md`](system-analytics/flow-packages.md) §M27).
+[`system-analytics/flow-packages.md`](system-analytics/flow-packages.md) §"Version binding and authored→executable bridge").
 
-**No new web environment variable is required by M27.** MCP server secrets travel
-only as env-var names; the supervisor resolves them from its existing `process.env`
-at spawn. The env table above is unchanged by M27.
+**No new web environment variable is required by the platform MCP catalog.** MCP
+server secrets travel only as env-var names; the supervisor resolves them from its
+existing `process.env` at spawn. The env table above is unchanged by it.
 
 ### Project Brain provider config — `platform_runtime_settings` (Implemented, ADR-122)
 
@@ -219,7 +219,7 @@ capabilities:
       agent: codex
       source: project
       path: .maister/capabilities/codex-default/settings.json
-  # Implemented (M14) — agent_definitions[] and env_profiles[] below
+  # Implemented — agent_definitions[] and env_profiles[] below
   agent_definitions:
     - id: claude-strict
       source: project
@@ -234,7 +234,7 @@ flow_roles:
     description: Human user, service, or internal agent that owns reviews
   - ref: qa
     label: QA
-# Implemented (M14) — capability_imports[] block below
+# Implemented — capability_imports[] block below
 capability_imports:
   - id: aif-skills
     source: github.com/org/maister-aif-skills
@@ -272,12 +272,12 @@ flows:
 | `project.default_branch` | `main` | Default base branch for new runs and default target branch for promotion. `project.main_branch` remains accepted as a backwards-compatible alias until the branch-targeting migration lands. |
 | `project.branch_prefix` | `maister/` | Run-branch prefix; combined with the slug. |
 | `project.default_runner` | `inherit` | Platform runner id or `inherit`. `inherit` uses the platform default. Missing/unknown runner ids create an explicit reconfiguration requirement; they never create project-scoped runner rows. |
-| `promotion.mode` | `local_merge` | **(Implemented, M18 — ADR-058/049.)** `local_merge` merges the run branch into the target branch locally; `pull_request` creates/updates a PR from the run branch into the target branch. Resolved at launch via the override chain (launch override > project `promotion.mode` > default `local_merge`) and snapshotted to `workspaces.promotion_mode`. `pull_request` mode has the per-provider host prerequisites below. |
-| `promotion.remote` | unset | **(Implemented, M18 — ADR-049.)** Remote name used by `pull_request` mode (the `git push` target and the PR base remote). |
+| `promotion.mode` | `local_merge` | **(Implemented — ADR-058/049.)** `local_merge` merges the run branch into the target branch locally; `pull_request` creates/updates a PR from the run branch into the target branch. Resolved at launch via the override chain (launch override > project `promotion.mode` > default `local_merge`) and snapshotted to `workspaces.promotion_mode`. `pull_request` mode has the per-provider host prerequisites below. |
+| `promotion.remote` | unset | **(Implemented — ADR-049.)** Remote name used by `pull_request` mode (the `git push` target and the PR base remote). |
 | `flows[].runner` | `inherit` | Platform runner id or `inherit`. This is the project Flow attachment default and inherits the project default. |
-| `flow_roles[]` | `[]` | M13 Flow routing registry. Each `ref` is project-scoped and may be used by `finish.human.role` or human-node `settings.roles[]`. Flow roles are not RBAC and never replace `project_members.role`. |
+| `flow_roles[]` | `[]` | Flow routing registry (ADR-040). Each `ref` is project-scoped and may be used by `finish.human.role` or human-node `settings.roles[]`. Flow roles are not RBAC and never replace `project_members.role`. |
 
-#### `pull_request` promotion mode — per-provider host prerequisites (Implemented, M18 — ADR-049)
+#### `pull_request` promotion mode — per-provider host prerequisites (Implemented — ADR-049)
 
 `pull_request` promotion runs in the **web tier** (the promote route shells a
 provider CLI *or* calls a Gitea-compatible REST API, plus `git push`). The
@@ -318,7 +318,7 @@ streamed via SSE, never embedded in `session/update` payloads. They are document
 > `local_merge` needs none. No silent dev/prod skew. See
 > [ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)
 
-#### Studio PR-to-source publish — same host prerequisites (Implemented, M39 Stream B — ADR-113)
+#### Studio PR-to-source publish — same host prerequisites (Implemented — ADR-113)
 
 Studio **PR-to-source** (`POST /api/studio/local-packages/{id}/publish`, ADR-113)
 reuses the **same** provider machinery as `pull_request` run promotion: it `git push`es
@@ -332,7 +332,7 @@ automation. No new env var; the same
 cover it. `.maister` stays host-only (ADR-023) — no compose change.
 > and [`deployment.md`](deployment.md).
 
-#### `capability_imports[]` (Implemented, M14)
+#### `capability_imports[]` (Implemented)
 
 The optional `capability_imports[]` block declares git-pinned capability
 packages for the project. Each entry is fetched, trust-evaluated, and
@@ -371,7 +371,7 @@ The resolved import is then ingested into `capability_records` via
 **Config-state symmetry (R-SYM):** Removing an entry from `capability_imports[]`
 disables the corresponding config/import-owned `capability_records` rows
 (`selectable=false`, `disabled_at` set). Historic profile snapshots are not
-retroactively invalidated. **M25 authored catalog carve-out:** rows whose
+retroactively invalidated. **Authored catalog carve-out:** rows whose
 `material.origin='authored'` are local DB-authored projections and are never
 disabled by `upsertCapabilitiesFromConfig` SET/CLEAR, even though they also use
 `source='project'`.
@@ -433,7 +433,7 @@ section; `mcps[].env` values MUST match `/^env:[A-Z0-9_]+$/` (secret values
 are never stored — same convention as `platform_mcp_servers`). There is NO
 `version` field — the git tag is the only pin (ADR-021 semantics).
 
-#### Authored capability catalog (Implemented, M25)
+#### Authored capability catalog (Implemented)
 
 Authored rules, skills, and flows are created through MAIster's DB/API surface,
 not through `maister.yaml`. Local `Published` means visible inside this MAIster
@@ -458,7 +458,8 @@ publish/export/install requires a valid package:
   `..` segments, no duplicate normalized paths, and no file-vs-directory
   collisions.
 - package file content is valid UTF-8 text; binary payloads are refused.
-- setup/script artifacts remain inert until the M10 trust-gated setup lifecycle.
+- setup/script artifacts remain inert until the trust-gated setup lifecycle
+  (ADR-021).
 
 The platform `/flows` UI and actions use project-scoped `manageCatalog` for
 create, edit, publish, import, and export. Project admin/owner is sufficient
@@ -500,7 +501,7 @@ Operational CLIs use the same package body and validation boundary:
   `enablement_state='Installed'`; setup and enablement remain explicit follow-up
   lifecycle actions.
 
-#### `capabilities.agent_definitions[]` and `capabilities.env_profiles[]` (Implemented, M14)
+#### `capabilities.agent_definitions[]` and `capabilities.env_profiles[]` (Implemented)
 
 Two new arrays extend the existing `capabilities` block. Both follow the same
 shape as `capabilities.mcps[]` / `capabilities.skills[]` but cover the
@@ -519,7 +520,8 @@ disk or carried on the wire (R-SECRET).
 
 ### Planned Flow package lifecycle
 
-M10 keeps `maister.yaml` as the project-desired Flow list but moves package
+The package revision lifecycle (ADR-021) keeps `maister.yaml` as the
+project-desired Flow list but moves package
 state into MAIster's database and UI. The file declares desired ids, sources,
 version labels, and optional executor overrides. Runtime package records store
 resolved revisions, manifest digests, compatibility results, trust decisions,
@@ -540,7 +542,7 @@ rules, and restrictions from `maister.yaml`. These records are persisted to
 launcher, and snapshotted into a run-scoped profile before the supervisor
 session starts. Flow graph node settings capability refs are validated against
 this registry at launch and resolved to concrete agent artifacts at runtime
-(**Implemented, M14** — see ADR-041; capability config is delivered to the claude
+(**Implemented** — see ADR-041; capability config is delivered to the claude
 agent via `<worktree>/.claude/settings.local.json` + ACP `newSession`
 `params.mcpServers`, the corrected channel per ADR-044, after the CLI-flag
 mechanism was disproven). The `instructed → enforced` flip remains **deferred**,
@@ -566,7 +568,8 @@ than silently weakening the boundary.
 
 ### Flow role registry
 
-`flow_roles[]` is the M13 project-local registry for human-work routing labels.
+`flow_roles[]` is the project-local registry for human-work routing labels
+(ADR-040).
 It accepts:
 
 | Field | Rule |
@@ -581,7 +584,7 @@ against that registry and rejects unknown refs with `CONFIG`. Removing a role
 from `maister.yaml` archives the DB row; re-adding the same ref reactivates it.
 
 For compatibility, omitted or empty `flow_roles[]` does not enforce existing
-role annotations in older Flow packages. New M13 projects that use role-owned
+role annotations in older Flow packages. New projects that use role-owned
 queues should declare the registry explicitly.
 
 For scratch runs, the web tier owns scoped materialization. V1 writes
@@ -611,7 +614,8 @@ supports an explicit safe profile-swap operation.
 
 ### Planned external operations configuration
 
-M16 external operations are configured from the MAIster UI and database, not
+External operations (ADR-045/046/047) are configured from the MAIster UI and
+database, not
 from `maister.yaml`. API tokens are service credentials; putting token secrets
 or token hashes in a project repo would make rotation and audit worse.
 
@@ -646,7 +650,7 @@ separate authorization model.
    or create an explicit reconfiguration requirement before project Flow
    attachment is enabled.
 3. No duplicate flow IDs; no duplicate `capability_imports[].id`.
-4. **(Implemented, M14)** Every Flow node settings capability reference
+4. **(Implemented)** Every Flow node settings capability reference
    (`mcps[]`, `skills[]`, `restrictions[]`, `settingsProfile`, `tools.{claude|codex}`)
    must resolve to a project, Flow-shipped, or system capability record. An
    unknown ref, or a ref present in the registry but not supported by the
@@ -699,9 +703,9 @@ metadata:                               # optional: routing hints + provenance, 
 runner_type: acp                        # optional, defaults to acp today
 runner: claude-code                     # optional platform ACP target
 setup: ./setup.sh                       # optional one-time install hook
-# Optional M10 package contract (ADR-021): recorded + displayed as opaque
+# Optional package contract (ADR-021): recorded + displayed as opaque
 # metadata. Only `compat` + `schemaVersion` are ENFORCED at enablement;
-# capabilities/gates/artifacts/external_ops gain runtime meaning in M11+.
+# capabilities/gates/artifacts/external_ops gained runtime meaning in later engine work.
 compat:                                 # optional engine compatibility range
   engine_min: 3.0.0
 capabilities: [shell, edit]             # optional opaque string list
@@ -744,10 +748,10 @@ is redispatch-recoverable only when its config declares `retry_safe: true`;
 [ADR-034](decisions.md#adr-034-crashed-run-recovery-semantics-hybrid---resume--re-dispatch-durable-marker-first-cap-re-admission)
 and [`flow-dsl.md`](flow-dsl.md).
 
-### Node `settings` (typed, M11c)
+### Node `settings` (typed)
 
 Every Flow graph node carries an **optional** typed `settings` block. The block
-is discriminated on node type and replaces the M11a opaque passthrough — the
+is discriminated on node type and replaces the earlier opaque passthrough — the
 shape is now validated, not passed through verbatim. `settings` is OPTIONAL on
 **every** node type: a node with no `settings` validates and runs unchanged, and
 absence of `settings` NEVER triggers a launch refusal (back-compat). Settings
@@ -787,31 +791,31 @@ fields on a `judge` node.
 | `runner` | `string` | **`ai_coding` only.** For `runner_type: acp`, a platform ACP runner target or package-local target that must be remapped during Flow load/attach. |
 | `model` | `string` | Free-form model override. |
 | `thinkingEffort` | `low \| medium \| high` | Unknown value rejected. |
-| `mcps` | `string[]` | Capability class. Registry resolution against `capability_records` at validate/launch is **Implemented (M14)**. |
-| `tools` | `{ claude?: string[]; codex?: string[] }` | Per-agent tool map; malformed map rejected. Capability class. Registry resolution is **Implemented (M14)**. |
-| `skills` | `string[]` | Capability class. Registry resolution is **Implemented (M14)**. |
-| `settingsProfile` | `string` | **`ai_coding` only.** Named `agent_definition` capability reference. Registry resolution is **Implemented (M14)**. |
+| `mcps` | `string[]` | Capability class. Registry resolution against `capability_records` at validate/launch is **Implemented (ADR-041)**. |
+| `tools` | `{ claude?: string[]; codex?: string[] }` | Per-agent tool map; malformed map rejected. Capability class. Registry resolution is **Implemented (ADR-041)**. |
+| `skills` | `string[]` | Capability class. Registry resolution is **Implemented (ADR-041)**. |
+| `settingsProfile` | `string` | **`ai_coding` only.** Named `agent_definition` capability reference. Registry resolution is **Implemented (ADR-041)**. |
 | `workspaceAccess` | `read \| write \| none` | **`ai_coding` only.** Capability class. |
 | `artifactAccess` | `string[]` | **`ai_coding` only.** Artifact ids the node may read/write. |
 | `permissionMode` | `ask \| allow \| deny` | Capability class. Unknown value rejected. |
 | `limits` | `{ maxDurationMinutes?: number > 0; maxCostUsd?: number > 0 }` | Out-of-range rejected. `maxDurationMinutes` is the watchdog cap (below); `maxCostUsd` is record-only. |
-| `restrictions` | `string[]` | Capability class. Registry resolution is **Implemented (M14)**. |
-| `hooks` | `{ disabled?: boolean; repetition?: { max: number > 0 }; noProgress?: { maxTurns: number > 0 }; pathGuard?: { allowedPaths: string[] } }` | **(Designed — ADR-108, M40.)** Capability class. Per-tool-call guardrail rules enforced at the supervisor↔ACP seam; requires `compat.engine_min >= 1.8.0`. See [`flow-dsl.md`](flow-dsl.md) + [`system-analytics/guardrail-hooks.md`](system-analytics/guardrail-hooks.md). |
+| `restrictions` | `string[]` | Capability class. Registry resolution is **Implemented (ADR-041)**. |
+| `hooks` | `{ disabled?: boolean; repetition?: { max: number > 0 }; noProgress?: { maxTurns: number > 0 }; pathGuard?: { allowedPaths: string[] } }` | **(Designed — ADR-108.)** Capability class. Per-tool-call guardrail rules enforced at the supervisor↔ACP seam; requires `compat.engine_min >= 1.8.0`. See [`flow-dsl.md`](flow-dsl.md) + [`system-analytics/guardrail-hooks.md`](system-analytics/guardrail-hooks.md). |
 | `enforcement` | `{ mcps?; tools?; skills?; restrictions?; permissionMode?; workspaceAccess?; hooks? }` | Per-class intent — see below. |
 
 **`human` settings** (decision/role/takeover shape):
 
 | Field | Type | Notes |
 | ----- | ---- | ----- |
-| `roles` | `string[]` | Eligible reviewer roles. Role refs are NOT validated against a registry in M11c (M13). |
+| `roles` | `string[]` | Eligible reviewer roles. Role refs are NOT validated against a registry at settings validation. |
 | `assignees` | `string[]` | Specific assignees. |
-| `decisions` | `string[]` | Each value MUST appear in the node's `transitions` (M11c). |
+| `decisions` | `string[]` | Each value MUST appear in the node's `transitions`. |
 | `allowFurtherTracks` | `boolean` | Permit spawning further tracks. |
 | `allowTakeover` | `boolean` | Permit manual takeover. |
 | `slaHours` | `number > 0` | Out-of-range rejected. |
 | `stalenessHint` | `string` | Hint surfaced when downstream goes stale. |
 | `returnRequires` | `string[]` | Conditions required before returning. |
-| `criticality` | `low \| medium \| high \| critical` | **(Implemented — M17.)** Flow-author-declared severity. Optional; additive — no `MAISTER_ENGINE_VERSION` bump (stays 1.2.0). Stored write-once on `hitl_requests.criticality` at HITL row creation; absent means no severity declared. Responder `confidence` is a response-time value supplied in the answer body — it cannot be pre-declared here. See [`flow-dsl.md`](flow-dsl.md#human-step). |
+| `criticality` | `low \| medium \| high \| critical` | **(Implemented.)** Flow-author-declared severity. Optional; additive — no `MAISTER_ENGINE_VERSION` bump (stays 1.2.0). Stored write-once on `hitl_requests.criticality` at HITL row creation; absent means no severity declared. Responder `confidence` is a response-time value supplied in the answer body — it cannot be pre-declared here. See [`flow-dsl.md`](flow-dsl.md#human-step). |
 
 **`cli` / `check` settings** (command shape):
 
@@ -838,9 +842,10 @@ strictly the class must hold:
 
 At launch, each `strict` class is checked against `ENFORCEABILITY_BY_AGENT` — a
 **code constant** in `web/lib/flows/enforcement.ts` (NOT an env var, port, or
-config-file path), keyed by `agent × capabilityClass`. In M11c every cell is
+config-file path), keyed by `agent × capabilityClass`. Originally every cell was
 `instructed`, so any `strict` declaration is `refused` and launch throws
-(`CONFIG`, or `EXECUTOR_UNAVAILABLE` once M14 flips cells). M14 only ever flips
+(`CONFIG`, or `EXECUTOR_UNAVAILABLE` once capability materialization — ADR-041 —
+flips cells). A flip only ever goes
 `instructed → enforced`; the contract tightens, never loosens. The table and the
 `evaluateNodeEnforcement` truth table are FROZEN in
 [`system-analytics/flow-settings.md`](system-analytics/flow-settings.md) — that
@@ -874,7 +879,7 @@ load and project Flow attachment. A missing id creates a required
 reconfiguration requirement; the manifest can still be loaded standalone for
 testing.
 
-### Package contract + compatibility (M10)
+### Package contract + compatibility (ADR-021)
 
 `compat`, `capabilities`, `gates`, `artifacts`, and `external_ops` are optional.
 They are parsed, digested into `flow_revisions.manifest_digest`, recorded in
@@ -909,7 +914,7 @@ guard) hard-blocks any policy run with `MaisterError("PRECONDITION")` when
 violated. The checkpoint ref namespaces `refs/maister/checkpoints/*` and
 `refs/maister/chat-checkpoints/*` are git refs, not env.
 
-### Verdict calibration (M15)
+### Verdict calibration
 
 `ai_judgment` and `skill_check` gates may declare a confidence threshold so a passing
 verdict only clears when the agent is sufficiently confident. Two config surfaces:
@@ -1011,72 +1016,72 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `DB_URL` | yes | — | `lib/db/client.ts`; accepts only `postgres://...` or `postgresql://...` |
 | `MAISTER_DB_POOL_MAX` | no | `10` | Postgres pool size in `lib/db/client.ts` |
 | `MAISTER_CLI_INHERIT_ENV` | no | off | **(Implemented, [ADR-153](decisions.md#adr-153-flow-child-process-env-isolation--allow-listed-env-for-clicheckprobe-children).)** Web tier compatibility escape hatch: `1/true/on/yes` makes flow-spawned bash children (`cli`/`check` node commands, `command_check` gates, `requirements[]` probes) inherit the FULL web process env — including secrets — as before ADR-153, with a once-per-process warn. Default (off) gives children only the allow-listed env (`web/lib/flows/child-env.ts`). Host/service-env only; use only while migrating a package that relied on ambient env, then unset. |
-| `MAISTER_MAX_CONCURRENT_RUNS` | no | `6` | Global Flow/scratch run concurrency cap (across all projects; counts `run_kind IN ('flow','scratch')`). M24 scheduler `flow_run` jobs delegate to this existing launch queue instead of consuming `command` budgets. (M34 — owner-requested default bump `3 → 6`; env semantics unchanged.) |
-| `MAISTER_MAX_CONCURRENT_AGENTS` | no | `3` | **(M34 — Implemented, ADR-089.)** Separate concurrency budget for platform-agent runs (`run_kind='agent'`) enforced at `tryStartRun` with its own `Pending` FIFO — agent runs never consume Flow slots and vice versa. **M41 consensus** also uses this ceiling for ephemeral verification/synthesis ACP sessions through an internal limiter; tokens are released in `finally` and these sessions are not `runs` rows. Repurposed from the obsolete M24 meaning (SQL claim budget for `agent_tick` attempts — `agent_tick.dispatcher` is now a hardcoded-budget-1 singleton). |
+| `MAISTER_MAX_CONCURRENT_RUNS` | no | `6` | Global Flow/scratch run concurrency cap (across all projects; counts `run_kind IN ('flow','scratch')`). Scheduler `flow_run` jobs delegate to this existing launch queue instead of consuming `command` budgets. (ADR-089 — owner-requested default bump `3 → 6`; env semantics unchanged.) |
+| `MAISTER_MAX_CONCURRENT_AGENTS` | no | `3` | **(Implemented, ADR-089.)** Separate concurrency budget for platform-agent runs (`run_kind='agent'`) enforced at `tryStartRun` with its own `Pending` FIFO — agent runs never consume Flow slots and vice versa. **Consensus (ADR-109)** also uses this ceiling for ephemeral verification/synthesis ACP sessions through an internal limiter; tokens are released in `finally` and these sessions are not `runs` rows. Repurposed from its obsolete scheduler-era meaning (SQL claim budget for `agent_tick` attempts — `agent_tick.dispatcher` is now a hardcoded-budget-1 singleton). |
 | `MAISTER_MAX_AGENT_CHAIN_DEPTH` | no | `2` | **(Implemented — ADR-156.)** Web tier. Caps agent→agent trigger chains ACROSS and WITHIN projects. `runs.agent_chain_depth` is snapshotted at launch: an agent run launched from a domain event whose `actor_type = 'agent'` inherits `parentDepth + 1`; every other trigger source (manual, cron, webhook, flow-node binding) seeds `0`. Enforced at two points — the cross-project reach check (`canAgentReachProject`) denies with an existence-hiding 404 + audited WARN `reason: "chain_depth_exhausted"`, and the agent-launch-from-agent-authored-event path refuses the launch, WARNs, and skips the candidate rather than throwing (the consumer's idempotent contract). Closes BOTH ping-pong hazards: cross-project A→B→A, and the same-project A↔B pair that existing self-exclusion (own events only) does not cover. Host/service-env only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)). |
 | `MAISTER_CONTEXT_MOUNT_ENABLED` | no | `true` | **(Implemented — ADR-157.)** Web tier. Platform kill switch for read-only sibling-repo context mounts. Default on (unset ⇒ on); off stops NEW mount materialization — a flow node's `settings.context_repos` and an attachment's `context_repos` resolve to no mounts and the session launches without them. In-flight runs keep the mounts they already snapshotted on `runs.context_mounts`, and the terminal/GC release paths keep working off that snapshot. Host/service-env only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)). |
 | `MAISTER_CONTEXT_REPOS` | no (derived — never set by hand) | derived per session | **(Implemented — ADR-157.)** Supervisor → ACP adapter child. JSON array of the resolved sibling mounts, e.g. `[{"slug":"api","path":"/abs/mount","ref":"main","commit":"<sha40>"}]`. Derived by the supervisor from the first-class `contextMounts[]` field on `POST /sessions` — NOT an `executor.env` entry (that is the provider-secret channel), and never operator-authored. Injected into the ACP child ONLY: it is deliberately absent from the [ADR-153](decisions.md#adr-153-flow-child-process-env-isolation--allow-listed-env-for-clicheckprobe-children) allow-list, so `cli`/`check`/gate/probe children never see it — matching the DSL rule that `settings.context_repos` is accepted only on `ai_coding`/`judge`/`orchestrator` nodes. See [`supervisor.md`](supervisor.md) and [`flow-dsl.md`](flow-dsl.md). |
-| `MAISTER_MAX_CONCURRENT_COMMANDS` | no | `2` | **Implemented, M24.** SQL claim budget for concurrent `command` scheduler attempts; invalid or non-positive values fall back to `2` and do not reduce or override `MAISTER_MAX_CONCURRENT_RUNS`. |
+| `MAISTER_MAX_CONCURRENT_COMMANDS` | no | `2` | **Implemented.** SQL claim budget for concurrent `command` scheduler attempts; invalid or non-positive values fall back to `2` and do not reduce or override `MAISTER_MAX_CONCURRENT_RUNS`. |
 | `MAISTER_MAX_CLI_TIMEOUT_MS` | no | `3600000` (1 h) | **(Implemented.)** Host-wide ceiling for a cli/check node's declared `settings.timeoutMs` (see [`flow-dsl.md`](flow-dsl.md#node-actions-review-and-gates)). The effective per-command timeout is `min(settings.timeoutMs ?? 300000, ceiling)`; requests above the ceiling clamp with a warning, they never fail validation. Invalid or non-positive values fall back to `3600000`. Read by `web/lib/flows/runner-cli.ts`; host/service-env only — wired into `.env.example` + this doc, never `compose.yml` (mirrors the `MAISTER_NODE_OUTPUT_MAX_BYTES` precedent). |
 | `MAISTER_TASK_QUEUE_EDGE_DRAIN` | no | `on` | **(Implemented, [ADR-121](decisions.md#adr-121-priority-ordered-dependency-draining-task-queue-unified-admission-gate).)** Toggles the **C2 fresh-Backlog-task** source of the unified admission gate (and the 60s `auto-launch-triaged` poll backstop). `off` ⇒ no slot-free auto-pull of NEW tasks; cap-safe resume (C3) + Pending promote (C1) + priority ordering stay ON regardless (INV-7). Accepts `on/off/true/false/1/0/yes/no` (else falls back to `on`). A project overrides per-project via `task_queue_settings.edgeDrain`. |
 | `MAISTER_TASK_QUEUE_AUTO_RESERVE` | no | `2` | **(Implemented, [ADR-121](decisions.md#adr-121-priority-ordered-dependency-draining-task-queue-unified-admission-gate).)** Flow-pool slots reserved from auto-drain — auto-drained Backlog-task runs never exceed `flowCap − reserve`, leaving guaranteed headroom for scratch/manual/resume (INV-8). `0` disables the reserve; invalid/negative values fall back to `2`. Global only (no per-project reserve). |
-| `MAISTER_MAX_ORCHESTRATOR_FANOUT` | no | `16` | **(M37 — Implemented, [ADR-098](decisions.md#adr-098-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume).)** Web tier. Per-plan task cap for an orchestrator node's `run_plan` delegation; an `orchestrator` node may lower it via `settings.delegation.max_fanout`. **M41 consensus** reuses the same helper as the hard `participants[]` cap and does not introduce a per-node raise above the host limit. Enforced pre-transaction — an over-limit plan is refused with `MaisterError({ code: "CONFIG" })` and no partial run-tree is written. |
-| `MAISTER_ORCHESTRATOR_MAX_DEPTH` | no | `3` | **(M37 — Implemented, [ADR-098](decisions.md#adr-098-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume).)** Web tier. Run-tree recursion bound (`runs.parent_run_id` depth) for orchestrator delegation; an `orchestrator` node may lower it via `settings.delegation.max_depth`. **M41 consensus** draft child runs are regular run-tree children and reuse the same depth guard. Enforced pre-transaction — an over-depth request is refused with `MaisterError({ code: "CONFIG" })`. |
-| `MAISTER_RECONCILE_SWEEP_INTERVAL_SECONDS` | no | `60` | Web: periodic reconcile sweeper interval (M19) |
-| `MAISTER_RECONCILE_GRACE_SECONDS` | no | `90` | Web: grace window before a no-live-session agent run is crashed (protects in-flight launches/recovers) (M19) |
-| `MAISTER_GC_AGE_DAYS` | no | `14` | Web: age before Abandoned/Done worktrees + Removed flow revisions are GC'd (M19) |
+| `MAISTER_MAX_ORCHESTRATOR_FANOUT` | no | `16` | **(Implemented, [ADR-098](decisions.md#adr-098-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume).)** Web tier. Per-plan task cap for an orchestrator node's `run_plan` delegation; an `orchestrator` node may lower it via `settings.delegation.max_fanout`. **Consensus (ADR-109)** reuses the same helper as the hard `participants[]` cap and does not introduce a per-node raise above the host limit. Enforced pre-transaction — an over-limit plan is refused with `MaisterError({ code: "CONFIG" })` and no partial run-tree is written. |
+| `MAISTER_ORCHESTRATOR_MAX_DEPTH` | no | `3` | **(Implemented, [ADR-098](decisions.md#adr-098-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume).)** Web tier. Run-tree recursion bound (`runs.parent_run_id` depth) for orchestrator delegation; an `orchestrator` node may lower it via `settings.delegation.max_depth`. **Consensus (ADR-109)** draft child runs are regular run-tree children and reuse the same depth guard. Enforced pre-transaction — an over-depth request is refused with `MaisterError({ code: "CONFIG" })`. |
+| `MAISTER_RECONCILE_SWEEP_INTERVAL_SECONDS` | no | `60` | Web: periodic reconcile sweeper interval |
+| `MAISTER_RECONCILE_GRACE_SECONDS` | no | `90` | Web: grace window before a no-live-session agent run is crashed (protects in-flight launches/recovers) |
+| `MAISTER_GC_AGE_DAYS` | no | `14` | Web: age before Abandoned/Done worktrees + Removed flow revisions are GC'd |
 | `MAISTER_COST_RECONCILE_LOOKBACK_HOURS` | no | `168` | **(Implemented, [ADR-117](decisions.md#adr-117-reliable-cost-rollup-reconciliation-and-per-runner-cost-attribution).)** Web: lookback window (hours) for the `system_sweep` cost-rollup backstop reconcile — only runs whose `ended_at` is within this window are candidates. Floor 1. Default 168 (7d, matching the GC horizon). Read by `web/lib/instance-config.ts:costReconcileLookbackHours()`; enforced by `web/lib/runs/cost-reconcile-sweep.ts`. Host/service-env only — `web` runs on the host ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)), never a compose var. |
 | `MAISTER_RALPH_MAX_ATTEMPTS` | no | `5` | **(Implemented, [ADR-095](decisions.md#adr-095-flow-execution-control-policy--snapshotted-preset--composable-autonomy-axes-fail-closed-no-blind-ship).)** Execution-policy ralph-loop (axis A2, `crashRetry=ralph_loop` — the unattended preset): hard cap on TOTAL attempts per task (original launch + auto-relaunches) before the task holds in Backlog for a human. Floor 1. Read by `web/lib/instance-config.ts:ralphMaxAttempts()`; enforced by the `run.failed` consumer `web/lib/runs/ralph-loop.ts`. Host/service-env only — `web` runs on the host ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)), never a compose var. |
 | `MAISTER_AUTO_RETRY_MAX_ATTEMPTS` | no | `3` | **(Implemented, [ADR-095](decisions.md#adr-095-flow-execution-control-policy--snapshotted-preset--composable-autonomy-axes-fail-closed-no-blind-ship).)** Execution-policy in-run auto-retry (axis A2, `crashRetry=auto_retry`): hard cap on TOTAL ledger attempts for a `retry_safe` node re-dispatched in-run on a transient code (`SPAWN`/`EXECUTOR_UNAVAILABLE`/`CHECKPOINT`/`ACP_PROTOCOL`) when no per-node `retry_policy` is declared (the author's `retry_policy` wins). Floor 1. Read by `web/lib/instance-config.ts:autoRetryMaxAttempts()`; synthesizes an ADR-080 retry in `web/lib/flows/graph/runner-graph.ts`. Host/service-env only. |
 | `MAISTER_BUDGET_HARD_MULTIPLIER` | no | `1.25` | **(Implemented, [ADR-101](decisions.md#adr-101-cost-budget-governance--budget-execution-policy-axis-token-metered-warn-escalate-terminate-ladder-fail-open).)** Execution-policy `budget` axis: the multiplier deriving a scope's TERMINATE ceiling `hardMaxTokens` from its ESCALATE ceiling `maxTokens` when `hardMaxTokens` is unset (`hardMaxTokens = maxTokens × this`). Read by the **web tier** (the keepalive-sweeper budget watchdog). Host/service-env only — `web` runs on the host ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)), so this is never a container/compose var. |
 | `MAISTER_DEFAULT_UNATTENDED_BUDGET_TOKENS` | no | unset (no default ceiling) | **(Implemented, [ADR-101](decisions.md#adr-101-cost-budget-governance--budget-execution-policy-axis-token-metered-warn-escalate-terminate-ladder-fail-open).)** Execution-policy `budget` axis: when set, seeds a `tree`-scope token ceiling for an `unattended`-preset launch that declares no explicit budget (the launch dialog also shows a non-blocking hint). Unset ⇒ an unattended run stays unbounded (fail-open). Read by the **web tier**. Host/service-env only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)) — never a container/compose var. |
-| `MAISTER_HOOK_REPETITION_MAX` | no | `5` | **(Designed — [ADR-108](decisions.md#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation), M40.)** Guardrail hook engine: consecutive-identical tool-call cap before the `repetition` breaker halts. Auto-armed for `unattended`-preset runs (per-node opt-out); a node may override. Read by the **web tier** (folded into the resolved `hooksConfig`). Host/service-env only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)) — never a container/compose var. |
-| `MAISTER_HOOK_NO_PROGRESS_TURNS` | no | `15` | **(Designed — ADR-108, M40.)** Guardrail hook engine: `sessionUpdate` turns since the last edit/diff-producing tool call before the `no_progress` breaker halts. Auto-armed for `unattended`-preset runs (per-node opt-out). Read by the **web tier**. Host/service-env only (ADR-023) — never a container/compose var. |
-| `MAISTER_HOOK_DEFAULT_WRITABLE_PATHS` | no | unset (⇒ worktree root) | **(Designed — ADR-108, M40.)** Guardrail hook engine: comma-separated default writable glob set for a node that opts into `path_guard` without listing `allowedPaths`. Unset ⇒ the worktree root (the guard then denies only out-of-tree writes). `path_guard` is always opt-in. Read by the **web tier**. Host/service-env only (ADR-023) — never a container/compose var. |
+| `MAISTER_HOOK_REPETITION_MAX` | no | `5` | **(Designed — [ADR-108](decisions.md#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation).)** Guardrail hook engine: consecutive-identical tool-call cap before the `repetition` breaker halts. Auto-armed for `unattended`-preset runs (per-node opt-out); a node may override. Read by the **web tier** (folded into the resolved `hooksConfig`). Host/service-env only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)) — never a container/compose var. |
+| `MAISTER_HOOK_NO_PROGRESS_TURNS` | no | `15` | **(Designed — ADR-108.)** Guardrail hook engine: `sessionUpdate` turns since the last edit/diff-producing tool call before the `no_progress` breaker halts. Auto-armed for `unattended`-preset runs (per-node opt-out). Read by the **web tier**. Host/service-env only (ADR-023) — never a container/compose var. |
+| `MAISTER_HOOK_DEFAULT_WRITABLE_PATHS` | no | unset (⇒ worktree root) | **(Designed — ADR-108.)** Guardrail hook engine: comma-separated default writable glob set for a node that opts into `path_guard` without listing `allowedPaths`. Unset ⇒ the worktree root (the guard then denies only out-of-tree writes). `path_guard` is always opt-in. Read by the **web tier**. Host/service-env only (ADR-023) — never a container/compose var. |
 | `MAISTER_CAPABILITY_DENY_ESCALATION_THRESHOLD` | no | `3` | **(Implemented — [ADR-130](decisions.md#adr-130-adapter-agnostic-capability-enforcement-at-the-acp-seam).)** `capability_guard` enforcement: number of consecutive out-of-profile tool-call denials before the seam halts the session and escalates a `hook_trip` HITL (`N`). Resolved by the **web tier** and delivered on the `enforcementProfile` (the supervisor stays config-free for the threshold, matching the `MAISTER_HOOK_REPETITION_MAX` pattern). Host/service-env only (ADR-023) — never a container/compose var. |
-| `MAISTER_GC_WARNING_DAYS` | no | `2` | Web: TTL warning window before removal (color ramp) (M19) |
-| `MAISTER_GC_ARCHIVE_PUSH` | no | `false` | Web: push the `maister/archive/<runId>` branch to the remote during GC preserve (M19) |
-| `MAISTER_CRON_TOKEN` | no (empty ⇒ `/api/cron/gc` and `/api/cron/tick` return 503 disabled) | (none) | **Server-only secret** for token-guarded cron routes — never logged or streamed. M24 reuses it for `GET`/`POST /api/cron/tick`; `/api/cron/gc` remains a compatibility wrapper. |
-| `MAISTER_SCHEDULER_TIMER_ENABLED` | no | `false` | **Implemented, M24.** Enables the single-box web-tier fallback timer when exactly `true`. External cron remains preferred. |
-| `MAISTER_SCHEDULER_TICK_INTERVAL_SECONDS` | no | `60` | **Implemented, M24.** Fallback timer cadence only; fixed-interval job cadence lives per `scheduler_jobs.cadence_interval_seconds`. |
-| `MAISTER_SCHEDULER_ATTEMPT_TIMEOUT_SECONDS` | no | `300` | **Implemented, M24.** Lease timeout for stuck `Claimed`/`Running` scheduler attempts before reaping as `Failed`. |
-| `MAISTER_SCHEDULER_AGENT_TICK_MAX_FAILURES` | no | `3` | **Implemented, M24.** Auto-disable threshold for repeated `agent_tick` precondition/launcher failures during result recording and lease reaping; invalid or non-positive values fall back to `3`. Other job kinds use `scheduler_jobs.max_failures`. |
-| `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS` | no | `300` | **(Implemented, M18 — ADR-058, Codex F1.)** Stale-`claiming` claim reclaim window (seconds), for BOTH claim axes: a `workspaces.promotion_state='claiming'` claim older than this is reclaimable by the next promote attempt (crash recovery), which re-mints `promotion_attempt_id`, and `canReclaimLifecycle` applies the same window to a stale `lifecycle_operation_state='claiming'` slot. **(ADR-141)** It also derives the branch-sync claim heartbeat: a live sync driver refreshes `lifecycle_operation_claimed_at` every `window / 4` (floored at 1s), so lowering this makes a live sync beat proportionally more often. That heartbeat is what lets `claimed_at` mean "last known alive" rather than "claim start" — without it a sync outliving this window has its slot stolen, dropping the `name='sync'` predicate that promote's reverse fence reads. Read by the web tier's shared `promoteRun` service, `workbench-lifecycle/service.ts`, and `runs/sync-target.ts`. Host/service-env only — the default compose stays Postgres-only per [ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres), so this is never a container/compose var. |
+| `MAISTER_GC_WARNING_DAYS` | no | `2` | Web: TTL warning window before removal (color ramp) |
+| `MAISTER_GC_ARCHIVE_PUSH` | no | `false` | Web: push the `maister/archive/<runId>` branch to the remote during GC preserve |
+| `MAISTER_CRON_TOKEN` | no (empty ⇒ `/api/cron/gc` and `/api/cron/tick` return 503 disabled) | (none) | **Server-only secret** for token-guarded cron routes — never logged or streamed. The polymorphic scheduler reuses it for `GET`/`POST /api/cron/tick`; `/api/cron/gc` remains a compatibility wrapper. |
+| `MAISTER_SCHEDULER_TIMER_ENABLED` | no | `false` | **Implemented.** Enables the single-box web-tier fallback timer when exactly `true`. External cron remains preferred. |
+| `MAISTER_SCHEDULER_TICK_INTERVAL_SECONDS` | no | `60` | **Implemented.** Fallback timer cadence only; fixed-interval job cadence lives per `scheduler_jobs.cadence_interval_seconds`. |
+| `MAISTER_SCHEDULER_ATTEMPT_TIMEOUT_SECONDS` | no | `300` | **Implemented.** Lease timeout for stuck `Claimed`/`Running` scheduler attempts before reaping as `Failed`. |
+| `MAISTER_SCHEDULER_AGENT_TICK_MAX_FAILURES` | no | `3` | **Implemented.** Auto-disable threshold for repeated `agent_tick` precondition/launcher failures during result recording and lease reaping; invalid or non-positive values fall back to `3`. Other job kinds use `scheduler_jobs.max_failures`. |
+| `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS` | no | `300` | **(Implemented — ADR-058, Codex F1.)** Stale-`claiming` claim reclaim window (seconds), for BOTH claim axes: a `workspaces.promotion_state='claiming'` claim older than this is reclaimable by the next promote attempt (crash recovery), which re-mints `promotion_attempt_id`, and `canReclaimLifecycle` applies the same window to a stale `lifecycle_operation_state='claiming'` slot. **(ADR-141)** It also derives the branch-sync claim heartbeat: a live sync driver refreshes `lifecycle_operation_claimed_at` every `window / 4` (floored at 1s), so lowering this makes a live sync beat proportionally more often. That heartbeat is what lets `claimed_at` mean "last known alive" rather than "claim start" — without it a sync outliving this window has its slot stolen, dropping the `name='sync'` predicate that promote's reverse fence reads. Read by the web tier's shared `promoteRun` service, `workbench-lifecycle/service.ts`, and `runs/sync-target.ts`. Host/service-env only — the default compose stays Postgres-only per [ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres), so this is never a container/compose var. |
 | `MAISTER_AUTO_PROMOTION` | no | `on` | **(Designed — [ADR-126](decisions.md#adr-126-auto-promotion-lanes).)** Platform kill switch for lane-bounded auto-promotion. `on` (default; unset ⇒ on) lets the `auto_promote` sweep evaluate `Review` flow runs; `off` stops NEW auto-promotions within one tick (in-flight `promoteRun` calls complete). Independent of and ANDed with each project's master toggle in `projects.auto_promotion`. Read by the web tier (`autoPromotionEnabledFromEnv()`); host/service-env only per [ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres). |
-| `MAISTER_API_BASE_URL` | no | `http://localhost:3000` | **(M16 — Implemented)** MCP facade: base URL of the MAIster REST API the `mcp/` package wraps (e.g. `http://localhost:3000` in dev; external HTTPS in prod). |
-| `MAISTER_PROJECT_TOKEN` | no | (none) | **(M16/M39 — Implemented)** MCP facade **stdio/local-only** project/run-bound token. Takes precedence over `MAISTER_ACCESS_TOKEN`. **IGNORED** under the Streamable-HTTP transport, which requires a per-request inbound bearer forwarded verbatim to `/api/v1/ext`. Not a web-tier secret — never read by `web/` or `supervisor/`. |
-| `MAISTER_ACCESS_TOKEN` | no | (none) | **(M39 — Implemented)** MCP facade **stdio/local-only** personal access token fallback for account-wide workflows such as `hitl_inbox`. Used only when `MAISTER_PROJECT_TOKEN` is unset or empty. **IGNORED** under Streamable-HTTP. Not read by `web/` or `supervisor/`. |
-| `MCP_TRANSPORT` | no | (unset → `http`) | **(M16/M39 — Implemented)** MCP facade transport select. Unset = Streamable-HTTP (remote; per-request inbound bearer, no ambient token). `stdio` (or `--stdio`) = local stdio transport reading `MAISTER_PROJECT_TOKEN`, then `MAISTER_ACCESS_TOKEN` as fallback. |
-| `MCP_PORT` | no | `3001` | **(M16 — Implemented)** MCP facade HTTP bind port for the Streamable-HTTP transport. Unused under stdio. |
-| `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` | no | unset (empty) | M10 Flow package trust policy (ADR-021). Comma-separated source-URL prefixes that are `trusted_by_policy` (auto-enabled on install). `local`/`file://` sources are always trusted by policy; every other git source is `untrusted` until an explicit per-(project, revision) trust confirmation. Read by the web tier (`web/lib/flows/trust.ts`) at install time. |
-| `MAISTER_TRUSTED_CAPABILITY_SOURCE_PREFIXES` | no | unset (empty) | **Implemented (M14).** Comma-separated source-URL prefixes for `capability_imports[]` entries that are granted `trusted_by_policy` (auto-trusted on install, no explicit confirm required). Mirrors `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` exactly — same prefix-match semantics, same `local`/`file://` always-trusted rule. Every other git source is `untrusted` until an operator calls `POST /api/projects/{slug}/capabilities/{capabilityRefId}/trust`. Setting `trust: explicit` on a `capability_imports[]` entry forces the confirm step even for policy-trusted sources. Read by `web/lib/capabilities/import.ts:resolveCapabilityTrust()`. See ADR-043. |
+| `MAISTER_API_BASE_URL` | no | `http://localhost:3000` | **(Implemented)** MCP facade: base URL of the MAIster REST API the `mcp/` package wraps (e.g. `http://localhost:3000` in dev; external HTTPS in prod). |
+| `MAISTER_PROJECT_TOKEN` | no | (none) | **(Implemented)** MCP facade **stdio/local-only** project/run-bound token. Takes precedence over `MAISTER_ACCESS_TOKEN`. **IGNORED** under the Streamable-HTTP transport, which requires a per-request inbound bearer forwarded verbatim to `/api/v1/ext`. Not a web-tier secret — never read by `web/` or `supervisor/`. |
+| `MAISTER_ACCESS_TOKEN` | no | (none) | **(Implemented)** MCP facade **stdio/local-only** personal access token fallback for account-wide workflows such as `hitl_inbox`. Used only when `MAISTER_PROJECT_TOKEN` is unset or empty. **IGNORED** under Streamable-HTTP. Not read by `web/` or `supervisor/`. |
+| `MCP_TRANSPORT` | no | (unset → `http`) | **(Implemented)** MCP facade transport select. Unset = Streamable-HTTP (remote; per-request inbound bearer, no ambient token). `stdio` (or `--stdio`) = local stdio transport reading `MAISTER_PROJECT_TOKEN`, then `MAISTER_ACCESS_TOKEN` as fallback. |
+| `MCP_PORT` | no | `3001` | **(Implemented)** MCP facade HTTP bind port for the Streamable-HTTP transport. Unused under stdio. |
+| `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` | no | unset (empty) | Flow package trust policy (ADR-021). Comma-separated source-URL prefixes that are `trusted_by_policy` (auto-enabled on install). `local`/`file://` sources are always trusted by policy; every other git source is `untrusted` until an explicit per-(project, revision) trust confirmation. Read by the web tier (`web/lib/flows/trust.ts`) at install time. |
+| `MAISTER_TRUSTED_CAPABILITY_SOURCE_PREFIXES` | no | unset (empty) | **Implemented.** Comma-separated source-URL prefixes for `capability_imports[]` entries that are granted `trusted_by_policy` (auto-trusted on install, no explicit confirm required). Mirrors `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` exactly — same prefix-match semantics, same `local`/`file://` always-trusted rule. Every other git source is `untrusted` until an operator calls `POST /api/projects/{slug}/capabilities/{capabilityRefId}/trust`. Setting `trust: explicit` on a `capability_imports[]` entry forces the confirm step even for policy-trusted sources. Read by `web/lib/capabilities/import.ts:resolveCapabilityTrust()`. See ADR-043. |
 | `MAISTER_PACKAGE_DISCOVERY_STALE_HOURS` | no | `24` | **(Implemented — ADR-088.)** Web: package-source discovery staleness window (integer hours; invalid/absent → default). At web startup, enabled `package_sources` rows with `last_checked_at` null or older than this are refreshed sequentially (fire-and-forget, per-source try/catch); the manual `/refresh` endpoint ignores the window. Wired through `.env.example`; host/service-env only — the default compose stays Postgres-only per [ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres), so this is never a container/compose var. |
 | `MAISTER_DEFAULT_PACKAGE_SOURCES` | no | unset → built-in (`https://github.com/kanischev/maister-plugins`) | **(Implemented — ADR-088.)** Web: comma-separated list of default package-source URLs ensured at web boot. Each URL is inserted as a `package_sources` row when absent (insert-only, idempotent on the `url` unique index; an admin who disabled or deleted a default row is never re-created or re-enabled), then the same-boot discovery sweep picks up the freshly-seeded rows. A monorepo is ONE source — discovery scans `packages/*` within it. This is the ops-level "add more sources" path alongside the admin `/settings` UI. Unset → the built-in default list; an empty value (`""`) → opt out (ensure nothing) — empty is NOT the same as unset. Read by `web/lib/packages/catalog.ts` (`defaultPackageSourceUrls` / `ensureDefaultPackageSources`). Host/service-env only — never a container/compose var per [ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres). |
 | `MAISTER_KEEPALIVE_MINUTES` | no | `30` | NeedsInput keep-alive window (minutes). Read by BOTH supervisor (pending-permission deferred timeout) AND web (sweeper expiry, activity-bump amount, useActivityPing heartbeat at half-window). Bumped by every `POST /api/runs/:runId/activity`. |
 | `MAISTER_LOCAL_PACKAGE_LOCK_MINUTES` | no | `30` | **(ADR-096 — Implemented.)** Session-scoped working-dir edit-lock TTL (minutes) for `/studio/edit`. Acquired on editor open, refreshed by `POST /api/studio/local-packages/:id/lock-refresh` (mirrors the run keep-alive), lazy stale-takeover, no sweeper. Host/service-env only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)) — never a compose var. **(ADR-149 — Implemented.)** The SAME knob is the TTL for the authored-capability editor lock at `/flows/{projectSlug}/{capId}` (`POST /api/projects/{slug}/catalog/caps/{capId}/lock-refresh`): one "editor lock TTL" concept, deliberately no second variable and no new deployment wiring. |
-| `MAISTER_KEEPALIVE_SWEEP_INTERVAL_SECONDS` | no | `30` | M8 keep-alive sweeper tick frequency (seconds). The singleton timer in `web/lib/runs/keepalive-sweeper.ts` calls `runSweepTick()` every interval. Lower → snappier idle transitions; higher → less DB load. |
+| `MAISTER_KEEPALIVE_SWEEP_INTERVAL_SECONDS` | no | `30` | Keep-alive sweeper tick frequency (seconds). The singleton timer in `web/lib/runs/keepalive-sweeper.ts` calls `runSweepTick()` every interval. Lower → snappier idle transitions; higher → less DB load. |
 | `MAISTER_ASSISTANT_ACTIVITY_WAITING_TOOL_AFTER_SECONDS` | no | `90` | Assistant-activity liveness threshold (seconds). Once the latest semantic action is still pending/in-progress for at least this age, `/api/v1/ext/activity` and `/api/v1/ext/runs/{runId}/activity` synthesize `waiting_on_tool` instead of `working`. Read by the web tier at request time (`web/lib/instance-config.ts` → `web/lib/ext-activity/liveness.ts`). Host/service-env only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)); never a compose var. |
 | `MAISTER_ASSISTANT_ACTIVITY_SILENT_AFTER_SECONDS` | no | `180` | Assistant-activity liveness threshold (seconds). If no later meaningful action arrives and no human/tool wait outranks it, the assistant activity surface reports `silent` after this age. Read by the web tier at request time; invalid/non-positive values fall back to the default with a one-time WARN. |
 | `MAISTER_AGENT_MEMORY_MAX_CHARS` | no | `32768` | (ADR-152) Cap, in **characters**, on one agent's memory file (`.maister/<project-slug>/agents/<enc(packageName)>/<enc(stem)>/memory.md`). Read by the web tier through `agentMemoryMaxChars()` (`web/lib/instance-config.ts`, `positiveIntFromEnv`); invalid or non-positive values fall back to the default with a one-time WARN. Enforced at both ends: an over-cap **write** refuses `MaisterError("CONFIG")` → 422, while an over-cap **read** degrades (no MEMORY section, `log.warn`, launch proceeds). Host/service-env only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)); never a compose var. |
 | `MAISTER_ASSISTANT_ACTIVITY_STALLED_AFTER_SECONDS` | no | `900` | Assistant-activity liveness threshold (seconds). Active `Running` work that stays quiet past this age is escalated from `silent` to `stalled`; non-active runs instead return `liveness.state = inactive` with a status-specific summary. Host/service-env only; never a compose var. |
-| `MAISTER_NEEDSINPUTIDLE_TTL_HOURS` | no | `24` | M8 NeedsInputIdle abandonment TTL (hours). Sweeper pass 2 flips `NeedsInputIdle` rows whose `checkpoint_at + ttl < now()` to `Abandoned` and closes any open `hitl_requests.respondedAt`. |
-| `MAISTER_RESUME_PROMPT_TIMEOUT_SECONDS` | no | `60` | M8 resume-prompt watchdog (seconds). After a `NeedsInputIdle` row is resumed (ACP `session/resume`), the runner-agent must receive `session.permission_request` within this window or `crashResumedRun` transitions the run to `Crashed`. (Helper exists; runner-agent enforcement is a follow-up patch.) |
-| `MAISTER_WORKBENCH_MAX_FILE_BYTES` | no | `524288` (512 KiB) | **(M22 — Implemented, ADR-053.)** Max size of a single git-tracked blob the workbench file viewer serves. A larger file renders the `file-too-large` page state on the `?file=` RSC path (ADR-066; not an HTTP `413`); bytes are never sent. Read by `web/lib/instance-config.ts:workbenchMaxFileBytes()`. Host/service-env only — `web` runs on the host ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)), so this is never a container/compose var. |
-| `MAISTER_NODE_OUTPUT_MAX_BYTES` | no | `262144` (256 KiB) | **(M26 — Implemented, [ADR-063](decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7).)** Caps a graph node's structured-output payload (the agent ` ```json maister:output ` block or the cli `MAISTER_OUTPUT_FILE` contents) before parse/validate at the post-action seam; exceeding it fails the attempt with `MaisterError({ code: "CONFIG" })`. Read by `web/lib/instance-config.ts:nodeOutputMaxBytes()`. Host/service-env only — `web` runs on the host ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)), so this is wired into `.env.example` + this doc **only**, never `compose.yml` (mirrors the `MAISTER_WORKBENCH_MAX_FILE_BYTES` precedent). See [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md) §M26 and [`flow-dsl.md`](flow-dsl.md) §M26. |
+| `MAISTER_NEEDSINPUTIDLE_TTL_HOURS` | no | `24` | NeedsInputIdle abandonment TTL (hours). Sweeper pass 2 flips `NeedsInputIdle` rows whose `checkpoint_at + ttl < now()` to `Abandoned` and closes any open `hitl_requests.respondedAt`. |
+| `MAISTER_RESUME_PROMPT_TIMEOUT_SECONDS` | no | `60` | Resume-prompt watchdog (seconds). After a `NeedsInputIdle` row is resumed (ACP `session/resume`), the runner-agent must receive `session.permission_request` within this window or `crashResumedRun` transitions the run to `Crashed`. (Helper exists; runner-agent enforcement is a follow-up patch.) |
+| `MAISTER_WORKBENCH_MAX_FILE_BYTES` | no | `524288` (512 KiB) | **(Implemented, ADR-053.)** Max size of a single git-tracked blob the workbench file viewer serves. A larger file renders the `file-too-large` page state on the `?file=` RSC path (ADR-066; not an HTTP `413`); bytes are never sent. Read by `web/lib/instance-config.ts:workbenchMaxFileBytes()`. Host/service-env only — `web` runs on the host ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)), so this is never a container/compose var. |
+| `MAISTER_NODE_OUTPUT_MAX_BYTES` | no | `262144` (256 KiB) | **(Implemented, [ADR-063](decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7).)** Caps a graph node's structured-output payload (the agent ` ```json maister:output ` block or the cli `MAISTER_OUTPUT_FILE` contents) before parse/validate at the post-action seam; exceeding it fails the attempt with `MaisterError({ code: "CONFIG" })`. Read by `web/lib/instance-config.ts:nodeOutputMaxBytes()`. Host/service-env only — `web` runs on the host ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)), so this is wired into `.env.example` + this doc **only**, never `compose.yml` (mirrors the `MAISTER_WORKBENCH_MAX_FILE_BYTES` precedent). See [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md) §"Structured output validate seam" and [`flow-dsl.md`](flow-dsl.md) §"Structured node output channel". |
 | `MAISTER_ARTIFACT_INLINE_MAX_BYTES` | no | `262144` (256 KiB) | **(P2 — Implemented, [ADR-120](decisions.md#adr-120-artifact-body-injection-into-prompts).)** Per-injection cap for an artifact **body** injected into a graph node's prompt (via `{{ artifacts.<id>.content }}` or `input.requires[].inline: true`). Applied ONLY at the injection seam (`capForInline`, UTF-8-boundary-safe truncate + in-band marker, `{ truncated: true }`) — never inside `resolveArtifactContent` and never on the artifact payload API route, which returns the full untruncated body. For a `file` or `git-log` locator the injection path also bounds the **read** to this cap (reads at most `cap + 1` bytes; the log truncates instead of throwing) so a huge artifact never loads its full payload into the web process. Never fails the run on a large body (truncates). Read by `web/lib/instance-config.ts`; host/service-env only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)) — wired into `.env.example` + this doc **only**, never `compose.yml` (mirrors the `MAISTER_NODE_OUTPUT_MAX_BYTES` precedent). See [`system-analytics/artifacts.md`](system-analytics/artifacts.md) and [`flow-dsl.md`](flow-dsl.md). |
-| `MAISTER_HARNESS_NEVER_FIRED_MIN` | no | `10` | **(M29 — Implemented, [ADR-073](decisions.md#adr-073-harness-adequacy--coherence-metrics-read-only-observatory-extension).)** Minimum terminal gate executions in the observatory lookback window before the never-fired heuristic may flag a declared gate ("never fired — verify gate quality or a blind spot"). Read by `web/lib/instance-config.ts:harnessNeverFiredMin()` at the query layer and passed into the pure rollup as a parameter; invalid/non-positive values fall back to the default with a one-time WARN. Host/service-env only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)) — never a compose var. See [`system-analytics/observatory.md`](system-analytics/observatory.md). |
+| `MAISTER_HARNESS_NEVER_FIRED_MIN` | no | `10` | **(Implemented, [ADR-073](decisions.md#adr-073-harness-adequacy--coherence-metrics-read-only-observatory-extension).)** Minimum terminal gate executions in the observatory lookback window before the never-fired heuristic may flag a declared gate ("never fired — verify gate quality or a blind spot"). Read by `web/lib/instance-config.ts:harnessNeverFiredMin()` at the query layer and passed into the pure rollup as a parameter; invalid/non-positive values fall back to the default with a one-time WARN. Host/service-env only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)) — never a compose var. See [`system-analytics/observatory.md`](system-analytics/observatory.md). |
 | `MAISTER_PROJECTS_DIR` | no | unset | Auto-discovery root; every `maister.yaml` under this dir is registered on startup |
 | `MAISTER_REPOS_ROOT` | no | `~/.maister/repos` | Root that `POST /api/projects` clones a `repoUrl` into (ADR-025). Resolved by `web/lib/instance-config.ts:reposRoot()`; surfaced read-only on `/settings`. |
-| `MAISTER_MCP_FACADE_COMMAND` | no | `<repo>/mcp/node_modules/.bin/tsx` | **(M34 — Implemented, ADR-089 D9.)** Command an agent session uses to launch the maister MCP facade (its sanctioned write channel, carrying the per-launch ephemeral token via the literal `env` channel). Override for split-host topologies. |
-| `MAISTER_MCP_FACADE_ARGS` | no | `<repo>/mcp/src/main.ts --stdio` | **(M34 — Implemented, ADR-089 D9.)** Space-split args for the facade command; only read when the command default is overridden or the default args do not fit. |
+| `MAISTER_MCP_FACADE_COMMAND` | no | `<repo>/mcp/node_modules/.bin/tsx` | **(Implemented, ADR-089 D9.)** Command an agent session uses to launch the maister MCP facade (its sanctioned write channel, carrying the per-launch ephemeral token via the literal `env` channel). Override for split-host topologies. |
+| `MAISTER_MCP_FACADE_ARGS` | no | `<repo>/mcp/src/main.ts --stdio` | **(Implemented, ADR-089 D9.)** Space-split args for the facade command; only read when the command default is overridden or the default args do not fit. |
 | `MAISTER_MCP_PROBE_TIMEOUT_MS` | no | `8000` | **(ADR-129 — Designed, W-F.)** Supervisor. Bounds the MCP `initialize` handshake in `POST /mcp-probe`; on timeout the probe releases the spawned child (SIGTERM→SIGKILL teardown grace is fixed by the MCP SDK transport, ~2s). Host env — the supervisor is not containerized (compose runs Postgres only). |
 | `MAISTER_WORKTREES_ROOT` | no | `~/.maister/worktrees` | Root for run worktrees (ADR-025). Resolved by `worktreesRoot()`. The deprecated `MAISTER_WORKTREE_ROOT` is accepted as a fallback. Surfaced read-only on `/settings`. |
 | `MAISTER_LOCAL_PACKAGES_ROOT` | no | `~/.maister/local` | **(ADR-096 — Designed, Flow Studio Phase C.)** Root for editable local-package working directories (one git-backed dir per `local_packages` row). Resolved by `web/lib/instance-config.ts:localPackagesRoot()`. Host-only — like the flows/worktrees roots, `.maister` is NOT container-mounted ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)); host/service-env only. |
-| `MAISTER_EVALUATION_EVIDENCE_ROOT` | no | `~/.maister/evaluations` | **(ADR-144 — Implemented, M46.)** Root for the content-addressed immutable Evaluation Lab evidence store. Blobs are written tmp+fsync+rename BEFORE the DB seal, so a crash leaves an orphan blob (GC-eligible) but the DB never points at an absent blob. Resolved by `web/lib/instance-config.ts:evaluationEvidenceRoot()`. Host-only — `.maister` is NOT container-mounted ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)); host/service-env only. |
-| `MAISTER_CONTROLLED_RECIPES_ENABLED` | no | enabled (any value but `false`) | **(ADR-146 — Implemented, M47 T6.5.)** Platform-wide rollout kill switch for controlled (launched) Evaluation Recipes, independent of M46 observed Studies. Read by `web/lib/evaluations/launch-batch.ts:controlledRecipesEnabled()`; set to the literal `false` to freeze NEW controlled evaluation launches — batch-intent creation and queued-batch drains alike — with a typed `CONFIG` refusal. Observed participants, existing launched runs, and in-flight executions are unaffected. Host/service-env only. |
-| `MAISTER_IMPORT_MAX_BYTES` | no | `52428800` (50 MiB) | **(M36, ADR-096.)** Total-size cap for a `/studio/local-packages/:id/import` batch (folder or zip/tar.gz); the archive blob is also checked against this BEFORE parsing (zip-bomb defense). Over → `PRECONDITION`, nothing persisted. `web/lib/instance-config.ts:importMaxBytes()`. Host/service-env only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)) — never a compose var. |
-| `MAISTER_IMPORT_MAX_ENTRIES` | no | `2000` | **(M36, ADR-096.)** Max file count per import batch; over → `PRECONDITION` pre-write. `importMaxEntries()`. Host/service-env only. |
-| `MAISTER_IMPORT_MAX_FILE_BYTES` | no | `10485760` (10 MiB) | **(M36, ADR-096.)** Per-file size cap within an import batch; over → `PRECONDITION` pre-write. `importMaxFileBytes()`. Host/service-env only. |
+| `MAISTER_EVALUATION_EVIDENCE_ROOT` | no | `~/.maister/evaluations` | **(ADR-144 — Implemented.)** Root for the content-addressed immutable Evaluation Lab evidence store. Blobs are written tmp+fsync+rename BEFORE the DB seal, so a crash leaves an orphan blob (GC-eligible) but the DB never points at an absent blob. Resolved by `web/lib/instance-config.ts:evaluationEvidenceRoot()`. Host-only — `.maister` is NOT container-mounted ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)); host/service-env only. |
+| `MAISTER_CONTROLLED_RECIPES_ENABLED` | no | enabled (any value but `false`) | **(ADR-146 — Implemented.)** Platform-wide rollout kill switch for controlled (launched) Evaluation Recipes, independent of observed Studies. Read by `web/lib/evaluations/launch-batch.ts:controlledRecipesEnabled()`; set to the literal `false` to freeze NEW controlled evaluation launches — batch-intent creation and queued-batch drains alike — with a typed `CONFIG` refusal. Observed participants, existing launched runs, and in-flight executions are unaffected. Host/service-env only. |
+| `MAISTER_IMPORT_MAX_BYTES` | no | `52428800` (50 MiB) | **(ADR-096.)** Total-size cap for a `/studio/local-packages/:id/import` batch (folder or zip/tar.gz); the archive blob is also checked against this BEFORE parsing (zip-bomb defense). Over → `PRECONDITION`, nothing persisted. `web/lib/instance-config.ts:importMaxBytes()`. Host/service-env only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)) — never a compose var. |
+| `MAISTER_IMPORT_MAX_ENTRIES` | no | `2000` | **(ADR-096.)** Max file count per import batch; over → `PRECONDITION` pre-write. `importMaxEntries()`. Host/service-env only. |
+| `MAISTER_IMPORT_MAX_FILE_BYTES` | no | `10485760` (10 MiB) | **(ADR-096.)** Per-file size cap within an import batch; over → `PRECONDITION` pre-write. `importMaxFileBytes()`. Host/service-env only. |
 | `MAISTER_SUPERVISOR_URL` | no | `http://localhost:7777` | Web → supervisor HTTP+SSE base URL — see [Supervisor](supervisor.md) |
 | `MAISTER_SUPERVISOR_PORT` | no | `7777` | Supervisor bind port (read by `supervisor/src/main.ts`) |
 | `MAISTER_RUNTIME_ROOT` | no | supervisor `cwd` | Root under which `.maister/<slug>/runs/...` is written |
@@ -1098,9 +1103,10 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `MAISTER_WEBHOOK_MAX_ATTEMPTS` | no | `8` | **(Implemented, ADR-077.)** Terminal-dead threshold: a delivery whose `attempt_count` reaches this value is permanently set to `dead` status. The default covers the full retry curve (`1m, 5m, 15m, 1h, 4h, 12h, 24h` → initial + 7 retries = 8 total, ~41.5 h). Web tier only — host/service-env, never a `compose.yml` var (see [ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)). |
 | `MAISTER_WEBHOOK_ALLOW_HOSTS` | no | unset | **(Implemented, ADR-077 revised.)** Comma-separated EXACT hosts (case-insensitive) exempt from the outbound-webhook destination egress policy, which blocks loopback / private / link-local (incl. `169.254.169.254` metadata) / multicast / unspecified destinations at write AND send time. Set e.g. `127.0.0.1` to deliver to a local consumer in dev/e2e. Web tier only — host/service-env, never a `compose.yml` var (see [ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)). |
 
-**M17 env-variable parity:** M17 adds no new environment variable. The table
-above is identical to `.env.example`; `compose*.yml`, bound ports, and the
-supervisor sidecar configuration are unchanged by M17.
+**HITL-surface env-variable parity:** the HITL hybrid surface (ADR-054/055/057)
+adds no new environment variable. The table above is identical to
+`.env.example`; `compose*.yml`, bound ports, and the supervisor sidecar
+configuration are unchanged by it.
 
 **Project-onboarding + git-access env parity (Implemented, [ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)):**
 this work adds **no new host-read environment variable**, by design. Git auth is
@@ -1121,7 +1127,7 @@ values.
 ## Authentication & RBAC
 
 MAIster uses **Auth.js v5** (formerly NextAuth.js) with a **credentials
-provider only**. OAuth providers are not configured in M9.
+provider only**. OAuth providers are not configured.
 
 The implementation is split into two files to satisfy Auth.js's edge/node
 boundary requirements:
@@ -1313,14 +1319,14 @@ with real values):
 }
 ```
 
-## Cost tracking on resume (M8)
+## Cost tracking on resume
 
 Every line appended to `.maister/<projectSlug>/runs/<runId>/cost.jsonl`
 by a supervisor session that was resumed (spawned with a `resumeSessionId`,
 restored via the ACP `session/resume` call) carries
 `"resumed": true`. The marker is added in `supervisor/src/cost.ts`'s
 `attachCost(opts)` from `opts.resumed = Boolean(parsed.resumeSessionId)`
-at session creation time. The M0 spike measured ~$0.28 of
+at session creation time. The original ACP spike measured ~$0.28 of
 `cache_creation_input_tokens` per cross-process resume — keep-alive
 saves this cost when the operator is paying attention. Ops can monitor
 the tax via:

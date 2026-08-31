@@ -36,7 +36,7 @@ install/attach/trust machinery (that is [`packages.md`](packages.md), reused).
   `sync_state` (jsonb NULL, ADR-132 —
   `{targetInstallId, targetRef, conflictedFiles: string[], startedAt}`;
   `NULL` = no sync in flight).
-- **Per-project default ("virtual") local package** (M36, ADR-096): a
+- **Per-project default ("virtual") local package** (ADR-096): a
   `local_packages` row with `is_default = true` and a non-NULL `project_id`. It
   is the landing spot for **element-level forks** — a member who forks one flow /
   skill / agent / rule out of an installed package does not name a package; the
@@ -89,7 +89,7 @@ stateDiagram-v2
 
 ## Process flows
 
-Create from scratch, or fork an installed package (two grains, M36):
+Create from scratch, or fork an installed package (two grains):
 
 ```mermaid
 flowchart TD
@@ -109,7 +109,7 @@ flowchart TD
     K3 --> K4["copy EXACTLY that one element (flow dir / skill / agent .md / rule)"]
 ```
 
-**Fork mechanism (finalized, M36):** a fork **copies the installed revision's
+**Fork mechanism (finalized):** a fork **copies the installed revision's
 on-disk content** (`package_installs.installedPath`, server-only) excluding any
 `.git`/VCS dir, then `git init`s the destination fresh — it does NOT re-clone the
 upstream source or reuse its history (a clone-source variant was rejected: the
@@ -192,7 +192,7 @@ The attach gate (`manageLocalPackages` on `attachToProjectId`) is evaluated
 **before** the irreversible export+install, so an inaccessible attach target
 never leaves a cut install behind. The tmp export dir is removed in a `finally`.
 
-**Batch import (M36).** `POST /api/studio/local-packages/:id/import`
+**Batch import.** `POST /api/studio/local-packages/:id/import`
 (`multipart/form-data`) accepts a **folder** (files with relative paths) or one
 **zip / tar.gz** archive. `mode=preview` returns the resolved tree without
 writing (no lock); `mode=commit` asserts the session edit-lock, then writes.
@@ -206,7 +206,7 @@ defense). A single violation rejects the whole import pre-write, so the working
 dir is left UNCHANGED. Only regular files are written — tar dirs/symlinks/devices
 are skipped at the source, closing the tar-symlink escape vector.
 
-**Git-backed diff + Commit/Discard (M36).** The working dir is a git repo, so
+**Git-backed diff + Commit/Discard.** The working dir is a git repo, so
 every edit (form / YAML / import / AI) is a working-tree change. `GET
 /api/studio/local-packages/:id/diff` returns the uncommitted
 working-tree-vs-`HEAD` diff (2-dot, incl. untracked) as a `@git-diff-view` DTO +
@@ -281,15 +281,15 @@ existing collection `sourceInstallId` fork contract is stale; package forks keep
 their dedicated endpoint. The documented file move endpoint has no route and
 will be removed from OpenAPI rather than represented as implemented.
 
-## M39 Stream A — first-class authoring (Implemented, ADR-105)
+## Package-authoring Stream A — first-class authoring (Implemented, ADR-105)
 
 Stream A is **web-only** (no migration, no new `MaisterError` code) and finishes
-the in-app authoring surface M36 started. The canonical Create Flow wizard now
-covers both a new local package plus its initial Flow and another Flow in an
-existing editable package; it never creates a DB-only authored Flow.
+the in-app authoring surface the ADR-096 base started. The canonical Create Flow
+wizard now covers both a new local package plus its initial Flow and another
+Flow in an existing editable package; it never creates a DB-only authored Flow.
 
 **Centralized model + per-project version pins.** Packages stay **instance-level**
-and Studio-edited (M36 platform-scoping, ADR-096/097, stands — project-scoping was
+and Studio-edited (platform-scoping, ADR-096/097, stands — project-scoping was
 evaluated and rejected: it fights reuse). A project consumes a package at a **cut
 version** (a pin), never a live edit; editing in Studio produces new cuts, and at
 launch a project adopts a newer cut or keeps its pin (the adopt path is **Stream
@@ -359,10 +359,11 @@ un-launchable; WIP lives in the uncommitted, lock-preserved working dir. A share
 here; Stream B's PR-to-source adds a **sibling `PublishDialog`** modeled on its
 modal pattern (the commit dialog itself is not extended — see ADR-113).
 
-## M39 Stream B — version-adopt launch + PR-to-source (Implemented — ADR-107/110)
+## Package-authoring Stream B — version-adopt launch + PR-to-source (Implemented — ADR-107/110)
 
-Stream B is the **runtime + publish** half of M39 and owns **migration 0078** — the
-only schema change in M39's runtime. It closes two gaps left by Stream A's
+Stream B is the **runtime + publish** half of the Studio package-authoring work
+and owns **migration 0078** — the only schema change in its runtime. It closes
+two gaps left by Stream A's
 centralized model: a project can pick up a **newer cut** of a package it pins, and a
 member can **propose a local package's edits upstream** as a PR.
 
@@ -738,7 +739,7 @@ flowchart TD
     G --> I
 ```
 
-Batch import is unchanged — see **Batch import (M36)** above; the composition Files
+Batch import is unchanged — see **Batch import** above; the composition Files
 tab surfaces one shared **Import** button wired to the existing
 `POST .../import` (`mode=preview` → confirm → `mode=commit`).
 
@@ -818,7 +819,7 @@ tab surfaces one shared **Import** button wired to the existing
   persisted.
 - A package fork MUST copy the WHOLE bundle into a NEW `<ref>-local` package
   (recording `source_install_id` + `source_ref`); `forceNew` bypasses dedup and
-  "Customize" names the copy `<ref> (custom)`. An element fork (M39 A4,
+  "Customize" names the copy `<ref> (custom)`. An element fork (ADR-105 A4,
   `forkElementToNewLocal`) MUST copy EXACTLY ONE confined element into a NEW
   centralized local package named `<elementName> (local)` — **NO project target**
   (owner reframe: editing is centralized) — carrying NO `source_install_id`
@@ -837,7 +838,7 @@ tab surfaces one shared **Import** button wired to the existing
 - A cut MUST stamp `last_cut_install_id` only AFTER the install (and any attach)
   succeeds — the stamp is the durable "cut succeeded" marker, never written
   before the side-effect.
-- The MCP-template editor (M36 T2.5) sources its prefill from the platform MCP
+- The MCP-template editor (T2.5) sources its prefill from the platform MCP
   catalog (`platform_mcp_servers`) and materializes a `mcps/*` template carrying
   ONLY transport/command/args/url + `env:NAME` references — secret VALUES MUST
   NEVER be read or written. MCP-template provenance is **display-only**: the
@@ -850,33 +851,33 @@ tab surfaces one shared **Import** button wired to the existing
   decision).
 - Phase C MUST NOT extend the authored CAPABILITY enum (`rule|skill|flow`,
   `authored_capabilities`) and MUST NOT add a new `MaisterError` code (ADR-008
-  closed union). *(M39 note: the **file-kind** classifier union
+  closed union). *(ADR-105 note: the **file-kind** classifier union
   `AuthoredFlowPackageFileKind` is a DIFFERENT type — Stream A DOES extend it with
   `manifest` + `subagent` (file-based, Variant B), which is not a capability-enum
   change.)*
-- (M39 Stream A, ADR-105) A package commit MUST validate the **changed** artifacts
+- (Stream A, ADR-105) A package commit MUST validate the **changed** artifacts
   (flow parse+compile, manifest parse, platform-agent strict frontmatter, subagent
   lenient frontmatter, skill `SKILL.md` presence) and MUST **hard-block** on any
   invalid artifact (`PRECONDITION`/`CONFIG`) — no "commit anyway" override;
   already-committed artifacts are assumed valid, WIP stays in the working dir.
-- (M39 Stream A, ADR-105) `forkPackageToLocal` MUST dedup by `source_install_id`
+- (Stream A, ADR-105) `forkPackageToLocal` MUST dedup by `source_install_id`
   (existing fork → 200 `{ alreadyExists: true }`; fresh fork → 201);
   "Customize for this project" MUST reuse that path and name the copy by
   convention (`P (for <project>)`) with NO schema field.
-- (M39 Stream B, ADR-107 — Implemented) A launch MUST detect, per package backing the
+- (Stream B, ADR-107 — Implemented) A launch MUST detect, per package backing the
   task's flow, whether a newer cut exists (`last_cut_install_id` differs from the pin)
   and/or uncut Studio edits exist (working dir dirty vs the pin's `source_commit_sha`),
   and offer `keep | adopt | cut_and_adopt`. `adopt`/`cut_and_adopt` MUST advance the
   project attachment via `upgradeAttachment` BEFORE the enablement check, and the flow
   run MUST keep `runs.local_package_id` NULL. An option not in the detected set → 409.
-- (M39 Stream B, ADR-107 — Implemented) `cut_and_adopt` MUST run the Studio cut gate (free
+- (Stream B, ADR-107 — Implemented) `cut_and_adopt` MUST run the Studio cut gate (free
   edit-lock + `validatePackageArtifacts` → `installPackageRevision` → `stampLastCutInstall`)
   before adopting; a package locked by another session or with invalid artifacts →
   `PRECONDITION` (the launcher can still `keep`).
-- (M39 Stream B, ADR-107 — Implemented) A cut install MUST record `source_local_package_id`
+- (Stream B, ADR-107 — Implemented) A cut install MUST record `source_local_package_id`
   + `source_commit_sha`; provenance is derived (`flowRevisionId → install`), never a new
   `runs` column.
-- (M39 Stream B, ADR-113 — Implemented) `publishLocalPackage` MUST resolve its target ONLY
+- (Stream B, ADR-113 — Implemented) `publishLocalPackage` MUST resolve its target ONLY
   from the registered `package_sources` allow-list (never a body URL), validate the
   branch name at the git sink (`branchNameSchema`), push the package working tree on a
   stable `maister/<pkg-slug>` branch, and write `last_pushed_branch`/`last_pr_url` only

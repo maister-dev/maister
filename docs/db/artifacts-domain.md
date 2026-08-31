@@ -1,11 +1,12 @@
 # Artifacts domain ERD
 
 Tables for the typed evidence index and ADR-022 projector cursor introduced by
-M12. See [`../system-analytics/artifacts.md`](../system-analytics/artifacts.md)
+the typed artifact model (ADR-037). See
+[`../system-analytics/artifacts.md`](../system-analytics/artifacts.md)
 for behavior and the validity FSM, and
 [`../database-schema.md`](../database-schema.md) for the column-level narrative.
 
-> **Status: Implemented (M12).** Migration `0015_m12_artifacts_evidence.sql`
+> **Status: Implemented.** Migration `0015_m12_artifacts_evidence.sql`
 > (additive, forward-only, no down-migration) adds both tables.
 
 ```mermaid
@@ -29,9 +30,9 @@ erDiagram
         text hash "content hash (head SHA / file digest) when cheap"
         integer size_bytes "nullable"
         text validity "current|stale|superseded|failed|skipped DEFAULT current"
-        jsonb required_for "snapshot from manifest: (review|merge)[] — declared, not enforced until M14"
-        text visibility "internal|shared DEFAULT internal — declared, not enforced until M14"
-        text retention "run|ephemeral DEFAULT run — declared, not enforced until M14"
+        jsonb required_for "snapshot from manifest: (review|merge)[] — declared, not enforced until capability materialization (ADR-041)"
+        text visibility "internal|shared DEFAULT internal — declared, not enforced until capability materialization (ADR-041)"
+        text retention "run|ephemeral DEFAULT run — declared, not enforced until capability materialization (ADR-041)"
         integer monotonic_id "supervisor event id (projector rows); NULL for runner-inline"
         text superseded_by_id FK "NULL → artifact_instances(id) ON DELETE SET NULL"
         timestamptz created_at "DEFAULT now()"
@@ -58,7 +59,7 @@ and projector replay **upsert** idempotently (`onConflictDoUpdate`).
 | Runner-inline declared output | `run:<nodeAttemptId>:<artifactDefId>` | `run:na_abc123:impl-diff` |
 | Runner-inline default (kind-scoped) | `run:<nodeAttemptId>:default:<kind>` | `run:na_abc123:default:log` |
 | Projector-derived | `proj:<runId>:<monotonicId>` | `proj:run_xyz789:42` |
-| Gate mutation report, undeclared output (M29) | `run:<nodeAttemptId>:mutation:<gateId>` | `run:na_abc123:mutation:impl-mutation` |
+| Gate mutation report, undeclared output | `run:<nodeAttemptId>:mutation:<gateId>` | `run:na_abc123:mutation:impl-mutation` |
 
 `monotonicId` is **run-global** in the durable `run.events.jsonl` log (see
 ADR-038 Phase-0 re-confirmation correction). A single projector `id` is unique

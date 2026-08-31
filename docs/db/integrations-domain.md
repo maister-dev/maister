@@ -1,12 +1,12 @@
 # Integrations domain ERD
 
-Tables for project API tokens and the token audit log introduced by M16.
+Tables for project API tokens and the token audit log introduced by ADR-046.
 See [`../system-analytics/external-operations.md`](../system-analytics/external-operations.md)
 for the token lifecycle FSM, gate-report flows, and the MCP facade auth model,
 and [`../database-schema.md`](../database-schema.md) for the column-level
 narrative.
 
-> **Status: Implemented (M16), as of 2026-06-02; expanded by
+> **Status: Implemented, as of 2026-06-02; expanded by
 > `0031_token_actor_scope_support.sql`; global personal tokens Implemented by
 > migration `0063`.** Migration `0020_m16_api_tokens.sql` (additive,
 > forward-only) adds both tables. ADRs:
@@ -77,7 +77,7 @@ password change.
 
 ## Designed migration `0063`
 
-`0063` extends the M16 tables for account-level personal tokens:
+`0063` extends the project-token tables for account-level personal tokens:
 
 - `project_tokens.project_id` becomes nullable while retaining
   `ON DELETE CASCADE`.

@@ -2,7 +2,7 @@
 
 - **Type:** block (board tab).
 - **Route:** `/projects/{slug}?tab=mcps`.
-- **Status:** Implemented — M27 project-local list + the ADR-129 hub (requirements ledger, 3-source servers list, match/connect/overlay dialogs, test-connection with inline result).
+- **Status:** Implemented — project-local list + the ADR-129 hub (requirements ledger, 3-source servers list, match/connect/overlay dialogs, test-connection with inline result).
 - **Source:** `web/components/board/panels/mcp-panel.tsx` (rebuilt) + `mcp-bind-dialogs.tsx`, `web/components/mcp/mcp-select.tsx`, `web/lib/mcp/{hub-service,requirements-ledger,binding-service}.ts`.
 
 ## JTBD

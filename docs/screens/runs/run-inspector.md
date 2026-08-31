@@ -7,7 +7,7 @@ retained historical metadata and a localized unavailable state instead of
 attempting diff/file reads; server routes independently deny all worktree-backed
 mutations and recovery.
 
-## M43 terminalized legacy state (Implemented)
+## Cut-over terminalized legacy state (ADR-131 — Implemented)
 
 The page-level persistent Failed cut-over banner is visible with the run detail
 and list; the inspector exposes the same reason and terminal timestamp as facts.

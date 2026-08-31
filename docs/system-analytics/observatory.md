@@ -1,11 +1,11 @@
 # Observatory domain
 
-> **Status: Implemented (M23).** Observatory is the Wave-1 read-only metrics surface
+> **Status: Implemented.** Observatory is the Wave-1 read-only metrics surface
 > for correction pressure, autonomy, and repeatable harvestable signals. It
-> builds on the M11a `node_attempts` ledger, M12 artifact evidence index, M15
-> readiness verdict calibration, and HITL timing rows. Locked decision:
+> builds on the graph engine's `node_attempts` ledger, the typed-artifact
+> evidence index, readiness verdict calibration, and HITL timing rows. Locked decision:
 > [ADR-059](../decisions.md#adr-059-read-only-observatory-formulas-and-harvest-priority).
-> The **harness adequacy & coherence** layer below is **(M29 — Implemented)** —
+> The **harness adequacy & coherence** layer below is **(Implemented)** —
 > sensor firing-rate, never-fired flags, per-control effectiveness, and the
 > per-flow coverage map. Locked decision:
 > [ADR-073](../decisions.md#adr-073-harness-adequacy--coherence-metrics-read-only-observatory-extension).
@@ -43,19 +43,19 @@ Implemented surfaces are `web/lib/queries/observatory.ts`,
 - **Contributing evidence** — run ids, node attempts, gate results,
   HITL waits, and artifact-instance links that explain an aggregate row without
   exposing server-only handles or raw payloads.
-- **Sensor firing stats (M29 — Implemented)** — per `(projectId, flowId, nodeId,
+- **Sensor firing stats (Implemented)** — per `(projectId, flowId, nodeId,
 gateId)` group and per gate `kind` rollup: terminal-status counts
   (`passed/failed/stale/skipped/overridden`), `executions`, and `fail_rate`
   per the ADR-073 formulas.
-- **Never-fired flag (M29 — Implemented)** — a per-gate boolean raised when a
+- **Never-fired flag (Implemented)** — a per-gate boolean raised when a
   declared, sufficiently-executed gate has zero `failed + stale` results in the
   window; threshold `MAISTER_HARNESS_NEVER_FIRED_MIN` (default 10) is read at
   the query layer and passed into the pure rollup as a parameter.
-- **Control effectiveness (M29 — Implemented)** — per-gate rework-follow rates +
+- **Control effectiveness (Implemented)** — per-gate rework-follow rates +
   lift, and per-capability (`runs.resolved_capability_set.capabilities[].refId`)
   with/without correction-rate comparison; runs with a null capability set are
   excluded.
-- **Coverage map (M29 — Implemented)** — per flow (revisions used by scoped runs,
+- **Coverage map (Implemented)** — per flow (revisions used by scoped runs,
   joined via `runs.flow_revision_id`): per-node declared gate counts by `mode`,
   blocking count, guide-side presence (skills/rules/restrictions in node
   `settings`), and the "guides without sensors" imbalance flag.
@@ -296,7 +296,8 @@ flowchart TD
 - Overlapping waits are merged before summing.
 - `total_run_time` uses `coalesce(runs.ended_at, now) - runs.started_at` and is
   clamped to at least one second.
-- Review and promotion dwell without a `hitl_requests` row are excluded in M23.
+- Review and promotion dwell without a `hitl_requests` row are excluded in the
+  current scope.
   The UI MUST label this metric as HITL wait share and carry
   `reviewDwellExcluded=true`.
 
@@ -336,9 +337,10 @@ flowchart TD
   plus artifact kind/definition ids when linked.
 - `priorityScore` is derived from occurrence count, affected run count, affected
   project count, and extra weight for failed or stale blocking gates.
-- M17 `criticality` and `human_confidence` are optional future multipliers.
+- The HITL `criticality` and `human_confidence` fields are optional future
+  multipliers.
 
-### Harness adequacy & coherence rollup (M29 — Implemented)
+### Harness adequacy & coherence rollup (Implemented)
 
 The harness layer answers "is the harness sensing anything, and do its controls
 matter" over the same scoped window. It extends the existing bulk read path
@@ -382,7 +384,8 @@ flowchart TD
   and groups with fewer than 3 executions render "—", never `0%`.
 
 - Observatory MUST be read-only: no DB writes, filesystem writes, supervisor
-  calls, background jobs, or state-changing routes are part of M23.
+  calls, background jobs, or state-changing routes are part of the
+  Observatory surface.
 - Cost dimensions (ADR-087 totals, ADR-117 model/runner breakdown) MUST preserve
   the read-only boundary: Observatory reads derived cost rollups and bulk
   run/node rows only; it never triggers recomputation through a mutating route,
@@ -411,20 +414,20 @@ flowchart TD
   fields.
 - UI labels MUST say signals or patterns, not recommendations or automatic
   fixes.
-- **(M29 — Implemented)** Harness rollups MUST be computed on-the-fly from the
+- **(Implemented)** Harness rollups MUST be computed on-the-fly from the
   bulk rows with exactly ONE additional bulk SELECT (`flow_revisions` by
   distinct scoped revision ids) — no caching, no read-model table, no per-run
   query loops, no schema change, no new HTTP route.
-- **(M29 — Implemented)** The never-fired flag MUST raise only when the gate is
+- **(Implemented)** The never-fired flag MUST raise only when the gate is
   declared in ≥1 revision used by scoped runs AND
   `executions >= MAISTER_HARNESS_NEVER_FIRED_MIN` AND `failed + stale == 0`;
   the threshold MUST be passed into the pure rollup as a parameter, never read
   from env inside it.
-- **(M29 — Implemented)** Capability effectiveness MUST exclude runs whose
+- **(Implemented)** Capability effectiveness MUST exclude runs whose
   `runs.resolved_capability_set` is null (never counted as "without"); coverage
   MUST exclude runs whose `runs.flow_revision_id` is null from the declared
   side while keeping their firing stats.
-- **(M29 — Implemented)** Every harness rate MUST render with its denominator, and
+- **(Implemented)** Every harness rate MUST render with its denominator, and
   any group with `executions < 3` MUST render as "—" (insufficient data), never
   as `0%`.
 - **(ADR-101 / ADR-125 — Implemented)** Budget surfacing MUST read
@@ -532,14 +535,14 @@ labels and states. The complete calculation and test contract are in
   redaction tests before it can appear in examples.
 - A performance need for new indexes is a migration task, not an implicit
   read-model change.
-- **(M29 — Implemented)** A gate with zero executions in the window (declared but
+- **(Implemented)** A gate with zero executions in the window (declared but
   never run — e.g. its node never executed) is NOT never-fired-flagged: the
   flag requires the execution threshold; the coverage map still lists the gate
   as declared.
-- **(M29 — Implemented)** Null `runs.resolved_capability_set` (pre-ADR-069
+- **(Implemented)** Null `runs.resolved_capability_set` (pre-ADR-069
   launches) thins capability-effectiveness denominators; such runs are dropped
   from both sides of the comparison and the honest-N denominator shows it.
-- **(M29 — Implemented)** Revision drift — scoped runs spanning multiple revisions
+- **(Implemented)** Revision drift — scoped runs spanning multiple revisions
   of the same flow — makes the declared-gate set the UNION across used
   revisions; a gate present in only one revision still appears, with its firing
   stats from the runs that declared it. A manifest that fails to parse skips
@@ -548,9 +551,9 @@ labels and states. The complete calculation and test contract are in
 ## Linked artifacts
 
 - ADR: [ADR-059](../decisions.md#adr-059-read-only-observatory-formulas-and-harvest-priority)
-- ADR (harness layer, M29):
+- ADR (harness layer):
   [ADR-073](../decisions.md#adr-073-harness-adequacy--coherence-metrics-read-only-observatory-extension)
-- Env knob (M29 — Implemented): `MAISTER_HARNESS_NEVER_FIRED_MIN` —
+- Env knob (Implemented): `MAISTER_HARNESS_NEVER_FIRED_MIN` —
   [`../configuration.md`](../configuration.md) env table (host env only,
   ADR-023 — never compose files)
 - Run state: [`runs.md`](runs.md)
@@ -559,7 +562,7 @@ labels and states. The complete calculation and test contract are in
 - Readiness verdict calibration: [`readiness.md`](readiness.md)
 - Artifact evidence index: [`artifacts.md`](artifacts.md)
 - DB schema reference: [`../database-schema.md`](../database-schema.md)
-- Web API: no OpenAPI change in M23 because Observatory uses server-component
+- Web API: no OpenAPI change because Observatory uses server-component
   read models, not external HTTP API routes.
 - Source: [ADR-134](../decisions.md#adr-134-observatory-agentization-and-commit-provenance),
   [`scheduler.md`](scheduler.md), [`runs.md`](runs.md), and

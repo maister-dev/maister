@@ -186,12 +186,12 @@ branch, per-source re-check button).
 - **Data:** `GET /api/admin/package-installs` + per-project attachment joins;
   local packages from the new local-package store.
 
-### 4. Package detail — `/studio/packages/{ref}` (Redesigned in M36 — Phase 1; full template: [`package-viewer.md`](./package-viewer.md))
+### 4. Package detail — `/studio/packages/{ref}` (Redesigned — Phase 1; full template: [`package-viewer.md`](./package-viewer.md))
 
 - **JTBD:** "When I open a package, I want its full bill-of-materials, a
   read-only preview of any flow, its versions and trust, where it's attached,
   and the actions to rework it."
-- **Layout & regions** (M36 Flow Package Viewer, Phase 1 — read-only; details +
+- **Layout & regions** (Flow Package Viewer, Phase 1 — read-only; details +
   states in [`package-viewer.md`](./package-viewer.md)):
   - **Header:** name · source · version(s) · trust · Local/Installed badge.
   - **Bill-of-materials → tab bar + paged cards:** one **tab per kind** (flows ·
@@ -213,7 +213,7 @@ branch, per-source re-check button).
     (list). **Rework** forks an installed package into a local package and opens
     `/studio/edit/{localPackageId}`; the **Import (⤓)** affordance is absent on
     installed (immutable) packages.
-- **Data & APIs:** the package-install manifest + the M36 bill-of-materials
+- **Data & APIs:** the package-install manifest + the bill-of-materials
   contract (`getStudioPackageBom`), confined bundle file/image reads
   (`installed_path`, server-only), and `POST /api/studio/packages/{ref}/fork` for
   the Studio rework path. The older project-scoped fork route still backs the

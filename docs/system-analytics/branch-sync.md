@@ -30,7 +30,7 @@ conflict signal, and it explicitly excludes scratch runs, shared-tree runs
   **`projects.sync_runner_id`** (nullable `text` FK → `platform_acp_runners`, ON
   DELETE SET NULL) — the resolver runner default.
 - **`run_sessions` `sync-<attempt>` row** — the fresh resolver ACP session identity
-  (`runs` has no session column; dropped in M42, ADR-114). Unique
+  (`runs` has no session column; dropped by ADR-114). Unique
   `(run_id, session_name)`.
 - **`LifecycleOperationName='sync'`** — TS-only 6th lifecycle op, mutually exclusive
   with `archive|drop|exportBranch|snapshotCommit|handoffBranch`.

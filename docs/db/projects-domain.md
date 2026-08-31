@@ -25,7 +25,7 @@ erDiagram
         text branch_prefix "default 'maister/'"
         text maister_yaml_path "nullable (ADR-093 Designed, 0054): manifest path; NULL = config-in-DB-only"
         text default_runner_id "platform runner override"
-        text promotion_mode "M18: project-default promotion mode (local_merge|pull_request); override-chain source (§3.4)"
+        text promotion_mode "project-default promotion mode (local_merge|pull_request); override-chain source (§3.4)"
         jsonb delivery_policy_default "ADR-085 Designed: strategy/push/trigger/targetBranch"
         jsonb execution_policy_default "migration 0055: default execution policy {preset,overrides}, nullable"
         jsonb task_queue_settings "ADR-121 (0087): {edgeDrain?,maxInFlightAuto?}, nullable (NULL = env defaults)"
@@ -44,7 +44,7 @@ erDiagram
         text installed_path "current pointer; runs use flow_revision"
         jsonb manifest "parsed flow.yaml"
         integer schema_version
-        text version_binding "M27 Designed: pinned|latest (DEFAULT latest)"
+        text version_binding "ADR-069 Designed: pinned|latest (DEFAULT latest)"
         timestamp created_at
     }
 
@@ -104,7 +104,7 @@ erDiagram
     }
 ```
 
-> **Note (ADR-064):** `FLOW_GRAPH_LAYOUTS` (M22) was dropped in migration `0030`.
+> **Note (ADR-064):** `FLOW_GRAPH_LAYOUTS` was dropped in migration `0030`.
 > Authored flow-graph node positions now live in the `flow.yaml` `presentation`
 > section, not a DB table.
 
@@ -226,7 +226,7 @@ tree, and initial git commit.
   is never exposed to the client; `source_install_id` / `last_cut_install_id`
   FKs are `SET NULL` on install delete (lineage is advisory, not load-bearing —
   ADR-132 divergence/sync degrade to a typed `CONFIG` when it is gone).
-- **(M36, migration `0058`)** `local_packages_default_per_project` — a
+- **(Implemented, migration `0058`)** `local_packages_default_per_project` — a
   **partial-unique** index on `(project_id) WHERE is_default` enforcing at most
   one default "virtual" local package per project. `project_id` (FK `projects`,
   CASCADE) is **nullable**: NULL for named, platform-scoped local packages; set
@@ -256,13 +256,14 @@ tree, and initial git commit.
 - `flows.manifest` stores the **parsed** graph-only `flow.yaml` — typed nodes,
   portable runner profiles, etc. Source of truth for the runtime step
   loader; the on-disk `flow.yaml` is only read on install / refresh.
-- `flows.version_binding` **(Designed, M27)**: `pinned` resolves `flows.enabled_revision_id`; `latest` picks the newest published `flow_revisions` row for the `flow_ref_id`, never a draft.
+- `flows.version_binding` **(Designed — ADR-069)**: `pinned` resolves `flows.enabled_revision_id`; `latest` picks the newest published `flow_revisions` row for the `flow_ref_id`, never a draft.
 - Project Flow runner defaults live in `project_flow_runner_defaults`.
-- Planned M10 splits immutable Flow package revisions from project Flow
+- The planned package-revision lifecycle (ADR-021) splits immutable Flow
+  package revisions from project Flow
   enablement. Until that lands, `flows` is still the mutable current pointer;
   run safety comes from `runs.flow_revision`.
-- `flow_revisions.exec_trust` **(Designed, M27)**: second independent trust axis. `untrusted | trusted`. Gates `runRevisionSetup` (setup.sh) and MCP stdio command spawn. Default `untrusted`; requires an explicit operator flip. Drawn in the narrative; `FLOW_REVISIONS` is not included in this partial ERD.
-- `platform_mcp_servers` **(Designed, M27)**: platform-admin-managed MCP server catalog. No FK to other tables in this diagram — secret values are stored only as `env:NAME` references. Mirrors `platform_acp_runners` in admin CRUD surface. **(ADR-129 Designed)** `trust_status` becomes load-bearing at materialization (untrusted ⇒ visible-but-withheld); `last_probe_status`/`last_probe_at`/`last_probe_reason` cache the admin global health probe (never a secret value).
+- `flow_revisions.exec_trust` **(Designed)**: second independent trust axis. `untrusted | trusted`. Gates `runRevisionSetup` (setup.sh) and MCP stdio command spawn. Default `untrusted`; requires an explicit operator flip. Drawn in the narrative; `FLOW_REVISIONS` is not included in this partial ERD.
+- `platform_mcp_servers` **(Designed — ADR-070)**: platform-admin-managed MCP server catalog. No FK to other tables in this diagram — secret values are stored only as `env:NAME` references. Mirrors `platform_acp_runners` in admin CRUD surface. **(ADR-129 Designed)** `trust_status` becomes load-bearing at materialization (untrusted ⇒ visible-but-withheld); `last_probe_status`/`last_probe_at`/`last_probe_reason` cache the admin global health probe (never a secret value).
 - `project_mcp_bindings` **(Designed, ADR-129)**: the explicit binding of a capability `ref_id` to a concrete MCP target within one project. FK `project_id` → `projects` (CASCADE). UNIQUE `(project_id, ref_id)` — one binding per ref per project. An enabled binding's target WINS over `project > platform > flow-package` precedence; a disabled binding makes the ref unresolvable (explicit opt-out); an absent binding leaves resolution unchanged (grandfather). `config_overlay` remaps env/header/arg/url NAMES only (no secret value). See [`../system-analytics/mcp-management.md`](../system-analytics/mcp-management.md).
 - ADR-084 DB audit: runner adapter/capability-agent columns are SQL `text`
   without CHECK/enum constraints, so adding `gemini`, `opencode`, and `mimo` is a

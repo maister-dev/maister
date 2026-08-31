@@ -1,9 +1,9 @@
-# Typed artifacts and evidence graph (M12)
+# Typed artifacts and evidence graph
 
-> **Status: Implemented (M12), as of 2026-06-02.** The artifact model, validity
+> **Status: Implemented, as of 2026-06-02.** The artifact model, validity
 > FSM, runner-inline recording, the ADR-022 projector, the read-only API routes,
 > and the evidence-graph explorer all shipped across Phases 1–8 and are reconciled
-> as-built here (Phase 9, T9.1). Tags below tagged `(M14 …)`/`(Designed)` refer to
+> as-built here (Phase 9, T9.1). Tags below tagged `(Designed)` refer to
 > later scope (capability enforcement of `visibility`/`retention`) and remain
 > unbuilt.
 
@@ -20,11 +20,11 @@ decision.
 
 Domain boundary: the artifact write paths (runner-inline + ADR-022 projector),
 the validity lifecycle, the read-only evidence API, and the review-refusal
-mechanism. The **promotion artifact** (M18) is in scope here as a *recorded
+mechanism. The **promotion artifact** is in scope here as a *recorded
 output* (Implemented) — the flow-merge / PR promotion *control flow* lives in
 [`workspaces.md`](workspaces.md). Out of scope: content-addressed blob storage,
-external ingestion beyond M16, capability enforcement
-(`visibility`/`retention` — M14).
+external ingestion beyond the external operations API, capability enforcement
+(`visibility`/`retention` — Designed).
 
 Locked decisions: [ADR-037](../decisions.md#adr-037-typed-artifact-model)
 (typed artifact model), [ADR-038](../decisions.md#adr-038-hybrid-write-path-for-artifact_instances-refines-adr-022)
@@ -43,9 +43,9 @@ Locked decisions: [ADR-037](../decisions.md#adr-037-typed-artifact-model)
 - **Artifact kind** — one of the closed catalog:
   `diff | log | test_report | lint_report | ai_judgment | human_note |
   commit_set | checkpoint | preview | generic_file`, plus
-  `mutation_report` **(M29 — Implemented)**. The DB `kind` column is text with a
+  `mutation_report` **(Implemented)**. The DB `kind` column is text with a
   TS-level enum, so the addition needs no migration.
-- **Mutation report (M29 — Implemented)** — the deterministic post-condition
+- **Mutation report (Implemented)** — the deterministic post-condition
   evidence of an `artifact_required` gate with `must_touch`/`must_not_touch`
   assertions
   ([ADR-074](../decisions.md#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates)).
@@ -65,9 +65,9 @@ Locked decisions: [ADR-037](../decisions.md#adr-037-typed-artifact-model)
   `git-range`, `git-log`, `file`, `gate-verdict`, `hitl-response`, `inline`.
 - **Producer** — who wrote the row: `runner | projector | takeover | gate |
   human`. The `gate` producer also records a `test_report` artifact when an
-  `external_check` gate report is ingested via the M16 operations API, surfacing
+  `external_check` gate report is ingested via the external operations API, surfacing
   the external verdict in the evidence graph.
-- **Promotion artifact (Implemented, M18)** — when a flow run is promoted from
+- **Promotion artifact (Implemented)** — when a flow run is promoted from
   `Review` the promotion service records the promoted change as a **`commit_set`**
   (and/or **`diff`**) artifact over the `base→run` range (locator `git-range`),
   carrying `pr_url`/`pr_number` **in the payload** for `pull_request` promotions.
@@ -81,7 +81,7 @@ Locked decisions: [ADR-037](../decisions.md#adr-037-typed-artifact-model)
   render-time template var resolving the **`current`** artifact's body (the
   resolved diff/log/plan/test-report text, or pretty-printed JSON for a
   `gate-verdict`/`hitl-response` locator). Graph `nodes[]` only (D4). Distinct from
-  the metadata accessors (`.kind`/`.uri`/`.validity`/`.nodeId`, M12), which carry no
+  the original metadata accessors (`.kind`/`.uri`/`.validity`/`.nodeId`), which carry no
   body. Capped at the **injection seam** only (256 KiB,
   `MAISTER_ARTIFACT_INLINE_MAX_BYTES`) — never on the payload route. Both this
   accessor AND the `inline` flag below require `compat.engine_min >= 2.2.0` (D5).
@@ -243,20 +243,21 @@ gate, when present, fails first if any `inputArtifacts` ref is not `current`:
 flowchart TD
     HITL[Review node reaches\nterminal non-rework transition] --> Gate[pre_finish blocking\nartifact_required gate\nchecks all inputArtifacts]
     Gate -->|all current| AssertReady[assertEvidenceReady\nrunId review]
-    AssertReady -->|ready| Done[node Succeeded → run Review\n→ Done is M18 promotion]
+    AssertReady -->|ready| Done[node Succeeded → run Review\n→ Done is the promotion service]
     Gate -->|any not current| Refused[gate_results status=failed\nnode CANNOT finish\nReview REFUSED]
     AssertReady -->|blocked| Refused
 ```
 
 The merge refusal guard (`assertEvidenceReady(runId, "merge")`) is **shipped
-and unit-tested in M12** but wired at the flow-promotion path in M18. The M12
-`promote` route is scratch-only and is NOT modified.
+and unit-tested in this domain** but wired at the flow-promotion path
+(Implemented — ADR-058). The pre-existing `promote` route is scratch-only and
+is NOT modified.
 
-**(Implemented, M18) Promotion-artifact recording.** When the shared promotion
+**(Implemented) Promotion-artifact recording.** When the shared promotion
 service finalizes a flow run (`Review → Done`), it records a `commit_set`
 (and/or `diff`) artifact over the `base→run` range via the existing
-`recordArtifact` + `git-range` locator path — exactly the same write path M12
-already uses, with **no new artifact kind**. For a `pull_request` promotion the
+`recordArtifact` + `git-range` locator path — exactly the same write path this
+domain already uses, with **no new artifact kind**. For a `pull_request` promotion the
 `pr_url`/`pr_number` ride **in the artifact payload** (the closed kind catalog is
 unchanged; `pr_link` is NOT added — resolved decision Q3). The record is an
 AFTER-side write inside the finalize transaction, so a half-finished promotion
@@ -264,8 +265,8 @@ never leaves a stranded promotion artifact (see the two-phase claim in
 [`workspaces.md`](workspaces.md)). The evidence-graph explorer renders this
 artifact as the terminal promotion node.
 
-`visibility`/`retention` are **declared and recorded** in M12. Access
-enforcement and capability materialization are **M14 (Designed)**.
+`visibility`/`retention` are **declared and recorded** in the base model. Access
+enforcement and capability materialization are **(Designed)**.
 
 ### Artifact body injection into prompts (Implemented — P2)
 
@@ -455,12 +456,12 @@ decision child.
 - ADRs: [ADR-037](../decisions.md#adr-037-typed-artifact-model),
   [ADR-038](../decisions.md#adr-038-hybrid-write-path-for-artifact_instances-refines-adr-022),
   [ADR-039](../decisions.md#adr-039-xyflowreact--dagrejsdagre-as-the-evidence-graph-renderer),
-  [ADR-074 (mutation sensor, M29)](../decisions.md#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates),
-  [ADR-022](../decisions.md) (projector, lands with M12),
+  [ADR-074 (mutation sensor)](../decisions.md#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates),
+  [ADR-022](../decisions.md) (projector, Implemented),
   [ADR-027](../decisions.md#adr-027-append-only-node_attempts-run-ledger),
   [ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped),
   [ADR-058](../decisions.md#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve)
-  (promotion artifact via `commit_set`/`diff`, Implemented M18),
+  (promotion artifact via `commit_set`/`diff`, Implemented),
   [ADR-120](../decisions.md#adr-120-artifact-body-injection-into-prompts)
   (artifact body injection: `{{ artifacts.X.content }}` + `inline:true`, engine
   2.2.0, Implemented P2).
@@ -480,7 +481,7 @@ decision child.
 - Related domains: [`flow-graph.md`](flow-graph.md) (gate machinery, staleness),
   [`manual-takeover.md`](manual-takeover.md) (takeover-return artifact recording),
   [`workspaces.md`](workspaces.md) (promotion service that records the promotion
-  artifact, Implemented M18).
+  artifact, Implemented).
 - Source files (Implemented): `web/lib/db/schema.ts` (new tables),
   `web/lib/flows/graph/artifact-store.ts`, `web/lib/projector/artifact-projector.ts`,
   `web/lib/flows/graph/evidence-readiness.ts`,

@@ -11,13 +11,13 @@ domain covers platform package sources, version discovery, package
 installation, per-project attachment/detach/upgrade, package-level trust, local
 versions, and the `maister.yaml packages[]` bootstrap + write-back contract
 (ADR-088). Everything below is **(Implemented)** — shipped by the
-`feature/package-management` plan (M33) — except the pieces tagged
+`feature/package-management` plan — except the pieces tagged
 **(ADR-132)**: source kinds (`git | local`), digest-as-version discovery for
 local sources, the by-kind update-available carve, and the per-source publish
 base branch. Per-revision install/trust mechanics stay in
 [`flow-packages.md`](flow-packages.md) and are referenced, not restated.
 
-## M43 package compatibility (Implemented)
+## Cut-over package compatibility (ADR-131 — Implemented)
 
 Direct Flow-package installation maps legacy members to FLOW_INSTALL/502.
 Admin package ingestion maps member-manifest validation to CONFIG/422 while

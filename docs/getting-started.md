@@ -27,7 +27,7 @@ two long-running Node processes:
   integration test suite)
 - **uv** + **Python 3.12** only when a Flow plugin needs Python tooling.
 - **`gh` (GitHub CLI) — optional** (Designed, [ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)). When present and authed (`gh auth login`), the Add-project flow auto-uses its token (`gh auth token`) for `github.com` HTTPS clones. Absent or unauthed degrades gracefully to SSH / the one-off HTTPS-token field — `gh` is never required for onboarding.
-- **PR-mode promotion (Implemented, M18) — only needed for `pull_request` promotion;
+- **PR-mode promotion (Implemented) — only needed for `pull_request` promotion;
   `local_merge` needs none.** Per the run's provider: `gh` CLI on `PATH` (github),
   `glab` CLI on `PATH` (gitlab) — each with host auth (`gh auth` / `glab auth`, or
   `GH_TOKEN` / `GITLAB_TOKEN` in the env); or `GITEA_TOKEN` / `GITVERSE_TOKEN` in the
@@ -60,7 +60,7 @@ The lockfile (`pnpm-lock.yaml` at the repo root) is committed —
 for both `web/` and `supervisor/`. CI uses the frozen lockfile.
 
 `maister-web` now includes `@xyflow/react` (v12) + `@dagrejs/dagre` for the
-M12 evidence-graph explorer (React 19 compatible, already in the lockfile, no
+evidence-graph explorer (React 19 compatible, already in the lockfile, no
 extra setup). See [ADR-039](decisions.md#adr-039-xyflowreact--dagrejsdagre-as-the-evidence-graph-renderer).
 
 ## Run the dev servers
@@ -86,7 +86,7 @@ docker compose up -d postgres            # only Postgres runs in Docker
 For a production VPS install (systemd services, TLS reverse proxy, firewall),
 see [`deployment.md`](deployment.md).
 
-What you should see (M9+): the MAIster login page at `/login`. Sign in with
+What you should see: the MAIster login page at `/login`. Sign in with
 the credentials from `pnpm db:seed`. Active routes:
 
 | Route                        | Description                                                                 |
@@ -116,7 +116,7 @@ typecheck          # tsc --noEmit
 test               # vitest unit + integration
 test:unit          # unit only (fast)
 test:integration   # spins up Postgres via testcontainers (slower)
-test:e2e           # Playwright (authed M11a/M11b UI specs — see note below)
+test:e2e           # Playwright (authed UI specs — see note below)
 db:generate        # generate a Drizzle migration from lib/db/schema.ts
 db:migrate         # apply MAIN-lineage migrations against $DB_URL
 db:migrate:brain   # apply the Project-Brain lineage (brain_* + pgvector); AFTER
@@ -148,8 +148,9 @@ maister-web test:e2e` (or `cd web && pnpm test:e2e`) creates one disposable
 > `webServer` boots `next dev` on `E2E_PORT` (3100) against the wrapper-provided
 > `DB_URL`; no fixed `E2E_DB_URL` or manual schema reset exists.
 > The seed `git init`s a real parent repo + `git worktree add`s each authed
-> spec's run branch under `<repo>/.worktrees/`, so the M11b manual-takeover spec
-> exercises real `git log`/`git diff`/`merge-base` on return. If a prior run
+> spec's run branch under `<repo>/.worktrees/`, so the manual-takeover spec
+> (`m11b-takeover.spec.ts`) exercises real `git log`/`git diff`/`merge-base` on
+> return. If a prior run
 > left a prior E2E process running, stop that process and re-run; the wrapper
 > owns a new database for every invocation.
 
@@ -242,7 +243,7 @@ state or invoking `psql`.
 The script prints every root it will remove and refuses to delete the MAIster
 repository cwd or `MAISTER_REPOS_ROOT`.
 
-## Authentication setup (M9)
+## Authentication setup
 
 MAIster requires `AUTH_SECRET` to start. Generate one and add it to `.env`:
 
@@ -503,7 +504,7 @@ Full DSL reference: [Flow DSL](flow-dsl.md). Bundled plugin walkthrough:
 ## Scheduler cron
 
 The unified scheduler clock is exposed at `GET`/`POST /api/cron/tick`
-(Implemented, M24). Point external cron there in production. The route is
+(Implemented). Point external cron there in production. The route is
 stateless: every tick claims due jobs atomically, runs bounded handlers, and
 records attempt results. Set `MAISTER_CRON_TOKEN` to a secret and pass it in the
 `X-Maister-Cron-Token` header:
@@ -518,7 +519,8 @@ token returns `401`. On success `/api/cron/tick` returns `200` with a scheduler
 summary, or `207` if a claimed attempt failed/skipped. The token is a
 server-only secret — never commit a real value or log it.
 
-`GET`/`POST /api/cron/gc` remains a compatibility route for the M19 GC contract.
+`GET`/`POST /api/cron/gc` remains a compatibility route for the original GC
+contract (ADR-033..036).
 It delegates to the scheduler `system_sweep` service while preserving the old
 GC summary shape and `200`/`207` behavior. Single-box deployments may enable the
 fallback timer with `MAISTER_SCHEDULER_TIMER_ENABLED=true`, but external cron is

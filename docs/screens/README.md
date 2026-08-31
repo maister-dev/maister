@@ -142,7 +142,7 @@ flowchart TD
     Portfolio --> AddProject["projects/add-project /projects/new — admin"]
     Board --> Evaluations["projects/project-evaluations /projects/SLUG/evaluations"]
     Board --> SettingsGit["projects/project-settings-git /projects/SLUG?tab=settings — admin/owner"]
-    Board --> SettingsAgents["projects/project-settings-agents /projects/SLUG?tab=settings — Implemented (M39, ADR-106)"]
+    Board --> SettingsAgents["projects/project-settings-agents /projects/SLUG?tab=settings — Implemented (ADR-106)"]
     Board --> ProjectBrain["projects/project-brain /projects/SLUG?tab=brain — available after Brain enablement, migration, and embedding config"]
     Board --> McpHub["projects/project-mcps-hub /projects/SLUG?tab=mcps — Designed (ADR-129)"]
     Board --> SettingsBrain["projects/project-settings-brain /projects/SLUG?tab=settings — Implemented (ADR-127/128)"]
@@ -174,14 +174,14 @@ flowchart TD
 | [`observatory.md`](observatory.md) | Observatory (delivery attribution, cost/budget, flow-ledger process metrics) | `/observatory`, `/projects/{slug}/observatory` | Existing panels and ADR-134 additions Implemented |
 | [`settings-acp-runners.md`](settings-acp-runners.md) | Settings → ACP runners catalog (admin) | `/settings` | Implemented |
 | [`settings-brain.md`](settings-brain.md) | Settings → Brain provider config (admin) | `/settings` | Implemented |
-| [`admin-scheduler.md`](admin-scheduler.md) | Scheduler cockpit (admin) | `/admin/scheduler` | Implemented (M24/M28) |
+| [`admin-scheduler.md`](admin-scheduler.md) | Scheduler cockpit (admin) | `/admin/scheduler` | Implemented (ADR-071) |
 | [`projects/project-board.md`](projects/project-board.md) | Project board (columns, Markdown task cards, launch, task editing) | `/projects/{slug}` | Implemented |
 | [`projects/project-automations.md`](projects/project-automations.md) | Project Automations (one-time task launches, recurring schedules, agent binding links) | `/projects/{slug}?tab=automations` | Implemented (ADR-139) |
-| [`projects/project-mcps-hub.md`](projects/project-mcps-hub.md) | Project MCP hub (3-source list, requirements ledger, match/connect/overlay, test-connection) | `/projects/{slug}?tab=mcps` | Implemented (M27 list + ADR-129 hub) |
-| [`projects/project-evaluations.md`](projects/project-evaluations.md) | Evaluation Lab (Studies list, Study Lab, controlled-launch dialog, verdict) | `/projects/{slug}/evaluations` and `/projects/{slug}/evaluations/{studyId}` | Implemented (M46–M48, ADR-142..147/150) |
+| [`projects/project-mcps-hub.md`](projects/project-mcps-hub.md) | Project MCP hub (3-source list, requirements ledger, match/connect/overlay, test-connection) | `/projects/{slug}?tab=mcps` | Implemented (list + ADR-129 hub) |
+| [`projects/project-evaluations.md`](projects/project-evaluations.md) | Evaluation Lab (Studies list, Study Lab, controlled-launch dialog, verdict) | `/projects/{slug}/evaluations` and `/projects/{slug}/evaluations/{studyId}` | Implemented (ADR-142..147/150) |
 | [`projects/add-project.md`](projects/add-project.md) | Add-project form (modes, prefill, bootstrap, classified clone errors) | `/projects/new` | Implemented |
 | [`projects/project-settings-git.md`](projects/project-settings-git.md) | Project Settings → Git (remotes table + persist-config) | `/projects/{slug}?tab=settings` | Designed (ADR-093) |
-| [`projects/project-settings-agents.md`](projects/project-settings-agents.md) | Project Settings → Agents (attach/enable, triggers, runner + autonomy policy) | `/projects/{slug}?tab=settings` | Implemented (M39, ADR-106) |
+| [`projects/project-settings-agents.md`](projects/project-settings-agents.md) | Project Settings → Agents (attach/enable, triggers, runner + autonomy policy) | `/projects/{slug}?tab=settings` | Implemented (ADR-106) |
 | [`projects/project-settings-brain.md`](projects/project-settings-brain.md) | Project Settings → Brain (enablement, home resolution, projection flow) | `/projects/{slug}?tab=settings` | Implemented (ADR-127/128) |
 | [`projects/project-brain.md`](projects/project-brain.md) | Project Brain (memory search, sources, proposals) | `/projects/{slug}?tab=brain` when Brain is enabled, migrated, and embeddings are configured | Implemented (ADR-127/128) |
 | [`studio/README.md`](studio/README.md) | Flow Studio redesign (area design: overview · sources · packages · package detail · editor · local workspace) | `/studio/*` | Implemented; standalone artifact pickers / move-to-package planned |

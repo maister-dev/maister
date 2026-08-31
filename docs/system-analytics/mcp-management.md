@@ -1,7 +1,7 @@
 # MCP capability management domain
 
-> **Status: mixed.** The platform CRUD + M14 materialization surface is
-> **Implemented** (M27, [ADR-070](../decisions.md#adr-070)). MCP Management v2
+> **Status: mixed.** The platform CRUD + capability-materialization surface is
+> **Implemented** ([ADR-070](../decisions.md#adr-070)). MCP Management v2
 > ([ADR-129](../decisions.md#adr-129)) is **Implemented**: the
 > `project_mcp_bindings` table + migration `0093`, the binding-aware resolver
 > with `provenance`, load-bearing trust + withheld persistence, the per-project
@@ -13,8 +13,8 @@
 > MCP-select (W-G) + agent effective-MCPs list, and the seeded hub e2e.
 > Acceptance SSOT
 > [`.ai-factory/specs/feature-mcp-management-v2.md`](../../.ai-factory/specs/feature-mcp-management-v2.md);
-> pieces below are tagged with their current status. Extends the M14
-> materialization surface in [capabilities.md](capabilities.md) and the M25
+> pieces below are tagged with their current status. Extends the
+> materialization surface in [capabilities.md](capabilities.md) and the
 > authored catalog in [capability-catalog.md](capability-catalog.md).
 
 ## Purpose
@@ -55,7 +55,7 @@ scope: MCP marketplace / reputation / malware scanning / sandboxing / org policy
   enabled binding **wins over precedence**; a disabled binding makes the ref
   **unresolvable** (opt-out); an absent binding is **grandfather** (today's
   behavior). See [db/projects-domain.md](../db/projects-domain.md).
-- **`capability_records` kind=mcp** (Implemented, M14; extended v2) — one row per
+- **`capability_records` kind=mcp** (Implemented; extended v2) — one row per
   declared MCP in the project registry, `source ∈ {platform, project,
   flow-package}`. `material` jsonb carries transport shape + `env:NAME`
   references — never secret values; a package **requirement** marker and the
@@ -264,7 +264,7 @@ the gate), invoked on every `POST`/`PATCH
 - **Acceptance SSOT (SDD):** [`.ai-factory/specs/feature-mcp-management-v2.md`](../../.ai-factory/specs/feature-mcp-management-v2.md) — entities, per-route identifier labels, Expectations, edge-cases, test matrix.
 - **Decision:** [ADR-129](../decisions.md#adr-129) — requirements & bindings, per-project overlay, trust & health activation (amends [ADR-070](../decisions.md#adr-070) platform CRUD + [ADR-043](../decisions.md#adr-043) materialization visibility; extends [ADR-088](../decisions.md#adr-088) package manifest; fulfills [ADR-128](../decisions.md#adr-128) Serena trust-gate precondition).
 - **Capability resolution precedence:** [capabilities.md](capabilities.md) — the project > platform > flow-package winner rule that an **absent** binding falls through to.
-- **M14 materialization path:** [capabilities.md](capabilities.md) §Process flows — reused; v2 adds the trust gate, the overlay (names-only), and the withheld sinks.
+- **Materialization path:** [capabilities.md](capabilities.md) §Process flows — reused; v2 adds the trust gate, the overlay (names-only), and the withheld sinks.
 - **Authored catalog:** [capability-catalog.md](capability-catalog.md) — authored publish does not mutate `platform_mcp_servers`.
 - **Admin surface precedent:** [acp-runners.md](acp-runners.md) — `platform_mcp_servers` CRUD + delete-guard mirror `platform_acp_runners` (ADR-065).
 - **OpenAPI (web):** [`../api/web.openapi.yaml`](../api/web.openapi.yaml) — bindings, connect/disconnect, project probe, admin trust + PATCH `trustStatus`.

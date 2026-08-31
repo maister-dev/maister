@@ -18,7 +18,7 @@ removing the workspace; board/launchability then treats the task as relaunchable
 without hiding the historical run. Discard changes non-`Done` runs to
 `Abandoned`. This does not delete evidence, transcript, cost, or runtime JSONL.
 
-## M43 upgrade terminalization (Implemented)
+## Cut-over upgrade terminalization (ADR-131 — Implemented)
 
 Migration 0094 changes legacy Flow runs in Pending, Running, NeedsInput,
 NeedsInputIdle, HumanWorking, WaitingOnChildren, Review, or Crashed to Failed
@@ -36,21 +36,21 @@ re-triage after the event creates a later arm eligible for C2. Migration 0096
 adds partial `domain_events` indexes for the exact D2 reason/source predicate,
 so list/detail/reconcile reads remain bounded as the immutable event log grows.
 
-> **M42 — Unified runner & session model (Implemented).** Run runner state
+> **Unified runner & session model (Implemented — ADR-114).** Run runner state
 > (`runner_id`, `runner_resolution_tier`, `capability_agent`, `runner_snapshot`,
 > `acp_session_id`) moved OFF the `runs` row (dropped in migration `0082`) into the per-session `run_sessions`
 > table (sole source of truth; exactly one `default` row for `scratch`/`agent`
 > runs). A flow run hosts N **sequential** sessions sharing one worktree.
 > Canonical: [`sessions.md`](sessions.md) /
 > [ADR-114](../decisions.md#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth).
-> Flipped to as-built in M42 Phase 7.
+> Flipped to as-built in the ADR-114 implementation (Phase 7).
 
 ## Domain entities
 
 - **Run** — `runs` row. FK to `tasks`, `projects`, and `flows`.
   `run_kind ∈ {flow, scratch, agent}`; per-session runner identity is held in
   `run_sessions`.
-  - **`run_kind = scratch` — project-less local-package variant** (M36 Phase 5,
+  - **`run_kind = scratch` — project-less local-package variant** (Implemented —
     ADR-097): a scratch run rooted at a local-package `working_dir` with **no
     project and no `workspaces` row**. `runs.project_id` is **NULL** and
     `runs.local_package_id` is the launch snapshot; `scratch_runs` carries the
@@ -59,11 +59,11 @@ so list/detail/reconcile reads remain bounded as the immutable event log grows.
     narrows `project_id` via `requireRunProjectId`. See
     [`studio-ai-assistant.md`](studio-ai-assistant.md) and the consumer
     checklist in [`../decisions.md#adr-096`](../decisions.md).
-- **Assignment** — M13 ownership row for pending human-visible work. It points
+- **Assignment** — ownership row (ADR-040) for pending human-visible work. It points
   at a run for inbox/read-model purposes but does not add run statuses and does
   not participate in scheduler caps.
 - **ACP session id** — opaque resume handle, per session on
-  `run_sessions.acp_session_id` (M42 — moved off `runs`).
+  `run_sessions.acp_session_id` (moved off `runs` — ADR-114).
   Lifecycle described in [`../decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume`](../decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume).
 - **Workspace** — git worktree under
   `.maister/<slug>/runs/<runId>/`. See [`workspaces.md`](workspaces.md).
@@ -75,7 +75,7 @@ so list/detail/reconcile reads remain bounded as the immutable event log grows.
     form input.
   - `input-<stepId>.json` — atomic-written response payload.
 
-## Run detail UI hierarchy (Planned M35)
+## Run detail UI hierarchy (Implemented)
 
 The run detail screen does not add run statuses or mutate the run state
 machine. It projects the existing run, workspace, graph, evidence, timeline,
@@ -128,7 +128,7 @@ stateDiagram-v2
     HumanWorking --> Abandoned: abandon
 
     Running --> Review: agent exits 0
-    Running --> Review: operator stop<br/>(M27 lifecycle)
+    Running --> Review: operator stop<br/>(workbench lifecycle)
     Running --> Crashed: heartbeat dead<br/>no checkpoint
     Running --> Failed: agent exits non-zero<br/>(no recovery path)
 
@@ -153,9 +153,9 @@ Status names exactly match the `runs.status` enum in
 returns a `Done` run to `Review` so its stale or conflicted PR can be re-synced
 and re-promoted (`markReopenFromDone`).
 
-### M11a graph rework loop (Implemented)
+### Graph rework loop (Implemented)
 
-The M11a review-driven rework loop does **not** add a run status. It is a
+The review-driven rework loop does **not** add a run status. It is a
 **node-pointer move inside `Running`**: a `review` node finishes `human` and the
 run enters `NeedsInput` (same as any HITL); when the reviewer's `rework`
 decision is resumed, the runner marks downstream gates stale, moves the node
@@ -163,18 +163,20 @@ pointer back to the rework target, opens attempt N+1, and continues — all with
 `Running`. Three invariants hold so the run machine is not over-claimed:
 
 1. **No new status.** Rework is a pointer move within `Running`; there is **no
-   `HumanWorking`** status in M11a (that is M11b). The only HITL-driven status is
+   `HumanWorking`** status in the rework loop (that is manual takeover —
+   ADR-030). The only HITL-driven status is
    the existing `NeedsInput`/`NeedsInputIdle` pair.
 2. **`current_step_id` carries the node id.** `runs.current_step_id` holds the
    compiled-graph **node id**. The existing fail-closed resume check (unknown id
    in the pinned manifest → `Crashed` + `MaisterError("CONFIG")`) applies to the
    graph.
-3. **Gates feed, do not gate promotion.** M11a writes `gate_results` but they do
-   **not** block promotion. The promote sequence's "verify required gates" step
-   is the **M15/M18** readiness policy, not M11a — see the note on the happy-path
+3. **Gates feed, do not gate promotion.** The graph engine writes `gate_results`
+   but they do **not** block promotion. The promote sequence's "verify required
+   gates" step is the **readiness enforcement** policy (ADR-048/ADR-058), not the
+   graph engine — see the note on the happy-path
    diagram below and [`flow-graph.md`](flow-graph.md).
 
-### M27 operator stop to `Review` (Implemented)
+### Operator stop to `Review` (Implemented)
 
 The workbench lifecycle surface can intentionally stop a live Flow run and park
 it in `Review` without deleting the worktree. This broadens `Review`: it can
@@ -184,7 +186,7 @@ stopped run is not treated as completed merely because it is reviewable. Full
 stop, archive, drop, snapshot, export, and handoff semantics live in
 [`workbench-lifecycle.md`](workbench-lifecycle.md).
 
-### M11b manual-takeover status `HumanWorking` (Implemented)
+### Manual-takeover status `HumanWorking` (Implemented)
 
 Manual takeover ([ADR-030](../decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status))
 adds the real `runs.status` value `HumanWorking`. A reviewer parked at a
@@ -196,7 +198,7 @@ abandons it (`HumanWorking → Abandoned`). Full domain detail lives in
 [`manual-takeover.md`](manual-takeover.md). Four invariants bind it to the run
 machine:
 
-1. **`HumanWorking` is a REAL run status**, unlike the M11a rework loop above
+1. **`HumanWorking` is a REAL run status**, unlike the graph rework loop above
    (a node-pointer move *within* `Running`). A claimed run leaves the
    `Running`/`NeedsInput` machine and renders a distinct board surface.
 2. **It counts against the global cap exactly like `Running`/`NeedsInput`**
@@ -205,7 +207,8 @@ machine:
    (`web/lib/scheduler.ts`, the initial-promote and under-advisory-lock-recheck
    counts of `status IN ('Running','NeedsInput','HumanWorking')`).
 3. **The takeover branch IS `workspaces.branch`** — no new branch, target, base
-   selection, or PR is created (that is **M18**). The claim exposes the existing
+   selection, or PR is created (that is **promotion** — ADR-058). The claim
+   exposes the existing
    `worktree_path` + branch only.
 4. **`HumanWorking` is session-less BY DESIGN** (the human edits locally; there
    is no live ACP session) yet HOLDS a worktree, so it is **EXCLUDED from the
@@ -216,13 +219,13 @@ machine:
    `loadActiveRunSessionsByRunId` (`run_sessions`), skipping rows with no active
    `acp_session_id` — so `HumanWorking` is excluded by construction.
 
-### M19 reconcile-driven `Running → Crashed` + hybrid Recover (Designed)
+### Reconcile-driven `Running → Crashed` + hybrid Recover (Implemented)
 
-M19 ([ADR-033](../decisions.md#adr-033), [ADR-034](../decisions.md#adr-034))
+Reconciliation ([ADR-033](../decisions.md#adr-033), [ADR-034](../decisions.md#adr-034))
 adds an out-of-band **reconcile sweep** (startup + periodic) that classifies a
 stranded `Running` run into re-attach / re-dispatch / skip / `Crashed`. This is
 the **`Running → Crashed`** transition that did not previously exist (only
-`NeedsInput → Crashed` did, via `crashResumedRun`); M19 adds `crashRunningRun`
+`NeedsInput → Crashed` did, via `crashResumedRun`); it adds `crashRunningRun`
 (CAS `WHERE status='Running'`). The full classification table and the GC
 lifecycle live in [`reconciliation-gc.md`](reconciliation-gc.md). Four
 invariants bind it to the run machine:
@@ -246,17 +249,16 @@ invariants bind it to the run machine:
    resumes it on slot-free. `POST /api/runs/{runId}/discard` marks `Abandoned`
    and enters the GC countdown (no synchronous worktree removal).
 
-### M18 flow-run `Review → Done` promotion (Implemented)
+### Flow-run `Review → Done` promotion (Implemented)
 
-Before M18 a **flow** run dead-ended at `Review` (`Running→Review` is
+Originally a **flow** run dead-ended at `Review` (`Running→Review` is
 CAS-guarded; no promote path flipped it terminal — only scratch runs promoted).
-M18
-([ADR-058](../decisions.md#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve))
+[ADR-058](../decisions.md#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve)
 wires the **existing** `Review → Done` edge for flow runs through a **shared
 `promoteRun` service** that drives both run kinds. This adds **NO new
 `runs.status` value** — `local_merge` terminates at the existing `Done`. The
 `pull_request` mode (which also lands at `Done` and records `pr_url`/`pr_number`
-on the workspace but is not tracked to merge) is **Implemented (M18)**.
+on the workspace but is not tracked to merge) is **Implemented**.
 The full claim → side-effect → finalize contract (the durable
 `promotion_state` claim + per-attempt `promotion_attempt_id` token, idempotency,
 and the crash windows) lives in [`workspaces.md`](workspaces.md). Four
@@ -268,12 +270,13 @@ invariants bind it to the run machine:
    avoids the new-status consumer fan-out.
 2. **Promote-time readiness re-gate.** The promote service calls
    `assertEvidenceReady(runId, "review")` a **second** time, at promote time —
-   the M16 chokepoint already enforces it once at Review-entry, but gates can go
+   the Review chokepoint (ADR-045) already enforces it once at Review-entry, but gates can go
    stale between Review-entry and the promote click. A not-ready/stale gate
    refuses promotion `PRECONDITION` (run stays `Review`, no side-effect);
    **overridden** gates satisfy it via the existing `{passed, overridden}`
-   allow-list (`isExternalGateReady`). This **reuses M16, with no M15
-   dependency** — an ADR-045-consistent M18 carve, not an M15 implementation.
+   allow-list (`isExternalGateReady`). This **reuses that chokepoint, with no
+   dependency on the readiness layer (ADR-048)** — an ADR-045-consistent
+   promotion carve, not a readiness implementation.
 3. **Allow-list guard.** The promote guard is `status ∈ {Review}` (flow) /
    `dialogStatus = "Review"` (scratch), NOT `if (!terminal)` — a future status is
    rejected by default.
@@ -461,7 +464,7 @@ Compatibility:
   trigger: "manual" }`;
 - legacy `pull_request` maps to `{ strategy: "pull_request", push:
   "on_success", trigger: "manual" }`;
-- scratch runs stay on legacy M18 promote semantics in this slice.
+- scratch runs stay on the legacy ADR-058 promote semantics in this slice.
 
 `auto_on_ready` fires only when a run is in `Review` and the existing
 readiness gate returns ready/overridden. The run-detail banner states that the
@@ -659,14 +662,14 @@ sequenceDiagram
     end
 ```
 
-> The "verify required gates" step above is the readiness re-gate. In **M11a**
-> the graph runner *records* `gate_results` (pass/fail/stale/overridden) but does
-> **not** gate promotion on them. **(Implemented, M18)** the promote service enforces
+> The "verify required gates" step above is the readiness re-gate. The graph
+> runner itself *records* `gate_results` (pass/fail/stale/overridden) but does
+> **not** gate promotion on them. **(Implemented)** the promote service enforces
 > readiness here by calling `assertEvidenceReady(runId, "review")` a **second**
-> time (a deliberate M16 reuse, no M15 dependency —
+> time (a deliberate reuse of the ADR-045 chokepoint, no readiness-layer dependency —
 > [ADR-058](../decisions.md#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve));
 > overridden gates satisfy it. `local_merge` finalizes at `Done`; `pull_request`
-> is **(Implemented, M18)**. See [`flow-graph.md`](flow-graph.md) and
+> is **(Implemented)**. See [`flow-graph.md`](flow-graph.md) and
 > [`workspaces.md`](workspaces.md).
 
 ### NeedsInput and keep-alive cycle
@@ -707,7 +710,7 @@ flowchart TD
     Start([startup or heartbeat tick]) --> Find[Find runs status=Running]
     Find --> Skip[HumanWorking rows skipped:<br/>session-less by design, hold a worktree<br/>recovery sweep SELECT filters status=NeedsInput]
     Find --> Tk{recorded takeover return AND<br/>re-entry gates still stale AND<br/>no re-entry checks attempt yet?}
-    Tk -- yes --> Redispatch[re-dispatch graph runner at current_step_id<br/>idempotent, M11a CAS-guarded resume<br/>NOT a naive Running to Crashed sweep]
+    Tk -- yes --> Redispatch[re-dispatch graph runner at current_step_id<br/>idempotent, CAS-guarded resume<br/>NOT a naive Running to Crashed sweep]
     Tk -- no --> Live{supervisor has live session?}
     Live -- yes --> OK[no action]
     Live -- no --> Cp{acp_session_id present?}
@@ -721,7 +724,8 @@ flowchart TD
 
 > The **takeover-return** branch rescues a run stranded in `Running` when the
 > process died after the return's `HumanWorking → Running` flip but before the
-> runner attached. The re-dispatch is idempotent (M11a CAS-guarded resume): a
+> runner attached. The re-dispatch is idempotent (the graph engine's CAS-guarded
+> resume): a
 > live runner makes it a no-op, a genuinely stale pointer fails closed to
 > `Crashed`. A naive "`Running` + no live session → `Crashed`" sweep is rejected —
 > it would false-positive on a session-less `command_check` gate running after the
@@ -821,7 +825,7 @@ already-inserted run) — never an orphan worktree or live ACP session.
   hard cap); excess runs wait as `Pending` and auto-promote when a slot
   frees. `HumanWorking` counts toward the cap exactly like
   `Running`/`NeedsInput` — a claimed worktree holds a slot.
-- **(Implemented, M11b)** A `HumanWorking` run survives Next.js and
+- **(Implemented)** A `HumanWorking` run survives Next.js and
   supervisor restart WITHOUT being classified `Crashed`: it is session-less
   by design and is excluded from the `runResumeRecoverySweep` candidate set
   (SELECT filters `status='NeedsInput'`, then the post-query
@@ -839,13 +843,13 @@ already-inserted run) — never an orphan worktree or live ACP session.
 - **(Designed)** Full Flow-run state survives Next.js restart AND
   supervisor restart; on boot, reconciliation classifies orphans as
   `Crashed` and offers Recover or Discard.
-- **(Implemented, M19)** The reconcile sweep is allow-list `Running`-only and
+- **(Implemented)** The reconcile sweep is allow-list `Running`-only and
   transitions a stranded `Running` run to `Crashed` (`crashRunningRun`)
   ONLY when the worktree is gone, a `cli` node has no live session, or an
   agent session is gone past `MAISTER_RECONCILE_GRACE_SECONDS`; every such
   transition calls `promoteNextPending` and clears
   `runs.resume_started_at`. See [`reconciliation-gc.md`](reconciliation-gc.md).
-- **(Implemented, M19)** Recover stamps `runs.resume_started_at` and flips
+- **(Implemented)** Recover stamps `runs.resume_started_at` and flips
   `Crashed → Running` (cap free) or `Crashed → Pending` (cap full, 202)
   BEFORE any `createSession`; it re-admits through the global cap and never
   over-spawns. See [`reconciliation-gc.md`](reconciliation-gc.md).
@@ -907,16 +911,16 @@ already-inserted run) — never an orphan worktree or live ACP session.
   via `local_merge` or `pull_request`. Promotion
   targets the selected target branch after readiness gates pass or are
   explicitly overridden. No deploy or release management is implied.
-- **(Implemented, M18)** A **flow** run MUST be promotable from `Review` through the
+- **(Implemented)** A **flow** run MUST be promotable from `Review` through the
   shared `promoteRun` service to the existing terminal `Done` — `local_merge`
   finalizes at `Done` (no new `runs.status`). The `pull_request` mode (also
   landing at `Done`, recording `pr_url`/`pr_number` but not tracking the PR to
-  merge) is **(Implemented, M18)**.
-- **(Implemented, M18)** Promotion MUST re-check readiness at promote time via
+  merge) is **(Implemented)**.
+- **(Implemented)** Promotion MUST re-check readiness at promote time via
   `assertEvidenceReady(runId, "review")`; a not-ready/stale gate refuses
   `PRECONDITION` (run stays `Review`, no side-effect) and overridden gates
-  satisfy it (`{passed, overridden}` allow-list) — the M16 chokepoint reused, no
-  M15 dependency.
+  satisfy it (`{passed, overridden}` allow-list) — the ADR-045 Review chokepoint
+  reused, no readiness-layer dependency.
 - **(Implemented)** Local promotion uses `git merge --no-ff`; conflicts always
   abort the merge, leave the run in `Review`, and create/keep a manual
   resolution path. The legacy `merge` route name is superseded by
@@ -958,9 +962,9 @@ already-inserted run) — never an orphan worktree or live ACP session.
   SIGTERM → grace → SIGKILL), then transitions run to `Abandoned`,
   removes worktree on GC.
 
-## M8 keep-alive + checkpoint + resume
+## Keep-alive + checkpoint + resume
 
-### State transitions added by M8
+### State transitions added by the keep-alive/checkpoint layer
 
 ```
                  keep-alive expired
@@ -1133,7 +1137,7 @@ resume or depend on supervisor availability.
   [ADR-011 Workspace lifecycle](../decisions.md#adr-011-workspace-lifecycle-via-git-worktree),
   [ADR-018 Task ↔ Run 1:N](../decisions.md#adr-018-task--run-cardinality-is-1n),
   [ADR-058 Branch targeting + shared promotion + promote-time readiness re-gate](../decisions.md#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve)
-  (Implemented, M18).
+  (Implemented).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md).
 - Config reference: [`../configuration.md`](../configuration.md)
   §`Environment variables (server tier)` —
@@ -1142,7 +1146,7 @@ resume or depend on supervisor availability.
 - API: [`../api/supervisor.openapi.yaml`](../api/supervisor.openapi.yaml),
   [`../api/async/supervisor-sse.asyncapi.yaml`](../api/async/supervisor-sse.asyncapi.yaml).
 - Related: [`assistant-activity.md`](assistant-activity.md), [`hitl.md`](hitl.md), [`workspaces.md`](workspaces.md),
-  [`tasks.md`](tasks.md), [`flow-graph.md`](flow-graph.md) (M11a rework loop),
+  [`tasks.md`](tasks.md), [`flow-graph.md`](flow-graph.md) (graph rework loop),
   [`workbench-lifecycle.md`](workbench-lifecycle.md).
 - Source: `web/lib/db/schema.ts` (runs table),
   `supervisor/src/heartbeat.ts`, `supervisor/src/spawn.ts`.

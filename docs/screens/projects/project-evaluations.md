@@ -2,7 +2,7 @@
 
 - **Routes:** `/projects/{slug}/evaluations`,
   `/projects/{slug}/evaluations/{studyId}`
-- **Status:** Implemented (M46–M48, ADR-142..147); controlled-launch UI and
+- **Status:** Implemented (ADR-142..147); controlled-launch UI and
   legacy-experiment cut-over (ADR-150). Supersedes the retired Experiment
   Comparison Studio — legacy `/experiments` deep-links permanently redirect here.
 - **Source:** `web/app/(app)/projects/[slug]/evaluations/page.tsx`,

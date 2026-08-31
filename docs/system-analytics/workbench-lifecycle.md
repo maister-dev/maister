@@ -1,8 +1,8 @@
 # Workbench lifecycle domain
 
-> **Status: Implemented (M27 slice).** This contract covers operator actions
+> **Status: Implemented.** This contract covers operator actions
 > for stopped, stale, crashed, finished, and no-longer-useful run workbenches.
-> It extends the read-only M22 workbench with explicit lifecycle controls while
+> It extends the read-only workbench with explicit lifecycle controls while
 > reusing the existing run status enum, workspace archive columns, supervisor
 > session model, and git worktree helpers.
 
@@ -41,7 +41,8 @@ the run in its current review/terminal state.
 
 ## ADR-142 lifecycle contract (Implemented)
 
-ADR-142 replaces the conflicting M19/M27 workspace-retention behavior in this
+ADR-142 replaces the conflicting earlier GC and workbench-lifecycle
+workspace-retention behavior in this
 document. A run's status is immutable execution history; workspace presence is
 a separate axis. The behavior below is implemented.
 
