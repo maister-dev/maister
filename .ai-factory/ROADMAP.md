@@ -758,3 +758,28 @@
 | M43. Postgres-only + graph-only cut-over                                     | 2026-07-12 |
 | M44. Flow Review Workspace                                                   | 2026-07-15 |
 | M20. Dogfood + external adoption signal                                      | 2026-07-15 |
+
+## Backlog (untriaged deferred work)
+
+> Ledger of deferred carve-outs surfaced by the 2026-08-31 docs audit
+> (`DOCS_OPTIMIZATION_AUDIT.md` §O). Items here are deliberately parked —
+> pull one into a milestone before working on it. The 26 partial/compromise
+> implementations of audit §A await their own separate product triage; the
+> fate of the unlanded Tact-0 plan (burned ADR-123: workspace-boundary
+> default-deny + agent token scopes + standup-digest/build-sentinel agents,
+> overlaps §A run-summary gap) is part of that triage.
+
+- [ ] Connect-time "run init?" prompt UX for scratch sessions (aif design §10).
+- [ ] Project archive/unarchive write-path + UI (`projects.archived_at` is read by ~10 guards, written by nothing; audit §A9).
+- [ ] Embedding-based duplicate detection for triage — cheaper now that the Brain pgvector substrate ships (triager spec §11).
+- [ ] Event-driven auto-launch: emit + consume `task.triaged` for lower-latency enqueue (tick-only today; triager spec §11).
+- [ ] Combined `Stop & *` rail actions for `runKind=agent` rows (rail-actions design out-of-scope note).
+- [ ] Non-Flow per-kind Studio authoring + its host E2E coverage (studio-package-authoring Stream A follow-up).
+
+### Triage outcomes 2026-08-31 (owner decisions — do not re-open without new evidence)
+
+- CLOSED (decided no): native `AskUserQuestion` passthrough — HITL + scratch chat instead of forking the adapter; supervisor-side inline per-step budget enforcement — over-built for a token ceiling; PRD-as-flow-node.
+- CLOSED (deferred indefinitely): USD cost conversion / model price table — token counts stay the meter until API price tracking becomes load-bearing.
+- CLOSED (already resolved in code): `/flows` disposition — `/flows/new` already redirects to the Studio wizard and `/flows/[slug]/[capId]` is the live fork editor, not a duplicate; `/settings` vs `/studio/sources` panel duplication — `PackageSourcesPanel` renders only in `/studio/sources`; `archiveAuthoredCapability` edit-lock guard — `assertEditLock` present (`web/lib/catalog/authored-service.ts:728`).
+- CLOSED (known platform asymmetry): codex parity for materialized subagents — `plannedAgents` is claude-only by design (`web/lib/capabilities/adapter-home.ts:232`); codex has no subagent surface to materialize into. Revisit only if codex grows one.
+- DONE 2026-08-31: `aif-loop` / `aif-qa` / `aif-dev-light` / `aif-autonomous` shipped as first-class flows (maister-plugins `711d251`, gate-green for `aif/v2.6.0`); MCP `supported_agents` readiness gating (`82d9a0f1f`).
