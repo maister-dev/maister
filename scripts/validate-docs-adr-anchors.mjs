@@ -70,6 +70,7 @@ function changedDocsFiles() {
 const headingRe = /^#{2,6}\s+(ADR-\d+:.*)$/gm;
 const validAnchors = new Set();
 const knownAdrNumbers = new Set();
+const hubStubs = new Map(); // num -> { title, status }
 {
   const src = readFileSync(decisionsPath, "utf8");
   let m;
@@ -79,6 +80,68 @@ const knownAdrNumbers = new Set();
     const num = /ADR-(\d+)/.exec(heading);
     if (num) knownAdrNumbers.add(num[1]);
   }
+  const stubRe =
+    /^### ADR-(\d{3}): ([^\n]+)\n\n\*\*Status:\*\* ([^\n]+)$/gm;
+  while ((m = stubRe.exec(src)) !== null) {
+    hubStubs.set(m[1], { title: m[2], status: m[3] });
+  }
+}
+
+// --- Hub ↔ body-file contract (F2 split of decisions.md) ---------------------
+// Every `### ADR-NNN:` hub stub must have `docs/decisions/adr-NNN.md`; every
+// body file must have a hub stub; body `# ADR-NNN: <title>` and `**Status:**`
+// must match the stub verbatim (the body is the source — edit it first, then
+// mirror the stub). Runs in every mode (cheap, and stub/body drift must never
+// slip through a changed-files run that touched only one side.)
+const contractFailures = [];
+{
+  const decisionsDir = join(docsRoot, "decisions");
+  const bodyFiles = new Set(
+    readdirSync(decisionsDir).filter((f) => /^adr-\d{3}\.md$/.test(f)),
+  );
+
+  for (const [num, stub] of hubStubs) {
+    const fileName = `adr-${num}.md`;
+    if (!bodyFiles.has(fileName)) {
+      contractFailures.push(
+        `hub stub ADR-${num} has no body file docs/decisions/${fileName}`,
+      );
+      continue;
+    }
+    bodyFiles.delete(fileName);
+    const body = readFileSync(join(decisionsDir, fileName), "utf8");
+    const titleM = /^# ADR-(\d{3}): ([^\n]+)$/m.exec(body);
+    const statusM = /^\*\*Status:\*\* ([^\n]+)$/m.exec(body);
+    if (!titleM || titleM[2] !== stub.title) {
+      contractFailures.push(
+        `docs/decisions/${fileName}: title differs from the hub stub ("${titleM?.[2] ?? "<missing>"}" vs "${stub.title}")`,
+      );
+    }
+    // Body statuses point at the hub (`../decisions.md#adr-…`); stub statuses
+    // link in-file (`#adr-…`). Normalize before comparing.
+    const bodyStatus = (statusM?.[1] ?? "<missing>").replaceAll(
+      "../decisions.md#",
+      "#",
+    );
+    if (bodyStatus !== stub.status) {
+      contractFailures.push(
+        `docs/decisions/${fileName}: **Status:** differs from the hub stub ("${bodyStatus}" vs "${stub.status}")`,
+      );
+    }
+  }
+  for (const orphan of bodyFiles) {
+    contractFailures.push(
+      `docs/decisions/${orphan} has no matching ADR stub in decisions.md`,
+    );
+  }
+}
+
+if (contractFailures.length > 0) {
+  console.error(
+    `validate-docs-adr-anchors: ${contractFailures.length} hub/body contract violation(s):`,
+  );
+  for (const f of contractFailures) console.error(`  ${f}`);
+  process.exit(2);
 }
 
 // Match markdown links pointing at a decisions.md ADR anchor, from any doc, plus
@@ -127,7 +190,7 @@ for (const file of targets) {
 
 if (failures.length === 0) {
   console.log(
-    `validate-docs-adr-anchors: ${checked} ADR anchor link(s) resolved across ${targets.length} file(s)`,
+    `validate-docs-adr-anchors: ${checked} ADR anchor link(s) resolved across ${targets.length} file(s); ${hubStubs.size} hub stub(s) ↔ body files in sync`,
   );
   process.exit(0);
 }

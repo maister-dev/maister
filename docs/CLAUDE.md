@@ -214,11 +214,18 @@ Mermaid usage requirements:
 
 ### R4. The ADR template is the only way to record decisions
 
-New decisions go in [`decisions.md`](decisions.md) using the template
-at the bottom of that file. Numbering is sequential and immutable
-(superseded ADRs stay; do not renumber). One decision per ADR.
+The ADR log is a hub + records: [`decisions.md`](decisions.md) holds the
+index, one stub per ADR (heading + Status + Date + link), the template,
+and the editing rules; each full record lives in
+`decisions/adr-NNN.md`. New decisions: create the record file from the
+template, then add the stub and index row. Numbering is sequential and
+immutable (superseded ADRs stay; do not renumber). One decision per ADR.
+Decision text is immutable; direction changes get a new superseding ADR,
+non-direction deltas go into a dated `**Amendments:**` list in the
+record. `pnpm validate:docs` enforces the stub ↔ record bijection and
+status equality.
 
-Outside `decisions.md`, prose may *cite* an ADR (`see ADR-005`) but MUST
+Outside the ADR log, prose may *cite* an ADR (`see ADR-005`) but MUST
 NOT restate its rationale at length. Single source of truth.
 
 ### R5. Process and domain description structure
