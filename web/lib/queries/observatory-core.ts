@@ -17,6 +17,10 @@ export interface ObservatoryTimedRunInput extends ObservatoryRunInput {
   endedAt: Date | null;
 }
 
+// ADR-160: mirrors `OPERATOR_INTERRUPT_DECISION` in flows/graph/ledger.ts.
+// Duplicated as a literal because this module is pure (no server-only imports).
+const OPERATOR_INTERRUPT_DECISION = "operator_interrupt";
+
 export interface ObservatoryNodeAttemptInput {
   id: string;
   runId: string;
@@ -26,6 +30,10 @@ export interface ObservatoryNodeAttemptInput {
   status: ObservatoryNodeStatus;
   errorCode?: string | null;
   exitCode?: number | null;
+  // ADR-160: `operator_interrupt` marks an attempt closed by a HUMAN pausing a
+  // live node, not by a correction the agent needed. Excluded from BOTH
+  // correction counters below.
+  decision?: string | null;
 }
 
 export interface ObservatoryHitlInput {
@@ -230,15 +238,25 @@ export function rollupCorrectionMetrics(input: {
   let retryCount = 0;
 
   for (const attempts of attemptsByRunNode.values()) {
+    // ADR-160: an operator restart advances `attempt` exactly like a genuine
+    // retry, so subtract them here as well. Excluding them from `reworkCount`
+    // ALONE would still report a fabricated correction rate — both counters
+    // have to move or the metric stays inflated.
+    const operatorRestarts = attempts.filter(
+      (row) => row.decision === OPERATOR_INTERRUPT_DECISION,
+    ).length;
+
     retryCount += Math.max(
       0,
-      maxNumber(attempts.map((row) => row.attempt)) - 1,
+      maxNumber(attempts.map((row) => row.attempt)) - 1 - operatorRestarts,
     );
   }
 
   const reworkCount = input.nodeAttempts.filter(
     (attempt) =>
-      eligibleRunSet.has(attempt.runId) && attempt.status === "Reworked",
+      eligibleRunSet.has(attempt.runId) &&
+      attempt.status === "Reworked" &&
+      attempt.decision !== OPERATOR_INTERRUPT_DECISION,
   ).length;
   const runCount = eligibleRunIds.length;
 

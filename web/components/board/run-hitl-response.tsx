@@ -59,6 +59,8 @@ export interface RunHitlResponseProps {
     | "infra_recovery"
     | "budget_breach"
     | "hook_trip"
+    // ADR-160: the operator node interrupt.
+    | "node_interrupt"
     | "decision_request";
   options: HitlOption[];
   availableOptions?: BudgetBreachAvailableOption[];

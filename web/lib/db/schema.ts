@@ -4582,6 +4582,10 @@ export const assignments = pgTable(
         "infra_recovery",
         "budget_breach",
         "hook_trip",
+        // ADR-160: the assignment for a node_interrupt HITL. TS-only —
+        // `assignments.action_kind` carries no DB CHECK
+        // (0018_m13_assignment_actors.sql), so this value needs no migration.
+        "node_interrupt",
         "decision_request",
       ],
     }).notNull(),
@@ -4708,6 +4712,10 @@ export const hitlRequests = pgTable(
         "infra_recovery",
         "budget_breach",
         "hook_trip",
+        // ADR-160: an operator paused a live agent node mid-turn. TS-only —
+        // `hitl_requests.kind` carries no DB CHECK (0000_clumsy_nightshade.sql),
+        // so this value needs no migration.
+        "node_interrupt",
         "decision_request",
       ],
     }).notNull(),

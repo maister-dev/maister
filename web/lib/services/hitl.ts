@@ -35,6 +35,17 @@ import { atomicWriteJson } from "@/lib/atomic";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
+  getNodeAttemptsForRun,
+  markDownstreamStale,
+  markNodeReworked,
+  OPERATOR_INTERRUPT_DECISION,
+} from "@/lib/flows/graph/ledger";
+import { maxOperatorRestarts } from "@/lib/instance-config";
+import {
+  OPERATOR_CORRECTION_MAX,
+  WORKSPACE_POLICY_IDS,
+} from "@/lib/runs/node-interrupt";
+import {
   assertConsensusDecision,
   assertHitlResponse,
   assertReviewDecision,
@@ -4671,6 +4682,313 @@ async function handleHookTripResponse(args: {
   );
 }
 
+// ADR-160: respond to an operator node interrupt (a NeedsInput node_interrupt
+// HITL). Four server-owned options; human-actor-only is enforced at the
+// respondToHitl chokepoint above.
+//
+//   resume       → leave the run awaiting and scheduleResume; the runner owns
+//                  NeedsInput→Running and the agent continues the SAME attempt
+//                  via session/resume, so context is preserved.
+//   restart_node → close the parked attempt `Reworked` with
+//                  decision='operator_interrupt' and let runGraph append a
+//                  FRESH attempt (because the closing status is Reworked, not
+//                  NeedsInput, `reusesCurrentAttempt` is false — that is the
+//                  mechanism this design rests on).
+//   restart_from → same, targeting an earlier node, plus downstream staling.
+//   stop         → the existing terminal stop; no new stop semantics.
+//
+// The workspace policy is applied against the target's checkpoint_ref BEFORE
+// the ledger transaction (the M30 rework X-ATOMIC ordering), so a crash between
+// the two is idempotent on retry. A missing checkpoint_ref degrades to `keep`
+// with a WARN — never a guess.
+async function handleNodeInterruptResponse(args: {
+  db: any;
+  hitlRow: any;
+  runRow: any;
+  body: {
+    optionId?: string;
+    workspacePolicy?: string;
+    targetNodeId?: string;
+    correction?: string;
+  };
+  runId: string;
+  hitlRequestId: string;
+  startedAt: number;
+  recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
+}): Promise<NextResponse> {
+  const {
+    db,
+    hitlRow,
+    runRow,
+    body,
+    runId,
+    hitlRequestId,
+    startedAt,
+    recordSuccessAudit,
+  } = args;
+  const optionId = body.optionId;
+
+  if (
+    optionId !== "resume" &&
+    optionId !== "restart_node" &&
+    optionId !== "restart_from" &&
+    optionId !== "stop"
+  ) {
+    throw new MaisterError(
+      "PRECONDITION",
+      'node_interrupt response requires optionId "resume", "restart_node", "restart_from", or "stop"',
+    );
+  }
+
+  const interruptedNodeId = hitlRow.stepId as string;
+
+  if (optionId === "stop") {
+    // Delegates to the existing terminal stop — no new stop semantics.
+    const { stopWorkbenchRun } = await import("@/lib/workbench-lifecycle/service");
+
+    await db
+      .update(hitlRequests)
+      .set({ respondedAt: new Date() })
+      .where(eq(hitlRequests.id, hitlRequestId));
+    await stopWorkbenchRun(runId);
+    await recordSuccessAudit?.(db, 200);
+
+    log.info(
+      { runId, hitlRequestId, optionId, latencyMs: Date.now() - startedAt },
+      "node_interrupt stopped — delegated to the existing terminal stop",
+    );
+
+    return NextResponse.json({ ok: true, runStatus: "Review" }, { status: 200 });
+  }
+
+  // Ledger-derived eligibility for restart_from. The static graph has cycles,
+  // so "earlier" is not derivable from topology — only from what actually ran.
+  const ledger = await getNodeAttemptsForRun(runId, db);
+  const targetNodeId =
+    optionId === "restart_from" ? body.targetNodeId : interruptedNodeId;
+
+  if (optionId === "restart_from") {
+    if (typeof targetNodeId !== "string" || targetNodeId.length === 0) {
+      throw new MaisterError(
+        "PRECONDITION",
+        "restart_from requires a targetNodeId",
+      );
+    }
+
+    const ranBefore = ledger.some(
+      (r: { nodeId: string }) => r.nodeId === targetNodeId,
+    );
+
+    if (!ranBefore || targetNodeId === interruptedNodeId) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `node ${targetNodeId} has no prior attempt in this run — forward skips are not supported`,
+      );
+    }
+  }
+
+  const workspacePolicy = body.workspacePolicy ?? "keep";
+
+  if (!WORKSPACE_POLICY_IDS.includes(workspacePolicy as never)) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `unknown workspacePolicy "${workspacePolicy}"`,
+    );
+  }
+
+  if (optionId === "resume") {
+    const outcome = await db.transaction(async (tx: any) => {
+      const locked = await lockHitlRow(tx, hitlRequestId);
+
+      if (!locked) {
+        throw new MaisterError(
+          "PRECONDITION",
+          `hitl request not found: ${hitlRequestId}`,
+        );
+      }
+      if (locked.respondedAt) {
+        const [r] = await tx
+          .select({ status: runs.status })
+          .from(runs)
+          .where(eq(runs.id, runId));
+
+        return {
+          transition: "already-delivered",
+          runStatus: (r?.status as string | undefined) ?? runRow.status,
+        } as const;
+      }
+
+      await tx
+        .update(hitlRequests)
+        .set({ respondedAt: new Date() })
+        .where(eq(hitlRequests.id, hitlRequestId));
+      await systemCloseActiveAssignmentsForRun({
+        db: tx,
+        runId,
+        reason: "node_interrupt resumed",
+      });
+      await recordSuccessAudit?.(tx, 202);
+
+      return { transition: "resume" } as const;
+    });
+
+    // Self-heal a crash between the respondedAt commit and the resume handoff
+    // (CB3): a same-payload retry re-drives it. Idempotent — runFlow's
+    // NeedsInput gate no-ops if the run already advanced.
+    if (outcome.transition === "already-delivered") {
+      if (outcome.runStatus === "NeedsInput") scheduleResume(runId);
+
+      return NextResponse.json(
+        { ok: true, runStatus: outcome.runStatus, idempotent: true },
+        { status: 200 },
+      );
+    }
+
+    scheduleResume(runId);
+    log.info(
+      { runId, hitlRequestId, optionId, latencyMs: Date.now() - startedAt },
+      "node_interrupt resumed — same attempt continues via session/resume",
+    );
+
+    return NextResponse.json(
+      { ok: true, runStatus: "NeedsInput", state: "resume-in-progress" },
+      { status: 202 },
+    );
+  }
+
+  // --- restart_node / restart_from ------------------------------------------
+  const restartCount = ledger.filter(
+    (r: { decision: string | null }) => r.decision === "operator_interrupt",
+  ).length;
+  const cap = maxOperatorRestarts();
+
+  if (restartCount >= cap) {
+    log.warn(
+      { runId, restartCount, cap },
+      "[node-interrupt] operator-restart safety cap reached",
+    );
+
+    throw new MaisterError(
+      "CONFLICT",
+      `this run has already used ${restartCount} operator restarts (MAISTER_MAX_OPERATOR_RESTARTS=${cap})`,
+    );
+  }
+
+  const parked = ledger
+    .filter(
+      (r: { nodeId: string; status: string }) =>
+        r.nodeId === interruptedNodeId && r.status === "NeedsInput",
+    )
+    .at(-1) as { id: string } | undefined;
+
+  if (!parked) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `run ${runId} has no parked attempt at ${interruptedNodeId} to restart`,
+    );
+  }
+
+  const outcome = await db.transaction(async (tx: any) => {
+    const locked = await lockHitlRow(tx, hitlRequestId);
+
+    if (!locked) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `hitl request not found: ${hitlRequestId}`,
+      );
+    }
+    if (locked.respondedAt) {
+      const [r] = await tx
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, runId));
+
+      return {
+        transition: "already-delivered",
+        runStatus: (r?.status as string | undefined) ?? runRow.status,
+      } as const;
+    }
+
+    // The operator's correction is persisted as the HITL RESPONSE — its natural
+    // home — and read back at prompt-build time by the runner. It is never a
+    // template variable and never touches `commentsVar`.
+    await tx
+      .update(hitlRequests)
+      .set({
+        respondedAt: new Date(),
+        response: {
+          optionId,
+          workspacePolicy,
+          targetNodeId,
+          ...(typeof body.correction === "string" && body.correction.length > 0
+            ? { correction: body.correction.slice(0, OPERATOR_CORRECTION_MAX) }
+            : {}),
+        },
+      })
+      .where(eq(hitlRequests.id, hitlRequestId));
+
+    // `Reworked` (not `NeedsInput`) is load-bearing: it makes
+    // `reusesCurrentAttempt` false, so runGraph appends a FRESH attempt.
+    await markNodeReworked(
+      parked.id,
+      {
+        decision: OPERATOR_INTERRUPT_DECISION,
+        workspacePolicy: workspacePolicy as never,
+      },
+      tx,
+    );
+
+    // Stale downstream only when the operator jumped BACK — restarting the same
+    // node re-runs it and its own gates without invalidating anything upstream.
+    if (targetNodeId !== interruptedNodeId) {
+      await markDownstreamStale(runId, [targetNodeId as string], tx);
+    }
+
+    await tx
+      .update(runs)
+      .set({ currentStepId: targetNodeId })
+      .where(eq(runs.id, runId));
+
+    await systemCloseActiveAssignmentsForRun({
+      db: tx,
+      runId,
+      reason: "node_interrupt restarted",
+    });
+    await recordSuccessAudit?.(tx, 202);
+
+    return { transition: "restart" } as const;
+  });
+
+  if (outcome.transition === "already-delivered") {
+    if (outcome.runStatus === "NeedsInput") scheduleResume(runId);
+
+    return NextResponse.json(
+      { ok: true, runStatus: outcome.runStatus, idempotent: true },
+      { status: 200 },
+    );
+  }
+
+  scheduleResume(runId);
+  log.info(
+    {
+      runId,
+      hitlRequestId,
+      optionId,
+      interruptedNodeId,
+      targetNodeId,
+      workspacePolicy,
+      correctionChars: body.correction?.length ?? 0,
+      latencyMs: Date.now() - startedAt,
+    },
+    "node_interrupt restart recorded — fresh attempt will be appended",
+  );
+
+  return NextResponse.json(
+    { ok: true, runStatus: "NeedsInput", state: "restart-scheduled" },
+    { status: 202 },
+  );
+}
+
 type AgentQuestionResponseOutcome =
   | { kind: "replayed"; reTriggerMode: "agent" | "triage" }
   | {
@@ -5084,7 +5402,11 @@ export async function respondToHitl(
       // ADR-108 (M40): a guardrail trip is a safety escalation only a human may
       // resolve — a machine/agent token must never dismiss its own trip
       // (dispatched to handleHookTripResponse below).
-      hitlRow.kind === "hook_trip"
+      hitlRow.kind === "hook_trip" ||
+      // ADR-160: an operator node interrupt is a human judgement call about a
+      // live agent. Same posture as hook_trip — a machine/agent token must
+      // never answer its own interruption. No ext-API / MCP surface exists.
+      hitlRow.kind === "node_interrupt"
     ) {
       throw new MaisterError(
         "UNAUTHORIZED",
@@ -5168,6 +5490,21 @@ export async function respondToHitl(
     log.debug({ runId, hitlRequestId, branch: "hook_trip" }, "dispatch");
 
     return await handleHookTripResponse({
+      db,
+      hitlRow,
+      runRow,
+      body,
+      runId,
+      hitlRequestId,
+      startedAt,
+      recordSuccessAudit,
+    });
+  }
+
+  if (hitlRow.kind === "node_interrupt") {
+    log.debug({ runId, hitlRequestId, branch: "node_interrupt" }, "dispatch");
+
+    return await handleNodeInterruptResponse({
       db,
       hitlRow,
       runRow,

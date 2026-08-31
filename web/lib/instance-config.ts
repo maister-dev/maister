@@ -138,6 +138,25 @@ export function promotionClaimTimeoutSeconds(): number {
   return parsed;
 }
 
+// ADR-160: hard cap on operator-initiated node restarts per run. These are
+// deliberately EXCLUDED from the flow's `rework.maxLoops` budget (that budget
+// expresses the author's tolerance for automated rework, not for human
+// intervention), so the bound is not removed — it is moved here.
+const DEFAULT_MAX_OPERATOR_RESTARTS = 10;
+
+export function maxOperatorRestarts(): number {
+  const raw = process.env.MAISTER_MAX_OPERATOR_RESTARTS;
+
+  if (!raw) return DEFAULT_MAX_OPERATOR_RESTARTS;
+  const parsed = Number.parseInt(raw, 10);
+
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return DEFAULT_MAX_OPERATOR_RESTARTS;
+  }
+
+  return parsed;
+}
+
 // A.2/A1 ralph-loop (execution-policy axis A2): hard cap on TOTAL attempts per
 // task (the original launch + auto-relaunches) before the loop holds the task
 // in Backlog for a human. Env override, sane default, floor at 1.

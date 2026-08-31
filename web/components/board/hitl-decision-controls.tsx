@@ -263,6 +263,8 @@ export interface HitlDecisionControlsProps {
     | "infra_recovery"
     | "budget_breach"
     | "hook_trip"
+    // ADR-160: the operator node interrupt.
+    | "node_interrupt"
     | "decision_request";
   reviewSchema: ReviewSchema | null;
   options: HitlOption[];

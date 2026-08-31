@@ -1003,7 +1003,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
 
 ## Phase 3 — Feature B backend (soft node interrupt + corrective restart)
 
-- [ ] **Task 20: Add the `node_interrupt` HITL kind and the interrupt endpoint.**
+- [x] **Task 20: Add the `node_interrupt` HITL kind and the interrupt endpoint.**
   TS-only enum additions (no migration — verified): `hitl_requests.kind` in `web/lib/db/schema.ts`
   (~4703) and `assignments.action_kind` (~4574). New route
   `web/app/api/runs/[runId]/node-interrupt/route.ts` + `web/lib/runs/node-interrupt.ts`, modelled
@@ -1028,7 +1028,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   checkpoint request and on successful park; WARN on a lost CAS; ERROR on the re-thrown 503.
   *Depends on:* 19, 5.
 
-- [ ] **Task 21: Server-owned option matrix + response handler.**
+- [x] **Task 21: Server-owned option matrix + response handler.**
   - Matrix derivation in `web/lib/runs/node-interrupt.ts`, surfaced through
     `web/lib/queries/run.ts` / `hitl.ts` / `inbox-context.ts` on the SAME `availableOptions` channel
     the `budget_breach` kind already uses (`run.ts:449-455`, `hitl.ts:332`, `inbox-context.ts:713`).
@@ -1060,7 +1060,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   degrade; WARN on a rejected `targetNodeId`.
   *Depends on:* 20.
 
-- [ ] **Task 22: Feature-B consumer fanout sweep.**
+- [x] **Task 22: Feature-B consumer fanout sweep.**
   Work the Feature-B column: `rg "'hook_trip'" web/` and mirror **every** hit for `node_interrupt`
   — `web/lib/run-transcript/transcript.ts` (60/81/386/434/442), `web/lib/ext-activity/run-feed.ts:241`,
   `web/lib/assignments/service.ts:81`, `web/lib/queries/observatory.ts:178,633`, the keepalive sweeper
@@ -1071,7 +1071,22 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   *Deliverable:* a checklist in the PR body enumerating every `hook_trip` site and its verdict.
   *Depends on:* 21.
 
-- [ ] **Task 23: Correction-comment prompt append (D6).**
+  **RESULT — every `hook_trip` site, by `rg "'hook_trip'" web/`, with a verdict.**
+
+  | Site | Verdict |
+  | --- | --- |
+  | `db/schema.ts` — `hitl_requests.kind`, `assignments.action_kind` | **mirrored** — both are TS-only enums (neither column carries a DB CHECK), so `node_interrupt` needs no migration |
+  | `services/hitl.ts` — human-actor-only gate | **mirrored** — a machine/agent token is refused before any mutation, same posture as `hook_trip` |
+  | `services/hitl.ts` — dispatch chain | **mirrored** — `handleNodeInterruptResponse` |
+  | `assignments/service.ts` — `actionKind` union | **mirrored** — the interrupt opens an assignment like every other human gate |
+  | `components/board/hitl-decision-controls.tsx`, `run-hitl-response.tsx` | **mirrored** (kind unions widened); the option UI itself is Task 26 |
+  | `run-transcript/transcript.ts` (×5), `run-feed.ts:241`, `transcript-view.tsx:503` | **NOT mirrored, deliberately** — these parse and render a SUPERVISOR transcript event. A guardrail trip is emitted by the agent's own session; an operator interrupt arrives through the API and has no transcript line to parse. Mirroring would invent an event the supervisor never sends. |
+  | `queries/observatory.ts:178,633` — `hookTripEscalations` | **NOT mirrored, deliberately** — that counter measures GUARDRAIL trips (an agent misbehaving). An operator interrupt is a human choice, not a guardrail failure, and folding it in would corrupt the metric's meaning. It is instead excluded from the correction counters entirely (Task 25). |
+  | keep-alive sweeper (`runs/keepalive-sweeper.ts`) | **nothing to mirror — verified, not assumed**: it selects on `runs.status` (`NeedsInput` / `NeedsInputIdle`) and never on `hitl_requests.kind`, so a `node_interrupt` park idles and 24 h-abandons identically by construction |
+  | reconcile classifier (`lib/reconcile.ts`) | **nothing to mirror** — it does not enumerate HITL kinds; a parked `NeedsInput` run is never classified `Crashed` regardless of kind |
+  | `lib/errors-core.ts` | **no change** — no new `MaisterError` code; the interrupt reuses `PRECONDITION` / `CONFLICT` / `UNAUTHORIZED` / `EXECUTOR_UNAVAILABLE` |
+
+- [x] **Task 23: Correction-comment prompt append (D6).**
   `web/lib/flows/graph/runner-graph.ts` — where the P7 run-context pointer is appended
   (~1538-1545), append a second fenced, labelled block carrying the operator correction for the
   restarted attempt only. It is **not** a template variable: it is never passed through Mustache and
@@ -1082,7 +1097,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   (non-restart) attempt does not; a node with no declared `commentsVar` still renders.
   *Depends on:* 21.
 
-- [ ] **Task 24: Budget accounting — operator restarts must not burn `rework.maxLoops` (D7).**
+- [x] **Task 24: Budget accounting — operator restarts must not burn `rework.maxLoops` (D7).**
   `web/lib/flows/graph/rework-baseline.ts` + the maxLoops check in `runner-graph.ts` (~2731):
   compute the node's effective attempt count as
   `attempt - (rework_baseline ?? 0) - operatorInterruptCount(runId, nodeId)`, where the operator count
@@ -1096,7 +1111,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   exhausts at `maxLoops + 1`; the cap refuses at N+1.
   *Depends on:* 21.
 
-- [ ] **Task 25: Observatory exclusion + deployment wiring.**
+- [x] **Task 25: Observatory exclusion + deployment wiring.**
   - `web/lib/queries/observatory-core.ts`: add `decision?: string | null` to
     `ObservatoryNodeAttemptInput` (20-29) and, in `rollupCorrectionMetrics` (215-255), exclude
     `decision === 'operator_interrupt'` rows from **`reworkCount`** *and* subtract them from the

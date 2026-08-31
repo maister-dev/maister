@@ -16,11 +16,20 @@ describe("hook_trip enum (ADR-108, migration 0066)", () => {
     "infra_recovery",
     "budget_breach",
     "hook_trip",
+    // ADR-160: the operator node interrupt. TS-only — neither
+    // `hitl_requests.kind` nor `assignments.action_kind` carries a DB CHECK,
+    // so this value needed no migration.
+    "node_interrupt",
     "decision_request",
     ]);
   });
 
   it("assignments.action_kind includes hook_trip", () => {
     expect(assignments.actionKind.enumValues).toContain("hook_trip");
+  });
+
+  it("both enums carry node_interrupt (ADR-160)", () => {
+    expect(hitlRequests.kind.enumValues).toContain("node_interrupt");
+    expect(assignments.actionKind.enumValues).toContain("node_interrupt");
   });
 });

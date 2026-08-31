@@ -598,6 +598,11 @@ export async function endActiveTakeover(runId: string, db?: Db): Promise<void> {
 // manual takeover on the ledger. An M11b claim row writes no `decision`.
 export const REVIEW_REWORK_CLAIM_DECISION = "review_rework_claim";
 
+// ADR-160: marks an attempt closed by an OPERATOR node interrupt rather than a
+// flow-declared rework. Excluded from `rework.maxLoops` accounting and from
+// both Observatory correction counters.
+export const OPERATOR_INTERRUPT_DECISION = "operator_interrupt";
+
 export async function getActiveTakeover(
   runId: string,
   db?: Db,

@@ -10,9 +10,29 @@
 // reworks); exhaustion fires when `effective > maxLoops`. A node that never
 // resets has a NULL baseline everywhere → effective == attemptNumber → behavior
 // byte-identical to pre-ADR-118.
+//
+// ADR-160: OPERATOR node restarts are subtracted too. An operator stepping in to
+// correct a wandering agent is human intervention, not a failed automated
+// iteration — charging it to `rework.maxLoops` would let a reviewer exhaust a
+// flow's rework allowance by HELPING it. The bound is not removed, only moved:
+// operator restarts are capped per run by `MAISTER_MAX_OPERATOR_RESTARTS`.
+// A run with zero operator restarts passes 0 here and is byte-identical to
+// pre-ADR-160.
 export function effectiveAttempts(
   attemptNumber: number,
   baseline: number | null | undefined,
+  operatorRestarts: number = 0,
 ): number {
-  return attemptNumber - (baseline ?? 0);
+  return attemptNumber - (baseline ?? 0) - operatorRestarts;
+}
+
+// Count a node's attempts closed by an operator interrupt. Pure so the bound
+// check stays unit-testable without Postgres.
+export function operatorInterruptCount(
+  attempts: ReadonlyArray<{ nodeId: string; decision: string | null }>,
+  nodeId: string,
+): number {
+  return attempts.filter(
+    (a) => a.nodeId === nodeId && a.decision === "operator_interrupt",
+  ).length;
 }

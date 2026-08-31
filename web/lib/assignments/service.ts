@@ -79,6 +79,9 @@ export type CreateHitlAssignmentArgs = CreateAssignmentArgs & {
     | "infra_recovery"
     | "budget_breach"
     | "hook_trip"
+    // ADR-160: the operator node interrupt opens an assignment like every
+    // other human-gate kind.
+    | "node_interrupt"
   >;
 };
 
