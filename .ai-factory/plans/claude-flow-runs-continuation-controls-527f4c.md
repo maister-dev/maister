@@ -951,7 +951,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   *Turns green:* the composition half of AC-A19 (the e2e in Task 19 covers the UI half).
   *Depends on:* 17.
 
-- [ ] **Task 19: Feature-A e2e + docs as-built.**
+- [x] **Task 19: Feature-A e2e + docs as-built.**
   Playwright spec `web/e2e/rework-claim.spec.ts` (stub-supervisor seeded, per project convention;
   kill the shared 3100/7788 ports and baseline-prove first). Drive: Review run → Take for rework →
   panel shows worktree path + branch → Return → run re-enters and reaches a fresh review.
@@ -967,6 +967,36 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   AC conformance walk above.
   *Turns green:* AC-A19.
   *Depends on:* 18, 15.
+
+  **AC CONFORMANCE WALK (AC-A1..A19) — every AC names its green test.**
+
+  | AC | Green test | Project |
+  | --- | --- | --- |
+  | AC-A1 | `T-A1` — one case per eligibility term + the unknown-status allow-list default | unit |
+  | AC-A2 | `T-A2` — `agent`/`scratch` refused, message names branch sync / relaunch; pins the deliberate divergence from ADR-141 | unit |
+  | AC-A3 | `T-A3` — a REAL two-racer collision behind a transaction barrier: one winner, loser `CONFLICT` at the CAS, exactly one claim row | integration |
+  | AC-A4 | `T-A4` — cap-full ⇒ `CONFLICT`, run stays `Review`, no `Pending` row | integration |
+  | AC-A5 | `T-A5` — orchestrator child refused, protecting `SETTLED_RUN_STATUSES` | integration |
+  | AC-A6 | `T-A6` — 6 cases: manifest, takeover-transition, precedence, exhausted, stale target falls through, LAST executed human node wins | unit |
+  | AC-A7 | `T-A7` — 4 cases: below floor ⇒ `CONFIG`, at 3.5.0 compiles, unknown id names the id, no-`reentry` ungated | unit |
+  | AC-A8 | `T-A8` — status × owner × workspace matrix, incl. non-owner refused and every other status byte-identical; extended by the 4 `continuation`-block cases | unit + integration |
+  | AC-A9 | `T-A9` — divergence carries command + both SHAs + ahead/behind + instructions, and branch/ledger/status are byte-identical | integration |
+  | AC-A10 | `T-A10` — missing remote is a no-op success | integration |
+  | AC-A11 | `T-A11` — dirty worktree and zero-commit return each `CONFLICT` with no ledger write | integration |
+  | AC-A12 | `T-A12` — ledger-tx failure ⇒ 503, still `HumanWorking`, claim open, no event, retry replays cleanly | integration |
+  | AC-A13 | `T-A13` — the claim anchor's prior `passed` gate goes `stale` | integration |
+  | AC-A14 | `T-A14` — the ADR-030 takeover shape behaves identically; **observed result recorded in ADR-159** (it WAS affected) | integration |
+  | AC-A15 | `T-A15` — release returns to `Review`, closes the claim, frees the slot | integration |
+  | AC-A16 | `T-A16` — 4 cases: claim event, return event, none on refusal, CHECK rejects an unknown kind | integration |
+  | AC-A17 | `T-A17` — a committed return with no dispatch is reachable by the EXISTING `runTakeoverReturnRecoverySweep` predicate | integration |
+  | AC-A18 | `T-A18` — promote fence (through the real `promoteRun` seam), sync fence, claim refused after leaving `Review`, abandon on the new provenance | integration |
+  | AC-A19 | composition test (server half) + `e2e/adr159-rework-claim.spec.ts` (UI half) — **both green** | integration + e2e |
+
+  **Non-goals re-verified as still holding:** no operator-selected re-entry (every route derives it
+  from server state); no merge/rebase/AI-resolve on ingest (fast-forward only); no forward skips;
+  `run_kind ∈ {agent, scratch}` refused; `Done` runs untouched; no Flow Studio editor for `reentry`
+  (round-trip preservation only); no new `runs.status`, `node_attempts` status, or `MaisterError`
+  code.
   <!-- Commit checkpoint: Commit 5 (Tasks 17-19) — FEATURE A IS SHIPPABLE HERE -->
 
 ---

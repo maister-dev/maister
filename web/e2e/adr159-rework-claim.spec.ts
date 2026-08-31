@@ -43,15 +43,21 @@ function loadFixture(): FixtureRecord {
   return all.byKey.adr159;
 }
 
-// Web-first: poll the server-rendered run-detail page until the run has come
-// back through the graph and is offering the claim again.
-async function reloadUntilClaimable(page: Page, runId: string): Promise<void> {
+// Web-first: poll the server-rendered run-detail page until the returned run
+// has travelled back through the graph and produced a FRESH review.
+//
+// Note the destination: re-entry drives `checks` (whose staled gate reruns) and
+// then parks at the `review` human node as `NeedsInput` — it does NOT land back
+// in `Review`. A rework claim is only offered from `Review`, so the proof that
+// the loop closed is a fresh review HITL, which renders M11b's owner-agnostic
+// "Take over" affordance.
+async function reloadUntilFreshReview(page: Page, runId: string): Promise<void> {
   await expect(async () => {
     await page.goto(`/runs/${runId}`);
     await expect(
-      page.getByRole("button", { name: "Take for rework", exact: true }),
+      page.getByRole("button", { name: "Take over", exact: true }),
     ).toBeVisible({ timeout: 2_000 });
-  }).toPass({ timeout: 25_000 });
+  }).toPass({ timeout: 45_000 });
 }
 
 test("rework claim loop: Review → claim → commit → return → staled gate reruns → fresh review", async ({
@@ -71,7 +77,9 @@ test("rework claim loop: Review → claim → commit → return → staled gate 
   await expect(takeForRework).toBeVisible();
   // The server resolved the re-entry node and says where the run will come back
   // in, before the operator commits to anything.
-  await expect(page.getByText("checks", { exact: false })).toBeVisible();
+  await expect(
+    page.getByText("Re-enters the flow at checks", { exact: true }),
+  ).toBeVisible();
 
   // (b) Claim → Review transitions to HumanWorking and the run ACQUIRES a slot.
   const claimResponse = page.waitForResponse(
@@ -92,7 +100,12 @@ test("rework claim loop: Review → claim → commit → return → staled gate 
   await expect(
     page.getByRole("button", { name: "Release", exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("HumanWorking", { exact: true })).toBeVisible();
+  // The status pill appears in more than one surface on run-detail; the
+  // owner-gated Return/Release pair above is the load-bearing proof of the
+  // claim, so scope this to the first occurrence rather than over-constraining.
+  await expect(
+    page.getByText("HumanWorking", { exact: true }).first(),
+  ).toBeVisible();
 
   // (c) The human edits locally and commits — this is the work the return must
   // capture and the flow's own gates must re-validate.
@@ -148,14 +161,18 @@ test("rework claim loop: Review → claim → commit → return → staled gate 
   expect(body.returnedCommitCount).toBeGreaterThanOrEqual(1);
   expect(body.fastForwarded).toBe(false);
 
-  // (e) The staled `lint` gate reruns and the run settles back into a fresh
-  // review — the whole point of returning it to the graph rather than promoting
-  // it by hand.
-  await reloadUntilClaimable(page, fx.runId);
+  // (e) The staled `lint` gate reruns and the run produces a FRESH review — the
+  // whole point of returning it to the graph rather than promoting it by hand.
+  // The operator's commits were re-validated by the flow's own gates, not
+  // inherited as already-green.
+  await reloadUntilFreshReview(page, fx.runId);
 
-  // Back in Review and claimable again: the loop is repeatable, and the run was
-  // never taken out of its own graph to get there.
+  await expect(
+    page.getByRole("button", { name: "Take over", exact: true }),
+  ).toBeVisible();
+  // The rework claim is NOT offered here: the run is parked at a human node in
+  // NeedsInput, and a claim is admitted only from Review.
   await expect(
     page.getByRole("button", { name: "Take for rework", exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
 });
