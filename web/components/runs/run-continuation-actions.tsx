@@ -14,6 +14,7 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useState, useTransition } from "react";
 
+import { CheckoutContext } from "@/components/runs/checkout-context";
 import { readApiError } from "@/lib/api-error";
 
 // ADR-159: the copyable remediation a non-fast-forward refusal carries. The
@@ -36,7 +37,10 @@ export interface RunContinuationActionsProps {
   // Non-null while a rework claim is open.
   claimOwnerUserId: string | null;
   viewerUserId: string | null;
+  // The REAL path (clipboard target); `displayWorktreePath` is the abbreviated
+  // form rendered in the field. See CheckoutContext for why they are separate.
   worktreePath: string;
+  displayWorktreePath?: string;
   branch: string;
   canAct: boolean;
 }
@@ -65,6 +69,7 @@ export function RunContinuationActions({
   claimOwnerUserId,
   viewerUserId,
   worktreePath,
+  displayWorktreePath,
   branch,
   canAct,
 }: RunContinuationActionsProps): ReactElement {
@@ -167,52 +172,17 @@ export function RunContinuationActions({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
-        {t("checkoutContext")}
-      </div>
-      <div className="flex flex-col gap-2 rounded-[10px] border border-line bg-ivory p-3">
-        <label className="flex flex-col gap-1">
-          <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
-            {t("branch")}
-          </span>
-          <input
-            readOnly
-            className="rounded-[6px] border border-line-soft bg-paper px-2 py-1 font-mono text-[11px] text-ink-2"
-            value={branch}
-            onFocus={(e) => e.currentTarget.select()}
-          />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
-            worktree
-          </span>
-          <div className="flex items-center gap-2">
-            <input
-              readOnly
-              className="min-w-0 flex-1 rounded-[6px] border border-line-soft bg-paper px-2 py-1 font-mono text-[11px] text-ink-2"
-              value={worktreePath}
-              onFocus={(e) => e.currentTarget.select()}
-            />
-            <button
-              aria-label={t("copy")}
-              className="flex-none rounded-[6px] border border-line bg-paper px-2 py-1 text-mute hover:text-ink-2"
-              type="button"
-              onClick={() => void copy(worktreePath)}
-            >
-              {copied ? (
-                <CheckIcon aria-hidden className="size-4 text-[#2f9e44]" />
-              ) : (
-                <ClipboardDocumentIcon aria-hidden className="size-4" />
-              )}
-            </button>
-          </div>
-        </label>
+      <CheckoutContext
+        branch={branch}
+        displayWorktreePath={displayWorktreePath}
+        worktreePath={worktreePath}
+      >
         {reentryNodeId ? (
           <p className="font-mono text-[11px] text-mute">
             {t("reentryAt", { node: reentryNodeId })}
           </p>
         ) : null}
-      </div>
+      </CheckoutContext>
 
       {isOwner ? (
         <div className="flex flex-wrap items-center gap-2">

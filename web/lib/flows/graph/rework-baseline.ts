@@ -1,3 +1,5 @@
+import { OPERATOR_INTERRUPT_DECISION } from "@/lib/flows/graph/attempt-decisions";
+
 // ADR-118: effective attempt count for a rework-loop node.
 //
 // `node_attempts.rework_baseline` (NULL ⇒ 0) is the attempt number at which the
@@ -33,6 +35,6 @@ export function operatorInterruptCount(
   nodeId: string,
 ): number {
   return attempts.filter(
-    (a) => a.nodeId === nodeId && a.decision === "operator_interrupt",
+    (a) => a.nodeId === nodeId && a.decision === OPERATOR_INTERRUPT_DECISION,
   ).length;
 }

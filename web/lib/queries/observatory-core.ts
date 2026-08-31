@@ -1,3 +1,5 @@
+import { OPERATOR_INTERRUPT_DECISION } from "@/lib/flows/graph/attempt-decisions";
+
 export type ObservatoryNodeStatus =
   | "Pending"
   | "Running"
@@ -16,10 +18,6 @@ export interface ObservatoryTimedRunInput extends ObservatoryRunInput {
   startedAt: Date;
   endedAt: Date | null;
 }
-
-// ADR-160: mirrors `OPERATOR_INTERRUPT_DECISION` in flows/graph/ledger.ts.
-// Duplicated as a literal because this module is pure (no server-only imports).
-const OPERATOR_INTERRUPT_DECISION = "operator_interrupt";
 
 export interface ObservatoryNodeAttemptInput {
   id: string;

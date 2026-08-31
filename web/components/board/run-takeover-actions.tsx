@@ -7,6 +7,7 @@ import { useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
+import { CheckoutContext } from "@/components/runs/checkout-context";
 import { readApiError } from "@/lib/api-error";
 
 export interface RunTakeoverActionsProps {
@@ -36,7 +37,6 @@ export function RunTakeoverActions({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function post(path: "claim" | "return"): Promise<void> {
@@ -64,18 +64,7 @@ export function RunTakeoverActions({
     }
   }
 
-  async function copy(value: string): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard denied — the value is still selectable in the field.
-    }
-  }
-
   const disabled = busy || pending || !canAct;
-  const worktreeDisplayValue = displayWorktreePath ?? worktreePath;
 
   if (mode === "claimable") {
     return (
@@ -100,42 +89,11 @@ export function RunTakeoverActions({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
-        {t("checkoutContext")}
-      </div>
-      <div className="flex flex-col gap-2 rounded-[10px] border border-line bg-ivory p-3">
-        <label className="flex flex-col gap-1">
-          <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
-            {t("branch")}
-          </span>
-          <input
-            readOnly
-            className="rounded-[6px] border border-line-soft bg-paper px-2 py-1 font-mono text-[11px] text-ink-2"
-            value={branch}
-            onFocus={(e) => e.currentTarget.select()}
-          />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
-            worktree
-          </span>
-          <div className="flex items-center gap-2">
-            <input
-              readOnly
-              className="min-w-0 flex-1 rounded-[6px] border border-line-soft bg-paper px-2 py-1 font-mono text-[11px] text-ink-2"
-              value={worktreeDisplayValue}
-              onFocus={(e) => e.currentTarget.select()}
-            />
-            <button
-              className="flex-none rounded-[6px] border border-line bg-paper px-2 py-1 font-mono text-[10px] uppercase tracking-[0.06em] text-mute hover:text-ink-2"
-              type="button"
-              onClick={() => void copy(worktreePath)}
-            >
-              {copied ? "✓" : t("copy")}
-            </button>
-          </div>
-        </label>
-      </div>
+      <CheckoutContext
+        branch={branch}
+        displayWorktreePath={displayWorktreePath}
+        worktreePath={worktreePath}
+      />
 
       {isOwner ? (
         <button

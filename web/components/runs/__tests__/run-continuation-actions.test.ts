@@ -69,8 +69,37 @@ describe("RunContinuationActions", () => {
 
     expect(html).toContain("runContinuation.returnToFlow");
     expect(html).toContain("runContinuation.release");
-    expect(html).toContain("runContinuation.checkoutContext");
+    expect(html).toContain("checkoutContext.title");
     expect(html).not.toContain("runContinuation.notOwner");
+  });
+
+  // The display path and the clipboard path are DIFFERENT values. Rendering the
+  // real absolute path leaks the host layout; copying the abbreviated one hands
+  // the operator a string that cannot be `cd`-ed into. Both halves have to hold
+  // at once — passing one value for both is the regression this fences.
+  it("renders the abbreviated worktree path but keeps the real one for copy", () => {
+    const html = render({
+      claimOwnerUserId: "user-owner",
+      viewerUserId: "user-owner",
+      reworkClaimAvailable: false,
+      worktreePath: "/Users/developer/.maister/worktrees/app/run-1",
+      displayWorktreePath: "<maister_worktrees>/app/run-1",
+    });
+
+    expect(html).toContain("&lt;maister_worktrees&gt;/app/run-1");
+    expect(html).not.toContain("/Users/developer/.maister/worktrees/app/run-1");
+  });
+
+  // Without a display form the real path is what the field shows — the takeover
+  // surface relies on the same defaulting.
+  it("falls back to the real path when no display form is given", () => {
+    const html = render({
+      claimOwnerUserId: "user-owner",
+      viewerUserId: "user-owner",
+      reworkClaimAvailable: false,
+    });
+
+    expect(html).toContain("/repos/app/.maister/app/runs/r1/worktree");
   });
 
   it("hides Return and Release from a non-owner", () => {

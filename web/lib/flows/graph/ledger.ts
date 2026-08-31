@@ -594,14 +594,18 @@ export async function endActiveTakeover(runId: string, db?: Db): Promise<void> {
 
 // The active (un-returned) takeover for a run: the latest node_attempts row
 // with owner_user_id set and ended_at still null. Returns null when none.
-// ADR-159: the ONLY thing distinguishing a Review rework claim from an ADR-030
-// manual takeover on the ledger. An M11b claim row writes no `decision`.
-export const REVIEW_REWORK_CLAIM_DECISION = "review_rework_claim";
-
-// ADR-160: marks an attempt closed by an OPERATOR node interrupt rather than a
-// flow-declared rework. Excluded from `rework.maxLoops` accounting and from
-// both Observatory correction counters.
-export const OPERATOR_INTERRUPT_DECISION = "operator_interrupt";
+// ADR-159 (`review_rework_claim`): the ONLY thing distinguishing a Review
+// rework claim from an ADR-030 manual takeover on the ledger — an M11b claim
+// row writes no `decision`.
+// ADR-160 (`operator_interrupt`): marks an attempt closed by an OPERATOR node
+// interrupt rather than a flow-declared rework. Excluded from `rework.maxLoops`
+// accounting and from both Observatory correction counters.
+// Defined in the pure `attempt-decisions` module and re-exported here so the
+// existing server-side import sites keep working.
+export {
+  OPERATOR_INTERRUPT_DECISION,
+  REVIEW_REWORK_CLAIM_DECISION,
+} from "@/lib/flows/graph/attempt-decisions";
 
 export async function getActiveTakeover(
   runId: string,

@@ -95,6 +95,7 @@ import {
   deliverPermission,
 } from "@/lib/supervisor-client";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+import { isStoppableRunStatus } from "@/lib/workbench-lifecycle/policy";
 import {
   archiveWorkbench,
   createWorkbenchHandoffBranch,
@@ -4744,21 +4745,76 @@ async function handleNodeInterruptResponse(args: {
 
   if (optionId === "stop") {
     // Delegates to the existing terminal stop — no new stop semantics.
-    const { stopWorkbenchRun } = await import("@/lib/workbench-lifecycle/service");
+    const { stopWorkbenchRun } = await import(
+      "@/lib/workbench-lifecycle/service"
+    );
 
-    await db
-      .update(hitlRequests)
-      .set({ respondedAt: new Date() })
-      .where(eq(hitlRequests.id, hitlRequestId));
+    const outcome = await db.transaction(async (tx: any) => {
+      const locked = await lockHitlRow(tx, hitlRequestId);
+
+      if (!locked) {
+        throw new MaisterError(
+          "PRECONDITION",
+          `hitl request not found: ${hitlRequestId}`,
+        );
+      }
+      if (locked.respondedAt) {
+        const [r] = await tx
+          .select({ status: runs.status })
+          .from(runs)
+          .where(eq(runs.id, runId));
+
+        return {
+          transition: "already-delivered",
+          runStatus: (r?.status as string | undefined) ?? runRow.status,
+        } as const;
+      }
+
+      await tx
+        .update(hitlRequests)
+        .set({ respondedAt: new Date() })
+        .where(eq(hitlRequests.id, hitlRequestId));
+      await systemCloseActiveAssignmentsForRun({
+        db: tx,
+        runId,
+        reason: "node_interrupt stopped",
+      });
+      await recordSuccessAudit?.(tx, 200);
+
+      return { transition: "stop" } as const;
+    });
+
+    // Self-heal a crash (or a failed teardown) between the respondedAt commit
+    // and the stop handoff: the marker is consumed but the run is still live,
+    // so a same-payload retry is the durable recovery path. Gated on the run
+    // still being stoppable — re-driving a run already parked at Review would
+    // be refused by the lifecycle policy, stranding the retry forever.
+    if (outcome.transition === "already-delivered") {
+      if (isStoppableRunStatus(outcome.runStatus)) {
+        await stopWorkbenchRun(runId);
+      }
+
+      return NextResponse.json(
+        { ok: true, runStatus: "Review", idempotent: true },
+        { status: 200 },
+      );
+    }
+
+    // Outside the marker commit: a teardown failure surfaces as a typed error
+    // the operator can retry (the panel keeps its hitlRequestId and re-enters
+    // through the already-delivered branch above), instead of silently leaving
+    // a consumed request on a still-running run.
     await stopWorkbenchRun(runId);
-    await recordSuccessAudit?.(db, 200);
 
     log.info(
       { runId, hitlRequestId, optionId, latencyMs: Date.now() - startedAt },
       "node_interrupt stopped — delegated to the existing terminal stop",
     );
 
-    return NextResponse.json({ ok: true, runStatus: "Review" }, { status: 200 });
+    return NextResponse.json(
+      { ok: true, runStatus: "Review" },
+      { status: 200 },
+    );
   }
 
   // Ledger-derived eligibility for restart_from. The static graph has cycles,
@@ -4858,7 +4914,8 @@ async function handleNodeInterruptResponse(args: {
 
   // --- restart_node / restart_from ------------------------------------------
   const restartCount = ledger.filter(
-    (r: { decision: string | null }) => r.decision === "operator_interrupt",
+    (r: { decision: string | null }) =>
+      r.decision === OPERATOR_INTERRUPT_DECISION,
   ).length;
   const cap = maxOperatorRestarts();
 

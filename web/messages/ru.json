@@ -2577,13 +2577,15 @@
       "toolCount": "{name} ×{count}"
     }
   },
+  "checkoutContext": {
+    "title": "Локальный чекаут",
+    "branch": "ветка",
+    "copy": "Копировать"
+  },
   "runContinuation": {
     "takeForRework": "Взять на доработку",
     "returnToFlow": "Вернуть в поток",
     "release": "Освободить",
-    "checkoutContext": "Контекст рабочей копии",
-    "branch": "Ветка",
-    "copy": "Копировать",
     "copyInstructions": "Копировать команды",
     "notOwner": "Прогон занят другим пользователем — вернуть или освободить его может только владелец.",
     "reentryAt": "Возврат в поток на узле {node}",

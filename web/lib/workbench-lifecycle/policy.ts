@@ -93,14 +93,22 @@ function disabledActions(
   return ACTION_ORDER.map((id) => action(id, false, disabledReason));
 }
 
+// The single definition of "this run is still live enough to stop". Exported so
+// callers that re-drive a stop (the ADR-160 node-interrupt self-heal) gate on
+// the same set the policy enforces, instead of keeping a second copy that
+// drifts when the set changes.
+export function isStoppableRunStatus(status: string): boolean {
+  return FLOW_STOP_STATUSES.has(status as WorkbenchRunStatus);
+}
+
 function isStopAllowed(args: WorkbenchLifecyclePolicyInput): boolean {
   if (args.runKind === "scratch") {
     return args.scratchDialogStatus
       ? SCRATCH_STOP_DIALOG_STATUSES.has(args.scratchDialogStatus)
-      : FLOW_STOP_STATUSES.has(args.runStatus);
+      : isStoppableRunStatus(args.runStatus);
   }
 
-  return FLOW_STOP_STATUSES.has(args.runStatus);
+  return isStoppableRunStatus(args.runStatus);
 }
 
 function isWorktreeActionAllowed(args: WorkbenchLifecyclePolicyInput): boolean {

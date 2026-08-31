@@ -1906,13 +1906,16 @@ export default async function RunDetailLayout({
               <RunContinuationActions
                 branch={detail.branch}
                 canAct={canAct}
-                claimOwnerUserId={detail.continuation.claim?.ownerUserId ?? null}
+                claimOwnerUserId={
+                  detail.continuation.claim?.ownerUserId ?? null
+                }
                 disabledReason={detail.continuation.disabledReason}
+                displayWorktreePath={displayWorktreePath}
                 reentryNodeId={detail.continuation.reentryNodeId}
                 reworkClaimAvailable={detail.continuation.reworkClaimAvailable}
                 runId={detail.runId}
                 viewerUserId={user.id}
-                worktreePath={displayWorktreePath ?? detail.worktreePath}
+                worktreePath={detail.worktreePath}
               />
             </section>
           ) : null}

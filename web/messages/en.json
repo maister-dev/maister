@@ -2577,13 +2577,15 @@
       "toolCount": "{name} ×{count}"
     }
   },
+  "checkoutContext": {
+    "title": "Check out locally",
+    "branch": "branch",
+    "copy": "Copy"
+  },
   "runContinuation": {
     "takeForRework": "Take for rework",
     "returnToFlow": "Return to flow",
     "release": "Release",
-    "checkoutContext": "Checkout context",
-    "branch": "Branch",
-    "copy": "Copy",
     "copyInstructions": "Copy commands",
     "notOwner": "This run is claimed by another user — only the claim owner can return or release it.",
     "reentryAt": "Re-enters the flow at {node}",
