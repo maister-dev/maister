@@ -425,6 +425,30 @@ with `adapter`, binary source, executable path if non-secret, exit code, and a
 bounded stderr tail. No log may contain env values, provider tokens, generated
 config bodies, or raw ACP payloads.
 
+## Expectations
+
+- Runner resolution MUST follow the strict allow-list chain (launch override >
+  step target > slot binding/auto-match > project Flow default > platform Flow
+  default > project default > platform default) and MUST return `{ runnerId,
+  tier }`; it MUST NEVER guess from a missing reference.
+- A launch whose resolved runner is missing, disabled, or `NotReady` MUST
+  refuse with `MaisterError("EXECUTOR_UNAVAILABLE")`/`("CONFIG")` BEFORE
+  `git worktree add`, before any run/workspace DB write, and before supervisor
+  spawn.
+- Every launch MUST snapshot the effective runner into `runs.runner_snapshot`
+  (via `run_sessions`); resume/recover MUST read the snapshot, never a mutable
+  catalog row.
+- The supervisor is the ONLY process that maps runner intent to child argv/env;
+  adapter binaries are spawned from an allow-list, never from manifest strings.
+- Runner `env` overrides MUST win over provider/sidecar provisioner values on
+  key collision; `env:SOURCE` values MUST resolve from the supervisor
+  environment immediately before spawn, never earlier and never web-side.
+- Spawn/readiness logs MUST carry ids, kinds, and reason codes only — NEVER
+  env values, tokens, parsed sidecar config, or generated config bodies.
+- Readiness MUST be recomputed on catalog writes and surfaced as
+  `Ready | NotReady | Unknown` with reason codes; `Unknown` is reserved for
+  unavailable supervisor diagnostics.
+
 ## Edge cases
 
 - **No platform default** - startup/bootstrap and settings save fail with

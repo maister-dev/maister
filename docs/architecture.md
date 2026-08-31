@@ -265,11 +265,11 @@ C4Component
 
 These components are implemented unless the status column says otherwise:
 
-| Component | File (planned) | Purpose | Status |
+| Component | File | Purpose | Status |
 | --------- | -------------- | ------- | ------ |
 | `app/api/projects/route.ts` | Route Handler | Register projects from a local path or repo source, slug derivation, slug + repo_path uniqueness, Flow plugin install on register, owner membership. | Implemented |
 | `lib/flows` | `web/lib/flows.ts` | Flow plugin loader: `git clone --branch <tag>`, symlink into project subtree, manifest validation. | Implemented |
-| `lib/acp-runners` | `web/lib/acp-runners/*` | Platform runner catalog, sidecar references, usage checks, Flow remaps, and `resolveRunner()` precedence (launch override → step target → project Flow default → platform Flow default → project default → platform default). | Implemented |
+| `lib/acp-runners` | `web/lib/acp-runners/*` | Platform runner catalog + `resolveRunner()` precedence chain — owned by [`system-analytics/executors.md`](system-analytics/executors.md). | Implemented |
 | `lib/worktree` | `web/lib/worktree.ts` | `git worktree add/remove/list` wrapper, project-scoped paths. | Implemented |
 | `lib/scheduler` | `web/lib/scheduler.ts` | Global concurrency cap, Pending queue, auto-promote on slot free. | Implemented |
 | `app/api/projects/[slug]/tasks/route.ts` | Route Handler | Create tasks → `Backlog`. | Implemented |
@@ -278,13 +278,13 @@ These components are implemented unless the status column says otherwise:
 | `app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route.ts` | Route Handler | Two-phase HITL response, permission delivery, atomic input artifact, runner wake-up. | Implemented |
 | `app/api/runs/[id]/activity/route.ts` | Route Handler | Bump `keepalive_until` by 30 min while user on the page. | Implemented |
 | `app/api/runs/[id]/diff/route.ts` | Route Handler | Raw `git diff` rendered in `<pre>`. | Implemented |
-| `app/api/runs/[id]/promote/route.ts` | Route Handler | Promote run branch to target branch by delivery-policy mode — `merge` / `rebase_merge` / `pull_request` (ADR-087). `pull_request` (ADR-049) pushes the run branch to origin and opens a provider PR/MR (`gh` / `glab` / Gitea REST), flipping the run to `Done` at PR creation; PR-to-merge tracking is deferred. Local merge conflict → abort + Review/manual resolution. | Implemented |
+| `app/api/runs/[id]/promote/route.ts` | Route Handler | Promote the run branch by delivery-policy mode (`merge`/`rebase_merge`/`ai_rebase_merge`/`pull_request`) — owned by [`system-analytics/workspaces.md`](system-analytics/workspaces.md) + [`branch-sync.md`](system-analytics/branch-sync.md). | Implemented |
 | `app/api/scratch-runs/[runId]/recover/route.ts` | Route Handler | Recover a crashed scratch session through the stored ACP session id. | Implemented |
 | Projector | `web/lib/projector/artifact-projector.ts` | Web-side. Derives event-stream evidence — the tool-call activity log + preview — from the per-run `run.events.jsonl`. Pull-based at runner sync points + startup catch-up. **Never drives run state.** | Implemented |
 | ArtifactStore | `web/lib/flows/graph/artifact-store.ts` | Web-side. CRUD + lifecycle (record / supersede / stale / fail) over the `artifact_instances` evidence index. | Implemented |
-| MCP facade | `mcp/src/` | Standalone `@maister/mcp` package. Registers external MCP tools (task/run/readiness/gate/HITL/comment/triage/relation operations), each a thin REST client of `/api/v1/ext` (M17/M39, ADR-055). Transport-scoped auth: Streamable-HTTP forwards inbound bearer; stdio reads `MAISTER_PROJECT_TOKEN`, then `MAISTER_ACCESS_TOKEN` as fallback. See ADR-042 and [`configuration.md`](configuration.md#environment-variables-server-tier). | Implemented |
-| Cross-project HITL inbox | `web/lib/queries/portfolio.ts` + `app/(app)/page.tsx` | Portfolio-home block listing every pending HITL across visible projects (membership-scoped `getCrossProjectHitlInbox`), absorbing the one-per-project `NeedsYouStrip`; renders the inline response component + a numeric "Needs you (N)" badge. See ADR-057. | Implemented |
-| Project Brain | `web/lib/brain/*` + `web/lib/domain-events/memory-harvest.ts` + `web/lib/brain/index-triggers.ts` | ADR-122/127/128: owned-tier memory, Consultant indexed sources/chunks, cross-tier recall, source reindex jobs, clusters/proposals, autonomy counters, docs-as-code projection, Serena seed, `memory_recall`/`memory_retain`/`memory_clusters`/`memory_propose` MCP tools, and P7 ambient context. Own migration lineage `web/lib/db/brain-migrations`. See [`system-analytics/project-brain.md`](system-analytics/project-brain.md). | Implemented |
+| MCP facade | `mcp/src/` | Standalone `@maister/mcp`: external MCP tools as thin REST clients of `/api/v1/ext` — owned by [`system-analytics/external-operations.md`](system-analytics/external-operations.md). | Implemented |
+| Cross-project HITL inbox | `web/lib/queries/portfolio.ts` + `app/(app)/page.tsx` | Portfolio block listing pending HITL across visible projects (ADR-057) — behavior owned by [`system-analytics/hitl.md`](system-analytics/hitl.md). | Implemented |
+| Project Brain | `web/lib/brain/*` | Owned + indexed memory tiers with recall/retain MCP tools (ADR-122/127/128; own migration lineage) — owned by [`system-analytics/project-brain.md`](system-analytics/project-brain.md). | Implemented |
 
 ## Dependency rules
 

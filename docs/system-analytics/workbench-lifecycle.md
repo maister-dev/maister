@@ -6,6 +6,39 @@
 > reusing the existing run status enum, workspace archive columns, supervisor
 > session model, and git worktree helpers.
 
+## Purpose
+
+When an operator sees a stale, stopped, crashed, finished, or no-longer-useful
+workbench in a sidebar, project panel, or run detail view, they need to decide
+its fate there: stop live cost, preserve useful work, free disk, or hand the
+branch to a local developer without spelunking through git.
+
+When an operator stops an active run, MAIster should terminate the live
+supervisor session and finalize the run by its kind — a flow run rests in
+`Review`, an agent run is finalized to `Abandoned` (terminal) through its own
+agent-termination path — leaving the worktree present for inspection, archive,
+or drop instead of treating the operator stop as a crash.
+**(Implemented — runKind-dispatched stop.)**
+
+When an operator already knows a live flow or scratch run should be preserved or
+discarded, MAIster should offer one-click **Stop & archive** and **Stop & drop**
+that stop the run and then run the worktree op, instead of forcing a stop, a
+wait for `Review`, then a separate second click. **(Implemented.)**
+
+When an operator archives or drops a workbench, MAIster must preserve recoverable
+work before any prune. Archive records the preservation result, removes the
+owned worktree, and retains the run's historical status; Drop preserves first,
+then removes only an owned worktree and marks non-`Done` runs `Abandoned`.
+
+When an operator exports a branch, MAIster should push the existing run branch
+to the selected remote and provide checkout commands. Dirty work is committed
+first through the explicit snapshot commit sub-action.
+
+When an operator wants to continue outside MAIster without final promotion,
+MAIster should create a separate handoff branch at the workbench HEAD, push it
+to a selected existing remote, and show copyable checkout commands while leaving
+the run in its current review/terminal state.
+
 ## ADR-142 lifecycle contract (Implemented)
 
 ADR-142 replaces the conflicting M19/M27 workspace-retention behavior in this
@@ -46,40 +79,7 @@ with `idempotent: true`; a conflicting completed intent returns `409 CONFLICT`.
 `retention_gc` and `reconciliation` are internal dispositions, never request
 body values. JSONL and other runtime-artifact retention are unchanged.
 
-## JTBD
-
-When an operator sees a stale, stopped, crashed, finished, or no-longer-useful
-workbench in a sidebar, project panel, or run detail view, they need to decide
-its fate there: stop live cost, preserve useful work, free disk, or hand the
-branch to a local developer without spelunking through git.
-
-When an operator stops an active run, MAIster should terminate the live
-supervisor session and finalize the run by its kind — a flow run rests in
-`Review`, an agent run is finalized to `Abandoned` (terminal) through its own
-agent-termination path — leaving the worktree present for inspection, archive,
-or drop instead of treating the operator stop as a crash.
-**(Implemented — runKind-dispatched stop.)**
-
-When an operator already knows a live flow or scratch run should be preserved or
-discarded, MAIster should offer one-click **Stop & archive** and **Stop & drop**
-that stop the run and then run the worktree op, instead of forcing a stop, a
-wait for `Review`, then a separate second click. **(Implemented.)**
-
-When an operator archives or drops a workbench, MAIster must preserve recoverable
-work before any prune. Archive records the preservation result, removes the
-owned worktree, and retains the run's historical status; Drop preserves first,
-then removes only an owned worktree and marks non-`Done` runs `Abandoned`.
-
-When an operator exports a branch, MAIster should push the existing run branch
-to the selected remote and provide checkout commands. Dirty work is committed
-first through the explicit snapshot commit sub-action.
-
-When an operator wants to continue outside MAIster without final promotion,
-MAIster should create a separate handoff branch at the workbench HEAD, push it
-to a selected existing remote, and show copyable checkout commands while leaving
-the run in its current review/terminal state.
-
-## Vocabulary
+## Domain entities
 
 - **Workbench** — the visible run/workspace unit in the left rail, portfolio
   cards, project active workspace panel, board/run detail views, and scratch
@@ -298,7 +298,7 @@ exists. Both directions are matrix-tested. See [`branch-sync.md`](branch-sync.md
 - Export and handoff success states include non-chained checkout commands.
 - EN and RU labels are shipped together under `workbenchLifecycle`.
 
-## Acceptance criteria
+### Acceptance criteria (per-surface)
 
 - A live flow run shows only **Stop** in every shared workbench panel.
 - A `Review`/terminal workbench with a present worktree shows **Archive**,
@@ -328,6 +328,21 @@ exists. Both directions are matrix-tested. See [`branch-sync.md`](branch-sync.md
 - Focused tests cover policy, service orchestration, route wrappers, read-model
   projection, real-git behavior, race/idempotency, UI dialogs, and Playwright
   smoke coverage across the visible panels.
+
+## Edge cases
+
+- Archive/Drop on an active-status run (`Pending`…`NeedsInputIdle`,
+  `HumanWorking`) → refused; the combined Stop & Archive / Stop & Drop path is
+  the remediation.
+- `WaitingOnChildren` → archive/drop refused; the subtree abandon/cascade is
+  the remediation.
+- Drop whose run-status CAS no longer matches (state moved concurrently) →
+  no removal recorded; the operation reports the conflict instead of
+  clobbering.
+- A lifecycle operation while the `sync` claim (ADR-141) holds the slot →
+  `MaisterError("CONFLICT")`; claims are exclusive per workspace.
+- Archive-ref record is written ONLY after `preserveWorktree` succeeds — a
+  preserve failure leaves the workspace unarchived and actionable.
 
 ## Linked artifacts
 

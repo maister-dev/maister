@@ -755,37 +755,22 @@ ride in the pinned `flow_revisions.manifest` — no separate file, env var, or
 sidecar. Validation lives in `web/lib/config.schema.ts`; failures throw
 `MaisterError({ code: "CONFIG" })`.
 
-Status: the typed shape, node-level validation, the launch-time refusal
-boundary, the `enforcement` evaluator, the `enforcement_snapshot` audit record,
-and the time-limit watchdog are **Implemented (M11c subset)**. Capability-reference
-resolution against the project registry (carve-b), agent-aware name mapping, and
-per-session native materialization are **Implemented (M14)** — see
-ADR-041 in [`decisions.md`](decisions.md). The materialized config reaches the
-claude agent via `<worktree>/.claude/settings.local.json` + ACP `newSession`
-`params.mcpServers` (the corrected channel per ADR-044; the CLI-flag
-mechanism was disproven against `claude-agent-acp@0.37.0`). The
-`instructed → enforced` flip remains **deferred**, gated on the ADR-042
-live-adapter spike — no cell is flipped. See
-[ADR-031](decisions.md) (typed settings) / [ADR-032](decisions.md) (refusal
-boundary) and the frozen enforcement spec in
-[`system-analytics/flow-settings.md`](system-analytics/flow-settings.md).
+Status (Implemented): the typed shape, node-level validation, the launch-time
+refusal boundary, the `enforcement` evaluator + `enforcement_snapshot` audit
+record, the time-limit watchdog, capability-reference resolution, agent-aware
+name mapping, and per-session native materialization (delivery channel:
+`<worktree>/.claude/settings.local.json` + ACP `newSession` `params.mcpServers`,
+ADR-044). `tools`/`mcps`/`hooks` are **enforced** at the supervisor ACP seam
+(`capability_guard`, [ADR-130](decisions.md#adr-130)); `skills`/`restrictions`/
+`permissionMode` stay `instructed` permanently. Field-by-field semantics and
+the enforcement table: [`system-analytics/flow-settings.md`](system-analytics/flow-settings.md)
+(see [ADR-031](decisions.md#adr-031)/[ADR-032](decisions.md#adr-032)).
 
-**Per-adapter capability materialization (Implemented — capability composer, M14
-generalization).** Claude and Gemini use cwd-discovered workspace directories:
-claude gets `.claude/skills` plus `.claude/agents`, while Gemini gets
-`.gemini/skills` and keeps its native `~/.gemini` user auth/config. Gemini CLI
-then performs its own user/workspace settings merge. A `google_gemini` runner
-without `apiKeyEnv` does not get an ACP `authenticate` call or a Gemini API key
-from MAIster; the spawned CLI uses the operator's default auth selection from
-`~/.gemini`. Codex is still
-home-redirected through a per-session computed `CODEX_HOME` that the web tier
-injects into `adapterLaunch.env` (`web/lib/capabilities/adapter-home.ts`) —
-symlinked global `auth.json`/`config.toml`, per-skill symlinks of
-`~/.codex/skills/*`, and materialized project `skills/` where project wins on a
-name collision. See
-[`system-analytics/acp-runners.md`](system-analytics/acp-runners.md) and
-[`supervisor.md`](supervisor.md). Codex flips to cwd-`.codex` discovery when
-openai/codex#21907 lands.
+**Per-adapter capability materialization (Implemented).** Claude/Gemini use
+cwd-discovered workspace dirs; Codex is home-redirected through a per-session
+`CODEX_HOME` (`web/lib/capabilities/adapter-home.ts`). The full per-adapter
+matrix lives in [`system-analytics/acp-runners.md`](system-analytics/acp-runners.md)
+and [`supervisor.md`](supervisor.md) — not restated here (R7).
 
 **`ai_coding` / `judge` settings** (agent-capability shape):
 
@@ -901,149 +886,28 @@ Incompatibility surfaces as `CONFIG` (422). Semantic validation of the opaque
 contract lists is deferred to the milestone that introduces each concept (see
 [ADR-021](decisions.md#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility)).
 
-**M11a engine bump (Implemented).** M11a bumps the `MAISTER_ENGINE_VERSION`
-constant `1.0.0 → 1.1.0` in `web/lib/flows/engine-version.ts`
-([ADR-026](decisions.md#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump)).
-This is a **code constant, not an env var** — there is no compose / `.env`
-wiring for it. A Flow that uses the graph manifest (`nodes[]`) MUST declare
-`compat.engine_min: 1.1.0`, so an older engine refuses it through the same
-`engine_min..engine_max` check above. `SUPPORTED_FLOW_SCHEMA_VERSIONS` stays
-`[1]` (the graph is additive — no `schemaVersion` bump).
-
-**M12 engine bump (Implemented).** M12 bumps `MAISTER_ENGINE_VERSION`
-`1.1.0 → 1.2.0`. `GRAPH_MIN_ENGINE_VERSION` stays `1.1.0` — a graph-manifest
-Flow still only needs `compat.engine_min: 1.1.0` to enable. The **declared-
-artifact gate** is the new threshold: validating `input.requires` /
-`output.produces` refs against the manifest's declared artifact ids AND
-enforcing the `artifact_required` gate require `compat.engine_min ≥ 1.2.0`. A
-Flow that declares typed produces/requires or an `artifact_required` gate but
-sets `engine_min < 1.2.0` is refused through the same `engine_min..engine_max`
-check above. `SUPPORTED_FLOW_SCHEMA_VERSIONS` stays `[1]` (additive).
+**Engine floors.** `MAISTER_ENGINE_VERSION` is a **code constant, not an env
+var** (`web/lib/flows/engine-version.ts`); its header comment is the canonical
+bump log — one entry per capability floor (graph `nodes[]` 1.1.0 → … →
+graph-only cut-over 3.0.0 → context mounts 3.4.0). A flow declaring a floored
+capability MUST set `compat.engine_min` accordingly; each floor's rationale
+lives in the ADR the comment names. `SUPPORTED_FLOW_SCHEMA_VERSIONS` stays
+`[1]`.
 
 **Default vs declared artifacts.** DEFAULT artifact recording — the run log,
 guard metrics, the human/form answer, and the diff — is captured for **all
-runs at engine 1.1.0 with no manifest changes**: every run records these
-regardless of what the Flow declares. The DECLARED-artifact contract — typed
+runs with no manifest changes**. The DECLARED-artifact contract — typed
 `output.produces` / `input.requires` validation plus the `artifact_required`
 gate — is opt-in and requires `compat.engine_min ≥ 1.2.0`.
 
-| Capability | Engine floor | Manifest changes | Scope |
-| ---------- | ------------ | ---------------- | ----- |
-| DEFAULT artifact recording (log, guard metrics, human/form answer, diff) | `1.1.0` | none | every run, always |
-| DECLARED-artifact contract (typed `produces`/`requires` validation + `artifact_required` gate) | `1.2.0` | declare `output.produces` / `input.requires` / `artifact_required` | Flows that opt in |
-
-**M15 readiness enforcement (Implemented).** `MAISTER_ENGINE_VERSION` stays `1.2.0`
-(no bump). The Review chokepoint readiness check (`assertEvidenceReady`) now applies to
-**all** graph flows — the prior engine-gate around it was removed — and evaluates **all**
-blocking gate kinds (`command_check`/`ai_judgment`/`skill_check`/`artifact_required`/
-`external_check`), not only the two artifact kinds. The new calibration fields below are
-optional/additive, so no engine floor change is required
-([ADR-048](decisions.md#adr-048-readiness-enforcement-over-all-blocking-gate-kinds--verdict-calibration-m15)).
-
-**M26 engine bump (Implemented).** M26 bumps `MAISTER_ENGINE_VERSION`
-`1.2.0 → 1.3.0` in `web/lib/flows/engine-version.ts`
-([ADR-063](decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7)).
-`MAISTER_ENGINE_VERSION` is a **code constant, not an env var** — there is no
-`.env` wiring for it (unlike `MAISTER_NODE_OUTPUT_MAX_BYTES`, the separate
-size-cap env var above, which is wired into `.env.example` + this doc only, never
-`compose.yml`). A Flow that declares the new node
-`output.result` field on any node MUST declare `compat.engine_min: 1.3.0`, so an
-older engine refuses it through the same `engine_min..engine_max` check above; a
-manifest using `output.result` without `compat.engine_min >= 1.3.0` is rejected
-with `CONFIG` (mirrors the M12 declared-artifact gate). A Flow that does **not**
-declare `output.result` stays valid at any `engine_min` (back-compat).
-`SUPPORTED_FLOW_SCHEMA_VERSIONS` stays `[1]` (the field is additive). The
-transport contract and validate seam are in [`flow-dsl.md`](flow-dsl.md) §M26 and
-[`system-analytics/flow-graph.md`](system-analytics/flow-graph.md) §M26.
-
-**M30 engine bump (Implemented).** M30 bumps `MAISTER_ENGINE_VERSION` `1.3.0 → 1.4.0`
-in `web/lib/flows/engine-version.ts`
-([ADR-079](decisions.md#adr-079-node-workspacepolicy-execution-and-checkpoint-capture)).
-It is a **code constant, not an env var** — no `.env`/compose wiring. The new node
-DSL keys `retry_policy`
-([ADR-080](decisions.md#adr-080-node-level-retry-policy)) and `session_policy` plus
-the flow `defaults` block
-([ADR-081](decisions.md#adr-081-rework-session-policy-with-resume-by-default))
-require `compat.engine_min: 1.4.0`; a manifest using any of them with
-`engine_min < 1.4.0` is refused with `CONFIG` through the same
-`engine_min..engine_max` check. A Flow using none of these keys stays valid at any
-`engine_min` (back-compat). `SUPPORTED_FLOW_SCHEMA_VERSIONS` stays `[1]`. The
-workspacePolicy-execution, review-diff scopes, and gate-chat features add **no**
-flow DSL and need no engine floor. The DSL keys are parsed fresh from
-`flow_revisions.manifest` on every launch — a removed key naturally CLEARs (no
-persisted upsert state, no SET/CLEAR asymmetry).
-
-**M30 deployment surface (Implemented).** DD10 requires `MAISTER_RUNTIME_ROOT` to
-resolve **outside** every registered `repo_path` so checkpoint rewind/discard
-(`git clean -fd`) can never reach the run-artifact tree
+**Runtime-root deployment precondition (Implemented).** `MAISTER_RUNTIME_ROOT`
+must resolve **outside** every registered `repo_path` so checkpoint
+rewind/discard (`git clean -fd`) can never reach the run-artifact tree
 (`runtimeRoot/.maister/<slug>/runs/<runId>/`); the containment assert
-(`containmentAssert` in `workspace-checkpoint.ts` + the `discardWorktree` guard)
-hard-blocks any policy run with `MaisterError("PRECONDITION")` when violated —
-a deploy precondition. The checkpoint ref namespaces `refs/maister/checkpoints/*` and
-`refs/maister/chat-checkpoints/*` are git refs, not env. B20 audit verdict: **no
-new env var was introduced** — the candidate `MAISTER_GATE_CHAT_ENABLED` toggle
-was not needed (availability is session-presence-driven, ADR-078 DD2), so M30
-adds no deployment surface beyond the existing `MAISTER_RUNTIME_ROOT` layout
-precondition.
-
-**M41 engine bump (Implemented).** M41 bumps `MAISTER_ENGINE_VERSION` `1.8.0 →
-1.9.0` in `web/lib/flows/engine-version.ts` for the first-class `consensus`
-flow-graph node ([ADR-109](decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution)).
-A manifest declaring `type: consensus` MUST declare `compat.engine_min >= 1.9.0`;
-an older engine refuses it through the same `engine_min..engine_max` check. The
-node introduces no new process, route, sidecar, or environment variable. It
-reuses `MAISTER_MAX_ORCHESTRATOR_FANOUT` for the participant cap,
-`MAISTER_ORCHESTRATOR_MAX_DEPTH` for run-tree recursion checks on draft child
-runs, and `MAISTER_MAX_CONCURRENT_AGENTS` for ephemeral verification/synthesis
-ACP sessions through the existing capacity helper. Runtime logs for fan-out,
-park/resume, verify, tally, synthesis, and HITL must use structured fields
-(`runId`, `nodeId`, `nodeAttemptId`, `round`, participant/verifier IDs, verdict
-status) and must not interpolate prompt, draft, debate, or resolution body text.
-
-**M42 engine bump (Implemented).** M42 bumps `MAISTER_ENGINE_VERSION` `1.9.0 →
-2.0.0` ([ADR-114](decisions.md#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth))
-— the first stable clean-cutover baseline. The unified runner config (new
-`effort` / `env` fields), first-class `sessions:`, node `session:` / `runner:`,
-and judge `runner:` are 2.0.0 features: a manifest using any of them MUST declare
-`compat.engine_min >= 2.0.0`, refused otherwise through the same
-`engine_min..engine_max` check. The `env` field is a passthrough NAME map whose
-values are `env:NAME` references resolved supervisor-side — never literal secrets
-— so M42 adds **no** deployment surface (no new host env var, sidecar, port, or
-config file). `SUPPORTED_FLOW_SCHEMA_VERSIONS` stays `[1]`.
-
-**ADR-118 engine bump (Implemented).** Bumps `MAISTER_ENGINE_VERSION` `2.0.0 →
-2.1.0` for rework loop `onExhaustion` routing + human-driven counter reset
-(`resetTargets`) ([ADR-118](decisions.md#adr-118-rework-loop-onexhaustion-routing--human-driven-counter-reset-resettargets--engine-210)).
-A manifest where any node's `rework` declares either field MUST declare
-`compat.engine_min >= 2.1.0`, refused otherwise through the same
-`engine_min..engine_max` check. Adds no deployment surface.
-
-**ADR-120 engine bump (Implemented — P2).** Bumps `MAISTER_ENGINE_VERSION`
-`2.1.0 → 2.2.0` for artifact body injection
-([ADR-120](decisions.md#adr-120-artifact-body-injection-into-prompts)). **Both**
-surfaces require `compat.engine_min >= 2.2.0`: (a) any `input.requires[].inline:
-true` entry, AND (b) any `{{ artifacts.<id>.content }}` reference in a node's
-`action.prompt`, `cli.command`, or the field a `pre_finish` gate renders (an
-`ai_judgment` gate's `prompt`, or a `skill_check`/`command_check` gate's
-`command` — the scan matches the gate executor exactly, so load-time and runtime
-detection never drift). A manifest using either surface below `2.2.0` is refused at load
-(`CONFIG`); a Flow using neither stays valid at any `engine_min`.
-`MAISTER_ENGINE_VERSION` is a code constant (no `.env`/compose wiring), but the
-injection body cap **is** a tunable env var — `MAISTER_ARTIFACT_INLINE_MAX_BYTES`
-(default `262144`, in the env-vars table below). That cap bounds the per-injection
-prompt body only; it does NOT affect the artifact **payload API** route, which
-returns the full untruncated body. `SUPPORTED_FLOW_SCHEMA_VERSIONS` stays `[1]`.
-
-**ADR-131 engine bump (Implemented).** The graph-only cut-over started with
-engine `3.0.0`. A manifest containing top-level `steps[]` is refused with the
-locked upgrade remediation; `nodes[]` is the sole executable Flow shape. The
-current host engine is `3.3.0` (ADR-137 adds typed plan review; ADR-143 adds
-package-sourced Evaluation Methods; ADR-154 adds `MAISTER_FLOW_DIR` for
-cli/check node actions). A graph-shaped
-manifest whose declared `compat.engine_min..engine_max` excludes `3.3.0`
-remains inspectable but is typed `engine_incompatible` and refused at
-stored/executable mutation boundaries. Existing graph manifests with an
-open-ended engine range remain compatible.
+(`containmentAssert` in `workspace-checkpoint.ts` + the `discardWorktree`
+guard) hard-blocks any policy run with `MaisterError("PRECONDITION")` when
+violated. The checkpoint ref namespaces `refs/maister/checkpoints/*` and
+`refs/maister/chat-checkpoints/*` are git refs, not env.
 
 ### Verdict calibration (M15)
 
@@ -1091,11 +955,13 @@ promotion.
 
 ### Guard semantics
 
-`cost` / `time` / `regex` guard fields are parsed and evaluated as
-observational signals. Guard results are written to
-`.maister/<slug>/runs/<run-id>/guards.jsonl`. Cost guards compare
-against token totals from `cost.jsonl` when the supervisor has emitted
-usage records. Guards do not kill a run today; enforcement is Phase 2.
+`cost` / `time` / `regex` guard fields are parsed and evaluated; results are
+written to `.maister/<slug>/runs/<run-id>/guards.jsonl`, with cost compared
+against `cost.jsonl` token totals. Enforcement status: token budgets terminate
+via the execution-policy ladder (`BUDGET_EXCEEDED`, ADR-101/125) and
+`limits.maxDurationMinutes` terminates via the time-limit watchdog; `regex`
+guards (and the declared `limits.maxCostUsd`) remain observational —
+record-only, no kill (tracked in the roadmap Backlog).
 
 ## `form_schema` versioning
 

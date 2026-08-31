@@ -338,3 +338,57 @@ not need changes. Persistence remains:
 - `.maister/<slug>/runs/<runId>/flow-assistant-actions.jsonl` for server-only
   action audit evidence;
 - existing git diff/Commit/Discard as the human review boundary.
+
+## Expectations
+
+- Assistant ACP sessions MUST run with `readOnlySession: true`; the ONLY write
+  path into the package is a parsed, schema-valid
+  `maister_flow_assistant_action.v1` block applied through the existing
+  local-package write helpers under the caller's edit lock.
+- Every operation path MUST pass the same confinement as manual Studio writes
+  (no absolute paths, no `..`, no NUL, no escaping symlinks, no `.git`).
+- An existing-file upsert/delete MUST match the server-snapshot `baseHash`;
+  a stale hash MUST reject the whole action before any write.
+- Operations MUST validate against an in-memory virtual package (manifest,
+  Flow YAML, frontmatter, schemas, graph compile) BEFORE touching disk; a
+  failure rejects atomically.
+- V1 operations are full-file only (`upsert_file`/`delete_file`); raw protocol
+  text MUST be stripped from stored assistant markdown, with sanitized
+  `flow_action_result` system messages as the reload-stable UI record.
+- Every action MUST leave a redacted audit trail in
+  `flow-assistant-actions.jsonl` (`received → validated →
+  applied|rejected|interrupted`); file contents appear only as hashes + byte
+  counts.
+- Logs MUST NEVER contain prompt text, file contents, raw action JSON,
+  absolute working dirs, or secrets.
+- Commit/Discard on the working tree stays the durable accept/revert boundary;
+  the assistant MUST NOT commit.
+
+## Edge cases
+
+- Malformed JSON or schema-invalid action block → invalid-action result card
+  (`CONFIG`-class), no writes, protocol text stripped.
+- Stale `baseHash` (file changed since the context snapshot) → whole-action
+  reject with a stale reason; the user re-asks against fresh context.
+- Path-confinement violation → reject before writes, WARN log with the
+  rejected hint only.
+- Failure mid-apply → `interrupted` audit record with operation index; the
+  working tree may hold a partial apply — the git diff drawer + Discard is the
+  recovery path.
+- Audit-append failure after a successful apply → WARN; user-visible file
+  state wins over the audit trail.
+- Edit lock lost/expired during a turn → apply refused
+  (`edit_lock_not_held`); conversation continues read-only.
+
+## Linked artifacts
+
+- Behavior spec: this file (SSOT); design lineage:
+  [`../pv/flow-authoring-assistant.md`](../pv/flow-authoring-assistant.md)
+  (historical — shipped architecture differs).
+- ADRs: [ADR-097](../decisions.md#adr-097), [ADR-110](../decisions.md#adr-110).
+- Source: `web/lib/studio/flow-assistant/` (context, parse, apply),
+  `web/components/studio/studio-ai-tab.tsx`, local-package write helpers in
+  `web/lib/local-packages/`.
+- Related domains: [`local-packages.md`](local-packages.md) (edit lock, write
+  helpers), [`scratch-runs.md`](scratch-runs.md) (conversation substrate),
+  [`flow-studio.md`](flow-studio.md) (editor surface).

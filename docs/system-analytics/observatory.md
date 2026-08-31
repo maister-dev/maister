@@ -436,32 +436,6 @@ flowchart TD
   the WARN rung (no domain event), and MUST stay read-only (no actions, EN+RU
   labels).
 
-## Edge cases
-
-- Empty scope returns zero-valued metrics and useful empty states, not an error.
-- Legacy flow runs without `node_attempts` rows are excluded from
-  `runCount` and surfaced only as legacy-no-ledger query diagnostics.
-- Active runs with open HITL waits are volatile and may change between refreshes.
-- Overlapping HITL rows on the same run are merged to prevent wait time from
-  exceeding total run time.
-- Missing artifact definitions fall back to artifact `kind` buckets.
-- Text extraction is disabled by default; any later bounded text subset requires
-  redaction tests before it can appear in examples.
-- A performance need for new indexes is a migration task, not an implicit
-  read-model change.
-- **(M29 — Implemented)** A gate with zero executions in the window (declared but
-  never run — e.g. its node never executed) is NOT never-fired-flagged: the
-  flag requires the execution threshold; the coverage map still lists the gate
-  as declared.
-- **(M29 — Implemented)** Null `runs.resolved_capability_set` (pre-ADR-069
-  launches) thins capability-effectiveness denominators; such runs are dropped
-  from both sides of the comparison and the honest-N denominator shows it.
-- **(M29 — Implemented)** Revision drift — scoped runs spanning multiple revisions
-  of the same flow — makes the declared-gate set the UNION across used
-  revisions; a gate present in only one revision still appears, with its firing
-  stats from the runs that declared it. A manifest that fails to parse skips
-  that revision with a WARN and the coverage map omits it.
-
 ## Implemented: agentization and run-kind scope (ADR-134)
 
 **Status: Implemented.** ADR-134 extends the per-project, read-only Observatory
@@ -527,6 +501,49 @@ The read model uses bulk queries, explicit `now`, fixed query count for one or
 many rows, and no fetch/reconcile/seed side effect. EN and RU render the same
 labels and states. The complete calculation and test contract are in
 [`../../.ai-factory/specs/feature-observatory-agentization-provenance.md`](../../.ai-factory/specs/feature-observatory-agentization-provenance.md).
+
+## Expectations
+
+- The Observatory MUST be read-only: no page/API in this domain writes a row,
+  changes promotion state, or makes a git network call from a request.
+- Aggregates MUST be scoped to projects visible to the caller; an empty scope
+  MUST return zero-valued metrics and empty states, never an error.
+- Correction rate, Autonomy Score, and signal clusters MUST be derived from
+  the `node_attempts`/`gate_results`/HITL ledgers exactly as persisted —
+  no synthetic or interpolated events.
+- Cost surfaces MUST read `run_cost_rollups`/`node_attempt_cost_rollups`
+  (token counts; USD is deliberately absent) and MUST agree with the
+  execution-policy budget state they annotate.
+- Overlapping HITL wait intervals on one run MUST be merged so attention time
+  never exceeds wall-clock run time.
+- Delivery attribution (ADR-134) MUST classify by `run_kind` and agent
+  identity without altering any underlying metric definition.
+
+## Edge cases
+
+- Empty scope returns zero-valued metrics and useful empty states, not an error.
+- Legacy flow runs without `node_attempts` rows are excluded from
+  `runCount` and surfaced only as legacy-no-ledger query diagnostics.
+- Active runs with open HITL waits are volatile and may change between refreshes.
+- Overlapping HITL rows on the same run are merged to prevent wait time from
+  exceeding total run time.
+- Missing artifact definitions fall back to artifact `kind` buckets.
+- Text extraction is disabled by default; any later bounded text subset requires
+  redaction tests before it can appear in examples.
+- A performance need for new indexes is a migration task, not an implicit
+  read-model change.
+- **(M29 — Implemented)** A gate with zero executions in the window (declared but
+  never run — e.g. its node never executed) is NOT never-fired-flagged: the
+  flag requires the execution threshold; the coverage map still lists the gate
+  as declared.
+- **(M29 — Implemented)** Null `runs.resolved_capability_set` (pre-ADR-069
+  launches) thins capability-effectiveness denominators; such runs are dropped
+  from both sides of the comparison and the honest-N denominator shows it.
+- **(M29 — Implemented)** Revision drift — scoped runs spanning multiple revisions
+  of the same flow — makes the declared-gate set the UNION across used
+  revisions; a gate present in only one revision still appears, with its firing
+  stats from the runs that declared it. A manifest that fails to parse skips
+  that revision with a WARN and the coverage map omits it.
 
 ## Linked artifacts
 

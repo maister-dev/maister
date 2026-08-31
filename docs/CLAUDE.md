@@ -190,6 +190,13 @@ Every `system-analytics/*.md` file MUST contain, in this order:
 The diagrams and bullets are the artifact. Prose between them is glue,
 not commentary.
 
+Additional **topical sections** (a frozen sub-spec, a cost dimension, an
+ADR-scoped contract) are allowed for large domains: they belong AFTER
+Process flows and BEFORE Expectations, never before Purpose and never after
+Linked artifacts. A state-and-action matrix may stand in for the State
+machine + Process flows pair where transitions are operation-driven rather
+than event-driven.
+
 ### R5a. Expectations section fill-in rules
 
 The **Expectations** section is the steady-state contract for the
