@@ -231,6 +231,12 @@ Use a parenthetical tag such as `(Implemented)`, `(Designed)`, or
 about what is real today without turning old milestone labels into
 blockers.
 
+Milestone numbers (`M11a`, `M43`, …) are **changelog vocabulary, not
+status**: do not add them to new or edited current-plane passages — use
+the three tags above; `M-NN` belongs in the ADR log, `.ai-factory/
+ROADMAP.md`, and commit history. Existing milestone tags are being
+removed opportunistically (de-milestoning pass); don't add new ones.
+
 ### R7. Cross-reference, do not duplicate
 
 Configuration, error taxonomy, DB schema, supervisor wire contract,
