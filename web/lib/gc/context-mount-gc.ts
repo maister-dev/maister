@@ -139,7 +139,7 @@ async function recordAttemptFailure(args: {
 
   await atomicWriteJson(args.candidate.markerPath, next).catch(
     (err: unknown) => {
-      // A marker we cannot persist means the item degrades to the pre-ADR-142
+      // A marker we cannot persist means the item degrades to the pre-ADR-148
       // behaviour (retried every tick) — loud, but not fatal to the scan.
       log.error(
         {
@@ -209,7 +209,7 @@ async function listMountCandidates(
  * window: a mount created before the snapshot commit is referenced by no row.
  *
  * Goes beyond the `-ro` sweep it is modeled on by carrying a DURABLE per-item
- * attempt marker (ADR-142 semantics: `state` / `attempt_count` / `next_retry_at`
+ * attempt marker (ADR-148 semantics: `state` / `attempt_count` / `next_retry_at`
  * plus sanitized error evidence) next to the mount, so a permanently-failing
  * item cannot starve the rest of the scan.
  */

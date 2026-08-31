@@ -3683,7 +3683,7 @@ export const runSyncAttempts = pgTable(
 
 export type RunSyncAttemptRow = typeof runSyncAttempts.$inferSelect;
 export type RunSyncAttemptInsert = typeof runSyncAttempts.$inferInsert;
-// ADR-142: bounded operational state for filesystem/DB convergence. This is
+// ADR-148: bounded operational state for filesystem/DB convergence. This is
 // deliberately not run history and stores a root-relative path only.
 export const workspaceReconciliationFindings = pgTable(
   "workspace_reconciliation_findings",
