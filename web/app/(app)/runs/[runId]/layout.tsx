@@ -23,6 +23,8 @@ import {
 } from "@/components/board/panels/flow-settings-panel";
 import { RunHitlResponse } from "@/components/board/run-hitl-response";
 import { RunTakeoverActions } from "@/components/board/run-takeover-actions";
+import { NodeInterruptControls } from "@/components/runs/node-interrupt-controls";
+import { NodeInterruptTrigger } from "@/components/runs/node-interrupt-trigger";
 import { RunContinuationActions } from "@/components/runs/run-continuation-actions";
 import {
   RunTimeline,
@@ -629,6 +631,12 @@ export default async function RunDetailLayout({
     detail.status === "NeedsInput" &&
     offersTakeover(detail.pendingHitl?.schema);
   const isHumanWorking = detail.status === "HumanWorking";
+  // ADR-160: an interrupt is only offered on a live flow run. The route
+  // re-derives every admission term server-side, so this is presentation only.
+  const canInterruptNode =
+    detail.status === "Running" &&
+    detail.runKind === "flow" &&
+    detail.currentStepId !== null;
 
   // ADR-071 Task 13: review-gate panel data — thread counts + the RunDiff
   // review context. Computed ONLY when the pending gate is a human review
@@ -1650,6 +1658,27 @@ export default async function RunDetailLayout({
                       status={detail.pendingHitl.assignmentStatus}
                     />
                   </div>
+                  {/* ADR-160: the operator node interrupt's four options.
+                      Availability is SERVER-owned (`nodeInterrupt`), so the
+                      client renders what it is given and never re-derives it. */}
+                  {detail.pendingHitl?.kind === "node_interrupt" &&
+                  detail.pendingHitl.nodeInterrupt ? (
+                    <div className="mb-4">
+                      <NodeInterruptControls
+                        canAct={canAct}
+                        defaultOptionId={
+                          detail.pendingHitl.nodeInterrupt.defaultOptionId
+                        }
+                        hitlRequestId={detail.pendingHitl.hitlRequestId}
+                        interruptedNodeId={detail.currentStepId ?? ""}
+                        options={detail.pendingHitl.nodeInterrupt.options}
+                        restartTargets={
+                          detail.pendingHitl.nodeInterrupt.restartTargets
+                        }
+                        runId={detail.runId}
+                      />
+                    </div>
+                  ) : null}
                   {detail.pendingHitl &&
                   (detail.pendingHitl.kind === "human" ||
                     detail.pendingHitl.kind === "form") ? (
@@ -1840,6 +1869,15 @@ export default async function RunDetailLayout({
               stays for a takeover claim — they are told apart by
               `continuation.claim`, which is non-null only for the ADR-159
               provenance. */}
+          {canInterruptNode ? (
+            <section className="mt-6 rounded-[14px] border border-line bg-ivory p-5">
+              <h2 className="mb-3 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-amber before:content-['']">
+                {t("handoff")}
+              </h2>
+              <NodeInterruptTrigger canAct={canAct} runId={detail.runId} />
+            </section>
+          ) : null}
+
           {isHumanWorking && detail.continuation.claim === null ? (
             <section className="mt-6 rounded-[14px] border border-[color-mix(in_oklab,var(--accent-4)_30%,var(--line))] bg-accent-4-soft/30 p-5">
               <h2 className="mb-3 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-accent-4 before:content-['']">

@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { NodeAttemptType } from "@/lib/db/schema";
+
 import { randomUUID } from "node:crypto";
 import { unlink } from "node:fs/promises";
 import path from "node:path";
@@ -17,8 +19,6 @@ import { markNodeNeedsInput } from "@/lib/flows/graph/ledger";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { runtimeRoot as configuredRuntimeRoot } from "@/lib/instance-config";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
-
-import type { NodeAttemptType } from "@/lib/db/schema";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { hitlRequests, nodeAttempts, projects, runs } =

@@ -1127,7 +1127,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
 
 ## Phase 4 — Feature B UI, tests, docs
 
-- [ ] **Task 26: UI — interrupt control + option matrix.**
+- [x] **Task 26: UI — interrupt control + option matrix.**
   Run-detail node view (`web/app/(app)/runs/[runId]/layout.tsx` + the HITL response components
   `web/components/board/run-hitl-response.tsx` / `hitl-decision-controls.tsx`, which already consume
   `availableOptions`): an **icon + label** "Interrupt node" button on a live agent node; on the park,
@@ -1138,7 +1138,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   *Verify:* `renderToStaticMarkup` tests for each option state, the disclosure, and the disabled cases.
   *Depends on:* 22, 21.
 
-- [ ] **Task 27: i18n (Feature B).** All new strings into BOTH `en.json` and `ru.json`, keys
+- [x] **Task 27: i18n (Feature B).** All new strings into BOTH `en.json` and `ru.json`, keys
   identical: option labels, the correction placeholder, workspace-policy labels + explanations, every
   refusal message, the safety-cap message, the `cli`/`check` deferral message.
   *Depends on:* 26.

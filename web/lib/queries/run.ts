@@ -59,9 +59,15 @@ import * as schema from "@/lib/db/schema";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import {
   getNodeAttemptsForRun,
+  OPERATOR_INTERRUPT_DECISION,
   REVIEW_REWORK_CLAIM_DECISION,
 } from "@/lib/flows/graph/ledger";
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
+import { maxOperatorRestarts } from "@/lib/instance-config";
+import {
+  deriveNodeInterruptOptions,
+  type NodeInterruptOptionMatrix,
+} from "@/lib/runs/node-interrupt";
 import { resolveReentryNode } from "@/lib/runs/reentry";
 import { assertReworkClaimEligible } from "@/lib/runs/rework-claim";
 import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
@@ -130,6 +136,9 @@ export interface RunPendingHitl {
   prompt: string;
   options: HitlOption[];
   availableOptions?: BudgetBreachAvailableOption[];
+  // ADR-160: the server-owned node_interrupt matrix, delivered on the SAME
+  // channel `budget_breach` uses so the client never re-derives availability.
+  nodeInterrupt?: NodeInterruptOptionMatrix | null;
   budgetProgress?: BudgetBreachProgressDto | null;
   claimStage?: BudgetBreachClaimStage | null;
   schema: unknown;
@@ -545,6 +554,8 @@ export const getRunDetail = cache(async function getRunDetail(
     .select({
       id: hitlRequests.id,
       kind: hitlRequests.kind,
+      // ADR-160: the interrupted node, needed to derive the option matrix.
+      stepId: hitlRequests.stepId,
       prompt: hitlRequests.prompt,
       rawSchema: hitlRequests.schema,
       criticality: hitlRequests.criticality,
@@ -603,6 +614,43 @@ export const getRunDetail = cache(async function getRunDetail(
       ),
   );
   const pendingBudgetContextByHitlRequestId = new Map(pendingBudgetContexts);
+
+  // ADR-160: the node_interrupt matrix is ledger-derived. Paid ONLY when an
+  // interrupt is actually pending — every other run skips both reads.
+  const hasPendingInterrupt = hitlRows.some(
+    (h) => h.kind === "node_interrupt",
+  );
+  const ledgerRows: Array<{ nodeId: string; decision: string | null }> =
+    hasPendingInterrupt
+      ? ((await getNodeAttemptsForRun(runId, client)) as Array<{
+          nodeId: string;
+          decision: string | null;
+        }>)
+      : [];
+  const reworkTargetsByNode = new Map<string, readonly string[]>();
+
+  if (hasPendingInterrupt) {
+    try {
+      const loadedManifest = await loadRunManifest(runId, client);
+
+      if (loadedManifest?.manifest) {
+        for (const [nodeId, compiled] of compileManifest(
+          loadedManifest.manifest,
+        ).nodes) {
+          const targets = compiled.rework?.allowedTargets;
+
+          if (targets) reworkTargetsByNode.set(nodeId, targets);
+        }
+      }
+    } catch (err) {
+      // Presentation-only enrichment: a `recommended` flag is nice to have, and
+      // an unreadable manifest must not break the run-detail render.
+      log.warn(
+        { runId, err: err instanceof Error ? err.message : String(err) },
+        "[node-interrupt] could not resolve declared rework targets",
+      );
+    }
+  }
   const pendingHitls: RunPendingHitl[] = hitlRows.map((pending) => {
     const assignment = assignmentByHitlRequestId.get(pending.id) ?? null;
     const assigneeActorId = assignment?.assigneeActorId ?? null;
@@ -631,6 +679,19 @@ export const getRunDetail = cache(async function getRunDetail(
         })) ?? extractOptions(pending.kind, pending.rawSchema),
       ...(budgetContext?.availableOptions
         ? { availableOptions: budgetContext.availableOptions }
+        : {}),
+      ...(pending.kind === "node_interrupt"
+        ? {
+            nodeInterrupt: deriveNodeInterruptOptions({
+              interruptedNodeId: pending.stepId,
+              ledgerNodeIds: ledgerRows.map((r) => r.nodeId),
+              declaredReworkTargets: reworkTargetsByNode.get(pending.stepId),
+              operatorRestartCount: ledgerRows.filter(
+                (r) => r.decision === OPERATOR_INTERRUPT_DECISION,
+              ).length,
+              maxOperatorRestarts: maxOperatorRestarts(),
+            }),
+          }
         : {}),
       budgetProgress: budgetContext?.budgetProgress ?? null,
       claimStage: budgetContext?.claimStage ?? null,

@@ -2590,6 +2590,25 @@
     "nonFastForwardTitle": "Branch has diverged",
     "nonFastForwardBody": "The return is fast-forward only. Your branch is {aheadBy} commit(s) ahead and {behindBy} behind the remote. Resolve it in the worktree, push, then return again."
   },
+  "nodeInterrupt": {
+    "interrupted": "Node {node} was interrupted mid-turn. Choose how to continue.",
+    "correctionLabel": "Correction for the agent (optional)",
+    "correctionPlaceholder": "What did it get wrong? This is appended to the restarted node's prompt.",
+    "workspacePolicyLabel": "Workspace",
+    "policyKeep": "Keep the working tree as it is",
+    "policyRewind": "Rewind to the node checkpoint",
+    "policyFresh": "Start the node from a fresh tree",
+    "restartNode": "Restart this node",
+    "resume": "Resume as-is",
+    "stop": "Stop run",
+    "restartFrom": "Restart from here",
+    "showRestartFrom": "Restart from an earlier node",
+    "hideRestartFrom": "Hide earlier nodes",
+    "targetLabel": "Target node",
+    "targetRecommended": "{node} (recommended)",
+    "default": "default",
+    "interruptNode": "Interrupt node"
+  },
   "evidence": {
     "title": "Evidence graph",
     "empty": "No evidence yet for this run.",
