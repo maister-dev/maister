@@ -23,7 +23,7 @@ This expands the canonical [product spine](VISION.md#core-product-spine) with
 the runtime objects a single delivery passes through.
 
 ```text
-Project -> Flow package -> Task / Experiment / Scratch run -> External operation -> Run -> Branch target -> Workspace -> Flow node / Dialog turn -> Capability profile -> Artifact graph -> Gate readiness -> Assignment -> HITL / Manual takeover -> Review -> Compare -> Promote
+Project -> Flow package -> Task / Evaluation Study / Scratch run -> External operation -> Run -> Branch target -> Workspace -> Flow node / Dialog turn -> Capability profile -> Artifact graph -> Gate readiness -> Assignment -> HITL / Manual takeover -> Review -> Compare -> Promote
 ```
 
 - **Project** — a registered repo with `maister.yaml` v2.
@@ -49,9 +49,11 @@ Project -> Flow package -> Task / Experiment / Scratch run -> External operation
   smoke-gated. Multiple profiles may share an adapter with different
   model/router/env settings.
 - **Task** — backlog intent. One task may spawn many Flow runs.
-- **Experiment** — task-bound comparison container that pins a base commit,
-  launches several ordinary runs as variants/replicates, compares their diff,
-  files, gates, and token rollups, and records a human rubric verdict.
+- **Evaluation Study** — comparison container of the Evaluation Lab
+  (ADR-142..147/150, which retired the earlier "Experiment" model): observed
+  or launched participant runs over immutable evidence snapshots, judged by
+  package-sourced methods (incl. pairwise tournaments) with objective checks
+  and an append-only human verdict.
 - **Scratch run** — manual coding-agent workspace started from a project,
   base branch, optional scratch branch/name, executor profile, work mode,
   reasoning effort, prompt, optional issue/files, and capability profile. It is
@@ -178,12 +180,18 @@ Project -> Flow package -> Task / Experiment / Scratch run -> External operation
   work on a MAIster run branch, and promote to a selected target branch by PR or
   local merge after readiness passes. Deploy/release management stays manual and
   outside MAIster.
-- Experiment Comparison Studio (ADR-124) is required for Phase 1 benchmarking:
-  a project member can create a task-bound experiment, pin the base commit at
-  creation, launch variants through the normal run pipeline, compare diff/files/
-  gates/tokens, ask an advisory judge, and record a human verdict. It adds no
-  new execution runtime, no new SSE/domain event family, and no auto-approval or
-  auto-promotion.
+- The Evaluation Lab (ADR-142..147, ADR-150 — Implemented; supersedes the
+  ADR-124 Experiment Comparison Studio) carries Phase 1 benchmarking: Studies
+  over observed or launched participant runs, immutable evidence snapshots,
+  package-sourced judge methods with objective checks and pairwise
+  tournaments, controlled-launch recipes with preflight, and append-only
+  human verdicts. It adds no auto-approval or auto-promotion.
+- Multi-repo enablement (M49, ADR-155/156/157 — Implemented): cross-project
+  task relations under one platform-wide gating lock, opt-in cross-project
+  agent facade reach on the read/comment/relate allow-list, and read-only
+  sibling-repo context mounts on `ai_coding`/`judge`/`orchestrator` nodes.
+  `project = repo` stays; relations may cross projects, the automation they
+  drive may not.
 
 ## Phase 2
 
@@ -213,9 +221,11 @@ strong workload isolation, attention routing, and enterprise identity.
    - Build on Project Brain managed sources, owned lessons, proposals, and
      recall for dependency APIs, architecture decisions, project conventions,
      and Flow docs.
-   - Proposed lesson -> accepted rule workflow with a source trace to the run,
-     review, incident, bug, or manual decision that produced it.
-   - Rule freshness and cleanup so project memory does not become stale noise.
+   - Proposed lesson -> accepted rule workflow with a source trace
+     *(Implemented — `brain_proposals` with actor/resolution fields,
+     ADR-128)*.
+   - Rule freshness and cleanup *(Implemented — decay TTL + recurrence
+     promotion)* so project memory does not become stale noise.
 
 3. **Narrow tools and permissioned hands**
    - Build on scoped capability materialization, execution budgets, MCP trust,
@@ -247,22 +257,26 @@ strong workload isolation, attention routing, and enterprise identity.
    - Noisy-command compaction for tests, git output, linters, builds, and logs.
    - Cache-resume cost tracking for checkpointed sessions.
    - Browser/process memory visibility for parallel runs on small hosts.
-   - Budget thresholds that warn first and enforce only when the product signal
-     is clear.
+   - Budget thresholds *(Implemented — ADR-101 warn → escalate → terminate
+     ladder with `BUDGET_EXCEEDED` and the `budget_breach` HITL; USD pricing
+     stays deferred)*.
 
 7. **Flow and intake expansion**
    - More Flow templates: bugfix, feature, review, requirements clarification,
      system analysis, incident/log analysis, docs update, dependency update,
      and release-note preparation.
-   - Flow designer UI on top of the graph/runtime foundation, without turning
-     MAIster into a generic workflow builder.
+   - Flow designer UI *(Implemented — Flow Studio visual editor, M27/M35/M39;
+     see `system-analytics/flow-studio.md`)* on top of the graph/runtime
+     foundation, without turning MAIster into a generic workflow builder.
    - Writable competing-code consensus drafts only after the implemented
      read-only M41 consensus proves demand in qualified core processes.
    - Deeper Gemini/OpenCode/MiMo ACP proof for permissions, MCP, model switching,
      and resume semantics beyond the first adapter-family support.
-   - CI/log intake, external board sync, and background project agents only
-     after draft/publish, dedup, severity, cooldown, and human-feedback controls
-     exist.
+   - CI/log intake and external board sync only after draft/publish, dedup,
+     severity, cooldown, and human-feedback controls exist. (The background
+     project-agent substrate itself shipped — M34: catalog, five triggers,
+     read-only enforcement, quarantine, triage — without those controls;
+     they remain the bar for agent OUTPUT surfaces and board sync.)
 
 Phase 2 succeeds when a real project can run several concurrent agent tasks
 with visual checks, curated references, narrow tools, useful summaries,
@@ -278,7 +292,9 @@ spends attention on decisions rather than terminal babysitting.
 - Cross-run artifact reuse.
 - Full payload-schema validation for every artifact kind.
 - OIDC/SSO/MFA, session revocation, escalation calendars, external board sync,
-  notification channels, and organization/team administration.
+  notification channels (the outbound-webhook substrate ADR-077 is built;
+  deferred is only the notifier consumers), and organization/team
+  administration.
 - Public marketplace, remote reputation/rating, automated malicious-code
   scanning, signed packages, automatic update rollout, package dependency
   solving, container sandboxing, organization-wide capability policies, and

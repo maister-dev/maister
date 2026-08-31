@@ -172,7 +172,7 @@ there is no `gc_state` enum column.
 
 ## Process flows
 
-### Startup reconcile (Designed, M19)
+### Startup reconcile (Implemented, M19)
 
 Runs once on Node boot from `web/instrumentation.ts`, AFTER the two
 existing recovery sweeps (`runResumeRecoverySweep`,
@@ -201,7 +201,7 @@ flowchart TD
     Act -- skip --> Noop[no action]
 ```
 
-### Periodic reconcile sweep (Designed, M19)
+### Periodic reconcile sweep (Implemented, M19)
 
 A `globalThis`-singleton timer
 (`setInterval(...).unref()`, `MAISTER_RECONCILE_SWEEP_INTERVAL_SECONDS`,
@@ -291,7 +291,7 @@ flowchart TD
     Sum -- yes --> R207[207 JSON summary]
 ```
 
-### Preserve-then-prune (Designed, M19)
+### Preserve-then-prune (Implemented, M19)
 
 The destructive-safety core: every removal is gated on preserve success;
 GC archives a branch, it never merges to main/target (that is M18
@@ -543,7 +543,7 @@ change in the same commit, never on its own.
 - Related domains: [`runs.md`](runs.md), [`workspaces.md`](workspaces.md),
   [`workbench-lifecycle.md`](workbench-lifecycle.md),
   [`flow-packages.md`](flow-packages.md), [`flow-graph.md`](flow-graph.md).
-- Source (Designed, M19): `web/lib/reconcile.ts`, `web/lib/runs/recover.ts`,
+- Source (Implemented, M19): `web/lib/reconcile.ts`, `web/lib/runs/recover.ts`,
   `web/lib/gc/preserve.ts`, `web/lib/gc/workspace-gc.ts`,
   `web/lib/gc/revision-gc.ts`, `web/lib/scheduler/system-sweeps.ts`.
 - Context-mount backstop (ADR-157): `web/lib/gc/context-mount-gc.ts` (the sweep +

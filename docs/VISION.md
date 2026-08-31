@@ -73,8 +73,9 @@ Keep the implemented spine reliable on **several real projects in parallel**:
 2. See active workspaces across projects in a project-grouped Portfolio/left-rail
    surface with status labels, launched-by display, and a per-project scratch
    `+` action.
-3. For each project, manage a **task board** with two columns:
-   `Backlog | In Flight`.
+3. For each project, manage a **task board** — 4 task states rendered as 7
+   derived columns (`Backlog · Prepare · InProduction · OnReview ·
+   InDelivery · Crashed · Done`).
 4. Create backlog tasks (title + prompt + Flow from project's `flows[]`).
 5. Click **Launch** on a Backlog task → workspace auto-created via git
    worktree → Flow launched. Task moves to In Flight. Retry-friendly: a task
@@ -85,13 +86,16 @@ Keep the implemented spine reliable on **several real projects in parallel**:
    composer, and adjust executor profile, work mode, reasoning effort,
    optional issue/files, and run-scoped MCP/skill/rule/agent-pack profile
    through expandable controls.
-7. Run Claude Code or Codex headlessly inside the worktree through ACP.
+7. Run coding agents headlessly inside the worktree through ACP — `claude`
+   and `codex` as the ready default adapter families, plus diagnostics-gated
+   `gemini` / `opencode` / `mimo`.
 8. Show run progress, logs, dialog turns, and HITL in the Web UI through
    durable SSE.
 9. Let the user answer permission and structured-form HITL requests.
 10. Show diff and promote a ready run branch to the selected target branch.
-11. Run up to 3 Flow sessions concurrently across projects; scratch v1 shares
-    the same live-session cap and rejects when full rather than queueing.
+11. Run up to 6 flow/scratch sessions concurrently across projects
+    (`MAISTER_MAX_CONCURRENT_RUNS`, global cap; platform agents have a
+    separate cap of 3); runs above the cap queue as `Pending`.
 
 Qualification succeeds when a core process records its prerequisites, exact
 package and engine compatibility, expected artifacts/gates, failure taxonomy,
@@ -130,9 +134,10 @@ reliable while this validation proceeds:
 
 ## Phase 2: mature the harness
 
-Phase 2 should not be "more integrations" first. After the current target can
-run a controlled Flow end to end, Phase 2 should make the operating harness
-dependable under daily parallel use.
+Phase 2 should not be "more integrations" first. The original gate — run a
+controlled Flow end to end — cleared with the M20 dogfood (2026-07-15); the
+harness work below is now partly built. Four of the six layers have shipped
+foundations (tagged per R6); "Eyes" and narrow "Hands" remain the open ones.
 
 The harness has six layers:
 
@@ -141,7 +146,9 @@ The harness has six layers:
    preview URLs, port mapping, browser automation, screenshots, DOM inspection,
    user-flow traces and visible app/test service state as run evidence.
 
-2. **Knowledge**
+2. **Knowledge** *(Implemented — Project Brain, ADR-122/127/128: owned tier,
+   indexed Consultant tier, recall/retain MCP tools, proposals bridge; see
+   `system-analytics/project-brain.md`)*
    Project context must be curated, short and fresh. Promote local references,
    dependency notes, project rules, Flow docs and accepted lessons as managed
    artifacts with review and staleness signals.
@@ -152,25 +159,32 @@ The harness has six layers:
    permission policies for tools that touch files, terminals, network or
    secrets.
 
-4. **Automation**
+4. **Automation** *(Implemented — guardrail/hook engine ADR-108/130, run
+   schedules M28, project automations ADR-139, domain-event bus ADR-086)*
    Formatting, linting, status pings, review checks, slash commands, skills and
    recurring routines should be visible project automation. They should not be
    hidden local magic.
 
-5. **Observability**
+5. **Observability** *(Partially implemented — Observatory M23 + ADR-134,
+   assistant pulse ADR-152; the human-facing run-summary/attention digest and
+   notification routing remain open)*
    The user should know what finished, what is blocked, what changed and what
    needs review without watching logs. Add run summaries, health signals,
    recovery events and notification routing.
 
-6. **Economics**
+6. **Economics** *(Implemented for tokens/time — budget axis ADR-101/117/125:
+   warn → escalate → terminate with `BUDGET_EXCEEDED`, cost rollups, breach
+   HITL; USD pricing and `maxCostUsd` enforcement deliberately deferred)*
    Tokens, context, browser/process memory and noisy commands are product
-   constraints. Track cost per run, node, executor, gate and tool surface; warn
-   first, enforce later.
+   constraints. Track cost per run, node, executor, gate and tool surface.
 
 Phase 2 should expand Flow templates, previews, knowledge, automation,
 notifications, economics and intake only after the current package/graph/gate
-foundation exists. Background agents and external board sync stay behind noise
-controls: draft/publish, dedup, severity, cooldowns and human feedback.
+foundation exists. The background-agent substrate shipped (M34: catalog, five
+triggers, read-only enforcement, quarantine, triage) without the originally
+gating noise controls — draft/publish, dedup, severity, cooldowns and human
+feedback remain roadmap for agent OUTPUT surfaces; external board sync still
+waits for them.
 
 ## Later / outside current validation
 
@@ -178,8 +192,8 @@ controls: draft/publish, dedup, severity, cooldowns and human feedback.
 - managed preview hosting and strong container/VM sandboxing;
 - enterprise SSO, organization administration and compliance reporting;
 - Temporal-class durable orchestration;
-- judge calibration lab;
-- automatic project lesson promotion;
+- judge calibration lab (calibration/longitudinal read models beyond the
+  shipped ADR-145/147 judge panels);
 - full Kanban (Done as drag-target / WIP limits / swim-lanes);
 - cross-project task moves;
 - GitHub issue / Linear / YouGile sync;

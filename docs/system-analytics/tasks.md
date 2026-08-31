@@ -49,7 +49,7 @@ comment/activity/subscription/inbox substrate around tasks is owned by
   (`requires` added by ADR-098, `duplicate_of` by ADR-112),
   `UNIQUE(from_task_id, kind, to_task_id)`, no self-relations,
   same-project only in Stage 1 (`CONFIG` on violation; the project axis is
-  lifted by ADR-155 — Designed, see [`social-board.md`](social-board.md)).
+  lifted by ADR-155 — Implemented, see [`social-board.md`](social-board.md)).
   Inverse labels ("blocked by", "required by", "child of") are render-time
   only.
 - **Launch verdict** (M34 — Implemented, ADR-089) — `tasks.flow_id` becomes
@@ -310,7 +310,7 @@ flowchart TD
     Class -- flagged/unconfigured --> Excluded[excluded by construction]
 ```
 
-### Manual launchability v2 and "Run again" surfaces (Designed, ADR-085)
+### Manual launchability v2 and "Run again" surfaces (Implemented, ADR-087)
 
 Manual launchability is an operator-facing intent, separate from scheduled
 dispatch. The manual classifier returns:
@@ -421,7 +421,7 @@ cap; hundreds are allowed, full pagination is Phase 2). The count chip and the
 token-total aggregates are computed over **all** runs via SQL aggregates, so the
 display cap never makes the chip lie.
 
-### Phase B UI and test ownership (Designed, ADR-085)
+### Phase B UI and test ownership (Implemented, ADR-087)
 
 | User story                           | UI surface(s)                                          | Acceptance and states                                                                                                                                                                                                                                                                                          | Test owner                                                                                |
 | ------------------------------------ | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
@@ -550,7 +550,7 @@ launchable`, held **even when `flow_id` is set** — and MUST be cleared only
   dispatcher — via the shared classifier, never via UI-only logic.
 - **(Implemented, ADR-083 clause 4)** Duplicate relation writes MUST be
   idempotent no-ops; the relation's project axis (same-project in Stage 1,
-  from-end ownership with a possibly foreign to-end under ADR-155 — Designed,
+  from-end ownership with a possibly foreign to-end under ADR-155 — Implemented,
   which supersedes only that sentence of the clause) is contracted in
   [`social-board.md`](social-board.md).
 - Launch runs precondition checks (clean repo, branch free, worktree
@@ -603,7 +603,7 @@ Abandoned`. Failure to terminate the session does NOT block the task
   No cycle detection in Stage 1.
 - **(Implemented, ADR-083 clause 4) Self relation** → `MaisterError("CONFIG")`
   (400 internal, 422 ext). A cross-project relation is refused the same way in
-  Stage 1 and allowed by ADR-155 (Designed) — see
+  Stage 1 and allowed by ADR-155 (Implemented) — see
   [`social-board.md`](social-board.md).
 - **(Implemented, ADR-078) Hole-y numbering** — deleting a task leaves a
   permanent gap in `KEY-N`; `next_task_number` never decrements. Not an

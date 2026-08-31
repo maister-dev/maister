@@ -83,7 +83,7 @@ order) is the DQ7 matrix:
 | cap full (task launchable)                                     | `skipped_cap`             | flag + `catchup_queued`                                             | `launchRun` → run lands `Pending` + queue position (`queued_pending`)                                                              |
 | free                                                           | launch                    | launch (+ clear flag)                                               | launch                                                                                                                             |
 
-### Classifier split for manual relaunch (Designed, ADR-085)
+### Classifier split for manual relaunch (Implemented, ADR-087)
 
 Schedules keep their conservative classifier intent even though manual
 "Run again" allows `Done`, `Review`, and `Crashed` targets. A schedule fire is

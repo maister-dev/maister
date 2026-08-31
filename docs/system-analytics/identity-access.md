@@ -478,7 +478,7 @@ flowchart TD
 - Error taxonomy: [`../error-taxonomy.md`](../error-taxonomy.md)
   (`UNAUTHENTICATED`, `UNAUTHORIZED`, `PASSWORD_CHANGE_REQUIRED`,
   `ACCOUNT_INACTIVE`).
-- Cross-project agent reach (Designed):
+- Cross-project agent reach (Implemented, ADR-156):
   [ADR-156](../decisions.md#adr-156-cross-project-agent-facade-reach),
   [`agents.md`](agents.md) (the reach predicate, the `runs.agent_chain_depth`
   budget, the attachment grant), [`external-operations.md`](external-operations.md)

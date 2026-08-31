@@ -488,7 +488,7 @@ flowchart TD
     K -- ai_judgment --> AI[agent session new-session<br/>parse structured verdict]
     K -- skill_check --> SK[slash command via agent<br/>best-effort, TODO M14 scoping]
     K -- human_review --> HR[emit review HITL]
-    K -- artifact_required --> AR[skipped + WARN + TODO M12]
+    K -- artifact_required --> AR[executed — presence + validity, M12]
     K -- external_check --> EC[pending; flipped by external report endpoint]
     CC --> Mode{mode?}
     AI --> Mode
@@ -704,7 +704,7 @@ readiness interaction: [`readiness.md`](readiness.md).
   raw prose kept as evidence — **not** a thrown domain code
   ([ADR-008](../decisions.md#adr-008-typed-error-taxonomy-maistererror) closed
   union).
-- **`artifact_required` gate** → `skipped` + WARN + `TODO(M12)` (no artifact
+- **`artifact_required` gate** → **executed since M12** (presence + validity + `must_touch`/`must_not_touch` per ADR-074; historically stubbed as `skipped` + WARN before M12) (no artifact
   instances until M12). **`external_check` gate** → starts `pending`; an external
   runner flips it via `POST /api/v1/ext/runs/{runId}/gates/{gateId}/report`, which
   drives the gate `pending → passed|failed`, records a `test_report` artifact, and

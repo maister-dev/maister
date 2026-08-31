@@ -1,6 +1,20 @@
 # Flow Authoring Assistant — feature request
 
-> **Status:** Feature request / vision. Not a committed plan, changes no ADR,
+> **Status: SHIPPED — historical record (verified 2026-08-31).** The feature
+> landed as the Flow Studio AI authoring assistant (ADR-097 + ADR-110); the
+> behavior SSOT is
+> [`../system-analytics/studio-ai-assistant.md`](../system-analytics/studio-ai-assistant.md).
+> **The shipped architecture differs from this proposal**: V1 runs a
+> read-only ACP session that emits a validated `maister_flow_assistant_action.v1`
+> block which the web tier applies in place through local-package write
+> helpers — the review/revert buffer is the working tree + git diff drawer
+> with **Commit/Discard** as the accept boundary. There is NO
+> draft-proposal→human-approve gate; the "mandatory and never bypassable"
+> approval flow described below was NOT built. The read-only editor claim
+> below is also historical — the Studio editor (M27/M35/M39) is writable.
+> Original text kept verbatim as decision context:
+>
+> Feature request / vision. Not a committed plan, changes no ADR,
 > supersedes nothing. Captures the *what* and *why* of an agent-assisted Flow
 > authoring surface so it can be fed into `/aif-plan` later. Lives in `docs/pv/`
 > beside [`improvement-roadmap.md`](improvement-roadmap.md); it is the write-side

@@ -805,10 +805,10 @@ single-active-run guards.
   [ADR-090](../decisions.md#adr-090-agent-workspace-axis-with-three-layer-read-only-enforcement-and-quarantine),
   [ADR-106](../decisions.md#adr-106-package-based-platform-agents--package-identity-attachment-gating-optional-flow-enrichment-and-per-agent-runner-policy)
   (package identity, gating, optional-flow, runner policy);
-  [ADR-156](../decisions.md#adr-156-cross-project-agent-facade-reach) (Designed —
+  [ADR-156](../decisions.md#adr-156-cross-project-agent-facade-reach) (Implemented —
   cross-project facade reach, scope subset, agent chain depth),
   [ADR-157](../decisions.md#adr-157-read-only-sibling-repo-context-mounts)
-  (Designed — read-only sibling context mounts); boundary kept from
+  (Implemented — read-only sibling context mounts); boundary kept from
   ADR-041/043 (materialize-only); policy axes ADR-095/101/102.
 - **DB:** [`db/agents-domain.md`](../db/agents-domain.md),
   [`db/runs-domain.md`](../db/runs-domain.md),
@@ -821,7 +821,7 @@ single-active-run guards.
   [`agent-mentions.md`](agent-mentions.md) (`trigger_type='mention'` bindings
   and the directed `@<agentId>` summon branch, ADR-151).
 - **Agent memory:** [`agent-memory.md`](agent-memory.md) (ADR-152, Implemented).
-- **Cross-project + sibling context (Designed):**
+- **Cross-project + sibling context (Implemented, ADR-155/156/157):**
   [`identity-access.md`](identity-access.md) (the `CROSS_PROJECT_AGENT_SCOPES`
   subset, the `tasks:create` grant, token authority at the cross-project seam),
   [`flow-settings.md`](flow-settings.md) + [`workspaces.md`](workspaces.md) (the

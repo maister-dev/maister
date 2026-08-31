@@ -10,7 +10,11 @@
 > together with (and ahead of the polish of) flow binding, not after it;
 > **(3) social layer** — agents are polymorphic social actors (quarantine
 > system comments, `task_activity`, triage verdict + Q&A loop over task
-> comments), which this sketch did not anticipate.
+> comments), which this sketch did not anticipate;
+> **(4) packaging** — agents ship INSIDE flow packages (`agents/<stem>.md`,
+> package-qualified ids `<flowRefId>:<stem>`, ADR-106), not in the
+> standalone `~/.maister/agents/` / `.maister/<slug>/agents/` scopes §"scope"
+> below proposes.
 > **Mγ (continuous + enforce) remains the future stage** — the sections
 > below stay as the Mγ vision record. Original framing kept verbatim:
 >
@@ -122,8 +126,9 @@ single-box deployments — logic stays in Next.js either way.
 Guards:
 - **ADR #1** — tick = clock + recovery sweep, never a state-transition poller; no
   `fs.watch`/`chokidar`. Live path stays ACP notifications.
-- **Concurrency** — separate `MAISTER_MAX_CONCURRENT_AGENTS` budget; **do not**
-  touch the flow cap=3 (ADR #4). Ops agents must not evict delivery runs.
+- **Concurrency** — separate `MAISTER_MAX_CONCURRENT_AGENTS` budget (shipped:
+  default 3; the flow/scratch cap was later raised to 6 via ADR-089/090).
+  Ops agents must not evict delivery runs.
 - **Idempotency** — atomic claim (`UPDATE … WHERE next_run_at <= now()
   RETURNING`) so overlapping ticks can't double-spawn.
 - **Workspace by mode** (light ADR #7 bifurcation) — monitoring/stats agents

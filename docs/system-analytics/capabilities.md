@@ -50,7 +50,7 @@ sources, cross-project capability promotion, codex enforced mapping
 
 ## Domain entities
 
-- **Capability record** (`capability_records`, Designed (M14) for the Flow-run
+- **Capability record** (`capability_records`, Implemented (M14) for the Flow-run
   wiring; the table itself ships from M11/scratch). One row per declared
   capability in a project. `kind ∈ {mcp, skill, rule, setting, restriction, tool,
   agent_definition, env_profile}`; `source ∈ {platform, project, flow-package}`;
@@ -59,14 +59,14 @@ sources, cross-project capability promotion, codex enforced mapping
   `agent_definition` (from `maister.yaml agent_definitions[]`) and `env_profile`
   (from `env_profiles[]`) — generically. See
   [`../db/capabilities-domain.md`](../db/capabilities-domain.md).
-- **Capability import** (`capability_imports`, **NEW** — Designed (M14)). One row
+- **Capability import** (`capability_imports`, **NEW** — Implemented (M14)). One row
   per `(projectId, capabilityRefId, resolvedRevision)`, mirroring
   `flow_revisions`: `source`, `versionTag`, `resolvedRevision` (40-hex SHA),
   `manifestDigest`, `manifest` (jsonb), `installedPath`, `setupStatus`,
   `packageStatus`, `trustStatus`, `createdAt`/`updatedAt`. Records a git-pinned
   capability package fetched into `~/.maister/capabilities/<id>@<sha[:12]>/`.
   Migration `0019`. See [`../db/capabilities-domain.md`](../db/capabilities-domain.md).
-- **Resolved capability profile** (Designed (M14)). The in-memory output of
+- **Resolved capability profile** (Implemented (M14)). The in-memory output of
   `resolveCapabilityProfile` — a deterministic, agent-support-gated selection of
   per-kind capabilities plus a `profileDigest` (stable across runs, changes when
   a resolved capability revision changes). For Flow runs it is NOT persisted in
@@ -289,7 +289,7 @@ union).
 
 ## Capability resolution precedence (Implemented)
 
-**(Implemented)** The uniform local-first resolution order applies to **all** capability kinds (`mcp`, `skill`, `rule`, `agent_definition`, `restriction`, and any future kind): **project > platform > flow-package**. For `kind=mcp`, an explicit `project_mcp_bindings` row overrides this precedence for its ref (ADR-129, Designed — see [mcp-management.md](mcp-management.md)).
+**(Implemented)** The uniform local-first resolution order applies to **all** capability kinds (`mcp`, `skill`, `rule`, `agent_definition`, `restriction`, and any future kind): **project > platform > flow-package**. For `kind=mcp`, an explicit `project_mcp_bindings` row overrides this precedence for its ref (ADR-129, Implemented — see [mcp-management.md](mcp-management.md)).
 
 Winner per `(kind, capability_ref_id)`: the highest-precedence record in the chain is used; lower-precedence records with the same `(kind, refId)` are **shadowed — no merge, no duplicate emitted**. This is consistent with the runner-resolution chain (root CLAUDE.md §5) and is enforced in `resolver.ts` via winner-per-`(kind, refId)` selection (`selectedRecords`), so no duplicate capability record for the same `(kind, refId)` reaches materialization.
 

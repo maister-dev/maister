@@ -14,8 +14,8 @@
 > [`../plans/2026-06-08-aif-flow-package-design.md`](../plans/2026-06-08-aif-flow-package-design.md).
 > Lives in `docs/pv/` beside
 > [`improvement-roadmap.md`](improvement-roadmap.md); ADR + migration numbers
-> are assigned at implementation time (next-free; the M32 outbox plan
-> currently claims ADR-085 / migration 0045).
+> are assigned at implementation time (next-free; the M32 outbox landed as
+> ADR-086 / migration `0046_domain_events.sql`).
 
 ## 1. Goal and end model
 
@@ -274,20 +274,16 @@ be planned cold; pointers: this doc, `docs/system-analytics/flow-packages.md`,
   first", never force). Arbitrary host checkouts join the catalog as
   `kind: local` sources with digest-as-version (ADR-132 §c), which covers
   the "test locally before proposing" leg without git round-trips.
-- **P5 — Agent-assisted package editing.** Natural-language package
-  editing ("remove X from node Y, add a gate Z") driven by an agent that
-  edits the Studio draft set; review stays human. Builds on P4's draft
-  granularity; likely a scratch-run variant with a package-editing
-  toolset.
-- **P6 — `core` package content.** Platform agents shipped as a package:
-  task **triager/router** (clarifies a task, picks flow via
-  `metadata.labels`/`route_when`, picks runner + delivery policy) and
-  **GitHub intake** (reads issues, creates internal tasks + relations).
-  Depends on the platform-agents direction (M32 outbox,
-  `agent_tick` scheduler job, MCP facade actor model;
-  see [`agents-as-environment-actors.md`](agents-as-environment-actors.md)).
-  The package manifest grows a `platform_agents` section via
-  `schemaVersion` bump.
+- **P5 — Agent-assisted package editing.** *(Shipped — ADR-097/110, the
+  Studio AI assistant: exactly the predicted shape, a project-less
+  scratch-run ACP session rooted at a local-package working dir; see
+  [`../system-analytics/studio-ai-assistant.md`](../system-analytics/studio-ai-assistant.md).)*
+- **P6 — `core` package content.** *(Half shipped: the triager substrate
+  landed with M34/ADR-111/112 — triage verdict ops, Q&A loop, simple-intent
+  tasks, `auto_launch_triaged`; the `core:triager` agent definition lives in
+  the maister-plugins `core` package.)* Remaining: **GitHub intake** (reads
+  issues, creates internal tasks + relations) and finishing the `core`
+  package packaging of these agents.
 - **Open note — package capability materialization into the consuming
   repo.** Today bundle skills/agents materialize into the **run worktree**
   (repo-local copies win). Open direction: an optional script/command to

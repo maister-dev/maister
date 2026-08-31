@@ -121,7 +121,7 @@ Status: **Implemented** — `web/lib/instance-config.ts` +
 - **Non-admin opens `/settings`** → forbidden branch; roots and host-tool
   status are not resolved or rendered.
 
-## Platform MCP server admin (Designed, M27)
+## Platform MCP server admin (Implemented, M27)
 
 The `/settings` page hosts a **platform MCP server admin panel**, mirroring the
 ACP runner admin panel ([acp-runners.md](acp-runners.md), ADR-065). An admin
@@ -142,7 +142,7 @@ detail, state machine, and expectations are in
   [ADR-049 PR promotion via a hybrid provider `PrAdapter`](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant)
   (Implemented, M18 — gh/glab + Gitea-API token become required-for-PR),
   [ADR-065](../decisions.md#adr-065) (admin CRUD surface pattern; MCP panel mirrors ACP runner panel),
-  [ADR-070](../decisions.md#adr-070) (platform MCP admin CRUD, Designed M27).
+  [ADR-070](../decisions.md#adr-070) (platform MCP admin CRUD, Implemented M27).
 - Config reference: [`../configuration.md`](../configuration.md) §Environment
   variables.
 - Related domains: [`projects.md`](projects.md),

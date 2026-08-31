@@ -326,10 +326,10 @@ Before any docs PR merges, the diff MUST pass:
 | OpenAPI 3.0.3 | `npx @redocly/cli lint <file>` or [editor.swagger.io](https://editor.swagger.io) | Zero errors; warnings reviewed. |
 | AsyncAPI 2.6.0 | `npx @asyncapi/cli validate <file>` | Zero errors. |
 
-CI gates land in Phase 2. Until then, the author runs the checks
-locally; the Mermaid gate runs automatically through the hook above.
-The `Validate all artifacts` task in the implementation plan covers
-this for the initial bulk migration.
+CI exists (`.github/workflows/ci.yml`: lint/typecheck/unit lane plus a
+label-gated integration lane); the docs gates above also run locally and
+through the Claude Code Stop hook. Wiring `validate:docs` into CI is an
+open follow-up.
 
 ## Adding a new artifact
 

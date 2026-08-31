@@ -5,8 +5,8 @@
 > `readiness-core.ts` classifier, the `overridden` summary state, and the unified
 > readiness summary on run-detail / board / portfolio are shipped, on top of the M11a
 > gate-execution lifecycle, the M12 artifact-validity rules, and the M16 `external_check`
-> loop. The merge-refuse-for-flow-runs acceptance clause is **deferred to M18** (the
-> scratch-promote merge guard is the wired, vacuously-ready call site only). Locked decisions:
+> loop. The merge-refuse-for-flow-runs acceptance clause is **Implemented (M18)** —
+> `promoteRun` calls `assertEvidenceReady` and refuses on failing blocking gates. Locked decisions:
 > [ADR-048](../decisions.md#adr-048-readiness-enforcement-over-all-blocking-gate-kinds--verdict-calibration-m15),
 > bounded by [ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped)
 > and [ADR-045](../decisions.md#adr-045-external_check-enforcement-via-the-review-chokepoint-m16m15m18-carve).
@@ -193,9 +193,9 @@ The pre-M15 `artifactEnforcementActive` (engine `1.2.0`) guard around this call 
 enforcement now applies to **all** graph flows. The merge phase reuses the same
 `assertEvidenceReady(runId, "merge")`; in M15 it is wired only into the scratch promote
 route as a reusable call site (vacuously ready — scratch runs carry no flow gates), with
-genuine flow-run merge enforcement deferred to M18.
+genuine flow-run merge enforcement shipped with M18 (`web/lib/runs/promote.ts` calls `assertEvidenceReady(runId, "review", tx)` before promotion).
 
-### Delivery-policy auto trigger (Designed, ADR-085)
+### Delivery-policy auto trigger (Implemented, ADR-087)
 
 `trigger="auto_on_ready"` consumes the existing readiness contract instead of adding a new
 readiness state. A run in `Review` with an auto delivery-policy snapshot may auto-promote

@@ -321,7 +321,7 @@ flowchart TD
   batch with a paid side effect burns money hourly, not minutely);
   `consecutive_failures` + `last_error` + the pass summary's `deferred` count
   are the observability surface (WARN log per failing pass, INFO per deferral).
-  Poison-pill policy is a first-real-consumer concern (Phase 2).
+  Poison-pill / dead-letter policy remains open (tracked in the roadmap backlog): eight real consumers are registered, so the original "first-real-consumer" framing no longer applies — the per-consumer failure backoff (capped at one attempt/hour) is today's only backstop.
 - **Project/task/run hard delete** → FK cascade removes the events; the
   durable audit trail is `task_activity` / run ledgers, not this log.
 

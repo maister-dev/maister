@@ -103,7 +103,7 @@ enum | array`.
 - **Chat checkpoint** — **(M30 — Implemented, ADR-078)** the single L3 neutrality
   baseline ref `refs/maister/chat-checkpoints/<runId>/<hitlRequestId>` (bounded at 1,
   captured at the first chat turn) via the ADR-079 checkpoint machinery.
-- **Delivery-policy conflict assignment** — **(Designed, ADR-085)** an
+- **Delivery-policy conflict assignment** — **(Implemented, ADR-087)** an
   `ai_rebase_merge` promotion conflict uses the existing `merge_conflict` assignment
   action kind and the current inbox / needs-you surfaces. Agent-driven conflict
   resolution may raise normal `permission`, `form`, or `human` HITL requests during the
@@ -249,7 +249,7 @@ sequenceDiagram
     Note over R: Exceeding rework.maxLoops fails closed.
 ```
 
-### `ai_rebase_merge` HITL surfacing (Implemented, ADR-085)
+### `ai_rebase_merge` HITL surfacing (Implemented, ADR-141)
 
 Delivery-policy promotion does not create a parallel HITL lane. When
 `strategy="ai_rebase_merge"` hits a rebase conflict, the promote service records the

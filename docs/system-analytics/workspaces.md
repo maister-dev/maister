@@ -27,7 +27,7 @@ reconciliation on host or process restart.
 - **Promotion mode** — `local_merge | pull_request` (`workspaces.promotion_mode`).
   Resolved at launch from the override chain (launch override > project
   `promotion.mode` > default `local_merge`); a per-run snapshot, not live-synced.
-- **Delivery policy** (Designed, ADR-085) — typed run snapshot resolving
+- **Delivery policy** (Implemented, ADR-087) — typed run snapshot resolving
   project default -> launch override -> promote-time override. It supersedes
   `promotion_mode` for new Flow runs while preserving legacy compatibility:
   `local_merge` maps to `strategy=merge`, `pull_request` maps to
@@ -269,7 +269,7 @@ No new `MaisterError` code is added — the closed union
 ([ADR-008](../decisions.md#adr-008-typed-error-taxonomy-maistererror)) already
 covers `PRECONDITION`, `CONFLICT`, and `EXECUTOR_UNAVAILABLE`.
 
-#### Delivery-policy promotion (Designed, ADR-085)
+#### Delivery-policy promotion (Implemented, ADR-087)
 
 New Flow runs snapshot a `DeliveryPolicy`:
 
@@ -516,13 +516,13 @@ flowchart LR
   explicit recover route for crashed scratch sessions.
 - GC removes worktrees of runs in `Done | Abandoned` older than 7 d;
   GC failures log and continue without setting `removed_at`.
-- **(Designed, M19)** GC MUST select terminal candidates by
+- **(Implemented, M19)** GC MUST select terminal candidates by
   `COALESCE(workspaces.scheduled_removal_at, runs.ended_at + MAISTER_GC_AGE_DAYS) <= now()`
   (default age 14 d) and MUST preserve before pruning: dirty tracked + untracked
   state is snapshot-committed onto `maister/archive/<runId>`, and
   `removeOwnedWorktree` runs ONLY when preserve succeeds. See
   [`reconciliation-gc.md`](reconciliation-gc.md).
-- **(Designed, M19)** GC MUST NOT merge into main/target; preservation is the
+- **(Implemented, M19)** GC MUST NOT merge into main/target; preservation is the
   archive branch (+ optional push when `MAISTER_GC_ARCHIVE_PUSH=true`, default
   `false`) only.
 - **(Implemented, M27)** Operator archive/drop/export/snapshot/handoff actions

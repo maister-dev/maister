@@ -66,7 +66,7 @@ in M11c.
   `flow_revisions.manifest` (persisted; see [runs-domain ERD](../db/runs-domain.md)).
 - **Capability class** — one of the seven capability-bearing settings subject to
   the `enforcement` intent: `mcps`, `tools`, `skills`, `restrictions`,
-  `permissionMode`, `workspaceAccess`, `hooks` (`hooks` Designed — ADR-108, M40;
+  `permissionMode`, `workspaceAccess`, `hooks` (`hooks` Implemented — ADR-108, M40;
   see "Hook engine capability class" below).
 - **`enforcement` intent** — per-class `strict | instruct | off`, default
   `instruct`, declared by the flow author in `settings.enforcement`.
@@ -78,7 +78,7 @@ in M11c.
 - **`enforcement_snapshot`** — append-only `node_attempts` jsonb column
   (migration `0013`) recording `{ class, declared, capability, verdict }[]` at
   launch / first attempt.
-- **`settings.context_repos`** (Designed —
+- **`settings.context_repos`** (Implemented —
   [ADR-157](../decisions.md#adr-157-read-only-sibling-repo-context-mounts)) — a
   typed node setting declaring **read-only sibling-repo context mounts**.
   Available on `ai_coding`, `judge`, and `orchestrator` **only**: all three
@@ -302,7 +302,7 @@ and the actionable smoke ritual (`pnpm -C supervisor smoke:acp --capability-enfo
 distinguishing "awaiting adapter evidence" from a generic refusal. Every new string has
 EN + RU keys.
 
-## Hook engine capability class (Designed — ADR-108)
+## Hook engine capability class (Implemented — ADR-108)
 
 The **seventh** capability class `hooks` ([ADR-108](../decisions.md#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation),
 M40) declares the per-tool-call guardrail rules (`path_guard` / `repetition` /
@@ -347,7 +347,7 @@ documented-N/A if the bundled adapter does not honor settings-file hooks. The
 native hook's `allowedPaths` derive from the same resolved `hooksConfig.pathGuard`
 (one source of truth).
 
-## FROZEN SPEC — capability-token normalizer & matcher (Designed — capability composer, FR-E)
+## FROZEN SPEC — capability-token normalizer & matcher (Implemented — capability composer, FR-E)
 
 The composer authors capabilities as **canonical tokens**; the normalizer expands
 them to each runner's **wire form** in the templating pass (nodes) and at scratch
@@ -563,7 +563,7 @@ flowchart TD
   taxonomy), [ADR-026/027/028](../decisions.md) (graph manifest, ledger, gates),
   [ADR-084](../decisions.md#adr-084-acp-adapter-families-for-gemini-cli-and-opencode),
   [ADR-157](../decisions.md#adr-157-read-only-sibling-repo-context-mounts)
-  (Designed — read-only sibling-repo context mounts).
+  (Implemented — read-only sibling-repo context mounts).
 - Schema / validation: `web/lib/config.schema.ts`, `web/lib/config.ts`.
 - Enforcement: `web/lib/flows/enforcement.ts`,
   `web/lib/flows/graph/compile.ts`, `web/lib/flows/graph/runner-graph.ts`.

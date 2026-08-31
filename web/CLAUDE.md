@@ -167,11 +167,12 @@ part of this milestone.
 - The board's "In Delivery" stage is an approximation computed in
   `web/lib/board.ts` from recently-merged run status — not a persisted
   board column.
-- Admin user management is limited to global users: `/admin/users` can
-  activate pending registrations, disable/re-enable accounts, change global
-  roles, and reset passwords. Project member invite/remove flows are still not
-  implemented; `project_members` rows are written only by `POST /api/projects`
-  (owner) and existing seed/test flows.
+- Admin user management covers global users at `/admin/users` (activate
+  pending registrations, disable/re-enable accounts, change global roles,
+  reset passwords). Project member management shipped after M9: the project
+  members panel adds/changes-role/removes members
+  (`web/lib/project-members.ts`, `web/app/api/projects/[slug]/members/*`,
+  ADR-062).
 
 ## Scripts
 

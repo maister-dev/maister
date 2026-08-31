@@ -5,7 +5,12 @@
 > sequencing lives in [`.ai-factory/ROADMAP.md`](../../.ai-factory/ROADMAP.md),
 > starting with M45 core-package process qualification on private projects.
 > Pre-/post-M20 wording below is preserved as historical decision context, not
-> current status. This document changes no ADR and supersedes nothing. It lives
+> current status. **Every wave proposal below has since shipped or been
+> rejected** (verified 2026-08-31): treat all in-body status remarks
+> ("in-flight", "not yet ADR-bound", "deferred", "blocked", "today …") as
+> STALE — the per-domain `docs/system-analytics/*.md` files and the ADR log
+> are the only current truth. This document changes no ADR and supersedes
+> nothing. It lives
 > in `docs/pv/`, beside
 > [`agents-as-environment-actors.md`](agents-as-environment-actors.md).
 
@@ -323,7 +328,7 @@ them behind the wedge-dilution risk noted in the sibling doc. **Mention-to-spawn
 see *Owner-directed next bets §3*.
 
 ### E5 — Multi-user / governance / external surface *(Wave 4)*
-RBAC with real action-blocking (today roles are routing/audit labels),
+RBAC with real action-blocking *(since shipped — `web/lib/authz.ts` action→role map, enforced platform-wide)*,
 team boundaries, role-scoped inboxes; bidirectional webhooks. Pull forward only
 when going from single-operator toward team use and the 3 external installs.
 The **external-agent surface** (API + MCP driving a separate conversational
@@ -489,7 +494,7 @@ JSON projection.
 - **Judge-driven branching** (`ai_judgment` + confidence calibration) — the
   deterministic half of dynamic routing (P4).
 - **Capability materialization** (per-session `settings.local.json` + MCP) —
-  M14; delivery shipped, strict enforcement deferred (ADR-041).
+  M14; delivery shipped; enforcement since flipped at the ACP seam (ADR-130).
 - **Session-reuse + consistency guard** — coded but dormant in graph mode (P6).
 - **`node_attempts.vars` + reduction** — exists; only human nodes populate it (P1).
 - **`hash`/`size_bytes` columns** — present but never written (activate in P3).
@@ -497,7 +502,7 @@ JSON projection.
 
 ## Deliberately deferred
 
-- Strict capability enforcement (blocked on the live-adapter spike, ADR-041).
+- Strict capability enforcement *(since shipped — ADR-130 `capability_guard` at the ACP seam; the ADR-041 per-adapter spike became moot)*.
 - Cross-run artifact reuse, content-addressed blob store, full payload-schema
   validation (PRODUCT_VIEW Phase 2).
 - Standalone/continuous actors before external validation (wedge-dilution risk).

@@ -303,7 +303,7 @@ See ADR-068 (`version_binding`), ADR-069 (`exec_trust`), and [`flow-studio.md`](
 - Rollback changes project enablement only. It does not mutate existing runs or
   delete the newer package revision.
 - Package removal is refused while any run references the revision.
-- **(Designed, M19)** Flow-revision GC MUST delete a `flow_revisions` row and
+- **(Implemented, M19)** Flow-revision GC MUST delete a `flow_revisions` row and
   its install path ONLY when `package_status='Removed'`, past
   `MAISTER_GC_AGE_DAYS`, with zero `runs.flow_revision_id` and zero
   `flows.enabled_revision_id` references re-asserted under `FOR UPDATE`; it only
@@ -346,7 +346,7 @@ manifest + install path from that pinned revision.
   before workspace creation.
 - **Remove referenced revision** -> `PRECONDITION`; keep revision until no run
   references it.
-- **(Designed, M19) GC of a still-referenced `Removed` revision** -> the FK
+- **(Implemented, M19) GC of a still-referenced `Removed` revision** -> the FK
   re-assert under `FOR UPDATE` finds a reference and the sweep SKIPS the row,
   leaving the bytes until it is genuinely unreferenced. No error raised.
 - **Rollback target incompatible with current project config** ->

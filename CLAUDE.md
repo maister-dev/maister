@@ -289,9 +289,11 @@ trust UI is Phase 2.
 
 Templating: full Mustache-style interpolation (strict mode — unknown var
 throws `CONFIG`) with session context, task fields, per-step output vars,
-executor metadata. Note: structured agent/cli `vars` are not yet populated
-(P1 roadmap); `{{ steps.<id>.output }}` carries stdout text today, only
-`human` nodes emit structured `vars`.
+executor metadata. Structured `vars` are populated by any node declaring
+`output.result` (`ai_coding | cli | check | judge` — ADR-063 P1 + M38
+`decide` routing); `{{ steps.<id>.output }}` carries stdout text,
+`{{ steps.<id>.vars.<name> }}` reads `node_attempts.vars`; artifact bodies
+inject via `{{ artifacts.<id>.content }}` (ADR-120).
 
 ### 7. Workspace lifecycle
 
@@ -430,8 +432,10 @@ Current Scope, these are **Implemented** today:
 - **Typed artifacts + evidence graph** (M12): `artifact_instances`, validity
   FSM, produced-output enforcement. → `artifacts.md`
 - **Capability materialization** (M14): per-session `settings.local.json` +
-  ACP `mcpServers`, two-axis trust (`trust_status` + `exec_trust`); strict
-  enforcement deferred (ADR-041). → `flow-settings.md`
+  ACP `mcpServers`, two-axis trust (`trust_status` + `exec_trust`); `tools`/
+  `mcps`/`hooks` are enforced at the supervisor ACP seam since ADR-130
+  (`capability_guard`); residual: flow-path `workspaceAccess` seam delivery +
+  the destructive-agent launch gate. → `flow-settings.md`, `guardrail-hooks.md`
 - **Readiness gate** (M15): promotion gating over blocking gates + verdict
   calibration. → `readiness.md`
 - **Observatory** (M23): read-only Autonomy Score, correction-rate, signal
@@ -440,8 +444,9 @@ Current Scope, these are **Implemented** today:
   agent_tick | flow_run | run_schedule`); user-facing task cron schedules
   shipped (M28) → `run-schedules.md`, `scheduler.md`
 - **Authored catalog + Flow Studio** (M25/M27): in-app create/version of
-  rules/skills/flows + visual graph editor; PR-to-catalog publication is
-  roadmap E3. → `flow-studio.md`
+  rules/skills/flows + visual graph editor; publish→PR to the package source
+  (ADR-113) and bidirectional upstream sync (ADR-132) shipped. →
+  `flow-studio.md`, `local-packages.md`
 - **Platform + project MCP & ACP-runner catalogs** (M27, ADR-065/070): CRUD
   + resolver precedence (project > platform > flow-package). → `acp-runners.md`
 - **External operations API + project tokens + MCP facade** (M16/M17):
@@ -493,6 +498,22 @@ Current Scope, these are **Implemented** today:
   emitter; package upgrade preview with agent break-impact warnings.
   → `agents.md`
 
+- **Post-M34 (compact; per-domain docs are authoritative):** orchestrator
+  engine + run-tree + shared-worktree review (M37, ADR-098/099/100/102) ·
+  output-driven `decide` routing + run-context (M38, ADR-103) · Studio
+  package authoring + local packages + fork↔upstream loop (M39,
+  ADR-105/107/110/113/116/132) · guardrail/hook engine (M40, ADR-108;
+  `capability_guard` ADR-130) · consensus node (M41, ADR-109) · unified
+  runner config + first-class sessions (M42, ADR-114) · Postgres-only +
+  graph-only cut-over, engine 3.0 (M43, ADR-131) · Flow Review Workspace
+  (M44, ADR-138) + branch sync / PR lifecycle / `ai_rebase_merge`
+  (ADR-140/141) · Project Brain A/B/C (ADR-122/127/128) · Evaluation Lab +
+  Experiments cut-over (M46–M48, ADR-142..147/150) · agent mentions +
+  pulse + per-attachment memory (ADR-151/152) · env isolation +
+  `MAISTER_FLOW_DIR` (ADR-153/154) · cross-project relations / agent reach
+  / context mounts (M49, ADR-155/156/157) · RU user manual (ADR-158) ·
+  generated DBML ERD + docs gates (ADR-159).
+
 Historical product backlog/wave rationale: `docs/pv/improvement-roadmap.md`.
 Current sequencing lives in `.ai-factory/ROADMAP.md`; M45 qualifies
 core-package processes on private projects. Many original backlog foundations
@@ -501,22 +522,25 @@ core-package processes on private projects. Many original backlog foundations
 ## Phase 2 Candidates
 
 These are not forbidden. They need an explicit implementation plan because
-they change product surface, contracts, or operating model. (Items shipped
-since the original list — visual Flow designer, diff syntax highlighting,
-judge-node/`ai_judgment` gating — were removed; some below are partially
-landed, see *Built since the original baseline*.)
+they change product surface, contracts, or operating model. (Re-cut
+2026-08-31: shipped items removed — A/B benchmarking became the Evaluation
+Lab (ADR-142..147/150), RBAC action-blocking is live (`web/lib/authz.ts`),
+the event log table is `domain_events` (ADR-086), PR-to-catalog is ADR-113,
+opencode/gemini/mimo are gated adapter families, cost/time guard enforcement
+shipped (ADR-101 + `maxDurationMinutes` watchdog), CI exists
+(`.github/workflows/ci.yml`); outbound webhooks (ADR-077) left earlier.)
 
 continuous background agents (Mγ: heartbeat daemons + crash-loop backoff —
-the M34 substrate covers catalog/triggers/one-shot runs) · Telegram ·
-A/B benchmark runs · durable orchestration · full multi-user RBAC w/ action-
-blocking · full Kanban (Done as drag-target / WIP limits / swim-lanes) ·
-event log table · test-run UI button · GitHub Actions CI/CD · project
-archival UI · cross-project task moves · GitHub issue / Linear / YouGile
-sync · custom ACP extensions · writable competing-code consensus drafts ·
-cost/time/regex guard enforcement · plugin sandboxing · HITL as separate
-swimlane cards · Cursor / opencode / Aider executors. (Outbound webhooks are no longer deferred — the generic outbound
-event-delivery primitive is now built; agent-over-MCP and notifiers are
-consumers of it, see ADR-077.)
+the M34 substrate covers catalog/triggers/one-shot runs) · Telegram /
+notifier consumers on the webhook primitive · durable orchestration · full
+Kanban (Done as drag-target / WIP limits / swim-lanes) · test-run UI button ·
+CD pipeline (CI exists) · project archival UI (schema half exists —
+`projects.archived_at` is read, never written) · cross-project task moves ·
+GitHub issue / Linear / YouGile sync · custom ACP extensions · writable
+competing-code consensus drafts · regex guard enforcement (cost/time
+shipped) · `maxCostUsd` enforcement flip (declared, record-only today) ·
+plugin sandboxing · HITL as separate swimlane cards · Cursor / Aider
+executors.
 
 ## Conventions
 

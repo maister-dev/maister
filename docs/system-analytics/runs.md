@@ -281,7 +281,7 @@ invariants bind it to the run machine:
    transaction keyed on the attempt token; a retry after success returns `409`
    (already `Done`), never a second promotion.
 
-### Multi-run launch overrides (Designed, ADR-085)
+### Multi-run launch overrides (Implemented, ADR-087)
 
 Manual task launches are no longer limited to Backlog retry. The manual
 surface uses a positive allow-list from [`tasks.md`](tasks.md):
@@ -380,7 +380,7 @@ the same `launchRun` service, token project-scope check, and audit row, but it
 does not accept `flowId` or delivery-policy override until a versioned external
 API decision adds parity.
 
-### Cost and time accounting (Designed, ADR-085)
+### Cost and time accounting (Implemented, ADR-087)
 
 `cost.jsonl` remains the append-only source of truth. Cost records are enriched
 at the supervisor boundary with:
@@ -435,7 +435,7 @@ node-attempt (monospace + copy). For runs created before `0053`,
 with a "resolved prompt not captured for this run" note — never a best-effort
 re-render (which would lie on `{{ steps.*.output }}`).
 
-### Delivery policy (Designed, ADR-085)
+### Delivery policy (Implemented, ADR-087)
 
 Delivery policy resolves as:
 
@@ -483,7 +483,7 @@ the existing rebase-merge lane, and on conflict it no longer dead-ends at a
 releases and delegates to the branch-sync AI resolver under the sync
 lifecycle claim instead. See [branch-sync.md](branch-sync.md) (R7).
 
-### Phase A audit and QA matrix (Designed, ADR-085)
+### Phase A audit and QA matrix (Implemented, ADR-087)
 
 Verified baseline for this slice:
 
@@ -839,13 +839,13 @@ already-inserted run) — never an orphan worktree or live ACP session.
 - **(Designed)** Full Flow-run state survives Next.js restart AND
   supervisor restart; on boot, reconciliation classifies orphans as
   `Crashed` and offers Recover or Discard.
-- **(Designed, M19)** The reconcile sweep is allow-list `Running`-only and
+- **(Implemented, M19)** The reconcile sweep is allow-list `Running`-only and
   transitions a stranded `Running` run to `Crashed` (`crashRunningRun`)
   ONLY when the worktree is gone, a `cli` node has no live session, or an
   agent session is gone past `MAISTER_RECONCILE_GRACE_SECONDS`; every such
   transition calls `promoteNextPending` and clears
   `runs.resume_started_at`. See [`reconciliation-gc.md`](reconciliation-gc.md).
-- **(Designed, M19)** Recover stamps `runs.resume_started_at` and flips
+- **(Implemented, M19)** Recover stamps `runs.resume_started_at` and flips
   `Crashed → Running` (cap free) or `Crashed → Pending` (cap full, 202)
   BEFORE any `createSession`; it re-admits through the global cap and never
   over-spawns. See [`reconciliation-gc.md`](reconciliation-gc.md).

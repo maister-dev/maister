@@ -674,14 +674,16 @@
   Status: the controlled-launch seam production adapter, the Study Lab
   creation UI, and the E2E all landed with the ADR-150 experiments cut-over.
 
-- [~] **M48. Advanced Evaluation** — pairwise and tournament methods
+- [x] **M48. Advanced Evaluation** — pairwise and tournament methods
   (`pairwise_tournament@1`), scheduled evaluation suites and package-upgrade
   regression Studies over the M24 clock, calibration/longitudinal read models,
   and optional human-approved standardization of a winning execution recipe.
   ADR-147. No automatic winner promotion is introduced.
   Status: the pairwise EXECUTION path (match-verdict persistence + routing) and
-  the standardization routes/UI landed with the ADR-150 cut-over; calibration/
-  longitudinal read models and package-upgrade regression suites remain.
+  the standardization routes/UI landed with the ADR-150 cut-over; the
+  longitudinal read model shipped too (`computeSuiteLongitudinal`,
+  `web/lib/evaluations/suites.ts`). Remaining — calibration read models and
+  package-upgrade regression Studies — moved to the Backlog section below.
 
 - [x] **M49. Multi-repo cross-project enablement** — let one owner run related
   work across several private repositories without giving up `project = repo`,
@@ -702,8 +704,9 @@
   ADR-155/156/157; migrations 0123/0124. Explicit non-goals: multi-repo
   runs/workspaces, coordinated cross-repo promotion, orchestrator cross-project
   delegation, a meta-project/project-group entity, cross-project task moves.
-  Status: implemented and gate-green (web unit 7122, supervisor 494, mcp 245),
-  unmerged. Open follow-ups: the `relations:delete` cross-project scope is
+  Status: implemented and gate-green (web unit 7122, supervisor 494, mcp 245);
+  merged to main (`8a09ad0eb`, pushed 2026-08-12). Open follow-ups: the
+  `relations:delete` cross-project scope is
   broader than ADR-156's self-authored-edge justification; agent-authored
   cross-project edge CREATION stays refused pending a decision; the
   `CONTEXT_REPOS_MAX` shared-constant duplication across the web/supervisor
@@ -758,6 +761,10 @@
 | M43. Postgres-only + graph-only cut-over                                     | 2026-07-12 |
 | M44. Flow Review Workspace                                                   | 2026-07-15 |
 | M20. Dogfood + external adoption signal                                      | 2026-07-15 |
+| M46. Evaluation Foundation (Evaluation Lab core)                             | 2026-07-18 |
+| M47. Controlled Evaluation Expansion                                         | 2026-07-18 |
+| M48. Advanced Evaluation (remainder → Backlog)                               | 2026-07-21 |
+| M49. Multi-repo cross-project enablement (merged 2026-08-12)                 | 2026-08-05 |
 
 ## Backlog (untriaged deferred work)
 
@@ -775,6 +782,7 @@
 - [ ] Event-driven auto-launch: emit + consume `task.triaged` for lower-latency enqueue (tick-only today; triager spec §11).
 - [ ] Combined `Stop & *` rail actions for `runKind=agent` rows (rail-actions design out-of-scope note).
 - [ ] Non-Flow per-kind Studio authoring + its host E2E coverage (studio-package-authoring Stream A follow-up).
+- [ ] Evaluation calibration read models + package-upgrade regression Studies (M48 remainder; longitudinal shipped).
 
 ### Triage outcomes 2026-08-31 (owner decisions — do not re-open without new evidence)
 

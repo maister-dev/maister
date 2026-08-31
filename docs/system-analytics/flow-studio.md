@@ -565,7 +565,7 @@ agent options, schema options, `onWriteSchemaFile`, and the existing
 > SDD spec: [`../../.ai-factory/specs/feature-flow-studio-redesign.md`](../../.ai-factory/specs/feature-flow-studio-redesign.md).
 > Decision: [ADR-092](../decisions.md#adr-092). The editor redesign (Phase B) is
 > now **(Implemented)** — see §"Editor redesign (Phase B)" below; the
-> editable-local-package backend (Phase C) is **(Designed)** and ships as its own plan.
+> editable-local-package backend (Phase C) is **(Implemented)** — see [`local-packages.md`](local-packages.md).
 
 The redesign unifies the scattered catalog surfaces (the `/flows` landing, admin
 `/settings` sources, board `?tab=packages`, and the
@@ -585,8 +585,8 @@ turns the flow-flat install list into a package-grouped view.
 | `/studio/sources` | Sources (relocated `PackageSourcesPanel`, admin) | A | Implemented |
 | `/studio/packages` | Packages list grouped by package | A | Implemented |
 | `/studio/packages/{ref}` | Package detail (BoM · read-only preview · versions · attach · fork) | A | Implemented |
-| `/studio/edit/{...}` | Big-canvas artifact editor redesign | B | Designed |
-| `/studio/local` | Local / virtual package | C | Designed |
+| `/studio/edit/{...}` | Big-canvas artifact editor redesign | B | Implemented |
+| `/studio/local` | Local / virtual package | C | Implemented |
 
 The rail's **Flows** item becomes **Studio** (`/studio`); the `/flows` **landing is
 removed** (the editor sub-routes `/flows/{slug}/{capId}` + `/flows/new` stay until
@@ -604,7 +604,7 @@ filter in Studio and an "Open in Studio" deep-link from each attached package
 install/attach/trust lifecycle and [`agents.md`](agents.md) for the agent kinds
 Studio will eventually author (R7 — not restated here).
 
-### Editable local package — the spine (Designed; Phase C)
+### Editable local package — the spine (Implemented; Phase C)
 
 A local-source install already produces an immutable `local-<digest>` revision
 (ADR-088). The redesign adds the *editable* layer above it — **Variant B**: a
@@ -614,8 +614,8 @@ installer over the dir → a `local-<digest>` `package_installs` revision that
 projects attach. The "virtual package" is the default local package for loose
 artifacts; **move-to-package** relocates artifacts between local packages.
 Standalone artifact kinds (`agent`/`mcp`, beyond today's `rule|skill|flow`) become
-files in the working dir. This whole layer is **(Designed)** — built in Phase C;
-git write-back to an upstream source is **(Phase 2)**.
+files in the working dir. This whole layer is **(Implemented — Phase C, `web/lib/local-packages/`)**;
+git write-back to an upstream source is **(Implemented — publish→PR ADR-113, upstream sync ADR-132)**.
 
 ### Editor redesign (Phase B) — Implemented
 
@@ -701,7 +701,7 @@ list (`gate-form.tsx`).
 
 ## Linked artifacts
 
-- **Studio redesign (Phase A — Designed→Implemented on merge):**
+- **Studio redesign (Phase A — Implemented):**
   [`../screens/studio/README.md`](../screens/studio/README.md) (surface SSOT),
   [`../../.ai-factory/specs/feature-flow-studio-redesign.md`](../../.ai-factory/specs/feature-flow-studio-redesign.md) (SDD spec),
   [ADR-092](../decisions.md#adr-092) (unified-Studio IA + editable-local-package direction).
