@@ -10,7 +10,7 @@
 The web control plane has no autocomplete for skills/agents when a user writes a
 prompt — neither in the **Scratch Run** composer nor in the **AI-coding node**
 prompt editor. Both are plain `<textarea>`s
-([scratch-dialog.tsx](../../web/components/scratch/scratch-dialog.tsx),
+([scratch-composer.tsx](../../web/components/scratch/scratch-composer.tsx) — was scratch-dialog.tsx at write time,
 [node-side-form.tsx](../../web/components/flows/node-form/node-side-form.tsx)).
 Coding-agent CLIs surface skills/commands as typeahead; we want the equivalent in
 the web, and it must work across runners whose invocation syntax differs

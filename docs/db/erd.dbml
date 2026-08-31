@@ -1,0 +1,2818 @@
+// GENERATED FILE — do not edit by hand (ADR-159).
+// Source of truth: web/lib/db/schema.ts (main lineage) + web/lib/brain/schema.ts (Brain lineage).
+// Regenerate: pnpm --filter maister-web db:erd
+// Drift gate:  pnpm --filter maister-web db:erd --check (part of pnpm validate:docs)
+// View: import into https://dbdiagram.io or any DBML renderer.
+
+table accounts {
+  user_id text [not null]
+  type text [not null]
+  provider text [not null]
+  provider_account_id text [not null]
+  refresh_token text
+  access_token text
+  expires_at integer
+  token_type text
+  scope text
+  id_token text
+  session_state text
+
+  indexes {
+    (provider, provider_account_id) [pk]
+  }
+}
+
+table actor_identities {
+  id text [pk, not null]
+  project_id text [not null]
+  kind text [not null]
+  label text [not null]
+  user_id text
+  token_id text
+  internal_agent_ref text
+  system_key text
+  disabled_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (project_id, user_id) [name: 'actor_identities_project_user_uq', unique]
+    (project_id, token_id) [name: 'actor_identities_project_token_uq', unique]
+    project_id [name: 'actor_identities_project_idx']
+  }
+}
+
+table agent_project_links {
+  id text [pk, not null]
+  agent_id text [not null]
+  project_id text [not null]
+  enabled boolean [not null, default: true]
+  runner_override_id text
+  branch_base text
+  execution_policy_override jsonb
+  config jsonb
+  can_read_brain boolean [not null, default: false]
+  can_write_brain boolean [not null, default: false]
+  memory_enabled boolean [not null, default: false]
+  cross_project_reach boolean [not null, default: false]
+  context_repos jsonb
+  schedules_revision integer [not null, default: 1]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (agent_id, project_id) [name: 'agent_project_links_agent_project_uq', unique]
+    project_id [name: 'agent_project_links_project_idx']
+  }
+}
+
+table agent_schedules {
+  id text [pk, not null]
+  agent_id text [not null]
+  project_id text [not null]
+  trigger_type text [not null]
+  cron_expr text
+  timezone text
+  next_fire_at "timestamp with time zone"
+  last_fired_at "timestamp with time zone"
+  last_attempt_at "timestamp with time zone"
+  last_attempt_fence integer
+  last_outcome text
+  last_error_code text
+  last_error_message text
+  last_run_id text
+  event_match jsonb
+  enabled boolean [not null, default: true]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (project_id, agent_id) [name: 'agent_schedules_project_agent_idx']
+    (trigger_type, enabled, next_fire_at) [name: 'agent_schedules_due_cron_idx']
+    
+    
+  }
+}
+
+table agents {
+  id text [pk, not null]
+  package_name text [not null]
+  version_label text [not null]
+  origin text [not null]
+  name text [not null]
+  description text [not null]
+  runner_id text
+  workspace text [not null]
+  mode text [not null]
+  triggers jsonb [not null]
+  capability_profile jsonb
+  risk_tier text [not null]
+  recommended jsonb
+  config_schema jsonb
+  flow_ref text
+  branch_base text
+  workspace_ref text
+  source_path text [not null]
+  enabled boolean [not null, default: true]
+  quarantined_at "timestamp with time zone"
+  quarantine_reason text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    package_name [name: 'agents_package_name_idx']
+  }
+}
+
+table artifact_instances {
+  id text [pk, not null]
+  run_id text [not null]
+  node_attempt_id text
+  node_id text
+  attempt integer
+  artifact_def_id text
+  kind text [not null]
+  producer text [not null]
+  locator jsonb [not null]
+  uri text
+  hash text
+  size_bytes integer
+  validity text [not null, default: 'current']
+  required_for jsonb
+  visibility text [not null, default: 'internal']
+  retention text [not null, default: 'run']
+  monotonic_id integer
+  superseded_by_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    run_id [name: 'artifact_instances_run_idx']
+    node_attempt_id [name: 'artifact_instances_node_attempt_idx']
+    (run_id, kind) [name: 'artifact_instances_run_kind_idx']
+    (run_id, validity) [name: 'artifact_instances_run_validity_idx']
+  }
+}
+
+table artifact_projection_cursors {
+  id text [pk, not null]
+  run_id text [not null]
+  scope text [not null]
+  events_log_path text [not null]
+  last_monotonic_id integer [not null, default: 0]
+  status text [not null, default: 'idle']
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (run_id, scope) [name: 'artifact_projection_cursors_run_scope_uq', unique]
+  }
+}
+
+table assignment_events {
+  id text [pk, not null]
+  assignment_id text [not null]
+  project_id text [not null]
+  run_id text [not null]
+  event_kind text [not null]
+  actor_id text
+  from_status text
+  to_status text
+  payload jsonb [not null, default: `{}`]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    assignment_id [name: 'assignment_events_assignment_idx']
+    (project_id, created_at) [name: 'assignment_events_project_created_idx']
+  }
+}
+
+table assignments {
+  id text [pk, not null]
+  project_id text [not null]
+  run_id text [not null]
+  task_id text
+  node_id text
+  step_id text
+  hitl_request_id text
+  node_attempt_id text
+  action_kind text [not null]
+  status text [not null, default: 'open']
+  role_refs jsonb [not null, default: `[]`]
+  title text [not null]
+  assignee_actor_id text
+  created_by_actor_id text
+  completed_by_actor_id text
+  evidence_artifact_id text
+  branch text
+  ref text
+  sla_hours integer
+  stale_evidence_summary jsonb
+  claimed_at "timestamp with time zone"
+  completed_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    hitl_request_id [name: 'assignments_hitl_request_uq', unique]
+    (project_id, status) [name: 'assignments_project_status_idx']
+    (run_id, status) [name: 'assignments_run_status_idx']
+    assignee_actor_id [name: 'assignments_current_actor_idx']
+    hitl_request_id [name: 'assignments_hitl_request_idx']
+  }
+}
+
+table authored_capabilities {
+  id text [pk, not null]
+  project_id text [not null]
+  kind text [not null]
+  slug text [not null]
+  title text [not null]
+  lifecycle text [not null, default: 'DRAFT']
+  draft_version integer [not null, default: 1]
+  current_draft_revision_id text
+  current_published_revision_id text
+  source_flow_ref_id text
+  locked_by_user_id text
+  locked_by_session text
+  lock_expires_at "timestamp with time zone"
+  archived_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (project_id, kind, slug) [name: 'authored_capabilities_project_kind_slug_uq', unique]
+    (project_id, kind) [name: 'authored_capabilities_project_kind_idx']
+  }
+}
+
+table authored_capability_revisions {
+  id text [pk, not null]
+  capability_id text [not null]
+  project_id text [not null]
+  kind text [not null]
+  revision_number integer [not null]
+  lifecycle text [not null, default: 'DRAFT']
+  draft_version integer [not null]
+  title text [not null]
+  body jsonb [not null, default: `{}`]
+  manifest jsonb
+  schema_version integer [not null, default: 1]
+  content_hash text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  published_at "timestamp with time zone"
+  archived_at "timestamp with time zone"
+
+  indexes {
+    (capability_id, revision_number) [name: 'authored_capability_revisions_capability_revision_uq', unique]
+    capability_id [name: 'authored_capability_revisions_active_draft_uq', unique]
+    (capability_id, lifecycle) [name: 'authored_capability_revisions_capability_lifecycle_idx']
+  }
+}
+
+table capability_imports {
+  id text [pk, not null]
+  project_id text [not null]
+  capability_ref_id text [not null]
+  source text [not null]
+  version_tag text [not null]
+  resolved_revision text [not null]
+  manifest_digest text [not null]
+  manifest jsonb [not null]
+  installed_path text [not null]
+  setup_status text [not null, default: 'pending']
+  package_status text [not null, default: 'Installing']
+  trust_status text [not null, default: 'untrusted']
+  package_install_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (project_id, capability_ref_id, resolved_revision) [name: 'capability_imports_project_ref_revision_uq', unique]
+  }
+}
+
+table capability_records {
+  id text [pk, not null]
+  project_id text [not null]
+  capability_ref_id text [not null]
+  kind text [not null]
+  label text [not null]
+  source text [not null]
+  version text
+  revision text
+  agents jsonb [not null]
+  enforceability text [not null, default: 'instructed']
+  selected_by_default boolean [not null, default: true]
+  selectable boolean [not null, default: true]
+  material jsonb [not null, default: `{}`]
+  disabled_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (project_id, source, kind, capability_ref_id) [name: 'capability_records_project_ref_uq', unique]
+    (project_id, kind, selectable) [name: 'capability_records_project_kind_idx']
+  }
+}
+
+table consensus_round_verdicts {
+  id text [pk, not null]
+  run_id text [not null]
+  node_attempt_id text [not null]
+  round integer [not null]
+  verifier_key text [not null]
+  target_key text [not null]
+  parse_status text [not null]
+  verdict text [not null]
+  axes jsonb [not null, default: `{}`]
+  disagreements jsonb [not null, default: `[]`]
+  confidence real
+  raw_output_artifact_id text
+  error_code text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (node_attempt_id, round, verifier_key, target_key) [name: 'consensus_round_verdicts_attempt_round_pair_uq', unique]
+    run_id [name: 'consensus_round_verdicts_run_idx']
+    node_attempt_id [name: 'consensus_round_verdicts_node_attempt_idx']
+  }
+}
+
+table domain_event_consumers {
+  consumer_id text [pk, not null]
+  cursor_event_id bigint [not null, default: 0]
+  lease_expires_at "timestamp with time zone"
+  last_dispatched_at "timestamp with time zone"
+  last_error text
+  consecutive_failures integer [not null, default: 0]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+}
+
+table domain_events {
+  id bigint [pk, not null]
+  kind text [not null]
+  project_id text [not null]
+  task_id text
+  run_id text
+  actor_type text
+  actor_id text
+  payload jsonb [not null]
+  occurred_at "timestamp with time zone" [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  tx_id xid8 [not null, default: `pg_current_xact_id()`]
+
+  indexes {
+    
+    
+    (run_id, occurred_at) [name: 'domain_events_m43_cutover_run_occurred_idx']
+    (task_id, occurred_at) [name: 'domain_events_m43_cutover_task_occurred_idx']
+  }
+}
+
+table evaluation_aggregate_results {
+  id text [pk, not null]
+  execution_id text [not null]
+  algorithm_id text [not null]
+  algorithm_version text [not null]
+  inputs jsonb [not null]
+  calculations jsonb [not null]
+  display_values jsonb
+  caps jsonb
+  quorum jsonb
+  exclusions jsonb
+  dispersion jsonb
+  warnings jsonb
+  digest text [not null]
+  revision integer [not null, default: 1]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (execution_id, revision) [name: 'evaluation_aggregate_results_execution_revision_uq', unique]
+    execution_id [name: 'evaluation_aggregate_results_execution_idx']
+  }
+}
+
+table evaluation_criterion_results {
+  id text [pk, not null]
+  attempt_id text [not null]
+  participant_id text
+  criterion_id text [not null]
+  state text [not null]
+  score numeric
+  rationale text
+  confidence numeric
+  evidence_refs jsonb
+  objective_refs jsonb
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (attempt_id, criterion_id, participant_id) [name: 'evaluation_criterion_results_attempt_criterion_uq', unique]
+    attempt_id [name: 'evaluation_criterion_results_attempt_idx']
+    
+    
+  }
+}
+
+table evaluation_events {
+  id text [pk, not null]
+  study_id text [not null]
+  execution_id text
+  sequence integer [not null]
+  event_type text [not null]
+  payload jsonb
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (study_id, sequence) [name: 'evaluation_events_study_sequence_uq', unique]
+    study_id [name: 'evaluation_events_study_idx']
+  }
+}
+
+table evaluation_evidence_items {
+  id text [pk, not null]
+  snapshot_id text [not null]
+  participant_id text
+  kind text [not null]
+  locator text [not null]
+  digest text [not null]
+  bytes integer
+  coverage_class text [not null]
+  inclusion_reason text
+  truncation jsonb
+  redaction jsonb
+  blob_key text
+  retention text
+  captured_at "timestamp with time zone"
+  source_watermark text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    snapshot_id [name: 'evaluation_evidence_items_snapshot_idx']
+    participant_id [name: 'evaluation_evidence_items_participant_idx']
+  }
+}
+
+table evaluation_evidence_snapshots {
+  id text [pk, not null]
+  study_id text [not null]
+  status text [not null, default: 'preparing']
+  participant_watermarks jsonb [not null]
+  evidence_protocol_digest text [not null]
+  manifest_digest text
+  coverage_summary jsonb
+  warnings jsonb
+  storage_generation text
+  sealed_at "timestamp with time zone"
+  prepared_by_user_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  pending_delete_at "timestamp with time zone"
+  deleted_at "timestamp with time zone"
+
+  indexes {
+    study_id [name: 'evaluation_evidence_snapshots_study_idx']
+    evidence_protocol_digest [name: 'evaluation_evidence_snapshots_protocol_digest_idx']
+    
+  }
+}
+
+table evaluation_executions {
+  id text [pk, not null]
+  study_id text [not null]
+  method_revision_id text
+  evidence_snapshot_id text
+  status text [not null, default: 'queued']
+  version integer [not null, default: 1]
+  effective_profile_snapshot jsonb
+  randomization_seed text
+  objective_policy_snapshot jsonb
+  judge_policy_snapshot jsonb
+  aggregation_policy_snapshot jsonb
+  idempotency_key text
+  request_digest text
+  terminal_reason text
+  retry_of text
+  requested_by_user_id text
+  cancelled_by_user_id text
+  requested_at "timestamp with time zone" [not null, default: `now()`]
+  started_at "timestamp with time zone"
+  cancelled_at "timestamp with time zone"
+  terminal_at "timestamp with time zone"
+
+  indexes {
+    (study_id, status) [name: 'evaluation_executions_study_status_idx']
+    (study_id, idempotency_key) [name: 'evaluation_executions_study_idem_uq', unique]
+    
+  }
+}
+
+table evaluation_human_verdicts {
+  id text [pk, not null]
+  study_id text [not null]
+  supersedes_id text
+  outcome text [not null]
+  participant_ids jsonb [not null]
+  execution_ids jsonb [not null]
+  no_evaluation_evidence_ack boolean [not null, default: false]
+  rationale text
+  acknowledged_warnings jsonb
+  created_by_user_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    study_id [name: 'evaluation_human_verdicts_study_idx']
+    
+    
+  }
+}
+
+table evaluation_judge_attempts {
+  id text [pk, not null]
+  execution_id text [not null]
+  role text [not null]
+  ordinal integer [not null]
+  retry_ordinal integer [not null, default: 0]
+  match_a text
+  match_b text
+  retry_of text
+  agent_id text
+  agent_revision text
+  agent_run_id text
+  intended_run_id text
+  token_id text
+  runner_snapshot jsonb
+  model_snapshot jsonb
+  status text [not null, default: 'queued']
+  reason text
+  sealed_result jsonb
+  result_digest text
+  prompt_digest text
+  schema_digest text
+  evidence_digest text
+  usage jsonb
+  cost jsonb
+  enqueued_at "timestamp with time zone"
+  running_at "timestamp with time zone"
+  terminal_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (execution_id, role, ordinal, retry_ordinal, match_a, match_b) [name: 'evaluation_judge_attempts_unique', unique]
+    execution_id [name: 'evaluation_judge_attempts_execution_idx']
+    
+  }
+}
+
+table evaluation_judge_panels {
+  id text [pk, not null]
+  name text [not null]
+  revision integer [not null, default: 1]
+  role_bindings jsonb [not null]
+  policy jsonb [not null]
+  enabled boolean [not null, default: true]
+  created_by_user_id text
+  updated_by_user_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    enabled [name: 'evaluation_judge_panels_enabled_idx']
+  }
+}
+
+table evaluation_launch_batch_items {
+  id text [pk, not null]
+  batch_id text [not null]
+  recipe_id text [not null]
+  replicate_ordinal integer [not null]
+  status text [not null, default: 'queued']
+  run_id text
+  participant_id text
+  attempt integer [not null, default: 0]
+  error_reason text
+  version integer [not null, default: 1]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    batch_id [name: 'evaluation_launch_batch_items_batch_idx']
+    status [name: 'evaluation_launch_batch_items_status_idx']
+    (batch_id, recipe_id, replicate_ordinal) [name: 'evaluation_launch_batch_items_item_uq', unique]
+    
+    
+  }
+}
+
+table evaluation_launch_batches {
+  id text [pk, not null]
+  study_id text [not null]
+  status text [not null, default: 'queued']
+  idempotency_key text
+  request_digest text
+  requested_by_user_id text
+  version integer [not null, default: 1]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+  completed_at "timestamp with time zone"
+
+  indexes {
+    study_id [name: 'evaluation_launch_batches_study_idx']
+    (study_id, idempotency_key) [name: 'evaluation_launch_batches_study_idem_uq', unique]
+    
+  }
+}
+
+table evaluation_method_revisions {
+  id text [pk, not null]
+  package_install_id text [not null]
+  method_id text [not null]
+  qualified_id text [not null]
+  package_name text [not null]
+  version_label text [not null]
+  schema_version integer [not null]
+  normalized_definition jsonb [not null]
+  definition_digest text [not null]
+  prompt_digest text [not null]
+  schema_digest text [not null]
+  compat jsonb [not null]
+  activation text [not null, default: 'disabled']
+  validation_errors jsonb
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (package_install_id, method_id) [name: 'evaluation_method_revisions_install_method_uq', unique]
+    qualified_id [name: 'evaluation_method_revisions_qualified_idx']
+    
+  }
+}
+
+table evaluation_metric_results {
+  id text [pk, not null]
+  execution_id text [not null]
+  participant_id text
+  metric_id text [not null]
+  metric_version text [not null]
+  status text [not null]
+  reason text
+  value jsonb
+  unit text
+  provenance jsonb
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    execution_id [name: 'evaluation_metric_results_execution_idx']
+    
+  }
+}
+
+table evaluation_objective_check_runs {
+  id text [pk, not null]
+  execution_id text [not null]
+  participant_id text
+  check_id text [not null]
+  check_version text [not null]
+  attempt integer [not null, default: 1]
+  status text [not null, default: 'queued']
+  reason text
+  input_digest text
+  output_digest text
+  trusted_profile_provenance jsonb
+  log_evidence_item_id text
+  started_at "timestamp with time zone"
+  finished_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (execution_id, participant_id, check_id, attempt) [name: 'evaluation_objective_check_runs_unique', unique]
+    execution_id [name: 'evaluation_objective_check_runs_execution_idx']
+    
+  }
+}
+
+table evaluation_participants {
+  id text [pk, not null]
+  study_id text [not null]
+  run_id text
+  source_type text [not null]
+  recipe_id text
+  label text [not null]
+  display_order integer [not null, default: 0]
+  replicate_group text
+  replicate_ordinal integer
+  launch_reason text
+  batch_item_id text
+  run_identity jsonb
+  joined_at "timestamp with time zone" [not null, default: `now()`]
+  frozen_at "timestamp with time zone"
+  removed_at "timestamp with time zone"
+
+  indexes {
+    study_id [name: 'evaluation_participants_study_idx']
+    run_id [name: 'evaluation_participants_run_idx']
+    (study_id, run_id) [name: 'evaluation_participants_live_run_uq', unique]
+    batch_item_id [name: 'evaluation_participants_batch_item_uq', unique]
+    
+    
+    
+  }
+}
+
+table evaluation_profiles {
+  id text [pk, not null]
+  name text [not null]
+  method_revision_id text [not null]
+  panel_id text [not null]
+  revision integer [not null, default: 1]
+  defaults jsonb
+  hard_limits jsonb
+  allowed_overrides jsonb
+  enabled boolean [not null, default: true]
+  created_by_user_id text
+  updated_by_user_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    method_revision_id [name: 'evaluation_profiles_method_idx']
+    panel_id [name: 'evaluation_profiles_panel_idx']
+  }
+}
+
+table evaluation_project_profile_overrides {
+  id text [pk, not null]
+  project_id text [not null]
+  profile_id text [not null]
+  revision integer [not null, default: 1]
+  overrides jsonb [not null]
+  updated_by_user_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (project_id, profile_id) [name: 'evaluation_project_profile_overrides_project_profile_uq', unique]
+  }
+}
+
+table evaluation_recipes {
+  id text [pk, not null]
+  study_id text [not null]
+  key text [not null]
+  label text [not null]
+  definition jsonb [not null]
+  definition_digest text [not null]
+  replicate_group text
+  version integer [not null, default: 1]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  tombstoned_at "timestamp with time zone"
+
+  indexes {
+    (study_id, key) [name: 'evaluation_recipes_study_key_uq', unique]
+    study_id [name: 'evaluation_recipes_study_idx']
+  }
+}
+
+table evaluation_reviews {
+  id text [pk, not null]
+  execution_id text [not null]
+  kind text [not null]
+  status text [not null, default: 'required']
+  version integer [not null, default: 1]
+  flags jsonb
+  reviewer_user_id text
+  resolution text
+  rationale text
+  adjudicated_result jsonb
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+  resolved_at "timestamp with time zone"
+
+  indexes {
+    execution_id [name: 'evaluation_reviews_execution_idx']
+    
+    
+  }
+}
+
+table evaluation_standardized_recipes {
+  id text [pk, not null]
+  project_id text [not null]
+  slot text [not null, default: 'default']
+  revision integer [not null]
+  action text [not null]
+  source_study_id text
+  source_recipe_id text
+  source_verdict_id text
+  definition jsonb [not null]
+  definition_digest text [not null]
+  rolled_back_to_revision integer
+  created_by_user_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (project_id, slot) [name: 'evaluation_standardized_recipes_project_slot_idx']
+    (project_id, slot, revision) [name: 'evaluation_standardized_recipes_revision_uq', unique]
+    
+  }
+}
+
+table evaluation_studies {
+  id text [pk, not null]
+  project_id text [not null]
+  task_id text [not null]
+  title text [not null]
+  purpose text
+  status text [not null, default: 'draft']
+  version integer [not null, default: 1]
+  created_by_user_id text
+  legacy_experiment_id text
+  archived_reason text
+  legacy_snapshot jsonb
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+  decided_at "timestamp with time zone"
+  archived_at "timestamp with time zone"
+
+  indexes {
+    (project_id, status) [name: 'evaluation_studies_project_status_idx']
+    task_id [name: 'evaluation_studies_task_idx']
+    legacy_experiment_id [name: 'evaluation_studies_legacy_experiment_uq', unique]
+    
+  }
+}
+
+table evaluation_suite_studies {
+  id text [pk, not null]
+  suite_id text [not null]
+  study_id text [not null]
+  task_id text [not null]
+  suite_version integer [not null]
+  scan_key text [not null]
+  generated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    suite_id [name: 'evaluation_suite_studies_suite_idx']
+    (suite_id, task_id, scan_key) [name: 'evaluation_suite_studies_scan_uq', unique]
+  }
+}
+
+table evaluation_suites {
+  id text [pk, not null]
+  project_id text [not null]
+  name text [not null]
+  kind text [not null, default: 'scheduled']
+  definition jsonb [not null]
+  definition_digest text [not null]
+  version integer [not null, default: 1]
+  enabled boolean [not null, default: true]
+  last_trigger_revision text
+  created_by_user_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    project_id [name: 'evaluation_suites_project_idx']
+    
+  }
+}
+
+table flow_revisions {
+  id text [pk, not null]
+  flow_ref_id text [not null]
+  source text [not null]
+  version_label text [not null]
+  resolved_revision text [not null]
+  manifest_digest text [not null]
+  manifest jsonb [not null]
+  schema_version integer [not null]
+  engine_min text
+  engine_max text
+  default_runner_id text
+  contract jsonb
+  installed_path text [not null]
+  setup_status text [not null, default: 'pending']
+  package_status text [not null, default: 'Installing']
+  exec_trust text [not null, default: 'untrusted']
+  installed_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (flow_ref_id, resolved_revision) [name: 'flow_revisions_ref_revision_uq', unique]
+  }
+}
+
+table flow_runner_remaps {
+  id text [pk, not null]
+  project_id text
+  flow_revision_id text [not null]
+  slot_key text [not null]
+  mapped_runner_id text
+  status text [not null, default: 'Pending']
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (project_id, flow_revision_id, slot_key) [name: 'flow_runner_remaps_project_revision_slot_uq', unique]
+    mapped_runner_id [name: 'flow_runner_remaps_mapped_runner_idx']
+  }
+}
+
+table flows {
+  id text [pk, not null]
+  project_id text [not null]
+  flow_ref_id text [not null]
+  source text [not null]
+  version text [not null]
+  revision text [not null, default: 'unknown']
+  installed_path text [not null]
+  manifest jsonb [not null]
+  schema_version integer [not null]
+  enabled_revision_id text
+  enablement_state text [not null, default: 'Installed']
+  trust_status text [not null, default: 'untrusted']
+  version_binding text [not null, default: 'latest']
+  package_install_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (project_id, flow_ref_id) [name: 'flows_project_ref_uq', unique]
+  }
+}
+
+table gate_chat_messages {
+  id text [pk, not null]
+  run_id text [not null]
+  hitl_request_id text [not null]
+  node_id text [not null]
+  gate_attempt integer [not null]
+  role text [not null]
+  author_user_id text
+  author_label text [not null]
+  body text [not null]
+  acp_session_id text
+  seq integer [not null]
+  mutation_reverted boolean [not null, default: false]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    run_id [name: 'gate_chat_messages_run_idx']
+    hitl_request_id [name: 'gate_chat_messages_hitl_request_idx']
+    
+    (hitl_request_id, seq) [name: 'gate_chat_messages_hitl_seq_unique', unique]
+  }
+}
+
+table gate_chat_turns {
+  id text [pk, not null]
+  run_id text [not null]
+  hitl_request_id text [not null]
+  user_message_id text [not null]
+  agent_message_id text
+  state text [not null]
+  lease_expires_at "timestamp with time zone"
+  error_code text
+  completed_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (hitl_request_id, state) [name: 'gate_chat_turns_hitl_state_idx']
+    hitl_request_id [name: 'gate_chat_turns_pending_hitl_uq', unique]
+    
+    
+    
+  }
+}
+
+table gate_results {
+  id text [pk, not null]
+  run_id text [not null]
+  node_attempt_id text [not null]
+  gate_id text [not null]
+  kind text [not null]
+  mode text [not null, default: 'blocking']
+  status text [not null, default: 'pending']
+  verdict jsonb
+  input_artifact_refs jsonb
+  output_artifact_ref text
+  stale_from jsonb
+  overridden_by text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  ended_at "timestamp with time zone"
+
+  indexes {
+    run_id [name: 'gate_results_run_idx']
+    node_attempt_id [name: 'gate_results_node_attempt_idx']
+  }
+}
+
+table hitl_requests {
+  id text [pk, not null]
+  run_id text [not null]
+  step_id text [not null]
+  kind text [not null]
+  schema jsonb
+  prompt text [not null]
+  task_id text
+  activation_state text
+  retrigger_mode text
+  superseded_at "timestamp with time zone"
+  superseded_by_hitl_request_id text
+  superseded_by_run_id text
+  response jsonb
+  parent_hitl_request_id text
+  source_artifact_id text
+  decision_id text
+  decision text
+  workspace_policy text
+  rework_target text
+  review_tip_sha text
+  dirty_resolution text
+  criticality text
+  human_confidence real
+  responded_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    run_id [name: 'hitl_requests_run_idx']
+    (run_id, source_artifact_id, decision_id) [name: 'hitl_requests_decision_request_uq', unique]
+    (parent_hitl_request_id, responded_at, created_at) [name: 'hitl_requests_pending_decision_idx']
+    
+    (task_id, created_at) [name: 'hitl_requests_agent_question_active_idx']
+    
+    
+    
+    
+  }
+}
+
+table inbox_items {
+  id text [pk, not null]
+  recipient_type text [not null]
+  recipient_id text [not null]
+  project_id text [not null]
+  task_id text [not null]
+  event_kind text [not null]
+  source_ref jsonb [not null]
+  read_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (recipient_type, recipient_id, read_at, created_at) [name: 'inbox_items_recipient_idx']
+    
+    
+  }
+}
+
+table local_packages {
+  id text [pk, not null]
+  name text [not null]
+  slug text [not null, unique]
+  working_dir text [not null]
+  status text [not null, default: 'active']
+  source_install_id text
+  source_repo_url text
+  source_ref text
+  branch_name text
+  last_cut_install_id text
+  locked_by_user_id text
+  locked_by_session text
+  lock_expires_at "timestamp with time zone"
+  created_by text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+  project_id text
+  is_default boolean [not null, default: false]
+  last_pushed_branch text
+  last_pr_url text
+  publishing_started_at "timestamp with time zone"
+  sync_state jsonb
+  creation_state jsonb
+
+  indexes {
+    project_id [name: 'local_packages_default_per_project', unique]
+  }
+}
+
+table node_attempt_cost_rollups {
+  id text [pk, not null]
+  run_id text [not null]
+  project_id text
+  node_attempt_id text [not null]
+  node_id text [not null]
+  model text [not null]
+  input_tokens integer [not null, default: 0]
+  output_tokens integer [not null, default: 0]
+  cache_read_tokens integer [not null, default: 0]
+  cache_creation_tokens integer [not null, default: 0]
+  resume_input_tokens integer [not null, default: 0]
+  resume_output_tokens integer [not null, default: 0]
+  resume_cache_read_tokens integer [not null, default: 0]
+  resume_cache_creation_tokens integer [not null, default: 0]
+  source_event_count integer [not null, default: 0]
+  source_cursor text
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (node_attempt_id, model) [name: 'node_attempt_cost_rollups_attempt_model_uq', unique]
+    (run_id, node_attempt_id) [name: 'node_attempt_cost_rollups_run_attempt_idx']
+  }
+}
+
+table node_attempts {
+  id text [pk, not null]
+  run_id text [not null]
+  node_id text [not null]
+  node_type text [not null]
+  attempt integer [not null, default: 1]
+  status text [not null, default: 'Pending']
+  decision text
+  workspace_policy text
+  rework_from_node text
+  acp_session_id text
+  checkpoint_ref text
+  session_policy text
+  session_fallback boolean [not null, default: false]
+  auto_retry boolean [not null, default: false]
+  stdout text
+  resolved_prompt text
+  rework_baseline integer
+  vars jsonb [not null, default: `{}`]
+  exit_code integer
+  error_code text
+  owner_user_id text
+  base_ref text
+  returned_commits text
+  returned_diff text
+  enforcement_snapshot jsonb
+  materialization_plan jsonb
+  started_at "timestamp with time zone" [not null, default: `now()`]
+  ended_at "timestamp with time zone"
+
+  indexes {
+    (run_id, node_id, attempt) [name: 'node_attempts_run_node_attempt_uq', unique]
+    run_id [name: 'node_attempts_run_idx']
+  }
+}
+
+table package_installs {
+  id text [pk, not null]
+  source_url text [not null]
+  name text [not null]
+  version_label text [not null]
+  resolved_revision text [not null]
+  manifest jsonb [not null]
+  manifest_digest text [not null]
+  installed_path text [not null]
+  package_status text [not null, default: 'Installing']
+  trust_status text [not null, default: 'untrusted']
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+  source_local_package_id text
+  source_commit_sha text
+
+  indexes {
+    (source_url, name, resolved_revision) [name: 'package_installs_source_name_rev_uq', unique]
+  }
+}
+
+table package_sources {
+  id text [pk, not null]
+  url text [not null, unique]
+  kind text [not null, default: 'git']
+  base_branch text
+  enabled boolean [not null, default: true]
+  note text
+  discovered jsonb [not null, default: `[]`]
+  last_checked_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+}
+
+table platform_acp_runners {
+  id text [pk, not null]
+  adapter text [not null]
+  capability_agent text [not null]
+  model text [not null]
+  provider jsonb [not null]
+  env jsonb [not null, default: `{}`]
+  permission_policy text [not null, default: 'default']
+  sidecar_id text
+  readiness_status text [not null, default: 'Unknown']
+  readiness_reasons jsonb [not null, default: `[]`]
+  enabled boolean [not null, default: true]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (adapter, enabled) [name: 'platform_acp_runners_adapter_enabled_idx']
+    sidecar_id [name: 'platform_acp_runners_sidecar_idx']
+  }
+}
+
+table platform_mcp_servers {
+  id text [pk, not null]
+  transport text [not null, default: 'stdio']
+  command text
+  args jsonb [not null, default: `[]`]
+  env_keys jsonb [not null, default: `[]`]
+  url text
+  header_keys jsonb [not null, default: `[]`]
+  supported_agents jsonb [not null, default: `["claude","codex","gemini","opencode","mimo"]`]
+  trust_status text [not null, default: 'untrusted']
+  readiness_status text [not null, default: 'Unknown']
+  readiness_reasons jsonb [not null, default: `[]`]
+  last_probe_status text
+  last_probe_at "timestamp with time zone"
+  last_probe_reason text
+  enabled boolean [not null, default: true]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (transport, enabled) [name: 'platform_mcp_servers_transport_enabled_idx']
+  }
+}
+
+table platform_router_sidecars {
+  id text [pk, not null]
+  kind text [not null]
+  lifecycle text [not null]
+  command_preset text
+  config_path text
+  base_url text
+  healthcheck_url text
+  auth_token_ref text
+  readiness_status text [not null, default: 'Unknown']
+  readiness_reasons jsonb [not null, default: `[]`]
+  enabled boolean [not null, default: true]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+}
+
+table platform_runtime_settings {
+  id text [pk, not null, default: 'singleton']
+  default_runner_id text [not null]
+  webhooks_enabled boolean [not null, default: true]
+  embedding_base_url text
+  embedding_model text
+  embedding_dimensions integer
+  embedding_api_key_ref text
+  distill_base_url text
+  distill_model text
+  distill_api_key_ref text
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+}
+
+table project_flow_roles {
+  id text [pk, not null]
+  project_id text [not null]
+  role_ref text [not null]
+  label text [not null]
+  description text
+  source text [not null, default: 'config']
+  archived_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (project_id, role_ref) [name: 'project_flow_roles_project_key_uq', unique]
+    project_id [name: 'project_flow_roles_project_idx']
+  }
+}
+
+table project_flow_runner_defaults {
+  id text [pk, not null]
+  project_id text [not null]
+  flow_id text [not null]
+  runner_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (project_id, flow_id) [name: 'project_flow_runner_defaults_project_flow_uq', unique]
+  }
+}
+
+table project_mcp_bindings {
+  id text [pk, not null]
+  project_id text [not null]
+  ref_id text [not null]
+  target_kind text [not null]
+  target_id text [not null]
+  enabled boolean [not null, default: true]
+  config_overlay jsonb [not null, default: `{}`]
+  recommended_hint text
+  created_by text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (project_id, ref_id) [name: 'project_mcp_bindings_project_ref_uq', unique]
+    project_id [name: 'project_mcp_bindings_project_idx']
+    
+  }
+}
+
+table project_members {
+  id text [pk, not null]
+  project_id text [not null]
+  user_id text [not null]
+  role text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  added_by text
+  updated_at "timestamp with time zone"
+  updated_by text
+
+  indexes {
+    (project_id, user_id) [name: 'project_members_project_user_uq', unique]
+    user_id [name: 'project_members_user_idx']
+  }
+}
+
+table project_package_attachments {
+  id text [pk, not null]
+  project_id text [not null]
+  package_install_id text [not null]
+  package_name text [not null]
+  attached_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (project_id, package_name) [name: 'project_package_attachments_project_name_uq', unique]
+  }
+}
+
+table project_tokens {
+  id text [pk, not null]
+  project_id text
+  name text [not null]
+  token_kind text [not null, default: 'project']
+  owner_user_id text
+  agent_id text
+  prefix text [not null]
+  token_hash text [not null]
+  scopes jsonb [not null, default: `["*"]`]
+  created_by text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  last_used_at "timestamp with time zone"
+  expires_at "timestamp with time zone"
+  revoked_at "timestamp with time zone"
+
+  indexes {
+    prefix [name: 'project_tokens_prefix_idx']
+    project_id [name: 'project_tokens_project_idx']
+    owner_user_id [name: 'project_tokens_owner_idx']
+    agent_id [name: 'project_tokens_agent_idx']
+    (owner_user_id, created_at) [name: 'project_tokens_owner_created_idx']
+    
+    
+    
+    
+  }
+}
+
+table projects {
+  id text [pk, not null]
+  slug text [not null, unique]
+  name text [not null]
+  repo_path text [not null, unique]
+  repo_url text
+  provider text
+  main_branch text [not null, default: 'main']
+  branch_prefix text [not null, default: 'maister/']
+  maister_yaml_path text
+  default_runner_id text
+  sync_strategy_default text [not null, default: 'rebase']
+  sync_runner_id text
+  promotion_mode text
+  delivery_policy_default jsonb
+  execution_policy_default jsonb
+  task_queue_settings jsonb
+  auto_promotion jsonb
+  brain_enabled boolean [not null, default: false]
+  task_key text [not null, unique]
+  next_task_number integer [not null, default: 1]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  archived_at "timestamp with time zone"
+}
+
+table repo_delivery_rollups {
+  id text [pk, not null]
+  project_id text [not null]
+  branch text [not null]
+  bucket_start "timestamp with time zone" [not null]
+  bucket_end "timestamp with time zone" [not null]
+  commits integer [not null, default: 0]
+  merge_pr_units integer [not null, default: 0]
+  additions bigint [not null, default: 0]
+  deletions bigint [not null, default: 0]
+  delivery_refs jsonb [not null, default: `[]`]
+  provider_complete boolean [not null, default: true]
+  fetched_at "timestamp with time zone" [not null]
+  head_sha text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (project_id, branch, bucket_start, bucket_end) [name: 'repo_delivery_rollups_project_branch_bucket_uq', unique]
+    (project_id, branch, bucket_start) [name: 'repo_delivery_rollups_project_branch_bucket_idx']
+    (project_id, fetched_at) [name: 'repo_delivery_rollups_project_fetched_idx']
+    
+    
+  }
+}
+
+table review_comments {
+  id text [pk, not null]
+  run_id text [not null]
+  hitl_request_id text [not null]
+  node_id text [not null]
+  gate_attempt integer [not null]
+  parent_id text
+  author_user_id text
+  author_label text [not null]
+  file_path text
+  side text
+  line integer
+  line_content text
+  body text [not null]
+  status text [not null, default: 'open']
+  resolved_by_user_id text
+  resolved_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone"
+
+  indexes {
+    (run_id, created_at) [name: 'review_comments_run_created_idx']
+    (run_id, status) [name: 'review_comments_run_status_idx']
+    hitl_request_id [name: 'review_comments_hitl_request_idx']
+    parent_id [name: 'review_comments_parent_idx']
+    
+    
+    
+  }
+}
+
+table run_cost_rollups {
+  run_id text [pk, not null]
+  project_id text
+  task_id text
+  flow_id text
+  input_tokens integer [not null, default: 0]
+  output_tokens integer [not null, default: 0]
+  cache_read_tokens integer [not null, default: 0]
+  cache_creation_tokens integer [not null, default: 0]
+  resume_input_tokens integer [not null, default: 0]
+  resume_output_tokens integer [not null, default: 0]
+  resume_cache_read_tokens integer [not null, default: 0]
+  resume_cache_creation_tokens integer [not null, default: 0]
+  by_model jsonb [not null, default: `{}`]
+  by_runner jsonb [not null, default: `{}`]
+  source_event_count integer [not null, default: 0]
+  source_cursor text
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (project_id, flow_id) [name: 'run_cost_rollups_project_flow_idx']
+  }
+}
+
+table run_messages {
+  id text [pk, not null]
+  run_id text [not null]
+  node_attempt_id text
+  sequence integer [not null]
+  role text [not null]
+  content text [not null]
+  supervisor_event_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (run_id, node_attempt_id, sequence) [name: 'run_messages_run_node_attempt_sequence_uq', unique]
+  }
+}
+
+table run_schedules {
+  id text [pk, not null]
+  project_id text [not null]
+  task_id text [not null]
+  name text [not null]
+  cron_expr text [not null]
+  timezone text [not null]
+  overlap_policy text [not null, default: 'skip']
+  runner_id text
+  enabled boolean [not null, default: true]
+  next_fire_at "timestamp with time zone" [not null]
+  queue_one_pending boolean [not null, default: false]
+  queued_fire_at "timestamp with time zone"
+  last_fired_at "timestamp with time zone"
+  last_fire_outcome text
+  last_fire_error text
+  last_run_id text
+  created_by_user_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    project_id [name: 'run_schedules_project_idx']
+    task_id [name: 'run_schedules_task_idx']
+    (enabled, next_fire_at) [name: 'run_schedules_due_idx']
+    last_run_id [name: 'run_schedules_last_run_idx']
+  }
+}
+
+table run_sessions {
+  id text [pk, not null]
+  run_id text [not null]
+  session_name text [not null]
+  runner_id text
+  runner_resolution_tier text
+  capability_agent text
+  runner_snapshot jsonb
+  acp_session_id text
+  resolution_source text
+  resolution_warning jsonb
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (run_id, session_name) [name: 'run_sessions_run_session_uq', unique]
+    runner_id [name: 'run_sessions_runner_idx']
+  }
+}
+
+table run_sync_attempts {
+  id text [pk, not null]
+  run_id text [not null]
+  workspace_id text [not null]
+  attempt integer [not null]
+  strategy text [not null]
+  mode text [not null]
+  phase text [not null, default: 'starting']
+  target_ref text
+  target_sha text
+  head_sha_before text
+  head_sha_after text
+  remote_sha_before text
+  conflicted_files jsonb
+  runner_id text
+  session_name text
+  agent_running_since "timestamp with time zone"
+  auto_finalize boolean [not null, default: false]
+  pushed boolean [not null, default: false]
+  error_code text
+  error_message text
+  actor_type text
+  actor_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (run_id, attempt) [name: 'run_sync_attempts_run_attempt_uq', unique]
+    run_id [name: 'run_sync_attempts_run_idx']
+  }
+}
+
+table runs {
+  id text [pk, not null]
+  run_kind text [not null, default: 'flow']
+  agent_id text
+  trigger_source text
+  trigger_event_id bigint
+  trigger_payload jsonb
+  scheduled_launch_id text
+  agent_schedule_id text
+  evaluation_batch_item_id text
+  agent_workspace text
+  task_id text
+  project_id text
+  local_package_id text
+  brain_context boolean
+  flow_id text
+  status text [not null, default: 'Pending']
+  current_step_id text
+  flow_version text [not null]
+  flow_revision text [not null, default: 'unknown']
+  flow_revision_id text
+  created_by_user_id text
+  checkpoint_at "timestamp with time zone"
+  keepalive_until "timestamp with time zone"
+  started_at "timestamp with time zone" [not null, default: `now()`]
+  ended_at "timestamp with time zone"
+  resume_started_at "timestamp with time zone"
+  resume_requested_at "timestamp with time zone"
+  queue_admitted_at "timestamp with time zone"
+  resume_target_step_id text
+  resolved_capability_set jsonb
+  withheld_mcps jsonb
+  delivery_policy_snapshot jsonb
+  parent_run_id text
+  root_run_id text
+  delegation_snapshot jsonb
+  launch_mode text
+  persistent boolean [not null, default: false]
+  addressable_key text
+  workspace_mode text
+  promoted_head_sha text
+  merge_commit_sha text
+  diff_stat jsonb
+  execution_policy jsonb [not null, default: `{"preset":"supervised"}`]
+  promotion_hold jsonb
+  review_entered_at "timestamp with time zone"
+  budget_state jsonb
+  agent_config jsonb
+  cost_reconciled_at "timestamp with time zone"
+  agent_memory_hash text
+  agent_chain_depth integer [not null, default: 0]
+  context_mounts jsonb
+
+  indexes {
+    (project_id, status) [name: 'runs_project_status_idx']
+    (project_id, status, run_kind) [name: 'runs_project_status_kind_idx']
+    task_id [name: 'runs_task_idx']
+    (run_kind, task_id) [name: 'runs_kind_task_idx']
+    parent_run_id [name: 'runs_parent_run_id_idx']
+    root_run_id [name: 'runs_root_run_id_idx']
+    promoted_head_sha [name: 'runs_promoted_head_sha_idx']
+    merge_commit_sha [name: 'runs_merge_commit_sha_idx']
+    (agent_id, trigger_event_id) [name: 'runs_agent_trigger_event_uq', unique]
+    scheduled_launch_id [name: 'runs_scheduled_launch_id_unique', unique]
+    evaluation_batch_item_id [name: 'runs_evaluation_batch_item_uq', unique]
+    agent_schedule_id [name: 'runs_agent_schedule_idx']
+    (root_run_id, addressable_key) [name: 'runs_root_addressable_key_uq', unique]
+    task_id [name: 'runs_auto_task_uq', unique]
+    ended_at [name: 'runs_ended_at_idx']
+  }
+}
+
+table scheduled_task_launch_attempts {
+  id text [pk, not null]
+  scheduled_launch_id text [not null]
+  run_id text [not null]
+  task_attempt_number integer [not null]
+  branch text [not null]
+  worktree_path text [not null]
+  request_hash text [not null]
+  claim_fence integer [not null]
+  state text [not null, default: 'Reserved']
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    run_id [name: 'scheduled_task_launch_attempts_run_id_uq', unique]
+    scheduled_launch_id [name: 'scheduled_task_launch_attempts_launch_live_uq', unique]
+    (scheduled_launch_id, created_at) [name: 'scheduled_task_launch_attempts_launch_idx']
+    
+  }
+}
+
+table scheduled_task_launch_events {
+  id text [pk, not null]
+  scheduled_launch_id text [not null]
+  kind text [not null]
+  actor_type text [not null]
+  actor_id text
+  claim_fence integer
+  error_code text
+  message text
+  metadata jsonb
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (scheduled_launch_id, created_at) [name: 'scheduled_task_launch_events_launch_created_idx']
+  }
+}
+
+table scheduled_task_launches {
+  id text [pk, not null]
+  project_id text [not null]
+  task_id text
+  task_key text [not null]
+  task_number integer [not null]
+  task_title text [not null]
+  created_by_user_id text
+  last_actor_user_id text
+  scheduled_local_time text [not null]
+  timezone text [not null]
+  disambiguation text
+  scheduled_for_at "timestamp with time zone" [not null]
+  armed_at "timestamp with time zone" [not null]
+  launch_request jsonb [not null]
+  request_hash text [not null]
+  idempotency_key text [not null]
+  state text [not null, default: 'Scheduled']
+  revision integer [not null, default: 1]
+  next_attempt_at "timestamp with time zone"
+  attempt_count integer [not null, default: 0]
+  max_attempts integer [not null, default: 3]
+  claim_id text
+  claim_fence integer
+  claim_expires_at "timestamp with time zone"
+  claim_origin text
+  latest_outcome text
+  error_code text
+  error_message text
+  late_by_ms bigint
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (project_id, created_by_user_id, idempotency_key) [name: 'scheduled_task_launches_project_creator_idempotency_uq', unique]
+    (project_id, updated_at) [name: 'scheduled_task_launches_project_idx']
+    (next_attempt_at, id) [name: 'scheduled_task_launches_due_idx']
+    
+    
+    
+  }
+}
+
+table scheduler_job_runs {
+  id text [pk, not null]
+  job_id text [not null]
+  job_kind text [not null]
+  status text [not null, default: 'Claimed']
+  claimed_at "timestamp with time zone" [not null, default: `now()`]
+  started_at "timestamp with time zone"
+  finished_at "timestamp with time zone"
+  lease_expires_at "timestamp with time zone" [not null]
+  summary jsonb [not null, default: `{}`]
+  error_code text
+  error_message text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    job_id [name: 'scheduler_job_runs_job_idx']
+    (status, lease_expires_at) [name: 'scheduler_job_runs_lease_idx']
+  }
+}
+
+table scheduler_jobs {
+  id text [pk, not null]
+  project_id text
+  job_kind text [not null]
+  target jsonb [not null, default: `{}`]
+  cadence_interval_seconds integer [not null]
+  next_run_at "timestamp with time zone" [not null]
+  last_fired_at "timestamp with time zone"
+  lease_expires_at "timestamp with time zone"
+  consecutive_failures integer [not null, default: 0]
+  max_failures integer [not null, default: 3]
+  disabled_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (disabled_at, next_run_at) [name: 'scheduler_jobs_due_idx']
+    (job_kind, next_run_at) [name: 'scheduler_jobs_kind_due_idx']
+    (project_id, job_kind) [name: 'scheduler_jobs_project_kind_idx']
+  }
+}
+
+table scratch_attachments {
+  id text [pk, not null]
+  run_id text [not null]
+  message_id text
+  kind text [not null]
+  label text
+  value text [not null]
+  file_name text
+  mime_type text
+  byte_size integer
+  sha256 text
+  storage_path text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    run_id [name: 'scratch_attachments_run_idx']
+    message_id [name: 'scratch_attachments_message_idx']
+  }
+}
+
+table scratch_capability_profiles {
+  id text [pk, not null]
+  run_id text [not null, unique]
+  profile_digest text [not null]
+  materialized_path text [not null]
+  selected_mcp_ids jsonb [not null, default: `[]`]
+  selected_skill_ids jsonb [not null, default: `[]`]
+  selected_rule_ids jsonb [not null, default: `[]`]
+  restrictions jsonb [not null, default: `{}`]
+  adapter_launch jsonb [not null, default: `{}`]
+  downgrade_notes jsonb
+  created_at "timestamp with time zone" [not null, default: `now()`]
+}
+
+table scratch_runs {
+  run_id text [pk, not null]
+  project_id text
+  local_package_id text
+  name text
+  initial_prompt text [not null]
+  work_mode text [not null, default: 'auto']
+  reasoning_effort text [not null, default: 'high']
+  plan_mode text [not null, default: 'off']
+  linked_task_id text
+  linked_issue_url text
+  base_branch text [not null]
+  base_commit text [not null]
+  target_branch text
+  dialog_status text [not null, default: 'Starting']
+  supervisor_session_id text
+  created_by_user_id text [not null]
+  error_code text
+  error_message text
+  error_metadata jsonb
+  last_user_message_at "timestamp with time zone"
+  last_agent_message_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (project_id, dialog_status) [name: 'scratch_runs_project_status_idx']
+    (local_package_id, dialog_status) [name: 'scratch_runs_local_package_idx']
+    
+  }
+}
+
+table sessions {
+  session_token text [pk, not null]
+  user_id text [not null]
+  expires "timestamp with time zone" [not null]
+}
+
+table task_activity {
+  id text [pk, not null]
+  task_id text [not null]
+  project_id text [not null]
+  actor_type text [not null]
+  actor_id text
+  event_kind text [not null]
+  payload jsonb [not null, default: `{}`]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (task_id, created_at) [name: 'task_activity_task_created_idx']
+    (project_id, created_at) [name: 'task_activity_project_created_idx']
+    
+    (task_id, payload) [name: 'task_activity_agent_summon_uq', unique]
+    
+    
+  }
+}
+
+table task_clarifications {
+  id text [pk, not null]
+  task_id text [not null]
+  seq integer [not null]
+  source_hitl_request_id text [not null]
+  origin_run_id text [not null]
+  origin_agent_id text [not null]
+  question text [not null]
+  question_schema jsonb [not null]
+  retrigger_mode text [not null]
+  answer jsonb
+  answered_by_user_id text
+  answered_at "timestamp with time zone"
+  superseded_at "timestamp with time zone"
+  superseded_by_hitl_request_id text
+  superseded_by_run_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (task_id, seq) [name: 'task_clarifications_task_seq_uq', unique]
+    source_hitl_request_id [name: 'task_clarifications_source_hitl_request_uq', unique]
+    (task_id, seq, id) [name: 'task_clarifications_answered_context_idx']
+    
+    
+    
+    
+  }
+}
+
+table task_comments {
+  id text [pk, not null]
+  task_id text [not null]
+  project_id text [not null]
+  actor_type text [not null]
+  actor_id text
+  body text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (task_id, created_at) [name: 'task_comments_task_created_idx']
+    
+    
+  }
+}
+
+table task_relations {
+  id text [pk, not null]
+  project_id text [not null]
+  from_task_id text [not null]
+  kind text [not null]
+  to_task_id text [not null]
+  actor_type text [not null]
+  actor_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (from_task_id, kind, to_task_id) [name: 'task_relations_from_kind_to_uq', unique]
+    to_task_id [name: 'task_relations_to_task_idx']
+    
+    
+    
+    
+  }
+}
+
+table task_subscribers {
+  id text [pk, not null]
+  task_id text [not null]
+  subscriber_type text [not null]
+  subscriber_id text [not null]
+  reason text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (task_id, subscriber_type, subscriber_id) [name: 'task_subscribers_task_pair_uq', unique]
+    
+    
+  }
+}
+
+table tasks {
+  id text [pk, not null]
+  project_id text [not null]
+  number integer [not null]
+  title text [not null]
+  prompt text [not null]
+  flow_id text
+  status text [not null, default: 'Backlog']
+  stage text [not null, default: 'Backlog']
+  attempt_number integer [not null, default: 1]
+  triage_status text
+  runner_id text
+  base_branch text
+  target_branch text
+  promotion_mode text
+  launch_mode text
+  launch_armed_at "timestamp with time zone"
+  delegation_spec jsonb
+  execution_policy jsonb
+  priority text [not null, default: 'normal']
+  triage_confidence "numeric(4, 3)"
+  queue_paused boolean [not null, default: false]
+  queue_claimed_at "timestamp with time zone"
+  agent_id text
+  trigger_event_id bigint
+  created_by_user_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (id, attempt_number) [name: 'tasks_id_attempt_uq', unique]
+    (project_id, number) [name: 'tasks_project_number_uq', unique]
+    (project_id, status) [name: 'tasks_project_status_idx']
+    (agent_id, trigger_event_id) [name: 'tasks_agent_trigger_event_uq', unique]
+    
+    
+  }
+}
+
+table token_audit_log {
+  id text [pk, not null]
+  token_id text [not null]
+  project_id text
+  actor_label text [not null]
+  scope_used text [not null]
+  endpoint text [not null]
+  method text [not null]
+  result text [not null]
+  status_code integer [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    token_id [name: 'token_audit_token_idx']
+    (project_id, created_at) [name: 'token_audit_project_created_idx']
+  }
+}
+
+table users {
+  id text [pk, not null]
+  name text
+  email text [not null, unique]
+  email_verified "timestamp with time zone"
+  image text
+  password_hash text
+  role text [not null, default: 'member']
+  account_status text [not null, default: 'pending']
+  account_status_updated_at "timestamp with time zone"
+  account_status_updated_by text
+  must_change_password boolean [not null, default: false]
+  last_login_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  created_by text
+  updated_at "timestamp with time zone"
+  updated_by text
+
+  indexes {
+    account_status [name: 'users_account_status_idx']
+  }
+}
+
+table verification_tokens {
+  identifier text [not null]
+  token text [not null]
+  expires "timestamp with time zone" [not null]
+
+  indexes {
+    (identifier, token) [pk]
+  }
+}
+
+table webhook_deliveries {
+  id text [pk, not null]
+  event_id text [not null]
+  subscription_id text [not null]
+  status text [not null, default: 'pending']
+  attempt_count integer [not null, default: 0]
+  next_attempt_at "timestamp with time zone" [not null]
+  lease_expires_at "timestamp with time zone"
+  idempotency_key text [not null]
+  last_http_status integer
+  last_error_kind text
+  last_error_message text
+  delivered_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (subscription_id, event_id) [name: 'webhook_deliveries_sub_event_uq', unique]
+    next_attempt_at [name: 'webhook_deliveries_due_idx']
+    (subscription_id, created_at) [name: 'webhook_deliveries_subscription_log_idx']
+  }
+}
+
+table webhook_delivery_attempts {
+  id text [pk, not null]
+  delivery_id text [not null]
+  attempt_no integer [not null]
+  requested_at "timestamp with time zone" [not null]
+  duration_ms integer [not null]
+  http_status integer
+  error_kind text
+  error_detail text
+  response_snippet text
+
+  indexes {
+    (delivery_id, attempt_no) [name: 'webhook_delivery_attempts_delivery_attempt_uq', unique]
+    delivery_id [name: 'webhook_delivery_attempts_delivery_idx']
+  }
+}
+
+table webhook_events {
+  id text [pk, not null]
+  project_id text [not null]
+  run_id text [not null]
+  type text [not null]
+  data jsonb [not null]
+  payload jsonb
+  occurred_at "timestamp with time zone" [not null]
+  fanout_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    created_at [name: 'webhook_events_pending_fanout_idx']
+  }
+}
+
+table webhook_subscriptions {
+  id text [pk, not null]
+  project_id text
+  name text [not null]
+  url text [not null]
+  method text [not null, default: 'POST']
+  headers jsonb [not null, default: `{}`]
+  event_types jsonb [not null]
+  signing_secret_ref text [not null]
+  secondary_signing_secret_ref text
+  enabled boolean [not null, default: true]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    project_id [name: 'webhook_subscriptions_project_idx']
+  }
+}
+
+table workspace_reconciliation_findings {
+  id text [pk, not null]
+  identity_fingerprint text [not null, unique]
+  candidate_kind text [not null]
+  relative_path text [not null]
+  provenance_version integer
+  provenance_fingerprint text
+  provenance_run_id text
+  project_id text
+  run_id text
+  workspace_id text
+  state text [not null]
+  first_seen_at "timestamp with time zone" [not null, default: `now()`]
+  last_seen_at "timestamp with time zone" [not null, default: `now()`]
+  armed_at "timestamp with time zone"
+  next_retry_at "timestamp with time zone"
+  attempt_count integer [not null, default: 0]
+  retry_generation integer [not null, default: 0]
+  lease_expires_at "timestamp with time zone"
+  attempt_id text
+  last_error_code text
+  last_error_message text
+  result_code text
+  rescue_ref text
+  rescue_commit text
+  resolved_at "timestamp with time zone"
+
+  indexes {
+    (state, next_retry_at, first_seen_at) [name: 'workspace_reconciliation_findings_due_idx']
+    provenance_run_id [name: 'workspace_reconciliation_findings_provenance_run_idx']
+    (project_id, run_id, workspace_id) [name: 'workspace_reconciliation_findings_correlation_idx']
+    
+    
+    
+    
+    
+    
+  }
+}
+
+table workspaces {
+  id text [pk, not null]
+  run_id text [not null]
+  project_id text [not null]
+  branch text [not null]
+  worktree_path text [not null, unique]
+  parent_repo_path text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  removed_at "timestamp with time zone"
+  scheduled_removal_at "timestamp with time zone"
+  archived_branch text
+  archived_at "timestamp with time zone"
+  archived_commit text
+  preservation_outcome text
+  removal_kind text
+  base_branch text
+  base_commit text
+  target_branch text
+  promotion_mode text
+  pr_url text
+  pr_number integer
+  promoted_at "timestamp with time zone"
+  promotion_state text [not null, default: 'none']
+  promotion_lane text
+  promotion_claimed_at "timestamp with time zone"
+  promotion_owner_user_id text
+  promotion_attempt_id text
+  lifecycle_operation_state text [not null, default: 'none']
+  lifecycle_operation_claimed_at "timestamp with time zone"
+  lifecycle_operation_lease_expires_at "timestamp with time zone"
+  lifecycle_operation_attempt_id text
+  lifecycle_operation_name text
+  lifecycle_operation_expected_run_status text
+  pr_state text
+  pr_has_conflicts boolean
+  pr_merged_at "timestamp with time zone"
+  pr_merge_commit_sha text
+
+  indexes {
+    (lifecycle_operation_state, lifecycle_operation_lease_expires_at) [name: 'workspaces_lifecycle_claim_idx']
+    
+    
+    
+    
+    
+    project_id [name: 'workspaces_pr_state_scan_idx']
+  }
+}
+
+table brain_chunks {
+  id text [pk, not null]
+  source_id text [not null]
+  project_id text [not null]
+  stable_id text [not null]
+  kind text [not null]
+  title text [not null]
+  path text [not null]
+  symbol text
+  content text [not null]
+  metadata jsonb [not null]
+  source_range jsonb
+  content_hash text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+}
+
+table brain_edges {
+  id text [pk, not null]
+  project_id text [not null]
+  from_ref jsonb [not null]
+  to_ref jsonb [not null]
+  relation text [not null]
+  confidence "numeric(4, 3)" [not null]
+  degraded boolean [not null, default: false]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+}
+
+table brain_embeddings {
+  id text [pk, not null]
+  item_id text
+  chunk_id text
+  split_ordinal integer [not null, default: 0]
+  vector vector [not null]
+  embedding_provider text [not null]
+  embedding_model text [not null]
+  embedding_dimensions integer [not null]
+  embedding_version text [not null]
+  source_hash text [not null]
+  content_hash text [not null]
+  chunker_id text
+  chunker_version text
+  embedded_at "timestamp with time zone" [not null, default: `now()`]
+}
+
+table brain_harvested_events {
+  project_id text [not null]
+  domain_event_id bigint [not null]
+  harvested_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (project_id, domain_event_id) [pk]
+  }
+}
+
+table brain_index_jobs {
+  id text [pk, not null]
+  project_id text [not null]
+  source_id text
+  reason text [not null]
+  status text [not null, default: 'queued']
+  progress integer [not null, default: 0]
+  resumable_cursor jsonb
+  created_at "timestamp with time zone" [not null, default: `now()`]
+}
+
+table brain_items {
+  id text [pk, not null]
+  project_id text [not null]
+  kind text [not null]
+  tier text [not null, default: 'owned']
+  title text [not null]
+  content text [not null]
+  status text [not null, default: 'active']
+  confidence "numeric(4, 3)" [not null]
+  reinforcement_count integer [not null, default: 0]
+  last_reinforced_at "timestamp with time zone"
+  expires_at "timestamp with time zone"
+  content_hash text [not null]
+  tags jsonb [not null, default: `[]`]
+  source_run_id text
+  source_node_attempt_id text
+  source_domain_event_id bigint
+  source_gate_kind text
+  source_ref jsonb
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+}
+
+table brain_project_config {
+  project_id text [pk, not null]
+  home_resolution jsonb [not null]
+  projection_flow_id text
+  autonomy_policy jsonb [not null]
+  indexing_profile text [not null, default: 'docs']
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+}
+
+table brain_proposal_decision_stats {
+  project_id text [not null]
+  kind text [not null]
+  blast_radius text [not null]
+  accepted_count integer [not null, default: 0]
+  rejected_count integer [not null, default: 0]
+  auto_drafted_count integer [not null, default: 0]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (project_id, kind, blast_radius) [pk]
+  }
+}
+
+table brain_proposals {
+  id text [pk, not null]
+  project_id text [not null]
+  kind text [not null]
+  evidence_item_ids jsonb [not null]
+  draft jsonb [not null]
+  status text [not null]
+  blast_radius text [not null]
+  autonomy_decision text [not null]
+  cluster_hash text
+  actor jsonb [not null]
+  resolution jsonb
+  authored_draft_id text
+  task_id text
+  run_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+  resolved_at "timestamp with time zone"
+  applied_at "timestamp with time zone"
+}
+
+table brain_snapshots {
+  id text [pk, not null]
+  project_id text [not null]
+  run_id text
+  node_attempt_id text
+  actor_type text [not null]
+  actor_id text [not null]
+  trigger text [not null]
+  query text [not null]
+  query_hash text [not null]
+  embedding_model text [not null]
+  returned_items jsonb [not null]
+  ranker_version text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+}
+
+table brain_sources {
+  id text [pk, not null]
+  project_id text [not null]
+  kind text [not null]
+  path text [not null]
+  source_hash text
+  chunker_id text [not null]
+  chunker_version text [not null]
+  enabled boolean [not null, default: true]
+  profile_managed boolean [not null, default: false]
+  last_indexed_at "timestamp with time zone"
+  last_error jsonb
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+}
+
+ref accounts_user_id_users_id_fk: accounts.user_id > users.id [delete: cascade, update: no action]
+
+ref actor_identities_project_id_projects_id_fk: actor_identities.project_id > projects.id [delete: cascade, update: no action]
+
+ref actor_identities_user_id_users_id_fk: actor_identities.user_id > users.id [delete: set null, update: no action]
+
+ref agent_project_links_agent_id_agents_id_fk: agent_project_links.agent_id > agents.id [delete: cascade, update: no action]
+
+ref agent_project_links_project_id_projects_id_fk: agent_project_links.project_id > projects.id [delete: cascade, update: no action]
+
+ref agent_project_links_runner_override_id_platform_acp_runners_id_fk: agent_project_links.runner_override_id > platform_acp_runners.id [delete: set null, update: no action]
+
+ref agent_schedules_agent_id_agents_id_fk: agent_schedules.agent_id > agents.id [delete: cascade, update: no action]
+
+ref agent_schedules_project_id_projects_id_fk: agent_schedules.project_id > projects.id [delete: cascade, update: no action]
+
+ref agents_runner_id_platform_acp_runners_id_fk: agents.runner_id > platform_acp_runners.id [delete: set null, update: no action]
+
+ref artifact_instances_run_id_runs_id_fk: artifact_instances.run_id > runs.id [delete: cascade, update: no action]
+
+ref artifact_instances_node_attempt_id_node_attempts_id_fk: artifact_instances.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
+
+ref artifact_instances_superseded_by_id_artifact_instances_id_fk: artifact_instances.superseded_by_id > artifact_instances.id [delete: set null, update: no action]
+
+ref artifact_projection_cursors_run_id_runs_id_fk: artifact_projection_cursors.run_id > runs.id [delete: cascade, update: no action]
+
+ref assignment_events_assignment_id_assignments_id_fk: assignment_events.assignment_id > assignments.id [delete: cascade, update: no action]
+
+ref assignment_events_project_id_projects_id_fk: assignment_events.project_id > projects.id [delete: cascade, update: no action]
+
+ref assignment_events_run_id_runs_id_fk: assignment_events.run_id > runs.id [delete: cascade, update: no action]
+
+ref assignment_events_actor_id_actor_identities_id_fk: assignment_events.actor_id > actor_identities.id [delete: set null, update: no action]
+
+ref assignments_project_id_projects_id_fk: assignments.project_id > projects.id [delete: cascade, update: no action]
+
+ref assignments_run_id_runs_id_fk: assignments.run_id > runs.id [delete: cascade, update: no action]
+
+ref assignments_task_id_tasks_id_fk: assignments.task_id > tasks.id [delete: set null, update: no action]
+
+ref assignments_hitl_request_id_hitl_requests_id_fk: assignments.hitl_request_id > hitl_requests.id [delete: cascade, update: no action]
+
+ref assignments_node_attempt_id_node_attempts_id_fk: assignments.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
+
+ref assignments_assignee_actor_id_actor_identities_id_fk: assignments.assignee_actor_id > actor_identities.id [delete: set null, update: no action]
+
+ref assignments_created_by_actor_id_actor_identities_id_fk: assignments.created_by_actor_id > actor_identities.id [delete: set null, update: no action]
+
+ref assignments_completed_by_actor_id_actor_identities_id_fk: assignments.completed_by_actor_id > actor_identities.id [delete: set null, update: no action]
+
+ref assignments_evidence_artifact_id_artifact_instances_id_fk: assignments.evidence_artifact_id > artifact_instances.id [delete: set null, update: no action]
+
+ref authored_capabilities_project_id_projects_id_fk: authored_capabilities.project_id > projects.id [delete: cascade, update: no action]
+
+ref authored_capabilities_locked_by_user_id_users_id_fk: authored_capabilities.locked_by_user_id > users.id [delete: set null, update: no action]
+
+ref authored_capability_revisions_capability_id_authored_capabilities_id_fk: authored_capability_revisions.capability_id > authored_capabilities.id [delete: cascade, update: no action]
+
+ref authored_capability_revisions_project_id_projects_id_fk: authored_capability_revisions.project_id > projects.id [delete: cascade, update: no action]
+
+ref capability_imports_project_id_projects_id_fk: capability_imports.project_id > projects.id [delete: cascade, update: no action]
+
+ref capability_imports_package_install_id_package_installs_id_fk: capability_imports.package_install_id > package_installs.id [delete: no action, update: no action]
+
+ref capability_records_project_id_projects_id_fk: capability_records.project_id > projects.id [delete: cascade, update: no action]
+
+ref consensus_round_verdicts_run_id_runs_id_fk: consensus_round_verdicts.run_id > runs.id [delete: cascade, update: no action]
+
+ref consensus_round_verdicts_node_attempt_id_node_attempts_id_fk: consensus_round_verdicts.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
+
+ref consensus_round_verdicts_raw_output_artifact_id_artifact_instances_id_fk: consensus_round_verdicts.raw_output_artifact_id > artifact_instances.id [delete: set null, update: no action]
+
+ref domain_events_project_id_projects_id_fk: domain_events.project_id > projects.id [delete: cascade, update: no action]
+
+ref domain_events_task_id_tasks_id_fk: domain_events.task_id > tasks.id [delete: cascade, update: no action]
+
+ref domain_events_run_id_runs_id_fk: domain_events.run_id > runs.id [delete: cascade, update: no action]
+
+ref evaluation_aggregate_results_execution_id_evaluation_executions_id_fk: evaluation_aggregate_results.execution_id > evaluation_executions.id [delete: cascade, update: no action]
+
+ref evaluation_criterion_results_attempt_id_evaluation_judge_attempts_id_fk: evaluation_criterion_results.attempt_id > evaluation_judge_attempts.id [delete: cascade, update: no action]
+
+ref evaluation_criterion_results_participant_id_evaluation_participants_id_fk: evaluation_criterion_results.participant_id > evaluation_participants.id [delete: set null, update: no action]
+
+ref evaluation_events_study_id_evaluation_studies_id_fk: evaluation_events.study_id > evaluation_studies.id [delete: cascade, update: no action]
+
+ref evaluation_events_execution_id_evaluation_executions_id_fk: evaluation_events.execution_id > evaluation_executions.id [delete: set null, update: no action]
+
+ref evaluation_evidence_items_snapshot_id_evaluation_evidence_snapshots_id_fk: evaluation_evidence_items.snapshot_id > evaluation_evidence_snapshots.id [delete: cascade, update: no action]
+
+ref evaluation_evidence_items_participant_id_evaluation_participants_id_fk: evaluation_evidence_items.participant_id > evaluation_participants.id [delete: set null, update: no action]
+
+ref evaluation_evidence_snapshots_study_id_evaluation_studies_id_fk: evaluation_evidence_snapshots.study_id > evaluation_studies.id [delete: cascade, update: no action]
+
+ref evaluation_evidence_snapshots_prepared_by_user_id_users_id_fk: evaluation_evidence_snapshots.prepared_by_user_id > users.id [delete: set null, update: no action]
+
+ref evaluation_executions_study_id_evaluation_studies_id_fk: evaluation_executions.study_id > evaluation_studies.id [delete: cascade, update: no action]
+
+ref evaluation_executions_method_revision_id_evaluation_method_revisions_id_fk: evaluation_executions.method_revision_id > evaluation_method_revisions.id [delete: restrict, update: no action]
+
+ref evaluation_executions_evidence_snapshot_id_evaluation_evidence_snapshots_id_fk: evaluation_executions.evidence_snapshot_id > evaluation_evidence_snapshots.id [delete: restrict, update: no action]
+
+ref evaluation_executions_retry_of_evaluation_executions_id_fk: evaluation_executions.retry_of > evaluation_executions.id [delete: set null, update: no action]
+
+ref evaluation_executions_requested_by_user_id_users_id_fk: evaluation_executions.requested_by_user_id > users.id [delete: set null, update: no action]
+
+ref evaluation_executions_cancelled_by_user_id_users_id_fk: evaluation_executions.cancelled_by_user_id > users.id [delete: set null, update: no action]
+
+ref evaluation_human_verdicts_study_id_evaluation_studies_id_fk: evaluation_human_verdicts.study_id > evaluation_studies.id [delete: cascade, update: no action]
+
+ref evaluation_human_verdicts_supersedes_id_evaluation_human_verdicts_id_fk: evaluation_human_verdicts.supersedes_id > evaluation_human_verdicts.id [delete: set null, update: no action]
+
+ref evaluation_human_verdicts_created_by_user_id_users_id_fk: evaluation_human_verdicts.created_by_user_id > users.id [delete: set null, update: no action]
+
+ref evaluation_judge_attempts_execution_id_evaluation_executions_id_fk: evaluation_judge_attempts.execution_id > evaluation_executions.id [delete: cascade, update: no action]
+
+ref evaluation_judge_attempts_retry_of_evaluation_judge_attempts_id_fk: evaluation_judge_attempts.retry_of > evaluation_judge_attempts.id [delete: set null, update: no action]
+
+ref evaluation_judge_attempts_agent_id_agents_id_fk: evaluation_judge_attempts.agent_id > agents.id [delete: set null, update: no action]
+
+ref evaluation_judge_attempts_agent_run_id_runs_id_fk: evaluation_judge_attempts.agent_run_id > runs.id [delete: set null, update: no action]
+
+ref evaluation_judge_panels_created_by_user_id_users_id_fk: evaluation_judge_panels.created_by_user_id > users.id [delete: set null, update: no action]
+
+ref evaluation_judge_panels_updated_by_user_id_users_id_fk: evaluation_judge_panels.updated_by_user_id > users.id [delete: set null, update: no action]
+
+ref evaluation_launch_batch_items_batch_id_evaluation_launch_batches_id_fk: evaluation_launch_batch_items.batch_id > evaluation_launch_batches.id [delete: cascade, update: no action]
+
+ref evaluation_launch_batch_items_recipe_id_evaluation_recipes_id_fk: evaluation_launch_batch_items.recipe_id > evaluation_recipes.id [delete: restrict, update: no action]
+
+ref evaluation_launch_batch_items_run_id_runs_id_fk: evaluation_launch_batch_items.run_id > runs.id [delete: set null, update: no action]
+
+ref evaluation_launch_batch_items_participant_id_evaluation_participants_id_fk: evaluation_launch_batch_items.participant_id > evaluation_participants.id [delete: set null, update: no action]
+
+ref evaluation_launch_batches_study_id_evaluation_studies_id_fk: evaluation_launch_batches.study_id > evaluation_studies.id [delete: cascade, update: no action]
+
+ref evaluation_launch_batches_requested_by_user_id_users_id_fk: evaluation_launch_batches.requested_by_user_id > users.id [delete: set null, update: no action]
+
+ref evaluation_method_revisions_package_install_id_package_installs_id_fk: evaluation_method_revisions.package_install_id > package_installs.id [delete: restrict, update: no action]
+
+ref evaluation_metric_results_execution_id_evaluation_executions_id_fk: evaluation_metric_results.execution_id > evaluation_executions.id [delete: cascade, update: no action]
+
+ref evaluation_metric_results_participant_id_evaluation_participants_id_fk: evaluation_metric_results.participant_id > evaluation_participants.id [delete: set null, update: no action]
+
+ref evaluation_objective_check_runs_execution_id_evaluation_executions_id_fk: evaluation_objective_check_runs.execution_id > evaluation_executions.id [delete: cascade, update: no action]
+
+ref evaluation_objective_check_runs_participant_id_evaluation_participants_id_fk: evaluation_objective_check_runs.participant_id > evaluation_participants.id [delete: set null, update: no action]
+
+ref evaluation_objective_check_runs_log_evidence_item_id_evaluation_evidence_items_id_fk: evaluation_objective_check_runs.log_evidence_item_id > evaluation_evidence_items.id [delete: set null, update: no action]
+
+ref evaluation_participants_study_id_evaluation_studies_id_fk: evaluation_participants.study_id > evaluation_studies.id [delete: cascade, update: no action]
+
+ref evaluation_participants_run_id_runs_id_fk: evaluation_participants.run_id > runs.id [delete: set null, update: no action]
+
+ref evaluation_participants_recipe_id_evaluation_recipes_id_fk: evaluation_participants.recipe_id > evaluation_recipes.id [delete: set null, update: no action]
+
+ref evaluation_participants_batch_item_id_evaluation_launch_batch_items_id_fk: evaluation_participants.batch_item_id > evaluation_launch_batch_items.id [delete: set null, update: no action]
+
+ref evaluation_profiles_method_revision_id_evaluation_method_revisions_id_fk: evaluation_profiles.method_revision_id > evaluation_method_revisions.id [delete: restrict, update: no action]
+
+ref evaluation_profiles_panel_id_evaluation_judge_panels_id_fk: evaluation_profiles.panel_id > evaluation_judge_panels.id [delete: restrict, update: no action]
+
+ref evaluation_profiles_created_by_user_id_users_id_fk: evaluation_profiles.created_by_user_id > users.id [delete: set null, update: no action]
+
+ref evaluation_profiles_updated_by_user_id_users_id_fk: evaluation_profiles.updated_by_user_id > users.id [delete: set null, update: no action]
+
+ref evaluation_project_profile_overrides_project_id_projects_id_fk: evaluation_project_profile_overrides.project_id > projects.id [delete: cascade, update: no action]
+
+ref evaluation_project_profile_overrides_profile_id_evaluation_profiles_id_fk: evaluation_project_profile_overrides.profile_id > evaluation_profiles.id [delete: restrict, update: no action]
+
+ref evaluation_project_profile_overrides_updated_by_user_id_users_id_fk: evaluation_project_profile_overrides.updated_by_user_id > users.id [delete: set null, update: no action]
+
+ref evaluation_recipes_study_id_evaluation_studies_id_fk: evaluation_recipes.study_id > evaluation_studies.id [delete: cascade, update: no action]
+
+ref evaluation_reviews_execution_id_evaluation_executions_id_fk: evaluation_reviews.execution_id > evaluation_executions.id [delete: cascade, update: no action]
+
+ref evaluation_reviews_reviewer_user_id_users_id_fk: evaluation_reviews.reviewer_user_id > users.id [delete: set null, update: no action]
+
+ref evaluation_standardized_recipes_project_id_projects_id_fk: evaluation_standardized_recipes.project_id > projects.id [delete: cascade, update: no action]
+
+ref evaluation_standardized_recipes_source_study_id_evaluation_studies_id_fk: evaluation_standardized_recipes.source_study_id > evaluation_studies.id [delete: set null, update: no action]
+
+ref evaluation_standardized_recipes_source_recipe_id_evaluation_recipes_id_fk: evaluation_standardized_recipes.source_recipe_id > evaluation_recipes.id [delete: set null, update: no action]
+
+ref evaluation_standardized_recipes_source_verdict_id_evaluation_human_verdicts_id_fk: evaluation_standardized_recipes.source_verdict_id > evaluation_human_verdicts.id [delete: set null, update: no action]
+
+ref evaluation_standardized_recipes_created_by_user_id_users_id_fk: evaluation_standardized_recipes.created_by_user_id > users.id [delete: set null, update: no action]
+
+ref evaluation_studies_project_id_projects_id_fk: evaluation_studies.project_id > projects.id [delete: cascade, update: no action]
+
+ref evaluation_studies_task_id_tasks_id_fk: evaluation_studies.task_id > tasks.id [delete: restrict, update: no action]
+
+ref evaluation_studies_created_by_user_id_users_id_fk: evaluation_studies.created_by_user_id > users.id [delete: set null, update: no action]
+
+ref evaluation_suite_studies_suite_id_evaluation_suites_id_fk: evaluation_suite_studies.suite_id > evaluation_suites.id [delete: cascade, update: no action]
+
+ref evaluation_suite_studies_study_id_evaluation_studies_id_fk: evaluation_suite_studies.study_id > evaluation_studies.id [delete: cascade, update: no action]
+
+ref evaluation_suite_studies_task_id_tasks_id_fk: evaluation_suite_studies.task_id > tasks.id [delete: restrict, update: no action]
+
+ref evaluation_suites_project_id_projects_id_fk: evaluation_suites.project_id > projects.id [delete: cascade, update: no action]
+
+ref evaluation_suites_created_by_user_id_users_id_fk: evaluation_suites.created_by_user_id > users.id [delete: set null, update: no action]
+
+ref flow_revisions_default_runner_id_platform_acp_runners_id_fk: flow_revisions.default_runner_id > platform_acp_runners.id [delete: set null, update: no action]
+
+ref flow_runner_remaps_project_id_projects_id_fk: flow_runner_remaps.project_id > projects.id [delete: cascade, update: no action]
+
+ref flow_runner_remaps_flow_revision_id_flow_revisions_id_fk: flow_runner_remaps.flow_revision_id > flow_revisions.id [delete: cascade, update: no action]
+
+ref flow_runner_remaps_mapped_runner_id_platform_acp_runners_id_fk: flow_runner_remaps.mapped_runner_id > platform_acp_runners.id [delete: set null, update: no action]
+
+ref flows_project_id_projects_id_fk: flows.project_id > projects.id [delete: cascade, update: no action]
+
+ref flows_enabled_revision_id_flow_revisions_id_fk: flows.enabled_revision_id > flow_revisions.id [delete: set null, update: no action]
+
+ref flows_package_install_id_package_installs_id_fk: flows.package_install_id > package_installs.id [delete: no action, update: no action]
+
+ref gate_chat_messages_run_id_runs_id_fk: gate_chat_messages.run_id > runs.id [delete: cascade, update: no action]
+
+ref gate_chat_messages_hitl_request_id_hitl_requests_id_fk: gate_chat_messages.hitl_request_id > hitl_requests.id [delete: cascade, update: no action]
+
+ref gate_chat_messages_author_user_id_users_id_fk: gate_chat_messages.author_user_id > users.id [delete: set null, update: no action]
+
+ref gate_chat_turns_run_id_runs_id_fk: gate_chat_turns.run_id > runs.id [delete: cascade, update: no action]
+
+ref gate_chat_turns_hitl_request_id_hitl_requests_id_fk: gate_chat_turns.hitl_request_id > hitl_requests.id [delete: cascade, update: no action]
+
+ref gate_chat_turns_user_message_id_gate_chat_messages_id_fk: gate_chat_turns.user_message_id > gate_chat_messages.id [delete: cascade, update: no action]
+
+ref gate_chat_turns_agent_message_id_gate_chat_messages_id_fk: gate_chat_turns.agent_message_id > gate_chat_messages.id [delete: set null, update: no action]
+
+ref gate_results_run_id_runs_id_fk: gate_results.run_id > runs.id [delete: cascade, update: no action]
+
+ref gate_results_node_attempt_id_node_attempts_id_fk: gate_results.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
+
+ref hitl_requests_run_id_runs_id_fk: hitl_requests.run_id > runs.id [delete: cascade, update: no action]
+
+ref hitl_requests_task_id_tasks_id_fk: hitl_requests.task_id > tasks.id [delete: cascade, update: no action]
+
+ref hitl_requests_parent_hitl_request_id_hitl_requests_id_fk: hitl_requests.parent_hitl_request_id > hitl_requests.id [delete: cascade, update: no action]
+
+ref hitl_requests_source_artifact_id_artifact_instances_id_fk: hitl_requests.source_artifact_id > artifact_instances.id [delete: cascade, update: no action]
+
+ref inbox_items_project_id_projects_id_fk: inbox_items.project_id > projects.id [delete: cascade, update: no action]
+
+ref inbox_items_task_id_tasks_id_fk: inbox_items.task_id > tasks.id [delete: cascade, update: no action]
+
+ref local_packages_source_install_id_package_installs_id_fk: local_packages.source_install_id > package_installs.id [delete: set null, update: no action]
+
+ref local_packages_last_cut_install_id_package_installs_id_fk: local_packages.last_cut_install_id > package_installs.id [delete: set null, update: no action]
+
+ref local_packages_locked_by_user_id_users_id_fk: local_packages.locked_by_user_id > users.id [delete: set null, update: no action]
+
+ref local_packages_created_by_users_id_fk: local_packages.created_by > users.id [delete: set null, update: no action]
+
+ref local_packages_project_id_projects_id_fk: local_packages.project_id > projects.id [delete: cascade, update: no action]
+
+ref node_attempt_cost_rollups_run_id_runs_id_fk: node_attempt_cost_rollups.run_id > runs.id [delete: cascade, update: no action]
+
+ref node_attempt_cost_rollups_project_id_projects_id_fk: node_attempt_cost_rollups.project_id > projects.id [delete: cascade, update: no action]
+
+ref node_attempt_cost_rollups_node_attempt_id_node_attempts_id_fk: node_attempt_cost_rollups.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
+
+ref node_attempts_run_id_runs_id_fk: node_attempts.run_id > runs.id [delete: cascade, update: no action]
+
+ref node_attempts_owner_user_id_users_id_fk: node_attempts.owner_user_id > users.id [delete: set null, update: no action]
+
+ref package_installs_source_local_package_id_local_packages_id_fk: package_installs.source_local_package_id > local_packages.id [delete: set null, update: no action]
+
+ref platform_acp_runners_sidecar_id_platform_router_sidecars_id_fk: platform_acp_runners.sidecar_id > platform_router_sidecars.id [delete: set null, update: no action]
+
+ref platform_runtime_settings_default_runner_id_platform_acp_runners_id_fk: platform_runtime_settings.default_runner_id > platform_acp_runners.id [delete: no action, update: no action]
+
+ref project_flow_roles_project_id_projects_id_fk: project_flow_roles.project_id > projects.id [delete: cascade, update: no action]
+
+ref project_flow_runner_defaults_project_id_projects_id_fk: project_flow_runner_defaults.project_id > projects.id [delete: cascade, update: no action]
+
+ref project_flow_runner_defaults_flow_id_flows_id_fk: project_flow_runner_defaults.flow_id > flows.id [delete: cascade, update: no action]
+
+ref project_flow_runner_defaults_runner_id_platform_acp_runners_id_fk: project_flow_runner_defaults.runner_id > platform_acp_runners.id [delete: set null, update: no action]
+
+ref project_mcp_bindings_project_id_projects_id_fk: project_mcp_bindings.project_id > projects.id [delete: cascade, update: no action]
+
+ref project_members_project_id_projects_id_fk: project_members.project_id > projects.id [delete: cascade, update: no action]
+
+ref project_members_user_id_users_id_fk: project_members.user_id > users.id [delete: cascade, update: no action]
+
+ref project_package_attachments_project_id_projects_id_fk: project_package_attachments.project_id > projects.id [delete: cascade, update: no action]
+
+ref project_package_attachments_package_install_id_package_installs_id_fk: project_package_attachments.package_install_id > package_installs.id [delete: restrict, update: no action]
+
+ref project_tokens_project_id_projects_id_fk: project_tokens.project_id > projects.id [delete: cascade, update: no action]
+
+ref project_tokens_owner_user_id_users_id_fk: project_tokens.owner_user_id > users.id [delete: set null, update: no action]
+
+ref project_tokens_agent_id_agents_id_fk: project_tokens.agent_id > agents.id [delete: cascade, update: no action]
+
+ref project_tokens_created_by_users_id_fk: project_tokens.created_by > users.id [delete: set null, update: no action]
+
+ref projects_sync_runner_id_platform_acp_runners_id_fk: projects.sync_runner_id > platform_acp_runners.id [delete: set null, update: no action]
+
+ref repo_delivery_rollups_project_id_projects_id_fk: repo_delivery_rollups.project_id > projects.id [delete: cascade, update: no action]
+
+ref review_comments_run_id_runs_id_fk: review_comments.run_id > runs.id [delete: cascade, update: no action]
+
+ref review_comments_hitl_request_id_hitl_requests_id_fk: review_comments.hitl_request_id > hitl_requests.id [delete: cascade, update: no action]
+
+ref review_comments_parent_id_review_comments_id_fk: review_comments.parent_id > review_comments.id [delete: cascade, update: no action]
+
+ref review_comments_author_user_id_users_id_fk: review_comments.author_user_id > users.id [delete: set null, update: no action]
+
+ref review_comments_resolved_by_user_id_users_id_fk: review_comments.resolved_by_user_id > users.id [delete: set null, update: no action]
+
+ref run_cost_rollups_run_id_runs_id_fk: run_cost_rollups.run_id > runs.id [delete: cascade, update: no action]
+
+ref run_cost_rollups_project_id_projects_id_fk: run_cost_rollups.project_id > projects.id [delete: cascade, update: no action]
+
+ref run_cost_rollups_task_id_tasks_id_fk: run_cost_rollups.task_id > tasks.id [delete: set null, update: no action]
+
+ref run_cost_rollups_flow_id_flows_id_fk: run_cost_rollups.flow_id > flows.id [delete: set null, update: no action]
+
+ref run_messages_run_id_runs_id_fk: run_messages.run_id > runs.id [delete: cascade, update: no action]
+
+ref run_messages_node_attempt_id_node_attempts_id_fk: run_messages.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
+
+ref run_schedules_project_id_projects_id_fk: run_schedules.project_id > projects.id [delete: cascade, update: no action]
+
+ref run_schedules_task_id_tasks_id_fk: run_schedules.task_id > tasks.id [delete: cascade, update: no action]
+
+ref run_schedules_runner_id_platform_acp_runners_id_fk: run_schedules.runner_id > platform_acp_runners.id [delete: set null, update: no action]
+
+ref run_schedules_last_run_id_runs_id_fk: run_schedules.last_run_id > runs.id [delete: set null, update: no action]
+
+ref run_schedules_created_by_user_id_users_id_fk: run_schedules.created_by_user_id > users.id [delete: set null, update: no action]
+
+ref run_sessions_run_id_runs_id_fk: run_sessions.run_id > runs.id [delete: cascade, update: no action]
+
+ref run_sessions_runner_id_platform_acp_runners_id_fk: run_sessions.runner_id > platform_acp_runners.id [delete: set null, update: no action]
+
+ref run_sync_attempts_run_id_runs_id_fk: run_sync_attempts.run_id > runs.id [delete: cascade, update: no action]
+
+ref run_sync_attempts_workspace_id_workspaces_id_fk: run_sync_attempts.workspace_id > workspaces.id [delete: cascade, update: no action]
+
+ref runs_agent_id_agents_id_fk: runs.agent_id > agents.id [delete: set null, update: no action]
+
+ref runs_scheduled_launch_id_scheduled_task_launches_id_fk: runs.scheduled_launch_id > scheduled_task_launches.id [delete: set null, update: no action]
+
+ref runs_agent_schedule_id_agent_schedules_id_fk: runs.agent_schedule_id > agent_schedules.id [delete: set null, update: no action]
+
+ref runs_task_id_tasks_id_fk: runs.task_id > tasks.id [delete: cascade, update: no action]
+
+ref runs_project_id_projects_id_fk: runs.project_id > projects.id [delete: cascade, update: no action]
+
+ref runs_local_package_id_local_packages_id_fk: runs.local_package_id > local_packages.id [delete: cascade, update: no action]
+
+ref runs_flow_id_flows_id_fk: runs.flow_id > flows.id [delete: cascade, update: no action]
+
+ref runs_flow_revision_id_flow_revisions_id_fk: runs.flow_revision_id > flow_revisions.id [delete: set null, update: no action]
+
+ref runs_created_by_user_id_users_id_fk: runs.created_by_user_id > users.id [delete: set null, update: no action]
+
+ref runs_parent_run_id_runs_id_fk: runs.parent_run_id > runs.id [delete: set null, update: no action]
+
+ref runs_root_run_id_runs_id_fk: runs.root_run_id > runs.id [delete: set null, update: no action]
+
+ref scheduled_task_launch_attempts_scheduled_launch_id_scheduled_task_launches_id_fk: scheduled_task_launch_attempts.scheduled_launch_id > scheduled_task_launches.id [delete: cascade, update: no action]
+
+ref scheduled_task_launch_events_scheduled_launch_id_scheduled_task_launches_id_fk: scheduled_task_launch_events.scheduled_launch_id > scheduled_task_launches.id [delete: cascade, update: no action]
+
+ref scheduled_task_launches_project_id_projects_id_fk: scheduled_task_launches.project_id > projects.id [delete: cascade, update: no action]
+
+ref scheduled_task_launches_task_id_tasks_id_fk: scheduled_task_launches.task_id > tasks.id [delete: set null, update: no action]
+
+ref scheduled_task_launches_created_by_user_id_users_id_fk: scheduled_task_launches.created_by_user_id > users.id [delete: set null, update: no action]
+
+ref scheduled_task_launches_last_actor_user_id_users_id_fk: scheduled_task_launches.last_actor_user_id > users.id [delete: set null, update: no action]
+
+ref scheduler_job_runs_job_id_scheduler_jobs_id_fk: scheduler_job_runs.job_id > scheduler_jobs.id [delete: cascade, update: no action]
+
+ref scheduler_jobs_project_id_projects_id_fk: scheduler_jobs.project_id > projects.id [delete: cascade, update: no action]
+
+ref scratch_attachments_run_id_scratch_runs_run_id_fk: scratch_attachments.run_id > scratch_runs.run_id [delete: cascade, update: no action]
+
+ref scratch_attachments_message_id_run_messages_id_fk: scratch_attachments.message_id > run_messages.id [delete: cascade, update: no action]
+
+ref scratch_capability_profiles_run_id_scratch_runs_run_id_fk: scratch_capability_profiles.run_id > scratch_runs.run_id [delete: cascade, update: no action]
+
+ref scratch_runs_run_id_runs_id_fk: scratch_runs.run_id > runs.id [delete: cascade, update: no action]
+
+ref scratch_runs_project_id_projects_id_fk: scratch_runs.project_id > projects.id [delete: cascade, update: no action]
+
+ref scratch_runs_local_package_id_local_packages_id_fk: scratch_runs.local_package_id > local_packages.id [delete: cascade, update: no action]
+
+ref scratch_runs_linked_task_id_tasks_id_fk: scratch_runs.linked_task_id > tasks.id [delete: set null, update: no action]
+
+ref scratch_runs_created_by_user_id_users_id_fk: scratch_runs.created_by_user_id > users.id [delete: no action, update: no action]
+
+ref sessions_user_id_users_id_fk: sessions.user_id > users.id [delete: cascade, update: no action]
+
+ref task_activity_task_id_tasks_id_fk: task_activity.task_id > tasks.id [delete: cascade, update: no action]
+
+ref task_activity_project_id_projects_id_fk: task_activity.project_id > projects.id [delete: cascade, update: no action]
+
+ref task_clarifications_task_id_tasks_id_fk: task_clarifications.task_id > tasks.id [delete: cascade, update: no action]
+
+ref task_comments_task_id_tasks_id_fk: task_comments.task_id > tasks.id [delete: cascade, update: no action]
+
+ref task_comments_project_id_projects_id_fk: task_comments.project_id > projects.id [delete: cascade, update: no action]
+
+ref task_relations_project_id_projects_id_fk: task_relations.project_id > projects.id [delete: cascade, update: no action]
+
+ref task_relations_from_task_id_tasks_id_fk: task_relations.from_task_id > tasks.id [delete: cascade, update: no action]
+
+ref task_relations_to_task_id_tasks_id_fk: task_relations.to_task_id > tasks.id [delete: cascade, update: no action]
+
+ref task_subscribers_task_id_tasks_id_fk: task_subscribers.task_id > tasks.id [delete: cascade, update: no action]
+
+ref tasks_project_id_projects_id_fk: tasks.project_id > projects.id [delete: cascade, update: no action]
+
+ref tasks_flow_id_flows_id_fk: tasks.flow_id > flows.id [delete: no action, update: no action]
+
+ref tasks_runner_id_platform_acp_runners_id_fk: tasks.runner_id > platform_acp_runners.id [delete: set null, update: no action]
+
+ref tasks_agent_id_agents_id_fk: tasks.agent_id > agents.id [delete: set null, update: no action]
+
+ref tasks_created_by_user_id_users_id_fk: tasks.created_by_user_id > users.id [delete: set null, update: no action]
+
+ref token_audit_log_token_id_project_tokens_id_fk: token_audit_log.token_id > project_tokens.id [delete: cascade, update: no action]
+
+ref token_audit_log_project_id_projects_id_fk: token_audit_log.project_id > projects.id [delete: set null, update: no action]
+
+ref webhook_deliveries_event_id_webhook_events_id_fk: webhook_deliveries.event_id > webhook_events.id [delete: cascade, update: no action]
+
+ref webhook_deliveries_subscription_id_webhook_subscriptions_id_fk: webhook_deliveries.subscription_id > webhook_subscriptions.id [delete: cascade, update: no action]
+
+ref webhook_delivery_attempts_delivery_id_webhook_deliveries_id_fk: webhook_delivery_attempts.delivery_id > webhook_deliveries.id [delete: cascade, update: no action]
+
+ref webhook_events_project_id_projects_id_fk: webhook_events.project_id > projects.id [delete: cascade, update: no action]
+
+ref webhook_events_run_id_runs_id_fk: webhook_events.run_id > runs.id [delete: cascade, update: no action]
+
+ref webhook_subscriptions_project_id_projects_id_fk: webhook_subscriptions.project_id > projects.id [delete: cascade, update: no action]
+
+ref workspace_reconciliation_findings_project_id_projects_id_fk: workspace_reconciliation_findings.project_id > projects.id [delete: set null, update: no action]
+
+ref workspace_reconciliation_findings_run_id_runs_id_fk: workspace_reconciliation_findings.run_id > runs.id [delete: set null, update: no action]
+
+ref workspace_reconciliation_findings_workspace_id_workspaces_id_fk: workspace_reconciliation_findings.workspace_id > workspaces.id [delete: set null, update: no action]
+
+ref workspaces_run_id_runs_id_fk: workspaces.run_id > runs.id [delete: cascade, update: no action]
+
+ref workspaces_project_id_projects_id_fk: workspaces.project_id > projects.id [delete: cascade, update: no action]
+
+ref workspaces_promotion_owner_user_id_users_id_fk: workspaces.promotion_owner_user_id > users.id [delete: set null, update: no action]

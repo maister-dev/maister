@@ -23,6 +23,7 @@
     "db:check": "tsx --import ./scripts/_register-shim.mjs lib/db/check.ts",
     "db:seed": "tsx --import ./scripts/_register-shim.mjs lib/db/seed.ts",
     "db:studio": "drizzle-kit studio",
+    "db:erd": "tsx --import ./scripts/_register-shim.mjs scripts/generate-erd-dbml.ts",
     "install-flow": "tsx --import ./scripts/_register-shim.mjs scripts/install-flow.ts",
     "install-package": "tsx --import ./scripts/_register-shim.mjs scripts/install-package.ts",
     "run-flow": "tsx --import ./scripts/_register-shim.mjs scripts/run-flow.ts",
@@ -51,8 +52,8 @@
     "@heroicons/react": "2.2.0",
     "@heroui/react": "3.0.4",
     "@heroui/styles": "3.0.4",
-    "@lezer/highlight": "1.2.3",
     "@js-temporal/polyfill": "0.5.1",
+    "@lezer/highlight": "1.2.3",
     "@tiptap/core": "^3.27.1",
     "@tiptap/extension-document": "^3.27.1",
     "@tiptap/extension-mention": "^3.27.1",
@@ -93,6 +94,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@dbml/core": "10.1.1",
     "@eslint/compat": "1.2.8",
     "@eslint/eslintrc": "3.3.1",
     "@eslint/js": "9.25.1",
@@ -110,6 +112,7 @@
     "@typescript-eslint/parser": "8.34.1",
     "@vitest/ui": "^2.1.9",
     "dotenv": "^17.4.2",
+    "drizzle-dbml-generator": "0.10.0",
     "drizzle-kit": "^0.28.1",
     "eslint": "9.25.1",
     "eslint-config-next": "16.2.0",

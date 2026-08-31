@@ -183,6 +183,7 @@
 | [ADR-156](#adr-156-cross-project-agent-facade-reach) | Cross-project agent facade reach | Implemented | 2026-08-05 |
 | [ADR-157](#adr-157-read-only-sibling-repo-context-mounts) | Read-only sibling-repo context mounts | Implemented | 2026-08-05 |
 | [ADR-158](#adr-158-russian-user-manual-with-screenshots-under-docsrumanual) | Russian user manual with screenshots under `docs/ru/manual/` | Implemented | 2026-08-12 |
+| [ADR-159](#adr-159-dbml-as-the-format-of-the-generated-consolidated-erd) | DBML as the format of the generated consolidated ERD | Implemented | 2026-08-31 |
 
 ---
 
@@ -14342,6 +14343,59 @@ PDF for distribution.
   HTML.
 - _Committing the built PDF_: rejected — regenerable artifact, would bloat
   history on every re-capture.
+
+---
+
+### ADR-159: DBML as the format of the generated consolidated ERD
+
+**Date:** 2026-08-31
+**Status:** Implemented
+**Context:** [ADR-016](#adr-016-mermaid-as-the-only-diagramming-language-for-docs)
+made Mermaid the only diagramming language. The consolidated ERD outgrew that
+choice twice over: its single `erDiagram` block reached 60,314 characters —
+past the 50,000-character `maxTextSize` every Mermaid renderer enforces, so
+the committed diagram stopped rendering anywhere while the `mermaid.parse()`
+docs gate stayed green — and hand maintenance had let it fall ~30 tables
+behind the 106-table two-lineage schema.
+
+**Decision:** The consolidated ERD is a **generated DBML artifact**,
+`docs/db/erd.dbml`, produced from both Drizzle lineages
+(`web/lib/db/schema.ts` + `web/lib/brain/schema.ts`) by
+`pnpm --filter maister-web db:erd` (`drizzle-dbml-generator`; alias table
+exports, duplicate same-endpoint FK refs, and expression-index column repeats
+are normalized by the generator script). The output is parse-validated with
+`@dbml/core` at generation time and drift-gated by `db:erd --check` inside
+`pnpm validate:docs` — a schema change that forgets to regenerate fails the
+gate. `docs/db/erd.md` stays as the human wrapper (view/regenerate
+instructions; its ~28 inbound links keep resolving).
+
+This narrowly amends ADR-016: DBML is admitted for **this one generated
+artifact only**. Per-domain ERDs and every other diagram remain
+hand-maintained Mermaid, now also size-guarded — a block over 50,000
+characters fails `validate-docs-mermaid.mjs` instead of shipping
+valid-but-unrenderable.
+
+**Consequences:**
+
+- The consolidated ERD can no longer drift from the schema or exceed renderer
+  limits; it is greppable (`table <name>`, `ref:` lines) and imports into
+  dbdiagram.io and DBML-aware IDE tooling.
+- Inline GitHub rendering of the full ERD is given up — accepted: at 106
+  tables no single rendered diagram is readable anyway; focused views stay
+  Mermaid in `docs/db/*-domain.md`.
+- Schema changes carry one extra command (`db:erd`); forgetting is caught by
+  `validate:docs`, not by a reviewer.
+
+**Alternatives Considered:**
+
+- **Split the Mermaid ERD into several sub-limit blocks:** keeps rendering but
+  keeps hand maintenance and the staleness class that already produced a
+  ~30-table gap. Rejected.
+- **Hand-written DBML:** trades one hand-maintained artifact for another.
+  Rejected.
+- **Generate from drizzle-kit snapshot JSON:** the Brain lineage ships no
+  snapshots (journal only), so generation must import the TS schemas.
+  Rejected as primary mechanism.
 
 ---
 

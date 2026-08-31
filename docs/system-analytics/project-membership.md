@@ -16,7 +16,7 @@ the project Members tab are shipped and covered by unit + integration tests.
 
 - **`project_members`** — join table between `projects` and `users`. One row
   per `(project_id, user_id)` pair. Carries `role` and audit columns.
-  See [`../db/erd.md#project_members`](../db/erd.md#project_members).
+  See [`../db/erd.md`](../db/erd.md).
 - **`project_members.role`** — `owner | admin | member | viewer`. `owner` confers
   no capability beyond `admin` in the current implementation; global admins are
   implicit owners of every project and are not required to have an explicit row.
@@ -191,7 +191,7 @@ sequenceDiagram
 
 ## Linked artifacts
 
-- ERD: [`../db/erd.md#project_members`](../db/erd.md#project_members).
+- ERD: [`../db/erd.md`](../db/erd.md).
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml) — `/api/projects/{slug}/members` paths.
 - Authorization helper: `web/lib/authz.ts`.
 - ADR: [ADR-062](../decisions.md#adr-062) — user and project member management.

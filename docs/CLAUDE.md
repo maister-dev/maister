@@ -50,7 +50,8 @@ truth). The fix is to update docs in the same PR.
 
 | File | What it answers |
 | ---- | ---------------- |
-| [`db/erd.md`](db/erd.md) | Full Mermaid ERD across all tables. |
+| [`db/erd.md`](db/erd.md) | Consolidated-ERD wrapper: how to view/regenerate `db/erd.dbml`. |
+| [`db/erd.dbml`](db/erd.dbml) | Full generated DBML ERD across both Drizzle lineages (ADR-159). Never hand-edit. |
 | [`db/projects-domain.md`](db/projects-domain.md) | Projects + Executors + Flows ERD. |
 | [`db/runs-domain.md`](db/runs-domain.md) | Tasks + Runs + Workspaces ERD. |
 | [`db/hitl-domain.md`](db/hitl-domain.md) | HITL Requests ERD + form-schema shape. |
@@ -161,15 +162,20 @@ Allowed in `docs/`:
 - **Mermaid** diagrams, fenced as ` ```mermaid `.
 - **YAML** for OpenAPI 3.0.3, AsyncAPI 2.6.0, JSON Schema, and `*.yaml`
   config examples inside Markdown fences.
+- **DBML** for exactly one artifact: the generated consolidated ERD
+  `db/erd.dbml` (ADR-159). Never hand-edit it — regenerate via
+  `pnpm --filter maister-web db:erd`.
 
 Anything else (PlantUML, draw.io XML, PNG screenshots, PDF) needs an ADR
 in `decisions.md` first.
 
-### R2. Mermaid is the only diagramming language
+### R2. Mermaid is the only authored diagramming language
 
 Every architectural, sequence, state, ERD, or flow diagram MUST be a
 Mermaid block. The reasons are version control, AI-readability, and
-zero-tool review. Hand-drawn images are rejected.
+zero-tool review. Hand-drawn images are rejected. Single exception: the
+consolidated ERD is generated DBML (`db/erd.dbml`, ADR-159) — per-domain
+ERDs stay Mermaid.
 
 Mermaid usage requirements:
 
@@ -182,6 +188,9 @@ Mermaid usage requirements:
   three top architectural views in `architecture.md`. Use plain
   `flowchart` / `sequenceDiagram` / `stateDiagram-v2` everywhere else.
 - One diagram per concept. If a diagram exceeds ~25 nodes, split it.
+- A block MUST stay under 50,000 characters — renderers enforce
+  `maxTextSize` even though `mermaid.parse()` does not; the validator
+  fails oversized blocks.
 - Add a sentence of prose above each diagram naming the purpose. Never
   leave a diagram unannotated — readers should know what to look for
   before they scan it.
@@ -303,10 +312,12 @@ Before any docs PR merges, the diff MUST pass:
 
 | Artifact | Validator | How |
 | -------- | --------- | --- |
-| Mermaid blocks | `pnpm validate:docs` (repo root) | Parses every changed `docs/**/*.md` block via `mermaid.parse()`; exits non-zero on any syntax error. Use `pnpm validate:docs:all` to check the entire `docs/` tree regardless of git status. The Claude Code Stop hook in `.claude/settings.json` runs this gate automatically before the agent finishes a turn. |
+| Mermaid blocks | `pnpm validate:docs` (repo root) | Parses every changed `docs/**/*.md` block via `mermaid.parse()` AND fails blocks over 50,000 chars (renderer `maxTextSize`); exits non-zero on any error. Use `pnpm validate:docs:all` to check the entire `docs/` tree regardless of git status. The Claude Code Stop hook in `.claude/settings.json` runs this gate automatically before the agent finishes a turn. |
+| ADR anchors | `pnpm validate:docs` | Every `decisions.md#adr-NNN` link must resolve to a real `### ADR-NNN:` header. |
+| Relative links | `pnpm validate:docs` (`validate:docs:links[:all]`) | Every relative markdown link in changed `docs/**/*.md` must resolve to an existing file/dir. |
+| Consolidated ERD | `pnpm validate:docs` (`pnpm --filter maister-web db:erd --check`) | Regenerates the DBML from the Drizzle schemas and fails when `db/erd.dbml` drifted (ADR-159). |
 | OpenAPI 3.0.3 | `npx @redocly/cli lint <file>` or [editor.swagger.io](https://editor.swagger.io) | Zero errors; warnings reviewed. |
 | AsyncAPI 2.6.0 | `npx @asyncapi/cli validate <file>` | Zero errors. |
-| Markdown | `pnpm lint:md` (when present) | No broken intra-doc links. |
 
 CI gates land in Phase 2. Until then, the author runs the checks
 locally; the Mermaid gate runs automatically through the hook above.
@@ -323,7 +334,8 @@ this for the initial bulk migration.
 3. **New decision** → append an ADR to `decisions.md` (next sequential
    number). Do not rewrite history; supersede if needed.
 4. **New ERD** → add a Mermaid `erDiagram` to the relevant `db/*.md`.
-   Update the consolidated `db/erd.md`.
+   The consolidated `db/erd.dbml` regenerates from the Drizzle schemas
+   (`pnpm --filter maister-web db:erd`) — never hand-edit it.
 5. **New screen** → add a file under `screens/` following the per-doc template
    in [`screens/README.md`](screens/README.md) (one file per screen / block /
    chrome element; flat plus `chrome/` until an area reaches ≥ 3 files). Add a

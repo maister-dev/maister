@@ -18,7 +18,7 @@
 > watchdog, and the run-detail visibility panel are **Implemented** in M11c.
 > Capability-reference resolution against a registry (carve-b), agent-aware
 > mapping, and per-session native materialization are **Implemented (M14)** — see
-> ADR-041 / ADR-042 / ADR-043 in [`decisions.md`](decisions.md). Capability config
+> ADR-041 / ADR-042 / ADR-043 in [`decisions.md`](../decisions.md). Capability config
 > is now genuinely **delivered** to the claude agent via
 > `<worktree>/.claude/settings.local.json` (`tools` → `permissions.allow`,
 > `permissionMode` → `permissions.defaultMode`) and ACP `newSession`
@@ -63,7 +63,7 @@ in M11c.
   (`web/lib/config.schema.ts`). `ai_coding` / `judge` carry the agent-capability
   shape; `human` carries decision/role/takeover shape; `cli` / `check` carry the
   command shape. Optional on every node type. Lives in the pinned
-  `flow_revisions.manifest` (persisted; see [runs-domain ERD](db/runs-domain.md)).
+  `flow_revisions.manifest` (persisted; see [runs-domain ERD](../db/runs-domain.md)).
 - **Capability class** — one of the seven capability-bearing settings subject to
   the `enforcement` intent: `mcps`, `tools`, `skills`, `restrictions`,
   `permissionMode`, `workspaceAccess`, `hooks` (`hooks` Designed — ADR-108, M40;
@@ -558,9 +558,9 @@ flowchart TD
 
 ## Linked artifacts
 
-- ADRs: [ADR-031](decisions.md) (typed settings, carve (b)),
-  [ADR-032](decisions.md) (refusal boundary), [ADR-008](decisions.md) (error
-  taxonomy), [ADR-026/027/028](decisions.md) (graph manifest, ledger, gates),
+- ADRs: [ADR-031](../decisions.md) (typed settings, carve (b)),
+  [ADR-032](../decisions.md) (refusal boundary), [ADR-008](../decisions.md) (error
+  taxonomy), [ADR-026/027/028](../decisions.md) (graph manifest, ledger, gates),
   [ADR-084](../decisions.md#adr-084-acp-adapter-families-for-gemini-cli-and-opencode),
   [ADR-157](../decisions.md#adr-157-read-only-sibling-repo-context-mounts)
   (Designed — read-only sibling-repo context mounts).
@@ -568,11 +568,11 @@ flowchart TD
 - Enforcement: `web/lib/flows/enforcement.ts`,
   `web/lib/flows/graph/compile.ts`, `web/lib/flows/graph/runner-graph.ts`.
 - Launch: `web/app/api/runs/route.ts`.
-- DB: [database-schema.md](database-schema.md),
-  [db/runs-domain.md](db/runs-domain.md) (`node_attempts.enforcement_snapshot`).
-- Errors: [error-taxonomy.md](error-taxonomy.md) (`CONFIG`,
+- DB: [database-schema.md](../database-schema.md),
+  [db/runs-domain.md](../db/runs-domain.md) (`node_attempts.enforcement_snapshot`).
+- Errors: [error-taxonomy.md](../error-taxonomy.md) (`CONFIG`,
   `EXECUTOR_UNAVAILABLE` M11c callers).
-- DSL: [flow-dsl.md](flow-dsl.md) (node `settings` block).
+- DSL: [flow-dsl.md](../flow-dsl.md) (node `settings` block).
 - Context mounts (Implemented — ADR-157): [`workspaces.md`](workspaces.md)
   (mount path, `runs.context_mounts` snapshot, the three read-only enforcement
   layers, terminal release) and [`reconciliation-gc.md`](reconciliation-gc.md)

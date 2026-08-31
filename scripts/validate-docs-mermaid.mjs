@@ -93,6 +93,20 @@ for (const file of targets) {
     i += 1;
     blocks += 1;
     const startLine = src.slice(0, m.index).split("\n").length;
+
+    // mermaid.parse() does not enforce maxTextSize, but every renderer does
+    // (default 50,000 chars) — a block over the limit is "valid" here yet
+    // refuses to render anywhere. Fail it. (This is how the old full ERD at
+    // 60k chars shipped green while being unviewable — ADR-159.)
+    if (m[1].length > 50_000) {
+      failures.push({
+        file: relative(repoRoot, file),
+        line: startLine,
+        block: i,
+        err: `block is ${m[1].length} chars — exceeds the 50,000-char renderer maxTextSize; split the diagram`,
+      });
+      continue;
+    }
     try {
       await mermaid.parse(m[1]);
       passes += 1;

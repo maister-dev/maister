@@ -1,26 +1,26 @@
-# Database — Mermaid ERDs
+# Database — ERDs
 
-Domain-grouped Entity-Relationship Diagrams for the MAIster schema.
-Source of truth for column shape and constraints is the Drizzle
-schema in `web/lib/db/schema.ts`; the prose reference is
-[`../database-schema.md`](../database-schema.md).
+Entity-Relationship views of the MAIster schema. Source of truth for column
+shape and constraints is the Drizzle schema — `web/lib/db/schema.ts` (main
+lineage) plus `web/lib/brain/schema.ts` (Brain lineage, ADR-122); the prose
+reference is [`../database-schema.md`](../database-schema.md).
 
-The diagrams in this folder are the **visual** view. If they disagree
-with the Drizzle schema, the Drizzle schema wins — open a PR to fix
-the ERD.
+Two kinds of view live here (ADR-159):
 
-Scratch-run persistence, the selectable capability catalog, M12 artifacts, and
-M13 assignment persistence are included in the ERDs because migrations now back
-those contracts. Roadmap persistence for API tokens and external operation
-events remains tracked in
-[`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence)
-until migrations exist.
+- **Consolidated** — [`erd.dbml`](erd.dbml), **generated** from both Drizzle
+  lineages and drift-gated by `pnpm validate:docs`. Never hand-edit it;
+  regenerate with `pnpm --filter maister-web db:erd`. [`erd.md`](erd.md) is
+  its wrapper (how to view/regenerate).
+- **Per-domain** — hand-maintained Mermaid `erDiagram`s, one file per domain.
+  If a domain diagram disagrees with the Drizzle schema, the schema wins —
+  open a PR to fix the ERD.
 
 ## Files
 
 | File | Scope |
 | ---- | ----- |
-| [`erd.md`](erd.md) | Full ERD across implemented tables. |
+| [`erd.dbml`](erd.dbml) | Generated consolidated ERD across all tables of both lineages (ADR-159). |
+| [`erd.md`](erd.md) | Wrapper for the consolidated ERD: view/regenerate instructions. |
 | [`projects-domain.md`](projects-domain.md) | Projects + Executors + Flows. |
 | [`runs-domain.md`](runs-domain.md) | Tasks + Runs + Workspaces + scratch-run tables. |
 | [`hitl-domain.md`](hitl-domain.md) | HITL Requests + review-comment threads (ADR-072) + form-schema shape. |
@@ -28,6 +28,12 @@ until migrations exist.
 | [`assignments-domain.md`](assignments-domain.md) | M13 Flow roles, actors, assignments, and assignment events. |
 | [`capabilities-domain.md`](capabilities-domain.md) | Capability records + git-pinned imports + materialization plan column (M14, Implemented). |
 | [`domain-events.md`](domain-events.md) | Domain-event outbox: `domain_events` fact log + per-consumer cursors (ADR-086, Implemented). |
+| [`agents-domain.md`](agents-domain.md) | Platform-agent tables: `agents` catalog, `agent_project_links`, `agent_schedules` (ADR-089/090). |
+| [`brain-domain.md`](brain-domain.md) | Project Brain lineage tables (ADR-122/127/128). |
+| [`evaluations-domain.md`](evaluations-domain.md) | Evaluation Lab tables (ADR-142..147, ADR-150). |
+| [`integrations-domain.md`](integrations-domain.md) | Project tokens + token audit log (M16). |
+| [`scheduler-domain.md`](scheduler-domain.md) | Scheduler jobs + run schedules + scheduled task launches (M24/M28, ADR-139). |
+| [`webhooks.md`](webhooks.md) | Webhook subscriptions + events outbox + deliveries + attempts (ADR-077). |
 
 ## Cardinality notation
 

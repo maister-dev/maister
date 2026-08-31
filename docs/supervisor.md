@@ -49,7 +49,7 @@ different host than the web tier — only the HTTP+SSE wire is shared.
 The architectural decision and its trade-offs live in
 [`ARCHITECTURE.md`](../.ai-factory/ARCHITECTURE.md). The M0 spike findings
 (package versions, cross-process resume cost) live in
-[`M0 Spike Findings`](kaa-maister-m0-spike-findings-20260525.md).
+the M0 spike findings (historical doc removed; summary in root `CLAUDE.md` §ACP Spike Findings).
 
 ## HTTP API
 
@@ -673,7 +673,7 @@ bounded depth 8). When found, it appends a record to
 ```
 
 `cache_creation_input_tokens` is the load-bearing field for ops:
-[M0 spike findings](kaa-maister-m0-spike-findings-20260525.md) measured
+the M0 spike findings (summary in root `CLAUDE.md` §ACP Spike Findings) measured
 ~$0.28 of cache-creation tokens per cross-process respawn. The 30-min
 keep-alive window (M8) is the lever that controls this.
 
@@ -926,6 +926,6 @@ through a `PassThrough` so both consumers see every chunk.
 
 - [Configuration](configuration.md) — `maister.yaml` v2 + env vars
 - [Error Taxonomy](error-taxonomy.md) — `MaisterError` codes the web tier raises after translation
-- [ACP Pivot Revision](kaa-maister-design-20260525-acp-revision.md) — the multi-runner design that motivated the supervisor split
-- [M0 Spike Findings](kaa-maister-m0-spike-findings-20260525.md) — adapter package versions and cross-process resume cost
+- ACP Pivot Revision (2026-05-25, historical doc removed) — the multi-runner design that motivated the supervisor split
+- M0 Spike Findings — adapter package versions and cross-process resume cost; summary in root `CLAUDE.md` §ACP Spike Findings
 - [Architecture](../.ai-factory/ARCHITECTURE.md) — dependency rules; the supervisor↔web wire contract

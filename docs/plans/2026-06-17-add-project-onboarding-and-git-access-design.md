@@ -279,8 +279,8 @@ attached flows/packages so the file matches the DB.
 
 `components/projects/config-persist-banner.tsx` (client island): renders when
 `project.maisterYamlPath == null`, on **both** the portfolio home
-([page.tsx](../../web/app/(app)/page.tsx)) and the project board
-([projects/[slug]/page.tsx](../../web/app/(app)/projects/[slug]/page.tsx)). Action
+([page.tsx](../../web/app/%28app%29/page.tsx)) and the project board
+([projects/[slug]/page.tsx](../../web/app/%28app%29/projects/%5Bslug%5D/page.tsx)). Action
 → confirm dialog (target path + branch + commit message) →
 `POST …/persist-config` → success hides it + toast. **Dismiss** is
 client-persisted (`localStorage` per project); on dismiss, a note points to

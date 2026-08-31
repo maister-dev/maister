@@ -6,12 +6,14 @@
   "scripts": {
     "local:blast-maister-state": "node scripts/blast-maister-local-state.mjs",
     "test:local-reset": "node --test scripts/blast-maister-local-state.test.mjs",
-    "validate:docs": "node scripts/validate-docs-mermaid.mjs && node scripts/validate-docs-adr-anchors.mjs",
+    "validate:docs": "node scripts/validate-docs-mermaid.mjs && node scripts/validate-docs-adr-anchors.mjs && node scripts/validate-docs-links.mjs && pnpm --filter maister-web db:erd --check",
     "validate:contracts": "node scripts/validate-contracts.mjs && pnpm validate:adapter-mirrors",
     "validate:adapter-mirrors": "node scripts/validate-adapter-mirrors.ts",
-    "validate:docs:all": "node scripts/validate-docs-mermaid.mjs --all && node scripts/validate-docs-adr-anchors.mjs --all",
+    "validate:docs:all": "node scripts/validate-docs-mermaid.mjs --all && node scripts/validate-docs-adr-anchors.mjs --all && node scripts/validate-docs-links.mjs --all && pnpm --filter maister-web db:erd --check",
     "validate:docs:adr": "node scripts/validate-docs-adr-anchors.mjs",
     "validate:docs:adr:all": "node scripts/validate-docs-adr-anchors.mjs --all",
+    "validate:docs:links": "node scripts/validate-docs-links.mjs",
+    "validate:docs:links:all": "node scripts/validate-docs-links.mjs --all",
     "verify:m38": "node scripts/verify-m38-surface.mjs"
   },
   "devDependencies": {
