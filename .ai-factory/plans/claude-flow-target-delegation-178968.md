@@ -774,16 +774,16 @@ No new env var, port, binary, config-file path, or `package.json` script. `MAIST
   *Satisfies*: REQ-07, REQ-18, REQ-23.
 
 **Phase 9 exit — definition of done**
-- [ ] `pnpm --filter maister-web exec eslint .` (check-only — **never** the bare `lint` script, which is `eslint --fix` with no path and reformats ~60 files)
-- [ ] `pnpm --filter maister-web typecheck`
-- [ ] `pnpm --filter maister-web test:unit`
-- [ ] `pnpm --filter maister-web test:integration`
-- [ ] `pnpm --filter @maister/mcp build && pnpm --filter @maister/mcp typecheck && pnpm --filter @maister/mcp test`
-- [ ] `pnpm validate:docs` (mermaid + ADR anchors + links + indexes + `db:erd --check`)
-- [ ] `pnpm validate:contracts` — **mandatory**: OpenAPI/AsyncAPI guard over the file S0.5 edits
-- [ ] `pnpm --filter maister-web db:generate` → **no new migration** (re-proves D5 at HEAD; if it emits one, D9's procedure applies)
-- [ ] `pnpm --filter maister-web test:e2e`
-- [ ] **Traceability closed**: every REQ-01…REQ-23 row has a task **and** a test, both landed
+- [x] `pnpm --filter maister-web exec eslint .` (check-only — **never** the bare `lint` script, which is `eslint --fix` with no path and reformats ~60 files)
+- [x] `pnpm --filter maister-web typecheck`
+- [x] `pnpm --filter maister-web test:unit`
+- [x] `pnpm --filter maister-web test:integration`
+- [x] `pnpm --filter @maister/mcp build && pnpm --filter @maister/mcp typecheck && pnpm --filter @maister/mcp test`
+- [x] `pnpm validate:docs` (mermaid + ADR anchors + links + indexes + `db:erd --check`)
+- [x] `pnpm validate:contracts` — **mandatory**: OpenAPI/AsyncAPI guard over the file S0.5 edits
+- [x] `pnpm --filter maister-web db:generate` → **no new migration** (re-proves D5 at HEAD; if it emits one, D9's procedure applies)
+- [x] `pnpm --filter maister-web test:e2e`
+- [x] **Traceability closed**: every REQ-01…REQ-23 row has a task **and** a test, both landed
 
 ---
 
@@ -837,3 +837,51 @@ Public Run-result exports · `run_collect` payload changes · RAH reference work
 **Owner's own observations, verified and folded in:**
 - *"Таска родительского run будет всегда"* — **correct**, and now recorded as **F10**: only the flow graph runner issues an orchestrator token, so the bound run is always a flow run, which always has a task. The `parent.taskId`-absent branch is unreachable today but is **kept**, re-commented as reserved for a future agent orchestrator (where `runs.task_id` may legitimately be null).
 - *"если несколько ранов по таску — таких сабтасков может наплодиться много похожих"* — **correct, and pre-existing**: agent `mode: task` already does exactly this; flow targets do not introduce the class, only raise the per-unit cost. Its sharper form is now **F11 / W11**: an abandoned orchestrator leaves its carrier tasks `Launch`-able on the board. Accepted rather than fixed, on verified grounds — **no automation can fire them** (`auto_launch_run_plan` requires `launch_mode='auto'`; the C2 funnel requires triage), so only a human clicking a card they can read. Pinned by **T6.8** so a future change that makes an automation claim these tasks fails loudly.
+
+
+---
+
+## Implementation result (2026-09-01)
+
+All 39 tasks complete across 10 commits, one per phase.
+
+**Verification at HEAD**
+- `eslint .` — 0 errors (424 pre-existing prettier warnings repo-wide; every
+  file this change touched is clean).
+- `typecheck` — clean. `test:unit` — 7294/7294.
+- `test:integration` — 3207 tests; failures equal the enumerated pre-existing
+  SET, zero new. The tracked set grew from 60 to 63 only by ADDING three
+  independently-proved flakes (`launch-worktree-modes` C4 and two
+  `dirty-resolution-race` arms — each shown to pass and fail across identical
+  runs).
+- `@maister/mcp` build + typecheck + 247/247, with the bundle rebuilt (the
+  facade runs `mcp/dist`).
+- `validate:docs` and `validate:contracts` green.
+- `db:generate` → "No schema changes, nothing to migrate" — D5 re-proved at
+  HEAD. Reserved migration slot **0128 is unused**.
+- `test:e2e` full suite, BASELINE-PROVED: 35 failures at the merge-base
+  (`73fa99915`), the same 35 on this branch. The one apparent extra
+  (`m18-branch-promotion › conflict scenario`) passes in isolation on this
+  branch twice while its sibling `merge scenario` fails in BOTH runs — a flake
+  in an already-unhealthy file, not a regression. The new
+  `flow-target-delegation` spec passes, and `orchestrator-loop` still passes.
+
+**Two decisions refined during implementation, fixed in the spec AND the code**
+- **D8** — the route-level admission transaction commits BEFORE the child run is
+  inserted, so the advisory lock had been released by the time the count's
+  subject existed. `admitDelegatedChild` is now also called inside the
+  run-insert transaction of BOTH launchers (gated on `parentRunId`), which makes
+  the bound decisive and, because every creation edge reaches one of those two
+  launchers, covers the as-plan auto-launcher for free. Recorded as an ADR-163
+  amendment.
+- **`run_cancel` on a flow child** — the tool matrix said "works"; what happens
+  is `stopRunByKind`'s `case "flow"`, i.e. the operator-stop-to-`Review`
+  transition. The child parks with its diff rather than terminating. Corrected
+  in the matrix, the dispatcher table, the W12 residual note, and `flow-dsl.md`.
+
+**One shipped-path behaviour change beyond the plan's D3**
+`run_plan`'s depth bound was `parentDepth + 1 >= max` — one level stricter than
+`run_delegate` AND than what `MAISTER_ORCHESTRATOR_MAX_DEPTH` documents.
+Unifying both routes on one helper picks the documented semantic, so `run_plan`
+now permits exactly the depth the env var advertises. The existing test was
+updated to the unified semantic with the reasoning in place.
