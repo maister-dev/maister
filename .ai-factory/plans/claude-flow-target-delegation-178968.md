@@ -738,7 +738,7 @@ No new env var, port, binary, config-file path, or `package.json` script. `MAIST
   An orchestrator with one agent child (`Running`) and one flow child (`Review`); abandon the orchestrator; assert **both** flip `Abandoned`, `run.abandoned` fires for each with `parentRunId`, workspaces get `scheduled_removal_at`, and `promoteNextPending` runs once **per pool** (`flow` and `agent`).
   *Satisfies*: REQ-19.
 
-- [ ] **T8.3 — Dispatcher-arm sweep (REQ-09).** (depends on T8.1, T8.2)
+- [x] **T8.3 — Dispatcher-arm sweep (REQ-09).** (depends on T8.1, T8.2)
   For each of the twelve sites in the §Shared dispatchers table, confirm coverage exists for **both** discriminant arms — the six marked VERIFY get one flow-child assertion each if none exists, the six marked NEW/WIDEN are already covered by their own tasks. Half-A-tested + half-B-tested ≠ A∘B-tested. Record the mapping (site → covering test) in the commit body; add only the assertions genuinely missing — do not create parallel tests for behaviour already pinned.
   *Satisfies*: REQ-09.
 
@@ -750,24 +750,24 @@ No new env var, port, binary, config-file path, or `package.json` script. `MAIST
 
 > The machine-readable contracts landed in Phase 0. What remains is prose, status flips, and the end-to-end proof.
 
-- [ ] **T9.1 — Flip Designed → Implemented + reconcile drift.** (depends on Phase 8)
+- [x] **T9.1 — Flip Designed → Implemented + reconcile drift.** (depends on Phase 8)
   `orchestrator.md`, `runs.md`, `domain-events.md`, `database-schema.md`, `db/runs-domain.md`: flip every ADR-163 status tag, and reconcile any statement that drifted during Phases 2-8 — the Phase-0 spec is the source of truth, so a genuine divergence is fixed in **both** places, never patched in the doc alone.
   *Acceptance*: `pnpm validate:docs` green; a line-by-line re-read of the Phase-0 refusal table matches the shipped route.
   *Satisfies*: REQ-22.
 
-- [ ] **T9.2 — Prose surfaces: DSL, config, error taxonomy, shipped skills.** (depends on T9.1)
+- [x] **T9.2 — Prose surfaces: DSL, config, error taxonomy, shipped skills.** (depends on T9.1)
   `docs/flow-dsl.md` §"Node `orchestrator`" (`:598-676`): flow targets in the delegation toolset; `settings.delegation.max_fanout` now bounds **live children of any kind** (D3) — and say explicitly that `web/lib/config.schema.ts` is **unchanged** (`orchestratorSettingsSchema:789` gains no field; only runtime semantics widen), so a reader does not hunt for a schema field.
   `docs/configuration.md`: widen the `MAISTER_MAX_ORCHESTRATOR_FANOUT` row's description. `docs/error-taxonomy.md`: the new refusal reasons under the **existing** `CONFIG` / `PRECONDITION` codes (no new code).
   `docs/system-analytics/external-operations.md` + any shipped skill text enumerating delegation targets. **Verification gate** (project rule: contract edits are not done until the spec set is updated AND verified by grep): run `grep -rn "run_delegate\|run_plan" docs .codex .claude`, open each hit, and record in the commit body which were updated and which are confirmed kind-neutral.
   *Satisfies*: REQ-22.
 
-- [ ] **T9.3 — In-repo fixture Flow (REQ-23).** (depends on Phase 8)
+- [x] **T9.3 — In-repo fixture Flow (REQ-23).** (depends on Phase 8)
   E2E flow manifests are **not** `flow.yaml` files on disk — they are inline `INSERT INTO flows (…, manifest, …)` + a `flow_revisions` row in `web/e2e/_seed/seed-e2e.ts` (`:1723`, `:1826`, `:1928`, `:2034`, `:2239`), surfaced through a typed entry in `web/e2e/_seed/fixtures.ts` (the orchestrator fixture is at `:44`, `:241`).
   Add a `delegated-flow` fixture the same way: a minimal 2-node graph (one `cli` node that touches a file, one `check` node), `flows.trust_status='trusted'`, `enablement_state='Enabled'`, an `Installed` revision with `setup_status='done'` and a host-compatible engine range, plus an `E2EDelegatedFlowFixture` entry.
   **No third-party production package enters this repo** — the `maister-plugins` example stays deferred in ADR-163 §Follow-ups.
   *Satisfies*: REQ-23.
 
-- [ ] **T9.4 — E2E: an orchestrator launches a Flow child that reaches `Review`.** (depends on T9.3)
+- [x] **T9.4 — E2E: an orchestrator launches a Flow child that reaches `Review`.** (depends on T9.3)
   New spec `web/e2e/flow-target-delegation.spec.ts`, following `web/e2e/orchestrator-loop.spec.ts`: the test supervisor drives the orchestrator session to call the **real** `POST /api/v1/ext/runs/delegate` with `{target:{flowId:"delegated-flow"}, mode:"task", prompt:…}`; assert the workbench run-tree renders the **flow** child; drive its nodes; assert it reaches **`Review`**; tick `POST /api/cron/tick?jobKind=domain_event_dispatch` and assert the parked orchestrator wakes (`WaitingOnChildren → Running`).
   **⚠ Shared-infra gotcha:** ports `3100`/`7788` and the `maister_e2e` DB are shared across **all** worktrees — kill those ports and baseline-prove the suite before attributing any failure to this change.
   *Acceptance*: `pnpm --filter maister-web test:e2e -- flow-target-delegation` green; the full e2e suite shows no **new** failures versus the Phase-0 baseline.

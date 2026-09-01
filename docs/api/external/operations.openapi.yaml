@@ -1513,7 +1513,7 @@ paths:
         snapshots the resolved effective definition + runner onto the child run
         row.
 
-        **Flow targets (Designed — ADR-163).** `target.flowId` launches the child
+        **Flow targets (Implemented — ADR-163).** `target.flowId` launches the child
         through the CANONICAL Flow Run pipeline (`launchRunStaged`) — the same
         workspace, graph state, session set, capability materialization, and
         executor resolution a board Launch gets — never through the agent
@@ -1557,7 +1557,7 @@ paths:
                   prompt: "Review the auth refactor and report blocking findings."
                   title: "Review auth refactor"
               flowTargetAsTask:
-                summary: Flow target, mode task (Designed — ADR-163)
+                summary: Flow target, mode task (Implemented — ADR-163)
                 value:
                   target: { flowId: "bugfix" }
                   mode: task
@@ -1565,7 +1565,7 @@ paths:
                   title: "Fix collect 500"
               flowTargetAsRun:
                 summary: >-
-                  Flow target, mode run (Designed — ADR-163). Still mints and
+                  Flow target, mode run (Implemented — ADR-163). Still mints and
                   links a carrier task, and still returns childTaskId.
                 value:
                   target: { flowId: "bugfix" }
@@ -1578,7 +1578,7 @@ paths:
             Child unit created (the run row is committed; the supervisor
             `POST /sessions` happens after commit, so the child may still be
             `Pending` when this returns). `childTaskId` is present for an AGENT
-            target only with `mode = "task"`, and **(Designed — ADR-163)** ALWAYS
+            target only with `mode = "task"`, and **(Implemented — ADR-163)** ALWAYS
             for a FLOW target (a flow child always has a carrier task).
           content:
             application/json:
@@ -1594,7 +1594,7 @@ paths:
                     format: uuid
                     description: |
                       Agent target: present only for `mode == "task"`. Flow
-                      target **(Designed — ADR-163)**: always present.
+                      target **(Implemented — ADR-163)**: always present.
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -1610,7 +1610,7 @@ paths:
             (`MAISTER_MAX_ORCHESTRATOR_FANOUT`, live children of both kinds),
             engine floor below `1.6.0`, or a `strict` path-scope declaration
             (refused until the deferred policy layer lands, ADR-099).
-            **(Designed — ADR-163)** also: both or neither of `agentId` /
+            **(Implemented — ADR-163)** also: both or neither of `agentId` /
             `flowId`; an agent-only field (`workspace`, `workspaceMode`,
             `persistent`, `addressableKey`) on a flow target; `title` on an agent
             `mode: run` target; a flow whose manifest `schemaVersion` is
@@ -1652,11 +1652,11 @@ paths:
 
         **Pre-transaction `CONFIG` bounds (→ 422):** a cyclic `dependsOn`, a
         batch that would push the orchestrator's LIVE child count of BOTH kinds
-        past `MAISTER_MAX_ORCHESTRATOR_FANOUT` **(Designed — ADR-163: live
+        past `MAISTER_MAX_ORCHESTRATOR_FANOUT` **(Implemented — ADR-163: live
         children + batch size, under a per-orchestrator advisory lock — not the
         batch length alone)**, or a run-tree depth past
         `MAISTER_ORCHESTRATOR_MAX_DEPTH`. Validation is all-or-nothing — no
-        partial DAG is ever written. **(Designed — ADR-163)** A batch may MIX
+        partial DAG is ever written. **(Implemented — ADR-163)** A batch may MIX
         agent and flow entries; the post-commit source launch dispatches per entry
         on its recorded `delegation_spec` kind. Tasks whose dependencies are already clear
         are marked launchable and fold into the advisory-locked
@@ -1676,7 +1676,7 @@ paths:
               mixedKindDag:
                 summary: >-
                   A DAG mixing an agent entry and a flow entry (flow arm
-                  Designed — ADR-163).
+                  Implemented — ADR-163).
                 value:
                   tasks:
                     - key: spec
@@ -1715,7 +1715,7 @@ paths:
             Request body failed schema validation, or a `CONFIG` precondition was
             violated — cyclic `dependsOn`, over-fanout
             (`MAISTER_MAX_ORCHESTRATOR_FANOUT`), or over-depth
-            (`MAISTER_ORCHESTRATOR_MAX_DEPTH`). **(Designed — ADR-163)** also: an
+            (`MAISTER_ORCHESTRATOR_MAX_DEPTH`). **(Implemented — ADR-163)** also: an
             entry with both or neither of `agentId` / `flowId`, or `workspace` on
             a flow entry. No partial DAG is written.
           content:
@@ -4853,7 +4853,7 @@ components:
 
     ExtDelegationTarget:
       description: |
-        (Implemented — ADR-098; flow arm Designed — ADR-163) The catalog-resolved
+        (Implemented — ADR-098; flow arm Implemented — ADR-163) The catalog-resolved
         child to spawn. EXACTLY ONE of `agentId` / `flowId` — expressed as a
         `oneOf` of two closed arms, so "exactly one" is schema, not prose. Both
         are body-controlled and resolved through the token project's enabled +
@@ -4877,7 +4877,7 @@ components:
         - type: object
           title: FlowTarget
           description: |
-            (Designed — ADR-163) A governed multi-node process from the project's
+            (Implemented — ADR-163) A governed multi-node process from the project's
             enabled + trusted flows — its own graph, gates, review, and
             promotion. Resolved ONLY through the bound orchestrator's project by
             `flows.id` or `flows.flow_ref_id`; a package path, git tag,
@@ -4898,7 +4898,7 @@ components:
     ExtRunDelegateBody:
       type: object
       description: |
-        (Implemented — ADR-098; flow arm Designed — ADR-163) `run_delegate`
+        (Implemented — ADR-098; flow arm Implemented — ADR-163) `run_delegate`
         payload. `projectId` and the parent `runId` are token-derived, never
         carried here.
 
@@ -4917,7 +4917,7 @@ components:
         | `addressableKey` | yes | REFUSED — agent-target only |
         | `runnerOverride` | yes (agent runner chain) | yes (Flow executor-resolution chain) |
 
-        **Flow-target semantics (Designed — ADR-163).** A flow child ALWAYS gets
+        **Flow-target semantics (Implemented — ADR-163).** A flow child ALWAYS gets
         a server-minted carrier task, ALWAYS linked `parent_of` under the
         orchestrator's task, in BOTH modes — a flow run cannot exist without a
         task, and the board renders a `parent_of` child as its own card anyway,
@@ -4927,7 +4927,7 @@ components:
         orchestrator's task. Its `baseBranch`/`targetBranch` both resolve to the
         project's main branch; the body accepts no branch field.
 
-        **Admission (Designed — ADR-163).** Run-tree depth
+        **Admission (Implemented — ADR-163).** Run-tree depth
         (`MAISTER_ORCHESTRATOR_MAX_DEPTH`) and per-orchestrator fan-out
         (`MAISTER_MAX_ORCHESTRATOR_FANOUT`, counting LIVE children of BOTH kinds)
         are checked by one shared helper under a per-orchestrator advisory lock,
@@ -4944,7 +4944,7 @@ components:
           description: |
             AGENT target: `task` = child task (`parent_of` Kanban card) + child
             run; `run` = child run only (`runs.parent_run_id`, no board card).
-            FLOW target **(Designed — ADR-163)**: both modes create a carrier
+            FLOW target **(Implemented — ADR-163)**: both modes create a carrier
             task and link it `parent_of` — `mode` is recorded in
             `delegation_snapshot.mode` and does NOT change board presence or
             linkage. It is documented here rather than silently dropped.
@@ -4959,7 +4959,7 @@ components:
             Title for the child task; defaults to the prompt's first line.
             AGENT target: valid only with `mode == "task"` — an agent
             `mode: run` child creates no task, so `title` with it is refused
-            `CONFIG` → 422 **(Designed — ADR-163)** rather than dropped.
+            `CONFIG` → 422 **(Implemented — ADR-163)** rather than dropped.
             FLOW target: honoured in BOTH modes (a carrier task always exists).
         workspace:
           type: string
@@ -4967,7 +4967,7 @@ components:
           description: |
             AGENT target only. Workspace axis for the child run; defaults to the
             resolved definition's recommended workspace when omitted. On a FLOW
-            target it is REFUSED `CONFIG` → 422 **(Designed — ADR-163)** — a flow
+            target it is REFUSED `CONFIG` → 422 **(Implemented — ADR-163)** — a flow
             run always provisions its own worktree, so the axis is meaningless.
         workspaceMode:
           type: string
@@ -4979,7 +4979,7 @@ components:
             pre-allocated tree with serialized writers (one active writer per
             tree). `shared` requires a delegated child (a `rootRunId`); a top-level
             run is refused with `CONFIG`. AGENT target only — on a FLOW target
-            the whole field is refused `CONFIG` → 422 **(Designed — ADR-163)**;
+            the whole field is refused `CONFIG` → 422 **(Implemented — ADR-163)**;
             the shared-tree allocator lives in the agent launcher and is not
             ported onto the flow launch path in this cut.
             A `shared` writable tree is ONE branch =
@@ -4993,7 +4993,7 @@ components:
             that parks (`NeedsInputIdle`, ACP session retained) between turns
             instead of running to terminal; re-message it via `run_message` by its
             `addressableKey`. Requires `addressableKey`. AGENT target only — on a
-            FLOW target it is refused `CONFIG` → 422 **(Designed — ADR-163)**.
+            FLOW target it is refused `CONFIG` → 422 **(Implemented — ADR-163)**.
         addressableKey:
           type: string
           minLength: 1
@@ -5003,7 +5003,7 @@ components:
             (M37 Phase 8 — ADR-099) Stable key, unique within the orchestrator
             tree (`root_run_id`), used to address a persistent child via
             `run_message`. Required when `persistent` is true. AGENT target only —
-            on a FLOW target it is refused `CONFIG` → 422 **(Designed — ADR-163)**.
+            on a FLOW target it is refused `CONFIG` → 422 **(Implemented — ADR-163)**.
         runnerOverride:
           type: string
           minLength: 1
@@ -5012,7 +5012,7 @@ components:
             the fail-closed runner resolution chain. Snapshotted onto the child
             run's `runner_snapshot`. Supported by BOTH target kinds: an agent
             target passes it through the agent runner chain, a FLOW target
-            **(Designed — ADR-163)** through the EXISTING Flow
+            **(Implemented — ADR-163)** through the EXISTING Flow
             executor-resolution chain (as `LaunchRunInput.runnerId`), so an
             unknown or disabled runner surfaces that chain's own `PRECONDITION` /
             `EXECUTOR_UNAVAILABLE`.
@@ -5020,7 +5020,7 @@ components:
     ExtRunPlanTask:
       type: object
       description: |
-        (Implemented — ADR-098; flow arm Designed — ADR-163) One node of a
+        (Implemented — ADR-098; flow arm Implemented — ADR-163) One node of a
         submitted task DAG. `key` is the in-batch identifier referenced by other
         tasks' `dependsOn`. `target` is the same discriminated
         `ExtDelegationTarget` union `run_delegate` uses, so a single DAG may mix
@@ -5055,7 +5055,7 @@ components:
           enum: [none, repo_read, worktree]
           description: |
             Optional workspace axis for the task's run. AGENT entries only —
-            refused `CONFIG` → 422 on a flow entry **(Designed — ADR-163)**.
+            refused `CONFIG` → 422 on a flow entry **(Implemented — ADR-163)**.
         runnerOverride:
           type: string
           minLength: 1
@@ -5076,7 +5076,7 @@ components:
       type: object
       description: |
         (Implemented — ADR-098) `run_plan` payload. `projectId` and the parent
-        `runId` are token-derived. **(Designed — ADR-163)** The batch is bounded
+        `runId` are token-derived. **(Implemented — ADR-163)** The batch is bounded
         by `MAISTER_MAX_ORCHESTRATOR_FANOUT` counted as LIVE children of BOTH
         kinds PLUS this batch's size — the same `admitDelegatedChild` helper
         `run_delegate` and the as-plan auto-launcher use, under a

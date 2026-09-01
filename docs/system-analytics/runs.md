@@ -330,7 +330,7 @@ invariants bind it to the run machine:
    transaction keyed on the attempt token; a retry after success returns `409`
    (already `Done`), never a second promotion.
 
-### Delegated flow-run child (Designed — ADR-163)
+### Delegated flow-run child (Implemented — ADR-163)
 
 A `run_delegate` / `run_plan` target may name a **Flow** instead of a catalog
 agent. The child is an ordinary `run_kind='flow'` run launched through the

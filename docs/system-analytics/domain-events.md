@@ -84,7 +84,7 @@ observe its failed child; success-gated dependents do not launch.
   top-level Review emits nothing). It wakes a parked orchestrator to
   collect/promote/rework and drives as-plan auto-promote. The payload stays
   ids/keys/statuses only (no secrets).
-  **(Designed, ADR-163 — migration-free)** `run.review` gains a **SECOND
+  **(Implemented, ADR-163 — migration-free)** `run.review` gains a **SECOND
   emitter**: the flow graph runner's `Review` branch, in the SAME transaction as
   the status flip and gated on `parent_run_id != null` — matching the agent
   launcher's rule exactly. Before this the branch emitted only
@@ -313,7 +313,7 @@ flowchart TD
   `launchAgentRun` (cap admission inside that call), and auto-promote an
   as-plan child reaching `Review`; `orchestrator_resume` MUST be the only
   consumer that wakes the parent out of `WaitingOnChildren` (single-winner CAS
-  + `session/resume`). **(Designed — ADR-163)** `auto_launch_run_plan`'s
+  + `session/resume`). **(Implemented — ADR-163)** `auto_launch_run_plan`'s
   `run_kind` gate MUST be an ALLOW-LIST (`agent | flow`), never a deny-check, so
   a kind added later stays rejected by default; it MUST dispatch the candidate
   launch on the task's `delegation_spec` kind; and it MUST call
@@ -345,7 +345,7 @@ flowchart TD
   parentless) WITHOUT introducing a new kind. **(Implemented — ADR-100,
   migration 0060)** the settled-not-terminal `run.review` kind MUST be emitted
   ONLY for a child with a parent and MUST carry `parent_run_id`.
-  **(Designed — ADR-163)** BOTH `run.review` emitters — the agent launcher's
+  **(Implemented — ADR-163)** BOTH `run.review` emitters — the agent launcher's
   `finalizeAgentRun` and the flow graph runner's `Review` branch — MUST emit
   inside the SAME transaction as the status flip; a status a settled-event
   consumer waits on that nothing emits is a deadlock, not a missing feature.

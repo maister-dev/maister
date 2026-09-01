@@ -61,6 +61,10 @@ export type DelegateRequest = {
   // 0-based child index (a sub-task ordinal).
   index: number;
   prompt: string;
+  // ADR-163: resolves the in-repo delegated flow ref IF the orchestrator's own
+  // project has one, else null. A per-run lookup rather than an env var,
+  // because both orchestrator specs share one supervisor process.
+  delegatedFlowRef?: () => Promise<string | null>;
 };
 
 export type DelegateHook = (req: DelegateRequest) => Promise<void>;
@@ -167,6 +171,16 @@ const httpDelegateHook: DelegateHook = async (req) => {
         `(token=${!!req.facadeToken}, baseUrl=${req.apiBaseUrl})`,
     );
   }
+
+  // ADR-163: choose the delegation target PER RUN, from the orchestrator's own
+  // project — not from an env var. Both orchestrator specs share one supervisor
+  // process, so a global switch would flip the other spec's children too. A
+  // project that has the in-repo delegated flow gets a FLOW child; every other
+  // project keeps the agent target unchanged.
+  const flowRef = await req.delegatedFlowRef?.();
+  const target = flowRef
+    ? { flowId: flowRef }
+    : { agentId: process.env.MAISTER_TEST_CHILD_AGENT_ID };
   const res = await fetch(`${req.apiBaseUrl}/api/v1/ext/runs/delegate`, {
     method: "POST",
     headers: {
@@ -174,7 +188,7 @@ const httpDelegateHook: DelegateHook = async (req) => {
       authorization: `Bearer ${req.facadeToken}`,
     },
     body: JSON.stringify({
-      target: { agentId: process.env.MAISTER_TEST_CHILD_AGENT_ID },
+      target,
       mode: "run",
       prompt: req.prompt,
     }),
@@ -320,6 +334,17 @@ export async function startTestSupervisor(
           apiBaseUrl,
           index: i,
           prompt: childPrompt(i),
+          delegatedFlowRef: async () => {
+            const rows = await opts.pool.query(
+              `SELECT f.flow_ref_id
+                 FROM runs r
+                 JOIN flows f ON f.project_id = r.project_id
+                WHERE r.id = $1 AND f.flow_ref_id = 'e2e-delegated-flow'`,
+              [rec.runId],
+            );
+
+            return (rows.rows[0]?.flow_ref_id as string | undefined) ?? null;
+          },
         };
 
         delegations.push(req);

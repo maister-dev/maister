@@ -70,6 +70,8 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
 let issueOrchestratorRunToken: typeof import("@/lib/agents/tokens").issueOrchestratorRunToken;
 let delegatePost: typeof import("@/app/api/v1/ext/runs/delegate/route").POST;
 let reworkPost: typeof import("@/app/api/v1/ext/runs/rework/route").POST;
+let cancelPost: typeof import("@/app/api/v1/ext/runs/cancel/route").POST;
+let collectPost: typeof import("@/app/api/v1/ext/runs/collect/route").POST;
 let messagePost: typeof import("@/app/api/v1/ext/runs/message/route").POST;
 let promotePost: typeof import("@/app/api/v1/ext/runs/promote/route").POST;
 
@@ -86,6 +88,8 @@ beforeAll(async () => {
     "@/app/api/v1/ext/runs/delegate/route"
   ));
   ({ POST: reworkPost } = await import("@/app/api/v1/ext/runs/rework/route"));
+  ({ POST: cancelPost } = await import("@/app/api/v1/ext/runs/cancel/route"));
+  ({ POST: collectPost } = await import("@/app/api/v1/ext/runs/collect/route"));
   ({ POST: messagePost } = await import("@/app/api/v1/ext/runs/message/route"));
   ({ POST: promotePost } = await import("@/app/api/v1/ext/runs/promote/route"));
 }, 180_000);
@@ -891,5 +895,70 @@ describe("tool support by child kind (ADR-163 D2 / REQ-14)", () => {
 
     expect(json.code ?? "").not.toBe("PRECONDITION");
     expect(json.message ?? "").not.toContain("not supported for flow");
+  }, 60_000);
+
+  // The other half of the tool-support matrix: `run_cancel` and `run_collect`
+  // are kind-AGNOSTIC and must work on a flow child. Asserted because "it should
+  // just work" is exactly the claim that rots — `stopRunByKind` dispatches on
+  // `run_kind`, so the flow arm is a real branch, not an incidental pass.
+  // NOTE the asymmetry this pins: `run_cancel` on an AGENT child abandons it,
+  // but on a FLOW child it routes through `stopRunByKind`'s `case "flow"` —
+  // the documented operator-stop-to-`Review` transition every flow run has.
+  // The coordinator gets a child parked in Review with its diff intact, NOT a
+  // terminated one; abandoning a flow child is what the parent's cascade does.
+  // Asserting the real behaviour rather than the assumed one is the point.
+  it("run_cancel stops a flow child through the run-kind dispatcher (flow → Review)", async () => {
+    const res = await delegatePost(
+      delegateRequest(secret, flowDelegation()),
+      {},
+    );
+    const { childRunId } = (await res.json()) as { childRunId: string };
+
+    await pool.query(`UPDATE "runs" SET "status" = 'Running' WHERE "id" = $1`, [
+      childRunId,
+    ]);
+
+    const cancelled = await cancelPost(
+      extRequest("/api/v1/ext/runs/cancel", { childRunId }),
+      {},
+    );
+
+    expect(cancelled.status).toBe(200);
+    expect((await childRun(childRunId)).status).toBe("Review");
+  }, 60_000);
+
+  it("run_collect projects a flow child alongside its agent siblings", async () => {
+    const flowRes = await delegatePost(
+      delegateRequest(secret, flowDelegation()),
+      {},
+    );
+    const { childRunId: flowChildId } = (await flowRes.json()) as {
+      childRunId: string;
+    };
+
+    const worker = await seedAgent(ctx, { id: "worker" });
+    const agentRes = await delegatePost(
+      delegateRequest(secret, {
+        target: { agentId: worker },
+        mode: "run",
+        prompt: "sibling",
+      }),
+      {},
+    );
+    const { childRunId: agentChildId } = (await agentRes.json()) as {
+      childRunId: string;
+    };
+
+    const collected = await collectPost(
+      extRequest("/api/v1/ext/runs/collect", { all: true }),
+      {},
+    );
+
+    expect(collected.status).toBe(200);
+    const results = (await collected.json()) as { childRunId: string }[];
+
+    expect(results.map((c) => c.childRunId).sort()).toEqual(
+      [agentChildId, flowChildId].sort(),
+    );
   }, 60_000);
 });

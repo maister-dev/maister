@@ -630,12 +630,17 @@ nodes:
   `tools`, `skills`, `permissionMode`, `limits`, `restrictions`, `enforcement`,
   …); the same registry resolution and per-class `enforcement` intent
   apply.
-- **`delegation` sub-block** (optional) — `max_fanout` (the per-plan task cap for
-  `run_plan`) and `max_depth` (the run-tree recursion bound). When omitted they
-  default to env `MAISTER_MAX_ORCHESTRATOR_FANOUT` (`16`) and
-  `MAISTER_ORCHESTRATOR_MAX_DEPTH` (`3`). An over-fanout or over-depth request is
-  refused pre-transaction with `MaisterError("CONFIG")`; no partial run-tree is
-  created.
+- **`delegation` sub-block** (optional) — `max_fanout` and `max_depth` (the
+  run-tree recursion bound). When omitted they default to env
+  `MAISTER_MAX_ORCHESTRATOR_FANOUT` (`16`) and `MAISTER_ORCHESTRATOR_MAX_DEPTH`
+  (`3`). An over-fanout or over-depth request is refused with
+  `MaisterError("CONFIG")`; no partial run-tree is created.
+  **(Implemented — [ADR-163](decisions.md#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher))** `max_fanout` now bounds the
+  orchestrator's LIVE children of BOTH kinds (agent + flow), not the size of one
+  `run_plan` batch, and is enforced by one shared helper on every
+  child-creation edge. `web/lib/config.schema.ts` is UNCHANGED — the
+  `orchestratorSettingsSchema` gains no field; only the runtime semantics of the
+  existing one widen, so there is no new schema field to look for.
 
 **Delegation semantics (brief; full contract in
 [ADR-098](decisions.md#adr-098-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume)
@@ -645,17 +650,31 @@ MCP facade (a per-launch ephemeral `agent:<id>` token scoped `runs:delegate`,
 materialized into the orchestrator session's ACP `mcpServers` for
 `orchestrator` nodes only, revoked on terminal):
 
-- `run_delegate` — spawn one child as `as-task` (a child task + run, board card via
+- `run_delegate` — spawn one child from EXACTLY ONE target
+  (**[ADR-163](decisions.md#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher)**: `target.agentId` or `target.flowId`, a discriminated
+  union). An AGENT target spawns `as-task` (a child task + run, board card via
   `parent_of`) or `as-run` (a child run only, `runs.parent_run_id`, workbench
-  subtree, **no** board card).
+  subtree, **no** board card). A FLOW target spawns a governed multi-node
+  process through the canonical Flow launcher; because a flow run cannot exist
+  without a task, it ALWAYS gets a server-minted carrier task linked
+  `parent_of`, in both modes. Flow targets accept only `title` and
+  `runnerOverride` — `workspace`, `workspaceMode`, `persistent`, and
+  `addressableKey` are agent-only and are REFUSED, never ignored.
 - `run_plan` — write a **success-gated** task DAG (N child tasks wired by the
   `requires` relation kind, which releases a dependent **only** on `Done` —
   `Failed`/`Abandoned` keeps it blocked and wakes the orchestrator) in one
-  transaction after pre-tx cycle / depth / fanout validation.
+  transaction after pre-tx cycle / depth / fanout validation. A batch may MIX
+  agent and flow entries (**[ADR-163](decisions.md#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher)**); each created task records its
+  target kind in `delegation_spec`, and the as-plan auto-launcher dispatches on
+  it.
 - `run_collect` — read each child's terminal status, `{{ steps.<id>.output }}`
   stdout var, produced-artifact manifest, and base→run diff ref (never the child
   worktree directly — the reviewer-isolation contract).
-- `run_cancel` — cancel a child run.
+- `run_cancel` — stop a child run. **[ADR-163](decisions.md#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher)** — the OUTCOME differs
+  by kind: an agent child is `Abandoned`, while a flow child takes the ordinary
+  operator-stop-to-`Review` transition and parks with its diff intact.
+  `run_rework` and `run_message` do NOT apply to a flow child and are refused
+  `PRECONDITION`.
 
 Children are **catalog-resolved governed Runs** (the effective definition through
 the project's enabled + trusted catalog, ADR-089/090; never runtime-authored) —

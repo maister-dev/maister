@@ -343,7 +343,14 @@ and `ACCOUNT_INACTIVE`; ADR-101 added `BUDGET_EXCEEDED`; ADR-122 added
 > - **`PRECONDITION` → HTTP 409** — a `run_delegate` / `run_plan` naming an agent
 >   not resolvable through the project's enabled + trusted catalog (unresolvable /
 >   untrusted delegation target — "resolve+trust" is physically separate from
->   "launch", and **no child run is created** on refusal); a cross-batch
+>   "launch", and **no child run is created** on refusal);
+>   **(Implemented — [ADR-163](decisions.md#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher))** the same code covers a FLOW target that
+>   is unknown, outside the token's project, not `Enabled`/`UpdateAvailable`,
+>   `untrusted`, missing an enabled revision, on a revision that is not
+>   `Installed`, or whose package setup is `pending`/`failed`; plus `run_rework`
+>   or `run_message` addressed to a flow child (neither applies to one), and a
+>   delegation whose orchestrator terminalized DURING the child's launch (the
+>   just-born child is abandoned through the parent's cascade); a cross-batch
 >   `dependsOn` / `requires` reference outside the plan being written; **a run-bound
 >   ext token whose orchestrator has TERMINALIZED** (`Done`/`Failed`/`Crashed`/
 >   `Abandoned`) on any of delegate/plan/collect/cancel/promote/rework/message
@@ -358,7 +365,12 @@ and `ACCOUNT_INACTIVE`; ADR-101 added `BUDGET_EXCEEDED`; ADR-122 added
 > - **`CONFIG` → HTTP 422** — a flow declaring an `orchestrator` node with
 >   `compat.engine_min < 1.6.0` (engine floor); an over-`max_fanout` /
 >   over-`max_depth` request (bounds, enforced pre-tx); a cyclic task DAG in
->   `run_plan`; a `strict` path-scope enforcement declaration (the Phase-2 policy
+>   `run_plan`; **(Implemented — [ADR-163](decisions.md#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher))** a `target` carrying BOTH or
+>   NEITHER of `agentId`/`flowId`; an agent-only field (`workspace`,
+>   `workspaceMode`, `persistent`, `addressableKey`) on a flow target; `title` on
+>   an agent `mode: run` target; a flow whose manifest `schemaVersion` is
+>   unsupported or whose engine range is incompatible with this engine;
+>   a `strict` path-scope enforcement declaration (the Phase-2 policy
 >   gap — refused until [ADR-099](decisions.md#adr-099-persistent-swarm-layer-2--addressable-sessions-star-routed-messaging-worktree-modes-per-agent-read-only) lands). A `workspace_mode: shared`
 >   delegation with a writable worktree is NO LONGER a `CONFIG` launch gate — the
 >   shared-tree review/promote model is specified in

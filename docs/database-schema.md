@@ -1104,7 +1104,7 @@ draft updates increment `draft_version` and stale callers receive `CONFLICT`.
                                  //   NULL. The as-plan delegation spec (target +
                                  //   resolved settings) captured for a child task
                                  //   submitted via `run_plan`.
-                                 //   (Designed, ADR-163 — NO DDL, a TS $type<>
+                                 //   (Implemented, ADR-163 — NO DDL, a TS $type<>
                                  //   widening only): a DISCRIMINATED UNION on
                                  //   `kind` —
                                  //     { kind?: 'agent'; agentId; workspace?;
@@ -1420,7 +1420,7 @@ unread badge and inbox panel.
                                  //   here (skill-context rule 207).
                                  //   (Implemented, ADR-109) a consensus participant
                                  //   uses { kind:'runner', ... } instead.
-                                 //   (Designed, ADR-163 — NO DDL, a TS $type<>
+                                 //   (Implemented, ADR-163 — NO DDL, a TS $type<>
                                  //   widening only) a DELEGATED FLOW child uses
                                  //     { kind: 'flow'; flowId; flowRefId;
                                  //       flowRevisionId; resolvedRevision;

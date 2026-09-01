@@ -45,6 +45,8 @@ export type E2EPlatformAgentsFixture = E2EProjectFixture & {
 // delegate-target worker agent.
 export type E2EOrchestratorFixture = E2EProjectFixture & {
   workerAgentId: string;
+  // ADR-163: the in-repo flow ref the orchestrator delegates a FLOW child to.
+  delegatedFlowRef: string;
   taskNumber: number;
   agentsRoot: string;
 };
@@ -239,6 +241,8 @@ export type E2EFixtures = {
     m23: E2EM23Fixture;
     platformAgents: E2EPlatformAgentsFixture;
     orchestrator: E2EOrchestratorFixture;
+    // ADR-163: the flow-target delegation project.
+    orchestratorFlow: E2EOrchestratorFixture;
     m38: E2EM38Fixture;
     m40: E2EM40Fixture;
     budgetFork: E2EBudgetForkFixture;

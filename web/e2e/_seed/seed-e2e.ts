@@ -556,6 +556,11 @@ const AGENT_BODY_MARKER = "E2E-HELPER-SYSTEM-PROMPT-MARKER";
 // orchestrator parks on WaitingOnChildren, and the run-tree subtree renders the
 // 2 children on the orchestrator's workbench.
 const ORCHESTRATOR_SLUG = "e2e-orchestrator";
+// ADR-163: a SECOND orchestrator project whose coordinator delegates to a FLOW.
+// Separate from the agent-delegation project on purpose — the test supervisor
+// picks the delegation target by looking for this project's delegated flow, so
+// the two loops cannot interfere with each other's child counts.
+const ORCHESTRATOR_FLOW_SLUG = "e2e-orchestrator-flow";
 const E2E_WORKER_AGENT = "e2e-orc-pkg:e2e-worker";
 
 const ORCHESTRATOR_MANIFEST = {
@@ -572,9 +577,38 @@ const ORCHESTRATOR_MANIFEST = {
   ],
 };
 
+// ADR-163: the FLOW the orchestrator delegates to. Deliberately an IN-REPO
+// fixture, not a third-party package: REQ-23 keeps production Flow packages out
+// of this repository, and a two-node graph is enough to prove the whole chain
+// (a governed child that provisions a worktree, produces a diff, and parks in
+// `Review` so the parent's wake edge fires).
+const E2E_DELEGATED_FLOW_REF = "e2e-delegated-flow";
+
+const DELEGATED_FLOW_MANIFEST = {
+  schemaVersion: 1,
+  name: "E2E Delegated Flow",
+  compat: { engine_min: "3.0.0" },
+  nodes: [
+    {
+      id: "touch",
+      type: "cli",
+      action: { command: "echo delegated > delegated.txt" },
+      transitions: { success: "verify" },
+    },
+    {
+      id: "verify",
+      type: "check",
+      action: { command: "test -f delegated.txt" },
+      transitions: { success: "done" },
+    },
+  ],
+};
+
 type OrchestratorFixture = ProjectFixture & {
   // The catalog agent the orchestrator delegates each child to.
   workerAgentId: string;
+  // ADR-163: the flow ref the orchestrator delegates a FLOW child to.
+  delegatedFlowRef: string;
   // The Backlog task's KEY-N number (the board launch target).
   taskNumber: number;
   // The agent-package install root the test supervisor's delegation resolves.
@@ -2395,7 +2429,14 @@ async function seedAdr159ReworkClaimFixture(
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
      VALUES ($1, $2, $3, $4, $5, $6)`,
-    [ids.workspace, ids.run, ids.project, ADR159_BRANCH, worktreePath, repoPath],
+    [
+      ids.workspace,
+      ids.run,
+      ids.project,
+      ADR159_BRANCH,
+      worktreePath,
+      repoPath,
+    ],
   );
 
   // A FINISHED ledger: implement → checks (+ passed gate) → review, all closed,
@@ -2514,7 +2555,14 @@ async function seedAdr160NodeInterruptFixture(
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
      VALUES ($1, $2, $3, $4, $5, $6)`,
-    [ids.workspace, ids.run, ids.project, ADR160_BRANCH, worktreePath, repoPath],
+    [
+      ids.workspace,
+      ids.run,
+      ids.project,
+      ADR160_BRANCH,
+      worktreePath,
+      repoPath,
+    ],
   );
 
   // `plan` finished; `implement` is the parked attempt the operator interrupted.
@@ -2539,9 +2587,13 @@ async function seedAdr160NodeInterruptFixture(
         kind: "node_interrupt",
         nodeId: ADR160_NODE,
         decisions: ["resume", "restart_node", "restart_from", "stop"],
-        workspacePolicies: ["keep", "rewind-to-node-checkpoint", "fresh-attempt"],
+        workspacePolicies: [
+          "keep",
+          "rewind-to-node-checkpoint",
+          "fresh-attempt",
+        ],
       }),
-      "You interrupted \"implement\" mid-turn. Resume it as-is, restart it, restart from an earlier node, or stop the run.",
+      'You interrupted "implement" mid-turn. Resume it as-is, restart it, restart from an earlier node, or stop the run.',
     ],
   );
   await pool.query(
@@ -6986,17 +7038,29 @@ async function seedPlatformAgentsFixture(
 }
 
 // M37 (ADR-098): a launchable orchestrator flow + its delegate-target agent.
+// ADR-163: `withDelegatedFlow` additionally seeds the in-repo flow the
+// coordinator delegates a FLOW child to.
 async function seedOrchestratorE2EFixture(
   pool: Pool,
   adminId: string,
+  opts: {
+    slug?: string;
+    projectName?: string;
+    taskTitle?: string;
+    withDelegatedFlow?: boolean;
+    // The agent package is global (one `e2e-orc-pkg` install); only the FIRST
+    // seeding creates it, the rest just attach the existing install.
+    reuseAgentPackage?: boolean;
+  } = {},
 ): Promise<OrchestratorFixture> {
+  const slug = opts.slug ?? ORCHESTRATOR_SLUG;
   const base = await seedLaunchableProjectFixture(pool, {
-    slug: ORCHESTRATOR_SLUG,
-    projectName: "E2E Orchestrator",
+    slug,
+    projectName: opts.projectName ?? "E2E Orchestrator",
     userId: adminId,
-    repoPath: path.join(RUNTIME_ROOT, "repos", ORCHESTRATOR_SLUG),
+    repoPath: path.join(RUNTIME_ROOT, "repos", slug),
     task: {
-      title: "Coordinate the delivery",
+      title: opts.taskTitle ?? "Coordinate the delivery",
       prompt: "Break the delivery into sub-tasks and delegate them.",
       status: "Backlog",
       stage: "Backlog",
@@ -7011,7 +7075,7 @@ async function seedOrchestratorE2EFixture(
      WHERE flow_ref_id = 'acceptance' AND installed_path = $2`,
     [
       JSON.stringify(ORCHESTRATOR_MANIFEST),
-      path.join(RUNTIME_ROOT, "flows", `${ORCHESTRATOR_SLUG}-flow`),
+      path.join(RUNTIME_ROOT, "flows", `${slug}-flow`),
     ],
   );
   await pool.query(`UPDATE flows SET manifest = $1 WHERE id = $2`, [
@@ -7023,6 +7087,45 @@ async function seedOrchestratorE2EFixture(
   // finalizes Done and emits run.done). Shipped as a package, pinned in the
   // project, attached to it — the same trust contour as platform-agents.
   const agentsRoot = path.join(RUNTIME_ROOT, "orc-agents");
+
+  if (!opts.reuseAgentPackage) {
+    await seedOrchestratorAgentPackage(pool, agentsRoot);
+  }
+
+  const orcPkgInstall = await pool.query(
+    `SELECT id FROM package_installs WHERE name = 'e2e-orc-pkg'`,
+  );
+
+  await attachOrchestratorAgentPackage(pool, {
+    projectId: base.projectId,
+    agentsRoot,
+    packageInstallId: orcPkgInstall.rows[0].id as string,
+  });
+
+  if (opts.withDelegatedFlow) {
+    await seedDelegatedFlowForProject(pool, base.projectId, slug);
+  }
+
+  const taskNumber = Number(
+    (await pool.query(`SELECT number FROM tasks WHERE id = $1`, [base.taskId!]))
+      .rows[0].number,
+  );
+
+  return {
+    ...base,
+    workerAgentId: E2E_WORKER_AGENT,
+    delegatedFlowRef: E2E_DELEGATED_FLOW_REF,
+    taskNumber,
+    agentsRoot,
+  };
+}
+
+// The global `e2e-orc-pkg` agent package: definition file, catalog row, and the
+// Installed package_install every consuming project attaches to.
+async function seedOrchestratorAgentPackage(
+  pool: Pool,
+  agentsRoot: string,
+): Promise<void> {
   const workerPath = writeAgentDefinition({
     agentsRoot,
     id: E2E_WORKER_AGENT,
@@ -7054,21 +7157,6 @@ async function seedOrchestratorE2EFixture(
              'rev-e2e-orc', 'digest', '{}'::jsonb, 1, $2, 'Installed')`,
     [orcPkgRevisionId, agentsRoot],
   );
-  await pool.query(
-    `INSERT INTO flows
-       (id, project_id, flow_ref_id, source, version, installed_path,
-        manifest, schema_version, enabled_revision_id, enablement_state,
-        trust_status, version_binding)
-     VALUES ($1, $2, 'e2e-orc-pkg', 'github.com/maister/e2e-orc-pkg', 'v1.0.0',
-             $3, '{}'::jsonb, 1, $4, 'Enabled', 'trusted', 'pinned')`,
-    [randomUUID(), base.projectId, agentsRoot, orcPkgRevisionId],
-  );
-  // (ADR-106) Same contract as the platform-agents fixture: the boot
-  // `resyncAgents()` re-registers agents from Installed `package_installs`
-  // rows and DISABLES every catalog row it cannot re-register, and the
-  // delegate route resolves the effective definition through the project's
-  // attachment. Without both, the coordinator's delegation is refused with
-  // PRECONDITION `agent "e2e-orc-pkg:e2e-worker" is disabled`.
   const orcPkgInstallId = randomUUID();
 
   await pool.query(
@@ -7083,28 +7171,97 @@ async function seedOrchestratorE2EFixture(
              'rev-e2e-orc', '{}'::jsonb, 'digest', $2, 'Installed', 'trusted')`,
     [orcPkgInstallId, agentsRoot],
   );
+}
+
+// Attach the global `e2e-orc-pkg` package to ONE project: the project flow row,
+// the package attachment, and the agent link.
+//
+// (ADR-106) Same contract as the platform-agents fixture: the boot
+// `resyncAgents()` re-registers agents from Installed `package_installs` rows
+// and DISABLES every catalog row it cannot re-register, and the delegate route
+// resolves the effective definition through the project's attachment. Without
+// both, the coordinator's delegation is refused with PRECONDITION
+// `agent "e2e-orc-pkg:e2e-worker" is disabled`.
+async function attachOrchestratorAgentPackage(
+  pool: Pool,
+  args: { projectId: string; agentsRoot: string; packageInstallId: string },
+): Promise<void> {
+  const revision = await pool.query(
+    `SELECT id FROM flow_revisions WHERE flow_ref_id = 'e2e-orc-pkg'`,
+  );
+
+  await pool.query(
+    `INSERT INTO flows
+       (id, project_id, flow_ref_id, source, version, installed_path,
+        manifest, schema_version, enabled_revision_id, enablement_state,
+        trust_status, version_binding)
+     VALUES ($1, $2, 'e2e-orc-pkg', 'github.com/maister/e2e-orc-pkg', 'v1.0.0',
+             $3, '{}'::jsonb, 1, $4, 'Enabled', 'trusted', 'pinned')`,
+    [randomUUID(), args.projectId, args.agentsRoot, revision.rows[0].id],
+  );
   await pool.query(
     `INSERT INTO project_package_attachments
        (id, project_id, package_install_id, package_name)
      VALUES ($1, $2, $3, 'e2e-orc-pkg')`,
-    [randomUUID(), base.projectId, orcPkgInstallId],
+    [randomUUID(), args.projectId, args.packageInstallId],
   );
   await pool.query(
     `INSERT INTO agent_project_links (id, agent_id, project_id) VALUES ($1, $2, $3)`,
-    [randomUUID(), E2E_WORKER_AGENT, base.projectId],
+    [randomUUID(), E2E_WORKER_AGENT, args.projectId],
   );
+}
 
-  const taskNumber = Number(
-    (await pool.query(`SELECT number FROM tasks WHERE id = $1`, [base.taskId!]))
-      .rows[0].number,
+// ADR-163: the delegate-target FLOW — Enabled, trusted, on an Installed
+// revision whose setup completed and whose engine range this engine satisfies.
+// The same trust contour as any project flow; the delegation resolver walks
+// exactly these rows. IN-REPO by design (REQ-23): no production third-party
+// Flow package enters this repository.
+async function seedDelegatedFlowForProject(
+  pool: Pool,
+  projectId: string,
+  slug: string,
+): Promise<void> {
+  const delegatedFlowPath = path.join(
+    RUNTIME_ROOT,
+    "flows",
+    `${slug}-delegated`,
   );
+  const delegatedRevisionId = randomUUID();
 
-  return {
-    ...base,
-    workerAgentId: E2E_WORKER_AGENT,
-    taskNumber,
-    agentsRoot,
-  };
+  await pool.query(`DELETE FROM flow_revisions WHERE flow_ref_id = $1`, [
+    E2E_DELEGATED_FLOW_REF,
+  ]);
+  await pool.query(
+    `INSERT INTO flow_revisions
+       (id, flow_ref_id, source, version_label, resolved_revision,
+        manifest_digest, manifest, schema_version, engine_min, installed_path,
+        package_status, setup_status)
+     VALUES ($1, $2, 'github.com/maister/e2e-delegated-flow', 'v1.0.0',
+             'rev-e2e-delegated', 'digest', $3::jsonb, 1, '3.0.0', $4,
+             'Installed', 'done')`,
+    [
+      delegatedRevisionId,
+      E2E_DELEGATED_FLOW_REF,
+      JSON.stringify(DELEGATED_FLOW_MANIFEST),
+      delegatedFlowPath,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO flows
+       (id, project_id, flow_ref_id, source, version, installed_path,
+        manifest, schema_version, enabled_revision_id, enablement_state,
+        trust_status, version_binding)
+     VALUES ($1, $2, $3, 'github.com/maister/e2e-delegated-flow', 'v1.0.0', $4,
+             $5::jsonb, 1, $6, 'Enabled', 'trusted', 'pinned')`,
+    [
+      randomUUID(),
+      projectId,
+      E2E_DELEGATED_FLOW_REF,
+      delegatedFlowPath,
+      JSON.stringify(DELEGATED_FLOW_MANIFEST),
+      delegatedRevisionId,
+    ],
+  );
 }
 
 type M38DecideCase = {
@@ -7593,6 +7750,15 @@ You answer when summoned by an @mention.
     }
 
     const orchestrator = await seedOrchestratorE2EFixture(pool, admin.id);
+    // ADR-163: a second orchestrator project whose coordinator delegates to a
+    // FLOW. The agent package is global, so this one reuses it.
+    const orchestratorFlow = await seedOrchestratorE2EFixture(pool, admin.id, {
+      slug: ORCHESTRATOR_FLOW_SLUG,
+      projectName: "E2E Orchestrator (flow target)",
+      taskTitle: "Delegate a governed flow",
+      withDelegatedFlow: true,
+      reuseAgentPackage: true,
+    });
     const m38 = await seedM38DecideFixture(pool, admin.id);
     const m40 = await seedM40Fixture(pool, admin.id);
     const capabilityEnforcement = await seedCapabilityEnforcementFixture(
@@ -7659,6 +7825,7 @@ You answer when summoned by an @mention.
         flowViewer,
         platformAgents,
         orchestrator,
+        orchestratorFlow,
         m38,
         m40,
         capabilityEnforcement,

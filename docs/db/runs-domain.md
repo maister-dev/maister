@@ -674,7 +674,7 @@ only for explicit HITL or permission waits.
 - `SCRATCH_ATTACHMENTS.storage_path` is server-internal. Public APIs expose
   uploaded-file display metadata and the rootless artifact reference stored in
   `value`, never absolute filesystem roots.
-- `RUNS.delegation_snapshot` **(Designed — ADR-163, NO DDL)** is a
+- `RUNS.delegation_snapshot` **(Implemented — ADR-163, NO DDL)** is a
   `kind`-discriminated jsonb union widened in TypeScript only: `kind?: 'agent'`
   (legacy rows carry no `kind`) = `{agentDefinitionId, revisionId}`;
   `kind: 'runner'` (ADR-109) = a consensus participant; `kind: 'flow'` = a
@@ -684,7 +684,7 @@ only for explicit HITL or permission waits.
   `PROJECTS.main_branch` — a delegated child never branches off its parent — and
   the pinned `flowRevisionId` is the revision `loadRun` resolves the manifest
   from, so advancing the project's enabled revision cannot re-point a live child.
-- `TASKS.delegation_spec` **(Designed — ADR-163, NO DDL)** likewise becomes a
+- `TASKS.delegation_spec` **(Implemented — ADR-163, NO DDL)** likewise becomes a
   `kind`-discriminated union: `{kind?: 'agent'; agentId; workspace?;
   runnerOverride?}` (legacy rows: no `kind` ⇒ read as agent) or
   `{kind: 'flow'; flowId; runnerOverride?}`. Readers use the
