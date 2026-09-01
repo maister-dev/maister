@@ -522,20 +522,20 @@ No new env var, port, binary, config-file path, or `package.json` script. `MAIST
 
 > Three failing tests derived directly from Phase-0 artifacts. Each must be **run** and its failure reason recorded before any production code is written.
 
-- [ ] **R1.1 — RED: the discriminated-target contract.** (depends on S0.6)
+- [x] **R1.1 — RED: the discriminated-target contract.** (depends on S0.6)
   Assert `mcp` `TOOL_SPECS` and the ext OpenAPI agree on the `oneOf` target for both tools, and that the ext route rejects `{agentId, flowId}` together and `{}`.
   **RED**: `pnpm --filter @maister/mcp test` fails on the target mismatch (the routes still accept the loose object); the route cases fail because today's Zod accepts both/neither shapes.
   *Files*: `mcp/src/__tests__/tool-contract.test.ts` (extended), `web/app/api/v1/ext/runs/__tests__/delegate-target-shape.integration.test.ts`.
   *Satisfies*: REQ-01.
 
-- [ ] **R1.2 — RED-neutral: the Agent-compat replay.** (depends on S0.6)
+- [x] **R1.2 — RED-neutral: the Agent-compat replay.** (depends on S0.6)
   A **parameterized** replay of the six shipped agent behaviours (as-task, as-run, snapshot + root propagation, disabled/untrusted/Disabled-package refusals, terminal-token refusal, depth bound, no-binding refusal) as a table of cases — **not** six copy-pasted bodies (DRY, finding H7).
   This one is **GREEN from the start by design**: it is the regression fence proving REQ-02, so any later red here is a compatibility break, not progress.
   *Files*: `web/app/api/v1/ext/runs/__tests__/delegate-agent-compat.integration.test.ts`.
   *Migration note*: the existing case `delegate.integration.test.ts:790` — *"flow-target delegation is rejected (CONFIG, out of scope)"* — is **migrated**, not deleted; its assertion inverts in T6.2.
   *Satisfies*: REQ-02.
 
-- [ ] **R1.3 — RED: the refusal table, table-driven.** (depends on S0.2, S0.6)
+- [x] **R1.3 — RED: the refusal table, table-driven.** (depends on S0.2, S0.6)
   One test, one row per refusal-table entry (both-fields, neither-field, each agent-only field on a flow target, no run-bound token, terminal orchestrator, over-depth, over-fan-out, unknown flow, not-enabled, untrusted, no enabled revision, revision not `Installed`, `setupStatus` failed, unsupported `schemaVersion`, engine-incompatible). Each row asserts **code + HTTP status + zero rows written** (`tasks` and `runs` both unchanged).
   Plus a **static** case for REQ-05: `web/lib/flows/delegatable-flow.ts` imports no launcher module — read the file's import list and assert none of `services/runs`, `agents/launch`, `flows/runner` appears. This makes "physically separate" a test, not a convention.
   **RED**: every flow row fails (the route still refuses all flow targets with a single generic CONFIG); the static case fails (the module does not exist yet).
