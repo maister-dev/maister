@@ -212,6 +212,7 @@ import {
 import * as schemaModule from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -4930,37 +4931,9 @@ export async function runGraph(
           data: { source: "runner" },
         });
 
-        // ADR-163: a DELEGATED flow child reaching Review must also emit the
-        // `run.review` DOMAIN event, in THIS transaction, or a parent parked in
-        // WaitingOnChildren never wakes — its Failed/Crashed siblings emit, its
-        // success side did not, and a status a settled-event consumer waits on
-        // that nothing emits is a deadlock, not a missing feature. Gated on
-        // parent_run_id exactly like the agent launcher's emit: a top-level
-        // Review has no orchestrator to route to, and emitting for it would put
-        // every board run's review into a consumer population only
-        // orchestration reads.
-        if (rows[0].parentRunId) {
-          await emitDomainEvent({
-            db: tx,
-            kind: "run.review",
-            projectId: rows[0].projectId,
-            taskId: rows[0].taskId,
-            runId,
-            actor: { type: "system", id: null },
-            parentRunId: rows[0].parentRunId,
-            payload: {
-              runId,
-              taskId: rows[0].taskId,
-              flowId: rows[0].flowId,
-              runKind: rows[0].runKind,
-              status: "Review",
-            },
-          });
-          log2.info(
-            { parentRunId: rows[0].parentRunId },
-            "[delegation.wake] run.review emitted for a delegated flow child",
-          );
-        }
+        // ADR-163: the delegated-child `run.review` domain emit is ONE helper
+        // shared by every Review flip, so no path can miss the parent wake.
+        await emitDelegatedReviewIfChild(tx, { runId, ...rows[0] });
       }
     });
     log2.info({}, "runGraph ended Review");

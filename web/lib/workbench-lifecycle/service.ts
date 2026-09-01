@@ -23,6 +23,7 @@ import {
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import { DISPOSABLE_WORKSPACE_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import { preserveWorktree, type PreserveResult } from "@/lib/gc/preserve";
@@ -2201,7 +2202,14 @@ async function markRunStoppedAndCloseAssignments(args: {
         reviewEnteredAt: args.endedAt,
       })
       .where(and(eq(runs.id, args.runId), inArray(runs.status, STOP_STATUSES)))
-      .returning({ id: runs.id, projectId: runs.projectId });
+      .returning({
+        id: runs.id,
+        projectId: runs.projectId,
+        taskId: runs.taskId,
+        flowId: runs.flowId,
+        runKind: runs.runKind,
+        parentRunId: runs.parentRunId,
+      });
 
     if (rows.length === 0) {
       throw new MaisterError(
@@ -2222,6 +2230,16 @@ async function markRunStoppedAndCloseAssignments(args: {
       projectId: requireRunProjectId(rows[0].projectId, args.runId),
       runId: args.runId,
       data: { source: "workbench" },
+    });
+    // ADR-163: an operator stop parks a delegated child in Review too, and a
+    // Review nothing announces leaves its parent waiting forever.
+    await emitDelegatedReviewIfChild(tx, {
+      runId: args.runId,
+      projectId: requireRunProjectId(rows[0].projectId, args.runId),
+      taskId: rows[0].taskId,
+      flowId: rows[0].flowId,
+      runKind: rows[0].runKind,
+      parentRunId: rows[0].parentRunId,
     });
   });
 }

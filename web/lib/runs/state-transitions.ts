@@ -10,6 +10,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { gcAgeDays } from "@/lib/instance-config";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
@@ -432,6 +433,39 @@ export async function markReworkClaimFromReview(
   return { ok: true };
 }
 
+// The Review re-entries below share one shape: an exact-status CAS onto
+// `Review` plus the delegated-child `run.review` domain emit in the SAME
+// transaction (ADR-163 — a Review a settled-event consumer waits on that
+// nothing emits is a deadlock). `opts.db` may already be a transaction; the
+// nested call becomes a savepoint.
+async function casToReviewAndEmit(
+  db: Db,
+  runId: string,
+  set: Record<string, unknown>,
+  fromStatus: string,
+): Promise<{ id: string }[]> {
+  return db.transaction(async (tx: Db) => {
+    const rows = await tx
+      .update(runs)
+      .set(set)
+      .where(and(eq(runs.id, runId), eq(runs.status, fromStatus)))
+      .returning({
+        id: runs.id,
+        projectId: runs.projectId,
+        taskId: runs.taskId,
+        flowId: runs.flowId,
+        runKind: runs.runKind,
+        parentRunId: runs.parentRunId,
+      });
+
+    if (rows.length > 0) {
+      await emitDelegatedReviewIfChild(tx, { runId, ...rows[0] });
+    }
+
+    return rows;
+  });
+}
+
 // ADR-160: release a rework claim back to Review — NOT NeedsInput, because this
 // provenance has no review HITL to re-open.
 export async function markReviewFromReworkClaim(
@@ -439,11 +473,12 @@ export async function markReviewFromReworkClaim(
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
-  const rows = await db
-    .update(runs)
-    .set({ status: "Review" })
-    .where(and(eq(runs.id, runId), eq(runs.status, "HumanWorking")))
-    .returning({ id: runs.id });
+  const rows = await casToReviewAndEmit(
+    db,
+    runId,
+    { status: "Review" },
+    "HumanWorking",
+  );
 
   if (rows.length === 0) {
     log.warn(
@@ -500,11 +535,12 @@ export async function markSyncReviewFromRunning(
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
-  const rows = await db
-    .update(runs)
-    .set({ status: "Review", keepaliveUntil: null, checkpointAt: null })
-    .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
-    .returning({ id: runs.id });
+  const rows = await casToReviewAndEmit(
+    db,
+    runId,
+    { status: "Review", keepaliveUntil: null, checkpointAt: null },
+    "Running",
+  );
 
   if (rows.length === 0) {
     log.warn(
@@ -535,11 +571,12 @@ export async function markSyncReviewFromNeedsInput(
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
-  const rows = await db
-    .update(runs)
-    .set({ status: "Review", keepaliveUntil: null, checkpointAt: null })
-    .where(and(eq(runs.id, runId), eq(runs.status, fromStatus)))
-    .returning({ id: runs.id });
+  const rows = await casToReviewAndEmit(
+    db,
+    runId,
+    { status: "Review", keepaliveUntil: null, checkpointAt: null },
+    fromStatus,
+  );
 
   if (rows.length === 0) {
     log.warn(

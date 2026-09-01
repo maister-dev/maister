@@ -1,3 +1,4 @@
+import type { DomainEventRow } from "@/lib/db/schema";
 import type {
   LifecycleContext,
   WorkbenchLifecycleDeps,
@@ -5,6 +6,7 @@ import type {
 
 import { randomUUID } from "node:crypto";
 
+import { and, eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
@@ -17,6 +19,7 @@ import {
   vi,
 } from "vitest";
 
+import { domainEvents } from "@/lib/db/schema";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -478,5 +481,149 @@ describe("workbench stop — orchestrator cascade (M37 T7.4)", () => {
     expect(byId.get(orchestratorRunId)).toBe("Review");
     expect(byId.get(runningChild)).toBe("Abandoned");
     expect(byId.get(needsInputChild)).toBe("Abandoned");
+  });
+});
+
+// ADR-163 review F1: the graph runner's Review branch emits `run.review` for a
+// delegated child, but the OPERATOR stop path (`markRunStoppedAndCloseAssignments`)
+// flipped to Review with the webhook only. A flow child stopped while its parent
+// waits in WaitingOnChildren therefore never woke it, and reconcile later crashed
+// the parent as `orchestrator-stuck` and cascade-abandoned every child. Every
+// Review flip of a delegated child must emit, through one helper.
+describe("workbench stop — a delegated flow child wakes its parked parent (ADR-163 review F1)", () => {
+  async function seedChildFlow(projectId: string): Promise<string> {
+    const flowId = randomUUID();
+
+    await pool.query(
+      `INSERT INTO "flows" ("id", "project_id", "flow_ref_id", "source", "version", "installed_path", "manifest", "schema_version")
+       VALUES ($1, $2, 'child-flow', 'github.com/x/y', 'v1.0.0', '/tmp/flows/child', '{"schemaVersion":1,"name":"Child","nodes":[]}'::jsonb, 1)`,
+      [flowId, projectId],
+    );
+
+    return flowId;
+  }
+
+  async function seedParkedOrchestrator(
+    projectId: string,
+    flowId: string,
+  ): Promise<string> {
+    const taskId = randomUUID();
+    const runId = randomUUID();
+
+    await pool.query(
+      `INSERT INTO "tasks" ("id", "project_id", "number", "title", "prompt", "launch_mode")
+       VALUES ($1, $2, $3, 'orc', 'coordinate', 'manual')`,
+      [taskId, projectId, Math.trunc(Math.random() * 1e9) + 1],
+    );
+    await pool.query(
+      `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "flow_id",
+         "status", "current_step_id", "flow_version", "flow_revision", "root_run_id")
+       VALUES ($1, 'flow', $2, $3, $4, 'WaitingOnChildren', 'coordinate', 'v1.0.0', 'unknown', $1)`,
+      [runId, projectId, taskId, flowId],
+    );
+    await pool.query(
+      `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "acp_session_id")
+       VALUES ($1, $2, 'default', 'acp-coord-stop')`,
+      [randomUUID(), runId],
+    );
+    await pool.query(
+      `INSERT INTO "node_attempts" ("id", "run_id", "node_id", "node_type", "attempt", "status")
+       VALUES ($1, $2, 'coordinate', 'orchestrator', 1, 'NeedsInput')`,
+      [randomUUID(), runId],
+    );
+
+    return runId;
+  }
+
+  async function seedFlowRun(args: {
+    projectId: string;
+    flowId: string;
+    parentRunId: string | null;
+  }): Promise<{ runId: string; taskId: string }> {
+    const taskId = randomUUID();
+    const runId = randomUUID();
+
+    await pool.query(
+      `INSERT INTO "tasks" ("id", "project_id", "number", "title", "prompt", "launch_mode")
+       VALUES ($1, $2, $3, 'child', 'p', 'manual')`,
+      [taskId, args.projectId, Math.trunc(Math.random() * 1e9) + 1],
+    );
+    await pool.query(
+      `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "flow_id",
+         "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id", "launch_mode")
+       VALUES ($1, 'flow', $2, $3, $4, 'Running', 'v1.0.0', 'unknown', $5, COALESCE($5, $1), 'manual')`,
+      [runId, args.projectId, taskId, args.flowId, args.parentRunId],
+    );
+
+    return { runId, taskId };
+  }
+
+  async function reviewDomainEvents(runId: string): Promise<DomainEventRow[]> {
+    return (await db
+      .select()
+      .from(domainEvents)
+      .where(
+        and(eq(domainEvents.runId, runId), eq(domainEvents.kind, "run.review")),
+      )) as DomainEventRow[];
+  }
+
+  it("stopping a Running flow child of a parked orchestrator emits run.review with parentRunId, and orchestrator_resume wakes the parent", async () => {
+    const projectId = await seedProject();
+    const flowId = await seedChildFlow(projectId);
+    const parentRunId = await seedParkedOrchestrator(projectId, flowId);
+    const child = await seedFlowRun({ projectId, flowId, parentRunId });
+
+    const result = await stopWorkbenchRun(child.runId);
+
+    expect(result).toMatchObject({ ok: true, runStatus: "Review" });
+
+    const events = await reviewDomainEvents(child.runId);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].taskId).toBe(child.taskId);
+    expect(events[0].payload).toMatchObject({
+      parentRunId,
+      runKind: "flow",
+      status: "Review",
+    });
+
+    const { buildOrchestratorResumeConsumer } = await import(
+      "@/lib/domain-events/orchestrator-resume"
+    );
+    const resumed: string[] = [];
+    const consumer = buildOrchestratorResumeConsumer({
+      db,
+      resumeFlow: async (runId) => {
+        resumed.push(runId);
+      },
+    });
+
+    await consumer.handle(events);
+
+    const parent = await pool.query(
+      `SELECT "status" FROM "runs" WHERE "id" = $1`,
+      [parentRunId],
+    );
+
+    expect(parent.rows[0].status).toBe("Running");
+    expect(resumed).toEqual([parentRunId]);
+  });
+
+  it("stopping a TOP-LEVEL flow run emits the webhook only — no run.review domain event", async () => {
+    const projectId = await seedProject();
+    const flowId = await seedChildFlow(projectId);
+    const top = await seedFlowRun({ projectId, flowId, parentRunId: null });
+
+    const result = await stopWorkbenchRun(top.runId);
+
+    expect(result).toMatchObject({ ok: true, runStatus: "Review" });
+    expect(await reviewDomainEvents(top.runId)).toHaveLength(0);
+
+    const webhooks = await pool.query(
+      `SELECT 1 FROM "webhook_events" WHERE "run_id" = $1 AND "type" = 'run.review'`,
+      [top.runId],
+    );
+
+    expect(webhooks.rowCount).toBe(1);
   });
 });

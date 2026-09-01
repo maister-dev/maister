@@ -400,4 +400,93 @@ describe("orchestrator_resume wakes on a FLOW child (ADR-163 REQ-18/REQ-20)", ()
     expect(await statusOf(parentRunId)).toBe("Running");
     expect(resumed).toEqual([parentRunId]);
   });
+  // ADR-163 review F1: the runner's Review branch is not the only way a
+  // delegated child enters Review — the ADR-160 rework-claim release and both
+  // ADR-141 sync-resolver returns flip to Review too. Each takes the child
+  // through a NON-settled status and back, so a sibling settle inside that
+  // window leaves the parent waiting on a status nothing announces. Every
+  // Review flip of a child must emit, top-level flips must not.
+  describe("every Review flip of a delegated child emits run.review (ADR-163 review F1)", () => {
+    let transitions: typeof import("@/lib/runs/state-transitions");
+
+    beforeAll(async () => {
+      transitions = await import("@/lib/runs/state-transitions");
+    });
+
+    async function seedTopLevelFlowRun(status: string): Promise<string> {
+      const taskId = randomUUID();
+      const runId = randomUUID();
+
+      await (db as any).insert(schema.tasks).values({
+        number: Math.trunc(Math.random() * 1e9) + 1,
+        id: taskId,
+        projectId,
+        title: "top",
+        prompt: "p",
+        flowId,
+      });
+      await pool.query(
+        `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "flow_id",
+           "status", "flow_version", "flow_revision")
+         VALUES ($1, 'flow', $2, $3, $4, $5, 'v1.0.0', 'unknown')`,
+        [runId, projectId, taskId, flowId, status],
+      );
+
+      return runId;
+    }
+
+    const flips: Array<{
+      name: string;
+      from: string;
+      flip: (runId: string) => Promise<{ ok: boolean }>;
+    }> = [
+      {
+        name: "markSyncReviewFromRunning",
+        from: "Running",
+        flip: (runId) => transitions.markSyncReviewFromRunning(runId, { db }),
+      },
+      {
+        name: "markSyncReviewFromNeedsInput",
+        from: "NeedsInput",
+        flip: (runId) =>
+          transitions.markSyncReviewFromNeedsInput(runId, "NeedsInput", { db }),
+      },
+      {
+        name: "markReviewFromReworkClaim",
+        from: "HumanWorking",
+        flip: (runId) => transitions.markReviewFromReworkClaim(runId, { db }),
+      },
+    ];
+
+    it.each(flips)(
+      "$name on a delegated child emits run.review carrying parentRunId",
+      async ({ from, flip }) => {
+        const parentRunId = await seedParkedOrchestrator();
+        const { runId } = await seedFlowChild({ parentRunId, status: from });
+
+        expect(await flip(runId)).toEqual({ ok: true });
+        expect(await statusOf(runId)).toBe("Review");
+
+        const events = await domainEventsFor(runId, "run.review");
+
+        expect(events).toHaveLength(1);
+        expect(events[0].payload).toMatchObject({
+          parentRunId,
+          runKind: "flow",
+          status: "Review",
+        });
+      },
+    );
+
+    it.each(flips)(
+      "$name on a TOP-LEVEL run emits no run.review domain event",
+      async ({ from, flip }) => {
+        const runId = await seedTopLevelFlowRun(from);
+
+        expect(await flip(runId)).toEqual({ ok: true });
+        expect(await statusOf(runId)).toBe("Review");
+        expect(await domainEventsFor(runId, "run.review")).toHaveLength(0);
+      },
+    );
+  });
 });
