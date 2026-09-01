@@ -264,9 +264,20 @@ export async function seedFlow(
  */
 export async function seedAgent(
   ctx: DelegationSeedCtx,
-  args: { id: string; enabled?: boolean },
+  args: {
+    id: string;
+    enabled?: boolean;
+    /**
+     * Declared triggers. The launcher refuses a trigger the definition does not
+     * declare, so a suite that drives the agent through the as-plan
+     * auto-launcher (trigger `domain_event`) must widen this — the default
+     * `["manual"]` covers the delegation routes only.
+     */
+    triggers?: string[];
+  },
 ): Promise<string> {
   const qualifiedId = `test-pkg:${args.id}`;
+  const triggers = args.triggers ?? ["manual"];
 
   await mkdir(path.join(ctx.agentsRoot, "maister-agents"), { recursive: true });
   await writeFile(
@@ -277,7 +288,7 @@ description: d
 workspace: none
 mode: session
 triggers:
-  - manual
+${triggers.map((t) => `  - ${t}`).join("\n")}
 risk_tier: read_only
 ---
 Do the thing.
@@ -287,12 +298,13 @@ Do the thing.
 
   await ctx.pool.query(
     `INSERT INTO "agents" ("id", "package_name", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path", "enabled")
-     VALUES ($1, 'test-pkg', 'v1.0.0', 'git', $2, 'd', 'none', 'session', '["manual"]'::jsonb, 'read_only', $3, $4)`,
+     VALUES ($1, 'test-pkg', 'v1.0.0', 'git', $2, 'd', 'none', 'session', $5::jsonb, 'read_only', $3, $4)`,
     [
       qualifiedId,
       args.id,
       path.join(ctx.agentsRoot, "maister-agents", `${args.id}.md`),
       args.enabled ?? true,
+      JSON.stringify(triggers),
     ],
   );
   await ctx.pool.query(

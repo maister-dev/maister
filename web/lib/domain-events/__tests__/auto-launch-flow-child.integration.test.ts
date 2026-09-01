@@ -10,6 +10,7 @@ import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
   afterAll,
+  afterEach,
   beforeAll,
   beforeEach,
   describe,
@@ -22,6 +23,7 @@ import { schema } from "@/test-support/graph-run-seed";
 import {
   type DelegationSeedCtx,
   resetDelegationFixture,
+  seedAgent,
   seedChildRun,
   seedFlow,
   seedTask,
@@ -43,6 +45,28 @@ let agentsRoot: string;
 let ctx: DelegationSeedCtx;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+// The REAL launcher is used by the admission-guard cases below, so the
+// scheduler and the supervisor are stubbed at their own seams: the run row must
+// land (that is where the guard runs) without an ACP session being spawned.
+vi.mock("@/lib/scheduler", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/scheduler")>();
+
+  return {
+    ...actual,
+    tryStartRun: vi.fn(async () => ({ started: false, queuePosition: 1 })),
+    promoteNextPending: vi.fn(async () => null),
+  };
+});
+vi.mock("@/lib/supervisor-client", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/supervisor-client")>();
+
+  return {
+    ...actual,
+    checkSupervisorHealth: vi.fn(async () => ({ kind: "available" as const })),
+    listSessions: vi.fn(async () => []),
+  };
+});
 
 let buildAutoLaunchRunPlanConsumer: typeof import("@/lib/domain-events/auto-launch").buildAutoLaunchRunPlanConsumer;
 let emitDomainEvent: typeof import("@/lib/domain-events/outbox").emitDomainEvent;
@@ -70,7 +94,15 @@ let orchestratorTaskId: string;
 let flowId: string;
 
 beforeEach(async () => {
-  ctx = await resetDelegationFixture({ pool, db, agentsRoot });
+  // A real git repo: the FLOW arm of the admission-guard cases below runs the
+  // canonical launcher, which validates both branch refs against the project's
+  // actual branch set before any git side-effect.
+  ctx = await resetDelegationFixture({
+    pool,
+    db,
+    agentsRoot,
+    withGitRepo: true,
+  });
   ({ flowId } = await seedFlow(ctx, { flowRefId: "delegated-flow" }));
 
   const orchestratorTask = await seedTask(ctx, { title: "orchestrator" });
@@ -418,5 +450,185 @@ describe("auto_launch_run_plan with FLOW children (ADR-163)", () => {
         )
       ).rows[0].n,
     ).toBe(0);
+  }, 60_000);
+});
+
+// ADR-163 REQ-15 — the third child-creation edge.
+//
+// `run_delegate` and `run_plan` call `admitDelegatedChild` at the route, but the
+// as-plan auto-launcher never did: it is guarded because the bound is ALSO taken
+// inside the launcher's own run-insert transaction, and this consumer's default
+// bindings are the real launchers (`opts.launch ?? launchAgentRun`,
+// `opts.launchFlow ?? launchRun`).
+//
+// Every OTHER case in this file injects those launchers, which bypasses the
+// guard entirely — so without this describe block the claim "the auto-launch
+// edge is guarded" rests on reading one line of wiring. These cases build the
+// consumer with NO launcher injection so the REAL launcher runs, and assert the
+// cap actually bites there.
+describe("the as-plan auto-launcher is bounded by the shared cap (ADR-163 REQ-15)", () => {
+  afterEach(() => {
+    delete process.env.MAISTER_MAX_ORCHESTRATOR_FANOUT;
+  });
+
+  /**
+   * A producer task that has just gone Done, plus an as-plan dependent gated on
+   * it by `requires`. Returns the dependent's task id and the settled event.
+   */
+  async function seedReleasableDependent(
+    spec: Record<string, unknown>,
+    dependentFlowId: string | null,
+  ): Promise<{ dependentTaskId: string; events: DomainEventRow[] }> {
+    const producerTaskId = await seedAsPlanTask({
+      title: "producer",
+      spec: { kind: "agent", agentId: "test-pkg:worker" },
+    });
+    const dependentTaskId = await seedAsPlanTask({
+      title: "dependent",
+      spec,
+      flowId: dependentFlowId,
+    });
+    const { addTaskRelation } = await import("@/lib/social/relations");
+
+    await addTaskRelation(
+      {
+        projectId: ctx.projectId,
+        fromTaskId: dependentTaskId,
+        kind: "requires",
+        toTaskId: producerTaskId,
+        actor: { type: "system", id: null },
+      },
+      db,
+    );
+
+    const producerRunId = await seedChildRun(ctx, {
+      parentRunId,
+      runKind: "agent",
+      status: "Done",
+      taskId: producerTaskId,
+    });
+
+    await pool.query(
+      `UPDATE "runs" SET "launch_mode" = 'auto' WHERE "id" = $1`,
+      [producerRunId],
+    );
+
+    return {
+      dependentTaskId,
+      events: await settle({
+        runId: producerRunId,
+        taskId: producerTaskId,
+        kind: "run.done",
+        runKind: "agent",
+        status: "Done",
+      }),
+    };
+  }
+
+  async function runsForTask(taskId: string): Promise<number> {
+    return (
+      await pool.query(
+        `SELECT count(*)::int AS n FROM "runs" WHERE "task_id" = $1`,
+        [taskId],
+      )
+    ).rows[0].n;
+  }
+
+  it("refuses a released dependent at the cap through the REAL launcher, and admits it once a slot frees", async () => {
+    process.env.MAISTER_MAX_ORCHESTRATOR_FANOUT = "2";
+
+    // The auto-launcher's trigger is `domain_event`; the launcher refuses a
+    // trigger the definition does not declare, and that refusal would make the
+    // at-cap assertion below pass for the WRONG reason.
+    await seedAgent(ctx, {
+      id: "worker",
+      triggers: ["manual", "domain_event"],
+    });
+
+    // Two live children already fill the cap. Neither is the dependent.
+    const hog = await seedChildRun(ctx, {
+      parentRunId,
+      runKind: "agent",
+      status: "Running",
+    });
+
+    await seedChildRun(ctx, {
+      parentRunId,
+      runKind: "flow",
+      status: "Review",
+      flowId,
+    });
+
+    const { dependentTaskId, events } = await seedReleasableDependent(
+      { kind: "agent", agentId: "test-pkg:worker" },
+      null,
+    );
+
+    // NO launcher injection — `opts.launch` defaults to the real launchAgentRun,
+    // whose run-insert transaction is where admitDelegatedChild runs.
+    const consumer = buildAutoLaunchRunPlanConsumer({ db });
+
+    // The consumer's contract is idempotent: a refusal is a logged skip, never a
+    // throw — a throw would redeliver this window forever.
+    await expect(consumer.handle(events)).resolves.toBeUndefined();
+
+    expect(await runsForTask(dependentTaskId)).toBe(0);
+
+    // Free a slot and re-deliver. The dependent now launches, which proves the
+    // refusal above was the CAP and not a broken fixture — without this half the
+    // first assertion would pass on any failure at all.
+    await pool.query(`UPDATE "runs" SET "status" = 'Done' WHERE "id" = $1`, [
+      hog,
+    ]);
+    await expect(consumer.handle(events)).resolves.toBeUndefined();
+
+    expect(await runsForTask(dependentTaskId)).toBe(1);
+
+    const launched = (
+      await pool.query(
+        `SELECT "run_kind", "parent_run_id", "launch_mode" FROM "runs" WHERE "task_id" = $1`,
+        [dependentTaskId],
+      )
+    ).rows[0];
+
+    expect(launched.run_kind).toBe("agent");
+    expect(launched.parent_run_id).toBe(parentRunId);
+    expect(launched.launch_mode).toBe("auto");
+  }, 60_000);
+
+  it("the same bound applies to a FLOW dependent through the real flow launcher", async () => {
+    process.env.MAISTER_MAX_ORCHESTRATOR_FANOUT = "1";
+
+    await seedAgent(ctx, { id: "worker" });
+
+    const hog = await seedChildRun(ctx, {
+      parentRunId,
+      runKind: "flow",
+      status: "Running",
+      flowId,
+    });
+    const { dependentTaskId, events } = await seedReleasableDependent(
+      { kind: "flow", flowId },
+      flowId,
+    );
+    const consumer = buildAutoLaunchRunPlanConsumer({ db });
+
+    await expect(consumer.handle(events)).resolves.toBeUndefined();
+    expect(await runsForTask(dependentTaskId)).toBe(0);
+
+    await pool.query(`UPDATE "runs" SET "status" = 'Done' WHERE "id" = $1`, [
+      hog,
+    ]);
+    await expect(consumer.handle(events)).resolves.toBeUndefined();
+
+    expect(await runsForTask(dependentTaskId)).toBe(1);
+    expect(
+      (
+        await pool.query(
+          `SELECT "run_kind" FROM "runs" WHERE "task_id" = $1`,
+          [dependentTaskId],
+        )
+      ).rows[0].run_kind,
+    ).toBe("flow");
   }, 60_000);
 });
