@@ -899,7 +899,7 @@ export async function releaseHumanWorking(
 // non-terminal abandonable set. Status-guarded so a duplicate/concurrent
 // abandon on an already-terminal row loses → {ok:false} → 409. The caller runs
 // promoteNextPending after a successful abandon to free the slot.
-const ABANDONABLE_STATUSES = [
+export const ABANDONABLE_STATUSES = [
   "Pending",
   "Running",
   "NeedsInput",

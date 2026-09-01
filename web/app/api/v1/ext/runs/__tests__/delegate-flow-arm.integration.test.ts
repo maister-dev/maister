@@ -897,17 +897,16 @@ describe("tool support by child kind (ADR-163 D2 / REQ-14)", () => {
     expect(json.message ?? "").not.toContain("not supported for flow");
   }, 60_000);
 
-  // The other half of the tool-support matrix: `run_cancel` and `run_collect`
-  // are kind-AGNOSTIC and must work on a flow child. Asserted because "it should
-  // just work" is exactly the claim that rots — `stopRunByKind` dispatches on
-  // `run_kind`, so the flow arm is a real branch, not an incidental pass.
-  // NOTE the asymmetry this pins: `run_cancel` on an AGENT child abandons it,
-  // but on a FLOW child it routes through `stopRunByKind`'s `case "flow"` —
-  // the documented operator-stop-to-`Review` transition every flow run has.
-  // The coordinator gets a child parked in Review with its diff intact, NOT a
-  // terminated one; abandoning a flow child is what the parent's cascade does.
-  // Asserting the real behaviour rather than the assumed one is the point.
-  it("run_cancel stops a flow child through the run-kind dispatcher (flow → Review)", async () => {
+  // ADR-163 review Q1-A: the coordinator's `run_cancel` ENDS a delegated flow
+  // child — it is not the operator's stop-to-Review. An interrupted child is not
+  // reviewable work, and a child parked in Review would still count as LIVE for
+  // the shared fan-out cap while D2 refuses rework/message, leaving the
+  // coordinator no way to reclaim capacity except promoting a half-done diff.
+  // The human stop path (UI / node-interrupt) keeps Review and emits run.review
+  // (step 1); only the token path abandons.
+  it("run_cancel ABANDONS a flow child: run.abandoned carries parentRunId and the fan-out slot is freed", async () => {
+    process.env.MAISTER_MAX_ORCHESTRATOR_FANOUT = "1";
+
     const res = await delegatePost(
       delegateRequest(secret, flowDelegation()),
       {},
@@ -918,13 +917,41 @@ describe("tool support by child kind (ADR-163 D2 / REQ-14)", () => {
       childRunId,
     ]);
 
+    const { admitDelegatedChild } = await import(
+      "@/lib/orchestrator/admission"
+    );
+
+    await expect(
+      admitDelegatedChild(db, { parentRunId }),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+
     const cancelled = await cancelPost(
       extRequest("/api/v1/ext/runs/cancel", { childRunId }),
       {},
     );
 
     expect(cancelled.status).toBe(200);
-    expect((await childRun(childRunId)).status).toBe("Review");
+    expect(await cancelled.json()).toEqual({
+      childRunId,
+      status: "Abandoned",
+    });
+    expect((await childRun(childRunId)).status).toBe("Abandoned");
+
+    const events = await pool.query(
+      `SELECT "payload" FROM "domain_events" WHERE "run_id" = $1 AND "kind" = 'run.abandoned'`,
+      [childRunId],
+    );
+
+    expect(events.rows).toHaveLength(1);
+    expect(events.rows[0].payload).toMatchObject({
+      parentRunId,
+      runKind: "flow",
+    });
+
+    // The slot is back: one more child fits under a cap of 1.
+    await expect(
+      admitDelegatedChild(db, { parentRunId }),
+    ).resolves.toBeUndefined();
   }, 60_000);
 
   it("run_collect projects a flow child alongside its agent siblings", async () => {

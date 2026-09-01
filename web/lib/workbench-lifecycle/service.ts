@@ -26,6 +26,10 @@ import { MaisterError } from "@/lib/errors";
 import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import { DISPOSABLE_WORKSPACE_RUN_STATUSES } from "@/lib/runs/run-status-sets";
+import {
+  ABANDONABLE_STATUSES,
+  markAbandoned,
+} from "@/lib/runs/state-transitions";
 import { preserveWorktree, type PreserveResult } from "@/lib/gc/preserve";
 import {
   promotionClaimTimeoutSeconds,
@@ -107,6 +111,9 @@ export type LifecycleRun = {
   workspaceMode?: "own" | "shared" | null;
   agentWorkspace?: "none" | "repo_read" | "worktree" | null;
   rootRunId?: string | null;
+  // ADR-163: a delegated child (set) takes the coordinator's cancel-to-Abandoned
+  // path on the token surface; a top-level run (null) never does.
+  parentRunId?: string | null;
 };
 
 export type LifecycleWorkspace = {
@@ -1784,6 +1791,76 @@ export async function stopWorkbenchRun(
   return stopRunByKind(runId, ctx, deps);
 }
 
+// ADR-163 (owner decision Q1-A): the coordinator's `run_cancel` ENDS a
+// delegated flow child. The operator stop keeps its stop-to-Review semantic for
+// humans, but a child the coordinator cancels is not reviewable work, and a
+// child parked in Review still counts as LIVE for the shared fan-out cap while
+// run_rework / run_message are refused for flow children — cancel-to-Review left
+// the coordinator no way to reclaim capacity except promoting a half-done diff.
+// Gated on the abandonable set rather than the workbench "stop" policy so a
+// child a human already parked in Review can still be cancelled; a terminal
+// child refuses CONFLICT like the agent arm. `markAbandoned` emits run.abandoned
+// with parent_run_id (the parent wake) and stamps the GC deadline; assignments
+// close in the same transaction.
+async function cancelDelegatedFlowChild(
+  runId: string,
+  ctx: LifecycleContext,
+  deps: WorkbenchLifecycleDeps,
+): Promise<StopWorkbenchRunResult> {
+  if (!(ABANDONABLE_STATUSES as readonly string[]).includes(ctx.run.status)) {
+    throw new MaisterError(
+      "CONFLICT",
+      `run ${runId} is ${ctx.run.status} and cannot be cancelled`,
+    );
+  }
+
+  // A flow child may itself coordinate a sub-tree: children first.
+  await deps.cascadeOrchestratorIfNeeded(ctx.run);
+
+  const supervisorStopped = await stopLiveSupervisorSession(ctx, deps);
+
+  await db().transaction(async (tx) => {
+    const abandoned = await markAbandoned(runId, { db: tx });
+
+    if (!abandoned.ok) {
+      // Lost the CAS to a concurrent terminal write — the outcome is identical;
+      // surface that this call was not the finalizer (agent-arm parity).
+      log.info(
+        { runId, reason: abandoned.reason },
+        "delegated flow child cancel was a no-op (run already terminal)",
+      );
+
+      return;
+    }
+
+    await systemCloseActiveAssignmentsForRun({
+      db: tx,
+      runId,
+      reason: "run cancelled by orchestrator",
+    });
+  });
+
+  try {
+    await deps.promoteNextPending();
+  } catch (err) {
+    log.error(
+      {
+        runId,
+        projectId: ctx.run.projectId,
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "promoteNextPending after delegated child cancel failed",
+    );
+  }
+
+  log.info(
+    { runId, parentRunId: ctx.run.parentRunId, supervisorStopped },
+    "[delegation.cancel] delegated flow child abandoned by its coordinator",
+  );
+
+  return { ok: true, runId, runStatus: "Abandoned", supervisorStopped };
+}
+
 // M37 (ADR-098): the same generalized stop, reached from the /api/v1/ext token
 // surface (run_cancel). There is no browser session here — authority is the
 // run-bound token, so the session check is skipped and authorization is the
@@ -1803,6 +1880,10 @@ export async function stopWorkbenchRunForToken(
 
   if (ctx.run.projectId !== args.projectId) {
     throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
+  }
+
+  if (ctx.run.runKind === "flow" && ctx.run.parentRunId) {
+    return cancelDelegatedFlowChild(runId, ctx, deps);
   }
 
   return stopRunByKind(runId, ctx, deps);
@@ -1938,6 +2019,7 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
       workspaceMode: runs.workspaceMode,
       agentWorkspace: runs.agentWorkspace,
       rootRunId: runs.rootRunId,
+      parentRunId: runs.parentRunId,
     })
     .from(runs)
     .where(eq(runs.id, runId));
