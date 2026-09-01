@@ -12,6 +12,7 @@ import {
   vi,
 } from "vitest";
 
+import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { issueToken } from "@/lib/tokens/issue";
 import * as schemaModule from "@/lib/db/schema";
 import {
@@ -34,6 +35,11 @@ beforeAll(async () => {
   });
 
   db = testDatabase.db;
+
+  // Platform-scoped, so one Ready runner serves every project in this file.
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(randomUUID(), "claude"));
 
   const routeModule = await import(
     "@/app/api/v1/ext/projects/[slug]/flows/route"
@@ -61,6 +67,11 @@ async function seedProject(slug: string): Promise<string> {
   return projectId;
 }
 
+// Launchability is NOT enablement+trust alone: `isProjectFlowLaunchable` also
+// requires an ENABLED REVISION that is Installed, past setup, and engine/schema
+// compatible — plus at least one Ready platform runner (seeded once, below).
+// Every flow here gets that baseline so the only thing a case varies is the
+// enablement/trust pair it is actually asserting.
 async function seedFlow(
   projectId: string,
   opts: {
@@ -72,6 +83,7 @@ async function seedFlow(
   },
 ): Promise<string> {
   const flowId = randomUUID();
+  const revisionId = randomUUID();
   const manifest: Record<string, unknown> = {
     schemaVersion: 1,
     name: opts.flowRefId,
@@ -87,6 +99,23 @@ async function seedFlow(
 
   if (opts.metadata !== undefined) manifest.metadata = opts.metadata;
 
+  await db.insert(schema.flowRevisions).values({
+    id: revisionId,
+    flowRefId: opts.flowRefId,
+    source: "github.com/x/y",
+    versionLabel: "v1.0.0",
+    // flow_revisions is PLATFORM-scoped and unique on (flowRefId,
+    // resolvedRevision), so two projects seeding the same ref must not share
+    // a revision sha.
+    resolvedRevision: revisionId.slice(0, 8),
+    manifestDigest: `digest-${revisionId.slice(0, 8)}`,
+    manifest,
+    schemaVersion: 1,
+    installedPath: `/tmp/flows/${opts.flowRefId}`,
+    setupStatus: "not_required",
+    packageStatus: "Installed",
+  });
+
   await db.insert(schema.flows).values({
     id: flowId,
     projectId,
@@ -98,6 +127,7 @@ async function seedFlow(
     schemaVersion: 1,
     enablementState: opts.enablementState,
     trustStatus: opts.trustStatus,
+    enabledRevisionId: revisionId,
     createdAt: opts.createdAt ?? new Date(),
   });
 

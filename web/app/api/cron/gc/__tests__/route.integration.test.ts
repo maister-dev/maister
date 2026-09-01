@@ -151,14 +151,24 @@ describe("GET/POST /api/cron/gc", () => {
     expect(workspaceSweepSpy).toHaveBeenCalledOnce();
   }, 60_000);
 
-  it("keeps a partial cleanup failure in the durable scheduler summary", async () => {
+  it("keeps a THROWN sub-sweep failure in the durable scheduler summary", async () => {
     workspaceSweepSpy.mockRejectedValueOnce(new Error("workspace sweep boom"));
 
     const response = await cronPOST(request("POST", TOKEN));
 
-    expect(response.status).toBe(200);
+    // A sub-sweep that THROWS lands in `bundleErrors`, which fails the whole
+    // system_sweep attempt — so 207 Multi-Status (failedCount > 0), not 200.
+    // Only a COUNTED partial (`N candidate(s) failed`) keeps the job Succeeded.
+    expect(response.status).toBe(207);
+
     const attempts = await db.select().from(schema.schedulerJobRuns);
 
+    // The durability claim, and the harder half of it: the summary survives on
+    // the FAILED path too, not only when the attempt succeeds.
+    expect(attempts[0]).toMatchObject({
+      status: "Failed",
+      errorCode: "SYSTEM_SWEEP_FAILED",
+    });
     expect(attempts[0].summary).toMatchObject({
       errors: expect.arrayContaining([
         expect.stringContaining("workspace sweep failed"),

@@ -221,17 +221,27 @@ describe("installFlowPlugin (integration)", () => {
     const directFlowDir = join(fixturesDir, "direct-schema-root-only");
 
     await mkdir(directFlowDir, { recursive: true });
+    // Graph-only since ADR-131: a legacy `steps[]` manifest is refused during
+    // classification, well before the form-schema root check this case is about.
     await writeFile(
       join(directFlowDir, "flow.yaml"),
       `schemaVersion: 1
 name: Direct Schema Root Only
-steps:
+compat:
+  engine_min: 1.1.0
+nodes:
   - id: review
-    type: human
-    form_schema: README.json
+    type: form
+    settings:
+      form_schema: README.json
+    transitions:
+      success: finish
   - id: finish
     type: cli
-    command: "echo done"
+    action:
+      command: "echo done"
+    transitions:
+      success: done
 `,
       "utf8",
     );

@@ -116,10 +116,14 @@ async function seedPackageFlow(
 async function flowStates(
   flowIds: readonly string[],
 ): Promise<Map<string, string>> {
+  // sql.param, not a bare `${flowIds}`: drizzle expands a bare array chunk into
+  // a comma-separated parameter LIST, so the cast lands on a row constructor
+  // (`ANY(($1,$2)::text[])`) and postgres refuses with "cannot cast type record
+  // to text[]". sql.param binds the whole array as ONE parameter.
   const rows = await db.execute<{ id: string; enablement_state: string }>(sql`
     SELECT id, enablement_state
     FROM flows
-    WHERE id = ANY(${flowIds}::text[])
+    WHERE id = ANY(${sql.param(flowIds)}::text[])
   `);
 
   return new Map(rows.rows.map((row) => [row.id, row.enablement_state]));
