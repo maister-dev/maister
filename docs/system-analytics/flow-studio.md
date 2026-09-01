@@ -337,6 +337,13 @@ binary_content`).
 | WARN | `rule_guardrail_shape` | rule guardrail frontmatter malformed (no web runtime parser → cannot block) |
 | WARN | `shell_lint` | a shell heuristic-lint finding (pure JS, no shellcheck) |
 | WARN | `form_schema_unreferenced` | `formSchemaSchema` issue on a schema file NOT referenced by the manifest |
+
+**Schema-builder coverage (ADR-162).** The visual `form_schema` builder offers
+every field type including `json`, but array **`items`** has no visual control —
+a typed-array declaration is authored in the builder's **Raw JSON** tab. The
+builder never strips `items`: it round-trips through `formSchemaSchema`, so a
+document authored in Raw JSON stays intact when the visual tab is used
+afterwards.
 | WARN | `frontmatter_unknown_key` | unknown frontmatter key (preserved verbatim) |
 
 Manifest-reference resolution runs ONLY when the manifest parses (an unparseable

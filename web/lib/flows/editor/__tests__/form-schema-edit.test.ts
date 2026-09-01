@@ -333,6 +333,55 @@ describe("applyFieldEdit — update", () => {
 
 // ─── formFieldsFromSchema extraction on a nested object schema ────────────────
 
+describe("ADR-162 — the builder round-trips json/items it cannot edit visually", () => {
+  // `items` has no visual control (documented in system-analytics/flow-studio.md);
+  // it is authored in the Raw JSON tab. A builder edit must therefore never
+  // strip it, or the visual tab would silently destroy a typed-array contract.
+  const TYPED: FormSchema = {
+    schemaVersion: 1,
+    fields: [
+      { name: "verdict", type: "string", required: true },
+      { name: "tags", type: "array", items: { type: "string" } },
+      { name: "payload", type: "json" },
+    ],
+  } as unknown as FormSchema;
+
+  it("preserves `items` across an unrelated field update", () => {
+    const next = applyFieldEdit(TYPED, {
+      kind: "update",
+      path: [0],
+      patch: { label: "Verdict" },
+    });
+
+    expect(next.fields[1]).toEqual({
+      name: "tags",
+      type: "array",
+      items: { type: "string" },
+    });
+  });
+
+  it("preserves `items` when the array field itself is renamed", () => {
+    const next = applyFieldEdit(TYPED, {
+      kind: "update",
+      path: [1],
+      patch: { name: "labels" },
+    });
+
+    expect(next.fields[1]).toEqual({
+      name: "labels",
+      type: "array",
+      items: { type: "string" },
+    });
+  });
+
+  it("round-trips json/items through serialize -> parse unchanged", () => {
+    const parsed = parseFormSchemaJson(serializeFormSchema(TYPED));
+
+    expect(parsed.ok).toBe(true);
+    expect(parsed.ok === true && parsed.schema).toEqual(TYPED);
+  });
+});
+
 describe("formFieldsFromSchema on a nested object schema", () => {
   it("extracts the top-level fields (preview reuses the HITL extractor)", () => {
     const views = formFieldsFromSchema(NESTED);
