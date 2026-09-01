@@ -90,7 +90,6 @@ export const GRAPH_MIN_ENGINE_VERSION = "1.1.0";
 // revision whose schemaVersion is not listed here is refused.
 export const SUPPORTED_FLOW_SCHEMA_VERSIONS: readonly number[] = [1];
 
-
 export type EngineCompatResult = {
   compatible: boolean;
   // Set when incompatible OR when a bound was unparseable; null on success.

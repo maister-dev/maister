@@ -331,7 +331,7 @@ binary_content`).
 | Severity | Code | Fires when |
 |---|---|---|
 | BLOCK | `schema_json_invalid` | a `schemas/**/*.json` file fails `JSON.parse` |
-| BLOCK | `form_schema_invalid` | a schema file REFERENCED by the manifest (`form_schema:` / `output.result.schema:`) fails `formSchemaSchema` |
+| BLOCK | `form_schema_invalid` | a schema file REFERENCED by the manifest (`form_schema:` / `output.result.schema:`) fails `formSchemaSchema`, **or** (ADR-162) uses `type: "json"` / array `items` while the lowest `compat.engine_min` among the manifests referencing it is `< 3.6.0` |
 | BLOCK | `frontmatter_missing` | `skills/**/SKILL.md` or `agents/*.md` with missing/unparseable frontmatter |
 | BLOCK | `frontmatter_field_missing` | such a file missing `name` or `description` |
 | WARN | `rule_guardrail_shape` | rule guardrail frontmatter malformed (no web runtime parser → cannot block) |

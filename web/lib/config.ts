@@ -2040,8 +2040,6 @@ export async function resolveOutputResultSchemaWithIdentity(
 
   return {
     schema,
-    sha256: createHash("sha256")
-      .update(new Uint8Array(bytes))
-      .digest("hex"),
+    sha256: createHash("sha256").update(new Uint8Array(bytes)).digest("hex"),
   };
 }
