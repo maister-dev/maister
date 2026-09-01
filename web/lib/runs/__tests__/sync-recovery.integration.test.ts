@@ -155,15 +155,24 @@ async function seedRunAttempt(opts: {
      values ($1, $2, $3, 'flow', $4, 'v1', 'manual', now())`,
     [runId, projectId, taskId, opts.status],
   );
+  // `workspaces_lifecycle_claim_shape_check` requires ALL of attempt id, name,
+  // expected run status, and lease to be present for state 'claiming' — and
+  // `syncRunTarget` writes exactly that set (expected status = the run's status
+  // at claim time, plus a lease). Omitting the last two is a state production
+  // cannot produce, and the CHECK rejects the insert outright.
   await pool.query(
-    `insert into workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path, lifecycle_operation_name, lifecycle_operation_state, lifecycle_operation_attempt_id)
-     values ($1, $2, $3, 'maister/rec', $4, '/tmp/repo', 'sync', 'claiming', $5)`,
+    `insert into workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path,
+        lifecycle_operation_name, lifecycle_operation_state, lifecycle_operation_attempt_id,
+        lifecycle_operation_expected_run_status, lifecycle_operation_claimed_at,
+        lifecycle_operation_lease_expires_at)
+     values ($1, $2, $3, 'maister/rec', $4, '/tmp/repo', 'sync', 'claiming', $5, $6, now(), now() + interval '10 minutes')`,
     [
       workspaceId,
       runId,
       projectId,
       `/tmp/wt-${workspaceId.slice(0, 8)}`,
       lifecycleAttemptId,
+      opts.status,
     ],
   );
   await pool.query(

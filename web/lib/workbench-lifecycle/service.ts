@@ -2,6 +2,7 @@ import "server-only";
 
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { ZodType } from "zod";
+import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
 import type { ProjectAction } from "@/lib/authz";
 import type {
   WorkspacePreservationOutcome,
@@ -2075,12 +2076,7 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
         archivedCommit: args.archivedCommit,
         preservationOutcome: args.preservationOutcome,
         removalKind: args.removalKind,
-        lifecycleOperationState: "none",
-        lifecycleOperationClaimedAt: null,
-        lifecycleOperationLeaseExpiresAt: null,
-        lifecycleOperationAttemptId: null,
-        lifecycleOperationName: null,
-        lifecycleOperationExpectedRunStatus: null,
+        ...RELEASED_LIFECYCLE_CLAIM,
       })
       .where(
         and(
@@ -2340,12 +2336,7 @@ export async function finalizeLifecycleOperation(args: {
   const update =
     args.state === "done"
       ? {
-          lifecycleOperationState: "none",
-          lifecycleOperationClaimedAt: null,
-          lifecycleOperationLeaseExpiresAt: null,
-          lifecycleOperationAttemptId: null,
-          lifecycleOperationName: null,
-          lifecycleOperationExpectedRunStatus: null,
+          ...RELEASED_LIFECYCLE_CLAIM,
         }
       : {
           lifecycleOperationState: "failed",

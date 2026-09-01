@@ -29,6 +29,13 @@ const execFileAsync = promisify(execFile);
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 let fixtureRepo: string;
+// The SOURCE URL form of the fixture repo. `validateUrl` (ADR-025) allow-lists
+// https / http / ssh / file schemes and the scp-short form, and rejects
+// everything else — the guard that keeps git's `ext::` smart-transport and
+// `-oProxyCommand=` option injection out of a body-supplied URL. A bare
+// filesystem path carries no scheme, so it is refused; `file://` is the
+// supported way to name a local repo.
+let fixtureRepoUrl: string;
 
 async function git(cwd: string, ...args: string[]): Promise<void> {
   await execFileAsync("git", args, {
@@ -51,6 +58,7 @@ beforeAll(async () => {
 
   // Local git monorepo fixture: packages/aif + per-package tags.
   fixtureRepo = await mkdtemp(join(tmpdir(), "pkg-catalog-repo-"));
+  fixtureRepoUrl = `file://${fixtureRepo}`;
   await git(fixtureRepo, "init", "-b", "main");
   await mkdir(join(fixtureRepo, "packages/aif/flows/dev"), { recursive: true });
   await writeFile(
@@ -76,13 +84,13 @@ afterAll(async () => {
 describe("package source catalog (integration)", () => {
   it("CRUD: create, dup-url CONFLICT, update, delete", async () => {
     const { id } = await createPackageSource({
-      url: fixtureRepo,
+      url: fixtureRepoUrl,
       note: "fixture",
       db,
     });
 
     await expect(
-      createPackageSource({ url: fixtureRepo, db }),
+      createPackageSource({ url: fixtureRepoUrl, db }),
     ).rejects.toSatisfy(
       (e: unknown) => isMaisterError(e) && e.code === "CONFLICT",
     );
@@ -100,7 +108,7 @@ describe("package source catalog (integration)", () => {
   });
 
   it("refresh discovers manifest packages × tags from a real local repo", async () => {
-    const { id } = await createPackageSource({ url: fixtureRepo, db });
+    const { id } = await createPackageSource({ url: fixtureRepoUrl, db });
     const result = await refreshPackageSource({ id, db });
 
     expect(result).not.toBeNull();
@@ -122,7 +130,7 @@ describe("package source catalog (integration)", () => {
 
   it("refresh degrades to the stale snapshot when the remote is dead", async () => {
     const { id } = await createPackageSource({
-      url: join(tmpdir(), "definitely-missing-repo-dir"),
+      url: `file://${join(tmpdir(), "definitely-missing-repo-dir")}`,
       db,
     });
 
@@ -152,7 +160,7 @@ describe("package source catalog (integration)", () => {
 
   it("delete is usage-guarded while installs from the source are attached", async () => {
     const { id } = await createPackageSource({
-      url: "github.com/x/guarded",
+      url: "https://github.com/x/guarded",
       db,
     });
     const projectId = randomUUID();
@@ -169,7 +177,7 @@ describe("package source catalog (integration)", () => {
 
     await db.insert(schema.packageInstalls).values({
       id: installId,
-      sourceUrl: "github.com/x/guarded",
+      sourceUrl: "https://github.com/x/guarded",
       name: "aif",
       versionLabel: "aif/v1.0.0",
       resolvedRevision: "a".repeat(40),

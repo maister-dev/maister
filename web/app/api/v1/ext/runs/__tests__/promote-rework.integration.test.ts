@@ -92,6 +92,21 @@ vi.mock("@/lib/worktree", async (importOriginal) => {
     resolveBaseCommit: vi.fn(async () => "targettip000000"),
     branchExists: vi.fn(async () => true),
     pushBranch: vi.fn(async () => undefined),
+    // ADR-134 delivery evidence: promoteRun's finalize captures a diff stat via
+    // git AFTER the merge. This suite runs with no real repo, and the stat call
+    // was added after the stub list was written — it threw, and because
+    // `deliveryHistoryStats` maps a git failure to CONFLICT the promote read it
+    // as a rebase conflict and answered 409 instead of finishing.
+    deliveryHistoryStats: vi.fn(async () => ({
+      files: 1,
+      additions: 1,
+      deletions: 0,
+    })),
+    deliveryCommitStats: vi.fn(async () => ({
+      files: 1,
+      additions: 1,
+      deletions: 0,
+    })),
     promoteLocalMerge: (...args: unknown[]) =>
       promoteLocalMergeSpy(...(args as [])),
   };

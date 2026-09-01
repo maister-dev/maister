@@ -91,6 +91,13 @@ function request(taskId: string): NextRequest {
 // Manifest whose pinned revision declares an ai_coding node with a strict
 // enforcement intent on a class the M11c table can only INSTRUCT → launch must
 // REFUSE with CONFIG (400, the existing httpStatusForCode mapping).
+// ADR-130 flipped tools/mcps to seam-ENFORCED for every agent, so a strict
+// `mcps` declaration no longer refuses at the static gate with CONFIG — it
+// resolves as enforceable, and where an agent cannot honour it the refusal is
+// EXECUTOR_UNAVAILABLE instead. `skills` is still `instructed` for every agent
+// (it is not seam-interceptable), so it is the class that still exercises the
+// "no executor can strictly enforce this" CONFIG arm these cases are about.
+// Same repoint applied to the sibling graph-runner suite in ea320e187.
 const strictManifest = {
   schemaVersion: 1,
   name: "Strict",
@@ -100,12 +107,12 @@ const strictManifest = {
       type: "ai_coding",
       action: { prompt: "/aif-implement" },
       transitions: { success: "done" },
-      settings: { enforcement: { mcps: "strict" } },
+      settings: { enforcement: { skills: "strict" } },
     },
   ],
 };
 
-// A judge node carrying strict mcps — also capability-bearing → also refused.
+// A judge node carrying strict skills — also capability-bearing → also refused.
 const strictJudgeManifest = {
   schemaVersion: 1,
   name: "StrictJudge",
@@ -115,7 +122,7 @@ const strictJudgeManifest = {
       type: "judge",
       action: { prompt: "/judge" },
       transitions: { success: "done" },
-      settings: { enforcement: { mcps: "strict" } },
+      settings: { enforcement: { skills: "strict" } },
     },
   ],
 };
@@ -401,7 +408,7 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
     sessionRef.value = { user: { id: "u-member", role: "member" } };
   });
 
-  it("refuses a strict-mcps ai_coding manifest with 400 CONFIG and NO side-effect", async () => {
+  it("refuses a strict-skills ai_coding manifest with 400 CONFIG and NO side-effect", async () => {
     const res = await POST(request("task-proj-strict"));
 
     expect(res.status).toBe(400);
@@ -470,7 +477,7 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
     ).toMatchObject({ status: "Backlog", attemptNumber: 1 });
   });
 
-  it("refuses a strict-mcps judge manifest with 400 CONFIG too", async () => {
+  it("refuses a strict-skills judge manifest with 400 CONFIG too", async () => {
     const res = await POST(request("task-proj-judge"));
 
     expect(res.status).toBe(400);
@@ -642,7 +649,7 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
   });
 
   it("refuses an untrusted revision on the TRUST gate BEFORE the enforcement evaluator (PRECONDITION 409, not CONFIG)", async () => {
-    // The manifest carries enforcement.mcps:"strict" (would yield CONFIG at the
+    // The manifest carries enforcement.skills:"strict" (would yield CONFIG at the
     // enforcement gate), but trust runs first → the evaluator is never reached.
     const res = await POST(request("task-proj-untrusted"));
 

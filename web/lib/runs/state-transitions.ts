@@ -5,6 +5,7 @@ import pino from "pino";
 
 import { nextKeepaliveAt } from "./keepalive-config";
 
+import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
@@ -83,12 +84,7 @@ async function releaseSyncClaimOnTerminal(
   // sync can hold this slot behind a run we are terminalizing right here.
   const released = await tx
     .update(workspaces)
-    .set({
-      lifecycleOperationState: "none",
-      lifecycleOperationClaimedAt: null,
-      lifecycleOperationAttemptId: null,
-      lifecycleOperationName: null,
-    })
+    .set(RELEASED_LIFECYCLE_CLAIM)
     .where(
       and(
         eq(workspaces.runId, runId),

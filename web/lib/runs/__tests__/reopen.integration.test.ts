@@ -309,6 +309,11 @@ async function seedRun(opts: SeedRunOpts): Promise<{
     prNumber: opts.prNumber ?? null,
     promotionState: opts.promotionState ?? "done",
     removedAt: opts.removedAt ?? null,
+    // `workspaces_removed_result_check` is `removed_at IS NULL OR removal_kind
+    // IS NOT NULL` — production never records a removal without saying which
+    // kind it was, so a seed that sets only the timestamp is a state the schema
+    // rejects. These cases model a retention-GC'd worktree.
+    removalKind: opts.removedAt ? "retention_gc" : null,
     archivedAt: opts.archivedAt ?? null,
     archivedBranch: opts.archivedBranch ?? null,
     scheduledRemovalAt:
@@ -416,7 +421,20 @@ describe("assertReopenEligible", () => {
 // ===========================================================================
 
 describe("deriveStage — reopened run", () => {
-  it("returns OnReview for a Review run regardless of worktree presence", () => {
+  // A reopened run derives to OnReview because `reopenRun` GUARANTEES a present
+  // workspace: it re-attaches a GC'd worktree from the surviving branch and
+  // clears `removed_at` inside the same transaction that CASes Done → Review
+  // (asserted by the round-trip cases above, and documented in
+  // system-analytics/branch-sync.md as "card derives to OnReview").
+  //
+  // This case used to assert OnReview "regardless of worktree presence", which
+  // contradicted an explicit, commented board rule — a Review run whose
+  // workspace really is gone is historical evidence and belongs in a
+  // relaunchable lane, not parked on the review column forever. That
+  // combination is unreachable THROUGH reopen, so the test was asserting
+  // against the board rule rather than against reopen. Both arms are pinned
+  // here so neither side can drift silently.
+  it("returns OnReview for a reopened Review run (workspace present, as reopen leaves it)", () => {
     expect(
       deriveStage({
         taskStatus: "InFlight",
@@ -425,6 +443,9 @@ describe("deriveStage — reopened run", () => {
         workspaceRemoved: false,
       }),
     ).toBe("OnReview");
+  });
+
+  it("still sends a Review run whose workspace is genuinely REMOVED to Backlog", () => {
     expect(
       deriveStage({
         taskStatus: "InFlight",
@@ -432,7 +453,7 @@ describe("deriveStage — reopened run", () => {
         runStatus: "Review",
         workspaceRemoved: true,
       }),
-    ).toBe("OnReview");
+    ).toBe("Backlog");
   });
 });
 

@@ -3,6 +3,7 @@ import "server-only";
 import { and, desc, eq, notInArray } from "drizzle-orm";
 import pino from "pino";
 
+import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
@@ -221,12 +222,7 @@ async function releaseClaim(
 
   await db
     .update(workspaces)
-    .set({
-      lifecycleOperationState: "none",
-      lifecycleOperationClaimedAt: null,
-      lifecycleOperationAttemptId: null,
-      lifecycleOperationName: null,
-    })
+    .set(RELEASED_LIFECYCLE_CLAIM)
     .where(
       and(
         eq(workspaces.id, workspaceId),

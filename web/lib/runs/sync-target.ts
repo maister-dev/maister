@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, notInArray, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
 import { loadRunnerCatalog } from "@/lib/acp-runners/catalog";
 import { resolveSyncRunner } from "@/lib/acp-runners/resolve";
 import {
@@ -421,12 +422,7 @@ async function releaseSyncClaim(db: Db, claim: Claim): Promise<void> {
   await db
     .update(workspaces)
     .set({
-      lifecycleOperationState: "none",
-      lifecycleOperationClaimedAt: null,
-      lifecycleOperationLeaseExpiresAt: null,
-      lifecycleOperationAttemptId: null,
-      lifecycleOperationName: null,
-      lifecycleOperationExpectedRunStatus: null,
+      ...RELEASED_LIFECYCLE_CLAIM,
     })
     .where(
       and(

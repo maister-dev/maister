@@ -37,6 +37,22 @@ vi.mock("@/lib/worktree", async (orig) => ({
   pushBranch: vi.fn(async () => undefined),
   promoteLocalMerge: (...args: unknown[]) =>
     promoteLocalMergeSpy(...(args as [])),
+  // ADR-134 delivery evidence: promoteRun's finalize captures a diff stat via
+  // git AFTER the merge. These suites deliberately run with NO real repo (the
+  // git side effects above are stubbed), and the stat call was added later
+  // without joining that list — so it threw, and because
+  // `deliveryHistoryStats` maps a git failure to CONFLICT, the promote read it
+  // as a rebase conflict and diverted into the resolver path.
+  deliveryHistoryStats: vi.fn(async () => ({
+    files: 1,
+    additions: 1,
+    deletions: 0,
+  })),
+  deliveryCommitStats: vi.fn(async () => ({
+    files: 1,
+    additions: 1,
+    deletions: 0,
+  })),
 }));
 
 let db: NodePgDatabase;

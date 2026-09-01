@@ -27,3 +27,28 @@ export function lifecycleClaimIsStale(workspace: {
     claimedAt.getTime() < Date.now() - promotionClaimTimeoutSeconds() * 1000
   );
 }
+
+/**
+ * The column set that RELEASES a workspace lifecycle claim.
+ *
+ * `workspaces_lifecycle_claim_shape_check` (migration `0116`) makes the claim a
+ * SHAPE, not a flag: for `lifecycle_operation_state = 'none'`, `attempt_id`,
+ * `name`, `expected_run_status`, and `lease_expires_at` must ALL be NULL (and
+ * `claimed_at` with them, by the same convention). A release that clears only
+ * some of them does not leave a half-released claim — the CHECK rejects the
+ * UPDATE outright and the release THROWS.
+ *
+ * Declared once for the same reason `lifecycleClaimIsStale` is: four call sites
+ * release a claim (workspace removal, the lifecycle-operation settle, the
+ * sync-recovery sweep, and the terminal state transition), and two of them had
+ * drifted to clearing four of the six columns — which broke every sync release
+ * at the CHECK.
+ */
+export const RELEASED_LIFECYCLE_CLAIM = {
+  lifecycleOperationState: "none",
+  lifecycleOperationClaimedAt: null,
+  lifecycleOperationLeaseExpiresAt: null,
+  lifecycleOperationAttemptId: null,
+  lifecycleOperationName: null,
+  lifecycleOperationExpectedRunStatus: null,
+} as const;
