@@ -77,6 +77,7 @@ import {
   maxAgentChainDepth,
   worktreesRoot,
 } from "@/lib/instance-config";
+import { admitDelegatedChild } from "@/lib/orchestrator/admission";
 import { removeOwnedPlainAgentDirectory } from "@/lib/gc/plain-agent-directory-gc";
 import {
   loadActiveRunSession,
@@ -1366,6 +1367,18 @@ export async function launchAgentRun(
 
   try {
     const inserted = await _db.transaction(async (tx: Db) => {
+      // ADR-163: a DELEGATED child's depth + shared fan-out bound is decided
+      // here, in the same transaction as the run INSERT and under the
+      // per-orchestrator advisory lock, so the count includes every committed
+      // sibling of BOTH kinds and two concurrent delegations cannot both land.
+      // This one call guards every edge that reaches this launcher — the ext
+      // delegate route, run_plan's source launch, and the as-plan auto-launcher
+      // — because all of them arrive through this single insert. No-op for a
+      // top-level run (no parentRunId).
+      if (input.parentRunId) {
+        await admitDelegatedChild(tx, { parentRunId: input.parentRunId });
+      }
+
       // Claim-first: the INSERT itself is the at-least-once dedup claim. The
       // persistent addressable_key uniqueness is enforced by the pre-insert
       // check above (the deterministic path); the partial index is the

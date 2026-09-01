@@ -439,10 +439,24 @@ per discriminant.
 | 11 | `lib/reconcile.ts` | VERIFY — the flow arm is already reached for `run_kind='flow'` |
 | 12 | `lib/runs/promote.ts` `promoteChildRunForToken` | VERIFY — kind-agnostic |
 
-**Child-creation edges.** Three sites create a delegated child and therefore ALL
-call `admitDelegatedChild()`: `run_delegate`, `run_plan`'s source launch, and
-`auto_launch_run_plan`'s candidate launch (which has never had a depth or
-fan-out check). A guard on one of N edges is a guard on none.
+**Child-creation edges.** Three sites create a delegated child — `run_delegate`,
+`run_plan`'s source launch, and `auto_launch_run_plan`'s candidate launch (which
+has never had a depth or fan-out check). A guard on one of N edges is a guard on
+none, so all three are covered by ONE helper, `admitDelegatedChild()`, called at
+**two levels**:
+
+1. **Decisive** — inside the transaction that INSERTS the child run
+   (`launchRunStaged` for a flow child, `launchAgentRun` for an agent child),
+   gated on `parentRunId`. The per-orchestrator advisory lock is held through
+   that insert, so the count provably includes every committed sibling and two
+   racers cannot both land. Every one of the three edges reaches one of these
+   two launchers, which is what makes the coverage complete rather than
+   enumerated.
+2. **Fast path** — at the `run_delegate` route, in the same transaction as the
+   carrier task. It exists to avoid minting a carrier task and provisioning a
+   worktree for an obviously over-cap request. It is never the decision: a
+   count taken in a transaction that commits before the run exists is a
+   read, not a mutex.
 
 ## Expectations
 

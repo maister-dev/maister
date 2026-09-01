@@ -1,9 +1,12 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 
 import { NextRequest } from "next/server";
 
@@ -22,7 +25,33 @@ export type DelegationSeedCtx = {
   agentsRoot: string;
   projectId: string;
   executorId: string;
+  /** `projects.repo_path` — a real git repo only when `withGitRepo` was set. */
+  repoPath: string;
 };
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * A real git repo with a `main` branch and one commit.
+ *
+ * Only the FLOW arm needs it: `launchRunStaged` validates both resolved branch
+ * refs against the project's actual branch set before any git side-effect, so a
+ * flow launch against a bare path is refused long before the run insert. The
+ * refusal suites deliberately skip it — they never reach git, and a repo per
+ * `beforeEach` is pure cost there.
+ */
+export async function initGitRepo(): Promise<string> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "maister-deleg-repo-"));
+
+  await execFileAsync("git", ["-C", dir, "init", "-q", "-b", "main"]);
+  await execFileAsync("git", ["-C", dir, "config", "user.email", "t@t"]);
+  await execFileAsync("git", ["-C", dir, "config", "user.name", "t"]);
+  await writeFile(path.join(dir, "README.md"), "seed\n", "utf8");
+  await execFileAsync("git", ["-C", dir, "add", "."]);
+  await execFileAsync("git", ["-C", dir, "commit", "-q", "-m", "seed"]);
+
+  return dir;
+}
 
 const TABLES_IN_DELETE_ORDER = [
   "domain_events",
@@ -56,6 +85,8 @@ export async function resetDelegationFixture(args: {
   pool: Pool;
   db: NodePgDatabase;
   agentsRoot: string;
+  /** Back `projects.repo_path` with a real git repo (needed to LAUNCH a flow). */
+  withGitRepo?: boolean;
 }): Promise<DelegationSeedCtx> {
   const { pool, db, agentsRoot } = args;
 
@@ -65,6 +96,9 @@ export async function resetDelegationFixture(args: {
 
   const projectId = randomUUID();
   const executorId = randomUUID();
+  const repoPath = args.withGitRepo
+    ? await initGitRepo()
+    : `/repos/${projectId}`;
 
   await pool.query(
     `INSERT INTO "projects" ("id", "slug", "name", "repo_path", "main_branch", "branch_prefix", "maister_yaml_path", "task_key", "next_task_number")
@@ -72,7 +106,7 @@ export async function resetDelegationFixture(args: {
     [
       projectId,
       `p-${projectId.slice(0, 8)}`,
-      `/repos/${projectId}`,
+      repoPath,
       `K${projectId
         .replace(/[^0-9A-Za-z]/g, "")
         .slice(0, 7)
@@ -96,6 +130,7 @@ export async function resetDelegationFixture(args: {
     agentsRoot,
     projectId,
     executorId,
+    repoPath,
   };
 
   // The pinned-package chain the agent effective-definition resolver walks.

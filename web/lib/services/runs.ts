@@ -69,6 +69,7 @@ import {
 } from "@/lib/flows/manifest-parser";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { LAUNCHABLE_FLOW_ENABLEMENT_STATES } from "@/lib/flows/enablement-states";
+import { admitDelegatedChild } from "@/lib/orchestrator/admission";
 import { resolveEffectiveFlowRevision } from "@/lib/flows/lifecycle";
 import { runFlow } from "@/lib/flows/runner";
 import { worktreesRoot } from "@/lib/instance-config";
@@ -385,7 +386,17 @@ export type LaunchRunInput = {
   parentRunId?: string;
   rootRunId?: string;
   launchMode?: "auto" | "manual";
-  delegationSnapshot?: DelegationSnapshot;
+  // The flow arm deliberately OMITS `baseBranch`/`targetBranch`: this launcher
+  // is what resolves them (input -> task defaults -> project main), so it is
+  // what records them. A caller that supplied its own pair would be duplicating
+  // a resolution it cannot see the inputs to, which is how the snapshot and the
+  // workspace drift apart.
+  delegationSnapshot?:
+    | Exclude<DelegationSnapshot, { kind: "flow" }>
+    | Omit<
+        Extract<DelegationSnapshot, { kind: "flow" }>,
+        "baseBranch" | "targetBranch"
+      >;
 };
 
 function budgetRestartSourceRunId(
@@ -1653,6 +1664,17 @@ export async function* launchRunStaged(
       await _db.transaction(async (tx: any) => {
         await ctx.assertLaunchOwnership?.(tx);
 
+        // ADR-163: for a DELEGATED child the fan-out/depth bound is decided
+        // HERE — in the same transaction as the run INSERT and under the
+        // per-orchestrator advisory lock — so the count provably includes every
+        // committed sibling and two racers cannot both insert. The delegation
+        // seam's own pre-check is a fast path that avoids minting a carrier task
+        // and a worktree for an obviously over-cap request; it is never the
+        // decision. No-op for every board / scheduled launch (no parentRunId).
+        if (input.parentRunId) {
+          await admitDelegatedChild(tx, { parentRunId: input.parentRunId });
+        }
+
         // `runs` first: `workspaces.run_id` is a non-deferrable FK to `runs.id`,
         // so the workspace insert would violate it if it ran first.
         const insertedRun = await tx
@@ -1722,7 +1744,18 @@ export async function* launchRunStaged(
             parentRunId: input.parentRunId ?? null,
             rootRunId: input.rootRunId ?? null,
             launchMode: input.launchMode ?? null,
-            delegationSnapshot: input.delegationSnapshot ?? null,
+            // D7: the launcher completes the flow snapshot with the branch
+            // pair IT resolved, so the snapshot and `workspaces` can never
+            // disagree about what this child branched from and promotes into.
+            delegationSnapshot: input.delegationSnapshot
+              ? input.delegationSnapshot.kind === "flow"
+                ? {
+                    ...input.delegationSnapshot,
+                    baseBranch: base,
+                    targetBranch: target,
+                  }
+                : input.delegationSnapshot
+              : null,
             status: "Pending",
             // Snapshot the enabled revision (M10, ADR-021). flow_revision_id is
             // the authoritative pin the runner resolves the manifest + bundle

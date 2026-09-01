@@ -647,12 +647,12 @@ No new env var, port, binary, config-file path, or `package.json` script. `MAIST
 
 ### Phase 6 — `run_delegate` flow arm
 
-- [ ] **T6.1 — Adopt the shared schema + admission in the route (agent path first).** (depends on Phase 5)
+- [x] **T6.1 — Adopt the shared schema + admission in the route (agent path first).** (depends on Phase 5)
   **GREEN for R1.1/R1.3 shape rows without touching flow behaviour yet.** Replace the loose `target` object with `delegationTargetSchema`, apply `refineDelegateOptionsForTarget`, and move depth **plus** the new fan-out check into `admitDelegatedChild` — the flow-target branch still refuses, so R1.2 must stay green through this task.
   *Acceptance*: R1.2 green (compat intact), R1.1 green, R1.3 shape/limit rows green, R1.3 flow-trust rows still red.
   *Satisfies*: REQ-01, REQ-02, REQ-15.
 
-- [ ] **T6.2 — The flow arm.** (depends on T6.1)
+- [x] **T6.2 — The flow arm.** (depends on T6.1)
   **RED**: R1.3's remaining flow rows + the new behaviour cases below.
   **GREEN**: delete the `"flow-target delegation is not yet supported"` block (`:145-160`); resolve via `resolveDelegatableFlow`; then, in **one** `db.transaction` that also holds the admission lock: mint the carrier task and create the `parent_of` relation — for **BOTH** modes (D1) — with `tasks.flowId` = the **selected** child flow (explicitly **not** inherited from the orchestrator's task, REQ-11), `title = body.title ?? titleFromPrompt(body.prompt)` in both modes, `launch_mode='manual'`. After commit, call `launchRun({taskId: carrierTaskId, flowId, runnerId: body.runnerOverride ?? undefined, parentRunId, rootRunId, launchMode:'manual', delegationSnapshot:{kind:'flow',…}}, extCtx)` where `extCtx = {actorUserId: null, authorize: async () => {}}` (the token already scoped the project). The **agent** arm's `mode:task` block moves into the same single transaction (atomicity improvement, pinned by R1.2).
   Keep the existing `parent.taskId`-absent branch as a graceful `log.info` + continue — **do not** harden it into an assert: it is unreachable today (F10) but becomes live if an agent orchestrator is introduced. Re-comment it as *"reserved for a future agent orchestrator; unreachable while only the flow graph runner issues an orchestrator token"*.
@@ -661,31 +661,31 @@ No new env var, port, binary, config-file path, or `package.json` script. `MAIST
   *Logging*: `log.info({parentRunId, childRunId, childTaskId, targetKind:"flow", flowRefId, flowRevisionId, mode}, "[delegation.delegate] flow child launched")`.
   *Satisfies*: REQ-07, REQ-08, REQ-09, REQ-10, REQ-11, REQ-13.
 
-- [ ] **T6.3 — `title` on the AGENT `mode: run` path.** (depends on T6.2)
+- [x] **T6.3 — `title` on the AGENT `mode: run` path.** (depends on T6.2)
   `delegate/route.ts:218` sits inside the `mode === "task"` block, so an agent `mode: run` **silently discards** `title` — a live instance of the rule this plan enforces. An agent `mode:run` child creates no task, so there is nothing to name: refuse with `CONFIG` — *"title is only meaningful with mode:task (an agent mode:run child has no task to name)"*.
   **⚠ Behaviour change to a shipped path.** Owner approved Q3=A for the flow path; this agent-side tightening is offered separately and is **safe to drop** without affecting any other task.
   *Acceptance*: agent `mode:run` + `title` → `CONFIG 422`, nothing written; agent `mode:task` + `title` unchanged (R1.2); flow accepts `title` in both modes.
   *Satisfies*: REQ-12.
 
-- [ ] **T6.4 — Carrier-task compensation (W2).** (depends on T6.2)
+- [x] **T6.4 — Carrier-task compensation (W2).** (depends on T6.2)
   **RED**: inject a `launchRun` that throws `EXECUTOR_UNAVAILABLE` after the carrier commit; assert the carrier task and relation are gone and the route returns `503` — fails, no compensation exists.
   **GREEN**: an outermost compensation wrapping the **entire** `launchRun` call (not a convenient tail), deleting the carrier task + relation guarded by "the task has no runs", with per-revert `catch` + `log.error`. Note `launchRunStaged` already owns two inner compensation layers (`removeWorktree`, `revertPackageVersionChoices`); this is a third, outer one.
   *Logging*: `log.warn({parentRunId, carrierTaskId, code}, "[delegation.compensate] flow delegation failed after carrier task — removing carrier")`.
   *Satisfies*: REQ-21.
 
-- [ ] **T6.5 — Scheduler dispatch + per-pool admission (REQ-17).** (depends on T6.2)
+- [x] **T6.5 — Scheduler dispatch + per-pool admission (REQ-17).** (depends on T6.2)
   With the flow pool saturated, a flow delegation returns `202` with the child `Pending`; freeing a slot and running `promoteNextPending({pool:'flow'})` flips it `Running`. In the same table: an **agent** child from the same orchestrator is admitted against the **agent** pool independently — two budgets, one tree (F8).
   *Satisfies*: REQ-17.
 
-- [ ] **T6.6 — Crash recovery (W5).** (depends on T6.2)
+- [x] **T6.6 — Crash recovery (W5).** (depends on T6.2)
   Drive a delegated flow child to `Running` with no live supervisor session; run reconcile; assert `Crashed` **and** a `run.crashed` domain event carrying `parentRunId`; then run `orchestrator_resume` and assert the parent wakes.
   *Satisfies*: REQ-21.
 
-- [ ] **T6.7 — Parent terminalization during launch (W6).** (depends on T6.2)
+- [x] **T6.7 — Parent terminalization during launch (W6).** (depends on T6.2)
   **GREEN**: a post-commit parent re-read; if the parent is terminal, abandon the child through the `cascadeAbandonRunTree` path and return `PRECONDITION 409`.
   *Satisfies*: REQ-21.
 
-- [ ] **T6.8 — Residual shapes W3, W7, W11, W12.** (depends on T6.4, T4.2)
+- [x] **T6.8 — Residual shapes W3, W7, W11, W12.** (depends on T6.4, T4.2)
   Four assertions pinning documented residuals so a future change that alters any of them fails loudly rather than silently:
   - **W3**: simulate death between the carrier tx and the launch — the residual is a `Backlog`, `launch_mode='manual'` task that **no** discovery query selects (drive `auto_launch_run_plan` and a C2 tick; assert no run appears);
   - **W7**: two identical delegations → two children, both in `run_collect`; the one that would exceed the cap → `CONFIG` (the admission lock narrows but does not eliminate this — D6);

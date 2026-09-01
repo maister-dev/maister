@@ -9,8 +9,12 @@ import { launchAgentRun } from "@/lib/agents/launch";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { orchestratorMaxDepth } from "@/lib/instance-config";
-import { resolveDelegatableFlow } from "@/lib/flows/delegatable-flow";
+import {
+  resolveDelegatableFlow,
+  type DelegatableFlow,
+} from "@/lib/flows/delegatable-flow";
+import { admitDelegatedChild } from "@/lib/orchestrator/admission";
+import { cascadeAbandonRunTree } from "@/lib/orchestrator/cascade";
 import {
   delegationTargetKind,
   delegationTargetSchema,
@@ -18,7 +22,8 @@ import {
   titleFromPrompt,
 } from "@/lib/orchestrator/delegation-target";
 import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
-import { addTaskRelation } from "@/lib/social/relations";
+import { addTaskRelation, removeTaskRelation } from "@/lib/social/relations";
+import { launchRun } from "@/lib/services/runs";
 import { createTask } from "@/lib/services/tasks";
 import {
   handleExt,
@@ -39,6 +44,90 @@ const log = pino({
 });
 
 const ENDPOINT = "POST /api/v1/ext/runs/delegate";
+
+/**
+ * W2 compensation: the carrier transaction committed, then the launch failed.
+ *
+ * Removes the child task and its `parent_of` edge so a failed delegation leaves
+ * no orphan card. Guarded by "the task has no runs" — a launch that failed AFTER
+ * inserting the run row (the adopt/CONFLICT paths) must keep its task, and the
+ * run row is the only durable evidence of that. Each revert has its own catch +
+ * log.error: a compensation that throws would replace the caller's real error
+ * with a cleanup error and lose the diagnosis.
+ */
+async function compensateChildTask(args: {
+  db: Db;
+  projectId: string;
+  parentTaskId: string | null;
+  childTaskId: string | undefined;
+  parentRunId: string;
+  actor: Parameters<typeof addTaskRelation>[0]["actor"];
+  code: string;
+}): Promise<void> {
+  const { db, childTaskId } = args;
+
+  if (!childTaskId) return;
+
+  log.warn(
+    {
+      parentRunId: args.parentRunId,
+      carrierTaskId: childTaskId,
+      code: args.code,
+    },
+    "[delegation.compensate] delegation failed after the child task — removing it",
+  );
+
+  const runRows = (await db
+    .select({ id: runs.id })
+    .from(runs)
+    .where(eq(runs.taskId, childTaskId))
+    .limit(1)) as { id: string }[];
+
+  if (runRows.length > 0) {
+    log.warn(
+      { parentRunId: args.parentRunId, carrierTaskId: childTaskId },
+      "[delegation.compensate] child task already has a run — left in place",
+    );
+
+    return;
+  }
+
+  if (args.parentTaskId) {
+    await removeTaskRelation(
+      {
+        projectId: args.projectId,
+        fromTaskId: args.parentTaskId,
+        kind: "parent_of",
+        toTaskId: childTaskId,
+        actor: args.actor,
+      },
+      db,
+    ).catch((err: unknown) =>
+      log.error(
+        {
+          parentRunId: args.parentRunId,
+          carrierTaskId: childTaskId,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "[delegation.compensate] parent_of removal failed (manual cleanup may be required)",
+      ),
+    );
+  }
+
+  await db
+    .delete(tasks)
+    .where(eq(tasks.id, childTaskId))
+    .catch((err: unknown) =>
+      log.error(
+        {
+          parentRunId: args.parentRunId,
+          carrierTaskId: childTaskId,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "[delegation.compensate] child task delete failed (manual cleanup may be required)",
+      ),
+    );
+}
 
 const bodySchema = z
   .object({
@@ -71,30 +160,6 @@ const bodySchema = z
   });
 
 type DelegateBody = z.infer<typeof bodySchema>;
-
-// Walk the parent_run_id chain up from `startId`, counting hops. The parent run
-// itself is depth 0; each ancestor adds 1. The FK guarantees a DAG so the walk
-// terminates; the loop cap is a defensive backstop against any cycle a manual
-// DB edit could introduce.
-async function delegationDepth(db: Db, startId: string): Promise<number> {
-  let depth = 0;
-  let currentId: string | null = startId;
-  const cap = 64;
-
-  while (currentId && depth < cap) {
-    const rows = (await db
-      .select({ parentRunId: runs.parentRunId })
-      .from(runs)
-      .where(eq(runs.id, currentId))) as { parentRunId: string | null }[];
-    const parentRunId: string | null = rows[0]?.parentRunId ?? null;
-
-    if (!parentRunId) break;
-    depth += 1;
-    currentId = parentRunId;
-  }
-
-  return depth;
-}
 
 export async function POST(
   req: NextRequest,
@@ -174,28 +239,14 @@ export async function POST(
 
       const rootRunId = parent.rootRunId ?? parent.id;
 
-      // Depth bound: refuse if the parent chain is already at the limit.
-      const depth = await delegationDepth(db, parent.id);
-
-      if (depth >= orchestratorMaxDepth()) {
-        return NextResponse.json(
-          {
-            code: "CONFIG",
-            message: `delegation depth limit reached (${orchestratorMaxDepth()})`,
-          },
-          { status: httpStatusForExtCode("CONFIG") },
-        );
-      }
-
       // ADR-163: locate -> establish trust -> execute. Trust resolution runs
-      // here, in a module that cannot start a run, so every refusal below
-      // writes ZERO rows. The launch half of the flow arm lands with the
-      // carrier task; until then a TRUSTED flow target is still refused, but
-      // an untrusted one now gets its own typed refusal rather than a blanket
-      // "not supported".
+      // in a module that cannot start a run, so every refusal here writes ZERO
+      // rows — the guarantee is structural, not incidental.
+      let resolvedFlow: DelegatableFlow | null = null;
+
       if (targetKind === "flow") {
         try {
-          await resolveDelegatableFlow(
+          resolvedFlow = await resolveDelegatableFlow(
             { projectId: ctx.projectId, flowId: body.target.flowId as string },
             db,
           );
@@ -209,50 +260,81 @@ export async function POST(
 
           throw err;
         }
-
-        return NextResponse.json(
-          {
-            code: "CONFIG",
-            message: "flow-target delegation is not yet supported",
-          },
-          { status: httpStatusForExtCode("CONFIG") },
-        );
       }
 
-      const agentId = body.target.agentId as string;
-
+      // ADR-163 D1: a FLOW target always gets a carrier task — a flow run
+      // cannot exist without one, and the board renders a `parent_of` child as
+      // its own card either way, so omitting the link would produce the same
+      // card with no provenance. `mode` therefore controls board LINKAGE for a
+      // flow target, never board PRESENCE.
+      const needsChildTask = targetKind === "flow" || body.mode === "task";
       let childTaskId: string | undefined;
 
       try {
-        if (body.mode === "task") {
-          // Reuse the orchestrator's task flow as the child's default; a
-          // flowless child is a simple-intent task awaiting triage.
-          let parentFlowId: string | null = null;
+        // ADR-163 D8: admission and the child task share ONE transaction, so
+        // the fast-path bound and the reservation cannot be split by a racer.
+        // The DECISIVE bound is re-taken inside the launcher's own run-insert
+        // transaction under the same lock (see admitDelegatedChild call sites).
+        await db.transaction(async (tx: Db) => {
+          await admitDelegatedChild(tx, { parentRunId: parent.id });
 
-          if (parent.taskId) {
-            const orchTaskRows = await db
+          if (!needsChildTask) return;
+
+          // The child task's flow: for a FLOW target it is the SELECTED flow,
+          // explicitly NOT inherited from the orchestrator's task. For an agent
+          // target the orchestrator's flow stays the default (a flowless child
+          // is a simple-intent task awaiting triage) — unchanged behavior.
+          let childFlowId: string | null = resolvedFlow?.flowId ?? null;
+
+          if (!childFlowId && parent.taskId) {
+            const orchTaskRows = await tx
               .select({ flowId: tasks.flowId })
               .from(tasks)
               .where(eq(tasks.id, parent.taskId));
 
-            parentFlowId = orchTaskRows[0]?.flowId ?? null;
+            childFlowId = orchTaskRows[0]?.flowId ?? null;
           }
 
           const created = await createTask(
             {
               title: body.title ?? titleFromPrompt(body.prompt),
               prompt: body.prompt,
-              flowId: parentFlowId,
+              flowId: childFlowId,
             },
             { projectId: ctx.projectId, actorUserId: null },
-            db,
+            tx,
           );
 
           childTaskId = created.taskId;
 
-          // parent_of from the orchestrator's task to the child. If the
-          // orchestrator run has no task, the child task still exists but there
-          // is no board parent to link it under — log and continue.
+          // Stamp the delegation intent — `createTask` does not accept it
+          // (same idiom as run_plan's as-plan tasks). `launch_mode='manual'` is
+          // what keeps the as-plan auto-launcher and the abandon cascade's
+          // un-launched-task sweep away from a carrier task; `delegation_spec`
+          // records WHAT was delegated, so a reader of the board card can see
+          // it without walking to the run.
+          if (resolvedFlow) {
+            await tx
+              .update(tasks)
+              .set({
+                launchMode: "manual",
+                delegationSpec: {
+                  kind: "flow",
+                  flowId: resolvedFlow.flowId,
+                  ...(body.runnerOverride
+                    ? { runnerOverride: body.runnerOverride }
+                    : {}),
+                },
+                updatedAt: new Date(),
+              })
+              .where(eq(tasks.id, childTaskId));
+          }
+
+          // parent_of from the orchestrator's task to the child. Reserved for a
+          // future AGENT orchestrator, where `runs.task_id` may legitimately be
+          // null: today only the flow graph runner issues an orchestrator
+          // token, and a flow run always has a task, so this branch is
+          // unreachable — kept as a graceful log, never hardened into an assert.
           if (parent.taskId) {
             await addTaskRelation(
               {
@@ -262,7 +344,7 @@ export async function POST(
                 toTaskId: childTaskId,
                 actor: socialActorForToken(ctx.actor),
               },
-              db,
+              tx,
             );
           } else {
             log.info(
@@ -270,35 +352,143 @@ export async function POST(
               "delegation parent run has no task — child task created without a parent_of relation",
             );
           }
-        }
-
-        const result = await launchAgentRun({
-          agentId,
-          projectId: ctx.projectId,
-          taskId: childTaskId ?? null,
-          launchOverrideRunnerId: body.runnerOverride ?? null,
-          parentRunId,
-          rootRunId,
-          launchMode: "manual",
-          persistent: body.persistent ?? false,
-          addressableKey: body.addressableKey ?? null,
-          workspaceMode: body.workspaceMode ?? null,
-          // M37 (ADR-100): honor the requested per-child workspace axis (was
-          // previously parsed then dropped).
-          workspace: body.workspace ?? null,
-          trigger: { source: "manual" },
-          db,
         });
 
-        if ("deduped" in result) {
-          // No trigger event id is set on a delegation, so this is unreachable
-          // in practice — treat it as a precondition failure rather than
-          // silently returning a phantom child.
-          throw new MaisterError(
-            "PRECONDITION",
-            "delegated launch was unexpectedly deduped",
+        // Everything from here on is fallible AFTER the carrier transaction
+        // committed, so the compensation below must wrap the ENTIRE remainder —
+        // not a convenient tail.
+        let childRunId: string;
+
+        try {
+          if (resolvedFlow) {
+            const launched = await launchRun(
+              {
+                taskId: childTaskId as string,
+                flowId: resolvedFlow.flowId,
+                runnerId: body.runnerOverride ?? undefined,
+                parentRunId,
+                rootRunId,
+                launchMode: "manual",
+                delegationSnapshot: {
+                  kind: "flow",
+                  flowId: resolvedFlow.flowId,
+                  flowRefId: resolvedFlow.flowRefId,
+                  flowRevisionId: resolvedFlow.revisionId,
+                  resolvedRevision: resolvedFlow.resolvedRevision,
+                  engineMin: resolvedFlow.engineMin,
+                  engineMax: resolvedFlow.engineMax,
+                  carrierTaskId: childTaskId as string,
+                  mode: body.mode,
+                  runnerOverride: body.runnerOverride ?? null,
+                  // D7: `baseBranch`/`targetBranch` are completed by
+                  // launchRunStaged from ITS own resolution — the route does not
+                  // re-derive a pair it cannot see the inputs to.
+                },
+              },
+              // The token already scoped the project; there is no session user
+              // to authorize against on an ext delegation.
+              { actorUserId: null, authorize: async () => {} },
+              db,
+            );
+
+            childRunId = launched.runId;
+            log.info(
+              {
+                parentRunId,
+                childRunId,
+                childTaskId,
+                targetKind: "flow",
+                flowRefId: resolvedFlow.flowRefId,
+                flowRevisionId: resolvedFlow.revisionId,
+                mode: body.mode,
+              },
+              "[delegation.delegate] flow child launched",
+            );
+          } else {
+            const result = await launchAgentRun({
+              agentId: body.target.agentId as string,
+              projectId: ctx.projectId,
+              taskId: childTaskId ?? null,
+              launchOverrideRunnerId: body.runnerOverride ?? null,
+              parentRunId,
+              rootRunId,
+              launchMode: "manual",
+              persistent: body.persistent ?? false,
+              addressableKey: body.addressableKey ?? null,
+              workspaceMode: body.workspaceMode ?? null,
+              // M37 (ADR-100): honor the requested per-child workspace axis
+              // (was previously parsed then dropped).
+              workspace: body.workspace ?? null,
+              trigger: { source: "manual" },
+              db,
+            });
+
+            if ("deduped" in result) {
+              // No trigger event id is set on a delegation, so this is
+              // unreachable in practice — treat it as a precondition failure
+              // rather than silently returning a phantom child.
+              throw new MaisterError(
+                "PRECONDITION",
+                "delegated launch was unexpectedly deduped",
+              );
+            }
+
+            childRunId = result.runId;
+          }
+        } catch (launchErr) {
+          await compensateChildTask({
+            db,
+            projectId: ctx.projectId,
+            parentTaskId: parent.taskId ?? null,
+            childTaskId,
+            parentRunId,
+            actor: socialActorForToken(ctx.actor),
+            code: isMaisterError(launchErr) ? launchErr.code : "UNKNOWN",
+          });
+          throw launchErr;
+        }
+
+        // W6: the orchestrator may have terminalized WHILE this child was
+        // launching — the pre-flight check cannot see that, and the parent's own
+        // cascade already ran before this child existed. Re-read the parent now
+        // that the child row is committed and, if the tree is terminal, run the
+        // SAME cascade a parent stop runs. Cascading from the PARENT (not the
+        // child) is deliberate: the cascade abandons a run's DESCENDANTS and
+        // leaves the root to its caller, and the just-born child is exactly one
+        // of the parent's descendants. The already-terminal parent is untouched.
+        const parentNow = await resolveActiveBoundRun(
+          db,
+          parentRunId,
+          ctx.projectId,
+        );
+
+        if (!parentNow.ok) {
+          await cascadeAbandonRunTree(
+            parentRunId,
+            parent.taskId ?? null,
+            "user_stopped",
+            { db },
+          ).catch((cascadeErr: unknown) =>
+            log.error(
+              {
+                parentRunId,
+                childRunId,
+                err:
+                  cascadeErr instanceof Error
+                    ? cascadeErr.message
+                    : String(cascadeErr),
+              },
+              "[delegation.compensate] cascade of an orphaned child failed",
+            ),
+          );
+
+          return NextResponse.json(
+            { code: parentNow.code, message: parentNow.message },
+            { status: httpStatusForExtCode(parentNow.code) },
           );
         }
+
+        const result = { runId: childRunId };
 
         await recordRequiredTokenAudit(
           {
