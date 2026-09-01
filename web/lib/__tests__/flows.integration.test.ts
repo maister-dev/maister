@@ -261,6 +261,82 @@ steps:
     });
   });
 
+  // ADR-162 (AC-13): a schema document using the `json` field type or typed
+  // array `items` needs compat.engine_min >= 3.6.0. The manifest and the
+  // document only meet at install, so that is where the refusal lives.
+  async function writeJsonTypeFlow(
+    name: string,
+    engineMin: string,
+  ): Promise<string> {
+    const dir = join(fixturesDir, name);
+
+    await mkdir(join(dir, "schemas"), { recursive: true });
+    await writeFile(
+      join(dir, "flow.yaml"),
+      `schemaVersion: 1
+name: ${name}
+compat:
+  engine_min: "${engineMin}"
+nodes:
+  - id: plan
+    type: ai_coding
+    action:
+      prompt: "plan"
+    output:
+      result:
+        schema: ./schemas/out.json
+    transitions:
+      success: done
+`,
+      "utf8",
+    );
+    await writeFile(
+      join(dir, "schemas", "out.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        fields: [{ name: "payload", type: "json", required: true }],
+      }),
+      "utf8",
+    );
+
+    return dir;
+  }
+
+  it("rejects a json/items schema document below the 3.6.0 floor with FLOW_INSTALL", async () => {
+    const dir = await writeJsonTypeFlow("json-schema-old-engine", "3.5.0");
+
+    await expect(
+      installFlowPlugin({
+        source: dir,
+        version: "local-dev",
+        projectId,
+        projectSlug: "demo-app",
+        flowId: "json-schema-old-engine",
+        workspaceRoot,
+        db,
+      }),
+    ).rejects.toMatchObject({
+      code: "FLOW_INSTALL",
+      message: expect.stringContaining("3.6.0"),
+    });
+  });
+
+  it("installs the same json schema document at engine_min 3.6.0", async () => {
+    const dir = await writeJsonTypeFlow("json-schema-new-engine", "3.6.0");
+
+    const installed = await installFlowPlugin({
+      source: dir,
+      version: "local-dev",
+      projectId,
+      projectSlug: "demo-app",
+      flowId: "json-schema-new-engine",
+      workspaceRoot,
+      db,
+    });
+
+    expect(installed).toBeTruthy();
+  });
+
   it("rejects a non-existent tag with FLOW_INSTALL carrying git stderr", async () => {
     try {
       await installFlowPlugin({

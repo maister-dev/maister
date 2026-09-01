@@ -734,3 +734,56 @@ describe("runGraph — ADR-162 output_contract identity", () => {
     });
   }, 60_000);
 });
+
+// --- ADR-162 (AC-16): open payloads survive into vars unmodified -------------
+
+describe("runGraph — ADR-162 open payload round-trip", () => {
+  it("AC-16: undeclared nested structures reach node_attempts.vars deep-equal and re-render", async () => {
+    const payload = {
+      verdict: "pass",
+      tags: ["a", "b"],
+      payload: { anything: [1, null, { deep: true }] },
+      undeclared: { nested: { leaf: "kept", list: [{ k: 1 }] } },
+      nullLeaf: null,
+    };
+    const flow = {
+      schemaVersion: 1,
+      name: "g",
+      compat: { engine_min: "3.6.0" },
+      nodes: [
+        {
+          id: "emit",
+          type: "cli",
+          action: {
+            command: `cat > "$MAISTER_OUTPUT_FILE" <<'JSON'\n${JSON.stringify(payload)}\nJSON`,
+          },
+          output: { result: { schema: "./schemas/open.json" } },
+          transitions: { success: "use" },
+        },
+        {
+          id: "use",
+          type: "cli",
+          action: {
+            command:
+              'echo "leaf:{{ steps.emit.vars.undeclared.nested.leaf }} v:{{ steps.emit.vars.verdict }}"',
+          },
+          transitions: { success: "done" },
+        },
+      ],
+    };
+    const seeded = await seedGraphRun(flow);
+
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    expect((await getRun(seeded.runId)).status).toBe("Review");
+
+    const attempts = await getAttempts(seeded.runId);
+
+    // Nothing stripped, nothing rewritten — including the undeclared subtree
+    // and the null leaf on a field the schema never mentions.
+    expect(attempts.find((a) => a.nodeId === "emit")?.vars).toEqual(payload);
+    expect(attempts.find((a) => a.nodeId === "use")?.stdout ?? "").toContain(
+      "leaf:kept v:pass",
+    );
+  }, 60_000);
+});

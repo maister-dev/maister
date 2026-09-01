@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "fields": [
+    { "name": "verdict", "type": "string", "required": true },
+    { "name": "tags", "type": "array", "items": { "type": "string" } },
+    { "name": "payload", "type": "json" }
+  ]
+}

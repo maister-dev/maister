@@ -307,3 +307,90 @@ describe("runGraph — ADR-162 consensus engine_vars transport", () => {
     expect(decide?.vars).toEqual(VALID_VARS);
   }, 60_000);
 });
+
+// --- ADR-162 (AC-17): the engine_vars mismatch class routes through rework ---
+
+describe("runGraph — ADR-162 consensus on_mismatch", () => {
+  it("engine vars that mismatch rework the node with the reason in commentsVar", async () => {
+    let call = 0;
+
+    runConsensusNode.mockImplementation(
+      async (args: {
+        loaded: { run: { id: string } };
+        node: { id: string };
+        nodeAttemptId: string;
+        nodeAttemptNumber: number;
+        db: unknown;
+      }) => {
+        call += 1;
+        for (const [artifactDefId, kind] of [
+          ["consensus_plan", "plan"],
+          ["debate_log", "human_note"],
+        ] as const) {
+          await recordCurrentArtifact(
+            {
+              id: `run:${args.nodeAttemptId}:${artifactDefId}`,
+              runId: args.loaded.run.id,
+              nodeAttemptId: args.nodeAttemptId,
+              nodeId: args.node.id,
+              attempt: args.nodeAttemptNumber,
+              artifactDefId,
+              kind,
+              producer: "runner",
+              locator: { kind: "inline", text: `${artifactDefId} body` },
+              validity: "current",
+              requiredFor: ["review"],
+              visibility: "shared",
+              retention: "run",
+            },
+            args.db as Parameters<typeof recordCurrentArtifact>[1],
+          );
+        }
+
+        return {
+          ok: true,
+          stdout: "",
+          vars:
+            call === 1
+              ? { consensus: { source: "agreement", round: "one" } }
+              : structuredClone(VALID_VARS),
+          durationMs: 1,
+        };
+      },
+    );
+
+    const seeded = await seedGraphRun(
+      consensusFlow(
+        {
+          schema: "./schemas/consensus.json",
+          required: true,
+          on_mismatch: "retry",
+        },
+        {
+          rework: {
+            allowedTargets: ["decide"],
+            workspacePolicies: ["keep"],
+            maxLoops: 3,
+            commentsVar: "fix_notes",
+          },
+        },
+        'echo "done"',
+      ),
+    );
+
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    expect((await getRun(seeded.runId)).status).toBe("Review");
+
+    const attempts = (await getAttempts(seeded.runId))
+      .filter((a) => a.nodeId === "decide")
+      .sort((a, b) => a.attempt - b.attempt);
+
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0].status).toBe("Reworked");
+    expect(attempts[0].decision).toBe("retry");
+    expect(attempts[0].stdout ?? "").toContain("schema mismatch");
+    expect(attempts[1].status).toBe("Succeeded");
+    expect(attempts[1].vars).toEqual(VALID_VARS);
+  }, 60_000);
+});

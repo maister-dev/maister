@@ -25,6 +25,8 @@ import {
 
 const FIXTURE_PATH = resolve(__dirname, "_fixtures/m26-output-flow");
 const SCHEMA = "./schemas/result.json";
+// ADR-162 fixture: { verdict: string (required), tags?: array<string>, payload?: json }
+const OPEN_SCHEMA = "./schemas/open.json";
 
 let container: StartedPostgresTestDb["container"];
 let testDatabase: StartedPostgresTestDb;
@@ -282,5 +284,116 @@ describe("runGraph — M38 on_mismatch rework", () => {
     // The fix: the engine records the author's declared policy, NOT "keep".
     expect(attempts[0].workspacePolicy).toBe("rewind-to-node-checkpoint");
     expect(attempts[1].status).toBe("Succeeded");
+  }, 60_000);
+});
+
+// --- ADR-162 (AC-17): the new failure classes route through the SAME rework ---
+// One case per class. The bad-then-good marker pattern mirrors the M38 retry
+// test above; each asserts the class-specific reason reached `commentsVar`.
+
+describe("runGraph — ADR-162 on_mismatch over the new failure classes", () => {
+  function retryFlow(badPayloadCommand: string): unknown {
+    return {
+      schemaVersion: 1,
+      name: "g",
+      compat: { engine_min: "3.6.0" },
+      nodes: [
+        {
+          id: "extract",
+          type: "cli",
+          action: {
+            command:
+              `echo "notes:{{ fix_notes }}"; ` +
+              `if [ -f once.marker ]; then echo '{"verdict":"ok"}' > "$MAISTER_OUTPUT_FILE"; ` +
+              `else ${badPayloadCommand}; touch once.marker; fi`,
+          },
+          output: { result: { schema: OPEN_SCHEMA, on_mismatch: "retry" } },
+          rework: {
+            allowedTargets: ["extract"],
+            workspacePolicies: ["keep"],
+            maxLoops: 3,
+            commentsVar: "fix_notes",
+          },
+          transitions: { success: "done" },
+        },
+      ],
+    };
+  }
+
+  async function expectRetriedWithReason(
+    badPayloadCommand: string,
+    reason: RegExp,
+  ): Promise<void> {
+    const seeded = await seedGraphRun(retryFlow(badPayloadCommand));
+
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    expect((await getRun(seeded.runId)).status).toBe("Review");
+
+    const attempts = (await getAttempts(seeded.runId))
+      .filter((a) => a.nodeId === "extract")
+      .sort((a, b) => a.attempt - b.attempt);
+
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0].status).toBe("Reworked");
+    expect(attempts[0].decision).toBe("retry");
+    expect(attempts[1].status).toBe("Succeeded");
+    expect(attempts[1].stdout ?? "").toMatch(reason);
+  }
+
+  it("an unsafe own key reworks with the JSON path in commentsVar", async () => {
+    await expectRetriedWithReason(
+      `printf '{"verdict":"ok","__proto__":{"x":1}}' > "$MAISTER_OUTPUT_FILE"`,
+      /notes:.*__proto__/,
+    );
+  }, 60_000);
+
+  it("a payload past the nesting-depth limit reworks with the limit in commentsVar", async () => {
+    // 64 nested objects under `deep` sit at depths 2..65 — one past the cap.
+    const deep =
+      `open=""; close=""; i=0; ` +
+      `while [ $i -lt 64 ]; do open="\${open}{\\"n\\":"; close="\${close}}"; i=$((i+1)); done; ` +
+      `printf '{"verdict":"ok","payload":%s1%s}' "$open" "$close" > "$MAISTER_OUTPUT_FILE"`;
+
+    await expectRetriedWithReason(deep, /notes:.*nesting depth \(64\)/);
+  }, 60_000);
+
+  it("an items element mismatch reworks with field[i] in commentsVar", async () => {
+    await expectRetriedWithReason(
+      `printf '{"verdict":"ok","tags":["a",2]}' > "$MAISTER_OUTPUT_FILE"`,
+      /notes:.*tags\[1\]/,
+    );
+  }, 60_000);
+
+  it("without on_mismatch a new-class failure is still a hard CONFIG", async () => {
+    const manifest = {
+      schemaVersion: 1,
+      name: "g",
+      compat: { engine_min: "3.6.0" },
+      nodes: [
+        {
+          id: "extract",
+          type: "cli",
+          action: {
+            command: `printf '{"verdict":"ok","__proto__":{"x":1}}' > "$MAISTER_OUTPUT_FILE"`,
+          },
+          output: { result: { schema: OPEN_SCHEMA } },
+          transitions: { success: "done" },
+        },
+      ],
+    };
+    const seeded = await seedGraphRun(manifest);
+
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    expect((await getRun(seeded.runId)).status).toBe("Failed");
+
+    const extract = (await getAttempts(seeded.runId)).find(
+      (a) => a.nodeId === "extract",
+    );
+
+    expect(extract?.status).toBe("Failed");
+    expect(extract?.errorCode).toBe("CONFIG");
+    expect(extract?.stdout ?? "").toContain("__proto__");
   }, 60_000);
 });
