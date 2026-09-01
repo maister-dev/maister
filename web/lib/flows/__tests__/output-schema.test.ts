@@ -335,6 +335,45 @@ describe("validateStructuredOutput — typed array items (AC-2)", () => {
     ).toBe(false);
   });
 
+  it("rejects a null element under a typed items (elements are never optional)", () => {
+    // `null` = absent applies to FIELDS, which can be optional. An array
+    // element has no optionality, so a typed items rejects null rather than
+    // silently treating it as an absent value.
+    const schema = {
+      schemaVersion: 1,
+      fields: [
+        {
+          name: "tags",
+          type: "array",
+          required: true,
+          items: { type: "string" },
+        },
+      ],
+    };
+    const r = validateStructuredOutput({ tags: ["a", null] }, schema);
+
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.message).toContain("tags[1]");
+  });
+
+  it("accepts a null element under items: { type: json }", () => {
+    const schema = {
+      schemaVersion: 1,
+      fields: [
+        {
+          name: "rows",
+          type: "array",
+          required: true,
+          items: { type: "json" },
+        },
+      ],
+    };
+
+    expect(
+      validateStructuredOutput({ rows: [null, 1, { a: 1 }] }, schema),
+    ).toEqual({ ok: true });
+  });
+
   it("leaves an items-less array untyped (mixed elements pass)", () => {
     const schema = {
       schemaVersion: 1,

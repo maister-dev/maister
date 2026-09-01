@@ -1465,6 +1465,10 @@ gate). Two additions raise the floor to **`3.6.0`** (ADR-162):
 floor, because no engine version has a transport for it. A flow that does not
 declare `output.result` stays valid at any `engine_min` (back-compat).
 
+**Cost note for `consensus`.** `on_mismatch` on a consensus node reworks the
+node, which re-runs the whole draft fan-out and cross-verification — materially
+more expensive than an `ai_coding` retry. Set `rework.maxLoops` deliberately.
+
 **Per-attempt contract identity.** Each attempt that reaches validation records
 `node_attempts.output_contract` =
 `{schemaRef, schemaVersion, sha256, transport, engineVersion}` on the same write

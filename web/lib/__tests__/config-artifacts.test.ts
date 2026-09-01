@@ -624,17 +624,23 @@ describe("validateGraphManifest — artifact validation (M12 Phase 2)", () => {
     });
 
     it("rejects output.result on a form node at any engine_min (no floor)", async () => {
-      for (const engineMin of ["1.3.0", "3.6.0"]) {
-        const path = await writeGraph(`output-result-form-${engineMin}.yaml`, (m) => {
-          m.compat.engine_min = engineMin;
-          m.nodes[2] = {
-            id: "review",
-            type: "form",
-            settings: { form_schema: "./schemas/intake.json" },
-            output: { result: { schema: "./schemas/out.json" } },
-            transitions: { success: "done" },
-          };
-        });
+      // Includes a floor BELOW the M26 1.3.0 gate: the node-type refusal is
+      // unconditional and must be reported ahead of a version bump that would
+      // not help.
+      for (const engineMin of ["1.2.0", "1.3.0", "3.6.0"]) {
+        const path = await writeGraph(
+          `output-result-form-${engineMin}.yaml`,
+          (m) => {
+            m.compat.engine_min = engineMin;
+            m.nodes[2] = {
+              id: "review",
+              type: "form",
+              settings: { form_schema: "./schemas/intake.json" },
+              output: { result: { schema: "./schemas/out.json" } },
+              transitions: { success: "done" },
+            };
+          },
+        );
 
         await expect(loadFlowManifest(path)).rejects.toMatchObject({
           code: "CONFIG",
@@ -735,11 +741,37 @@ describe("validateGraphManifest — artifact validation (M12 Phase 2)", () => {
       );
     });
 
-    it("leaves an ai_coding output.result valid at its own 1.3.0 floor", async () => {
-      const path = await writeGraph("output-result-ai-coding-1.3.0.yaml", (m) => {
-        m.compat.engine_min = "1.3.0";
-        (m.nodes[0].output as any).result = { schema: "./schemas/out.json" };
+    it("reports the 3.6.0 coordinator floor ahead of the 1.3.0 gate", async () => {
+      // Both gates apply at engine_min 1.2.0. Bumping to 1.3.0 would NOT make
+      // the manifest loadable, so the coordinator floor is the actionable
+      // answer and must be the one reported.
+      const path = await writeGraph("output-result-orch-1.2.0.yaml", (m) => {
+        m.compat.engine_min = "1.2.0";
+        m.nodes[0] = orchestratorNode();
       });
+
+      let caught: unknown;
+
+      try {
+        await loadFlowManifest(path);
+      } catch (e) {
+        caught = e;
+      }
+
+      const msg = caught instanceof Error ? caught.message : "";
+
+      expect(msg).toContain("3.6.0");
+      expect(msg).not.toContain("bump compat.engine_min to 1.3.0");
+    });
+
+    it("leaves an ai_coding output.result valid at its own 1.3.0 floor", async () => {
+      const path = await writeGraph(
+        "output-result-ai-coding-1.3.0.yaml",
+        (m) => {
+          m.compat.engine_min = "1.3.0";
+          (m.nodes[0].output as any).result = { schema: "./schemas/out.json" };
+        },
+      );
 
       const manifest = await loadFlowManifest(path);
 

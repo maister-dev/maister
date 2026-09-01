@@ -1,5 +1,6 @@
 import type { HitlOption } from "@/lib/queries/hitl";
 import type { NodeInterruptControlsProps } from "@/components/runs/node-interrupt-controls";
+import type { FormSchemaFieldType } from "@/lib/flows/editor/form-schema-edit";
 import type { ReactElement } from "react";
 import type {
   BudgetBreachAvailableOption,
@@ -243,6 +244,53 @@ export interface HitlFormFieldView {
   type?: string;
   required?: boolean;
   options?: string[];
+}
+
+// ADR-162: the HITL form renders every field as a text input, so the submitted
+// value is always a raw string and has to be coerced back to the field's
+// declared type before the server re-validates it against the same
+// `formSchemaSchema`. The map is keyed by the field-type union, so a new type
+// added to the grammar is a COMPILE error here instead of silently falling
+// through to the raw string — which is how `json` (the one type that accepts
+// any value, and would therefore have stored the raw string as a silent
+// success) was missed the first time.
+const FORM_FIELD_COERCERS: Record<
+  FormSchemaFieldType,
+  (raw: string) => unknown
+> = {
+  string: (raw) => raw,
+  enum: (raw) => raw,
+  number: (raw) => {
+    const n = Number(raw);
+
+    return Number.isFinite(n) ? n : raw;
+  },
+  boolean: (raw) => raw === "true",
+  // A text input cannot express an array/object; the raw string is submitted so
+  // the server's validator rejects it with an actionable message rather than
+  // this layer guessing a shape.
+  array: (raw) => raw,
+  object: (raw) => raw,
+  json: (raw) => {
+    try {
+      return JSON.parse(raw) as unknown;
+    } catch {
+      return raw;
+    }
+  },
+};
+
+// Coerces one raw form input to its declared type. An unknown/absent type (a
+// stored schema this build does not know) keeps the raw string.
+export function coerceFormFieldValue(
+  type: string | undefined,
+  raw: string,
+): unknown {
+  const coerce = (
+    FORM_FIELD_COERCERS as Record<string, (r: string) => unknown>
+  )[type ?? ""];
+
+  return coerce ? coerce(raw) : raw;
 }
 
 // A `form` or task-bound `agent_question` HITL renders option buttons +

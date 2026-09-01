@@ -578,9 +578,9 @@ today-passing optional-absent run whose schema file is broken into a `CONFIG` fa
 | Condition | Where | Code | Message |
 | --- | --- | --- | --- |
 | `output.result` on a `human`/`form` node | `validateGraphManifest` | `CONFIG` | ``graph flow <path> declares output.result on node "<id>" of type <type> — human/form nodes take their vars from the HITL input artifact; remove output.result`` |
-| `output.result` on `orchestrator`/`consensus` with `engine_min < 3.6.0` | `validateGraphManifest` | `CONFIG` | ``graph flow <path> declares output.result on an orchestrator/consensus node but engine_min "<min>" < 3.6.0 — bump compat.engine_min to 3.6.0 (host engine is <engine>)`` |
-| Schema doc uses `type: "json"` or `items` with `engine_min < 3.6.0` | package install | `FLOW_INSTALL` | ``flow install failed [stage=schema] <ref> uses the json field type or typed array items but engine_min "<min>" < 3.6.0 — bump compat.engine_min to 3.6.0`` |
-| Same, in Studio lifecycle validation | authored-flow validation | finding | `form_schema_invalid`, severity BLOCK, same sentence |
+| `output.result` on `orchestrator`/`consensus` with `engine_min < 3.6.0` | `validateGraphManifest` | `CONFIG` | ``graph flow <path> declares output.result on node "<id>" of type <type> but engine_min "<min>" < 3.6.0 — bump compat.engine_min to 3.6.0 (host engine is <engine>)`` |
+| Schema doc uses `type: "json"` or `items` with `engine_min < 3.6.0` | package install (`validatePackageRootSchemaReferences`) | `FLOW_INSTALL` | ``package form schema <ref> uses the json field type or typed array items but engine_min "<min>" < 3.6.0 — bump compat.engine_min to 3.6.0`` — bare, like its `must resolve to root schemas/<name>.json` sibling; the `flow install failed [stage=…]` wrapper is not applied to schema-reference refusals |
+| Same, in Studio lifecycle validation | authored-flow validation | finding | `form_schema_invalid`, severity BLOCK: ``Manifest-referenced form schema <path> uses the json field type or typed array items but the referencing flow declares compat.engine_min "<min|unset>" < 3.6.0 — bump compat.engine_min to 3.6.0.`` The floor folds to the LOWEST `engine_min` among the manifests referencing the document |
 | Unsafe own key at any depth | seam / any validator consumer | `CONFIG` | ``unsafe key "<key>" at <jsonPath>`` |
 | Depth / key-count / array-length over limit | seam / any validator consumer | `CONFIG` | ``payload exceeds the maximum nesting depth (64) at <jsonPath>`` · ``payload exceeds the maximum object key count (10000)`` · ``array at <jsonPath> exceeds the maximum length (10000)`` |
 | `items` element mismatch | seam / any validator consumer | `CONFIG` | ``field "<name>[<i>]" must be a <type>`` |
@@ -596,6 +596,10 @@ routes it into rework.
 `output.result` on `orchestrator`/`consensus` and the `json`/`items` schema-document features. The
 `human`/`form` refusal carries **no** floor — the combination is dead configuration at every engine
 version, so the honest gate is an unconditional refusal, not a version gate.
+
+Both node-type refusals are evaluated **before** the M26 `OUTPUT_ENGINE_MIN` (1.3.0) gate, so an
+author whose real problem is "this node type has no transport" or "this arm needs 3.6.0" gets that
+answer first rather than a 1.3.0 bump that would not make the manifest loadable.
 
 ### C-12 — Rejected alternative: engine prompt injection of the sentinel instruction
 

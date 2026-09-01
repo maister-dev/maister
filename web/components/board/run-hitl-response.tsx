@@ -21,6 +21,7 @@ import {
   HitlDecisionControls,
   type NodeInterruptOptionMatrixView,
   budgetBreachFromSchema,
+  coerceFormFieldValue,
   consensusHitlFromSchema,
   formFieldsFromSchema,
 } from "@/components/board/hitl-decision-controls";
@@ -245,15 +246,7 @@ export function RunHitlResponse({
 
       if (raw === undefined || raw === "") continue;
 
-      if (field.type === "number") {
-        const n = Number(raw);
-
-        response[field.name] = Number.isFinite(n) ? n : raw;
-      } else if (field.type === "boolean") {
-        response[field.name] = raw === "true";
-      } else {
-        response[field.name] = raw;
-      }
+      response[field.name] = coerceFormFieldValue(field.type, raw);
     }
 
     void post({ response });

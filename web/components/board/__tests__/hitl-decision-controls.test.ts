@@ -42,6 +42,7 @@ vi.mock("next-intl", () => ({
 import {
   HitlDecisionControls,
   budgetBreachFromSchema,
+  coerceFormFieldValue,
   consensusHitlFromSchema,
   hookTripFromSchema,
   planReviewDecisionFromSchema,
@@ -1349,5 +1350,46 @@ describe("hookTripFromSchema — pure schema narrowing", () => {
     expect(hookTripFromSchema({ kind: "hook_trip" })).toBeNull();
     expect(hookTripFromSchema(null)).toBeNull();
     expect(hookTripFromSchema("nope")).toBeNull();
+  });
+});
+
+// ADR-162: the HITL form submits every field as a raw string, so the coercer is
+// the ONLY thing standing between a declared field type and the value the
+// server stores. `json` is the dangerous one — it accepts ANY value, so a
+// missed coercion is a silent wrong-shape success rather than a loud
+// validation error.
+describe("coerceFormFieldValue (ADR-162)", () => {
+  it("parses a json field back into a JSON value", () => {
+    expect(coerceFormFieldValue("json", '{"a":1}')).toEqual({ a: 1 });
+    expect(coerceFormFieldValue("json", "[1,2]")).toEqual([1, 2]);
+    expect(coerceFormFieldValue("json", "null")).toBeNull();
+    expect(coerceFormFieldValue("json", "7")).toBe(7);
+    expect(coerceFormFieldValue("json", '"text"')).toBe("text");
+  });
+
+  it("keeps the raw string when a json field is not valid JSON", () => {
+    // Mirrors the number fallback: the server re-validates, and `json` accepts
+    // a string, so an operator's plain prose is stored verbatim rather than
+    // throwing in the browser.
+    expect(coerceFormFieldValue("json", "not json")).toBe("not json");
+  });
+
+  it("keeps the pre-ADR-162 coercions byte-identical", () => {
+    expect(coerceFormFieldValue("number", "7")).toBe(7);
+    expect(coerceFormFieldValue("number", "seven")).toBe("seven");
+    expect(coerceFormFieldValue("boolean", "true")).toBe(true);
+    expect(coerceFormFieldValue("boolean", "anything-else")).toBe(false);
+    expect(coerceFormFieldValue("string", "x")).toBe("x");
+    expect(coerceFormFieldValue("enum", "approve")).toBe("approve");
+  });
+
+  it("submits array/object as the raw string so the server rejects it loudly", () => {
+    expect(coerceFormFieldValue("array", "[1,2]")).toBe("[1,2]");
+    expect(coerceFormFieldValue("object", '{"a":1}')).toBe('{"a":1}');
+  });
+
+  it("keeps the raw string for an absent or unknown declared type", () => {
+    expect(coerceFormFieldValue(undefined, "x")).toBe("x");
+    expect(coerceFormFieldValue("tuple", "x")).toBe("x");
   });
 });

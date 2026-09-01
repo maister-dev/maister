@@ -1077,15 +1077,6 @@ export function validateGraphManifest(
     );
   }
 
-  // Engine gate (M26): manifests declaring `output.result` require
-  // engine_min >= 1.3.0. Manifests without it stay valid at any engine_min.
-  if (declaresOutputResult(nodes) && !semverGte(engineMin, OUTPUT_ENGINE_MIN)) {
-    throw new MaisterError(
-      "CONFIG",
-      `graph flow ${flowYamlPath} is declaring output.result but engine_min "${engineMin}" < ${OUTPUT_ENGINE_MIN} — bump compat.engine_min to ${OUTPUT_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
-    );
-  }
-
   // ADR-162 (C-10): human/form take their vars from the HITL input artifact —
   // a declared `output.result` there is dead config at every engine version, so
   // the refusal carries no floor.
@@ -1123,6 +1114,18 @@ export function validateGraphManifest(
         `graph flow ${flowYamlPath} declares output.result on node "${coordinatorOutputNode.id}" of type ${coordinatorOutputNode.type} but engine_min "${engineMin}" < ${OUTPUT_COORDINATOR_ENGINE_MIN} — bump compat.engine_min to ${OUTPUT_COORDINATOR_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
       );
     }
+  }
+
+  // Engine gate (M26): manifests declaring `output.result` require
+  // engine_min >= 1.3.0. Runs AFTER the ADR-162 node-type refusals above so an
+  // author whose real problem is "this node type has no transport" or "this arm
+  // needs 3.6.0" gets that answer first instead of a 1.3.0 bump that would not
+  // help. Manifests without `output.result` stay valid at any engine_min.
+  if (declaresOutputResult(nodes) && !semverGte(engineMin, OUTPUT_ENGINE_MIN)) {
+    throw new MaisterError(
+      "CONFIG",
+      `graph flow ${flowYamlPath} is declaring output.result but engine_min "${engineMin}" < ${OUTPUT_ENGINE_MIN} — bump compat.engine_min to ${OUTPUT_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
+    );
   }
 
   // Engine gate (M30, ADR-080/081): retry_policy / session_policy / defaults
