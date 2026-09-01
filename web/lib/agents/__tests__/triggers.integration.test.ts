@@ -314,6 +314,49 @@ describe("agent_triggers outbox consumer (ADR-086/087)", () => {
     expect(Number(runs.rows[0].trigger_event_id)).toBe(777);
   });
 
+  // ADR-163: `run.review` now has a SECOND emitter — the flow graph runner's
+  // Review branch, for a delegated flow child. That widens the population this
+  // consumer sees, and the widening is INTENDED, not incidental: an agent bound
+  // to `run.review` fires on a delegated flow child's review exactly as it does
+  // on an agent child's. Pinned so a future narrowing of the matcher (or of the
+  // emit) is a loud failure rather than a silently missing trigger.
+  it("delivers a FLOW child's run.review to an agent bound to that kind", async () => {
+    const reviewAgent = await seedAgent({
+      id: "review-watcher",
+      triggers: ["domain_event"],
+    });
+
+    await pool.query(
+      `INSERT INTO "agent_schedules" ("id", "agent_id", "project_id", "trigger_type", "event_match")
+       VALUES ($1, $2, $3, 'event', '{"kinds":["run.review"]}'::jsonb)`,
+      [randomUUID(), reviewAgent, projectId],
+    );
+
+    const consumer = triggers.buildAgentTriggersConsumer({ db });
+
+    await consumer.handle([
+      fakeEvent({
+        id: 4242 as unknown as DomainEventRow["id"],
+        kind: "run.review",
+        actorType: "system",
+        actorId: null,
+        payload: {
+          runKind: "flow",
+          status: "Review",
+          parentRunId: randomUUID(),
+        },
+      }),
+    ]);
+
+    const runs = await pool.query(
+      `SELECT "trigger_event_id" FROM "runs" WHERE "agent_id" = $1`,
+      [reviewAgent],
+    );
+
+    expect(runs.rows).toHaveLength(1);
+    expect(Number(runs.rows[0].trigger_event_id)).toBe(4242);
+  });
+
   // ADR-151 D8: the generic matcher filters trigger_type='event' explicitly,
   // so a mention binding never joins the eventMatch.kinds fan-out (its
   // event_match is null and would match nothing anyway — the point is that the

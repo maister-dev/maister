@@ -4905,8 +4905,7 @@ export async function runGraph(
     await db.transaction(async (tx: Db) => {
       const rows = await tx
         .update(runs)
-        // ADR-126 T8: stamp the auto-promotion grace anchor alongside the flip
-        // (a column, NOT a run.review domain emit — D-3).
+        // ADR-126 T8: stamp the auto-promotion grace anchor alongside the flip.
         .set({
           status: "Review",
           endedAt,
@@ -4914,7 +4913,13 @@ export async function runGraph(
           currentStepId: null,
         })
         .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
-        .returning({ projectId: runs.projectId });
+        .returning({
+          projectId: runs.projectId,
+          taskId: runs.taskId,
+          flowId: runs.flowId,
+          runKind: runs.runKind,
+          parentRunId: runs.parentRunId,
+        });
 
       if (rows.length > 0) {
         await emitWebhookEvent({
@@ -4924,6 +4929,38 @@ export async function runGraph(
           runId,
           data: { source: "runner" },
         });
+
+        // ADR-163: a DELEGATED flow child reaching Review must also emit the
+        // `run.review` DOMAIN event, in THIS transaction, or a parent parked in
+        // WaitingOnChildren never wakes — its Failed/Crashed siblings emit, its
+        // success side did not, and a status a settled-event consumer waits on
+        // that nothing emits is a deadlock, not a missing feature. Gated on
+        // parent_run_id exactly like the agent launcher's emit: a top-level
+        // Review has no orchestrator to route to, and emitting for it would put
+        // every board run's review into a consumer population only
+        // orchestration reads.
+        if (rows[0].parentRunId) {
+          await emitDomainEvent({
+            db: tx,
+            kind: "run.review",
+            projectId: rows[0].projectId,
+            taskId: rows[0].taskId,
+            runId,
+            actor: { type: "system", id: null },
+            parentRunId: rows[0].parentRunId,
+            payload: {
+              runId,
+              taskId: rows[0].taskId,
+              flowId: rows[0].flowId,
+              runKind: rows[0].runKind,
+              status: "Review",
+            },
+          });
+          log2.info(
+            { parentRunId: rows[0].parentRunId },
+            "[delegation.wake] run.review emitted for a delegated flow child",
+          );
+        }
       }
     });
     log2.info({}, "runGraph ended Review");

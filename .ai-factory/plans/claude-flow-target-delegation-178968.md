@@ -577,13 +577,13 @@ No new env var, port, binary, config-file path, or `package.json` script. `MAIST
 
 > Independently valuable and independently testable; deliberately lands **before** any flow child can exist, so the deadlock can never ship.
 
-- [ ] **T3.1 — Emit `run.review` as a domain event from the graph runner.** (depends on Phase 2)
+- [x] **T3.1 — Emit `run.review` as a domain event from the graph runner.** (depends on Phase 2)
   **RED** is T3.2's first case. **GREEN**: at `web/lib/flows/graph/runner-graph.ts:4904-4927`, widen the Review branch's `.returning()` to `{projectId, taskId, flowId, runKind, parentRunId}` (matching the `Failed`/`Crashed` siblings at `:4817`/`:4863`) and, **inside the same transaction** as the status flip, after the existing `emitWebhookEvent`, emit `run.review` via `emitDomainEvent` with `parentRunId` — **gated on `parentRunId != null`**, so a top-level Review still emits nothing (matching `agents/launch.ts:2540-2555` and `orchestrator.md`).
   *Acceptance*: (a) a delegated flow run reaching `Review` writes exactly one `domain_events` row, `kind='run.review'`, `payload.parentRunId` set, `payload.runKind='flow'`; (b) a **top-level** flow run writes none; (c) the webhook fires in both cases; (d) a rolled-back status flip leaves no event (same-tx proof).
   *Logging*: `log2.info({parentRunId, runKind:"flow"}, "[delegation.wake] emitted run.review for delegated flow child")`.
   *Satisfies*: REQ-18.
 
-- [ ] **T3.2 — Prove the wake, and the sibling gate, at the consumer.** (depends on T3.1)
+- [x] **T3.2 — Prove the wake, and the sibling gate, at the consumer.** (depends on T3.1)
   Three cases, no more (finding **H7** pruned this from two tasks and seven arms):
   1. one flow child → `Review` → `orchestrator_resume` CASes the parent `WaitingOnChildren → Running` and calls the injected `resumeFlow` with `{orchestratorResume:{targetStepId}}`;
   2. two flow children, one still `Running` → parent is **not** woken (pending-sibling gate);
