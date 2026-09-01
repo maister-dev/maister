@@ -15,6 +15,7 @@ export const FORM_FIELD_TYPES: readonly FormSchemaFieldType[] = [
   "enum",
   "array",
   "object",
+  "json",
 ] as const;
 
 // A path into the nested `fields` tree: each entry is the field index at that

@@ -1299,14 +1299,39 @@ export const flowYamlV1Schema = graphOnlyManifestInputSchema.pipe(
 // M26 (ADR-063): the grammar gains a nested `object` type with recursive
 // `fields`, so a structured node output can declare a tree. Recursion needs an
 // explicit element type for `z.lazy`; all prior flat types are unchanged.
+// ADR-162: `json` (any JSON value) and a nameless recursive `items` element
+// declaration for `array` join the same grammar. Both require
+// `compat.engine_min >= 3.6.0`, enforced where a manifest meets the document
+// (package install + Studio lifecycle validation) — the grammar itself stays
+// version-agnostic so an older document keeps parsing.
+const FORM_FIELD_TYPES = [
+  "string",
+  "number",
+  "boolean",
+  "enum",
+  "array",
+  "object",
+  "json",
+] as const;
+
+type FormFieldType = (typeof FORM_FIELD_TYPES)[number];
+
+type FormItemsShape = {
+  type: FormFieldType;
+  options?: string[];
+  fields?: FormFieldShape[];
+  items?: FormItemsShape;
+};
+
 type FormFieldShape = {
   name: string;
   label?: string;
-  type: "string" | "number" | "boolean" | "enum" | "array" | "object";
+  type: FormFieldType;
   required?: boolean;
   default?: unknown;
   options?: string[];
   fields?: FormFieldShape[];
+  items?: FormItemsShape;
 };
 
 const formFieldSchema: z.ZodType<FormFieldShape> = z.lazy(() =>
@@ -1314,11 +1339,26 @@ const formFieldSchema: z.ZodType<FormFieldShape> = z.lazy(() =>
     .object({
       name: z.string().min(1),
       label: z.string().min(1).optional(),
-      type: z.enum(["string", "number", "boolean", "enum", "array", "object"]),
+      type: z.enum(FORM_FIELD_TYPES),
       required: z.boolean().optional(),
       default: z.unknown().optional(),
       options: z.array(z.string()).optional(),
       fields: z.array(formFieldSchema).optional(),
+      items: formItemsSchema.optional(),
+    })
+    .passthrough(),
+);
+
+// An array element declaration: same shape as a field minus the authoring-only
+// keys (`name`/`label`/`required`/`default`) — an element has no name and is
+// never optional.
+const formItemsSchema: z.ZodType<FormItemsShape> = z.lazy(() =>
+  z
+    .object({
+      type: z.enum(FORM_FIELD_TYPES),
+      options: z.array(z.string()).optional(),
+      fields: z.array(formFieldSchema).optional(),
+      items: formItemsSchema.optional(),
     })
     .passthrough(),
 );
@@ -1364,6 +1404,7 @@ export type FlowPresentation = z.infer<typeof flowPresentationSchema>;
 export type FlowNodePresentation = z.infer<typeof flowNodePresentationSchema>;
 export type FlowCompat = z.infer<typeof flowCompatSchema>;
 export type FormSchema = z.infer<typeof formSchemaSchema>;
+export type FormFieldItems = z.infer<typeof formItemsSchema>;
 export type NodeDef = z.infer<typeof nodeSchema>;
 export type GateDef = z.infer<typeof gateSchema>;
 export type WorkspacePolicy = z.infer<typeof workspacePolicySchema>;

@@ -985,6 +985,67 @@ describe("formSchemaSchema", () => {
       }),
     ).not.toThrow();
   });
+
+  // --- ADR-162 (Wave 3): json type + typed array items ----------------------
+
+  it("accepts the json field type (ADR-162)", () => {
+    expect(() =>
+      formSchemaSchema.parse({
+        schemaVersion: 1,
+        fields: [
+          { name: "payload", type: "json", required: true },
+          { name: "opaque", type: "json" },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
+  it("accepts a nameless recursive array items declaration (ADR-162)", () => {
+    expect(() =>
+      formSchemaSchema.parse({
+        schemaVersion: 1,
+        fields: [
+          { name: "tags", type: "array", items: { type: "string" } },
+          {
+            name: "levels",
+            type: "array",
+            items: { type: "enum", options: ["a", "b"] },
+          },
+          {
+            name: "rows",
+            type: "array",
+            items: {
+              type: "object",
+              fields: [{ name: "id", type: "string", required: true }],
+            },
+          },
+          {
+            name: "matrix",
+            type: "array",
+            items: { type: "array", items: { type: "number" } },
+          },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects an items declaration with an unknown type (ADR-162)", () => {
+    expect(() =>
+      formSchemaSchema.parse({
+        schemaVersion: 1,
+        fields: [{ name: "tags", type: "array", items: { type: "tuple" } }],
+      }),
+    ).toThrow();
+  });
+
+  it("keeps an items-less array valid (ADR-162 openness)", () => {
+    expect(() =>
+      formSchemaSchema.parse({
+        schemaVersion: 1,
+        fields: [{ name: "tags", type: "array" }],
+      }),
+    ).not.toThrow();
+  });
 });
 
 // --- M26 (ADR-063): node output.result declaration --------------------------

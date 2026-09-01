@@ -203,9 +203,9 @@ No AI co-author trailer (repo convention).
 
 ### Phase 1: Validator grammar — TDD
 
-- [ ] **T1.R (RED)** — extend `web/lib/__tests__/config.schema.test.ts` (json/items parse + unknown-type still rejected) and `web/lib/flows/__tests__/output-schema.test.ts` with AC-1…AC-5 cases + AC-6 untouched; run `pnpm test:unit` → new cases fail for intended reasons.
-- [ ] **T1.G (GREEN)** — `config.schema.ts`: add `"json"` to `FormFieldShape`/`formFieldSchema`, recursive nameless `items`; `output-schema.ts`: json presence rule, items element validation with `field[i]` paths, structural pre-pass walk (unsafe keys with JSON path; depth/keys/array limits as exported constants). Existing error messages unchanged. No logging in the pure function.
-- [ ] **T1.F (REFACTOR + authoring touch)** — `form-schema-builder.tsx`: add `json` type option + EN/RU labels (`messages/en.json`, `messages/ru.json`); `template-variable-catalog.ts`: `json` field = opaque leaf (verify; adjust only if it warns) + extend `template-variable-catalog.test.ts`. Typed-items editing stays raw-JSON-mode (documented, no new UI).
+- [x] **T1.R (RED)** — extend `web/lib/__tests__/config.schema.test.ts` (json/items parse + unknown-type still rejected) and `web/lib/flows/__tests__/output-schema.test.ts` with AC-1…AC-5 cases + AC-6 untouched; run `pnpm test:unit` → new cases fail for intended reasons.
+- [x] **T1.G (GREEN)** — `config.schema.ts`: add `"json"` to `FormFieldShape`/`formFieldSchema`, recursive nameless `items`; `output-schema.ts`: json presence rule, items element validation with `field[i]` paths, structural pre-pass walk (unsafe keys with JSON path; depth/keys/array limits as exported constants). Existing error messages unchanged. No logging in the pure function.
+- [x] **T1.F (REFACTOR + authoring touch)** — `form-schema-builder.tsx`: add `json` type option + EN/RU labels (`messages/en.json`, `messages/ru.json`); `template-variable-catalog.ts`: `json` field = opaque leaf (verify; adjust only if it warns) + extend `template-variable-catalog.test.ts`. Typed-items editing stays raw-JSON-mode (documented, no new UI).
 - **Phase 1 gate:** `cd web && pnpm typecheck && pnpm exec eslint . && pnpm test:unit` green (never `pnpm lint` — it reformats the repo).
 
 ### Phase 2: Transport matrix — TDD

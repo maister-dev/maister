@@ -80,6 +80,7 @@ const FORM_SCHEMA_LABELS = {
     enum: "Enum",
     array: "Array",
     object: "Object",
+    json: "JSON (any value)",
   },
   preview: {
     criticalityLabel: "Criticality",

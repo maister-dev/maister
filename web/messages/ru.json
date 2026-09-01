@@ -3836,7 +3836,8 @@
           "boolean": "Логическое",
           "enum": "Перечисление",
           "array": "Массив",
-          "object": "Объект"
+          "object": "Объект",
+          "json": "JSON (любое значение)"
         },
         "preview": {
           "criticalityLabel": "Критичность",

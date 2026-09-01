@@ -187,6 +187,7 @@ export function formSchemaBuilderLabels(te: T): FormSchemaBuilderLabels {
       enum: te("artifacts.formSchema.type.enum"),
       array: te("artifacts.formSchema.type.array"),
       object: te("artifacts.formSchema.type.object"),
+      json: te("artifacts.formSchema.type.json"),
     },
     preview: {
       criticalityLabel: te("artifacts.formSchema.preview.criticalityLabel"),

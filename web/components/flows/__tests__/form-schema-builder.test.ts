@@ -40,6 +40,7 @@ const LABELS: BuilderProps["labels"] = {
     enum: "Enum",
     array: "Array",
     object: "Object",
+    json: "JSON (any value)",
   },
   preview: {
     criticalityLabel: "Criticality",

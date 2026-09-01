@@ -245,4 +245,44 @@ describe("buildTemplateVariableCatalog", () => {
     expect(entries.has("steps.form.vars.approved")).toBe(false);
     expect(entries.has("steps.broken.vars.any")).toBe(false);
   });
+
+  it("exposes a json field as an opaque leaf with no expansion or warning (ADR-162)", () => {
+    const catalog = buildTemplateVariableCatalog({
+      manifest: nodeManifest([
+        {
+          id: "plan",
+          type: "ai_coding",
+          action: { prompt: "p" },
+          output: { result: { schema: "./schemas/plan.json", required: true } },
+          transitions: { success: "review" },
+        },
+        { id: "review", type: "human" },
+      ]),
+      selectedNodeId: "review",
+      files: [
+        file(
+          "schemas/plan.json",
+          schema([
+            { name: "payload", type: "json", required: true },
+            { name: "tags", type: "array", items: { type: "string" } },
+          ]),
+        ),
+      ],
+    });
+    const entries = byPath(catalog.entries);
+
+    expect(entries.get("steps.plan.vars.payload")).toMatchObject({
+      valueType: "json",
+      presence: "required",
+    });
+    expect(entries.get("steps.plan.vars.tags")).toMatchObject({
+      valueType: "array",
+    });
+    expect(
+      catalog.entries.some((entry) =>
+        entry.path.startsWith("steps.plan.vars.payload."),
+      ),
+    ).toBe(false);
+    expect(catalog.warnings).toEqual([]);
+  });
 });
