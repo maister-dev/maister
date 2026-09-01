@@ -9,7 +9,7 @@ import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
 import { launchAgentRun } from "@/lib/agents/launch";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { isMaisterError } from "@/lib/errors";
+import { isMaisterError, type MaisterError } from "@/lib/errors";
 import { orchestratorMaxFanout } from "@/lib/instance-config";
 import {
   resolveDelegatableFlow,
@@ -17,8 +17,11 @@ import {
 } from "@/lib/flows/delegatable-flow";
 import { admitDelegatedChild } from "@/lib/orchestrator/admission";
 import {
+  type DelegationTarget,
   delegationTargetKind,
   delegationTargetSchema,
+  refuseUnsupportedDelegationOption,
+  titleFromPrompt,
 } from "@/lib/orchestrator/delegation-target";
 import { launchRun } from "@/lib/services/runs";
 import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
@@ -66,10 +69,9 @@ const bodySchema = z
 type PlanBody = z.infer<typeof bodySchema>;
 type PlanTask = z.infer<typeof planTaskSchema>;
 
-function titleFromPrompt(prompt: string): string {
-  const firstLine = prompt.split("\n")[0].trim();
-
-  return firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine;
+/** The body-supplied ref an entry named, for refusal messages. */
+function targetRef(target: DelegationTarget): string {
+  return target.flowId ?? target.agentId ?? "?";
 }
 
 // Kahn topological reduction: peel keys with no remaining unresolved
@@ -171,14 +173,38 @@ export async function POST(
       }
 
       // ADR-163: a cheap pre-check so an obviously oversized batch is refused
-      // before any resolution work. The BINDING bound is
-      // `admitDelegatedChild(live + batch size)` inside the DAG transaction —
-      // this one cannot see the orchestrator's already-running children.
+      // before any resolution work. It cannot see the orchestrator's running
+      // children; the DAG transaction's `admitDelegatedChild(live + batch
+      // size)` can, but inserts no runs, so the DECISIVE bound is the one
+      // inside each launcher's run-insert transaction (ADR-163 D8 amendment).
       if (planTasks.length > orchestratorMaxFanout()) {
         return NextResponse.json(
           {
             code: "CONFIG",
             message: `plan fan-out limit reached (${orchestratorMaxFanout()})`,
+          },
+          { status: httpStatusForExtCode("CONFIG") },
+        );
+      }
+
+      // ADR-163 D4: the per-kind option allow-list is a SHAPE rule, settled
+      // BEFORE any resolution work with the same code and status `run_delegate`
+      // gives the same field — every violating entry reported at once. An
+      // as-plan entry always mints a task, so `mode` is fixed to "task".
+      const optionRefusals = planTasks.flatMap((t) => {
+        const refusal = refuseUnsupportedDelegationOption(
+          delegationTargetKind(t.target),
+          { mode: "task", title: t.title, workspace: t.workspace },
+        );
+
+        return refusal ? [`${t.key} (${targetRef(t.target)}): ${refusal}`] : [];
+      });
+
+      if (optionRefusals.length > 0) {
+        return NextResponse.json(
+          {
+            code: "CONFIG",
+            message: `unsupported plan options: ${optionRefusals.join("; ")}`,
           },
           { status: httpStatusForExtCode("CONFIG") },
         );
@@ -264,22 +290,36 @@ export async function POST(
       //
       // ADR-163: the target is a discriminated union, so the resolver is chosen
       // per entry — the agent catalog for one, the project's enabled+trusted
-      // flows for the other. A batch may MIX both kinds. `workspace` is
-      // agent-only, so a flow entry carrying it is collected here as a failure
-      // rather than silently dropped.
-      const resolveFailures: string[] = [];
+      // flows for the other. A batch may MIX both kinds. Every typed refusal is
+      // collected with ITS code; anything else is a real fault and propagates.
+      const resolveFailures: {
+        key: string;
+        ref: string;
+        code: MaisterError["code"];
+        message: string;
+      }[] = [];
       const resolvedFlows = new Map<string, DelegatableFlow>();
+
+      const collectRefusal = async (
+        t: PlanTask,
+        resolve: () => Promise<void>,
+      ): Promise<void> => {
+        try {
+          await resolve();
+        } catch (err) {
+          if (!isMaisterError(err)) throw err;
+          resolveFailures.push({
+            key: t.key,
+            ref: targetRef(t.target),
+            code: err.code,
+            message: err.message,
+          });
+        }
+      };
 
       for (const t of planTasks) {
         if (delegationTargetKind(t.target) === "flow") {
-          if (t.workspace !== undefined) {
-            resolveFailures.push(
-              `${t.key} (${t.target.flowId}): workspace is not supported for flow targets (a flow run always provisions its own worktree)`,
-            );
-            continue;
-          }
-
-          try {
+          await collectRefusal(t, async () => {
             resolvedFlows.set(
               t.key,
               await resolveDelegatableFlow(
@@ -290,38 +330,34 @@ export async function POST(
                 db,
               ),
             );
-          } catch (err) {
-            resolveFailures.push(
-              `${t.key} (${t.target.flowId}): ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            );
-          }
-
+          });
           continue;
         }
 
-        try {
+        await collectRefusal(t, async () => {
           await resolveEffectiveAgentDefinition(
             { agentId: t.target.agentId as string, projectId: ctx.projectId },
             db,
           );
-        } catch (err) {
-          resolveFailures.push(
-            `${t.key} (${t.target.agentId}): ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        }
+        });
       }
 
       if (resolveFailures.length > 0) {
+        // One shared code when the batch agrees (what `run_delegate` answers for
+        // any entry alone); a MIXED batch aggregates to the conservative
+        // PRECONDITION, every line still tagged with its own code.
+        const codes = new Set(resolveFailures.map((f) => f.code));
+        const code: MaisterError["code"] =
+          codes.size === 1 ? resolveFailures[0].code : "PRECONDITION";
+
         return NextResponse.json(
           {
-            code: "PRECONDITION",
-            message: `unresolvable plan targets: ${resolveFailures.join("; ")}`,
+            code,
+            message: `unresolvable plan targets: ${resolveFailures
+              .map((f) => `${f.key} (${f.ref}): [${f.code}] ${f.message}`)
+              .join("; ")}`,
           },
-          { status: httpStatusForExtCode("PRECONDITION") },
+          { status: httpStatusForExtCode(code) },
         );
       }
 

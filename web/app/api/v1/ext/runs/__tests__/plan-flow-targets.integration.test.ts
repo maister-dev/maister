@@ -267,14 +267,17 @@ describe("run_plan flow targets (ADR-163)", () => {
     expect(json.code).toBe("PRECONDITION");
     // BOTH bad entries, not just the first — an all-or-nothing validation that
     // reported one failure per round-trip would make a 10-entry DAG a 10-step
-    // guessing game.
-    expect(json.message).toContain("a (untrusted-flow)");
-    expect(json.message).toContain("b (no-such-flow)");
+    // guessing game. Each line names the entry and carries its own code.
+    expect(json.message).toContain("a (untrusted-flow): [PRECONDITION]");
+    expect(json.message).toContain("b (no-such-flow): [PRECONDITION]");
     expect(await countRows(ctx, "tasks")).toBe(tasksBefore);
     expect(await countRows(ctx, "task_relations")).toBe(0);
   }, 60_000);
 
-  it("`workspace` on a flow entry is refused, not silently dropped", async () => {
+  // ADR-163 review Q2-A: a per-kind allow-list violation is a SHAPE problem and
+  // answers CONFIG 422 before any resolution work — the same code and status
+  // `run_delegate` gives the same field on the same target kind.
+  it("`workspace` on a flow entry is refused CONFIG 422 before resolution, not silently dropped", async () => {
     const tasksBefore = await countRows(ctx, "tasks");
 
     const res = await planPost(
@@ -292,10 +295,91 @@ describe("run_plan flow targets (ADR-163)", () => {
       {},
     );
 
-    expect(res.status).toBe(409);
-    expect(((await res.json()) as { message: string }).message).toContain(
-      "workspace is not supported for flow targets",
+    expect(res.status).toBe(422);
+    const json = (await res.json()) as { code: string; message: string };
+
+    expect(json.code).toBe("CONFIG");
+    expect(json.message).toContain(
+      "a (delegated-flow): workspace is not supported for flow targets",
     );
+    expect(await countRows(ctx, "tasks")).toBe(tasksBefore);
+  }, 60_000);
+
+  // ADR-163 review Q2-A: resolution failures keep their own code when the batch
+  // agrees on one (here CONFIG for two engine-incompatible flows, as
+  // `run_delegate` would answer for either alone)...
+  it("a batch whose resolution failures are all CONFIG answers CONFIG 422", async () => {
+    await seedFlow(ctx, { flowRefId: "future-a", engineMin: "99.0.0" });
+    await seedFlow(ctx, { flowRefId: "future-b", engineMin: "99.0.0" });
+
+    const tasksBefore = await countRows(ctx, "tasks");
+
+    const res = await planPost(
+      planRequest(secret, {
+        tasks: [
+          {
+            key: "a",
+            target: { flowId: "future-a" },
+            prompt: "p",
+            dependsOn: [],
+          },
+          {
+            key: "b",
+            target: { flowId: "future-b" },
+            prompt: "p",
+            dependsOn: [],
+          },
+        ],
+      }),
+      {},
+    );
+
+    expect(res.status).toBe(422);
+    const json = (await res.json()) as { code: string; message: string };
+
+    expect(json.code).toBe("CONFIG");
+    expect(json.message).toContain("a (future-a): [CONFIG]");
+    expect(json.message).toContain("b (future-b): [CONFIG]");
+    expect(await countRows(ctx, "tasks")).toBe(tasksBefore);
+  }, 60_000);
+
+  // ...and a MIXED batch aggregates to the conservative PRECONDITION 409 with
+  // every entry still tagged by its own code, so nothing is hidden.
+  it("a batch mixing PRECONDITION and CONFIG failures answers PRECONDITION 409 with per-entry codes", async () => {
+    await seedFlow(ctx, {
+      flowRefId: "untrusted-flow",
+      trustStatus: "untrusted",
+    });
+    await seedFlow(ctx, { flowRefId: "future-a", engineMin: "99.0.0" });
+
+    const tasksBefore = await countRows(ctx, "tasks");
+
+    const res = await planPost(
+      planRequest(secret, {
+        tasks: [
+          {
+            key: "a",
+            target: { flowId: "untrusted-flow" },
+            prompt: "p",
+            dependsOn: [],
+          },
+          {
+            key: "b",
+            target: { flowId: "future-a" },
+            prompt: "p",
+            dependsOn: [],
+          },
+        ],
+      }),
+      {},
+    );
+
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as { code: string; message: string };
+
+    expect(json.code).toBe("PRECONDITION");
+    expect(json.message).toContain("a (untrusted-flow): [PRECONDITION]");
+    expect(json.message).toContain("b (future-a): [CONFIG]");
     expect(await countRows(ctx, "tasks")).toBe(tasksBefore);
   }, 60_000);
 
