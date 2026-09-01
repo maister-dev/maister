@@ -34,6 +34,10 @@ let db: NodePgDatabase;
 let runtimeRoot: string;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+// The enumerated shape must cover every import site reached transitively, not
+// just the calls this suite makes: `lib/services/hitl.ts` pulls in gate-chat,
+// whose `defaultApi` binds five supervisor exports AT MODULE LOAD. A missing
+// name is a load-time "No <x> export is defined on the mock", not a test miss.
 vi.mock("@/lib/supervisor-client", () => ({
   checkpointSession: vi.fn(async (sessionId: string) => ({
     alreadyCheckpointed: false,
@@ -41,6 +45,15 @@ vi.mock("@/lib/supervisor-client", () => ({
     monotonicId: 1,
   })),
   deliverPermission: vi.fn(async () => ({ ok: true })),
+  listSessions: vi.fn(async () => []),
+  cancelPrompt: vi.fn(async () => ({ cancelled: true })),
+  sendPrompt: vi.fn(async () => ({ stopReason: "end_turn" })),
+  createSession: vi.fn(async () => ({
+    sessionId: "sup-1",
+    pid: 1,
+    acpSessionId: "acp-1",
+  })),
+  streamSession: vi.fn(async function* () {}),
 }));
 vi.mock("@/lib/flows/runner", () => ({
   runFlow: vi.fn(async () => {}),

@@ -246,6 +246,48 @@ async function runGit(
   });
 }
 
+// `git config` takes an exclusive lock on the file it writes and does NOT retry:
+// `extensions.worktreeConfig` lands in the SHARED `.git/config`, so any two
+// concurrent worktree allocations in one repo can collide, and two children
+// allocating the SAME shared tree (ADR-102) also collide on its
+// `config.worktree`. Git reports it as "could not lock config file ...: File
+// exists" and exits non-zero, which surfaced as a spurious CONFLICT from
+// install/ensure. The lock is held for a single write+rename, so a short bounded
+// backoff resolves it; anything else propagates unchanged on the first attempt.
+const CONFIG_LOCK_RETRY_DELAYS_MS = [25, 50, 100, 200];
+
+function isConfigLockContention(error: unknown): boolean {
+  const stderr = (error as { stderr?: unknown })?.stderr;
+
+  return (
+    typeof stderr === "string" && stderr.includes("could not lock config file")
+  );
+}
+
+async function runGitConfig(
+  worktreePath: string,
+  args: readonly string[],
+): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await runGit(worktreePath, args);
+
+      return;
+    } catch (error) {
+      if (
+        attempt >= CONFIG_LOCK_RETRY_DELAYS_MS.length ||
+        !isConfigLockContention(error)
+      ) {
+        throw error;
+      }
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, CONFIG_LOCK_RETRY_DELAYS_MS[attempt]),
+      );
+    }
+  }
+}
+
 async function assertManagedFilesExcluded(worktreePath: string): Promise<void> {
   try {
     await execFileAsync(
@@ -268,14 +310,18 @@ async function configureWorktreeProvenance(
 ): Promise<void> {
   await ensureWorktreeGitExclude(worktreePath);
   await assertManagedFilesExcluded(worktreePath);
-  await runGit(worktreePath, ["config", "extensions.worktreeConfig", "true"]);
-  await runGit(worktreePath, [
+  await runGitConfig(worktreePath, [
+    "config",
+    "extensions.worktreeConfig",
+    "true",
+  ]);
+  await runGitConfig(worktreePath, [
     "config",
     "--worktree",
     "core.hooksPath",
     path.dirname(paths.hook),
   ]);
-  await runGit(worktreePath, [
+  await runGitConfig(worktreePath, [
     "config",
     "--worktree",
     "commit.template",

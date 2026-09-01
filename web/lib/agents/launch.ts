@@ -126,7 +126,10 @@ import {
   resolveBaseCommit,
   statusPorcelain,
 } from "@/lib/worktree";
-import { ensureWorktreeProvenance } from "@/lib/worktree-provenance";
+import {
+  ensureWorktreeProvenance,
+  readWorktreeProvenanceMetadata,
+} from "@/lib/worktree-provenance";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -915,6 +918,34 @@ async function launchAgentDrivenFlowRun(
   };
 }
 
+/**
+ * The provenance owner of a shared tree THIS launch did not allocate.
+ *
+ * `ensureWorktreeProvenance` verifies the tree against an EXPECTED runId, so a
+ * non-allocator must expect the owner's id, not its own. Both non-allocating
+ * shared-tree paths — the orphan claim and the TOCTOU catch — used to keep
+ * their own `runId` and were refused PRECONDITION "managed worktree provenance
+ * conflicts with the delivery owner": a benign concurrent allocation reported
+ * as an ownership violation. (The `treeRow` reuse branch is NOT routed here on
+ * purpose — it has a better expectation, the allocator's row, and keeping it
+ * preserves a real mismatch check.)
+ *
+ * Falls back to `fallbackRunId` when the tree carries no readable provenance —
+ * the narrow window where `git worktree add` has registered the path but the
+ * winner has not written provenance yet. `ensureWorktreeProvenance` installs on
+ * ENOENT, so the fallback is the pre-existing behaviour, never a new throw.
+ */
+async function adoptExistingTreeOwner(
+  worktreePath: string,
+  fallbackRunId: string,
+): Promise<string> {
+  const existing = await readWorktreeProvenanceMetadata(worktreePath).catch(
+    () => null,
+  );
+
+  return existing?.runId ?? fallbackRunId;
+}
+
 export async function launchAgentRun(
   input: LaunchAgentRunInput,
 ): Promise<LaunchAgentRunResult> {
@@ -1152,6 +1183,10 @@ export async function launchAgentRun(
           // existing path/branch) and claim the row below. The true base is lost;
           // promote/diff tolerate base_commit=null.
           baseCommit = null;
+          provenanceRunId = await adoptExistingTreeOwner(
+            worktreePath,
+            provenanceRunId,
+          );
           log.warn(
             { rootRunId, worktreePath },
             "shared tree orphan path claimed — no prior workspaces row",
@@ -1191,6 +1226,10 @@ export async function launchAgentRun(
 
             if (after.some((w) => w.path === worktreePath)) {
               baseCommit = null;
+              provenanceRunId = await adoptExistingTreeOwner(
+                worktreePath,
+                provenanceRunId,
+              );
             } else {
               throw new MaisterError(
                 "CONFLICT",

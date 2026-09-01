@@ -62,11 +62,21 @@ vi.mock("@/lib/db/client", () => ({
 // scratch-runs/events.ts imports sendPrompt + streamSession at module load for
 // its defaultSupervisorApi (unused — the scratch test threads an explicit api),
 // so the mock must still export them.
+// listSessions/cancelPrompt/createSession are here for gate-chat's `defaultApi`,
+// which lib/services/hitl.ts pulls in and which binds them at MODULE LOAD — a
+// missing name fails the whole file to load, not one assertion.
 vi.mock("@/lib/supervisor-client", () => ({
   deliverPermission: vi.fn(async () => ({ ok: true })),
   cancelPermission: vi.fn(async () => undefined),
   sendPrompt: vi.fn(async () => ({ stopReason: "end_turn" })),
   streamSession: vi.fn(async function* () {}),
+  listSessions: vi.fn(async () => []),
+  cancelPrompt: vi.fn(async () => ({ cancelled: true })),
+  createSession: vi.fn(async () => ({
+    sessionId: "sup-1",
+    pid: 1,
+    acpSessionId: "acp-1",
+  })),
 }));
 
 vi.mock("@/lib/flows/runner", () => ({
