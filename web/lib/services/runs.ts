@@ -33,7 +33,10 @@ import {
 import { resolvePinnedFlowRevisionForRefId } from "@/lib/packages/pin";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { type AgentExecutionPolicyRecommendation } from "@/lib/db/schema";
+import {
+  type AgentExecutionPolicyRecommendation,
+  type DelegationSnapshot,
+} from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
   formatFlowRefError,
@@ -374,6 +377,15 @@ export type LaunchRunInput = {
   // boolean — no recall/embedding call, no snapshot insert happens here
   // (snapshots are consumption-time: T4.3 ambient / T4.2 explicit).
   brainContext?: boolean | null;
+  // ADR-163: delegation provenance for a flow run launched as an orchestrator's
+  // child. SERVER-INTERNAL — set only by the delegation seam, never accepted
+  // from a route body (the same idiom as `scheduledReservation` and
+  // `evaluationBatchItemId`). Absent for every board / scheduled / agent-driven
+  // launch, which is what keeps a top-level run's run-tree columns NULL.
+  parentRunId?: string;
+  rootRunId?: string;
+  launchMode?: "auto" | "manual";
+  delegationSnapshot?: DelegationSnapshot;
 };
 
 function budgetRestartSourceRunId(
@@ -1702,6 +1714,15 @@ export async function* launchRunStaged(
             // ADR-122 (T5.3): persist the launch-time ambient-brain decision.
             // null = inherit the flow default at ambient-inject time (T4.3).
             brainContext: input.brainContext ?? null,
+            // ADR-163: run-tree linkage + the launch-time delegation snapshot
+            // for a delegated flow child. All four are written in THIS insert,
+            // so a child is never briefly parentless; every terminal and
+            // recovery path reads the snapshot rather than a live projection
+            // that may have moved since.
+            parentRunId: input.parentRunId ?? null,
+            rootRunId: input.rootRunId ?? null,
+            launchMode: input.launchMode ?? null,
+            delegationSnapshot: input.delegationSnapshot ?? null,
             status: "Pending",
             // Snapshot the enabled revision (M10, ADR-021). flow_revision_id is
             // the authoritative pin the runner resolves the manifest + bundle
@@ -1918,6 +1939,19 @@ export async function* launchRunStaged(
     taskId: task.id,
     warnings: runnerResolutionWarnings,
   });
+
+  if (input.parentRunId) {
+    log.info(
+      {
+        runId,
+        taskId: task.id,
+        parentRunId: input.parentRunId,
+        rootRunId: input.rootRunId ?? null,
+        launchMode: input.launchMode ?? null,
+      },
+      "[delegation.launch] flow run launched as delegated child",
+    );
+  }
 
   const startResult = await tryStartRun(runId, { db: _db });
 

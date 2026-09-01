@@ -630,13 +630,13 @@ No new env var, port, binary, config-file path, or `package.json` script. `MAIST
 
 ### Phase 5 — Delegation provenance on the canonical Flow launcher
 
-- [ ] **T5.1 — Extend `LaunchRunInput`.** (depends on Phase 4)
+- [x] **T5.1 — Extend `LaunchRunInput`.** (depends on Phase 4)
   **RED** is T5.2. **GREEN**: add `parentRunId?`, `rootRunId?`, `launchMode?`, `delegationSnapshot?` to `LaunchRunInput` in `web/lib/services/runs.ts` and thread them into the run insert (`:1654-1721`). Doc-comment them as **server-internal**, set only by the delegation seam and never accepted from a route body — the same idiom as `scheduledReservation` / `evaluationBatchItemId`.
   Base/target need **no** new input: `base = input.baseBranch ?? task.baseBranch ?? project.mainBranch` already falls through to the project default for a carrier task (D7). The resolved pair is copied into `delegation_snapshot`.
   *Logging*: `log.info({runId, taskId, parentRunId, rootRunId, launchMode}, "[delegation.launch] flow run launched as delegated child")` when `parentRunId` is set.
   *Satisfies*: REQ-07, REQ-08.
 
-- [ ] **T5.2 — Snapshot completeness + drift immunity.** (depends on T5.1)
+- [x] **T5.2 — Snapshot completeness + drift immunity.** (depends on T5.1)
   Assert the child persists every launch-time decision a terminal or recovery path reads: `flow_id`, `flow_revision_id`, `flow_version`, `flow_revision`, `parent_run_id`, `root_run_id`, `launch_mode`, `run_sessions.runner_snapshot`, and a `delegation_snapshot` carrying `flowRefId`, `resolvedRevision`, `engineMin/Max`, `carrierTaskId`, `mode`, `runnerOverride`, `baseBranch`, `targetBranch`. Then **mutate the live projection** — advance the flow's `enabled_revision_id` to a different revision — and assert the child's snapshot is unchanged and `loadRun` still resolves the manifest from `runs.flow_revision_id`. Plus: `workspaces.base_branch`/`target_branch` both equal `project.mainBranch` (D7 — the child does **not** branch from the orchestrator's branch, F12).
   *Files*: `web/lib/services/__tests__/launch-run-delegated.integration.test.ts`.
   *Satisfies*: REQ-06, REQ-08.
