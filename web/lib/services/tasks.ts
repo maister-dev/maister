@@ -5,7 +5,7 @@ import type { TaskPriority } from "@/lib/tasks/criticality";
 
 import { randomUUID } from "node:crypto";
 
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, notExists, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -479,4 +479,38 @@ export async function updateTask(
     .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId)));
 
   return taskToDTO(updatedRows[0], _db);
+}
+
+/**
+ * Abandon tasks that never launched — the ONE terminal exit for a task that
+ * automation created and can no longer use (an orchestrator cascade's
+ * un-launched as-plan children, a delegation whose launch failed after its
+ * carrier task committed).
+ *
+ * The "no run" guard is part of the UPDATE, not a prior SELECT: `runs.task_id`
+ * cascades on delete and a run inserted between a check and a write must keep
+ * its task. Never a hard delete — `domain_events.task_id` cascades too, and the
+ * `task.created` fact must survive its task's failure.
+ *
+ * Returns the ids actually abandoned.
+ */
+export async function abandonUnlaunchedTasks(
+  db: Db,
+  taskIds: string[],
+  at: Date,
+): Promise<string[]> {
+  if (taskIds.length === 0) return [];
+
+  const rows = (await db
+    .update(tasks)
+    .set({ status: "Abandoned", updatedAt: at })
+    .where(
+      and(
+        inArray(tasks.id, taskIds),
+        notExists(db.select().from(runs).where(eq(runs.taskId, tasks.id))),
+      ),
+    )
+    .returning({ id: tasks.id })) as { id: string }[];
+
+  return rows.map((row) => row.id);
 }

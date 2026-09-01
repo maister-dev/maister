@@ -3,6 +3,7 @@ import "server-only";
 import { and, inArray } from "drizzle-orm";
 import pino from "pino";
 
+import { abandonUnlaunchedTasks } from "@/lib/services/tasks";
 import { revokeOrchestratorRunTokensForRun } from "@/lib/agents/tokens";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -16,10 +17,7 @@ import { gcAgeDays } from "@/lib/instance-config";
 import { poolForRunKind, promoteNextPending } from "@/lib/scheduler";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs, tasks, workspaces } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { runs, workspaces } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -127,12 +125,7 @@ export async function cascadeAbandonRunTree(
               })
           : [];
 
-      if (unlaunchedTaskIds.length > 0) {
-        await tx
-          .update(tasks)
-          .set({ status: "Abandoned", updatedAt: endedAt })
-          .where(inArray(tasks.id, unlaunchedTaskIds));
-      }
+      await abandonUnlaunchedTasks(tx, unlaunchedTaskIds, endedAt);
 
       if (runRows.length > 0) {
         // Same GC deadline pattern as markAbandoned — every cascaded run shares

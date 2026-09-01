@@ -138,6 +138,18 @@ function flowDelegation(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** The one task the fixture did not seed: the carrier a delegation minted. */
+async function carrierTask(): Promise<{ id: string; status: string }> {
+  const rows = await pool.query(
+    `SELECT "id", "status" FROM "tasks" WHERE "project_id" = $1 AND "id" <> $2`,
+    [ctx.projectId, orchestratorTaskId],
+  );
+
+  expect(rows.rows).toHaveLength(1);
+
+  return rows.rows[0];
+}
+
 async function childRun(runId: string) {
   return (
     await pool.query(
@@ -240,8 +252,10 @@ describe("run_delegate flow arm (ADR-163 REQ-07..REQ-13)", () => {
 
   // REQ-13: `runnerOverride` reaches the FLOW executor-resolution chain, so an
   // unknown runner surfaces THAT chain's own error rather than a bespoke one —
-  // and, being a launch-time failure, it triggers the carrier compensation.
-  it("an unknown runnerOverride surfaces the flow runner chain's own refusal and leaves no carrier task", async () => {
+  // and, being a launch-time failure, it triggers the carrier compensation,
+  // which ABANDONS the carrier (the task model's terminal exit) rather than
+  // deleting a row whose FKs cascade into runs and the fact log.
+  it("an unknown runnerOverride surfaces the flow runner chain's own refusal and leaves the carrier task Abandoned", async () => {
     const tasksBefore = await countRows(ctx, "tasks");
 
     const res = await delegatePost(
@@ -254,7 +268,8 @@ describe("run_delegate flow arm (ADR-163 REQ-07..REQ-13)", () => {
 
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(await countRows(ctx, "runs")).toBe(1); // the orchestrator only
-    expect(await countRows(ctx, "tasks")).toBe(tasksBefore);
+    expect(await countRows(ctx, "tasks")).toBe(tasksBefore + 1);
+    expect((await carrierTask()).status).toBe("Abandoned");
   });
 
   it("REQ-17: a flow child draws the FLOW pool while an agent sibling draws the AGENT pool", async () => {
@@ -284,8 +299,12 @@ describe("run_delegate flow arm (ADR-163 REQ-07..REQ-13)", () => {
 
 describe("run_delegate flow arm — failure and crash windows (ADR-163 REQ-21)", () => {
   // W2: the carrier transaction committed, then the launch threw. The
-  // compensation must cover the ENTIRE fallible remainder, not a tail.
-  it("W2: a launch failure after the carrier transaction removes the carrier task AND its relation", async () => {
+  // compensation must cover the ENTIRE fallible remainder, not a tail — and it
+  // ABANDONS the carrier rather than deleting it: `runs.task_id` and
+  // `domain_events.task_id` cascade on delete, so a hard delete could erase a
+  // concurrently inserted run and always erased the committed `task.created`
+  // fact. The `parent_of` relation stays as provenance.
+  it("W2: a launch failure after the carrier transaction abandons the carrier task, keeps its relation and its fact-log row", async () => {
     // Point the project at a path that is not a git repo, so `launchRunStaged`
     // throws AFTER the carrier task committed. This is a real failure mode
     // (a moved/deleted checkout), not an injected stub.
@@ -303,8 +322,20 @@ describe("run_delegate flow arm — failure and crash windows (ADR-163 REQ-21)",
     );
 
     expect(res.status).toBeGreaterThanOrEqual(400);
-    expect(await countRows(ctx, "tasks")).toBe(tasksBefore);
-    expect(await countRows(ctx, "task_relations")).toBe(relationsBefore);
+    expect(await countRows(ctx, "tasks")).toBe(tasksBefore + 1);
+    expect(await countRows(ctx, "task_relations")).toBe(relationsBefore + 1);
+
+    const carrier = await carrierTask();
+
+    expect(carrier.status).toBe("Abandoned");
+    expect(await countRows(ctx, "runs")).toBe(1); // the orchestrator only
+
+    const created = await pool.query(
+      `SELECT 1 FROM "domain_events" WHERE "task_id" = $1 AND "kind" = 'task.created'`,
+      [carrier.id],
+    );
+
+    expect(created.rowCount).toBe(1);
   });
 
   // W6: the orchestrator terminalized between the pre-flight check and the

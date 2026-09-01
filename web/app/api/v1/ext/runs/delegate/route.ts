@@ -22,9 +22,9 @@ import {
   titleFromPrompt,
 } from "@/lib/orchestrator/delegation-target";
 import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
-import { addTaskRelation, removeTaskRelation } from "@/lib/social/relations";
+import { addTaskRelation } from "@/lib/social/relations";
 import { launchRun } from "@/lib/services/runs";
-import { createTask } from "@/lib/services/tasks";
+import { abandonUnlaunchedTasks, createTask } from "@/lib/services/tasks";
 import {
   handleExt,
   httpStatusForExtCode,
@@ -33,7 +33,7 @@ import {
 import { socialActorForToken } from "@/lib/tokens/verify";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches lib/services/tasks.ts).
-const { runs, tasks } = schemaModule as unknown as Record<string, any>;
+const { tasks } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -48,20 +48,20 @@ const ENDPOINT = "POST /api/v1/ext/runs/delegate";
 /**
  * W2 compensation: the carrier transaction committed, then the launch failed.
  *
- * Removes the child task and its `parent_of` edge so a failed delegation leaves
- * no orphan card. Guarded by "the task has no runs" — a launch that failed AFTER
- * inserting the run row (the adopt/CONFLICT paths) must keep its task, and the
- * run row is the only durable evidence of that. Each revert has its own catch +
- * log.error: a compensation that throws would replace the caller's real error
- * with a cleanup error and lose the diagnosis.
+ * ABANDONS the carrier task — never deletes it. `runs.task_id` and
+ * `domain_events.task_id` cascade on delete, so a hard delete could erase a run
+ * inserted concurrently and always erased the committed `task.created` fact;
+ * the task model's terminal exit everywhere else is `Abandoned`. The `parent_of`
+ * relation stays as provenance. The "task has no run" guard lives inside the
+ * UPDATE: a launch that failed AFTER inserting the run row (the adopt/CONFLICT
+ * paths) keeps a live task, and the run row is the only durable evidence of
+ * that. A compensation that throws would replace the caller's real error with a
+ * cleanup error and lose the diagnosis — so it logs and returns.
  */
 async function compensateChildTask(args: {
   db: Db;
-  projectId: string;
-  parentTaskId: string | null;
   childTaskId: string | undefined;
   parentRunId: string;
-  actor: Parameters<typeof addTaskRelation>[0]["actor"];
   code: string;
 }): Promise<void> {
   const { db, childTaskId } = args;
@@ -74,59 +74,32 @@ async function compensateChildTask(args: {
       carrierTaskId: childTaskId,
       code: args.code,
     },
-    "[delegation.compensate] delegation failed after the child task — removing it",
+    "[delegation.compensate] delegation failed after the child task — abandoning it",
   );
 
-  const runRows = (await db
-    .select({ id: runs.id })
-    .from(runs)
-    .where(eq(runs.taskId, childTaskId))
-    .limit(1)) as { id: string }[];
+  const abandoned = await abandonUnlaunchedTasks(
+    db,
+    [childTaskId],
+    new Date(),
+  ).catch((err: unknown) => {
+    log.error(
+      {
+        parentRunId: args.parentRunId,
+        carrierTaskId: childTaskId,
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "[delegation.compensate] child task abandon failed (manual cleanup may be required)",
+    );
 
-  if (runRows.length > 0) {
+    return [] as string[];
+  });
+
+  if (abandoned.length === 0) {
     log.warn(
       { parentRunId: args.parentRunId, carrierTaskId: childTaskId },
       "[delegation.compensate] child task already has a run — left in place",
     );
-
-    return;
   }
-
-  if (args.parentTaskId) {
-    await removeTaskRelation(
-      {
-        projectId: args.projectId,
-        fromTaskId: args.parentTaskId,
-        kind: "parent_of",
-        toTaskId: childTaskId,
-        actor: args.actor,
-      },
-      db,
-    ).catch((err: unknown) =>
-      log.error(
-        {
-          parentRunId: args.parentRunId,
-          carrierTaskId: childTaskId,
-          err: err instanceof Error ? err.message : String(err),
-        },
-        "[delegation.compensate] parent_of removal failed (manual cleanup may be required)",
-      ),
-    );
-  }
-
-  await db
-    .delete(tasks)
-    .where(eq(tasks.id, childTaskId))
-    .catch((err: unknown) =>
-      log.error(
-        {
-          parentRunId: args.parentRunId,
-          carrierTaskId: childTaskId,
-          err: err instanceof Error ? err.message : String(err),
-        },
-        "[delegation.compensate] child task delete failed (manual cleanup may be required)",
-      ),
-    );
 }
 
 const bodySchema = z
@@ -438,11 +411,8 @@ export async function POST(
         } catch (launchErr) {
           await compensateChildTask({
             db,
-            projectId: ctx.projectId,
-            parentTaskId: parent.taskId ?? null,
             childTaskId,
             parentRunId,
-            actor: socialActorForToken(ctx.actor),
             code: isMaisterError(launchErr) ? launchErr.code : "UNKNOWN",
           });
           throw launchErr;
