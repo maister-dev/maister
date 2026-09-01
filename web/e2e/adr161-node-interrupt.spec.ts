@@ -1,4 +1,4 @@
-// ADR-160 (T-B13): the operator node-interrupt card end-to-end through the real
+// ADR-161 (T-B13): the operator node-interrupt card end-to-end through the real
 // UI + respondToHitl. A run parked by an interrupt renders the four
 // server-owned options; restarting the node with a correction records the
 // operator's intent on the ledger and re-enters the graph.
@@ -6,7 +6,7 @@
 // The option set is SERVER-owned, so the assertions here are as much about what
 // the client does NOT decide as about what it renders.
 //
-// PREREQUISITES (wired by the AS-BUILT harness): the `adr160` fixture in
+// PREREQUISITES (wired by the AS-BUILT harness): the `adr161` fixture in
 // `e2e/_seed/seed-e2e.ts` — its OWN project, run, and on-disk worktree, parked
 // at `implement` with `plan` already in the ledger (which is what makes
 // `restart_from` eligible: targets are ledger-derived, never topological).
@@ -26,9 +26,9 @@ type FixtureRecord = {
 function loadFixture(): FixtureRecord {
   const all = JSON.parse(
     readFileSync(path.resolve("e2e/.auth/fixtures.json"), "utf8"),
-  ) as { byKey: { adr160: FixtureRecord } };
+  ) as { byKey: { adr161: FixtureRecord } };
 
-  return all.byKey.adr160;
+  return all.byKey.adr161;
 }
 
 async function reloadUntilGone(page: Page, runId: string): Promise<void> {

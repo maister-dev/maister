@@ -1041,7 +1041,7 @@ remediation string). Probes run with runner authority, like `command_check`
 gates — only trusted flows reach this path. See
 [ADR-091](decisions.md#adr-091-flow-requirements-launch-precondition).
 
-## Flow `reentry` (ADR-159 — Implemented)
+## Flow `reentry` (ADR-160 — Implemented)
 
 A flow may declare, at the **top level beside `nodes`**, the node an operator's
 [rework claim](system-analytics/run-continuation.md) re-enters the graph at when
@@ -1091,7 +1091,7 @@ nodes:
 - Round-trip preserved by Flow Studio: authoring a draft and publishing it must
   not drop the key, even though v1 ships no Studio editor for it.
 
-See [ADR-159](decisions.md#adr-159-review-run-rework-claim-with-fast-forward-only-handoff-round-trip)
+See [ADR-160](decisions.md#adr-160-review-run-rework-claim-with-fast-forward-only-handoff-round-trip)
 and [`system-analytics/run-continuation.md`](system-analytics/run-continuation.md).
 
 ## Gate execution (Implemented)

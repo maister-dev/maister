@@ -209,7 +209,7 @@ export async function POST(
         );
       }
       // An ADR-030 takeover must keep using its own route: its re-entry comes
-      // from the parked node's `transitions.takeover`, not the ADR-159 chain.
+      // from the parked node's `transitions.takeover`, not the ADR-160 chain.
       if (active.decision !== REVIEW_REWORK_CLAIM_DECISION) {
         throw new MaisterError(
           "PRECONDITION",
@@ -227,7 +227,7 @@ export async function POST(
     const { nodeId, nodeAttemptId, attempt } = intent;
     const { worktreePath, branch, parentRepoPath } = loaded.workspace;
 
-    // Re-entry from the ADR-159 chain (server-state only, never body-derived).
+    // Re-entry from the ADR-160 chain (server-state only, never body-derived).
     const graph = compileManifest(loaded.manifest);
     const ledger = await getNodeAttemptsForRun(runId, db);
     const reentry = resolveReentryNode(graph, ledger);

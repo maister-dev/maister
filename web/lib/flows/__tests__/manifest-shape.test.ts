@@ -132,7 +132,7 @@ describe("graph-only manifest shape contract", () => {
     });
   });
 
-  it("publishes engine 3.5.0 as the flow-level `reentry` host contract (ADR-159)", () => {
+  it("publishes engine 3.5.0 as the flow-level `reentry` host contract (ADR-160)", () => {
     expect(MAISTER_ENGINE_VERSION).toBe("3.5.0");
   });
 

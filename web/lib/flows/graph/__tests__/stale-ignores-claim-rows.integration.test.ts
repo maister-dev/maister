@@ -11,7 +11,7 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-// T-A13 (AC-A13) / T-A14 (AC-A14) — ADR-159 D10.
+// T-A13 (AC-A13) / T-A14 (AC-A14) — ADR-160 D10.
 //
 // A takeover/rework CLAIM row is a human-handoff marker, not a node execution.
 // `latestAttemptByNode` picks the highest-attempt row per node, so a claim row
@@ -66,7 +66,7 @@ type Seeded = {
 // `passed` gate, then a claim row appended at the SAME node with a higher
 // attempt number and a non-null owner.
 async function seedClaimOverExecutedAttempt(opts: {
-  // ADR-159 rework claims write this; an ADR-030 takeover leaves it unset.
+  // ADR-160 rework claims write this; an ADR-030 takeover leaves it unset.
   decision?: string;
 }): Promise<Seeded> {
   const { runId } = await seedGraphRun(db, MANIFEST, {
@@ -148,7 +148,7 @@ async function attemptStatus(attemptId: string): Promise<string> {
   return rows[0].status;
 }
 
-describe("ADR-159 D10 — markDownstreamStale ignores claim rows", () => {
+describe("ADR-160 D10 — markDownstreamStale ignores claim rows", () => {
   it("T-A13 — a rework claim row does not shield the node's real last execution", async () => {
     const s = await seedClaimOverExecutedAttempt({
       decision: "review_rework_claim",

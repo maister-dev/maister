@@ -8,7 +8,7 @@ MAIster-managed worktree, while keeping branch state, uploaded context,
 capability choices, HITL, diff review, and active workspace visibility under
 the same web, database, supervisor, and worktree contracts as Flow runs.
 
-## ADR-142 workspace removal (Implemented)
+## ADR-148 workspace removal (Implemented)
 
 Scratch Discard joins the shared fenced preserve-first protocol and returns the
 common lifecycle-removal DTO. It removes an owned worktree only after durable

@@ -50,9 +50,9 @@ observe its failed child; success-gated dependents do not launch.
   budget axis reuses this SAME kind (no new kind) with `reason=budget_exceeded`
   in its `payload` when a run/task-scope budget escalates to a `budget_breach`
   HITL.
-  **(ADR-160 — Implemented)** the operator node interrupt ALSO reuses
+  **(ADR-161 — Implemented)** the operator node interrupt ALSO reuses
   `run.escalated` (no new kind) with `reason=node_interrupt` in its `payload`.
-  **(ADR-159 — Implemented)** `run.rework_claimed` and `run.rework_returned` are the
+  **(ADR-160 — Implemented)** `run.rework_claimed` and `run.rework_returned` are the
   two genuinely new kinds: an operator taking a finished `Review` run back for
   rework, and returning it. Both are emitted with `actor_type='user'` inside the
   SAME transaction as their domain write, and **neither belongs to
@@ -65,7 +65,7 @@ observe its failed child; success-gated dependents do not launch.
   `triage_requeued` activity in one transaction, ADR-089). Extension rule:
   one taxonomy entry + emit site(s) in the owning domain transaction + one
   doc row + a CHECK update via migration — **plus a fourth point discovered by
-  ADR-159**: `PulseEventKind` is a type alias of `DomainEventKind`, so
+  ADR-160**: `PulseEventKind` is a type alias of `DomainEventKind`, so
   `mapDomainEvent` in `web/lib/ext-activity/domain-events.ts` (an exhaustive
   `switch` with no `default` arm) and its
   `docs/api/external/operations.openapi.yaml` `ExtPulseEventKind` mirror move

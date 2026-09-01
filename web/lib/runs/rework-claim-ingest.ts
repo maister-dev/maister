@@ -35,7 +35,7 @@ export type ReworkIngestArgs = {
 const DEFAULT_REMOTE = "origin";
 
 /**
- * ADR-159 D4: fetch + fast-forward ONLY.
+ * ADR-160 D4: fetch + fast-forward ONLY.
  *
  * `git fetch <remote>` with no refspec (matching ADR-141, so `<remote>/<branch>`
  * really is refreshed), then a fast-forward of the run worktree's branch.

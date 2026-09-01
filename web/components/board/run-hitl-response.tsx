@@ -60,12 +60,12 @@ export interface RunHitlResponseProps {
     | "infra_recovery"
     | "budget_breach"
     | "hook_trip"
-    // ADR-160: the operator node interrupt.
+    // ADR-161: the operator node interrupt.
     | "node_interrupt"
     | "decision_request";
   options: HitlOption[];
   availableOptions?: BudgetBreachAvailableOption[];
-  // ADR-160: the server-owned interrupt matrix, passed straight through.
+  // ADR-161: the server-owned interrupt matrix, passed straight through.
   nodeInterrupt?: NodeInterruptOptionMatrixView | null;
   budgetProgress?: BudgetBreachProgressDto | null;
   claimStage?: BudgetBreachClaimStage | null;

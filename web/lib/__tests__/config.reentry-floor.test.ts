@@ -8,7 +8,7 @@ import { stringify as stringifyYaml } from "yaml";
 import { loadFlowManifest } from "@/lib/config";
 import { isMaisterError } from "@/lib/errors";
 
-// T-A7 (AC-A7) — ADR-159: the flow-level `reentry` key names the node an
+// T-A7 (AC-A7) — ADR-160: the flow-level `reentry` key names the node an
 // operator's rework claim re-enters the graph at. It is compile-time only and
 // is never persisted to a DB column, so the YAML->DB SET/CLEAR symmetry rule
 // does not apply; the only obligations are the 3.5.0 engine floor, the
@@ -16,7 +16,7 @@ import { isMaisterError } from "@/lib/errors";
 // that do not declare it. The gate is on the MANIFEST, not on `nodes` — the
 // key is flow-level.
 
-describe("T-A7 ADR-159 — flow-level `reentry` engine floor and node resolution", () => {
+describe("T-A7 ADR-160 — flow-level `reentry` engine floor and node resolution", () => {
   let workDir: string;
 
   beforeEach(async () => {

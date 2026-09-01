@@ -28,7 +28,7 @@ export interface ObservatoryNodeAttemptInput {
   status: ObservatoryNodeStatus;
   errorCode?: string | null;
   exitCode?: number | null;
-  // ADR-160: `operator_interrupt` marks an attempt closed by a HUMAN pausing a
+  // ADR-161: `operator_interrupt` marks an attempt closed by a HUMAN pausing a
   // live node, not by a correction the agent needed. Excluded from BOTH
   // correction counters below.
   decision?: string | null;
@@ -236,7 +236,7 @@ export function rollupCorrectionMetrics(input: {
   let retryCount = 0;
 
   for (const attempts of attemptsByRunNode.values()) {
-    // ADR-160: an operator restart advances `attempt` exactly like a genuine
+    // ADR-161: an operator restart advances `attempt` exactly like a genuine
     // retry, so subtract them here as well. Excluding them from `reworkCount`
     // ALONE would still report a fabricated correction rate — both counters
     // have to move or the metric stays inflated.

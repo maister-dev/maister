@@ -630,7 +630,7 @@ export default async function RunDetailLayout({
     detail.status === "NeedsInput" &&
     offersTakeover(detail.pendingHitl?.schema);
   const isHumanWorking = detail.status === "HumanWorking";
-  // ADR-160: an interrupt is only offered on a live flow run. The route
+  // ADR-161: an interrupt is only offered on a live flow run. The route
   // re-derives every admission term server-side, so this is presentation only.
   const canInterruptNode =
     detail.status === "Running" &&
@@ -1845,10 +1845,10 @@ export default async function RunDetailLayout({
             />
           ) : null}
 
-          {/* ADR-159: a rework claim renders its OWN handoff panel (FF ingest,
+          {/* ADR-160: a rework claim renders its OWN handoff panel (FF ingest,
               release-to-Review, non-fast-forward remediation). The M11b panel
               stays for a takeover claim — they are told apart by
-              `continuation.claim`, which is non-null only for the ADR-159
+              `continuation.claim`, which is non-null only for the ADR-160
               provenance. */}
           {canInterruptNode ? (
             <section className="mt-6 rounded-[14px] border border-line bg-ivory p-5">

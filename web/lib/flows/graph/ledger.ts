@@ -480,11 +480,11 @@ export async function claimTakeover(args: {
   runId: string;
   nodeId: string;
   userId: string;
-  // ADR-159: a Review rework claim anchors on the LAST EXECUTED node, which is
+  // ADR-160: a Review rework claim anchors on the LAST EXECUTED node, which is
   // rarely a `human` node — so the type is explicit rather than assumed.
   // Defaults preserve the ADR-030 takeover shape byte-for-byte.
   nodeType?: NodeAttemptType;
-  // ADR-159: `review_rework_claim` marks the Review provenance. An ADR-030
+  // ADR-160: `review_rework_claim` marks the Review provenance. An ADR-030
   // takeover leaves this unset, which is what every consumer branches on.
   decision?: string;
   db?: Db;
@@ -594,10 +594,10 @@ export async function endActiveTakeover(runId: string, db?: Db): Promise<void> {
 
 // The active (un-returned) takeover for a run: the latest node_attempts row
 // with owner_user_id set and ended_at still null. Returns null when none.
-// ADR-159 (`review_rework_claim`): the ONLY thing distinguishing a Review
+// ADR-160 (`review_rework_claim`): the ONLY thing distinguishing a Review
 // rework claim from an ADR-030 manual takeover on the ledger — an M11b claim
 // row writes no `decision`.
-// ADR-160 (`operator_interrupt`): marks an attempt closed by an OPERATOR node
+// ADR-161 (`operator_interrupt`): marks an attempt closed by an OPERATOR node
 // interrupt rather than a flow-declared rework. Excluded from `rework.maxLoops`
 // accounting and from both Observatory correction counters.
 // Defined in the pure `attempt-decisions` module and re-exported here so the
@@ -713,14 +713,14 @@ export function latestAttemptByNode(
   return latest;
 }
 
-// ADR-159 D10: the per-node latest attempt for STALING purposes, skipping
+// ADR-160 D10: the per-node latest attempt for STALING purposes, skipping
 // human-handoff claim rows (`owner_user_id` set).
 //
 // A takeover/rework claim row is a marker, not a node execution, yet it carries
 // the highest attempt number at its node. Left in, it becomes "the latest
 // attempt" and SHIELDS that node's real last execution — and its `passed`
 // gate_results — from being staled, so invalidated evidence survives a
-// re-review. For the ADR-159 rework claim this is the general case: the claim
+// re-review. For the ADR-160 rework claim this is the general case: the claim
 // anchors on the last executed node, which is by construction downstream of any
 // re-entry.
 //

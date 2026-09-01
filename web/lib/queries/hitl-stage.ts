@@ -91,7 +91,7 @@ export async function resolveStages(
 }
 
 /**
- * ADR-160: batch the pending-interrupt option matrices for a page of inbox
+ * ADR-161: batch the pending-interrupt option matrices for a page of inbox
  * rows, keyed by `hitl_request_id`.
  *
  * Sits beside `resolveStages` because it has the same shape — an async

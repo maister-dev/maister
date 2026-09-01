@@ -41,7 +41,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// ADR-160: only agent-executed nodes can be interrupted. `cli` and `check` run
+// ADR-161: only agent-executed nodes can be interrupted. `cli` and `check` run
 // a shell command in a detached process group; killing one mid-command is a
 // different mechanism (and a different failure surface) and is deliberately out
 // of v1 scope, so they are refused with a message that NAMES the deferral
@@ -168,7 +168,7 @@ function interruptSchema(nodeId: string): Record<string, unknown> {
 }
 
 /**
- * ADR-160: pause ONE live agent node and park the run for a corrective restart.
+ * ADR-161: pause ONE live agent node and park the run for a corrective restart.
  *
  * Mechanics are `escalateHookTrip`'s, reused rather than re-derived: checkpoint
  * BEFORE the transaction (an `EXECUTOR_UNAVAILABLE` checkpoint re-throws with no
@@ -315,7 +315,7 @@ export async function escalateNodeInterrupt(
         });
         // Reuses the EXISTING run.escalated kind — an operator pausing a node is
         // an escalation like any other, which is why Feature B needs no taxonomy
-        // entry and no CHECK migration (ADR-159's claim/return do).
+        // entry and no CHECK migration (ADR-160's claim/return do).
         await emitDomainEvent({
           db: tx,
           kind: "run.escalated",
@@ -369,7 +369,7 @@ export async function escalateNodeInterrupt(
 }
 
 /**
- * ADR-160: derive the server-owned option matrix for a parked `node_interrupt`.
+ * ADR-161: derive the server-owned option matrix for a parked `node_interrupt`.
  *
  * `restart_from`'s eligible targets are LEDGER-derived — the nodes with at
  * least one prior attempt in THIS run — because the static graph has cycles and
@@ -430,12 +430,12 @@ export function deriveNodeInterruptOptions(args: {
   };
 }
 
-// ADR-160 D6: the operator correction is length-capped before storage. It is
+// ADR-161 D6: the operator correction is length-capped before storage. It is
 // appended verbatim inside a fence, never interpolated as a template.
 export const OPERATOR_CORRECTION_MAX = 4000;
 
 /**
- * ADR-160 D6: the operator correction owed to the NEXT attempt at `nodeId`.
+ * ADR-161 D6: the operator correction owed to the NEXT attempt at `nodeId`.
  *
  * Consume-once without a mutable flag: a correction applies only while the
  * target node has exactly ONE attempt started after the response was recorded —
@@ -515,7 +515,7 @@ export async function loadPendingOperatorCorrection(
 }
 
 /**
- * ADR-160: the ONE place the pending-interrupt option matrix is assembled.
+ * ADR-161: the ONE place the pending-interrupt option matrix is assembled.
  *
  * The matrix is ledger-derived and manifest-enriched, so every surface that
  * offers the operator an answer — run detail, the HITL inbox, the board card —

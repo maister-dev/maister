@@ -1,6 +1,6 @@
 # Run continuation domain
 
-> **Status: Implemented (ADR-159 / ADR-160).** Both halves are shipped — the
+> **Status: Implemented (ADR-160 / ADR-161).** Both halves are shipped — the
 > `Review` rework claim (eligibility, claim/return/release, fast-forward-only
 > ingest, re-entry resolution, the owner carve-out, and the claim/return domain
 > events behind migration `0125`) and the operator node interrupt (the
@@ -12,11 +12,11 @@
 
 **Run continuation** covers the two operator-initiated ways to put an already-
 launched flow run back under the graph's control after it has left the agent's
-hands. **(A) Rework claim** (Implemented — [ADR-159](../decisions.md#adr-159-review-run-rework-claim-with-fast-forward-only-handoff-round-trip))
+hands. **(A) Rework claim** (Implemented — [ADR-160](../decisions.md#adr-160-review-run-rework-claim-with-fast-forward-only-handoff-round-trip))
 takes a run that reached `Review`, hands its existing worktree to a human, ingests
 whatever they push back by fast-forward only, and re-enters the graph at a
 server-resolved node so the flow's own gates re-validate the new commits.
-**(B) Node interrupt** (Implemented — [ADR-160](../decisions.md#adr-160-operator-node-interrupt-with-corrective-restart))
+**(B) Node interrupt** (Implemented — [ADR-161](../decisions.md#adr-161-operator-node-interrupt-with-corrective-restart))
 pauses one live agent node mid-turn and offers a corrective restart. The domain
 boundary is the operator's re-entry into a run's own graph: eligibility, the claim
 ledger row, the fast-forward ingest, re-entry resolution, the interrupt option
@@ -50,7 +50,7 @@ Implemented), promotion ([`readiness.md`](readiness.md)), or workspace removal
 - **Operator restart attempt** (Implemented) — a `node_attempts` row closed
   `Reworked` with `decision='operator_interrupt'`. Excluded from
   `rework.maxLoops` accounting and from both Observatory correction counters.
-- **Domain events** (Implemented for ADR-159; ADR-160 reuses `run.escalated`) — `run.rework_claimed` and `run.rework_returned`
+- **Domain events** (Implemented for ADR-160; ADR-161 reuses `run.escalated`) — `run.rework_claimed` and `run.rework_returned`
   (migration `0125` extends `domain_events_kind_check` to 13 kinds). The interrupt
   reuses the existing `run.escalated` with `reason='node_interrupt'`. See
   [`domain-events.md`](domain-events.md).
@@ -62,7 +62,7 @@ Feature A — the rework claim round-trip (Implemented):
 ```mermaid
 stateDiagram-v2
     [*] --> Review: graph reached terminal review
-    Review --> HumanWorking: rework claim (ADR-159)<br/>allow-list + cap re-check under lock
+    Review --> HumanWorking: rework claim (ADR-160)<br/>allow-list + cap re-check under lock
     Review --> Review: claim refused<br/>PRECONDITION / CONFLICT
     HumanWorking --> Running: return<br/>FF ingest + stale + re-entry cursor
     HumanWorking --> Review: release (no changes)<br/>slot freed, claim row closed
@@ -77,7 +77,7 @@ Feature B — the soft node interrupt (Implemented):
 ```mermaid
 stateDiagram-v2
     [*] --> Running: agent node executing
-    Running --> NeedsInput: operator interrupt (ADR-160)<br/>checkpoint pre-tx, then one park tx
+    Running --> NeedsInput: operator interrupt (ADR-161)<br/>checkpoint pre-tx, then one park tx
     Running --> Running: interrupt refused<br/>PRECONDITION / CONFLICT / 503
     NeedsInput --> Running: resume<br/>session/resume, same attempt
     NeedsInput --> Running: restart_node<br/>attempt closed Reworked/operator_interrupt
@@ -206,7 +206,7 @@ Refusal matrix — each row is phrased as the allow-list the code uses (Implemen
 | concurrency cap full | `CONFLICT` | 409 | claim — never `Pending` |
 | `Review → HumanWorking` CAS lost | `CONFLICT` | 409 | claim |
 | actor is not `owner_user_id` | `UNAUTHORIZED` | 403 | return / release |
-| claim is an ADR-030 takeover, not `review_rework_claim` | `PRECONDITION` | 409 | return — use the M11b route |
+| claim is an ADR-030 takeover, not `review_rework_claim` | `PRECONDITION` | 409 | return — use the ADR-030 takeover route |
 | `remote` not in the `listRemotes()` allow-list | `PRECONDITION` | 409 | return |
 | branch not fast-forwardable | `PRECONDITION` | 409 | return — carries `{command, localSha, remoteSha, aheadBy, behindBy, instructions[]}` |
 | worktree dirty / zero-commit return | `CONFLICT` | 409 | return — no ledger write |
@@ -240,8 +240,8 @@ throw nothing.
 
 ## Linked artifacts
 
-- **ADRs** — [ADR-159](../decisions.md#adr-159-review-run-rework-claim-with-fast-forward-only-handoff-round-trip),
-  [ADR-160](../decisions.md#adr-160-operator-node-interrupt-with-corrective-restart);
+- **ADRs** — [ADR-160](../decisions.md#adr-160-review-run-rework-claim-with-fast-forward-only-handoff-round-trip),
+  [ADR-161](../decisions.md#adr-161-operator-node-interrupt-with-corrective-restart);
   precedents [ADR-030](../decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status)
   manual takeover, [ADR-141](../decisions.md#adr-141-branch-sync-with-ai-conflict-resolver-and-reopen) branch sync,
   [ADR-086](../decisions.md#adr-086-domain-event-outbox-as-the-shared-trigger-bus) domain events.

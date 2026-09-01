@@ -332,6 +332,21 @@ inject via `{{ artifacts.<id>.content }}` (ADR-120).
   conflicts. PR lifecycle state (`open|merged|closed(+conflicts)`) is polled
   onto `workspaces` by the `pr_state_scan` scheduler job (ADR-140). →
   `docs/system-analytics/branch-sync.md`.
+- **Run continuation controls** (ADR-160/161, Implemented): two operator
+  re-entries into a run the flow cannot advance itself. A **rework claim**
+  returns a finished `Review` run to `HumanWorking` and back into the graph at a
+  server-resolved re-entry node (manifest `reentry`, else the last executed
+  `human` node's `transitions.takeover`, else refused); the return ingest is
+  **fast-forward only** — divergence refuses `PRECONDITION` with copyable
+  remediation. Unlike the ADR-030 takeover it ACQUIRES a concurrency slot, so a
+  cap-full claim is refused inside the claim transaction, never queued. An
+  **operator node interrupt** parks a live agent node into `NeedsInput` with a
+  `node_interrupt` HITL whose four options are server-owned; `restart_from`
+  targets are ledger-derived (the graph has cycles — forward skips are refused),
+  and operator restarts are excluded from `rework.maxLoops` and both Observatory
+  correction counters, bounded by `MAISTER_MAX_OPERATOR_RESTARTS`. Provenance
+  for both rides `node_attempts.decision`; no new run status. →
+  `docs/system-analytics/run-continuation.md`.
 
 ### 8. Promotion policy
 

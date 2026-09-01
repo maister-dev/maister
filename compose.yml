@@ -6,7 +6,7 @@ name: ${COMPOSE_PROJECT_NAME:-maister}
 # Assistant-activity liveness thresholds remain host env only
 # (`MAISTER_ASSISTANT_ACTIVITY_*`) for the same reason — there is no web
 # container env block to mirror here.
-# ADR-160's `MAISTER_MAX_OPERATOR_RESTARTS` is host env only for the same
+# ADR-161's `MAISTER_MAX_OPERATOR_RESTARTS` is host env only for the same
 # reason; it lives in `.env.example`, `deploy/maister.env.example`, and the
 # `docs/configuration.md` env table.
 services:

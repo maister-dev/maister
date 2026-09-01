@@ -21,7 +21,7 @@ export interface CheckoutContextProps {
 }
 
 // The local checkout affordance shared by the ADR-030 manual takeover and the
-// ADR-159 rework claim. Both hand the same worktree to a human editing it on
+// ADR-160 rework claim. Both hand the same worktree to a human editing it on
 // the host, so the block has exactly one implementation.
 export function CheckoutContext({
   branch,

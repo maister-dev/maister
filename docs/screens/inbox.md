@@ -87,6 +87,14 @@ the project-group header) with three disclosure tiers:
   purpose-built buttons/inputs for `pick-draft-N`, `provide-resolution`,
   `re-run-round`, and `abort`; the card never exposes participant ids, child run
   ids, or unbounded draft bodies as editable fields.
+- **Node-interrupt HITL (expanded, ADR-161):** the card renders the same
+  four-option interrupt surface the run page uses — *Restart node* as the
+  one-click default, *Resume* and *Stop* beside it, *Restart from* behind a
+  disclosure toggle, plus the correction textarea and workspace-policy selector.
+  The option matrix (per-option `enabled`/`disabledReason`, the ledger-derived
+  restart targets, and the interrupted node id) is server-supplied through the
+  same loader run detail uses, so an interrupt raised anywhere is answerable
+  here without falling back to a raw JSON response body.
 - **Run (deep dive):** `View run` opens the full run page.
 
 Per-card criticality accent (critical red / high amber / medium info / low
@@ -192,14 +200,20 @@ open a review workspace. The Inbox never presents a second approve/rework form.
   [`../system-analytics/consensus.md`](../system-analytics/consensus.md)
   (consensus no-agreement HITL decisions),
   [`../system-analytics/social-board.md`](../system-analytics/social-board.md)
-  (canonical `needsYou`, inbox fanout).
+  (canonical `needsYou`, inbox fanout),
+  [`../system-analytics/run-continuation.md`](../system-analytics/run-continuation.md)
+  (the node-interrupt option matrix and its shared loader).
 - ADRs: [ADR-057](../decisions.md#adr-057) (HITL hybrid surface),
   [ADR-083](../decisions.md#adr-083) (social board / inbox),
-  [ADR-125](../decisions.md#adr-125-budget-breach-four-way-fork-with-staged-claims).
+  [ADR-125](../decisions.md#adr-125-budget-breach-four-way-fork-with-staged-claims),
+  [ADR-161](../decisions.md#adr-161-operator-node-interrupt-with-corrective-restart)
+  (node-interrupt card).
 - Plan: `.ai-factory/plans/feature-inbox-card-redesign.md`.
 - Source: `web/app/(app)/inbox/page.tsx`, `web/lib/queries/needs-you.ts`,
   `web/lib/queries/portfolio.ts` (`getCrossProjectHitlInbox`),
-  `web/lib/queries/inbox.ts`, `web/lib/queries/inbox-context.ts`.
+  `web/lib/queries/inbox.ts`, `web/lib/queries/inbox-context.ts`,
+  `web/lib/queries/hitl-stage.ts` (`resolveNodeInterruptMatrices`),
+  `web/components/inbox/hitl-card.tsx`.
 
 ## Plan-review decision card (Implemented — ADR-137)
 

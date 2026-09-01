@@ -1,17 +1,17 @@
-// ADR-159 (T-A19): the full REWORK-CLAIM loop end-to-end through the real UI +
+// ADR-160 (T-A19): the full REWORK-CLAIM loop end-to-end through the real UI +
 // rework-claim routes + graph runner — a finished `Review` run is taken back for
 // rework, the human commits locally, the run is returned into the graph at the
 // server-resolved re-entry node, the staled gate reruns, and the run comes back
 // to a fresh review.
 //
-// This is the ADR-159 counterpart to `m11b-takeover.spec.ts`, and the contrast
+// This is the ADR-160 counterpart to `m11b-takeover.spec.ts`, and the contrast
 // is the point: M11b enters from `NeedsInput` at a parked human_review node,
 // this enters from `Review` after the graph has already FINISHED. There is no
 // open HITL and `current_step_id` is NULL, so both the claim anchor and the
 // re-entry node are derived from the ledger rather than from a cursor.
 //
 // PREREQUISITES (wired by the AS-BUILT harness, no manual setup):
-//   • The `adr159` fixture in `e2e/_seed/seed-e2e.ts` — its OWN project, flow,
+//   • The `adr160` fixture in `e2e/_seed/seed-e2e.ts` — its OWN project, flow,
 //     task, run, and real on-disk git worktree, so it never races m11a/m11b
 //     under `fullyParallel`.
 //   • NO supervisor — the re-entry node is `checks` (a `check` node + a
@@ -38,9 +38,9 @@ type FixtureRecord = {
 function loadFixture(): FixtureRecord {
   const all = JSON.parse(
     readFileSync(path.resolve("e2e/.auth/fixtures.json"), "utf8"),
-  ) as { byKey: { adr159: FixtureRecord } };
+  ) as { byKey: { adr160: FixtureRecord } };
 
-  return all.byKey.adr159;
+  return all.byKey.adr160;
 }
 
 // Web-first: poll the server-rendered run-detail page until the returned run

@@ -48,7 +48,7 @@ not a table.
 
 | Table | Constraint | Columns | Purpose |
 | ----- | ---------- | ------- | ------- |
-| `domain_events` | `CHECK` | `kind` | Taxonomy allow-list (13 kinds, ADR-086; widened to 13 by migration `0125` for ADR-159 `run.rework_claimed` / `run.rework_returned`). |
+| `domain_events` | `CHECK` | `kind` | Taxonomy allow-list (13 kinds, ADR-086; widened to 13 by migration `0125` for ADR-160 `run.rework_claimed` / `run.rework_returned`). |
 | `domain_events` | `CHECK` | `actor_type` | `user \| system \| agent` (NULL allowed). |
 | `domain_event_consumers` | `PK` | `consumer_id` | One cursor row per registered consumer. |
 

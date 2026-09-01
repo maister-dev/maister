@@ -15,7 +15,7 @@ export type ReentryResolution =
   | { ok: false; reason: "no_reentry_declared" };
 
 /**
- * ADR-159: resolve the node an operator's rework claim re-enters the graph at.
+ * ADR-160: resolve the node an operator's rework claim re-enters the graph at.
  *
  * The chain is ordered and reads SERVER STATE ONLY — an operator can never
  * choose the node:

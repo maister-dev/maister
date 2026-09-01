@@ -16,7 +16,7 @@ surface of the same page (see [instance-config.md](instance-config.md)), or mode
 decision record for the delete guard and the in-`/settings` CRUD surface is
 [ADR-065](../decisions.md#adr-065).
 
-## ADR-142 workspace lifecycle boundary (Implemented)
+## ADR-148 workspace lifecycle boundary (Implemented)
 
 ACP/session operations remain live-execution concerns. Archive refuses a run
 with active assignment, takeover, or actionable HITL and never erases ACP

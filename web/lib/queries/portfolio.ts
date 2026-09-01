@@ -274,7 +274,7 @@ export function lifecycleActionsForWorkspace(input: {
     hasWorkspace: input.hasWorkspace,
     workspaceRemoved: input.removedAt !== null,
     workspaceArchived: input.archivedBranch !== null,
-    // ADR-159: the owner carve-out is a run-detail affordance, not a portfolio
+    // ADR-160: the owner carve-out is a run-detail affordance, not a portfolio
     // one — the rail keeps showing no actions for a HumanWorking row.
     claimOwnerUserId: null,
     viewerUserId: null,

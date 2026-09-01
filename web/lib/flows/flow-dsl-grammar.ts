@@ -27,11 +27,11 @@ name: my-flow
 runner_profiles:
   claude-code: { capability_agent: claude, adapter: claude, model: claude-sonnet-4-6, provider: { kind: anthropic } }
 compat: { engine_min: 3.0.0 }   # graph-only authoring baseline
-reentry: verify                  # optional; engine_min >= 3.5.0 (ADR-159)
+reentry: verify                  # optional; engine_min >= 3.5.0 (ADR-160)
 nodes: [ ... ]                   # required and non-empty
 \`\`\`
 
-- \`reentry\` (engine_min >= 3.5.0, ADR-159) is a FLOW-LEVEL key naming the node
+- \`reentry\` (engine_min >= 3.5.0, ADR-160) is a FLOW-LEVEL key naming the node
   an operator's rework claim re-enters the graph at after a finished \`Review\`
   run is taken back for correction. It MUST name a node id present in
   \`nodes[]\` or the manifest fails to compile (CONFIG). It is the first link of

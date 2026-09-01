@@ -5,7 +5,7 @@ import {
   type ObservatoryNodeAttemptInput,
 } from "@/lib/queries/observatory-core";
 
-// T-B11 (AC-B11) — ADR-160: an operator restart is human intervention, not a
+// T-B11 (AC-B11) — ADR-161: an operator restart is human intervention, not a
 // correction the agent needed, so it must be excluded from BOTH Observatory
 // correction counters.
 //
@@ -35,7 +35,7 @@ function rollup(nodeAttempts: ObservatoryNodeAttemptInput[]) {
   } as never);
 }
 
-describe("T-B11 ADR-160 — operator restarts are excluded from both counters", () => {
+describe("T-B11 ADR-161 — operator restarts are excluded from both counters", () => {
   it("reports correctionRate 0 for a run whose only churn was operator restarts", () => {
     const m = rollup([
       attempt({ attempt: 1, status: "Reworked", decision: "operator_interrupt" }),

@@ -1024,7 +1024,7 @@ async function loadObservatoryRows(
       status: nodeAttempts.status,
       errorCode: nodeAttempts.errorCode,
       exitCode: nodeAttempts.exitCode,
-      // ADR-160: threaded so rollupCorrectionMetrics can exclude operator
+      // ADR-161: threaded so rollupCorrectionMetrics can exclude operator
       // restarts from BOTH correction counters.
       decision: nodeAttempts.decision,
     })

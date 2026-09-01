@@ -6,7 +6,7 @@ import {
   type ReworkClaimEligibilityRun,
 } from "@/lib/runs/rework-claim";
 
-// T-A1 (AC-A1) / T-A2 (AC-A2) — ADR-159 eligibility.
+// T-A1 (AC-A1) / T-A2 (AC-A2) — ADR-160 eligibility.
 // The gate is an ALLOW-LIST: every term must hold, and a status not named is
 // rejected by default rather than falling through. The predicate copies ADR-141
 // sync's terms but NARROWS run_kind to `flow` — sync is a branch operation (it
@@ -42,7 +42,7 @@ function refusal(
   }
 }
 
-describe("T-A1 ADR-159 — rework-claim eligibility allow-list", () => {
+describe("T-A1 ADR-160 — rework-claim eligibility allow-list", () => {
   it("admits a top-level, non-shared, non-lineage Review flow run with a live workspace", () => {
     expect(refusal(run())).toBeNull();
   });
@@ -107,7 +107,7 @@ describe("T-A1 ADR-159 — rework-claim eligibility allow-list", () => {
   });
 });
 
-describe("T-A2 ADR-159 — agent runs are structurally excluded", () => {
+describe("T-A2 ADR-160 — agent runs are structurally excluded", () => {
   // Explicit and EARLY, with a message that says why — rather than letting the
   // caller fall through to a confusing "no re-entry declared" later.
   it.each([["agent"], ["scratch"]])(

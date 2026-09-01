@@ -14,9 +14,9 @@ via `session.crashed`/`session.exited`) is owned by the runner and is NOT
 re-implemented here; reconciliation is the out-of-band recovery sweep, and
 GC is the deferred removal that never destroys un-committed work.
 
-## ADR-142 workspace cleanup contract (Implemented)
+## ADR-148 workspace cleanup contract (Implemented)
 
-The behavior below is the shipped baseline. ADR-142 changes only the
+The behavior below is the shipped baseline. ADR-148 changes only the
 workspace cleanup boundary: automatic row-backed GC selects the disposable
 set `{Done, Abandoned}` and never selects `Review`, `Crashed`, or `Failed`.
 All row-backed removal paths use a renewable lifecycle claim that fences every
@@ -117,7 +117,7 @@ and enter normal terminal preserve/prune GC after restart.
   the GC backstop sweep below is its only automatic cleanup. Its launch snapshot
   is `runs.context_mounts`; its lifecycle is owned by
   [`workspaces.md`](workspaces.md).
-- **Evaluation evidence snapshot** (**Implemented, ADR-142/144** —
+- **Evaluation evidence snapshot** (**Implemented, ADR-148/144** —
   `evaluation_evidence_snapshots` rows; see
   [`../db/evaluations-domain.md`](../db/evaluations-domain.md)) — the
   Evaluation Lab arm of the shared GC bundle. `sweepEvaluationEvidence`
@@ -274,7 +274,7 @@ The route is kept as a compatibility wrapper over the unified scheduler
 `system_sweep` service. The response shape and `200`/`207`/`401`/`503` behavior
 remain the original GC contract; new external cron integrations should prefer
 `/api/cron/tick`. The shared GC bundle both entry points run includes the
-ADR-142 evaluation-evidence sweep (orphan `preparing` recovery + two-stage
+ADR-148 evaluation-evidence sweep (orphan `preparing` recovery + two-stage
 reference-guarded `pending_delete → deleted` finalize — see Domain entities
 above) alongside workspace/revision GC, capabilities cleanup, ephemeral-agent
 cleanup, and the agent-materialization retry.
@@ -343,7 +343,7 @@ would hand the resumed coordinator paths that no longer exist.
 Where it goes **beyond** the `-ro` sweep it copies: that sweep has no durable
 per-item state — it counts a `failed` and retries forever, so one permanently
 undeletable path is re-attempted on every tick. This backstop carries a
-**durable per-item attempt marker** using the ADR-142 *semantics* (`state` /
+**durable per-item attempt marker** using the ADR-148 *semantics* (`state` /
 `attemptCount` / `nextRetryAt` / sanitized error evidence) but deliberately
 **not** the `workspace_reconciliation_findings` table. Two independent reasons:
 that table's `candidate_kind` CHECK admits only four values

@@ -8,7 +8,7 @@ handlers, and records attempts. It generalizes the existing GC cron route into
 one polymorphic scheduler without moving scheduling into the supervisor and
 without turning recovery sweeps into live-path polling.
 
-## ADR-142 workspace cleanup contract (Implemented)
+## ADR-148 workspace cleanup contract (Implemented)
 
 `system_sweep.default` becomes the single periodic owner of workspace cleanup.
 The timer, `/api/cron/tick`, and the immediate `/api/cron/gc` compatibility
@@ -52,7 +52,7 @@ may call a GC bundle directly or create a second scheduler state machine.
   compatibility extension Implemented) — keeps current response semantics and
   runs the GC bundle (workspace + revision GC + capabilities cleanup +
   ephemeral-agent cleanup + terminal/missing-run agent-materialization retry +
-  the ADR-142 evaluation-evidence sweep)
+  the ADR-148 evaluation-evidence sweep)
   only. It
   does NOT run the keepalive or reconcile sweeps, so the GC cron never transitions
   runs to `Crashed`; that live composition belongs to the `system_sweep` job kind.
@@ -158,7 +158,7 @@ may call a GC bundle directly or create a second scheduler state machine.
     special-case); and i18n `adminScheduler.kind.pr_state_scan` (EN + RU). The
     admin UI is data-driven (no hardcoded kind list). Handler:
     `web/lib/scheduler/handlers/pr-state-scan.ts`.
-- **`evaluation_dispatch` job kind** (**Implemented, ADR-142** — Evaluation Lab
+- **`evaluation_dispatch` job kind** (**Implemented, ADR-148** — Evaluation Lab
   T3.3) — the ONE seeded singleton evaluation dispatcher
   (`evaluation_dispatch.dispatcher` job, 60s cadence, budget
   `evaluationDispatch: 1`, `max_failures` 3, `systemManaged`, not
@@ -255,7 +255,7 @@ flowchart TD
     Sweep --> CostReconcile[reconcileTerminalCostRollups]
     Sweep --> Gc[workspace + revision GC]
     Sweep --> CapCleanup[runCapabilitiesCleanupSweep]
-    Sweep --> EvalEvidence[sweepEvaluationEvidence — ADR-142 orphan-capture + two-stage delete]
+    Sweep --> EvalEvidence[sweepEvaluationEvidence — ADR-148 orphan-capture + two-stage delete]
     Sweep --> BrainDecay[runBrainDecaySweep — ADR-122, hourly self-throttle]
     Sweep --> BrainReindex[runBrainReindexSweep — ADR-122 reindex worker]
     Keepalive --> Summary[aggregate result]
@@ -333,7 +333,7 @@ flowchart TD
   `auto_launch_triaged.default` (60-second cadence; Implemented, ADR-112), and
   `auto_promote.default` (60-second cadence; Implemented, ADR-126), and
   `evaluation_dispatch.dispatcher` + `evaluation_suite_scan.dispatcher`
-  (60-second cadence each; Implemented, ADR-142/ADR-147).
+  (60-second cadence each; Implemented, ADR-148/ADR-147).
 - Atomic claim MUST enforce per-kind budgets in SQL before an attempt is created:
   `command` uses `MAISTER_MAX_CONCURRENT_COMMANDS`; `agent_tick` is a hardcoded
   budget of 1 (singleton dispatcher; Implemented — its former
@@ -347,7 +347,7 @@ flowchart TD
   Implemented, ADR-086); `auto_launch_triaged` is a hardcoded budget of 1
   (singleton launcher; Implemented, ADR-112); `evaluation_dispatch` and
   `evaluation_suite_scan` are each a hardcoded budget of 1 (singleton
-  dispatchers; Implemented, ADR-142/ADR-147).
+  dispatchers; Implemented, ADR-148/ADR-147).
 - `agent_tick` MUST be the seeded `agent_tick.dispatcher` singleton only —
   `createSchedulerJobSchema` rejects the kind (Implemented; the earlier
   "stub without a launcher records `Skipped`/`PRECONDITION`" seam is
@@ -368,7 +368,7 @@ flowchart TD
 - `/api/cron/gc` MUST keep its existing auth and response contract and run the
   shared GC bundle (workspace + revision GC + capabilities cleanup +
   ephemeral-agent cleanup + terminal/missing-run agent-materialization retry +
-  the ADR-142 evaluation-evidence sweep)
+  the ADR-148 evaluation-evidence sweep)
   only; it MUST
   NOT run the keepalive or reconcile sweeps that `system_sweep` performs.
 - `/admin/scheduler` MUST treat `scheduler_jobs` and `run_schedules` as
@@ -469,7 +469,7 @@ flowchart TD
 - PR lifecycle tracking (Implemented, ADR-140):
   [ADR-140](../decisions.md#adr-140-pr-lifecycle-tracking) — the per-project
   `pr_state_scan` jobKind.
-- Evaluation Lab dispatch + suites (Implemented, ADR-142/ADR-147): the
+- Evaluation Lab dispatch + suites (Implemented, ADR-148/ADR-147): the
   `evaluation_dispatch` and `evaluation_suite_scan` singleton jobKinds —
   handlers `web/lib/evaluations/dispatcher/tick.ts` and
   `web/lib/evaluations/suites.ts`; DB:

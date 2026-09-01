@@ -128,7 +128,7 @@ export type LifecycleContext = {
   project: LifecycleProject;
   run: LifecycleRun;
   workspace: LifecycleWorkspace | null;
-  // ADR-159: `owner_user_id` of an OPEN rework claim on this run
+  // ADR-160: `owner_user_id` of an OPEN rework claim on this run
   // (`node_attempts.decision = 'review_rework_claim'`, `ended_at IS NULL`),
   // else null. An M11b takeover leaves it null and opens no carve-out.
   reworkClaimOwnerUserId?: string | null;
@@ -163,7 +163,7 @@ export type RecordDropInput = {
 };
 
 export type WorkbenchLifecycleDeps = {
-  // Returns the authenticated user when the binding has one. ADR-159 uses it
+  // Returns the authenticated user when the binding has one. ADR-160 uses it
   // as the `viewerUserId` for the lifecycle owner carve-out, so the session is
   // read exactly once, at the boundary that already authenticates.
   requireActiveSession: () => Promise<{ id: string } | void>;
@@ -1795,7 +1795,7 @@ export async function stopWorkbenchRunForToken(
   const deps = depsFromOptions(options);
   const ctx = await deps.loadContext(runId);
 
-  // Token authority, no browser session: there is no viewer, so the ADR-159
+  // Token authority, no browser session: there is no viewer, so the ADR-160
   // owner carve-out can never open for this path.
   ctx.viewerUserId = null;
 
@@ -1985,7 +1985,7 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
     );
   }
 
-  // ADR-159: an OPEN rework claim opens the owner carve-out in the policy. An
+  // ADR-160: an OPEN rework claim opens the owner carve-out in the policy. An
   // ADR-030 takeover writes no `decision`, so it never matches and keeps
   // today's all-actions-disabled behaviour.
   const activeClaim = await getActiveTakeover(runId, client);

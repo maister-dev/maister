@@ -134,7 +134,7 @@ export interface RunPendingHitl {
   prompt: string;
   options: HitlOption[];
   availableOptions?: BudgetBreachAvailableOption[];
-  // ADR-160: the server-owned node_interrupt matrix, delivered on the SAME
+  // ADR-161: the server-owned node_interrupt matrix, delivered on the SAME
   // channel `budget_breach` uses so the client never re-derives availability.
   nodeInterrupt?: NodeInterruptOptionMatrix | null;
   budgetProgress?: BudgetBreachProgressDto | null;
@@ -230,14 +230,14 @@ export interface RunDetail {
     warning: RunnerResolutionWarning;
   }>;
   cutoverFailure: GraphOnlyCutoverFailure | null;
-  // ADR-159: the rework-claim surface. Availability is SERVER-OWNED (mirroring
+  // ADR-160: the rework-claim surface. Availability is SERVER-OWNED (mirroring
   // the `budget_breach` availableOptions precedent) so the client never
   // re-derives eligibility; when unavailable it carries a typed reason the UI
   // turns into the "launch a new run from this branch" pointer.
   continuation: RunContinuation;
 }
 
-// ADR-159: derive the run-detail continuation block. Availability is decided
+// ADR-160: derive the run-detail continuation block. Availability is decided
 // here, server-side, so the client never re-derives eligibility — the same
 // contract the `budget_breach` `availableOptions` channel already follows.
 async function deriveRunContinuation(args: {
@@ -382,7 +382,7 @@ export type RunContinuationClaim = {
 };
 
 export type RunContinuation = {
-  // Non-null only while an ADR-159 rework claim is open (an ADR-030 takeover
+  // Non-null only while an ADR-160 rework claim is open (an ADR-030 takeover
   // leaves it null — the two are told apart by `node_attempts.decision`).
   claim: RunContinuationClaim | null;
   reworkClaimAvailable: boolean;
@@ -439,7 +439,7 @@ export const getRunDetail = cache(async function getRunDetail(
       status: runs.status,
       startedAt: runs.startedAt,
       runKind: runs.runKind,
-      // ADR-159: eligibility terms the continuation block gates on. Without
+      // ADR-160: eligibility terms the continuation block gates on. Without
       // them the derivation reads `null` and would offer a claim on an
       // orchestrator child or a shared-tree run.
       parentRunId: runs.parentRunId,
@@ -538,7 +538,7 @@ export const getRunDetail = cache(async function getRunDetail(
       and(
         eq(nodeAttempts.runId, runId),
         isNull(nodeAttempts.endedAt),
-        // ADR-159: NOT filtered to `human`. An M11b takeover claims the parked
+        // ADR-160: NOT filtered to `human`. An M11b takeover claims the parked
         // human_review node, but a rework claim anchors on the LAST EXECUTED
         // node — usually `check` or `ai_coding` — so a nodeType filter would
         // read its owner as null and silently disable every owner-gated action.
@@ -554,7 +554,7 @@ export const getRunDetail = cache(async function getRunDetail(
     .select({
       id: hitlRequests.id,
       kind: hitlRequests.kind,
-      // ADR-160: the interrupted node, needed to derive the option matrix.
+      // ADR-161: the interrupted node, needed to derive the option matrix.
       stepId: hitlRequests.stepId,
       prompt: hitlRequests.prompt,
       rawSchema: hitlRequests.schema,
@@ -615,7 +615,7 @@ export const getRunDetail = cache(async function getRunDetail(
   );
   const pendingBudgetContextByHitlRequestId = new Map(pendingBudgetContexts);
 
-  // ADR-160: assembled by the shared loader so run detail, the inbox, and the
+  // ADR-161: assembled by the shared loader so run detail, the inbox, and the
   // board card offer the SAME option matrix.
   const nodeInterruptMatrices = await loadNodeInterruptMatrices({
     runId,
@@ -722,7 +722,7 @@ export const getRunDetail = cache(async function getRunDetail(
     );
   }
 
-  // ADR-159: server-owned continuation availability. The eligibility + re-entry
+  // ADR-160: server-owned continuation availability. The eligibility + re-entry
   // resolution are only meaningful for a flow run that is in Review (claimable)
   // or already HumanWorking (claimed), so the manifest parse and the
   // launched-lineage probe are paid ONLY on that path — every other status

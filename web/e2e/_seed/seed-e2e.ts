@@ -345,13 +345,13 @@ const REOPEN_BRANCH = "maister/e2e-reopen";
 
 // --- M11b fixture: graph run paused at a takeover-capable review node --------
 
-// --- ADR-159 fixture: a FINISHED graph run sitting in Review ----------------
+// --- ADR-160 fixture: a FINISHED graph run sitting in Review ----------------
 // Same graph shape as m11b, but the run has already reached `Review`: the human
 // node ran and approved, `current_step_id` is NULL (what runGraph writes on
 // reaching Review), and there is no open HITL. That is the exact state a rework
 // claim starts from — and why the anchor and the re-entry node must both be
 // derived from the LEDGER rather than from a cursor.
-// --- ADR-160 fixture: a run PARKED by an operator node interrupt -----------
+// --- ADR-161 fixture: a run PARKED by an operator node interrupt -----------
 // `plan` ran and finished; `implement` was interrupted mid-turn and is parked
 // NeedsInput with a `node_interrupt` HITL. This is the state the four-option
 // card renders from — and `plan` in the ledger is what makes `restart_from`
@@ -2317,7 +2317,7 @@ async function seedM11bFixture(
   };
 }
 
-// ADR-159: a Review-status run with a finished ledger and a passed gate on the
+// ADR-160: a Review-status run with a finished ledger and a passed gate on the
 // re-entry node — the gate that MUST go stale when the claim is returned.
 async function seedAdr159ReworkClaimFixture(
   pool: Pool,
@@ -2439,7 +2439,7 @@ async function seedAdr159ReworkClaimFixture(
   };
 }
 
-// ADR-160: a flow run parked by an operator node interrupt.
+// ADR-161: a flow run parked by an operator node interrupt.
 async function seedAdr160NodeInterruptFixture(
   pool: Pool,
   userId: string,
@@ -7412,8 +7412,8 @@ async function main(): Promise<void> {
 
     const m11a = await seedM11aFixture(pool, admin.id);
     const m11b = await seedM11bFixture(pool, admin.id);
-    const adr159 = await seedAdr159ReworkClaimFixture(pool, admin.id);
-    const adr160 = await seedAdr160NodeInterruptFixture(pool, admin.id);
+    const adr160 = await seedAdr159ReworkClaimFixture(pool, admin.id);
+    const adr161 = await seedAdr160NodeInterruptFixture(pool, admin.id);
     const runSync = await seedSyncFixture(pool, admin.id);
     const prReopen = await seedReopenFixture(pool, admin.id);
     const m12 = await seedM12EvidenceFixture(pool, admin.id);
@@ -7628,8 +7628,8 @@ You answer when summoned by an @mention.
       byKey: {
         m11a,
         m11b,
-        adr159,
         adr160,
+        adr161,
         runSync,
         prReopen,
         m12,

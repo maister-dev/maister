@@ -323,6 +323,39 @@ freshness, threads, feedback preview, and one approve/request-changes decision.
 The final delivery `ReviewPanel` stays a promotion surface with its own
 base-to-run-to-target meaning. Both paths must state that distinction in EN/RU.
 
+## Continuation controls (Implemented — ADR-160/161)
+
+Two operator affordances share this page and are never both actionable at once,
+because they enter from different run statuses.
+
+**Handoff panel (rework claim).** On a `Review` run the panel offers *Take for
+rework*; on a `HumanWorking` run held by an open rework claim it offers *Return
+to flow* and *Release*. Availability, the refusal reason, and the resolved
+re-entry node are all server-owned — the client renders what it is given and
+never re-derives eligibility, so a disabled button always carries the server's
+own sentence for why. While a claim is open the panel shows the local checkout
+context (branch + worktree path) through the same block the ADR-030 takeover
+uses; the field renders the abbreviated path while the copy button puts the real
+one on the clipboard. A non-fast-forward *Return* renders the server's structured
+remediation — the exact command, the local/remote SHAs, and how far the branch
+has diverged — as copyable text rather than a generic error.
+
+**Node-interrupt controls.** A live agent node (`ai_coding | judge |
+orchestrator`) carries an interrupt trigger; `cli` and `check` nodes refuse with
+a message that names the deferral rather than failing obscurely. Once the run has
+parked with a `node_interrupt` HITL, the decision surface renders the four
+server-supplied options with *Restart node* marked as the one-click default,
+*Resume* and *Stop* beside it, and the rarer *Restart from* behind a disclosure
+toggle so it does not compete with the default. A correction textarea and a
+workspace-policy selector apply to both restart options. Options the server
+marked unavailable render disabled with their reason — the safety cap disables
+only the two restarts, never Resume or Stop.
+
+The interrupt is answered through the SAME decision surface everywhere it
+appears — run detail, the HITL inbox, and the cross-project inbox — because all
+of them resolve the option matrix from one server loader. No surface falls back
+to a raw JSON response body.
+
 ## Linked artifacts
 
 - Blocks: [`run-inspector.md`](run-inspector.md), [`workbench.md`](workbench.md).
@@ -330,19 +363,25 @@ base-to-run-to-target meaning. Both paths must state that distinction in EN/RU.
   [`../../system-analytics/flow-graph.md`](../../system-analytics/flow-graph.md),
   [`../../system-analytics/hitl.md`](../../system-analytics/hitl.md),
   [`../../system-analytics/consensus.md`](../../system-analytics/consensus.md),
-  [`../../system-analytics/branch-sync.md`](../../system-analytics/branch-sync.md).
+  [`../../system-analytics/branch-sync.md`](../../system-analytics/branch-sync.md),
+  [`../../system-analytics/run-continuation.md`](../../system-analytics/run-continuation.md).
 - ADRs: [ADR-052](../../decisions.md#adr-052-live-node-status-coloring-via-sse-triggered-graph-status-refetch),
   [ADR-053](../../decisions.md#adr-053-workbench-file-tree-git-tracked-only-member-gated-reads),
   [ADR-066](../../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror),
   [ADR-082](../../decisions.md#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher),
   [ADR-109](../../decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution),
   [ADR-140](../../decisions.md#adr-140-pr-lifecycle-tracking),
-  [ADR-141](../../decisions.md#adr-141-branch-sync-with-ai-conflict-resolver-and-reopen).
+  [ADR-141](../../decisions.md#adr-141-branch-sync-with-ai-conflict-resolver-and-reopen),
+  [ADR-160](../../decisions.md#adr-160-review-run-rework-claim-with-fast-forward-only-handoff-round-trip),
+  [ADR-161](../../decisions.md#adr-161-operator-node-interrupt-with-corrective-restart).
 - Source: `web/app/(app)/runs/[runId]/layout.tsx`,
   `web/components/board/flow-graph-view-section.tsx`,
   `web/components/board/run-timeline.tsx`,
   `web/components/board/evidence-graph-section.tsx`,
-  `web/components/runs/review-panel.tsx`.
+  `web/components/runs/review-panel.tsx`,
+  `web/components/runs/run-continuation-actions.tsx`,
+  `web/components/runs/node-interrupt-controls.tsx`,
+  `web/components/runs/checkout-context.tsx`.
 
 ## Plan-review panel (Implemented — ADR-137)
 

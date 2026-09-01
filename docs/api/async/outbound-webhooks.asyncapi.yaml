@@ -483,9 +483,9 @@ components:
           enum: [budget_exceeded, hook_trip, node_interrupt]
           description: |
             Budget-escalate, hook-trip, or operator node-interrupt variant.
-            `node_interrupt` (ADR-160, Designed) deliberately REUSES this kind
+            `node_interrupt` (ADR-161, Designed) deliberately REUSES this kind
             rather than adding one: an operator pausing a node is an escalation
-            like any other. ADR-159's claim/return, by contrast, are distinct
+            like any other. ADR-160's claim/return, by contrast, are distinct
             lifecycle facts and get their own kinds — the asymmetry is a
             decision, not an omission.
         scope:
@@ -512,7 +512,7 @@ components:
     DataRunReworkClaimed:
       type: object
       description: >-
-        `run.rework_claimed` (ADR-159, Designed) — an operator took a finished
+        `run.rework_claimed` (ADR-160, Designed) — an operator took a finished
         `Review` run back for rework. Emitted in the SAME transaction as the
         `Review → HumanWorking` CAS and the claim `node_attempts` row (ADR-086
         exactly-once). NOT run-terminal and NOT run-settled: a claim must never
@@ -538,7 +538,7 @@ components:
     DataRunReworkReturned:
       type: object
       description: >-
-        `run.rework_returned` (ADR-159, Designed) — the claim owner returned the
+        `run.rework_returned` (ADR-160, Designed) — the claim owner returned the
         run to the graph. Emitted in the SAME transaction as the return's single
         ledger write (record + artifacts + staleness + the `HumanWorking →
         Running` CAS + the cursor park). NOT run-terminal and NOT run-settled.

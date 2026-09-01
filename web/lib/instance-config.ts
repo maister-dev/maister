@@ -138,7 +138,7 @@ export function promotionClaimTimeoutSeconds(): number {
   return parsed;
 }
 
-// ADR-160: hard cap on operator-initiated node restarts per run. These are
+// ADR-161: hard cap on operator-initiated node restarts per run. These are
 // deliberately EXCLUDED from the flow's `rework.maxLoops` budget (that budget
 // expresses the author's tolerance for automated rework, not for human
 // intervention), so the bound is not removed — it is moved here.

@@ -7,7 +7,7 @@ import {
 } from "@/lib/flows/engine-version";
 
 describe("MAISTER_ENGINE_VERSION", () => {
-  it("is 3.5.0 for the flow-level `reentry` key (ADR-159)", () => {
+  it("is 3.5.0 for the flow-level `reentry` key (ADR-160)", () => {
     expect(MAISTER_ENGINE_VERSION).toBe("3.5.0");
   });
 });

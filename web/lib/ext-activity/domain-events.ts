@@ -98,7 +98,7 @@ function mapDomainEvent(row: DomainEventActivityRow): DomainEventMapping {
         action: { verb: "escalate", object: "run", outcome: "needs attention" },
         summary: `run ${row.runId ?? ""} escalated`.trim(),
       };
-    // ADR-159: the operator rework round-trip. `PulseEventKind` is an alias of
+    // ADR-160: the operator rework round-trip. `PulseEventKind` is an alias of
     // `DomainEventKind`, so these cases are load-bearing — without them this
     // exhaustive switch stops compiling the moment the taxonomy widens.
     case "run.rework_claimed":

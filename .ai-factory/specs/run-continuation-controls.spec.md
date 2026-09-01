@@ -1,6 +1,6 @@
-# Run Continuation Controls — handoff round-trip + soft node interrupt (ADR-159 / ADR-160)
+# Run Continuation Controls — handoff round-trip + soft node interrupt (ADR-160 / ADR-161)
 
-Status: **Implemented (ADR-159 / ADR-160).** Both features are shipped; every
+Status: **Implemented (ADR-160 / ADR-161).** Both features are shipped; every
 `REQ-*` below is satisfied and every `AC-*` names a green test (see the plan's
 AC conformance walks for Phase 1+2 and Phase 3+4).
 
@@ -32,7 +32,7 @@ early.
 
 Owner brief (2026-08-31) + owner decisions 1–7 recorded in the plan's
 "Owner decisions" section. Durable record: this spec +
-[ADR-159](../../docs/decisions.md) + [ADR-160](../../docs/decisions.md) +
+[ADR-160](../../docs/decisions.md) + [ADR-161](../../docs/decisions.md) +
 [`docs/system-analytics/run-continuation.md`](../../docs/system-analytics/run-continuation.md)
 + the plan [`../plans/claude-flow-runs-continuation-controls-527f4c.md`](../plans/claude-flow-runs-continuation-controls-527f4c.md).
 
@@ -214,7 +214,7 @@ Test ids are stable and are cited by the plan's tasks. `unit` = vitest project `
 | **AC-A11** | Dirty worktree and zero-commit return each refuse `CONFLICT` with no ledger write | REQ-A7 | T-A11 (integ, 2 cases) |
 | **AC-A12** | A ledger-tx failure rolls back fully, returns `503`, leaves the run `HumanWorking`, and a retry replays cleanly | REQ-A7 | T-A12 (integ) |
 | **AC-A13** | After return, the claim anchor's prior `passed` gates are `stale` — the claim row does not shield them | REQ-A8 | T-A13 (integ, Feature-A shape) |
-| **AC-A14** | The same holds for the M11b takeover shape; the observed result is recorded in ADR-159 either way | REQ-A8 | T-A14 (integ, M11b shape) |
+| **AC-A14** | The same holds for the M11b takeover shape; the observed result is recorded in ADR-160 either way | REQ-A8 | T-A14 (integ, M11b shape) |
 | **AC-A15** | Release returns the run to `Review`, closes the claim row, and frees the slot | REQ-A9 | T-A15 (integ) |
 | **AC-A16** | Claim and return each write exactly one `domain_events` row with the right kind/actor/payload; rolling the tx back leaves none; a refused claim writes none; the CHECK rejects an unknown kind | REQ-A10 | T-A16 (integ, 4 cases) |
 | **AC-A17** | A return committed with no runner dispatch is picked up by `runTakeoverReturnRecoverySweep` | REQ-A11 | T-A17 (integ) |
@@ -250,7 +250,7 @@ Test ids are stable and are cited by the plan's tasks. `unit` = vitest project `
 ## Linked artifacts
 
 - Plan: [`../plans/claude-flow-runs-continuation-controls-527f4c.md`](../plans/claude-flow-runs-continuation-controls-527f4c.md)
-- ADRs: ADR-159 (Feature A), ADR-160 (Feature B) in [`docs/decisions.md`](../../docs/decisions.md)
+- ADRs: ADR-160 (Feature A), ADR-161 (Feature B) in [`docs/decisions.md`](../../docs/decisions.md)
 - Analytics: [`docs/system-analytics/run-continuation.md`](../../docs/system-analytics/run-continuation.md),
   [`runs.md`](../../docs/system-analytics/runs.md),
   [`manual-takeover.md`](../../docs/system-analytics/manual-takeover.md),

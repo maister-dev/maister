@@ -272,15 +272,15 @@ linear run renders an empty-but-valid timeline (no crash).
   → `Crashed`" sweep is REJECTED — it would false-positive on a legitimately
   session-less `command_check` gate executing after the return.
 
-## Review-run rework claim (ADR-159 — Implemented)
+## Review-run rework claim (ADR-160 — Implemented)
 
-[ADR-159](../decisions.md#adr-159-review-run-rework-claim-with-fast-forward-only-handoff-round-trip)
+[ADR-160](../decisions.md#adr-160-review-run-rework-claim-with-fast-forward-only-handoff-round-trip)
 adds a **second** way into `HumanWorking`, from `Review` instead of `NeedsInput`.
 It reuses this domain's substrate rather than forking it; the full contract lives
 in [`run-continuation.md`](run-continuation.md). What follows is only the
 delta, so neither file restates the other.
 
-**Shared with M11b, unchanged:**
+**Shared with the ADR-030 takeover, unchanged:**
 
 - The `runs.status='HumanWorking'` value, its session-less-but-holds-a-worktree
   property, and its exclusion from `runResumeRecoverySweep`.
@@ -294,9 +294,9 @@ delta, so neither file restates the other.
   to the takeover row's own node, so it reaches a Review-claim return unchanged.
 - `abandonRun`'s `releaseHumanWorking` path.
 
-**Differs from M11b:**
+**Differs from the ADR-030 takeover:**
 
-| Axis | M11b takeover (Implemented) | ADR-159 rework claim (Implemented) |
+| Axis | ADR-030 takeover (Implemented) | ADR-160 rework claim (Implemented) |
 | --- | --- | --- |
 | Entry status | `NeedsInput` at a parked `human_review` node | `Review`, after the graph finished |
 | Concurrency | enters from an already-counted status — no cap change | `Review` is slot-free, so the claim **acquires** a slot and re-checks the cap under the run-row lock; cap-full ⇒ `CONFLICT`, never `Pending` |
@@ -313,14 +313,14 @@ delta, so neither file restates the other.
 node, the latest attempt with `owner_user_id IS NULL`, so a claim row can never
 shield a node's real last execution from gate staling. This was written for the
 rework claim — whose anchor is by construction downstream of any re-entry — but
-it is applied unconditionally, so it governs M11b takeovers too. Whether it
-changed observable M11b behaviour was settled by test rather than by argument;
-see ADR-159's consequences.
+it is applied unconditionally, so it governs ADR-030 takeovers too. Whether it
+changed observable ADR-030 behaviour was settled by test rather than by argument;
+see ADR-160's consequences.
 
 ## Linked artifacts
 
 - ADRs: [ADR-030 Manual takeover](../decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status),
-  [ADR-159 Review-run rework claim](../decisions.md#adr-159-review-run-rework-claim-with-fast-forward-only-handoff-round-trip),
+  [ADR-160 Review-run rework claim](../decisions.md#adr-160-review-run-rework-claim-with-fast-forward-only-handoff-round-trip),
   [ADR-011 Workspace lifecycle](../decisions.md#adr-011-workspace-lifecycle-via-git-worktree),
   [ADR-009 Global concurrency cap](../decisions.md#adr-009-global-concurrency-cap--3),
   [ADR-008 Typed error taxonomy](../decisions.md#adr-008-typed-error-taxonomy-maistererror),

@@ -42,7 +42,7 @@ export type WorkbenchLifecyclePolicyInput = {
   hasWorkspace: boolean;
   workspaceRemoved: boolean;
   workspaceArchived: boolean;
-  // ADR-159: `owner_user_id` of an OPEN rework claim (`decision =
+  // ADR-160: `owner_user_id` of an OPEN rework claim (`decision =
   // 'review_rework_claim'`), else null. An M11b takeover leaves this null, so
   // it never opens the carve-out below.
   claimOwnerUserId: string | null;
@@ -94,7 +94,7 @@ function disabledActions(
 }
 
 // The single definition of "this run is still live enough to stop". Exported so
-// callers that re-drive a stop (the ADR-160 node-interrupt self-heal) gate on
+// callers that re-drive a stop (the ADR-161 node-interrupt self-heal) gate on
 // the same set the policy enforces, instead of keeping a second copy that
 // drifts when the set changes.
 export function isStoppableRunStatus(status: string): boolean {
@@ -115,7 +115,7 @@ function isWorktreeActionAllowed(args: WorkbenchLifecyclePolicyInput): boolean {
   return WORKTREE_ACTION_STATUSES.has(args.runStatus);
 }
 
-// ADR-159: the ONE hole in the `human-owned` wall. `exportBranch` is the single
+// ADR-160: the ONE hole in the `human-owned` wall. `exportBranch` is the single
 // action opened, and only to the claim owner on a present workspace — but it is
 // what makes snapshotCommit / handoffBranch / handoff-metadata reachable during
 // a claim, since all three gate on `requireActionAllowed(ctx, "exportBranch")`.

@@ -322,7 +322,7 @@ channel into the re-entered loop's prompt. A target with zero prior attempts is 
 no-op. A crash after commit self-heals: the next `appendNodeAttempt` reads the
 persisted baseline.
 
-**Flow-level `reentry` and the re-entry chain (ADR-159 — Implemented).** A finished
+**Flow-level `reentry` and the re-entry chain (ADR-160 — Implemented).** A finished
 `Review` run has no cursor — `runGraph` writes `current_step_id: null` on reaching
 `Review` — so a rework claim cannot resume "where it left off" and must resolve a
 re-entry node from durable state. The compiler carries an optional flow-level
@@ -346,7 +346,7 @@ staled, so the flow's own gates re-validate the human's commits. See
 [`run-continuation.md`](run-continuation.md) and
 [`flow-dsl.md`](../flow-dsl.md).
 
-**Operator restarts are outside the rework epoch (ADR-160 — Implemented).** An
+**Operator restarts are outside the rework epoch (ADR-161 — Implemented).** An
 operator node interrupt closes the parked attempt `Reworked` with
 `node_attempts.decision = 'operator_interrupt'`, which makes `runGraph` append a
 fresh attempt — the same mechanism a declared rework uses. It is deliberately

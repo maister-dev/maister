@@ -64,7 +64,7 @@ export type FlowGraph = {
   entry: string;
   order: string[];
   nodes: Map<string, CompiledNode>;
-  // ADR-159: the node an operator's rework claim re-enters at, when the flow
+  // ADR-160: the node an operator's rework claim re-enters at, when the flow
   // declares one. `null` means the claim falls through to the ledger-derived
   // link of the re-entry chain. Compile-time only — never persisted.
   reentry: string | null;
@@ -496,7 +496,7 @@ function compileGraph(
     });
   }
 
-  // ADR-159: re-assert here as well as in validateGraphManifest — authored
+  // ADR-160: re-assert here as well as in validateGraphManifest — authored
   // drafts reach compileManifest without going through the loader's gates.
   if (manifestReentry !== undefined && !nodes.has(manifestReentry)) {
     throw new MaisterError(

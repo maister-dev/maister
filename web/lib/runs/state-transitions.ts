@@ -403,7 +403,7 @@ export async function markReworkFromReview(
 // converges to ONE winner (loser → CONFLICT at the caller). Touches NO runs
 // session column (M42 dropped it); the caller wraps this in the FOR-UPDATE
 // promotion fence + cap gate. Clears keepalive/checkpoint so the run reads live.
-// ADR-159: the rework claim's status CAS. Exact-allow-list `WHERE
+// ADR-160: the rework claim's status CAS. Exact-allow-list `WHERE
 // status='Review'` — a set CAS would silently permit within-set transitions.
 // This runs FIRST inside the claim transaction so a concurrent loser is refused
 // here and never reaches the UNIQUE(run_id, node_id, attempt) insert.
@@ -436,7 +436,7 @@ export async function markReworkClaimFromReview(
   return { ok: true };
 }
 
-// ADR-159: release a rework claim back to Review — NOT NeedsInput, because this
+// ADR-160: release a rework claim back to Review — NOT NeedsInput, because this
 // provenance has no review HITL to re-open.
 export async function markReviewFromReworkClaim(
   runId: string,

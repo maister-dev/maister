@@ -12,7 +12,7 @@ import {
   type NodeInterruptControlsProps,
 } from "@/components/runs/node-interrupt-controls";
 
-// ADR-160 UI: the option set is SERVER-owned. These assert the component
+// ADR-161 UI: the option set is SERVER-owned. These assert the component
 // renders what it is given and never re-derives availability.
 
 const base: NodeInterruptControlsProps = {

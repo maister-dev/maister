@@ -5,7 +5,7 @@ import {
   operatorInterruptCount,
 } from "@/lib/flows/graph/rework-baseline";
 
-// T-B10 (AC-B10) — ADR-160: operator restarts must not burn the flow author's
+// T-B10 (AC-B10) — ADR-161: operator restarts must not burn the flow author's
 // `rework.maxLoops` budget. The budget expresses tolerance for AUTOMATED rework
 // loops; a human stepping in to correct a wandering agent is intervention, not
 // a failed iteration. The bound is moved, not removed — a separate
@@ -17,9 +17,9 @@ function ledger(...decisions: Array<string | null>): Attempt[] {
   return decisions.map((decision) => ({ nodeId: "implement", decision }));
 }
 
-describe("T-B10 ADR-160 — operator restarts are outside the rework epoch", () => {
+describe("T-B10 ADR-161 — operator restarts are outside the rework epoch", () => {
   // Back-compat is the load-bearing property: a run that never used an operator
-  // restart must compute byte-identically to pre-ADR-160.
+  // restart must compute byte-identically to pre-ADR-161.
   it("is byte-identical to the two-argument form when there are no operator restarts", () => {
     for (const [attempt, baseline] of [
       [1, null],
@@ -92,7 +92,7 @@ describe("T-B10 ADR-160 — operator restarts are outside the rework epoch", () 
     expect(effectiveAttempts(5, 0, restarts) > 3).toBe(true);
   });
 
-  // The ADR-118 baseline and the ADR-160 exclusion compose.
+  // The ADR-118 baseline and the ADR-161 exclusion compose.
   it("composes with the ADR-118 rework_baseline reset", () => {
     expect(effectiveAttempts(10, 4, 2)).toBe(4);
   });

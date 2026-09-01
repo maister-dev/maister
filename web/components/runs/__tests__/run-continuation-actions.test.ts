@@ -16,7 +16,7 @@ import {
   type RunContinuationActionsProps,
 } from "@/components/runs/run-continuation-actions";
 
-// ADR-159 UI: availability is SERVER-OWNED — the component renders what it is
+// ADR-160 UI: availability is SERVER-OWNED — the component renders what it is
 // given and never re-derives eligibility. These assert the five states an
 // operator can land in.
 

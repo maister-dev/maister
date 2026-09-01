@@ -13,13 +13,13 @@ import { OPERATOR_INTERRUPT_DECISION } from "@/lib/flows/graph/attempt-decisions
 // resets has a NULL baseline everywhere → effective == attemptNumber → behavior
 // byte-identical to pre-ADR-118.
 //
-// ADR-160: OPERATOR node restarts are subtracted too. An operator stepping in to
+// ADR-161: OPERATOR node restarts are subtracted too. An operator stepping in to
 // correct a wandering agent is human intervention, not a failed automated
 // iteration — charging it to `rework.maxLoops` would let a reviewer exhaust a
 // flow's rework allowance by HELPING it. The bound is not removed, only moved:
 // operator restarts are capped per run by `MAISTER_MAX_OPERATOR_RESTARTS`.
 // A run with zero operator restarts passes 0 here and is byte-identical to
-// pre-ADR-160.
+// pre-ADR-161.
 export function effectiveAttempts(
   attemptNumber: number,
   baseline: number | null | undefined,

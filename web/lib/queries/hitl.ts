@@ -126,7 +126,7 @@ export interface HitlItem {
   prompt: string;
   options: HitlOption[];
   availableOptions?: BudgetBreachAvailableOption[];
-  // ADR-160: the server-owned option matrix for a pending operator interrupt.
+  // ADR-161: the server-owned option matrix for a pending operator interrupt.
   // Present ONLY on `node_interrupt` rows; without it the card falls back to a
   // raw JSON textarea and the interrupt is effectively unanswerable here.
   nodeInterrupt?: NodeInterruptOptionMatrix;

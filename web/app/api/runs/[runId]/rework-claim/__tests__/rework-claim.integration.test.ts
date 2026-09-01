@@ -1,4 +1,4 @@
-// ADR-159 rework claim — integration behaviour against a real Postgres
+// ADR-160 rework claim — integration behaviour against a real Postgres
 // testcontainer, real migrations, a real on-disk git worktree, and the real
 // authz layer (only @/auth's session source is mocked).
 //
@@ -369,7 +369,7 @@ afterEach(async () => {
     .where(inArray(runs.status, ["Running", "NeedsInput", "HumanWorking"]));
 });
 
-describe("ADR-159 rework claim (integration)", () => {
+describe("ADR-160 rework claim (integration)", () => {
   it("claims a Review run and resolves re-entry from the ledger takeover transition", async () => {
     const s = await seed();
 
@@ -572,7 +572,7 @@ async function claimAs(s: Seed): Promise<void> {
   expect(res.status).toBe(200);
 }
 
-describe("ADR-159 rework return + release (integration)", () => {
+describe("ADR-160 rework return + release (integration)", () => {
   // T-A10 (AC-A10): the purely-local loop must still work. No remote configured
   // at all ⇒ the ingest is a no-op SUCCESS, not a failure.
   it("T-A10 — a missing remote is a no-op success", async () => {
@@ -824,9 +824,9 @@ describe("ADR-159 rework return + release (integration)", () => {
     await s.cleanup();
   });
 
-  // The return route is for the ADR-159 provenance only; an ADR-030 takeover
+  // The return route is for the ADR-160 provenance only; an ADR-030 takeover
   // must keep using /takeover/return, whose re-entry comes from the parked
-  // node's transitions.takeover rather than the ADR-159 chain.
+  // node's transitions.takeover rather than the ADR-160 chain.
   it("refuses to return an ADR-030 takeover claim", async () => {
     const s = await seed();
 
@@ -894,7 +894,7 @@ describe("ADR-159 rework return + release (integration)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Domain events (T-A16) — ADR-159 D11 / REQ-A10
+// Domain events (T-A16) — ADR-160 D11 / REQ-A10
 // ---------------------------------------------------------------------------
 
 async function domainEventsFor(runId: string): Promise<any[]> {
@@ -904,7 +904,7 @@ async function domainEventsFor(runId: string): Promise<any[]> {
     .where(eq(schema.domainEvents.runId, runId));
 }
 
-describe("T-A16 ADR-159 — claim/return domain events", () => {
+describe("T-A16 ADR-160 — claim/return domain events", () => {
   it("writes exactly one run.rework_claimed with a user actor and the right payload", async () => {
     const s = await seed();
 
@@ -989,7 +989,7 @@ describe("T-A16 ADR-159 — claim/return domain events", () => {
 // Consumer fanout (T-A18) — the Feature-A column of the fanout table
 // ---------------------------------------------------------------------------
 
-describe("T-A18 ADR-159 — promote/sync fences and abandon, both directions", () => {
+describe("T-A18 ADR-160 — promote/sync fences and abandon, both directions", () => {
   // A7: promoteRun and assertSyncEligible each require status==='Review', so
   // HumanWorking is ALREADY fenced against both — no new fence code. Assert it
   // rather than assuming it.
@@ -1096,10 +1096,10 @@ describe("T-A18 ADR-159 — promote/sync fences and abandon, both directions", (
 });
 
 // ---------------------------------------------------------------------------
-// Server-owned continuation availability (extends T-A8) — ADR-159 / REQ-A4, A5
+// Server-owned continuation availability (extends T-A8) — ADR-160 / REQ-A4, A5
 // ---------------------------------------------------------------------------
 
-describe("ADR-159 — run-detail continuation block is server-owned", () => {
+describe("ADR-160 — run-detail continuation block is server-owned", () => {
   async function continuationFor(runId: string) {
     const { getRunDetail } = await import("@/lib/queries/run");
     const detail = await getRunDetail(runId);

@@ -275,7 +275,7 @@ export interface HitlDecisionControlsProps {
     | "infra_recovery"
     | "budget_breach"
     | "hook_trip"
-    // ADR-160: the operator node interrupt.
+    // ADR-161: the operator node interrupt.
     | "node_interrupt"
     | "decision_request";
   reviewSchema: ReviewSchema | null;
@@ -293,7 +293,7 @@ export interface HitlDecisionControlsProps {
   budgetCeiling?: string;
   budgetProgress?: BudgetBreachProgressDto | null;
   availableOptions?: BudgetBreachAvailableOption[];
-  // ADR-160: the server-owned interrupt matrix. Absent on every other kind.
+  // ADR-161: the server-owned interrupt matrix. Absent on every other kind.
   nodeInterrupt?: NodeInterruptOptionMatrixView | null;
   claimStage?: BudgetBreachClaimStage | null;
   budgetParkMode?: BudgetBreachParkMode;

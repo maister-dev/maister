@@ -1,4 +1,4 @@
-// ADR-160: escalateNodeInterrupt — the pre-transaction checkpoint contract and
+// ADR-161: escalateNodeInterrupt — the pre-transaction checkpoint contract and
 // the one-transaction park. Owns T-B2 (an undeliverable checkpoint mutates
 // nothing), T-B3 (a park-tx failure leaves no orphan), and T-B12 (the park is
 // an ordinary NeedsInput park: idled, abandoned, never Crashed).

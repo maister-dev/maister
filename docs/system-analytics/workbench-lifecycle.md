@@ -39,9 +39,9 @@ MAIster should create a separate handoff branch at the workbench HEAD, push it
 to a selected existing remote, and show copyable checkout commands while leaving
 the run in its current review/terminal state.
 
-## ADR-142 lifecycle contract (Implemented)
+## ADR-148 lifecycle contract (Implemented)
 
-ADR-142 replaces the conflicting earlier GC and workbench-lifecycle
+ADR-148 replaces the conflicting earlier GC and workbench-lifecycle
 workspace-retention behavior in this
 document. A run's status is immutable execution history; workspace presence is
 a separate axis. The behavior below is implemented.
@@ -124,7 +124,7 @@ body values. JSONL and other runtime-artifact retention are unchanged.
 | live scratch dialog (`Starting`, `WaitingForUser`, `Running`, `NeedsInput`) | yes via scratch stop | no                        | no                         | no     |
 | live agent (`Running` / `NeedsInput` / `NeedsInputIdle`)                    | yes -> `Abandoned`   | no                        | no                         | no     |
 | `HumanWorking` (non-owner, or an ADR-030 takeover)                          | no                   | no                        | no                         | no     |
-| `HumanWorking` holding an ADR-159 rework claim, viewed by the claim owner    | no                   | no                        | no                         | yes (Implemented) |
+| `HumanWorking` holding an ADR-160 rework claim, viewed by the claim owner    | no                   | no                        | no                         | yes (Implemented) |
 | `Review`                                                                    | no-op hidden         | yes                       | yes                        | yes    |
 | `Crashed`                                                                   | no                   | yes while worktree exists | yes                        | yes    |
 | `Done`                                                                      | no                   | yes until pruned          | yes, status remains `Done` | yes    |
@@ -144,10 +144,10 @@ see [`branch-sync.md`](branch-sync.md). The combined
 they compose the existing `stop` (live) and `archive`/`drop` (parked) actions
 server-side so the operator clicks once.
 
-### ADR-159 rework-claim owner carve-out (Implemented)
+### ADR-160 rework-claim owner carve-out (Implemented)
 
 `HumanWorking` disables **every** action with the reason `human-owned`. The
-ADR-159 rework claim pokes exactly one hole in that, and only for one actor:
+ADR-160 rework claim pokes exactly one hole in that, and only for one actor:
 
 - **Scope.** When `runStatus === 'HumanWorking'` **and** the viewer matches the
   claim's `owner_user_id` **and** the workspace is present and not removed,
@@ -165,7 +165,7 @@ ADR-159 rework claim pokes exactly one hole in that, and only for one actor:
   to race the owner. The policy input carries `claimOwnerUserId` and
   `viewerUserId`; every other status × owner combination keeps today's derived
   action set byte-for-byte.
-- **The M11b takeover is unchanged.** Its claim row carries no
+- **The ADR-030 takeover is unchanged.** Its claim row carries no
   `decision='review_rework_claim'`, so it does not open the carve-out.
 
 ## Combined stop + worktree ops

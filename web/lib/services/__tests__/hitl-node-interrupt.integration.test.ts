@@ -1,4 +1,4 @@
-// ADR-160: respondToHitl for the `node_interrupt` kind — a four-way operator
+// ADR-161: respondToHitl for the `node_interrupt` kind — a four-way operator
 // fork over a paused agent node. Mirrors hitl-hook-trip.integration.test.ts
 // (testcontainer DB; runFlow + authz mocked).
 //
@@ -413,7 +413,7 @@ describe("respondToHitl node_interrupt integration", () => {
 // T-B7 — workspace-policy degrade (AC-B7)
 // ---------------------------------------------------------------------------
 
-describe("T-B7 ADR-160 — a missing checkpoint_ref degrades to keep", () => {
+describe("T-B7 ADR-161 — a missing checkpoint_ref degrades to keep", () => {
   // Degrading is the SAFE direction: rewinding to a guessed commit would
   // destroy the operator's work, whereas keeping the tree merely does less.
   it("records `keep` when the target has no checkpoint_ref", async () => {

@@ -30,7 +30,7 @@ agent schedule bindings (`agent_schedule_id`, `ON DELETE SET NULL`). The
 scheduled dispatcher remains outside the Run table: it first reserves identity
 in its own ledger, then the ordinary launch transaction writes this sole link.
 
-**ADR-142 (Implemented, migration `0107`)** keeps a run's historical
+**ADR-148 (Implemented, migration `0107`)** keeps a run's historical
 status independent from workspace presence. `WORKSPACES` gains a renewable
 lifecycle lease/result record; `WORKSPACE_RECONCILIATION_FINDINGS` is a
 separate durable report/retry/quarantine ledger correlated optionally to a
@@ -41,7 +41,7 @@ erDiagram
     PROJECTS ||--o{ TASKS : "owns"
     PROJECTS ||--o{ RUNS : "owns"
     PROJECTS ||--o{ WORKSPACES : "owns"
-    PROJECTS ||--o{ WORKSPACE_RECONCILIATION_FINDINGS : "ADR-142 observed candidate"
+    PROJECTS ||--o{ WORKSPACE_RECONCILIATION_FINDINGS : "ADR-148 observed candidate"
     FLOWS ||--o{ TASKS : "selected at create"
     FLOWS ||--o{ RUNS : "selected at launch"
     PLATFORM_ACP_RUNNERS ||--o{ RUNS : "launch runner"
@@ -49,8 +49,8 @@ erDiagram
     AGENT_SCHEDULES ||--o{ RUNS : "agent binding provenance (ADR-139)"
     TASKS ||--o{ RUNS : "1:N retry loop"
     RUNS }o--o| WORKSPACES : "own or shared worktree"
-    RUNS o|--o{ WORKSPACE_RECONCILIATION_FINDINGS : "ADR-142 optional correlation"
-    WORKSPACES o|--o{ WORKSPACE_RECONCILIATION_FINDINGS : "ADR-142 optional correlation"
+    RUNS o|--o{ WORKSPACE_RECONCILIATION_FINDINGS : "ADR-148 optional correlation"
+    WORKSPACES o|--o{ WORKSPACE_RECONCILIATION_FINDINGS : "ADR-148 optional correlation"
     RUNS ||--o{ RUNS : "run-tree delegation (parent_run_id, ADR-098)"
     RUNS ||--|{ RUN_SESSIONS : "per-session runner state (Implemented ADR-114)"
     PLATFORM_ACP_RUNNERS ||--o{ RUN_SESSIONS : "session runner (Implemented ADR-114, SET NULL)"

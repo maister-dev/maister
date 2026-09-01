@@ -97,7 +97,7 @@ for (const file of targets) {
     // mermaid.parse() does not enforce maxTextSize, but every renderer does
     // (default 50,000 chars) — a block over the limit is "valid" here yet
     // refuses to render anywhere. Fail it. (This is how the old full ERD at
-    // 60k chars shipped green while being unviewable — ADR-159.)
+    // 60k chars shipped green while being unviewable — ADR-160.)
     if (m[1].length > 50_000) {
       failures.push({
         file: relative(repoRoot, file),

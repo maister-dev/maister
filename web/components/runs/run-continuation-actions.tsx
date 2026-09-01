@@ -17,7 +17,7 @@ import { useState, useTransition } from "react";
 import { CheckoutContext } from "@/components/runs/checkout-context";
 import { readApiError } from "@/lib/api-error";
 
-// ADR-159: the copyable remediation a non-fast-forward refusal carries. The
+// ADR-160: the copyable remediation a non-fast-forward refusal carries. The
 // server owns every value here — the client only renders it.
 export type ReworkNonFastForwardDetails = {
   command: string;

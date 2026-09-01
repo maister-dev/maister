@@ -15,7 +15,7 @@ export interface NodeInterruptTriggerProps {
   canAct: boolean;
 }
 
-// ADR-160: pause ONE live agent node. The body is empty — the node, its
+// ADR-161: pause ONE live agent node. The body is empty — the node, its
 // attempt, and the supervisor session are all resolved server-side, so this
 // control carries no identifiers the server would have to trust.
 export function NodeInterruptTrigger({

@@ -713,6 +713,37 @@
   package boundary is an open packaging decision.
   (see `.ai-factory/plans/feature-multi-repo-cross-project-enablement.md`)
 
+- [x] **M50. Run continuation controls** — give an operator two ways to keep
+  working a run the flow can no longer advance on its own, without discarding
+  its evidence graph or its readiness history. **(A) Review-run rework claim**
+  (ADR-160): a finished `Review` run returns to `HumanWorking`, the operator
+  edits the existing worktree by hand, and a **fast-forward-only** ingest returns
+  it into the graph at a server-resolved re-entry node — declared `reentry` on
+  the manifest (engine floor `3.5.0`), else the last executed `human` node's
+  `transitions.takeover`, else refused with the reason. Divergence refuses
+  `PRECONDITION` carrying copyable remediation (command, local/remote SHAs,
+  ahead/behind). `Review → HumanWorking` ACQUIRES a concurrency slot, so the cap
+  is re-checked inside the claim transaction and a cap-full claim is refused,
+  never queued. **(B) Operator node interrupt** (ADR-161): a live agent node
+  (`ai_coding | judge | orchestrator`) parks into `NeedsInput` with a
+  `node_interrupt` HITL carrying a server-owned four-option matrix — resume /
+  restart node / restart from an earlier node / stop — plus a free-text
+  correction appended to the restarted attempt's prompt and a workspace policy
+  applied against the target's `checkpoint_ref`. `restart_from` targets are
+  **ledger-derived, never topological** (the graph has cycles); forward skips are
+  refused. Operator restarts are excluded from `rework.maxLoops` and from BOTH
+  Observatory correction counters, and bounded per run by
+  `MAISTER_MAX_OPERATOR_RESTARTS` (default 10). Provenance for both rides
+  `node_attempts.decision` (`review_rework_claim` / `operator_interrupt`) — no
+  new `runs.status` value, no new `node_attempts` status, no adapter fork.
+  Migration `0125` widens the domain-event kind CHECK to 13 for
+  `run.rework_claimed` / `run.rework_returned`. Explicit non-goals: merge or AI
+  conflict resolution on ingest, forward node skips, `run_kind ∈ {agent,
+  scratch}` for the claim, interrupting `cli`/`check` mid-command, and any
+  ext-API / MCP surface for `node_interrupt`.
+  (see `.ai-factory/plans/claude-flow-runs-continuation-controls-527f4c.md`,
+  `.ai-factory/specs/run-continuation-controls.spec.md`)
+
 ## Completed
 
 | Milestone                                                                    | Date       |

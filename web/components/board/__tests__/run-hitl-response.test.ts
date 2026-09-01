@@ -213,12 +213,12 @@ describe("RunHitlResponse — agent clarification wiring", () => {
   });
 });
 
-// ADR-160 finding-2 fence: before the shared branch existed, a `node_interrupt`
+// ADR-161 finding-2 fence: before the shared branch existed, a `node_interrupt`
 // row reaching the inbox or board card fell through to the raw JSON textarea —
 // the operator had to hand-type `{"optionId":"restart_node"}` to answer an
 // interrupt they had just raised. The four options must render wherever the
 // server supplies the matrix, not only on run detail.
-describe("RunHitlResponse — node interrupt wiring (ADR-160)", () => {
+describe("RunHitlResponse — node interrupt wiring (ADR-161)", () => {
   const MATRIX = {
     interruptedNodeId: "implement",
     defaultOptionId: "restart_node" as const,

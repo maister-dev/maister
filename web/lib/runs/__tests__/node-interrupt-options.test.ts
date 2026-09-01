@@ -7,7 +7,7 @@ import {
   WORKSPACE_POLICY_IDS,
 } from "@/lib/runs/node-interrupt";
 
-// T-B5 (AC-B5) — ADR-160: the option set is SERVER-owned and `restart_from`'s
+// T-B5 (AC-B5) — ADR-161: the option set is SERVER-owned and `restart_from`'s
 // targets are LEDGER-derived, because the static graph has cycles and "earlier"
 // is therefore not derivable from topology. Forward skips are out of scope.
 
@@ -18,7 +18,7 @@ const BASE = {
   maxOperatorRestarts: 10,
 };
 
-describe("T-B5 ADR-160 — server-owned option matrix", () => {
+describe("T-B5 ADR-161 — server-owned option matrix", () => {
   it("offers exactly the four options, defaulting to restart_node", () => {
     const m = deriveNodeInterruptOptions(BASE);
 
@@ -85,7 +85,7 @@ describe("T-B5 ADR-160 — server-owned option matrix", () => {
   });
 });
 
-describe("T-B1 ADR-160 — interruptible node types", () => {
+describe("T-B1 ADR-161 — interruptible node types", () => {
   it.each([["ai_coding"], ["judge"], ["orchestrator"]])(
     "admits %s (agent-executed)",
     (t) => {

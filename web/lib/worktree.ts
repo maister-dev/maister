@@ -3222,7 +3222,7 @@ async function isAncestor(
   }
 }
 
-// ADR-159: fast-forward the run WORKTREE's checked-out branch to a remote-
+// ADR-160: fast-forward the run WORKTREE's checked-out branch to a remote-
 // tracking ref, and report the outcome truthfully. Fast-forward only — no
 // merge, no rebase, no conflict resolution.
 //
@@ -3315,7 +3315,7 @@ async function revListLeftRightCounts(
 }
 
 // Whether a remote-tracking ref exists locally (post-fetch). A branch with no
-// upstream is a NO-OP success for the ADR-159 ingest, not a failure — the
+// upstream is a NO-OP success for the ADR-160 ingest, not a failure — the
 // purely-local edit loop must still return.
 export async function remoteTrackingRefExists(
   worktree: string,

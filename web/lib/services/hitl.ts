@@ -4683,7 +4683,7 @@ async function handleHookTripResponse(args: {
   );
 }
 
-// ADR-160: respond to an operator node interrupt (a NeedsInput node_interrupt
+// ADR-161: respond to an operator node interrupt (a NeedsInput node_interrupt
 // HITL). Four server-owned options; human-actor-only is enforced at the
 // respondToHitl chokepoint above.
 //
@@ -5510,7 +5510,7 @@ export async function respondToHitl(
       // resolve — a machine/agent token must never dismiss its own trip
       // (dispatched to handleHookTripResponse below).
       hitlRow.kind === "hook_trip" ||
-      // ADR-160: an operator node interrupt is a human judgement call about a
+      // ADR-161: an operator node interrupt is a human judgement call about a
       // live agent. Same posture as hook_trip — a machine/agent token must
       // never answer its own interruption. No ext-API / MCP surface exists.
       hitlRow.kind === "node_interrupt"

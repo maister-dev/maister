@@ -7,7 +7,7 @@ import {
   type WorkbenchRunStatus,
 } from "@/lib/workbench-lifecycle/policy";
 
-// T-A8 (AC-A8) — ADR-159 owner carve-out. `HumanWorking` disables EVERY action
+// T-A8 (AC-A8) — ADR-160 owner carve-out. `HumanWorking` disables EVERY action
 // with `human-owned`. The rework claim pokes exactly one hole in that, for
 // exactly one actor: the claim owner gets `exportBranch`, which is what makes
 // snapshotCommit / handoffBranch / handoff-metadata reachable (all three gate on
@@ -39,7 +39,7 @@ function byId(
   return Object.fromEntries(actions.map((a) => [a.id, a]));
 }
 
-describe("T-A8 ADR-159 — HumanWorking lifecycle owner carve-out", () => {
+describe("T-A8 ADR-160 — HumanWorking lifecycle owner carve-out", () => {
   it("enables exportBranch for the claim owner and nothing else", () => {
     const actions = byId(
       deriveWorkbenchLifecycleActions(

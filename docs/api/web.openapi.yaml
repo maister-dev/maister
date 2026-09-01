@@ -125,7 +125,7 @@ tags:
   - name: takeover
     description: Manual takeover — local worktree handoff (M11b, ADR-030).
   - name: run-continuation
-    description: Run continuation — Review rework claim with fast-forward-only handoff round-trip, and the operator node interrupt (ADR-159/160).
+    description: Run continuation — Review rework claim with fast-forward-only handoff round-trip, and the operator node interrupt (ADR-160/160).
   - name: review-comments
     description: Line-anchored review-comment threads on the review-gate diff (Implemented, ADR-072).
   - name: flow-packages
@@ -7032,7 +7032,7 @@ paths:
           `NeedsInput → Running` and respawns), returning 202
           `{ runStatus: "NeedsInput", state: "resume-in-progress" }`. Idempotent:
           a same-payload retry whose prior resume handoff was lost re-drives it.
-        - **node_interrupt** (ADR-160 — Implemented): a human-only four-way fork
+        - **node_interrupt** (ADR-161 — Implemented): a human-only four-way fork
           answering an operator node interrupt. Human-actor-only (a machine/agent
           token is rejected 403 at the shared chokepoint, before any mutation);
           no ext-API and no MCP surface. `optionId` is allow-listed to
@@ -7867,9 +7867,9 @@ paths:
   /api/runs/{runId}/rework-claim/claim:
     post:
       tags: [run-continuation]
-      summary: (ADR-159) Claim a finished Review run for rework
+      summary: (ADR-160) Claim a finished Review run for rework
       description: |
-        (ADR-159 — Implemented.)
+        (ADR-160 — Implemented.)
 
         Takes a run that has reached `Review` back into human hands so the
         operator can correct it and re-enter the graph. The run transitions
@@ -7877,7 +7877,7 @@ paths:
         exposed. No new branch, target, PR, remote, or supervisor session is
         created.
 
-        This is NOT the M11b takeover (`/takeover/claim`), which enters from
+        This is NOT the ADR-030 takeover (`/takeover/claim`), which enters from
         `NeedsInput` at a parked `human_review` node. Both produce
         `HumanWorking`; they are told apart by `node_attempts.decision`, which is
         `review_rework_claim` here and unwritten there.
@@ -8034,9 +8034,9 @@ paths:
   /api/runs/{runId}/rework-claim/return:
     post:
       tags: [run-continuation]
-      summary: (ADR-159) Return a rework-claimed run to the graph
+      summary: (ADR-160) Return a rework-claimed run to the graph
       description: |
-        (ADR-159 — Implemented.)
+        (ADR-160 — Implemented.)
 
         Returns a `HumanWorking` run held under a rework claim. The route
         fast-forwards the worktree from the remote, records the returned commit
@@ -8061,7 +8061,7 @@ paths:
         escape hatch is export → resolve elsewhere → push → return.
 
         Requires the session user to equal the claim's recorded `owner_user_id`.
-        A claim that is an M11b takeover rather than a `review_rework_claim` is
+        A claim that is an ADR-030 takeover rather than a `review_rework_claim` is
         refused — it must use `/takeover/return`.
 
         **Identifier trust (per-route).**
@@ -8146,7 +8146,7 @@ paths:
         "403":
           description: |
             The caller is not the claim owner (`UNAUTHORIZED`). Owner-only, like
-            the M11b takeover return.
+            the ADR-030 takeover return.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -8160,7 +8160,7 @@ paths:
             One of (`MaisterErrorBody`):
             - the run is not `HumanWorking`, or holds no open claim
               (`PRECONDITION`);
-            - the open claim is an M11b takeover, not a `review_rework_claim` —
+            - the open claim is an ADR-030 takeover, not a `review_rework_claim` —
               use `/takeover/return` (`PRECONDITION`);
             - `remote` is not in the worktree's remote allow-list
               (`PRECONDITION`);
@@ -8210,9 +8210,9 @@ paths:
   /api/runs/{runId}/rework-claim/release:
     post:
       tags: [run-continuation]
-      summary: (ADR-159) Release a rework claim without changes
+      summary: (ADR-160) Release a rework claim without changes
       description: |
-        (ADR-159 — Implemented.)
+        (ADR-160 — Implemented.)
 
         Releases a rework claim the operator decided not to act on. The run
         returns to **`Review`** — not `NeedsInput`, because in this provenance
@@ -8284,9 +8284,9 @@ paths:
   /api/runs/{runId}/node-interrupt:
     post:
       tags: [run-continuation]
-      summary: (ADR-160) Interrupt a live agent node and park for a corrective restart
+      summary: (ADR-161) Interrupt a live agent node and park for a corrective restart
       description: |
-        (ADR-160 — Implemented.)
+        (ADR-161 — Implemented.)
 
         Pauses ONE live agent node mid-turn and parks the run `NeedsInput` with a
         `node_interrupt` HITL carrying a server-owned option set. This is a soft

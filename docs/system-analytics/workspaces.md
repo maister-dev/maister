@@ -609,7 +609,7 @@ root metadata; entering a graph node may update only the optional Node pointer.
 GC can remove a worktree without removing persisted final evidence. Installation
 failure compensates the new branch/worktree before it returns a typed error.
 
-### ADR-142 provenance v2 and reconciliation (Implemented)
+### ADR-148 provenance v2 and reconciliation (Implemented)
 
 Every new writable Flow, scratch, own-agent, and shared allocator worktree
 write an atomically replaced `.maister-managed/provenance` v2 document with
@@ -1106,7 +1106,7 @@ remove from a sibling repo that never registered it.
   (Implemented).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (workspaces table — base/
   target/promotion claim columns from ADR-058, lifecycle operation claim columns
-  from the workbench lifecycle and ADR-142, and the Implemented ADR-140
+  from the workbench lifecycle and ADR-148, and the Implemented ADR-140
   PR-state columns + ADR-141 `run_sync_attempts` ledger).
 - Config reference: [`../configuration.md`](../configuration.md)
   (`promotion.mode`, `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS`).

@@ -428,11 +428,11 @@ and `ACCOUNT_INACTIVE`; ADR-101 added `BUDGET_EXCEEDED`; ADR-122 added
 > (`loadFlowManifest` session validation), `web/lib/acp-runners/resolve.ts`
 > (per-session resolution), and the `POST /api/runs` launch precondition.
 
-> **Run continuation controls (ADR-159 / ADR-160) add NO new `MaisterError`
+> **Run continuation controls (ADR-160 / ADR-161) add NO new `MaisterError`
 > code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror)
 > closed union). Both features reuse existing codes at new call sites:
 >
-> - **`PRECONDITION` → HTTP 409 (ADR-159, Implemented):** a rework claim refused by
+> - **`PRECONDITION` → HTTP 409 (ADR-160, Implemented):** a rework claim refused by
 >   any eligibility term — `runs.status` not `Review`, `run_kind` not `flow`
 >   (the message names branch sync / relaunch, because an agent run has no
 >   `node_attempts` to anchor on), `parent_run_id` set, `workspace_mode`
@@ -443,30 +443,30 @@ and `ACCOUNT_INACTIVE`; ADR-101 added `BUDGET_EXCEEDED`; ADR-122 added
 >   `remote` is not in the `listRemotes()` allow-list, or the fetch left the
 >   branch non-fast-forwardable — the last carries `{command, localSha,
 >   remoteSha, aheadBy, behindBy, instructions[]}` as advisory detail so the UI
->   can render a copyable block. **`PRECONDITION` → HTTP 409 (ADR-160,
+>   can render a copyable block. **`PRECONDITION` → HTTP 409 (ADR-161,
 >   Implemented):** an interrupt refused by any admission term — the run is not
 >   `Running`, not a flow run, has no `Running` node attempt, or the node is
 >   `cli`/`check` (the message names the deferral explicitly; interrupting a
 >   detached process group is out of v1 scope).
-> - **`CONFLICT` → HTTP 409 (ADR-159, Implemented):** the `Review → HumanWorking`
+> - **`CONFLICT` → HTTP 409 (ADR-160, Implemented):** the `Review → HumanWorking`
 >   CAS lost to a concurrent claimer; the global concurrency cap was full at
 >   claim time (**never** queued as `Pending` — the scheduler cannot start a
 >   human); a return against a dirty worktree or with a zero-commit range.
->   **(ADR-160, Implemented):** the `Running → NeedsInput` CAS lost to the node's
+>   **(ADR-161, Implemented):** the `Running → NeedsInput` CAS lost to the node's
 >   own completion, or a restart refused because the run already holds
 >   `MAISTER_MAX_OPERATOR_RESTARTS` attempts carrying
 >   `decision='operator_interrupt'`.
-> - **`UNAUTHORIZED` → HTTP 403 (ADR-159, Implemented):** a return or release
->   attempted by an actor other than the claim's `owner_user_id`. **(ADR-160,
+> - **`UNAUTHORIZED` → HTTP 403 (ADR-160, Implemented):** a return or release
+>   attempted by an actor other than the claim's `owner_user_id`. **(ADR-161,
 >   Implemented):** a machine/agent token answering a `node_interrupt` HITL —
 >   refused at the `respondToHitl` chokepoint before any mutation, the same
 >   human-actor-only posture as `hook_trip`.
-> - **`CONFIG` → HTTP 400 (ADR-159, Implemented):** a flow manifest declaring the
+> - **`CONFIG` → HTTP 400 (ADR-160, Implemented):** a flow manifest declaring the
 >   flow-level `reentry` field below engine floor `3.5.0`, or naming a node id
 >   absent from the compiled graph (the message names the id).
-> - **`EXECUTOR_UNAVAILABLE` → HTTP 503 (ADR-159, Implemented):** the return's
+> - **`EXECUTOR_UNAVAILABLE` → HTTP 503 (ADR-160, Implemented):** the return's
 >   single ledger transaction failed — the run stays `HumanWorking` with the
->   claim open and the operation is fully retryable. **(ADR-160, Implemented):**
+>   claim open and the operation is fully retryable. **(ADR-161, Implemented):**
 >   the pre-transaction `checkpointSession` was undeliverable; it **re-throws
 >   with no mutation**, so the run stays `Running` and there is no split-brain.
 >

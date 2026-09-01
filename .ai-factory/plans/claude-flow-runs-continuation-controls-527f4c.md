@@ -22,8 +22,8 @@ milestone entry only if the owner wants it sequenced.
 
 | Artifact | Number | Source of truth |
 | --- | --- | --- |
-| Feature A ADR | **ADR-159** | `git show main:docs/decisions.md` → `max(### ADR-NNN) = 158` (verified) |
-| Feature B ADR | **ADR-160** | same allocation pass |
+| Feature A ADR | **ADR-160** | `git show main:docs/decisions.md` → `max(### ADR-NNN) = 159` (re-verified after the docs-restructure rebase; main claimed 159 for the generated DBML ERD) |
+| Feature B ADR | **ADR-161** | same allocation pass |
 | Drizzle migration | **`0125`** — `domain_events_kind_check` extension **only** | `git show main:web/lib/db/migrations/meta/_journal.json` → `max(idx) = 124` (verified) |
 
 **Exactly one migration is required, and only because of the owner's decision to emit domain
@@ -400,11 +400,11 @@ and are gated by the Phase-0 and phase-exit criteria instead.
 ## Commit Plan
 
 - **Commit 1** (Tasks 0, 3A): `docs(specs): SDD freeze for run continuation controls + ADR-142 citation fix`
-- **Commit 2** (Tasks 1–5): `docs(flow-runs): ADR-159/160 + continuation-controls analytics and contracts`
+- **Commit 2** (Tasks 1–5): `docs(flow-runs): ADR-160/161 + continuation-controls analytics and contracts`
 - **Commit 3** (Tasks 6–11C): `feat(runs): review rework-claim, FF-only return, re-entry resolution`
 - **Commit 4** (Tasks 12–16): `feat(runs): continuation-controls fanout, UI, i18n`
 - **Commit 5** (Tasks 17–19): `test(runs): rework-claim edge-case sweep + AC conformance`
-- **Commit 6** (Tasks 20–25): `feat(runs): soft node interrupt with corrective restart (ADR-160)`
+- **Commit 6** (Tasks 20–25): `feat(runs): soft node interrupt with corrective restart (ADR-161)`
 - **Commit 7** (Tasks 26–29): `test(runs): node-interrupt edge-case sweep + docs as-built`
 - **Commit 8** (Task 30): `chore: ADR renumber pass after rebase`
 
@@ -439,9 +439,9 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   an ADR's rationale (R7 — cite, don't duplicate).
   *Depends on:* none. **Nothing else in this plan may start until this is frozen.**
 
-- [x] **Task 1: Write ADR-159 and ADR-160 headers + bodies in `docs/decisions.md`.**
-  ADR-159 "Review-run rework claim with fast-forward-only handoff round-trip" (Status: Accepted);
-  ADR-160 "Operator node interrupt with corrective restart" (Status: Accepted).
+- [x] **Task 1: Write ADR-160 and ADR-161 headers + bodies in `docs/decisions.md`.**
+  ADR-160 "Review-run rework claim with fast-forward-only handoff round-trip" (Status: Accepted);
+  ADR-161 "Operator node interrupt with corrective restart" (Status: Accepted).
   Each MUST record: the eligibility allow-list (D3) **including why `agent` is excluded although
   ADR-141 sync admits it** — branch-operation vs graph-re-entry concern, agent runs carry no
   `node_attempts`; the claim-is-a-status decision + WHY the leased lifecycle slot is unusable (A5);
@@ -451,7 +451,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   **every accepted residual crash window from the table above**.
   Also add the two ADR entries to the decisions index table at the top of the file.
   Add row entries to `docs/error-taxonomy.md` cells (no new codes).
-  *Verify:* `grep -c '^### ADR-159' docs/decisions.md` = 1, same for 160; anchor-check script green.
+  *Verify:* `grep -c '^### ADR-160' docs/decisions.md` = 1, same for 161; anchor-check script green.
   *Logging:* n/a (docs).
 
 - [x] **Task 2: Create `docs/system-analytics/run-continuation.md`** — the new domain doc. It owns
@@ -466,7 +466,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
     `MaisterError("CONFLICT")`, `MAISTER_MAX_OPERATOR_RESTARTS`). No restating diagrams, no
     duplicating Edge cases. If it needs >12 bullets the boundary is wrong — split the file.
   - **R6** — every described piece tagged `(Implemented)` / `(Designed)` / `(Phase 2)`.
-  - **R2** — Mermaid only. **R7** — cite ADR-159/160, never restate their rationale.
+  - **R2** — Mermaid only. **R7** — cite ADR-160/160, never restate their rationale.
   Content: the `Review → HumanWorking → Running` and
   `Running → NeedsInput → {resume | restart_node | restart_from | stop}` `stateDiagram-v2`s; the
   **refusal matrix** (one row per precondition, phrased as the allow-list the code uses); the
@@ -477,10 +477,10 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   *Depends on:* 0, 1.
 
 - [x] **Task 3: Update the existing domain docs.**
-  - `docs/system-analytics/runs.md` — add `Review --> HumanWorking: rework claim (ADR-159, cap-gated,
-    top-level only)` and `Running --> NeedsInput: operator node interrupt (ADR-160)` to the state
+  - `docs/system-analytics/runs.md` — add `Review --> HumanWorking: rework claim (ADR-160, cap-gated,
+    top-level only)` and `Running --> NeedsInput: operator node interrupt (ADR-161)` to the state
     diagram; extend the `HumanWorking` invariants section with the Review provenance.
-  - `docs/system-analytics/manual-takeover.md` — add a "Review-run rework claim (ADR-159)" section
+  - `docs/system-analytics/manual-takeover.md` — add a "Review-run rework claim (ADR-160)" section
     stating precisely what is shared with M11b and what differs (entry status, claim anchor, FF
     ingest, re-entry chain).
   - `docs/system-analytics/workbench-lifecycle.md` — document the owner carve-out: during
@@ -539,7 +539,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   `run.rework_returned` and the `run.escalated` `reason` enum value `node_interrupt`;
   `docs/api/async/outbound-webhooks.asyncapi.yaml` gains the matching webhook types.
   Record the decision that Feature A emits its own kinds while Feature B reuses `run.escalated`
-  (D11) in ADR-159/160 so the asymmetry is a decision, not an omission.
+  (D11) in ADR-160/160 so the asymmetry is a decision, not an omission.
   *Verify:* **`pnpm validate:contracts` green** (`scripts/validate-contracts.mjs` covers
   `web.openapi.yaml` + all four AsyncAPI files — it rejects unresolvable `$ref`s and external refs);
   every refusal row in Task 2's matrix has a matching status code **and** error code here; every
@@ -714,7 +714,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
      assert the review node's prior gate rows. `human_review` gates are deferred to node finish
      (`gates-exec.ts:703-717`) and the finish row is written at `runner-graph.ts:1021` — so the test
      must construct the state that actually exists, not the state I assumed. **Record the observed
-     result in ADR-159 either way.** If M11b proves unaffected, keep the test as documentation of
+     result in ADR-160 either way.** If M11b proves unaffected, keep the test as documentation of
      why; if it proves affected, this task fixed a live defect and that must be stated plainly in the
      ADR and the commit message.
   3. **Assertion migration is in-scope here, not a follow-up.** Run the existing M11b suites first
@@ -985,12 +985,12 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   | AC-A11 | `T-A11` — dirty worktree and zero-commit return each `CONFLICT` with no ledger write | integration |
   | AC-A12 | `T-A12` — ledger-tx failure ⇒ 503, still `HumanWorking`, claim open, no event, retry replays cleanly | integration |
   | AC-A13 | `T-A13` — the claim anchor's prior `passed` gate goes `stale` | integration |
-  | AC-A14 | `T-A14` — the ADR-030 takeover shape behaves identically; **observed result recorded in ADR-159** (it WAS affected) | integration |
+  | AC-A14 | `T-A14` — the ADR-030 takeover shape behaves identically; **observed result recorded in ADR-160** (it WAS affected) | integration |
   | AC-A15 | `T-A15` — release returns to `Review`, closes the claim, frees the slot | integration |
   | AC-A16 | `T-A16` — 4 cases: claim event, return event, none on refusal, CHECK rejects an unknown kind | integration |
   | AC-A17 | `T-A17` — a committed return with no dispatch is reachable by the EXISTING `runTakeoverReturnRecoverySweep` predicate | integration |
   | AC-A18 | `T-A18` — promote fence (through the real `promoteRun` seam), sync fence, claim refused after leaving `Review`, abandon on the new provenance | integration |
-  | AC-A19 | composition test (server half) + `e2e/adr159-rework-claim.spec.ts` (UI half) — **both green** | integration + e2e |
+  | AC-A19 | composition test (server half) + `e2e/adr160-rework-claim.spec.ts` (UI half) — **both green** | integration + e2e |
 
   **Non-goals re-verified as still holding:** no operator-selected re-entry (every route derives it
   from server state); no merge/rebase/AI-resolve on ingest (fast-forward only); no forward skips;
@@ -1211,7 +1211,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   fails the phase (same resolve-or-amend rule as Task 19). Re-verify the spec's Non-goals still hold.
   **Final spec reconciliation:** flip the spec header from
   `Status: SDD freeze for Phase 0. No production code is implemented by this spec.` to
-  `Status: Implemented (ADR-159 / ADR-160).` and record any amendment made during implementation.
+  `Status: Implemented (ADR-160 / ADR-161).` and record any amendment made during implementation.
   *Phase exit:* `pnpm --filter maister-web test` fully green · `eslint .` check-only clean ·
   `pnpm validate:docs` · `pnpm validate:docs:adr` · **`pnpm validate:contracts`** · both AC walks.
   *Turns green:* AC-B13.
@@ -1233,7 +1233,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   | AC-B10 | `T-B10` — N operator restarts do not advance the rework epoch; a genuine rework still exhausts at `maxLoops + 1` total visits; zero restarts is byte-identical | unit |
   | AC-B11 | `T-B11` — a restart-only run has `correctionRate === 0`; a mixed run counts only genuine reworks; the single-sided-exclusion trap is pinned explicitly | unit |
   | AC-B12 | `T-B12` — the park is an ordinary `NeedsInput` park, idled by status alone (the sweeper and reconcile never read `hitl_requests.kind`) | integ |
-  | AC-B13 | `e2e/adr160-node-interrupt.spec.ts` — parked card → four options → progressive disclosure offering the ledger-derived target → restart with a correction → 202 `restart-scheduled` → the card is consumed | e2e |
+  | AC-B13 | `e2e/adr161-node-interrupt.spec.ts` — parked card → four options → progressive disclosure offering the ledger-derived target → restart with a correction → 202 `restart-scheduled` → the card is consumed | e2e |
 
   **Non-goals re-verified as still holding:** no ext-API / MCP surface for
   `node_interrupt`; no forward skips; no multi-node batch restarts; `cli`/`check`
@@ -1247,7 +1247,7 @@ and are gated by the Phase-0 and phase-exit criteria instead.
 
 - [x] **Task 30: ADR renumber pass (its own focused session, AFTER rebasing onto main).**
   Re-read `max(### ADR-NNN)` from `git show main:docs/decisions.md`; if a parallel branch has taken
-  159/160, renumber **both** ADRs and every citation — including prose forms (`grep -rn 'ADR-159\|ADR-160'`
+  159/160, renumber **both** ADRs and every citation — including prose forms (`grep -rn 'ADR-160\|ADR-161'`
   across `docs/`, `web/`, `supervisor/`, `.ai-factory/`) and the decisions index table. Re-run the ADR
   anchor check. If a migration was introduced mid-implementation, re-read `max(idx)` from
   `_journal.json` at main's HEAD, renumber the **triple** (SQL file + `_journal.json` entry +
@@ -1256,38 +1256,43 @@ and are gated by the Phase-0 and phase-exit criteria instead.
   *Verify:* `git diff main...HEAD --stat` shows no duplicate ADR header; anchor check green; suite green.
   *Depends on:* 29.
 
-  **RESULT — rebase is a no-op; ONE collision found and left for the second lander.**
+  **RESULT (pass 1, 2026-08-31) — rebase was a no-op; ONE collision found and
+  left for the second lander.**
 
-  - **`main` has not moved** since this branch was cut (`main` == the merge-base,
-    `7538394c0`), so the rebase Task 30 is predicated on is a no-op and the
-    renumber trigger has not fired.
-  - **`max(### ADR-NNN)` on main = 158** and **`max(_journal idx)` on main = 124**,
-    so `ADR-159`, `ADR-160`, and migration `0125` are all still correct against main.
-  - Branch diff contains exactly one `ADR-159` header and one `ADR-160` header
-    (no duplicates); the ADR anchor check resolves 780 links; the migration is a
-    complete triple with a monotonic `when`.
+  - `main` had not moved since this branch was cut (`main` == the merge-base,
+    `7538394c0`), so the rebase this task is predicated on was a no-op and the
+    renumber trigger had not fired.
+  - `max(### ADR-NNN)` on main was **158** and `max(_journal idx)` was **124**,
+    so `ADR-159`, `ADR-160`, and migration `0125` were all correct against main
+    at that time.
+  - The unmerged sibling branch `claude/docs-optimization-agents-4e0e21` also
+    claimed **ADR-159**, for *"DBML as the format of the generated consolidated
+    ERD"*. It claimed no migration >= `0125`, so only the ADR numbers were at
+    stake. Per this project's convention — rebase + fast-forward, and whichever
+    branch lands SECOND renumbers — the collision was left unresolved rather
+    than pre-emptively renumbered.
 
-  **⚠ MERGE OBLIGATION (owner decision — deliberately NOT resolved here).**
-  The unmerged sibling branch **`claude/docs-optimization-agents-4e0e21`**
-  (last commit `f17409172`, 2026-09-01) also claims **ADR-159**, for *"DBML as
-  the format of the generated consolidated ERD"*. It claims **no** migration
-  ≥ `0125`, so `0125` is uncontested and only the ADR numbers are at stake.
+  **RESULT (pass 2, 2026-09-01) — the sibling landed first; renumber DISCHARGED.**
 
-  Per this project's integration convention — rebase + fast-forward, and
-  **whichever branch lands SECOND renumbers** — this is not resolvable from
-  inside either branch while both are unmerged: renumbering pre-emptively would
-  either be wasted work or collide again if the sibling renumbers too. So:
+  The sibling branch merged to `main` as `f17409172` (the docs-structure rework:
+  ADR log split into a hub + `decisions/adr-NNN.md` records, canonical indexes,
+  de-milestoning). Its ADR-159 is now main's. This branch rebased onto it and
+  took the second-lander obligation:
 
-  - If **this** branch merges first → nothing to do; the sibling renumbers its
-    ADR-159 to 161.
-  - If the **sibling** merges first → renumber **both** ADRs here (159→161,
-    160→162) and every citation, including the `decisions.md` index rows and the
-    prose forms. The sweep is
-    `rg -n 'ADR-159|ADR-160' docs/ web/ supervisor/ .ai-factory/`, and the anchor
-    slugs (`#adr-159-review-run-rework-claim-...`,
-    `#adr-160-operator-node-interrupt-...`) move with the headings. Re-run
-    `pnpm validate:docs:adr:all` afterwards — it resolves link targets and will
-    catch any citation the sweep missed.
+  - **`ADR-159` -> `ADR-160`** (Review-run rework claim) and **`ADR-160` ->
+    `ADR-161`** (Operator node interrupt), applied as ONE pass through a
+    placeholder — a sequential `159->160` then `160->161` would have collided
+    with itself.
+  - Main's seven ADR-159 (DBML/ERD) sites were classified and **excluded**:
+    `CLAUDE.md`, `docs/CLAUDE.md`, `docs/db/README.md`, `docs/db/erd.md`,
+    `docs/db/erd.dbml`, `docs/decisions/adr-159.md`,
+    `web/scripts/generate-erd-dbml.ts`. `docs/decisions.md` and this plan carry
+    BOTH features' numbers and were repaired line-by-line.
+  - Filename forms moved too: `web/e2e/adr159-rework-claim.spec.ts` ->
+    `adr160-rework-claim.spec.ts`, `adr160-node-interrupt.spec.ts` ->
+    `adr161-node-interrupt.spec.ts`, plus their `playwright.config.ts`
+    allow-list entries.
+  - Migration `0125` stayed uncontested (main still tops out at `0124`).
 
 ---
 
@@ -1307,7 +1312,7 @@ adapter fork.
 
 ## Owner decisions (resolved 2026-08-31 — locked, do not re-litigate)
 
-1. **`run_kind = flow` only.** Confirmed. Rationale recorded in D3 and ADR-159: agent runs carry no
+1. **`run_kind = flow` only.** Confirmed. Rationale recorded in D3 and ADR-160: agent runs carry no
    `node_attempts`, so there is no anchor, no re-entry node, and no graph traversal to resume.
    Refusal is explicit and early (Task 9), not a fall-through.
 2. **Release target = `Review`.** Confirmed as planned (Task 11).

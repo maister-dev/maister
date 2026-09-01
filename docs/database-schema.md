@@ -3153,9 +3153,9 @@ only). No UPDATE/DELETE application paths; future pruning MUST honor
                                    //   (ADR-100): settled, NOT terminal —
                                    //   a delegated child reaching Review
                                    //   run.rework_claimed/run.rework_returned
-                                   //   added by migration 0125 (ADR-159): the
+                                   //   added by migration 0125 (ADR-160): the
                                    //   operator rework round-trip — NEITHER is
-                                   //   terminal nor settled. ADR-160's node
+                                   //   terminal nor settled. ADR-161's node
                                    //   interrupt reuses run.escalated instead,
                                    //   so it needed no CHECK change.
   projectId,                       // NOT NULL, FK -> projects.id (cascade)

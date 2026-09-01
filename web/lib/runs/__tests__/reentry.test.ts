@@ -6,7 +6,7 @@ import { resolveReentryNode } from "@/lib/runs/reentry";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { NodeAttempt } from "@/lib/db/schema";
 
-// T-A6 (AC-A6) — ADR-159 re-entry resolution chain. Ordered, server-state only:
+// T-A6 (AC-A6) — ADR-160 re-entry resolution chain. Ordered, server-state only:
 //   1. the compiled flow-level `reentry`;
 //   2. else the LAST executed `human` node whose `transitions.takeover` names a
 //      node present in the compiled graph;
@@ -72,7 +72,7 @@ const T0 = new Date("2026-08-31T10:00:00Z");
 const T1 = new Date("2026-08-31T10:05:00Z");
 const T2 = new Date("2026-08-31T10:10:00Z");
 
-describe("T-A6 ADR-159 — resolveReentryNode chain", () => {
+describe("T-A6 ADR-160 — resolveReentryNode chain", () => {
   it("resolves from the flow-level manifest `reentry` when declared", () => {
     const result = resolveReentryNode(
       graph({ reentry: "verify" }),

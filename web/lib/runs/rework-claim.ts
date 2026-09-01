@@ -1,6 +1,6 @@
 import { MaisterError } from "@/lib/errors-core";
 
-// ADR-159: the readiness contract for taking a finished `Review` run back for
+// ADR-160: the readiness contract for taking a finished `Review` run back for
 // rework. Deliberately NOT shared with ADR-141's `assertSyncEligible`, whose
 // terms this copies: sync is a BRANCH operation (it needs only a worktree and a
 // branch, which an agent run has), while a rework claim is a GRAPH RE-ENTRY

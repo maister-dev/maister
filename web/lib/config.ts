@@ -548,7 +548,7 @@ const ARTIFACT_INLINE_ENGINE_MIN = "2.2.0";
 // packaged-script install-dir injection that ships with engine 3.3.0.
 const FLOW_DIR_ENGINE_MIN = "3.3.0";
 const CONTEXT_REPOS_ENGINE_MIN = "3.4.0";
-// ADR-159: the flow-level `reentry` key. Gated on the MANIFEST, not on `nodes`.
+// ADR-160: the flow-level `reentry` key. Gated on the MANIFEST, not on `nodes`.
 const REENTRY_ENGINE_MIN = "3.5.0";
 
 const PLAN_REVIEW_ENGINE_MIN = "3.1.0";
@@ -1006,7 +1006,7 @@ function declaresMutationAssertions(nodes: NodeDef[]): boolean {
   return false;
 }
 
-// ADR-159: flow-level, so it reads the manifest rather than the node list.
+// ADR-160: flow-level, so it reads the manifest rather than the node list.
 function declaresReentry(manifest: FlowYamlV1): boolean {
   return typeof manifest.reentry === "string" && manifest.reentry.length > 0;
 }
@@ -1193,7 +1193,7 @@ export function validateGraphManifest(
     }
   }
 
-  // ADR-159: the flow-level `reentry` key names the node an operator's rework
+  // ADR-160: the flow-level `reentry` key names the node an operator's rework
   // claim re-enters the graph at. Gated on the MANIFEST — the key is flow-level,
   // not per-node — so a manifest that never declares it stays valid at any
   // engine_min and compiles byte-identically to before.
