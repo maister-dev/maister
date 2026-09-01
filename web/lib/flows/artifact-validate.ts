@@ -15,7 +15,10 @@ import type { AuthoredFlowPackageFile } from "@/lib/catalog/authored-types";
 import { parse as parseYaml } from "yaml";
 
 import { parseAgentDefinition } from "@/lib/agents/definition";
-import { formSchemaSchema } from "@/lib/config.schema";
+import {
+  OUTPUT_COORDINATOR_ENGINE_MIN,
+  formSchemaSchema,
+} from "@/lib/config.schema";
 import { isMaisterError } from "@/lib/errors-core";
 import {
   ruleGuardrailSchema,
@@ -27,6 +30,7 @@ import {
   isRootSchemaFilePath,
   schemaRefToFilePath,
 } from "@/lib/flows/editor/reference-sources";
+import { semverGte } from "@/lib/flows/semver";
 import { shellLintFindings } from "@/lib/flows/shell-lint";
 
 // NEW content-validation codes (spec §6.1), kept disjoint from the existing
@@ -247,6 +251,7 @@ function isRootSchemaReferencePath(value: string): boolean {
 
 function validateReferencedSchemaDocument(
   file: Pick<AuthoredFlowPackageFile, "path" | "content">,
+  engineMin: string | undefined,
   issues: ArtifactContentIssue[],
 ): void {
   let parsed: unknown;
@@ -266,7 +271,21 @@ function validateReferencedSchemaDocument(
 
   const grammar = formSchemaSchema.safeParse(parsed);
 
-  if (grammar.success) return;
+  if (grammar.success) {
+    if (
+      schemaDocUsesCoordinatorGrammar(grammar.data) &&
+      !semverGte(engineMin ?? "", OUTPUT_COORDINATOR_ENGINE_MIN)
+    ) {
+      issues.push({
+        severity: "block",
+        code: "form_schema_invalid",
+        path: file.path,
+        message: `Manifest-referenced form schema ${file.path} uses the json field type or typed array items but the referencing flow declares compat.engine_min "${engineMin ?? "unset"}" < ${OUTPUT_COORDINATOR_ENGINE_MIN} — bump compat.engine_min to ${OUTPUT_COORDINATOR_ENGINE_MIN}.`,
+      });
+    }
+
+    return;
+  }
 
   const detail = grammar.error.issues
     .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
@@ -289,12 +308,12 @@ function validateReferencedSchemaDocument(
  */
 export function validateFormSchemaReferences(
   files: readonly Pick<AuthoredFlowPackageFile, "path" | "content">[],
-  references: ReadonlySet<string>,
+  references: SchemaReferenceFloors,
 ): ArtifactContentIssue[] {
   const filesByPath = new Map(files.map((file) => [file.path, file]));
   const issues: ArtifactContentIssue[] = [];
 
-  for (const reference of [...references].sort()) {
+  for (const reference of [...references.keys()].sort()) {
     if (!isRootSchemaReferencePath(reference)) {
       issues.push({
         severity: "block",
@@ -317,10 +336,69 @@ export function validateFormSchemaReferences(
       continue;
     }
 
-    validateReferencedSchemaDocument(file, issues);
+    validateReferencedSchemaDocument(file, references.get(reference), issues);
   }
 
   return issues;
+}
+
+// ADR-162: a reference paired with the LOWEST `compat.engine_min` among the
+// manifests that reference it — a document must satisfy the floor for every
+// manifest using it, so the weakest declaration decides.
+export type SchemaReferenceFloors = ReadonlyMap<string, string | undefined>;
+
+// Records `manifest`'s schema references and folds its `compat.engine_min` into
+// the running minimum for each.
+export function addSchemaReferenceFloors(
+  manifest: Record<string, unknown>,
+  floors: Map<string, string | undefined>,
+): void {
+  const compat = manifest.compat;
+  const engineMin =
+    isRecord(compat) && typeof compat.engine_min === "string"
+      ? compat.engine_min
+      : undefined;
+
+  for (const reference of collectReferencedSchemaPaths(manifest)) {
+    if (!floors.has(reference)) {
+      floors.set(reference, engineMin);
+      continue;
+    }
+    const current = floors.get(reference);
+
+    // `undefined` (no declared floor) is the weakest possible value. Otherwise
+    // keep the lower of the two: a document must satisfy the floor for EVERY
+    // manifest that references it. An unparseable declaration also sorts as
+    // weaker (semverGte is false), which fails closed.
+    if (current === undefined) continue;
+    if (engineMin === undefined || !semverGte(engineMin, current)) {
+      floors.set(reference, engineMin);
+    }
+  }
+}
+
+// ADR-162 (C-11): true when the document uses a grammar feature that arrived
+// with engine 3.6.0 — the `json` field type or a typed array `items`, at any
+// nesting depth.
+export function schemaDocUsesCoordinatorGrammar(doc: unknown): boolean {
+  if (!isRecord(doc)) return false;
+
+  return specListUsesCoordinatorGrammar(doc.fields);
+}
+
+function specListUsesCoordinatorGrammar(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+
+  return value.some((entry) => specUsesCoordinatorGrammar(entry));
+}
+
+function specUsesCoordinatorGrammar(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (value.type === "json") return true;
+  if (value.items !== undefined) return true;
+  if (specListUsesCoordinatorGrammar(value.fields)) return true;
+
+  return false;
 }
 
 function dedupeIssues(
@@ -350,7 +428,7 @@ function isFlowPackageFilePath(filePath: string): boolean {
 export function validatePackageArtifactContent(
   files: readonly AuthoredFlowPackageFile[],
 ): ArtifactContentIssue[] {
-  const references = new Set<string>();
+  const references = new Map<string, string | undefined>();
 
   for (const file of files) {
     if (!isFlowPackageFilePath(file.path)) continue;
@@ -359,9 +437,7 @@ export function validatePackageArtifactContent(
       const manifest = parseYaml(file.content);
 
       if (isRecord(manifest)) {
-        for (const reference of collectReferencedSchemaPaths(manifest)) {
-          references.add(reference);
-        }
+        addSchemaReferenceFloors(manifest, references);
       }
     } catch {
       // Flow YAML parse/compile validation is server-authoritative; no inferred

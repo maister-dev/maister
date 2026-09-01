@@ -2,6 +2,13 @@ import "server-only";
 
 import pino from "pino";
 
+import { compareSemver, parseSemver, semverGte } from "./semver";
+
+// Single semver implementation — callers must not hand-roll their own
+// comparison. Re-exported so the existing `@/lib/flows/engine-version` import
+// site stays the server-side entry point.
+export { semverGte };
+
 const log = pino({
   name: "flow-engine-version",
   level: process.env.LOG_LEVEL ?? "info",
@@ -63,7 +70,17 @@ const log = pino({
 // under the run dir and exposed to the ACP session. A flow declaring the
 // setting MUST `compat.engine_min >= 3.4.0`; the floor is enforced at manifest
 // load, so an older engine refuses loudly instead of silently ignoring it.
-export const MAISTER_ENGINE_VERSION = "3.5.0";
+// Bumped 3.4.0 -> 3.5.0 for the flow-level `reentry` key (ADR-160): the node an
+// operator's rework claim re-enters the graph at. A manifest declaring it MUST
+// `compat.engine_min >= 3.5.0` (REENTRY_ENGINE_MIN, see config.ts).
+// Bumped 3.5.0 -> 3.6.0 for the universal structured-result contract (ADR-162):
+// `output.result` on `orchestrator`/`consensus` nodes, and a referenced form-
+// schema document using the `json` field type or typed array `items`, MUST
+// `compat.engine_min >= 3.6.0` (OUTPUT_COORDINATOR_ENGINE_MIN, see
+// config.schema.ts). Below that floor an older engine would pick a transport
+// neither coordinator provisions, so the refusal is loud at manifest load and
+// at package install.
+export const MAISTER_ENGINE_VERSION = "3.6.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.
@@ -73,35 +90,6 @@ export const GRAPH_MIN_ENGINE_VERSION = "1.1.0";
 // revision whose schemaVersion is not listed here is refused.
 export const SUPPORTED_FLOW_SCHEMA_VERSIONS: readonly number[] = [1];
 
-type SemverTuple = [number, number, number];
-
-function parseSemver(value: string): SemverTuple | null {
-  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(value.trim());
-
-  if (!m) return null;
-
-  return [Number(m[1]), Number(m[2]), Number(m[3])];
-}
-
-function compareSemver(a: SemverTuple, b: SemverTuple): number {
-  for (let i = 0; i < 3; i++) {
-    if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
-  }
-
-  return 0;
-}
-
-// Returns true when `value` is a valid X.Y.Z semver >= reference `ref`.
-// Returns false for any unparseable input. Single semver implementation —
-// callers must not hand-roll their own comparison.
-export function semverGte(value: string, ref: string): boolean {
-  const v = parseSemver(value);
-  const r = parseSemver(ref);
-
-  if (!v || !r) return false;
-
-  return compareSemver(v, r) >= 0;
-}
 
 export type EngineCompatResult = {
   compatible: boolean;

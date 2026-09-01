@@ -34,12 +34,17 @@ import {
   readAndValidateFormSchemaDoc,
   type CapabilityRefIdsInput,
 } from "@/lib/config";
+import { OUTPUT_COORDINATOR_ENGINE_MIN } from "@/lib/config.schema";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { manifestDigest } from "@/lib/flows/digest";
-import { collectReferencedSchemaPaths } from "@/lib/flows/artifact-validate";
+import {
+  collectReferencedSchemaPaths,
+  schemaDocUsesCoordinatorGrammar,
+} from "@/lib/flows/artifact-validate";
 import { isRootSchemaFilePath } from "@/lib/flows/editor/reference-sources";
+import { semverGte } from "@/lib/flows/engine-version";
 import { readAuthoredFlowPackageDirectory } from "@/lib/flows/package-authoring";
 import { resolveTrust } from "@/lib/flows/trust";
 import {
@@ -405,6 +410,8 @@ async function validatePackageRootSchemaReferences(args: {
     args.manifest as unknown as Record<string, unknown>,
   );
 
+  const engineMin = args.manifest.compat?.engine_min ?? "";
+
   for (const reference of [...references].sort()) {
     if (reference !== reference.trim() || !isRootSchemaFilePath(reference)) {
       throw new MaisterError(
@@ -412,7 +419,23 @@ async function validatePackageRootSchemaReferences(args: {
         `package form schema reference must resolve to root schemas/<name>.json: ${reference}`,
       );
     }
-    await readAndValidateFormSchemaDoc(args.installedPath, reference);
+
+    const doc = await readAndValidateFormSchemaDoc(
+      args.installedPath,
+      reference,
+    );
+
+    // ADR-162 (C-11): the json field type and typed array items arrived with
+    // engine 3.6.0. Refuse at install, where the manifest and the document meet.
+    if (
+      schemaDocUsesCoordinatorGrammar(doc) &&
+      !semverGte(engineMin, OUTPUT_COORDINATOR_ENGINE_MIN)
+    ) {
+      throw new MaisterError(
+        "FLOW_INSTALL",
+        `package form schema ${reference} uses the json field type or typed array items but engine_min "${engineMin}" < ${OUTPUT_COORDINATOR_ENGINE_MIN} — bump compat.engine_min to ${OUTPUT_COORDINATOR_ENGINE_MIN}`,
+      );
+    }
   }
 
   return references.size;

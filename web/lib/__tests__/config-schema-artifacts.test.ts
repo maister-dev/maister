@@ -7,8 +7,8 @@ import {
 import { nodeOutputSchema } from "@/lib/config.schema";
 
 describe("config.schema — artifact produces[] fields", () => {
-  it("asserts MAISTER_ENGINE_VERSION is 3.5.0 for the flow-level `reentry` key (ADR-160)", () => {
-    expect(MAISTER_ENGINE_VERSION).toBe("3.5.0");
+  it("asserts MAISTER_ENGINE_VERSION is 3.6.0 for the universal structured-result contract (ADR-162)", () => {
+    expect(MAISTER_ENGINE_VERSION).toBe("3.6.0");
   });
 
   it("asserts GRAPH_MIN_ENGINE_VERSION remains 1.1.0", () => {

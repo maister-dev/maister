@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import {
+  NODE_OUTPUT_TRANSPORT,
   cliOutputFilePath,
   extractSentinelBlock,
   readCliOutputFile,
@@ -313,6 +314,21 @@ const SCHEMA_DOC = {
   ],
 };
 
+const CONSENSUS_SCHEMA_DOC = {
+  schemaVersion: 1,
+  fields: [
+    {
+      name: "consensus",
+      type: "object",
+      required: true,
+      fields: [
+        { name: "source", type: "string", required: true },
+        { name: "round", type: "number", required: true },
+      ],
+    },
+  ],
+};
+
 describe("validateNodeStructuredOutput", () => {
   let flowInstallPath: string;
   let runtimeRoot: string;
@@ -324,6 +340,11 @@ describe("validateNodeStructuredOutput", () => {
     await writeFile(
       join(flowInstallPath, "schemas", "result.json"),
       JSON.stringify(SCHEMA_DOC),
+      "utf8",
+    );
+    await writeFile(
+      join(flowInstallPath, "schemas", "consensus.json"),
+      JSON.stringify(CONSENSUS_SCHEMA_DOC),
       "utf8",
     );
   });
@@ -621,5 +642,132 @@ describe("validateNodeStructuredOutput", () => {
     expect((await validateNodeStructuredOutput(args)).ok).toBe(false);
     expect(updates[0].errorCode).toBe("CONFIG");
     expect(String(updates[0].stdout)).toContain("schema");
+  });
+
+  // --- ADR-162: orchestrator rides the sentinel transport (AC-7/AC-8) -------
+
+  it("folds a valid orchestrator sentinel payload into result.vars", async () => {
+    const { updates, db } = mockDb();
+    const args = seamArgs({
+      nodeType: "orchestrator",
+      output: RESULT_DECL,
+      stdout: `children settled.\n${OPEN}\n{"verdict":"pass","score":3}\n${CLOSE}\n`,
+      db,
+    });
+    const out = await validateNodeStructuredOutput(args);
+
+    expect(out.ok).toBe(true);
+    expect(args.result.vars).toEqual({ verdict: "pass", score: 3 });
+    expect(updates).toHaveLength(0);
+  });
+
+  it("fails an orchestrator with required output and no sentinel block, naming the block", async () => {
+    const { updates, db } = mockDb();
+    const args = seamArgs({
+      nodeType: "orchestrator",
+      output: REQUIRED_DECL,
+      stdout: "all children finished, nothing emitted",
+      db,
+    });
+    const out = await validateNodeStructuredOutput(args);
+
+    expect(out.ok).toBe(false);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].errorCode).toBe("CONFIG");
+    expect(String(updates[0].stdout)).toContain("maister:output");
+    expect(String(updates[0].stdout)).not.toContain("MAISTER_OUTPUT_FILE");
+  });
+
+  // --- ADR-162: consensus rides the engine_vars transport (AC-10) -----------
+
+  const CONSENSUS_DECL = { result: { schema: "./schemas/consensus.json" } };
+  const CONSENSUS_REQUIRED_DECL = {
+    result: { schema: "./schemas/consensus.json", required: true },
+  };
+
+  it("validates a consensus node's engine vars WITHOUT mutating them", async () => {
+    const { updates, db } = mockDb();
+    const vars = {
+      consensus: {
+        source: "agreement",
+        round: 2,
+        consensusPlanArtifactId: "consensus_plan",
+      },
+    };
+    const args = seamArgs({
+      nodeType: "consensus",
+      output: CONSENSUS_DECL,
+      vars,
+      db,
+    });
+    const out = await validateNodeStructuredOutput(args);
+
+    expect(out.ok).toBe(true);
+    expect(args.result.vars).toBe(vars);
+    expect(args.result.vars).toEqual({
+      consensus: {
+        source: "agreement",
+        round: 2,
+        consensusPlanArtifactId: "consensus_plan",
+      },
+    });
+    expect(updates).toHaveLength(0);
+  });
+
+  it("fails a consensus node whose engine vars mismatch the schema", async () => {
+    const { updates, db } = mockDb();
+    const args = seamArgs({
+      nodeType: "consensus",
+      output: CONSENSUS_DECL,
+      vars: { consensus: { source: "agreement", round: "two" } },
+      db,
+    });
+
+    expect((await validateNodeStructuredOutput(args)).ok).toBe(false);
+    expect(updates[0].errorCode).toBe("CONFIG");
+    expect(String(updates[0].stdout)).toContain("schema mismatch");
+  });
+
+  it("treats zero-key consensus vars as absent: required fails, optional passes", async () => {
+    const required = mockDb();
+    const requiredArgs = seamArgs({
+      nodeType: "consensus",
+      output: CONSENSUS_REQUIRED_DECL,
+      vars: {},
+      db: required.db,
+    });
+
+    expect((await validateNodeStructuredOutput(requiredArgs)).ok).toBe(false);
+    expect(required.updates[0].errorCode).toBe("CONFIG");
+    expect(String(required.updates[0].stdout)).toContain("engine vars");
+
+    const optional = mockDb();
+    const optionalArgs = seamArgs({
+      nodeType: "consensus",
+      output: CONSENSUS_DECL,
+      vars: {},
+      db: optional.db,
+    });
+
+    expect((await validateNodeStructuredOutput(optionalArgs)).ok).toBe(true);
+    expect(optionalArgs.result.vars).toEqual({});
+    expect(optional.updates).toHaveLength(0);
+  });
+});
+
+// --- ADR-162 (Wave 3): transport matrix -------------------------------------
+
+describe("NODE_OUTPUT_TRANSPORT (AC-14)", () => {
+  it("covers every node type exactly once with the locked mapping", () => {
+    expect(NODE_OUTPUT_TRANSPORT).toEqual({
+      ai_coding: "sentinel",
+      judge: "sentinel",
+      orchestrator: "sentinel",
+      cli: "file",
+      check: "file",
+      consensus: "engine_vars",
+      human: null,
+      form: null,
+    });
   });
 });

@@ -3,6 +3,7 @@ import type { AuthoredFlowPackageFile } from "@/lib/catalog/authored-types";
 import { describe, expect, it } from "vitest";
 
 import {
+  schemaDocUsesCoordinatorGrammar,
   validateArtifactContent,
   validatePackageArtifactContent,
 } from "@/lib/flows/artifact-validate";
@@ -542,5 +543,142 @@ nodes:
         },
       ]),
     );
+  });
+});
+
+// --- ADR-162 (AC-13): json/items schema documents need engine_min >= 3.6.0 ---
+
+const JSON_TYPE_SCHEMA = JSON.stringify({
+  schemaVersion: 1,
+  fields: [{ name: "payload", type: "json", required: true }],
+});
+
+const ITEMS_SCHEMA = JSON.stringify({
+  schemaVersion: 1,
+  fields: [{ name: "tags", type: "array", items: { type: "string" } }],
+});
+
+function manifestAt(engineMin: string, schemaRef: string): string {
+  return `schemaVersion: 1
+name: review
+compat:
+  engine_min: "${engineMin}"
+nodes:
+  - id: plan
+    type: ai_coding
+    action:
+      prompt: p
+    output:
+      result:
+        schema: ${schemaRef}
+`;
+}
+
+describe("schemaDocUsesCoordinatorGrammar (ADR-162)", () => {
+  it("detects the json type and items at any nesting depth", () => {
+    expect(schemaDocUsesCoordinatorGrammar(JSON.parse(JSON_TYPE_SCHEMA))).toBe(
+      true,
+    );
+    expect(schemaDocUsesCoordinatorGrammar(JSON.parse(ITEMS_SCHEMA))).toBe(
+      true,
+    );
+    expect(
+      schemaDocUsesCoordinatorGrammar({
+        schemaVersion: 1,
+        fields: [
+          {
+            name: "outer",
+            type: "object",
+            fields: [{ name: "inner", type: "json" }],
+          },
+        ],
+      }),
+    ).toBe(true);
+    expect(
+      schemaDocUsesCoordinatorGrammar({
+        schemaVersion: 1,
+        fields: [
+          {
+            name: "rows",
+            type: "array",
+            items: { type: "array", items: { type: "json" } },
+          },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it("returns false for a pre-ADR-162 document", () => {
+    expect(schemaDocUsesCoordinatorGrammar(JSON.parse(VALID_FORM_SCHEMA))).toBe(
+      false,
+    );
+    expect(
+      schemaDocUsesCoordinatorGrammar({
+        schemaVersion: 1,
+        fields: [
+          {
+            name: "outer",
+            type: "object",
+            fields: [{ name: "list", type: "array" }],
+          },
+        ],
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("validatePackageArtifactContent — json/items engine floor (ADR-162)", () => {
+  it("blocks a json-typed schema referenced by a manifest below 3.6.0", () => {
+    const issues = validatePackageArtifactContent([
+      file("flows/review/flow.yaml", manifestAt("3.5.0", "schemas/out.json")),
+      file("schemas/out.json", JSON_TYPE_SCHEMA),
+    ]);
+
+    expect(codes(issues)).toContainEqual({
+      code: "form_schema_invalid",
+      severity: "block",
+      path: "schemas/out.json",
+    });
+    expect(
+      issues.find((issue) => issue.path === "schemas/out.json")?.message,
+    ).toContain("3.6.0");
+  });
+
+  it("blocks a typed-items schema referenced by a manifest below 3.6.0", () => {
+    const issues = validatePackageArtifactContent([
+      file("flows/review/flow.yaml", manifestAt("3.5.0", "schemas/out.json")),
+      file("schemas/out.json", ITEMS_SCHEMA),
+    ]);
+
+    expect(codes(issues)).toContainEqual({
+      code: "form_schema_invalid",
+      severity: "block",
+      path: "schemas/out.json",
+    });
+  });
+
+  it("accepts the same documents at engine_min 3.6.0", () => {
+    for (const content of [JSON_TYPE_SCHEMA, ITEMS_SCHEMA]) {
+      const issues = validatePackageArtifactContent([
+        file("flows/review/flow.yaml", manifestAt("3.6.0", "schemas/out.json")),
+        file("schemas/out.json", content),
+      ]);
+
+      expect(issues).toEqual([]);
+    }
+  });
+
+  it("blocks when ANY referencing manifest is below the floor", () => {
+    const issues = validatePackageArtifactContent([
+      file("flows/new/flow.yaml", manifestAt("3.6.0", "schemas/out.json")),
+      file("flows/old/flow.yaml", manifestAt("3.5.0", "schemas/out.json")),
+      file("schemas/out.json", JSON_TYPE_SCHEMA),
+    ]);
+
+    expect(codes(issues)).toContainEqual({
+      code: "form_schema_invalid",
+      severity: "block",
+      path: "schemas/out.json",
+    });
   });
 });

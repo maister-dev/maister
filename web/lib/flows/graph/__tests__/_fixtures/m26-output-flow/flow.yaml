@@ -3,6 +3,16 @@
 # node emits the ```json maister:output sentinel block (validated against
 # ./schemas/result.json) and the downstream cli node renders the captured
 # vars via {{ steps.plan.vars.* }}. output.result requires engine_min 1.3.0.
+#
+# The fixture DIR is also the reference example for the ADR-162 transport
+# matrix; the suites that share it build their manifests inline so this flow
+# stays the minimal 1.3.0 back-compat arm:
+#   sentinel     ai_coding | judge | orchestrator  -> ./schemas/result.json
+#   file         cli | check ($MAISTER_OUTPUT_FILE) -> ./schemas/result.json
+#   engine_vars  consensus (validated in place)     -> ./schemas/consensus.json
+#   human | form                                     no channel — refused at load
+# The orchestrator/consensus arms and the json/items schema grammar need
+# compat.engine_min >= 3.6.0.
 schemaVersion: 1
 name: m26-output
 compat:

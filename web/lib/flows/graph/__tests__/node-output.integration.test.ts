@@ -2,6 +2,7 @@ import type { NodeAttempt, Run } from "@/lib/db/schema";
 import type { SupervisorApi } from "@/lib/flows/runner-agent";
 import type { SupervisorEvent } from "@/lib/supervisor-client";
 
+import { randomUUID } from "node:crypto";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
@@ -429,5 +430,195 @@ describe("runGraph — M26 structured node output (P1)", () => {
     expect(work1?.vars).toEqual({ verdict: "v1" });
     expect(work2?.status).toBe("Succeeded");
     expect(work2?.vars).toEqual({});
+  }, 60_000);
+});
+
+// --- ADR-162 (Wave 3): the orchestrator sentinel arm -------------------------
+
+// A child run under `parentRunId`, used to drive runOrchestratorStep's
+// park-vs-complete decision from real rows (AC-9).
+async function seedChildRun(
+  seeded: SeededGraphRun,
+  status: string,
+): Promise<void> {
+  const childTaskId = randomUUID();
+
+  await db.insert(schema.tasks).values({
+    number: Number.parseInt(randomUUID().slice(0, 6), 16),
+    id: childTaskId,
+    projectId: seeded.projectId,
+    title: "child",
+    prompt: "p",
+    flowId: seeded.flowId,
+  });
+  await db.insert(schema.runs).values({
+    id: randomUUID(),
+    taskId: childTaskId,
+    projectId: seeded.projectId,
+    flowId: seeded.flowId,
+    flowVersion: "v1.0.0",
+    status,
+    parentRunId: seeded.runId,
+    rootRunId: seeded.runId,
+  });
+}
+
+function orchestratorFlow(
+  result: Record<string, unknown>,
+  extra: Record<string, unknown> = {},
+): unknown {
+  return {
+    schemaVersion: 1,
+    name: "g",
+    compat: { engine_min: "3.6.0" },
+    nodes: [
+      {
+        id: "coordinate",
+        type: "orchestrator",
+        action: { prompt: "coordinate {{ task.prompt }}" },
+        output: { result },
+        transitions: { success: "use", pass: "use", fail: "done" },
+        ...extra,
+      },
+      {
+        id: "use",
+        type: "cli",
+        action: { command: 'echo "orc:{{ steps.coordinate.vars.verdict }}"' },
+        transitions: { success: "done" },
+      },
+    ],
+  };
+}
+
+describe("runGraph — ADR-162 orchestrator structured output", () => {
+  it("AC-7: a completing orchestrator's sentinel payload lands in vars and renders downstream", async () => {
+    const seeded = await seedGraphRun(
+      orchestratorFlow({ schema: "./schemas/result.json" }),
+    );
+
+    await seedChildRun(seeded, "Done"); // terminal → not pending → completes
+
+    const api = makeAgentSupervisor(
+      `children settled.\n${OPEN}\n{"verdict":"pass","score":4}\n${CLOSE}\n`,
+    );
+
+    await runFlow(seeded.runId, {
+      db,
+      runtimeRoot: seeded.runtimeRoot,
+      supervisorApi: api,
+    });
+
+    expect((await getRun(seeded.runId)).status).toBe("Review");
+
+    const attempts = await getAttempts(seeded.runId);
+    const coordinate = attempts.find((a) => a.nodeId === "coordinate");
+    const use = attempts.find((a) => a.nodeId === "use");
+
+    expect(coordinate?.status).toBe("Succeeded");
+    expect(coordinate?.vars).toEqual({ verdict: "pass", score: 4 });
+    expect(use?.stdout ?? "").toContain("orc:pass");
+  }, 60_000);
+
+  it("AC-8: a completing orchestrator with required output and no block fails CONFIG before gates", async () => {
+    const gateMarker = "orc-gate-ran.marker";
+    const flow = orchestratorFlow(
+      { schema: "./schemas/result.json", required: true },
+      {
+        pre_finish: {
+          gates: [
+            {
+              id: "g",
+              kind: "command_check",
+              mode: "blocking",
+              command: `touch ${gateMarker}`,
+            },
+          ],
+        },
+      },
+    );
+    const seeded = await seedGraphRun(flow);
+
+    await runFlow(seeded.runId, {
+      db,
+      runtimeRoot: seeded.runtimeRoot,
+      supervisorApi: makeAgentSupervisor("no block here"),
+    });
+
+    expect((await getRun(seeded.runId)).status).toBe("Failed");
+
+    const coordinate = (await getAttempts(seeded.runId)).find(
+      (a) => a.nodeId === "coordinate",
+    );
+
+    expect(coordinate?.status).toBe("Failed");
+    expect(coordinate?.errorCode).toBe("CONFIG");
+    expect(coordinate?.stdout ?? "").toContain("maister:output");
+    expect(await getGateResults(seeded.runId)).toHaveLength(0);
+    await expect(
+      access(join(seeded.worktreePath, gateMarker)),
+    ).rejects.toThrow();
+  }, 60_000);
+
+  it("AC-9: an orchestrator parking on pending children is NOT validated", async () => {
+    const seeded = await seedGraphRun(
+      orchestratorFlow({ schema: "./schemas/result.json", required: true }),
+    );
+
+    await seedChildRun(seeded, "Running"); // pending → the turn parks
+
+    await runFlow(seeded.runId, {
+      db,
+      runtimeRoot: seeded.runtimeRoot,
+      supervisorApi: makeAgentSupervisor("dispatched, awaiting children"),
+    });
+
+    expect((await getRun(seeded.runId)).status).toBe("WaitingOnChildren");
+
+    const coordinate = (await getAttempts(seeded.runId)).find(
+      (a) => a.nodeId === "coordinate",
+    );
+
+    expect(coordinate?.status).toBe("NeedsInput");
+    expect(coordinate?.errorCode ?? null).toBeNull();
+    expect(coordinate?.stdout ?? "").not.toContain("[structured output]");
+  }, 60_000);
+
+  it("AC-15: decide.from routes on an orchestrator's structured output", async () => {
+    const flow = {
+      schemaVersion: 1,
+      name: "g",
+      compat: { engine_min: "3.6.0" },
+      nodes: [
+        {
+          id: "coordinate",
+          type: "orchestrator",
+          action: { prompt: "coordinate" },
+          output: { result: { schema: "./schemas/result.json" } },
+          decide: { from: "output.verdict" },
+          transitions: { pass: "shipped", fail: "done" },
+        },
+        {
+          id: "shipped",
+          type: "cli",
+          action: { command: 'echo "routed"' },
+          transitions: { success: "done" },
+        },
+      ],
+    };
+    const seeded = await seedGraphRun(flow);
+
+    await runFlow(seeded.runId, {
+      db,
+      runtimeRoot: seeded.runtimeRoot,
+      supervisorApi: makeAgentSupervisor(
+        `${OPEN}\n{"verdict":"pass"}\n${CLOSE}`,
+      ),
+    });
+
+    const attempts = await getAttempts(seeded.runId);
+
+    expect(attempts.find((a) => a.nodeId === "shipped")?.status).toBe(
+      "Succeeded",
+    );
   }, 60_000);
 });

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "fields": [
+    {
+      "name": "consensus",
+      "type": "object",
+      "required": true,
+      "fields": [
+        { "name": "source", "type": "string", "required": true },
+        { "name": "round", "type": "number", "required": true },
+        { "name": "consensusPlanArtifactId", "type": "string" },
+        { "name": "debateLogArtifactId", "type": "string" }
+      ]
+    }
+  ]
+}

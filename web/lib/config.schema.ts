@@ -1304,6 +1304,13 @@ export const flowYamlV1Schema = graphOnlyManifestInputSchema.pipe(
 // `compat.engine_min >= 3.6.0`, enforced where a manifest meets the document
 // (package install + Studio lifecycle validation) — the grammar itself stays
 // version-agnostic so an older document keeps parsing.
+// ADR-162 floor: `output.result` on an `orchestrator`/`consensus` node, and a
+// referenced form-schema document using the `json` field type or typed array
+// `items`, require this `compat.engine_min`. It lives beside the grammar it
+// gates so the server loader (config.ts) and the client-side authoring
+// validators (flows/artifact-validate.ts) share one literal.
+export const OUTPUT_COORDINATOR_ENGINE_MIN = "3.6.0";
+
 const FORM_FIELD_TYPES = [
   "string",
   "number",

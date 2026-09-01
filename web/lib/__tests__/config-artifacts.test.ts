@@ -594,4 +594,156 @@ describe("validateGraphManifest — artifact validation (M12 Phase 2)", () => {
       expect(manifest.compat?.engine_min).toBe("1.2.0");
     });
   });
+
+  // --- ADR-162 (Wave 3) ----------------------------------------------------
+
+  describe("ADR-162 (AC-11): output.result is refused on human/form nodes", () => {
+    it("rejects output.result on a human node, naming the node id", async () => {
+      const path = await writeGraph("output-result-human.yaml", (m) => {
+        m.compat.engine_min = "3.6.0";
+        (m.nodes[2] as any).output = {
+          result: { schema: "./schemas/out.json" },
+        };
+      });
+
+      let caught: unknown;
+
+      try {
+        await loadFlowManifest(path);
+      } catch (e) {
+        caught = e;
+      }
+
+      expect(isMaisterError(caught)).toBe(true);
+      expect((caught as any).code).toBe("CONFIG");
+      const msg = caught instanceof Error ? caught.message : "";
+
+      expect(msg).toContain("review");
+      expect(msg).toContain("output.result");
+      expect(msg).toContain("HITL");
+    });
+
+    it("rejects output.result on a form node at any engine_min (no floor)", async () => {
+      for (const engineMin of ["1.3.0", "3.6.0"]) {
+        const path = await writeGraph(`output-result-form-${engineMin}.yaml`, (m) => {
+          m.compat.engine_min = engineMin;
+          m.nodes[2] = {
+            id: "review",
+            type: "form",
+            settings: { form_schema: "./schemas/intake.json" },
+            output: { result: { schema: "./schemas/out.json" } },
+            transitions: { success: "done" },
+          };
+        });
+
+        await expect(loadFlowManifest(path)).rejects.toMatchObject({
+          code: "CONFIG",
+        });
+      }
+    });
+  });
+
+  describe("ADR-162 (AC-12): output.result on orchestrator/consensus requires engine_min >= 3.6.0", () => {
+    function orchestratorNode(): Record<string, unknown> {
+      return {
+        id: "implement",
+        type: "orchestrator",
+        action: { prompt: "coordinate {{ task.prompt }}" },
+        output: { result: { schema: "./schemas/out.json" } },
+        transitions: { success: "test" },
+      };
+    }
+
+    function consensusNode(): Record<string, unknown> {
+      return {
+        id: "implement",
+        type: "consensus",
+        prompt: "Produce a plan for {{ task.prompt }}.",
+        participants: [
+          { id: "architect", agent: "architecture-reviewer" },
+          { id: "implementer", agent: "impl-reviewer" },
+        ],
+        workspace: { mode: "repo_read" },
+        material_axes: ["scope_matches_milestone"],
+        rounds: { mode: "iterate", max: 2 },
+        on_no_consensus: "escalate",
+        synthesizer: { agent: "plan-synthesizer" },
+        output: {
+          produces: [
+            { id: "consensus_plan", kind: "plan", current: true },
+            { id: "debate_log", kind: "human_note", current: true },
+          ],
+          result: { schema: "./schemas/out.json" },
+        },
+        transitions: { success: "test" },
+      };
+    }
+
+    it("rejects an orchestrator declaring output.result below the floor, naming 3.6.0", async () => {
+      const path = await writeGraph("output-result-orch-old.yaml", (m) => {
+        m.compat.engine_min = "3.5.0";
+        m.nodes[0] = orchestratorNode();
+      });
+
+      let caught: unknown;
+
+      try {
+        await loadFlowManifest(path);
+      } catch (e) {
+        caught = e;
+      }
+
+      expect(isMaisterError(caught)).toBe(true);
+      expect((caught as any).code).toBe("CONFIG");
+      expect(caught instanceof Error ? caught.message : "").toContain("3.6.0");
+    });
+
+    it("accepts the identical orchestrator manifest at engine_min 3.6.0", async () => {
+      const path = await writeGraph("output-result-orch-new.yaml", (m) => {
+        m.compat.engine_min = "3.6.0";
+        m.nodes[0] = orchestratorNode();
+      });
+
+      const manifest = await loadFlowManifest(path);
+
+      expect((manifest.nodes![0].output as any)?.result?.schema).toBe(
+        "./schemas/out.json",
+      );
+    });
+
+    it("rejects a consensus node declaring output.result below the floor", async () => {
+      const path = await writeGraph("output-result-consensus-old.yaml", (m) => {
+        m.compat.engine_min = "3.5.0";
+        m.nodes[0] = consensusNode();
+      });
+
+      await expect(loadFlowManifest(path)).rejects.toMatchObject({
+        code: "CONFIG",
+      });
+    });
+
+    it("accepts the identical consensus manifest at engine_min 3.6.0", async () => {
+      const path = await writeGraph("output-result-consensus-new.yaml", (m) => {
+        m.compat.engine_min = "3.6.0";
+        m.nodes[0] = consensusNode();
+      });
+
+      const manifest = await loadFlowManifest(path);
+
+      expect((manifest.nodes![0].output as any)?.result?.schema).toBe(
+        "./schemas/out.json",
+      );
+    });
+
+    it("leaves an ai_coding output.result valid at its own 1.3.0 floor", async () => {
+      const path = await writeGraph("output-result-ai-coding-1.3.0.yaml", (m) => {
+        m.compat.engine_min = "1.3.0";
+        (m.nodes[0].output as any).result = { schema: "./schemas/out.json" };
+      });
+
+      const manifest = await loadFlowManifest(path);
+
+      expect(manifest.compat?.engine_min).toBe("1.3.0");
+    });
+  });
 });

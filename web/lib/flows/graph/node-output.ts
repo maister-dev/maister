@@ -34,6 +34,28 @@ export type RawNodeOutputPayload =
   | { kind: "invalid"; reason: string }
   | { kind: "value"; value: unknown };
 
+export type NodeOutputTransport = "sentinel" | "file" | "engine_vars";
+
+// ADR-162 (C-1): the ONE map from node type to structured-output transport.
+// The seam, the load-time refusals, and the shipped authoring grammar all
+// derive from it. Transport follows the node's EXECUTION MECHANISM and is never
+// author-declared; `null` means the node type has no structured-output channel
+// (human/form take their vars from the HITL input artifact, and declaring
+// `output.result` on them is refused at manifest load).
+export const NODE_OUTPUT_TRANSPORT: Record<
+  CompiledNode["nodeType"],
+  NodeOutputTransport | null
+> = {
+  ai_coding: "sentinel",
+  judge: "sentinel",
+  orchestrator: "sentinel",
+  cli: "file",
+  check: "file",
+  consensus: "engine_vars",
+  human: null,
+  form: null,
+};
+
 const SENTINEL_OPEN_RE = /^```json maister:output[ \t]*\r?$/;
 const FENCE_CLOSE_RE = /^```[ \t]*\r?$/;
 
@@ -188,6 +210,47 @@ export async function readCliOutputFile(
   return parsePayload(raw, maxBytes, "MAISTER_OUTPUT_FILE");
 }
 
+const ABSENT_REASON: Record<NodeOutputTransport, string> = {
+  sentinel:
+    "structured output required but absent: no maister:output block in the captured output",
+  file: "structured output required but absent: MAISTER_OUTPUT_FILE was not written",
+  engine_vars:
+    "structured output required but absent: the node produced no engine vars",
+};
+
+// ADR-162 (C-2): the `engine_vars` transport. The value IS the engine-produced
+// `result.vars` object; absent means zero own keys. The byte cap applies to the
+// serialized form so an engine-side runaway is bounded exactly like the other
+// two transports.
+export function readEngineVars(
+  vars: Record<string, unknown>,
+  maxBytes: number,
+): RawNodeOutputPayload {
+  if (Object.keys(vars).length === 0) return { kind: "absent" };
+
+  let serialized: string;
+
+  try {
+    serialized = JSON.stringify(vars);
+  } catch (err) {
+    return {
+      kind: "invalid",
+      reason: `engine vars are not serializable: ${(err as Error).message}`,
+    };
+  }
+
+  const bytes = Buffer.byteLength(serialized, "utf8");
+
+  if (bytes > maxBytes) {
+    return {
+      kind: "invalid",
+      reason: `engine vars are ${bytes} bytes — exceeds MAISTER_NODE_OUTPUT_MAX_BYTES (${maxBytes})`,
+    };
+  }
+
+  return { kind: "value", value: vars };
+}
+
 export type ValidateNodeStructuredOutputArgs = {
   node: Pick<CompiledNode, "id" | "nodeType" | "output">;
   result: Pick<StepResult, "stdout" | "vars">;
@@ -215,23 +278,17 @@ export async function validateNodeStructuredOutput(
   args: ValidateNodeStructuredOutputArgs,
 ): Promise<StructuredOutputOutcome> {
   const decl = args.node.output?.result;
+  const transport = NODE_OUTPUT_TRANSPORT[args.node.nodeType];
 
-  if (
-    !decl ||
-    args.node.nodeType === "human" ||
-    args.node.nodeType === "form"
-  ) {
+  // Defensive skip: a human/form declaration is refused at manifest load
+  // (ADR-162 C-10), so reaching here means a pre-refusal stored manifest.
+  if (!decl || transport === null) {
     return { ok: true };
   }
 
-  const transport =
-    args.node.nodeType === "ai_coding" || args.node.nodeType === "judge"
-      ? "sentinel"
-      : "file";
-
   log.debug(
     { nodeId: args.node.id, nodeType: args.node.nodeType, transport },
-    "structured output: extracting",
+    "structured output: transport selected",
   );
 
   const maxBytes = nodeOutputMaxBytes();
@@ -239,6 +296,8 @@ export async function validateNodeStructuredOutput(
 
   if (transport === "sentinel") {
     payload = extractSentinelBlock(args.result.stdout, maxBytes);
+  } else if (transport === "engine_vars") {
+    payload = readEngineVars(args.result.vars, maxBytes);
   } else {
     let filePath: string;
 
@@ -259,16 +318,11 @@ export async function validateNodeStructuredOutput(
 
   if (payload.kind === "absent") {
     if (decl.required ?? false) {
-      return failAttempt(
-        args,
-        transport === "sentinel"
-          ? "structured output required but absent: no maister:output block in the captured output"
-          : "structured output required but absent: MAISTER_OUTPUT_FILE was not written",
-      );
+      return failAttempt(args, ABSENT_REASON[transport]);
     }
 
     log.debug(
-      { nodeId: args.node.id, attempt: args.attempt },
+      { nodeId: args.node.id, attempt: args.attempt, transport },
       "structured output absent (optional) — vars unchanged",
     );
 
@@ -301,9 +355,19 @@ export async function validateNodeStructuredOutput(
 
   const value = payload.value as Record<string, unknown>;
 
-  args.result.vars = { ...args.result.vars, ...value };
+  // ADR-162 (C-2): the engine produced these vars — validation is all the seam
+  // does. Folding a validated copy back over them would be a no-op at best and
+  // a silent overwrite of engine state at worst.
+  if (transport !== "engine_vars") {
+    args.result.vars = { ...args.result.vars, ...value };
+  }
   log.info(
-    { nodeId: args.node.id, attempt: args.attempt, keys: Object.keys(value) },
+    {
+      nodeId: args.node.id,
+      attempt: args.attempt,
+      transport,
+      keys: Object.keys(value),
+    },
     "structured output captured",
   );
 

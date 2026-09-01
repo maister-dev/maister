@@ -9,6 +9,7 @@ import { parse as parseYaml } from "yaml";
 
 import {
   ARTIFACT_KINDS,
+  OUTPUT_COORDINATOR_ENGINE_MIN,
   TERMINAL_TRANSITION_TARGET,
   allNodeMcpRefs,
   formSchemaSchema,
@@ -551,6 +552,16 @@ const CONTEXT_REPOS_ENGINE_MIN = "3.4.0";
 // ADR-160: the flow-level `reentry` key. Gated on the MANIFEST, not on `nodes`.
 const REENTRY_ENGINE_MIN = "3.5.0";
 
+// ADR-162 (D1/C-1): node types whose structured-output transport arrived with
+// engine 3.6.0 — `output.result` on them is refused below that floor. The
+// pre-3.6.0 arms (ai_coding/judge/cli/check) keep the 1.3.0 OUTPUT_ENGINE_MIN
+// floor; human/form are refused unconditionally (no transport at any version).
+const OUTPUT_COORDINATOR_NODE_TYPES: ReadonlySet<string> = new Set([
+  "orchestrator",
+  "consensus",
+]);
+const OUTPUT_HITL_NODE_TYPES: ReadonlySet<string> = new Set(["human", "form"]);
+
 const PLAN_REVIEW_ENGINE_MIN = "3.1.0";
 
 // ADR-120 (D12): `input.requires[].inline: true` is valid ONLY on prompt-bearing
@@ -711,6 +722,27 @@ function declaresOutputResult(nodes: NodeDef[]): boolean {
   }
 
   return false;
+}
+
+// ADR-162 (C-10): the first human/form node declaring `output.result`, or null.
+// Their vars come from the HITL input artifact and no transport exists for
+// them at any engine version, so this is an unconditional refusal, not a floor.
+function firstOutputResultOnHitlNode(nodes: NodeDef[]): NodeDef | null {
+  for (const n of nodes) {
+    if (n.output?.result && OUTPUT_HITL_NODE_TYPES.has(n.type)) return n;
+  }
+
+  return null;
+}
+
+// ADR-162 (C-11): the first orchestrator/consensus node declaring
+// `output.result`, or null. Gated on OUTPUT_COORDINATOR_ENGINE_MIN.
+function firstOutputResultOnCoordinatorNode(nodes: NodeDef[]): NodeDef | null {
+  for (const n of nodes) {
+    if (n.output?.result && OUTPUT_COORDINATOR_NODE_TYPES.has(n.type)) return n;
+  }
+
+  return null;
 }
 
 // Returns true when any node declares the M38 `decide` routing table or
@@ -1051,6 +1083,45 @@ export function validateGraphManifest(
       "CONFIG",
       `graph flow ${flowYamlPath} is declaring output.result but engine_min "${engineMin}" < ${OUTPUT_ENGINE_MIN} — bump compat.engine_min to ${OUTPUT_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
     );
+  }
+
+  // ADR-162 (C-10): human/form take their vars from the HITL input artifact —
+  // a declared `output.result` there is dead config at every engine version, so
+  // the refusal carries no floor.
+  const hitlOutputNode = firstOutputResultOnHitlNode(nodes);
+
+  if (hitlOutputNode) {
+    throw new MaisterError(
+      "CONFIG",
+      `graph flow ${flowYamlPath} declares output.result on node "${hitlOutputNode.id}" of type ${hitlOutputNode.type} — human/form nodes take their vars from the HITL input artifact; remove output.result`,
+    );
+  }
+
+  // ADR-162 (C-11): the orchestrator (sentinel) and consensus (engine vars)
+  // transports arrived with engine 3.6.0. Below the floor an older engine picks
+  // a transport neither node provisions, so the declaration is refused loudly.
+  const coordinatorOutputNode = firstOutputResultOnCoordinatorNode(nodes);
+
+  if (coordinatorOutputNode) {
+    const ok = semverGte(engineMin, OUTPUT_COORDINATOR_ENGINE_MIN);
+
+    log.debug(
+      {
+        flowYamlPath,
+        nodeId: coordinatorOutputNode.id,
+        nodeType: coordinatorOutputNode.type,
+        declared: engineMin || "(unset)",
+        required: OUTPUT_COORDINATOR_ENGINE_MIN,
+        ok,
+      },
+      "[engine-gate] output.result coordinator floor",
+    );
+    if (!ok) {
+      throw new MaisterError(
+        "CONFIG",
+        `graph flow ${flowYamlPath} declares output.result on node "${coordinatorOutputNode.id}" of type ${coordinatorOutputNode.type} but engine_min "${engineMin}" < ${OUTPUT_COORDINATOR_ENGINE_MIN} — bump compat.engine_min to ${OUTPUT_COORDINATOR_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
+      );
+    }
   }
 
   // Engine gate (M30, ADR-080/081): retry_policy / session_policy / defaults

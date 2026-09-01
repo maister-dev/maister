@@ -6,6 +6,7 @@ import { parseAgentDefinition } from "@/lib/agents/definition";
 import { validateSubagentMarkdown } from "@/lib/agents/subagent-definition";
 import { flowYamlV1Schema } from "@/lib/config.schema";
 import {
+  addSchemaReferenceFloors,
   collectReferencedSchemaPaths,
   validateFormSchemaReferences,
   validateSchemaFiles,
@@ -84,6 +85,9 @@ function validateLifecycleSchemaArtifacts(
 ): PackageArtifactError[] {
   const allReferences = new Set<string>();
   const changedFlowReferences = new Set<string>();
+  // ADR-162: lowest declared compat.engine_min per reference, so a json/items
+  // document referenced by a below-floor manifest blocks here too.
+  const referenceFloors = new Map<string, string | undefined>();
 
   for (const file of input.files) {
     if (!isFlowPath(file.path)) continue;
@@ -100,6 +104,11 @@ function validateLifecycleSchemaArtifacts(
       continue;
     }
 
+    addSchemaReferenceFloors(
+      manifest as Record<string, unknown>,
+      referenceFloors,
+    );
+
     const references = collectReferencedSchemaPaths(
       manifest as Record<string, unknown>,
     );
@@ -115,10 +124,12 @@ function validateLifecycleSchemaArtifacts(
       classifyPackageFilePath(file.path) === "schema" &&
       changed.has(file.path),
   );
-  const referencesToValidate = new Set<string>([
-    ...changedFlowReferences,
-    ...[...allReferences].filter((reference) => changed.has(reference)),
-  ]);
+  const referencesToValidate = new Map<string, string | undefined>(
+    [
+      ...changedFlowReferences,
+      ...[...allReferences].filter((reference) => changed.has(reference)),
+    ].map((reference) => [reference, referenceFloors.get(reference)]),
+  );
   const issues = [
     ...validateSchemaFiles(schemaCandidates, allReferences),
     ...validateFormSchemaReferences(input.files, referencesToValidate),
