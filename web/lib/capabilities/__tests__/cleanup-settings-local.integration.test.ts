@@ -9,22 +9,20 @@
 import type { MaterializationPlan } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
-import { mkdtempReal } from "@/test-support/worktree-test-root";
 import {
   access,
   mkdir,
-  mkdtemp,
   readFile,
   rm as fsRm,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { mkdtempReal } from "@/test-support/worktree-test-root";
 import * as fullSchema from "@/lib/db/schema";
 import {
   testPlatformRunnerRow,

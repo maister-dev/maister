@@ -1,16 +1,13 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtempReal } from "@/test-support/worktree-test-root";
 import {
   mkdir,
-  mkdtemp,
   readFile,
   rm,
   stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -26,6 +23,7 @@ import {
   it,
 } from "vitest";
 
+import { mkdtempReal } from "@/test-support/worktree-test-root";
 import {
   checkRepoReadDirt,
   filterManifestPorcelain,

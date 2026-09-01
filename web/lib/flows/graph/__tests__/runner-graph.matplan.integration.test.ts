@@ -194,7 +194,8 @@ function makeSupervisorSpy(): SupervisorApi & {
   createSpy: ReturnType<typeof vi.fn>;
   profileAtSpawn: () => { executor: { executorRefId: string } | null } | null;
 } {
-  let spawnProfile: { executor: { executorRefId: string } | null } | null = null;
+  let spawnProfile: { executor: { executorRefId: string } | null } | null =
+    null;
 
   const createSpy = vi.fn(async (input: { capabilityProfilePath?: string }) => {
     if (input.capabilityProfilePath) {
