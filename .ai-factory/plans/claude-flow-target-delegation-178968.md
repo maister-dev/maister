@@ -601,7 +601,7 @@ No new env var, port, binary, config-file path, or `package.json` script. `MAIST
 
 > Moved **ahead** of the routes (finding **H8**: the old plan had a Phase-4 test depending on a Phase-6 task). Admission is a pure helper with no route dependency, so it belongs here.
 
-- [ ] **T4.1 — `web/lib/orchestrator/admission.ts` — one helper, three callers.** (depends on Phase 3)
+- [x] **T4.1 — `web/lib/orchestrator/admission.ts` — one helper, three callers.** (depends on Phase 3)
   **RED** is T4.2. **GREEN**:
   ```ts
   export async function admitDelegatedChild(
@@ -614,7 +614,7 @@ No new env var, port, binary, config-file path, or `package.json` script. `MAIST
   *Logging*: `log.warn({parentRunId, live, incoming, cap}, "[delegation.admit] refused — orchestrator fan-out cap reached")`.
   *Satisfies*: REQ-15, REQ-16, REQ-20.
 
-- [ ] **T4.2 — Admission tests, including a REAL two-racer.** (depends on T4.1)
+- [x] **T4.2 — Admission tests, including a REAL two-racer.** (depends on T4.1)
   1. cap reached with a **mixed** set of live agent + flow children → next admission `CONFIG 422`, nothing written (proves the cap is shared, D3);
   2. a terminal child frees capacity;
   3. depth at the bound → `CONFIG 422`;
