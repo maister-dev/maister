@@ -36,7 +36,6 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import * as fullSchema from "@/lib/db/schema";
-import { capabilityMaterializationRootPath } from "@/lib/capabilities/materialize";
 import { runFlow } from "@/lib/flows/runner";
 import {
   startMainPostgresTestDb,
@@ -186,14 +185,30 @@ async function getAttempts(runId: string): Promise<NodeAttempt[]> {
 
 // A SupervisorApi spy. createSession returns a canned session and streamSession
 // yields a clean end-turn so the ai_coding node finishes without a real agent.
+//
+// It ALSO snapshots profile.json off disk at spawn time. Terminal cleanup (T4.3)
+// removes the node's whole capability dir, so the file no longer exists once
+// runFlow returns — and spawn time is the only moment the profile contract is
+// about anyway: what the adapter was actually handed.
 function makeSupervisorSpy(): SupervisorApi & {
   createSpy: ReturnType<typeof vi.fn>;
+  profileAtSpawn: () => { executor: { executorRefId: string } | null } | null;
 } {
-  const createSpy = vi.fn(async () => ({
-    sessionId: "sup-1",
-    pid: 1,
-    acpSessionId: "acp-1",
-  }));
+  let spawnProfile: { executor: { executorRefId: string } | null } | null = null;
+
+  const createSpy = vi.fn(async (input: { capabilityProfilePath?: string }) => {
+    if (input.capabilityProfilePath) {
+      spawnProfile = JSON.parse(
+        await readFile(input.capabilityProfilePath, "utf8"),
+      );
+    }
+
+    return {
+      sessionId: "sup-1",
+      pid: 1,
+      acpSessionId: "acp-1",
+    };
+  });
 
   async function* endTurnStream(): AsyncGenerator<SupervisorEvent> {
     yield {
@@ -223,6 +238,7 @@ function makeSupervisorSpy(): SupervisorApi & {
       async () => ({ ok: true }) as { ok: true },
     ) as unknown as SupervisorApi["deliverPermission"],
     createSpy,
+    profileAtSpawn: () => spawnProfile,
   };
 }
 
@@ -333,8 +349,13 @@ describe("runGraph — materialization plan → node_attempts ledger (T4.2 / T4.
     expect(Array.isArray(plan!.materializedFiles)).toBe(true);
     expect(plan!.materializedFiles.length).toBeGreaterThan(0);
 
-    // cleanup is seeded `pending` at materialize time (T4.3 mutates it later).
-    expect(plan!.cleanup.status).toBe("pending");
+    // cleanup is seeded `pending` at materialize time and mutated by T4.3. This
+    // assertion reads the plan AFTER `runFlow` returned — the run reached its
+    // terminal `Review`, so the terminal cleanup has already run and "later" is
+    // now. Asserting `done` pins the T4.3 mutation as well as T4.2's durable
+    // write; asserting `pending` here only held while cleanup did not run on
+    // the terminal path.
+    expect(plan!.cleanup.status).toBe("done");
 
     // Capability refIds grouped by disposition. ENFORCED mcp github →
     // enforcedClasses; INSTRUCTED skill my-skill → instructedClasses; a refused
@@ -343,24 +364,13 @@ describe("runGraph — materialization plan → node_attempts ledger (T4.2 / T4.
     expect(plan!.instructedClasses).toContain("my-skill");
     expect(plan!.refusedClasses).toEqual([]);
 
-    // ACP runner migration: profile.json records the durable resolved launch
-    // identity. This legacy fixture has no runner_id, so the fallback identity
-    // is the executor row id.
-    const profileJson = JSON.parse(
-      await readFile(
-        join(
-          capabilityMaterializationRootPath(
-            seeded.worktreePath,
-            seeded.runId,
-            attempt!.id,
-          ),
-          "profile.json",
-        ),
-        "utf8",
-      ),
-    );
+    // ACP runner migration: profile.json records the resolved launch identity.
+    // Read from the spawn-time snapshot, not from disk — the run reached its
+    // terminal `Review` above, and terminal cleanup has already removed the dir.
+    const profileJson = api.profileAtSpawn();
 
-    expect(profileJson.executor.executorRefId).toBe(seeded.executorId);
+    expect(profileJson).not.toBeNull();
+    expect(profileJson!.executor?.executorRefId).toBe(seeded.executorId);
   }, 60_000);
 
   it("captures the run-start resolved-revision snapshot in the plan (T4.4)", async () => {

@@ -696,9 +696,21 @@ describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
       transaction.mockRestore();
     }
 
-    await expect(
-      readdir(join(pkg.workingDir, ".maister", "capabilities")),
-    ).resolves.toEqual([]);
+    // The invariant is "no materialized capability survives the failed launch".
+    // Compensation now removes the capabilities DIRECTORY rather than emptying
+    // it, so asserting `readdir(...) === []` demanded a leftover empty dir the
+    // cleanup deliberately does not leave. Assert the invariant, which both
+    // shapes satisfy, and which a future change to either shape still upholds.
+    const capabilitiesDir = join(pkg.workingDir, ".maister", "capabilities");
+    const leftovers = await readdir(capabilitiesDir).catch(
+      (err: NodeJS.ErrnoException) => {
+        if (err.code === "ENOENT") return [] as string[];
+
+        throw err;
+      },
+    );
+
+    expect(leftovers).toEqual([]);
     await expect(
       stat(join(pkg.workingDir, ".claude", "skills", "flow-authoring")),
     ).rejects.toMatchObject({ code: "ENOENT" });
