@@ -2593,6 +2593,12 @@
     "nonFastForwardBody": "The return is fast-forward only. Your branch is {aheadBy} commit(s) ahead and {behindBy} behind the remote. Resolve it in the worktree, push, then return again."
   },
   "nodeInterrupt": {
+    "confirmStopTitle": "Stop this run?",
+    "confirmStopBody": "Stopping ends the run at {node}. The worktree is preserved, but the agent session is torn down and the run cannot continue from here.",
+    "confirmRestartTitle": "Discard workspace changes?",
+    "confirmRestartBody": "Restarting {node} with “{policy}” rewinds the worktree to that node's checkpoint and deletes untracked files. Uncommitted work is lost.",
+    "confirmAccept": "Confirm",
+    "confirmCancel": "Cancel",
     "interrupted": "Node {node} was interrupted mid-turn. Choose how to continue.",
     "correctionLabel": "Correction for the agent (optional)",
     "correctionPlaceholder": "What did it get wrong? This is appended to the restarted node's prompt.",

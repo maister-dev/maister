@@ -119,7 +119,10 @@ async function seedRunningRun(
 
 async function getRun(runId: string): Promise<any> {
   return (
-    await (db as any).select().from(schema.runs).where(eq(schema.runs.id, runId))
+    await (db as any)
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId))
   )[0];
 }
 
@@ -409,9 +412,12 @@ describe("T-B6 — loadPendingOperatorCorrection (consume-once retrieval)", () =
     const { loadPendingOperatorCorrection } = await import(
       "@/lib/runs/node-interrupt"
     );
-    const { runId, respondedAt } = await seedAnsweredInterrupt("ni-corr-other", {
-      targetNodeId: "plan",
-    });
+    const { runId, respondedAt } = await seedAnsweredInterrupt(
+      "ni-corr-other",
+      {
+        targetNodeId: "plan",
+      },
+    );
 
     await appendAttempt(runId, new Date(respondedAt.getTime() + 5_000), 2);
 
@@ -427,5 +433,94 @@ describe("T-B6 — loadPendingOperatorCorrection (consume-once retrieval)", () =
     const { runId } = await seedRunningRun("ni-corr-none");
 
     expect(await loadPendingOperatorCorrection(db, runId, NODE)).toBeNull();
+  });
+});
+
+// Codex finding 3 — `checkpointSession` is a cross-process await. Whatever the
+// run looked like when the request was admitted can be stale by the time the
+// transaction runs, and the run staying `Running` is NOT evidence that the
+// observed node is still the one executing. These interleave real writes inside
+// the checkpoint callback, which is the only place that window is reachable.
+describe("escalateNodeInterrupt — the checkpoint window is a race window", () => {
+  it("refuses when the cursor advanced to another node mid-checkpoint", async () => {
+    const { runId, attemptId } = await seedRunningRun("ni-race-cursor");
+
+    await expect(
+      escalateNodeInterrupt({
+        db,
+        runId,
+        actorUserId: "u-1",
+        supervisorSessionId: "sess-1",
+        // The observed node finishes and the run moves on — still `Running`,
+        // so a status-only CAS would have passed here.
+        checkpointSession: async () => {
+          await (db as any)
+            .update(schema.nodeAttempts)
+            .set({ status: "Succeeded" })
+            .where(eq(schema.nodeAttempts.id, attemptId));
+          await (db as any)
+            .update(schema.runs)
+            .set({ status: "Running", currentStepId: "checks" })
+            .where(eq(schema.runs.id, runId));
+        },
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    const run = await getRun(runId);
+
+    // The cursor must NOT have been rewound to the finished node.
+    expect(run.status).toBe("Running");
+    expect(run.currentStepId).toBe("checks");
+
+    const [attempt] = await (db as any)
+      .select()
+      .from(schema.nodeAttempts)
+      .where(eq(schema.nodeAttempts.id, attemptId));
+
+    // ...and the completed node's ledger row must still read Succeeded.
+    expect(attempt.status).toBe("Succeeded");
+    expect(await hitlRowsFor(runId)).toHaveLength(0);
+  });
+
+  it("refuses when the observed attempt completed and the node retried mid-checkpoint", async () => {
+    const { runId, attemptId } = await seedRunningRun("ni-race-attempt");
+    const retryId = randomUUID();
+
+    await expect(
+      escalateNodeInterrupt({
+        db,
+        runId,
+        actorUserId: "u-1",
+        supervisorSessionId: "sess-1",
+        // Same node, new attempt: the cursor still matches, so only the
+        // attempt-level CAS can catch this one.
+        checkpointSession: async () => {
+          await (db as any)
+            .update(schema.nodeAttempts)
+            .set({ status: "Succeeded" })
+            .where(eq(schema.nodeAttempts.id, attemptId));
+          await (db as any).insert(schema.nodeAttempts).values({
+            id: retryId,
+            runId,
+            nodeId: NODE,
+            nodeType: "ai_coding",
+            attempt: 2,
+            status: "Running",
+            startedAt: new Date(),
+          });
+        },
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    const [stale] = await (db as any)
+      .select()
+      .from(schema.nodeAttempts)
+      .where(eq(schema.nodeAttempts.id, attemptId));
+
+    expect(stale.status).toBe("Succeeded");
+
+    // The whole transaction rolled back: no half-parked run, no orphan HITL.
+    expect((await getRun(runId)).status).toBe("Running");
+    expect(await hitlRowsFor(runId)).toHaveLength(0);
   });
 });

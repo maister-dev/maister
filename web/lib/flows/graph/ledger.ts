@@ -429,18 +429,38 @@ export async function updateMaterializationCleanup(
   );
 }
 
+// `requireRunning` makes the write a CAS and reports whether it applied. The
+// in-runner callers observe and mutate the attempt in the same tick, so they
+// need no guard; the ADR-161 operator interrupt awaits a cross-process
+// supervisor checkpoint between observing the attempt and writing it, during
+// which that attempt can reach `Succeeded` — overwriting it would falsify a
+// completed node's ledger row.
 export async function markNodeNeedsInput(
   nodeAttemptId: string,
   db?: Db,
-): Promise<void> {
+  opts: { requireRunning?: boolean } = {},
+): Promise<boolean> {
   const d = db ?? getDb();
-
-  await d
+  const rows = await d
     .update(nodeAttempts)
     .set({ status: "NeedsInput" as NodeAttemptStatus })
-    .where(eq(nodeAttempts.id, nodeAttemptId));
+    .where(
+      opts.requireRunning
+        ? and(
+            eq(nodeAttempts.id, nodeAttemptId),
+            eq(nodeAttempts.status, "Running" as NodeAttemptStatus),
+          )
+        : eq(nodeAttempts.id, nodeAttemptId),
+    )
+    .returning({ id: nodeAttempts.id });
+  const applied = !opts.requireRunning || rows.length > 0;
 
-  log.debug({ nodeAttemptId, status: "NeedsInput" }, "node-attempt transition");
+  log.debug(
+    { nodeAttemptId, status: "NeedsInput", applied },
+    "node-attempt transition",
+  );
+
+  return applied;
 }
 
 // A review node's current attempt is marked Reworked when its reviewer chooses

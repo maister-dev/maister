@@ -277,15 +277,46 @@ export async function escalateNodeInterrupt(
   try {
     // 3. ONE transaction: CAS + ledger + HITL + assignment + both emits.
     paused = await db.transaction(async (tx: Db) => {
+      // The CAS must pin the CURSOR too, not just `Running`. The checkpoint
+      // round-trip above is a cross-process await: while it is in flight the
+      // observed node can finish and the run can advance to the next node while
+      // STILL being `Running`. A status-only CAS would then pass and this
+      // transaction would rewind `current_step_id` to the finished node.
       const upd = await tx
         .update(runs)
         .set({ status: "NeedsInput", currentStepId: nodeId })
-        .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+        .where(
+          and(
+            eq(runs.id, runId),
+            eq(runs.status, "Running"),
+            eq(runs.currentStepId, nodeId),
+          ),
+        )
         .returning({ id: runs.id });
 
       if (upd.length === 0) return false;
 
-      await markNodeNeedsInput(attempt.id, tx);
+      // Second half of the same race: the attempt itself must still be running.
+      // Overwriting a `Succeeded` attempt with `NeedsInput` would falsify a
+      // completed node's ledger row, so a lost race aborts the whole
+      // transaction rather than parking a node that already finished.
+      if (
+        !(await markNodeNeedsInput(attempt.id, tx, { requireRunning: true }))
+      ) {
+        log.warn(
+          { runId, nodeId, nodeAttemptId: attempt.id },
+          "[node-interrupt] attempt left Running during checkpoint — interrupt abandoned",
+        );
+
+        // Throw, not `return false`: the run CAS above already flipped the row,
+        // so only a rollback keeps run and ledger consistent. The outer catch
+        // unlinks needs-input.json and rethrows — the same cleanup the lost-CAS
+        // path performs, with the same CONFLICT the caller already handles.
+        throw new MaisterError(
+          "CONFLICT",
+          `node ${nodeId} of run ${runId} completed before the interrupt was applied`,
+        );
+      }
 
       await tx.insert(hitlRequests).values({
         id: hitlRequestId,

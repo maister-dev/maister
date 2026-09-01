@@ -2,6 +2,7 @@ import "server-only";
 
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
+import { eq } from "drizzle-orm";
 
 import {
   claimAssignment,
@@ -9,8 +10,6 @@ import {
   ensureUserActor,
 } from "@/lib/assignments/service";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
-import { eq } from "drizzle-orm";
-
 import { getDb } from "@/lib/db/client";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -25,7 +24,11 @@ import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
 import { resolveReentryNode } from "@/lib/runs/reentry";
 import { assertReworkClaimEligible } from "@/lib/runs/rework-claim";
 import { markReworkClaimFromReview } from "@/lib/runs/state-transitions";
-import { countLiveRuns, maxConcurrentRunsCap } from "@/lib/scheduler";
+import {
+  countLiveRuns,
+  maxConcurrentRunsCap,
+  takeSchedulerLock,
+} from "@/lib/scheduler";
 import * as schemaModule from "@/lib/db/schema";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
@@ -184,11 +187,20 @@ export async function POST(
 
     const claimed: { assignmentId: string; nodeAttemptId: string } =
       await db.transaction(async (tx: Db) => {
-        // Cap gate INSIDE the transaction. Review is slot-free while
-        // HumanWorking is not, so this claim ACQUIRES a slot and can be refused
-        // when the host is saturated. A pre-check outside the lock would be a
-        // TOCTOU; queueing is meaningless because the scheduler cannot start a
-        // human, so a full cap is a CONFLICT, never `Pending`.
+        // Cap gate INSIDE the transaction AND under the scheduler advisory
+        // lock. The transaction alone does not serialize this: two claims on
+        // DIFFERENT run rows never conflict, so both would read the same
+        // free-slot count and both would flip their own row — a count-then-
+        // update invariant that spans rows needs the global lock, which is why
+        // claimGraphResumeSlot / claimAgentResumeSlot take it first. Lock
+        // before any row lock, matching the scheduler's ordering.
+        //
+        // Review is slot-free while HumanWorking is not, so this claim
+        // ACQUIRES a slot and can be refused when the host is saturated.
+        // Queueing is meaningless because the scheduler cannot start a human,
+        // so a full cap is a CONFLICT, never `Pending`.
+        await takeSchedulerLock(tx);
+
         const cap = maxConcurrentRunsCap();
         const liveCount = await countLiveRuns(tx, "flow");
 

@@ -12,6 +12,8 @@ import clsx from "clsx";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 
+import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
+
 export type NodeInterruptOptionId =
   | "resume"
   | "restart_node"
@@ -71,8 +73,35 @@ export function NodeInterruptControls({
   );
 
   const disabled = busy || !canAct;
+  const [pendingConfirm, setPendingConfirm] =
+    useState<NodeInterruptOptionId | null>(null);
+
+  // `stop` terminalizes the run; a restart under a non-`keep` policy runs
+  // `reset --hard` + `git clean -fd` against the target's checkpoint. Both are
+  // irreversible from the UI, so they go through the shared confirmation
+  // instead of firing on a single misclick. `resume` and a `keep` restart
+  // change nothing the operator cannot undo, and stay one-click.
+  function isIrreversible(optionId: NodeInterruptOptionId): boolean {
+    if (optionId === "stop") return true;
+
+    return (
+      (optionId === "restart_node" || optionId === "restart_from") &&
+      workspacePolicy !== "keep"
+    );
+  }
+
+  function requestRespond(optionId: NodeInterruptOptionId): void {
+    if (isIrreversible(optionId)) {
+      setPendingConfirm(optionId);
+
+      return;
+    }
+
+    respond(optionId);
+  }
 
   function respond(optionId: NodeInterruptOptionId): void {
+    setPendingConfirm(null);
     onRespond({
       optionId,
       ...(optionId === "restart_node" || optionId === "restart_from"
@@ -107,7 +136,7 @@ export function NodeInterruptControls({
         disabled={off}
         title={opt?.disabledReason ?? undefined}
         type="button"
-        onClick={() => respond(optionId)}
+        onClick={() => requestRespond(optionId)}
       >
         <Icon aria-hidden className="size-4" />
         {label}
@@ -223,6 +252,56 @@ export function NodeInterruptControls({
 
       {error ? (
         <p className="font-mono text-[12px] text-[#d9534f]">{error}</p>
+      ) : null}
+
+      {pendingConfirm ? (
+        <ConfirmDialog
+          body={
+            pendingConfirm === "stop"
+              ? t("confirmStopBody", { node: interruptedNodeId })
+              : t("confirmRestartBody", {
+                  node:
+                    pendingConfirm === "restart_from"
+                      ? targetNodeId
+                      : interruptedNodeId,
+                  policy: t(
+                    workspacePolicy === "fresh-attempt"
+                      ? "policyFresh"
+                      : "policyRewind",
+                  ),
+                })
+          }
+          busy={busy}
+          cancelLabel={t("confirmCancel")}
+          testId="node-interrupt-confirm"
+          title={
+            pendingConfirm === "stop"
+              ? t("confirmStopTitle")
+              : t("confirmRestartTitle")
+          }
+          titleId="node-interrupt-confirm-title"
+          onClose={() => setPendingConfirm(null)}
+        >
+          <div className="flex items-center justify-end gap-2">
+            <button
+              className="rounded-lg border border-line bg-paper px-3.5 py-2 font-mono text-[11px] font-semibold text-mute hover:border-mute hover:text-ink-2 disabled:opacity-50"
+              disabled={busy}
+              type="button"
+              onClick={() => setPendingConfirm(null)}
+            >
+              {t("confirmCancel")}
+            </button>
+            <button
+              className="rounded-lg border border-amber bg-amber px-3.5 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2 disabled:opacity-50"
+              data-testid="node-interrupt-confirm-accept"
+              disabled={busy}
+              type="button"
+              onClick={() => respond(pendingConfirm)}
+            >
+              {t("confirmAccept")}
+            </button>
+          </div>
+        </ConfirmDialog>
       ) : null}
     </div>
   );

@@ -459,8 +459,13 @@ components:
       properties:
         reason:
           type: string
-          enum: [permission, form, human, budget_breach]
-          description: "`budget_breach` (ADR-101) — the budget watchdog paused the run for a Raise/Abandon HITL."
+          enum: [permission, form, human, budget_breach, node_interrupt]
+          description: >-
+            `budget_breach` (ADR-101) — the budget watchdog paused the run for a
+            Raise/Abandon HITL. `node_interrupt` (ADR-161) — an operator paused a
+            live agent node; `nodeId` names the interrupted node and the run
+            parks on a four-option HITL. The `run.escalated` emitted in the same
+            transaction carries the matching `reason`.
         nodeId:
           type: string
           nullable: true
@@ -483,7 +488,7 @@ components:
           enum: [budget_exceeded, hook_trip, node_interrupt]
           description: |
             Budget-escalate, hook-trip, or operator node-interrupt variant.
-            `node_interrupt` (ADR-161, Designed) deliberately REUSES this kind
+            `node_interrupt` (ADR-161, Implemented) deliberately REUSES this kind
             rather than adding one: an operator pausing a node is an escalation
             like any other. ADR-160's claim/return, by contrast, are distinct
             lifecycle facts and get their own kinds — the asymmetry is a

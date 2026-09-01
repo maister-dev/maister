@@ -56,6 +56,9 @@ import {
 import { isPlanReviewDecisionRequestSchema } from "@/lib/flows/graph/plan-review-decisions";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
+import { compileManifest } from "@/lib/flows/graph/compile";
+import { downstreamOf } from "@/lib/flows/graph/runner-graph";
+import { loadRunManifest } from "@/lib/queries/run-manifest";
 import { runFlow } from "@/lib/flows/runner";
 import {
   assertReviewFeedbackPresent,
@@ -4945,13 +4948,20 @@ async function handleNodeInterruptResponse(args: {
     );
   }
 
-  // Apply the workspace policy BEFORE the ledger transaction, against the
-  // TARGET's checkpoint_ref — the M30 rework X-ATOMIC ordering. A crash between
-  // the two is idempotent on retry: re-deciding re-applies against the same
-  // ref. A missing checkpoint_ref degrades to `keep` with a WARN; it is never
+  // RESOLVE the workspace policy here (read-only) but APPLY it only after the
+  // response marker is committed. `fresh-attempt` is `reset --hard` + `git clean
+  // -fd`; running it before the HITL row is locked let a replayed or losing
+  // concurrent request destroy the operator's work and only then discover the
+  // request was already answered — possibly by a `resume` that wanted the work
+  // kept. The claim is the gate; the git op is the consequence.
+  //
+  // A missing checkpoint_ref degrades to `keep` with a WARN; it is never
   // guessed, because rewinding to the wrong commit would destroy the operator's
-  // work rather than merely failing.
+  // work rather than merely failing. The degrade is decided here so the value
+  // actually applied is the value persisted on the response.
   let effectiveWorkspacePolicy = workspacePolicy;
+  let resolvedCheckpointRef: string | null = null;
+  let resolvedWorktreePath: string | null = null;
 
   if (workspacePolicy !== "keep") {
     const targetCheckpointRef = (
@@ -4979,20 +4989,48 @@ async function handleNodeInterruptResponse(args: {
       );
       effectiveWorkspacePolicy = "keep";
     } else {
-      const { applyWorkspacePolicy } = await import(
-        "@/lib/flows/graph/workspace-checkpoint"
-      );
-
-      await applyWorkspacePolicy({
-        policy: effectiveWorkspacePolicy as never,
-        worktreePath,
-        checkpointRef: targetCheckpointRef,
-      });
-      log.info(
-        { runId, targetNodeId, workspacePolicy: effectiveWorkspacePolicy },
-        "[node-interrupt] workspace policy applied against the target checkpoint",
-      );
+      resolvedCheckpointRef = targetCheckpointRef;
+      resolvedWorktreePath = worktreePath;
     }
+  }
+
+  // The pinned graph, needed to derive the stale set for a jump-back. Loaded
+  // before the transaction — a manifest read has no business inside it. Only
+  // `restart_from` needs it; `restart_node` stales nothing.
+  const graph =
+    targetNodeId !== interruptedNodeId
+      ? await (async () => {
+          const loaded = await loadRunManifest(runId, db);
+
+          return loaded?.manifest ? compileManifest(loaded.manifest) : null;
+        })()
+      : null;
+
+  // Applied only after the marker commit, and only by the request that WON the
+  // row. Idempotent by construction: `reset --hard <ref>^` + `clean -fd` against
+  // the same ref converges, so a retry that lost its prior handoff re-drives it.
+  async function applyResolvedWorkspacePolicy(): Promise<void> {
+    if (
+      effectiveWorkspacePolicy === "keep" ||
+      !resolvedCheckpointRef ||
+      !resolvedWorktreePath
+    ) {
+      return;
+    }
+
+    const { applyWorkspacePolicy } = await import(
+      "@/lib/flows/graph/workspace-checkpoint"
+    );
+
+    await applyWorkspacePolicy({
+      policy: effectiveWorkspacePolicy as never,
+      worktreePath: resolvedWorktreePath,
+      checkpointRef: resolvedCheckpointRef,
+    });
+    log.info(
+      { runId, targetNodeId, workspacePolicy: effectiveWorkspacePolicy },
+      "[node-interrupt] workspace policy applied against the target checkpoint",
+    );
   }
 
   const outcome = await db.transaction(async (tx: any) => {
@@ -5009,10 +5047,22 @@ async function handleNodeInterruptResponse(args: {
         .select({ status: runs.status })
         .from(runs)
         .where(eq(runs.id, runId));
+      const stored = (locked.response ?? {}) as {
+        optionId?: string;
+        workspacePolicy?: string;
+        targetNodeId?: string;
+      };
 
       return {
         transition: "already-delivered",
         runStatus: (r?.status as string | undefined) ?? runRow.status,
+        // Only a byte-identical retry may re-drive the destructive half. A
+        // request that lost the race carries a DIFFERENT decision, and applying
+        // its workspace policy would rewind work the winning decision kept.
+        sameDecision:
+          stored.optionId === optionId &&
+          stored.workspacePolicy === effectiveWorkspacePolicy &&
+          stored.targetNodeId === targetNodeId,
       } as const;
     }
 
@@ -5047,8 +5097,21 @@ async function handleNodeInterruptResponse(args: {
 
     // Stale downstream only when the operator jumped BACK — restarting the same
     // node re-runs it and its own gates without invalidating anything upstream.
+    //
+    // `markDownstreamStale` stales exactly the ids it is GIVEN; it derives
+    // nothing. Passing only the target left every node between the target and
+    // the interrupted node `Succeeded` with `passed` gates — evidence produced
+    // by a run state the jump-back just invalidated. `downstreamOf` excludes its
+    // start node, so the gate-bearing target is re-added explicitly, matching
+    // both the ADR-030 takeover and the ADR-160 rework-claim returns.
     if (targetNodeId !== interruptedNodeId) {
-      await markDownstreamStale(runId, [targetNodeId as string], tx);
+      const target = targetNodeId as string;
+
+      await markDownstreamStale(
+        runId,
+        graph ? [target, ...downstreamOf(graph, target)] : [target],
+        tx,
+      );
     }
 
     await tx
@@ -5067,7 +5130,21 @@ async function handleNodeInterruptResponse(args: {
   });
 
   if (outcome.transition === "already-delivered") {
-    if (outcome.runStatus === "NeedsInput") scheduleResume(runId);
+    // Only a byte-identical retry re-drives the destructive half; a losing
+    // concurrent request returns without touching the worktree, because the
+    // stored decision — not this request's payload — is what the run acts on.
+    if (outcome.sameDecision) {
+      await applyResolvedWorkspacePolicy();
+
+      const resume = await claimGraphResumeSlot(db, runId);
+
+      if (resume === "ready") scheduleResume(runId);
+    } else {
+      log.warn(
+        { runId, hitlRequestId, optionId },
+        "[node-interrupt] request lost the response race and carries a different decision — no workspace mutation",
+      );
+    }
 
     return NextResponse.json(
       { ok: true, runStatus: outcome.runStatus, idempotent: true },
@@ -5075,7 +5152,15 @@ async function handleNodeInterruptResponse(args: {
     );
   }
 
-  scheduleResume(runId);
+  await applyResolvedWorkspacePolicy();
+
+  // NOT bare scheduleResume: the keep-alive sweeper may have idled the run to
+  // NeedsInputIdle while the operator was deciding, and runFlow only claims
+  // NeedsInput. claimGraphResumeSlot is the cap-safe claim that un-idles first
+  // (or defers at cap), so an answer given after the sweep still wakes the run.
+  const resume = await claimGraphResumeSlot(db, runId);
+
+  if (resume === "ready") scheduleResume(runId);
   log.info(
     {
       runId,

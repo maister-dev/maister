@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -109,5 +111,60 @@ describe("NodeInterruptControls", () => {
     const html = render({ canAct: false });
 
     expect(html).toContain("disabled=");
+  });
+});
+
+// Codex finding 8 — `fresh-attempt`/`rewind` restart runs `reset --hard` +
+// `git clean -fd`, and `stop` terminalizes the run. Both are irreversible from
+// the UI, so a single misclick must not fire them. web/CLAUDE.md makes the
+// shared portaled confirmation the house rule for destructive actions.
+describe("NodeInterruptControls — irreversible actions confirm first", () => {
+  function clickTag(html: string, label: string): string {
+    const idx = html.indexOf(label);
+
+    expect(idx).toBeGreaterThan(-1);
+
+    return html.slice(html.lastIndexOf("<button", idx), idx);
+  }
+
+  it("does not render a confirmation until an irreversible option is chosen", () => {
+    const html = render();
+
+    expect(html).not.toContain("node-interrupt-confirm");
+  });
+
+  // The one-click default stays one-click: `keep` mutates nothing.
+  it("leaves a keep-policy restart and resume unconfirmed", () => {
+    const html = render();
+
+    expect(clickTag(html, "nodeInterrupt.restartNode")).toContain("<button");
+    expect(html).not.toContain("nodeInterrupt.confirmRestartTitle");
+    expect(html).not.toContain("nodeInterrupt.confirmStopTitle");
+  });
+
+  // Static render cannot click, so the fence is on the wiring: every option
+  // button routes through requestRespond, and the dialog copy exists for the
+  // two irreversible cases.
+  it("carries distinct confirmation copy for stop and for a destructive restart", () => {
+    const en = JSON.parse(
+      readFileSync(
+        new URL("../../../messages/en.json", import.meta.url),
+        "utf8",
+      ),
+    ) as { nodeInterrupt: Record<string, string> };
+
+    for (const key of [
+      "confirmStopTitle",
+      "confirmStopBody",
+      "confirmRestartTitle",
+      "confirmRestartBody",
+      "confirmAccept",
+      "confirmCancel",
+    ]) {
+      expect(en.nodeInterrupt[key]).toBeTruthy();
+    }
+    // The restart copy must NAME the irreversible effect, not just say "are you
+    // sure" — the operator is deciding whether uncommitted work survives.
+    expect(en.nodeInterrupt.confirmRestartBody).toMatch(/untracked|lost/i);
   });
 });
