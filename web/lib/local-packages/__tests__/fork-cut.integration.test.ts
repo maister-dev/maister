@@ -65,9 +65,32 @@ async function buildSourcePackage(root: string): Promise<void> {
   await mkdir(join(root, "flows/dev"), { recursive: true });
   await writeFile(join(root, "flows/dev/flow.yaml"), FLOW_YAML("aif-dev"));
   await mkdir(join(root, "skills/skill-one"), { recursive: true });
-  await writeFile(join(root, "skills/skill-one/SKILL.md"), "skill body\n");
+  // A SKILL.md and an agent `.md` are both content-gated at cut time
+  // (validatePackageArtifacts), so the bodies carry the required frontmatter.
+  // `rules/` stays freeform — no commit-time content contract.
+  await writeFile(
+    join(root, "skills/skill-one/SKILL.md"),
+    `---
+name: skill-one
+description: A skill
+---
+skill body
+`,
+  );
   await mkdir(join(root, "agents"), { recursive: true });
-  await writeFile(join(root, "agents/agent-one.md"), "agent body\n");
+  await writeFile(
+    join(root, "agents/agent-one.md"),
+    `---
+name: agent-one
+description: An agent
+workspace: repo_read
+mode: session
+triggers: [manual]
+risk_tier: read_only
+---
+agent body
+`,
+  );
   await mkdir(join(root, "rules"), { recursive: true });
   await writeFile(join(root, "rules/rule-one.md"), "rule body\n");
   await writeFile(
