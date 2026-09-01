@@ -293,11 +293,73 @@ describe("observatory read models", () => {
       budgetEscalations: 1,
       budgetTerminations: 5,
       hookTripEscalations: 0,
+      // ADR-108/agentization: the summary gained a per-run_kind breakdown. The
+      // fixture's budget events carry no run kind, so every one lands in
+      // `unattributed_legacy` and the three real kinds read zero — which is the
+      // interesting assertion here: the aggregate above and the breakdown below
+      // must account for the SAME events, or the panel double-counts.
+      byKind: [
+        {
+          kind: "flow",
+          budgetEscalations: 0,
+          budgetTerminations: 0,
+          hookTripEscalations: 0,
+        },
+        {
+          kind: "scratch",
+          budgetEscalations: 0,
+          budgetTerminations: 0,
+          hookTripEscalations: 0,
+        },
+        {
+          kind: "agent",
+          budgetEscalations: 0,
+          budgetTerminations: 0,
+          hookTripEscalations: 0,
+        },
+        {
+          kind: "unattributed_legacy",
+          budgetEscalations: 1,
+          budgetTerminations: 5,
+          hookTripEscalations: 0,
+        },
+      ],
     });
     expect(project.budget).toEqual({
       budgetEscalations: 1,
       budgetTerminations: 5,
       hookTripEscalations: 0,
+      // ADR-108/agentization: the summary gained a per-run_kind breakdown. The
+      // fixture's budget events carry no run kind, so every one lands in
+      // `unattributed_legacy` and the three real kinds read zero — which is the
+      // interesting assertion here: the aggregate above and the breakdown below
+      // must account for the SAME events, or the panel double-counts.
+      byKind: [
+        {
+          kind: "flow",
+          budgetEscalations: 0,
+          budgetTerminations: 0,
+          hookTripEscalations: 0,
+        },
+        {
+          kind: "scratch",
+          budgetEscalations: 0,
+          budgetTerminations: 0,
+          hookTripEscalations: 0,
+        },
+        {
+          kind: "agent",
+          budgetEscalations: 0,
+          budgetTerminations: 0,
+          hookTripEscalations: 0,
+        },
+        {
+          kind: "unattributed_legacy",
+          budgetEscalations: 1,
+          budgetTerminations: 5,
+          hookTripEscalations: 0,
+        },
+      ],
     });
   });
 
@@ -323,7 +385,13 @@ describe("observatory read models", () => {
     // Absolute ceiling guards against a constant-but-inflated count that the
     // relative equality above would miss; the per-project dimension is covered
     // by the two-project visibility tests in this file.
-    expect(singleRun.queryCount).toBeLessThanOrEqual(16);
+    //
+    // Raised 16 → 21 when the budget summary gained its per-run_kind breakdown:
+    // the equality assertion above still holds at 8 runs / 16 attempts, so the
+    // extra queries are CONSTANT, not data-proportional — which is the property
+    // this ceiling exists to protect. Keep it tight: it should be raised only
+    // alongside a demonstrated constant, never to absorb a growing count.
+    expect(singleRun.queryCount).toBeLessThanOrEqual(21);
   });
 
   it("uses one eligible run population for correction and autonomy", async () => {

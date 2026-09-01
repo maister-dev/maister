@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { mkdtempReal } from "@/test-support/worktree-test-root";
 import {
   mkdir,
   mkdtemp,
@@ -67,7 +68,7 @@ beforeEach(async () => {
   await pool.query(`DELETE FROM "agents"`);
   await pool.query(`DELETE FROM "projects"`);
 
-  repoPath = await mkdtemp(path.join(os.tmpdir(), "maister-watchdog-"));
+  repoPath = await mkdtempReal("maister-watchdog-");
   await exec("git", ["-C", repoPath, "init", "-q", "-b", "main"]);
   await writeFile(path.join(repoPath, "README.md"), "hello\n");
   await exec("git", ["-C", repoPath, "add", "-A"]);
@@ -124,8 +125,14 @@ async function seedWorld(): Promise<{
   const runId = randomUUID();
 
   await pool.query(
-    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "trigger_source", "task_id", "project_id", "flow_version", "flow_revision", "status")
-     VALUES ($1, 'agent', 'watchdog-agent', 'manual', $2, $3, 'agent', 'manual', 'Running')`,
+    // ADR-090 (migration 0052): `launchAgentRun` PERSISTS the workspace axis on
+    // the run row, and the terminal path reads
+    // `row.agentWorkspace ?? wsCtx?.workspace` — the persisted value first,
+    // precisely so a pinned-older or catalog-less run still releases correctly.
+    // Seeding without it left that fallback untestable: the
+    // agent-row-is-absent case had no provenance to fall back TO.
+    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "agent_workspace", "trigger_source", "task_id", "project_id", "flow_version", "flow_revision", "status")
+     VALUES ($1, 'agent', 'watchdog-agent', 'repo_read', 'manual', $2, $3, 'agent', 'manual', 'Running')`,
     [runId, taskId, projectId],
   );
 
@@ -189,7 +196,19 @@ describe("dirty-watchdog terminal choke point (ADR-090 L3)", () => {
       cwd: agentDirectory,
       runId,
       materialize: async (_ownedPaths, recordIntent) => {
-        const materializedPath = path.join(agentDirectory, "owned.txt");
+        // Must sit under one of the manifest's ALLOWED_ROOTS — a bare
+        // `owned.txt` at the agent-directory root is refused by the
+        // containment guard, which is the point of that guard. The case is
+        // about RESTORING materialization before the directory is removed, so
+        // the specific file only has to be a legitimately materializable one.
+        const materializedPath = path.join(
+          agentDirectory,
+          ".maister",
+          "capabilities",
+          "owned.txt",
+        );
+
+        await mkdir(path.dirname(materializedPath), { recursive: true });
 
         await recordIntent([materializedPath]);
         await writeFile(materializedPath, "owned\n");
@@ -230,7 +249,17 @@ describe("dirty-watchdog terminal choke point (ADR-090 L3)", () => {
 
     await mkdir(path.dirname(settingsPath), { recursive: true });
     await writeFile(settingsPath, '{"owner":"user"}\n');
-    await exec("git", ["-C", repoPath, "add", ".claude/settings.local.json"]);
+    // `-f`: the fixture repo gitignores `.claude/`, and this case is precisely
+    // about a user who TRACKS their own settings file anyway — which is what
+    // makes a later agent overwrite show up as dirt rather than as an ignored
+    // scratch file.
+    await exec("git", [
+      "-C",
+      repoPath,
+      "add",
+      "-f",
+      ".claude/settings.local.json",
+    ]);
     await exec("git", [
       "-C",
       repoPath,
@@ -358,9 +387,7 @@ describe("dirty-watchdog terminal choke point (ADR-090 L3)", () => {
 
   it("clean worktree run → Review, not Done, so promotion remains explicit", async () => {
     const { runId, projectId } = await seedWorld();
-    const worktreePath = await mkdtemp(
-      path.join(os.tmpdir(), "maister-review-materialization-"),
-    );
+    const worktreePath = await mkdtempReal("maister-review-materialization-");
     const materializedPath = path.join(
       worktreePath,
       ".claude",
@@ -533,12 +560,8 @@ describe("dirty-watchdog terminal choke point (ADR-090 L3)", () => {
 
   it("commits a none-workspace terminal status when post-commit cleanup refuses a symlink", async () => {
     const { runId } = await seedWorld();
-    const worktreesTmp = await mkdtemp(
-      path.join(os.tmpdir(), "maister-none-finalize-"),
-    );
-    const outside = await mkdtemp(
-      path.join(os.tmpdir(), "maister-none-owned-target-"),
-    );
+    const worktreesTmp = await mkdtempReal("maister-none-finalize-");
+    const outside = await mkdtempReal("maister-none-owned-target-");
     const originalWorktreesRoot = process.env.MAISTER_WORKTREES_ROOT;
 
     try {
@@ -642,7 +665,7 @@ describe("workspace_ref ephemeral checkout (ADR-090 rework, RD6)", () => {
   let originalWorktreesRoot: string | undefined;
 
   beforeEach(async () => {
-    worktreesTmp = await mkdtemp(path.join(os.tmpdir(), "maister-wt-"));
+    worktreesTmp = await mkdtempReal("maister-wt-");
     originalWorktreesRoot = process.env.MAISTER_WORKTREES_ROOT;
     process.env.MAISTER_WORKTREES_ROOT = worktreesTmp;
   });
@@ -718,9 +741,7 @@ describe("workspace_ref ephemeral checkout (ADR-090 rework, RD6)", () => {
 
   it("retains a failed materialization release for the ephemeral GC retry", async () => {
     const { runId, ephemeralPath } = await seedEphemeralRun();
-    const outside = await mkdtemp(
-      path.join(os.tmpdir(), "maister-ephemeral-release-failure-"),
-    );
+    const outside = await mkdtempReal("maister-ephemeral-release-failure-");
     const relativePath = ".claude/skills/linked";
     const linkedPath = path.join(ephemeralPath, relativePath);
     const ownershipRoot = path.join(

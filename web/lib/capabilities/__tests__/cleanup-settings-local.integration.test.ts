@@ -9,6 +9,7 @@
 import type { MaterializationPlan } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
+import { mkdtempReal } from "@/test-support/worktree-test-root";
 import {
   access,
   mkdir,
@@ -102,7 +103,7 @@ async function seed(): Promise<Seeded> {
   const taskId = randomUUID();
   const runId = randomUUID();
   const nodeAttemptId = randomUUID();
-  const worktreePath = await mkdtemp(join(tmpdir(), "wt-cleanup-sl-"));
+  const worktreePath = await mkdtempReal("wt-cleanup-sl-");
 
   await db.insert(schema.projects).values({
     taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
@@ -381,7 +382,7 @@ describe("cleanup reclaims worktree settings.local.json (M14 T4.5-E)", () => {
   });
 
   it("backup-once: the bak preserves the user's ORIGINAL across two materialize calls (Test 3)", async () => {
-    const worktreePath = await mkdtemp(join(tmpdir(), "wt-bak-once-"));
+    const worktreePath = await mkdtempReal("wt-bak-once-");
     const slPath = settingsLocalPath(worktreePath);
     const bakPath = settingsLocalBakPath(worktreePath);
 
@@ -456,7 +457,7 @@ describe("cleanup reclaims worktree settings.local.json (M14 T4.5-E)", () => {
   // zero tools/permissionMode (the always-on regression: settingsLocal was null
   // for a no-permission claude run before).
   it("writes { model, availableModels } into settings.local.json for a claude run with executor.model and NO tools (T3.1)", async () => {
-    const worktreePath = await mkdtemp(join(tmpdir(), "wt-model-write-"));
+    const worktreePath = await mkdtempReal("wt-model-write-");
     const slPath = settingsLocalPath(worktreePath);
 
     const materialized = await materializeCapabilityProfile({
@@ -485,7 +486,7 @@ describe("cleanup reclaims worktree settings.local.json (M14 T4.5-E)", () => {
   });
 
   it("reclaim is idempotent: a 2nd pass never re-deletes a restored user original (Test 5, #data-loss)", async () => {
-    const worktreePath = await mkdtemp(join(tmpdir(), "wt-reclaim-idem-"));
+    const worktreePath = await mkdtempReal("wt-reclaim-idem-");
     const slPath = settingsLocalPath(worktreePath);
 
     // The user's pre-existing settings.local.json.

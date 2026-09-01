@@ -2,13 +2,32 @@ import type { Dirent } from "node:fs";
 
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { lstat, readFile, readdir, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const TEST_WORKTREES_BASE = path.join(os.tmpdir(), "maister-test-worktrees");
+
+// CANONICAL, not just absolute. On macOS `os.tmpdir()` is `/var/folders/…`, a
+// symlink to `/private/var/folders/…`, and git reports the resolved spelling.
+// Production code that computes a path RELATIVE to a canonicalized root then
+// sees `../../../../../../../var/folders/…` and trips its own containment
+// guard — a failure produced entirely by the fixture handing it two spellings
+// of one directory. Resolving once here fixes it for every suite that builds on
+// this root. `os.tmpdir()` always exists, so the realpath cannot miss; the
+// fallback keeps a platform without one working.
+const TEST_WORKTREES_BASE = path.join(
+  (() => {
+    try {
+      return realpathSync(os.tmpdir());
+    } catch {
+      return os.tmpdir();
+    }
+  })(),
+  "maister-test-worktrees",
+);
 const MAX_WORKTREE_DISCOVERY_DEPTH = 3;
 
 export type TestWorktreeLane = "vitest" | "e2e" | "e2e-live";
@@ -26,7 +45,10 @@ function assertSafeInvocationId(invocationId: string): void {
 
 function assertTestWorktreesRoot(root: string): string {
   const resolvedBase = path.resolve(TEST_WORKTREES_BASE);
-  const resolvedRoot = path.resolve(root);
+  // Canonicalize the candidate too when it already exists, so a caller that
+  // passes the SYMLINKED spelling (an env var set by an older run, say) is still
+  // recognized as living under the managed base.
+  const resolvedRoot = path.resolve(canonicalizeIfPresent(root));
   const relativeRoot = path.relative(resolvedBase, resolvedRoot);
 
   if (
@@ -65,6 +87,14 @@ export function resolveTestWorktreesRoot(
   }
 
   return createTestWorktreesRoot(lane);
+}
+
+function canonicalizeIfPresent(candidate: string): string {
+  try {
+    return realpathSync(candidate);
+  } catch {
+    return candidate;
+  }
 }
 
 function isMissingPathError(error: unknown): boolean {
@@ -211,4 +241,22 @@ export async function cleanupTestWorktrees(root: string): Promise<void> {
   }
 
   await rm(safeRoot, { force: true, recursive: true });
+}
+
+/**
+ * `mkdtemp` under the OS temp dir, resolved through `realpath`.
+ *
+ * On macOS `os.tmpdir()` is `/var/folders/…`, a symlink to `/private/var/…`.
+ * Production code that computes a path RELATIVE to a canonicalized root then
+ * sees `../../../../../../../var/folders/…` and trips its own containment guard
+ * — a failure that exists only because the fixture handed it two spellings of
+ * the same directory. Every fixture whose path reaches a containment check or a
+ * path equality assertion must canonicalize at creation.
+ */
+export async function mkdtempReal(prefix: string): Promise<string> {
+  const { mkdtemp } = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+
+  return await realpath(await mkdtemp(path.join(os.tmpdir(), prefix)));
 }
