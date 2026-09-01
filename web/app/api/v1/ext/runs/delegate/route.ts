@@ -10,6 +10,13 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { orchestratorMaxDepth } from "@/lib/instance-config";
+import { resolveDelegatableFlow } from "@/lib/flows/delegatable-flow";
+import {
+  delegationTargetKind,
+  delegationTargetSchema,
+  refuseUnsupportedDelegationOption,
+  titleFromPrompt,
+} from "@/lib/orchestrator/delegation-target";
 import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
 import { addTaskRelation } from "@/lib/social/relations";
 import { createTask } from "@/lib/services/tasks";
@@ -35,12 +42,9 @@ const ENDPOINT = "POST /api/v1/ext/runs/delegate";
 
 const bodySchema = z
   .object({
-    target: z
-      .object({
-        agentId: z.string().min(1).optional(),
-        flowId: z.string().min(1).optional(),
-      })
-      .strict(),
+    // ADR-163: the wire shape lives in ONE module, imported by both delegation
+    // entry points — exactly one of agentId / flowId, each arm strict.
+    target: delegationTargetSchema,
     mode: z.enum(["task", "run"]),
     prompt: z.string().min(1),
     title: z.string().min(1).optional(),
@@ -92,12 +96,6 @@ async function delegationDepth(db: Db, startId: string): Promise<number> {
   return depth;
 }
 
-function titleFromPrompt(prompt: string): string {
-  const firstLine = prompt.split("\n")[0].trim();
-
-  return firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine;
-}
-
 export async function POST(
   req: NextRequest,
   _routeCtx: object,
@@ -128,6 +126,19 @@ export async function POST(
         );
       }
 
+      // ADR-163: the per-kind option allow-list. A field the target kind cannot
+      // support is REFUSED with its own message, never ignored — including
+      // `title` on an agent `mode: run`, which used to be silently dropped.
+      const targetKind = delegationTargetKind(body.target);
+      const optionRefusal = refuseUnsupportedDelegationOption(targetKind, body);
+
+      if (optionRefusal) {
+        return NextResponse.json(
+          { code: "CONFIG", message: optionRefusal },
+          { status: httpStatusForExtCode("CONFIG") },
+        );
+      }
+
       // The PARENT runId is the token's run binding — NEVER a body field. A
       // token with no run binding cannot delegate (per the trust table).
       const parentRunId = ctx.actor.boundRunId;
@@ -141,26 +152,6 @@ export async function POST(
           { status: httpStatusForExtCode("PRECONDITION") },
         );
       }
-
-      // Flow-target delegation is out of scope for Phase 3.
-      if (body.target.flowId) {
-        return NextResponse.json(
-          {
-            code: "CONFIG",
-            message: "flow-target delegation is not yet supported",
-          },
-          { status: httpStatusForExtCode("CONFIG") },
-        );
-      }
-
-      if (!body.target.agentId) {
-        return NextResponse.json(
-          { code: "CONFIG", message: "target.agentId is required" },
-          { status: httpStatusForExtCode("CONFIG") },
-        );
-      }
-
-      const agentId = body.target.agentId;
 
       // Finding 1 (Codex adversarial review): resolve the bound orchestrator
       // scoped to the token's project AND fail closed if it is missing or has
@@ -195,6 +186,40 @@ export async function POST(
           { status: httpStatusForExtCode("CONFIG") },
         );
       }
+
+      // ADR-163: locate -> establish trust -> execute. Trust resolution runs
+      // here, in a module that cannot start a run, so every refusal below
+      // writes ZERO rows. The launch half of the flow arm lands with the
+      // carrier task; until then a TRUSTED flow target is still refused, but
+      // an untrusted one now gets its own typed refusal rather than a blanket
+      // "not supported".
+      if (targetKind === "flow") {
+        try {
+          await resolveDelegatableFlow(
+            { projectId: ctx.projectId, flowId: body.target.flowId as string },
+            db,
+          );
+        } catch (err) {
+          if (isMaisterError(err)) {
+            return NextResponse.json(
+              { code: err.code, message: err.message },
+              { status: httpStatusForExtCode(err.code) },
+            );
+          }
+
+          throw err;
+        }
+
+        return NextResponse.json(
+          {
+            code: "CONFIG",
+            message: "flow-target delegation is not yet supported",
+          },
+          { status: httpStatusForExtCode("CONFIG") },
+        );
+      }
+
+      const agentId = body.target.agentId as string;
 
       let childTaskId: string | undefined;
 

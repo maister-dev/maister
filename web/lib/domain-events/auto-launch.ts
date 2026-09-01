@@ -16,6 +16,10 @@ import {
   type PromoteRunResult,
 } from "@/lib/runs/promote";
 import { countFailureTerminalSharedSiblings } from "@/lib/runs/shared-tree";
+import {
+  asAgentDelegationSpec,
+  delegationSpecKind,
+} from "@/lib/orchestrator/delegation-spec";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -301,12 +305,21 @@ export function buildAutoLaunchRunPlanConsumer(
               continue;
             }
 
-            const spec = candidate.delegationSpec;
+            // ADR-163: `delegation_spec` is a discriminated union, so the kind
+            // is read through the shared helper rather than sniffed inline —
+            // `!spec.agentId` would silently reclassify a flow spec as a
+            // malformed agent one and skip it forever. Flow candidates are
+            // widened in a later phase; today only the agent arm launches.
+            const spec = asAgentDelegationSpec(candidate.delegationSpec);
 
-            if (!spec || !spec.agentId) {
+            if (!spec) {
               log.warn(
-                { eventId: event.id, taskId: candidate.taskId },
-                "auto-launch: as-plan task has no delegation_spec.agentId — skip",
+                {
+                  eventId: event.id,
+                  taskId: candidate.taskId,
+                  specKind: delegationSpecKind(candidate.delegationSpec),
+                },
+                "auto-launch: as-plan task has no launchable agent delegation_spec — skip",
               );
               continue;
             }

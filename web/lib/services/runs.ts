@@ -65,6 +65,7 @@ import {
   parseExecutableStoredFlowManifest,
 } from "@/lib/flows/manifest-parser";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
+import { LAUNCHABLE_FLOW_ENABLEMENT_STATES } from "@/lib/flows/enablement-states";
 import { resolveEffectiveFlowRevision } from "@/lib/flows/lifecycle";
 import { runFlow } from "@/lib/flows/runner";
 import { worktreesRoot } from "@/lib/instance-config";
@@ -261,14 +262,6 @@ const log = pino({
   name: "service-runs",
   level: process.env.LOG_LEVEL ?? "info",
 });
-
-// Explicit allow-list of project flow enablement states that may launch a run
-// (M10, ADR-021). `Installed`/`Disabled`/`Failed`/`Deprecated` are NOT
-// launchable — enablement is an explicit action separate from trust.
-const LAUNCHABLE_ENABLEMENT_STATES = new Set<string>([
-  "Enabled",
-  "UpdateAvailable",
-]);
 
 export type LaunchRunInput = {
   taskId: string;
@@ -917,7 +910,7 @@ export async function* launchRunStaged(
     // revision is server-derived from the enablement pointer, never
     // body-controlled.
     //
-    // Launchability is an explicit allow-list (LAUNCHABLE_ENABLEMENT_STATES):
+    // Launchability is an explicit allow-list (LAUNCHABLE_FLOW_ENABLEMENT_STATES):
     // only `Enabled` and `UpdateAvailable` (which still has a live enabled
     // revision) may launch. `Installed` is NOT launchable — a package installed
     // from an untrusted source stays `Installed` after `/trust` and must be
@@ -929,7 +922,7 @@ export async function* launchRunStaged(
         `flow "${flow.flowRefId}" has no enabled package revision`,
       );
     }
-    if (!LAUNCHABLE_ENABLEMENT_STATES.has(flow.enablementState)) {
+    if (!LAUNCHABLE_FLOW_ENABLEMENT_STATES.has(flow.enablementState)) {
       throw new MaisterError(
         "PRECONDITION",
         `flow "${flow.flowRefId}" package is ${flow.enablementState}, not launchable (enable it first)`,

@@ -548,13 +548,13 @@ No new env var, port, binary, config-file path, or `package.json` script. `MAIST
 
 ### Phase 2 — Target resolution (GREEN for R1.1 shape + R1.3 static)
 
-- [ ] **T2.1 — `web/lib/orchestrator/delegation-target.ts` — wire shape only.** (depends on Phase 1)
+- [x] **T2.1 — `web/lib/orchestrator/delegation-target.ts` — wire shape only.** (depends on Phase 1)
   **RED** is R1.1. **GREEN**: export `delegationTargetSchema` — `z.union([z.object({agentId}).strict(), z.object({flowId}).strict()])` plus a `.superRefine` emitting the two exact messages (`"…exactly one of agentId / flowId (both present)"` / `"…(neither present)"`); `delegationTargetKind(t): "agent" | "flow"`; and `refineDelegateOptionsForTarget(body, ctx)` implementing the §5 matrix with the refusal table's exact strings.
   **REFACTOR**: both routes import this module — the shape lives in exactly one place (DRY).
   *Acceptance*: R1.1's route cases GREEN; module has no DB or launcher import (single responsibility).
   *Satisfies*: REQ-01, REQ-12.
 
-- [ ] **T2.2 — `web/lib/flows/delegatable-flow.ts` — trust resolution only.** (depends on T2.1)
+- [x] **T2.2 — `web/lib/flows/delegatable-flow.ts` — trust resolution only.** (depends on T2.1)
   **Renamed** from the first draft's `flows/delegation-target.ts` (finding **H9**: two modules with the same basename in different directories is a readability trap).
   **RED** is R1.3. **GREEN**: `resolveDelegatableFlow({projectId, flowId}, db)` → `{flowId, flowRefId, revisionId, resolvedRevision, versionLabel, engineMin, engineMax}`, running the SAME allow-list sequence as `launchRunStaged:926-1010`: `resolveFlowRef` (accepts `flows.id` or `flow_ref_id`, project-scoped) → re-assert `flow.projectId` → `enabledRevisionId` present → `LAUNCHABLE_ENABLEMENT_STATES.has(enablementState)` → `trustStatus !== 'untrusted'` → `resolveEffectiveFlowRevision` → `packageStatus === 'Installed'` → `setupStatus ∉ {pending,failed}` → `isSchemaVersionSupported` → `isEngineCompatible`.
   **REFACTOR**: hoist `LAUNCHABLE_ENABLEMENT_STATES` to a module both this and `services/runs.ts` import, so the two gates can never drift.
@@ -562,7 +562,7 @@ No new env var, port, binary, config-file path, or `package.json` script. `MAIST
   *Logging*: `log.debug({projectId, flowId, flowRefId, revisionId, enablementState, trustStatus}, "[delegation.flow] target resolved")` / `log.warn({…, reason}, "[delegation.flow] target refused")`.
   *Satisfies*: REQ-03, REQ-04, REQ-05.
 
-- [ ] **T2.3 — Widen the two jsonb unions + reader helper.** (depends on T2.2)
+- [x] **T2.3 — Widen the two jsonb unions + reader helper.** (depends on T2.2)
   **RED**: a unit test asserting `delegationSpecKind({agentId:'x'}) === 'agent'` (legacy row, no `kind`) and `…({kind:'flow',flowId:'y'}) === 'flow'` — fails, helper absent.
   **GREEN**: the `kind:'flow'` `DelegationSnapshot` variant (incl. `baseBranch`/`targetBranch` per D7) and the `TaskDelegationSpec` union in `web/lib/db/schema.ts`; `delegationSpecKind` in `web/lib/orchestrator/delegation-spec.ts`.
   **REFACTOR**: replace any `!spec.agentId` shape-sniffing with the helper.

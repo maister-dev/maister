@@ -1,15 +1,11 @@
 import "server-only";
 
+import { LAUNCHABLE_FLOW_ENABLEMENT_STATES } from "@/lib/flows/enablement-states";
 import {
   isEngineCompatible,
   isSchemaVersionSupported,
 } from "@/lib/flows/engine-version";
 import { classifyStoredFlowManifest } from "@/lib/flows/manifest-parser";
-
-const LAUNCHABLE_FLOW_ENABLEMENT_STATES = new Set<string>([
-  "Enabled",
-  "UpdateAvailable",
-]);
 
 export type ProjectFlowLaunchabilityInput = {
   enabledRevisionId: string | null;

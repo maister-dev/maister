@@ -787,16 +787,25 @@ describe("POST /api/v1/ext/runs/delegate", () => {
     expect(json.code).toBe("PRECONDITION");
   });
 
-  it("flow-target delegation is rejected (CONFIG, out of scope)", async () => {
+  // ADR-163 migration of the old "flow-target delegation is rejected (CONFIG,
+  // out of scope)" case. The target now passes the full trust sequence — this is
+  // a fully Enabled, trusted, Installed, setup-complete, engine-compatible flow
+  // in the token's own project — and is refused only because the LAUNCH half of
+  // the flow arm has not landed yet. The refusals for an untrustworthy flow are
+  // owned by delegate-refusals.integration.test.ts; this assertion INVERTS into
+  // the launch assertion once the carrier task + canonical launcher land.
+  it("a fully TRUSTED flow target is still refused while the launch half is unimplemented", async () => {
     const orchestrator = await seedAgent({ id: "orchestrator" });
     const { secret } = await seedOrchestratorRun({
       orchestratorAgentId: orchestrator,
       taskId: null,
     });
 
+    await pool.query(`UPDATE "flow_revisions" SET "setup_status" = 'done'`);
+
     const res = await delegatePost(
       delegateRequest(secret, {
-        target: { flowId: "some-flow" },
+        target: { flowId: "test-pkg" },
         mode: "run",
         prompt: "flow target",
       }),
@@ -804,7 +813,10 @@ describe("POST /api/v1/ext/runs/delegate", () => {
     );
 
     expect(res.status).toBe(422);
-    expect(((await res.json()) as { code: string }).code).toBe("CONFIG");
+    const json = (await res.json()) as { code: string; message: string };
+
+    expect(json.code).toBe("CONFIG");
+    expect(json.message).toContain("not yet supported");
   });
 });
 

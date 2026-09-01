@@ -14,6 +14,10 @@ import {
   orchestratorMaxDepth,
   orchestratorMaxFanout,
 } from "@/lib/instance-config";
+import {
+  delegationTargetKind,
+  delegationTargetSchema,
+} from "@/lib/orchestrator/delegation-target";
 import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
 import { addTaskRelation } from "@/lib/social/relations";
 import { createTask } from "@/lib/services/tasks";
@@ -40,11 +44,8 @@ const ENDPOINT = "POST /api/v1/ext/runs/plan";
 const planTaskSchema = z
   .object({
     key: z.string().min(1),
-    target: z
-      .object({
-        agentId: z.string().min(1),
-      })
-      .strict(),
+    // ADR-163: the SAME discriminated target both delegation entry points use.
+    target: delegationTargetSchema,
     prompt: z.string().min(1),
     title: z.string().min(1).optional(),
     workspace: z.enum(["none", "repo_read", "worktree"]).optional(),
@@ -281,15 +282,28 @@ export async function POST(
         );
       }
 
-      // (e) every target agent must resolve (enablement+trust+pinned revision).
+      // (e) every target must resolve (enablement+trust+pinned revision).
       // Collect ALL failures so the caller sees every bad target at once; NO
       // rows are written on any failure.
+      //
+      // ADR-163: the target is a discriminated union, so the resolver is chosen
+      // per entry. Flow entries are refused for now — the flow arm of the
+      // as-plan pipeline (spec persistence + per-kind source launch + the
+      // widened auto-launcher) lands together, and half of it would create
+      // tasks no launcher can start.
       const resolveFailures: string[] = [];
 
       for (const t of planTasks) {
+        if (delegationTargetKind(t.target) === "flow") {
+          resolveFailures.push(
+            `${t.key} (${t.target.flowId}): flow targets are not yet supported in run_plan`,
+          );
+          continue;
+        }
+
         try {
           await resolveEffectiveAgentDefinition(
-            { agentId: t.target.agentId, projectId: ctx.projectId },
+            { agentId: t.target.agentId as string, projectId: ctx.projectId },
             db,
           );
         } catch (err) {
@@ -418,7 +432,10 @@ export async function POST(
         if (t.dependsOn.length === 0) {
           try {
             const launched = await launchAgentRun({
-              agentId: t.target.agentId,
+              // Every entry reaching this point is an agent target — the flow
+              // arm is refused in pre-tx validation (e) until its whole
+              // pipeline lands.
+              agentId: t.target.agentId as string,
               projectId: ctx.projectId,
               taskId: childTaskId,
               launchOverrideRunnerId: t.runnerOverride ?? null,

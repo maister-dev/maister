@@ -1690,17 +1690,51 @@ export type DelegationSnapshot =
       nodeAttemptId: string;
       round: number;
       workspaceMode: "repo_read";
+    }
+  // ADR-163: a delegated FLOW child. Carries every launch-time decision a
+  // terminal or recovery path reads, so none of them has to be re-derived from
+  // a live projection that may have moved since. `baseBranch`/`targetBranch`
+  // both resolve to the project's main branch (a delegated child never branches
+  // off its parent), and `flowRevisionId` is the pinned revision the runner
+  // loads the manifest from — advancing the project's enabled revision cannot
+  // re-point a live child. No DDL: the column is jsonb and this is a `$type<>`
+  // widening only.
+  | {
+      kind: "flow";
+      flowId: string;
+      flowRefId: string;
+      flowRevisionId: string;
+      resolvedRevision: string;
+      engineMin: string | null;
+      engineMax: string | null;
+      carrierTaskId: string;
+      mode: "task" | "run";
+      runnerOverride: string | null;
+      baseBranch: string;
+      targetBranch: string;
     };
 
 // M37 (ADR-098, migration 0060): an as-plan task's launch intent — the
 // catalog-agent target + params the auto-launcher uses when the task's
 // `requires` blockers clear. Distinct from runs.delegation_snapshot (what a
 // child actually launched with).
-export type TaskDelegationSpec = {
-  agentId: string;
-  workspace?: "none" | "repo_read" | "worktree";
-  runnerOverride?: string;
-};
+// ADR-163: a discriminated union on `kind`. Rows written before that change
+// carry NO `kind`, so the agent arm's discriminant is optional and absent reads
+// as "agent" — every reader goes through `delegationSpecKind` rather than
+// sniffing `!spec.agentId`, which would misread a flow spec as a malformed
+// agent one. No DDL: a `$type<>` widening on an existing jsonb column.
+export type TaskDelegationSpec =
+  | {
+      kind?: "agent";
+      agentId: string;
+      workspace?: "none" | "repo_read" | "worktree";
+      runnerOverride?: string;
+    }
+  | {
+      kind: "flow";
+      flowId: string;
+      runnerOverride?: string;
+    };
 
 export const runs = pgTable(
   "runs",
