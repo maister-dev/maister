@@ -170,7 +170,7 @@ The `Validate` decision and its three branches are the **structured-output
 post-action seam** (below). For nodes without `output.result` the seam is a
 no-op and traversal is unchanged.
 
-### Structured output validate seam (Implemented — ADR-063)
+### Structured output validate seam (Implemented — ADR-063, ADR-162)
 
 > **Status (Implemented, P1.)** Opt-in schema-validated structured output, folded
 > into the existing `node_attempts.vars`. Decision:
@@ -189,7 +189,7 @@ folds the validated object into the attempt's `vars`. A node **without**
 (`vars: {}`, no transport provisioning, no parsing).
 
 1. **Acquire the raw payload by execution mechanism**, using the single
-   `NODE_OUTPUT_TRANSPORT` map (**Designed — ADR-162**; before it, the seam chose
+   `NODE_OUTPUT_TRANSPORT` map (**Implemented — ADR-162**; before it, the seam chose
    `sentinel` for `ai_coding`/`judge` and `file` for everything else, so
    `orchestrator`/`consensus` fell to a transport neither provisions):
 
@@ -207,7 +207,7 @@ folds the validated object into the attempt's `vars`. A node **without**
    payload bytes (for `engine_vars`, on the serialized value).
 3. **`JSON.parse`** defensively.
 4. **Validate** against the declared `formSchemaSchema` `./path`. The grammar
-   carries a nested `object` type (ADR-063) and — **Designed, ADR-162** — a
+   carries a nested `object` type (ADR-063) and — **Implemented, ADR-162** — a
    `json` any-value type, optional recursive array `items`, and a structural
    pre-pass (unsafe own keys `__proto__`/`constructor`/`prototype` at any depth;
    depth ≤ 64; ≤ 10 000 total object keys; ≤ 10 000 elements per array) that runs
@@ -226,14 +226,16 @@ folds the validated object into the attempt's `vars`. A node **without**
    (`result.ok`), at which point `sendPrompt` has already drained every permission
    deferred — `markNodeFailed` here leaks nothing. Payload absent while
    `required: false` → `vars` stays `{}` and the node proceeds.
-7. **Record the contract identity** (**Designed — ADR-162**): on the same ledger
-   UPDATE that closes the attempt (success AND seam failure),
-   `node_attempts.output_contract` gets
-   `{schemaRef, schemaVersion, sha256, transport, engineVersion}` — `sha256` over
-   the raw schema-file bytes. `markNodeReworked` never clears it; `NULL` means
-   "pre-feature row or no declaration".
+7. **Record the contract identity** (**Implemented — ADR-162**): once the
+   declared schema has been resolved, the same ledger UPDATE that closes the
+   attempt — success AND a post-resolution seam failure — writes
+   `node_attempts.output_contract` =
+   `{schemaRef, schemaVersion, sha256, transport, engineVersion}`, `sha256` over
+   the raw schema-file bytes. `markNodeReworked` never clears it. `NULL` means
+   "pre-feature row, no declaration, or the seam failed before the schema was
+   read" — the seam resolves the schema only on paths that need it.
 
-**Load-time refusals (Designed — ADR-162).** The seam's allow-list is mirrored by
+**Load-time refusals (Implemented — ADR-162).** The seam's allow-list is mirrored by
 manifest-load gates, so a transport-less declaration fails at authoring time
 rather than at run time:
 
@@ -695,7 +697,7 @@ readiness interaction: [`readiness.md`](readiness.md).
 - Graph `gate_results` **feed but do not gate promotion**; refusing a merge on
   an unsatisfied required gate is the readiness policy (ADR-048), not this
   domain.
-- **(Implemented; matrix + grammar + audit Designed — ADR-162)** A node declaring
+- **(Implemented — ADR-063, ADR-103, ADR-162)** A node declaring
   `output.result` MUST have its payload acquired by the single
   `NODE_OUTPUT_TRANSPORT` map — `sentinel` for `ai_coding`/`judge`/`orchestrator`
   (last ` ```json maister:output ` block in the 1 MiB-capped `result.stdout` of the

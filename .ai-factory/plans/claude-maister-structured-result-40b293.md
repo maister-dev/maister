@@ -231,11 +231,11 @@ No AI co-author trailer (repo convention).
 
 ### Phase 5: Docs as-built + grammar (depends on Phase 4)
 
-- [ ] **T5.1** `docs/flow-dsl.md` — transport table + both supported-type lists; human/form refusal; json/`null` rule, items, openness + preservation, limits (+ byte-cap subsumption), unsafe keys; 3.6.0 floors; "produces (evidence) vs result" paragraph near §1367.
-- [ ] **T5.2** `docs/system-analytics/flow-graph.md` — flip (Designed) → (Implemented); as-built reconcile; re-validate touched Mermaid.
-- [ ] **T5.3** `docs/system-analytics/artifacts.md` — one cross-ref line (plane separation). Root `CLAUDE.md` §6: matrix sentence + engine number 3.6.0.
-- [ ] **T5.4** Grammar + skill per S5: `flow-dsl-grammar.ts` structured-output section; `authoring-skill.ts` `REF_PACKAGE_LAYOUT` mentions `output.result` as a `schemas/` consumer; drift-guard prose pins (AC-21).
-- [ ] **T5.5** Finalize ADR-162 + spec as-built; renumber pass: re-verify ADR-162/migration-0127 are still max+1 vs main HEAD after rebase (`_journal.json` `when` monotonicity included); renumber if a parallel branch landed first.
+- [x] **T5.1** `docs/flow-dsl.md` — transport table + both supported-type lists; human/form refusal; json/`null` rule, items, openness + preservation, limits (+ byte-cap subsumption), unsafe keys; 3.6.0 floors; "produces (evidence) vs result" paragraph near §1367.
+- [x] **T5.2** `docs/system-analytics/flow-graph.md` — flip (Designed) → (Implemented); as-built reconcile; re-validate touched Mermaid.
+- [x] **T5.3** `docs/system-analytics/artifacts.md` — one cross-ref line (plane separation). Root `CLAUDE.md` §6: matrix sentence + engine number 3.6.0.
+- [x] **T5.4** Grammar + skill per S5: `flow-dsl-grammar.ts` structured-output section; `authoring-skill.ts` `REF_PACKAGE_LAYOUT` mentions `output.result` as a `schemas/` consumer; drift-guard prose pins (AC-21).
+- [x] **T5.5** Finalize ADR-162 + spec as-built; renumber pass: re-verify ADR-162/migration-0127 are still max+1 vs main HEAD after rebase (`_journal.json` `when` monotonicity included); renumber if a parallel branch landed first.
 - **Phase 5 gate (final):**
 ```
 cd web && pnpm typecheck

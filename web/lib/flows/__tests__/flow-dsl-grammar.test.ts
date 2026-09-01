@@ -208,6 +208,42 @@ describe("buildFlowDslGrammar drift guard", () => {
     expect(lower).toContain("takeover"); // the second link of the chain
   });
 
+  it("documents the ADR-162 structured-result runtime contract", () => {
+    // The transport matrix, the sentinel format, the schema grammar and the
+    // floors are RUNTIME facts the Zod-shape guard above cannot see. This skill
+    // is what a flow-authoring agent reads every turn, so the contract silently
+    // vanishing from it is a defect — pin the prose.
+    expect(grammar).toContain("maister:output");
+    expect(grammar).toContain("MAISTER_OUTPUT_FILE");
+    expect(grammar).toContain("3.6.0");
+    expect(grammar).toContain("MAISTER_NODE_OUTPUT_MAX_BYTES");
+    expect(grammar).toContain("__proto__");
+
+    // Every node type appears in the structured-output section, so an author can
+    // see which arm their node rides — including the two with no channel.
+    const section = grammar.slice(grammar.indexOf("Structured node result"));
+
+    for (const nodeType of [
+      "ai_coding",
+      "judge",
+      "orchestrator",
+      "cli",
+      "check",
+      "consensus",
+      "human",
+      "form",
+    ]) {
+      expect(section).toContain(nodeType);
+    }
+
+    const lower = section.toLowerCase();
+
+    expect(lower).toContain("refused at load"); // human/form
+    expect(lower).toContain("validated in place"); // consensus engine vars
+    expect(lower).toContain("never injects"); // the instruction stays authored
+    expect(lower).toContain("schema file is the contract"); // reference, don't restate
+  });
+
   it("documents the consensus compile-time output contract", () => {
     // validateConsensusOutputs (config.ts) hard-requires these exact produced
     // artifacts via a superRefine the Zod-shape guard above cannot see — so

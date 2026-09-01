@@ -2341,7 +2341,7 @@ deliberately does not resolve the schema on paths that never needed it. It is en
 (the flow-visible plane read by templating, `decide`, and the run-context
 projection) and out of every client DTO — no route handler or ext query selects
 it. See
-[`system-analytics/flow-graph.md`](system-analytics/flow-graph.md#structured-output-validate-seam-implemented--adr-063).
+[`system-analytics/flow-graph.md`](system-analytics/flow-graph.md#structured-output-validate-seam-implemented--adr-063-adr-162).
 
 **(Migration `0013`, additive to `0011`.)** `enforcementSnapshot`
 (jsonb, nullable) is an **append-only** audit record written once at launch /

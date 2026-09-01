@@ -130,7 +130,8 @@ maister-agents/<stem>.md # platform-agent (frontmatter + body); id is the stem
 skills/<name>/SKILL.md # a bundled skill (+ optional references/)
 mcps/<name>.yaml       # MCP capability descriptor
 rules/<name>.md        # rule capability
-schemas/<name>.json    # JSON schema referenced by a form/human node
+schemas/<name>.json    # form_schema for a form/human node, and the
+                       #   output.result schema any other node references
 \`\`\`
 
 ## maister-package.yaml

@@ -2,8 +2,9 @@
 
 ## Status
 
-Wave 1 (P1) **Implemented**; P7 + Wave-2 routing **delivered this milestone (M38)** — see
-"## Wave 2 (M38)" below. Frozen SSOT, extended on `feature/flow-routing-runcontext`.
+Wave 1 (P1) **Implemented**; P7 + Wave-2 routing **Implemented (M38)**; Wave 3
+(transport matrix + open JSON grammar + schema identity) **Implemented** — see
+"## Wave 3 (2026-09-01)" below. Frozen SSOT.
 Plan (Wave 1): `.ai-factory/plans/feature-m26-structured-output-run-context.md`.
 Plan (M38): `.ai-factory/plans/feature-flow-routing-runcontext.md`.
 ADRs: `docs/decisions.md` ADR-063 (Wave 1), **ADR-103 (M38: `decide` routing + `on_mismatch` +
@@ -457,6 +458,10 @@ same order, run stays `Running`, identical recovery profile. A crash between `ma
 
 
 ## Wave 3 (2026-09-01) — universal transport matrix, open JSON grammar, per-attempt schema identity
+
+**Status: Implemented** (reconciled as-built 2026-09-01; the only delta from the
+Phase-0 contract is C-9's `NULL` rule, tightened below and recorded as an
+ADR-162 amendment).
 
 ADR-162. Engine `3.5.0 → 3.6.0`. **One additive nullable column** (migration `0127`,
 `node_attempts.output_contract`), no new HTTP route / SSE event / `runs.status` value /

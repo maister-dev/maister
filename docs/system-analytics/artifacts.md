@@ -26,6 +26,13 @@ output* (Implemented) — the flow-merge / PR promotion *control flow* lives in
 external ingestion beyond the external operations API, capability enforcement
 (`visibility`/`retention` — Designed).
 
+**Evidence vs result (ADR-162).** `output.produces[]` is **evidence** and lives
+here; a node's `output.result` is its **result** — a small typed object in
+`node_attempts.vars` that downstream nodes template and route on, never an
+artifact body. An artifact id appearing inside a result payload is inert data:
+nothing dereferences it, and it confers no evidence. See
+[`flow-graph.md`](flow-graph.md#structured-output-validate-seam-implemented--adr-063-adr-162).
+
 Locked decisions: [ADR-037](../decisions.md#adr-037-typed-artifact-model)
 (typed artifact model), [ADR-038](../decisions.md#adr-038-hybrid-write-path-for-artifact_instances-refines-adr-022)
 (hybrid write path, Phase-0 re-confirmation), [ADR-039](../decisions.md#adr-039-xyflowreact--dagrejsdagre-as-the-evidence-graph-renderer)

@@ -101,7 +101,7 @@ These were earned in two review passes. Reopen them only with new evidence.
 
 ### 1. ACP-driven execution with hybrid HITL
 
-A Flow = a typed-node **graph** (`nodes[]`, current engine 3.4.0) — node
+A Flow = a typed-node **graph** (`nodes[]`, current engine 3.6.0) — node
 types `ai_coding | judge | cli | check | human | form | orchestrator`
 and `consensus`, wired by named `transitions` with bounded `rework` loops.
 Manifests with a top-level `steps` key are incompatible and must be
@@ -264,7 +264,7 @@ nodes:
       commentsVar: review_comments
 ```
 
-**The only runtime DSL is the typed-node graph (current engine `3.4.0`; the
+**The only runtime DSL is the typed-node graph (current engine `3.6.0`; the
 graph-only cut-over began at `3.0.0`).** Flows use
 `nodes:` with named
 `transitions`, bounded `rework`, typed `input.requires`/`output.produces`
@@ -272,7 +272,11 @@ artifacts (kind-matched, presence-enforced → `PRECONDITION`), six gate kinds
 (`command_check | skill_check | ai_judgment | artifact_required |
 external_check | human_review`, each `blocking | advisory`), a promotion-time
 **readiness** gate, per-node capability `settings` + declared `enforcement`,
-and per-capability engine-version floors. Graph **gates** block. Flows are
+and per-capability engine-version floors. Graph **gates** block. A node's
+opt-in `output.result` rides a transport fixed by node type (ADR-162, engine
+3.6.0): sentinel block for `ai_coding | judge | orchestrator`, per-attempt
+`MAISTER_OUTPUT_FILE` for `cli | check`, engine-produced `vars` validated in
+place for `consensus`, and a load-time refusal for `human | form`. Flows are
 also authorable **in-app** (`authored_capabilities`, draft→publish,
 content-addressed, bridged into the same `flow_revisions` lineage) on the
 **Flow Studio** visual graph editor (M25/M27). See

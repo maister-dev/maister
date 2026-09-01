@@ -826,7 +826,8 @@ nodes:
   `seg = [A-Za-z_][A-Za-z0-9_]*`). Any other value is refused at load (`CONFIG`).
 - **`from: output.<path>`** — outcome = `String(getPath(vars, <path>))` resolved by
   a safe nested getter (missing → no transition → terminal/Review, never a throw).
-  Works on any node declaring `output.result` (`ai_coding | cli | check | judge`).
+  Works on any node declaring `output.result`
+  (`ai_coding | judge | orchestrator | cli | check | consensus`).
 - **`from: verdict`** — outcome = the first `cases` entry whose `when` matches the
   verdict object (`verdict`, `confidence`, nested fields), else the `default`.
   Works on any node with a verdict-producing gate. The **engine** makes that gate
@@ -1349,20 +1350,29 @@ and CI ingestion beyond the generic external gate report contract.
 
 ## Structured node output channel (`output.result`) (Implemented — ADR-063 P1)
 
-> **Status (P1 Implemented; the run-context file (P7) stays Designed).** Opt-in schema-validated structured output for
+> **Status (Implemented).** Opt-in schema-validated structured output for
 > every graph node type, folded into the existing `node_attempts.vars` channel.
-> Decision: [ADR-063](decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7);
-> frozen SSOT:
+> Decisions: [ADR-063](decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7)
+> and [ADR-162](decisions.md#adr-162-universal-structured-node-result--transport-matrix-open-json-grammar-schema-identity)
+> (per-node-type transport matrix, open JSON grammar, per-attempt schema
+> identity, engine `3.6.0`); frozen SSOT:
 > `.ai-factory/specs/feature-m26-structured-output-run-context.md`. The
 > post-action validate seam, the run-context file, and the per-node-type
 > transport are drawn in
 > [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md).
 
-Today only `human`/HITL nodes write a structured result into
-`node_attempts.vars`; `ai_coding`/`cli`/`check`/`judge` nodes leave `vars: {}`.
-`output.result` lets any graph node emit a **schema-validated** structured result into that
-same `vars` channel, declared **opt-in** per node. A node without `output.result`
-behaves byte-identically to today (no transport provisioning, no parsing).
+`human`/HITL nodes write a structured result into `node_attempts.vars` through
+their input artifact; every other node type leaves `vars: {}` unless it declares
+`output.result`, which lets it emit a **schema-validated** structured result into
+that same `vars` channel. Declaration is **opt-in** per node; a node without
+`output.result` behaves byte-identically (no transport provisioning, no parsing).
+
+**Result vs evidence.** `output.result` is the node's **result** — a small typed
+object other nodes route and template on. `output.produces[]` is **evidence** —
+artifacts with bodies, recorded in `artifact_instances`. A result MUST NOT carry
+an artifact body, and an artifact id that appears inside a payload is inert data:
+nothing in the engine dereferences it. `stdout` is the third plane —
+diagnostics. See [`system-analytics/artifacts.md`](system-analytics/artifacts.md).
 
 **`output.result`.** A new field on a node's `output` block, **sibling of
 `output.produces[]`**:
@@ -1379,25 +1389,87 @@ output:
 
 | field       | type    | meaning                                                                                                                                                                                                                                                                                                                                     |
 | ----------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schema`    | string  | A **package-root schema reference** (not inline): canonical `./schemas/<name>.json`, with the legacy bare form normalized. Every install path rejects non-root, escaping, missing, malformed, or grammar-invalid references before the revision is usable; runtime resolves the same file from the installed flow revision's `schemas/` directory. The structured-output channel **adds** a nested `object` type to that grammar (flat today: `string \| number \| boolean \| enum \| array`) — net-new work, still no `ajv` and no new dep. |
-| `required?` | boolean | Default `false`. When `true`, an absent payload fails the attempt; when `false`, an absent payload leaves `vars: {}` and the node proceeds.                                                                                                                                                                                                 |
+| `schema`    | string  | A **package-root schema reference** (not inline): canonical `./schemas/<name>.json`, with the legacy bare form normalized. Every install path rejects non-root, escaping, missing, malformed, or grammar-invalid references before the revision is usable; runtime resolves the same file from the installed flow revision's `schemas/` directory. Grammar: `string \| number \| boolean \| enum \| array \| object \| json` — see **Schema grammar** below. Still no `ajv` and no new dep. |
+| `required?` | boolean | Default `false`. When `true`, an absent payload fails the attempt; when `false`, an absent payload leaves `vars: {}` and the node proceeds. It excuses **absence only** — a present-but-invalid payload always fails.                                                                                                                          |
 
 **Per-node-type output transport.** Transport is chosen by the node's execution
 mechanism, not declared:
 
-| Node types                            | Transport                                                                                                                                                                                                                                                                                                                                                              |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ai_coding`, `judge` (agent-executed) | The agent ends its response with a **single** sentinel-tagged fenced block ` ```json maister:output … ``` `; the runner extracts the **last** such block from the **1 MiB-capped** `result.stdout` capture (a block pushed past the cap is treated as **absent** → `CONFIG` if `required`). The agent writes **no file** (it cannot write outside its worktree `cwd`). |
-| `cli`, `check` (cli-executed)         | The runner injects `MAISTER_OUTPUT_FILE=<runDir>/output-<nodeId>-<attempt>.json` into the command env; the command writes its JSON there and the runner reads that file. The filename is **per-attempt**, so a non-writing rework attempt never inherits a prior attempt's file.                                                                                       |
+| Node types                                            | Transport     | How the payload is acquired                                                                                                                                                                                                                                                                                                                                            |
+| ----------------------------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ai_coding`, `judge`, `orchestrator` (agent-executed)  | `sentinel`    | The agent ends its response with a **single** sentinel-tagged fenced block ` ```json maister:output … ``` `; the runner extracts the **last** such block from the **1 MiB-capped** `result.stdout` capture (a block pushed past the cap is treated as **absent** → `CONFIG` if `required`). The agent writes **no file** (it cannot write outside its worktree `cwd`). |
+| `cli`, `check` (cli-executed)                          | `file`        | The runner injects `MAISTER_OUTPUT_FILE=<runDir>/output-<nodeId>-<attempt>.json` into the command env; the command writes its JSON there and the runner reads that file. The filename is **per-attempt**, so a non-writing rework attempt never inherits a prior attempt's file.                                                                                       |
+| `consensus` (engine-executed)                          | `engine_vars` | The engine-produced `result.vars` object IS the payload — validated **in place**, never merged or mutated. Absent means zero own keys. The byte cap applies to the serialized value.                                                                                                                                                                                  |
+| `human`, `form`                                        | *(none)*      | Their `vars` come from the HITL input artifact. Declaring `output.result` on them is **refused at manifest load** (`CONFIG`) at every engine version — the combination has never had a transport.                                                                                                                                                                     |
 
-`human` nodes are unchanged — their `vars` come from the HITL input artifact.
+An **orchestrator is validated only on the turn that completes it**. A turn that
+parks on pending children yields before the seam, so a `required: true`
+coordinator never fails a park.
 
-**Engine gate.** Any flow using `output.result` on **any** node MUST declare
-`compat.engine_min: 1.3.0`. `MAISTER_ENGINE_VERSION` bumps `1.2.0 → 1.3.0`; a
-manifest that declares `output.result` without `compat.engine_min >= 1.3.0` is
+### Schema grammar
+
+Field types: `string`, `number`, `boolean`, `enum` (with `options`), `array`,
+`object` (with recursive `fields`), and `json`.
+
+- **`json`** accepts any JSON value — scalar, `null`, array, or object. For
+  `json` **and only `json`**, an explicit JSON `null` is a **present** value;
+  absence means the key is missing. Every other type treats `null` as absent, so
+  a `required` non-`json` field is violated by `null`.
+- **`array` items.** `array` takes an optional recursive nameless
+  `items: { type, options?, fields?, items? }`. With `items`, every element is
+  validated and a violation names `field[i]`. Without `items` the array is
+  untyped and accepts mixed or empty content.
+- **Objects are open.** The validator iterates the schema's fields, never the
+  payload's keys. Undeclared keys — top level or at any depth inside a declared
+  `object` — pass validation and are **preserved unmodified** into
+  `node_attempts.vars`. There is no `additionalProperties` knob.
+
+```yaml
+# schemas/plan-output.json
+{ "schemaVersion": 1,
+  "fields": [
+    { "name": "verdict", "type": "enum", "options": ["pass", "fail"], "required": true },
+    { "name": "tags",    "type": "array", "items": { "type": "string" } },
+    { "name": "payload", "type": "json" } ] }
+```
+
+### Payload bounds
+
+Enforced on every payload, before any field check, and shared by HITL form
+responses and Brain lesson distillation (the same validator):
+
+| Bound                              | Value       | On breach                                            |
+| ---------------------------------- | ----------- | ---------------------------------------------------- |
+| `MAISTER_NODE_OUTPUT_MAX_BYTES`    | 256 KiB     | `CONFIG` before parsing                              |
+| Nesting depth                      | 64          | `CONFIG` naming the limit and the JSON path           |
+| Total object keys (whole payload)  | 10 000      | `CONFIG` naming the limit                             |
+| Array length (any single array)    | 10 000      | `CONFIG` naming the limit and the JSON path           |
+| Own key `__proto__`/`constructor`/`prototype` at any depth | — | `CONFIG` naming the JSON path |
+
+Only the byte cap is env-tunable; the structural bounds are constants, and the
+byte cap already subsumes per-string length.
+
+**Engine gates.** Any flow using `output.result` on **any** node MUST declare
+`compat.engine_min >= 1.3.0`; a manifest that declares it without that floor is
 rejected with `MaisterError("CONFIG")` (mirrors the `ARTIFACT_ENGINE_MIN = 1.2.0`
-gate). A flow that does **not** declare `output.result` stays valid at any
-`engine_min` (back-compat). The post-action validate seam, the size cap
+gate). Two additions raise the floor to **`3.6.0`** (ADR-162):
+
+- `output.result` on an **`orchestrator`** or **`consensus`** node — refused at
+  manifest load below the floor, naming it.
+- A referenced schema document using **`type: "json"`** or array **`items`** —
+  refused at package install (`MaisterError("FLOW_INSTALL")`) and BLOCKed by
+  Studio lifecycle validation (`form_schema_invalid`). When several flows
+  reference one document, the **lowest** declared `engine_min` decides.
+
+`output.result` on a `human`/`form` node is refused **unconditionally** — no
+floor, because no engine version has a transport for it. A flow that does not
+declare `output.result` stays valid at any `engine_min` (back-compat).
+
+**Per-attempt contract identity.** Each attempt that reaches validation records
+`node_attempts.output_contract` =
+`{schemaRef, schemaVersion, sha256, transport, engineVersion}` on the same write
+that closes it, so a package edit under a stable ref is detectable after the
+fact. It is engine metadata: no API response exposes it. The post-action validate seam, the size cap
 (`MAISTER_NODE_OUTPUT_MAX_BYTES`), and the run-context file are specified in
 [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md); env wiring is
 in [`configuration.md`](configuration.md). Rationale lives in

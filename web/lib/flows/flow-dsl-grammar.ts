@@ -190,6 +190,55 @@ Artifact \`kind\` is a platform artifact kind (e.g. \`diff\`, \`test_report\`,
 \`ai_judgment\`, \`generic_file\`). A required-but-absent artifact fails as
 PRECONDITION.
 
+### Structured node result (\`output.result\`, ADR-063 + ADR-162)
+
+\`output.produces\` is EVIDENCE (artifact bodies); \`output.result\` is the node's
+RESULT — a small typed object folded into \`node_attempts.vars\` that later nodes
+read as \`{{ steps.<id>.vars.<key> }}\` and \`decide: { from: output.<path> }\`
+routes on. Never put an artifact body in a result.
+
+\`schema\` REFERENCES a package-root document — \`./schemas/<name>.json\`. The
+schema file IS the contract: reference it, never restate its fields in the
+manifest.
+
+**Transport is fixed by node type — never declared:**
+
+| Node type | How the result is produced |
+| --- | --- |
+| \`ai_coding\`, \`judge\`, \`orchestrator\` | The agent ends its turn with a sentinel-tagged JSON block (exact form below); the LAST such block in the 1 MiB-capped stdout wins. An orchestrator is read only on the turn that completes it — a turn parking on children is never validated. |
+| \`cli\`, \`check\` | The command writes its JSON to \`\$MAISTER_OUTPUT_FILE\` (injected per attempt). |
+| \`consensus\` | The engine's own \`vars\` are validated in place — nothing to emit. |
+| \`human\`, \`form\` | NO channel. Declaring \`output.result\` on them is REFUSED at load. |
+
+The sentinel block, verbatim — an opening fence tagged \`json maister:output\`,
+the JSON object, then a bare closing fence:
+
+\`\`\`\`
+\`\`\`json maister:output
+{ "verdict": "pass", "tags": ["a"] }
+\`\`\`
+\`\`\`\`
+
+Prompt the agent for that block in the node's own \`action.prompt\` — the engine
+never injects the instruction.
+
+**Schema grammar:** \`string | number | boolean | enum | array | object | json\`.
+\`json\` accepts any JSON value and is the ONLY type where an explicit \`null\`
+counts as present. \`array\` takes an optional recursive \`items: { type, ... }\`;
+without it the array is untyped. Objects are OPEN — undeclared keys pass and are
+preserved verbatim into \`vars\`.
+
+**Bounds** (before any field check): payload <= 256 KiB
+(\`MAISTER_NODE_OUTPUT_MAX_BYTES\`), nesting depth <= 64, <= 10 000 total object
+keys, <= 10 000 elements per array, and an own key \`__proto__\`/\`constructor\`/
+\`prototype\` at any depth is rejected.
+
+**Engine floors:** \`output.result\` anywhere needs
+\`compat.engine_min >= 1.3.0\`; on \`orchestrator\`/\`consensus\`, and for any
+schema document using \`json\` or \`items\`, it needs \`compat.engine_min >= 3.6.0\`.
+\`required: true\` excuses ABSENCE only — a present-but-invalid payload always
+fails \`CONFIG\` unless \`on_mismatch\` routes it into rework.
+
 ### Artifact body injection (ADR-120; requires \`compat.engine_min >= 2.2.0\`)
 
 Forward a prior artifact's resolved **body** into a prompt (not just its metadata):

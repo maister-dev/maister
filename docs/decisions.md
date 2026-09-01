@@ -203,7 +203,7 @@
 | [ADR-159](#adr-159-dbml-as-the-format-of-the-generated-consolidated-erd) | DBML as the format of the generated consolidated ERD | Implemented | 2026-08-31 |
 | [ADR-160](#adr-160-review-run-rework-claim-with-fast-forward-only-handoff-round-trip) | Review-run rework claim with fast-forward-only handoff round-trip | Accepted | 2026-08-31 |
 | [ADR-161](#adr-161-operator-node-interrupt-with-corrective-restart) | Operator node interrupt with corrective restart | Accepted | 2026-08-31 |
-| [ADR-162](#adr-162-universal-structured-node-result--transport-matrix-open-json-grammar-schema-identity) | Universal structured node result — transport matrix, open JSON grammar, schema identity | Accepted | 2026-09-01 |
+| [ADR-162](#adr-162-universal-structured-node-result--transport-matrix-open-json-grammar-schema-identity) | Universal structured node result — transport matrix, open JSON grammar, schema identity | Implemented | 2026-09-01 |
 
 ---
 
@@ -1649,7 +1649,7 @@ Full record: [`decisions/adr-161.md`](decisions/adr-161.md)
 
 ### ADR-162: Universal structured node result — transport matrix, open JSON grammar, schema identity
 
-**Status:** Accepted
+**Status:** Implemented
 **Date:** 2026-09-01
 
 Full record: [`decisions/adr-162.md`](decisions/adr-162.md)
