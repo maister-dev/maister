@@ -188,31 +188,60 @@ folds the validated object into the attempt's `vars`. A node **without**
 `output.result` skips the whole seam — its behavior is byte-identical to today
 (`vars: {}`, no transport provisioning, no parsing).
 
-1. **Acquire the raw payload by execution mechanism.** Agent-executed
-   (`ai_coding`/`judge`) → the **last** ` ```json maister:output ` fenced block in
-   the **1 MiB-capped** `result.stdout` capture (`STDOUT_CAP_BYTES`); a block
-   pushed past the 1 MiB stdout cap is treated as **absent**. Cli-executed
-   (`cli`/`check`) → the contents of `MAISTER_OUTPUT_FILE=<runDir>/output-<nodeId>-<attempt>.json`
-   (per-attempt filename, so attempt N never inherits attempt N-1's file).
+1. **Acquire the raw payload by execution mechanism**, using the single
+   `NODE_OUTPUT_TRANSPORT` map (**Designed — ADR-162**; before it, the seam chose
+   `sentinel` for `ai_coding`/`judge` and `file` for everything else, so
+   `orchestrator`/`consensus` fell to a transport neither provisions):
+
+   | Node type | Transport | Raw payload |
+   | --- | --- | --- |
+   | `ai_coding`, `judge`, `orchestrator` | `sentinel` | The **last** properly-fenced ` ```json maister:output ` block in the **1 MiB-capped** `result.stdout` capture (`STDOUT_CAP_BYTES`) of the **completing** turn; a block pushed past that cap is **absent**. |
+   | `cli`, `check` | `file` | The contents of `MAISTER_OUTPUT_FILE=<runDir>/output-<nodeId>-<attempt>.json` (per-attempt filename, so attempt N never inherits attempt N-1's file). |
+   | `consensus` | `engine_vars` | The engine-produced `result.vars` object itself — validated in place, **never merged or mutated**. Absent ⇔ zero own keys. |
+   | `human`, `form` | *(none)* | Declaring `output.result` is refused at load; their `vars` come from the HITL input artifact. |
+
+   Transport follows the node's execution mechanism and is never author-declared.
+   An `orchestrator` turn that **parks** on pending children breaks out of
+   traversal before this seam, so only its completing turn is ever validated.
 2. **Enforce `MAISTER_NODE_OUTPUT_MAX_BYTES`** (default 256 KiB) on the raw
-   payload bytes.
+   payload bytes (for `engine_vars`, on the serialized value).
 3. **`JSON.parse`** defensively.
-4. **Validate** against the declared `formSchemaSchema` `./path`. This channel
-   **adds** a nested `object` type to that grammar (flat before: `string \|
-   number \| boolean \| enum \| array`) — net-new work, still no `ajv` and no
-   new dep.
+4. **Validate** against the declared `formSchemaSchema` `./path`. The grammar
+   carries a nested `object` type (ADR-063) and — **Designed, ADR-162** — a
+   `json` any-value type, optional recursive array `items`, and a structural
+   pre-pass (unsafe own keys `__proto__`/`constructor`/`prototype` at any depth;
+   depth ≤ 64; ≤ 10 000 total object keys; ≤ 10 000 elements per array) that runs
+   **before** any field check. Objects are **open**: undeclared keys pass and are
+   preserved unmodified. Still no `ajv` and no new dep.
 5. **On success,** fold the validated object into the attempt's `vars`, persisted
    by the **existing single** `markNodeSucceeded(..., { vars })` UPDATE — no new
    write, no new crash window. A downstream node then resolves
    `{{steps.<nodeId>.vars.<key>}}` through the unchanged `reduceLedger`
-   highest-attempt-wins union.
+   highest-attempt-wins union. The `engine_vars` arm validates only — `vars` is
+   already the engine's.
 6. **On any failure** — payload absent while `required: true`, oversize past the
-   cap, invalid JSON, or schema mismatch — the attempt fails with
-   `markNodeFailed` + `MaisterError("CONFIG")` and the run stays unpromotable. This
-   seam runs only after the agent turn reached `end_turn` (`result.ok`), at which
-   point `sendPrompt` has already drained every permission deferred —
-   `markNodeFailed` here leaks nothing. Payload absent while `required: false` →
-   `vars` stays `{}` and the node proceeds.
+   cap, invalid JSON, schema mismatch, an unsafe key, or a structural limit — the
+   attempt fails with `markNodeFailed` + `MaisterError("CONFIG")` and the run stays
+   unpromotable. This seam runs only after the agent turn reached `end_turn`
+   (`result.ok`), at which point `sendPrompt` has already drained every permission
+   deferred — `markNodeFailed` here leaks nothing. Payload absent while
+   `required: false` → `vars` stays `{}` and the node proceeds.
+7. **Record the contract identity** (**Designed — ADR-162**): on the same ledger
+   UPDATE that closes the attempt (success AND seam failure),
+   `node_attempts.output_contract` gets
+   `{schemaRef, schemaVersion, sha256, transport, engineVersion}` — `sha256` over
+   the raw schema-file bytes. `markNodeReworked` never clears it; `NULL` means
+   "pre-feature row or no declaration".
+
+**Load-time refusals (Designed — ADR-162).** The seam's allow-list is mirrored by
+manifest-load gates, so a transport-less declaration fails at authoring time
+rather than at run time:
+
+| Condition | Gate | Code |
+| --- | --- | --- |
+| `output.result` on a `human`/`form` node | `validateGraphManifest` | `MaisterError("CONFIG")` naming the node id and pointing at the native HITL vars — no engine floor, the combination is dead at every version |
+| `output.result` on an `orchestrator`/`consensus` node with `compat.engine_min < 3.6.0` | `validateGraphManifest` | `MaisterError("CONFIG")` naming the `3.6.0` floor |
+| A referenced schema document using `type: "json"` or array `items` with `compat.engine_min < 3.6.0` | package install (`validatePackageRootSchemaReferences`) · Studio lifecycle validation | `MaisterError("FLOW_INSTALL")` · `form_schema_invalid` (BLOCK) |
 
 ### Dynamic routing — `decide` + `on_mismatch` (Implemented)
 
@@ -573,7 +602,7 @@ readiness interaction: [`readiness.md`](readiness.md).
 - A manifest declares a non-empty `nodes[]`; any `steps[]` key and any missing
   or empty `nodes[]` is refused with `MaisterError("CONFIG")`.
 - A graph flow's declared `compat` range MUST include the current host engine
-  `3.3.0`;
+  `3.6.0`;
   open-ended graph packages with an older `engine_min` remain compatible.
 - **(ADR-153/ADR-154 — Implemented)** A `cli`/`check` node action's bash child
   runs with the **allow-listed** env only (never web-tier secrets), plus the
@@ -666,19 +695,35 @@ readiness interaction: [`readiness.md`](readiness.md).
 - Graph `gate_results` **feed but do not gate promotion**; refusing a merge on
   an unsatisfied required gate is the readiness policy (ADR-048), not this
   domain.
-- **(Implemented)** A node declaring `output.result` MUST have its payload
-  acquired by execution mechanism (agent → last ` ```json maister:output ` block in
-  the 1 MiB-capped `result.stdout`, a block past that cap treated as absent; cli →
-  per-attempt `MAISTER_OUTPUT_FILE`), size-capped at
-  `MAISTER_NODE_OUTPUT_MAX_BYTES`, JSON-parsed, and validated against the resolved
-  `formSchemaSchema` `./path` (extended this milestone with a nested `object` type)
-  BEFORE `Succeeded`, folding into the **existing** `markNodeSucceeded` `vars`
-  UPDATE (no new write/migration/error code); any failure (absent-while-`required`,
-  oversize, bad JSON, schema mismatch) MUST fail the attempt with
-  `MaisterError("CONFIG")` and leave the run unpromotable (the seam runs after
-  `end_turn`, so no ACP deferred is open and `markNodeFailed` leaks nothing) — while
-  a node WITHOUT `output.result` stays byte-identical to today (`vars: {}`) and
-  requires `compat.engine_min >= 1.3.0`.
+- **(Implemented; matrix + grammar + audit Designed — ADR-162)** A node declaring
+  `output.result` MUST have its payload acquired by the single
+  `NODE_OUTPUT_TRANSPORT` map — `sentinel` for `ai_coding`/`judge`/`orchestrator`
+  (last ` ```json maister:output ` block in the 1 MiB-capped `result.stdout` of the
+  **completing** turn, a block past that cap treated as absent; a parked
+  orchestrator turn is never validated), `file` for `cli`/`check` (per-attempt
+  `MAISTER_OUTPUT_FILE`), `engine_vars` for `consensus` (validate `result.vars` in
+  place, never mutate) — size-capped at `MAISTER_NODE_OUTPUT_MAX_BYTES`,
+  JSON-parsed, and validated against the resolved `formSchemaSchema` `./path`
+  (nested `object`; `json` any-value with `null`-is-present; optional recursive
+  array `items`; open objects preserving undeclared keys; a pre-pass rejecting own
+  `__proto__`/`constructor`/`prototype` at any depth and payloads over depth 64 /
+  10 000 keys / 10 000 array elements) BEFORE `Succeeded`, folding into the
+  **existing** `markNodeSucceeded` `vars` UPDATE (no new write/error code) and
+  stamping `node_attempts.output_contract` on the same closing UPDATE (success AND
+  seam failure; `markNodeReworked` never clears it); any failure
+  (absent-while-`required`, oversize, bad JSON, schema mismatch, unsafe key,
+  structural limit) MUST fail the attempt with `MaisterError("CONFIG")` and leave the
+  run unpromotable (the seam runs after `end_turn`, so no ACP deferred is open and
+  `markNodeFailed` leaks nothing) — while a node WITHOUT `output.result` stays
+  byte-identical (`vars: {}`, `output_contract` `NULL`) and requires
+  `compat.engine_min >= 1.3.0`, rising to `>= 3.6.0` on `orchestrator`/`consensus`
+  and for `json`/`items` schema documents, with `human`/`form` declarations refused
+  at load unconditionally. Enforced by `node-output.test.ts` (transport map
+  exhaustiveness + arms), `node-output.integration.test.ts` (fold + persistence +
+  orchestrator arms), `consensus-output.integration.test.ts` (engine_vars arm),
+  `output-schema.test.ts` (grammar + limits + unsafe keys),
+  `config.schema.test.ts` + the config-load suites (load refusals + floors), and
+  `ledger.integration.test.ts` (`output_contract` write points).
 - **(Implemented, ADR-089)** An `ai_coding` node declaring `settings.agent`
   MUST require `compat.engine_min >= 1.5.0` (`CONFIG` otherwise) and MUST
   resolve the catalog agent at compile/launch (`CONFIG` when unknown or when

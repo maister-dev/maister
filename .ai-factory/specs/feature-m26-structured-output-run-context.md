@@ -7,11 +7,18 @@ Wave 1 (P1) **Implemented**; P7 + Wave-2 routing **delivered this milestone (M38
 Plan (Wave 1): `.ai-factory/plans/feature-m26-structured-output-run-context.md`.
 Plan (M38): `.ai-factory/plans/feature-flow-routing-runcontext.md`.
 ADRs: `docs/decisions.md` ADR-063 (Wave 1), **ADR-103 (M38: `decide` routing + `on_mismatch` +
-engine 1.7.0 + P7)**.
+engine 1.7.0 + P7)**, **ADR-162 (Wave 3: transport matrix + open JSON grammar + schema identity +
+engine 3.6.0)**.
+Plan (Wave 3): `.ai-factory/plans/claude-maister-structured-result-40b293.md`.
 Re-frozen 2026-06-07 after the Phase-0 adversarial gate (resolves A1 compose, B1 stdout cap, B2
 vacuous deferred, B3 read-scope, B4 gate status, B5 nested-grammar, cli-attempt threading).
 Extended 2026-06-22 (M38) with the **P4 `decide` table**, **`on_mismatch` rework**, **engine
 `1.6.0 → 1.7.0`**, and the **P7 run-context file** (Designed → built this milestone).
+Extended 2026-09-01 (Wave 3, **ADR-162**) with the **per-node-type transport matrix**
+(`orchestrator` sentinel · `consensus` engine vars · `human`/`form` refused), the **open JSON schema
+grammar** (`json` type, typed array `items`, formalized openness, structural limits, unsafe-key
+rejection), **per-attempt schema identity** (`node_attempts.output_contract`, migration `0127`), and
+**engine `3.5.0 → 3.6.0`** — see "## Wave 3 (2026-09-01)" below.
 
 ## Value
 
@@ -437,13 +444,226 @@ same order, run stays `Running`, identical recovery profile. A crash between `ma
 
 ## Known limitations (Phase 1)
 
-- **`array` element shape is unconstrained.** A `{ type: "array" }` field validates only `Array.isArray`
-  (`output-schema.ts` `case "array"`); the grammar has no `items` slot
-  (`config.schema.ts` `formFieldSchema` has `name/label/type/required/default/options/fields` only), so
-  element type is not checked. `{ type: "array" }` accepts any array, including a mixed/empty one. A
-  Phase-2 `items?` field is the candidate to add element typing.
-- **`output.result.schema` paths are NOT validated at manifest load.** `resolveOutputResultSchema`
-  (`web/lib/config.ts`) reads + parses + `formSchemaSchema`-validates the `./path` at the **runtime parse
-  seam** (Phase 2), not at flow install/load (`validateGraphManifest`). A non-existent, non-JSON, or
-  malformed schema file is therefore caught at the post-action seam (run-time `CONFIG`), not at flow
-  install/load time yet. Manifest-load-time resolution is a Phase-2 candidate.
+- ~~**`array` element shape is unconstrained.**~~ **Resolved in Wave 3** — the grammar gains an optional
+  recursive nameless `items`; arrays declared without it stay untyped by design (see C-5/C-6 below).
+- ~~**`output.result.schema` paths are NOT validated at manifest load.**~~ **Stale — corrected 2026-09-01.**
+  Package install DOES resolve and validate every referenced schema document:
+  `validatePackageRootSchemaReferences` (`web/lib/flows.ts`) walks
+  `collectReferencedSchemaPaths(manifest)` — which collects `output.result.schema` — and calls
+  `readAndValidateFormSchemaDoc` on each, refusing the install (`FLOW_INSTALL`) on an escaping path, a
+  missing file, bad JSON, or a bad `formSchemaSchema` shape. The Studio lifecycle validation performs the
+  equivalent check and reports `form_schema_invalid`. What remains runtime-only is re-resolution at the
+  post-action seam, which is by design (the pinned revision's bytes are the runtime source of truth).
+
+
+## Wave 3 (2026-09-01) — universal transport matrix, open JSON grammar, per-attempt schema identity
+
+ADR-162. Engine `3.5.0 → 3.6.0`. **One additive nullable column** (migration `0127`,
+`node_attempts.output_contract`), no new HTTP route / SSE event / `runs.status` value /
+`MaisterError` code / env var / compose change. The seam position, the `required` semantics, the
+`on_mismatch` rework machinery, and the `decide` routing contract are unchanged.
+
+Each clause below is numbered `C-n` and mirrored by an acceptance criterion in
+"### Wave-3 Acceptance criteria".
+
+### C-1 — Transport matrix (single SSOT, keyed by node type)
+
+`NODE_OUTPUT_TRANSPORT` (`web/lib/flows/graph/node-output.ts`) is the ONE map from node type to
+transport. The seam, the load-time refusals, and the shipped authoring grammar all derive from it.
+Transport is chosen by the node's **execution mechanism** and is never author-declared.
+
+| Node type | Transport | Semantics |
+| --- | --- | --- |
+| `ai_coding`, `judge`, `orchestrator` | `sentinel` | Last properly-fenced ` ```json maister:output ` block in the 1 MiB-capped (`STDOUT_CAP_BYTES`) stdout of the **completing** turn. |
+| `cli`, `check` | `file` | Per-attempt `MAISTER_OUTPUT_FILE=<runDir>/output-<nodeId>-<attempt>.json`. Unchanged from Wave 1. |
+| `consensus` | `engine_vars` | The engine-produced `result.vars` object is validated directly. |
+| `human`, `form` | *(none)* | Declaring `output.result` is refused at load. Their `vars` come from the HITL input artifact. |
+
+The map MUST cover all eight node types (TypeScript exhaustiveness + a runtime pin test). The
+`ai_coding`/`judge`/`cli`/`check` arms MUST behave byte-identically to Wave 1.
+
+### C-2 — `engine_vars` semantics (`consensus`)
+
+The `engine_vars` arm validates `result.vars` **and mutates nothing**: no merge back into `vars`, no
+key rewrite. The engine produced those keys; a validated copy folded over them would be either a
+no-op or a silent overwrite of engine state. Absent ⇔ the object has zero own keys (defensive — the
+completing consensus path always carries `vars.consensus`). The byte cap applies to the serialized
+value. Failure semantics are identical to the other arms (`CONFIG`, `on_mismatch`-eligible).
+
+### C-3 — Orchestrator completing-turn rule
+
+An orchestrator turn that parks (pending children, `result.needsInput`) breaks out of the traversal
+**before** the seam and MUST NOT be validated. Only the turn that completes without pending children
+reaches the seam, and only that turn's stdout is scanned for the sentinel block. A `required: true`
+orchestrator therefore never fails a parked turn.
+
+### C-4 — `json` field type and its presence rule
+
+`type: "json"` accepts **any** JSON value: scalar, `null`, array, or object. For `json` — and for
+`json` only — an explicit JSON `null` is a **present** value; absence means the key is missing (or
+`undefined`). Every other type keeps the Wave-1 rule (`null` counts as absent) byte-identically.
+
+### C-5 — `items` shape
+
+`array` gains an optional **nameless recursive** `items: { type, options?, fields?, items? }`. With
+`items` present each element is validated and a violating element fails naming `field[i]`. Without
+`items` the array is untyped and accepts mixed/empty content — the Wave-1 behavior, preserved.
+
+### C-6 — Open by default, undeclared fields preserved
+
+The validator iterates **schema fields**, never payload keys. Undeclared keys — at the top level and
+at any nesting depth, inside declared `object` fields included — pass validation and MUST survive
+into `node_attempts.vars` unmodified. The validator MUST NOT strip, rewrite, or clone-normalize the
+value. There is no `additionalProperties` knob: the default is already open and closing it would
+break every existing payload carrying extra keys.
+
+### C-7 — Structural limits
+
+One recursive pre-pass walk enforces, before any field check:
+
+| Limit | Value | Failure |
+| --- | --- | --- |
+| Nesting depth | ≤ 64 | error naming the limit and the JSON path |
+| Total object keys (whole payload) | ≤ 10 000 | error naming the limit |
+| Array length (any single array) | ≤ 10 000 | error naming the limit and the JSON path |
+
+They are exported constants, **not** env-tunable: they are safety bounds on an LLM-authored payload,
+not a capacity dial. Per-string length needs no own limit — `MAISTER_NODE_OUTPUT_MAX_BYTES` (default
+256 KiB, enforced pre-parse on the raw bytes) already bounds the total payload and therefore every
+string inside it.
+
+### C-8 — Unsafe keys, and the three-consumer blast radius
+
+An own key `__proto__`, `constructor`, or `prototype` at **any** depth is rejected with an error
+naming the JSON path, in the same pre-pass and therefore **before** any field check.
+
+`validateStructuredOutput` has exactly three consumers: the node-output seam, HITL form/human
+response validation (`web/lib/flows/hitl-validate.ts`), and Brain lesson distillation
+(`web/lib/brain/distill.ts` `LESSON_SCHEMA`). C-7 and C-8 apply to all three. That is intended — all
+three validate LLM-origin payloads reaching the same flow-visible plane — and is verified by
+regression sweep, not assumed.
+
+### C-9 — Audit contract shape and write points
+
+`node_attempts.output_contract` (nullable `jsonb`):
+
+```json
+{
+  "schemaRef":     "./schemas/review.json",
+  "schemaVersion": 1,
+  "sha256":        "<64 hex chars of the raw schema file bytes>",
+  "transport":     "sentinel | file | engine_vars",
+  "engineVersion": "3.6.0"
+}
+```
+
+Written on the **same ledger UPDATE that closes the attempt**, on both the success path
+(`markNodeSucceeded`) and the seam-failure path (`markNodeFailed`). `markNodeReworked` MUST NOT
+clear it. `NULL` means "pre-feature row, or the node declared no `output.result`" — never "unknown
+contract". Identity is captured once, at schema resolution, by hashing the raw file bytes; the shared
+form-schema readers keep their signatures and behavior.
+
+### C-10 — Refusal table (exact `CONFIG` texts)
+
+| Condition | Where | Code | Message |
+| --- | --- | --- | --- |
+| `output.result` on a `human`/`form` node | `validateGraphManifest` | `CONFIG` | ``graph flow <path> declares output.result on node "<id>" of type <type> — human/form nodes take their vars from the HITL input artifact; remove output.result`` |
+| `output.result` on `orchestrator`/`consensus` with `engine_min < 3.6.0` | `validateGraphManifest` | `CONFIG` | ``graph flow <path> declares output.result on an orchestrator/consensus node but engine_min "<min>" < 3.6.0 — bump compat.engine_min to 3.6.0 (host engine is <engine>)`` |
+| Schema doc uses `type: "json"` or `items` with `engine_min < 3.6.0` | package install | `FLOW_INSTALL` | ``flow install failed [stage=schema] <ref> uses the json field type or typed array items but engine_min "<min>" < 3.6.0 — bump compat.engine_min to 3.6.0`` |
+| Same, in Studio lifecycle validation | authored-flow validation | finding | `form_schema_invalid`, severity BLOCK, same sentence |
+| Unsafe own key at any depth | seam / any validator consumer | `CONFIG` | ``unsafe key "<key>" at <jsonPath>`` |
+| Depth / key-count / array-length over limit | seam / any validator consumer | `CONFIG` | ``payload exceeds the maximum nesting depth (64) at <jsonPath>`` · ``payload exceeds the maximum object key count (10000)`` · ``array at <jsonPath> exceeds the maximum length (10000)`` |
+| `items` element mismatch | seam / any validator consumer | `CONFIG` | ``field "<name>[<i>]" must be a <type>`` |
+| `engine_vars` absent while `required: true` | seam (`consensus`) | `CONFIG` | ``structured output required but absent: the node produced no engine vars`` |
+
+Seam failures keep the Wave-1 envelope: the reason is appended to the attempt's stdout as
+`[structured output] <reason>` and the attempt is marked `Failed` with `CONFIG` unless `on_mismatch`
+routes it into rework.
+
+### C-11 — Engine floors
+
+`MAISTER_ENGINE_VERSION` bumps `3.5.0 → 3.6.0`. `OUTPUT_COORDINATOR_ENGINE_MIN = "3.6.0"` gates
+`output.result` on `orchestrator`/`consensus` and the `json`/`items` schema-document features. The
+`human`/`form` refusal carries **no** floor — the combination is dead configuration at every engine
+version, so the honest gate is an unconditional refusal, not a version gate.
+
+### C-12 — Rejected alternative: engine prompt injection of the sentinel instruction
+
+The engine does NOT append "emit a ` ```json maister:output ` block" to any node prompt. Doing so
+would mutate `resolved_prompt` for every run of every declaring node, breaking the prompt stability
+that reruns and provenance depend on, and would take ownership of prompt text away from the package
+that ships it. The instruction channel stays package-owned; the shipped authoring grammar
+(`buildFlowDslGrammar()` → the `/flow-authoring` skill + the Studio assistant) carries the full
+runtime contract instead.
+
+### C-13 — Plane separation (result vs evidence)
+
+`stdout`/logs are **diagnostics**; `node_attempts.vars` is the **result**; `artifact_instances` is
+the **evidence graph**. A structured result MUST NOT carry an artifact body. An artifact id appearing
+inside a payload is **inert data** — nothing in the engine dereferences it, and a payload key that
+looks like an artifact reference confers no evidence.
+
+### Wave-3 Expectations
+
+- The transport for a node MUST be `NODE_OUTPUT_TRANSPORT[nodeType]`, MUST cover all eight node
+  types, and MUST NOT be influenced by any author-declared field.
+- An `orchestrator` node's parked turn MUST NOT be validated; only its completing turn MUST be.
+- A `consensus` node's `output.result` MUST validate `result.vars` in place and MUST NOT mutate it.
+- `output.result` on a `human`/`form` node MUST be refused at manifest load (`CONFIG`), at every
+  engine version.
+- `output.result` on an `orchestrator`/`consensus` node, and a schema document using `json`/`items`,
+  MUST require `compat.engine_min >= 3.6.0`.
+- A `json` field MUST accept any JSON value and MUST treat an explicit `null` as present; every
+  other type MUST keep `null` = absent.
+- An `array` with `items` MUST validate every element and name `field[i]` on failure; an `array`
+  without `items` MUST stay untyped.
+- Undeclared payload keys at any depth MUST pass validation and MUST reach `node_attempts.vars`
+  unmodified.
+- A payload with an own `__proto__`/`constructor`/`prototype` key at any depth, or over the depth /
+  key-count / array-length limits, MUST be rejected before any field check — in all three validator
+  consumers.
+- `node_attempts.output_contract` MUST be written on attempt close (success AND seam failure) when
+  the node declares `output.result`, MUST survive `markNodeReworked`, and MUST stay `NULL`
+  otherwise.
+- No documented API response, OpenAPI/AsyncAPI schema, or client DTO may gain `output_contract`.
+- `MAISTER_ENGINE_VERSION === "3.6.0"`; Wave 3 MUST add no HTTP route, no `runs.status` value, no
+  `MaisterError` code, no env var, and no compose change.
+
+### Wave-3 Acceptance criteria
+
+- AC23 (C-1/C-14) — The transport map covers all eight node types; the `ai_coding`/`judge`/`cli`/
+  `check` arms pass their existing suites without assertion edits.
+- AC24 (C-1/C-3) — An `orchestrator` node with a valid completing-turn sentinel block folds its
+  payload into `vars` and persists it to `node_attempts.vars`; downstream `{{ steps.<id>.vars.* }}`
+  renders it.
+- AC25 (C-3) — An `orchestrator` node with `required: true` that completes WITHOUT a sentinel block
+  fails the attempt `CONFIG` (sentinel-flavored reason) and gates do not run; the same node parking
+  with pending children produces NO validation and NO `CONFIG`.
+- AC26 (C-2) — A `consensus` node's synthesis completion validates its engine vars with the object
+  unmutated; a schema mismatch fails `CONFIG`; `required` + zero-key vars fails; optional +
+  zero-key passes.
+- AC27 (C-10/C-11) — `output.result` on `human`/`form` refuses at load; on `orchestrator`/
+  `consensus` below `3.6.0` refuses naming the floor and the identical manifest at `3.6.0` loads and
+  runs.
+- AC28 (C-11) — A schema document using `json`/`items` under `engine_min < 3.6.0` refuses at package
+  install (`FLOW_INSTALL`) and BLOCKs in Studio validation; the same document at `3.6.0` installs.
+- AC29 (C-4/C-5) — A required `json` field is satisfied by `null` and violated by a missing key, and
+  accepts any JSON value; an `items` violation names `field[i]`; an `items`-less array accepts mixed
+  elements.
+- AC30 (C-6) — A payload with undeclared nested structures passes validation, is not mutated by the
+  validator, survives into `node_attempts.vars` deep-equal, and re-renders through templating.
+- AC31 (C-7/C-8) — At-limit payloads pass and limit+1 payloads fail naming the limit; an unsafe own
+  key at any depth fails naming the JSON path, before any field check.
+- AC32 (C-8) — The `hitl-validate` and Brain-distill suites pass unmodified under the hardening.
+- AC33 (C-9) — `output_contract` is persisted on success and on seam failure, survives
+  `markNodeReworked`, is `NULL` for nodes without a declaration and for HITL attempts; `sha256` is
+  the hash of the raw schema bytes and is stable across attempts; `transport` matches the arm;
+  `engineVersion` is `3.6.0`.
+- AC34 (C-9) — `git grep` confirms the only full-row `select().from(nodeAttempts)` outside tests is
+  `ledger.ts`, and the diff leaves `docs/api/**` untouched.
+- AC35 (C-10) — Each new failure class (unsafe key, depth/keys/array limit, `items` mismatch,
+  `engine_vars` mismatch) with `on_mismatch: retry|<outcome>` enters engine rework with the reason in
+  `commentsVar`; without `on_mismatch` it is a hard `CONFIG`.
+- AC36 (C-12) — The shipped authoring grammar contains the literals `maister:output`,
+  `MAISTER_OUTPUT_FILE`, every supported node type in the structured-output section, and the `3.6.0`
+  floor string; `resolved_prompt` gains no engine-injected sentinel instruction.
