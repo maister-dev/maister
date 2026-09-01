@@ -559,9 +559,14 @@ regression sweep, not assumed.
 
 Written on the **same ledger UPDATE that closes the attempt**, on both the success path
 (`markNodeSucceeded`) and the seam-failure path (`markNodeFailed`). `markNodeReworked` MUST NOT
-clear it. `NULL` means "pre-feature row, or the node declared no `output.result`" — never "unknown
-contract". Identity is captured once, at schema resolution, by hashing the raw file bytes; the shared
+clear it. Identity is captured once, at schema resolution, by hashing the raw file bytes; the shared
 form-schema readers keep their signatures and behavior.
+
+`NULL` means "pre-feature row, the node declared no `output.result`, or the seam failed BEFORE the
+schema was read" — never "unknown contract". The seam resolves the schema only on paths that need it,
+so a pre-resolution failure (absent while `required`, malformed JSON, over the byte cap, unresolvable
+path) records no contract. Resolving eagerly on every declaring attempt is rejected: it would turn a
+today-passing optional-absent run whose schema file is broken into a `CONFIG` failure.
 
 ### C-10 — Refusal table (exact `CONFIG` texts)
 
@@ -622,9 +627,9 @@ looks like an artifact reference confers no evidence.
 - A payload with an own `__proto__`/`constructor`/`prototype` key at any depth, or over the depth /
   key-count / array-length limits, MUST be rejected before any field check — in all three validator
   consumers.
-- `node_attempts.output_contract` MUST be written on attempt close (success AND seam failure) when
-  the node declares `output.result`, MUST survive `markNodeReworked`, and MUST stay `NULL`
-  otherwise.
+- `node_attempts.output_contract` MUST be written on attempt close (success AND a post-resolution
+  seam failure) once the declared schema has been resolved, MUST survive `markNodeReworked`, and MUST
+  stay `NULL` otherwise.
 - No documented API response, OpenAPI/AsyncAPI schema, or client DTO may gain `output_contract`.
 - `MAISTER_ENGINE_VERSION === "3.6.0"`; Wave 3 MUST add no HTTP route, no `runs.status` value, no
   `MaisterError` code, no env var, and no compose change.
@@ -655,10 +660,10 @@ looks like an artifact reference confers no evidence.
 - AC31 (C-7/C-8) — At-limit payloads pass and limit+1 payloads fail naming the limit; an unsafe own
   key at any depth fails naming the JSON path, before any field check.
 - AC32 (C-8) — The `hitl-validate` and Brain-distill suites pass unmodified under the hardening.
-- AC33 (C-9) — `output_contract` is persisted on success and on seam failure, survives
-  `markNodeReworked`, is `NULL` for nodes without a declaration and for HITL attempts; `sha256` is
-  the hash of the raw schema bytes and is stable across attempts; `transport` matches the arm;
-  `engineVersion` is `3.6.0`.
+- AC33 (C-9) — `output_contract` is persisted on success and on a post-resolution seam failure
+  (schema mismatch), survives `markNodeReworked`, and is `NULL` for nodes without a declaration, for
+  HITL attempts, and for pre-resolution failures; `sha256` is the hash of the raw schema bytes and is
+  stable across attempts; `transport` matches the arm; `engineVersion` is `3.6.0`.
 - AC34 (C-9) — `git grep` confirms the only full-row `select().from(nodeAttempts)` outside tests is
   `ledger.ts`, and the diff leaves `docs/api/**` untouched.
 - AC35 (C-10) — Each new failure class (unsafe key, depth/keys/array limit, `items` mismatch,

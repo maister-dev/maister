@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -628,6 +629,90 @@ describe("validateNodeStructuredOutput", () => {
     expect((await validateNodeStructuredOutput(args)).ok).toBe(false);
     expect(updates[0].errorCode).toBe("CONFIG");
     expect(String(updates[0].stdout)).toContain("exceeds");
+  });
+
+  // --- ADR-162 (AC-18): per-attempt contract identity ----------------------
+
+  const SCHEMA_SHA256 = createHash("sha256")
+    .update(new Uint8Array(Buffer.from(JSON.stringify(SCHEMA_DOC), "utf8")))
+    .digest("hex");
+
+  it("returns the resolved contract identity on success", async () => {
+    const { db } = mockDb();
+    const args = seamArgs({
+      nodeType: "ai_coding",
+      output: RESULT_DECL,
+      stdout: `${OPEN}\n{"verdict":"pass"}\n${CLOSE}`,
+      db,
+    });
+    const out = await validateNodeStructuredOutput(args);
+
+    expect(out).toEqual({
+      ok: true,
+      contract: {
+        schemaRef: "./schemas/result.json",
+        schemaVersion: 1,
+        sha256: SCHEMA_SHA256,
+        transport: "sentinel",
+        engineVersion: "3.6.0",
+      },
+    });
+  });
+
+  it("records the contract on the schema-mismatch failure path", async () => {
+    const { updates, db } = mockDb();
+    const args = seamArgs({
+      nodeType: "cli",
+      output: RESULT_DECL,
+      runId: "r-contract-fail",
+      db,
+    });
+    const file = cliOutputFilePath({
+      runtimeRoot,
+      projectSlug: "demo",
+      runId: "r-contract-fail",
+      nodeId: "n1",
+      attempt: 1,
+    });
+
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, '{"verdict":42}', "utf8");
+
+    expect((await validateNodeStructuredOutput(args)).ok).toBe(false);
+    expect(updates[0].outputContract).toEqual({
+      schemaRef: "./schemas/result.json",
+      schemaVersion: 1,
+      sha256: SCHEMA_SHA256,
+      transport: "file",
+      engineVersion: "3.6.0",
+    });
+  });
+
+  it("leaves the contract unset when the seam fails before the schema is read", async () => {
+    const { updates, db } = mockDb();
+    const args = seamArgs({
+      nodeType: "ai_coding",
+      output: REQUIRED_DECL,
+      stdout: "no block",
+      db,
+    });
+
+    expect((await validateNodeStructuredOutput(args)).ok).toBe(false);
+    expect(updates[0].outputContract).toBeUndefined();
+  });
+
+  it("carries the engine_vars transport in the contract for a consensus node", async () => {
+    const { db } = mockDb();
+    const args = seamArgs({
+      nodeType: "consensus",
+      output: { result: { schema: "./schemas/consensus.json" } },
+      vars: { consensus: { source: "agreement", round: 1 } },
+      db,
+    });
+    const out = await validateNodeStructuredOutput(args);
+
+    expect(out.ok && out.contract?.transport).toBe("engine_vars");
+    expect(out.ok && out.contract?.schemaRef).toBe("./schemas/consensus.json");
   });
 
   it("fails CONFIG when the declared schema path cannot be resolved", async () => {

@@ -1145,6 +1145,7 @@ table node_attempts {
   returned_diff text
   enforcement_snapshot jsonb
   materialization_plan jsonb
+  output_contract jsonb
   started_at "timestamp with time zone" [not null, default: `now()`]
   ended_at "timestamp with time zone"
 

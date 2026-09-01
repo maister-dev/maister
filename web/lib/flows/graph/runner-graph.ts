@@ -4254,6 +4254,9 @@ export async function runGraph(
               exitCode: result.exitCode,
               decision: onExhaustion,
               acpSessionId: result.acpSessionId,
+              ...(structuredOutput.ok && structuredOutput.contract
+                ? { outputContract: structuredOutput.contract }
+                : {}),
             },
             db,
           );
@@ -4397,6 +4400,9 @@ export async function runGraph(
             exitCode: result.exitCode,
             decision: forwardOutcome,
             acpSessionId: result.acpSessionId,
+            ...(structuredOutput.ok && structuredOutput.contract
+              ? { outputContract: structuredOutput.contract }
+              : {}),
           },
           db,
         );
@@ -4709,6 +4715,12 @@ export async function runGraph(
             exitCode: result.exitCode,
             decision: outcome === "success" ? undefined : outcome,
             acpSessionId: result.acpSessionId,
+            // ADR-162 (C-9): the contract identity rides the SAME closing
+            // UPDATE as the vars it validated — no second write, no new
+            // crash window.
+            ...(structuredOutput.ok && structuredOutput.contract
+              ? { outputContract: structuredOutput.contract }
+              : {}),
           },
           db,
         );

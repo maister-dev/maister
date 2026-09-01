@@ -11,6 +11,7 @@ import {
   getNodeAttemptsForRun,
   latestAttemptByNode,
   markDownstreamStale,
+  markNodeFailed,
   markNodeReworked,
   markNodeSucceeded,
   nextAttemptFor,
@@ -182,6 +183,109 @@ describe("node_attempts ledger (append-only)", () => {
     expect(row?.status).toBe("Reworked");
     expect(row?.decision).toBe("rework");
     expect(row?.workspacePolicy).toBe("keep");
+  });
+
+  // --- ADR-162 (AC-18): per-attempt structured-output contract identity ----
+
+  const OUTPUT_CONTRACT = {
+    schemaRef: "./schemas/result.json",
+    schemaVersion: 1,
+    sha256: "a".repeat(64),
+    transport: "sentinel" as const,
+    engineVersion: "3.6.0",
+  };
+
+  it("markNodeSucceeded persists outputContract on the closing UPDATE", async () => {
+    const runId = await seedRun();
+    const na = await appendNodeAttempt({
+      runId,
+      nodeId: "plan",
+      nodeType: "ai_coding",
+      db,
+    });
+
+    await markNodeSucceeded(
+      na.id,
+      { vars: { verdict: "pass" }, outputContract: OUTPUT_CONTRACT },
+      db,
+    );
+
+    const row = (await getNodeAttemptsForRun(runId, db)).find(
+      (r) => r.id === na.id,
+    );
+
+    expect(row?.status).toBe("Succeeded");
+    expect(row?.outputContract).toEqual(OUTPUT_CONTRACT);
+  });
+
+  it("markNodeFailed persists outputContract on the seam-failure path", async () => {
+    const runId = await seedRun();
+    const na = await appendNodeAttempt({
+      runId,
+      nodeId: "plan",
+      nodeType: "ai_coding",
+      db,
+    });
+
+    await markNodeFailed(
+      na.id,
+      {
+        errorCode: "CONFIG",
+        stdout: "[structured output] schema mismatch",
+        outputContract: OUTPUT_CONTRACT,
+      },
+      db,
+    );
+
+    const row = (await getNodeAttemptsForRun(runId, db)).find(
+      (r) => r.id === na.id,
+    );
+
+    expect(row?.status).toBe("Failed");
+    expect(row?.errorCode).toBe("CONFIG");
+    expect(row?.outputContract).toEqual(OUTPUT_CONTRACT);
+  });
+
+  it("markNodeReworked leaves a recorded outputContract intact", async () => {
+    const runId = await seedRun();
+    const na = await appendNodeAttempt({
+      runId,
+      nodeId: "plan",
+      nodeType: "ai_coding",
+      db,
+    });
+
+    await markNodeFailed(
+      na.id,
+      { errorCode: "CONFIG", outputContract: OUTPUT_CONTRACT },
+      db,
+    );
+    await markNodeReworked(na.id, { decision: "on_mismatch" }, db);
+
+    const row = (await getNodeAttemptsForRun(runId, db)).find(
+      (r) => r.id === na.id,
+    );
+
+    expect(row?.status).toBe("Reworked");
+    expect(row?.outputContract).toEqual(OUTPUT_CONTRACT);
+  });
+
+  it("outputContract stays NULL when no structured output was declared", async () => {
+    const runId = await seedRun();
+    const na = await appendNodeAttempt({
+      runId,
+      nodeId: "plan",
+      nodeType: "ai_coding",
+      db,
+    });
+
+    await markNodeSucceeded(na.id, { vars: {} }, db);
+
+    const row = (await getNodeAttemptsForRun(runId, db)).find(
+      (r) => r.id === na.id,
+    );
+
+    expect(row?.outputContract ?? null).toBeNull();
   });
 
   it("setMaterializationPlan is write-once: the second call does not overwrite the first plan (T4.4)", async () => {

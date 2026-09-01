@@ -5,6 +5,7 @@ import type {
   EnforcementSnapshotEntry,
   MaterializationPlan,
   NodeAttempt,
+  NodeAttemptOutputContract,
   NodeAttemptStatus,
   NodeAttemptType,
 } from "@/lib/db/schema";
@@ -158,6 +159,10 @@ export async function markNodeSucceeded(
     decision?: string;
     workspacePolicy?: WorkspacePolicy;
     acpSessionId?: string;
+    // ADR-162: the structured-output contract that judged this attempt, on the
+    // SAME closing UPDATE as the vars it validated. Undefined leaves the column
+    // untouched (NULL for a node that declared no `output.result`).
+    outputContract?: NodeAttemptOutputContract;
   } = {},
   db?: Db,
 ): Promise<void> {
@@ -173,6 +178,7 @@ export async function markNodeSucceeded(
       decision: args.decision ?? null,
       workspacePolicy: args.workspacePolicy ?? null,
       acpSessionId: args.acpSessionId ?? null,
+      ...(args.outputContract ? { outputContract: args.outputContract } : {}),
       endedAt: new Date(),
     })
     .where(eq(nodeAttempts.id, nodeAttemptId));
@@ -189,6 +195,10 @@ export async function markNodeFailed(
     errorCode: MaisterErrorCode;
     stdout?: string | null;
     exitCode?: number;
+    // ADR-162: set by the structured-output seam when the contract had already
+    // been resolved — a mismatch failure records WHICH schema rejected the
+    // payload. Undefined leaves the column untouched.
+    outputContract?: NodeAttemptOutputContract;
   },
   db?: Db,
 ): Promise<void> {
@@ -201,6 +211,7 @@ export async function markNodeFailed(
       stdout: truncate(args.stdout),
       exitCode: args.exitCode ?? null,
       errorCode: args.errorCode,
+      ...(args.outputContract ? { outputContract: args.outputContract } : {}),
       endedAt: new Date(),
     })
     .where(eq(nodeAttempts.id, nodeAttemptId));

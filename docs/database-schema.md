@@ -2303,7 +2303,7 @@ One immutable row per node execution; `attempt` auto-increments per
                                             //   nullable, pre-0053 rows fall back to
                                             //   the manifest template at view time
   vars (jsonb, DEFAULT '{}'),               // node output bag for templating
-  outputContract?,                          // (Designed, ADR-162, migration 0127)
+  outputContract?,                          // (Implemented, ADR-162, migration 0127)
                                             //   jsonb; per-attempt structured-output
                                             //   schema identity — see below
   exitCode?, errorCode?,                    // one of MaisterErrorCode literals
@@ -2325,7 +2325,7 @@ index is unchanged (`node_attempts_run_idx` on `(runId)`). See
 [`system-analytics/manual-takeover.md`](system-analytics/manual-takeover.md) and
 [ADR-030](decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status).
 
-**(Migration `0127`, Designed — [ADR-162](decisions.md#adr-162-universal-structured-node-result--transport-matrix-open-json-grammar-schema-identity).)**
+**(Migration `0127`, Implemented — [ADR-162](decisions.md#adr-162-universal-structured-node-result--transport-matrix-open-json-grammar-schema-identity).)**
 `outputContract` (jsonb, nullable, no default, no backfill) records WHICH
 structured-output contract judged this attempt:
 `{ schemaRef, schemaVersion, sha256, transport, engineVersion }` where `sha256`
@@ -2333,8 +2333,11 @@ hashes the raw bytes of the resolved `output.result.schema` document and
 `transport ∈ {sentinel, file, engine_vars}`. It is written on the SAME ledger
 UPDATE that closes the attempt — on the success path AND on the
 structured-output seam-failure path — and `markNodeReworked` never clears it.
-`NULL` means "row predates the column, or the node declared no `output.result`",
-never "unknown contract". It is engine metadata, deliberately kept out of `vars`
+`NULL` means "row predates the column, the node declared no `output.result`, or
+the seam failed before the schema was read" — never "unknown contract". A
+pre-resolution failure (payload absent while `required`, malformed JSON,
+oversize, unresolvable schema path) has no identity to record, and the seam
+deliberately does not resolve the schema on paths that never needed it. It is engine metadata, deliberately kept out of `vars`
 (the flow-visible plane read by templating, `decide`, and the run-context
 projection) and out of every client DTO — no route handler or ext query selects
 it. See

@@ -100,7 +100,11 @@ function validateLifecycleSchemaArtifacts(
       continue;
     }
 
-    if (typeof manifest !== "object" || manifest === null || Array.isArray(manifest)) {
+    if (
+      typeof manifest !== "object" ||
+      manifest === null ||
+      Array.isArray(manifest)
+    ) {
       continue;
     }
 
@@ -121,8 +125,7 @@ function validateLifecycleSchemaArtifacts(
 
   const schemaCandidates = input.files.filter(
     (file) =>
-      classifyPackageFilePath(file.path) === "schema" &&
-      changed.has(file.path),
+      classifyPackageFilePath(file.path) === "schema" && changed.has(file.path),
   );
   const referencesToValidate = new Map<string, string | undefined>(
     [

@@ -2,8 +2,8 @@ import type { NodeAttempt, Run } from "@/lib/db/schema";
 import type { SupervisorApi } from "@/lib/flows/runner-agent";
 import type { SupervisorEvent } from "@/lib/supervisor-client";
 
-import { randomUUID } from "node:crypto";
-import { access, mkdir, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { eq } from "drizzle-orm";
@@ -620,5 +620,117 @@ describe("runGraph — ADR-162 orchestrator structured output", () => {
     expect(attempts.find((a) => a.nodeId === "shipped")?.status).toBe(
       "Succeeded",
     );
+  }, 60_000);
+});
+
+// --- ADR-162 (AC-18): output_contract persisted on the closing UPDATE --------
+
+async function fixtureSchemaSha256(name: string): Promise<string> {
+  const bytes = await readFile(join(FIXTURE_PATH, "schemas", name));
+
+  return createHash("sha256").update(new Uint8Array(bytes)).digest("hex");
+}
+
+describe("runGraph — ADR-162 output_contract identity", () => {
+  it("AC-18: stamps the contract on the sentinel and file arms, and leaves it NULL where nothing is declared", async () => {
+    const sha256 = await fixtureSchemaSha256("result.json");
+    const flow = {
+      schemaVersion: 1,
+      name: "g",
+      compat: { engine_min: "1.3.0" },
+      nodes: [
+        {
+          id: "plan",
+          type: "ai_coding",
+          action: { prompt: "plan" },
+          output: { result: { schema: "./schemas/result.json" } },
+          transitions: { success: "emit" },
+        },
+        {
+          id: "emit",
+          type: "cli",
+          action: {
+            command: 'echo \'{"verdict":"ok"}\' > "$MAISTER_OUTPUT_FILE"',
+          },
+          output: { result: { schema: "./schemas/result.json" } },
+          transitions: { success: "plain" },
+        },
+        {
+          id: "plain",
+          type: "cli",
+          action: { command: 'echo "no declaration"' },
+          transitions: { success: "done" },
+        },
+      ],
+    };
+    const seeded = await seedGraphRun(flow);
+
+    await runFlow(seeded.runId, {
+      db,
+      runtimeRoot: seeded.runtimeRoot,
+      supervisorApi: makeAgentSupervisor(
+        `${OPEN}\n{"verdict":"pass"}\n${CLOSE}`,
+      ),
+    });
+
+    expect((await getRun(seeded.runId)).status).toBe("Review");
+
+    const attempts = await getAttempts(seeded.runId);
+    const base = {
+      schemaRef: "./schemas/result.json",
+      schemaVersion: 1,
+      sha256,
+      engineVersion: "3.6.0",
+    };
+
+    expect(attempts.find((a) => a.nodeId === "plan")?.outputContract).toEqual({
+      ...base,
+      transport: "sentinel",
+    });
+    expect(attempts.find((a) => a.nodeId === "emit")?.outputContract).toEqual({
+      ...base,
+      transport: "file",
+    });
+    expect(
+      attempts.find((a) => a.nodeId === "plain")?.outputContract ?? null,
+    ).toBeNull();
+  }, 60_000);
+
+  it("AC-18: a schema-mismatch seam failure records the contract that rejected the payload", async () => {
+    const sha256 = await fixtureSchemaSha256("result.json");
+    const flow = {
+      schemaVersion: 1,
+      name: "g",
+      compat: { engine_min: "1.3.0" },
+      nodes: [
+        {
+          id: "plan",
+          type: "ai_coding",
+          action: { prompt: "plan" },
+          output: { result: { schema: "./schemas/result.json" } },
+          transitions: { success: "done" },
+        },
+      ],
+    };
+    const seeded = await seedGraphRun(flow);
+
+    await runFlow(seeded.runId, {
+      db,
+      runtimeRoot: seeded.runtimeRoot,
+      supervisorApi: makeAgentSupervisor(`${OPEN}\n{"verdict":7}\n${CLOSE}`),
+    });
+
+    const plan = (await getAttempts(seeded.runId)).find(
+      (a) => a.nodeId === "plan",
+    );
+
+    expect(plan?.status).toBe("Failed");
+    expect(plan?.outputContract).toEqual({
+      schemaRef: "./schemas/result.json",
+      schemaVersion: 1,
+      sha256,
+      transport: "sentinel",
+      engineVersion: "3.6.0",
+    });
   }, 60_000);
 });

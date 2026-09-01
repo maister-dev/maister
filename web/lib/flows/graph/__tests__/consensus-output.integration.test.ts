@@ -11,11 +11,21 @@
 
 import type { NodeAttempt, Run } from "@/lib/db/schema";
 
-import { resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import { closeDb } from "@/lib/db/client";
 import { recordCurrentArtifact } from "@/lib/flows/graph/artifact-store";
@@ -193,6 +203,19 @@ describe("runGraph — ADR-162 consensus engine_vars transport", () => {
     expect(attempts.find((a) => a.nodeId === "use")?.stdout ?? "").toContain(
       "src:agreement",
     );
+
+    // AC-18: the engine_vars arm stamps its own transport in the contract.
+    const bytes = await readFile(
+      join(FIXTURE_PATH, "schemas", "consensus.json"),
+    );
+
+    expect(decide?.outputContract).toEqual({
+      schemaRef: "./schemas/consensus.json",
+      schemaVersion: 1,
+      sha256: createHash("sha256").update(new Uint8Array(bytes)).digest("hex"),
+      transport: "engine_vars",
+      engineVersion: "3.6.0",
+    });
   }, 60_000);
 
   it("AC-10: engine vars that mismatch the schema fail the attempt CONFIG", async () => {

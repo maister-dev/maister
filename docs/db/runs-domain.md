@@ -302,6 +302,7 @@ erDiagram
         text returned_diff "0011 raw git diff base..branch"
         jsonb enforcement_snapshot "0013 append-only verdict audit"
         jsonb materialization_plan "0019 Implemented: resolved profile snapshot + cleanup substate"
+        jsonb output_contract "0127 Implemented ADR-162: structured-output contract identity schemaRef/schemaVersion/sha256/transport/engineVersion; NULL when no output.result"
         text acp_session_id
         text stdout "truncated to 1 MiB"
         text resolved_prompt "0053 captured resolved agent prompt; nullable, pre-0053 rows null"
@@ -696,6 +697,22 @@ only after confirmed termination. A later task-bound standalone launch may set
 > See [`capabilities-domain.md`](capabilities-domain.md) for the full
 > jsonb shape and [`../database-schema.md`](../database-schema.md#node_attempts)
 > for the narrative. ADR-041 in [`../decisions.md`](../decisions.md).
+
+> **(Implemented, migration `0127`, additive.)** `NODE_ATTEMPTS` gains
+> `output_contract` (jsonb, nullable, no default, no backfill) — WHICH
+> structured-output contract judged this attempt:
+> `{ schemaRef, schemaVersion, sha256, transport, engineVersion }` with
+> `transport ∈ {sentinel, file, engine_vars}` and `sha256` over the resolved
+> schema document's exact bytes. Written on the SAME closing UPDATE as the
+> attempt's terminal status — the success path and the structured-output
+> seam-failure path alike — and never cleared by `markNodeReworked`. `NULL`
+> means the node declared no `output.result`, the row predates the column, or
+> the seam failed before the schema was read (no identity exists then). It is
+> engine metadata, deliberately kept out of `vars` (the flow-visible plane) and
+> out of every client DTO. See
+> [`../database-schema.md`](../database-schema.md#node_attempts) for the
+> narrative and
+> [ADR-162](../decisions.md#adr-162-universal-structured-node-result--transport-matrix-open-json-grammar-schema-identity).
 
 ## Linked artifacts
 

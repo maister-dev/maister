@@ -4219,6 +4219,16 @@ export const nodeAttempts = pgTable(
     materializationPlan: jsonb(
       "materialization_plan",
     ).$type<MaterializationPlan | null>(),
+    // ADR-162 (migration 0127): which structured-output contract judged this
+    // attempt. Written on the SAME ledger UPDATE that closes the attempt, on
+    // the success path AND on the seam-failure path; markNodeReworked never
+    // clears it. NULL means the node declared no `output.result`, the row
+    // predates the column, or the seam failed before the schema was resolved
+    // (no identity exists then). Engine metadata — deliberately NOT in `vars`,
+    // which is the flow-visible plane, and not projected into any client DTO.
+    outputContract: jsonb(
+      "output_contract",
+    ).$type<NodeAttemptOutputContract | null>(),
     startedAt: timestamp("started_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -5173,6 +5183,18 @@ export const projectMembers = pgTable(
 
 // Written by the launch pipeline; records what was resolved and applied for an
 // ai_coding / judge node attempt. Stored in node_attempts.materialization_plan.
+// ADR-162: the per-attempt structured-output contract identity persisted on
+// `node_attempts.output_contract`. `sha256` hashes the RAW bytes of the
+// resolved `output.result.schema` document, so a package edit under a stable
+// ref is detectable after the fact.
+export type NodeAttemptOutputContract = {
+  schemaRef: string;
+  schemaVersion: number;
+  sha256: string;
+  transport: "sentinel" | "file" | "engine_vars";
+  engineVersion: string;
+};
+
 export type MaterializationPlan = {
   profileDigest: string;
   resolvedRevisions: { refId: string; kind: string; sha: string }[];

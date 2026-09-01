@@ -1,5 +1,6 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 
@@ -1940,6 +1941,17 @@ export async function readAndValidateFormSchemaDoc(
   flowInstallPath: string,
   relPath: string,
 ): Promise<FormSchema> {
+  return (await readFormSchemaDocWithBytes(flowInstallPath, relPath)).schema;
+}
+
+// ADR-162: the same read + escape-guard + parse + validate procedure, also
+// returning the file's raw bytes so a caller can hash the exact document. Split
+// out rather than changing `readAndValidateFormSchemaDoc`'s signature — its
+// three callers keep behaving identically.
+async function readFormSchemaDocWithBytes(
+  flowInstallPath: string,
+  relPath: string,
+): Promise<{ schema: FormSchema; bytes: Buffer }> {
   const base = path.resolve(flowInstallPath);
   const joined = path.resolve(base, relPath);
 
@@ -1977,10 +1989,10 @@ export async function readAndValidateFormSchemaDoc(
     );
   }
 
-  let raw: string;
+  let bytes: Buffer;
 
   try {
-    raw = await readFile(resolvedPath, "utf8");
+    bytes = await readFile(resolvedPath);
   } catch (err) {
     throw new MaisterError(
       "CONFIG",
@@ -1992,7 +2004,7 @@ export async function readAndValidateFormSchemaDoc(
   let data: unknown;
 
   try {
-    data = JSON.parse(raw);
+    data = JSON.parse(bytes.toString("utf8"));
   } catch (err) {
     throw new MaisterError(
       "CONFIG",
@@ -2001,7 +2013,10 @@ export async function readAndValidateFormSchemaDoc(
     );
   }
 
-  return parseFormSchemaDoc(data, `invalid form_schema (${resolvedPath})`);
+  return {
+    schema: parseFormSchemaDoc(data, `invalid form_schema (${resolvedPath})`),
+    bytes,
+  };
 }
 
 export async function resolveOutputResultSchema(
@@ -2009,4 +2024,24 @@ export async function resolveOutputResultSchema(
   relPath: string,
 ): Promise<FormSchema> {
   return readAndValidateFormSchemaDoc(flowInstallPath, relPath);
+}
+
+// ADR-162 (C-9): the schema plus its content identity. `sha256` hashes the
+// document's exact bytes, so an upgrade that edits a schema file under a stable
+// package ref is detectable from the attempt row after the fact.
+export async function resolveOutputResultSchemaWithIdentity(
+  flowInstallPath: string,
+  relPath: string,
+): Promise<{ schema: FormSchema; sha256: string }> {
+  const { schema, bytes } = await readFormSchemaDocWithBytes(
+    flowInstallPath,
+    relPath,
+  );
+
+  return {
+    schema,
+    sha256: createHash("sha256")
+      .update(new Uint8Array(bytes))
+      .digest("hex"),
+  };
 }

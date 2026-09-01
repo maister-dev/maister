@@ -862,6 +862,13 @@
       "when": 1788249684158,
       "tag": "0126_claim_head_sha",
       "breakpoints": true
+    },
+    {
+      "idx": 127,
+      "version": "7",
+      "when": 1788257531779,
+      "tag": "0127_output_contract",
+      "breakpoints": true
     }
   ]
 }

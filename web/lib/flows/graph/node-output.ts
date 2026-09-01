@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { FormSchema } from "@/lib/config.schema";
+import type { NodeAttemptOutputContract } from "@/lib/db/schema";
 import type { StepResult } from "../types";
 import type { CompiledNode } from "./compile";
 
@@ -13,8 +13,9 @@ import { validateStructuredOutput } from "../output-schema";
 
 import { markNodeFailed } from "./ledger";
 
-import { resolveOutputResultSchema } from "@/lib/config";
+import { resolveOutputResultSchemaWithIdentity } from "@/lib/config";
 import { MaisterError } from "@/lib/errors";
+import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 import { nodeOutputMaxBytes } from "@/lib/instance-config";
 
 // M26 P1 (ADR-063): structured node output — transport extraction + the
@@ -264,7 +265,11 @@ export type ValidateNodeStructuredOutputArgs = {
 };
 
 export type StructuredOutputOutcome =
-  | { ok: true }
+  // ADR-162 (C-9): `contract` is set once the declared schema has been resolved
+  // — the caller persists it on the same UPDATE that closes the attempt. Absent
+  // when the node declared no `output.result`, or when the seam failed before
+  // the schema was read (no identity exists then).
+  | { ok: true; contract?: NodeAttemptOutputContract }
   | { ok: false; reason: string };
 
 // The post-action validate seam (spec §Transport & validation, D-B2/D-B4).
@@ -333,10 +338,15 @@ export async function validateNodeStructuredOutput(
     return failAttempt(args, payload.reason);
   }
 
-  let schema: FormSchema;
+  let resolved: Awaited<
+    ReturnType<typeof resolveOutputResultSchemaWithIdentity>
+  >;
 
   try {
-    schema = await resolveOutputResultSchema(args.flowInstallPath, decl.schema);
+    resolved = await resolveOutputResultSchemaWithIdentity(
+      args.flowInstallPath,
+      decl.schema,
+    );
   } catch (err) {
     return failAttempt(
       args,
@@ -344,12 +354,32 @@ export async function validateNodeStructuredOutput(
     );
   }
 
-  const verdict = validateStructuredOutput(payload.value, schema);
+  const contract: NodeAttemptOutputContract = {
+    schemaRef: decl.schema,
+    schemaVersion: resolved.schema.schemaVersion,
+    sha256: resolved.sha256,
+    transport,
+    engineVersion: MAISTER_ENGINE_VERSION,
+  };
+
+  log.debug(
+    {
+      nodeId: args.node.id,
+      attempt: args.attempt,
+      schemaRef: contract.schemaRef,
+      sha256: contract.sha256.slice(0, 12),
+      transport,
+    },
+    "structured output: contract resolved",
+  );
+
+  const verdict = validateStructuredOutput(payload.value, resolved.schema);
 
   if (!verdict.ok) {
     return failAttempt(
       args,
       `structured output schema mismatch: ${verdict.message}`,
+      contract,
     );
   }
 
@@ -371,19 +401,24 @@ export async function validateNodeStructuredOutput(
     "structured output captured",
   );
 
-  return { ok: true };
+  return { ok: true, contract };
 }
 
 async function failAttempt(
   args: ValidateNodeStructuredOutputArgs,
   reason: string,
+  contract?: NodeAttemptOutputContract,
 ): Promise<StructuredOutputOutcome> {
   const base = args.result.stdout;
   const stdout = `${base}${base.length > 0 && !base.endsWith("\n") ? "\n" : ""}[structured output] ${reason}`;
 
   await markNodeFailed(
     args.nodeAttemptId,
-    { errorCode: "CONFIG", stdout },
+    {
+      errorCode: "CONFIG",
+      stdout,
+      ...(contract ? { outputContract: contract } : {}),
+    },
     args.db,
   );
 

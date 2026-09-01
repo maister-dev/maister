@@ -217,9 +217,9 @@ No AI co-author trailer (repo convention).
 
 ### Phase 3: Audit identity — TDD (depends on Phase 2)
 
-- [ ] **T3.R (RED)** — ledger unit tests: `markNodeSucceeded`/`markNodeFailed` persist `outputContract`, `markNodeReworked` leaves it intact (AC-18); seam unit: contract built on success + failure with correct transport/sha256; integration extensions asserting `output_contract` on the sentinel/file/engine_vars arms. Red (column/type not yet present — shape probes).
-- [ ] **T3.G (GREEN)** — migration `0127_output_contract.sql` + journal + snapshot + `schema.ts` (`NodeAttemptOutputContract` type) per S3; `config.ts`: `resolveOutputResultSchemaWithIdentity` (raw-bytes sha256, shared readers' signatures untouched); `node-output.ts` + `ledger.ts` threading; DEBUG identity log (sha256 prefix only).
-- [ ] **T3.F (docs + integrity)** — `pnpm --filter maister-web db:erd` regen; `docs/db/runs-domain.md` erDiagram + `docs/database-schema.md` as-built. Integrity per AC-20; API sweep per AC-19 (`grep -rn "select().from(nodeAttempts)" web/lib web/app --include='*.ts'` → only ledger.ts outside tests; `git diff --stat docs/api/` empty).
+- [x] **T3.R (RED)** — ledger unit tests: `markNodeSucceeded`/`markNodeFailed` persist `outputContract`, `markNodeReworked` leaves it intact (AC-18); seam unit: contract built on success + failure with correct transport/sha256; integration extensions asserting `output_contract` on the sentinel/file/engine_vars arms. Red (column/type not yet present — shape probes).
+- [x] **T3.G (GREEN)** — migration `0127_output_contract.sql` + journal + snapshot + `schema.ts` (`NodeAttemptOutputContract` type) per S3; `config.ts`: `resolveOutputResultSchemaWithIdentity` (raw-bytes sha256, shared readers' signatures untouched); `node-output.ts` + `ledger.ts` threading; DEBUG identity log (sha256 prefix only).
+- [x] **T3.F (docs + integrity)** — `pnpm --filter maister-web db:erd` regen; `docs/db/runs-domain.md` erDiagram + `docs/database-schema.md` as-built. Integrity per AC-20; API sweep per AC-19 (`grep -rn "select().from(nodeAttempts)" web/lib web/app --include='*.ts'` → only ledger.ts outside tests; `git diff --stat docs/api/` empty).
 - **Phase 3 gate:** unit + integration green; `pnpm validate:docs` green (incl. `db:erd --check`); AC-19/AC-20 command outputs recorded in the commit message body.
 
 ### Phase 4: Hardening + completion sweep — TDD (depends on Phase 3)
