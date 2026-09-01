@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -103,21 +103,32 @@ export async function POST(
       const caller = boundRes.run;
       const treeRoot = caller.rootRunId ?? caller.id;
 
-      // Resolve the persistent child by key OR id, within the caller's tree and
-      // project. addressable_key is unique per tree, so this matches at most one.
+      // Resolve the child by key OR id, within the caller's tree and project.
+      //
+      // ADR-163: the `persistent` filter moved OUT of the WHERE and into an
+      // explicit branch below. Filtering on it made every non-persistent target
+      // — including a FLOW child, which can never be persistent — answer "no
+      // such child", which is false and unactionable: the child exists, it just
+      // cannot be messaged. Selection is unchanged (persistent first), so every
+      // case that resolves today resolves to the same row; only the refusals
+      // get sharper.
       const childRows = await db
-        .select({ id: runs.id, runKind: runs.runKind })
+        .select({
+          id: runs.id,
+          runKind: runs.runKind,
+          persistent: runs.persistent,
+        })
         .from(runs)
         .where(
           and(
             eq(runs.rootRunId, treeRoot),
-            eq(runs.persistent, true),
             eq(runs.projectId, ctx.projectId),
             body.addressableKey !== undefined
               ? eq(runs.addressableKey, body.addressableKey)
               : eq(runs.id, body.childRunId as string),
           ),
-        );
+        )
+        .orderBy(desc(runs.persistent));
       const child = childRows[0];
 
       if (!child) {
@@ -125,17 +136,32 @@ export async function POST(
           {
             code: "PRECONDITION",
             message:
-              "no persistent child with that addressableKey/childRunId in this orchestrator tree",
+              "no child with that addressableKey/childRunId in this orchestrator tree",
           },
           { status: httpStatusForExtCode("PRECONDITION") },
         );
       }
 
+      // ADR-163 D2: branch on run_kind BEFORE the persistent check, so a flow
+      // child gets the reason that actually applies to it — a flow child has no
+      // addressable agent session to message at all, persistent or not.
       if (child.runKind !== "agent") {
         return NextResponse.json(
           {
             code: "PRECONDITION",
-            message: "re-message targets an agent child only",
+            message:
+              "run_message is not supported for flow children — a flow child has no addressable agent session; use run_collect / run_promote / run_cancel",
+          },
+          { status: httpStatusForExtCode("PRECONDITION") },
+        );
+      }
+
+      if (!child.persistent) {
+        return NextResponse.json(
+          {
+            code: "PRECONDITION",
+            message:
+              "child is not a persistent addressable agent — only a persistent child can be re-messaged",
           },
           { status: httpStatusForExtCode("PRECONDITION") },
         );

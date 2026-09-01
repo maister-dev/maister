@@ -1,9 +1,12 @@
+import type { DomainEventRow } from "@/lib/db/schema";
+
 import { randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
+import { NextRequest } from "next/server";
 import { Pool } from "pg";
 import {
   afterAll,
@@ -66,6 +69,9 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
 
 let issueOrchestratorRunToken: typeof import("@/lib/agents/tokens").issueOrchestratorRunToken;
 let delegatePost: typeof import("@/app/api/v1/ext/runs/delegate/route").POST;
+let reworkPost: typeof import("@/app/api/v1/ext/runs/rework/route").POST;
+let messagePost: typeof import("@/app/api/v1/ext/runs/message/route").POST;
+let promotePost: typeof import("@/app/api/v1/ext/runs/promote/route").POST;
 
 beforeAll(async () => {
   agentsRoot = await mkdtemp(path.join(os.tmpdir(), "maister-deleg-flow-"));
@@ -79,6 +85,9 @@ beforeAll(async () => {
   ({ POST: delegatePost } = await import(
     "@/app/api/v1/ext/runs/delegate/route"
   ));
+  ({ POST: reworkPost } = await import("@/app/api/v1/ext/runs/rework/route"));
+  ({ POST: messagePost } = await import("@/app/api/v1/ext/runs/message/route"));
+  ({ POST: promotePost } = await import("@/app/api/v1/ext/runs/promote/route"));
 }, 180_000);
 
 afterAll(async () => {
@@ -480,12 +489,19 @@ describe("run_delegate flow arm — failure and crash windows (ADR-163 REQ-21)",
     const { buildOrchestratorResumeConsumer } = await import(
       "@/lib/domain-events/orchestrator-resume"
     );
-    const event = (
-      await pool.query(
-        `SELECT * FROM "domain_events" WHERE "run_id" = $1 AND "kind" = 'run.crashed'`,
-        [childRunId],
-      )
-    ).rows[0];
+    // Read through DRIZZLE: a raw pg row is snake_case, so a consumer reading
+    // `event.runId` / `event.taskId` would silently see `undefined`.
+    const { schema } = await import("@/test-support/graph-run-seed");
+    const { and, eq } = await import("drizzle-orm");
+    const [event] = await db
+      .select()
+      .from(schema.domainEvents)
+      .where(
+        and(
+          eq(schema.domainEvents.runId, childRunId),
+          eq(schema.domainEvents.kind, "run.crashed"),
+        ),
+      );
     const resumed: string[] = [];
 
     await buildOrchestratorResumeConsumer({
@@ -493,7 +509,7 @@ describe("run_delegate flow arm — failure and crash windows (ADR-163 REQ-21)",
       resumeFlow: async (runId: string) => {
         resumed.push(runId);
       },
-    }).handle([event]);
+    }).handle([event as unknown as DomainEventRow]);
 
     expect(resumed).toEqual([parentRunId]);
     expect((await childRun(parentRunId)).status).toBe("Running");
@@ -650,17 +666,41 @@ describe("run_delegate flow arm — failure and crash windows (ADR-163 REQ-21)",
     expect(await countLiveRuns(db as never, "flow")).toBe(0);
   });
 
-  // W10 (route side): a live flow child in Review is reached by the parent's
-  // cancellation cascade, and its FLOW pool slot is released.
-  it("W10: the cancel cascade reaches a flow child in Review", async () => {
-    const res = await delegatePost(
+  // W10 / REQ-19: the parent's cancellation cascade must reach BOTH child kinds
+  // in one transaction, emit a routable terminal for each, release each
+  // workspace, and reclaim a slot from EACH pool the tree was drawing on.
+  it("W10: the cancel cascade abandons an agent child AND a flow child, per-pool", async () => {
+    const scheduler = await import("@/lib/scheduler");
+
+    vi.mocked(scheduler.promoteNextPending).mockClear();
+
+    const flowRes = await delegatePost(
       delegateRequest(secret, flowDelegation()),
       {},
     );
-    const { childRunId } = (await res.json()) as { childRunId: string };
+    const { childRunId: flowChildId } = (await flowRes.json()) as {
+      childRunId: string;
+    };
 
     await pool.query(`UPDATE "runs" SET "status" = 'Review' WHERE "id" = $1`, [
-      childRunId,
+      flowChildId,
+    ]);
+
+    const worker = await seedAgent(ctx, { id: "worker" });
+    const agentRes = await delegatePost(
+      delegateRequest(secret, {
+        target: { agentId: worker },
+        mode: "run",
+        prompt: "agent sibling",
+      }),
+      {},
+    );
+    const { childRunId: agentChildId } = (await agentRes.json()) as {
+      childRunId: string;
+    };
+
+    await pool.query(`UPDATE "runs" SET "status" = 'Running' WHERE "id" = $1`, [
+      agentChildId,
     ]);
 
     const { cascadeAbandonRunTree } = await import(
@@ -673,9 +713,51 @@ describe("run_delegate flow arm — failure and crash windows (ADR-163 REQ-21)",
       { db },
     );
 
-    expect(result.cascadedRunIds).toContain(childRunId);
-    expect((await childRun(childRunId)).status).toBe("Abandoned");
-  });
+    expect(result.cascadedRunIds.sort()).toEqual(
+      [agentChildId, flowChildId].sort(),
+    );
+    expect((await childRun(flowChildId)).status).toBe("Abandoned");
+    expect((await childRun(agentChildId)).status).toBe("Abandoned");
+
+    // A routable terminal for EACH — without parentRunId a grandparent would
+    // never learn the sub-tree collapsed.
+    for (const runId of [flowChildId, agentChildId]) {
+      const events = (
+        await pool.query(
+          `SELECT "payload" FROM "domain_events" WHERE "run_id" = $1 AND "kind" = 'run.abandoned'`,
+          [runId],
+        )
+      ).rows;
+
+      expect(events).toHaveLength(1);
+      expect((events[0].payload as { parentRunId: string }).parentRunId).toBe(
+        parentRunId,
+      );
+    }
+
+    // The flow child provisioned a worktree, so its workspace is scheduled for
+    // removal; the agent child's `workspace: none` provisions none.
+    const flowWorkspace = (
+      await pool.query(
+        `SELECT "scheduled_removal_at" FROM "workspaces" WHERE "run_id" = $1`,
+        [flowChildId],
+      )
+    ).rows[0];
+
+    expect(flowWorkspace.scheduled_removal_at).not.toBeNull();
+
+    // Once per pool the tree actually held — a single global call would starve
+    // whichever pool it did not name.
+    const pools = vi
+      .mocked(scheduler.promoteNextPending)
+      .mock.calls.map(
+        (call) => (call[0] as { pool?: string } | undefined)?.pool,
+      )
+      .filter(Boolean)
+      .sort();
+
+    expect(pools).toEqual(["agent", "flow"]);
+  }, 60_000);
 });
 
 describe("run_delegate — the admission cap is shared across kinds at the route (ADR-163 D3)", () => {
@@ -708,4 +790,106 @@ describe("run_delegate — the admission cap is shared across kinds at the route
     expect(json.message).toContain("fan-out limit reached");
     expect(await countRows(ctx, "runs")).toBe(runsBefore);
   });
+});
+
+describe("tool support by child kind (ADR-163 D2 / REQ-14)", () => {
+  function extRequest(routePath: string, body: unknown) {
+    const req = new NextRequest(`http://localhost${routePath}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    req.headers.set("authorization", `Bearer ${secret}`);
+
+    return req;
+  }
+
+  async function reviewFlowChild(): Promise<string> {
+    const res = await delegatePost(
+      delegateRequest(secret, flowDelegation()),
+      {},
+    );
+    const { childRunId } = (await res.json()) as { childRunId: string };
+
+    await pool.query(`UPDATE "runs" SET "status" = 'Review' WHERE "id" = $1`, [
+      childRunId,
+    ]);
+
+    return childRunId;
+  }
+
+  it("run_rework on a flow child → PRECONDITION, and the child is UNTOUCHED", async () => {
+    const childRunId = await reviewFlowChild();
+    const before = await childRun(childRunId);
+
+    const res = await reworkPost(
+      extRequest("/api/v1/ext/runs/rework", {
+        childRunId,
+        prompt: "try again",
+      }),
+      {},
+    );
+
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as { code: string; message: string };
+
+    expect(json.code).toBe("PRECONDITION");
+    expect(json.message).toContain("run_rework is not supported for flow");
+
+    // A refusal is a ROUTING decision, not a state mutation: the child is still
+    // exactly where it was, and its promotion state is untouched.
+    const after = await childRun(childRunId);
+
+    expect(after.status).toBe("Review");
+    expect(after).toEqual(before);
+
+    const promotionState = (
+      await pool.query(
+        `SELECT "promotion_state" FROM "workspaces" WHERE "run_id" = $1`,
+        [childRunId],
+      )
+    ).rows[0];
+
+    // `none` is the at-launch default; the point is that the refusal did not
+    // advance it (to `claiming`/`done`).
+    expect(promotionState.promotion_state).toBe("none");
+  }, 60_000);
+
+  it("run_message on a flow child → PRECONDITION naming the actual reason", async () => {
+    const childRunId = await reviewFlowChild();
+
+    const res = await messagePost(
+      extRequest("/api/v1/ext/runs/message", {
+        childRunId,
+        prompt: "hello?",
+      }),
+      {},
+    );
+
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as { code: string; message: string };
+
+    expect(json.code).toBe("PRECONDITION");
+    // Not the old blanket "no persistent child …", which was false: the child
+    // exists, it just has no addressable agent session.
+    expect(json.message).toContain("run_message is not supported for flow");
+  }, 60_000);
+
+  it("run_promote on the SAME child still reaches the promote service — the refusals are routing, not a block on the child", async () => {
+    const childRunId = await reviewFlowChild();
+
+    const res = await promotePost(
+      extRequest("/api/v1/ext/runs/promote", { childRunId }),
+      {},
+    );
+
+    // The child has no real merge base in this fixture, so the outcome is the
+    // promote service's OWN result — the point is that `run_promote` is not
+    // refused for being a flow child the way rework/message are.
+    const json = (await res.json()) as { code?: string; message?: string };
+
+    expect(json.code ?? "").not.toBe("PRECONDITION");
+    expect(json.message ?? "").not.toContain("not supported for flow");
+  }, 60_000);
 });

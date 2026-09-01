@@ -699,17 +699,17 @@ No new env var, port, binary, config-file path, or `package.json` script. `MAIST
 
 ### Phase 7 — `run_plan` flow targets + the as-plan auto-launcher
 
-- [ ] **T7.1 — Discriminated target in `run_plan`.** (depends on Phase 6)
+- [x] **T7.1 — Discriminated target in `run_plan`.** (depends on Phase 6)
   `planTaskSchema.target` → `delegationTargetSchema`; per-kind option allow-list (`workspace` agent-only, `runnerOverride` both). Pre-tx validation (e) dispatches per target kind and still **collects all failures** so every bad target is reported at once with **no rows written**. A flow entry's `createTask` sets `flowId` = the resolved child flow and `delegationSpec = {kind:'flow', flowId, runnerOverride?}`.
   *Acceptance*: a mixed agent+flow plan writes all tasks + `requires` edges in **one** transaction; one bad flow target writes nothing and lists both failures.
   *Satisfies*: REQ-01, REQ-11, REQ-12.
 
-- [ ] **T7.2 — Source-task launch dispatch + admission.** (depends on T7.1)
+- [x] **T7.2 — Source-task launch dispatch + admission.** (depends on T7.1)
   Post-commit source launch (`plan/route.ts:410-450`) branches on `delegationSpecKind` → `launchAgentRun` vs `launchRun`, and the pre-tx bound calls `admitDelegatedChild(tx, {parentRunId, incoming: tasks.length})` — replacing the per-call-only `tasks.length > cap` check so the batch is bounded by **live children + batch size** (REQ-15). A source-launch failure still leaves the task in `Backlog`.
   *Logging*: `log.info({key, taskId, targetKind, childRunId}, "[delegation.plan] source task launched")`; the existing failure `log.warn` gains `targetKind`.
   *Satisfies*: REQ-09, REQ-15.
 
-- [ ] **T7.3 — Widen `auto_launch_run_plan` — and guard its edge (H1/H4).** (depends on T7.2)
+- [x] **T7.3 — Widen `auto_launch_run_plan` — and guard its edge (H1/H4).** (depends on T7.2)
   `web/lib/domain-events/auto-launch.ts`:
   - `if (payload.runKind !== "agent") continue;` (`:203`) → an **allow-list** `!== "agent" && !== "flow"`, so `scratch` and any future kind stay rejected by default;
   - `autoPromoteAsPlanChild` (`:214`) now also runs for flow children (`promoteChildRunForToken` is already kind-agnostic);
@@ -718,7 +718,7 @@ No new env var, port, binary, config-file path, or `package.json` script. `MAIST
   *Acceptance*: a mixed diamond DAG (agent → flow → agent) flows end-to-end — sources launch, each child reaches `Review`, auto-promotes to `Done`, advances its task, releases the dependent, and the dependent launches with the right launcher; a burst that would exceed the cap is refused per-candidate and logged, never thrown (the consumer's idempotent contract).
   *Satisfies*: REQ-09, REQ-15, REQ-19.
 
-- [ ] **T7.4 — as-plan flow child: auto-promote vs manual, and the conflict path.** (depends on T7.3)
+- [x] **T7.4 — as-plan flow child: auto-promote vs manual, and the conflict path.** (depends on T7.3)
   One table-driven test, three rows: a `launch_mode='auto'` flow child in `Review` **is** auto-promoted (system actor, `local_merge`) → `Done` → `run.done` re-enters the consumer → task `Done` → `requires` released; a **manual** (as-run) flow child in `Review` is **not** auto-promoted (waits for `run_promote`) — the `launch_mode` discriminant; an auto child whose promote **conflicts** stays `Review`, surfaces `CONFLICT`, flips no sibling, and is never auto-resolved (REQ-20: `Review` ≠ safe-to-ship).
   *Satisfies*: REQ-14, REQ-20.
 
@@ -728,13 +728,13 @@ No new env var, port, binary, config-file path, or `package.json` script. `MAIST
 
 ### Phase 8 — Tool support matrix + cascade
 
-- [ ] **T8.1 — Explicit `run_rework` / `run_message` refusals (D2).** (depends on Phase 7)
+- [x] **T8.1 — Explicit `run_rework` / `run_message` refusals (D2).** (depends on Phase 7)
   **RED**: a flow child in `Review` → `run_rework` currently reaches `reworkChildRun` and fails with its internal message; assert instead the route-level `PRECONDITION 409` — *"run_rework is not supported for flow children — promote or cancel it, or resolve it through its own review loop"*.
   **GREEN**: extend the child `select` with `runKind` and refuse **before** dispatch (`reworkChildRun`'s own `runKind !== "agent"` guard stays as defence in depth). Symmetric explicit refusal in `message/route.ts`.
   *Acceptance*: the flow child is untouched by the refusal (still `Review`, `promotion_state` unchanged) and `run_promote` on the same child still succeeds — proving the refusal is a routing decision, not a state mutation.
   *Satisfies*: REQ-09, REQ-14.
 
-- [ ] **T8.2 — Cancellation cascade covers flow children.** (depends on Phase 7)
+- [x] **T8.2 — Cancellation cascade covers flow children.** (depends on Phase 7)
   An orchestrator with one agent child (`Running`) and one flow child (`Review`); abandon the orchestrator; assert **both** flip `Abandoned`, `run.abandoned` fires for each with `parentRunId`, workspaces get `scheduled_removal_at`, and `promoteNextPending` runs once **per pool** (`flow` and `agent`).
   *Satisfies*: REQ-19.
 

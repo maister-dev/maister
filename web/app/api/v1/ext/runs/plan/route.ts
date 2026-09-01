@@ -10,14 +10,17 @@ import { launchAgentRun } from "@/lib/agents/launch";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { orchestratorMaxFanout } from "@/lib/instance-config";
 import {
-  orchestratorMaxDepth,
-  orchestratorMaxFanout,
-} from "@/lib/instance-config";
+  resolveDelegatableFlow,
+  type DelegatableFlow,
+} from "@/lib/flows/delegatable-flow";
+import { admitDelegatedChild } from "@/lib/orchestrator/admission";
 import {
   delegationTargetKind,
   delegationTargetSchema,
 } from "@/lib/orchestrator/delegation-target";
+import { launchRun } from "@/lib/services/runs";
 import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
 import { addTaskRelation } from "@/lib/social/relations";
 import { createTask } from "@/lib/services/tasks";
@@ -62,28 +65,6 @@ const bodySchema = z
 
 type PlanBody = z.infer<typeof bodySchema>;
 type PlanTask = z.infer<typeof planTaskSchema>;
-
-// Walk the parent_run_id chain up from `startId`, counting hops (matches
-// delegate/route.ts). The parent run itself is depth 0; each ancestor adds 1.
-async function delegationDepth(db: Db, startId: string): Promise<number> {
-  let depth = 0;
-  let currentId: string | null = startId;
-  const cap = 64;
-
-  while (currentId && depth < cap) {
-    const rows = (await db
-      .select({ parentRunId: runs.parentRunId })
-      .from(runs)
-      .where(eq(runs.id, currentId))) as { parentRunId: string | null }[];
-    const parentRunId: string | null = rows[0]?.parentRunId ?? null;
-
-    if (!parentRunId) break;
-    depth += 1;
-    currentId = parentRunId;
-  }
-
-  return depth;
-}
 
 function titleFromPrompt(prompt: string): string {
   const firstLine = prompt.split("\n")[0].trim();
@@ -189,6 +170,10 @@ export async function POST(
         );
       }
 
+      // ADR-163: a cheap pre-check so an obviously oversized batch is refused
+      // before any resolution work. The BINDING bound is
+      // `admitDelegatedChild(live + batch size)` inside the DAG transaction —
+      // this one cannot see the orchestrator's already-running children.
       if (planTasks.length > orchestratorMaxFanout()) {
         return NextResponse.json(
           {
@@ -269,35 +254,50 @@ export async function POST(
 
       const rootRunId = parent.rootRunId ?? parent.id;
 
-      // (d) run-tree depth: the child tasks launch one level below the parent.
-      const depth = await delegationDepth(db, parent.id);
-
-      if (depth + 1 >= orchestratorMaxDepth()) {
-        return NextResponse.json(
-          {
-            code: "CONFIG",
-            message: `delegation depth limit reached (${orchestratorMaxDepth()})`,
-          },
-          { status: httpStatusForExtCode("CONFIG") },
-        );
-      }
+      // (d) run-tree depth is enforced by `admitDelegatedChild` inside the DAG
+      // transaction (ADR-163) — the same helper, the same walk, the same lock as
+      // every other child-creation edge. The copy that used to live here is gone.
 
       // (e) every target must resolve (enablement+trust+pinned revision).
       // Collect ALL failures so the caller sees every bad target at once; NO
       // rows are written on any failure.
       //
       // ADR-163: the target is a discriminated union, so the resolver is chosen
-      // per entry. Flow entries are refused for now — the flow arm of the
-      // as-plan pipeline (spec persistence + per-kind source launch + the
-      // widened auto-launcher) lands together, and half of it would create
-      // tasks no launcher can start.
+      // per entry — the agent catalog for one, the project's enabled+trusted
+      // flows for the other. A batch may MIX both kinds. `workspace` is
+      // agent-only, so a flow entry carrying it is collected here as a failure
+      // rather than silently dropped.
       const resolveFailures: string[] = [];
+      const resolvedFlows = new Map<string, DelegatableFlow>();
 
       for (const t of planTasks) {
         if (delegationTargetKind(t.target) === "flow") {
-          resolveFailures.push(
-            `${t.key} (${t.target.flowId}): flow targets are not yet supported in run_plan`,
-          );
+          if (t.workspace !== undefined) {
+            resolveFailures.push(
+              `${t.key} (${t.target.flowId}): workspace is not supported for flow targets (a flow run always provisions its own worktree)`,
+            );
+            continue;
+          }
+
+          try {
+            resolvedFlows.set(
+              t.key,
+              await resolveDelegatableFlow(
+                {
+                  projectId: ctx.projectId,
+                  flowId: t.target.flowId as string,
+                },
+                db,
+              ),
+            );
+          } catch (err) {
+            resolveFailures.push(
+              `${t.key} (${t.target.flowId}): ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          }
+
           continue;
         }
 
@@ -332,29 +332,53 @@ export async function POST(
         keyToTaskId = await db.transaction(async (tx: Db) => {
           const map = new Map<string, string>();
 
+          // ADR-163: the whole batch is admitted ONCE, under the
+          // per-orchestrator lock, as `live children + batch size` — replacing
+          // the pre-ADR-163 check that compared the batch LENGTH alone against
+          // the cap and so ignored every child already running.
+          await admitDelegatedChild(tx, {
+            parentRunId: parent.id,
+            incoming: planTasks.length,
+          });
+
           for (const t of planTasks) {
+            const resolvedFlow = resolvedFlows.get(t.key) ?? null;
             const created = await createTask(
               {
                 title: t.title ?? titleFromPrompt(t.prompt),
                 prompt: t.prompt,
-                flowId: null,
+                // A flow entry's task carries the SELECTED flow; an agent
+                // entry's task stays flowless (a simple-intent task awaiting
+                // triage), unchanged.
+                flowId: resolvedFlow?.flowId ?? null,
               },
               { projectId: ctx.projectId, actorUserId: null },
               tx,
             );
 
             // Stamp the as-plan launch intent — createTask does not accept it.
+            // The spec is `kind`-discriminated (ADR-163) so the auto-launcher
+            // dispatches on it rather than sniffing for `agentId`.
             await tx
               .update(tasks)
               .set({
                 launchMode: "auto",
-                delegationSpec: {
-                  agentId: t.target.agentId,
-                  ...(t.workspace ? { workspace: t.workspace } : {}),
-                  ...(t.runnerOverride
-                    ? { runnerOverride: t.runnerOverride }
-                    : {}),
-                },
+                delegationSpec: resolvedFlow
+                  ? {
+                      kind: "flow" as const,
+                      flowId: resolvedFlow.flowId,
+                      ...(t.runnerOverride
+                        ? { runnerOverride: t.runnerOverride }
+                        : {}),
+                    }
+                  : {
+                      kind: "agent" as const,
+                      agentId: t.target.agentId as string,
+                      ...(t.workspace ? { workspace: t.workspace } : {}),
+                      ...(t.runnerOverride
+                        ? { runnerOverride: t.runnerOverride }
+                        : {}),
+                    },
                 updatedAt: new Date(),
               })
               .where(eq(tasks.id, created.taskId));
@@ -430,34 +454,79 @@ export async function POST(
         };
 
         if (t.dependsOn.length === 0) {
-          try {
-            const launched = await launchAgentRun({
-              // Every entry reaching this point is an agent target — the flow
-              // arm is refused in pre-tx validation (e) until its whole
-              // pipeline lands.
-              agentId: t.target.agentId as string,
-              projectId: ctx.projectId,
-              taskId: childTaskId,
-              launchOverrideRunnerId: t.runnerOverride ?? null,
-              parentRunId,
-              rootRunId,
-              launchMode: "auto",
-              trigger: { source: "manual" },
-              db,
-            });
+          const resolvedFlow = resolvedFlows.get(t.key) ?? null;
 
-            if (!("deduped" in launched)) entry.childRunId = launched.runId;
+          try {
+            // ADR-163: branch on the entry's target kind BEFORE calling a
+            // kind-specific launcher. A flow source goes through the canonical
+            // flow pipeline with its carrier task (the as-plan task IS the
+            // carrier here — it already exists and already carries the flow).
+            if (resolvedFlow) {
+              const launched = await launchRun(
+                {
+                  taskId: childTaskId,
+                  flowId: resolvedFlow.flowId,
+                  runnerId: t.runnerOverride ?? undefined,
+                  parentRunId,
+                  rootRunId,
+                  launchMode: "auto",
+                  delegationSnapshot: {
+                    kind: "flow",
+                    flowId: resolvedFlow.flowId,
+                    flowRefId: resolvedFlow.flowRefId,
+                    flowRevisionId: resolvedFlow.revisionId,
+                    resolvedRevision: resolvedFlow.resolvedRevision,
+                    engineMin: resolvedFlow.engineMin,
+                    engineMax: resolvedFlow.engineMax,
+                    carrierTaskId: childTaskId,
+                    mode: "task",
+                    runnerOverride: t.runnerOverride ?? null,
+                  },
+                },
+                { actorUserId: null, authorize: async () => {} },
+                db,
+              );
+
+              entry.childRunId = launched.runId;
+            } else {
+              const launched = await launchAgentRun({
+                agentId: t.target.agentId as string,
+                projectId: ctx.projectId,
+                taskId: childTaskId,
+                launchOverrideRunnerId: t.runnerOverride ?? null,
+                parentRunId,
+                rootRunId,
+                launchMode: "auto",
+                trigger: { source: "manual" },
+                db,
+              });
+
+              if (!("deduped" in launched)) entry.childRunId = launched.runId;
+            }
+
+            log.info(
+              {
+                parentRunId,
+                key: t.key,
+                taskId: childTaskId,
+                targetKind: resolvedFlow ? "flow" : "agent",
+                childRunId: entry.childRunId,
+              },
+              "[delegation.plan] source task launched",
+            );
           } catch (err) {
             log.warn(
               {
                 parentRunId,
                 key: t.key,
                 taskId: childTaskId,
+                targetKind: resolvedFlow ? "flow" : "agent",
                 agentId: t.target.agentId,
+                flowId: t.target.flowId,
                 code: isMaisterError(err) ? err.code : "UNKNOWN",
                 err: err instanceof Error ? err.message : String(err),
               },
-              "run_plan source-task launch failed — task stays Backlog for the auto-launcher",
+              "[delegation.plan] source task launch refused — task stays Backlog for the auto-launcher",
             );
           }
         }

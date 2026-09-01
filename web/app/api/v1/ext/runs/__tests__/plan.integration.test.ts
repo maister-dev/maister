@@ -409,15 +409,24 @@ describe("POST /api/v1/ext/runs/plan", () => {
       taskId: orchTaskId,
     });
 
-    // Build a run-tree ancestor chain so the orchestrator run sits at DEPTH 2.
-    // With MAISTER_ORCHESTRATOR_MAX_DEPTH=3 the route guard is `depth + 1 >= 3`,
-    // so this plan's children would land at depth 3 → refused (CONFIG) pre-tx.
+    // Build a run-tree ancestor chain so the orchestrator run sits at DEPTH 3.
+    //
+    // ADR-163 unified BOTH delegation entry points on `admitDelegatedChild`,
+    // whose bound is `parentDepth >= MAISTER_ORCHESTRATOR_MAX_DEPTH` — the
+    // `run_delegate` semantic, and the one `MAISTER_ORCHESTRATOR_MAX_DEPTH`
+    // documents ("the longest parent_run_id chain a delegated child may sit
+    // at"). `run_plan` previously used `parentDepth + 1 >= max`, refusing ONE
+    // LEVEL EARLIER than the documented bound and than its sibling route; that
+    // off-by-one is what this test used to pin. With max=3 the refusal now needs
+    // the orchestrator itself at depth 3.
     const a1 = randomUUID(); // depth 0 (no parent)
     const a2 = randomUUID(); // depth 1 (parent a1)
+    const a3 = randomUUID(); // depth 2 (parent a2)
 
     for (const [id, parent] of [
       [a1, null],
       [a2, a1],
+      [a3, a2],
     ] as const) {
       await pool.query(
         `INSERT INTO "runs" ("id", "run_kind", "project_id", "status",
@@ -433,7 +442,7 @@ describe("POST /api/v1/ext/runs/plan", () => {
     }
     await pool.query(
       `UPDATE "runs" SET "parent_run_id" = $1, "root_run_id" = $2 WHERE "id" = $3`,
-      [a2, a1, parentRunId],
+      [a3, a1, parentRunId],
     );
 
     const before = await countTasks();

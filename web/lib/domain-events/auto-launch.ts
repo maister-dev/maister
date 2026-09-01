@@ -16,10 +16,13 @@ import {
   type PromoteRunResult,
 } from "@/lib/runs/promote";
 import { countFailureTerminalSharedSiblings } from "@/lib/runs/shared-tree";
+import { resolveDelegatableFlow } from "@/lib/flows/delegatable-flow";
 import {
   asAgentDelegationSpec,
+  asFlowDelegationSpec,
   delegationSpecKind,
 } from "@/lib/orchestrator/delegation-spec";
+import { launchRun } from "@/lib/services/runs";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -39,6 +42,10 @@ const log = pino({
 type LaunchFn = (
   input: Parameters<typeof launchAgentRun>[0],
 ) => Promise<LaunchAgentRunResult>;
+
+// ADR-163: the FLOW arm's launcher, injectable on the same seam as the agent
+// one so the suites can drive dispatch without provisioning a worktree.
+type LaunchFlowFn = typeof launchRun;
 
 type PromoteFn = (
   childRunId: string,
@@ -186,7 +193,12 @@ async function autoPromoteAsPlanChild(
 // exactly once over its lifetime). A redelivered window re-runs handle, sees
 // the already-created run, and skips.
 export function buildAutoLaunchRunPlanConsumer(
-  opts: { db?: Db; launch?: LaunchFn; promote?: PromoteFn } = {},
+  opts: {
+    db?: Db;
+    launch?: LaunchFn;
+    launchFlow?: LaunchFlowFn;
+    promote?: PromoteFn;
+  } = {},
 ): DomainEventConsumer {
   return {
     id: "auto_launch_run_plan",
@@ -194,6 +206,7 @@ export function buildAutoLaunchRunPlanConsumer(
     async handle(events: DomainEventRow[]): Promise<void> {
       const _db = opts.db ?? getDb();
       const launch = opts.launch ?? launchAgentRun;
+      const launchFlow = opts.launchFlow ?? launchRun;
       const promote = opts.promote ?? promoteChildRunForToken;
 
       for (const event of events) {
@@ -202,9 +215,12 @@ export function buildAutoLaunchRunPlanConsumer(
 
         const payload = (event.payload ?? {}) as Record<string, unknown>;
 
-        // Branch on run_kind FIRST (skill-context rule 207): only an agent
-        // child settled event carries an orchestrator parent_run_id.
-        if (payload.runKind !== "agent") continue;
+        // Branch on run_kind FIRST (skill-context rule 207). ADR-163 widens the
+        // as-plan machinery to FLOW children, and does it as an ALLOW-LIST
+        // rather than by deleting the check: `scratch` — and any kind added
+        // later — stays rejected by default. Deleting it would have opened the
+        // as-plan pipeline to every settled run in the platform.
+        if (payload.runKind !== "agent" && payload.runKind !== "flow") continue;
 
         const parentRunId = payload.parentRunId;
 
@@ -215,7 +231,10 @@ export function buildAutoLaunchRunPlanConsumer(
         // M37 (ADR-100): an as-plan child reaching Review auto-promotes; the
         // resulting run.done re-enters this consumer to advance the task +
         // release dependents. Manual (as-run) children are skipped here — the
-        // live coordinator promotes them via run_promote.
+        // live coordinator promotes them via run_promote. ADR-163: this now
+        // fires for a FLOW child too — `promoteChildRunForToken` is
+        // kind-agnostic, and without it an as-plan flow child would sit in
+        // Review forever and never release its dependents.
         if (event.kind === "run.review") {
           await autoPromoteAsPlanChild(_db, event, promote);
           continue;
@@ -310,16 +329,21 @@ export function buildAutoLaunchRunPlanConsumer(
             // `!spec.agentId` would silently reclassify a flow spec as a
             // malformed agent one and skip it forever. Flow candidates are
             // widened in a later phase; today only the agent arm launches.
-            const spec = asAgentDelegationSpec(candidate.delegationSpec);
+            // ADR-163: dispatch on the spec's KIND. Reading it through the
+            // shared helpers rather than sniffing `!spec.agentId` is what keeps
+            // a flow spec from being silently reclassified as a malformed agent
+            // one and skipped forever without an error.
+            const agentSpec = asAgentDelegationSpec(candidate.delegationSpec);
+            const flowSpec = asFlowDelegationSpec(candidate.delegationSpec);
 
-            if (!spec) {
+            if (!agentSpec && !flowSpec) {
               log.warn(
                 {
                   eventId: event.id,
                   taskId: candidate.taskId,
                   specKind: delegationSpecKind(candidate.delegationSpec),
                 },
-                "auto-launch: as-plan task has no launchable agent delegation_spec — skip",
+                "auto-launch: as-plan task has no launchable delegation_spec — skip",
               );
               continue;
             }
@@ -346,6 +370,66 @@ export function buildAutoLaunchRunPlanConsumer(
             // starving the rest. Idempotency is the hasAnyRun guard above plus
             // the singleton dispatcher's commit-before-cursor-advance: a
             // redelivered window re-runs handle, sees the run, and skips.
+            // ADR-163: the depth + shared fan-out bound also applies HERE.
+            // This edge has never had either check — a burst of released
+            // dependents could fan an orchestrator out without limit — and the
+            // guard is taken inside each launcher's run-insert transaction, so
+            // it is decided under the same per-orchestrator lock as the other
+            // two edges. A refusal surfaces through the catch below as a logged
+            // skip, never a throw: this consumer is at-least-once, so a throw
+            // would redeliver the whole window forever.
+            if (flowSpec) {
+              // Re-resolve the flow HERE rather than trusting the stored spec:
+              // a dependent may be released hours after the plan was submitted,
+              // and the flow can have been disabled, untrusted, or upgraded to
+              // an incompatible revision in between. The snapshot must record
+              // what this launch actually resolved, so there is nothing to
+              // record until it does — a placeholder revision id would be a
+              // lie a recovery path would later read as truth. A refusal falls
+              // into the catch below as a logged skip.
+              const resolved = await resolveDelegatableFlow(
+                { projectId: candidate.projectId, flowId: flowSpec.flowId },
+                _db,
+              );
+              const launched = await launchFlow(
+                {
+                  taskId: candidate.taskId,
+                  flowId: resolved.flowId,
+                  runnerId: flowSpec.runnerOverride ?? undefined,
+                  parentRunId,
+                  rootRunId,
+                  launchMode: "auto",
+                  delegationSnapshot: {
+                    kind: "flow",
+                    flowId: resolved.flowId,
+                    flowRefId: resolved.flowRefId,
+                    flowRevisionId: resolved.revisionId,
+                    resolvedRevision: resolved.resolvedRevision,
+                    engineMin: resolved.engineMin,
+                    engineMax: resolved.engineMax,
+                    carrierTaskId: candidate.taskId,
+                    mode: "task",
+                    runnerOverride: flowSpec.runnerOverride ?? null,
+                  },
+                },
+                { actorUserId: null, authorize: async () => {} },
+                _db,
+              );
+
+              log.info(
+                {
+                  eventId: event.id,
+                  taskId: candidate.taskId,
+                  flowId: flowSpec.flowId,
+                  runId: launched.runId,
+                  status: launched.status,
+                },
+                "[delegation.plan] as-plan FLOW dependent launched",
+              );
+              continue;
+            }
+
+            const spec = agentSpec!;
             const result = await launch({
               agentId: spec.agentId,
               projectId: candidate.projectId,

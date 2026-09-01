@@ -90,7 +90,7 @@ export async function POST(
       // Only a direct child of the bound orchestrator, in the token's project,
       // and currently in Review may be reworked.
       const rows = await db
-        .select({ id: runs.id, status: runs.status })
+        .select({ id: runs.id, status: runs.status, runKind: runs.runKind })
         .from(runs)
         .where(
           and(
@@ -106,6 +106,25 @@ export async function POST(
           {
             code: "PRECONDITION",
             message: "run is not a child of the bound orchestrator run",
+          },
+          { status: httpStatusForExtCode("PRECONDITION") },
+        );
+      }
+
+      // ADR-163 D2: `run_rework` does NOT apply to a FLOW child. A flow child
+      // owns its own `human`/`rework` loop, and grafting the coordinator's
+      // prompt onto it would need a re-entry contract that overlaps ADR-160's
+      // rework claim. Refused HERE, before dispatch, so the child is provably
+      // untouched — `reworkChildRun`'s own `runKind !== "agent"` guard stays as
+      // defence in depth, but a route that reached it would already have
+      // committed to a kind-specific path. Branch on run_kind BEFORE calling a
+      // kind-specific mechanism (skill-context rule 207).
+      if (child.runKind !== "agent") {
+        return NextResponse.json(
+          {
+            code: "PRECONDITION",
+            message:
+              "run_rework is not supported for flow children — promote or cancel it, or resolve it through its own review loop",
           },
           { status: httpStatusForExtCode("PRECONDITION") },
         );
