@@ -296,6 +296,7 @@ erDiagram
         boolean session_fallback "0040: DEFAULT false; true when resume fell back to new_session"
         text rework_from_node "origin node on rework re-entry"
         text owner_user_id FK "0011 takeover owner (users.id SET NULL)"
+        text claim_head_sha "0126: branch HEAD when the claim row was appended; the return measures operator commits from it"
         text base_ref "0011 merge-base SHA for returned range"
         text returned_commits "0011 raw git log base..branch"
         text returned_diff "0011 raw git diff base..branch"

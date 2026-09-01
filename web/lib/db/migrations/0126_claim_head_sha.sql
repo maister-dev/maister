@@ -1,0 +1,1 @@
+ALTER TABLE "node_attempts" ADD COLUMN "claim_head_sha" text;

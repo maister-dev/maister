@@ -1577,3 +1577,80 @@ describe("rework claim — the cap gate is globally serialized", () => {
     await s.cleanup();
   });
 });
+
+// Codex finding 5 — the zero-commit guard counted from the project merge-base,
+// so it only ever fired on a branch sitting exactly at main. A run that reached
+// `Review` ALWAYS carries the commits its flow made, so in production the guard
+// was dead: claim, touch nothing, Return, and the run re-entered validation
+// instead of being told to Release. The decision now comes from the claim-time
+// HEAD recorded on the claim row (migration 0126).
+describe("rework return — 'did the operator commit anything' is measured from the claim", () => {
+  // THE production shape the old test missed: pre-claim commits on the branch.
+  it("refuses a no-change return on a branch that already has flow commits", async () => {
+    const s = await seed();
+
+    // The flow's own work, committed BEFORE the claim is taken.
+    await commitInWorktree(s.worktreePath, "impl.txt", "flow work\n", "feat");
+    await claimAs(s);
+
+    const claim = (await claimRows(s.runId))[0];
+
+    // The claim recorded where the branch stood when it was taken.
+    expect(claim.claimHeadSha).toMatch(/^[0-9a-f]{40}$/);
+
+    const res = await returnPOST(returnReq(s.runId), {
+      params: Promise.resolve({ runId: s.runId }),
+    });
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("CONFLICT");
+    expect((await readRun(s.runId)).status).toBe("HumanWorking");
+    expect((await claimRows(s.runId))[0].endedAt).toBeNull();
+
+    await s.cleanup();
+  });
+
+  it("accepts a return that added exactly one commit on top of flow commits", async () => {
+    const s = await seed();
+
+    await commitInWorktree(s.worktreePath, "impl.txt", "flow work\n", "feat");
+    await claimAs(s);
+    await commitInWorktree(s.worktreePath, "fix.txt", "operator\n", "fix");
+
+    const res = await returnPOST(returnReq(s.runId), {
+      params: Promise.resolve({ runId: s.runId }),
+    });
+
+    expect(res.status).toBe(200);
+    // The reported count is the OPERATOR's ONE commit, not the branch's two.
+    expect((await res.json()).returnedCommitCount).toBe(1);
+
+    await s.cleanup();
+  });
+
+  // Back-compat: a claim taken before the column existed has no recorded head,
+  // and must keep the historical merge-base behaviour rather than refusing a
+  // return that really did carry work.
+  it("falls back to the merge-base count for a pre-migration claim row", async () => {
+    const s = await seed();
+
+    await commitInWorktree(s.worktreePath, "impl.txt", "flow work\n", "feat");
+    await claimAs(s);
+
+    // Simulate a row claimed before migration 0126.
+    await db
+      .update(nodeAttempts)
+      .set({ claimHeadSha: null })
+      .where(eq(nodeAttempts.runId, s.runId));
+
+    const res = await returnPOST(returnReq(s.runId), {
+      params: Promise.resolve({ runId: s.runId }),
+    });
+
+    // The branch has flow commits, so the legacy count is positive and the
+    // return is accepted — exactly as it behaved before this change.
+    expect(res.status).toBe(200);
+
+    await s.cleanup();
+  });
+});

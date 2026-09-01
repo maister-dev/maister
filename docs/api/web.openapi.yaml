@@ -7816,7 +7816,11 @@ paths:
                       path and re-opens a fresh `human_review` HITL.
                   returnedCommitCount:
                     type: integer
-                    description: Number of commits in `git log <base>..<branch>` (display only).
+                    description: |
+                      Commits the reviewer added while holding the takeover —
+                      `claim_head_sha..branch` (migration `0126`), falling back
+                      to `git log <base>..<branch>` when the claim row has no
+                      recorded head. Display only.
               examples:
                 returned:
                   summary: Return succeeded
@@ -8127,7 +8131,17 @@ paths:
                     enum: [Running]
                   returnedCommitCount:
                     type: integer
-                    description: Commits in `base..branch` recorded on the claim row.
+                    description: |
+                      Commits the OPERATOR added while holding the claim —
+                      `claim_head_sha..branch`, where `claim_head_sha` is the
+                      branch HEAD recorded when the claim row was appended
+                      (migration `0126`). NOT the merge-base range: a run that
+                      reached `Review` already carries every commit its flow
+                      made, so that count is positive even when the operator
+                      changed nothing, which is what made the zero-commit
+                      refusal below unreachable. Falls back to the merge-base
+                      count for a claim row with no recorded head (claimed
+                      before the column existed, or an unresolvable SHA).
                   fastForwarded:
                     type: boolean
                     description: |
@@ -8195,7 +8209,7 @@ paths:
                     code: CONFLICT
                     message: "worktree has uncommitted changes — commit or stash before returning"
                 emptyReturn:
-                  summary: CONFLICT — nothing to validate
+                  summary: CONFLICT — the operator committed nothing
                   value:
                     code: CONFLICT
                     message: "no commits to return — release the claim instead"

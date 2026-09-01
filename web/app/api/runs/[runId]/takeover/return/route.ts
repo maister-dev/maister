@@ -26,6 +26,7 @@ import {
 import { downstreamOf } from "@/lib/flows/graph/runner-graph";
 import { loadRun, loadRunProjectId } from "@/lib/flows/graph/runner-core";
 import { runFlow } from "@/lib/flows/runner";
+import { countOperatorCommits } from "@/lib/runs/claim-head";
 import { loadProjectMainBranch } from "@/lib/runs/takeover-context";
 import { markReturnedToRunning } from "@/lib/runs/state-transitions";
 import {
@@ -181,6 +182,7 @@ export async function POST(
         nodeId: active.nodeId,
         nodeAttemptId: active.id,
         attempt: active.attempt,
+        claimHeadSha: active.claimHeadSha ?? null,
       };
     });
 
@@ -251,9 +253,19 @@ export async function POST(
       );
     }
 
-    const commitCountPre = returnedCommits
+    // The merge-base range stays the REVIEW evidence (the whole branch); whether
+    // the reviewer actually committed anything is answered from the claim-time
+    // HEAD, because a run's branch already carries every commit its flow made.
+    const branchCommitCount = returnedCommits
       .split("\n")
       .filter((l) => l.length > 0).length;
+    const operatorCommitCount = await countOperatorCommits({
+      worktreePath,
+      branch,
+      claimHeadSha: intent.claimHeadSha,
+      runId,
+    });
+    const commitCountPre = operatorCommitCount ?? branchCommitCount;
 
     if (commitCountPre === 0) {
       throw new MaisterError(
@@ -263,7 +275,14 @@ export async function POST(
     }
 
     log.info(
-      { runId, nodeId, baseRef, commitCount: commitCountPre },
+      {
+        runId,
+        nodeId,
+        baseRef,
+        commitCount: commitCountPre,
+        branchCommitCount,
+        claimHeadSha: intent.claimHeadSha,
+      },
       "takeover return phase 2a — git log/diff captured",
     );
 

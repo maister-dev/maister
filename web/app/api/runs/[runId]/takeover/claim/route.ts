@@ -17,6 +17,7 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import { claimTakeover } from "@/lib/flows/graph/ledger";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { loadRun, loadRunProjectId } from "@/lib/flows/graph/runner-core";
+import { captureClaimHead } from "@/lib/runs/claim-head";
 import { markHumanWorking } from "@/lib/runs/state-transitions";
 
 // FIXME(any): dual drizzle-orm peer-dep variants — Db handle.
@@ -159,6 +160,15 @@ export async function POST(
     // (23505) — a non-MaisterError → 500. With the CAS first, the loser's CAS
     // returns {ok:false} → deterministic 409 CONFLICT and it never reaches the
     // unique-violating INSERT.
+    // ADR-030 shares the ADR-160 claim-head capture: both hand the same worktree
+    // to a human and both ask "did they commit anything" on return. Read before
+    // the transaction — git I/O has no place inside one.
+    const claimHeadSha = await captureClaimHead({
+      worktreePath: loaded.workspace.worktreePath,
+      branch: loaded.workspace.branch,
+      runId,
+    });
+
     const claimed: { ok: boolean; assignmentId: string | null } =
       await db.transaction(async (tx: Db) => {
         const cas = await markHumanWorking(runId, user.id, { db: tx });
@@ -212,6 +222,7 @@ export async function POST(
           runId,
           nodeId,
           userId: user.id,
+          claimHeadSha,
           db: tx,
         });
         const manualAssignment = await createAssignment({

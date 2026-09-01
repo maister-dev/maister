@@ -1129,6 +1129,7 @@ table node_attempts {
   rework_from_node text
   acp_session_id text
   checkpoint_ref text
+  claim_head_sha text
   session_policy text
   session_fallback boolean [not null, default: false]
   auto_retry boolean [not null, default: false]

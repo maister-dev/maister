@@ -31,6 +31,7 @@ import {
 import { loadRun, loadRunProjectId } from "@/lib/flows/graph/runner-core";
 import { downstreamOf } from "@/lib/flows/graph/runner-graph";
 import { runFlow } from "@/lib/flows/runner";
+import { countOperatorCommits } from "@/lib/runs/claim-head";
 import { resolveReentryNode } from "@/lib/runs/reentry";
 import { ingestForReworkReturn } from "@/lib/runs/rework-claim-ingest";
 import { markReturnedToRunning } from "@/lib/runs/state-transitions";
@@ -221,6 +222,7 @@ export async function POST(
         nodeId: active.nodeId,
         nodeAttemptId: active.id,
         attempt: active.attempt,
+        claimHeadSha: active.claimHeadSha ?? null,
       };
     });
 
@@ -242,7 +244,13 @@ export async function POST(
     const reentryNode = reentry.nodeId;
 
     log.info(
-      { runId, nodeId, reentryNode, reentrySource: reentry.source, ownerUserId: user.id },
+      {
+        runId,
+        nodeId,
+        reentryNode,
+        reentrySource: reentry.source,
+        ownerUserId: user.id,
+      },
       "rework return phase 1 — intent verified",
     );
 
@@ -285,9 +293,20 @@ export async function POST(
       );
     }
 
-    const commitCount = returnedCommits
+    // The merge-base range is the REVIEW evidence — the reviewer wants the whole
+    // branch — but it cannot answer "did the operator commit anything", because
+    // a run that reached Review already carries every commit its flow made.
+    // That question is answered from the claim-time HEAD.
+    const branchCommitCount = returnedCommits
       .split("\n")
       .filter((l) => l.length > 0).length;
+    const operatorCommitCount = await countOperatorCommits({
+      worktreePath,
+      branch,
+      claimHeadSha: intent.claimHeadSha,
+      runId,
+    });
+    const commitCount = operatorCommitCount ?? branchCommitCount;
 
     if (commitCount === 0) {
       throw new MaisterError(
@@ -297,7 +316,15 @@ export async function POST(
     }
 
     log.info(
-      { runId, nodeId, baseRef, commitCount, fastForwarded: ingest.fastForwarded },
+      {
+        runId,
+        nodeId,
+        baseRef,
+        commitCount,
+        branchCommitCount,
+        claimHeadSha: intent.claimHeadSha,
+        fastForwarded: ingest.fastForwarded,
+      },
       "rework return phase 2a — ingest + git evidence captured",
     );
 

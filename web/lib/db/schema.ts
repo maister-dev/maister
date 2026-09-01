@@ -4161,6 +4161,14 @@ export const nodeAttempts = pgTable(
     // attempt; rewind target is `<ref>^`. Nullable for pre-M30 rows and node
     // types without workspace capture.
     checkpointRef: text("checkpoint_ref"),
+    // ADR-160: the branch HEAD at the instant a human CLAIM row was appended
+    // (ADR-030 takeover and ADR-160 rework claim alike). Written only on claim
+    // rows — the return compares it against the live tip to tell whether the
+    // operator actually committed anything, which the merge-base range cannot:
+    // a finished run's branch already carries every commit the flow made.
+    // Nullable: rows claimed before this column existed, and claims where the
+    // SHA could not be read, fall back to the historical merge-base count.
+    claimHeadSha: text("claim_head_sha"),
     // M30 (ADR-081): effective session policy snapshot for this attempt
     // (rework-transition > node > flow defaults > engine default `resume`).
     // The DB column is plain text (no CHECK), so this enum is TS-level only.
@@ -6140,7 +6148,7 @@ export const domainEvents = pgTable(
   (t) => ({
     kindCheck: check(
       "domain_events_kind_check",
-      sql`${t.kind} in ('task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_answered', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.escalated', 'gate.failed')`,
+      sql`${t.kind} in ('task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_answered', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.escalated', 'run.rework_claimed', 'run.rework_returned', 'gate.failed')`,
     ),
     actorTypeCheck: check(
       "domain_events_actor_type_check",

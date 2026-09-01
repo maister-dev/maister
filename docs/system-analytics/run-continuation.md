@@ -180,6 +180,19 @@ flowchart TD
   execution from gate staling — for every caller, unconditionally. *(Implemented)*
 - Release without changes MUST return the run to `Review` (never `NeedsInput`),
   close the claim row, and free the slot via `promoteNextPending`. *(Implemented)*
+- "Did the operator commit anything" MUST be measured from
+  `node_attempts.claim_head_sha` — the branch HEAD recorded when the claim row
+  was appended (migration `0126`) — NOT from the project merge-base. A run that
+  reached `Review` already carries every commit its flow made, so the merge-base
+  count is positive for a claim where nothing changed, which made the
+  "no commits to return — release instead" refusal unreachable in production.
+  The merge-base range stays the REVIEW evidence (the reviewer wants the whole
+  branch); only the decision and the reported `returnedCommitCount` move.
+  A null `claim_head_sha` — a row claimed before the column existed, or one
+  whose SHA git could not resolve — MUST fall back to the merge-base count: a
+  wrong zero would refuse a return that really did carry work. The ADR-030
+  takeover return shares this rule, because `claimTakeover` is the single writer
+  of both claim shapes. *(Implemented)*
 - A node interrupt MUST be admitted only on a `Running` flow run whose current node
   has a `status='Running'` attempt and is `ai_coding | judge | orchestrator`;
   `cli` and `check` MUST refuse `MaisterError("PRECONDITION")`. *(Implemented)*

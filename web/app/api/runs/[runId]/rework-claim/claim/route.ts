@@ -21,6 +21,7 @@ import {
 } from "@/lib/flows/graph/ledger";
 import { loadRun, loadRunProjectId } from "@/lib/flows/graph/runner-core";
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
+import { captureClaimHead } from "@/lib/runs/claim-head";
 import { resolveReentryNode } from "@/lib/runs/reentry";
 import { assertReworkClaimEligible } from "@/lib/runs/rework-claim";
 import { markReworkClaimFromReview } from "@/lib/runs/state-transitions";
@@ -185,6 +186,14 @@ export async function POST(
 
     const anchorNode = graph.nodes.get(anchor.nodeId);
 
+    // Read BEFORE the transaction — git I/O has no place inside one. The run is
+    // `Review`, so nothing else is committing to this branch.
+    const claimHeadSha = await captureClaimHead({
+      worktreePath: loaded.workspace.worktreePath,
+      branch: loaded.workspace.branch,
+      runId,
+    });
+
     const claimed: { assignmentId: string; nodeAttemptId: string } =
       await db.transaction(async (tx: Db) => {
         // Cap gate INSIDE the transaction AND under the scheduler advisory
@@ -252,6 +261,7 @@ export async function POST(
           userId: user.id,
           nodeType: anchorNode?.nodeType ?? anchor.nodeType,
           decision: REVIEW_REWORK_CLAIM_DECISION,
+          claimHeadSha,
           db: tx,
         });
 

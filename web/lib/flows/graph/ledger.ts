@@ -507,6 +507,12 @@ export async function claimTakeover(args: {
   // ADR-160: `review_rework_claim` marks the Review provenance. An ADR-030
   // takeover leaves this unset, which is what every consumer branches on.
   decision?: string;
+  // The branch HEAD at the instant of the claim. The return compares it against
+  // the live tip to tell whether the operator committed anything; the
+  // merge-base range cannot, because a run's branch already carries every
+  // commit the flow made. Null when git could not resolve it — the return then
+  // degrades to the historical merge-base count.
+  claimHeadSha?: string | null;
   db?: Db;
 }): Promise<{ id: string; attempt: number }> {
   const db = args.db ?? getDb();
@@ -521,6 +527,7 @@ export async function claimTakeover(args: {
     attempt,
     status: "NeedsInput" as NodeAttemptStatus,
     ownerUserId: args.userId,
+    claimHeadSha: args.claimHeadSha ?? null,
     ...(args.decision !== undefined ? { decision: args.decision } : {}),
   });
 
@@ -532,6 +539,7 @@ export async function claimTakeover(args: {
       attempt,
       ownerUserId: args.userId,
       decision: args.decision ?? null,
+      claimHeadSha: args.claimHeadSha ?? null,
     },
     "takeover claimed — node-attempt appended",
   );
