@@ -96,7 +96,7 @@ erDiagram
         text promotion_mode "ADR-089: local_merge|pull_request, nullable"
         text launch_mode "auto|manual nullable — as-plan child task (ADR-098, 0060)"
         timestamp launch_armed_at "ADR-112 (0073): enqueue-intent boundary, nullable — auto_launch_triaged retry cap counts only flow runs started at/after this"
-        jsonb delegation_spec "as-plan delegation spec for run_plan children (ADR-098, 0060)"
+        jsonb delegation_spec "as-plan delegation spec, kind-discriminated agent|flow (ADR-098/163, 0060)"
         jsonb execution_policy "migration 0055: per-task default execution policy, nullable"
         text priority "ADR-121 (0087): low|normal|high|urgent, NOT NULL default normal, CHECK"
         numeric triage_confidence "ADR-121 (0087): advisory 0..1, nullable, CHECK"
@@ -126,7 +126,7 @@ erDiagram
         jsonb runner_snapshot "Implemented ADR-114 (0082): moved to run_sessions"
         text parent_run_id FK "runs(id) SET NULL — orchestrator delegator (ADR-098, 0060)"
         text root_run_id FK "runs(id) — run-tree root (ADR-098, 0060)"
-        jsonb delegation_snapshot "{agentDefinitionId,revisionId} only (ADR-098, 0060)"
+        jsonb delegation_snapshot "kind-discriminated agent|runner|flow launch snapshot (ADR-098/109/163, 0060)"
         text launch_mode "auto|manual nullable (ADR-098, 0060)"
         boolean persistent "addressable long-lived child, DEFAULT false (ADR-099, 0060)"
         text addressable_key "star-routing key, unique per tree when persistent (ADR-099, 0060)"
@@ -674,6 +674,23 @@ only for explicit HITL or permission waits.
 - `SCRATCH_ATTACHMENTS.storage_path` is server-internal. Public APIs expose
   uploaded-file display metadata and the rootless artifact reference stored in
   `value`, never absolute filesystem roots.
+- `RUNS.delegation_snapshot` **(Designed — ADR-163, NO DDL)** is a
+  `kind`-discriminated jsonb union widened in TypeScript only: `kind?: 'agent'`
+  (legacy rows carry no `kind`) = `{agentDefinitionId, revisionId}`;
+  `kind: 'runner'` (ADR-109) = a consensus participant; `kind: 'flow'` = a
+  delegated FLOW child, carrying `{flowId, flowRefId, flowRevisionId,
+  resolvedRevision, engineMin, engineMax, carrierTaskId, mode, runnerOverride,
+  baseBranch, targetBranch}`. Both branch fields resolve to
+  `PROJECTS.main_branch` — a delegated child never branches off its parent — and
+  the pinned `flowRevisionId` is the revision `loadRun` resolves the manifest
+  from, so advancing the project's enabled revision cannot re-point a live child.
+- `TASKS.delegation_spec` **(Designed — ADR-163, NO DDL)** likewise becomes a
+  `kind`-discriminated union: `{kind?: 'agent'; agentId; workspace?;
+  runnerOverride?}` (legacy rows: no `kind` ⇒ read as agent) or
+  `{kind: 'flow'; flowId; runnerOverride?}`. Readers use the
+  `delegationSpecKind` helper, never an inline `!spec.agentId` shape test. Both
+  widenings are `$type<>`-only: no column, CHECK, or index changes, so
+  `docs/db/erd.dbml` is untouched and is NOT regenerated.
 - **(Designed)** `node_attempts` and `gate_results` are now drawn above
   (migration `0010`). The remaining graph-maturity tables — artifacts, artifact
   edges, assignments, external operation events — are still future work and not

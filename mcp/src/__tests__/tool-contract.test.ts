@@ -31,6 +31,8 @@ type JsonSchema = {
   required?: string[];
   items?: JsonSchema;
   allOf?: JsonSchema[];
+  oneOf?: JsonSchema[];
+  additionalProperties?: boolean;
   $ref?: string;
   minimum?: number;
   maximum?: number;
@@ -278,6 +280,46 @@ function toolSpec(name: string): JsonSchema {
   return TOOL_SPECS[name].inputSchema as JsonSchema;
 }
 
+// A stable, order-insensitive rendering of a `oneOf` union's arms: per arm, the
+// sorted property names, the sorted required set, each property's base type, and
+// whether the arm is closed. A schema with no `oneOf` renders as a single arm, so
+// a union collapsing into a plain object is itself a detectable drift.
+function unionSignature(schema: JsonSchema): string {
+  const arms = schema.oneOf ? schema.oneOf.map(deref) : [schema];
+
+  return arms
+    .map((arm) => {
+      const props = Object.entries(arm.properties ?? {})
+        .map(
+          ([name, sub]) =>
+            `${name}:${[...baseTypeSet(deref(sub))].sort().join("|")}`,
+        )
+        .sort()
+        .join(",");
+
+      return `{props=[${props}] required=[${[...(arm.required ?? [])].sort().join(",")}] closed=${arm.additionalProperties === false}}`;
+    })
+    .sort()
+    .join(" | ");
+}
+
+function expectTargetUnionMirrors(
+  openapiNode: JsonSchema,
+  toolNode: JsonSchema | undefined,
+  label: string,
+): void {
+  const spec = deref(openapiNode);
+
+  expect(toolNode, `${label} present in TOOL_SPECS`).toBeDefined();
+  expect(
+    (spec.oneOf ?? []).length,
+    `${label} is a oneOf union in the spec`,
+  ).toBeGreaterThan(1);
+  expect(unionSignature(toolNode as JsonSchema), label).toEqual(
+    unionSignature(spec),
+  );
+}
+
 describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
   it("maps every registered tool to an operation, and vice versa", () => {
     expect(Object.keys(TOOL_OP).sort()).toEqual(Object.keys(TOOL_SPECS).sort());
@@ -376,18 +418,62 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
 
   // Nested composites: the generic loop compares only the top-level `target` /
   // `tasks` fields, so their inner shape is asserted explicitly here.
-  it("run_delegate.target mirrors ExtDelegationTarget", () => {
-    const openapiTarget = deref(
+  //
+  // ADR-163 made `ExtDelegationTarget` a `oneOf` of two CLOSED arms, so "exactly
+  // one of agentId/flowId" is schema rather than prose. `deref` cannot collapse a
+  // `oneOf` (there is no single branch to pick), so comparing `.properties` alone
+  // would compare `{}` with `{}` and PASS while checking nothing — a guard that
+  // stopped looking is worse than no guard. Compare the ARM SETS instead.
+  it("run_delegate.target mirrors ExtDelegationTarget (oneOf arm sets)", () => {
+    expectTargetUnionMirrors(
+      bodySchema(openapi.paths["/api/v1/ext/runs/delegate"].post)!.properties!
+        .target,
+      toolSpec("run_delegate").properties!.target,
+      "run_delegate.target",
+    );
+  });
+
+  it("run_plan tasks[].target mirrors ExtDelegationTarget (oneOf arm sets)", () => {
+    const openapiItem = deref(
+      bodySchema(openapi.paths["/api/v1/ext/runs/plan"].post)!.properties!.tasks
+        .items as JsonSchema,
+    );
+    const toolItem = toolSpec("run_plan").properties!.tasks.items as JsonSchema;
+
+    expectTargetUnionMirrors(
+      openapiItem.properties!.target,
+      (toolItem.properties ?? {}).target,
+      "run_plan.tasks[].target",
+    );
+  });
+
+  // Proves the arm-set comparison actually inspects both arms: a deliberately
+  // drifted arm MUST produce a different signature. Without this case, an
+  // arm-set comparison that degenerated to `"" === ""` would still pass.
+  it("the oneOf arm-set signature detects a drifted arm", () => {
+    const good = deref(
       bodySchema(openapi.paths["/api/v1/ext/runs/delegate"].post)!.properties!
         .target,
     );
-    const toolTarget = (toolSpec("run_delegate").properties!.target ?? {}) as {
-      properties?: Record<string, JsonSchema>;
+    const drifted: JsonSchema = {
+      oneOf: (good.oneOf ?? []).map((arm, i) =>
+        i === 1
+          ? {
+              ...arm,
+              properties: {
+                ...(arm.properties ?? {}),
+                packagePath: { type: "string" },
+              },
+            }
+          : arm,
+      ),
     };
 
-    expect(new Set(Object.keys(toolTarget.properties ?? {}))).toEqual(
-      new Set(Object.keys(openapiTarget.properties ?? {})),
-    );
+    expect(unionSignature(good)).not.toEqual(unionSignature(drifted));
+    // The signature is non-empty, so the inequality above is a real comparison
+    // and not two empty strings differing by accident.
+    expect(unionSignature(good)).toContain("agentId");
+    expect(unionSignature(good)).toContain("flowId");
   });
 
   it("run_plan tasks[] items mirror ExtRunPlanTask (props, required, enums)", () => {

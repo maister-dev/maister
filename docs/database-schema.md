@@ -1104,6 +1104,16 @@ draft updates increment `draft_version` and stale callers receive `CONFLICT`.
                                  //   NULL. The as-plan delegation spec (target +
                                  //   resolved settings) captured for a child task
                                  //   submitted via `run_plan`.
+                                 //   (Designed, ADR-163 — NO DDL, a TS $type<>
+                                 //   widening only): a DISCRIMINATED UNION on
+                                 //   `kind` —
+                                 //     { kind?: 'agent'; agentId; workspace?;
+                                 //       runnerOverride? }   // legacy: no `kind`
+                                 //   | { kind: 'flow'; flowId; runnerOverride? }
+                                 //   Pre-existing rows carry NO `kind` and MUST be
+                                 //   read as 'agent'. Every reader uses the
+                                 //   discriminating helper `delegationSpecKind`,
+                                 //   never an inline `!spec.agentId` shape test.
   priority,                      // ADR-121 (Implemented, migration 0087): text
                                  //   'low'|'normal'|'high'|'urgent', NOT NULL
                                  //   DEFAULT 'normal', CHECK. The live input to the
@@ -1408,6 +1418,22 @@ unread badge and inbox panel.
                                  //   { agentDefinitionId, revisionId }. The resolved
                                  //   runner stays in runnerSnapshot, never duplicated
                                  //   here (skill-context rule 207).
+                                 //   (Implemented, ADR-109) a consensus participant
+                                 //   uses { kind:'runner', ... } instead.
+                                 //   (Designed, ADR-163 — NO DDL, a TS $type<>
+                                 //   widening only) a DELEGATED FLOW child uses
+                                 //     { kind: 'flow'; flowId; flowRefId;
+                                 //       flowRevisionId; resolvedRevision;
+                                 //       engineMin; engineMax; carrierTaskId;
+                                 //       mode: 'task'|'run'; runnerOverride;
+                                 //       baseBranch; targetBranch }
+                                 //   — every launch-time decision a terminal or
+                                 //   recovery path reads. baseBranch/targetBranch
+                                 //   both resolve to project.main_branch (a child
+                                 //   never branches off its parent); the pinned
+                                 //   flowRevisionId is what loadRun resolves the
+                                 //   manifest from, so advancing the project's
+                                 //   enabled revision never re-points a live child.
   launchMode?,                   // (Implemented, ADR-098, migration 0060):
                                  //   'auto' | 'manual'; nullable
   persistent,                    // (Implemented, ADR-099, migration 0060):

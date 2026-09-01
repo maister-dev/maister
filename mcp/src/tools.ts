@@ -316,16 +316,31 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   run_delegate: {
     description:
-      "Delegate work to a governed child run spawned from a catalog agent (target.agentId, package-qualified <flowRefId>:<stem>). mode:'task' also creates a child board task linked parent_of under the orchestrator's task; mode:'run' spawns a board-less child. The parent orchestrator run is derived from the calling token — it is never accepted in the body. Delegating to an untrusted/disabled agent is refused (no child run is created).",
+      "Delegate work to a governed child run. Supply EXACTLY ONE target: target.agentId = a single-purpose catalog agent (one session, one turn-loop, package-qualified <flowRefId>:<stem>); target.flowId = a governed multi-node process from the project's enabled+trusted flows (its own graph, gates, review). Flow targets accept only title and runnerOverride — workspace, workspaceMode, persistent, addressableKey are agent-only and are refused, not ignored; a flow child always gets a linked board task (childTaskId is always returned) and run_rework/run_message do not apply to it. For an agent target, mode:'task' also creates a child board task linked parent_of under the orchestrator's task and mode:'run' spawns a board-less child. The parent orchestrator run is derived from the calling token — never accepted in the body. An untrusted/disabled/incompatible target is refused and no child run is created.",
     inputSchema: {
       type: "object",
       properties: {
         target: {
-          type: "object",
-          properties: {
-            agentId: { type: "string" },
-            flowId: { type: "string" },
-          },
+          oneOf: [
+            {
+              type: "object",
+              title: "AgentTarget",
+              properties: {
+                agentId: { type: "string", minLength: 1 },
+              },
+              required: ["agentId"],
+              additionalProperties: false,
+            },
+            {
+              type: "object",
+              title: "FlowTarget",
+              properties: {
+                flowId: { type: "string", minLength: 1 },
+              },
+              required: ["flowId"],
+              additionalProperties: false,
+            },
+          ],
         },
         mode: { type: "string", enum: ["task", "run"] },
         prompt: { type: "string", minLength: 1 },
@@ -356,7 +371,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   run_plan: {
     description:
-      "Emit a task-DAG of as-plan child tasks under the calling orchestrator. Each entry is a catalog-agent target with a unique `key` and a `dependsOn` list of in-batch keys; the DAG must be acyclic. Every task is created launch_mode='auto' and linked parent_of under the orchestrator's task; dependencies become success-gated `requires` relations. Source tasks (empty dependsOn) launch immediately; downstream tasks auto-launch once their requires-dependencies all complete successfully. The orchestrator run is derived from the calling token — never accepted in the body. Returns { tasks: [{ key, taskId, childRunId? }] } (childRunId only for launched sources).",
+      "Emit a task-DAG of as-plan child tasks under the calling orchestrator. Each entry supplies EXACTLY ONE target — target.agentId (a catalog agent) or target.flowId (a governed multi-node process from the project's enabled+trusted flows) — plus a unique `key` and a `dependsOn` list of in-batch keys; a batch may mix both kinds and the DAG must be acyclic. `workspace` is agent-only and is refused on a flow entry, not ignored. Every task is created launch_mode='auto' and linked parent_of under the orchestrator's task; dependencies become success-gated `requires` relations. Source tasks (empty dependsOn) launch immediately; downstream tasks auto-launch once their requires-dependencies all complete successfully. The orchestrator run is derived from the calling token — never accepted in the body. Returns { tasks: [{ key, taskId, childRunId? }] } (childRunId only for launched sources).",
     inputSchema: {
       type: "object",
       properties: {
@@ -367,9 +382,26 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
             properties: {
               key: { type: "string", minLength: 1 },
               target: {
-                type: "object",
-                properties: { agentId: { type: "string" } },
-                required: ["agentId"],
+                oneOf: [
+                  {
+                    type: "object",
+                    title: "AgentTarget",
+                    properties: {
+                      agentId: { type: "string", minLength: 1 },
+                    },
+                    required: ["agentId"],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: "object",
+                    title: "FlowTarget",
+                    properties: {
+                      flowId: { type: "string", minLength: 1 },
+                    },
+                    required: ["flowId"],
+                    additionalProperties: false,
+                  },
+                ],
               },
               prompt: { type: "string", minLength: 1 },
               title: { type: "string", minLength: 1 },

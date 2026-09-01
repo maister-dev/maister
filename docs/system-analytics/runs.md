@@ -330,6 +330,45 @@ invariants bind it to the run machine:
    transaction keyed on the attempt token; a retry after success returns `409`
    (already `Done`), never a second promotion.
 
+### Delegated flow-run child (Designed — ADR-163)
+
+A `run_delegate` / `run_plan` target may name a **Flow** instead of a catalog
+agent. The child is an ordinary `run_kind='flow'` run launched through the
+canonical pipeline (`launchRunStaged`) — same worktree, graph state, session set,
+capability materialization, and executor resolution as a board Launch — plus
+delegation provenance. Four things distinguish it from a board flow run:
+
+1. **A carrier task.** A flow run cannot exist without a task
+   (`assertFlowRunInvariant` requires `taskId && flowId`, `loadRun` throws
+   `PRECONDITION` without one, and the flow prompt entry point IS `task.prompt`),
+   so the delegation seam mints one server-side: `launch_mode='manual'`,
+   `flowId` = the SELECTED child flow (never inherited from the orchestrator's
+   task), prompt = the delegated prompt, always linked `parent_of` under the
+   orchestrator's task in BOTH delegation modes. `mode` is therefore not a
+   board-visibility switch for flow targets.
+2. **Delegation provenance.** `parent_run_id`, `root_run_id`, `launch_mode`, and
+   a `delegation_snapshot` with `kind: 'flow'` carrying the flow ref, the pinned
+   `flowRevisionId`, the engine range evaluated AT LAUNCH, the carrier task id,
+   the requested mode, the runner override, and the resolved
+   `baseBranch`/`targetBranch` — both of which are `project.mainBranch` (a
+   delegated child never branches off its parent). Recovery and terminal paths
+   read the snapshot, never a live projection.
+3. **The flow scheduler pool.** `poolForRunKind` gives it `MAISTER_MAX_CONCURRENT_RUNS`
+   while an agent sibling draws `MAISTER_MAX_CONCURRENT_AGENTS` — two budgets,
+   one tree. Only the per-orchestrator fan-out cap is shared across kinds.
+4. **It always parks in `Review`.** A flow run always provisions a worktree, so
+   unlike an agent child (which may be `workspace: none` and reach `Done`
+   directly) it always produces a diff a coordinator must promote. Reaching
+   `Review` emits the `run.review` DOMAIN event gated on `parent_run_id != null`,
+   which is what wakes a parent parked in `WaitingOnChildren`. `run_rework` and
+   `run_message` are refused (`PRECONDITION`) — a flow child owns its own
+   `human`/`rework` loop. If the coordinator exits without promoting, the child
+   parks indefinitely: it holds no scheduler slot, but its worktree and branch
+   are retained and nothing reclaims them (ADR-163 residual W12).
+
+See [orchestrator.md](orchestrator.md) for the delegation contract, the refusal
+table, and the shared-dispatcher enumeration.
+
 ### Multi-run launch overrides (Implemented, ADR-087)
 
 Manual task launches are no longer limited to Backlog retry. The manual

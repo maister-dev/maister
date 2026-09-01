@@ -84,6 +84,26 @@ observe its failed child; success-gated dependents do not launch.
   top-level Review emits nothing). It wakes a parked orchestrator to
   collect/promote/rework and drives as-plan auto-promote. The payload stays
   ids/keys/statuses only (no secrets).
+  **(Designed, ADR-163 — migration-free)** `run.review` gains a **SECOND
+  emitter**: the flow graph runner's `Review` branch, in the SAME transaction as
+  the status flip and gated on `parent_run_id != null` — matching the agent
+  launcher's rule exactly. Before this the branch emitted only
+  `emitWebhookEvent`, so a delegated FLOW child reaching `Review` would never
+  wake a parent parked in `WaitingOnChildren`. No new kind, no CHECK change:
+  `run.review` is already in `DOMAIN_EVENT_KINDS` and in
+  `domain_events_kind_check`. Blast radius at the moment of the change is exactly
+  ZERO — no delegated flow child exists before it. The widened population's
+  consumer sweep:
+
+  | Consumer | Filter | Effect of a FLOW `run.review` |
+  | --- | --- | --- |
+  | `orchestrator_resume` | `isRunSettledEventKind`; branches on the PARENT's `run_kind`, child-agnostic | works unchanged — this is the wake path the emit exists for |
+  | `auto_launch_run_plan` | `isRunSettledEventKind` AND `payload.runKind === "agent"` | must WIDEN to an allow-list (`agent \| flow`), else a flow child in an as-plan DAG never auto-promotes and never releases its dependents |
+  | `agent_triggers` | generic `eventMatch.kinds` allow-list | an agent bound to `run.review` now ALSO fires on delegated flow children — an intended widening |
+  | `ralph_loop` | `run.failed` only | unaffected |
+  | `cost_rollup_reconcile` | `isRunTerminalEventKind` | unaffected (`run.review` is settled-not-terminal, so excluded) |
+  | `memory_harvest` | run-terminal + `gate.failed` | unaffected |
+  | `source_reindex` | brain kinds | unaffected |
   **(ADR-151 — Implemented)** `task.comment_added` has its `payload` **widened**
   with an optional `mentionedAgentIds: string[]` (deduped resolved agent ids,
   omitted when empty) — a migration-free widening, since the payload is
@@ -293,7 +313,12 @@ flowchart TD
   `launchAgentRun` (cap admission inside that call), and auto-promote an
   as-plan child reaching `Review`; `orchestrator_resume` MUST be the only
   consumer that wakes the parent out of `WaitingOnChildren` (single-winner CAS
-  + `session/resume`).
+  + `session/resume`). **(Designed — ADR-163)** `auto_launch_run_plan`'s
+  `run_kind` gate MUST be an ALLOW-LIST (`agent | flow`), never a deny-check, so
+  a kind added later stays rejected by default; it MUST dispatch the candidate
+  launch on the task's `delegation_spec` kind; and it MUST call
+  `admitDelegatedChild()` before launching (this edge has never had a depth or
+  fan-out check).
 - A handler failure MUST increment `consecutive_failures`, set `last_error`,
   release the lease, and leave the cursor unchanged; a subsequent success MUST
   reset `consecutive_failures` to 0. Redelivery of the failed window MUST wait
@@ -320,6 +345,10 @@ flowchart TD
   parentless) WITHOUT introducing a new kind. **(Implemented — ADR-100,
   migration 0060)** the settled-not-terminal `run.review` kind MUST be emitted
   ONLY for a child with a parent and MUST carry `parent_run_id`.
+  **(Designed — ADR-163)** BOTH `run.review` emitters — the agent launcher's
+  `finalizeAgentRun` and the flow graph runner's `Review` branch — MUST emit
+  inside the SAME transaction as the status flip; a status a settled-event
+  consumer waits on that nothing emits is a deadlock, not a missing feature.
 
 ## Edge cases
 
