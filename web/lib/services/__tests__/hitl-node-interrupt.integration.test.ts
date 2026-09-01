@@ -32,6 +32,7 @@ import {
 } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 import { respondToHitl, type HitlActor } from "@/lib/services/hitl";
+import { seedGraphRun } from "@/test-support/graph-run-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -48,6 +49,14 @@ vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 vi.mock("@/lib/flows/runner", () => ({ runFlow: vi.fn(async () => {}) }));
 vi.mock("@/lib/authz", () => ({
   requireProjectAction: vi.fn(async () => {}),
+}));
+// The destructive half, stubbed so a test can assert WHETHER it ran. The real
+// implementation is `reset --hard` + `git clean -fd`.
+const applyWorkspacePolicy = vi.fn(async () => {});
+
+vi.mock("@/lib/flows/graph/workspace-checkpoint", () => ({
+  applyWorkspacePolicy: (...args: unknown[]) =>
+    applyWorkspacePolicy(...(args as [])),
 }));
 
 beforeAll(async () => {
@@ -442,6 +451,256 @@ describe("T-B7 ADR-161 — a missing checkpoint_ref degrades to keep", () => {
     // The EFFECTIVE policy is recorded, not the requested one — the ledger must
     // not claim a rewind that never happened.
     expect(attempt.workspacePolicy).toBe("keep");
-    expect((await getHitl(hitlRequestId)).response.workspacePolicy).toBe("keep");
+    expect((await getHitl(hitlRequestId)).response.workspacePolicy).toBe(
+      "keep",
+    );
+  });
+});
+
+// Codex finding 1 (critical) — the workspace policy used to be applied BEFORE
+// the HITL row was locked, so a request that lost the race, or a plain replay,
+// could `reset --hard` + `git clean -fd` the operator's worktree and only then
+// discover the request had already been answered. The stored decision — not the
+// arriving payload — is what the run acts on, so only a byte-identical retry
+// may re-drive the destructive half.
+describe("node_interrupt — a consumed HITL cannot destroy the workspace", () => {
+  // Give the target a checkpoint_ref and the run a worktree, so the policy is
+  // resolvable and would really be applied — otherwise the degrade-to-keep path
+  // would mask whether the ordering fix works.
+  async function attachCheckpointAndWorkspace(
+    projectId: string,
+    slug: string,
+    runId: string,
+  ): Promise<void> {
+    await (db as any)
+      .update(schema.nodeAttempts)
+      .set({ checkpointRef: `refs/maister/checkpoints/${runId}/a` })
+      .where(eq(schema.nodeAttempts.nodeId, EARLIER));
+    await (db as any).insert(schema.workspaces).values({
+      id: randomUUID(),
+      projectId,
+      runId,
+      branch: "maister/t-1",
+      worktreePath: `/tmp/${slug}-wt`,
+      parentRepoPath: `/tmp/${slug}`,
+      baseBranch: "main",
+    });
+  }
+
+  it("does NOT rewind when a losing request carries a different decision", async () => {
+    const projectId = await seedProject("ni-replay");
+    const seeded = await seedParkedRun(projectId);
+    const { runId, hitlRequestId, parkedAttemptId } = seeded;
+
+    await attachCheckpointAndWorkspace(projectId, "ni-replay", runId);
+
+    // The winner keeps the work.
+    const first = await respondToHitl(
+      { runId, hitlRequestId, body: { optionId: "resume" } },
+      userActor,
+      { db },
+    );
+
+    expect(first.status).toBe(202);
+    expect(applyWorkspacePolicy).not.toHaveBeenCalled();
+
+    // A replay arrives asking to throw the worktree away.
+    const second = await respondToHitl(
+      {
+        runId,
+        hitlRequestId,
+        body: {
+          optionId: "restart_from",
+          targetNodeId: EARLIER,
+          workspacePolicy: "fresh-attempt",
+        },
+      },
+      userActor,
+      { db },
+    );
+
+    expect(second.status).toBe(200);
+    // THE fence: the losing payload must not have touched the filesystem.
+    expect(applyWorkspacePolicy).not.toHaveBeenCalled();
+    // ...and the winning decision still stands — `resume` keeps the SAME
+    // attempt, so a restart that had taken effect would read `Reworked` here.
+    expect((await getAttempt(parkedAttemptId)).status).toBe("NeedsInput");
+  });
+
+  it("re-drives the rewind for a byte-identical retry", async () => {
+    const projectId = await seedProject("ni-retry");
+    const { runId, hitlRequestId } = await seedParkedRun(projectId);
+
+    await attachCheckpointAndWorkspace(projectId, "ni-retry", runId);
+    const body = {
+      optionId: "restart_from",
+      targetNodeId: EARLIER,
+      workspacePolicy: "fresh-attempt",
+    };
+
+    expect(
+      (await respondToHitl({ runId, hitlRequestId, body }, userActor, { db }))
+        .status,
+    ).toBe(202);
+    expect(applyWorkspacePolicy).toHaveBeenCalledTimes(1);
+
+    // A same-payload retry is the durable recovery path for a handoff lost
+    // between the marker commit and the git op — it must converge, not refuse.
+    expect(
+      (await respondToHitl({ runId, hitlRequestId, body }, userActor, { db }))
+        .status,
+    ).toBe(200);
+    expect(applyWorkspacePolicy).toHaveBeenCalledTimes(2);
+  });
+});
+
+// Codex finding 2 — the keep-alive sweeper can idle a parked run to
+// NeedsInputIdle while the operator is still deciding. The old bare
+// scheduleResume drove runFlow, which only claims NeedsInput, so the answer was
+// accepted and the run stayed asleep with no way to recover it.
+describe("node_interrupt — an answer after the idle sweep still wakes the run", () => {
+  it("un-idles NeedsInputIdle instead of silently accepting", async () => {
+    const projectId = await seedProject("ni-idle");
+    const { runId, hitlRequestId, parkedAttemptId } =
+      await seedParkedRun(projectId);
+
+    // The sweeper checkpointed the run while the operator was reading.
+    await (db as any)
+      .update(schema.runs)
+      .set({
+        status: "NeedsInputIdle",
+        checkpointAt: new Date(),
+        keepaliveUntil: null,
+      })
+      .where(eq(schema.runs.id, runId));
+
+    const res = await respondToHitl(
+      { runId, hitlRequestId, body: { optionId: "restart_node" } },
+      userActor,
+      { db },
+    );
+
+    expect(res.status).toBe(202);
+
+    const run = await getRun(runId);
+
+    // Claimed out of the idle state — the runner owns NeedsInput → Running from
+    // here. Left at NeedsInputIdle the run would never resume.
+    expect(run.status).toBe("NeedsInput");
+    expect(run.checkpointAt).toBeNull();
+    // The decision itself still landed.
+    expect((await getAttempt(parkedAttemptId)).status).toBe("Reworked");
+  });
+});
+
+// Codex finding 6 — `markDownstreamStale` stales exactly the ids it is handed;
+// it derives nothing from the graph. Passing only [targetNodeId] staled the one
+// node about to be re-run anyway and left every node BETWEEN the target and the
+// interrupted node `Succeeded` with `passed` gates — evidence produced under a
+// run state the jump-back has just invalidated.
+describe("node_interrupt — restart_from stales the whole downstream", () => {
+  const MANIFEST = {
+    schemaVersion: 1,
+    name: "ni-stale",
+    engine: "3.4.0",
+    nodes: [
+      {
+        id: EARLIER,
+        type: "ai_coding",
+        action: { prompt: "plan" },
+        transitions: { success: "middle" },
+      },
+      {
+        id: "middle",
+        type: "ai_coding",
+        action: { prompt: "middle" },
+        gates: [{ id: "middle-check", kind: "command_check", command: "true" }],
+        transitions: { success: INTERRUPTED },
+      },
+      {
+        id: INTERRUPTED,
+        type: "ai_coding",
+        action: { prompt: "implement" },
+        transitions: { success: "done" },
+      },
+    ],
+  };
+
+  it("stales an intermediate node and its passed gate", async () => {
+    const seeded = await seedGraphRun(db, MANIFEST, {
+      flowRevision: true,
+      run: { status: "NeedsInput", currentStepId: INTERRUPTED },
+    });
+    const { runId } = seeded;
+
+    async function attempt(
+      nodeId: string,
+      attemptNo: number,
+      status: string,
+    ): Promise<string> {
+      const id = randomUUID();
+
+      await (db as any).insert(schema.nodeAttempts).values({
+        id,
+        runId,
+        nodeId,
+        nodeType: "ai_coding",
+        attempt: attemptNo,
+        status,
+        startedAt: new Date(Date.now() - 60_000),
+      });
+
+      return id;
+    }
+
+    await attempt(EARLIER, 1, "Succeeded");
+    const middleId = await attempt("middle", 1, "Succeeded");
+
+    await attempt(INTERRUPTED, 1, "NeedsInput");
+    await (db as any).insert(schema.gateResults).values({
+      id: randomUUID(),
+      runId,
+      nodeAttemptId: middleId,
+      gateId: "middle-check",
+      kind: "command_check",
+      mode: "blocking",
+      status: "passed",
+    });
+
+    const hitlRequestId = randomUUID();
+
+    await (db as any).insert(schema.hitlRequests).values({
+      id: hitlRequestId,
+      runId,
+      stepId: INTERRUPTED,
+      kind: "node_interrupt",
+      prompt: "interrupted",
+      schema: { kind: "node_interrupt", nodeId: INTERRUPTED },
+    });
+
+    const res = await respondToHitl(
+      {
+        runId,
+        hitlRequestId,
+        body: { optionId: "restart_from", targetNodeId: EARLIER },
+      },
+      userActor,
+      { db },
+    );
+
+    expect(res.status).toBe(202);
+
+    const middle = await getAttempt(middleId);
+
+    // The node between the jump target and the interrupt must lose its
+    // Succeeded verdict — its work was produced under a superseded state.
+    expect(middle.status).toBe("Stale");
+
+    const [gate] = await (db as any)
+      .select()
+      .from(schema.gateResults)
+      .where(eq(schema.gateResults.nodeAttemptId, middleId));
+
+    expect(gate.status).toBe("stale");
   });
 });

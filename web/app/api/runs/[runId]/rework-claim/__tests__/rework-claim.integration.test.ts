@@ -15,7 +15,15 @@ import { promisify } from "node:util";
 import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
 import {
@@ -98,6 +106,30 @@ vi.mock("next-auth", () => ({
 const dbRef: { value: any } = { value: null };
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => dbRef.value }));
+// Codex finding 4: the cap gate spans ROWS, so a transaction alone cannot
+// serialize it. Records the order of the scheduler-lock and the live-run count
+// while delegating to the real implementations, so the fence is on real
+// behaviour, not on a stub.
+const schedulerCalls: string[] = [];
+
+vi.mock("@/lib/scheduler", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/scheduler")>("@/lib/scheduler");
+
+  return {
+    ...actual,
+    takeSchedulerLock: async (tx: unknown) => {
+      schedulerCalls.push("lock");
+
+      return actual.takeSchedulerLock(tx as never);
+    },
+    countLiveRuns: async (tx: unknown, pool: unknown) => {
+      schedulerCalls.push("count");
+
+      return actual.countLiveRuns(tx as never, pool as never);
+    },
+  };
+});
 
 // The return route resumes the runner via queueMicrotask. These cases assert
 // the committed state, not a real traversal.
@@ -181,12 +213,14 @@ type Seed = {
   cleanup: () => Promise<void>;
 };
 
-async function seed(opts: {
-  runStatus?: string;
-  parentRunId?: string | null;
-  ledgerNodes?: string[];
-  extraLiveRuns?: number;
-} = {}): Promise<Seed> {
+async function seed(
+  opts: {
+    runStatus?: string;
+    parentRunId?: string | null;
+    ledgerNodes?: string[];
+    extraLiveRuns?: number;
+  } = {},
+): Promise<Seed> {
   const tag = randomUUID().slice(0, 8);
   const projectId = randomUUID();
   const ownerId = randomUUID();
@@ -271,7 +305,11 @@ async function seed(opts: {
   });
 
   // A finished graph's ledger: implement -> checks -> review.
-  const ledgerNodes = opts.ledgerNodes ?? ["implement", REENTRY_NODE, REVIEW_NODE];
+  const ledgerNodes = opts.ledgerNodes ?? [
+    "implement",
+    REENTRY_NODE,
+    REVIEW_NODE,
+  ];
   // Strictly in the PAST: the claim row that follows takes the column default
   // (now()), and `hasPendingTakeoverResume` treats any re-entry attempt started
   // AFTER the takeover row as "the resume already progressed".
@@ -557,8 +595,22 @@ async function attachRemote(s: {
   const remote = await mkdtemp(path.join(tmpdir(), "rwc-remote-"));
 
   await execFileAsync("git", ["init", "--bare", remote]);
-  await execFileAsync("git", ["-C", s.parentRepo, "remote", "add", "origin", remote]);
-  await execFileAsync("git", ["-C", s.worktreePath, "push", "-u", "origin", s.branch]);
+  await execFileAsync("git", [
+    "-C",
+    s.parentRepo,
+    "remote",
+    "add",
+    "origin",
+    remote,
+  ]);
+  await execFileAsync("git", [
+    "-C",
+    s.worktreePath,
+    "push",
+    "-u",
+    "origin",
+    s.branch,
+  ]);
 
   return remote;
 }
@@ -609,7 +661,13 @@ describe("ADR-160 rework return + release (integration)", () => {
     const clone = await mkdtemp(path.join(tmpdir(), "rwc-clone-"));
 
     await execFileAsync("git", ["clone", "-b", s.branch, remote, clone]);
-    await execFileAsync("git", ["-C", clone, "config", "user.email", "t@t.dev"]);
+    await execFileAsync("git", [
+      "-C",
+      clone,
+      "config",
+      "user.email",
+      "t@t.dev",
+    ]);
     await execFileAsync("git", ["-C", clone, "config", "user.name", "T"]);
     await writeFile(path.join(clone, "remote.txt"), "remote work\n");
     await execFileAsync("git", ["-C", clone, "add", "."]);
@@ -617,7 +675,12 @@ describe("ADR-160 rework return + release (integration)", () => {
     await execFileAsync("git", ["-C", clone, "push"]);
 
     // ...while the local worktree commits something else → true divergence.
-    await commitInWorktree(s.worktreePath, "local.txt", "local work\n", "local");
+    await commitInWorktree(
+      s.worktreePath,
+      "local.txt",
+      "local work\n",
+      "local",
+    );
 
     const headBefore = (
       await execFileAsync("git", ["-C", s.worktreePath, "rev-parse", "HEAD"])
@@ -664,9 +727,18 @@ describe("ADR-160 rework return + release (integration)", () => {
     const clone = await mkdtemp(path.join(tmpdir(), "rwc-clone-"));
 
     await execFileAsync("git", ["clone", "-b", s.branch, remote, clone]);
-    await execFileAsync("git", ["-C", clone, "config", "user.email", "t@t.dev"]);
+    await execFileAsync("git", [
+      "-C",
+      clone,
+      "config",
+      "user.email",
+      "t@t.dev",
+    ]);
     await execFileAsync("git", ["-C", clone, "config", "user.name", "T"]);
-    await writeFile(path.join(clone, "elsewhere.txt"), "pushed from elsewhere\n");
+    await writeFile(
+      path.join(clone, "elsewhere.txt"),
+      "pushed from elsewhere\n",
+    );
     await execFileAsync("git", ["-C", clone, "add", "."]);
     await execFileAsync("git", ["-C", clone, "commit", "-m", "elsewhere"]);
     await execFileAsync("git", ["-C", clone, "push"]);
@@ -694,9 +766,12 @@ describe("ADR-160 rework return + release (integration)", () => {
     await claimAs(s);
     await commitInWorktree(s.worktreePath, "fix.txt", "x\n", "fix");
 
-    const res = await returnPOST(returnReq(s.runId, { remote: "not-a-remote" }), {
-      params: Promise.resolve({ runId: s.runId }),
-    });
+    const res = await returnPOST(
+      returnReq(s.runId, { remote: "not-a-remote" }),
+      {
+        params: Promise.resolve({ runId: s.runId }),
+      },
+    );
 
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("PRECONDITION");
@@ -887,7 +962,9 @@ describe("ADR-160 rework return + release (integration)", () => {
 
     // The sweep's own predicate — agnostic to the takeover row's node, which is
     // what lets it reach this provenance unchanged.
-    expect(await hasPendingTakeoverResume(s.runId, REENTRY_NODE, db)).toBe(true);
+    expect(await hasPendingTakeoverResume(s.runId, REENTRY_NODE, db)).toBe(
+      true,
+    );
 
     await s.cleanup();
   });
@@ -1158,9 +1235,7 @@ describe("ADR-160 — run-detail continuation block is server-owned", () => {
     const noTakeover = {
       ...fixtureManifest,
       nodes: fixtureManifest.nodes.map((n: any) =>
-        n.id === REVIEW_NODE
-          ? { ...n, transitions: { approve: "done" } }
-          : n,
+        n.id === REVIEW_NODE ? { ...n, transitions: { approve: "done" } } : n,
       ),
     };
 
@@ -1219,9 +1294,9 @@ describe("AC-A19 (server half) — Review -> claim -> return composition", () =>
 
     const { getRunDetail } = await import("@/lib/queries/run");
 
-    expect((await getRunDetail(s.runId))?.continuation.reworkClaimAvailable).toBe(
-      true,
-    );
+    expect(
+      (await getRunDetail(s.runId))?.continuation.reworkClaimAvailable,
+    ).toBe(true);
 
     await claimAs(s);
 
@@ -1246,13 +1321,21 @@ describe("AC-A19 (server half) — Review -> claim -> return composition", () =>
       viewerUserId: s.ownerId,
     });
 
-    expect(ownerActions.find((a) => a.id === "exportBranch")?.enabled).toBe(true);
+    expect(ownerActions.find((a) => a.id === "exportBranch")?.enabled).toBe(
+      true,
+    );
 
     const remote = await attachRemote(s);
     const clone = await mkdtemp(path.join(tmpdir(), "rwc-e2e-clone-"));
 
     await execFileAsync("git", ["clone", "-b", s.branch, remote, clone]);
-    await execFileAsync("git", ["-C", clone, "config", "user.email", "t@t.dev"]);
+    await execFileAsync("git", [
+      "-C",
+      clone,
+      "config",
+      "user.email",
+      "t@t.dev",
+    ]);
     await execFileAsync("git", ["-C", clone, "config", "user.name", "T"]);
     await writeFile(path.join(clone, "fix.txt"), "the human's fix\n");
     await execFileAsync("git", ["-C", clone, "add", "."]);
@@ -1440,6 +1523,56 @@ describe("T-A12 / Task 17 — failure and race edges", () => {
     );
     expect((await readRun(s.runId)).status).toBe("HumanWorking");
     expect((await claimRows(s.runId))[0].endedAt).toBeNull();
+
+    await s.cleanup();
+  });
+});
+
+// Codex finding 4 — the cap gate counted live runs inside the transaction but
+// WITHOUT the scheduler advisory lock. Two claims on DIFFERENT run rows never
+// conflict at the row level, so both could read the same free slot and both take
+// it, overrunning a cap documented as hard. The repo's serialization primitive
+// for this exact count-then-update shape is takeSchedulerLock, taken FIRST —
+// see claimGraphResumeSlot / claimAgentResumeSlot.
+describe("rework claim — the cap gate is globally serialized", () => {
+  it("takes the scheduler lock before counting live runs", async () => {
+    schedulerCalls.length = 0;
+
+    const s = await seed();
+    const res = await claimPOST(claimReq(s.runId), {
+      params: Promise.resolve({ runId: s.runId }),
+    });
+
+    expect(res.status).toBe(200);
+
+    const lockAt = schedulerCalls.indexOf("lock");
+    const countAt = schedulerCalls.indexOf("count");
+
+    expect(lockAt).toBeGreaterThanOrEqual(0);
+    expect(countAt).toBeGreaterThanOrEqual(0);
+    // Order is the invariant: counting before the lock is the same TOCTOU the
+    // lock exists to close, and locking after the count serializes nothing.
+    expect(lockAt).toBeLessThan(countAt);
+
+    await s.cleanup();
+  });
+
+  // The refusal path must ALSO be under the lock — otherwise a claim that
+  // should have been refused slips through while another claim is committing.
+  it("still refuses at a full cap with the lock held", async () => {
+    const cap = Number(process.env.MAISTER_MAX_CONCURRENT_RUNS ?? "6");
+
+    schedulerCalls.length = 0;
+
+    const s = await seed({ extraLiveRuns: cap });
+    const res = await claimPOST(claimReq(s.runId), {
+      params: Promise.resolve({ runId: s.runId }),
+    });
+
+    expect(res.status).toBe(409);
+    expect(schedulerCalls.indexOf("lock")).toBeLessThan(
+      schedulerCalls.indexOf("count"),
+    );
 
     await s.cleanup();
   });

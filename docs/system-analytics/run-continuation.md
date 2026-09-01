@@ -183,6 +183,34 @@ flowchart TD
 - A node interrupt MUST be admitted only on a `Running` flow run whose current node
   has a `status='Running'` attempt and is `ai_coding | judge | orchestrator`;
   `cli` and `check` MUST refuse `MaisterError("PRECONDITION")`. *(Implemented)*
+- The admission CAS MUST re-assert BOTH `runs.current_step_id` and the observed
+  attempt's `Running` status inside the transaction, because the checkpoint call
+  is a cross-process await during which the observed node can finish while the
+  run stays `Running`. A lost race MUST roll the whole transaction back with
+  `CONFLICT` — never rewind the cursor onto a finished node, and never overwrite
+  a `Succeeded` attempt with `NeedsInput`. *(Implemented)*
+- The interrupt response MUST commit the HITL marker BEFORE applying any
+  workspace policy, and only the request that WON the row may apply it. A
+  request that arrives after the row was answered MUST re-drive the policy only
+  when its payload is byte-identical to the stored decision; a conflicting
+  payload MUST mutate nothing. `reset --hard` + `git clean -fd` on a request that
+  turned out to be a replay is unrecoverable data loss. *(Implemented)*
+- Answering an interrupt MUST wake the run through `claimGraphResumeSlot`, not a
+  bare `runFlow` dispatch: the keep-alive sweeper can idle the run to
+  `NeedsInputIdle` while the operator is deciding, and `runFlow` claims only
+  `NeedsInput`. *(Implemented)*
+- A `restart_from` MUST stale the target AND everything reachable from it in the
+  pinned graph. `markDownstreamStale` stales exactly the ids it is given and
+  derives nothing, so passing the target alone leaves the nodes between the
+  target and the interrupt `Succeeded` with `passed` gates. *(Implemented)*
+- The claim's cap gate MUST take `takeSchedulerLock` BEFORE `countLiveRuns`. The
+  invariant spans rows, so a transaction alone does not serialize it: two claims
+  on different runs never conflict and would both take the same free slot.
+  *(Implemented)*
+- The two irreversible interrupt options MUST be confirmed before they fire:
+  `stop` (terminalizes the run) and a restart under a non-`keep` workspace
+  policy (`reset --hard` + `git clean -fd`). `resume` and a `keep` restart stay
+  one-click, so the default action keeps its low friction. *(Implemented)*
 - `restart_from` targets MUST be ledger-derived — nodes with at least one prior
   attempt in this run — and a target with no prior attempt MUST be refused; the
   operator correction MUST reach the agent as a fenced prompt append, never through

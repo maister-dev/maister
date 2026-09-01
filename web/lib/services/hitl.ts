@@ -56,9 +56,6 @@ import {
 import { isPlanReviewDecisionRequestSchema } from "@/lib/flows/graph/plan-review-decisions";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
-import { compileManifest } from "@/lib/flows/graph/compile";
-import { downstreamOf } from "@/lib/flows/graph/runner-graph";
-import { loadRunManifest } from "@/lib/queries/run-manifest";
 import { runFlow } from "@/lib/flows/runner";
 import {
   assertReviewFeedbackPresent,
@@ -114,6 +111,7 @@ const {
   artifactInstances,
   assignments,
   hitlRequests,
+  nodeAttempts,
   projects,
   runs,
   runSyncAttempts,
@@ -4934,20 +4932,6 @@ async function handleNodeInterruptResponse(args: {
     );
   }
 
-  const parked = ledger
-    .filter(
-      (r: { nodeId: string; status: string }) =>
-        r.nodeId === interruptedNodeId && r.status === "NeedsInput",
-    )
-    .at(-1) as { id: string } | undefined;
-
-  if (!parked) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `run ${runId} has no parked attempt at ${interruptedNodeId} to restart`,
-    );
-  }
-
   // RESOLVE the workspace policy here (read-only) but APPLY it only after the
   // response marker is committed. `fresh-attempt` is `reset --hard` + `git clean
   // -fd`; running it before the HITL row is locked let a replayed or losing
@@ -4997,12 +4981,47 @@ async function handleNodeInterruptResponse(args: {
   // The pinned graph, needed to derive the stale set for a jump-back. Loaded
   // before the transaction — a manifest read has no business inside it. Only
   // `restart_from` needs it; `restart_node` stales nothing.
-  const graph =
+  // Dynamically imported: `runner-graph` drags the supervisor client in behind
+  // it, and a top-level import would pull that whole tree into every consumer
+  // of this module. Same reason `applyWorkspacePolicy` is imported lazily.
+  const staleSet =
     targetNodeId !== interruptedNodeId
       ? await (async () => {
-          const loaded = await loadRunManifest(runId, db);
+          const target = targetNodeId as string;
 
-          return loaded?.manifest ? compileManifest(loaded.manifest) : null;
+          try {
+            const { loadRunManifest } = await import(
+              "@/lib/queries/run-manifest"
+            );
+            const loaded = await loadRunManifest(runId, db);
+
+            if (!loaded?.manifest) return [target];
+            const { compileManifest } = await import(
+              "@/lib/flows/graph/compile"
+            );
+            const { downstreamOf } = await import(
+              "@/lib/flows/graph/runner-graph"
+            );
+
+            return [
+              target,
+              ...downstreamOf(compileManifest(loaded.manifest), target),
+            ];
+          } catch (err) {
+            // Degrade to the target alone rather than refusing the restart: an
+            // unreadable manifest must not strand the operator. Logged loudly —
+            // downstream evidence is then left standing and needs a manual look.
+            log.error(
+              {
+                runId,
+                targetNodeId,
+                err: err instanceof Error ? err.message : String(err),
+              },
+              "[node-interrupt] could not derive the downstream stale set — staling the target only",
+            );
+
+            return [target];
+          }
         })()
       : null;
 
@@ -5066,6 +5085,31 @@ async function handleNodeInterruptResponse(args: {
       } as const;
     }
 
+    // The parked attempt is resolved INSIDE the lock, after the
+    // already-delivered check. Resolving it earlier made a legitimate
+    // same-payload retry fail `PRECONDITION` — the first response had already
+    // flipped the attempt to `Reworked`, so the precondition fired before the
+    // idempotent branch was ever reached.
+    const parkedRows: Array<{ id: string }> = await tx
+      .select({ id: nodeAttempts.id })
+      .from(nodeAttempts)
+      .where(
+        and(
+          eq(nodeAttempts.runId, runId),
+          eq(nodeAttempts.nodeId, interruptedNodeId),
+          eq(nodeAttempts.status, "NeedsInput"),
+        ),
+      )
+      .orderBy(asc(nodeAttempts.attempt));
+    const parked = parkedRows.at(-1);
+
+    if (!parked) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `run ${runId} has no parked attempt at ${interruptedNodeId} to restart`,
+      );
+    }
+
     // The operator's correction is persisted as the HITL RESPONSE — its natural
     // home — and read back at prompt-build time by the runner. It is never a
     // template variable and never touches `commentsVar`.
@@ -5104,14 +5148,8 @@ async function handleNodeInterruptResponse(args: {
     // by a run state the jump-back just invalidated. `downstreamOf` excludes its
     // start node, so the gate-bearing target is re-added explicitly, matching
     // both the ADR-030 takeover and the ADR-160 rework-claim returns.
-    if (targetNodeId !== interruptedNodeId) {
-      const target = targetNodeId as string;
-
-      await markDownstreamStale(
-        runId,
-        graph ? [target, ...downstreamOf(graph, target)] : [target],
-        tx,
-      );
+    if (staleSet) {
+      await markDownstreamStale(runId, staleSet, tx);
     }
 
     await tx
