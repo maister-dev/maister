@@ -2224,6 +2224,8 @@
     "answerClarification": "Ответить на уточнение",
     "answeringClarification": "Сохраняем уточнение…",
     "formCustomPlaceholder": "Введите своё значение…",
+    "jsonFieldParsed": "Разобрано как JSON",
+    "jsonFieldPlainText": "Не валидный JSON — сохранится как обычный текст",
     "branch": "ветка",
     "baseBranch": "Базовая ветка",
     "targetBranch": "Целевая ветка",
@@ -3857,7 +3859,9 @@
           "submit": "Отправить",
           "reviewCommentsPlaceholder": "Что нужно изменить? (необязательно)",
           "formInstructions": "Выберите вариант или впишите свой ответ для каждого поля.",
-          "formCustomPlaceholder": "Введите своё значение…"
+          "formCustomPlaceholder": "Введите своё значение…",
+          "jsonFieldParsed": "Разобрано как JSON",
+          "jsonFieldPlainText": "Не валидный JSON — сохранится как обычный текст"
         }
       },
       "contentIssues": {

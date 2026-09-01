@@ -2224,6 +2224,8 @@
     "answerClarification": "Answer clarification",
     "answeringClarification": "Saving clarification…",
     "formCustomPlaceholder": "Type a custom value…",
+    "jsonFieldParsed": "Parsed as JSON",
+    "jsonFieldPlainText": "Not valid JSON — will be stored as plain text",
     "branch": "branch",
     "baseBranch": "Base branch",
     "targetBranch": "Target branch",
@@ -3857,7 +3859,9 @@
           "submit": "Submit",
           "reviewCommentsPlaceholder": "What needs to change? (optional)",
           "formInstructions": "Pick an option or type your own answer for each field.",
-          "formCustomPlaceholder": "Type a custom value…"
+          "formCustomPlaceholder": "Type a custom value…",
+          "jsonFieldParsed": "Parsed as JSON",
+          "jsonFieldPlainText": "Not valid JSON — will be stored as plain text"
         }
       },
       "contentIssues": {

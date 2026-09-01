@@ -338,6 +338,13 @@ binary_content`).
 | WARN | `shell_lint` | a shell heuristic-lint finding (pure JS, no shellcheck) |
 | WARN | `form_schema_unreferenced` | `formSchemaSchema` issue on a schema file NOT referenced by the manifest |
 
+**HITL rendering of a `json` field (ADR-162).** A `json` field is rendered in the
+HITL form as a monospace **textarea** (not the single-line input every other type
+gets) plus a live hint saying whether the current text will be parsed as JSON or
+stored as plain text — the two outcomes of `coerceFormFieldValue`. The hint is
+advisory: `json` accepts a string, so prose is a valid submission, and the
+operator is told so before submitting rather than discovering it downstream.
+
 **Schema-builder coverage (ADR-162).** The visual `form_schema` builder offers
 every field type including `json`, but array **`items`** has no visual control —
 a typed-array declaration is authored in the builder's **Raw JSON** tab. The

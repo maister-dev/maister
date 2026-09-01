@@ -410,6 +410,8 @@ export function RunHitlResponse({
         ? t("agentQuestionInstructions")
         : t("formInstructions"),
     formCustomPlaceholder: t("formCustomPlaceholder"),
+    jsonFieldParsed: t("jsonFieldParsed"),
+    jsonFieldPlainText: t("jsonFieldPlainText"),
     reviewOpenCount: t("reviewOpenCount"),
     reviewOutdatedCount: t("reviewOutdatedCount"),
     reviewLoopChip: t("reviewLoopChip"),

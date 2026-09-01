@@ -45,6 +45,7 @@ import {
   coerceFormFieldValue,
   consensusHitlFromSchema,
   hookTripFromSchema,
+  isJsonText,
   planReviewDecisionFromSchema,
   reviewLoopInfo,
 } from "@/components/board/hitl-decision-controls";
@@ -66,6 +67,8 @@ const LABELS = {
   reviewCommentsPlaceholder: "run.reviewCommentsPlaceholder",
   formInstructions: "run.formInstructions",
   formCustomPlaceholder: "run.formCustomPlaceholder",
+  jsonFieldParsed: "run.jsonFieldParsed",
+  jsonFieldPlainText: "run.jsonFieldPlainText",
 };
 
 const BUDGET_LABELS = {
@@ -476,6 +479,62 @@ describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () =>
       const html = render({ kind: "form", schema: { type: "object" } });
 
       expect(html).toContain('id="hitl-json-response"');
+    });
+  });
+
+  // ADR-162: a `json` field carries structure, so a single-line text input is
+  // the wrong control. It gets the monospace textarea plus a live hint telling
+  // the operator which of the two coercion outcomes their text will take.
+  describe("json field control (ADR-162)", () => {
+    const jsonSchema = {
+      schemaVersion: 1,
+      fields: [
+        { name: "payload", label: "Payload", type: "json", required: true },
+        { name: "title", label: "Title", type: "string" },
+      ],
+    };
+
+    it("renders a textarea for a json field and an input for the others", () => {
+      const html = render({ kind: "form", schema: jsonSchema });
+
+      expect(html).toContain('<textarea class="min-h-[80px]');
+      expect(html).toContain('id="hitl-form-field-payload"');
+      // The sibling string field keeps the single-line input.
+      expect(html).toContain('id="hitl-form-field-title" placeholder');
+      expect(html).toContain('type="text"');
+    });
+
+    it("shows the parsed-as-JSON hint when the value is valid JSON", () => {
+      const html = render({
+        kind: "form",
+        schema: jsonSchema,
+        formValues: { payload: '{"a":1}' },
+      });
+
+      expect(html).toContain('data-testid="hitl-form-json-hint-payload"');
+      expect(html).toContain("run.jsonFieldParsed");
+      expect(html).not.toContain("run.jsonFieldPlainText");
+    });
+
+    it("shows the plain-text hint when the value is not JSON", () => {
+      const html = render({
+        kind: "form",
+        schema: jsonSchema,
+        formValues: { payload: "just prose" },
+      });
+
+      expect(html).toContain("run.jsonFieldPlainText");
+      expect(html).not.toContain("run.jsonFieldParsed");
+    });
+
+    it("shows no hint until the operator types something", () => {
+      const html = render({
+        kind: "form",
+        schema: jsonSchema,
+        formValues: { payload: "   " },
+      });
+
+      expect(html).not.toContain('data-testid="hitl-form-json-hint-payload"');
     });
   });
 
@@ -1391,5 +1450,18 @@ describe("coerceFormFieldValue (ADR-162)", () => {
   it("keeps the raw string for an absent or unknown declared type", () => {
     expect(coerceFormFieldValue(undefined, "x")).toBe("x");
     expect(coerceFormFieldValue("tuple", "x")).toBe("x");
+  });
+});
+
+describe("isJsonText (ADR-162)", () => {
+  it("agrees with coerceFormFieldValue about what will be parsed", () => {
+    for (const raw of ['{"a":1}', "[1,2]", "null", "7", '"text"', "true"]) {
+      expect(isJsonText(raw)).toBe(true);
+      expect(coerceFormFieldValue("json", raw)).not.toBe(raw);
+    }
+    for (const raw of ["just prose", "{unclosed", "", "a: 1"]) {
+      expect(isJsonText(raw)).toBe(false);
+      expect(coerceFormFieldValue("json", raw)).toBe(raw);
+    }
   });
 });

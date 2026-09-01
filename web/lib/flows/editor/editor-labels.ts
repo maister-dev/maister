@@ -216,6 +216,8 @@ export function formSchemaBuilderLabels(te: T): FormSchemaBuilderLabels {
       formCustomPlaceholder: te(
         "artifacts.formSchema.preview.formCustomPlaceholder",
       ),
+      jsonFieldParsed: te("artifacts.formSchema.preview.jsonFieldParsed"),
+      jsonFieldPlainText: te("artifacts.formSchema.preview.jsonFieldPlainText"),
     },
   };
 }

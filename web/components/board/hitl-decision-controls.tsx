@@ -54,6 +54,10 @@ export interface HitlDecisionControlsLabels {
   reviewLoopChip?: string;
   reviewApproveOpenWarn?: string;
   reviewReworkExhausted?: string;
+  // ADR-162 `json` field live-validity hint. Optional so pre-feature consumers
+  // keep compiling; both render sites carry an English `??` fallback.
+  jsonFieldParsed?: string;
+  jsonFieldPlainText?: string;
   // A2 infra_recovery (auto_retry exhaustion) — retry/abandon button labels.
   infraRecoveryRetry?: string;
   infraRecoveryAbandon?: string;
@@ -279,6 +283,19 @@ const FORM_FIELD_COERCERS: Record<
     }
   },
 };
+
+// True when the raw text parses as JSON — i.e. `coerceFormFieldValue` will
+// store structure rather than the string. Drives the `json` field's live hint so
+// the operator sees which of the two happens BEFORE submitting.
+export function isJsonText(raw: string): boolean {
+  try {
+    JSON.parse(raw);
+
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // Coerces one raw form input to its declared type. An unknown/absent type (a
 // stored schema this build does not know) keeps the raw string.
@@ -770,12 +787,14 @@ function FormFieldControl({
   field,
   value,
   placeholder,
+  labels,
   disabled,
   onChange,
 }: {
   field: HitlFormFieldView;
   value: string;
   placeholder: string;
+  labels: HitlDecisionControlsLabels;
   disabled: boolean;
   onChange: (v: string) => void;
 }): ReactElement {
@@ -811,15 +830,42 @@ function FormFieldControl({
           ))}
         </div>
       ) : null}
-      <input
-        className="rounded-[7px] border border-line bg-paper px-2 py-1.5 text-[12.5px] text-ink outline-none focus:border-amber"
-        disabled={disabled}
-        id={`hitl-form-field-${field.name}`}
-        placeholder={placeholder}
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      />
+      {field.type === "json" ? (
+        <>
+          <textarea
+            className="min-h-[80px] rounded-[7px] border border-line bg-paper px-2 py-1.5 font-mono text-[12.5px] text-ink outline-none focus:border-amber"
+            disabled={disabled}
+            id={`hitl-form-field-${field.name}`}
+            placeholder={placeholder}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+          />
+          {value.trim().length > 0 ? (
+            <p
+              className={clsx(
+                "font-mono text-[11px]",
+                isJsonText(value) ? "text-good" : "text-mute",
+              )}
+              data-testid={`hitl-form-json-hint-${field.name}`}
+              role="status"
+            >
+              {isJsonText(value)
+                ? `✓ ${labels.jsonFieldParsed ?? "Parsed as JSON"}`
+                : (labels.jsonFieldPlainText ?? "Stored as plain text")}
+            </p>
+          ) : null}
+        </>
+      ) : (
+        <input
+          className="rounded-[7px] border border-line bg-paper px-2 py-1.5 text-[12.5px] text-ink outline-none focus:border-amber"
+          disabled={disabled}
+          id={`hitl-form-field-${field.name}`}
+          placeholder={placeholder}
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )}
     </div>
   );
 }
@@ -1642,6 +1688,7 @@ export function HitlDecisionControls({
               key={field.name}
               disabled={disabled}
               field={field}
+              labels={labels}
               placeholder={labels.formCustomPlaceholder}
               value={formValues[field.name] ?? ""}
               onChange={(v) => onFormFieldChange(field.name, v)}
