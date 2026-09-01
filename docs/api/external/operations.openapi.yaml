@@ -2020,6 +2020,14 @@ paths:
         orchestrator, in the token's project, and currently in `Review`
         (otherwise `PRECONDITION` → 409).
 
+        **(Implemented — [ADR-163](../../decisions.md#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher))** `childRunId` MUST
+        additionally be an AGENT child. `run_rework` does not apply to a FLOW
+        child — a flow child owns its own `human`/`rework` loop — and is refused
+        `PRECONDITION` → 409 at the route, BEFORE any dispatch, so the child is
+        left untouched (still `Review`, `promotion_state` unchanged) and
+        `run_promote` on the same child still succeeds. Resolve a flow child by
+        promoting or cancelling it, or through its own review loop.
+
         **(Implemented — ADR-102.)** Reworking a `workspace_mode='shared'` child
         is refused `CONFLICT` → 409 while the tree promote is in progress / done
         (the rework fences on the allocator workspace's `promotion_state`), so a
