@@ -457,6 +457,45 @@ function isKnownCode(value: unknown): value is MaisterErrorCode {
   );
 }
 
+// ADR-164 D5: the ONE status+body → MaisterError mapping. The supervisor's
+// `details` travel through untouched (reason tokens are the contract), and the
+// wire-only `FENCED` code lands as `CONFLICT {details.reason:"assignment_fenced"}`
+// — no new MaisterError member. `details.httpStatus` lets an endpoint apply
+// its own status-specific rule (input 410 → HITL_TIMEOUT) without re-parsing.
+export function supervisorErrorToMaister(
+  status: number,
+  body: unknown,
+  fallbackCode: MaisterErrorCode,
+): MaisterError {
+  const record =
+    body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const wireCode = typeof record.code === "string" ? record.code : null;
+  const wireDetails =
+    record.details && typeof record.details === "object"
+      ? (record.details as Record<string, unknown>)
+      : {};
+  const message =
+    typeof record.message === "string"
+      ? record.message
+      : `supervisor ${status}`;
+
+  if (wireCode === "FENCED") {
+    return new MaisterError("CONFLICT", message, {
+      details: {
+        ...wireDetails,
+        reason: "assignment_fenced",
+        httpStatus: status,
+      },
+    });
+  }
+
+  return new MaisterError(
+    isKnownCode(wireCode) ? wireCode : fallbackCode,
+    message,
+    { details: { ...wireDetails, httpStatus: status } },
+  );
+}
+
 async function asMaisterError(
   res: Response,
   fallbackCode: MaisterErrorCode,
@@ -468,28 +507,34 @@ async function asMaisterError(
   } catch {
     /* non-JSON body, fall through */
   }
-  const code =
-    body &&
-    typeof body === "object" &&
-    "code" in body &&
-    isKnownCode((body as { code: unknown }).code)
-      ? (body as { code: MaisterErrorCode }).code
-      : fallbackCode;
-  const message =
-    body &&
-    typeof body === "object" &&
-    "message" in body &&
-    typeof (body as { message: unknown }).message === "string"
-      ? (body as { message: string }).message
-      : `supervisor ${res.status}`;
 
-  return new MaisterError(code, message);
+  return supervisorErrorToMaister(res.status, body, fallbackCode);
+}
+
+// A failure whose outcome on the host is UNKNOWN (the request may or may not
+// have executed): network error, timeout, non-JSON 5xx. The execution-host
+// deliverer retries the SAME command id on this marker and on nothing else.
+export const UNKNOWN_OUTCOME_TRANSPORT = "unknown_outcome" as const;
+
+function unknownOutcomeError(
+  err: unknown,
+  ctx: string,
+  reason: "network" | "timeout" | "non_json_5xx",
+): MaisterError {
+  const message = err instanceof Error ? err.message : String(err);
+
+  return new MaisterError("EXECUTOR_UNAVAILABLE", `${ctx}: ${message}`, {
+    cause: err instanceof Error ? err : undefined,
+    details: { transport: UNKNOWN_OUTCOME_TRANSPORT, reason },
+  });
 }
 
 function networkErrorToMaister(err: unknown, ctx: string): MaisterError {
-  const message = err instanceof Error ? err.message : String(err);
-
-  return new MaisterError("EXECUTOR_UNAVAILABLE", `${ctx}: ${message}`);
+  return unknownOutcomeError(
+    err,
+    ctx,
+    isAbortError(err) ? "timeout" : "network",
+  );
 }
 
 async function fetchLongLivedSupervisor(
@@ -1126,5 +1171,409 @@ export async function* streamSession(
     }
   } finally {
     reader.releaseLock();
+  }
+}
+
+// ============================================================================
+// ADR-164 (Designed) — enveloped wire. Importable ONLY from
+// `web/lib/execution-host/**` (the local-direct transport); domain code goes
+// through `BoundClient` / `HostAdminClient`. Every enveloped variant shares the
+// ONE `request()` helper below, so status classification (definitive vs
+// unknown-outcome), replay detection, and `details` pass-through live in one
+// place. The legacy path-bearing functions above are deleted at the strict
+// flip (T5.3) once no importer remains.
+// ============================================================================
+
+export type WireCommandFence = {
+  hostKey: string;
+  assignmentId: string;
+  assignmentEpoch: number;
+  runId: string;
+};
+
+export type WireEnvelope<TPayload = unknown> = {
+  command: { id: string; kind: string; issuedAt: string };
+  fence: WireCommandFence;
+  payload: TPayload;
+};
+
+export type WorkspaceKindWire = "git_worktree" | "repo_checkout" | "directory";
+
+export type AdoptWorkspaceWirePayload = {
+  runId: string;
+  projectSlug: string;
+  kind: WorkspaceKindWire;
+  path: string;
+  repoPath?: string;
+  contextMounts?: ContextMountSnapshot[];
+};
+
+export type AdoptWorkspaceWireResult = {
+  executionWorkspaceId: string;
+  kind: WorkspaceKindWire;
+  replayed: boolean;
+};
+
+export type WorkspaceRecordWire = {
+  executionWorkspaceId: string;
+  runId: string;
+  projectSlug: string;
+  kind: WorkspaceKindWire;
+  adoptedAt: string;
+  releasedAt: string | null;
+};
+
+export type CommandReceiptWire = {
+  commandId: string;
+  runId: string;
+  kind: string;
+  assignmentEpoch: number;
+  phase: "accepted" | "completed" | "rejected";
+  httpStatus: number;
+  body: Record<string, unknown>;
+  receivedAt: string;
+  completedAt: string | null;
+  // `accepted` + `inflight:false` = the host restarted mid-turn (turn_lost).
+  inflight: boolean;
+};
+
+export type DeleteSessionOutcome = "terminated" | "gone";
+
+export const COMMAND_REPLAYED_HEADER = "x-maister-command-replayed";
+
+type WireRequest = {
+  method: "GET" | "POST" | "DELETE";
+  path: string;
+  body?: unknown;
+  ctx: string;
+  fallbackCode: MaisterErrorCode;
+  timeoutMs?: number | null;
+  longLived?: boolean;
+  signal?: AbortSignal;
+};
+
+type WireResponse<T> = { status: number; body: T; replayed: boolean };
+
+function combineSignals(
+  a: AbortSignal | undefined,
+  b: AbortSignal | undefined,
+): AbortSignal | undefined {
+  if (a && b) return AbortSignal.any([a, b]);
+
+  return a ?? b;
+}
+
+async function request<T>(spec: WireRequest): Promise<WireResponse<T>> {
+  const url = `${baseUrl()}${spec.path}`;
+  const controller = spec.timeoutMs ? new AbortController() : null;
+  const timer = controller
+    ? setTimeout(() => controller.abort(), spec.timeoutMs ?? undefined)
+    : null;
+  const headers: Record<string, string> =
+    spec.body !== undefined ? { "content-type": "application/json" } : {};
+  const init = {
+    method: spec.method,
+    headers,
+    body: spec.body !== undefined ? JSON.stringify(spec.body) : undefined,
+    signal: combineSignals(spec.signal, controller?.signal),
+  };
+  let res: Response;
+
+  logger.debug({ url, method: spec.method, ctx: spec.ctx }, "wire-request");
+
+  try {
+    res = spec.longLived
+      ? await fetchLongLivedSupervisor(url, init, spec.ctx)
+      : await fetch(url, { ...init, cache: "no-store" });
+  } catch (err) {
+    throw networkErrorToMaister(err, spec.ctx);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
+  const replayed = res.headers.get(COMMAND_REPLAYED_HEADER) === "true";
+
+  if (res.ok) {
+    if (res.status === 204) {
+      return { status: res.status, body: null as T, replayed };
+    }
+
+    return { status: res.status, body: (await res.json()) as T, replayed };
+  }
+
+  let errorBody: unknown = null;
+  let parsed = false;
+
+  try {
+    errorBody = await res.json();
+    parsed = true;
+  } catch {
+    /* non-JSON error body */
+  }
+
+  if (!parsed && res.status >= 500) {
+    throw unknownOutcomeError(
+      new Error(`supervisor ${res.status} (non-JSON body)`),
+      spec.ctx,
+      "non_json_5xx",
+    );
+  }
+
+  throw supervisorErrorToMaister(res.status, errorBody, spec.fallbackCode);
+}
+
+function httpStatusOf(err: unknown): number | null {
+  const status =
+    err instanceof MaisterError ? err.details?.httpStatus : undefined;
+
+  return typeof status === "number" ? status : null;
+}
+
+// A parsed 5xx is DEFINITIVE (the host answered): EXECUTOR_UNAVAILABLE without
+// the unknown-outcome marker, so the ledger records `failed` after one attempt
+// and the caller's own retry issues a NEW command (D5).
+function definitiveUnavailable(err: unknown): never {
+  const status = httpStatusOf(err);
+
+  if (err instanceof MaisterError && status !== null && status >= 500) {
+    throw new MaisterError("EXECUTOR_UNAVAILABLE", err.message, {
+      details: err.details,
+    });
+  }
+
+  throw err;
+}
+
+function sessionPath(sessionId: string, suffix = ""): string {
+  return `/sessions/${encodeURIComponent(sessionId)}${suffix}`;
+}
+
+export async function adoptWorkspace(
+  envelope: WireEnvelope<AdoptWorkspaceWirePayload>,
+  opts: { timeoutMs?: number } = {},
+): Promise<AdoptWorkspaceWireResult> {
+  const { contextMounts, ...rest } = envelope.payload;
+  // ADR-157: the supervisor's ContextMountSchema is strict and wire-shaped;
+  // this is the one place the adopt body is built.
+  const body: WireEnvelope = {
+    ...envelope,
+    payload:
+      contextMounts && contextMounts.length > 0
+        ? { ...rest, contextMounts: contextMountsToWire(contextMounts) }
+        : rest,
+  };
+  const res = await request<AdoptWorkspaceWireResult>({
+    method: "POST",
+    path: "/workspaces/adopt",
+    body,
+    ctx: "adoptWorkspace",
+    fallbackCode: "PRECONDITION",
+    timeoutMs: opts.timeoutMs ?? 10_000,
+  });
+
+  return { ...res.body, replayed: res.body.replayed || res.replayed };
+}
+
+export async function getWorkspace(
+  executionWorkspaceId: string,
+): Promise<WorkspaceRecordWire | null> {
+  try {
+    const res = await request<WorkspaceRecordWire>({
+      method: "GET",
+      path: `/workspaces/${encodeURIComponent(executionWorkspaceId)}`,
+      ctx: "getWorkspace",
+      fallbackCode: "PRECONDITION",
+      timeoutMs: 10_000,
+    });
+
+    return res.body;
+  } catch (err) {
+    if (httpStatusOf(err) === 404) return null;
+    throw err;
+  }
+}
+
+export async function releaseWorkspace(
+  executionWorkspaceId: string,
+  envelope: WireEnvelope,
+): Promise<{ released: boolean }> {
+  try {
+    const res = await request<{ released: boolean }>({
+      method: "DELETE",
+      path: `/workspaces/${encodeURIComponent(executionWorkspaceId)}`,
+      body: envelope,
+      ctx: "releaseWorkspace",
+      fallbackCode: "PRECONDITION",
+      timeoutMs: 10_000,
+    });
+
+    return { released: res.body.released === true };
+  } catch (err) {
+    if (httpStatusOf(err) === 404) return { released: false };
+    throw err;
+  }
+}
+
+export async function getCommandReceipt(
+  commandId: string,
+): Promise<CommandReceiptWire | null> {
+  try {
+    const res = await request<CommandReceiptWire>({
+      method: "GET",
+      path: `/commands/${encodeURIComponent(commandId)}`,
+      ctx: "getCommandReceipt",
+      fallbackCode: "PRECONDITION",
+      timeoutMs: 10_000,
+    });
+
+    return { ...res.body, inflight: res.body.inflight === true };
+  } catch (err) {
+    if (httpStatusOf(err) === 404) return null;
+    throw err;
+  }
+}
+
+export async function createSessionEnveloped(
+  envelope: WireEnvelope,
+  opts: { timeoutMs?: number } = {},
+): Promise<CreateSessionResult> {
+  const res = await request<CreateSessionResult>({
+    method: "POST",
+    path: "/sessions",
+    body: envelope,
+    ctx: "createSession",
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: opts.timeoutMs ?? 60_000,
+  });
+
+  return res.body;
+}
+
+export async function sendPromptEnveloped(
+  sessionId: string,
+  envelope: WireEnvelope<SendPromptInput>,
+  opts: { signal?: AbortSignal } = {},
+): Promise<PromptResult> {
+  const res = await request<PromptResult>({
+    method: "POST",
+    path: sessionPath(sessionId, "/prompt"),
+    body: envelope,
+    ctx: "sendPrompt",
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: null,
+    longLived: true,
+    signal: opts.signal,
+  });
+
+  return res.body;
+}
+
+// Input keeps its status-specific rules: 410 (and the pre-M7 404) is a
+// genuinely expired deferred → terminal HITL_TIMEOUT; a parsed 5xx is the
+// "unknown session" answer → definitive EXECUTOR_UNAVAILABLE.
+export async function deliverInputEnveloped(
+  sessionId: string,
+  envelope: WireEnvelope,
+): Promise<{ ok: true }> {
+  try {
+    const res = await request<{ ok: true }>({
+      method: "POST",
+      path: sessionPath(sessionId, "/input"),
+      body: envelope,
+      ctx: "deliverInput",
+      fallbackCode: "ACP_PROTOCOL",
+      timeoutMs: 10_000,
+    });
+
+    return res.body;
+  } catch (err) {
+    const status = httpStatusOf(err);
+
+    if (
+      err instanceof MaisterError &&
+      (status === 410 || status === 404) &&
+      err.details?.reason !== "assignment_fenced"
+    ) {
+      throw new MaisterError("HITL_TIMEOUT", err.message, {
+        details: err.details,
+      });
+    }
+
+    return definitiveUnavailable(err);
+  }
+}
+
+export async function cancelPromptEnveloped(
+  sessionId: string,
+  envelope: WireEnvelope,
+): Promise<{ cancelled: boolean }> {
+  const res = await request<{ cancelled?: boolean }>({
+    method: "POST",
+    path: sessionPath(sessionId, "/cancel"),
+    body: envelope,
+    ctx: "cancelPrompt",
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: 10_000,
+  });
+
+  return { cancelled: res.body?.cancelled === true };
+}
+
+export async function checkpointSessionEnveloped(
+  sessionId: string,
+  envelope: WireEnvelope,
+): Promise<CheckpointResponse> {
+  let body: Partial<CheckpointResponse>;
+
+  try {
+    body = (
+      await request<Partial<CheckpointResponse>>({
+        method: "POST",
+        path: sessionPath(sessionId, "/checkpoint"),
+        body: envelope,
+        ctx: "checkpointSession",
+        fallbackCode: "CHECKPOINT",
+        timeoutMs: 30_000,
+      })
+    ).body;
+  } catch (err) {
+    return definitiveUnavailable(err);
+  }
+
+  if (
+    typeof body.alreadyCheckpointed !== "boolean" ||
+    typeof body.sessionId !== "string" ||
+    typeof body.monotonicId !== "number"
+  ) {
+    throw new MaisterError(
+      "CHECKPOINT",
+      `supervisor returned malformed CheckpointResponse: ${JSON.stringify(body)}`,
+    );
+  }
+
+  return body as CheckpointResponse;
+}
+
+// 404 is an OUTCOME, not a failure: the session already exited in the
+// list/delete interval (the `deleteSessionIfPresent` semantics).
+export async function deleteSessionEnveloped(
+  sessionId: string,
+  envelope: WireEnvelope,
+): Promise<{ outcome: DeleteSessionOutcome }> {
+  try {
+    await request<unknown>({
+      method: "DELETE",
+      path: sessionPath(sessionId),
+      body: envelope,
+      ctx: "deleteSession",
+      fallbackCode: "ACP_PROTOCOL",
+      timeoutMs: 30_000,
+    });
+
+    return { outcome: "terminated" };
+  } catch (err) {
+    if (httpStatusOf(err) === 404) return { outcome: "gone" };
+
+    return definitiveUnavailable(err);
   }
 }

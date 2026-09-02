@@ -72,8 +72,10 @@ simultaneous hosts, no placement, no host UI (ADR-164 §D12).
 - **Receipt** — a host-side `command_receipts` row `(command_id, run_id,
   kind, epoch, phase ∈ {accepted, completed, rejected}, http_status,
   body_json, received_at, completed_at)`; readable through
-  `GET /commands/{commandId}` and replayed verbatim on a duplicate id with
-  `X-Maister-Command-Replayed: true`.
+  `GET /commands/{commandId}` (which adds the process-memory `inflight`
+  flag — `accepted` + `inflight:false` is the restart-mid-turn signature the
+  web folds as `turn_lost` without re-sending) and replayed verbatim on a
+  duplicate id with `X-Maister-Command-Replayed: true`.
 - **Execution workspace handle** — `executionWorkspaceId = "ws_<uuid>"`,
   host-scoped, keyed `(runId, realpath)` in the host's `workspaces` table
   with `kind ∈ {git_worktree, repo_checkout, directory}`, `path`,

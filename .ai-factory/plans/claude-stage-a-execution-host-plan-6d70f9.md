@@ -887,7 +887,7 @@ on** · **Logging/Failure** · **Acceptance**. "Suite green" = the package's
 
 ### Phase 3 — Web execution-host module
 
-- [ ] **T3.1 Types, transport interface, local-direct transport, shared fakes.**
+- [x] **T3.1 Types, transport interface, local-direct transport, shared fakes.**
   Spec: D10; E-EH-08 (web half), E-EH-12.
   RED (web `unit`, `web/lib/execution-host/__tests__/wire-shape.test.ts`):
   T1 `buildEnvelope()` output matches the OpenAPI `CommandEnvelope` example shape and never contains `worktreePath|repoPath|confineRoot|runId|projectSlug` inside a `session.create` payload (fixture-driven, Appendix D §D.4);
@@ -905,7 +905,7 @@ on** · **Logging/Failure** · **Acceptance**. "Suite green" = the package's
   REFACTOR: `supervisor-client.ts` keeps ONE `request()` helper; enveloped
   variants share it.
   Depends on: T2.5. Acceptance: T1–T3 green; `web/lib/__tests__/supervisor-client.test.ts` extended; typecheck green.
-- [ ] **T3.2 Local host registrar + resolver.**
+- [x] **T3.2 Local host registrar + resolver.**
   Spec: D1, D8; E-EH-01; X-EH-02, X-EH-03, X-EH-22.
   RED (web `integration`, `registrar.integration.test.ts`, real supervisor child):
   G1 first boot → one row, `readiness='ready'`, `capabilities.protocolVersion=1`;
@@ -920,7 +920,7 @@ on** · **Logging/Failure** · **Acceptance**. "Suite green" = the package's
   REFACTOR: policy table as data (`decideRegistration(observed) → action`)
   unit-testable without DB — its unit test replaces no integration case.
   Depends on: T1.2, T3.1. Acceptance: G1–G6 green; suite green.
-- [ ] **T3.3 Command ledger + deliverer + bound client.**
+- [x] **T3.3 Command ledger + deliverer + bound client.**
   Spec: D4, D5; E-EH-03 (web side), E-EH-06, E-EH-07, E-EH-11; X-EH-04, X-EH-07, X-EH-08, X-EH-14, X-EH-15, X-EH-20.
   RED (web `integration` + fake transport, `ledger.integration.test.ts`):
   L1 `issue()` persists `queued` BEFORE the transport is called (transport spy records DB state at call time);
@@ -938,7 +938,7 @@ on** · **Logging/Failure** · **Acceptance**. "Suite green" = the package's
   kind-specific branches outside the policy table; `HostAdminClient` and
   `BoundClient` share the transport instance.
   Depends on: T1.2, T3.1, T3.2. Logging: per contract. Acceptance: L1–L8, D1–D2 green; suite green.
-- [ ] **T3.4 Startup + periodic recovery + retention.**
+- [x] **T3.4 Startup + periodic recovery + retention.**
   Spec: D5, D8; E-EH-10; X-EH-16, X-EH-17.
   RED (web `integration` + REAL supervisor, `command-recovery.integration.test.ts`):
   V1 W2: fault-inject the ack write after a real create → row stays `delivering`; `recoverExecutionCommands()` → `succeeded`, `host_session_id` persisted, `GET /sessions` shows exactly ONE session (no re-spawn);
@@ -949,7 +949,7 @@ on** · **Logging/Failure** · **Acceptance**. "Suite green" = the package's
   GREEN: `recovery.ts`, `instrumentation.ts` order, `system-sweeps.ts` pass + summary field.
   REFACTOR: recovery reuses the deliverer for driverless re-delivery (no second send path).
   Depends on: T3.3. Acceptance: V1–V6 green; suite green.
-- [ ] **T3.5 Workspace adoption client.**
+- [x] **T3.5 Workspace adoption client.**
   Spec: D7; E-EH-08, E-EH-09; X-EH-11.
   RED (web `integration` + REAL supervisor, `adoption.integration.test.ts`):
   K1 flow-run assignment → adopt payload derived from `workspaces.worktree_path` + `projects.repo_path` (kind `git_worktree`), handle stored on the assignment, second call skips the wire;
@@ -1438,6 +1438,49 @@ Appendix A.3.
   identical (comm: zero entries either way). Five stub log lines
   `orchestrator session missing facade token/baseUrl` exist on main's stub
   too (line 166). Quarantine list for T7.1 = `scratchpad/base-failed.txt`.
+- **2026-09-02 Phase 3 (T3.1–T3.5) — DONE, Commit 5.** `web/lib/execution-host/`
+  gained `contracts.ts` (transport interface + wire DTOs), `signals.ts`
+  (process-local `session.command` bus), `ledger.ts` (`issueCommand` →
+  `queued` row + local admission fence), `deliverer.ts` (`COMMAND_POLICY`
+  table; `deliverCommand` claim→wire→ack-tx; `deliverPrompt` with the
+  first-durable-signal completion), `registrar.ts` (`REGISTRATION_POLICY`
+  as data under `lockActiveLocalHost`), `resolver.ts` (30 s memo,
+  `hostForAssignment` verifies the live key), `placement.ts`
+  (`mintPlacement` inside the caller's tx + D9 `ensureAssignment`),
+  `adoption.ts` (`workspaceSpecFor` kind map + `ensureWorkspaceAdopted`),
+  `client.ts` (`BoundClient`/`HostAdminClient`, `executionHosts`
+  singleton), `recovery.ts` (W1/W2/W4 + stale-active release + 7-day prune),
+  `transports/local-direct.ts`; `supervisor-client.ts` gained ONE
+  `request()` helper, `supervisorErrorToMaister` (details pass-through,
+  FENCED→CONFLICT) and the enveloped/workspace/receipt variants;
+  `persistRunSessionHostBinding` (upsert on `(run_id, session_name)`);
+  `instrumentation.ts` order + the `executionHost` arm of `runSystemSweep`.
+  Test harnesses: `test-support/fake-execution-host.ts` (fence high-water,
+  receipts, faults, scripted prompt turns), `real-supervisor.ts` (node
+  `--import tsx` child on a temp runtime root, health-gated, SIGKILL/restart
+  on the same state dir), `git-fixture.ts`. Cases green: T1–T3, G1–G6,
+  L1–L8, D1–D2, V1–V6, K1–K6. Findings: (1) **`GET /commands/{id}` gained
+  `inflight`** (process-memory flag next to the durable row) — the plan's
+  "`accepted` w/o in-flight → turn_lost" needs it to be decidable from the
+  web without re-sending a prompt into a possibly-live turn; OpenAPI/Zod/
+  stubs/analytics updated. (2) **A receipt lookup that fails on the wire is
+  not a 404**: the driver's first lookup after a host SIGKILL raced the
+  restart and folded `receipt_missing`; the deliverer now retries the lookup
+  (0.5 s·2ⁿ, 5 attempts) before `receipt_lookup_failed`. (3) The
+  `repo_read` + `workspace_ref` checkout is a detached LINKED worktree
+  (`addDetachedWorktree`), so it adopts as `git_worktree`, not
+  `repo_checkout` (the registry's `repo_path_mismatch` rule would reject the
+  latter). (4) pnpm's `.bin/tsx` shim and the tsx CLI both proxy the real
+  process — SIGKILL never reached the supervisor until the harness ran node
+  with `--import tsx` directly. (5) D1's "input happy path" is the cancel of
+  an unknown permission (the lifecycle fixture never asks for one): the wire
+  answers 410 → definitive `HITL_TIMEOUT`, ledger `failed` after ONE
+  attempt — recorded, not hidden. (6) The supervisor lists exited sessions
+  and answers 200 on deleting an exited record (`outcome: terminated`).
+  (7) `hostForAssignment`/`mintPlacement` take the caller's db (never
+  `getDb()`), so the integration DB is honored. Baseline reminder: the
+  supervisor-client unit test (56) and `system-sweeps.test.ts` (8, with the
+  new arm mocked like every other) are green.
 - **2026-09-02 Phase 1 (T1.1–T1.3) — DONE, Commit 2.** `db:generate --name
   execution_hosts` produced `0128_execution_hosts.sql` matching Appendix C
   name-for-name (this drizzle-kit wraps in `IF NOT EXISTS` / `DO $$`; journal

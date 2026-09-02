@@ -563,6 +563,8 @@ export const CommandReceiptSchema = z
     body: z.record(z.string(), z.unknown()),
     receivedAt: z.string().datetime({ offset: true }),
     completedAt: z.string().datetime({ offset: true }).nullable().optional(),
+    // `accepted` + `inflight:false` = the host restarted mid-turn (turn_lost).
+    inflight: z.boolean(),
   })
   .strict();
 

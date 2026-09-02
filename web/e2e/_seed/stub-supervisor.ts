@@ -225,6 +225,8 @@ export function stubReceipt(commandId: string) {
         body: r.body ?? {},
         receivedAt: r.receivedAt,
         completedAt: r.receivedAt,
+        // The stub records receipts after the effect, so nothing is in flight.
+        inflight: false,
       }
     : null;
 }

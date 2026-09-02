@@ -5,6 +5,8 @@ import type { RunnerSnapshot } from "@/lib/db/schema";
 import type { AnyColumn, SQL } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
+import { randomUUID } from "node:crypto";
+
 import {
   and,
   desc,
@@ -20,6 +22,7 @@ import * as schema from "@/lib/db/schema";
 
 type ReadDb = Pick<NodePgDatabase<typeof schema>, "select">;
 type WriteDb = Pick<NodePgDatabase<typeof schema>, "select" | "update">;
+type InsertDb = Pick<NodePgDatabase<typeof schema>, "insert">;
 
 // M42 (ADR-114): the per-session runner/resume state for one logical session.
 // After the contract migration drops the `runs.{runner_id,
@@ -151,6 +154,47 @@ export async function persistRunSessionAcpSessionId(
         eq(runSessions.sessionName, sessionName),
       ),
     );
+}
+
+// ADR-164 E-EH-07: the `session.create` ack binds the logical session to the
+// host (`host_session_id` = the supervisor's URL key, distinct from the ACP
+// resume handle) and to the assignment that created it — in the SAME
+// transaction as the command ack. Upsert on (run_id, session_name): the row
+// normally pre-exists (the launch/scratch/agent paths insert it), but a
+// recovery fold after a crash must not depend on that.
+export async function persistRunSessionHostBinding(
+  db: InsertDb,
+  input: {
+    runId: string;
+    sessionName: string;
+    hostSessionId: string;
+    acpSessionId: string | null;
+    executionAssignmentId: string;
+  },
+): Promise<void> {
+  const now = new Date();
+
+  await db
+    .insert(runSessions)
+    .values({
+      id: randomUUID(),
+      runId: input.runId,
+      sessionName: input.sessionName,
+      hostSessionId: input.hostSessionId,
+      acpSessionId: input.acpSessionId,
+      executionAssignmentId: input.executionAssignmentId,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [runSessions.runId, runSessions.sessionName],
+      set: {
+        hostSessionId: input.hostSessionId,
+        acpSessionId: input.acpSessionId,
+        executionAssignmentId: input.executionAssignmentId,
+        updatedAt: now,
+      },
+    });
 }
 
 // Batch variant for list/sweep readers: the ACTIVE session per run id (same

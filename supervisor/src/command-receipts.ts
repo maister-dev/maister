@@ -191,7 +191,13 @@ export class CommandReceipts {
   }
 }
 
-export function receiptToResponse(row: CommandReceiptRow): {
+// `inflight` is process memory next to the durable row: an `accepted` receipt
+// with `inflight:false` is the restart-mid-turn signature the web folds as
+// `turn_lost` without re-sending the command.
+export function receiptToResponse(
+  row: CommandReceiptRow,
+  inflight: boolean,
+): {
   commandId: string;
   runId: string;
   kind: string;
@@ -201,6 +207,7 @@ export function receiptToResponse(row: CommandReceiptRow): {
   body: Record<string, unknown>;
   receivedAt: string;
   completedAt: string | null;
+  inflight: boolean;
 } {
   return {
     commandId: row.commandId,
@@ -215,6 +222,7 @@ export function receiptToResponse(row: CommandReceiptRow): {
         : {},
     receivedAt: row.receivedAt,
     completedAt: row.completedAt,
+    inflight,
   };
 }
 

@@ -66,6 +66,18 @@ export async function register(): Promise<void> {
   }
 
   try {
+    // ADR-164 D8: register the local execution host FIRST (identity-change
+    // policy under the active row's lock; unreachable → readiness
+    // `unavailable`, never a boot failure), then close the command crash
+    // windows (W1/W2/W4) before any recovery sweep re-drives a run. Grace 0:
+    // no driver of THIS process exists yet, so every open row is stale.
+    const { ensureLocalExecutionHost, recoverExecutionCommands } = await import(
+      "@/lib/execution-host"
+    );
+
+    await ensureLocalExecutionHost();
+    await recoverExecutionCommands({ graceMs: 0 });
+
     const { runResumeRecoverySweep, runTakeoverReturnRecoverySweep } =
       await import("@/lib/runs/resume-recovery");
 

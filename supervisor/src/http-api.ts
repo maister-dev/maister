@@ -756,7 +756,11 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       return;
     }
 
-    reply.status(200).send(receiptToResponse(receipt));
+    reply
+      .status(200)
+      .send(
+        receiptToResponse(receipt, receipts.hasInflight(req.params.commandId)),
+      );
   });
 
   app.post("/sessions", async (req, reply) => {

@@ -1,0 +1,413 @@
+// ADR-164 T3.4 — startup + periodic recovery + retention (V1–V6) against a
+// REAL supervisor child (SIGKILL + restart on the same state dir for W4).
+
+import type { Db } from "@/lib/execution-host/db";
+import type { ExecutionHosts } from "@/lib/execution-host/client";
+import type { RealSupervisor } from "@/test-support/real-supervisor";
+
+import { randomUUID } from "node:crypto";
+
+import { eq } from "drizzle-orm";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import * as fullSchema from "@/lib/db/schema";
+import { isMaisterError } from "@/lib/errors";
+import {
+  getAssignmentById,
+  mintAssignment,
+} from "@/lib/execution-host/assignments";
+import { createExecutionHosts } from "@/lib/execution-host/client";
+import {
+  getCommand,
+  insertCommand,
+  listCommandsForRun,
+} from "@/lib/execution-host/commands";
+import {
+  pruneExecutionCommands,
+  recoverExecutionCommands,
+  releaseStaleAssignments,
+} from "@/lib/execution-host/recovery";
+import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
+import { resetResolverForTests } from "@/lib/execution-host/resolver";
+import { runReconcileSweep } from "@/lib/reconcile";
+import {
+  seedProjectRow,
+  seedRun,
+  seedWorkspace,
+} from "@/test-support/execution-host-seed";
+import { addWorktree, initRepo } from "@/test-support/git-fixture";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
+import {
+  startRealSupervisor,
+  useRealSupervisorUrl,
+} from "@/test-support/real-supervisor";
+
+const schema = fullSchema as unknown as Record<string, any>;
+
+let testDatabase: StartedPostgresTestDb;
+let db: Db;
+let sup: RealSupervisor;
+let restoreUrl: () => void = () => {};
+let hosts: ExecutionHosts;
+let project: { id: string; slug: string; repoPath: string };
+let hostId: string;
+
+const CREATE_PAYLOAD = {
+  stepId: "s1",
+  executor: { agent: "claude" as const, model: "mock" },
+};
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function seedFlowRun(name: string, status = "Running") {
+  const runId = await seedRun(testDatabase.db, {
+    projectId: project.id,
+    status,
+  });
+  const worktreePath = await addWorktree(
+    project.repoPath,
+    `${sup.runtimeRoot}/wt-${name}`,
+    `maister/${name}`,
+  );
+
+  await seedWorkspace(testDatabase.db, {
+    runId,
+    projectId: project.id,
+    worktreePath,
+    parentRepoPath: project.repoPath,
+  });
+
+  return runId;
+}
+
+async function mint(runId: string, reason: "launch" | "resume" = "launch") {
+  return db.transaction((tx) =>
+    mintAssignment(tx as unknown as Db, { runId, hostId, reason }),
+  );
+}
+
+async function runSessionRow(runId: string) {
+  const rows = (await db
+    .select()
+    .from(schema.runSessions)
+    .where(eq(schema.runSessions.runId, runId))) as unknown as Array<{
+    hostSessionId: string | null;
+    acpSessionId: string | null;
+    executionAssignmentId: string | null;
+  }>;
+
+  return rows[0] ?? null;
+}
+
+async function untilState(id: string, states: string[], timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+
+  for (;;) {
+    const row = await getCommand(db, id);
+
+    if (row && states.includes(row.state)) return row;
+    if (Date.now() > deadline) {
+      throw new Error(
+        `command ${id} never reached ${states.join("|")} (now ${row?.state})`,
+      );
+    }
+    await sleep(50);
+  }
+}
+
+// A db whose NEXT `transaction` call fails — the ack-write crash window (W2).
+function withAckFault(base: Db): { db: Db; arm: () => void } {
+  let armed = false;
+  const proxied = new Proxy(base, {
+    get(target, prop, receiver) {
+      if (prop === "transaction" && armed) {
+        armed = false;
+
+        return async () => {
+          throw new Error("injected: connection lost before the ack write");
+        };
+      }
+
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+
+  return { db: proxied as Db, arm: () => (armed = true) };
+}
+
+beforeAll(async () => {
+  testDatabase = await startMainPostgresTestDb({
+    databaseName: "eh_recovery_test",
+  });
+  db = testDatabase.db as unknown as Db;
+  // `--hang-prompt` never completes a turn: the W4 window needs a prompt that
+  // is still `accepted` when the host is killed.
+  sup = await startRealSupervisor({ fixtureArgs: ["--hang-prompt"] });
+  restoreUrl = useRealSupervisorUrl(sup.url);
+  resetRegistrarStateForTests();
+  resetResolverForTests();
+  project = await seedProjectRow(testDatabase.db, {
+    repoPath: await initRepo(`${sup.runtimeRoot}/repo`),
+  });
+  hosts = createExecutionHosts({ db });
+  const probe = await hosts.forRun(await seedFlowRun("probe"), {
+    reason: "launch",
+  });
+
+  hostId = probe.host.id;
+}, 180_000);
+
+afterAll(async () => {
+  restoreUrl();
+  await sup?.kill();
+  await testDatabase?.stop();
+});
+
+describe("execution-command recovery (real supervisor)", () => {
+  it("V1 (W2): a create whose ack write died is folded from the receipt — no second session", async () => {
+    const runId = await seedFlowRun("v1");
+    const assignment = await mint(runId);
+    const faulty = withAckFault(db);
+    const faultyHosts = createExecutionHosts({ db: faulty.db });
+    const client = await faultyHosts.forAssignment(assignment);
+
+    // Adopt first (clean), then arm the fault for the create's ack tx.
+    await client.ensureWorkspace();
+    faulty.arm();
+    await expect(client.createSession(CREATE_PAYLOAD)).rejects.toThrow(
+      /injected/,
+    );
+
+    const [createRow] = (await listCommandsForRun(db, runId)).filter(
+      (r) => r.kind === "session.create",
+    );
+
+    expect(createRow.state).toBe("delivering");
+    expect(await runSessionRow(runId)).toBeNull();
+
+    const summary = await recoverExecutionCommands({ db, graceMs: 0 });
+
+    expect(summary.folded).toBe(1);
+    const folded = await getCommand(db, createRow.id);
+
+    expect(folded!.state).toBe("succeeded");
+    const session = await runSessionRow(runId);
+
+    expect(session?.hostSessionId).toBeTruthy();
+    expect(session?.executionAssignmentId).toBe(assignment.id);
+
+    const live = (await hosts.local().listSessions()).filter(
+      (s) => s.runId === runId,
+    );
+
+    expect(live).toHaveLength(1);
+    expect(live[0].sessionId).toBe(session!.hostSessionId);
+  }, 120_000);
+
+  it("V2 (W1): a queued driverless delete is delivered; a queued create is orphaned without a wire call", async () => {
+    const runId = await seedFlowRun("v2");
+    const assignment = await mint(runId);
+    const client = await hosts.forAssignment(assignment);
+    const created = await client.createSession(CREATE_PAYLOAD);
+    const deleteRow = await insertCommand(db, {
+      id: randomUUID(),
+      runId,
+      assignmentId: assignment.id,
+      hostId,
+      assignmentEpoch: assignment.epoch,
+      kind: "session.delete",
+      targetSessionId: created.sessionId,
+      payload: {},
+      maxAttempts: 3,
+      driverless: true,
+    });
+    const createRow = await insertCommand(db, {
+      id: randomUUID(),
+      runId,
+      assignmentId: assignment.id,
+      hostId,
+      assignmentEpoch: assignment.epoch,
+      kind: "session.create",
+      payload: {
+        ...CREATE_PAYLOAD,
+        executionWorkspaceId: "ws_" + "0".repeat(32),
+      },
+      maxAttempts: 3,
+    });
+    // The supervisor lists exited sessions too — count LIVE ones.
+    const liveSessions = async () =>
+      (await hosts.local().listSessions()).filter((s) => s.status === "live");
+    const sessionsBefore = (await liveSessions()).length;
+
+    const summary = await recoverExecutionCommands({ db, graceMs: 0 });
+
+    expect(summary.redelivered).toBe(1);
+    expect(summary.orphaned).toBe(1);
+    expect((await getCommand(db, deleteRow.id))!.state).toBe("succeeded");
+    expect((await getCommand(db, createRow.id))!).toMatchObject({
+      state: "failed",
+      lastError: { reason: "ORPHANED" },
+    });
+
+    const sessionsAfter = await liveSessions();
+
+    expect(sessionsAfter.length).toBe(sessionsBefore - 1);
+    expect(sessionsAfter.map((s) => s.sessionId)).not.toContain(
+      created.sessionId,
+    );
+  }, 120_000);
+
+  it("V3 (W4): SIGKILL mid-prompt + restart on the same state dir → turn_lost, same key, new boot id, run reconciled Crashed", async () => {
+    const runId = await seedFlowRun("v3");
+    const assignment = await mint(runId);
+    const client = await hosts.forAssignment(assignment);
+    const created = await client.createSession(CREATE_PAYLOAD);
+    const beforeHealth = await hosts.local().health();
+
+    // Feed `commandSignals` like a real SSE consumer would.
+    const consumer = (async () => {
+      try {
+        for await (const event of hosts
+          .local()
+          .streamSession(created.hostSessionId)) {
+          // Signals are published by the admin stream itself.
+          void event;
+        }
+      } catch {
+        /* the stream dies with the host */
+      }
+    })();
+    const handle = await client.prompt(created.hostSessionId, {
+      stepId: "s1",
+      prompt: "hang",
+    });
+
+    await untilState(handle.commandId, ["accepted"]);
+
+    sup = await sup.restart();
+    const afterHealth = await hosts.local().health();
+
+    expect(beforeHealth.kind).toBe("ready");
+    expect(afterHealth.kind).toBe("ready");
+    if (beforeHealth.kind !== "ready" || afterHealth.kind !== "ready") return;
+    expect(afterHealth.identity?.hostKey).toBe(beforeHealth.identity?.hostKey);
+    expect(afterHealth.identity?.bootId).not.toBe(
+      beforeHealth.identity?.bootId,
+    );
+
+    // The live driver observes the loss through its own receipt lookup.
+    await expect(handle.completion).rejects.toSatisfy(
+      (err: unknown) =>
+        isMaisterError(err) && err.details?.reason === "turn_lost",
+    );
+    await consumer;
+
+    // Recovery on a fresh process sees the same row still `accepted`: the
+    // host's receipt is `accepted` with no in-flight execution.
+    await db
+      .update(schema.executionCommands)
+      .set({ state: "accepted", completedAt: null, lastError: null })
+      .where(eq(schema.executionCommands.id, handle.commandId));
+    const summary = await recoverExecutionCommands({ db, graceMs: 0 });
+
+    expect(summary.turnLost).toBe(1);
+    expect(await getCommand(db, handle.commandId)).toMatchObject({
+      state: "failed",
+      lastError: { reason: "turn_lost" },
+    });
+
+    // The existing reconcile classifies the run: Running, no live session,
+    // no checkpoint → Crashed.
+    await runReconcileSweep({ db });
+    const [run] = (await db
+      .select({ status: schema.runs.status })
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId))) as Array<{ status: string }>;
+
+    expect(run.status).toBe("Crashed");
+  }, 180_000);
+
+  it("V4: a delivering row younger than the grace is left alone", async () => {
+    const runId = await seedFlowRun("v4");
+    const assignment = await mint(runId);
+    const row = await insertCommand(db, {
+      id: randomUUID(),
+      runId,
+      assignmentId: assignment.id,
+      hostId,
+      assignmentEpoch: assignment.epoch,
+      kind: "session.cancel",
+      targetSessionId: "sess-none",
+      payload: {},
+      maxAttempts: 3,
+    });
+
+    await db
+      .update(schema.executionCommands)
+      .set({ state: "delivering", deliveringSince: new Date(), attempts: 1 })
+      .where(eq(schema.executionCommands.id, row.id));
+
+    const summary = await recoverExecutionCommands({ db });
+
+    expect(summary.skippedInFlight).toBeGreaterThanOrEqual(1);
+    expect((await getCommand(db, row.id))!.state).toBe("delivering");
+  });
+
+  it("V5: an active assignment on a Review run is released by the sweep; a Running run's is not", async () => {
+    const reviewRun = await seedRun(testDatabase.db, {
+      projectId: project.id,
+      status: "Review",
+    });
+    const runningRun = await seedRun(testDatabase.db, {
+      projectId: project.id,
+      status: "Running",
+    });
+    const stale = await mint(reviewRun);
+    const live = await mint(runningRun);
+
+    const released = await releaseStaleAssignments({ db, graceMs: 0 });
+
+    expect(released).toBeGreaterThanOrEqual(1);
+    expect(await getAssignmentById(db, stale.id)).toMatchObject({
+      state: "released",
+      releasedReason: "sweep",
+    });
+    expect((await getAssignmentById(db, live.id))!.state).toBe("active");
+  });
+
+  it("V6: prune deletes terminal rows older than 7 days only", async () => {
+    const runId = await seedRun(testDatabase.db, { projectId: project.id });
+    const assignment = await mint(runId);
+    const insertTerminal = async (ageDays: number) => {
+      const row = await insertCommand(db, {
+        id: randomUUID(),
+        runId,
+        assignmentId: assignment.id,
+        hostId,
+        assignmentEpoch: assignment.epoch,
+        kind: "session.cancel",
+        payload: {},
+        maxAttempts: 3,
+      });
+      const completedAt = new Date(Date.now() - ageDays * 24 * 60 * 60 * 1000);
+
+      await db
+        .update(schema.executionCommands)
+        .set({ state: "succeeded", completedAt })
+        .where(eq(schema.executionCommands.id, row.id));
+
+      return row.id;
+    };
+    const old = await insertTerminal(8);
+    const recent = await insertTerminal(6);
+
+    const pruned = await pruneExecutionCommands({ db });
+
+    expect(pruned).toBe(1);
+    expect(await getCommand(db, old)).toBeNull();
+    expect(await getCommand(db, recent)).not.toBeNull();
+  });
+});

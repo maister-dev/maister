@@ -14,6 +14,7 @@ import pino from "pino";
 import { runBrainDecaySweep } from "@/lib/brain/decay";
 import { runBrainReindexSweep } from "@/lib/brain/reindex";
 import { runCapabilitiesCleanupSweep } from "@/lib/capabilities/cleanup";
+import { executionCommandReconcilePass } from "@/lib/execution-host";
 import { runEphemeralAgentGcSweep } from "@/lib/gc/ephemeral-agent-gc";
 import { runContextMountGcSweep } from "@/lib/gc/context-mount-gc";
 import { runAgentMaterializationCleanupSweep } from "@/lib/gc/agent-materialization-gc";
@@ -46,6 +47,12 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
   // returning a summary.
   syncRecovery: Awaited<ReturnType<typeof runSyncRecoverySweep>> | null;
   cost: Awaited<ReturnType<typeof reconcileTerminalCostRollups>> | null;
+  // ADR-164 D5/D8: execution-command crash-window recovery (W1/W2/W4 with the
+  // 60 s in-flight grace), the stale-active-assignment backstop, and the 7-day
+  // terminal-row retention. null when it threw before returning a summary.
+  executionHost: Awaited<
+    ReturnType<typeof executionCommandReconcilePass>
+  > | null;
   workspace: WorkspaceGcSummary | null;
   workspaceReconciliation: WorkspaceReconciliationSummary | null;
   revision: RevisionGcSummary | null;
@@ -291,6 +298,19 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     log.error({ err: message }, "system_sweep cost reconcile threw");
   }
 
+  let executionHost: SystemSweepSummary["executionHost"] = null;
+
+  try {
+    executionHost = await executionCommandReconcilePass();
+    errors.push(...executionHost.commands.errors);
+  } catch (err) {
+    const message = errorMessage(err);
+
+    errors.push(`execution-host reconcile pass failed: ${message}`);
+    bundleErrors.push(`execution-host reconcile pass failed: ${message}`);
+    log.error({ err: message }, "system_sweep execution-host reconcile threw");
+  }
+
   let brain: SystemSweepSummary["brain"] = null;
 
   try {
@@ -327,6 +347,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     reconcile,
     syncRecovery,
     cost,
+    executionHost,
     brain,
     brainReindex,
     workspace: gc.workspace,

@@ -52,6 +52,23 @@ vi.mock("@/lib/gc/agent-materialization-gc", () => ({
 vi.mock("@/lib/runs/sync-recovery", () => ({
   runSyncRecoverySweep: runSyncRecoverySweepMock,
 }));
+// ADR-164: the execution-host reconcile pass needs the DB + the local host;
+// mocked like every other arm so `errors: []` stays a real guard.
+vi.mock("@/lib/execution-host", () => ({
+  executionCommandReconcilePass: vi.fn(async () => ({
+    commands: {
+      scanned: 0,
+      redelivered: 0,
+      orphaned: 0,
+      folded: 0,
+      turnLost: 0,
+      skippedInFlight: 0,
+      errors: [],
+    },
+    assignmentsReleased: 0,
+    commandsPruned: 0,
+  })),
+}));
 // Same exposure, PRE-EXISTING (ADR-122, not this branch): both brain sweeps were
 // un-mocked too, so they threw on getDb() into the same swallowed `errors[]`.
 // Mocked here so `errors: []` below is a real guard for EVERY arm — otherwise

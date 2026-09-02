@@ -1,3 +1,4 @@
+import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { randomUUID } from "node:crypto";
@@ -5,34 +6,56 @@ import { randomUUID } from "node:crypto";
 import * as fullSchema from "@/lib/db/schema";
 
 // Minimal rows for execution-host tests: one project, one run, one registered
-// local host. Kept deliberately narrow — assignment/command tests must not
-// depend on the flow/task seed chain.
+// local host, optionally a workspace / local package. Kept deliberately narrow
+// — assignment/command tests must not depend on the flow/task seed chain.
 // FIXME(any): drizzle duplicate peer copies — same cast as graph-run-seed.ts.
 const schema = fullSchema as unknown as Record<string, any>;
 
-export async function seedProject(db: NodePgDatabase): Promise<string> {
+export type SeededProject = { id: string; slug: string; repoPath: string };
+
+export async function seedProjectRow(
+  db: NodePgDatabase,
+  input: { repoPath?: string; slug?: string } = {},
+): Promise<SeededProject> {
   const projectId = randomUUID();
   const short = projectId.replace(/-/g, "").slice(0, 8);
+  const slug = input.slug ?? `eh-${short}`;
+  const repoPath = input.repoPath ?? `/tmp/eh-${short}`;
 
   await db.insert(schema.projects).values({
     id: projectId,
-    slug: `eh-${short}`,
+    slug,
     name: `EH ${short}`,
-    repoPath: `/tmp/eh-${short}`,
+    repoPath,
     maisterYamlPath: "/tmp/m.yaml",
     taskKey: `E${short.slice(0, 5).toUpperCase()}`,
   });
 
-  return projectId;
+  return { id: projectId, slug, repoPath };
+}
+
+export async function seedProject(
+  db: NodePgDatabase,
+  input: { repoPath?: string; slug?: string } = {},
+): Promise<string> {
+  return (await seedProjectRow(db, input)).id;
 }
 
 export async function seedRun(
   db: NodePgDatabase,
-  input: { projectId: string; status?: string; runKind?: string } = {
-    projectId: "",
-  },
+  input: {
+    projectId: string;
+    id?: string;
+    status?: string;
+    runKind?: "flow" | "scratch" | "agent";
+    agentWorkspace?: "none" | "repo_read" | "worktree";
+    localPackageId?: string;
+    contextMounts?: ContextMountSnapshot[];
+    rootRunId?: string;
+    workspaceMode?: "own" | "shared";
+  } = { projectId: "" },
 ): Promise<string> {
-  const runId = randomUUID();
+  const runId = input.id ?? randomUUID();
 
   await db.insert(schema.runs).values({
     id: runId,
@@ -41,9 +64,56 @@ export async function seedRun(
     status: input.status ?? "Running",
     flowVersion: "scratch",
     flowRevision: "manual",
+    agentWorkspace: input.agentWorkspace ?? null,
+    localPackageId: input.localPackageId ?? null,
+    contextMounts: input.contextMounts ?? null,
+    rootRunId: input.rootRunId ?? null,
+    workspaceMode: input.workspaceMode ?? null,
   });
 
   return runId;
+}
+
+export async function seedWorkspace(
+  db: NodePgDatabase,
+  input: {
+    runId: string;
+    projectId: string;
+    worktreePath: string;
+    parentRepoPath: string;
+    branch?: string;
+  },
+): Promise<string> {
+  const id = randomUUID();
+
+  await db.insert(schema.workspaces).values({
+    id,
+    runId: input.runId,
+    projectId: input.projectId,
+    branch: input.branch ?? `maister/eh-${id.slice(0, 8)}`,
+    worktreePath: input.worktreePath,
+    parentRepoPath: input.parentRepoPath,
+  });
+
+  return id;
+}
+
+export async function seedLocalPackage(
+  db: NodePgDatabase,
+  input: { workingDir: string; name?: string; slug?: string },
+): Promise<string> {
+  const id = randomUUID();
+  const short = id.replace(/-/g, "").slice(0, 8);
+
+  await db.insert(schema.localPackages).values({
+    id,
+    name: input.name ?? `eh-pkg-${short}`,
+    slug: input.slug ?? `eh-pkg-${short}`,
+    workingDir: input.workingDir,
+    status: "active",
+  });
+
+  return id;
 }
 
 export async function seedLocalHost(

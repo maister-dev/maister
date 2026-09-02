@@ -1,0 +1,151 @@
+import type {
+  CreateSessionInput,
+  CreateSessionResult,
+  ExecutionHostIdentity,
+  PromptResult,
+  SendPromptInput,
+  SupervisorEvent,
+  SupervisorSessionRecord,
+} from "@/lib/supervisor-client";
+import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
+import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
+import type {
+  CommandEnvelope,
+  CommandKind,
+  ExecutionWorkspaceId,
+  WorkspaceKind,
+} from "./types";
+
+// ADR-164 D10: the typed boundary domain code addresses execution through.
+// `ExecutionHostTransport` is the replaceable wire (local-direct today); the
+// deliverer depends on this interface and the ledger only — neither knows the
+// other (DIP).
+
+export type HostHealth =
+  | {
+      kind: "ready";
+      identity: ExecutionHostIdentity | null;
+      version: string;
+      sessions: { live: number; exited: number; crashed: number };
+    }
+  | { kind: "unavailable"; reason: string; message: string };
+
+export type AdoptWorkspaceWire = {
+  runId: string;
+  projectSlug: string;
+  kind: WorkspaceKind;
+  path: string;
+  repoPath?: string;
+  contextMounts?: ContextMountSnapshot[];
+};
+
+export type AdoptWorkspaceResult = {
+  executionWorkspaceId: ExecutionWorkspaceId;
+  kind: WorkspaceKind;
+  replayed: boolean;
+};
+
+export type WorkspaceRecord = {
+  executionWorkspaceId: ExecutionWorkspaceId;
+  runId: string;
+  projectSlug: string;
+  kind: WorkspaceKind;
+  adoptedAt: string;
+  releasedAt: string | null;
+};
+
+export type CommandReceipt = {
+  commandId: string;
+  runId: string;
+  kind: CommandKind;
+  assignmentEpoch: number;
+  phase: "accepted" | "completed" | "rejected";
+  httpStatus: number;
+  body: Record<string, unknown>;
+  receivedAt: string;
+  completedAt: string | null;
+  // `accepted` + `inflight:false` = the host restarted mid-turn (turn_lost).
+  inflight: boolean;
+};
+
+export type DeleteSessionOutcome = "terminated" | "gone";
+
+// The handle form of `POST /sessions`: every path field is derived by the host
+// from the adopted handle (server state), never carried on the wire.
+export type CreateSessionPayload = Omit<
+  CreateSessionInput,
+  | "runId"
+  | "projectSlug"
+  | "worktreePath"
+  | "repoPath"
+  | "confineRoot"
+  | "contextMounts"
+> & { executionWorkspaceId: ExecutionWorkspaceId };
+
+export type InputPayload = {
+  kind: "permission";
+  action: "select" | "cancel";
+  requestId: string;
+  optionId?: string;
+  reason?: string;
+};
+
+export type CheckpointResult = {
+  alreadyCheckpointed: boolean;
+  sessionId: string;
+  monotonicId: number;
+};
+
+export type EmptyPayload = Record<string, never>;
+
+export interface ExecutionHostTransport {
+  health(opts?: { timeoutMs?: number }): Promise<HostHealth>;
+  listSessions(): Promise<SupervisorSessionRecord[]>;
+  streamSession(
+    sessionId: string,
+    opts?: { lastEventId?: number; signal?: AbortSignal },
+  ): AsyncGenerator<SupervisorEvent, void, void>;
+  getCommandReceipt(commandId: string): Promise<CommandReceipt | null>;
+  getWorkspace(executionWorkspaceId: string): Promise<WorkspaceRecord | null>;
+  adoptWorkspace(
+    envelope: CommandEnvelope<AdoptWorkspaceWire>,
+  ): Promise<AdoptWorkspaceResult>;
+  releaseWorkspace(
+    executionWorkspaceId: string,
+    envelope: CommandEnvelope<EmptyPayload>,
+  ): Promise<{ released: boolean }>;
+  createSession(
+    envelope: CommandEnvelope<CreateSessionPayload>,
+  ): Promise<CreateSessionResult>;
+  sendPrompt(
+    sessionId: string,
+    envelope: CommandEnvelope<SendPromptInput>,
+    opts?: { signal?: AbortSignal },
+  ): Promise<PromptResult>;
+  deliverInput(
+    sessionId: string,
+    envelope: CommandEnvelope<InputPayload>,
+  ): Promise<{ ok: true }>;
+  cancelPrompt(
+    sessionId: string,
+    envelope: CommandEnvelope<EmptyPayload>,
+  ): Promise<{ cancelled: boolean }>;
+  checkpointSession(
+    sessionId: string,
+    envelope: CommandEnvelope<EmptyPayload>,
+  ): Promise<CheckpointResult>;
+  deleteSession(
+    sessionId: string,
+    envelope: CommandEnvelope<EmptyPayload>,
+  ): Promise<{ outcome: DeleteSessionOutcome }>;
+}
+
+// A transport failure whose outcome on the host is UNKNOWN (network error,
+// timeout, non-JSON 5xx). The deliverer retries the SAME command id up to the
+// kind's budget; every other failure is definitive.
+export const UNKNOWN_OUTCOME_DETAIL = "unknown_outcome" as const;
+
+export type BoundAssignment = {
+  assignment: ExecutionAssignment;
+  host: ExecutionHost;
+};
