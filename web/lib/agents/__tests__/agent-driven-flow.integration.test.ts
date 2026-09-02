@@ -5,8 +5,7 @@
 // the supervisor). The launch-branch + auto-create-task is covered by the unit
 // + service layers; here the run is seeded directly (the node-output pattern)
 // so runFlow can be awaited without the background-dispatch race.
-import type { SupervisorApi } from "@/lib/flows/runner-agent";
-import type { SupervisorEvent } from "@/lib/supervisor-client";
+import type { ExecutionHosts } from "@/lib/execution-host";
 
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -24,6 +23,7 @@ import {
 } from "@/lib/__tests__/runner-fixtures";
 import { loadFlowManifest } from "@/lib/config";
 import { runFlow } from "@/lib/flows/runner";
+import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -218,50 +218,12 @@ async function seedAgentDrivenFlowRun(
   return { runId, runtimeRoot };
 }
 
-// SupervisorApi stub capturing every prompt sent to a session.
-function makeCapturingSupervisor(prompts: string[]): SupervisorApi {
-  async function* stream(): AsyncGenerator<SupervisorEvent> {
-    yield {
-      type: "session.update",
-      sessionId: "sup-1",
-      monotonicId: 1,
-      update: {
-        sessionUpdate: "agent_message_chunk",
-        content: { type: "text", text: "done" },
-      },
-    } as SupervisorEvent;
-    yield {
-      type: "session.exited",
-      sessionId: "sup-1",
-      monotonicId: 2,
-      exitCode: 0,
-    } as SupervisorEvent;
-  }
-
-  return {
-    createSession: (async () => ({
-      sessionId: "sup-1",
-      pid: 1,
-      acpSessionId: "acp-1",
-    })) as unknown as SupervisorApi["createSession"],
-    deleteSession: (async () =>
-      undefined) as unknown as SupervisorApi["deleteSession"],
-    sendPrompt: (async (_sessionId: string, input: { prompt: string }) => {
-      prompts.push(input.prompt);
-
-      return { stopReason: "end_turn" as const };
-    }) as unknown as SupervisorApi["sendPrompt"],
-    streamSession: (() =>
-      stream()) as unknown as SupervisorApi["streamSession"],
-    cancelPermission: (async () => ({
-      ok: true,
-    })) as unknown as SupervisorApi["cancelPermission"],
-    deliverPermission: (async () => ({
-      ok: true,
-    })) as unknown as SupervisorApi["deliverPermission"],
-    checkpointSession: (async () =>
-      undefined) as unknown as SupervisorApi["checkpointSession"],
-  };
+// ADR-164: a fake execution host capturing every prompt sent to a session.
+async function makeCapturingSupervisor(
+  runId: string,
+  prompts: string[],
+): Promise<ExecutionHosts> {
+  return (await fakeGraphHosts(db, runId, { prompts })).hosts;
 }
 
 describe("agent drives a flow — persona on every ai_coding node (M39, ADR-106)", () => {
@@ -272,7 +234,7 @@ describe("agent drives a flow — persona on every ai_coding node (M39, ADR-106)
 
     await runFlow(seeded.runId, {
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeCapturingSupervisor(prompts),
+      executionHosts: await makeCapturingSupervisor(seeded.runId, prompts),
     });
 
     expect(prompts).toHaveLength(1);
@@ -289,7 +251,7 @@ describe("agent drives a flow — persona on every ai_coding node (M39, ADR-106)
 
     await runFlow(seeded.runId, {
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeCapturingSupervisor(prompts),
+      executionHosts: await makeCapturingSupervisor(seeded.runId, prompts),
     });
 
     expect(prompts).toHaveLength(1);

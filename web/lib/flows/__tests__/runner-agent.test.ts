@@ -1,5 +1,6 @@
+import type { PromptResult, SupervisorEvent } from "@/lib/execution-host";
 import type { FlowContext } from "@/lib/flows/types";
-import type { PromptResult, SupervisorEvent } from "@/lib/supervisor-client";
+import type { FakeCall } from "@/test-support/fake-execution-host";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -10,11 +11,8 @@ import {
   runs as runsTable,
   webhookEvents as webhookEventsTable,
 } from "@/lib/db/schema";
-import {
-  runAgentStep,
-  type RunAgentStepCtx,
-  type SupervisorApi,
-} from "@/lib/flows/runner-agent";
+import { runAgentStep, type RunAgentStepCtx } from "@/lib/flows/runner-agent";
+import { fakeAgentExecution } from "@/test-support/fake-execution-host";
 
 // M34 (ADR-089): the agent-binding resolution is mocked at the module
 // boundary — the resolver's own contract (registration, `flow` trigger,
@@ -204,51 +202,49 @@ function makeFakeDb(
   };
 }
 
-async function* eventStream(
-  events: SupervisorEvent[],
-): AsyncGenerator<SupervisorEvent> {
-  for (const ev of events) {
-    yield ev;
-    await new Promise((r) => setImmediate(r));
-  }
-}
-
+// ADR-164: the runner's execution seam is a fake-backed BoundClient + admin
+// stream (no ledger, no database). `events` scripts the session stream; the
+// permission input the runner sends is observed on the fake transport.
 function makeApi(opts: {
   events: SupervisorEvent[];
   promptStopReason?: PromptResult["stopReason"];
-  cancelImpl?: (
-    sessionId: string,
-    requestId: string,
-    reason: string,
-  ) => Promise<{ ok: true }>;
-}): SupervisorApi & { cancelSpy: ReturnType<typeof vi.fn> } {
-  const cancelSpy = vi.fn(
-    opts.cancelImpl ?? (async () => ({ ok: true }) as { ok: true }),
-  );
+  cancelFails?: boolean;
+}) {
+  const execution = fakeAgentExecution({
+    events: opts.events,
+    promptStopReason: opts.promptStopReason,
+  });
+  const { fake } = execution;
+
+  if (opts.cancelFails) {
+    fake.failOnce("deliverInput", new Error("supervisor unreachable"));
+  }
+
+  const inputs = (action: "select" | "cancel") =>
+    fake
+      .callsOf("deliverInput")
+      .filter(
+        (c) =>
+          (c.envelope?.payload as { action?: string } | undefined)?.action ===
+          action,
+      );
+  const payloadOf = (call: FakeCall | undefined) =>
+    (call?.envelope?.payload ?? {}) as Record<string, unknown>;
+  // The step deletes its session in `finally`, so the host session id is read
+  // off the prompt command the runner sent (its URL key), not the live map.
+  const sessionId = () => fake.callsOf("sendPrompt")[0]?.args[0] as string;
 
   return {
-    createSession: vi.fn(async () => ({
-      sessionId: "sup-session-1",
-      pid: 1234,
-      acpSessionId: "acp-1",
-    })),
-    deleteSession: vi.fn(async () => undefined),
-    sendPrompt: vi.fn(async () => ({
-      stopReason: opts.promptStopReason ?? "end_turn",
-    })),
-    streamSession: vi.fn(() =>
-      eventStream(opts.events),
-    ) as unknown as SupervisorApi["streamSession"],
-    cancelPermission: cancelSpy as unknown as SupervisorApi["cancelPermission"],
-    checkpointSession: async () => ({
-      alreadyCheckpointed: false,
-      sessionId: "s",
-      monotonicId: 0,
+    ...execution,
+    sessionId,
+    cancels: () => inputs("cancel"),
+    creates: () => fake.callsOf("createSession").map(payloadOf),
+    prompts: () => fake.callsOf("sendPrompt").map(payloadOf),
+    cancelArgs: (call: FakeCall) => ({
+      sessionId: call.args[0] as string,
+      requestId: payloadOf(call).requestId as string,
+      reason: payloadOf(call).reason as string,
     }),
-    deliverPermission: vi.fn(
-      async () => ({ ok: true }) as { ok: true },
-    ) as unknown as SupervisorApi["deliverPermission"],
-    cancelSpy,
   };
 }
 
@@ -335,9 +331,10 @@ describe("runner-agent — session.permission_request handling", () => {
     expect(inserted.runId).toBe("run-1");
     expect(inserted.stepId).toBe("plan");
     expect((inserted.schema as { requestId: string }).requestId).toBe("req-A");
+    // The HITL row stores the HOST session id (the supervisor's URL key).
     expect(
       (inserted.schema as { supervisorSessionId: string }).supervisorSessionId,
-    ).toBe("sup-session-1");
+    ).toBe(api.sessionId());
 
     const statusUpdates = db.updates.map((u) => u.set.status).filter(Boolean);
 
@@ -405,12 +402,14 @@ describe("runner-agent — session.permission_request handling", () => {
       api,
     );
 
-    expect(api.cancelSpy).toHaveBeenCalledTimes(1);
-    expect(api.cancelSpy).toHaveBeenCalledWith(
-      "sup-session-1",
-      "req-fail",
-      expect.stringContaining("DB_PERSIST_FAILED"),
-    );
+    const cancels = api.cancels();
+
+    expect(cancels).toHaveLength(1);
+    expect(api.cancelArgs(cancels[0])).toMatchObject({
+      sessionId: api.sessionId(),
+      requestId: "req-fail",
+      reason: expect.stringContaining("DB_PERSIST_FAILED"),
+    });
 
     const statusUpdates = db.updates.map((u) => u.set.status).filter(Boolean);
 
@@ -425,9 +424,7 @@ describe("runner-agent — session.permission_request handling", () => {
     const db = makeFakeDb({ insertFails: true });
     const api = makeApi({
       events: [permissionRequest(1, "req-X"), update(2, "tail"), exited(3)],
-      cancelImpl: async () => {
-        throw new Error("supervisor unreachable");
-      },
+      cancelFails: true,
     });
 
     const result = await runAgentStep(
@@ -436,7 +433,7 @@ describe("runner-agent — session.permission_request handling", () => {
       api,
     );
 
-    expect(api.cancelSpy).toHaveBeenCalledTimes(1);
+    expect(api.cancels()).toHaveLength(1);
     const statusUpdates = db.updates.map((u) => u.set.status).filter(Boolean);
 
     expect(statusUpdates).toContain("Crashed");
@@ -456,9 +453,11 @@ describe("runner-agent — session.permission_request handling", () => {
       api,
     );
 
-    expect(api.cancelSpy).toHaveBeenCalledTimes(1);
-    expect(api.cancelSpy.mock.calls[0][0]).toBe("sup-session-1");
-    expect(api.cancelSpy.mock.calls[0][1]).toBe("req-spy");
+    const cancels = api.cancels();
+
+    expect(cancels).toHaveLength(1);
+    expect(api.cancelArgs(cancels[0]).sessionId).toBe(api.sessionId());
+    expect(api.cancelArgs(cancels[0]).requestId).toBe("req-spy");
   });
 
   it("event consumer captures session.update text chunks after permission_request resolves", async () => {
@@ -492,9 +491,7 @@ describe("runner-agent — B1 autoApprovePermissions threading", () => {
       api,
     );
 
-    expect(api.createSession).toHaveBeenCalledWith(
-      expect.objectContaining({ autoApprovePermissions: true }),
-    );
+    expect(api.creates()[0]).toMatchObject({ autoApprovePermissions: true });
   });
 
   it("leaves autoApprovePermissions undefined when the ctx omits it", async () => {
@@ -507,9 +504,7 @@ describe("runner-agent — B1 autoApprovePermissions threading", () => {
       api,
     );
 
-    expect(api.createSession).toHaveBeenCalledWith(
-      expect.objectContaining({ autoApprovePermissions: undefined }),
-    );
+    expect(api.creates()[0].autoApprovePermissions).toBeUndefined();
   });
 });
 
@@ -526,11 +521,9 @@ describe("runner-agent — hooksConfig threading (ADR-108)", () => {
       api,
     );
 
-    expect(api.createSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        hooksConfig: { repetition: { max: 5 }, noProgress: { maxTurns: 15 } },
-      }),
-    );
+    expect(api.creates()[0]).toMatchObject({
+      hooksConfig: { repetition: { max: 5 }, noProgress: { maxTurns: 15 } },
+    });
   });
 
   it("leaves hooksConfig undefined when the ctx omits it", async () => {
@@ -543,9 +536,39 @@ describe("runner-agent — hooksConfig threading (ADR-108)", () => {
       api,
     );
 
-    expect(api.createSession).toHaveBeenCalledWith(
-      expect.objectContaining({ hooksConfig: undefined }),
+    expect(api.creates()[0].hooksConfig).toBeUndefined();
+  });
+});
+
+// ADR-164 D7: the session body is the HANDLE form — no path, no run identity
+// (both ride the fence and the adopted workspace handle).
+describe("runner-agent — handle-form session body (ADR-164)", () => {
+  it("createSession carries executionWorkspaceId and no path fields", async () => {
+    const db = makeFakeDb();
+    const api = makeApi({ events: [update(1, "hi"), exited(2)] });
+
+    await runAgentStep(
+      { id: "plan", type: "agent", mode: "new-session", prompt: "go" },
+      makeCtx(db, { contextMounts: [] }),
+      api,
     );
+
+    const [create] = api.creates();
+
+    expect(create.executionWorkspaceId).toMatch(/^ws_/);
+    for (const field of [
+      "runId",
+      "projectSlug",
+      "worktreePath",
+      "repoPath",
+      "confineRoot",
+      "contextMounts",
+    ]) {
+      expect(create).not.toHaveProperty(field);
+    }
+    // The prompt and the delete both address the HOST session id.
+    expect(api.fake.callsOf("sendPrompt")[0].args[0]).toBe(api.sessionId());
+    expect(api.fake.callsOf("deleteSession")[0].args[0]).toBe(api.sessionId());
   });
 });
 
@@ -626,6 +649,30 @@ describe("runner-agent — session.exited.reason handling (M8 Codex fix #1)", ()
   });
 });
 
+// ADR-164 E-EH-11: a fenced command means a newer driver owns the run — the
+// step yields without deleting the session or touching run state.
+describe("runner-agent — driver yield rule (ADR-164)", () => {
+  it("a FENCED prompt returns {fenced:true} with no delete and no status write", async () => {
+    const db = makeFakeDb();
+    const api = makeApi({ events: [update(1, "hi"), exited(2)] });
+
+    // A second driver generation already advanced the host's fence.
+    api.fake.fences.set("run-1", api.client.assignment.epoch + 1);
+
+    const result = await runAgentStep(
+      { id: "plan", type: "agent", mode: "new-session", prompt: "go" },
+      makeCtx(db),
+      api,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.fenced).toBe(true);
+    expect(result.errorCode).toBe("CONFLICT");
+    expect(api.fake.callsOf("deleteSession")).toHaveLength(0);
+    expect(db.updates.filter((u) => u.set.status)).toHaveLength(0);
+  });
+});
+
 describe("runner-agent — catalog-agent binding substitution (M34, ADR-089)", () => {
   it("session-mode binding sends the agent body + '## Task' + node prompt as the session prompt", async () => {
     const db = makeFakeDb();
@@ -645,8 +692,7 @@ describe("runner-agent — catalog-agent binding substitution (M34, ADR-089)", (
       }),
     );
 
-    const prompt = (api.sendPrompt as ReturnType<typeof vi.fn>).mock.calls[0][1]
-      .prompt as string;
+    const prompt = api.prompts()[0].prompt as string;
 
     expect(prompt).toContain("E2E-HELPER-SYSTEM-PROMPT-MARKER");
     expect(prompt).toContain("\n\n## Task\n\ngo do it");
@@ -676,8 +722,7 @@ describe("runner-agent — catalog-agent binding substitution (M34, ADR-089)", (
       }),
     );
 
-    const prompt = (api.sendPrompt as ReturnType<typeof vi.fn>).mock.calls[0][1]
-      .prompt as string;
+    const prompt = api.prompts()[0].prompt as string;
 
     expect(prompt.startsWith("E2E-HELPER-SYSTEM-PROMPT-MARKER")).toBe(true);
     expect(prompt).toContain("\n\n## Task\n\nimplement X");
@@ -721,10 +766,7 @@ describe("runner-agent — catalog-agent binding substitution (M34, ADR-089)", (
 
     expect(flowBindingMock.resolveFlowBoundAgent).not.toHaveBeenCalled();
 
-    const prompt = (api.sendPrompt as ReturnType<typeof vi.fn>).mock.calls[0][1]
-      .prompt as string;
-
-    expect(prompt).toBe("plain");
+    expect(api.prompts()[0].prompt).toBe("plain");
   });
 });
 
@@ -749,7 +791,7 @@ describe("runner-agent — resolved_prompt capture (migration 0053)", () => {
     expect(promptUpdate).toBeDefined();
     // {{ task.prompt }} resolves to the FlowContext task prompt ("go").
     expect(promptUpdate?.set.resolvedPrompt).toBe("implement go");
-    expect(api.sendPrompt).toHaveBeenCalled();
+    expect(api.prompts()).toHaveLength(1);
     expect(result.ok).toBe(true);
   });
 
@@ -764,7 +806,7 @@ describe("runner-agent — resolved_prompt capture (migration 0053)", () => {
     );
 
     // Best-effort: the throw never blocks dispatch (the agent turn ran).
-    expect(api.sendPrompt).toHaveBeenCalled();
+    expect(api.prompts()).toHaveLength(1);
     expect(result.ok).toBe(true);
     expect(db.updates.find((u) => "resolvedPrompt" in u.set)).toBeUndefined();
   });

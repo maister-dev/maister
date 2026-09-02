@@ -10,14 +10,13 @@ import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { markNodeSucceeded } from "@/lib/flows/graph/ledger";
+import { type SupervisorEvent } from "@/lib/supervisor-client";
 import {
-  cancelPermission,
-  deleteSession,
-  deliverPermission,
-  sendPrompt,
-  streamSession,
-  type SupervisorEvent,
-} from "@/lib/supervisor-client";
+  createExecutionHosts,
+  isFencedError,
+  type BoundClient,
+  type ExecutionHosts,
+} from "@/lib/execution-host";
 import {
   crashResumedRun,
   failResumedRun,
@@ -84,6 +83,7 @@ export type RunResumedSessionOptions = {
   acpSessionId: string;
   stepId: string;
   db?: Db;
+  executionHosts?: ExecutionHosts;
 };
 
 type StoredIntent = {
@@ -298,9 +298,33 @@ export async function runResumedSession(
     "runResumedSession started",
   );
 
+  // ADR-164: every host-bound call of this driver rides the client bound to
+  // the run's active assignment (the generation the resume claim minted).
+  const hosts = opts.executionHosts ?? createExecutionHosts({ db });
+  let client: BoundClient;
+
+  try {
+    client = await hosts.forRun(runId);
+  } catch (err) {
+    if (isFencedError(err)) {
+      log.warn({ runId }, "runResumedSession: driver-yielded — fenced");
+
+      return;
+    }
+    log.warn(
+      { runId, err: err instanceof Error ? err.message : String(err) },
+      "runResumedSession: host binding failed — rolling back to NeedsInputIdle",
+    );
+    await rollbackResumedRun(runId, { db });
+
+    return;
+  }
+  const admin = hosts.local();
+
   let stopReason: string | null = null;
   let permissionDelivered = false;
   let permissionFailed = false;
+  let fenced = false;
   // Wrapped in an object so the type narrows correctly when read after
   // a closure assignment — TS otherwise narrows `consumerError` to
   // `null` because it can't see closure mutations.
@@ -328,7 +352,7 @@ export async function runResumedSession(
 
   const consumerPromise = (async () => {
     try {
-      for await (const ev of streamSession(supervisorSessionId, {
+      for await (const ev of admin.streamSession(supervisorSessionId, {
         signal: abort.signal,
       })) {
         if (abort.signal.aborted) break;
@@ -396,11 +420,12 @@ export async function runResumedSession(
           "runResumedSession: no stored intent — cancelling to keep agent moving",
         );
         try {
-          await cancelPermission(
-            supervisorSessionId,
-            ev.requestId,
-            "no-stored-intent",
-          );
+          await client.deliverInput(supervisorSessionId, {
+            kind: "permission",
+            action: "cancel",
+            requestId: ev.requestId,
+            reason: "no-stored-intent",
+          });
         } catch (err) {
           log.warn(
             { runId, err: (err as Error).message },
@@ -412,11 +437,12 @@ export async function runResumedSession(
       }
 
       try {
-        await deliverPermission(
-          supervisorSessionId,
-          ev.requestId,
-          intent.optionId,
-        );
+        await client.deliverInput(supervisorSessionId, {
+          kind: "permission",
+          action: "select",
+          requestId: ev.requestId,
+          optionId: intent.optionId,
+        });
         await markIntentDelivered(db, runId, intent, ev.requestId);
         permissionDelivered = true;
         log.info(
@@ -474,10 +500,12 @@ export async function runResumedSession(
   let promptError: Error | null = null;
 
   try {
-    promptResult = await sendPrompt(supervisorSessionId, {
+    const handle = await client.prompt(supervisorSessionId, {
       stepId,
       prompt: RESUME_CONTINUATION_PROMPT,
     });
+
+    promptResult = await handle.completion;
     stopReason = promptResult.stopReason;
     log.info(
       {
@@ -489,11 +517,18 @@ export async function runResumedSession(
       "runResumedSession: continuation prompt completed",
     );
   } catch (err) {
-    promptError = err instanceof Error ? err : new Error(String(err));
-    log.warn(
-      { runId, err: promptError.message },
-      "runResumedSession: sendPrompt failed",
-    );
+    if (isFencedError(err)) {
+      // ADR-164 yield rule: a newer generation owns the run — no terminal
+      // decision, no intent write, no teardown of a session that is not ours.
+      fenced = true;
+      log.warn({ runId }, "runResumedSession: driver-yielded — fenced");
+    } else {
+      promptError = err instanceof Error ? err : new Error(String(err));
+      log.warn(
+        { runId, err: promptError.message },
+        "runResumedSession: sendPrompt failed",
+      );
+    }
   } finally {
     clearTimeout(watchdogTimer);
     abort.abort();
@@ -501,6 +536,8 @@ export async function runResumedSession(
   }
 
   // Decide the final run state.
+  if (fenced) return;
+
   try {
     if (permissionFailed) {
       const intent = await findOpenStoredIntent(db, runId, stepId);
@@ -626,7 +663,7 @@ export async function runResumedSession(
     // exits on its own clock. The supervisor will GC it after the
     // standard grace.
     try {
-      await deleteSession(supervisorSessionId);
+      await client.deleteSession(supervisorSessionId);
     } catch (err) {
       log.debug(
         { runId, err: (err as Error).message },

@@ -49,8 +49,8 @@ export type EscalateHookTripArgs = {
   rule: HookTripHaltRule;
   toolCall?: unknown;
   runKind: "flow" | "agent";
-  // Injected so each consumer passes its own supervisor api (mirrors the budget
-  // watchdog which calls checkpointSession directly). An EXECUTOR_UNAVAILABLE
+  // Injected so each consumer passes the `checkpoint` of the client bound to
+  // the run's execution assignment (ADR-164). An EXECUTOR_UNAVAILABLE
   // checkpoint re-throws (live halt, undeliverable → CRASH) — no state mutation,
   // no split-brain.
   checkpointSession: (sessionId: string) => Promise<unknown>;

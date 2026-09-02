@@ -2,6 +2,7 @@ import "server-only";
 
 import type { RunResumedSessionOptions } from "@/lib/runs/resume-driver";
 import type { CreateSessionInput } from "@/lib/supervisor-client";
+import type { ExecutionHosts } from "@/lib/execution-host";
 
 import { and, count, eq, inArray, isNull } from "drizzle-orm";
 import pino from "pino";
@@ -20,7 +21,12 @@ import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { scheduleResumedSessionDrive } from "@/lib/runs/resume-driver";
 import { crashRunningRun } from "@/lib/runs/state-transitions";
 import { maxConcurrentRunsCap, takeSchedulerLock } from "@/lib/scheduler";
-import { createSession } from "@/lib/supervisor-client";
+import {
+  createExecutionHosts,
+  isFencedError,
+  localHost,
+  mintPlacement,
+} from "@/lib/execution-host";
 
 // Re-export the pure classifier from its canonical home so existing importers
 // (`@/lib/runs/recover`) keep working — the run-detail projection imports it
@@ -74,7 +80,7 @@ export type RunFlowResumeOpts = { crashResume?: { targetStepId: string } };
 
 export interface ResumeCrashedRunOptions {
   db?: Db;
-  createSession?: typeof createSession;
+  executionHosts?: ExecutionHosts;
   scheduleResumedSessionDrive?: (o: RunResumedSessionOptions) => string;
   runFlow?: (id: string, runOpts?: RunFlowResumeOpts) => Promise<void> | void;
   now?: () => Date;
@@ -93,6 +99,23 @@ export async function resumeCrashedRun(
   const db = opts.db ?? getDb();
   const now = opts.now ?? (() => new Date());
   const cap = maxConcurrentRunsCap();
+  const hosts = opts.executionHosts ?? createExecutionHosts({ db });
+
+  // ADR-164 D3: a recover is a new driver generation — its epoch is minted
+  // inside the Crashed → Running|Pending claim below. Resolve the host first
+  // so an unavailable host refuses the recover as transient with no claim.
+  let placementHost;
+
+  try {
+    placementHost = await localHost({ db, transport: hosts.transport });
+  } catch (err) {
+    log.warn(
+      { runId, err: err instanceof Error ? err.message : String(err) },
+      "resumeCrashedRun: local execution host unavailable — transient",
+    );
+
+    return { state: "transient" };
+  }
 
   // Phase-1 commit outcome: either a terminal RecoverResult (no side-effect
   // needed) or the `drive` marker meaning the slot-free Crashed→Running flip
@@ -197,6 +220,11 @@ export async function resumeCrashedRun(
 
       if (updated.length === 0) return { state: "conflict" };
 
+      await mintPlacement(tx, {
+        runId,
+        reason: "recover",
+        host: placementHost,
+      });
       log.info(
         { runId, liveCount, cap },
         "resumeCrashedRun: cap full → queued",
@@ -218,6 +246,7 @@ export async function resumeCrashedRun(
 
     if (updated.length === 0) return { state: "conflict" };
 
+    await mintPlacement(tx, { runId, reason: "recover", host: placementHost });
     log.info(
       { runId, liveCount, cap },
       "resumeCrashedRun: slot free → Running",
@@ -247,7 +276,7 @@ export async function driveResume(
   state: "resumed" | "redispatched" | "unresumable" | "transient";
 }> {
   const db = opts.db ?? getDb();
-  const createSessionFn = opts.createSession ?? createSession;
+  const hosts = opts.executionHosts ?? createExecutionHosts({ db });
   const driveFn =
     opts.scheduleResumedSessionDrive ?? scheduleResumedSessionDrive;
 
@@ -335,17 +364,16 @@ export async function driveResume(
   const stepId = run.currentStepId ?? "resume";
 
   try {
-    const input: CreateSessionInput = {
-      runId,
-      projectSlug: run.projectSlug,
-      worktreePath: run.worktreePath,
+    // Bound to the `recover` generation the claim minted (a queued recover
+    // promoted by the scheduler binds the same active assignment).
+    const client = await hosts.forRun(runId, { reason: "recover" });
+    const result = await client.createSession({
       stepId,
       executor: launch.executor,
       runner: launch.runner,
       resumeSessionId: run.acpSessionId ?? undefined,
       adapterLaunch: launch.adapterLaunch,
-    };
-    const result = await createSessionFn(input);
+    });
 
     if (!result.acpSessionId) {
       log.error(
@@ -363,6 +391,7 @@ export async function driveResume(
       acpSessionId: result.acpSessionId,
       stepId,
       db,
+      executionHosts: hosts,
     });
 
     log.info(
@@ -372,6 +401,12 @@ export async function driveResume(
 
     return { state: "resumed" };
   } catch (err) {
+    // ADR-164 yield rule: a newer generation owns the run — write nothing.
+    if (isFencedError(err)) {
+      log.warn({ runId }, "driveResume: driver-yielded — assignment fenced");
+
+      return { state: "transient" };
+    }
     // Transient (supervisor 5xx / network) → leave Running, NO rollback; an
     // operator/sweeper can retry.
     if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {

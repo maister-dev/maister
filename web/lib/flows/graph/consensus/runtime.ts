@@ -3,7 +3,7 @@ import "server-only";
 import type { FlowContext, StepResult } from "@/lib/flows/types";
 import type { CompiledNode } from "../compile";
 import type { Db, LoadedRun } from "../runner-core";
-import type { SupervisorApi } from "@/lib/flows/runner-agent";
+import type { AgentExecution } from "@/lib/flows/runner-agent";
 import type { ConsensusNodeDef } from "./drafts";
 import type { ConsensusDisagreement, ParsedConsensusVerdict } from "./verdict";
 import type { ConsensusRoleRuntime } from "./roles";
@@ -58,7 +58,8 @@ type RunConsensusNodeInput = {
   context: FlowContext;
   runtimeRoot: string;
   worktreePath: string;
-  supervisorApi?: SupervisorApi;
+  execution?: AgentExecution;
+  bindExecution?: () => Promise<AgentExecution>;
   nodeAttemptId: string;
   nodeAttemptNumber: number;
   db: Db;
@@ -403,6 +404,7 @@ async function runVerifier(
           stepId: `${args.node.id}:verify`,
           nodeAttemptId: args.nodeAttemptId,
           worktreePath: args.worktreePath,
+          bindExecution: args.bindExecution,
           executor: {
             id: verifierRuntime.executor.id,
             agent: verifierRuntime.executor.agent,
@@ -421,7 +423,7 @@ async function runVerifier(
           db: args.db,
           context: args.context,
         },
-        args.supervisorApi,
+        args.execution,
       );
 
       rawOutput = res.stdout ?? "";
@@ -658,6 +660,7 @@ async function synthesizeConsensus(
         stepId: `${args.node.id}:synthesize`,
         nodeAttemptId: args.nodeAttemptId,
         worktreePath: args.worktreePath,
+        bindExecution: args.bindExecution,
         executor: {
           id: synthesizer.executor.id,
           agent: synthesizer.executor.agent,
@@ -676,7 +679,7 @@ async function synthesizeConsensus(
         db: args.db,
         context: args.context,
       },
-      args.supervisorApi,
+      args.execution,
     );
 
     if (!res.ok) {

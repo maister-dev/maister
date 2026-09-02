@@ -26,6 +26,7 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -34,11 +35,11 @@ let db: NodePgDatabase;
 let runtimeRoot: string;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
-// The enumerated shape must cover every import site reached transitively, not
-// just the calls this suite makes: `lib/services/hitl.ts` pulls in gate-chat,
-// whose `defaultApi` binds five supervisor exports AT MODULE LOAD. A missing
-// name is a load-time "No <x> export is defined on the mock", not a test miss.
-vi.mock("@/lib/supervisor-client", () => ({
+// Partial mock: the service graph reads other client members at module load
+// (gate-chat's default api); the checkpoint itself now rides the execution-host
+// client (ADR-164), so this spy only pins that the legacy path is never used.
+vi.mock("@/lib/supervisor-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/supervisor-client")>()),
   checkpointSession: vi.fn(async (sessionId: string) => ({
     alreadyCheckpointed: false,
     sessionId,
@@ -179,6 +180,7 @@ async function seedRun(
     runKind?: "flow" | "agent";
     status?: string;
     acpSessionId?: string | null;
+    hostSessionId?: string | null;
     taskId?: string | null;
     flowId?: string | null;
     agentId?: string | null;
@@ -210,6 +212,7 @@ async function seedRun(
     capabilityAgent: "claude",
     runnerSnapshot: testRunnerSnapshot(executorId),
     acpSessionId: opts.acpSessionId ?? null,
+    hostSessionId: opts.hostSessionId ?? null,
   });
 
   return runId;
@@ -275,7 +278,7 @@ async function seedWorkspace(
 
 async function seedTaskBoundFlowRun(
   slug: string,
-  opts: { acpSessionId?: string | null } = {},
+  opts: { acpSessionId?: string | null; hostSessionId?: string | null } = {},
 ) {
   const projectId = await seedProject(slug);
   const flowId = await seedFlow(projectId);
@@ -284,6 +287,7 @@ async function seedTaskBoundFlowRun(
     taskId,
     flowId,
     acpSessionId: opts.acpSessionId,
+    hostSessionId: opts.hostSessionId,
   });
 
   await seedWorkspace(projectId, runId);
@@ -524,22 +528,41 @@ describe("respondToHitl budget_breach integration — restart and park composite
     expect(comments[0]?.body).toContain("flow-restart-new");
   });
 
-  it("restart checkpoints a live paused session before terminalizing the old run", async () => {
+  // ADR-164 B1 (Verified #6): the pre-restart checkpoint must address the
+  // host's OWN session id (`run_sessions.host_session_id`) through the client
+  // bound to the run — never the ACP-level handle the host does not key by.
+  it("restart checkpoints a live paused session by its HOST session id before terminalizing the old run", async () => {
     const { runId } = await seedTaskBoundFlowRun("budget-restart-checkpoint", {
-      acpSessionId: "sup-budget-live",
+      acpSessionId: "acp-budget-live",
+      hostSessionId: "sup-budget-live",
     });
     const hitlRequestId = await seedBudgetBreachHitl(runId);
-    const { checkpointSession } = await import("@/lib/supervisor-client");
-    const checkpointSpy = vi.mocked(checkpointSession);
+    const { hosts, fake } = await fakeExecutionHosts(db, { runId });
+
+    fake.sessions.set("sup-budget-live", {
+      sessionId: "sup-budget-live",
+      runId,
+      stepId: "plan",
+      acpSessionId: "acp-budget-live",
+      executionWorkspaceId: "ws_seeded",
+      assignmentEpoch: 1,
+      createdByCommandId: "seeded",
+      status: "live",
+    });
 
     const res = await respondToHitl(
       { runId, hitlRequestId, body: { optionId: "restart" } },
       userActor,
-      { db },
+      { db, executionHosts: hosts },
     );
 
     expect(res.status).toBe(202);
-    expect(checkpointSpy).toHaveBeenCalledWith("sup-budget-live");
+    const checkpoints = fake
+      .callsOf("checkpointSession")
+      .map((call) => call.args[0]);
+
+    expect(checkpoints).toEqual(["sup-budget-live"]);
+    expect(fake.sessions.get("sup-budget-live")?.status).toBe("exited");
   });
 
   it("restart re-drives from a terminalized staged claim after a crash window", async () => {
@@ -752,17 +775,28 @@ describe("respondToHitl budget_breach integration — restart and park composite
 
   it("park snapshot preserves through the workbench lifecycle before resolving the row", async () => {
     const { runId, taskId } = await seedTaskBoundFlowRun("budget-park", {
-      acpSessionId: "sup-budget-park",
+      acpSessionId: "acp-budget-park",
+      hostSessionId: "sup-budget-park",
     });
     const hitlRequestId = await seedBudgetBreachHitl(runId);
-    const { checkpointSession } = await import("@/lib/supervisor-client");
+    const { hosts, fake } = await fakeExecutionHosts(db, { runId });
+
+    fake.sessions.set("sup-budget-park", {
+      sessionId: "sup-budget-park",
+      runId,
+      stepId: "plan",
+      acpSessionId: "acp-budget-park",
+      executionWorkspaceId: "ws_seeded",
+      assignmentEpoch: 1,
+      createdByCommandId: "seeded",
+      status: "live",
+    });
     const {
       archiveWorkbench,
       snapshotWorkbenchCommit,
       stopThenArchive,
       stopWorkbenchRun,
     } = await import("@/lib/workbench-lifecycle/service");
-    const checkpointSpy = vi.mocked(checkpointSession);
     const archiveWorkbenchSpy = vi.mocked(archiveWorkbench);
     const snapshotWorkbenchCommitSpy = vi.mocked(snapshotWorkbenchCommit);
     const stopThenArchiveSpy = vi.mocked(stopThenArchive);
@@ -775,7 +809,7 @@ describe("respondToHitl budget_breach integration — restart and park composite
         body: { optionId: "park", response: { mode: "snapshot" } },
       },
       userActor,
-      { db },
+      { db, executionHosts: hosts },
     );
     const payload = await res.json();
 
@@ -789,7 +823,9 @@ describe("respondToHitl budget_breach integration — restart and park composite
       commitMessage: `Budget park snapshot for ${runId}`,
       allowPausedBudgetRun: true,
     });
-    expect(checkpointSpy).toHaveBeenCalledWith("sup-budget-park");
+    expect(
+      fake.callsOf("checkpointSession").map((call) => call.args[0]),
+    ).toEqual(["sup-budget-park"]);
     expect(archiveWorkbenchSpy).toHaveBeenCalledWith(runId, {
       allowPausedBudgetRun: true,
     });

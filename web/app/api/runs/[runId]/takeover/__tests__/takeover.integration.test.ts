@@ -41,6 +41,7 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 
 const execFileAsync = promisify(execFile);
 const schema = schemaModule as unknown as Record<string, any>;
@@ -371,6 +372,9 @@ beforeAll(async () => {
     databaseName: "takeover_test",
   });
   db = testDatabase.db;
+  // ADR-164: the return claim mints on the local host — a fake host backs
+  // every implicit resolution in this process.
+  await fakeExecutionHosts(db);
 
   ({ POST: claimPOST } = await import("../claim/route"));
   ({ POST: returnPOST } = await import("../return/route"));

@@ -1,6 +1,5 @@
 import type { NodeAttempt, Run } from "@/lib/db/schema";
-import type { SupervisorApi } from "@/lib/flows/runner-agent";
-import type { SupervisorEvent } from "@/lib/supervisor-client";
+import type { ExecutionHosts } from "@/lib/execution-host";
 
 import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -18,6 +17,7 @@ import {
   seedGraphRun as seedGraphRunShared,
   type SeededGraphRun,
 } from "@/test-support/graph-run-seed";
+import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -104,66 +104,29 @@ async function writeDecision(
   );
 }
 
-// SupervisorApi stub: streams `text` as one agent_message_chunk, then a clean
-// end-turn, so an ai_coding/judge node finishes with result.stdout === text.
-function makeAgentSupervisor(text: string): SupervisorApi {
-  async function* stream(): AsyncGenerator<SupervisorEvent> {
-    yield {
-      type: "session.update",
-      sessionId: "sup-1",
-      monotonicId: 1,
-      update: {
-        sessionUpdate: "agent_message_chunk",
-        content: { type: "text", text },
-      },
-    } as SupervisorEvent;
-    yield {
-      type: "session.exited",
-      sessionId: "sup-1",
-      monotonicId: 2,
-      exitCode: 0,
-    } as SupervisorEvent;
-  }
-
-  return {
-    createSession: (async () => ({
-      sessionId: "sup-1",
-      pid: 1,
-      acpSessionId: "acp-1",
-    })) as unknown as SupervisorApi["createSession"],
-    deleteSession: (async () =>
-      undefined) as unknown as SupervisorApi["deleteSession"],
-    sendPrompt: (async () => ({
-      stopReason: "end_turn" as const,
-    })) as unknown as SupervisorApi["sendPrompt"],
-    streamSession: (() =>
-      stream()) as unknown as SupervisorApi["streamSession"],
-    cancelPermission: (async () => ({
-      ok: true,
-    })) as unknown as SupervisorApi["cancelPermission"],
-    checkpointSession: async () => ({
-      alreadyCheckpointed: false,
-      sessionId: "s",
-      monotonicId: 0,
-    }),
-    deliverPermission: (async () => ({
-      ok: true,
-    })) as unknown as SupervisorApi["deliverPermission"],
-  };
+// ADR-164: the execution seam is a fake host scripted to stream `text` as one
+// agent_message_chunk, then a clean end-turn, so an ai_coding/judge node
+// finishes with result.stdout === text.
+async function makeAgentSupervisor(
+  runId: string,
+  text: string,
+): Promise<ExecutionHosts> {
+  return (await fakeGraphHosts(db, runId, { text })).hosts;
 }
 
 describe("runGraph — M26 structured node output (P1)", () => {
   it("AC1+AC3: ai_coding sentinel block lands in node_attempts.vars and a downstream cli node renders {{ steps.plan.vars.verdict }} (fixture flow.yaml)", async () => {
     const manifest = await loadFlowManifest(join(FIXTURE_PATH, "flow.yaml"));
     const seeded = await seedGraphRun(manifest);
-    const api = makeAgentSupervisor(
+    const api = await makeAgentSupervisor(
+      seeded.runId,
       `Plan ready.\n${OPEN}\n{"verdict":"pass","score":1}\n${CLOSE}\n`,
     );
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api,
     });
 
     expect((await getRun(seeded.runId)).status).toBe("Review");
@@ -194,14 +157,15 @@ describe("runGraph — M26 structured node output (P1)", () => {
       ],
     };
     const seeded = await seedGraphRun(judgeFlow);
-    const api = makeAgentSupervisor(
+    const api = await makeAgentSupervisor(
+      seeded.runId,
       `Reviewed.\n${OPEN}\n{"verdict":"fail","score":0}\n${CLOSE}\n`,
     );
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api,
     });
 
     expect((await getRun(seeded.runId)).status).toBe("Review");
@@ -281,12 +245,15 @@ describe("runGraph — M26 structured node output (P1)", () => {
       ],
     };
     const seeded = await seedGraphRun(requiredFlow);
-    const api = makeAgentSupervisor("All done, but no sentinel block here.\n");
+    const api = await makeAgentSupervisor(
+      seeded.runId,
+      "All done, but no sentinel block here.\n",
+    );
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api,
     });
 
     expect((await getRun(seeded.runId)).status).toBe("Failed");
@@ -324,12 +291,15 @@ describe("runGraph — M26 structured node output (P1)", () => {
     };
     const seeded = await seedGraphRun(optionalFlow);
     // Present block, schema mismatch: verdict must be a string.
-    const api = makeAgentSupervisor(`${OPEN}\n{"verdict":123}\n${CLOSE}\n`);
+    const api = await makeAgentSupervisor(
+      seeded.runId,
+      `${OPEN}\n{"verdict":123}\n${CLOSE}\n`,
+    );
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api,
     });
 
     expect((await getRun(seeded.runId)).status).toBe("Failed");
@@ -498,14 +468,15 @@ describe("runGraph — ADR-162 orchestrator structured output", () => {
 
     await seedChildRun(seeded, "Done"); // terminal → not pending → completes
 
-    const api = makeAgentSupervisor(
+    const api = await makeAgentSupervisor(
+      seeded.runId,
       `children settled.\n${OPEN}\n{"verdict":"pass","score":4}\n${CLOSE}\n`,
     );
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api,
     });
 
     expect((await getRun(seeded.runId)).status).toBe("Review");
@@ -541,7 +512,7 @@ describe("runGraph — ADR-162 orchestrator structured output", () => {
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeAgentSupervisor("no block here"),
+      executionHosts: await makeAgentSupervisor(seeded.runId, "no block here"),
     });
 
     expect((await getRun(seeded.runId)).status).toBe("Failed");
@@ -569,7 +540,10 @@ describe("runGraph — ADR-162 orchestrator structured output", () => {
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeAgentSupervisor("dispatched, awaiting children"),
+      executionHosts: await makeAgentSupervisor(
+        seeded.runId,
+        "dispatched, awaiting children",
+      ),
     });
 
     expect((await getRun(seeded.runId)).status).toBe("WaitingOnChildren");
@@ -610,7 +584,8 @@ describe("runGraph — ADR-162 orchestrator structured output", () => {
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeAgentSupervisor(
+      executionHosts: await makeAgentSupervisor(
+        seeded.runId,
         `${OPEN}\n{"verdict":"pass"}\n${CLOSE}`,
       ),
     });
@@ -668,7 +643,8 @@ describe("runGraph — ADR-162 output_contract identity", () => {
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeAgentSupervisor(
+      executionHosts: await makeAgentSupervisor(
+        seeded.runId,
         `${OPEN}\n{"verdict":"pass"}\n${CLOSE}`,
       ),
     });
@@ -717,7 +693,10 @@ describe("runGraph — ADR-162 output_contract identity", () => {
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeAgentSupervisor(`${OPEN}\n{"verdict":7}\n${CLOSE}`),
+      executionHosts: await makeAgentSupervisor(
+        seeded.runId,
+        `${OPEN}\n{"verdict":7}\n${CLOSE}`,
+      ),
     });
 
     const plan = (await getAttempts(seeded.runId)).find(

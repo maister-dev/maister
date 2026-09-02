@@ -81,6 +81,9 @@ export async function appendNodeAttempt(args: {
   autoRetry?: boolean;
   // M30 (ADR-081): the effective rework session policy snapshot.
   sessionPolicy?: "resume" | "new_session";
+  // ADR-164: the driver generation (execution assignment) that dispatches
+  // this attempt — attribution for "which epoch produced it".
+  executionAssignmentId?: string | null;
   db?: Db;
 }): Promise<{ id: string; attempt: number }> {
   const db = args.db ?? getDb();
@@ -116,6 +119,7 @@ export async function appendNodeAttempt(args: {
     autoRetry: args.autoRetry ?? false,
     sessionPolicy: args.sessionPolicy ?? null,
     reworkBaseline,
+    executionAssignmentId: args.executionAssignmentId ?? null,
   });
 
   log.info(

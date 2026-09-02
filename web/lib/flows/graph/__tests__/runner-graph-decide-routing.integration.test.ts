@@ -1,6 +1,5 @@
 import type { NodeAttempt, Run } from "@/lib/db/schema";
-import type { SupervisorApi } from "@/lib/flows/runner-agent";
-import type { SupervisorEvent } from "@/lib/supervisor-client";
+import type { ExecutionHosts } from "@/lib/execution-host";
 
 import { resolve } from "node:path";
 
@@ -16,6 +15,7 @@ import {
   seedGraphRun as seedGraphRunShared,
   type SeededGraphRun,
 } from "@/test-support/graph-run-seed";
+import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -76,50 +76,12 @@ async function getAttempts(runId: string): Promise<NodeAttempt[]> {
 
 // Streams `text` as one agent_message_chunk then a clean end-turn — the gate's
 // ai_judgment agent parses its verdict from this text.
-function makeAgentSupervisor(text: string): SupervisorApi {
-  async function* stream(): AsyncGenerator<SupervisorEvent> {
-    yield {
-      type: "session.update",
-      sessionId: "sup-1",
-      monotonicId: 1,
-      update: {
-        sessionUpdate: "agent_message_chunk",
-        content: { type: "text", text },
-      },
-    } as SupervisorEvent;
-    yield {
-      type: "session.exited",
-      sessionId: "sup-1",
-      monotonicId: 2,
-      exitCode: 0,
-    } as SupervisorEvent;
-  }
-
-  return {
-    createSession: (async () => ({
-      sessionId: "sup-1",
-      pid: 1,
-      acpSessionId: "acp-1",
-    })) as unknown as SupervisorApi["createSession"],
-    deleteSession: (async () =>
-      undefined) as unknown as SupervisorApi["deleteSession"],
-    sendPrompt: (async () => ({
-      stopReason: "end_turn" as const,
-    })) as unknown as SupervisorApi["sendPrompt"],
-    streamSession: (() =>
-      stream()) as unknown as SupervisorApi["streamSession"],
-    cancelPermission: (async () => ({
-      ok: true,
-    })) as unknown as SupervisorApi["cancelPermission"],
-    checkpointSession: async () => ({
-      alreadyCheckpointed: false,
-      sessionId: "s",
-      monotonicId: 0,
-    }),
-    deliverPermission: (async () => ({
-      ok: true,
-    })) as unknown as SupervisorApi["deliverPermission"],
-  };
+// ADR-164: a fake host scripted to stream `text` then a clean end-turn.
+async function makeAgentSupervisor(
+  runId: string,
+  text: string,
+): Promise<ExecutionHosts> {
+  return (await fakeGraphHosts(db, runId, { text })).hosts;
 }
 
 const SCHEMA = "./schemas/result.json";
@@ -186,23 +148,23 @@ describe("runGraph — M38 decide routing (from: output)", () => {
       .set({ status: "NeedsInput", currentStepId: "classify" })
       .where(eq(schema.runs.id, seeded.runId));
 
-    let actionDispatches = 0;
-    const api = {
-      ...makeAgentSupervisor(""),
-      createSession: (async () => {
-        actionDispatches += 1;
-        throw new Error("completed action must not be dispatched");
-      }) as SupervisorApi["createSession"],
-    };
+    const { hosts, fake } = await fakeGraphHosts(db, seeded.runId, {
+      text: "",
+    });
+
+    fake.failOnce(
+      "createSession",
+      new Error("completed action must not be dispatched"),
+    );
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: hosts,
       completedResume: { targetStepId: "classify" },
     });
 
-    expect(actionDispatches).toBe(0);
+    expect(fake.callsOf("createSession")).toHaveLength(0);
     expect((await getRun(seeded.runId)).status).toBe("Review");
 
     const attempts = await getAttempts(seeded.runId);
@@ -361,14 +323,15 @@ describe("runGraph — M38 decide routing (from: verdict, D3 routing-input)", ()
     // A "fail" verdict (which would normally fail a blocking ai_judgment gate)
     // with high confidence — decide must route on the confidence (→ approve),
     // proving the gate is routing-input, not a hard-fail.
-    const api = makeAgentSupervisor(
+    const api = await makeAgentSupervisor(
+      seeded.runId,
       'Reviewed. {"verdict":"fail","confidence":0.95}',
     );
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api,
     });
 
     // The run reached Review via the `approve → done` terminal — NOT Failed.
@@ -421,14 +384,15 @@ describe("runGraph — M38 decide routing (from: verdict, D3 routing-input)", ()
       ],
     };
     const seeded = await seedGraphRun(manifest);
-    const api = makeAgentSupervisor(
+    const api = await makeAgentSupervisor(
+      seeded.runId,
       'Reviewed. {"verdict":"pass","confidence":0.5}',
     );
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api,
     });
 
     const attempts = await getAttempts(seeded.runId);
@@ -484,14 +448,15 @@ describe("runGraph — M38 decide routing (from: verdict, D3 routing-input)", ()
     // null, so the routing-input gate is `failed` and surfaces NO verdict. A
     // broken producer must NOT fall through to the decide `default` (human →
     // escalate); the node fails closed (PRECONDITION) instead.
-    const api = makeAgentSupervisor(
+    const api = await makeAgentSupervisor(
+      seeded.runId,
       "Reviewed it thoroughly but forgot to emit any JSON.",
     );
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api,
     });
 
     expect((await getRun(seeded.runId)).status).toBe("Failed");
@@ -549,14 +514,15 @@ describe("runGraph — M38 decide routing (from: verdict, D3 routing-input)", ()
     // the advisory routing gate surfaces NO verdict. The node MUST fail closed
     // (PRECONDITION) rather than silently route the default branch
     // (human → escalate).
-    const api = makeAgentSupervisor(
+    const api = await makeAgentSupervisor(
+      seeded.runId,
       "Reviewed it thoroughly but forgot to emit any JSON.",
     );
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api,
     });
 
     expect((await getRun(seeded.runId)).status).toBe("Failed");

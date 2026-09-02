@@ -19,7 +19,7 @@ import type {
   SessionPolicy,
 } from "@/lib/config.schema";
 import type { FlowContext, StepResult } from "../types";
-import type { SupervisorApi } from "../runner-agent";
+import type { AgentExecution } from "../runner-agent";
 import type { CompiledNode } from "./compile";
 import type { Db, LoadedRun, RunFlowOptions } from "./runner-core";
 
@@ -40,7 +40,7 @@ import pino from "pino";
 
 import { buildContext } from "../context";
 import { hookEnvDefaults, resolveHooksConfig } from "../hooks-config";
-import { runAgentStep } from "../runner-agent";
+import { bindExecution, runAgentStep } from "../runner-agent";
 import { runCliStep } from "../runner-cli";
 import {
   parsePlanReviewContract,
@@ -180,7 +180,11 @@ import {
 import { projectRunEvents } from "@/lib/projector/artifact-projector";
 import { buildReviewFeedbackPacket } from "@/lib/review-comments/feedback-packet";
 import { promoteNextPending, releaseSlotOnIdle } from "@/lib/scheduler";
-import { checkpointSession, listSessions } from "@/lib/supervisor-client";
+import {
+  createExecutionHosts,
+  isFencedError,
+  releaseAssignmentForRun,
+} from "@/lib/execution-host";
 import { deliverRunIfAutoReady } from "@/lib/runs/auto-delivery";
 import { appendRunStreamEvent } from "@/lib/runs/run-stream-event";
 import { SETTLED_RUN_STATUSES } from "@/lib/runs/run-status-sets";
@@ -230,10 +234,7 @@ import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs, runSessions, hitlRequests } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { runs, hitlRequests } = schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "flow-runner-graph",
@@ -431,19 +432,24 @@ async function runOrchestratorStep(
 async function parkCoordinatorSession(
   db: Db,
   runId: string,
-  acpSessionId: string | null,
+  execution: AgentExecution,
+  hostSessionId: string | null,
   coordinatorType: "orchestrator" | "consensus",
   log2: typeof log,
 ): Promise<void> {
-  if (acpSessionId) {
+  if (hostSessionId) {
     try {
-      const sessions = await listSessions();
+      // ADR-164: the node's persisted host session id (written by the create
+      // ack) is the key — no acp-id scan. Liveness is read first so a
+      // long-exited one-shot session does not turn into a failed checkpoint
+      // command on every park.
+      const sessions = await execution.admin.listSessions();
       const live = sessions.find(
-        (s) => s.status === "live" && s.acpSessionId === acpSessionId,
+        (s) => s.status === "live" && s.sessionId === hostSessionId,
       );
 
       if (live) {
-        await checkpointSession(live.sessionId);
+        await execution.client.checkpoint(live.sessionId);
         log2.info(
           { runId, coordinatorType, supervisorSessionId: live.sessionId },
           "coordinator park — live session checkpointed (SIGTERM)",
@@ -1468,7 +1474,8 @@ async function executeNodeAction(
   ctx: {
     runtimeRoot: string;
     worktreePath: string;
-    supervisorApi?: SupervisorApi;
+    execution?: AgentExecution;
+    bindExecution?: () => Promise<AgentExecution>;
     capabilityProfilePath?: string;
     adapterLaunch?: ScratchAdapterLaunch;
     mcpServers?: AgentMcpServer[];
@@ -1503,6 +1510,7 @@ async function executeNodeAction(
     stepId: node.id,
     nodeAttemptId: ctx.nodeAttemptId,
     worktreePath: ctx.worktreePath,
+    bindExecution: ctx.bindExecution,
     context,
   };
 
@@ -1709,7 +1717,7 @@ async function executeNodeAction(
             // supervisor interceptor.
             hooksConfig,
           },
-          ctx.supervisorApi,
+          ctx.execution,
         );
 
       // M37 (ADR-098) T5.1: an orchestrator's turn is followed by the
@@ -1731,7 +1739,8 @@ async function executeNodeAction(
         context,
         runtimeRoot: ctx.runtimeRoot,
         worktreePath: ctx.worktreePath,
-        supervisorApi: ctx.supervisorApi,
+        execution: ctx.execution,
+        bindExecution: ctx.bindExecution,
         nodeAttemptId: ctx.nodeAttemptId,
         nodeAttemptNumber: ctx.nodeAttemptNumber,
         db: ctx.db,
@@ -2178,6 +2187,31 @@ export async function runGraph(
     );
   }
 
+  // ADR-164 D3: bind THIS driver generation ONCE to the run's active
+  // assignment — every host-bound command below carries that epoch, so a
+  // later re-entry (resume/recover/rework/interrupt) fences this traversal
+  // instead of racing it. Bound lazily at the first agent-kind need (an
+  // ai_coding/judge/orchestrator/consensus node, an agent gate, a coordinator
+  // park), so a cli-only flow never touches the host. A prebound seam (tests,
+  // nested callers) wins and is never re-resolved.
+  let execution: AgentExecution | null = opts.execution ?? null;
+  const ensureExecution = async (): Promise<AgentExecution> => {
+    if (!execution) {
+      execution = await bindExecution(
+        opts.executionHosts ?? createExecutionHosts({ db }),
+        runId,
+      );
+      opts.execution = execution;
+    }
+
+    return execution;
+  };
+  const isAgentNodeType = (nodeType: string): boolean =>
+    nodeType === "ai_coding" ||
+    nodeType === "judge" ||
+    nodeType === "orchestrator" ||
+    nodeType === "consensus";
+
   const graph = compileManifest(loaded.manifest);
   // M12 (T3.2): artifact enforcement is only active when the manifest declares
   // compat.engine_min >= 1.2.0 (the version that introduced typed artifacts).
@@ -2353,6 +2387,11 @@ export async function runGraph(
         runId,
         nodeId: resumeNodeId as string,
         nodeType: reentryNode.nodeType,
+        // Stamped here only when this generation is already bound; the create
+        // ack stamps it otherwise (a failed binding still leaves the attempt).
+        executionAssignmentId: isAgentNodeType(reentryNode.nodeType)
+          ? (execution?.client.assignment.id ?? null)
+          : null,
         db: tx,
       });
 
@@ -2418,6 +2457,7 @@ export async function runGraph(
           });
 
         if (rows.length > 0) {
+          await releaseAssignmentForRun(tx, runId, "run_terminal");
           await emitWebhookEvent({
             db: tx,
             type: "run.crashed",
@@ -2863,6 +2903,9 @@ export async function runGraph(
           // M30 (ADR-080): the prior iteration scheduled this re-entry.
           autoRetry: pendingAutoRetryNodeId === node.id,
           sessionPolicy: appendSessionPolicy,
+          executionAssignmentId: isAgentNodeType(node.nodeType)
+            ? (execution?.client.assignment.id ?? null)
+            : null,
           db,
         });
 
@@ -3246,7 +3289,8 @@ export async function runGraph(
             result = await executeNodeAction(node, loaded, context, {
               runtimeRoot,
               worktreePath,
-              supervisorApi: opts.supervisorApi,
+              execution: opts.execution,
+              bindExecution: ensureExecution,
               capabilityProfilePath: materialized?.capabilityProfilePath,
               adapterLaunch: materialized?.adapterLaunch,
               mcpServers: materialized?.mcpServers,
@@ -3267,7 +3311,38 @@ export async function runGraph(
               await clearWorktreeProvenanceNode(worktreePath);
             }
           }
+
+          // ADR-164 E-EH-11 (driver yield rule): a newer driver generation
+          // owns this run — write NOTHING (no ledger, status, or projection)
+          // and leave the traversal to the incarnation that fenced us.
+          if (result.fenced) {
+            log2.warn(
+              {
+                nodeId: node.id,
+                nodeAttemptId,
+                assignmentId: opts.execution?.client.assignment.id,
+                assignmentEpoch: opts.execution?.client.assignment.epoch,
+              },
+              "driver-yielded",
+            );
+
+            return;
+          }
         } catch (err) {
+          if (isFencedError(err)) {
+            log2.warn(
+              {
+                nodeId: node.id,
+                nodeAttemptId,
+                assignmentId: opts.execution?.client.assignment.id,
+                assignmentEpoch: opts.execution?.client.assignment.epoch,
+              },
+              "driver-yielded",
+            );
+
+            return;
+          }
+
           const e = isMaisterError(err)
             ? err
             : new MaisterError("CRASH", asError(err).message, {
@@ -3308,22 +3383,12 @@ export async function runGraph(
         }
       }
 
-      // M42 (ADR-114): persist this dispatch's acp_session_id onto the node's
-      // run_sessions row — the per-session resume handle (sole source of truth).
-      // The run-level runs.acp_session_id mirror was dropped (migration 0082);
-      // every reader resolves the resume handle from run_sessions.
-      if (result.acpSessionId) {
-        await db
-          .update(runSessions)
-          .set({ acpSessionId: result.acpSessionId, updatedAt: new Date() })
-          .where(
-            and(
-              eq(runSessions.runId, runId),
-              eq(runSessions.sessionName, nodeSessionName),
-            ),
-          );
-
-        if (nodeSession) nodeSession.acpSessionId = result.acpSessionId;
+      // M42 (ADR-114) / ADR-164 E-EH-07: the per-session resume handle lives on
+      // the node's run_sessions row, written by the `session.create` ACK
+      // transaction (`persistRunSessionHostBinding`) — never by a late
+      // post-prompt update. Only the in-memory mirror is refreshed here.
+      if (result.acpSessionId && nodeSession) {
+        nodeSession.acpSessionId = result.acpSessionId;
       }
 
       if (result.needsInput) {
@@ -3383,7 +3448,8 @@ export async function runGraph(
           await parkCoordinatorSession(
             db,
             runId,
-            result.acpSessionId ?? nodeSession?.acpSessionId ?? null,
+            await ensureExecution(),
+            nodeSession?.hostSessionId ?? null,
             node.nodeType as "orchestrator" | "consensus",
             log2,
           );
@@ -3682,7 +3748,8 @@ export async function runGraph(
           {
             runtimeRoot,
             worktreePath,
-            supervisorApi: opts.supervisorApi,
+            execution: opts.execution,
+            bindExecution: ensureExecution,
             // M29 (ADR-074): the node's resolved restriction path sets for
             // must_not_touch — undefined for capability-less nodes.
             restrictionPaths: materialized?.restrictionPaths,
@@ -4864,6 +4931,7 @@ export async function runGraph(
         });
 
       if (rows.length > 0) {
+        await releaseAssignmentForRun(tx, runId, "run_terminal");
         await emitWebhookEvent({
           db: tx,
           type: "run.crashed",
@@ -4910,6 +4978,7 @@ export async function runGraph(
         });
 
       if (rows.length > 0) {
+        await releaseAssignmentForRun(tx, runId, "run_terminal");
         await emitWebhookEvent({
           db: tx,
           type: "run.failed",
@@ -4986,6 +5055,7 @@ export async function runGraph(
           });
 
         if (rows.length === 0) return;
+        await releaseAssignmentForRun(tx, runId, "run_terminal");
 
         // The `invalid` row is the ONE durable source for the coordinator's
         // `resultFailure`, and it commits with the flip that emits the wake.
@@ -5127,7 +5197,9 @@ async function promoteAfterExit(
     const nextOpts: RunFlowOptions = {
       db: opts.db,
       runtimeRoot: opts.runtimeRoot,
-      supervisorApi: opts.supervisorApi,
+      // The promoted run is a DIFFERENT run: it binds its own assignment on
+      // the same host seam — this run's bound execution never leaks into it.
+      executionHosts: opts.executionHosts,
     };
     // Lazy import to avoid a static cycle with runner.ts (runFlow imports
     // runGraph). promoteNextPending re-enters via runFlow, which dispatches.

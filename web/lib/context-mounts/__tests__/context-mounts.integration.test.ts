@@ -6,9 +6,9 @@
  * — the ★ trap this whole path layout exists to avoid — proof that live mounts
  * are invisible to the workspace reconciler.
  */
-import type { SupervisorApi } from "@/lib/flows/runner-agent";
+import type { ExecutionHosts } from "@/lib/execution-host";
+import type { FakeCall } from "@/test-support/fake-execution-host";
 import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
-import type { SupervisorEvent } from "@/lib/supervisor-client";
 
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -34,6 +34,7 @@ import { releaseRunContextMounts } from "@/lib/context-mounts/terminal";
 import { runWorkspaceReconciliationSweep } from "@/lib/gc/workspace-reconciler";
 import { worktreesRoot } from "@/lib/instance-config";
 import { runFlow } from "@/lib/flows/runner";
+import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import { commitFile, listWorktrees } from "@/lib/worktree";
 import {
   schema,
@@ -165,44 +166,27 @@ function mountDeclaringFlow(siblingSlug: string, ref?: string) {
   };
 }
 
-function makeSupervisorSpy(): SupervisorApi & {
+// ADR-164: a fake execution host (clean end-turn) plus spies on every
+// `workspace.adopt` and `session.create` payload the runner sends. The
+// launch's context-mount snapshot rides the ADOPT payload (D7) — the session
+// body is the path-less handle form.
+async function makeSupervisorSpy(runId: string): Promise<{
+  hosts: ExecutionHosts;
   createSpy: ReturnType<typeof vi.fn>;
-} {
-  const createSpy = vi.fn(async () => ({
-    sessionId: "sup-1",
-    pid: 1,
-    acpSessionId: "acp-1",
-  }));
+  adoptSpy: ReturnType<typeof vi.fn>;
+}> {
+  const createSpy = vi.fn();
+  const adoptSpy = vi.fn();
+  const { hosts, fake } = await fakeGraphHosts(db, runId);
 
-  async function* endTurnStream(): AsyncGenerator<SupervisorEvent> {
-    yield {
-      type: "session.exited",
-      sessionId: "sup-1",
-      monotonicId: 1,
-      exitCode: 0,
-    } as SupervisorEvent;
-  }
+  fake.onCall("createSession", (call: FakeCall) => {
+    createSpy(call.envelope?.payload);
+  });
+  fake.onCall("adoptWorkspace", (call: FakeCall) => {
+    adoptSpy(call.envelope?.payload);
+  });
 
-  return {
-    createSession: createSpy as unknown as SupervisorApi["createSession"],
-    deleteSession: vi.fn(async () => undefined),
-    sendPrompt: vi.fn(async () => ({ stopReason: "end_turn" as const })),
-    streamSession: vi.fn(() =>
-      endTurnStream(),
-    ) as unknown as SupervisorApi["streamSession"],
-    cancelPermission: vi.fn(
-      async () => ({ ok: true }) as { ok: true },
-    ) as unknown as SupervisorApi["cancelPermission"],
-    checkpointSession: async () => ({
-      alreadyCheckpointed: false,
-      sessionId: "s",
-      monotonicId: 0,
-    }),
-    deliverPermission: vi.fn(
-      async () => ({ ok: true }) as { ok: true },
-    ) as unknown as SupervisorApi["deliverPermission"],
-    createSpy,
-  };
+  return { hosts, createSpy, adoptSpy };
 }
 
 async function seedMountRun(args: {
@@ -256,12 +240,12 @@ describe("context mounts — flow launch, snapshot, and terminal release", () =>
     const sibling = await createSiblingProject("CONTRACT-V1");
     const userId = await createAdminUser();
     const seeded = await seedMountRun({ sibling, createdByUserId: userId });
-    const api = makeSupervisorSpy();
+    const api = await makeSupervisorSpy(seeded.runId);
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api.hosts,
     });
 
     const expectedPath = contextMountPath(
@@ -303,7 +287,7 @@ describe("context mounts — flow launch, snapshot, and terminal release", () =>
       committish: sibling.headSha,
     });
 
-    const createArg = api.createSpy.mock.calls[0][0] as {
+    const createArg = api.adoptSpy.mock.calls[0][0] as {
       contextMounts?: ContextMountSnapshot[];
     };
 
@@ -339,7 +323,7 @@ describe("context mounts — flow launch, snapshot, and terminal release", () =>
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeSupervisorSpy(),
+      executionHosts: (await makeSupervisorSpy(seeded.runId)).hosts,
     });
 
     const snapshot = await loadSnapshot(seeded.runId);
@@ -360,7 +344,7 @@ describe("context mounts — flow launch, snapshot, and terminal release", () =>
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeSupervisorSpy(),
+      executionHosts: (await makeSupervisorSpy(seeded.runId)).hosts,
     });
 
     const [mount] = await loadSnapshot(seeded.runId);
@@ -391,7 +375,7 @@ describe("context mounts — flow launch, snapshot, and terminal release", () =>
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeSupervisorSpy(),
+      executionHosts: (await makeSupervisorSpy(seeded.runId)).hosts,
     });
 
     const [mount] = await loadSnapshot(seeded.runId);
@@ -422,7 +406,7 @@ describe("context mounts — flow launch, snapshot, and terminal release", () =>
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeSupervisorSpy(),
+      executionHosts: (await makeSupervisorSpy(seeded.runId)).hosts,
     });
 
     const [mount] = await loadSnapshot(seeded.runId);
@@ -482,7 +466,7 @@ describe("context mounts — flow launch, snapshot, and terminal release", () =>
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeSupervisorSpy(),
+      executionHosts: (await makeSupervisorSpy(seeded.runId)).hosts,
     });
 
     const attempts = (await db
@@ -511,17 +495,17 @@ describe("context mounts — flow launch, snapshot, and terminal release", () =>
 
     process.env.MAISTER_CONTEXT_MOUNT_ENABLED = "false";
 
-    const api = makeSupervisorSpy();
+    const api = await makeSupervisorSpy(seeded.runId);
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api.hosts,
     });
 
     expect(await loadSnapshot(seeded.runId)).toHaveLength(0);
 
-    const createArg = api.createSpy.mock.calls[0][0] as {
+    const createArg = api.adoptSpy.mock.calls[0][0] as {
       contextMounts?: ContextMountSnapshot[];
     };
 
@@ -540,7 +524,7 @@ describe("context mounts stay out of the workspace reconciler's scan scope", () 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeSupervisorSpy(),
+      executionHosts: (await makeSupervisorSpy(seeded.runId)).hosts,
     });
 
     const [mount] = await loadSnapshot(seeded.runId);

@@ -32,6 +32,9 @@ type InsertDb = Pick<NodePgDatabase<typeof schema>, "insert">;
 export interface ActiveRunSession {
   sessionName: string;
   acpSessionId: string | null;
+  // ADR-164: the supervisor's own session id (URL key of every host-bound
+  // session command) — distinct from the ACP resume handle above.
+  hostSessionId: string | null;
   runnerSnapshot: RunnerSnapshot | null;
   capabilityAgent: string | null;
   runnerId: string | null;
@@ -42,6 +45,7 @@ function toActiveRunSession(row: Record<string, unknown>): ActiveRunSession {
   return {
     sessionName: row.sessionName as string,
     acpSessionId: (row.acpSessionId ?? null) as string | null,
+    hostSessionId: (row.hostSessionId ?? null) as string | null,
     runnerSnapshot: (row.runnerSnapshot ?? null) as RunnerSnapshot | null,
     capabilityAgent: (row.capabilityAgent ?? null) as string | null,
     runnerId: (row.runnerId ?? null) as string | null,

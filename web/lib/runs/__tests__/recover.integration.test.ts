@@ -28,6 +28,7 @@
 //     run back to Crashed with resume_started_at CLEARED.
 
 import type { CreateSessionResult } from "@/lib/supervisor-client";
+import type { ExecutionHosts } from "@/lib/execution-host";
 
 import { randomUUID } from "node:crypto";
 
@@ -55,6 +56,10 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import {
+  createFakeExecutionHost,
+  fakeExecutionHosts,
+} from "@/test-support/fake-execution-host";
 
 const schema = schemaModule as unknown as Record<string, any>;
 const { flowRevisions, flows, projects, runs, tasks, users, workspaces } =
@@ -71,6 +76,13 @@ let flowId: string;
 let flowRevisionId: string;
 let userId: string;
 let originalCap: string | undefined;
+// ADR-164: the recover's `session.create` rides the client bound to the run's
+// `recover` assignment on a fake execution host; each case injects its own
+// create behaviour through this delegate (the spy shape the cases assert on).
+let hosts: ExecutionHosts;
+let activeCreateSession: (
+  payload: unknown,
+) => Promise<CreateSessionResult> = async () => sessionResult();
 
 // A graph manifest with an agent node + a session-less gate node so a run's
 // currentStepId selects which recovery plan resolves.
@@ -108,6 +120,13 @@ beforeAll(async () => {
   });
   container = testDatabase.container;
   db = testDatabase.db;
+  const fake = createFakeExecutionHost();
+
+  Object.assign(fake.transport, {
+    createSession: async (envelope: { payload: unknown }) =>
+      activeCreateSession(envelope.payload),
+  });
+  ({ hosts } = await fakeExecutionHosts(db, { fake }));
 
   // The scheduler advisory lock only engages on a postgres DB_URL.
   originalDbUrl = process.env.DB_URL;
@@ -267,6 +286,17 @@ async function readDefaultSession(runId: string): Promise<any> {
   return rows[0];
 }
 
+function installCreateSession<T extends (...args: never[]) => unknown>(
+  impl: T,
+): ReturnType<typeof vi.fn<T>> {
+  const spy = vi.fn(impl);
+
+  activeCreateSession = (payload) =>
+    (spy as unknown as (p: unknown) => Promise<CreateSessionResult>)(payload);
+
+  return spy;
+}
+
 function sessionResult(acpSessionId = "acp-resumed"): CreateSessionResult {
   return { sessionId: "sup-resumed", pid: 4242, acpSessionId };
 }
@@ -285,21 +315,23 @@ describe("resumeCrashedRun — resume-agent happy path (slot free)", () => {
     let resumeStartedAtAtCreate: Date | null = null;
     let currentStepIdAtCreate: string | null = null;
 
-    const createSession = vi.fn(async (): Promise<CreateSessionResult> => {
-      const row = await readRun(runId);
+    const createSession = installCreateSession(
+      async (): Promise<CreateSessionResult> => {
+        const row = await readRun(runId);
 
-      statusAtCreate = row.status;
-      resumeStartedAtAtCreate = row.resumeStartedAt;
-      currentStepIdAtCreate = row.currentStepId;
+        statusAtCreate = row.status;
+        resumeStartedAtAtCreate = row.resumeStartedAt;
+        currentStepIdAtCreate = row.currentStepId;
 
-      return sessionResult();
-    });
+        return sessionResult();
+      },
+    );
     const scheduleResumedSessionDrive = vi.fn(() => "drive-id");
     const runFlow = vi.fn(async () => {});
 
     const result = await resumeCrashedRun(runId, {
       db,
-      createSession,
+      executionHosts: hosts,
       scheduleResumedSessionDrive,
       runFlow,
     });
@@ -322,13 +354,13 @@ describe("resumeCrashedRun — redispatch (session-less retry_safe node)", () =>
       acpSessionId: "acp-check",
     });
 
-    const createSession = vi.fn(async () => sessionResult());
+    const createSession = installCreateSession(async () => sessionResult());
     const scheduleResumedSessionDrive = vi.fn(() => "drive-id");
     const runFlow = vi.fn(async () => {});
 
     const result = await resumeCrashedRun(runId, {
       db,
-      createSession,
+      executionHosts: hosts,
       scheduleResumedSessionDrive,
       runFlow,
     });
@@ -350,12 +382,12 @@ describe("resumeCrashedRun — redispatch (session-less retry_safe node)", () =>
       acpSessionId: null,
     });
 
-    const createSession = vi.fn(async () => sessionResult());
+    const createSession = installCreateSession(async () => sessionResult());
     const runFlow = vi.fn(async () => {});
 
     const result = await resumeCrashedRun(runId, {
       db,
-      createSession,
+      executionHosts: hosts,
       runFlow,
     });
 
@@ -374,12 +406,12 @@ describe("resumeCrashedRun — discard-only (agent node, null acpSessionId)", ()
       acpSessionId: null,
     });
 
-    const createSession = vi.fn(async () => sessionResult());
+    const createSession = installCreateSession(async () => sessionResult());
     const runFlow = vi.fn(async () => {});
 
     const result = await resumeCrashedRun(runId, {
       db,
-      createSession,
+      executionHosts: hosts,
       runFlow,
     });
 
@@ -406,12 +438,12 @@ describe("resumeCrashedRun — cap full → queued (Codex F2)", () => {
       acpSessionId: "acp-queued",
     });
 
-    const createSession = vi.fn(async () => sessionResult());
+    const createSession = installCreateSession(async () => sessionResult());
     const runFlow = vi.fn(async () => {});
 
     const result = await resumeCrashedRun(crashed, {
       db,
-      createSession,
+      executionHosts: hosts,
       runFlow,
     });
 
@@ -441,7 +473,7 @@ describe("resumeCrashedRun — queued resume via scheduler (Codex F2)", () => {
     // Recover while cap is full → run goes Pending (queued).
     const queuedResult = await resumeCrashedRun(crashed, {
       db,
-      createSession: vi.fn(async () => sessionResult()),
+      executionHosts: hosts,
       runFlow: vi.fn(async () => {}),
     });
 
@@ -454,7 +486,7 @@ describe("resumeCrashedRun — queued resume via scheduler (Codex F2)", () => {
       .set({ status: "Done", endedAt: new Date() })
       .where(eq(runs.id, live));
 
-    const createSession = vi.fn(async () => sessionResult());
+    const createSession = installCreateSession(async () => sessionResult());
     const scheduleResumedSessionDrive = vi.fn(() => "drive-id");
     const runFlow = vi.fn(async (_id: string) => {});
 
@@ -464,7 +496,7 @@ describe("resumeCrashedRun — queued resume via scheduler (Codex F2)", () => {
       resumeRun: (id: string) =>
         void driveResume(id, {
           db,
-          createSession,
+          executionHosts: hosts,
           scheduleResumedSessionDrive,
           runFlow,
         }),
@@ -487,18 +519,18 @@ describe("resumeCrashedRun — concurrent 2nd recover → conflict", () => {
       acpSessionId: "acp-race",
     });
 
-    const createSession = vi.fn(async () => sessionResult());
+    const createSession = installCreateSession(async () => sessionResult());
     const scheduleResumedSessionDrive = vi.fn(() => "drive-id");
 
     const [a, b] = await Promise.all([
       resumeCrashedRun(runId, {
         db,
-        createSession,
+        executionHosts: hosts,
         scheduleResumedSessionDrive,
       }),
       resumeCrashedRun(runId, {
         db,
-        createSession,
+        executionHosts: hosts,
         scheduleResumedSessionDrive,
       }),
     ]);
@@ -516,9 +548,9 @@ describe("resumeCrashedRun — concurrent 2nd recover → conflict", () => {
       acpSessionId: "acp-running",
     });
 
-    const createSession = vi.fn(async () => sessionResult());
+    const createSession = installCreateSession(async () => sessionResult());
 
-    const result = await resumeCrashedRun(runId, { db, createSession });
+    const result = await resumeCrashedRun(runId, { db, executionHosts: hosts });
 
     expect(result).toEqual({ state: "conflict" });
     expect(createSession).not.toHaveBeenCalled();
@@ -534,14 +566,14 @@ describe("resumeCrashedRun — transient supervisor failure (no rollback)", () =
       acpSessionId: "acp-transient",
     });
 
-    const createSession = vi.fn(async () => {
+    installCreateSession(async () => {
       throw new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor 503");
     });
     const runFlow = vi.fn(async () => {});
 
     const result = await resumeCrashedRun(runId, {
       db,
-      createSession,
+      executionHosts: hosts,
       runFlow,
     });
 
@@ -561,11 +593,11 @@ describe("resumeCrashedRun — unresumable acp session", () => {
       acpSessionId: "acp-checkpoint",
     });
 
-    const createSession = vi.fn(async () => {
+    installCreateSession(async () => {
       throw new MaisterError("CHECKPOINT", "unresumable session");
     });
 
-    const result = await resumeCrashedRun(runId, { db, createSession });
+    const result = await resumeCrashedRun(runId, { db, executionHosts: hosts });
 
     expect(result).toEqual({ state: "unresumable" });
     const row = await readRun(runId);
@@ -581,9 +613,9 @@ describe("resumeCrashedRun — unresumable acp session", () => {
       acpSessionId: "acp-empty",
     });
 
-    const createSession = vi.fn(async () => sessionResult(""));
+    installCreateSession(async () => sessionResult(""));
 
-    const result = await resumeCrashedRun(runId, { db, createSession });
+    const result = await resumeCrashedRun(runId, { db, executionHosts: hosts });
 
     expect(result).toEqual({ state: "unresumable" });
     expect((await readRun(runId)).status).toBe("Crashed");

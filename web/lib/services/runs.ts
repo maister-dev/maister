@@ -4,6 +4,7 @@ import type { CapabilityAgent } from "@/lib/config.schema";
 import type { ProjectAction } from "@/lib/authz";
 import type { ScheduledLaunchReservation } from "@/lib/scheduled-launches/types";
 import type { FlowDelegationSnapshotInput } from "@/lib/flows/delegatable-flow";
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
@@ -94,7 +95,7 @@ import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { tryStartRun } from "@/lib/scheduler";
-import { checkSupervisorHealth } from "@/lib/supervisor-client";
+import { localHost, mintPlacement } from "@/lib/execution-host";
 import { fetchProjectRemote, listProjectRemotes } from "@/lib/git-remotes";
 import {
   addWorktree,
@@ -757,14 +758,13 @@ export async function* launchRunStaged(
   // project pin. The dominant transient failure (supervisor down/restarting) must
   // not leave the shared pin silently advanced on a launch that cannot run; a full
   // re-check with runner context still runs post-resolution below.
-  const preAdoptHealth = await checkSupervisorHealth();
-
-  if (preAdoptHealth.kind === "unavailable") {
-    throw new MaisterError(
-      "EXECUTOR_UNAVAILABLE",
-      `supervisor unavailable (${preAdoptHealth.reason}): ${preAdoptHealth.message}`,
-    );
-  }
+  // ADR-164 D1: the registered local execution host is the readiness gate —
+  // unreachable, refused (identity changed under live runs), or pre-ADR-164
+  // supervisors all surface as EXECUTOR_UNAVAILABLE here. The host row is what
+  // the launch tx places the run on.
+  const placementHost = await localHost({
+    db: _db as unknown as ExecutionDb,
+  });
 
   // ADR-132 §a: validate the ephemeral per-run package pin as a cheap
   // deterministic precondition, hoisted BEFORE applyPackageVersionChoices so a
@@ -1053,24 +1053,23 @@ export async function* launchRunStaged(
       ) ?? sessionResolutions[0];
     const capabilityAgent = runnerResolution.capabilityAgent as CapabilityAgent;
 
-    const platformStatus = await checkSupervisorHealth();
-
-    if (platformStatus.kind === "unavailable") {
+    // ADR-164: re-check the local host with runner context (memoized 30 s;
+    // a host that went away mid-resolution refuses here, before any worktree).
+    try {
+      await localHost({ db: _db as unknown as ExecutionDb });
+    } catch (err) {
       log.warn(
         {
           taskId: task.id,
           projectId: project.id,
           runnerId: runnerResolution.runnerId,
           runnerResolutionTier: runnerResolution.runnerResolutionTier,
-          reason: platformStatus.reason,
-          message: platformStatus.message,
+          reason: isMaisterError(err) ? err.details?.reason : undefined,
+          message: err instanceof Error ? err.message : String(err),
         },
         "POST /api/runs supervisor readiness unavailable",
       );
-      throw new MaisterError(
-        "EXECUTOR_UNAVAILABLE",
-        `supervisor unavailable (${platformStatus.reason}): ${platformStatus.message}`,
-      );
+      throw err;
     }
 
     // M11c (ADR-032): static settings-enforcement gate. Refuse the launch
@@ -1777,6 +1776,15 @@ export async function* launchRunStaged(
             resolutionWarning: session.resolutionWarning ?? null,
           })),
         );
+
+        // ADR-164 D3: epoch 1 of the run's driver ownership, in the SAME tx as
+        // the run (no run ⇒ no assignment). Insert branch only — the ADR-150
+        // adopted-run branch returned above without inserting anything.
+        await mintPlacement(tx as unknown as ExecutionDb, {
+          runId,
+          reason: "launch",
+          host: placementHost,
+        });
 
         if (requiresLaunchUnattended(executionPolicy)) {
           logExecPolicyAction({

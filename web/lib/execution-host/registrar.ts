@@ -15,7 +15,7 @@ import {
   retireHost,
   touchLocalHost,
 } from "./hosts";
-import { createLocalDirectTransport } from "./transports/local-direct";
+import { defaultTransport } from "./default-transport";
 
 import { getDb } from "@/lib/db/client";
 
@@ -176,7 +176,7 @@ export async function ensureLocalExecutionHost(
   opts: EnsureLocalHostOptions = {},
 ): Promise<RegistrationResult> {
   const db = opts.db ?? getDb();
-  const transport = opts.transport ?? createLocalDirectTransport();
+  const transport = opts.transport ?? defaultTransport();
   const logger = opts.logger ?? defaultLog;
   const now = opts.now ?? (() => new Date());
   const health = await transport.health({

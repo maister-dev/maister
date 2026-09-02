@@ -10,9 +10,9 @@
  * refused explicitly — and, critically, ONLY when mounts are actually declared
  * and enabled, so an agent-driven flow otherwise keeps working.
  */
-import type { SupervisorApi } from "@/lib/flows/runner-agent";
+import type { ExecutionHosts } from "@/lib/execution-host";
+import type { FakeCall } from "@/test-support/fake-execution-host";
 import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
-import type { SupervisorEvent } from "@/lib/supervisor-client";
 
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -36,6 +36,7 @@ import {
 import { prepareContextMounts } from "@/lib/context-mounts/launch";
 import { isMaisterError } from "@/lib/errors";
 import { runFlow } from "@/lib/flows/runner";
+import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import { commitFile, listWorktrees } from "@/lib/worktree";
 import {
   schema,
@@ -237,44 +238,27 @@ function flowWithoutMounts() {
   };
 }
 
-function makeSupervisorSpy(): SupervisorApi & {
+// ADR-164: a fake execution host (clean end-turn) plus spies on every
+// `workspace.adopt` and `session.create` payload the runner sends. The
+// launch's context-mount snapshot rides the ADOPT payload (D7) — the session
+// body is the path-less handle form.
+async function makeSupervisorSpy(runId: string): Promise<{
+  hosts: ExecutionHosts;
   createSpy: ReturnType<typeof vi.fn>;
-} {
-  const createSpy = vi.fn(async () => ({
-    sessionId: "sup-1",
-    pid: 1,
-    acpSessionId: "acp-1",
-  }));
+  adoptSpy: ReturnType<typeof vi.fn>;
+}> {
+  const createSpy = vi.fn();
+  const adoptSpy = vi.fn();
+  const { hosts, fake } = await fakeGraphHosts(db, runId);
 
-  async function* endTurnStream(): AsyncGenerator<SupervisorEvent> {
-    yield {
-      type: "session.exited",
-      sessionId: "sup-1",
-      monotonicId: 1,
-      exitCode: 0,
-    } as SupervisorEvent;
-  }
+  fake.onCall("createSession", (call: FakeCall) => {
+    createSpy(call.envelope?.payload);
+  });
+  fake.onCall("adoptWorkspace", (call: FakeCall) => {
+    adoptSpy(call.envelope?.payload);
+  });
 
-  return {
-    createSession: createSpy as unknown as SupervisorApi["createSession"],
-    deleteSession: vi.fn(async () => undefined),
-    sendPrompt: vi.fn(async () => ({ stopReason: "end_turn" as const })),
-    streamSession: vi.fn(() =>
-      endTurnStream(),
-    ) as unknown as SupervisorApi["streamSession"],
-    cancelPermission: vi.fn(
-      async () => ({ ok: true }) as { ok: true },
-    ) as unknown as SupervisorApi["cancelPermission"],
-    checkpointSession: async () => ({
-      alreadyCheckpointed: false,
-      sessionId: "s",
-      monotonicId: 0,
-    }),
-    deliverPermission: vi.fn(
-      async () => ({ ok: true }) as { ok: true },
-    ) as unknown as SupervisorApi["deliverPermission"],
-    createSpy,
-  };
+  return { hosts, createSpy, adoptSpy };
 }
 
 async function seedRun(args: {
@@ -358,12 +342,12 @@ describe("ADR-157 D11 — an agent-driven flow run has no context-mount consent 
       packageInstallId,
       packageName,
     });
-    const api = makeSupervisorSpy();
+    const api = await makeSupervisorSpy(seeded.runId);
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api.hosts,
     });
 
     const attempt = await implementAttempt(seeded.runId);
@@ -425,12 +409,12 @@ describe("ADR-157 D11 — an agent-driven flow run has no context-mount consent 
       packageInstallId,
       packageName,
     });
-    const api = makeSupervisorSpy();
+    const api = await makeSupervisorSpy(seeded.runId);
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api.hosts,
     });
 
     // The regression guard: the refusal is keyed on DECLARED mounts, never on
@@ -456,12 +440,12 @@ describe("ADR-157 D11 — an agent-driven flow run has no context-mount consent 
 
     process.env.MAISTER_CONTEXT_MOUNT_ENABLED = "false";
 
-    const api = makeSupervisorSpy();
+    const api = await makeSupervisorSpy(seeded.runId);
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api.hosts,
     });
 
     // With mounts disabled there is nothing to consent to, so the refusal must
@@ -473,7 +457,7 @@ describe("ADR-157 D11 — an agent-driven flow run has no context-mount consent 
     expect(await loadSnapshot(seeded.runId)).toHaveLength(0);
     expect(await siblingWorktreeCount(sibling.repoPath)).toBe(1);
 
-    const createArg = api.createSpy.mock.calls[0][0] as {
+    const createArg = api.adoptSpy.mock.calls[0][0] as {
       contextMounts?: ContextMountSnapshot[];
     };
 
@@ -491,7 +475,7 @@ describe("ADR-157 D11 — an agent-driven flow run has no context-mount consent 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeSupervisorSpy(),
+      executionHosts: (await makeSupervisorSpy(seeded.runId)).hosts,
     });
 
     // The path the agent-driven refusal must not disturb: launching user holds

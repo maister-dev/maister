@@ -37,6 +37,10 @@ import {
 } from "@/lib/__tests__/runner-fixtures";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import {
+  fakeGraphHosts,
+  type FakeExecutionHost,
+} from "@/test-support/fake-execution-host";
+import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
@@ -47,7 +51,8 @@ const execFileAsync = promisify(execFile);
 
 // A scripted coordinator whose single turn ends NORMALLY (clean end_turn).
 // runOrchestratorStep then makes the park-vs-complete call from pending children.
-vi.mock("@/lib/flows/runner-agent", () => ({
+vi.mock("@/lib/flows/runner-agent", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/flows/runner-agent")>()),
   runAgentStep: vi.fn(async () => ({
     ok: true,
     stdout: "",
@@ -57,39 +62,11 @@ vi.mock("@/lib/flows/runner-agent", () => ({
   })),
 }));
 
-// Supervisor seam: listSessions returns a live session keyed on the coordinator's
-// acp handle so the park-time checkpoint path is exercised; checkpointSession is a
-// spy. Partial mock (importOriginal) so the rest of the client surface that other
-// modules import transitively stays intact.
-const checkpointCalls: string[] = [];
-
-vi.mock("@/lib/supervisor-client", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/lib/supervisor-client")>();
-
-  return {
-    ...actual,
-    listSessions: vi.fn(async () => [
-      {
-        sessionId: "sup-coordinator-1",
-        runId: "ignored",
-        projectSlug: "ignored",
-        stepId: "coordinate",
-        status: "live",
-        pid: 1,
-        startedAt: new Date().toISOString(),
-        logPath: "/tmp/x.log",
-        monotonicId: 1,
-        acpSessionId: "acp-coordinator-1",
-      },
-    ]),
-    checkpointSession: vi.fn(async (sessionId: string) => {
-      checkpointCalls.push(sessionId);
-
-      return { alreadyCheckpointed: false, sessionId, monotonicId: 1 };
-    }),
-  };
-});
+// Execution-host seam (ADR-164): the coordinator's live host session is
+// pre-registered on a fake execution host under the id the create ack persisted
+// to `run_sessions.host_session_id`, so the park-time checkpoint goes through
+// the run's bound client and is observable as a `session.checkpoint` command.
+const COORDINATOR_HOST_SESSION_ID = "sup-coordinator-1";
 
 // Scheduler seam: spy releaseSlotOnIdle (assert the park frees the slot) but keep
 // promoteNextPending a real no-op against the empty queue.
@@ -137,7 +114,6 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
-  checkpointCalls.splice(0);
   releaseSlotSpy.mockClear();
 });
 
@@ -233,6 +209,8 @@ async function seedOrchestratorRun(): Promise<{ runId: string }> {
     runnerId: executorId,
     capabilityAgent: "claude",
     runnerSnapshot: testRunnerSnapshot(executorId),
+    hostSessionId: COORDINATOR_HOST_SESSION_ID,
+    acpSessionId: "acp-coordinator-1",
   });
   await db.insert(schema.workspaces).values({
     id: randomUUID(),
@@ -245,6 +223,32 @@ async function seedOrchestratorRun(): Promise<{ runId: string }> {
   });
 
   return { runId };
+}
+
+async function bindCoordinatorHost(runId: string): Promise<{
+  hosts: Awaited<ReturnType<typeof fakeGraphHosts>>["hosts"];
+  fake: FakeExecutionHost;
+}> {
+  const { hosts, fake } = await fakeGraphHosts(db, runId);
+
+  fake.sessions.set(COORDINATOR_HOST_SESSION_ID, {
+    sessionId: COORDINATOR_HOST_SESSION_ID,
+    runId,
+    stepId: "coordinate",
+    acpSessionId: "acp-coordinator-1",
+    executionWorkspaceId: "ws_seeded",
+    assignmentEpoch: 1,
+    createdByCommandId: "seeded",
+    status: "live",
+  });
+
+  return { hosts, fake };
+}
+
+function checkpointedSessionIds(fake: FakeExecutionHost): string[] {
+  return fake
+    .callsOf("checkpointSession")
+    .map((call) => call.args[0] as string);
 }
 
 // A child run under the orchestrator at the given status.
@@ -294,10 +298,15 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
     const { runId } = await seedOrchestratorRun();
 
     await seedChild(runId, "Running"); // one pending (non-terminal) child
+    const { hosts, fake } = await bindCoordinatorHost(runId);
 
     const { runFlow } = await import("@/lib/flows/runner");
 
-    await runFlow(runId, { db, runtimeRoot: process.cwd() });
+    await runFlow(runId, {
+      db,
+      runtimeRoot: process.cwd(),
+      executionHosts: hosts,
+    });
 
     const run = await getRun(runId);
 
@@ -309,8 +318,12 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
 
     expect(session?.acpSessionId).toBe("acp-coordinator-1");
 
-    // The live session was checkpointed (SIGTERM) at park.
-    expect(checkpointCalls).toEqual(["sup-coordinator-1"]);
+    // The live session was checkpointed (SIGTERM) at park, addressed by the
+    // persisted host session id through the run's bound client.
+    expect(checkpointedSessionIds(fake)).toEqual([COORDINATOR_HOST_SESSION_ID]);
+    expect(fake.sessions.get(COORDINATOR_HOST_SESSION_ID)?.status).toBe(
+      "exited",
+    );
     // The slot was released so the parked coordinator does not hold the cap.
     expect(releaseSlotSpy).toHaveBeenCalledTimes(1);
   });
@@ -320,10 +333,15 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
 
     // A child that already finished — terminal, so NOT pending.
     await seedChild(runId, "Done");
+    const { hosts, fake } = await bindCoordinatorHost(runId);
 
     const { runFlow } = await import("@/lib/flows/runner");
 
-    await runFlow(runId, { db, runtimeRoot: process.cwd() });
+    await runFlow(runId, {
+      db,
+      runtimeRoot: process.cwd(),
+      executionHosts: hosts,
+    });
 
     const run = await getRun(runId);
 
@@ -332,7 +350,7 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
     expect(run.currentStepId).toBeNull();
 
     // No park ⇒ no checkpoint, no idle slot-release.
-    expect(checkpointCalls).toEqual([]);
+    expect(checkpointedSessionIds(fake)).toEqual([]);
     expect(releaseSlotSpy).not.toHaveBeenCalled();
   });
 });

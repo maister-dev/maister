@@ -10,7 +10,8 @@ import type {
   Workspace as WorkspaceRow,
 } from "@/lib/db/schema";
 import type { CapabilityAgent, FlowYamlV1 } from "@/lib/config.schema";
-import type { SupervisorApi } from "../runner-agent";
+import type { AgentExecution } from "../runner-agent";
+import type { ExecutionHosts } from "@/lib/execution-host";
 
 import { eq } from "drizzle-orm";
 
@@ -39,7 +40,11 @@ export type Db = any;
 export type RunFlowOptions = {
   db?: Db;
   runtimeRoot?: string;
-  supervisorApi?: SupervisorApi;
+  // ADR-164: the execution-host seam. `executionHosts` is what the graph
+  // binds its driver generation on (defaults to a local-direct instance over
+  // `db`); a prebound `execution` wins when a caller already holds one.
+  executionHosts?: ExecutionHosts;
+  execution?: AgentExecution;
   // A detached ACP resume driver already completed this node's action. Claim
   // the NeedsInput run and execute its normal finish pipeline without
   // re-dispatching the action.
@@ -69,6 +74,9 @@ export type LoadedRunSession = {
   sessionName: string;
   runner: RunnerSnapshot;
   acpSessionId: string | null;
+  // ADR-164: the supervisor's session id written by the create ack — the key
+  // for every host-bound session command (checkpoint on park, interrupts).
+  hostSessionId: string | null;
   capabilityAgent: string | null;
   runnerResolutionTier: string | null;
 };
@@ -229,6 +237,7 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
         sessionName: row.sessionName as string,
         runner: (row.runnerSnapshot ?? runner) as RunnerSnapshot,
         acpSessionId: (row.acpSessionId ?? null) as string | null,
+        hostSessionId: (row.hostSessionId ?? null) as string | null,
         capabilityAgent: (row.capabilityAgent ?? null) as string | null,
         runnerResolutionTier: (row.runnerResolutionTier ?? null) as
           | string
@@ -244,6 +253,7 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
       sessionName: "default",
       runner,
       acpSessionId: null,
+      hostSessionId: null,
       capabilityAgent: null,
       runnerResolutionTier: null,
     });

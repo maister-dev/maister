@@ -17,7 +17,7 @@ import {
 import { deliverCommand } from "./deliverer";
 import { getHostById, LIVE_DRIVER_RUN_STATUSES } from "./hosts";
 import { buildEnvelope } from "./ledger";
-import { createLocalDirectTransport } from "./transports/local-direct";
+import { defaultTransport } from "./default-transport";
 import {
   DELIVERING_IN_FLIGHT_GRACE_MS,
   EXECUTION_COMMAND_RETENTION_DAYS,
@@ -231,7 +231,7 @@ export async function recoverExecutionCommands(
   opts: RecoveryOptions = {},
 ): Promise<ExecutionCommandRecoverySummary> {
   const db = opts.db ?? getDb();
-  const transport = opts.transport ?? createLocalDirectTransport();
+  const transport = opts.transport ?? defaultTransport();
   const logger = opts.logger ?? defaultLog;
   const now = opts.now ?? (() => new Date());
   const graceMs = opts.graceMs ?? DELIVERING_IN_FLIGHT_GRACE_MS;

@@ -90,10 +90,14 @@ import { actorForUserId } from "@/lib/social/activity";
 import { addTaskComment } from "@/lib/social/comments";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 import {
-  cancelPermission,
-  checkpointSession,
-  deliverPermission,
-} from "@/lib/supervisor-client";
+  createExecutionHosts,
+  isFencedError,
+  localHost,
+  mintPlacement,
+  type BoundClient,
+  type ExecutionHosts,
+  type PreparedInput,
+} from "@/lib/execution-host";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { isStoppableRunStatus } from "@/lib/workbench-lifecycle/policy";
 import {
@@ -365,11 +369,12 @@ function claimAndResumeAgentRun(runId: string, db: any): void {
 //   - flow + NeedsInputIdle → resumeRun (respawn) + the resume-driver.
 async function scheduleBudgetBreachResume(args: {
   db: any;
+  executionHosts: ExecutionHosts;
   runId: string;
   runKind: string;
   stepId: string;
 }): Promise<void> {
-  const { db, runId, runKind, stepId } = args;
+  const { db, executionHosts, runId, runKind, stepId } = args;
 
   if (runKind === "agent") {
     // ADR-121 (INV-1): cap-safe reclaim — at cap a checkpointed run defers to the
@@ -411,7 +416,7 @@ async function scheduleBudgetBreachResume(args: {
     const { scheduleResumedSessionDrive } = await import(
       "@/lib/runs/resume-driver"
     );
-    const r = await resumeRun(runId, { db });
+    const r = await resumeRun(runId, { db, executionHosts });
 
     if (r.ok) {
       scheduleResumedSessionDrive({
@@ -419,6 +424,7 @@ async function scheduleBudgetBreachResume(args: {
         supervisorSessionId: r.newSupervisorSessionId,
         acpSessionId: r.acpSessionId,
         stepId,
+        executionHosts,
       });
     }
 
@@ -573,6 +579,9 @@ type HandlerArgs = {
   startedAt: number;
   actor: HitlActor;
   recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
+  // ADR-164: every host-bound command of the run goes through a client bound
+  // to its execution assignment.
+  executionHosts: ExecutionHosts;
 };
 
 type ResponseAssignmentClaim = {
@@ -730,10 +739,23 @@ async function markScratchPermissionTimedOut(
     .where(eq(scratchRuns.runId, runId));
 }
 
+// `prepared`/`client`: the `session.input` command queued in the Phase-1 tx
+// (ADR-164 D5) for the live NeedsInput case — null when the run is idle (the
+// resume path re-issues the intent) or when nothing is left to deliver.
 type PermissionClaim =
-  | { kind: "claimed"; runStatus: string }
+  | {
+      kind: "claimed";
+      runStatus: string;
+      prepared: PreparedInput | null;
+      client: BoundClient | null;
+    }
   | { kind: "already-delivered"; runStatus: string }
-  | { kind: "noop-idempotent"; runStatus: string };
+  | {
+      kind: "noop-idempotent";
+      runStatus: string;
+      prepared: PreparedInput | null;
+      client: BoundClient | null;
+    };
 
 async function handlePermissionResponse(
   args: HandlerArgs,
@@ -829,10 +851,34 @@ async function handlePermissionResponse(
         `permission already claimed with optionId="${stored.optionId}"; refusing to overwrite with "${optionId}"`,
       );
     }
+    // Queue the delivery command inside this claim tx (D5 ordering): the row
+    // commits with the response and is delivered in Phase 2. An idle run has
+    // no live session to address — its resume re-issues the intent instead.
+    const prepareDelivery = async () => {
+      if (lockedRun.status !== "NeedsInput") return null;
+      const client = await args.executionHosts.forRun(runId);
+      const prepared = await client.prepareInput(
+        tx,
+        schema.supervisorSessionId,
+        {
+          kind: "permission",
+          action: "select",
+          requestId: schema.requestId,
+          optionId,
+        },
+      );
+
+      return { client, prepared };
+    };
+
     if (stored && stored.optionId === optionId) {
+      const delivery = await prepareDelivery();
+
       return {
         kind: "noop-idempotent",
         runStatus: lockedRun.status as string,
+        prepared: delivery?.prepared ?? null,
+        client: delivery?.client ?? null,
       } as const;
     }
 
@@ -858,9 +904,13 @@ async function handlePermissionResponse(
         ),
       );
 
+    const delivery = await prepareDelivery();
+
     return {
       kind: "claimed",
       runStatus: lockedRun.status as string,
+      prepared: delivery?.prepared ?? null,
+      client: delivery?.client ?? null,
     } as const;
   });
 
@@ -1026,6 +1076,7 @@ async function handlePermissionResponse(
     );
     const r = await resumeRun(runId, {
       db,
+      executionHosts: args.executionHosts,
       ...(args.recordSuccessAudit
         ? {
             recordSuccessAudit: async (tx: any) => {
@@ -1045,6 +1096,7 @@ async function handlePermissionResponse(
         supervisorSessionId: r.newSupervisorSessionId,
         acpSessionId: r.acpSessionId,
         stepId: hitlRow.stepId,
+        executionHosts: args.executionHosts,
       });
 
       log.info(
@@ -1169,51 +1221,69 @@ async function handlePermissionResponse(
     );
   }
 
-  // Phase 2: deliver to supervisor, then mark respondedAt.
+  // Phase 2: deliver the queued `session.input` command, then mark respondedAt.
   // `delivered` distinguishes a supervisor-side delivery FAILURE (deferred still
   // live → must be released, see catch) from a post-delivery DB failure (deferred
   // already resolved → must NOT be cancelled).
   let delivered = false;
+  const { prepared, client } = claim;
+
+  if (!prepared || !client) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `run is not awaiting this response (status=${claim.runStatus}); no delivery command was queued`,
+    );
+  }
 
   try {
-    await deliverPermission(
-      schema.supervisorSessionId,
-      schema.requestId,
-      optionId,
-    );
-    delivered = true;
+    // The marker + scratch dialog flip + assignment completion + audit ride the
+    // command's ack transaction (one atomic unit with the `succeeded` row), so
+    // the durable success state cannot commit without its token audit.
+    await prepared.deliver({
+      onAck: async (tx: any, delivery) => {
+        delivered = true;
+        const stamped = await tx
+          .update(hitlRequests)
+          .set({
+            respondedAt: new Date(),
+            // A host replay (same command id re-sent after an unknown outcome)
+            // delivered on an earlier attempt: record what actually reached
+            // the agent alongside the stored choice.
+            ...(delivery.replayed
+              ? {
+                  response: {
+                    optionId,
+                    _audit: { deliveredOptionId: prepared.payload.optionId },
+                  },
+                }
+              : {}),
+          })
+          .where(
+            and(
+              eq(hitlRequests.id, hitlRequestId),
+              isNull(hitlRequests.respondedAt),
+            ),
+          )
+          .returning({ id: hitlRequests.id });
 
-    // Marker + scratch dialog flip + assignment completion + audit are one atomic
-    // unit so the durable success state cannot commit without its token audit.
-    await db.transaction(async (tx: any) => {
-      const stamped = await tx
-        .update(hitlRequests)
-        .set({ respondedAt: new Date() })
-        .where(
-          and(
-            eq(hitlRequests.id, hitlRequestId),
-            isNull(hitlRequests.respondedAt),
-          ),
-        )
-        .returning({ id: hitlRequests.id });
+        await markScratchPermissionDelivered(tx, runRow, runId);
+        await markSyncResolverPermissionDelivered(tx, runId);
+        await completeResponseAssignment(tx, assignmentClaim, { optionId });
+        await args.recordSuccessAudit?.(tx, 200);
 
-      await markScratchPermissionDelivered(tx, runRow, runId);
-      await markSyncResolverPermissionDelivered(tx, runId);
-      await completeResponseAssignment(tx, assignmentClaim, { optionId });
-      await args.recordSuccessAudit?.(tx, 200);
-
-      // ADR-097: a project-less local-package assistant run has no project to
-      // attribute this webhook to (webhook_events.project_id is NOT NULL and
-      // consumers are project-scoped) — skip it.
-      if (stamped.length > 0 && runRow.projectId) {
-        await emitWebhookEvent({
-          db: tx,
-          type: "hitl.responded",
-          projectId: runRow.projectId,
-          runId,
-          data: { hitlRequestId, kind: hitlRow.kind, via: "user" },
-        });
-      }
+        // ADR-097: a project-less local-package assistant run has no project to
+        // attribute this webhook to (webhook_events.project_id is NOT NULL and
+        // consumers are project-scoped) — skip it.
+        if (stamped.length > 0 && runRow.projectId) {
+          await emitWebhookEvent({
+            db: tx,
+            type: "hitl.responded",
+            projectId: runRow.projectId,
+            runId,
+            data: { hitlRequestId, kind: hitlRow.kind, via: "user" },
+          });
+        }
+      },
     });
 
     log.info(
@@ -1234,6 +1304,26 @@ async function handlePermissionResponse(
       { status: 200 },
     );
   } catch (err) {
+    // ADR-164 driver yield rule: a fenced delivery means another driver
+    // generation owns this run (a resume raced the response) — write nothing,
+    // release nothing; the stored intent is auto-delivered by that driver.
+    if (isFencedError(err)) {
+      log.warn(
+        {
+          runId,
+          hitlRequestId,
+          kind: "permission",
+          phase: "fenced",
+          assignmentId: client.assignment.id,
+          assignmentEpoch: client.assignment.epoch,
+          latencyMs: Date.now() - startedAt,
+        },
+        "permission delivery fenced — another driver owns the run",
+      );
+
+      throw err;
+    }
+
     if (isMaisterError(err) && err.code === "HITL_TIMEOUT") {
       // Re-check under FOR UPDATE: a concurrent winner may have already
       // marked respondedAt — in which case the supervisor 404 we just
@@ -1416,11 +1506,12 @@ async function handlePermissionResponse(
       const code = isMaisterError(err) ? err.code : "unknown";
 
       try {
-        await cancelPermission(
-          schema.supervisorSessionId,
-          schema.requestId,
-          `permission delivery failed: ${code}`,
-        );
+        await client.deliverInput(schema.supervisorSessionId, {
+          kind: "permission",
+          action: "cancel",
+          requestId: schema.requestId,
+          reason: `permission delivery failed: ${code}`,
+        });
         log.warn(
           {
             runId,
@@ -3530,19 +3621,27 @@ async function addBudgetSystemCommentBestEffort(args: {
 
 async function checkpointBudgetLiveSession(args: {
   db: any;
+  executionHosts: ExecutionHosts;
   runId: string;
   hitlRequestId: string;
   phase: "restart" | "park";
 }): Promise<boolean> {
   const active = await loadActiveRunSession(args.db, args.runId);
 
-  if (!active?.acpSessionId) {
+  // The host's own session id (ADR-164) — never the ACP-level handle, which
+  // the host does not key sessions by.
+  if (!active?.hostSessionId) {
     return false;
   }
 
-  const sessionId = active.acpSessionId;
+  const sessionId = active.hostSessionId;
+  // A parked run's incarnation may already be released; a checkpoint is a
+  // teardown kind and stays admissible there without minting a new epoch.
+  const client = await args.executionHosts.forRun(args.runId, {
+    teardown: true,
+  });
 
-  await checkpointSession(sessionId);
+  await client.checkpoint(sessionId);
   log.info(
     {
       runId: args.runId,
@@ -3813,12 +3912,14 @@ async function launchBudgetRestart(args: {
 
 async function performBudgetPark(args: {
   db: any;
+  executionHosts: ExecutionHosts;
   decision: Extract<BudgetBreachDecision, { optionId: "park" }>;
   runId: string;
   hitlRequestId: string;
 }): Promise<{ runStatus: string; ref: string | null }> {
   await checkpointBudgetLiveSession({
     db: args.db,
+    executionHosts: args.executionHosts,
     runId: args.runId,
     hitlRequestId: args.hitlRequestId,
     phase: "park",
@@ -3915,6 +4016,7 @@ async function handleBudgetBreachResponse(args: {
   startedAt: number;
   actor: HitlActor;
   recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
+  executionHosts: ExecutionHosts;
 }): Promise<NextResponse> {
   const {
     db,
@@ -3926,6 +4028,7 @@ async function handleBudgetBreachResponse(args: {
     startedAt,
     actor,
     recordSuccessAudit,
+    executionHosts,
   } = args;
   const breach = parseBudgetBreachSchema(hitlRow.schema);
   const scope = breach.scope as BudgetScope;
@@ -4155,6 +4258,7 @@ async function handleBudgetBreachResponse(args: {
     ) {
       await scheduleBudgetBreachResume({
         db,
+        executionHosts,
         runId,
         runKind: runRow.runKind,
         stepId: hitlRow.stepId,
@@ -4180,6 +4284,7 @@ async function handleBudgetBreachResponse(args: {
       if (!oldRunAlreadyTerminal) {
         await checkpointBudgetLiveSession({
           db,
+          executionHosts,
           runId,
           hitlRequestId,
           phase: "restart",
@@ -4335,6 +4440,7 @@ async function handleBudgetBreachResponse(args: {
           ? { runStatus: "Abandoned", ref: outcome.ref ?? null }
           : await performBudgetPark({
               db,
+              executionHosts,
               decision,
               runId,
               hitlRequestId,
@@ -4462,6 +4568,7 @@ async function handleBudgetBreachResponse(args: {
   // runFlow resume to agents (session/resume) and the idle restorable pause.
   await scheduleBudgetBreachResume({
     db,
+    executionHosts,
     runId,
     runKind: runRow.runKind,
     stepId: hitlRow.stepId,
@@ -4717,6 +4824,7 @@ async function handleNodeInterruptResponse(args: {
   hitlRequestId: string;
   startedAt: number;
   recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
+  executionHosts: ExecutionHosts;
 }): Promise<NextResponse> {
   const {
     db,
@@ -4727,6 +4835,7 @@ async function handleNodeInterruptResponse(args: {
     hitlRequestId,
     startedAt,
     recordSuccessAudit,
+    executionHosts,
   } = args;
   const optionId = body.optionId;
 
@@ -5052,6 +5161,14 @@ async function handleNodeInterruptResponse(args: {
     );
   }
 
+  // ADR-164 D3: a restart appends a fresh attempt under a NEW driver generation;
+  // the host is resolved before the claim so an unavailable host refuses the
+  // restart whole instead of recording a decision no driver can pick up.
+  const placementHost = await localHost({
+    db,
+    transport: executionHosts.transport,
+  });
+
   const outcome = await db.transaction(async (tx: any) => {
     const locked = await lockHitlRow(tx, hitlRequestId);
 
@@ -5161,6 +5278,11 @@ async function handleNodeInterruptResponse(args: {
       db: tx,
       runId,
       reason: "node_interrupt restarted",
+    });
+    await mintPlacement(tx, {
+      runId,
+      reason: "node_interrupt",
+      host: placementHost,
     });
     await recordSuccessAudit?.(tx, 202);
 
@@ -5570,9 +5692,11 @@ export async function respondToHitl(
   deps: {
     db: any;
     recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
+    executionHosts?: ExecutionHosts;
   },
 ): Promise<NextResponse> {
   const { db, recordSuccessAudit } = deps;
+  const executionHosts = deps.executionHosts ?? createExecutionHosts({ db });
   const { runId, hitlRequestId, body } = input;
   const bodyKeys = input.bodyKeys ?? Object.keys(body);
   const startedAt = Date.now();
@@ -5665,6 +5789,7 @@ export async function respondToHitl(
       startedAt,
       actor,
       recordSuccessAudit,
+      executionHosts,
     });
   }
 
@@ -5682,6 +5807,7 @@ export async function respondToHitl(
       startedAt,
       actor,
       recordSuccessAudit,
+      executionHosts,
     });
   }
 
@@ -5713,6 +5839,7 @@ export async function respondToHitl(
       startedAt,
       actor,
       recordSuccessAudit,
+      executionHosts,
     });
   }
 
@@ -5743,6 +5870,7 @@ export async function respondToHitl(
       hitlRequestId,
       startedAt,
       recordSuccessAudit,
+      executionHosts,
     });
   }
 
@@ -5760,6 +5888,7 @@ export async function respondToHitl(
       startedAt,
       actor,
       recordSuccessAudit,
+      executionHosts,
     });
   }
 
@@ -5780,6 +5909,7 @@ export async function respondToHitl(
       startedAt,
       actor,
       recordSuccessAudit,
+      executionHosts,
     });
   }
 
@@ -5796,5 +5926,6 @@ export async function respondToHitl(
     startedAt,
     actor,
     recordSuccessAudit,
+    executionHosts,
   });
 }

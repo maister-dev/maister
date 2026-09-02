@@ -1474,7 +1474,7 @@ export async function sendPromptEnveloped(
 export async function deliverInputEnveloped(
   sessionId: string,
   envelope: WireEnvelope,
-): Promise<{ ok: true }> {
+): Promise<{ ok: true; replayed: boolean }> {
   try {
     const res = await request<{ ok: true }>({
       method: "POST",
@@ -1485,7 +1485,7 @@ export async function deliverInputEnveloped(
       timeoutMs: 10_000,
     });
 
-    return res.body;
+    return { ok: true, replayed: res.replayed };
   } catch (err) {
     const status = httpStatusOf(err);
 

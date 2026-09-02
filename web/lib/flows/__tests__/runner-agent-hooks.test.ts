@@ -10,8 +10,8 @@
 // body on BOTH the new-session and the resume paths (a resume re-delivers the
 // re-derived profile), and omits it (inert) for a non-enforced node.
 
+import type { SupervisorEvent } from "@/lib/execution-host";
 import type { FlowContext } from "@/lib/flows/types";
-import type { SupervisorEvent } from "@/lib/supervisor-client";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -29,6 +29,7 @@ vi.mock("@/lib/runs/state-transitions", () => stateTransitionsMock);
 
 import { MaisterError } from "@/lib/errors";
 import { runAgentStep, type RunAgentStepCtx } from "@/lib/flows/runner-agent";
+import { fakeAgentExecution } from "@/test-support/fake-execution-host";
 
 const baseFlowCtx: FlowContext = {
   task: {
@@ -82,35 +83,19 @@ function makeFakeDb(): any {
   return api;
 }
 
-async function* eventStream(
-  events: SupervisorEvent[],
-): AsyncGenerator<SupervisorEvent> {
-  for (const ev of events) {
-    yield ev;
-    await new Promise((r) => setImmediate(r));
-  }
-}
-
+// ADR-164: the runner's seam is a fake-backed BoundClient + admin stream; the
+// session body the runner sends is observed on the fake transport.
 function makeApi(events: SupervisorEvent[]) {
-  const checkpointSpy = vi.fn(async () => ({
-    alreadyCheckpointed: false,
-    sessionId: "s",
-    monotonicId: 0,
-  }));
+  const execution = fakeAgentExecution({ events });
+  const { fake } = execution;
 
   return {
-    createSession: vi.fn(async () => ({
-      sessionId: "sup-session-1",
-      pid: 1234,
-      acpSessionId: "acp-1",
-    })),
-    deleteSession: vi.fn(async () => undefined),
-    sendPrompt: vi.fn(async () => ({ stopReason: "end_turn" as const })),
-    streamSession: vi.fn(() => eventStream(events)) as any,
-    cancelPermission: vi.fn(async () => ({ ok: true as const })) as any,
-    deliverPermission: vi.fn(async () => ({ ok: true as const })) as any,
-    checkpointSession: checkpointSpy as any,
-    checkpointSpy,
+    ...execution,
+    creates: () =>
+      fake
+        .callsOf("createSession")
+        .map((c) => c.envelope?.payload as Record<string, unknown>),
+    sessionId: () => fake.callsOf("sendPrompt")[0]?.args[0] as string,
   };
 }
 
@@ -152,7 +137,7 @@ describe("runner-agent — session.hook_trip", () => {
     const result = await runAgentStep(
       { id: "implement", type: "agent", mode: "new-session", prompt: "go" },
       makeCtx(),
-      api as never,
+      api,
     );
 
     expect(result.ok).toBe(false);
@@ -164,7 +149,8 @@ describe("runner-agent — session.hook_trip", () => {
         stepId: "implement",
         rule: "repetition",
         runKind: "flow",
-        supervisorSessionId: "sup-session-1",
+        // The HOST session id (the supervisor's URL key), never the ACP handle.
+        supervisorSessionId: api.sessionId(),
       }),
     );
     // The escalate already left the run NeedsInput — the idle flip must NOT fire.
@@ -183,7 +169,7 @@ describe("runner-agent — session.hook_trip", () => {
     const result = await runAgentStep(
       { id: "implement", type: "agent", mode: "new-session", prompt: "go" },
       makeCtx(),
-      api as never,
+      api,
     );
 
     expect(result.errorCode).toBe("STEP_CHECKPOINTED");
@@ -208,7 +194,7 @@ describe("runner-agent — session.hook_trip", () => {
     const result = await runAgentStep(
       { id: "implement", type: "agent", mode: "new-session", prompt: "go" },
       makeCtx(),
-      api as never,
+      api,
     );
 
     expect(result.ok).toBe(false);
@@ -233,7 +219,7 @@ describe("runner-agent — session.hook_trip", () => {
     const result = await runAgentStep(
       { id: "implement", type: "agent", mode: "new-session", prompt: "go" },
       makeCtx(),
-      api as never,
+      api,
     );
 
     expect(result.ok).toBe(false);
@@ -253,7 +239,7 @@ describe("runner-agent — session.hook_trip", () => {
     const result = await runAgentStep(
       { id: "implement", type: "agent", mode: "new-session", prompt: "go" },
       makeCtx(),
-      api as never,
+      api,
     );
 
     expect(result.errorCode).toBe("STEP_CHECKPOINTED");
@@ -269,7 +255,7 @@ describe("runner-agent — session.hook_trip", () => {
     const result = await runAgentStep(
       { id: "implement", type: "agent", mode: "new-session", prompt: "go" },
       makeCtx(),
-      api as never,
+      api,
     );
 
     expect(escalateHookTripMock.escalateHookTrip).not.toHaveBeenCalled();
@@ -290,13 +276,11 @@ describe("runner-agent — enforcementProfile delivery (ADR-130)", () => {
     await runAgentStep(
       { id: "implement", type: "agent", mode: "new-session", prompt: "go" },
       makeCtx({ enforcementProfile: profile }),
-      api as never,
+      api,
     );
 
-    expect(api.createSession).toHaveBeenCalledTimes(1);
-    expect(api.createSession).toHaveBeenCalledWith(
-      expect.objectContaining({ enforcementProfile: profile }),
-    );
+    expect(api.creates()).toHaveLength(1);
+    expect(api.creates()[0]).toMatchObject({ enforcementProfile: profile });
   });
 
   it("REQ-17: a resume re-delivers the (re-derived) enforcementProfile alongside resumeSessionId", async () => {
@@ -309,15 +293,13 @@ describe("runner-agent — enforcementProfile delivery (ADR-130)", () => {
     await runAgentStep(
       { id: "implement", type: "agent", mode: "new-session", prompt: "go" },
       makeCtx({ enforcementProfile: profile, resumeSessionId: "acp-prev" }),
-      api as never,
+      api,
     );
 
-    expect(api.createSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        enforcementProfile: profile,
-        resumeSessionId: "acp-prev",
-      }),
-    );
+    expect(api.creates()[0]).toMatchObject({
+      enforcementProfile: profile,
+      resumeSessionId: "acp-prev",
+    });
   });
 
   it("omits enforcementProfile for a non-enforced node (inert — byte-identical to pre-ADR-130)", async () => {
@@ -326,13 +308,10 @@ describe("runner-agent — enforcementProfile delivery (ADR-130)", () => {
     await runAgentStep(
       { id: "implement", type: "agent", mode: "new-session", prompt: "go" },
       makeCtx(),
-      api as never,
+      api,
     );
 
-    // Not called with any defined enforcementProfile (expect.anything() excludes
-    // undefined) → the field is inert exactly as before ADR-130.
-    expect(api.createSession).not.toHaveBeenCalledWith(
-      expect.objectContaining({ enforcementProfile: expect.anything() }),
-    );
+    // The field is inert exactly as before ADR-130: absent from the body.
+    expect(api.creates()[0].enforcementProfile).toBeUndefined();
   });
 });

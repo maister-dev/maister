@@ -63,11 +63,12 @@ import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { promoteNextPending, releaseSlotOnIdle } from "@/lib/scheduler";
 import {
-  checkpointSession,
-  deleteSession,
-  listSessions,
+  createExecutionHosts,
+  isFencedError,
+  type BoundClient,
+  type ExecutionHosts,
   type SupervisorSessionRecord,
-} from "@/lib/supervisor-client";
+} from "@/lib/execution-host";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -140,51 +141,22 @@ function needsInputIdleTtlHours(): number {
   return parsed;
 }
 
-// Map<acpSessionId, SupervisorSessionRecord> built once per tick so
-// each candidate row can look up its supervisor entry in O(1) without
-// a second HTTP round-trip.
-type SessionMap = Map<string, SupervisorSessionRecord>;
+// ADR-164: the live host session for the candidate's CURRENT node, read through
+// the client bound to the run's assignment. Matching by (runId, stepId) keeps
+// the "only the exact capped node's session" rule; a lookup failure is the
+// caller's "leave for the next tick" signal.
+async function liveSessionFor(
+  client: BoundClient,
+  stepId: string | null,
+): Promise<SupervisorSessionRecord | undefined> {
+  const records = await client.sessionsForRun();
 
-async function loadSupervisorSessionRecords(): Promise<
-  SupervisorSessionRecord[] | null
-> {
-  try {
-    return await listSessions();
-  } catch (err) {
-    log.warn(
-      { err: (err as Error).message },
-      "sweeper listSessions failed — candidates left for the next tick",
-    );
-
-    return null;
-  }
-}
-
-async function loadSupervisorSessions(): Promise<SessionMap | null> {
-  const records = await loadSupervisorSessionRecords();
-
-  if (records === null) return null;
-
-  const map: SessionMap = new Map();
-
-  for (const rec of records) {
-    if (rec.status === "live" && rec.acpSessionId) {
-      map.set(rec.acpSessionId, rec);
-    } else if (rec.status === "live") {
-      // No acpSessionId yet (rare race during boot) — fall back to
-      // the supervisor sessionId as the key. The matching path below
-      // tries acpSessionId first; the supervisor-sessionId fallback
-      // is only an escape hatch.
-      map.set(rec.sessionId, rec);
-    }
-  }
-
-  return map;
+  return records.find((r) => r.status === "live" && r.stepId === stepId);
 }
 
 type Pass1Candidate = {
   id: string;
-  acpSessionId: string | null;
+  hostSessionId: string | null;
 };
 
 async function fetchPass1Candidates(db: Db): Promise<Pass1Candidate[]> {
@@ -204,7 +176,8 @@ async function fetchPass1Candidates(db: Db): Promise<Pass1Candidate[]> {
     .orderBy(asc(runs.keepaliveUntil))
     .limit(PER_TICK_LIMIT);
 
-  // M42 (ADR-114): the checkpoint handle comes from the run's ACTIVE session.
+  // M42 (ADR-114): the checkpoint handle comes from the run's ACTIVE session —
+  // the host's own session id (ADR-164), written by the create ack.
   const activeByRun = await loadActiveRunSessionsByRunId(
     db,
     rows.map((row: { id: string }) => row.id),
@@ -212,7 +185,7 @@ async function fetchPass1Candidates(db: Db): Promise<Pass1Candidate[]> {
 
   return rows.map((row: { id: string }) => ({
     id: row.id,
-    acpSessionId: activeByRun.get(row.id)?.acpSessionId ?? null,
+    hostSessionId: activeByRun.get(row.id)?.hostSessionId ?? null,
   }));
 }
 
@@ -267,39 +240,25 @@ async function runWithConcurrency<T>(
   await Promise.all(slots);
 }
 
-async function runPass1(db: Db): Promise<number> {
+async function runPass1(db: Db, hosts: ExecutionHosts): Promise<number> {
   const candidates = await fetchPass1Candidates(db);
 
   if (candidates.length === 0) return 0;
 
-  const supervisorMap = await loadSupervisorSessions();
-
-  // M8 review finding #1: when listSessions() fails we cannot
-  // distinguish "session is gone" from "supervisor is transiently
-  // unreachable". Marking the row NeedsInputIdle in the latter case
-  // produces a split-brain state — the agent is still alive holding
-  // the original permission deferred, but the DB says the slot is
-  // free and the run is idle. Refuse to act on any candidate and
-  // wait for the next tick.
-  if (supervisorMap === null) {
-    log.warn(
-      { candidateCount: candidates.length },
-      "sweeper pass1 aborted — listSessions failed; leaving candidates in NeedsInput for next tick",
-    );
-
-    return 0;
-  }
-
   let idled = 0;
 
   await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (row) => {
-    const live = row.acpSessionId
-      ? supervisorMap.get(row.acpSessionId)
-      : undefined;
-
-    if (live) {
+    if (row.hostSessionId) {
+      // Checkpoint under the run's assignment. An unknown outcome (5xx /
+      // unreachable) must NOT idle the row: the agent may still be alive holding
+      // the permission deferred while the DB would say the slot is free
+      // (split-brain) — leave it for the next tick. A definitive refusal (404,
+      // or a fence from a newer driver generation) means this session is no
+      // longer ours to hold: proceed to markCheckpointed.
       try {
-        await checkpointSession(live.sessionId);
+        const client = await hosts.forRun(row.id);
+
+        await client.checkpoint(row.hostSessionId);
       } catch (err) {
         if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
           log.warn(
@@ -309,22 +268,29 @@ async function runPass1(db: Db): Promise<number> {
 
           return;
         }
-        log.warn(
-          {
-            runId: row.id,
-            err: err instanceof Error ? err.message : String(err),
-            code:
-              isMaisterError(err) && "code" in err
-                ? (err as { code: string }).code
-                : null,
-          },
-          "sweeper pass1 supervisor terminal failure — proceeding to markCheckpointed (session is unrecoverable)",
-        );
+        if (isFencedError(err)) {
+          log.warn(
+            { runId: row.id, hostSessionId: row.hostSessionId },
+            "sweeper pass1 checkpoint fenced — a newer driver generation owns the session; proceeding to markCheckpointed",
+          );
+        } else {
+          log.warn(
+            {
+              runId: row.id,
+              err: err instanceof Error ? err.message : String(err),
+              code:
+                isMaisterError(err) && "code" in err
+                  ? (err as { code: string }).code
+                  : null,
+            },
+            "sweeper pass1 supervisor terminal failure — proceeding to markCheckpointed (session is unrecoverable)",
+          );
+        }
       }
-    } else if (row.acpSessionId) {
+    } else {
       log.info(
-        { runId: row.id, acpSessionId: row.acpSessionId },
-        "sweeper pass1 supervisor session not live — marking checkpointed directly",
+        { runId: row.id },
+        "sweeper pass1 no host session recorded — marking checkpointed directly",
       );
     }
 
@@ -477,7 +443,6 @@ type TimeLimitCandidate = {
   flowId: string | null;
   flowRevisionId: string | null;
   currentStepId: string | null;
-  acpSessionId: string | null;
 };
 
 async function fetchTimeLimitCandidates(db: Db): Promise<TimeLimitCandidate[]> {
@@ -497,23 +462,13 @@ async function fetchTimeLimitCandidates(db: Db): Promise<TimeLimitCandidate[]> {
         excludeActiveSyncAttempt(db),
       ),
     )
-    // No acp_session_id filter: a capped node that hangs before reporting a
-    // session id must still be killable. deleteSession is best-effort (skipped
+    // No session filter: a capped node that hangs before its session is
+    // recorded must still be killable. deleteSession is best-effort (skipped
     // when no live session matches); the Failed transition fires regardless.
     .orderBy(asc(runs.startedAt))
     .limit(PER_TICK_LIMIT);
 
-  // M42 (ADR-114): the live session handle (if any) comes from the run's ACTIVE
-  // session; a node that hasn't reported one yet stays a candidate (null handle).
-  const activeByRun = await loadActiveRunSessionsByRunId(
-    db,
-    rows.map((row: { id: string }) => row.id),
-  );
-
-  return rows.map((row: { id: string }) => ({
-    ...row,
-    acpSessionId: activeByRun.get(row.id)?.acpSessionId ?? null,
-  }));
+  return rows;
 }
 
 // Resolve the pinned manifest for a run: the immutable flow_revisions.manifest
@@ -569,21 +524,13 @@ async function fetchActiveAttempt(
 // started_at) is terminated via supervisor DELETE (which drives teardown so no
 // permission deferred leaks), the attempt marked Failed, the run ended Failed.
 // Cost limits stay record-only — never a kill trigger.
-async function runTimeLimitPass(db: Db): Promise<number> {
+async function runTimeLimitPass(
+  db: Db,
+  hosts: ExecutionHosts,
+): Promise<number> {
   const candidates = await fetchTimeLimitCandidates(db);
 
   if (candidates.length === 0) return 0;
-
-  const records = await loadSupervisorSessionRecords();
-
-  if (records === null) {
-    log.warn(
-      { candidateCount: candidates.length },
-      "watchdog aborted — listSessions failed; leaving Running candidates for next tick",
-    );
-
-    return 0;
-  }
 
   let killed = 0;
 
@@ -609,24 +556,32 @@ async function runTimeLimitPass(db: Db): Promise<number> {
 
     if (elapsedMs <= cap * 60_000) return;
 
-    // Match the live supervisor session by the server-owned (runId, stepId),
-    // NOT by runs.acp_session_id: the graph runner persists acp_session_id only
-    // AFTER the node's prompt returns, so a node still mid-prompt has a null
-    // column while its agent session is live. Looking up by (runId, stepId)
-    // finds — and therefore actually tears down — that session instead of
-    // marking the run Failed while the agent keeps mutating the worktree
-    // (split-brain). Only the EXACT capped node's session is matched, never a
-    // later node's live session.
-    const live = records.find(
-      (r) =>
-        r.status === "live" &&
-        r.runId === row.id &&
-        r.stepId === row.currentStepId,
-    );
+    // Match the live host session by the server-owned (runId, stepId) through
+    // the run's bound client: only the EXACT capped node's session is torn
+    // down, never a later node's live session. When the host cannot be asked
+    // we cannot distinguish "gone" from "unreachable" — leave the run Running
+    // for the next tick rather than mark it Failed with a live agent.
+    let client: BoundClient;
+    let live: SupervisorSessionRecord | undefined;
+
+    try {
+      client = await hosts.forRun(row.id, { teardown: true });
+      live = await liveSessionFor(client, row.currentStepId);
+    } catch (err) {
+      log.warn(
+        {
+          runId: row.id,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "watchdog host lookup failed — leaving Running for next tick",
+      );
+
+      return;
+    }
 
     if (live) {
       try {
-        await deleteSession(live.sessionId);
+        await client.deleteSession(live.sessionId);
       } catch (err) {
         // 5xx / network → retryable: leave the run Running and retry next tick.
         // Marking Failed without confirming teardown is the split-brain we must
@@ -635,6 +590,16 @@ async function runTimeLimitPass(db: Db): Promise<number> {
           log.warn(
             { runId: row.id, err: err.message },
             "watchdog deleteSession 5xx — leaving Running for next tick",
+          );
+
+          return;
+        }
+        // A fence means a newer driver generation took the run over between
+        // the candidate scan and the kill: it is not ours to terminate.
+        if (isFencedError(err)) {
+          log.warn(
+            { runId: row.id },
+            "watchdog deleteSession fenced — a newer driver generation owns the run; skipping",
           );
 
           return;
@@ -814,7 +779,6 @@ type BudgetCandidate = {
   parentRunId: string | null;
   flowId: string | null;
   currentStepId: string | null;
-  acpSessionId: string | null;
   executionPolicy: unknown;
   // ADR-165 (D8/T6.4): the ROOT's effective delegation bounds. Its `budget` is
   // min-merged into the tree meters below. NULL = env-only, so the policy's
@@ -857,17 +821,7 @@ async function fetchBudgetCandidates(db: Db): Promise<BudgetCandidate[]> {
     .orderBy(asc(runs.startedAt))
     .limit(PER_TICK_LIMIT);
 
-  // M42 (ADR-114): the live session handle (for the terminate path) comes from
-  // the run's ACTIVE session.
-  const activeByRun = await loadActiveRunSessionsByRunId(
-    db,
-    rows.map((row: { id: string }) => row.id),
-  );
-
-  return rows.map((row: { id: string }) => ({
-    ...row,
-    acpSessionId: activeByRun.get(row.id)?.acpSessionId ?? null,
-  }));
+  return rows;
 }
 
 // Resolve the project slug for a candidate (lazy — only the escalate path needs
@@ -1400,16 +1354,34 @@ async function actBudgetWarn(
 // Find the live supervisor session for a candidate by the server-owned
 // (runId, stepId) — the same identity the time-limit pass keys on (acp_session_id
 // is null exactly during the long/over-cap window).
-function liveRecordFor(
-  records: SupervisorSessionRecord[],
+// The candidate's bound client + its live session for the current node. A
+// lookup failure (host unreachable / identity mismatch) returns null so the
+// caller leaves the candidate for the next tick — never act on "unknown".
+async function boundLiveSession(
+  hosts: ExecutionHosts,
   candidate: BudgetCandidate,
-): SupervisorSessionRecord | undefined {
-  return records.find(
-    (r) =>
-      r.status === "live" &&
-      r.runId === candidate.id &&
-      r.stepId === candidate.currentStepId,
-  );
+  phase: string,
+): Promise<{
+  client: BoundClient;
+  live: SupervisorSessionRecord | undefined;
+} | null> {
+  try {
+    const client = await hosts.forRun(candidate.id, { teardown: true });
+    const live = await liveSessionFor(client, candidate.currentStepId);
+
+    return { client, live };
+  } catch (err) {
+    log.warn(
+      {
+        runId: candidate.id,
+        phase,
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "[budget] host lookup failed — leaving candidate for next tick",
+    );
+
+    return null;
+  }
 }
 
 // PAUSE-FOR-BUDGET (run/task scope, any run_kind — ADR-106 M39 Phase 5): halt the
@@ -1428,21 +1400,32 @@ function liveRecordFor(
 // (agent → startAgentSession, flow → runFlow / idle resume-driver).
 async function actBudgetEscalate(
   db: Db,
-  records: SupervisorSessionRecord[],
+  hosts: ExecutionHosts,
   candidate: BudgetCandidate,
   verdict: BudgetVerdict,
   mode: "escalate" | "restorable",
 ): Promise<boolean> {
-  const live = liveRecordFor(records, candidate);
+  const bound = await boundLiveSession(hosts, candidate, "escalate");
+
+  if (!bound) return false;
+  const { client, live } = bound;
 
   if (live) {
     try {
-      await checkpointSession(live.sessionId);
+      await client.checkpoint(live.sessionId);
     } catch (err) {
       if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
         log.warn(
           { runId: candidate.id, err: err.message },
           "[budget] escalate checkpoint 5xx — leaving live for next tick",
+        );
+
+        return false;
+      }
+      if (isFencedError(err)) {
+        log.warn(
+          { runId: candidate.id },
+          "[budget] escalate checkpoint fenced — a newer driver generation owns the run; skipping",
         );
 
         return false;
@@ -1650,20 +1633,31 @@ async function actBudgetEscalate(
 // confirms stopped/absent.
 async function actBudgetTerminateRun(
   db: Db,
-  records: SupervisorSessionRecord[],
+  hosts: ExecutionHosts,
   candidate: BudgetCandidate,
   verdict: BudgetVerdict,
 ): Promise<boolean> {
-  const live = liveRecordFor(records, candidate);
+  const bound = await boundLiveSession(hosts, candidate, "terminate");
+
+  if (!bound) return false;
+  const { client, live } = bound;
 
   if (live) {
     try {
-      await deleteSession(live.sessionId);
+      await client.deleteSession(live.sessionId);
     } catch (err) {
       if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
         log.warn(
           { runId: candidate.id, err: err.message },
           "[budget] terminate deleteSession 5xx — leaving Running for next tick",
+        );
+
+        return false;
+      }
+      if (isFencedError(err)) {
+        log.warn(
+          { runId: candidate.id },
+          "[budget] terminate deleteSession fenced — a newer driver generation owns the run; skipping",
         );
 
         return false;
@@ -1832,7 +1826,7 @@ async function actBudgetTerminateRun(
 // never a tree root).
 async function actBudgetTerminateTree(
   db: Db,
-  records: SupervisorSessionRecord[],
+  hosts: ExecutionHosts,
   candidate: BudgetCandidate,
   verdict: BudgetVerdict,
 ): Promise<boolean> {
@@ -1842,16 +1836,27 @@ async function actBudgetTerminateTree(
   // leave the tree for the next tick rather than mark it Failed with the agent
   // still spending. A terminal (non-5xx) failure means the session is already
   // gone; proceed.
-  const rootLive = liveRecordFor(records, candidate);
+  const bound = await boundLiveSession(hosts, candidate, "tree-terminate");
+
+  if (!bound) return false;
+  const { client, live: rootLive } = bound;
 
   if (rootLive) {
     try {
-      await deleteSession(rootLive.sessionId);
+      await client.deleteSession(rootLive.sessionId);
     } catch (err) {
       if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
         log.warn(
           { runId: candidate.id, err: err.message },
           "[budget] tree-terminate root deleteSession 5xx — leaving tree for next tick",
+        );
+
+        return false;
+      }
+      if (isFencedError(err)) {
+        log.warn(
+          { runId: candidate.id },
+          "[budget] tree-terminate root deleteSession fenced — a newer driver generation owns the root; skipping",
         );
 
         return false;
@@ -1987,21 +1992,10 @@ function logBudgetTerminated(
   );
 }
 
-async function runBudgetPass(db: Db): Promise<number> {
+async function runBudgetPass(db: Db, hosts: ExecutionHosts): Promise<number> {
   const candidates = await fetchBudgetCandidates(db);
 
   if (candidates.length === 0) return 0;
-
-  const records = await loadSupervisorSessionRecords();
-
-  if (records === null) {
-    log.warn(
-      { candidateCount: candidates.length },
-      "budget watchdog aborted — listSessions failed; leaving candidates for next tick",
-    );
-
-    return 0;
-  }
 
   let acted = 0;
 
@@ -2064,7 +2058,7 @@ async function runBudgetPass(db: Db): Promise<number> {
         didAct = await actBudgetWarn(db, candidate, verdict);
       } else if (verdict.scope === "tree") {
         // tree breach (escalate force-promoted to terminate upstream) → cascade.
-        didAct = await actBudgetTerminateTree(db, records, candidate, verdict);
+        didAct = await actBudgetTerminateTree(db, hosts, candidate, verdict);
       } else {
         // run/task (non-tree): the onBudgetBreach policy axis picks the response.
         const disposition = resolveBudgetDisposition({
@@ -2076,7 +2070,7 @@ async function runBudgetPass(db: Db): Promise<number> {
         if (disposition === "escalate") {
           didAct = await actBudgetEscalate(
             db,
-            records,
+            hosts,
             candidate,
             verdict,
             "escalate",
@@ -2084,13 +2078,13 @@ async function runBudgetPass(db: Db): Promise<number> {
         } else if (disposition === "terminate_restorable") {
           didAct = await actBudgetEscalate(
             db,
-            records,
+            hosts,
             candidate,
             verdict,
             "restorable",
           );
         } else {
-          didAct = await actBudgetTerminateRun(db, records, candidate, verdict);
+          didAct = await actBudgetTerminateRun(db, hosts, candidate, verdict);
         }
       }
 
@@ -2110,13 +2104,14 @@ export type SweepResult = {
 };
 
 export async function runSweepTick(
-  opts: { db?: Db } = {},
+  opts: { db?: Db; executionHosts?: ExecutionHosts } = {},
 ): Promise<SweepResult> {
   const db = opts.db ?? getDb();
-  const idledCount = await runPass1(db);
+  const hosts = opts.executionHosts ?? createExecutionHosts({ db });
+  const idledCount = await runPass1(db, hosts);
   const abandonedCount = await runPass2(db);
-  const killedCount = await runTimeLimitPass(db);
-  const budgetActedCount = await runBudgetPass(db);
+  const killedCount = await runTimeLimitPass(db, hosts);
+  const budgetActedCount = await runBudgetPass(db, hosts);
   const scannedRunsCount =
     idledCount + abandonedCount + killedCount + budgetActedCount;
 

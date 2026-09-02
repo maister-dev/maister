@@ -24,6 +24,7 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 
 const schema = fullSchema as unknown as Record<string, any>;
 const { domainEvents, runs, tasks } = schema;
@@ -42,6 +43,8 @@ beforeAll(async () => {
 
   pool = testDatabase.pool;
   db = testDatabase.db;
+  // ADR-164: the resume claims mint on the local host — a fake host backs every implicit resolution.
+  await fakeExecutionHosts(db);
   // The scheduler advisory lock (pg_advisory_xact_lock) only engages when DB_URL
   // is a postgres URL — point it at the container so the gate's count-then-claim is
   // serialized exactly as in prod (the INV-1 burst test depends on it).

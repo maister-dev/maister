@@ -18,7 +18,12 @@ import {
   type MaisterErrorCode,
 } from "@/lib/errors";
 import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
-import { createSession } from "@/lib/supervisor-client";
+import {
+  createExecutionHosts,
+  isFencedError,
+  localHost,
+  type ExecutionHosts,
+} from "@/lib/execution-host";
 import {
   mergeRunnerAdapterLaunch,
   runnerExecutorInput,
@@ -52,6 +57,7 @@ export type ResumeRunResult =
 export type ResumeRunOptions = {
   db?: Db;
   recordSuccessAudit?: (db: Db) => Promise<void>;
+  executionHosts?: ExecutionHosts;
 };
 
 // M8 T9 / D7: resume a NeedsInputIdle run by spawning a fresh
@@ -153,15 +159,11 @@ export async function resumeRun(
   }
 
   const wsRows = await db
-    .select({
-      projectSlug: workspaces.parentRepoPath,
-      worktreePath: workspaces.worktreePath,
-    })
+    .select({ id: workspaces.id })
     .from(workspaces)
     .where(eq(workspaces.runId, runId));
-  const ws = wsRows[0];
 
-  if (!ws) {
+  if (!wsRows[0]) {
     log.error({ runId }, "resumeRun: workspace row missing");
     await failResumedRun(runId, "workspace-missing", { db });
 
@@ -173,24 +175,25 @@ export async function resumeRun(
     };
   }
 
-  const projRows = await db
-    .select({ slug: schemaModule.projects.slug })
-    .from(schemaModule.projects)
-    .where(eq(schemaModule.projects.id, runRow.projectId));
-  const projectSlug = projRows[0]?.slug;
+  // ADR-164: the resume is a new driver generation on the local host — resolve
+  // it BEFORE the claim so an unavailable host is a retryable refusal with no
+  // claim taken (the row stays NeedsInputIdle; the response stays stored).
+  const hosts = opts.executionHosts ?? createExecutionHosts({ db });
+  let placementHost;
 
-  if (!projectSlug) {
-    log.error(
-      { runId, projectId: runRow.projectId },
-      "resumeRun: project row missing",
+  try {
+    placementHost = await localHost({ db, transport: hosts.transport });
+  } catch (err) {
+    log.warn(
+      { runId, err: err instanceof Error ? err.message : String(err) },
+      "resumeRun: local execution host unavailable — no claim taken, retryable",
     );
-    await failResumedRun(runId, "project-missing", { db });
 
     return {
       ok: false,
-      code: "CHECKPOINT",
-      retryable: false,
-      message: "project row missing",
+      code: "EXECUTOR_UNAVAILABLE",
+      retryable: true,
+      message: err instanceof Error ? err.message : String(err),
     };
   }
 
@@ -228,6 +231,7 @@ export async function resumeRun(
       // CLAIM_RACE. Run it INSIDE this locked tx so the cap-check + claim are atomic.
       const result = await markResumed(runId, {
         db: tx,
+        placement: { host: placementHost, transport: hosts.transport },
         ...(opts.recordSuccessAudit
           ? { recordSuccessAudit: opts.recordSuccessAudit }
           : {}),
@@ -268,10 +272,10 @@ export async function resumeRun(
   }
 
   try {
-    const result = await createSession({
-      runId,
-      projectSlug,
-      worktreePath: ws.worktreePath,
+    // The client is bound to the assignment the claim just minted; the
+    // workspace handle was copied forward, so the create needs no re-adopt.
+    const client = await hosts.forRun(runId);
+    const result = await client.createSession({
       stepId: runRow.currentStepId ?? "resume",
       executor: runnerExecutorInput(runRow.runnerSnapshot),
       runner: runnerSupervisorInput({ snapshot: runRow.runnerSnapshot }),
@@ -310,6 +314,18 @@ export async function resumeRun(
       acpSessionId: result.acpSessionId,
     };
   } catch (err) {
+    // ADR-164 yield rule: a newer generation already owns this run — write no
+    // run state (its own driver re-issues the stored intent).
+    if (isFencedError(err)) {
+      log.warn({ runId }, "resumeRun: driver-yielded — assignment fenced");
+
+      return {
+        ok: false,
+        code: "CONFLICT",
+        retryable: false,
+        message: "another driver generation owns this run",
+      };
+    }
     if (isMaisterError(err)) {
       if (err.code === "EXECUTOR_UNAVAILABLE") {
         // Retryable spawn failure — roll back the claim so the

@@ -1,3 +1,4 @@
+import type { ExecutionHostTransport } from "./contracts";
 import type { Db } from "./db";
 import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
 import type { PlacementReason } from "./types";
@@ -25,11 +26,14 @@ export async function mintPlacement(
     // Resolution db when the memo is cold; defaults to the caller's tx (a
     // registrar savepoint inside the claim — rare, memoized 30 s otherwise).
     db?: Db;
+    transport?: ExecutionHostTransport;
     now?: Date;
     logger?: Logger;
   },
 ): Promise<ExecutionAssignment> {
-  const host = input.host ?? (await localHost({ db: input.db ?? tx }));
+  const host =
+    input.host ??
+    (await localHost({ db: input.db ?? tx, transport: input.transport }));
 
   return mintAssignment(tx, {
     runId: input.runId,
@@ -48,7 +52,7 @@ export async function ensureAssignment(
   db: Db,
   runId: string,
   reason: PlacementReason = "legacy_backfill",
-  opts: { logger?: Logger } = {},
+  opts: { logger?: Logger; transport?: ExecutionHostTransport } = {},
 ): Promise<ExecutionAssignment> {
   const active = await getActiveAssignment(db, runId);
 
@@ -60,6 +64,11 @@ export async function ensureAssignment(
   );
 
   return db.transaction((tx) =>
-    mintPlacement(tx as unknown as Db, { runId, reason, logger: opts.logger }),
+    mintPlacement(tx as unknown as Db, {
+      runId,
+      reason,
+      logger: opts.logger,
+      transport: opts.transport,
+    }),
   );
 }

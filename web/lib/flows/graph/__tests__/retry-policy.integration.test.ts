@@ -41,6 +41,7 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
@@ -55,7 +56,8 @@ let agentScript: Array<
   | { commitFile: string; thenFail: string }
 > = [];
 
-vi.mock("@/lib/flows/runner-agent", () => ({
+vi.mock("@/lib/flows/runner-agent", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/flows/runner-agent")>()),
   runAgentStep: vi.fn(
     async (
       step: { id: string; mode: string },
@@ -372,7 +374,11 @@ describe("retry_policy auto-retry (ADR-080)", () => {
       { ok: true },
     ];
 
-    await runGraph(loaded as never, { db, runtimeRoot });
+    await runGraph(loaded as never, {
+      db,
+      runtimeRoot,
+      executionHosts: (await fakeGraphHosts(db, runId)).hosts,
+    });
 
     const attempts = await attemptsFor(runId);
 
@@ -424,7 +430,11 @@ describe("retry_policy auto-retry (ADR-080)", () => {
       { ok: false, errorCode: "SPAWN" },
     ];
 
-    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+    await runGraph(loaded as never, {
+      db,
+      runtimeRoot: createdPaths[0],
+      executionHosts: (await fakeGraphHosts(db, runId)).hosts,
+    });
 
     const attempts = await attemptsFor(runId);
 
@@ -444,7 +454,11 @@ describe("retry_policy auto-retry (ADR-080)", () => {
     // Failed, unlike CRASH → Crashed).
     agentScript = [{ ok: false, errorCode: "PRECONDITION" }];
 
-    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+    await runGraph(loaded as never, {
+      db,
+      runtimeRoot: createdPaths[0],
+      executionHosts: (await fakeGraphHosts(db, runId)).hosts,
+    });
 
     const attempts = await attemptsFor(runId);
 
@@ -462,7 +476,11 @@ describe("retry_policy auto-retry (ADR-080)", () => {
 
     agentScript = [{ ok: false, errorCode: "CRASH" }];
 
-    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+    await runGraph(loaded as never, {
+      db,
+      runtimeRoot: createdPaths[0],
+      executionHosts: (await fakeGraphHosts(db, runId)).hosts,
+    });
 
     expect(await attemptsFor(runId)).toHaveLength(1);
     expect(await runStatus(runId)).toBe("Crashed");
@@ -483,7 +501,11 @@ describe("retry_policy auto-retry (ADR-080)", () => {
 
     agentScript = [{ ok: false, errorCode: "SPAWN" }];
 
-    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+    await runGraph(loaded as never, {
+      db,
+      runtimeRoot: createdPaths[0],
+      executionHosts: (await fakeGraphHosts(db, runId)).hosts,
+    });
 
     expect(await attemptsFor(runId)).toHaveLength(1);
     expect(await runStatus(runId)).toBe("Failed");
@@ -513,7 +535,11 @@ describe("execution-policy crashRetry=auto_retry (A2 in-run re-dispatch)", () =>
       { ok: true },
     ];
 
-    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+    await runGraph(loaded as never, {
+      db,
+      runtimeRoot: createdPaths[0],
+      executionHosts: (await fakeGraphHosts(db, runId)).hosts,
+    });
 
     const attempts = await attemptsFor(runId);
 
@@ -535,7 +561,11 @@ describe("execution-policy crashRetry=auto_retry (A2 in-run re-dispatch)", () =>
 
     agentScript = [{ ok: false, errorCode: "SPAWN" }];
 
-    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+    await runGraph(loaded as never, {
+      db,
+      runtimeRoot: createdPaths[0],
+      executionHosts: (await fakeGraphHosts(db, runId)).hosts,
+    });
 
     expect(await attemptsFor(runId)).toHaveLength(1);
     expect(await runStatus(runId)).toBe("Failed");
@@ -551,7 +581,11 @@ describe("execution-policy crashRetry=auto_retry (A2 in-run re-dispatch)", () =>
     // PRECONDITION is off the transient allow-list → no retry even under policy.
     agentScript = [{ ok: false, errorCode: "PRECONDITION" }];
 
-    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+    await runGraph(loaded as never, {
+      db,
+      runtimeRoot: createdPaths[0],
+      executionHosts: (await fakeGraphHosts(db, runId)).hosts,
+    });
 
     expect(await attemptsFor(runId)).toHaveLength(1);
     expect(await runStatus(runId)).toBe("Failed");
@@ -575,7 +609,11 @@ describe("execution-policy crashRetry=auto_retry (A2 in-run re-dispatch)", () =>
       { ok: false, errorCode: "SPAWN" },
     ];
 
-    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+    await runGraph(loaded as never, {
+      db,
+      runtimeRoot: createdPaths[0],
+      executionHosts: (await fakeGraphHosts(db, runId)).hosts,
+    });
 
     // Exactly 2 attempts (author cap), NOT 3 (policy default) → author won.
     expect(await attemptsFor(runId)).toHaveLength(2);
@@ -598,7 +636,11 @@ describe("execution-policy crashRetry=auto_retry (A2 in-run re-dispatch)", () =>
       { ok: false, errorCode: "SPAWN" },
     ];
 
-    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+    await runGraph(loaded as never, {
+      db,
+      runtimeRoot: createdPaths[0],
+      executionHosts: (await fakeGraphHosts(db, runId)).hosts,
+    });
 
     // Paused, NOT failed.
     expect(await runStatus(runId)).toBe("NeedsInput");
@@ -649,7 +691,11 @@ describe("execution-policy crashRetry=auto_retry (A2 in-run re-dispatch)", () =>
       { ok: false, errorCode: "SPAWN" },
       { ok: false, errorCode: "SPAWN" },
     ];
-    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+    await runGraph(loaded as never, {
+      db,
+      runtimeRoot: createdPaths[0],
+      executionHosts: (await fakeGraphHosts(db, runId)).hosts,
+    });
     expect(await runStatus(runId)).toBe("NeedsInput");
 
     // Human clicks Retry → the runner resumes and RE-RUNS the SAME node (the
@@ -659,7 +705,11 @@ describe("execution-policy crashRetry=auto_retry (A2 in-run re-dispatch)", () =>
     (loaded.run as { currentStepId: string | null }).currentStepId =
       "implement";
     agentScript = [{ ok: true }];
-    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+    await runGraph(loaded as never, {
+      db,
+      runtimeRoot: createdPaths[0],
+      executionHosts: (await fakeGraphHosts(db, runId)).hosts,
+    });
 
     expect(await runStatus(runId)).toBe("Review");
     expect(await attemptsFor(runId)).toHaveLength(3);
@@ -680,7 +730,11 @@ describe("execution-policy crashRetry=auto_retry (A2 in-run re-dispatch)", () =>
       { ok: false, errorCode: "SPAWN" },
       { ok: false, errorCode: "SPAWN" },
     ];
-    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+    await runGraph(loaded as never, {
+      db,
+      runtimeRoot: createdPaths[0],
+      executionHosts: (await fakeGraphHosts(db, runId)).hosts,
+    });
 
     expect(await runStatus(runId)).toBe("NeedsInput");
 

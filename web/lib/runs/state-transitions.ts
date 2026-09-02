@@ -1,5 +1,8 @@
 import "server-only";
 
+import type { ExecutionHost } from "@/lib/db/schema";
+import type { ExecutionHostTransport } from "@/lib/execution-host";
+
 import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import pino from "pino";
 
@@ -12,6 +15,7 @@ import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { type RunReviewCause } from "@/lib/domain-events/taxonomy";
 import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
+import { mintPlacement, releaseAssignmentForRun } from "@/lib/execution-host";
 import { gcAgeDays } from "@/lib/instance-config";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
@@ -114,7 +118,47 @@ async function releaseSyncClaimOnTerminal(
 export type StateTransitionOptions = {
   db?: Db;
   recordSuccessAudit?: (db: Db) => Promise<void>;
+  // ADR-164 D3: a claim transition that starts a new driver generation mints
+  // its epoch inside the CAS tx. A caller that already resolved the local host
+  // (launch-style) passes it; otherwise the memoized local host resolves here.
+  placement?: { host?: ExecutionHost; transport?: ExecutionHostTransport };
 };
+
+async function mintForClaim(
+  tx: Db,
+  runId: string,
+  reason: "resume" | "wait_resume" | "rework_return",
+  opts: StateTransitionOptions,
+): Promise<void> {
+  await mintPlacement(tx, {
+    runId,
+    reason,
+    host: opts.placement?.host,
+    transport: opts.placement?.transport,
+  });
+}
+
+// NeedsInput → NeedsInputIdle CAS + the ADR-164 assignment release in ONE tx:
+// the checkpoint ends this driver incarnation (the resume mints the next epoch).
+async function idleFromNeedsInput(db: Db, runId: string): Promise<boolean> {
+  return db.transaction(async (tx: Db) => {
+    const rows = await tx
+      .update(runs)
+      .set({
+        status: "NeedsInputIdle",
+        checkpointAt: new Date(),
+        keepaliveUntil: null,
+      })
+      .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")))
+      .returning({ id: runs.id });
+
+    if (rows.length === 0) return false;
+
+    await releaseAssignmentForRun(tx, runId, "checkpointed");
+
+    return true;
+  });
+}
 
 // M8 D3 / D5: NeedsInput → NeedsInputIdle on keep-alive expiry. The
 // sweeper calls this AFTER the supervisor has acknowledged the graceful
@@ -129,17 +173,9 @@ export async function markCheckpointed(
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
-  const rows = await db
-    .update(runs)
-    .set({
-      status: "NeedsInputIdle",
-      checkpointAt: new Date(),
-      keepaliveUntil: null,
-    })
-    .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")))
-    .returning({ id: runs.id });
+  const idled = await idleFromNeedsInput(db, runId);
 
-  if (rows.length === 0) {
+  if (!idled) {
     log.warn(
       { runId, from: "NeedsInput", to: "NeedsInputIdle" },
       "markCheckpointed: status-guard mismatch",
@@ -167,17 +203,9 @@ export async function markCheckpointedFromExit(
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
-  const rows = await db
-    .update(runs)
-    .set({
-      status: "NeedsInputIdle",
-      checkpointAt: new Date(),
-      keepaliveUntil: null,
-    })
-    .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")))
-    .returning({ id: runs.id });
+  const idled = await idleFromNeedsInput(db, runId);
 
-  if (rows.length === 0) {
+  if (!idled) {
     log.warn(
       { runId, from: "NeedsInput", to: "NeedsInputIdle", trigger: "exit" },
       "markCheckpointedFromExit: status-guard mismatch",
@@ -204,41 +232,40 @@ export async function markResumed(
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
-  const transition = async (tx: Db): Promise<StateTransitionResult> => {
-    const rows = await tx
-      .update(runs)
-      .set({
-        status: "NeedsInput",
-        keepaliveUntil: nextKeepaliveAt(),
-        checkpointAt: null,
-      })
-      .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")))
-      .returning({ id: runs.id });
 
-    if (rows.length === 0) {
-      log.warn(
+  return await (db as { transaction: any }).transaction(
+    async (tx: Db): Promise<StateTransitionResult> => {
+      const rows = await tx
+        .update(runs)
+        .set({
+          status: "NeedsInput",
+          keepaliveUntil: nextKeepaliveAt(),
+          checkpointAt: null,
+        })
+        .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")))
+        .returning({ id: runs.id });
+
+      if (rows.length === 0) {
+        log.warn(
+          { runId, from: "NeedsInputIdle", to: "NeedsInput" },
+          "markResumed: status-guard mismatch",
+        );
+
+        return { ok: false, reason: "status-guard-mismatch" };
+      }
+
+      // The resume is a new driver generation: mint inside the claim.
+      await mintForClaim(tx, runId, "resume", opts);
+      await opts.recordSuccessAudit?.(tx);
+
+      log.info(
         { runId, from: "NeedsInputIdle", to: "NeedsInput" },
-        "markResumed: status-guard mismatch",
+        "run-state transition",
       );
 
-      return { ok: false, reason: "status-guard-mismatch" };
-    }
-
-    await opts.recordSuccessAudit?.(tx);
-
-    log.info(
-      { runId, from: "NeedsInputIdle", to: "NeedsInput" },
-      "run-state transition",
-    );
-
-    return { ok: true };
-  };
-
-  if (opts.recordSuccessAudit) {
-    return await (db as { transaction: any }).transaction(transition);
-  }
-
-  return await transition(db);
+      return { ok: true };
+    },
+  );
 }
 
 // M37 (ADR-098): Running → WaitingOnChildren. The orchestrator node yields
@@ -270,6 +297,10 @@ export async function markWaitingOnChildren(
     return { ok: false, reason: "status-guard-mismatch" };
   }
 
+  // ADR-164 D2: a parked coordinator has no driver — its assignment ends here
+  // and the wait-resume re-entry mints the next epoch.
+  await releaseAssignmentForRun(db, runId, "waiting_on_children");
+
   log.info(
     { runId, from: "Running", to: "WaitingOnChildren" },
     "run-state transition",
@@ -288,37 +319,36 @@ export async function markResumedFromWait(
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
-  const transition = async (tx: Db): Promise<StateTransitionResult> => {
-    const rows = await tx
-      .update(runs)
-      .set({ status: "Running", checkpointAt: null })
-      .where(and(eq(runs.id, runId), eq(runs.status, "WaitingOnChildren")))
-      .returning({ id: runs.id });
 
-    if (rows.length === 0) {
-      log.warn(
+  return await (db as { transaction: any }).transaction(
+    async (tx: Db): Promise<StateTransitionResult> => {
+      const rows = await tx
+        .update(runs)
+        .set({ status: "Running", checkpointAt: null })
+        .where(and(eq(runs.id, runId), eq(runs.status, "WaitingOnChildren")))
+        .returning({ id: runs.id });
+
+      if (rows.length === 0) {
+        log.warn(
+          { runId, from: "WaitingOnChildren", to: "Running" },
+          "markResumedFromWait: status-guard mismatch",
+        );
+
+        return { ok: false, reason: "status-guard-mismatch" };
+      }
+
+      // The woken coordinator is a new driver generation (ADR-164 D3).
+      await mintForClaim(tx, runId, "wait_resume", opts);
+      await opts.recordSuccessAudit?.(tx);
+
+      log.info(
         { runId, from: "WaitingOnChildren", to: "Running" },
-        "markResumedFromWait: status-guard mismatch",
+        "run-state transition",
       );
 
-      return { ok: false, reason: "status-guard-mismatch" };
-    }
-
-    await opts.recordSuccessAudit?.(tx);
-
-    log.info(
-      { runId, from: "WaitingOnChildren", to: "Running" },
-      "run-state transition",
-    );
-
-    return { ok: true };
-  };
-
-  if (opts.recordSuccessAudit) {
-    return await (db as { transaction: any }).transaction(transition);
-  }
-
-  return await transition(db);
+      return { ok: true };
+    },
+  );
 }
 
 // M37 (ADR-098) T5.2: Running → WaitingOnChildren rollback. After the resume
@@ -333,17 +363,26 @@ export async function rollbackResumeFromWait(
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
-  const rows = await db
-    .update(runs)
-    .set({
-      status: "WaitingOnChildren",
-      checkpointAt: new Date(),
-      keepaliveUntil: null,
-    })
-    .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
-    .returning({ id: runs.id });
+  const rolledBack: boolean = await db.transaction(async (tx: Db) => {
+    const rows = await tx
+      .update(runs)
+      .set({
+        status: "WaitingOnChildren",
+        checkpointAt: new Date(),
+        keepaliveUntil: null,
+      })
+      .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+      .returning({ id: runs.id });
 
-  if (rows.length === 0) {
+    if (rows.length === 0) return false;
+
+    // ADR-164: the generation minted by the wait-resume claim never drove.
+    await releaseAssignmentForRun(tx, runId, "wait_resume_rollback");
+
+    return true;
+  });
+
+  if (!rolledBack) {
     log.warn(
       { runId, from: "Running", to: "WaitingOnChildren (rollback)" },
       "rollbackResumeFromWait: status-guard mismatch — concurrent transition won",
@@ -703,6 +742,8 @@ export async function failResumedRun(
 
     if (rows.length === 0) return false;
 
+    await releaseAssignmentForRun(tx, runId, "failed");
+
     await emitWebhookEvent({
       db: tx,
       type: "run.failed",
@@ -759,17 +800,26 @@ export async function rollbackResumedRun(
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
-  const rows = await db
-    .update(runs)
-    .set({
-      status: "NeedsInputIdle",
-      checkpointAt: new Date(),
-      keepaliveUntil: null,
-    })
-    .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")))
-    .returning({ id: runs.id });
+  const rolledBack: boolean = await db.transaction(async (tx: Db) => {
+    const rows = await tx
+      .update(runs)
+      .set({
+        status: "NeedsInputIdle",
+        checkpointAt: new Date(),
+        keepaliveUntil: null,
+      })
+      .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")))
+      .returning({ id: runs.id });
 
-  if (rows.length === 0) {
+    if (rows.length === 0) return false;
+
+    // ADR-164: the fresh epoch the resume claim minted never got a driver.
+    await releaseAssignmentForRun(tx, runId, "resume_rollback");
+
+    return true;
+  });
+
+  if (!rolledBack) {
     log.warn(
       { runId, from: "NeedsInput", to: "NeedsInputIdle (rollback)" },
       "rollbackResumedRun: status-guard mismatch — concurrent transition won",
@@ -830,13 +880,22 @@ export async function markReturnedToRunning(
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
-  const rows = await db
-    .update(runs)
-    .set({ status: "Running" })
-    .where(and(eq(runs.id, runId), eq(runs.status, "HumanWorking")))
-    .returning({ id: runs.id });
+  const returned: boolean = await db.transaction(async (tx: Db) => {
+    const rows = await tx
+      .update(runs)
+      .set({ status: "Running" })
+      .where(and(eq(runs.id, runId), eq(runs.status, "HumanWorking")))
+      .returning({ id: runs.id });
 
-  if (rows.length === 0) {
+    if (rows.length === 0) return false;
+
+    // The returned run is re-driven by a new generation (ADR-164 D3).
+    await mintForClaim(tx, runId, "rework_return", opts);
+
+    return true;
+  });
+
+  if (!returned) {
     log.warn(
       { runId, from: "HumanWorking", to: "Running" },
       "markReturnedToRunning: status-guard mismatch",
@@ -945,6 +1004,7 @@ export async function markAbandoned(
     if (rows.length === 0) return false;
 
     await releaseSyncClaimOnTerminal(tx, runId, "CRASH");
+    await releaseAssignmentForRun(tx, runId, "abandoned");
 
     // M19 Phase 1 (T1.C): stamp the GC removal deadline on the run's
     // workspace in the SAME tx so an abandoned run never lingers with a
@@ -1048,6 +1108,7 @@ export async function crashResumedRun(
     if (rows.length === 0) return false;
 
     await releaseSyncClaimOnTerminal(tx, runId, reason ?? "CRASH");
+    await releaseAssignmentForRun(tx, runId, "crashed");
 
     await emitWebhookEvent({
       db: tx,
@@ -1147,6 +1208,7 @@ export async function crashRunningRun(
     if (rows.length === 0) return false;
 
     await releaseSyncClaimOnTerminal(tx, runId, reason ?? "CRASH");
+    await releaseAssignmentForRun(tx, runId, "crashed");
 
     await emitWebhookEvent({
       db: tx,
@@ -1233,6 +1295,7 @@ export async function crashWaitingOnChildren(
     if (rows.length === 0) return false;
 
     await releaseSyncClaimOnTerminal(tx, runId, reason ?? "CRASH");
+    await releaseAssignmentForRun(tx, runId, "crashed");
 
     await emitWebhookEvent({
       db: tx,

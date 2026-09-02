@@ -27,19 +27,19 @@ import { hitlRequests, nodeAttempts, runs } from "@/lib/db/schema";
 import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
 import { markCheckpointedFromExit } from "@/lib/runs/state-transitions";
 import {
-  cancelPermission,
-  checkpointSession,
-  createSession,
-  deleteSession,
-  deliverPermission,
-  sendPrompt,
-  streamSession,
+  createExecutionHosts,
+  isFencedError,
+  type BoundClient,
   type CreateSessionResult,
+  type ExecutionHosts,
+  type HostAdminClient,
+  type HostSessionId,
+  type PlacementReason,
   type PromptResult,
   type SupervisorEvent,
   type SupervisorExecutorInput,
   type SupervisorRunnerInput,
-} from "@/lib/supervisor-client";
+} from "@/lib/execution-host";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { escalateHookTrip } from "@/lib/runs/hook-trip";
 import { haltRuleFromEvent } from "@/lib/runs/hook-trip-rule";
@@ -73,6 +73,10 @@ export type RunAgentStepCtx = {
   stepId: string;
   nodeAttemptId?: string;
   worktreePath: string;
+  // ADR-164: the caller's once-per-driver-generation binding, resolved lazily
+  // at the first agent dispatch (so a mocked step never binds and a failed
+  // binding surfaces as THIS step's failure, with its attempt in the ledger).
+  bindExecution?: () => Promise<AgentExecution>;
   // M34 (ADR-089): the node's `settings.agent` catalog binding — resolved at
   // dispatch (session-mode prompt substitution / subagent materialization).
   agentBinding?: { id: string };
@@ -116,28 +120,55 @@ export type RunAgentStepCtx = {
   db?: DbClientLike;
 };
 
-export type SupervisorApi = {
-  createSession: typeof createSession;
-  deleteSession: typeof deleteSession;
-  sendPrompt: typeof sendPrompt;
-  streamSession: typeof streamSession;
-  cancelPermission: typeof cancelPermission;
-  deliverPermission: typeof deliverPermission;
-  // ADR-108 (M40): a halting guardrail trip checkpoints the live session via
-  // escalateHookTrip before the NeedsInput escalate; injected so the consumer
-  // passes its own supervisor api (and tests stub it).
-  checkpointSession: typeof checkpointSession;
+// ADR-164 D3/E-EH-11: the driver's execution seam — a client BOUND to the
+// run's active assignment (every host-bound command carries that epoch, so a
+// superseded driver is fenced by the host, never silently re-bound) plus the
+// host-scoped admin reads (the per-session event stream). Bound ONCE per
+// driver generation by the graph runner; tests inject a fake-backed pair.
+export type AgentExecution = {
+  client: BoundClient;
+  admin: HostAdminClient;
 };
 
-const defaultSupervisor: SupervisorApi = {
-  createSession,
-  deleteSession,
-  sendPrompt,
-  streamSession,
-  cancelPermission,
-  deliverPermission,
-  checkpointSession,
-};
+export async function bindExecution(
+  hosts: ExecutionHosts,
+  runId: string,
+  opts: { reason?: PlacementReason } = {},
+): Promise<AgentExecution> {
+  return { client: await hosts.forRun(runId, opts), admin: hosts.local() };
+}
+
+type PermissionDeliverer = (
+  sessionId: string,
+  requestId: string,
+  optionId: string,
+) => Promise<{ ok: true }>;
+
+type PermissionCanceller = (
+  sessionId: string,
+  requestId: string,
+  reason: string,
+) => Promise<{ ok: true }>;
+
+function permissionDelivererFor(client: BoundClient): PermissionDeliverer {
+  return (sessionId, requestId, optionId) =>
+    client.deliverInput(sessionId, {
+      kind: "permission",
+      action: "select",
+      requestId,
+      optionId,
+    });
+}
+
+function permissionCancellerFor(client: BoundClient): PermissionCanceller {
+  return (sessionId, requestId, reason) =>
+    client.deliverInput(sessionId, {
+      kind: "permission",
+      action: "cancel",
+      requestId,
+      reason: reason.slice(0, 256),
+    });
+}
 
 function synthesizePermissionPrompt(toolCall: unknown): string {
   const tc = (toolCall ?? {}) as { title?: string };
@@ -149,9 +180,11 @@ type PermissionContext = {
   db: DbClientLike;
   runId: string;
   stepId: string;
+  // The HOST session id (the supervisor's URL key) — never the ACP resume
+  // handle. It is what the permission HITL row stores and replays against.
   supervisorSessionId: string;
-  cancelPermission: typeof cancelPermission;
-  deliverPermission: typeof deliverPermission;
+  cancelPermission: PermissionCanceller;
+  deliverPermission: PermissionDeliverer;
 };
 
 // M8 T11 / D9: look for a prior hitl_requests row where the operator
@@ -520,6 +553,9 @@ type EventConsumer = {
   // `stopReason: "end_turn"` (which it will, because a cancelled-with-
   // reason permission is journaled-for-replay, not denied).
   checkpointReasonObserved: () => boolean;
+  // Resolves true as soon as the checkpoint exit reason is observed, or false
+  // after `waitMs` (a prompt failure racing our own checkpoint teardown).
+  checkpointObserved: (waitMs: number) => Promise<boolean>;
   // ADR-108 (M40): true iff a halting guardrail trip was escalated for this
   // session. escalateHookTrip already CAS'd Running→NeedsInput + opened the
   // hook_trip HITL, so the runner MUST surface STEP_CHECKPOINTED WITHOUT
@@ -546,7 +582,7 @@ function executorToSupervisorInput(
 
 function startEventConsumer(
   sessionId: string,
-  supervisor: SupervisorApi,
+  execution: AgentExecution,
   permissionCtx?: PermissionContext,
 ): EventConsumer {
   const abort = new AbortController();
@@ -554,13 +590,14 @@ function startEventConsumer(
   let sawPermissionRequest = false;
   let persistFailure: { reason: string } | null = null;
   let checkpointObserved = false;
+  const checkpointWaiters: Array<() => void> = [];
   let hookEscalated = false;
   let hookEscalateFailed = false;
   const pendingWork: Promise<void>[] = [];
 
   const done = (async () => {
     try {
-      for await (const ev of supervisor.streamSession(sessionId, {
+      for await (const ev of execution.admin.streamSession(sessionId, {
         signal: abort.signal,
       })) {
         // ADR-108 (M40): a halting guardrail trip (repetition / no_progress)
@@ -583,7 +620,7 @@ function startEventConsumer(
                 rule: haltRule,
                 toolCall: ev.toolCall,
                 runKind: "flow",
-                checkpointSession: supervisor.checkpointSession,
+                checkpointSession: (id) => execution.client.checkpoint(id),
               }).then(
                 (r) => {
                   // Benign no-escalate (run gone / not Running / lost CAS) →
@@ -660,6 +697,7 @@ function startEventConsumer(
         if (ev.type === "session.exited" || ev.type === "session.crashed") {
           if (ev.type === "session.exited" && ev.reason === "checkpoint") {
             checkpointObserved = true;
+            for (const wake of checkpointWaiters.splice(0)) wake();
           }
           break;
         }
@@ -684,6 +722,18 @@ function startEventConsumer(
     },
     permissionPersistFailure: () => persistFailure,
     checkpointReasonObserved: () => checkpointObserved,
+    checkpointObserved: (waitMs) =>
+      checkpointObserved
+        ? Promise.resolve(true)
+        : new Promise<boolean>((resolve) => {
+            const timer = setTimeout(() => resolve(checkpointObserved), waitMs);
+
+            timer.unref?.();
+            checkpointWaiters.push(() => {
+              clearTimeout(timer);
+              resolve(true);
+            });
+          }),
     hookTripEscalated: () => hookEscalated,
     hookTripEscalateFailed: () => hookEscalateFailed,
   };
@@ -700,7 +750,7 @@ const RESUME_READONLY_LIFT =
 export async function runAgentStep(
   step: AgentStepLike,
   ctx: RunAgentStepCtx,
-  supervisorApi: SupervisorApi = defaultSupervisor,
+  execution?: AgentExecution,
 ): Promise<StepResult & { acpSessionId?: string; sessionFallback?: boolean }> {
   let promptTemplate = step.prompt;
 
@@ -819,25 +869,39 @@ export async function runAgentStep(
     }
   }
 
-  return runNewSession(step, ctx, supervisorApi, resolvedPrompt);
+  // A caller without a bound seam (standalone gate/consensus dispatch outside
+  // the graph runner) binds to the run's ACTIVE assignment on its own db.
+  const bound =
+    execution ??
+    (ctx.bindExecution
+      ? await ctx.bindExecution()
+      : await bindExecution(
+          createExecutionHosts({ db: ctx.db ?? getDb() }),
+          ctx.runId,
+        ));
+
+  return runNewSession(step, ctx, bound, resolvedPrompt);
 }
 
 async function runNewSession(
   _step: AgentStepLike,
   ctx: RunAgentStepCtx,
-  api: SupervisorApi,
+  execution: AgentExecution,
   resolvedPrompt: string,
 ): Promise<StepResult & { acpSessionId?: string; sessionFallback?: boolean }> {
   const startedAt = Date.now();
-  let session: CreateSessionResult | null = null;
+  const { client } = execution;
+  let session: (CreateSessionResult & { hostSessionId: HostSessionId }) | null =
+    null;
   let consumer: EventConsumer | null = null;
   let sessionFallback = false;
+  let fenced = false;
 
   try {
+    // ADR-164 D7: the handle form — the worktree, repo root, and context
+    // mounts are adopted ONCE per assignment (`runs.context_mounts` rides the
+    // adopt payload); the session body carries no path.
     const createInput = {
-      runId: ctx.runId,
-      projectSlug: ctx.projectSlug,
-      worktreePath: ctx.worktreePath,
       stepId: ctx.stepId,
       nodeAttemptId: ctx.nodeAttemptId,
       sessionName: ctx.sessionName,
@@ -849,18 +913,18 @@ async function runNewSession(
       autoApprovePermissions: ctx.autoApprovePermissions,
       hooksConfig: ctx.hooksConfig,
       enforcementProfile: ctx.enforcementProfile,
-      contextMounts: ctx.contextMounts,
     };
 
     if (ctx.resumeSessionId) {
       // M30 (ADR-081): try the resume respawn first; a gone/unresumable
       // session degrades OBSERVABLY to a fresh one (session_fallback).
       try {
-        session = await api.createSession({
+        session = await client.createSession({
           ...createInput,
           resumeSessionId: ctx.resumeSessionId,
         });
       } catch (err) {
+        if (isFencedError(err)) throw err;
         sessionFallback = true;
         log.warn(
           {
@@ -871,29 +935,54 @@ async function runNewSession(
           },
           "[session-policy] resume failed — falling back to a new session",
         );
-        session = await api.createSession(createInput);
+        session = await client.createSession(createInput);
       }
     } else {
-      session = await api.createSession(createInput);
+      session = await client.createSession(createInput);
     }
 
-    consumer = startEventConsumer(session.sessionId, api, {
+    consumer = startEventConsumer(session.hostSessionId, execution, {
       db: ctx.db ?? getDb(),
       runId: ctx.runId,
       stepId: ctx.stepId,
-      supervisorSessionId: session.sessionId,
-      cancelPermission: api.cancelPermission,
-      deliverPermission: api.deliverPermission,
+      supervisorSessionId: session.hostSessionId,
+      cancelPermission: permissionCancellerFor(client),
+      deliverPermission: permissionDelivererFor(client),
     });
 
     let promptResult: PromptResult;
 
     try {
-      promptResult = await api.sendPrompt(session.sessionId, {
+      const handle = await client.prompt(session.hostSessionId, {
         stepId: ctx.stepId,
         nodeAttemptId: ctx.nodeAttemptId,
         prompt: resolvedPrompt,
       });
+
+      try {
+        promptResult = await handle.completion;
+      } catch (err) {
+        // A checkpoint (keep-alive sweep, budget park, node interrupt) tears
+        // the adapter down mid-turn; the host then answers the in-flight turn
+        // with a failure ("ACP connection closed") that is NOT the step's — the
+        // consumer sees `session.exited{reason:"checkpoint"}` on the stream.
+        // Give that signal a moment to land, then treat the turn as paused.
+        if (
+          isFencedError(err) ||
+          !(await consumer.checkpointObserved(10_000))
+        ) {
+          throw err;
+        }
+        log.info(
+          {
+            runId: ctx.runId,
+            stepId: ctx.stepId,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          "prompt ended by our own checkpoint — treating the turn as paused",
+        );
+        promptResult = { stopReason: "cancelled", meta: null };
+      }
     } finally {
       consumer.abort.abort();
       await consumer.done;
@@ -1014,10 +1103,40 @@ async function runNewSession(
       acpSessionId: session.acpSessionId,
       sessionFallback,
     };
+  } catch (err) {
+    // ADR-164 E-EH-11 (driver yield rule): `assignment_fenced` means a newer
+    // driver generation owns this run — this incarnation must write no run,
+    // ledger, HITL, or scratch state, and must not even tear the session down
+    // (the host already evicted it under the newer epoch).
+    if (isFencedError(err)) {
+      fenced = true;
+      log.warn(
+        {
+          runId: ctx.runId,
+          stepId: ctx.stepId,
+          assignmentId: client.assignment.id,
+          assignmentEpoch: client.assignment.epoch,
+          hostSessionId: session?.hostSessionId ?? null,
+        },
+        "driver-yielded",
+      );
+
+      return {
+        ok: false,
+        fenced: true,
+        stdout: consumer?.snapshot() ?? "",
+        vars: {},
+        durationMs: Date.now() - startedAt,
+        errorCode: "CONFLICT" as const,
+        acpSessionId: session?.acpSessionId,
+        sessionFallback,
+      };
+    }
+    throw err;
   } finally {
-    if (session) {
-      await api
-        .deleteSession(session.sessionId)
+    if (session && !fenced) {
+      await client
+        .deleteSession(session.hostSessionId)
         .catch((err) =>
           log.warn(
             { err: (err as Error).message, sessionId: session?.sessionId },

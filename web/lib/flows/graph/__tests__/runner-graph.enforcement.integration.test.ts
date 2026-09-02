@@ -1,12 +1,13 @@
 import type { NodeAttempt, Run } from "@/lib/db/schema";
-import type { SupervisorApi } from "@/lib/flows/runner-agent";
-import type { SupervisorEvent } from "@/lib/supervisor-client";
+import type { ExecutionHosts } from "@/lib/execution-host";
+import type { FakeCall } from "@/test-support/fake-execution-host";
 
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { runFlow } from "@/lib/flows/runner";
+import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import { schema, seedGraphRun } from "@/test-support/graph-run-seed";
 import {
   startMainPostgresTestDb,
@@ -44,52 +45,23 @@ async function getAttempts(runId: string): Promise<NodeAttempt[]> {
     .where(eq(schema.nodeAttempts.runId, runId))) as unknown as NodeAttempt[];
 }
 
-// A SupervisorApi spy. The refusal path MUST never reach any of these — a call
-// to createSession would mean an agent process was spawned and a permission
-// deferred could leak. The pass path (instruct-only) WOULD spawn; we model a
-// clean end-turn so the run finishes without a real agent.
-function makeSupervisorSpy(): SupervisorApi & {
+// ADR-164: a fake execution host + a spy on every `session.create` payload.
+// The refusal path MUST never reach the host — a create would mean an agent
+// process was spawned and a permission deferred could leak. The pass path
+// (instruct-only) WOULD spawn; the fake's clean end-turn lets the run finish
+// without a real agent.
+async function makeSupervisorSpy(runId: string): Promise<{
+  hosts: ExecutionHosts;
   createSpy: ReturnType<typeof vi.fn>;
-} {
-  const createSpy = vi.fn(async () => ({
-    sessionId: "sup-1",
-    pid: 1,
-    acpSessionId: "acp-1",
-  }));
+}> {
+  const createSpy = vi.fn();
+  const { hosts, fake } = await fakeGraphHosts(db, runId);
 
-  // A clean end-turn stream so the PASS path's agent completes successfully
-  // (and the PASS snapshot test fails ONLY on the missing snapshot, not on a
-  // spawn-path crash). The REFUSAL path must never reach this — createSpy
-  // asserts zero spawns.
-  async function* endTurnStream(): AsyncGenerator<SupervisorEvent> {
-    yield {
-      type: "session.exited",
-      sessionId: "sup-1",
-      monotonicId: 1,
-      exitCode: 0,
-    } as SupervisorEvent;
-  }
+  fake.onCall("createSession", (call: FakeCall) => {
+    createSpy(call.envelope?.payload);
+  });
 
-  return {
-    createSession: createSpy as unknown as SupervisorApi["createSession"],
-    deleteSession: vi.fn(async () => undefined),
-    sendPrompt: vi.fn(async () => ({ stopReason: "end_turn" as const })),
-    streamSession: vi.fn(() =>
-      endTurnStream(),
-    ) as unknown as SupervisorApi["streamSession"],
-    cancelPermission: vi.fn(
-      async () => ({ ok: true }) as { ok: true },
-    ) as unknown as SupervisorApi["cancelPermission"],
-    checkpointSession: async () => ({
-      alreadyCheckpointed: false,
-      sessionId: "s",
-      monotonicId: 0,
-    }),
-    deliverPermission: vi.fn(
-      async () => ({ ok: true }) as { ok: true },
-    ) as unknown as SupervisorApi["deliverPermission"],
-    createSpy,
-  };
+  return { hosts, createSpy };
 }
 
 // ai_coding node declaring strict skills — REFUSED on the ADR-130 table:
@@ -135,12 +107,12 @@ const passFlow = {
 describe("runGraph — per-node enforcement gate (3.5 / 3.6 / 2.2)", () => {
   it("refuses a strict-skills ai_coding node: attempt Failed errorCode=CONFIG, run Failed, NO supervisor spawn", async () => {
     const seeded = await seedGraphRun(db, strictRefusalFlow);
-    const api = makeSupervisorSpy();
+    const api = await makeSupervisorSpy(seeded.runId);
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api.hosts,
     });
 
     // Run goes terminal Failed.
@@ -162,12 +134,12 @@ describe("runGraph — per-node enforcement gate (3.5 / 3.6 / 2.2)", () => {
 
   it("writes node_attempts.enforcement_snapshot on the REFUSAL path (2.2)", async () => {
     const seeded = await seedGraphRun(db, strictRefusalFlow);
-    const api = makeSupervisorSpy();
+    const api = await makeSupervisorSpy(seeded.runId);
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api.hosts,
     });
 
     const attempt = (await getAttempts(seeded.runId)).find(
@@ -185,12 +157,12 @@ describe("runGraph — per-node enforcement gate (3.5 / 3.6 / 2.2)", () => {
 
   it("writes node_attempts.enforcement_snapshot on the PASS path (2.2)", async () => {
     const seeded = await seedGraphRun(db, passFlow);
-    const api = makeSupervisorSpy();
+    const api = await makeSupervisorSpy(seeded.runId);
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api.hosts,
     });
 
     // The spy models a clean end-turn, so the run must finish Review with the

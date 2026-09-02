@@ -44,6 +44,7 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 
 const execFileAsync = promisify(execFile);
 const schema = schemaModule as unknown as Record<string, any>;
@@ -439,6 +440,9 @@ beforeAll(async () => {
   });
   container = testDatabase.container;
   db = testDatabase.db;
+  // ADR-164: the return claim mints on the local host — a fake host backs
+  // every implicit resolution in this process.
+  await fakeExecutionHosts(db);
   runtimeRoot = await mkdtemp(path.join(tmpdir(), "m11b-fix-rt-"));
   process.env.MAISTER_RUNTIME_ROOT = runtimeRoot;
   originalDbUrl = process.env.DB_URL;

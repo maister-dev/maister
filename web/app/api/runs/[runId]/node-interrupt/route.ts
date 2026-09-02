@@ -9,7 +9,7 @@ import { isMaisterError } from "@/lib/errors";
 import { loadRunProjectId } from "@/lib/flows/graph/runner-core";
 import { escalateNodeInterrupt } from "@/lib/runs/node-interrupt";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
-import { checkpointSession } from "@/lib/supervisor-client";
+import { executionHosts } from "@/lib/execution-host";
 
 // FIXME(any): dual drizzle-orm peer-dep variants — Db handle.
 type Db = any;
@@ -93,9 +93,10 @@ export async function POST(
 
     // The live session is looked up by the server-owned runId, never taken from
     // a body field. `loadActiveRunSession` already prefers a row with a live
-    // `acp_session_id`.
+    // `acp_session_id`; the checkpoint addresses the host's own session id
+    // (ADR-164) through the client bound to the run's active assignment.
     const session = await loadActiveRunSession(db, runId);
-    const sessionId = session?.acpSessionId ?? null;
+    const sessionId = session?.hostSessionId ?? null;
 
     if (!sessionId) {
       return NextResponse.json(
@@ -107,12 +108,13 @@ export async function POST(
       );
     }
 
+    const client = await executionHosts.forRun(runId);
     const result = await escalateNodeInterrupt({
       db,
       runId,
       actorUserId: user.id,
       supervisorSessionId: sessionId,
-      checkpointSession,
+      checkpointSession: (id) => client.checkpoint(id),
     });
 
     return NextResponse.json(

@@ -7,6 +7,8 @@
 // (restart_from stales downstream), T-B9 (resume keeps the same attempt), and
 // the safety-cap + forward-skip refusals.
 
+import type { ExecutionHosts } from "@/lib/execution-host";
+
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -37,12 +39,14 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let db: NodePgDatabase;
+let hosts: ExecutionHosts;
 let runtimeRoot: string;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
@@ -65,6 +69,8 @@ beforeAll(async () => {
   });
   pool = testDatabase.pool;
   db = testDatabase.db;
+  // ADR-164: a restart mints a `node_interrupt` placement on the local host.
+  ({ hosts } = await fakeExecutionHosts(db));
 }, 180_000);
 
 afterAll(async () => {
@@ -234,7 +240,7 @@ describe("respondToHitl node_interrupt integration", () => {
       respondToHitl(
         { runId, hitlRequestId, body: { optionId: "restart_node" } },
         { kind: "token", projectId, tokenId: "t-1" } as unknown as HitlActor,
-        { db },
+        { db, executionHosts: hosts },
       ),
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 
@@ -262,7 +268,7 @@ describe("respondToHitl node_interrupt integration", () => {
         },
       },
       userActor,
-      { db },
+      { db, executionHosts: hosts },
     );
 
     expect(res.status).toBe(202);
@@ -301,7 +307,7 @@ describe("respondToHitl node_interrupt integration", () => {
         },
       },
       userActor,
-      { db },
+      { db, executionHosts: hosts },
     );
 
     expect(res.status).toBe(202);
@@ -326,7 +332,7 @@ describe("respondToHitl node_interrupt integration", () => {
           body: { optionId: "restart_from", targetNodeId: "never-ran" },
         },
         userActor,
-        { db },
+        { db, executionHosts: hosts },
       ),
     ).rejects.toMatchObject({ code: "PRECONDITION" });
 
@@ -344,7 +350,7 @@ describe("respondToHitl node_interrupt integration", () => {
     const res = await respondToHitl(
       { runId, hitlRequestId, body: { optionId: "resume" } },
       userActor,
-      { db },
+      { db, executionHosts: hosts },
     );
 
     expect(res.status).toBe(202);
@@ -365,12 +371,12 @@ describe("respondToHitl node_interrupt integration", () => {
     const first = await respondToHitl(
       { runId, hitlRequestId, body: { optionId: "resume" } },
       userActor,
-      { db },
+      { db, executionHosts: hosts },
     );
     const second = await respondToHitl(
       { runId, hitlRequestId, body: { optionId: "resume" } },
       userActor,
-      { db },
+      { db, executionHosts: hosts },
     );
 
     expect(first.status).toBe(202);
@@ -390,7 +396,7 @@ describe("respondToHitl node_interrupt integration", () => {
       respondToHitl(
         { runId, hitlRequestId, body: { optionId: "restart_node" } },
         userActor,
-        { db },
+        { db, executionHosts: hosts },
       ),
     ).rejects.toMatchObject({ code: "CONFLICT" });
 
@@ -398,7 +404,7 @@ describe("respondToHitl node_interrupt integration", () => {
     const res = await respondToHitl(
       { runId, hitlRequestId, body: { optionId: "resume" } },
       userActor,
-      { db },
+      { db, executionHosts: hosts },
     );
 
     expect(res.status).toBe(202);
@@ -412,7 +418,7 @@ describe("respondToHitl node_interrupt integration", () => {
       respondToHitl(
         { runId, hitlRequestId, body: { optionId: "not-an-option" } },
         userActor,
-        { db },
+        { db, executionHosts: hosts },
       ),
     ).rejects.toMatchObject({ code: "PRECONDITION" });
   });
@@ -441,7 +447,7 @@ describe("T-B7 ADR-161 — a missing checkpoint_ref degrades to keep", () => {
         },
       },
       userActor,
-      { db },
+      { db, executionHosts: hosts },
     );
 
     expect(res.status).toBe(202);
@@ -498,7 +504,7 @@ describe("node_interrupt — a consumed HITL cannot destroy the workspace", () =
     const first = await respondToHitl(
       { runId, hitlRequestId, body: { optionId: "resume" } },
       userActor,
-      { db },
+      { db, executionHosts: hosts },
     );
 
     expect(first.status).toBe(202);
@@ -516,7 +522,7 @@ describe("node_interrupt — a consumed HITL cannot destroy the workspace", () =
         },
       },
       userActor,
-      { db },
+      { db, executionHosts: hosts },
     );
 
     expect(second.status).toBe(200);
@@ -539,16 +545,24 @@ describe("node_interrupt — a consumed HITL cannot destroy the workspace", () =
     };
 
     expect(
-      (await respondToHitl({ runId, hitlRequestId, body }, userActor, { db }))
-        .status,
+      (
+        await respondToHitl({ runId, hitlRequestId, body }, userActor, {
+          db,
+          executionHosts: hosts,
+        })
+      ).status,
     ).toBe(202);
     expect(applyWorkspacePolicy).toHaveBeenCalledTimes(1);
 
     // A same-payload retry is the durable recovery path for a handoff lost
     // between the marker commit and the git op — it must converge, not refuse.
     expect(
-      (await respondToHitl({ runId, hitlRequestId, body }, userActor, { db }))
-        .status,
+      (
+        await respondToHitl({ runId, hitlRequestId, body }, userActor, {
+          db,
+          executionHosts: hosts,
+        })
+      ).status,
     ).toBe(200);
     expect(applyWorkspacePolicy).toHaveBeenCalledTimes(2);
   });
@@ -577,7 +591,7 @@ describe("node_interrupt — an answer after the idle sweep still wakes the run"
     const res = await respondToHitl(
       { runId, hitlRequestId, body: { optionId: "restart_node" } },
       userActor,
-      { db },
+      { db, executionHosts: hosts },
     );
 
     expect(res.status).toBe(202);
@@ -685,7 +699,7 @@ describe("node_interrupt — restart_from stales the whole downstream", () => {
         body: { optionId: "restart_from", targetNodeId: EARLIER },
       },
       userActor,
-      { db },
+      { db, executionHosts: hosts },
     );
 
     expect(res.status).toBe(202);
@@ -702,5 +716,60 @@ describe("node_interrupt — restart_from stales the whole downstream", () => {
       .where(eq(schema.gateResults.nodeAttemptId, middleId));
 
     expect(gate.status).toBe("stale");
+  });
+});
+
+// ADR-164 D3: a restart appends a fresh attempt under a NEW driver generation —
+// the restart claim mints a `node_interrupt` placement on the local host, and a
+// `resume` (same attempt continues) reuses the current epoch, minting nothing.
+describe("node_interrupt — execution-assignment placement (ADR-164)", () => {
+  async function assignmentsOf(runId: string) {
+    return (db as any)
+      .select()
+      .from(schema.executionAssignments)
+      .where(eq(schema.executionAssignments.runId, runId));
+  }
+
+  it("restart_node mints an active node_interrupt assignment inside the restart claim", async () => {
+    const projectId = await seedProject("ni-mint");
+    const { runId, hitlRequestId } = await seedParkedRun(projectId);
+
+    expect(await assignmentsOf(runId)).toHaveLength(0);
+
+    const res = await respondToHitl(
+      {
+        runId,
+        hitlRequestId,
+        body: { optionId: "restart_node", workspacePolicy: "keep" },
+      },
+      userActor,
+      { db, executionHosts: hosts },
+    );
+
+    expect(res.status).toBe(202);
+    const rows = await assignmentsOf(runId);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      state: "active",
+      placementReason: "node_interrupt",
+    });
+    const run = await getRun(runId);
+
+    expect(run.executionAssignmentId).toBe(rows[0].id);
+  });
+
+  it("resume mints nothing — the same driver generation continues", async () => {
+    const projectId = await seedProject("ni-no-mint");
+    const { runId, hitlRequestId } = await seedParkedRun(projectId);
+
+    const res = await respondToHitl(
+      { runId, hitlRequestId, body: { optionId: "resume" } },
+      userActor,
+      { db, executionHosts: hosts },
+    );
+
+    expect(res.status).toBe(202);
+    expect(await assignmentsOf(runId)).toHaveLength(0);
   });
 });

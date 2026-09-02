@@ -6,10 +6,12 @@
 // `DELETE /sessions/:id`, marks the node `Failed`, and ends the run terminal.
 //
 // Seam (confirmed by reading lib/runs/keepalive-sweeper.ts): the public entry
-// is `runSweepTick({ db })`. The watchdog folds in as a new pass. Tests drive
+// is `runSweepTick({ db, executionHosts: hosts })`. The watchdog folds in as a new pass. Tests drive
 // the public `runSweepTick`; if the implementor instead exposes a dedicated
 // `runTimeLimitPass`, swap the import — the seeding + assertions are the
 // contract either way. See "Seam decisions" in the tester report.
+
+import type { ExecutionHosts } from "@/lib/execution-host";
 
 import { randomUUID } from "node:crypto";
 
@@ -32,11 +34,27 @@ const deleteSessionSpy = vi.fn(async (_id: string) => undefined);
 const listSessionsSpy = vi.fn(async () => [] as unknown[]);
 const checkpointSessionSpy = vi.fn(async (_id: string) => ({}) as unknown);
 
-vi.mock("@/lib/supervisor-client", () => ({
-  deleteSession: (id: string) => deleteSessionSpy(id),
-  listSessions: () => listSessionsSpy(),
-  checkpointSession: (id: string) => checkpointSessionSpy(id),
-}));
+// ADR-164: the sweeper addresses the host through clients bound to each run's
+// execution assignment. The fake host below routes the three session calls the
+// watchdog makes to the existing spies, so every case keeps its wire-level
+// assertions while the real ledger/binding path runs underneath.
+function spyBackedTransport(fake: FakeExecutionHost): void {
+  Object.assign(fake.transport, {
+    listSessions: () => listSessionsSpy(),
+    deleteSession: async (sessionId: string) => {
+      await deleteSessionSpy(sessionId);
+
+      return { outcome: "terminated" as const };
+    },
+    checkpointSession: async (sessionId: string) => {
+      const result = await checkpointSessionSpy(sessionId);
+
+      return (
+        result ?? { alreadyCheckpointed: false, sessionId, monotonicId: 1 }
+      );
+    },
+  });
+}
 
 // A watchdog kill frees a scheduler slot and promotes the next Pending run via
 // a lazy import of runFlow; mock it to a spy so the dispatch is observable and
@@ -47,7 +65,11 @@ vi.mock("@/lib/flows/runner", () => ({
   runFlow: (id: string) => runFlowSpy(id),
 }));
 
-let runSweepTick: (opts?: { db?: unknown }) => Promise<unknown>;
+let runSweepTick: (opts?: {
+  db?: unknown;
+  executionHosts?: ExecutionHosts;
+}) => Promise<unknown>;
+let hosts: ExecutionHosts;
 
 import * as schemaModule from "@/lib/db/schema";
 import {
@@ -59,6 +81,11 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import {
+  createFakeExecutionHost,
+  fakeExecutionHosts,
+  type FakeExecutionHost,
+} from "@/test-support/fake-execution-host";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -120,6 +147,11 @@ beforeAll(async () => {
   await db
     .insert(schema.platformAcpRunners)
     .values(testPlatformRunnerRow(executorId, "claude"));
+
+  const fake = createFakeExecutionHost();
+
+  spyBackedTransport(fake);
+  ({ hosts } = await fakeExecutionHosts(db, { fake }));
 
   ({ runSweepTick } = await import("../keepalive-sweeper"));
 }, 180_000);
@@ -315,7 +347,7 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
       acpSessionId: null,
     });
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect((await getRun(legacy.runId)).status).toBe("Running");
     expect((await getRun(capped.runId)).status).toBe("Failed");
@@ -334,7 +366,7 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
       liveSessionRecord(runId, supervisorSessionId, acp),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     // Supervisor session torn down (DELETE drives teardown → no leaked
     // permission deferred).
@@ -363,7 +395,7 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
       liveSessionRecord(runId, supervisorSessionId, acp),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect(deleteSessionSpy).not.toHaveBeenCalled();
     expect((await getRun(runId)).status).toBe("Running");
@@ -383,7 +415,7 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
       liveSessionRecord(runId, supervisorSessionId, acp),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect(deleteSessionSpy).not.toHaveBeenCalled();
     expect((await getRun(runId)).status).toBe("Running");
@@ -403,7 +435,7 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
       liveSessionRecord(runId, supervisorSessionId, acp),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect(deleteSessionSpy).not.toHaveBeenCalled();
     expect((await getRun(runId)).status).toBe("Running");
@@ -423,7 +455,7 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
 
     listSessionsSpy.mockResolvedValue([]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect(deleteSessionSpy).not.toHaveBeenCalled();
     expect((await getRun(runId)).status).toBe("Failed");
@@ -450,7 +482,7 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
       liveSessionRecord(runId, supervisorSessionId),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect(deleteSessionSpy).toHaveBeenCalledTimes(1);
     expect(deleteSessionSpy).toHaveBeenCalledWith(supervisorSessionId);
@@ -474,7 +506,7 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
       new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor 503"),
     );
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect(deleteSessionSpy).toHaveBeenCalledTimes(1);
     expect((await getRun(runId)).status).toBe("Running");
@@ -493,7 +525,7 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
       liveSessionRecord(runId, supervisorSessionId, "acp-promote"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     // The capped run is terminal Failed; the freed slot promotes the Pending
     // run to Running AND dispatches runFlow for it (F3).

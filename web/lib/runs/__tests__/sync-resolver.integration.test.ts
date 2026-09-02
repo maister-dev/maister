@@ -30,6 +30,7 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 
 const execFileAsync = promisify(execFile);
 
@@ -861,10 +862,24 @@ describe("syncRunTarget — agent resolver (ADR-141 Task 10)", () => {
 
     await new Promise((r) => setTimeout(r, 5));
     // The respond path owns NeedsInput → Running AND the agent_running_since re-stamp.
+    // ADR-164: the response is a `session.input` command through the client
+    // bound to the run's assignment on the (fake) execution host.
+    const { hosts, fake } = await fakeExecutionHosts(db, { runId });
+
+    fake.sessions.set(`sess-${runId}`, {
+      sessionId: `sess-${runId}`,
+      runId,
+      stepId: "sync",
+      acpSessionId: `acp-${runId}`,
+      executionWorkspaceId: "ws_seeded",
+      assignmentEpoch: 1,
+      createdByCommandId: "seeded",
+      status: "live",
+    });
     const res = await respondToHitl(
       { runId, hitlRequestId: hitlRow.id, body: { optionId: "allow" } },
       { kind: "user", userId: "user-1", label: "user-1" },
-      { db },
+      { db, executionHosts: hosts },
     );
 
     expect(res.status).toBe(200);
@@ -877,7 +892,7 @@ describe("syncRunTarget — agent resolver (ADR-141 Task 10)", () => {
     await bg.settled();
 
     expect((await readRun(runId)).status).toBe("Review");
-    expect(supMock.deliverPermission).toHaveBeenCalled();
+    expect(fake.callsOf("deliverInput")).toHaveLength(1);
   });
 
   it("deferred-release: a post-createSession persistence failure still deleteSessions", async () => {

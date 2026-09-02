@@ -13,15 +13,15 @@
  * cases (b)/(c) to fail (expected status: "failed", actual: "passed").
  */
 import type { GateResult } from "@/lib/db/schema";
-import type { SupervisorApi } from "@/lib/flows/runner-agent";
-import type { SupervisorEvent } from "@/lib/supervisor-client";
+import type { ExecutionHosts } from "@/lib/execution-host";
 
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { closeDb } from "@/lib/db/client";
 import { runFlow } from "@/lib/flows/runner";
+import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import { schema, seedGraphRun } from "@/test-support/graph-run-seed";
 import {
   startMainPostgresTestDb,
@@ -69,55 +69,15 @@ function oneNodeWithAiJudgmentGate(gateConfig: unknown) {
 }
 
 /**
- * Mock supervisorApi that returns agent stdout with a controlled verdict JSON.
- * The mock's streamSession emits session.update events with the verdict text,
- * then session.exited with exit code 0.
+ * ADR-164: a fake execution host whose agent turn streams the controlled
+ * verdict JSON as agent output (parseVerdict reads it from the collected
+ * agent_message_chunk text), then a clean end-turn.
  */
-function makeSupervisorMockForVerdict(verdictJson: string): SupervisorApi {
-  async function* sessionStream(): AsyncGenerator<SupervisorEvent> {
-    // Emit the verdict as agent output (parseVerdict looks for this in the output).
-    // The runner-agent collects text chunks from session.update events with
-    // sessionUpdate === "agent_message_chunk" and content.type === "text".
-    yield {
-      type: "session.update",
-      sessionId: "sup-1",
-      monotonicId: 1,
-      update: {
-        sessionUpdate: "agent_message_chunk",
-        content: { type: "text", text: verdictJson },
-      },
-    } as SupervisorEvent;
-    yield {
-      type: "session.exited",
-      sessionId: "sup-1",
-      monotonicId: 2,
-      exitCode: 0,
-    } as SupervisorEvent;
-  }
-
-  return {
-    createSession: vi.fn(async () => ({
-      sessionId: "sup-1",
-      pid: 1,
-      acpSessionId: "acp-1",
-    })),
-    deleteSession: vi.fn(async () => undefined),
-    sendPrompt: vi.fn(async () => ({ stopReason: "end_turn" as const })),
-    streamSession: vi.fn(() =>
-      sessionStream(),
-    ) as unknown as SupervisorApi["streamSession"],
-    cancelPermission: vi.fn(
-      async () => ({ ok: true }) as { ok: true },
-    ) as unknown as SupervisorApi["cancelPermission"],
-    checkpointSession: async () => ({
-      alreadyCheckpointed: false,
-      sessionId: "s",
-      monotonicId: 0,
-    }),
-    deliverPermission: vi.fn(
-      async () => ({ ok: true }) as { ok: true },
-    ) as unknown as SupervisorApi["deliverPermission"],
-  };
+async function makeSupervisorMockForVerdict(
+  runId: string,
+  verdictJson: string,
+): Promise<ExecutionHosts> {
+  return (await fakeGraphHosts(db, runId, { text: verdictJson })).hosts;
 }
 
 describe("calibrate-verdict-exec (M15) — verdict calibration at gate execution", () => {
@@ -133,14 +93,15 @@ describe("calibrate-verdict-exec (M15) — verdict calibration at gate execution
       db,
       oneNodeWithAiJudgmentGate(gateConfig),
     );
-    const supervisorApi = makeSupervisorMockForVerdict(
+    const supervisorApi = await makeSupervisorMockForVerdict(
+      seeded.runId,
       '{"verdict": "pass", "confidence": 0.9}',
     );
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi,
+      executionHosts: supervisorApi,
     });
 
     const gates = await getGates(seeded.runId);
@@ -167,14 +128,15 @@ describe("calibrate-verdict-exec (M15) — verdict calibration at gate execution
       db,
       oneNodeWithAiJudgmentGate(gateConfig),
     );
-    const supervisorApi = makeSupervisorMockForVerdict(
+    const supervisorApi = await makeSupervisorMockForVerdict(
+      seeded.runId,
       '{"verdict": "pass", "confidence": 0.5}',
     );
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi,
+      executionHosts: supervisorApi,
     });
 
     const gates = await getGates(seeded.runId);
@@ -201,12 +163,15 @@ describe("calibrate-verdict-exec (M15) — verdict calibration at gate execution
       db,
       oneNodeWithAiJudgmentGate(gateConfig),
     );
-    const supervisorApi = makeSupervisorMockForVerdict('{"verdict": "pass"}');
+    const supervisorApi = await makeSupervisorMockForVerdict(
+      seeded.runId,
+      '{"verdict": "pass"}',
+    );
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi,
+      executionHosts: supervisorApi,
     });
 
     const gates = await getGates(seeded.runId);
@@ -236,12 +201,15 @@ describe("calibrate-verdict-exec (M15) — verdict calibration at gate execution
       db,
       oneNodeWithAiJudgmentGate(gateConfig),
     );
-    const supervisorApi = makeSupervisorMockForVerdict('{"verdict": "pass"}');
+    const supervisorApi = await makeSupervisorMockForVerdict(
+      seeded.runId,
+      '{"verdict": "pass"}',
+    );
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi,
+      executionHosts: supervisorApi,
     });
 
     const gates = await getGates(seeded.runId);
@@ -268,14 +236,15 @@ describe("calibrate-verdict-exec (M15) — verdict calibration at gate execution
       db,
       oneNodeWithAiJudgmentGate(gateConfig),
     );
-    const supervisorApi = makeSupervisorMockForVerdict(
+    const supervisorApi = await makeSupervisorMockForVerdict(
+      seeded.runId,
       '{"verdict": "pass", "confidence": 0.9}',
     );
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi,
+      executionHosts: supervisorApi,
     });
 
     const gates = await getGates(seeded.runId);
@@ -302,14 +271,15 @@ describe("calibrate-verdict-exec (M15) — verdict calibration at gate execution
       db,
       oneNodeWithAiJudgmentGate(gateConfig),
     );
-    const supervisorApi = makeSupervisorMockForVerdict(
+    const supervisorApi = await makeSupervisorMockForVerdict(
+      seeded.runId,
       '{"verdict": "pass", "confidence": 2}',
     );
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi,
+      executionHosts: supervisorApi,
     });
 
     const gates = await getGates(seeded.runId);

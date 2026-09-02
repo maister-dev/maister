@@ -13,6 +13,7 @@
 // disk that returns `missing-cost-file` BEFORE any delete — the seeded rollup
 // rows survive, so seeding run_cost_rollups directly drives the meters.
 
+import type { ExecutionHosts } from "@/lib/execution-host";
 import type {
   BudgetAxis,
   BudgetState,
@@ -48,16 +49,28 @@ const checkpointSessionSpy = vi.fn(async (_id: string) => ({}) as unknown);
 // the real module so every such access resolves, and override only the three
 // functions the watchdog actually calls with spies. None of the spawn/prompt
 // paths run in these tests.
-vi.mock("@/lib/supervisor-client", async (importOriginal) => {
-  const actual = await importOriginal<object>();
 
-  return {
-    ...actual,
-    deleteSession: (id: string) => deleteSessionSpy(id),
+// ADR-164: the sweeper addresses the host through clients bound to each run's
+// execution assignment. The fake host below routes the three session calls the
+// watchdog makes to the existing spies, so every case keeps its wire-level
+// assertions while the real ledger/binding path runs underneath.
+function spyBackedTransport(fake: FakeExecutionHost): void {
+  Object.assign(fake.transport, {
     listSessions: () => listSessionsSpy(),
-    checkpointSession: (id: string) => checkpointSessionSpy(id),
-  };
-});
+    deleteSession: async (sessionId: string) => {
+      await deleteSessionSpy(sessionId);
+
+      return { outcome: "terminated" as const };
+    },
+    checkpointSession: async (sessionId: string) => {
+      const result = await checkpointSessionSpy(sessionId);
+
+      return (
+        result ?? { alreadyCheckpointed: false, sessionId, monotonicId: 1 }
+      );
+    },
+  });
+}
 
 // A terminate kill frees a scheduler slot and promotes the next Pending run via
 // a lazy import of runFlow; mock it so the dispatch is observable and no real
@@ -103,7 +116,11 @@ vi.mock("@/lib/runs/cost-rollups", async (importOriginal) => {
   };
 });
 
-let runSweepTick: (opts?: { db?: unknown }) => Promise<unknown>;
+let runSweepTick: (opts?: {
+  db?: unknown;
+  executionHosts?: ExecutionHosts;
+}) => Promise<unknown>;
+let hosts: ExecutionHosts;
 
 import * as schemaModule from "@/lib/db/schema";
 import {
@@ -115,6 +132,11 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import {
+  createFakeExecutionHost,
+  fakeExecutionHosts,
+  type FakeExecutionHost,
+} from "@/test-support/fake-execution-host";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -164,6 +186,11 @@ beforeAll(async () => {
   await db
     .insert(schema.platformAcpRunners)
     .values(testPlatformRunnerRow(executorId, "claude"));
+
+  const fake = createFakeExecutionHost();
+
+  spyBackedTransport(fake);
+  ({ hosts } = await fakeExecutionHosts(db, { fake }));
 
   ({ runSweepTick } = await import("../keepalive-sweeper"));
 }, 180_000);
@@ -417,7 +444,7 @@ describe("budget watchdog — WARN ladder (E3)", () => {
 
     listSessionsSpy.mockResolvedValue([]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     const run = await getRun(runId);
 
@@ -441,7 +468,7 @@ describe("budget watchdog — WARN ladder (E3)", () => {
 
     listSessionsSpy.mockResolvedValue([]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     // Still warn (not escalated/terminated); no session action taken.
     const run = await getRun(runId);
@@ -467,7 +494,7 @@ describe("budget watchdog — reconcile before read (E11)", () => {
     await seedRollup(runId, taskId, 850);
     listSessionsSpy.mockResolvedValue([]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     // The budgeted candidate is reconciled (the fail-open fast path reconciles
     // only AFTER confirming a positive meter, so an un-budgeted run is skipped).
@@ -493,7 +520,7 @@ describe("budget watchdog — ESCALATE (flow-only, E4) + non-flow promotion to t
       liveSessionRecord(runId, sup, "implement"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect(checkpointSessionSpy).toHaveBeenCalledWith(sup);
     expect(deleteSessionSpy).not.toHaveBeenCalled();
@@ -546,7 +573,7 @@ describe("budget watchdog — ESCALATE (flow-only, E4) + non-flow promotion to t
 
     listSessionsSpy.mockResolvedValue([liveSessionRecord(runId, sup, "agent")]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     // Terminate tears the session down (deleteSession), never checkpoints, and
     // never opens a budget_breach HITL.
@@ -575,7 +602,7 @@ describe("budget watchdog — ESCALATE (flow-only, E4) + non-flow promotion to t
       liveSessionRecord(runId, sup, "dialog"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect(deleteSessionSpy).toHaveBeenCalledWith(sup);
     expect(checkpointSessionSpy).not.toHaveBeenCalled();
@@ -612,7 +639,7 @@ describe("budget watchdog — ESCALATE (flow-only, E4) + non-flow promotion to t
       new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor 503"),
     );
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect(checkpointSessionSpy).toHaveBeenCalledTimes(1);
 
@@ -645,7 +672,7 @@ describe("budget watchdog — ESCALATE (flow-only, E4) + non-flow promotion to t
       liveSessionRecord(runId, sup, "implement"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     const run = await getRun(runId);
 
@@ -679,7 +706,7 @@ describe("budget watchdog — onBudgetBreach disposition (ADR-106 M39 Phase 5)",
       liveSessionRecord(runId, sup, "implement"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     // checkpoint (not delete) — restorable is recoverable, never a hard kill.
     expect(checkpointSessionSpy).toHaveBeenCalledWith(sup);
@@ -718,7 +745,7 @@ describe("budget watchdog — onBudgetBreach disposition (ADR-106 M39 Phase 5)",
 
     listSessionsSpy.mockResolvedValue([liveSessionRecord(runId, sup, "agent")]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect(checkpointSessionSpy).toHaveBeenCalledWith(sup);
     expect(deleteSessionSpy).not.toHaveBeenCalled();
@@ -748,7 +775,7 @@ describe("budget watchdog — onBudgetBreach disposition (ADR-106 M39 Phase 5)",
 
     listSessionsSpy.mockResolvedValue([liveSessionRecord(runId, sup, "agent")]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect(checkpointSessionSpy).toHaveBeenCalledWith(sup);
     expect(deleteSessionSpy).not.toHaveBeenCalled();
@@ -786,7 +813,7 @@ describe("budget watchdog — onBudgetBreach disposition (ADR-106 M39 Phase 5)",
 
     listSessionsSpy.mockResolvedValue([liveSessionRecord(runId, sup, "agent")]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     // restorable wins even at the hard rung — checkpoint, recoverable idle.
     expect(checkpointSessionSpy).toHaveBeenCalledWith(sup);
@@ -813,7 +840,7 @@ describe("budget watchdog — onBudgetBreach disposition (ADR-106 M39 Phase 5)",
       liveSessionRecord(runId, sup, "implement"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect(deleteSessionSpy).toHaveBeenCalledWith(sup);
     expect(checkpointSessionSpy).not.toHaveBeenCalled();
@@ -844,7 +871,7 @@ describe("budget watchdog — TERMINATE ladder (E5, D7 each arm)", () => {
       liveSessionRecord(runId, sup, "implement"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect(deleteSessionSpy).toHaveBeenCalledWith(sup);
 
@@ -883,7 +910,7 @@ describe("budget watchdog — TERMINATE ladder (E5, D7 each arm)", () => {
 
     listSessionsSpy.mockResolvedValue([liveSessionRecord(runId, sup, "agent")]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect(deleteSessionSpy).toHaveBeenCalledWith(sup);
 
@@ -912,7 +939,7 @@ describe("budget watchdog — TERMINATE ladder (E5, D7 each arm)", () => {
       liveSessionRecord(runId, sup, "dialog"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect(deleteSessionSpy).toHaveBeenCalledWith(sup);
 
@@ -953,7 +980,7 @@ describe("budget watchdog — TERMINATE ladder (E5, D7 each arm)", () => {
       new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor 503"),
     );
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect(deleteSessionSpy).toHaveBeenCalledTimes(1);
 
@@ -993,7 +1020,7 @@ describe("budget watchdog — TERMINATE ladder (E5, D7 each arm)", () => {
       new MaisterError("ACP_PROTOCOL", "supervisor 404 unknown session"),
     );
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect(deleteSessionSpy).toHaveBeenCalledTimes(1);
 
@@ -1029,7 +1056,7 @@ describe("budget watchdog — TERMINATE ladder (E5, D7 each arm)", () => {
       liveSessionRecord(runId, sup, "implement"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect((await getRun(runId)).status).toBe("Failed");
     expect((await getRun(pendingRunId)).status).toBe("Running");
@@ -1090,7 +1117,7 @@ describe("budget watchdog — TREE scope (E6)", () => {
 
     listSessionsSpy.mockResolvedValue([]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     // The whole tree is cascade-abandoned; the root is flipped Failed.
     expect((await getRun(childA)).status).toBe("Abandoned");
@@ -1315,7 +1342,7 @@ describe("budget watchdog — TREE scope (E6)", () => {
       liveSessionRecord(childB, "sup-b", "implement"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect((await getRun(rootId)).status).toBe("Failed");
     expect((await getRun(childA)).status).toBe("Abandoned");
@@ -1356,7 +1383,7 @@ describe("budget watchdog — TASK scope (E7)", () => {
       liveSessionRecord(liveRun, sup, "implement"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect(checkpointSessionSpy).toHaveBeenCalledWith(sup);
 
@@ -1409,7 +1436,7 @@ describe("budget watchdog — TASK scope (E7)", () => {
       liveSessionRecord(liveRun, sup, "implement"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     const run = await getRun(liveRun);
 
@@ -1451,7 +1478,7 @@ describe("budget watchdog — TASK scope (E7)", () => {
       liveSessionRecord(liveRun, sup, "implement"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect((await getRun(liveRun)).status).toBe("Running");
     expect(await getHitl(liveRun)).toHaveLength(0);
@@ -1518,7 +1545,7 @@ describe("budget watchdog — TASK scope (E7)", () => {
       liveSessionRecord(siblingRun, siblingSup, "implement"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     // The parked run is untouched — no kill, no pause, no HITL, no notified.
     const parked = await getRun(parkedRun);
@@ -1544,7 +1571,7 @@ describe("budget watchdog — fail-open / no-refusal (E1, E2)", () => {
 
     listSessionsSpy.mockResolvedValue([]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     const run = await getRun(runId);
 
@@ -1571,7 +1598,7 @@ describe("budget watchdog — fail-open / no-refusal (E1, E2)", () => {
 
     listSessionsSpy.mockResolvedValue([]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect((await getRun(runId)).status).toBe("Running");
     expect(deleteSessionSpy).not.toHaveBeenCalled();
@@ -1588,7 +1615,7 @@ describe("budget watchdog — fail-open / no-refusal (E1, E2)", () => {
 
     listSessionsSpy.mockResolvedValue([]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect((await getRun(runId)).status).toBe("Running");
     expect(deleteSessionSpy).not.toHaveBeenCalled();
@@ -1640,7 +1667,7 @@ describe("budget watchdog — status invariant (E9 / D2)", () => {
       liveSessionRecord(termRun, `${sup}-t`, "implement"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     const all = await db.select().from(schema.runs);
 
@@ -1673,7 +1700,10 @@ describe("budget watchdog — concurrency (two-racer CAS, H2)", () => {
     // RETURNING) lets exactly one win; the loser matches 0 rows, inserts no
     // second HITL row, and (post-fix) does NOT unlink the winner's
     // needs-input.json.
-    await Promise.all([runSweepTick({ db }), runSweepTick({ db })]);
+    await Promise.all([
+      runSweepTick({ db, executionHosts: hosts }),
+      runSweepTick({ db, executionHosts: hosts }),
+    ]);
 
     const run = await getRun(runId);
 
@@ -1703,7 +1733,10 @@ describe("budget watchdog — concurrency (two-racer CAS, H2)", () => {
       liveSessionRecord(runId, "sup-race-term", "implement"),
     ]);
 
-    await Promise.all([runSweepTick({ db }), runSweepTick({ db })]);
+    await Promise.all([
+      runSweepTick({ db, executionHosts: hosts }),
+      runSweepTick({ db, executionHosts: hosts }),
+    ]);
 
     expect((await getRun(runId)).status).toBe("Failed");
 
@@ -1741,7 +1774,7 @@ describe("budget watchdog — raise re-derives the hard ceiling (M2)", () => {
       liveSessionRecord(runId, "sup-reraise", "implement"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     // The hard band re-derives from the RAISED maxTokens (5000 × 1.25 = 6250),
     // and 1500 is below the 80% warn of 5000 (=4000) — the run keeps Running,

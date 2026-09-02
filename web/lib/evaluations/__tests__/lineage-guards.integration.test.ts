@@ -15,6 +15,7 @@ import {
   vi,
 } from "vitest";
 
+import { TEST_HOST_IDENTITY } from "@/test-support/supervisor-health-fixture";
 import * as schemaModule from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import {
@@ -43,6 +44,7 @@ function readyPlatformStatus(): PlatformStatus {
     kind: "ready",
     health: {
       status: "ready",
+      host: TEST_HOST_IDENTITY,
       version: "0.0.1",
       uptimeMs: 1,
       checkedAt: new Date().toISOString(),

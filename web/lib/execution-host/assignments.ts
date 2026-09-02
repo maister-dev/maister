@@ -8,7 +8,7 @@ import type {
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq, max } from "drizzle-orm";
+import { and, desc, eq, max } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import {
@@ -77,6 +77,23 @@ export async function getActiveAssignment(
   return rows[0] ?? null;
 }
 
+// The run's newest assignment regardless of state — what a teardown command
+// binds to when the run's incarnation already ended (`released`), so a
+// checkpoint/delete never mints a fresh epoch just to address a dead session.
+export async function getLatestAssignment(
+  db: Db,
+  runId: string,
+): Promise<ExecutionAssignment | null> {
+  const rows = await db
+    .select()
+    .from(executionAssignments)
+    .where(eq(executionAssignments.runId, runId))
+    .orderBy(desc(executionAssignments.epoch))
+    .limit(1);
+
+  return rows[0] ?? null;
+}
+
 export async function getAssignmentById(
   db: Db,
   id: string,
@@ -122,6 +139,19 @@ export async function mintAssignment(
   }
 
   const active = await getActiveAssignment(tx, input.runId);
+  // D3/D7: the adopted handle is copied forward from the run's NEWEST prior
+  // generation on the same host — released included (a resume follows a
+  // checkpoint that released it), so a re-entry never re-adopts. A stale
+  // handle is harmless: the host answers `unknown_workspace` and the client
+  // re-adopts once.
+  const previous = await getLatestAssignment(tx, input.runId);
+  const inherited =
+    previous && previous.executionHostId === input.hostId
+      ? {
+          executionWorkspaceId: previous.executionWorkspaceId,
+          workspaceAdoptedAt: previous.workspaceAdoptedAt,
+        }
+      : { executionWorkspaceId: null, workspaceAdoptedAt: null };
   const [agg] = await tx
     .select({ maxEpoch: max(executionAssignments.epoch) })
     .from(executionAssignments)
@@ -157,8 +187,8 @@ export async function mintAssignment(
         state: "active",
         placementReason: input.reason,
         // Stage A: the host never changes, so the handle carries forward.
-        executionWorkspaceId: active?.executionWorkspaceId ?? null,
-        workspaceAdoptedAt: active?.workspaceAdoptedAt ?? null,
+        executionWorkspaceId: inherited.executionWorkspaceId,
+        workspaceAdoptedAt: inherited.workspaceAdoptedAt,
         createdAt: now,
         updatedAt: now,
       })

@@ -37,6 +37,7 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
@@ -51,7 +52,8 @@ const agentCalls: Array<{
 let agentScript: Array<{ acpSessionId?: string; sessionFallback?: boolean }> =
   [];
 
-vi.mock("@/lib/flows/runner-agent", () => ({
+vi.mock("@/lib/flows/runner-agent", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/flows/runner-agent")>()),
   runAgentStep: vi.fn(
     async (
       step: { id: string; mode: string },
@@ -326,7 +328,9 @@ async function driveReworkLoop(args: {
     args.attempt2Script ?? { acpSessionId: "sess-2" },
   ];
 
-  await runGraph(loaded as never, { db, runtimeRoot });
+  const { hosts } = await fakeGraphHosts(db, runId);
+
+  await runGraph(loaded as never, { db, runtimeRoot, executionHosts: hosts });
 
   const statusAfter1 = (
     await pool.query(`SELECT status FROM runs WHERE id = $1`, [runId])
@@ -352,7 +356,7 @@ async function driveReworkLoop(args: {
     },
   };
 
-  await runGraph(loaded2 as never, { db, runtimeRoot });
+  await runGraph(loaded2 as never, { db, runtimeRoot, executionHosts: hosts });
 
   const redispatch = agentCalls.find(
     (c, i) => c.stepId === "implement" && i > 0,

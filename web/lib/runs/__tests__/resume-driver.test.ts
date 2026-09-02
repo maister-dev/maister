@@ -17,16 +17,45 @@ const deliverPermissionSpy = vi.fn();
 const cancelPermissionSpy = vi.fn();
 const deleteSessionSpy = vi.fn();
 
-vi.mock("@/lib/supervisor-client", () => ({
-  sendPrompt: (...args: unknown[]) => sendPromptSpy(...(args as unknown[])),
-  streamSession: (...args: unknown[]) =>
-    streamSessionSpy(...(args as unknown[])),
-  deliverPermission: (...args: unknown[]) =>
-    deliverPermissionSpy(...(args as unknown[])),
-  cancelPermission: (...args: unknown[]) =>
-    cancelPermissionSpy(...(args as unknown[])),
-  deleteSession: (...args: unknown[]) =>
-    deleteSessionSpy(...(args as unknown[])),
+vi.mock("@/lib/supervisor-client", () => ({}));
+
+// ADR-164: the resumed-session driver talks to the host through the client
+// bound to the run's assignment (prompt / input / delete) and the host-scoped
+// admin stream. The fake client routes each call to the existing spies with
+// the legacy argument shapes the cases assert on.
+vi.mock("@/lib/execution-host", () => ({
+  isFencedError: (err: unknown) =>
+    (err as { details?: { reason?: string } } | null)?.details?.reason ===
+    "assignment_fenced",
+  createExecutionHosts: () => ({
+    transport: {},
+    forRun: async () => ({
+      prompt: async (sessionId: string, input: unknown) => ({
+        commandId: "cmd",
+        completion: sendPromptSpy(sessionId, input),
+      }),
+      deliverInput: (
+        sessionId: string,
+        payload: {
+          action: "select" | "cancel";
+          requestId: string;
+          optionId?: string;
+          reason?: string;
+        },
+      ) =>
+        payload.action === "select"
+          ? deliverPermissionSpy(sessionId, payload.requestId, payload.optionId)
+          : cancelPermissionSpy(sessionId, payload.requestId, payload.reason),
+      deleteSession: (sessionId: string) => deleteSessionSpy(sessionId),
+    }),
+    forAssignment: () => {
+      throw new Error("not used");
+    },
+    local: () => ({
+      streamSession: (...args: unknown[]) =>
+        streamSessionSpy(...(args as unknown[])),
+    }),
+  }),
 }));
 
 const stateTransitionSpies = vi.hoisted(() => ({

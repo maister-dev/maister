@@ -18,9 +18,9 @@
  *
  * Harness mirrors runner-graph.enforcement.integration.test.ts exactly.
  */
-import type { SupervisorApi } from "@/lib/flows/runner-agent";
+import type { ExecutionHosts } from "@/lib/execution-host";
+import type { FakeCall } from "@/test-support/fake-execution-host";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
-import type { SupervisorEvent } from "@/lib/supervisor-client";
 
 import { mkdtemp, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -36,6 +36,7 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import { runFlow } from "@/lib/flows/runner";
+import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -177,44 +178,20 @@ async function seedCapabilityRecords(projectId: string): Promise<void> {
 
 // A SupervisorApi spy. createSession returns a canned session and streamSession
 // yields a clean end-turn so the ai_coding node finishes without a real agent.
-function makeSupervisorSpy(): SupervisorApi & {
+// ADR-164: a fake execution host whose agent turn is a clean end-turn, plus a
+// spy that receives every `session.create` payload the runner sends.
+async function makeSupervisorSpy(runId: string): Promise<{
+  hosts: ExecutionHosts;
   createSpy: ReturnType<typeof vi.fn>;
-} {
-  const createSpy = vi.fn(async () => ({
-    sessionId: "sup-1",
-    pid: 1,
-    acpSessionId: "acp-1",
-  }));
+}> {
+  const createSpy = vi.fn();
+  const { hosts, fake } = await fakeGraphHosts(db, runId);
 
-  async function* endTurnStream(): AsyncGenerator<SupervisorEvent> {
-    yield {
-      type: "session.exited",
-      sessionId: "sup-1",
-      monotonicId: 1,
-      exitCode: 0,
-    } as SupervisorEvent;
-  }
+  fake.onCall("createSession", (call: FakeCall) => {
+    createSpy(call.envelope?.payload);
+  });
 
-  return {
-    createSession: createSpy as unknown as SupervisorApi["createSession"],
-    deleteSession: vi.fn(async () => undefined),
-    sendPrompt: vi.fn(async () => ({ stopReason: "end_turn" as const })),
-    streamSession: vi.fn(() =>
-      endTurnStream(),
-    ) as unknown as SupervisorApi["streamSession"],
-    cancelPermission: vi.fn(
-      async () => ({ ok: true }) as { ok: true },
-    ) as unknown as SupervisorApi["cancelPermission"],
-    checkpointSession: async () => ({
-      alreadyCheckpointed: false,
-      sessionId: "s",
-      monotonicId: 0,
-    }),
-    deliverPermission: vi.fn(
-      async () => ({ ok: true }) as { ok: true },
-    ) as unknown as SupervisorApi["deliverPermission"],
-    createSpy,
-  };
+  return { hosts, createSpy };
 }
 
 // ai_coding node that opts into capabilities: declares mcps + skills (matching
@@ -263,12 +240,12 @@ describe("runGraph — capability materialization → createSession (T4.1)", () 
 
     await seedCapabilityRecords(seeded.projectId);
 
-    const api = makeSupervisorSpy();
+    const api = await makeSupervisorSpy(seeded.runId);
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api.hosts,
     });
 
     // Sanity: the spawn path was reached (the M11c gate did NOT refuse — every
@@ -313,12 +290,12 @@ describe("runGraph — capability materialization → createSession (T4.1)", () 
 
   it("pins the run model via settings.local.json for a settings-less CLAUDE node (ADR-076)", async () => {
     const seeded = await seedGraphRun(settingsLessFlow, "claude");
-    const api = makeSupervisorSpy();
+    const api = await makeSupervisorSpy(seeded.runId);
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api.hosts,
     });
 
     expect(api.createSpy).toHaveBeenCalled();
@@ -348,12 +325,12 @@ describe("runGraph — capability materialization → createSession (T4.1)", () 
 
   it("does NOT write settings.local.json for a settings-less CODEX node (pins supervisor-side)", async () => {
     const seeded = await seedGraphRun(settingsLessFlow, "codex");
-    const api = makeSupervisorSpy();
+    const api = await makeSupervisorSpy(seeded.runId);
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api.hosts,
     });
 
     expect(api.createSpy).toHaveBeenCalled();

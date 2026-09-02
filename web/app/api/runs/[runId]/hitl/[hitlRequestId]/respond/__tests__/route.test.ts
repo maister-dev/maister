@@ -217,8 +217,79 @@ const deliverPermissionSpy = vi.fn(
     _sessionId: string,
     _requestId: string,
     _optionId: string,
-  ): Promise<{ ok: true }> => ({ ok: true }),
+  ): Promise<{ ok: true; replayed?: boolean }> => ({ ok: true }),
 );
+// I1/I4 observability: every queued `session.input` (with the tx it was
+// queued in) and every one-shot delivery (the cancel path).
+const prepareInputSpy = vi.fn();
+const deliverInputSpy = vi.fn();
+let commandSeq = 0;
+// I4: when set, the ack transaction's domain write fails AFTER the wire
+// delivery succeeded (the deferred is already resolved on the host).
+let poisonAck = false;
+
+function fakeBoundClient(runId: string) {
+  return {
+    assignment: { id: `assignment-${runId}`, runId, epoch: 1 },
+    async prepareInput(
+      tx: unknown,
+      sessionId: string,
+      payload: { requestId: string; optionId?: string },
+    ) {
+      commandSeq += 1;
+      const commandId = `cmd-${commandSeq}`;
+
+      prepareInputSpy(tx, sessionId, payload, commandId);
+
+      return {
+        commandId,
+        payload,
+        deliver: async (opts?: {
+          onAck?: (
+            tx: unknown,
+            result: { ok: true; replayed: boolean },
+          ) => Promise<void>;
+        }) => {
+          const wire = await deliverPermissionSpy(
+            sessionId,
+            payload.requestId,
+            payload.optionId ?? "",
+          );
+          const result = {
+            ok: true as const,
+            replayed: wire.replayed ?? false,
+          };
+
+          await fakeDb.transaction(async (tx) =>
+            opts?.onAck?.(
+              poisonAck
+                ? {
+                    ...tx,
+                    update: () => {
+                      throw new Error("ack write failed");
+                    },
+                  }
+                : tx,
+              result,
+            ),
+          );
+
+          return result;
+        },
+      };
+    },
+    deliverInput: async (sessionId: string, payload: unknown) => {
+      deliverInputSpy(sessionId, payload);
+
+      return { ok: true, replayed: false };
+    },
+    checkpoint: vi.fn(async (sessionId: string) => ({
+      alreadyCheckpointed: false,
+      sessionId,
+      monotonicId: 1,
+    })),
+  };
+}
 const runFlowSpy = vi.fn(async (_runId: string): Promise<void> => undefined);
 const launchRunSpy = vi.fn(async (..._args: unknown[]) => ({
   runId: "run-budget-restart",
@@ -247,20 +318,29 @@ vi.mock("@/lib/db/client", () => ({
   getDb: () => fakeDb,
 }));
 
-vi.mock("@/lib/supervisor-client", () => ({
-  cancelPrompt: vi.fn(),
-  checkpointSession: vi.fn(async (sessionId: string) => ({
-    alreadyCheckpointed: false,
-    sessionId,
-    monotonicId: 1,
-  })),
-  createSession: vi.fn(),
-  deliverPermission: (sessionId: string, requestId: string, optionId: string) =>
-    deliverPermissionSpy(sessionId, requestId, optionId),
-  listSessions: vi.fn(async () => []),
-  sendPrompt: vi.fn(),
-  streamSession: vi.fn(),
-}));
+// ADR-164: the permission delivery is a `session.input` command queued in the
+// Phase-1 claim tx (`prepareInput`) and delivered after it commits; the ack
+// callback runs the Phase-2 domain writes. The fake client below keeps the
+// wire-level spy (`deliverPermissionSpy`) and records the queue/cancel calls
+// (I1–I4); the real ledger/tx semantics are pinned by
+// lib/services/__tests__/hitl-permission-ledger.integration.test.ts.
+vi.mock("@/lib/execution-host", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/execution-host")>();
+
+  return {
+    ...actual,
+    createExecutionHosts: () => ({
+      forRun: async (runId: string) => fakeBoundClient(runId),
+      forAssignment: vi.fn(),
+      local: vi.fn(),
+    }),
+    localHost: vi.fn(async () => ({ id: "host-1", hostKey: "eh_test" })),
+    mintPlacement: vi.fn(async (_tx: unknown, input: { runId: string }) => ({
+      id: `assignment-${input.runId}-2`,
+      epoch: 2,
+    })),
+  };
+});
 
 vi.mock("@/lib/flows/runner", () => ({
   runFlow: (runId: string) => runFlowSpy(runId),
@@ -346,6 +426,9 @@ beforeEach(async () => {
   dbState.updates = [];
   deliverPermissionSpy.mockReset();
   deliverPermissionSpy.mockImplementation(async () => ({ ok: true }));
+  prepareInputSpy.mockReset();
+  deliverInputSpy.mockReset();
+  poisonAck = false;
   runFlowSpy.mockReset();
   runFlowSpy.mockImplementation(async () => undefined);
   launchRunSpy.mockReset();
@@ -595,6 +678,113 @@ describe("HITL respond route — kind=permission", () => {
 
     expect(hitl.response).toEqual({ optionId: "allow" });
     expect(hitl.respondedAt).toBeInstanceOf(Date);
+  });
+
+  // ADR-164 I1: the `session.input` command is queued inside the Phase-1 claim
+  // transaction (a tx handle, not the root db) BEFORE the wire delivery.
+  it("I1: queues the session.input command in the Phase-1 tx, then delivers it", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow();
+    const order: string[] = [];
+
+    prepareInputSpy.mockImplementation(() => order.push("queued"));
+    deliverPermissionSpy.mockImplementation(async () => {
+      order.push("delivered");
+
+      return { ok: true };
+    });
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(200);
+    expect(order).toEqual(["queued", "delivered"]);
+    expect(prepareInputSpy).toHaveBeenCalledTimes(1);
+    const [tx, sessionId, payload] = prepareInputSpy.mock.calls[0];
+
+    expect(tx).not.toBe(fakeDb);
+    expect(tx).toMatchObject({ insert: expect.any(Function) });
+    expect(sessionId).toBe("sup-1");
+    expect(payload).toEqual({
+      kind: "permission",
+      action: "select",
+      requestId: "req-1",
+      optionId: "allow",
+    });
+  });
+
+  // ADR-164 I2: a definitive 503 leaves respondedAt NULL; the user's retry
+  // issues a NEW command (a fresh command id), never a replay of the failed one.
+  it("I2: 503 leaves respondedAt NULL and the retry issues a NEW command", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow();
+
+    deliverPermissionSpy.mockRejectedValueOnce(
+      new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor 503"),
+    );
+
+    const first = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(first.status).toBe(503);
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
+
+    const second = await invokePost(runId, hitlRequestId, {
+      optionId: "allow",
+    });
+
+    expect(second.status).toBe(200);
+    expect(prepareInputSpy).toHaveBeenCalledTimes(2);
+    expect(prepareInputSpy.mock.calls[0][3]).not.toBe(
+      prepareInputSpy.mock.calls[1][3],
+    );
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeInstanceOf(Date);
+  });
+
+  // ADR-164 I3: a host replay (the same command id re-sent after an unknown
+  // outcome) records what actually reached the agent next to the stored choice.
+  it("I3: a replayed delivery records _audit.deliveredOptionId", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow();
+
+    deliverPermissionSpy.mockResolvedValueOnce({ ok: true, replayed: true });
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(200);
+    expect(dbState.tables.hitl_requests[0].response).toEqual({
+      optionId: "allow",
+      _audit: { deliveredOptionId: "allow" },
+    });
+  });
+
+  // ADR-164 I4: a delivery that fails terminally releases the live deferred
+  // with exactly ONE `session.input{cancel}` command; a failure AFTER the wire
+  // delivery (ack-tx write) cancels nothing — the deferred is already resolved.
+  it("I4: terminal delivery failure issues exactly one session.input cancel", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow();
+
+    deliverPermissionSpy.mockRejectedValueOnce(
+      new MaisterError("ACP_PROTOCOL", "409 from supervisor"),
+    );
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(502);
+    expect(deliverInputSpy).toHaveBeenCalledTimes(1);
+    expect(deliverInputSpy).toHaveBeenCalledWith("sup-1", {
+      kind: "permission",
+      action: "cancel",
+      requestId: "req-1",
+      reason: "permission delivery failed: ACP_PROTOCOL",
+    });
+  });
+
+  it("I4: a post-delivery (ack) failure never cancels the already-resolved deferred", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow();
+
+    poisonAck = true;
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(500);
+    expect(deliverPermissionSpy).toHaveBeenCalledTimes(1);
+    expect(deliverInputSpy).not.toHaveBeenCalled();
   });
 
   it("linked assignment is claimed by the responding actor and completed", async () => {

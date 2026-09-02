@@ -37,6 +37,7 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
@@ -46,19 +47,49 @@ const execFileAsync = promisify(execFile);
 // awaiting children) with a session handle, mirroring a real ACP pause.
 const agentCalls: Array<{ stepId: string; prompt: string }> = [];
 
-vi.mock("@/lib/flows/runner-agent", () => ({
-  runAgentStep: vi.fn(async (step: { id: string; prompt: string }) => {
-    agentCalls.push({ stepId: step.id, prompt: step.prompt });
+vi.mock("@/lib/flows/runner-agent", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/flows/runner-agent")>()),
+  runAgentStep: vi.fn(
+    async (
+      step: { id: string; prompt: string },
+      ctx: {
+        runId: string;
+        db?: unknown;
+        bindExecution?: () => Promise<{
+          client: { assignment: { id: string } };
+        }>;
+      },
+      prebound?: { client: { assignment: { id: string } } },
+    ) => {
+      agentCalls.push({ stepId: step.id, prompt: step.prompt });
+      // The graph binds lazily at the first real dispatch; the scripted step
+      // resolves the same provider so the stamp carries the run's generation.
+      const execution = prebound ?? (await ctx.bindExecution!());
+      // ADR-164: the create ack (inside the real step) persists the host
+      // binding; the scripted step emulates that write so the retained
+      // resume handle is observable after the park.
+      const { persistRunSessionHostBinding } = await import(
+        "@/lib/runs/active-run-session"
+      );
 
-    return {
-      ok: true,
-      stdout: "",
-      vars: {},
-      durationMs: 1,
-      needsInput: true,
-      acpSessionId: "acp-coordinator-1",
-    };
-  }),
+      await persistRunSessionHostBinding(ctx.db as never, {
+        runId: ctx.runId,
+        sessionName: "default",
+        hostSessionId: "sup-coordinator-1",
+        acpSessionId: "acp-coordinator-1",
+        executionAssignmentId: execution.client.assignment.id,
+      });
+
+      return {
+        ok: true,
+        stdout: "",
+        vars: {},
+        durationMs: 1,
+        needsInput: true,
+        acpSessionId: "acp-coordinator-1",
+      };
+    },
+  ),
 }));
 
 let testDatabase: StartedPostgresTestDb;
@@ -214,7 +245,11 @@ describe("orchestrator node — supervisory lifecycle (M37)", () => {
     // Lazy import so the runner-agent / db-client mocks are installed first.
     const { runFlow } = await import("@/lib/flows/runner");
 
-    await runFlow(runId, { db, runtimeRoot });
+    await runFlow(runId, {
+      db,
+      runtimeRoot,
+      executionHosts: (await fakeGraphHosts(db, runId)).hosts,
+    });
 
     // The coordinator was dispatched as an ACP agent step.
     expect(agentCalls).toHaveLength(1);

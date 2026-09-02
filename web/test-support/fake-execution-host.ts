@@ -1,5 +1,5 @@
 import type { Db } from "@/lib/execution-host/db";
-import type { ExecutionAssignment } from "@/lib/db/schema";
+import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
 import type {
   AdoptWorkspaceResult,
   AdoptWorkspaceWire,
@@ -9,9 +9,14 @@ import type {
   DeleteSessionOutcome,
   ExecutionHostTransport,
   HostHealth,
+  InputDeliveryResult,
   WorkspaceRecord,
 } from "@/lib/execution-host/contracts";
-import type { CommandEnvelope, CommandKind } from "@/lib/execution-host/types";
+import type {
+  CommandEnvelope,
+  CommandKind,
+  ExecutionWorkspaceId,
+} from "@/lib/execution-host/types";
 import type {
   CreateSessionResult,
   PromptResult,
@@ -19,19 +24,27 @@ import type {
   SupervisorEvent,
   SupervisorSessionRecord,
 } from "@/lib/supervisor-client";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { randomUUID } from "node:crypto";
 
 import { MaisterError } from "@/lib/errors";
+import { isUnknownWorkspaceError } from "@/lib/execution-host/adoption";
 import {
   createExecutionHosts,
   type BoundClient,
   type ExecutionHosts,
+  type HostAdminClient,
 } from "@/lib/execution-host/client";
 import { UNKNOWN_OUTCOME_DETAIL } from "@/lib/execution-host/contracts";
+import { buildEnvelope } from "@/lib/execution-host/ledger";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
+import { setDefaultTransportForTests } from "@/lib/execution-host/default-transport";
 import { commandSignals } from "@/lib/execution-host/signals";
-import { asExecutionWorkspaceId } from "@/lib/execution-host/types";
+import {
+  asExecutionWorkspaceId,
+  asHostSessionId,
+} from "@/lib/execution-host/types";
 
 // ADR-164 T3.1: an in-memory `ExecutionHostTransport` with the host's
 // observable semantics (fence high-water, receipts + replay, handles, sessions)
@@ -51,6 +64,7 @@ export type FakeCall = {
 export type FakeSession = {
   sessionId: string;
   runId: string;
+  stepId: string;
   acpSessionId: string;
   executionWorkspaceId: string;
   assignmentEpoch: number;
@@ -84,6 +98,9 @@ export type FakeExecutionHost = {
   receipts: Map<string, CommandReceipt>;
   fences: Map<string, number>;
   failOnce(method: TransportMethod, error: unknown): void;
+  // The host executes the next call of `method` (receipt written) but the
+  // response is lost: the deliverer's same-id retry then meets a replay.
+  loseResponseOnce(method: TransportMethod): void;
   onCall(
     method: TransportMethod,
     hook: (call: FakeCall) => void | Promise<void>,
@@ -94,6 +111,11 @@ export type FakeExecutionHost = {
   ): void;
   restart(): void;
   monotonic(): number;
+  // Script the per-session SSE stream a driver consumes.
+  pushEvent(sessionId: string, event: SupervisorEvent): void;
+  endStream(sessionId: string): void;
+  // Events every session's FIRST stream yields (before pushed ones).
+  setStreamEvents(events: SupervisorEvent[] | null): void;
 };
 
 export function unknownOutcomeError(message = "ECONNREFUSED"): MaisterError {
@@ -141,6 +163,11 @@ export function createFakeExecutionHost(
   const receipts = new Map<string, CommandReceipt>();
   const fences = new Map<string, number>();
   const faults = new Map<TransportMethod, unknown[]>();
+  const lostResponses = new Set<TransportMethod>();
+  const loseResponse = (method: TransportMethod) => {
+    if (!lostResponses.delete(method)) return;
+    throw unknownOutcomeError(`fake: response to ${method} lost`);
+  };
   const hooks = new Map<
     TransportMethod,
     Array<(call: FakeCall) => void | Promise<void>>
@@ -183,10 +210,24 @@ export function createFakeExecutionHost(
           session.assignmentEpoch < envelope.fence.assignmentEpoch
         ) {
           session.status = "exited";
+          // Like the host: an evicted session's pending turn is rejected
+          // FENCED, and its stream ends with a fenced exit.
+          evictions.get(session.sessionId)?.(
+            fencedError(runId, session.assignmentEpoch),
+          );
+          streamQueueFor(session.sessionId).push({
+            type: "session.exited",
+            sessionId: session.sessionId,
+            monotonicId: ++monotonicId,
+            exitCode: 143,
+            reason: "fenced",
+          } as SupervisorEvent);
         }
       }
     }
   };
+  // In-flight prompt turns by session, rejectable on eviction.
+  const evictions = new Map<string, (err: MaisterError) => void>();
 
   const receipt = (
     envelope: CommandEnvelope<unknown>,
@@ -220,6 +261,47 @@ export function createFakeExecutionHost(
     }
 
     return null;
+  };
+
+  class StreamQueue {
+    scripted = false;
+    private readonly events: SupervisorEvent[] = [];
+    private closed = false;
+    private waiter: (() => void) | null = null;
+
+    push(event: SupervisorEvent): void {
+      this.events.push(event);
+      this.waiter?.();
+    }
+
+    close(): void {
+      this.closed = true;
+      this.waiter?.();
+    }
+
+    async next(signal?: AbortSignal): Promise<SupervisorEvent | null> {
+      for (;;) {
+        if (this.events.length > 0) return this.events.shift()!;
+        if (this.closed || signal?.aborted) return null;
+        await new Promise<void>((resolve) => {
+          this.waiter = resolve;
+          signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        this.waiter = null;
+      }
+    }
+  }
+  const streams = new Map<string, StreamQueue>();
+  let scriptedEvents: SupervisorEvent[] | null = null;
+  const streamQueueFor = (sessionId: string) => {
+    let queue = streams.get(sessionId);
+
+    if (!queue) {
+      queue = new StreamQueue();
+      streams.set(sessionId, queue);
+    }
+
+    return queue;
   };
 
   const liveSession = (sessionId: string) => {
@@ -264,7 +346,7 @@ export function createFakeExecutionHost(
         sessionId: s.sessionId,
         runId: s.runId,
         projectSlug: "fake",
-        stepId: "fake",
+        stepId: s.stepId,
         status: s.status,
         pid: 4242,
         startedAt: new Date(0).toISOString(),
@@ -273,8 +355,32 @@ export function createFakeExecutionHost(
         acpSessionId: s.acpSessionId,
       })) as unknown as SupervisorSessionRecord[];
     },
-    async *streamSession() {
-      await record("streamSession", null, []);
+    // Per-session event queue: yields what `pushEvent` scripted (plus the
+    // shared `setStreamEvents` script on the first stream of a session), ends
+    // on `session.exited|crashed`, `endStream`, or the consumer's abort signal.
+    async *streamSession(sessionId, opts) {
+      await record("streamSession", null, [sessionId, opts?.lastEventId]);
+      const queue = streamQueueFor(sessionId);
+
+      if (scriptedEvents && !queue.scripted) {
+        queue.scripted = true;
+        for (const event of scriptedEvents) queue.push(event);
+      }
+      for (;;) {
+        const event = await queue.next(opts?.signal);
+
+        if (event === null) return;
+        commandSignals.publish(event);
+        yield event;
+        if (
+          event.type === "session.exited" ||
+          event.type === "session.crashed"
+        ) {
+          return;
+        }
+        // Give the consumer's side effects a turn, like the real SSE stream.
+        await new Promise((r) => setImmediate(r));
+      }
     },
     async getCommandReceipt(commandId) {
       await record("getCommandReceipt", null, [commandId]);
@@ -353,6 +459,7 @@ export function createFakeExecutionHost(
       const session: FakeSession = {
         sessionId: `sess-${randomUUID()}`,
         runId: envelope.fence.runId,
+        stepId: envelope.payload.stepId ?? "fake",
         acpSessionId: `acp-${randomUUID()}`,
         executionWorkspaceId: ws.executionWorkspaceId,
         assignmentEpoch: envelope.fence.assignmentEpoch,
@@ -409,7 +516,16 @@ export function createFakeExecutionHost(
           } as SupervisorEvent);
         },
       };
-      const result = await promptBehavior(ctx);
+      const evicted = new Promise<never>((_, reject) => {
+        evictions.set(sessionId, reject);
+      });
+      let result: PromptResult;
+
+      try {
+        result = await Promise.race([promptBehavior(ctx), evicted]);
+      } finally {
+        evictions.delete(sessionId);
+      }
       const current = receipts.get(envelope.command.id);
 
       if (current?.phase === "accepted") {
@@ -421,10 +537,14 @@ export function createFakeExecutionHost(
     async deliverInput(sessionId, envelope) {
       await record("deliverInput", envelope, [sessionId]);
       fence(envelope);
+      const replayed = replay<InputDeliveryResult>(envelope);
+
+      if (replayed) return replayed;
       liveSession(sessionId);
       receipt(envelope, "completed", 200, { ok: true });
+      loseResponse("deliverInput");
 
-      return { ok: true };
+      return { ok: true, replayed: false };
     },
     async cancelPrompt(sessionId, envelope) {
       await record("cancelPrompt", envelope, [sessionId]);
@@ -475,6 +595,9 @@ export function createFakeExecutionHost(
     failOnce(method, error) {
       faults.set(method, [...(faults.get(method) ?? []), error]);
     },
+    loseResponseOnce(method) {
+      lostResponses.add(method);
+    },
     onCall(method, hook) {
       hooks.set(method, [...(hooks.get(method) ?? []), hook]);
     },
@@ -494,6 +617,15 @@ export function createFakeExecutionHost(
       }
     },
     monotonic: () => monotonicId,
+    pushEvent(sessionId, event) {
+      streamQueueFor(sessionId).push(event);
+    },
+    endStream(sessionId) {
+      streamQueueFor(sessionId).close();
+    },
+    setStreamEvents(events) {
+      scriptedEvents = events;
+    },
   };
 }
 
@@ -513,6 +645,417 @@ export async function fakeBoundClient(args: {
   });
 
   return { client: await hosts.forAssignment(args.assignment), hosts };
+}
+
+// A DB-backed `ExecutionHosts` over the fake transport for integration tests
+// that drive `runFlow`/services: registers the fake identity as THE active
+// local host (retiring any other active row of a previous fake) and, when a
+// run id is given, mints its `launch` assignment so `forRun` binds normally.
+export async function fakeExecutionHosts(
+  // Any drizzle client over the main schema — the graph suites hold a bare
+  // `NodePgDatabase`; the execution-host modules see it as `Db`.
+  anyDb: NodePgDatabase | Db,
+  opts: { fake?: FakeExecutionHost; runId?: string } = {},
+): Promise<{
+  hosts: ExecutionHosts;
+  fake: FakeExecutionHost;
+  hostId: string;
+  host: ExecutionHost;
+  assignment: ExecutionAssignment | null;
+}> {
+  const db = anyDb as unknown as Db;
+  const fake = opts.fake ?? createFakeExecutionHost();
+  const { executionHosts } = await import("@/lib/db/schema");
+  const { and, eq, isNull } = await import("drizzle-orm");
+  const { mintAssignment } = await import("@/lib/execution-host/assignments");
+  const { getActiveAssignment } = await import(
+    "@/lib/execution-host/assignments"
+  );
+
+  resetResolverForTests();
+  const active = await db
+    .select()
+    .from(executionHosts)
+    .where(
+      and(
+        eq(executionHosts.kind, "local_direct"),
+        isNull(executionHosts.retiredAt),
+      ),
+    );
+  let hostId = active.find((h) => h.hostKey === fake.identity.hostKey)?.id;
+
+  if (!hostId) {
+    for (const other of active) {
+      await db
+        .update(executionHosts)
+        .set({ retiredAt: new Date() })
+        .where(eq(executionHosts.id, other.id));
+    }
+    hostId = randomUUID();
+    await db.insert(executionHosts).values({
+      id: hostId,
+      hostKey: fake.identity.hostKey,
+      kind: "local_direct",
+      displayName: "fake local host",
+      transport: { kind: "local_direct" },
+      capabilities: {
+        protocolVersion: 1,
+        supervisorVersion: "fake",
+        adapters: [],
+      },
+      readiness: "ready",
+      lastBootId: fake.identity.bootId,
+      lastSeenAt: new Date(),
+    });
+  }
+
+  // Every implicit resolution in this process (a claim transition minting
+  // through `localHost({db: tx})`, a route's `createExecutionHosts({db})`)
+  // now reaches the fake instead of the real wire.
+  setDefaultTransportForTests(fake.transport);
+  const [host] = await db
+    .select()
+    .from(executionHosts)
+    .where(eq(executionHosts.id, hostId));
+
+  let assignment: ExecutionAssignment | null = null;
+
+  if (opts.runId) {
+    const seededHostId = hostId;
+    const runId = opts.runId;
+
+    assignment =
+      (await getActiveAssignment(db, runId)) ??
+      (await db.transaction((tx) =>
+        mintAssignment(tx as unknown as Db, {
+          runId,
+          hostId: seededHostId,
+          reason: "launch",
+        }),
+      ));
+  }
+
+  return {
+    hosts: createExecutionHosts({
+      db,
+      transport: fake.transport,
+      sleep: async () => {},
+    }),
+    fake,
+    hostId,
+    host,
+    assignment,
+  };
+}
+
+// Script one agent turn the way the graph tests used to stub `SupervisorApi`:
+// the session stream yields `text` as one agent_message_chunk then a clean
+// exit, every prompt is captured into `prompts`, and the turn ends with
+// `stopReason`. Re-applies to every session the fake creates.
+export function scriptAgentTurn(
+  fake: FakeExecutionHost,
+  opts: {
+    text?: string;
+    stopReason?: PromptResult["stopReason"];
+    prompts?: string[];
+    onPrompt?: (ctx: PromptContext) => Promise<PromptResult> | PromptResult;
+  } = {},
+): { prompts: string[] } {
+  const prompts = opts.prompts ?? [];
+  const events: SupervisorEvent[] = [];
+
+  if (opts.text !== undefined) {
+    events.push({
+      type: "session.update",
+      sessionId: "fake",
+      monotonicId: 1,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: opts.text },
+      },
+    } as SupervisorEvent);
+  }
+  events.push({
+    type: "session.exited",
+    sessionId: "fake",
+    monotonicId: events.length + 1,
+    exitCode: 0,
+  } as SupervisorEvent);
+  fake.setStreamEvents(events);
+  fake.setPromptBehavior(async (ctx) => {
+    prompts.push(ctx.envelope.payload.prompt);
+    if (opts.onPrompt) return opts.onPrompt(ctx);
+
+    return { stopReason: opts.stopReason ?? "end_turn", meta: null };
+  });
+
+  return { prompts };
+}
+
+// The graph-test seam in one call: a DB-backed `ExecutionHosts` over a fake
+// scripted like the old `makeEndTurnSupervisor()` stubs.
+export async function fakeGraphHosts(
+  db: NodePgDatabase | Db,
+  runId: string,
+  script: Parameters<typeof scriptAgentTurn>[1] = {},
+): Promise<{
+  hosts: ExecutionHosts;
+  fake: FakeExecutionHost;
+  prompts: string[];
+  creates: () => Record<string, unknown>[];
+  adopts: () => Record<string, unknown>[];
+}> {
+  const fake = createFakeExecutionHost();
+  const { prompts } = scriptAgentTurn(fake, script);
+  const { hosts } = await fakeExecutionHosts(db, { fake, runId });
+  const payloads = (method: TransportMethod) =>
+    fake
+      .callsOf(method)
+      .map((c) => (c.envelope?.payload ?? {}) as Record<string, unknown>);
+
+  return {
+    hosts,
+    fake,
+    prompts,
+    creates: () => payloads("createSession"),
+    adopts: () => payloads("adoptWorkspace"),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// DB-less doubles for unit-level driver tests (runner-agent, hooks): a
+// `BoundClient` whose commands go straight to the fake transport with a
+// synthesized fence — no ledger, no database. Integration tests bind through
+// `createExecutionHosts({ db, transport })` instead.
+// ---------------------------------------------------------------------------
+
+export function memoryHost(
+  fake: FakeExecutionHost,
+  id = "host-fake",
+): ExecutionHost {
+  const now = new Date(0);
+
+  return {
+    id,
+    hostKey: fake.identity.hostKey,
+    kind: "local_direct",
+    displayName: "fake host",
+    transport: { kind: "local_direct" },
+    capabilities: {
+      protocolVersion: 1,
+      supervisorVersion: "fake",
+      adapters: [],
+    },
+    readiness: "ready",
+    readinessReason: null,
+    lastBootId: fake.identity.bootId,
+    lastSeenAt: now,
+    registeredAt: now,
+    updatedAt: now,
+    retiredAt: null,
+  };
+}
+
+export function memoryAssignment(input: {
+  runId: string;
+  id?: string;
+  epoch?: number;
+  hostId?: string;
+  executionWorkspaceId?: string | null;
+}): ExecutionAssignment {
+  const now = new Date(0);
+
+  return {
+    id: input.id ?? randomUUID(),
+    runId: input.runId,
+    executionHostId: input.hostId ?? "host-fake",
+    epoch: input.epoch ?? 1,
+    state: "active",
+    placementReason: "launch",
+    executionWorkspaceId: input.executionWorkspaceId ?? null,
+    workspaceAdoptedAt: null,
+    leaseExpiresAt: null,
+    supersededById: null,
+    releasedReason: null,
+    createdAt: now,
+    updatedAt: now,
+    endedAt: null,
+  };
+}
+
+export function memoryBoundClient(args: {
+  fake: FakeExecutionHost;
+  runId: string;
+  assignment?: ExecutionAssignment;
+  host?: ExecutionHost;
+  projectSlug?: string;
+  workspacePath?: string;
+}): BoundClient {
+  const { fake } = args;
+  const host = args.host ?? memoryHost(fake);
+  let current =
+    args.assignment ?? memoryAssignment({ runId: args.runId, hostId: host.id });
+  const envelope = <TPayload>(kind: CommandKind, payload: TPayload) =>
+    buildEnvelope({
+      commandId: randomUUID(),
+      kind,
+      hostKey: host.hostKey,
+      assignmentId: current.id,
+      assignmentEpoch: current.epoch,
+      runId: current.runId,
+      payload,
+    });
+  const adopt = async () => {
+    const result = await fake.transport.adoptWorkspace(
+      envelope("workspace.adopt", {
+        runId: current.runId,
+        projectSlug: args.projectSlug ?? "fake",
+        kind: "directory" as const,
+        path: args.workspacePath ?? `/tmp/fake/${current.runId}`,
+      }),
+    );
+
+    current = {
+      ...current,
+      executionWorkspaceId: result.executionWorkspaceId,
+      workspaceAdoptedAt: new Date(),
+    };
+
+    return result;
+  };
+  const client: BoundClient = {
+    get assignment() {
+      return current;
+    },
+    host,
+    adoptWorkspace: (spec) =>
+      fake.transport.adoptWorkspace(envelope("workspace.adopt", spec)),
+    async ensureWorkspace(opts) {
+      if (!opts?.force && current.executionWorkspaceId) {
+        return asExecutionWorkspaceId(current.executionWorkspaceId);
+      }
+
+      return (await adopt()).executionWorkspaceId;
+    },
+    releaseWorkspace: (id) =>
+      fake.transport.releaseWorkspace(id, envelope("workspace.release", {})),
+    async createSession(payload, opts) {
+      const sessionName = opts?.sessionName ?? payload.sessionName ?? "default";
+      const attempt = async (executionWorkspaceId: ExecutionWorkspaceId) => {
+        const result = await fake.transport.createSession(
+          envelope("session.create", {
+            ...payload,
+            sessionName,
+            executionWorkspaceId,
+          }),
+        );
+
+        return { ...result, hostSessionId: asHostSessionId(result.sessionId) };
+      };
+
+      try {
+        return await attempt(await client.ensureWorkspace());
+      } catch (err) {
+        if (!isUnknownWorkspaceError(err)) throw err;
+
+        return attempt(await client.ensureWorkspace({ force: true }));
+      }
+    },
+    async prompt(sessionId, input, opts) {
+      const env = envelope("session.prompt", input);
+
+      return {
+        commandId: env.command.id,
+        completion: fake.transport.sendPrompt(sessionId, env, {
+          signal: opts?.signal,
+        }),
+      };
+    },
+    deliverInput: (sessionId, payload) =>
+      fake.transport.deliverInput(
+        sessionId,
+        envelope("session.input", payload),
+      ),
+    async prepareInput(_tx, sessionId, payload) {
+      const env = envelope("session.input", payload);
+
+      return {
+        commandId: env.command.id,
+        payload,
+        deliver: async (opts) => {
+          const result = await fake.transport.deliverInput(sessionId, env);
+
+          await opts?.onAck?.(null as never, result);
+
+          return result;
+        },
+      };
+    },
+    async sessionsForRun() {
+      const runId = current.runId;
+
+      return (await fake.transport.listSessions()).filter(
+        (record) => record.runId === runId,
+      );
+    },
+    cancelPrompt: (sessionId) =>
+      fake.transport.cancelPrompt(sessionId, envelope("session.cancel", {})),
+    checkpoint: (sessionId) =>
+      fake.transport.checkpointSession(
+        sessionId,
+        envelope("session.checkpoint", {}),
+      ),
+    deleteSession: (sessionId) =>
+      fake.transport.deleteSession(sessionId, envelope("session.delete", {})),
+  };
+
+  return client;
+}
+
+export function memoryAdminClient(fake: FakeExecutionHost): HostAdminClient {
+  return {
+    health: (opts) => fake.transport.health(opts),
+    listSessions: () => fake.transport.listSessions(),
+    streamSession: (sessionId, opts) =>
+      fake.transport.streamSession(sessionId, opts),
+    getCommandReceipt: (id) => fake.transport.getCommandReceipt(id),
+    getWorkspace: (id) => fake.transport.getWorkspace(id),
+  };
+}
+
+export type FakeAgentExecution = {
+  fake: FakeExecutionHost;
+  client: BoundClient;
+  admin: HostAdminClient;
+};
+
+// The runner-agent seam for unit tests: `events` scripts the session stream
+// (yielded on the first stream of any session), `promptStopReason` the turn.
+export function fakeAgentExecution(
+  args: {
+    fake?: FakeExecutionHost;
+    runId?: string;
+    events?: SupervisorEvent[];
+    promptStopReason?: PromptResult["stopReason"];
+    promptBehavior?: (ctx: PromptContext) => Promise<PromptResult>;
+  } = {},
+): FakeAgentExecution {
+  const fake = args.fake ?? createFakeExecutionHost();
+
+  if (args.events) fake.setStreamEvents(args.events);
+  if (args.promptBehavior) {
+    fake.setPromptBehavior(args.promptBehavior);
+  } else if (args.promptStopReason) {
+    const stopReason = args.promptStopReason;
+
+    fake.setPromptBehavior(async () => ({ stopReason, meta: null }));
+  }
+
+  return {
+    fake,
+    client: memoryBoundClient({ fake, runId: args.runId ?? "run-1" }),
+    admin: memoryAdminClient(fake),
+  };
 }
 
 export type { AdoptWorkspaceWire };

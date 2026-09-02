@@ -10,10 +10,11 @@ import { rollbackResumedRun } from "./state-transitions";
 import { getDb } from "@/lib/db/client";
 import { loadActiveRunSessionsByRunId } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
+import { type SupervisorSessionRecord } from "@/lib/supervisor-client";
 import {
-  listSessions,
-  type SupervisorSessionRecord,
-} from "@/lib/supervisor-client";
+  createExecutionHosts,
+  type ExecutionHosts,
+} from "@/lib/execution-host";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { gateResults, hitlRequests, nodeAttempts, runs } =
@@ -130,7 +131,7 @@ async function fetchCandidates(db: Db): Promise<RecoveryCandidate[]> {
   return candidates;
 }
 
-async function loadSupervisorSessionMap(): Promise<
+async function loadSupervisorSessionMap(hosts: ExecutionHosts): Promise<
   | {
       ok: true;
       map: Map<string, SupervisorSessionRecord>;
@@ -138,7 +139,7 @@ async function loadSupervisorSessionMap(): Promise<
   | { ok: false; reason: string }
 > {
   try {
-    const records = await listSessions();
+    const records = await hosts.local().listSessions();
     const map = new Map<string, SupervisorSessionRecord>();
 
     for (const rec of records) {
@@ -187,8 +188,9 @@ export type ResumeRecoverySweepResult = {
 
 export type ResumeRecoverySweepOptions = {
   db?: Db;
-  // Override for tests — by default uses the real supervisor-client.
-  loadSessions?: typeof loadSupervisorSessionMap;
+  executionHosts?: ExecutionHosts;
+  // Override for tests — by default lists the local execution host's sessions.
+  loadSessions?: () => ReturnType<typeof loadSupervisorSessionMap>;
   scheduleDriver?: typeof scheduleResumedSessionDrive;
 };
 
@@ -196,7 +198,9 @@ export async function runResumeRecoverySweep(
   opts: ResumeRecoverySweepOptions = {},
 ): Promise<ResumeRecoverySweepResult> {
   const db = opts.db ?? getDb();
-  const loadSessions = opts.loadSessions ?? loadSupervisorSessionMap;
+  const hosts = opts.executionHosts ?? createExecutionHosts({ db });
+  const loadSessions =
+    opts.loadSessions ?? (() => loadSupervisorSessionMap(hosts));
   const scheduleDriver = opts.scheduleDriver ?? scheduleResumedSessionDrive;
 
   const candidates = await fetchCandidates(db);
@@ -251,6 +255,7 @@ export async function runResumeRecoverySweep(
         acpSessionId: cand.acpSessionId,
         stepId: cand.stepId,
         db,
+        executionHosts: hosts,
       });
 
       rescheduled += 1;

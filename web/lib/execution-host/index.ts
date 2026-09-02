@@ -12,6 +12,7 @@ export type {
   DeleteSessionOutcome,
   ExecutionHostTransport,
   HostHealth,
+  InputDeliveryResult,
   InputPayload,
   WorkspaceRecord,
 } from "./contracts";
@@ -55,6 +56,7 @@ export type {
   ExecutionHosts,
   ExecutionHostsDeps,
   HostAdminClient,
+  PreparedInput,
 } from "./client";
 export { createExecutionHosts, executionHosts } from "./client";
 export type { PromptHandle } from "./deliverer";
@@ -63,6 +65,7 @@ export { buildEnvelope, fencedLocallyError } from "./ledger";
 export {
   getActiveAssignment,
   getAssignmentById,
+  getLatestAssignment,
   isAdmissible,
   mintAssignment,
   releaseAssignmentForRun,
@@ -79,6 +82,10 @@ export type {
   RegistrationResult,
 } from "./registrar";
 export { hostForAssignment, localHost } from "./resolver";
+export {
+  defaultTransport,
+  setDefaultTransportForTests,
+} from "./default-transport";
 export {
   ensureWorkspaceAdopted,
   isUnknownWorkspaceError,
@@ -99,3 +106,27 @@ export type {
 export { commandSignals } from "./signals";
 export { listCommandsForRun } from "./commands";
 export { findActiveLocalHost, LIVE_DRIVER_RUN_STATUSES } from "./hosts";
+
+// Wire DTO types domain code may name (the transport module itself stays
+// fenced to this package).
+export type {
+  CreateSessionInput,
+  CreateSessionResult,
+  ExecutionHostIdentity,
+  PromptContentBlock,
+  PromptResult,
+  PromptStopReason,
+  SendPromptInput,
+  SupervisorAdapterLaunchInput,
+  SupervisorDiagnostics,
+  SupervisorDiagnosticsStatus,
+  SupervisorEvent,
+  SupervisorExecutorInput,
+  SupervisorMcpProbeRequest,
+  SupervisorMcpProbeResult,
+  SupervisorModelCatalog,
+  SupervisorModelCatalogDraft,
+  SupervisorPermissionOption,
+  SupervisorRunnerInput,
+  SupervisorSessionRecord,
+} from "@/lib/supervisor-client";

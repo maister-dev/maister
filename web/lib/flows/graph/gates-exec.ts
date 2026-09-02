@@ -3,7 +3,7 @@ import "server-only";
 import type { GateDef } from "@/lib/config.schema";
 import type { ArtifactKind, GateVerdict } from "@/lib/db/schema";
 import type { FlowContext } from "../types";
-import type { SupervisorApi } from "../runner-agent";
+import type { AgentExecution } from "../runner-agent";
 import type { CompiledNode } from "./compile";
 import type { Db, LoadedRun } from "./runner-core";
 import type { RestrictionPathSet } from "./mutation-check";
@@ -59,7 +59,8 @@ const VERDICT_EVIDENCE_CAP = 2000;
 export type GateRunContext = {
   runtimeRoot: string;
   worktreePath: string;
-  supervisorApi?: SupervisorApi;
+  execution?: AgentExecution;
+  bindExecution?: () => Promise<AgentExecution>;
   // M29 (ADR-074, D-C2): the node's resolved restriction path sets for
   // must_not_touch; undefined when the node declares no restrictions.
   restrictionPaths?: RestrictionPathSet[];
@@ -509,6 +510,7 @@ async function runOneGate(
           { id: gate.id, type: "agent", mode: "new-session", prompt },
           {
             ...common,
+            bindExecution: ctx.bindExecution,
             // Thread the caller's db — runner-agent's event-consumer seam must
             // never fall back to env getDb() (a different connection).
             db: ctx.db,
@@ -521,7 +523,7 @@ async function runOneGate(
                 | undefined,
             },
           },
-          ctx.supervisorApi,
+          ctx.execution,
         ),
       );
 

@@ -28,11 +28,13 @@ import {
   markReworkFromReview,
   markWaitingOnChildren,
   releaseHumanWorking,
+  rollbackResumeFromWait,
 } from "@/lib/runs/state-transitions";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 
 const schema = schemaModule as unknown as Record<string, any>;
 const { flows, nodeAttempts, projects, runs, tasks, users } = schema;
@@ -49,6 +51,9 @@ beforeAll(async () => {
     databaseName: "state_test",
   });
   db = testDatabase.db;
+  // ADR-164: the claim transitions mint their epoch on the local host — a fake
+  // host backs every implicit resolution in this process.
+  await fakeExecutionHosts(db);
 
   projectId = randomUUID();
   executorId = randomUUID();
@@ -623,4 +628,83 @@ describe("state-transitions — markAbandoned", () => {
 
     expect(r.ok).toBe(false);
   }, 60_000);
+});
+
+// ADR-164 D3 (E3): every claim that starts a new driver generation mints its
+// epoch INSIDE the CAS tx with the claim's reason; a rolled-back wait-resume
+// releases the generation it minted.
+describe("state-transitions — execution-assignment placement (ADR-164)", () => {
+  async function assignmentsOf(runId: string) {
+    return db
+      .select()
+      .from(schema.executionAssignments)
+      .where(eq(schema.executionAssignments.runId, runId))
+      .orderBy(schema.executionAssignments.epoch);
+  }
+
+  it("markResumed mints an active `resume` assignment", async () => {
+    const runId = await seedRun("NeedsInputIdle", {
+      checkpointAt: new Date(Date.now() - 60_000),
+    });
+
+    expect((await markResumed(runId, { db })).ok).toBe(true);
+    const rows = await assignmentsOf(runId);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      epoch: 1,
+      state: "active",
+      placementReason: "resume",
+    });
+    expect((await readRun(runId)).executionAssignmentId).toBe(rows[0].id);
+  });
+
+  it("a lost markResumed claim mints nothing", async () => {
+    const runId = await seedRun("Running");
+
+    expect((await markResumed(runId, { db })).ok).toBe(false);
+    expect(await assignmentsOf(runId)).toHaveLength(0);
+  });
+
+  it("markResumedFromWait mints `wait_resume`; rollbackResumeFromWait releases it", async () => {
+    const runId = await seedRun("WaitingOnChildren", {
+      checkpointAt: new Date(),
+    });
+
+    expect((await markResumedFromWait(runId, { db })).ok).toBe(true);
+    let rows = await assignmentsOf(runId);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      state: "active",
+      placementReason: "wait_resume",
+    });
+
+    expect((await rollbackResumeFromWait(runId, { db })).ok).toBe(true);
+    rows = await assignmentsOf(runId);
+    expect(rows[0]).toMatchObject({
+      state: "released",
+      releasedReason: "wait_resume_rollback",
+    });
+  });
+
+  it("markReturnedToRunning mints `rework_return` on top of the prior generation", async () => {
+    const runId = await seedRun("NeedsInputIdle", {
+      checkpointAt: new Date(),
+    });
+
+    expect((await markResumed(runId, { db })).ok).toBe(true);
+    await db
+      .update(runs)
+      .set({ status: "HumanWorking" })
+      .where(eq(runs.id, runId));
+
+    expect((await markReturnedToRunning(runId, { db })).ok).toBe(true);
+    const rows = await assignmentsOf(runId);
+
+    expect(rows.map((r) => [r.epoch, r.state, r.placementReason])).toEqual([
+      [1, "superseded", "resume"],
+      [2, "active", "rework_return"],
+    ]);
+  });
 });

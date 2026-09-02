@@ -19,10 +19,11 @@
  * createSession spy args.
  */
 import type { NodeAttempt } from "@/lib/db/schema";
-import type { SupervisorApi } from "@/lib/flows/runner-agent";
-import type { SupervisorEvent } from "@/lib/supervisor-client";
+import type { ExecutionHosts } from "@/lib/execution-host";
+import type { FakeCall } from "@/test-support/fake-execution-host";
 
-import { mkdtemp, readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -37,6 +38,7 @@ import {
 } from "@/lib/__tests__/runner-fixtures";
 import * as fullSchema from "@/lib/db/schema";
 import { runFlow } from "@/lib/flows/runner";
+import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -183,64 +185,39 @@ async function getAttempts(runId: string): Promise<NodeAttempt[]> {
     .where(eq(schema.nodeAttempts.runId, runId))) as unknown as NodeAttempt[];
 }
 
-// A SupervisorApi spy. createSession returns a canned session and streamSession
-// yields a clean end-turn so the ai_coding node finishes without a real agent.
+// ADR-164: a fake execution host whose agent turn is a clean end-turn, plus a
+// spy that receives every `session.create` payload the runner sends (the
+// handle-form body still carries the capability material: mcpServers,
+// capabilityProfilePath, adapterLaunch, enforcementProfile).
 //
 // It ALSO snapshots profile.json off disk at spawn time. Terminal cleanup (T4.3)
 // removes the node's whole capability dir, so the file no longer exists once
 // runFlow returns — and spawn time is the only moment the profile contract is
 // about anyway: what the adapter was actually handed.
-function makeSupervisorSpy(): SupervisorApi & {
+async function makeSupervisorSpy(runId: string): Promise<{
+  hosts: ExecutionHosts;
   createSpy: ReturnType<typeof vi.fn>;
   profileAtSpawn: () => { executor: { executorRefId: string } | null } | null;
-} {
+}> {
   let spawnProfile: { executor: { executorRefId: string } | null } | null =
     null;
+  const createSpy = vi.fn();
+  const { hosts, fake } = await fakeGraphHosts(db, runId);
 
-  const createSpy = vi.fn(async (input: { capabilityProfilePath?: string }) => {
-    if (input.capabilityProfilePath) {
+  fake.onCall("createSession", (call: FakeCall) => {
+    const payload = call.envelope?.payload as
+      | { capabilityProfilePath?: string }
+      | undefined;
+
+    if (payload?.capabilityProfilePath) {
       spawnProfile = JSON.parse(
-        await readFile(input.capabilityProfilePath, "utf8"),
+        readFileSync(payload.capabilityProfilePath, "utf8"),
       );
     }
-
-    return {
-      sessionId: "sup-1",
-      pid: 1,
-      acpSessionId: "acp-1",
-    };
+    createSpy(payload);
   });
 
-  async function* endTurnStream(): AsyncGenerator<SupervisorEvent> {
-    yield {
-      type: "session.exited",
-      sessionId: "sup-1",
-      monotonicId: 1,
-      exitCode: 0,
-    } as SupervisorEvent;
-  }
-
-  return {
-    createSession: createSpy as unknown as SupervisorApi["createSession"],
-    deleteSession: vi.fn(async () => undefined),
-    sendPrompt: vi.fn(async () => ({ stopReason: "end_turn" as const })),
-    streamSession: vi.fn(() =>
-      endTurnStream(),
-    ) as unknown as SupervisorApi["streamSession"],
-    cancelPermission: vi.fn(
-      async () => ({ ok: true }) as { ok: true },
-    ) as unknown as SupervisorApi["cancelPermission"],
-    checkpointSession: async () => ({
-      alreadyCheckpointed: false,
-      sessionId: "s",
-      monotonicId: 0,
-    }),
-    deliverPermission: vi.fn(
-      async () => ({ ok: true }) as { ok: true },
-    ) as unknown as SupervisorApi["deliverPermission"],
-    createSpy,
-    profileAtSpawn: () => spawnProfile,
-  };
+  return { hosts, createSpy, profileAtSpawn: () => spawnProfile };
 }
 
 // ai_coding node that opts into capabilities: declares mcps + skills (matching
@@ -318,12 +295,12 @@ describe("runGraph — materialization plan → node_attempts ledger (T4.2 / T4.
 
     await seedCapabilityRecords(seeded.projectId);
 
-    const api = makeSupervisorSpy();
+    const api = await makeSupervisorSpy(seeded.runId);
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api.hosts,
     });
 
     // Sanity: the spawn path was reached (every declared class resolves to
@@ -379,12 +356,12 @@ describe("runGraph — materialization plan → node_attempts ledger (T4.2 / T4.
 
     await seedCapabilityRecords(seeded.projectId);
 
-    const api = makeSupervisorSpy();
+    const api = await makeSupervisorSpy(seeded.runId);
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api.hosts,
     });
 
     const attempts = await getAttempts(seeded.runId);
@@ -420,12 +397,12 @@ describe("runGraph — materialization plan → node_attempts ledger (T4.2 / T4.
     await seedCapabilityRecords(seeded.projectId);
     await seedDowngradedSkill(seeded.projectId);
 
-    const api = makeSupervisorSpy();
+    const api = await makeSupervisorSpy(seeded.runId);
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api.hosts,
     });
 
     const attempts = await getAttempts(seeded.runId);
@@ -495,7 +472,7 @@ describe("runGraph — materialization plan → node_attempts ledger (T4.2 / T4.
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeSupervisorSpy(),
+      executionHosts: (await makeSupervisorSpy(seeded.runId)).hosts,
     });
 
     // Re-read the persisted plan jsonb straight from the DB and grep it: the plan

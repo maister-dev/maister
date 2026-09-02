@@ -32,6 +32,7 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -338,15 +339,25 @@ describe("respondToHitl integration — permission response with real Postgres",
       label: "Test User",
     };
 
-    const { deliverPermission } = await import("@/lib/supervisor-client");
-    const deliverSpy = vi.mocked(deliverPermission);
+    // ADR-164: the delivery is a `session.input` command issued through the
+    // client bound to the run's assignment on the (fake) execution host.
+    const { hosts, fake } = await fakeExecutionHosts(db, { runId });
 
-    deliverSpy.mockImplementation(async () => ({ ok: true }));
+    fake.sessions.set("sup-1", {
+      sessionId: "sup-1",
+      runId,
+      stepId: "plan",
+      acpSessionId: "acp-1",
+      executionWorkspaceId: "ws_seeded",
+      assignmentEpoch: 1,
+      createdByCommandId: "seeded",
+      status: "live",
+    });
 
     const res = await respondToHitl(
       { runId, hitlRequestId, body: { optionId: "allow" } },
       actor,
-      { db },
+      { db, executionHosts: hosts },
     );
 
     expect(res.status).toBe(200);
@@ -359,7 +370,16 @@ describe("respondToHitl integration — permission response with real Postgres",
 
     expect(row.response).toEqual({ optionId: "allow" });
     expect(row.respondedAt).toBeInstanceOf(Date);
-    expect(deliverSpy).toHaveBeenCalledWith("sup-1", "req-1", "allow");
+    const inputs = fake.callsOf("deliverInput");
+
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0].args[0]).toBe("sup-1");
+    expect(inputs[0].envelope?.payload).toEqual({
+      kind: "permission",
+      action: "select",
+      requestId: "req-1",
+      optionId: "allow",
+    });
   });
 });
 

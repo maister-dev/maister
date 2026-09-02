@@ -1,6 +1,5 @@
 import type { NodeAttempt, Run } from "@/lib/db/schema";
-import type { SupervisorApi } from "@/lib/flows/runner-agent";
-import type { SupervisorEvent } from "@/lib/supervisor-client";
+import type { ExecutionHosts } from "@/lib/execution-host";
 
 import { execFile } from "node:child_process";
 import {
@@ -26,6 +25,7 @@ import {
   seedGraphRun as seedGraphRunShared,
   type SeededGraphRun,
 } from "@/test-support/graph-run-seed";
+import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -76,50 +76,12 @@ async function getAttempts(runId: string): Promise<NodeAttempt[]> {
     .where(eq(schema.nodeAttempts.runId, runId))) as unknown as NodeAttempt[];
 }
 
-function makeAgentSupervisor(text: string): SupervisorApi {
-  async function* stream(): AsyncGenerator<SupervisorEvent> {
-    yield {
-      type: "session.update",
-      sessionId: "sup-1",
-      monotonicId: 1,
-      update: {
-        sessionUpdate: "agent_message_chunk",
-        content: { type: "text", text },
-      },
-    } as SupervisorEvent;
-    yield {
-      type: "session.exited",
-      sessionId: "sup-1",
-      monotonicId: 2,
-      exitCode: 0,
-    } as SupervisorEvent;
-  }
-
-  return {
-    createSession: (async () => ({
-      sessionId: "sup-1",
-      pid: 1,
-      acpSessionId: "acp-1",
-    })) as unknown as SupervisorApi["createSession"],
-    deleteSession: (async () =>
-      undefined) as unknown as SupervisorApi["deleteSession"],
-    sendPrompt: (async () => ({
-      stopReason: "end_turn" as const,
-    })) as unknown as SupervisorApi["sendPrompt"],
-    streamSession: (() =>
-      stream()) as unknown as SupervisorApi["streamSession"],
-    cancelPermission: (async () => ({
-      ok: true,
-    })) as unknown as SupervisorApi["cancelPermission"],
-    checkpointSession: async () => ({
-      alreadyCheckpointed: false,
-      sessionId: "s",
-      monotonicId: 0,
-    }),
-    deliverPermission: (async () => ({
-      ok: true,
-    })) as unknown as SupervisorApi["deliverPermission"],
-  };
+// ADR-164: a fake host scripted to stream `text` then a clean end-turn.
+async function makeAgentSupervisor(
+  runId: string,
+  text: string,
+): Promise<ExecutionHosts> {
+  return (await fakeGraphHosts(db, runId, { text })).hosts;
 }
 
 const OPEN = "```json maister:output";
@@ -300,14 +262,15 @@ describe("runGraph — P7 run-context (ADR-103)", () => {
       ],
     };
     const seeded = await seedGraphRun(manifest);
-    const api = makeAgentSupervisor(
+    const api = await makeAgentSupervisor(
+      seeded.runId,
       `Reviewed.\n${OPEN}\n{"verdict":"ok","score":1}\n${CLOSE}\n`,
     );
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api,
     });
 
     expect((await getRun(seeded.runId)).status).toBe("Review");

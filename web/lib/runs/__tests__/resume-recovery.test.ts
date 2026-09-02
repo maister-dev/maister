@@ -46,6 +46,22 @@ vi.mock("@/lib/supervisor-client", () => ({
   listSessions: () => Promise.resolve([]),
 }));
 
+// ADR-164: the sweep lists sessions through the local execution host; every
+// case injects `loadSessions`, so the hosts factory is an inert stand-in (the
+// real module would pull the full schema this fake db does not model).
+vi.mock("@/lib/execution-host", () => ({
+  createExecutionHosts: () => ({
+    transport: {},
+    local: () => ({ listSessions: () => Promise.resolve([]) }),
+    forRun: () => {
+      throw new Error("not used");
+    },
+    forAssignment: () => {
+      throw new Error("not used");
+    },
+  }),
+}));
+
 type Row = Record<string, unknown>;
 
 function makeFakeDb(opts: {

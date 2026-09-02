@@ -1,6 +1,5 @@
 import type { ArtifactInstance, GateResult, Run } from "@/lib/db/schema";
-import type { SupervisorApi } from "@/lib/flows/runner-agent";
-import type { SupervisorEvent } from "@/lib/supervisor-client";
+import type { ExecutionHosts } from "@/lib/execution-host";
 import type { MutationReport } from "@/lib/flows/graph/mutation-check";
 
 import { execFile } from "node:child_process";
@@ -12,7 +11,7 @@ import { randomUUID } from "node:crypto";
 
 import { and, eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
 import {
@@ -23,6 +22,7 @@ import { closeDb } from "@/lib/db/client";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { GIT_UNAVAILABLE_REASON } from "@/lib/flows/graph/mutation-check";
 import { runFlow } from "@/lib/flows/runner";
+import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -676,41 +676,10 @@ function parseReport(row: ArtifactInstance): MutationReport {
   return JSON.parse(locator.text) as MutationReport;
 }
 
-// End-turn supervisor spy so an ai_coding node finishes without a real agent
-// (mirrors runner-graph.materialize.integration.test.ts).
-function makeEndTurnSupervisor(): SupervisorApi {
-  async function* endTurnStream(): AsyncGenerator<SupervisorEvent> {
-    yield {
-      type: "session.exited",
-      sessionId: "sup-1",
-      monotonicId: 1,
-      exitCode: 0,
-    } as SupervisorEvent;
-  }
-
-  return {
-    createSession: vi.fn(async () => ({
-      sessionId: "sup-1",
-      pid: 1,
-      acpSessionId: "acp-1",
-    })) as unknown as SupervisorApi["createSession"],
-    deleteSession: vi.fn(async () => undefined),
-    sendPrompt: vi.fn(async () => ({ stopReason: "end_turn" as const })),
-    streamSession: vi.fn(() =>
-      endTurnStream(),
-    ) as unknown as SupervisorApi["streamSession"],
-    cancelPermission: vi.fn(
-      async () => ({ ok: true }) as { ok: true },
-    ) as unknown as SupervisorApi["cancelPermission"],
-    checkpointSession: async () => ({
-      alreadyCheckpointed: false,
-      sessionId: "s",
-      monotonicId: 0,
-    }),
-    deliverPermission: vi.fn(
-      async () => ({ ok: true }) as { ok: true },
-    ) as unknown as SupervisorApi["deliverPermission"],
-  };
+// ADR-164: a fake execution host whose agent turn is a clean end-turn, so an
+// ai_coding node finishes without a real agent.
+async function makeEndTurnSupervisor(runId: string): Promise<ExecutionHosts> {
+  return (await fakeGraphHosts(db, runId)).hosts;
 }
 
 async function seedRestrictionRecord(
@@ -1019,7 +988,7 @@ describe("M29: must_not_touch via M14 restriction paths", () => {
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeEndTurnSupervisor(),
+      executionHosts: await makeEndTurnSupervisor(seeded.runId),
     });
 
     expect((await getRun(seeded.runId)).status).toBe("Failed");
@@ -1066,7 +1035,7 @@ describe("M29: must_not_touch via M14 restriction paths", () => {
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeEndTurnSupervisor(),
+      executionHosts: await makeEndTurnSupervisor(seeded.runId),
     });
 
     expect((await getRun(seeded.runId)).status).toBe("Review");

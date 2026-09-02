@@ -3,6 +3,8 @@ import type { MaisterError as RuntimeMaisterError } from "@/lib/errors";
 import { getTableName } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { TEST_HOST_IDENTITY } from "@/test-support/supervisor-health-fixture";
+
 // ADR-132 §a — ephemeral per-run package pin. The launch resolves the task
 // flow's revision from an explicitly named `package_installs` row instead of
 // the project attachment's enabled revision; the validation matrix below is
@@ -172,6 +174,23 @@ const fakeDb: FakeDb = {
   execute: async () => ({ rows: [] }),
 };
 
+// ADR-164: the launch places the run on the local execution host inside its
+// run-insert transaction; the fake db here has no row locks, so the seam is
+// mocked (its own contract is pinned by lib/execution-host integration tests).
+vi.mock("@/lib/execution-host", () => ({
+  localHost: vi.fn(async () => ({
+    id: "host-1",
+    hostKey: "eh_test0000000000000000000000000000",
+    kind: "local_direct",
+  })),
+  mintPlacement: vi.fn(async (_tx: unknown, input: { runId: string }) => ({
+    id: `assignment-${input.runId}`,
+    runId: input.runId,
+    executionHostId: "host-1",
+    epoch: 1,
+    state: "active",
+  })),
+}));
 vi.mock("@/lib/db/client", () => ({ getDb: () => fakeDb }));
 vi.mock("@/lib/worktree", () => ({
   addWorktree: mocks.addWorktree,
@@ -351,6 +370,7 @@ beforeEach(async () => {
     kind: "ready",
     health: {
       status: "ready",
+      host: TEST_HOST_IDENTITY,
       version: "test",
       uptimeMs: 1,
       checkedAt: new Date().toISOString(),

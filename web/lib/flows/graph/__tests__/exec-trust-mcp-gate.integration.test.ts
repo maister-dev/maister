@@ -8,9 +8,9 @@
  * Harness mirrors runner-graph.materialize.integration.test.ts, plus a pinned
  * flow_revisions row carrying the exec_trust axis.
  */
-import type { SupervisorApi } from "@/lib/flows/runner-agent";
+import type { ExecutionHosts } from "@/lib/execution-host";
+import type { FakeCall } from "@/test-support/fake-execution-host";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
-import type { SupervisorEvent } from "@/lib/supervisor-client";
 import type { FlowRevisionExecTrust } from "@/lib/db/schema";
 
 import { mkdtemp } from "node:fs/promises";
@@ -22,6 +22,7 @@ import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { runFlow } from "@/lib/flows/runner";
+import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import { schema, seedGraphRun } from "@/test-support/graph-run-seed";
 import {
   startMainPostgresTestDb,
@@ -100,44 +101,20 @@ async function seedRun(execTrust: FlowRevisionExecTrust) {
   return { runId: seeded.runId, runtimeRoot: seeded.runtimeRoot };
 }
 
-function makeSupervisorSpy(): SupervisorApi & {
+// ADR-164: a fake execution host whose agent turn is a clean end-turn, plus a
+// spy that receives every `session.create` payload the runner sends.
+async function makeSupervisorSpy(runId: string): Promise<{
+  hosts: ExecutionHosts;
   createSpy: ReturnType<typeof vi.fn>;
-} {
-  const createSpy = vi.fn(async () => ({
-    sessionId: "sup-1",
-    pid: 1,
-    acpSessionId: "acp-1",
-  }));
+}> {
+  const createSpy = vi.fn();
+  const { hosts, fake } = await fakeGraphHosts(db, runId);
 
-  async function* endTurnStream(): AsyncGenerator<SupervisorEvent> {
-    yield {
-      type: "session.exited",
-      sessionId: "sup-1",
-      monotonicId: 1,
-      exitCode: 0,
-    } as SupervisorEvent;
-  }
+  fake.onCall("createSession", (call: FakeCall) => {
+    createSpy(call.envelope?.payload);
+  });
 
-  return {
-    createSession: createSpy as unknown as SupervisorApi["createSession"],
-    deleteSession: vi.fn(async () => undefined),
-    sendPrompt: vi.fn(async () => ({ stopReason: "end_turn" as const })),
-    streamSession: vi.fn(() =>
-      endTurnStream(),
-    ) as unknown as SupervisorApi["streamSession"],
-    cancelPermission: vi.fn(
-      async () => ({ ok: true }) as { ok: true },
-    ) as unknown as SupervisorApi["cancelPermission"],
-    checkpointSession: async () => ({
-      alreadyCheckpointed: false,
-      sessionId: "s",
-      monotonicId: 0,
-    }),
-    deliverPermission: vi.fn(
-      async () => ({ ok: true }) as { ok: true },
-    ) as unknown as SupervisorApi["deliverPermission"],
-    createSpy,
-  };
+  return { hosts, createSpy };
 }
 
 function githubFromCreateCall(api: { createSpy: ReturnType<typeof vi.fn> }) {
@@ -151,12 +128,12 @@ function githubFromCreateCall(api: { createSpy: ReturnType<typeof vi.fn> }) {
 describe("runGraph — stdio MCP spawn gated on flow_revisions.exec_trust (T-C8b)", () => {
   it("withholds the stdio MCP when the pinned revision is untrusted", async () => {
     const seeded = await seedRun("untrusted");
-    const api = makeSupervisorSpy();
+    const api = await makeSupervisorSpy(seeded.runId);
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api.hosts,
     });
 
     expect(api.createSpy).toHaveBeenCalledTimes(1);
@@ -165,12 +142,12 @@ describe("runGraph — stdio MCP spawn gated on flow_revisions.exec_trust (T-C8b
 
   it("materializes the stdio MCP when the pinned revision is trusted", async () => {
     const seeded = await seedRun("trusted");
-    const api = makeSupervisorSpy();
+    const api = await makeSupervisorSpy(seeded.runId);
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api.hosts,
     });
 
     expect(api.createSpy).toHaveBeenCalledTimes(1);

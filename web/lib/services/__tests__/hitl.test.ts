@@ -195,11 +195,75 @@ vi.mock("@/lib/supervisor-client", () => ({
   createSession: vi.fn(),
   sendPrompt: vi.fn(),
   streamSession: async function* () {},
-  deliverPermission: (sessionId: string, requestId: string, optionId: string) =>
-    deliverPermissionSpy(sessionId, requestId, optionId),
-  cancelPermission: (sessionId: string, requestId: string, reason: string) =>
-    cancelPermissionSpy(sessionId, requestId, reason),
 }));
+
+// ADR-164: the permission delivery is a `session.input` command queued in the
+// Phase-1 claim tx and delivered afterwards through the client bound to the
+// run's assignment; the cancel on a failed delivery is the same command kind
+// with `action:"cancel"`. This fake client keeps the wire-level spies.
+vi.mock("@/lib/execution-host", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/execution-host")>();
+
+  return {
+    ...actual,
+    createExecutionHosts: () => ({
+      forRun: async (runId: string) => ({
+        assignment: { id: `assignment-${runId}`, runId, epoch: 1 },
+        async prepareInput(
+          _tx: unknown,
+          sessionId: string,
+          payload: { requestId: string; optionId?: string },
+        ) {
+          return {
+            commandId: `cmd-${runId}`,
+            payload,
+            deliver: async (opts?: {
+              onAck?: (
+                tx: unknown,
+                result: { ok: true; replayed: boolean },
+              ) => Promise<void>;
+            }) => {
+              await deliverPermissionSpy(
+                sessionId,
+                payload.requestId,
+                payload.optionId ?? "",
+              );
+              const result = { ok: true as const, replayed: false };
+
+              await fakeDb.transaction(async (tx) => opts?.onAck?.(tx, result));
+
+              return result;
+            },
+          };
+        },
+        deliverInput: async (
+          sessionId: string,
+          payload: { requestId: string; reason?: string },
+        ) => {
+          await cancelPermissionSpy(
+            sessionId,
+            payload.requestId,
+            payload.reason ?? "",
+          );
+
+          return { ok: true, replayed: false };
+        },
+        checkpoint: vi.fn(async (sessionId: string) => ({
+          alreadyCheckpointed: false,
+          sessionId,
+          monotonicId: 1,
+        })),
+      }),
+      forAssignment: vi.fn(),
+      local: vi.fn(),
+    }),
+    localHost: vi.fn(async () => ({ id: "host-1", hostKey: "eh_test" })),
+    mintPlacement: vi.fn(async (_tx: unknown, input: { runId: string }) => ({
+      id: `assignment-${input.runId}-2`,
+      epoch: 2,
+    })),
+  };
+});
 
 vi.mock("@/lib/flows/runner", () => ({
   runFlow: (runId: string) => runFlowSpy(runId),

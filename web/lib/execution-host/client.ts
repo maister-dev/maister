@@ -15,6 +15,7 @@ import type {
   DeleteSessionOutcome,
   ExecutionHostTransport,
   HostHealth,
+  InputDeliveryResult,
   InputPayload,
   WorkspaceRecord,
 } from "./contracts";
@@ -27,23 +28,26 @@ import type {
   PlacementReason,
 } from "./types";
 
+import { eq } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import { ensureWorkspaceAdopted, isUnknownWorkspaceError } from "./adoption";
 import {
   getActiveAssignment,
   getAssignmentById,
+  getLatestAssignment,
   setAssignmentWorkspace,
 } from "./assignments";
 import { COMMAND_POLICY, deliverCommand, deliverPrompt } from "./deliverer";
-import { issueCommand } from "./ledger";
+import { issueCommand, type IssuedCommand } from "./ledger";
 import { ensureAssignment } from "./placement";
 import { hostForAssignment } from "./resolver";
 import { commandSignals } from "./signals";
-import { createLocalDirectTransport } from "./transports/local-direct";
+import { defaultTransport } from "./default-transport";
 import { asExecutionWorkspaceId, asHostSessionId } from "./types";
 
 import { persistRunSessionHostBinding } from "@/lib/runs/active-run-session";
+import { nodeAttempts } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { getDb } from "@/lib/db/client";
 
@@ -57,6 +61,17 @@ export type CreateSessionOptions = {
   // `acp_session_id`, `execution_assignment_id`). Defaults to the payload's
   // `sessionName`, else "default" (M42 single-session runs).
   sessionName?: string;
+};
+
+// ADR-164 D5 ordering for `session.input`: the command row is queued inside the
+// caller's own transaction (the HITL Phase-1 claim) and delivered after it
+// commits; `onAck` runs in the ack transaction together with `succeeded`.
+export type PreparedInput = {
+  readonly commandId: string;
+  readonly payload: InputPayload;
+  deliver(opts?: {
+    onAck?: (tx: Db, result: InputDeliveryResult) => Promise<void>;
+  }): Promise<InputDeliveryResult>;
 };
 
 // ADR-164 D3/D4: every host-bound command of a run goes through the client
@@ -82,7 +97,15 @@ export interface BoundClient {
   deliverInput(
     sessionId: HostSessionId | string,
     payload: InputPayload,
-  ): Promise<{ ok: true }>;
+  ): Promise<InputDeliveryResult>;
+  prepareInput(
+    tx: Db,
+    sessionId: HostSessionId | string,
+    payload: InputPayload,
+  ): Promise<PreparedInput>;
+  // The host's session records for THIS run (any status); callers pick the
+  // live one for the node they act on.
+  sessionsForRun(): Promise<SupervisorSessionRecord[]>;
   cancelPrompt(
     sessionId: HostSessionId | string,
   ): Promise<{ cancelled: boolean }>;
@@ -113,9 +136,11 @@ export type ExecutionHosts = {
     assignment: ExecutionAssignment | { id: string },
   ): Promise<BoundClient>;
   // The run's ACTIVE assignment; a pre-Stage-A run is assigned lazily (D9).
+  // `teardown` binds the newest assignment even when it is `released` (X-EH-20:
+  // teardown kinds stay admissible there) instead of minting a new epoch.
   forRun(
     runId: string,
-    opts?: { reason?: PlacementReason },
+    opts?: { reason?: PlacementReason; teardown?: boolean },
   ): Promise<BoundClient>;
   local(): HostAdminClient;
 };
@@ -131,7 +156,7 @@ export type ExecutionHostsDeps = {
 export function createExecutionHosts(
   deps: ExecutionHostsDeps = {},
 ): ExecutionHosts {
-  const transport = deps.transport ?? createLocalDirectTransport();
+  const transport = deps.transport ?? defaultTransport();
   const logger = deps.logger ?? defaultLog;
   const dbOf = () => deps.db ?? getDb();
 
@@ -142,32 +167,41 @@ export function createExecutionHosts(
     let current = assignment;
     const db = dbOf();
 
-    async function immediate<TPayload, TResult>(
+    type ImmediateOptions<TResult> = {
+      targetSessionId?: string;
+      onAck?: (tx: Db, result: TResult) => Promise<void>;
+      resultSummary?: (result: TResult) => Record<string, unknown> | null;
+    };
+
+    function issue<TPayload>(
+      issueDb: Db,
       kind: CommandKind,
       payload: TPayload,
-      send: (envelope: CommandEnvelope<TPayload>) => Promise<TResult>,
-      opts: {
-        targetSessionId?: string;
-        onAck?: (tx: Db, result: TResult) => Promise<void>;
-        resultSummary?: (result: TResult) => Record<string, unknown> | null;
-      } = {},
-    ): Promise<TResult> {
+      targetSessionId: string | null,
+    ) {
       const policy = COMMAND_POLICY[kind];
-      const { row, envelope } = await issueCommand(db, {
+
+      return issueCommand(issueDb, {
         assignment: current,
         host,
         kind,
         payload,
         maxAttempts: policy.maxAttempts,
         driverless: policy.driverless,
-        targetSessionId: opts.targetSessionId ?? null,
+        targetSessionId,
         logger,
       });
+    }
 
+    function deliver<TPayload, TResult>(
+      issued: IssuedCommand<TPayload>,
+      send: (envelope: CommandEnvelope<TPayload>) => Promise<TResult>,
+      opts: ImmediateOptions<TResult>,
+    ): Promise<TResult> {
       return deliverCommand<TResult>({
         db,
-        command: row,
-        envelope,
+        command: issued.row,
+        envelope: issued.envelope,
         send: (env) => send(env as CommandEnvelope<TPayload>),
         onAck: opts.onAck,
         resultSummary: opts.resultSummary,
@@ -175,6 +209,22 @@ export function createExecutionHosts(
         sleep: deps.sleep,
         now: deps.now,
       });
+    }
+
+    async function immediate<TPayload, TResult>(
+      kind: CommandKind,
+      payload: TPayload,
+      send: (envelope: CommandEnvelope<TPayload>) => Promise<TResult>,
+      opts: ImmediateOptions<TResult> = {},
+    ): Promise<TResult> {
+      const issued = await issue(
+        db,
+        kind,
+        payload,
+        opts.targetSessionId ?? null,
+      );
+
+      return deliver(issued, send, opts);
     }
 
     const client: BoundClient = {
@@ -229,14 +279,24 @@ export function createExecutionHosts(
             { ...payload, sessionName, executionWorkspaceId },
             (env) => transport.createSession(env),
             {
-              onAck: (tx, result) =>
-                persistRunSessionHostBinding(tx, {
+              onAck: async (tx, result) => {
+                await persistRunSessionHostBinding(tx, {
                   runId: current.runId,
                   sessionName,
                   hostSessionId: result.sessionId,
                   acpSessionId: result.acpSessionId,
                   executionAssignmentId: current.id,
-                }),
+                });
+                // The flow attempt that owns this session is stamped with the
+                // driver generation here, not at append time: an attempt whose
+                // host binding fails must still exist in the ledger as Failed.
+                if (payload.nodeAttemptId) {
+                  await tx
+                    .update(nodeAttempts)
+                    .set({ executionAssignmentId: current.id })
+                    .where(eq(nodeAttempts.id, payload.nodeAttemptId));
+                }
+              },
               resultSummary: (result) => ({
                 sessionId: result.sessionId,
                 acpSessionId: result.acpSessionId,
@@ -302,11 +362,32 @@ export function createExecutionHosts(
         });
       },
       deliverInput(sessionId, payload) {
-        return immediate<InputPayload, { ok: true }>(
+        return immediate<InputPayload, InputDeliveryResult>(
           "session.input",
           payload,
           (env) => transport.deliverInput(sessionId, env),
           { targetSessionId: sessionId },
+        );
+      },
+      async prepareInput(tx, sessionId, payload) {
+        const issued = await issue(tx, "session.input", payload, sessionId);
+
+        return {
+          commandId: issued.row.id,
+          payload,
+          deliver: (opts) =>
+            deliver<InputPayload, InputDeliveryResult>(
+              issued,
+              (env) => transport.deliverInput(sessionId, env),
+              { targetSessionId: sessionId, onAck: opts?.onAck },
+            ),
+        };
+      },
+      async sessionsForRun() {
+        const runId = current.runId;
+
+        return (await transport.listSessions()).filter(
+          (record) => record.runId === runId,
         );
       },
       cancelPrompt(sessionId) {
@@ -393,8 +474,10 @@ export function createExecutionHosts(
       const db = dbOf();
       const assignment =
         (await getActiveAssignment(db, runId)) ??
+        (opts?.teardown ? await getLatestAssignment(db, runId) : null) ??
         (await ensureAssignment(db, runId, opts?.reason ?? "legacy_backfill", {
           logger,
+          transport,
         }));
 
       return bind(

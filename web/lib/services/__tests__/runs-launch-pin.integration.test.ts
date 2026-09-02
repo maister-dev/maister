@@ -25,6 +25,7 @@ const checkSupervisorHealthMock = vi.fn(async () => ({
   kind: "ready" as const,
   health: {
     status: "ready",
+    host: TEST_HOST_IDENTITY,
     version: "0.0.1",
     uptimeMs: 1,
     checkedAt: new Date().toISOString(),
@@ -82,6 +83,7 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { TEST_HOST_IDENTITY } from "@/test-support/supervisor-health-fixture";
 
 const schema = schemaModule as unknown as Record<string, any>;
 

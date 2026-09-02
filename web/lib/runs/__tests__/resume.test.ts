@@ -9,9 +9,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const createSessionSpy = vi.fn();
 
-vi.mock("@/lib/supervisor-client", () => ({
-  createSession: (input: unknown) => createSessionSpy(input),
-}));
+// ADR-164: the resume's `session.create` rides the client bound to the run's
+// freshly minted assignment; the placement host is resolved before the claim.
+// The fake client routes the create to the existing spy (handle-form payload).
+vi.mock("@/lib/execution-host", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/execution-host")>();
+
+  return {
+    ...actual,
+    localHost: vi.fn(async () => ({ id: "host-1", hostKey: "eh_test" })),
+    createExecutionHosts: () => ({
+      transport: {},
+      forRun: async () => ({
+        createSession: (input: unknown) => createSessionSpy(input),
+      }),
+      forAssignment: vi.fn(),
+      local: vi.fn(),
+    }),
+  };
+});
 
 // Mock state-transition helpers so we can drive markResumed outcomes
 // without a real DB.

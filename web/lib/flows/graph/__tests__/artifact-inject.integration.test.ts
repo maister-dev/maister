@@ -1,6 +1,6 @@
 import type { NodeAttempt, Run } from "@/lib/db/schema";
-import type { SupervisorApi } from "@/lib/flows/runner-agent";
-import type { SupervisorEvent } from "@/lib/supervisor-client";
+import type { ExecutionHosts } from "@/lib/execution-host";
+import type { FakeCall } from "@/test-support/fake-execution-host";
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -17,6 +17,7 @@ import {
   resolveArtifactContent,
 } from "@/lib/flows/graph/artifact-content";
 import { runFlow } from "@/lib/flows/runner";
+import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import {
   schema,
   seedGraphRun as seedGraphRunShared,
@@ -105,112 +106,35 @@ async function getAttempt(
   return rows.find((a) => a.nodeId === nodeId);
 }
 
-function makeAgentSupervisor(): SupervisorApi & {
+// ADR-164: a fake execution host streaming "done" then a clean end-turn, plus
+// a spy on every `session.create` the runner sends.
+async function makeAgentSupervisor(runId: string): Promise<{
+  hosts: ExecutionHosts;
   createSession: ReturnType<typeof vi.fn>;
-} {
-  async function* stream(): AsyncGenerator<SupervisorEvent> {
-    yield {
-      type: "session.update",
-      sessionId: "sup-1",
-      monotonicId: 1,
-      update: {
-        sessionUpdate: "agent_message_chunk",
-        content: { type: "text", text: "done" },
-      },
-    } as SupervisorEvent;
-    yield {
-      type: "session.exited",
-      sessionId: "sup-1",
-      monotonicId: 2,
-      exitCode: 0,
-    } as SupervisorEvent;
-  }
+}> {
+  const createSession = vi.fn();
+  const { hosts, fake } = await fakeGraphHosts(db, runId, { text: "done" });
 
-  const createSession = vi.fn(async () => ({
-    sessionId: "sup-1",
-    pid: 1,
-    acpSessionId: "acp-1",
-  }));
+  fake.onCall("createSession", (call: FakeCall) => {
+    createSession(call.envelope?.payload);
+  });
 
-  return {
-    createSession: createSession as unknown as SupervisorApi["createSession"],
-    deleteSession: (async () =>
-      undefined) as unknown as SupervisorApi["deleteSession"],
-    sendPrompt: (async () => ({
-      stopReason: "end_turn" as const,
-    })) as unknown as SupervisorApi["sendPrompt"],
-    streamSession: (() =>
-      stream()) as unknown as SupervisorApi["streamSession"],
-    cancelPermission: (async () => ({
-      ok: true,
-    })) as unknown as SupervisorApi["cancelPermission"],
-    checkpointSession: async () => ({
-      alreadyCheckpointed: false,
-      sessionId: "s",
-      monotonicId: 0,
-    }),
-    deliverPermission: (async () => ({
-      ok: true,
-    })) as unknown as SupervisorApi["deliverPermission"],
-  } as unknown as SupervisorApi & { createSession: ReturnType<typeof vi.fn> };
+  return { hosts, createSession };
 }
 
-// A supervisor that records every resolved prompt handed to sendPrompt and
-// streams a `pass` verdict so a blocking ai_judgment gate clears (letting the
-// node finish). Used to assert the GATE prompt rendered the injected body.
-function makeCapturingSupervisor(): {
-  api: SupervisorApi;
+// ADR-164: a fake execution host that records every resolved prompt the runner
+// sends and streams a `pass` verdict so a blocking ai_judgment gate clears
+// (letting the node finish). Used to assert the GATE prompt rendered the
+// injected body.
+async function makeCapturingSupervisor(runId: string): Promise<{
+  api: { hosts: ExecutionHosts };
   prompts: string[];
-} {
-  const prompts: string[] = [];
+}> {
+  const { hosts, prompts } = await fakeGraphHosts(db, runId, {
+    text: '{"verdict":"pass"}',
+  });
 
-  async function* stream(): AsyncGenerator<SupervisorEvent> {
-    yield {
-      type: "session.update",
-      sessionId: "sup-1",
-      monotonicId: 1,
-      update: {
-        sessionUpdate: "agent_message_chunk",
-        content: { type: "text", text: '{"verdict":"pass"}' },
-      },
-    } as SupervisorEvent;
-    yield {
-      type: "session.exited",
-      sessionId: "sup-1",
-      monotonicId: 2,
-      exitCode: 0,
-    } as SupervisorEvent;
-  }
-
-  const api = {
-    createSession: (async () => ({
-      sessionId: "sup-1",
-      pid: 1,
-      acpSessionId: "acp-1",
-    })) as unknown as SupervisorApi["createSession"],
-    deleteSession: (async () =>
-      undefined) as unknown as SupervisorApi["deleteSession"],
-    sendPrompt: (async (_sessionId: string, args: { prompt: string }) => {
-      prompts.push(args.prompt);
-
-      return { stopReason: "end_turn" as const };
-    }) as unknown as SupervisorApi["sendPrompt"],
-    streamSession: (() =>
-      stream()) as unknown as SupervisorApi["streamSession"],
-    cancelPermission: (async () => ({
-      ok: true,
-    })) as unknown as SupervisorApi["cancelPermission"],
-    checkpointSession: async () => ({
-      alreadyCheckpointed: false,
-      sessionId: "s",
-      monotonicId: 0,
-    }),
-    deliverPermission: (async () => ({
-      ok: true,
-    })) as unknown as SupervisorApi["deliverPermission"],
-  } as unknown as SupervisorApi;
-
-  return { api, prompts };
+  return { api: { hosts }, prompts };
 }
 
 const COMPAT = { engine_min: "2.2.0" };
@@ -250,7 +174,7 @@ describe("runGraph — artifact body injection (ADR-120, P2)", () => {
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeAgentSupervisor(),
+      executionHosts: (await makeAgentSupervisor(seeded.runId)).hosts,
     });
 
     const consume = await getAttempt(seeded.runId, "consume");
@@ -295,7 +219,7 @@ describe("runGraph — artifact body injection (ADR-120, P2)", () => {
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeAgentSupervisor(),
+      executionHosts: (await makeAgentSupervisor(seeded.runId)).hosts,
     });
 
     const consume = await getAttempt(seeded.runId, "consume");
@@ -427,7 +351,7 @@ describe("runGraph — artifact body injection (ADR-120, P2)", () => {
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeAgentSupervisor(),
+      executionHosts: (await makeAgentSupervisor(seeded.runId)).hosts,
     });
 
     const consume = await getAttempt(seeded.runId, "consume");
@@ -473,12 +397,12 @@ describe("runGraph — artifact body injection (ADR-120, P2)", () => {
       text: "GATE-ONLY-BODY-789",
     });
 
-    const { api, prompts } = makeCapturingSupervisor();
+    const { api, prompts } = await makeCapturingSupervisor(seeded.runId);
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api.hosts,
     });
 
     // The gate passed → node finished → run reached Review.
@@ -522,12 +446,12 @@ describe("runGraph — artifact body injection (ADR-120, P2)", () => {
       text: "SKILL-CMD-BODY-456",
     });
 
-    const { api, prompts } = makeCapturingSupervisor();
+    const { api, prompts } = await makeCapturingSupervisor(seeded.runId);
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api.hosts,
     });
 
     expect((await getRun(seeded.runId)).status).toBe("Review");
@@ -583,7 +507,7 @@ describe("runGraph — artifact body injection (ADR-120, P2)", () => {
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeAgentSupervisor(),
+      executionHosts: (await makeAgentSupervisor(seeded.runId)).hosts,
     });
 
     const consume = await getAttempt(seeded.runId, "consume");
@@ -628,12 +552,12 @@ describe("runGraph — artifact body injection (ADR-120, P2)", () => {
       path: "vanished.log",
     });
 
-    const api = makeAgentSupervisor();
+    const api = await makeAgentSupervisor(seeded.runId);
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api.hosts,
     });
 
     const consume = await getAttempt(seeded.runId, "consume");
@@ -680,7 +604,7 @@ describe("runGraph — artifact body injection (ADR-120, P2)", () => {
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeAgentSupervisor(),
+      executionHosts: (await makeAgentSupervisor(seeded.runId)).hosts,
     });
 
     const gateRows = (await db
@@ -731,7 +655,7 @@ describe("runGraph — artifact body injection (ADR-120, P2)", () => {
       await runFlow(seeded.runId, {
         db,
         runtimeRoot: seeded.runtimeRoot,
-        supervisorApi: makeAgentSupervisor(),
+        executionHosts: (await makeAgentSupervisor(seeded.runId)).hosts,
       });
 
       const consume = await getAttempt(seeded.runId, "consume");
@@ -768,12 +692,12 @@ describe("runGraph — artifact body injection (ADR-120, P2)", () => {
       path: "vanished.log",
     });
 
-    const api = makeAgentSupervisor();
+    const api = await makeAgentSupervisor(seeded.runId);
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api.hosts,
     });
 
     const run = await getRun(seeded.runId);

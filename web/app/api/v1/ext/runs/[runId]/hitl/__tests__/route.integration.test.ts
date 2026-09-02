@@ -25,6 +25,7 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 
 const schema = schemaModule as unknown as Record<string, any>;
 const auditMockState = vi.hoisted(() => ({
@@ -32,11 +33,11 @@ const auditMockState = vi.hoisted(() => ({
 }));
 const supervisorMocks = vi.hoisted(() => ({
   checkSupervisorHealth: vi.fn(async () => ({ kind: "available" })),
-  createSession: vi.fn(async () => ({
+  createSession: vi.fn(async (..._args: unknown[]) => ({
     sessionId: "resume-session",
     acpSessionId: "resume-acp",
   })),
-  deliverPermission: vi.fn(async () => ({ ok: true })),
+  deliverPermission: vi.fn(async (..._args: unknown[]) => ({ ok: true })),
 }));
 const resumeDriverMocks = vi.hoisted(() => ({
   scheduleResumedSessionDrive: vi.fn(() => "resume-drive"),
@@ -76,6 +77,64 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
   return { ...actual, ...supervisorMocks };
 });
 vi.mock("@/lib/runs/resume-driver", () => resumeDriverMocks);
+// ADR-164: the permission delivery rides a `session.input` command through the
+// client bound to the run's assignment; route the wire call to the existing
+// `deliverPermission` mock so every case keeps its supervisor-level assertions.
+vi.mock("@/lib/execution-host", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/execution-host")>();
+
+  return {
+    ...actual,
+    // The idle branch resolves the (fake, registered) local host before its
+    // resume claim and creates the resumed session through the bound client.
+    createExecutionHosts: () => ({
+      // No transport override: host resolution rides the registered fake.
+      transport: undefined,
+      forRun: async (runId: string) => ({
+        assignment: { id: `assignment-${runId}`, runId, epoch: 1 },
+        createSession: (payload: unknown) =>
+          supervisorMocks.createSession(payload),
+        async prepareInput(
+          _tx: unknown,
+          sessionId: string,
+          payload: { requestId: string; optionId?: string },
+        ) {
+          return {
+            commandId: `cmd-${randomUUID()}`,
+            payload,
+            deliver: async (opts?: {
+              onAck?: (
+                tx: unknown,
+                result: { ok: true; replayed: boolean },
+              ) => Promise<void>;
+            }) => {
+              await supervisorMocks.deliverPermission(
+                sessionId,
+                payload.requestId,
+                payload.optionId ?? "",
+              );
+              const result = { ok: true as const, replayed: false };
+
+              await (db as any).transaction((tx: unknown) =>
+                opts?.onAck?.(tx, result),
+              );
+
+              return result;
+            },
+          };
+        },
+        deliverInput: async () => ({ ok: true, replayed: false }),
+        checkpoint: async (sessionId: string) => ({
+          alreadyCheckpointed: false,
+          sessionId,
+          monotonicId: 1,
+        }),
+      }),
+      forAssignment: vi.fn(),
+      local: vi.fn(),
+    }),
+  };
+});
 vi.mock("@/lib/authz", () => ({
   requireProjectAction: vi.fn(async () => {}),
   requireProjectActionForUser: vi.fn(async () => {}),
@@ -114,6 +173,8 @@ beforeAll(async () => {
 
   pool = testDatabase.pool;
   db = testDatabase.db;
+  // ADR-164: the resume claim mints on the local host — register a fake one.
+  await fakeExecutionHosts(db);
 }, 180_000);
 
 afterAll(async () => {

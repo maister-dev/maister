@@ -6,6 +6,8 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { eq } from "drizzle-orm";
+
 import * as fullSchema from "@/lib/db/schema";
 import {
   testPlatformRunnerRow,
@@ -197,4 +199,57 @@ export async function seedGraphRun(
     runtimeRoot,
     repoPath,
   };
+}
+
+// ADR-164: register a local execution host row (idempotent on `hostKey`) and
+// mint the run's `launch` assignment on it — what `launchRun` does inside its
+// run-insert transaction, for suites that seed runs directly.
+export async function seedExecutionAssignment(
+  db: NodePgDatabase,
+  input: { runId: string; hostKey?: string; bootId?: string },
+): Promise<{ hostId: string; assignmentId: string; epoch: number }> {
+  const hostKey = input.hostKey ?? `eh_${randomUUID().replace(/-/g, "")}`;
+  const existing = (await db
+    .select({ id: schema.executionHosts.id })
+    .from(schema.executionHosts)
+    .where(eq(schema.executionHosts.hostKey, hostKey))) as Array<{
+    id: string;
+  }>;
+  let hostId = existing[0]?.id;
+
+  if (!hostId) {
+    hostId = randomUUID();
+    await db.insert(schema.executionHosts).values({
+      id: hostId,
+      hostKey,
+      kind: "local_direct",
+      displayName: "seeded local host",
+      transport: { kind: "local_direct" },
+      capabilities: {
+        protocolVersion: 1,
+        supervisorVersion: "test",
+        adapters: [],
+      },
+      readiness: "ready",
+      lastBootId: input.bootId ?? randomUUID(),
+      lastSeenAt: new Date(),
+    });
+  }
+
+  const assignmentId = randomUUID();
+
+  await db.insert(schema.executionAssignments).values({
+    id: assignmentId,
+    runId: input.runId,
+    executionHostId: hostId,
+    epoch: 1,
+    state: "active",
+    placementReason: "launch",
+  });
+  await db
+    .update(schema.runs)
+    .set({ executionAssignmentId: assignmentId })
+    .where(eq(schema.runs.id, input.runId));
+
+  return { hostId, assignmentId, epoch: 1 };
 }

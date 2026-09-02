@@ -90,6 +90,11 @@ export type InputPayload = {
   reason?: string;
 };
 
+// `replayed` = the host answered from its receipt (the same command id was
+// re-sent after an unknown outcome): the delivery happened on an earlier
+// attempt.
+export type InputDeliveryResult = { ok: true; replayed: boolean };
+
 export type CheckpointResult = {
   alreadyCheckpointed: boolean;
   sessionId: string;
@@ -125,7 +130,7 @@ export interface ExecutionHostTransport {
   deliverInput(
     sessionId: string,
     envelope: CommandEnvelope<InputPayload>,
-  ): Promise<{ ok: true }>;
+  ): Promise<InputDeliveryResult>;
   cancelPrompt(
     sessionId: string,
     envelope: CommandEnvelope<EmptyPayload>,
