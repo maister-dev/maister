@@ -246,7 +246,16 @@ sequenceDiagram
 ### (d) cancel / abandon cascade down the run-tree (Implemented)
 
 Stopping, abandoning, or dropping an orchestrator run cascades to its children in
-one transaction; every cascaded terminal honors `promoteNextPending`.
+one transaction; every cascaded terminal honors `promoteNextPending`. The
+cascade flips rows only — sessions live in the supervisor and the graph runner
+never re-reads `runs.status` — so every tree-cancelling caller (operator stop /
+drop, the abandon route, the coordinator's `run_cancel` of a child that itself
+orchestrates, the budget tree-terminate, the orphan-child compensation, the
+`orchestrator-stuck` crash) goes through ONE composition,
+`cascadeAbandonRunTreeAndStopSessions`, which also stops every cascaded
+descendant's live ACP session; the reconcile sweep reaps any live session a
+crash or a supervisor hiccup leaves under an `Abandoned` row
+**(Implemented — ADR-163 amendment)**.
 
 ```mermaid
 flowchart TD
@@ -254,7 +263,8 @@ flowchart TD
     BR --> ONE[one tx: cancel in-flight children]
     ONE --> TWO[release any WaitingOnChildren child]
     TWO --> THREE[mark un-launched launch_mode=auto child tasks Abandoned]
-    THREE --> SLOT[every cascaded terminal -> promoteNextPending<br/>no orphan holds a slot]
+    THREE --> SESS[stop every cascaded child's live ACP session<br/>best-effort; reconcile reaps a live session under an Abandoned row]
+    SESS --> SLOT[every cascaded terminal -> promoteNextPending<br/>no orphan holds a slot]
 ```
 
 ### (e) reviewed-child settle → promote / rework / auto-promote (Implemented, ADR-100)
@@ -574,7 +584,11 @@ none, so all three are covered by ONE helper, `admitDelegatedChild()`, called at
 - Cancelling or abandoning an orchestrator run MUST cascade to its run-tree in one
   transaction (cancel in-flight children, release `WaitingOnChildren`, mark
   un-launched `launch_mode='auto'` child tasks Abandoned) and every cascaded
-  terminal MUST honor `promoteNextPending`.
+  terminal MUST honor `promoteNextPending`; every tree-cancelling caller MUST
+  also stop each cascaded descendant's live supervisor session through
+  `cascadeAbandonRunTreeAndStopSessions`, and the reconcile sweep MUST stop a
+  live session found under an `Abandoned` run row (`orphanSessionsReaped`)
+  **(Implemented — ADR-163 amendment)**.
 - The delegation tools MUST be reachable ONLY from an `orchestrator` session (a
   run-bound token carrying `ORCHESTRATOR_TOKEN_SCOPES` =
   `runs:delegate`+`runs:collect`+`runs:cancel`+`runs:promote` materialized into

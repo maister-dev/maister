@@ -36,7 +36,7 @@ import { compileManifest } from "@/lib/flows/graph/compile";
 import { markNodeFailed, markNodeNeedsInput } from "@/lib/flows/graph/ledger";
 import { loadRunManifest } from "@/lib/queries/run-manifest";
 import { runtimeRoot as configuredRuntimeRoot } from "@/lib/instance-config";
-import { cascadeAbandonRunTree } from "@/lib/orchestrator/cascade";
+import { cascadeAbandonRunTreeAndStopSessions } from "@/lib/orchestrator/cascade";
 import {
   consecutiveFailedAttempts,
   consecutiveFailedRuns,
@@ -60,7 +60,6 @@ import {
 } from "@/lib/runs/execution-policy";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
-import { teardownLiveSessionsForRuns } from "@/lib/runs/session-teardown";
 import { promoteNextPending, releaseSlotOnIdle } from "@/lib/scheduler";
 import {
   checkpointSession,
@@ -1784,19 +1783,14 @@ async function actBudgetTerminateTree(
     }
   }
 
-  const { cascadedRunIds } = await cascadeAbandonRunTree(
+  // Rows AND sessions: without the teardown the child agents keep running to
+  // completion and the tree token cap stays soft.
+  await cascadeAbandonRunTreeAndStopSessions(
     candidate.id,
     candidate.taskId,
     "budget_exceeded",
-    { db },
+    { db, records, logLabel: "[budget] tree-terminate" },
   );
-
-  // The cascade only flipped DB rows; without this the child agents keep
-  // running to completion and the tree token cap stays soft.
-  await teardownLiveSessionsForRuns(cascadedRunIds, {
-    records,
-    logLabel: "[budget] tree-terminate",
-  });
 
   const notified = mergedBudgetState(
     candidate.budgetState,

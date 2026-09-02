@@ -1640,12 +1640,15 @@ async function stopLiveSupervisorSession(
 
 // M37 (ADR-098) T7.4: when a FLOW run being stopped/dropped is an orchestrator
 // (status WaitingOnChildren OR it has run-tree children), abandon its whole
-// sub-tree FIRST (children-first ordering) so no in-flight or queued child
-// outlives the cancelled coordinator. Idempotent — a second call (e.g. the drop
-// after a stop in stopThenDrop) finds every descendant already terminal and
-// cascades nothing. Lazy imports keep the cascade's scheduler/query graph out of
-// this module's static eval graph (mirrors the agent/scratch service imports).
-// The default WorkbenchLifecycleDeps wires this as cascadeOrchestratorIfNeeded.
+// sub-tree FIRST (children-first ordering) AND stop every cascaded
+// descendant's live session — the cascade flips rows only, and a grandchild
+// left live keeps spending under its terminal row — so no in-flight or queued
+// child outlives the cancelled coordinator. Idempotent — a second call (e.g.
+// the drop after a stop in stopThenDrop) finds every descendant already
+// terminal and cascades nothing. Lazy imports keep the cascade's
+// scheduler/query graph out of this module's static eval graph (mirrors the
+// agent/scratch service imports). The default WorkbenchLifecycleDeps wires this
+// as cascadeOrchestratorIfNeeded.
 async function cascadeOrchestratorIfNeeded(run: LifecycleRun): Promise<void> {
   if (run.runKind !== "flow") return;
 
@@ -1657,11 +1660,16 @@ async function cascadeOrchestratorIfNeeded(run: LifecycleRun): Promise<void> {
 
   if (!hasChildren) return;
 
-  const { cascadeAbandonRunTree } = await import("@/lib/orchestrator/cascade");
+  const { cascadeAbandonRunTreeAndStopSessions } = await import(
+    "@/lib/orchestrator/cascade"
+  );
 
-  await cascadeAbandonRunTree(run.id, run.taskId, "user_stopped", {
-    db: db(),
-  });
+  await cascadeAbandonRunTreeAndStopSessions(
+    run.id,
+    run.taskId,
+    "user_stopped",
+    { db: db(), logLabel: "[workbench.cascade]" },
+  );
 }
 
 async function stopFlowAfterAuth(

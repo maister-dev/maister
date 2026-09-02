@@ -1,9 +1,12 @@
 import "server-only";
 
+import type { SupervisorSessionRecord } from "@/lib/supervisor-client";
+
 import { and, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import { abandonUnlaunchedTasks } from "@/lib/services/tasks";
+import { teardownLiveSessionsForRuns } from "@/lib/runs/session-teardown";
 import { revokeOrchestratorRunTokensForRun } from "@/lib/agents/tokens";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -39,11 +42,16 @@ export interface CascadeAbandonOptions {
 export interface CascadeAbandonResult {
   cascadedRunCount: number;
   abandonedTaskCount: number;
-  // Ids of the runs this cascade actually flipped to Abandoned. The budget
-  // tree-terminate path uses these to tear down each cascaded child's live ACP
-  // session so the swarm actually stops spending — the cascade only mutates DB
-  // rows; sessions live in the supervisor.
+  // Ids of the runs this cascade actually flipped to Abandoned — what
+  // `cascadeAbandonRunTreeAndStopSessions` tears down. The cascade only
+  // mutates DB rows; sessions live in the supervisor.
   cascadedRunIds: string[];
+}
+
+export interface CascadeAndStopOptions extends CascadeAbandonOptions {
+  // A supervisor listing the caller already holds; omitted → listed here.
+  records?: readonly SupervisorSessionRecord[];
+  logLabel: string;
 }
 
 type CascadedRunRow = {
@@ -193,4 +201,34 @@ export async function cascadeAbandonRunTree(
     abandonedTaskCount: unlaunchedTaskIds.length,
     cascadedRunIds: cascaded.map((row) => row.id),
   };
+}
+
+// Codex review F2 (ADR-163): the cascade flips rows; the graph runner never
+// re-reads `runs.status`, so a cascaded child's live ACP session keeps spending
+// and mutating its worktree under an `Abandoned` row unless someone stops it.
+// ONE composition for every caller that cancels a tree (operator stop / drop,
+// the coordinator's run_cancel of a child that itself orchestrates, the abandon
+// route, the budget tree-terminate, the orphan-child compensation, the
+// orchestrator-stuck crash) so no caller can take the rows and forget the
+// sessions. Descendant rows flip before their teardown by construction — the
+// reconcile sweep reaps whatever a crash or a supervisor hiccup leaves live.
+export async function cascadeAbandonRunTreeAndStopSessions(
+  orchestratorRunId: string,
+  orchestratorTaskId: string | null,
+  reason: CascadeReason,
+  opts: CascadeAndStopOptions,
+): Promise<CascadeAbandonResult> {
+  const result = await cascadeAbandonRunTree(
+    orchestratorRunId,
+    orchestratorTaskId,
+    reason,
+    { db: opts.db },
+  );
+
+  await teardownLiveSessionsForRuns(result.cascadedRunIds, {
+    records: opts.records,
+    logLabel: opts.logLabel,
+  });
+
+  return result;
 }

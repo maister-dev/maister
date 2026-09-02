@@ -435,6 +435,11 @@ change in the same commit, never on its own.
   between the CAS and `launchRun`'s run-INSERT) — counted as `staleClaimsCleared`;
   it runs every tick independent of the run-candidate set (even on a
   zero-candidate tick) so a crashed claimer never strands the task.
+- **(Implemented — ADR-163 amendment)** The sweep MUST stop a live supervisor
+  session whose run row is already `Abandoned` — counted as
+  `orphanSessionsReaped`, allow-listed to exactly that status — without
+  writing the row: it is the orphan of a run-tree cascade whose best-effort
+  session teardown did not complete.
 - Reconcile candidate sets MUST stay disjoint from `runResumeRecoverySweep`
   (`NeedsInput`) and `runTakeoverReturnRecoverySweep` (returned takeover);
   reconcile excludes the takeover-return predicate.

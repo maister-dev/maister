@@ -460,6 +460,41 @@ describe("runReconcileSweep (integration)", () => {
     expect((await readRun(cutoverRunId)).status).toBe("Failed");
   }, 60_000);
 
+  // Codex review F2 (ADR-163): the cascade flips a descendant's row before its
+  // session teardown runs, and that teardown is best-effort — a web crash or a
+  // supervisor hiccup in between leaves an agent spending under an `Abandoned`
+  // row the Running-only candidate query never revisits. The sweep reaps
+  // exactly that: a live session whose run row is `Abandoned`.
+  it("reaps a live supervisor session whose run row is already Abandoned, and leaves a live Running run alone", async () => {
+    const orphan = await seedRun({
+      status: "Abandoned",
+      acpSessionId: "acp-orphan",
+    });
+    const live = await seedRun({ status: "Running", acpSessionId: "acp-live" });
+
+    await seedWorkspace(live, "/worktrees/reap-live");
+
+    const stopSession = vi.fn(async () => undefined);
+    const { opts } = makeOpts({
+      worktreePaths: ["/worktrees/reap-live"],
+      liveSessions: [
+        liveRecord(orphan, "acp-orphan"),
+        liveRecord(live, "acp-live"),
+      ],
+    });
+
+    const summary = await runReconcileSweep({
+      ...opts,
+      deleteSession: stopSession,
+    });
+
+    expect(stopSession).toHaveBeenCalledWith(`sup-${orphan}`);
+    expect(stopSession).not.toHaveBeenCalledWith(`sup-${live}`);
+    expect(summary.orphanSessionsReaped).toBe(1);
+    expect((await readRun(orphan)).status).toBe("Abandoned");
+    expect((await readRun(live)).status).toBe("Running");
+  }, 60_000);
+
   it("crashes an orphan Running whose worktree is gone and promotes the oldest Pending", async () => {
     const orphan = await seedRun({
       status: "Running",
@@ -892,6 +927,8 @@ describe("runReconcileSweep (integration)", () => {
       staleClaimsCleared: 0,
       // ADR-141: the sweep also recovers orphaned branch-sync attempts.
       syncRecovered: 0,
+      // Codex review F2: and reaps live sessions under Abandoned rows.
+      orphanSessionsReaped: 0,
     });
     expect((await readRun(orphan)).status).toBe("Running");
   }, 60_000);

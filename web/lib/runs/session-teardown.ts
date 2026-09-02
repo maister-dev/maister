@@ -19,27 +19,43 @@ const log = pino({
  * live in the supervisor"), and the graph runner does not notice an external
  * `Abandoned`, so without this the children keep spending to completion under a
  * terminal tree. Errors are tolerated: the row is already terminal and the
- * supervisor-side reconcile reaps any orphan. Matched by runId — a running child
- * has one live session; never narrowed by stepId.
+ * reconcile sweep reaps a live session under an `Abandoned` row on its next
+ * tick. Matched by runId and never narrowed by stepId — a run may hold more
+ * than one logical session, so EVERY live one is stopped.
  */
 export async function teardownLiveSessionsForRuns(
   runIds: readonly string[],
-  opts: { records?: SupervisorSessionRecord[]; logLabel: string },
+  opts: { records?: readonly SupervisorSessionRecord[]; logLabel: string },
 ): Promise<void> {
   if (runIds.length === 0) return;
 
-  const records = opts.records ?? (await listSessions());
+  let records: readonly SupervisorSessionRecord[];
+
+  try {
+    records = opts.records ?? (await listSessions());
+  } catch (err) {
+    log.warn(
+      { runIds, err: err instanceof Error ? err.message : String(err) },
+      `${opts.logLabel} listSessions failed — leaving teardown to the reconcile sweep`,
+    );
+
+    return;
+  }
 
   for (const runId of runIds) {
-    const live = records.find((r) => r.status === "live" && r.runId === runId);
-
-    if (!live) continue;
-
-    await deleteSession(live.sessionId).catch((err: unknown) => {
-      log.warn(
-        { runId, err: err instanceof Error ? err.message : String(err) },
-        `${opts.logLabel} child session teardown failed — continuing`,
-      );
-    });
+    for (const live of records.filter(
+      (r) => r.status === "live" && r.runId === runId,
+    )) {
+      await deleteSession(live.sessionId).catch((err: unknown) => {
+        log.warn(
+          {
+            runId,
+            sessionId: live.sessionId,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          `${opts.logLabel} child session teardown failed — continuing`,
+        );
+      });
+    }
   }
 }

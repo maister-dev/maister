@@ -373,6 +373,10 @@ export interface ReconcileSweepSummary {
   // tick via the branch-sync recovery executor (W2/W3). A driver-owned live sync is
   // counted in `skipped`, not here.
   syncRecovered: number;
+  // Codex review F2 (ADR-163): live supervisor sessions found under an
+  // `Abandoned` run row and stopped this tick — the recovery path for a
+  // cascade whose best-effort session teardown did not complete.
+  orphanSessionsReaped: number;
 }
 
 const ZERO_SUMMARY: ReconcileSweepSummary = {
@@ -384,6 +388,7 @@ const ZERO_SUMMARY: ReconcileSweepSummary = {
   cutoverSessionsStopped: 0,
   staleClaimsCleared: 0,
   syncRecovered: 0,
+  orphanSessionsReaped: 0,
 };
 
 // ADR-121 (T15): a C2 admission claim (tasks.queue_claimed_at) is held only across
@@ -508,6 +513,66 @@ async function stopGraphOnlyCutoverSessions(args: {
   });
 
   return stopped;
+}
+
+// Codex review F2 (ADR-163): a live supervisor session under an `Abandoned`
+// row is an orphan. The cascade flips a descendant's row BEFORE its session
+// teardown runs and that teardown is best-effort, so a web crash or a
+// supervisor hiccup between the two leaves an agent spending under a terminal
+// row the Running-only candidate query never revisits. Allow-list exactly
+// `Abandoned` — the one status the cascade writes.
+async function reapAbandonedRunSessions(args: {
+  db: Db;
+  records: readonly SupervisorSessionRecord[];
+  stopSession: (sessionId: string) => Promise<void>;
+}): Promise<number> {
+  const live = args.records.filter((record) => record.status === "live");
+  const liveRunIds = [...new Set(live.map((record) => record.runId))];
+
+  if (liveRunIds.length === 0) return 0;
+
+  let abandonedRunIds: Set<string>;
+
+  try {
+    const rows: Array<{ id: string }> = await args.db
+      .select({ id: runs.id })
+      .from(runs)
+      .where(and(inArray(runs.id, liveRunIds), eq(runs.status, "Abandoned")));
+
+    abandonedRunIds = new Set(rows.map((row) => row.id));
+  } catch (err) {
+    log.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      "[reconcile.reap] could not load Abandoned runs — leaving live sessions untouched",
+    );
+
+    return 0;
+  }
+
+  const candidates = live.filter((record) => abandonedRunIds.has(record.runId));
+  let reaped = 0;
+
+  await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (record) => {
+    try {
+      await args.stopSession(record.sessionId);
+      reaped += 1;
+      log.warn(
+        { runId: record.runId, sessionId: record.sessionId },
+        "[reconcile.reap] stopped a live session under an Abandoned run",
+      );
+    } catch (err) {
+      log.warn(
+        {
+          runId: record.runId,
+          sessionId: record.sessionId,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "[reconcile.reap] failed to stop a live session under an Abandoned run — next tick",
+      );
+    }
+  });
+
+  return reaped;
 }
 
 // Latest node_attempts.started_at for a run (the grace anchor alongside
@@ -1003,6 +1068,7 @@ export async function runReconcileSweep(
   let liveMap: Map<string, SupervisorSessionRecord>;
   let liveByRunStep: Map<string, SupervisorSessionRecord>;
   let cutoverSessionsStopped = 0;
+  let orphanSessionsReaped = 0;
 
   try {
     const records = await sessions();
@@ -1044,6 +1110,11 @@ export async function runReconcileSweep(
       records,
       stopSession,
     });
+    orphanSessionsReaped = await reapAbandonedRunSessions({
+      db,
+      records,
+      stopSession,
+    });
 
     liveMap = new Map();
     liveByRunStep = new Map();
@@ -1061,7 +1132,12 @@ export async function runReconcileSweep(
       "reconcile sweep: listSessions failed — skipping whole tick",
     );
 
-    return { ...ZERO_SUMMARY, staleClaimsCleared, cutoverSessionsStopped };
+    return {
+      ...ZERO_SUMMARY,
+      staleClaimsCleared,
+      cutoverSessionsStopped,
+      orphanSessionsReaped,
+    };
   }
 
   const candidates = await loadCandidates(db);
@@ -1069,7 +1145,12 @@ export async function runReconcileSweep(
   log.info({ candidates: candidates.length }, "reconcile sweep start");
 
   if (candidates.length === 0) {
-    return { ...ZERO_SUMMARY, staleClaimsCleared, cutoverSessionsStopped };
+    return {
+      ...ZERO_SUMMARY,
+      staleClaimsCleared,
+      cutoverSessionsStopped,
+      orphanSessionsReaped,
+    };
   }
 
   // One listWorktrees call per distinct repoPath → Set of worktree paths.
@@ -1177,18 +1258,22 @@ export async function runReconcileSweep(
           // via the WaitingOnChildren-guarded transition. The cascade owns its
           // own per-pool promote; crashWaitingOnChildren is status-guarded so a
           // concurrent wake that already moved it to Running loses.
-          const { cascadeAbandonRunTree } = await import(
+          const { cascadeAbandonRunTreeAndStopSessions } = await import(
             "@/lib/orchestrator/cascade"
           );
           const { crashWaitingOnChildren } = await import(
             "@/lib/runs/state-transitions"
           );
 
-          await cascadeAbandonRunTree(
+          await cascadeAbandonRunTreeAndStopSessions(
             cand.runId,
             cand.taskId,
             "orchestrator-stuck",
-            { db },
+            {
+              db,
+              records: [...liveByRunStep.values()],
+              logLabel: "[reconcile] orchestrator-stuck",
+            },
           );
           const crashResult = await crashWaitingOnChildren(
             cand.runId,
@@ -1378,6 +1463,7 @@ export async function runReconcileSweep(
     cutoverSessionsStopped,
     staleClaimsCleared,
     syncRecovered,
+    orphanSessionsReaped,
   };
 
   log.info(summary, "reconcile sweep complete");

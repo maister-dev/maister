@@ -279,7 +279,11 @@ invariants bind it to the run machine:
 1. **Allow-list `Running`-only.** Reconcile NEVER touches a non-`Running` row;
    `NeedsInput`/`NeedsInputIdle`/`HumanWorking`/terminal stay owned by the
    `resume-recovery`, `takeover-return`, and idle sweeps. Candidate sets are
-   disjoint by construction.
+   disjoint by construction. The one supervisor-side exception
+   **(Implemented — ADR-163 amendment)**: a live session whose run row is
+   already `Abandoned` is the orphan of a cascade whose best-effort session
+   teardown did not complete, and the sweep stops it (`orphanSessionsReaped`)
+   without writing the row.
 2. **Grace guard.** A `Running` agent run with no live session is SKIPPED while
    `runs.resume_started_at` OR the latest `node_attempts.started_at` is within
    `MAISTER_RECONCILE_GRACE_SECONDS` (default 90); only past grace is it

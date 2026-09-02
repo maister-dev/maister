@@ -15,7 +15,7 @@ import {
   resolveDelegatableFlow,
 } from "@/lib/flows/delegatable-flow";
 import { admitDelegatedChild } from "@/lib/orchestrator/admission";
-import { cascadeAbandonRunTree } from "@/lib/orchestrator/cascade";
+import { cascadeAbandonRunTreeAndStopSessions } from "@/lib/orchestrator/cascade";
 import {
   delegationTargetKind,
   delegationTargetSchema,
@@ -23,7 +23,6 @@ import {
   titleFromPrompt,
 } from "@/lib/orchestrator/delegation-target";
 import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
-import { teardownLiveSessionsForRuns } from "@/lib/runs/session-teardown";
 import { addTaskRelation } from "@/lib/social/relations";
 import { launchRun } from "@/lib/services/runs";
 import { abandonUnlaunchedTasks, createTask } from "@/lib/services/tasks";
@@ -429,30 +428,24 @@ export async function POST(
           // The cascade flips rows only; the just-born child may already hold
           // a live supervisor session that would otherwise keep spending
           // under the terminal tree.
-          await cascadeAbandonRunTree(
+          await cascadeAbandonRunTreeAndStopSessions(
             parentRunId,
             parent.taskId ?? null,
             "user_stopped",
-            { db },
-          )
-            .then(({ cascadedRunIds }) =>
-              teardownLiveSessionsForRuns(cascadedRunIds, {
-                logLabel: "[delegation.compensate]",
-              }),
-            )
-            .catch((cascadeErr: unknown) =>
-              log.error(
-                {
-                  parentRunId,
-                  childRunId,
-                  err:
-                    cascadeErr instanceof Error
-                      ? cascadeErr.message
-                      : String(cascadeErr),
-                },
-                "[delegation.compensate] cascade of an orphaned child failed",
-              ),
-            );
+            { db, logLabel: "[delegation.compensate]" },
+          ).catch((cascadeErr: unknown) =>
+            log.error(
+              {
+                parentRunId,
+                childRunId,
+                err:
+                  cascadeErr instanceof Error
+                    ? cascadeErr.message
+                    : String(cascadeErr),
+              },
+              "[delegation.compensate] cascade of an orphaned child failed",
+            ),
+          );
 
           return NextResponse.json(
             { code: parentNow.code, message: parentNow.message },

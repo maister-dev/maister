@@ -106,8 +106,9 @@ export async function POST(
 
     // M37 (ADR-098) T7.4: abandoning a flow orchestrator (parked on
     // WaitingOnChildren OR with live run-tree children) cancels its whole
-    // sub-tree FIRST (children-first), then abandons the coordinator below.
-    // Idempotent; touches only descendants, never the orchestrator row itself.
+    // sub-tree FIRST (children-first) — rows AND the cascaded children's live
+    // sessions — then abandons the coordinator below. Idempotent; touches only
+    // descendants, never the orchestrator row itself.
     if (run.runKind === "flow") {
       const { getChildRuns } = await import("@/lib/queries/run");
       const isOrchestrator =
@@ -115,11 +116,16 @@ export async function POST(
         (await getChildRuns(runId, db)).length > 0;
 
       if (isOrchestrator) {
-        const { cascadeAbandonRunTree } = await import(
+        const { cascadeAbandonRunTreeAndStopSessions } = await import(
           "@/lib/orchestrator/cascade"
         );
 
-        await cascadeAbandonRunTree(runId, run.taskId, "user_stopped", { db });
+        await cascadeAbandonRunTreeAndStopSessions(
+          runId,
+          run.taskId,
+          "user_stopped",
+          { db, logLabel: "[abandon.cascade]" },
+        );
       }
     }
 
