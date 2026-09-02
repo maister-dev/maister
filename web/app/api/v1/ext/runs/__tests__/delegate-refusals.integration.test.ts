@@ -347,6 +347,42 @@ const CASES: RefusalCase[] = [
       return flowBody();
     },
   },
+  // ADR-163 review F5: trust resolution must equal BOARD launchability, or a
+  // flow the board shows as not launchable passes delegation trust, mints a
+  // carrier task, and fails inside the launcher. These two checks lived only in
+  // the board projection before the gate was unified.
+  {
+    name: "a flow with no Ready platform runner to launch it",
+    code: "PRECONDITION",
+    status: 409,
+    messageContains: "no Ready platform ACP runner",
+    arrange: async () => {
+      await seedFlow(ctx, { flowRefId: "delegated-flow" });
+      await ctx.pool.query(
+        `UPDATE "platform_acp_runners" SET "readiness_status" = 'NotReady'`,
+      );
+
+      return flowBody();
+    },
+  },
+  {
+    name: "a flow whose stored manifest this engine cannot execute",
+    code: "CONFIG",
+    status: 422,
+    messageContains: "stored manifest cannot be executed",
+    arrange: async () => {
+      await seedFlow(ctx, {
+        flowRefId: "delegated-flow",
+        manifest: {
+          schemaVersion: 1,
+          name: "legacy",
+          steps: [{ id: "one", type: "agent", prompt: "x" }],
+        },
+      });
+
+      return flowBody();
+    },
+  },
 ];
 
 describe("run_delegate refusal table (ADR-163)", () => {

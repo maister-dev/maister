@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
+import { LAUNCHABLE_FLOW_ENABLEMENT_STATES } from "@/lib/flows/enablement-states";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { loadFlowRunnerBindings } from "@/lib/acp-runners/catalog";
 import {
@@ -76,11 +77,6 @@ type SessionPreviewResolution = {
   readonly warning: RunnerResolutionWarning | null;
   readonly declaresRunner: boolean;
 };
-
-const LAUNCHABLE_FLOW_ENABLEMENT_STATES = new Set<string>([
-  "Enabled",
-  "UpdateAvailable",
-]);
 
 function httpStatusForCode(code: string): number {
   switch (code) {

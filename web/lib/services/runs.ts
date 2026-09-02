@@ -51,10 +51,6 @@ import {
   capabilityBearingSettings,
 } from "@/lib/flows/enforcement";
 import { assertEnforcementEvidence } from "@/lib/flows/enforcement-evidence";
-import {
-  isEngineCompatible,
-  isSchemaVersionSupported,
-} from "@/lib/flows/engine-version";
 import { checkFlowRequirements } from "@/lib/flows/requirements-check";
 import {
   buildResolvedCapabilitySet,
@@ -63,12 +59,9 @@ import {
 import { normalizeNodeMcps } from "@/lib/config.schema";
 import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
 import { compileManifest } from "@/lib/flows/graph/compile";
-import {
-  flowManifestIncompatibilityDetails,
-  parseExecutableStoredFlowManifest,
-} from "@/lib/flows/manifest-parser";
+import { parseExecutableStoredFlowManifest } from "@/lib/flows/manifest-parser";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
-import { LAUNCHABLE_FLOW_ENABLEMENT_STATES } from "@/lib/flows/enablement-states";
+import { assertFlowLaunchable } from "@/lib/flows/launchability-gate";
 import { admitDelegatedChild } from "@/lib/orchestrator/admission";
 import { resolveEffectiveFlowRevision } from "@/lib/flows/lifecycle";
 import { runFlow } from "@/lib/flows/runner";
@@ -928,106 +921,37 @@ export async function* launchRunStaged(
     }
 
     // Resolve the project-enabled package revision (M10, ADR-021) and refuse
-    // launch on a package that is not in an explicitly launchable state, or is
-    // untrusted/incompatible/missing-setup — BEFORE any workspace creation. The
-    // revision is server-derived from the enablement pointer, never
-    // body-controlled.
+    // launch through the ONE shared launchability gate — BEFORE any workspace
+    // creation. The revision is server-derived from the enablement pointer,
+    // never body-controlled.
     //
-    // Launchability is an explicit allow-list (LAUNCHABLE_FLOW_ENABLEMENT_STATES):
-    // only `Enabled` and `UpdateAvailable` (which still has a live enabled
-    // revision) may launch. `Installed` is NOT launchable — a package installed
-    // from an untrusted source stays `Installed` after `/trust` and must be
-    // explicitly `/enable`d before it can run. This prevents trust alone from
-    // collapsing the trust+enable lifecycle into one launchable step.
-    if (!flow.enabledRevisionId) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `flow "${flow.flowRefId}" has no enabled package revision`,
-      );
-    }
-    if (!LAUNCHABLE_FLOW_ENABLEMENT_STATES.has(flow.enablementState)) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `flow "${flow.flowRefId}" package is ${flow.enablementState}, not launchable (enable it first)`,
-      );
-    }
-    if (flow.trustStatus === "untrusted") {
-      throw new MaisterError(
-        "PRECONDITION",
-        `flow "${flow.flowRefId}" package is not trusted — confirm trust before launch`,
-      );
-    }
-
     // M27/T-B4: resolve the effective revision per flows.version_binding (ADR-069).
     // `pinned` = the enabled pointer (unchanged behavior); `latest` = the newest
     // Installed revision for this flow_ref_id (a just-published authored revision
-    // floats in via the bridge). The per-revision guards below still gate the
-    // RESOLVED revision (packageStatus/setupStatus/engine/schema).
+    // floats in via the bridge). The gate below still checks the RESOLVED
+    // revision (packageStatus/setupStatus/engine/schema).
     // ADR-132: an ephemeral packagePin overrides the resolution — the
     // already-loaded pinned revision IS the effective revision (no re-select;
     // launch-time decision, persisted via the snapshot columns below).
     const effectiveRevisionId = pinnedRevision
       ? pinnedRevision.id
-      : ((await resolveEffectiveFlowRevision(_db, flow)) ??
-        flow.enabledRevisionId);
+      : flow.enabledRevisionId
+        ? ((await resolveEffectiveFlowRevision(_db, flow)) ??
+          flow.enabledRevisionId)
+        : null;
 
     const revisionRows = pinnedRevision
       ? [pinnedRevision]
-      : await _db
-          .select()
-          .from(flowRevisions)
-          .where(eq(flowRevisions.id, effectiveRevisionId));
+      : effectiveRevisionId
+        ? await _db
+            .select()
+            .from(flowRevisions)
+            .where(eq(flowRevisions.id, effectiveRevisionId))
+        : [];
     const revision = revisionRows[0];
 
-    if (!revision) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `enabled revision not found for flow "${flow.flowRefId}"`,
-      );
-    }
-    // Refuse a broken enabled pointer: a revision that was removed (or failed)
-    // out from under the enablement pointer must not reach runner startup
-    // (Codex finding #2 — concurrent removeRevision vs enable).
-    if (revision.packageStatus !== "Installed") {
-      throw new MaisterError(
-        "PRECONDITION",
-        `flow "${flow.flowRefId}" enabled revision is ${revision.packageStatus}, not Installed`,
-      );
-    }
-    if (
-      revision.setupStatus === "pending" ||
-      revision.setupStatus === "failed"
-    ) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `flow "${flow.flowRefId}" package setup is ${revision.setupStatus}`,
-      );
-    }
-    if (!isSchemaVersionSupported(revision.schemaVersion)) {
-      throw new MaisterError(
-        "CONFIG",
-        `flow "${flow.flowRefId}" requires unsupported manifest schemaVersion ${revision.schemaVersion}`,
-      );
-    }
-    {
-      const compat = isEngineCompatible(
-        revision.engineMin ?? undefined,
-        revision.engineMax ?? undefined,
-      );
+    assertFlowLaunchable(flow.flowRefId, flow, revision ?? null);
 
-      if (!compat.compatible) {
-        throw new MaisterError(
-          "CONFIG",
-          `flow "${flow.flowRefId}" is incompatible with this MAIster engine: ${compat.reason}`,
-          {
-            details: flowManifestIncompatibilityDetails({
-              kind: "engine_incompatible",
-              message: compat.reason ?? "engine compatibility check failed",
-            }),
-          },
-        );
-      }
-    }
     const manifest = parseExecutableStoredFlowManifest(revision.manifest, {
       code: "CONFIG",
       surface: "launch-service",

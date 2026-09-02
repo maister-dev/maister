@@ -1,5 +1,6 @@
 import "server-only";
 
+import { LAUNCHABLE_FLOW_ENABLEMENT_STATES } from "@/lib/flows/enablement-states";
 import type { Db } from "@/lib/evaluations/db";
 import type { PreflightContractLoaders } from "@/lib/evaluations/recipes";
 import type {
@@ -34,10 +35,6 @@ const log = pino({
   name: "evaluations-preflight-loaders",
   level: process.env.LOG_LEVEL ?? "info",
 });
-
-// A launchable flow's project enablement states (mirrors the private
-// LAUNCHABLE_FLOW_ENABLEMENT_STATES in project-flow-launchability.ts).
-const LAUNCHABLE_ENABLEMENT_STATES = new Set(["Enabled", "UpdateAvailable"]);
 
 // Build the exact-compat FlowContractProjection + launch-gate facets the pure
 // preflight core consumes. This is the SINGLE assembler shared by preflight
@@ -160,7 +157,7 @@ export async function buildFlowContractProjection(
     projectId: flowRow.projectId,
     trusted: flowRow.trustStatus !== "untrusted",
     enablementLaunchable:
-      LAUNCHABLE_ENABLEMENT_STATES.has(flowRow.enablementState) &&
+      LAUNCHABLE_FLOW_ENABLEMENT_STATES.has(flowRow.enablementState) &&
       revisionRow.packageStatus === "Installed" &&
       revisionRow.setupStatus !== "pending" &&
       revisionRow.setupStatus !== "failed",

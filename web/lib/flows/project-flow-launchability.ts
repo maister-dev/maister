@@ -1,10 +1,6 @@
 import "server-only";
 
-import { LAUNCHABLE_FLOW_ENABLEMENT_STATES } from "@/lib/flows/enablement-states";
-import {
-  isEngineCompatible,
-  isSchemaVersionSupported,
-} from "@/lib/flows/engine-version";
+import { evaluateFlowLaunchability } from "@/lib/flows/launchability-gate";
 import { classifyStoredFlowManifest } from "@/lib/flows/manifest-parser";
 
 export type ProjectFlowLaunchabilityInput = {
@@ -22,6 +18,11 @@ export type ProjectFlowLaunchabilityInput = {
   trustStatus: string;
 };
 
+// The board's "can this flow launch right now": the shared launchability gate
+// plus the two host facts the pure gate cannot see — a Ready platform runner
+// and an executable stored manifest. The delegation trust resolver applies the
+// same three, so a flow the board shows as launchable is exactly one an
+// orchestrator may delegate to.
 export function isProjectFlowLaunchable({
   enabledRevisionId,
   enablementState,
@@ -29,22 +30,12 @@ export function isProjectFlowLaunchable({
   revision,
   trustStatus,
 }: ProjectFlowLaunchabilityInput): boolean {
-  if (
-    !enabledRevisionId ||
-    !LAUNCHABLE_FLOW_ENABLEMENT_STATES.has(enablementState) ||
-    trustStatus === "untrusted" ||
-    !revision ||
-    revision.packageStatus !== "Installed" ||
-    revision.setupStatus === "pending" ||
-    revision.setupStatus === "failed" ||
-    !isSchemaVersionSupported(revision.schemaVersion) ||
-    !isEngineCompatible(
-      revision.engineMin ?? undefined,
-      revision.engineMax ?? undefined,
-    ).compatible
-  ) {
-    return false;
-  }
+  const verdict = evaluateFlowLaunchability(
+    { enabledRevisionId, enablementState, trustStatus },
+    revision,
+  );
+
+  if (!verdict.ok || revision === null) return false;
 
   return (
     hasReadyRunner && classifyStoredFlowManifest(revision.manifest).compatible

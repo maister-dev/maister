@@ -10,8 +10,9 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
-  resolveDelegatableFlow,
   type DelegatableFlow,
+  flowDelegationSnapshot,
+  resolveDelegatableFlow,
 } from "@/lib/flows/delegatable-flow";
 import { admitDelegatedChild } from "@/lib/orchestrator/admission";
 import { cascadeAbandonRunTree } from "@/lib/orchestrator/cascade";
@@ -342,21 +343,11 @@ export async function POST(
                 parentRunId,
                 rootRunId,
                 launchMode: "manual",
-                delegationSnapshot: {
-                  kind: "flow",
-                  flowId: resolvedFlow.flowId,
-                  flowRefId: resolvedFlow.flowRefId,
-                  flowRevisionId: resolvedFlow.revisionId,
-                  resolvedRevision: resolvedFlow.resolvedRevision,
-                  engineMin: resolvedFlow.engineMin,
-                  engineMax: resolvedFlow.engineMax,
+                delegationSnapshot: flowDelegationSnapshot(resolvedFlow, {
                   carrierTaskId: childTaskId as string,
                   mode: body.mode,
                   runnerOverride: body.runnerOverride ?? null,
-                  // D7: `baseBranch`/`targetBranch` are completed by
-                  // launchRunStaged from ITS own resolution — the route does not
-                  // re-derive a pair it cannot see the inputs to.
-                },
+                }),
               },
               // The token already scoped the project; there is no session user
               // to authorize against on an ext delegation.

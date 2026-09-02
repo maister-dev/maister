@@ -16,7 +16,10 @@ import {
   type PromoteRunResult,
 } from "@/lib/runs/promote";
 import { countFailureTerminalSharedSiblings } from "@/lib/runs/shared-tree";
-import { resolveDelegatableFlow } from "@/lib/flows/delegatable-flow";
+import {
+  flowDelegationSnapshot,
+  resolveDelegatableFlow,
+} from "@/lib/flows/delegatable-flow";
 import {
   asAgentDelegationSpec,
   asFlowDelegationSpec,
@@ -399,18 +402,11 @@ export function buildAutoLaunchRunPlanConsumer(
                   parentRunId,
                   rootRunId,
                   launchMode: "auto",
-                  delegationSnapshot: {
-                    kind: "flow",
-                    flowId: resolved.flowId,
-                    flowRefId: resolved.flowRefId,
-                    flowRevisionId: resolved.revisionId,
-                    resolvedRevision: resolved.resolvedRevision,
-                    engineMin: resolved.engineMin,
-                    engineMax: resolved.engineMax,
+                  delegationSnapshot: flowDelegationSnapshot(resolved, {
                     carrierTaskId: candidate.taskId,
                     mode: "task",
                     runnerOverride: flowSpec.runnerOverride ?? null,
-                  },
+                  }),
                 },
                 { actorUserId: null, authorize: async () => {} },
                 _db,

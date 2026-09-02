@@ -7,9 +7,10 @@
  * `/enable`d, so trust alone can never collapse the trust+enable lifecycle into
  * one launchable step. `Disabled` / `Failed` / `Deprecated` are likewise out.
  *
- * Declared once here because three call sites gate on it — the canonical flow
- * launcher, the project-flow launchability projection, and the delegation trust
- * resolver (ADR-163). Three private copies is how those gates drift apart.
+ * Declared once because every launch-gating site imports it — the shared
+ * launchability gate (canonical launcher, board projection, delegation trust
+ * resolver), the triage verdict, the task launch config, the launch-options
+ * route, and the evaluation preflight. Private copies are how gates drift.
  */
 export const LAUNCHABLE_FLOW_ENABLEMENT_STATES: ReadonlySet<string> =
   new Set<string>(["Enabled", "UpdateAvailable"]);

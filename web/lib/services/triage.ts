@@ -3,6 +3,7 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
+import { LAUNCHABLE_FLOW_ENABLEMENT_STATES } from "@/lib/flows/enablement-states";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
@@ -31,13 +32,6 @@ const log = pino({
   name: "service-triage",
   level: process.env.LOG_LEVEL ?? "info",
 });
-
-// ADR-112 (D9): the launchable-flow allow-list — same states the launch path
-// (LAUNCHABLE_ENABLEMENT_STATES) and the flow_list read side enforce.
-const LAUNCHABLE_FLOW_ENABLEMENT_STATES = new Set<string>([
-  "Enabled",
-  "UpdateAvailable",
-]);
 
 export type PromotionMode = "local_merge" | "pull_request";
 

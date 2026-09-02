@@ -1,5 +1,6 @@
 import "server-only";
 
+import { hasReadyPlatformRunner } from "@/lib/acp-runners/ready-runner";
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { Project, RunKind, ScratchDialogStatus } from "@/lib/db/schema";
@@ -199,7 +200,7 @@ export async function listLaunchableFlowSummaries(
   projectId: string,
   client: NodePgDatabase<typeof schema> = db(),
 ): Promise<ExtFlowSummary[]> {
-  const [rows, readyRunnerRows] = await Promise.all([
+  const [rows, hasReadyRunner] = await Promise.all([
     client
       .select({
         id: flows.id,
@@ -219,17 +220,8 @@ export async function listLaunchableFlowSummaries(
       .leftJoin(flowRevisions, eq(flowRevisions.id, flows.enabledRevisionId))
       .where(eq(flows.projectId, projectId))
       .orderBy(asc(flows.createdAt)),
-    client
-      .select({ id: platformAcpRunners.id })
-      .from(platformAcpRunners)
-      .where(
-        and(
-          eq(platformAcpRunners.enabled, true),
-          eq(platformAcpRunners.readinessStatus, "Ready"),
-        ),
-      ),
+    hasReadyPlatformRunner(client),
   ]);
-  const hasReadyRunner = readyRunnerRows.length > 0;
 
   return rows
     .filter((row) =>

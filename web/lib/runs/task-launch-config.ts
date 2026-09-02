@@ -8,6 +8,7 @@ import type {
   DeliveryPolicy,
   StoredDeliveryPolicy,
 } from "@/lib/runs/delivery-policy";
+import { LAUNCHABLE_FLOW_ENABLEMENT_STATES } from "@/lib/flows/enablement-states";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 
 import { and, eq } from "drizzle-orm";
@@ -39,11 +40,6 @@ const {
   projects,
   tasks,
 } = schemaModule as unknown as Record<string, any>;
-
-const LAUNCHABLE_FLOW_ENABLEMENT_STATES = new Set<string>([
-  "Enabled",
-  "UpdateAvailable",
-]);
 
 export type TaskLaunchConfig = {
   flow: { id: string; refId: string } | null;

@@ -12,8 +12,9 @@ import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, type MaisterError } from "@/lib/errors";
 import { orchestratorMaxFanout } from "@/lib/instance-config";
 import {
-  resolveDelegatableFlow,
   type DelegatableFlow,
+  flowDelegationSnapshot,
+  resolveDelegatableFlow,
 } from "@/lib/flows/delegatable-flow";
 import { admitDelegatedChild } from "@/lib/orchestrator/admission";
 import {
@@ -506,18 +507,11 @@ export async function POST(
                   parentRunId,
                   rootRunId,
                   launchMode: "auto",
-                  delegationSnapshot: {
-                    kind: "flow",
-                    flowId: resolvedFlow.flowId,
-                    flowRefId: resolvedFlow.flowRefId,
-                    flowRevisionId: resolvedFlow.revisionId,
-                    resolvedRevision: resolvedFlow.resolvedRevision,
-                    engineMin: resolvedFlow.engineMin,
-                    engineMax: resolvedFlow.engineMax,
+                  delegationSnapshot: flowDelegationSnapshot(resolvedFlow, {
                     carrierTaskId: childTaskId,
                     mode: "task",
                     runnerOverride: t.runnerOverride ?? null,
-                  },
+                  }),
                 },
                 { actorUserId: null, authorize: async () => {} },
                 db,

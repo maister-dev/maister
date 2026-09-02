@@ -1,5 +1,6 @@
 import "server-only";
 
+import { hasReadyPlatformRunner } from "@/lib/acp-runners/ready-runner";
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type {
   GlobalRole,
@@ -498,7 +499,7 @@ export async function getPortfolio(
       id: platformAcpRunners.id,
     })
     .from(platformAcpRunners);
-  const [onboardingFlowRows, readyRunnerRows] = await Promise.all([
+  const [onboardingFlowRows, hasReadyRunner] = await Promise.all([
     client
       .select({
         enabledRevisionId: flows.enabledRevisionId,
@@ -514,17 +515,8 @@ export async function getPortfolio(
       .from(flows)
       .leftJoin(flowRevisions, eq(flowRevisions.id, flows.enabledRevisionId))
       .where(inArray(flows.projectId, projectIds)),
-    client
-      .select({ id: platformAcpRunners.id })
-      .from(platformAcpRunners)
-      .where(
-        and(
-          eq(platformAcpRunners.enabled, true),
-          eq(platformAcpRunners.readinessStatus, "Ready"),
-        ),
-      ),
+    hasReadyPlatformRunner(client),
   ]);
-  const hasReadyRunner = readyRunnerRows.length > 0;
   const launchableFlowCount = onboardingFlowRows.filter((flow) =>
     isProjectFlowLaunchable({
       enabledRevisionId: flow.enabledRevisionId,

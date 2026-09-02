@@ -3,16 +3,20 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 
+import { hasReadyPlatformRunner } from "@/lib/acp-runners/ready-runner";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import type { DelegationSnapshot } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
-import { LAUNCHABLE_FLOW_ENABLEMENT_STATES } from "@/lib/flows/enablement-states";
 import {
-  isEngineCompatible,
-  isSchemaVersionSupported,
-} from "@/lib/flows/engine-version";
+  describeFlowLaunchabilityRefusal,
+  evaluateFlowLaunchability,
+} from "@/lib/flows/launchability-gate";
 import { resolveEffectiveFlowRevision } from "@/lib/flows/lifecycle";
-import { flowManifestIncompatibilityDetails } from "@/lib/flows/manifest-parser";
+import {
+  classifyStoredFlowManifest,
+  flowManifestIncompatibilityDetails,
+} from "@/lib/flows/manifest-parser";
 import {
   formatFlowRefError,
   resolveFlowRef,
@@ -58,12 +62,12 @@ export type DelegatableFlow = {
  * URL, or inline definition never enters this path, and the resolved row's
  * `projectId` is re-asserted afterwards.
  *
- * The gate sequence mirrors `launchRunStaged`'s in-line sequence exactly —
- * enablement allow-list, trust, pinned revision, package status, setup status,
- * manifest schema version, engine range — so a flow that this resolver admits is
- * one the canonical launcher will also admit. Divergence between the two would
- * mean a delegation that passes trust and then fails mid-launch with a carrier
- * task already written.
+ * Launchability is the ONE shared gate (`lib/flows/launchability-gate.ts`) the
+ * canonical launcher and the board projection evaluate, plus the board's two
+ * host facts (a Ready platform runner, an executable stored manifest) — so a
+ * flow this resolver admits is exactly one the board shows as launchable and
+ * the launcher will accept, and a refusal never arrives after a carrier task
+ * has been written.
  *
  * Throws `MaisterError` and writes nothing, ever.
  */
@@ -132,101 +136,54 @@ export async function resolveDelegatableFlow(
     code: "PRECONDITION" | "CONFIG",
     message: string,
     reason: string,
+    details?: Record<string, unknown>,
   ): never => {
     log.warn(
       { projectId, flowId: flow.id, flowRefId: flow.flowRefId, reason },
       "[delegation.flow] target refused",
     );
-    throw new MaisterError(code, message);
+    throw new MaisterError(code, message, details ? { details } : undefined);
   };
 
-  if (!flow.enabledRevisionId) {
-    refuse(
-      "PRECONDITION",
-      `flow "${flow.flowRefId}" has no enabled package revision`,
-      "no_enabled_revision",
-    );
-  }
-  if (!LAUNCHABLE_FLOW_ENABLEMENT_STATES.has(flow.enablementState)) {
-    refuse(
-      "PRECONDITION",
-      `flow "${flow.flowRefId}" package is ${flow.enablementState}, not launchable (enable it first)`,
-      "not_launchable",
-    );
-  }
-  if (flow.trustStatus === "untrusted") {
-    refuse(
-      "PRECONDITION",
-      `flow "${flow.flowRefId}" package is not trusted — confirm trust before launch`,
-      "untrusted",
-    );
-  }
-
-  const effectiveRevisionId =
-    (await resolveEffectiveFlowRevision(_db, flow)) ?? flow.enabledRevisionId;
-  const revisionRows = await _db
-    .select()
-    .from(flowRevisions)
-    .where(eq(flowRevisions.id, effectiveRevisionId));
+  const effectiveRevisionId = flow.enabledRevisionId
+    ? ((await resolveEffectiveFlowRevision(_db, flow)) ??
+      flow.enabledRevisionId)
+    : null;
+  const revisionRows = effectiveRevisionId
+    ? await _db
+        .select()
+        .from(flowRevisions)
+        .where(eq(flowRevisions.id, effectiveRevisionId))
+    : [];
   const revision = revisionRows[0];
 
-  // Defence in depth: `flows.enabled_revision_id` is a FK with ON DELETE SET
-  // NULL, so a vanished revision degrades into the no-pointer refusal above and
-  // this branch is unreachable through the schema. It mirrors the canonical
-  // launcher's guard so the two sequences stay identical.
-  if (!revision) {
+  const verdict = evaluateFlowLaunchability(flow, revision ?? null);
+
+  if (!verdict.ok) {
     refuse(
-      "PRECONDITION",
-      `enabled revision not found for flow "${flow.flowRefId}"`,
-      "revision_row_missing",
-    );
-  }
-  if (revision.packageStatus !== "Installed") {
-    refuse(
-      "PRECONDITION",
-      `flow "${flow.flowRefId}" enabled revision is ${revision.packageStatus}, not Installed`,
-      "revision_not_installed",
-    );
-  }
-  if (revision.setupStatus === "pending" || revision.setupStatus === "failed") {
-    refuse(
-      "PRECONDITION",
-      `flow "${flow.flowRefId}" package setup is ${revision.setupStatus}`,
-      "setup_incomplete",
-    );
-  }
-  if (!isSchemaVersionSupported(revision.schemaVersion)) {
-    refuse(
-      "CONFIG",
-      `flow "${flow.flowRefId}" requires unsupported manifest schemaVersion ${revision.schemaVersion}`,
-      "unsupported_schema_version",
+      verdict.code,
+      describeFlowLaunchabilityRefusal(flow.flowRefId, verdict),
+      verdict.reason,
+      verdict.details,
     );
   }
 
-  const compat = isEngineCompatible(
-    revision.engineMin ?? undefined,
-    revision.engineMax ?? undefined,
-  );
-
-  if (!compat.compatible) {
-    log.warn(
-      {
-        projectId,
-        flowId: flow.id,
-        flowRefId: flow.flowRefId,
-        reason: "engine_incompatible",
-      },
-      "[delegation.flow] target refused",
+  if (!(await hasReadyPlatformRunner(_db))) {
+    refuse(
+      "PRECONDITION",
+      `no Ready platform ACP runner is enabled — flow "${flow.flowRefId}" cannot be launched`,
+      "no_ready_runner",
     );
-    throw new MaisterError(
+  }
+
+  const stored = classifyStoredFlowManifest(revision.manifest);
+
+  if (!stored.compatible) {
+    refuse(
       "CONFIG",
-      `flow "${flow.flowRefId}" is incompatible with this MAIster engine: ${compat.reason}`,
-      {
-        details: flowManifestIncompatibilityDetails({
-          kind: "engine_incompatible",
-          message: compat.reason ?? "engine compatibility check failed",
-        }),
-      },
+      `flow "${flow.flowRefId}" stored manifest cannot be executed by this engine: ${stored.reason.message}`,
+      "manifest_incompatible",
+      flowManifestIncompatibilityDetails(stored.reason),
     );
   }
 
@@ -250,5 +207,39 @@ export async function resolveDelegatableFlow(
     versionLabel: revision.versionLabel,
     engineMin: revision.engineMin ?? null,
     engineMax: revision.engineMax ?? null,
+  };
+}
+
+export type FlowDelegationSnapshotInput = Omit<
+  Extract<DelegationSnapshot, { kind: "flow" }>,
+  "baseBranch" | "targetBranch"
+>;
+
+/**
+ * The launch-time `delegation_snapshot` a flow child carries — built in ONE
+ * place for the three child-creation edges (`run_delegate`, `run_plan`, the
+ * as-plan auto-launcher). `baseBranch` / `targetBranch` are deliberately absent:
+ * `launchRunStaged` completes them from its own branch resolution (ADR-163 D7),
+ * so the snapshot and the workspace cannot disagree.
+ */
+export function flowDelegationSnapshot(
+  resolved: DelegatableFlow,
+  args: {
+    carrierTaskId: string;
+    mode: "task" | "run";
+    runnerOverride: string | null;
+  },
+): FlowDelegationSnapshotInput {
+  return {
+    kind: "flow",
+    flowId: resolved.flowId,
+    flowRefId: resolved.flowRefId,
+    flowRevisionId: resolved.revisionId,
+    resolvedRevision: resolved.resolvedRevision,
+    engineMin: resolved.engineMin,
+    engineMax: resolved.engineMax,
+    carrierTaskId: args.carrierTaskId,
+    mode: args.mode,
+    runnerOverride: args.runnerOverride,
   };
 }
