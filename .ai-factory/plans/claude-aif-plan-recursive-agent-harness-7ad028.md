@@ -414,10 +414,10 @@ No AI co-author trailer (repo convention).
 
 ### Phase 1 — RED: the specification harness
 
-- [ ] **R1.1 — RED: collect v2 (AC-31, AC-32 fences).** `collect-v2.integration.test.ts`: v2 fields (RED: absent); grandchild invisible + named → 409 with the pinned message (GREEN fence); identical bodies on repeat (RED once the marker exists — assert body equality, not "no write"); terminal-parent token → 409 (fence).
-- [ ] **R1.2 — RED: `resultProfile` refusal table (AC-19).** `delegate-result-profile.integration.test.ts`: R1–R4 rows × both routes + the positive arm. RED: unknown key today.
-- [ ] **R1.3 — RED: validity FSM + status predicate (AC-08, AC-09).** `status.test.ts` (pure table) + `ledger.integration.test.ts`. RED: modules/table absent.
-- [ ] **R1.4 — RED: effective bounds (AC-25).** `bounds.test.ts`. RED: module absent.
+- [x] **R1.1 — RED: collect v2 (AC-31, AC-32 fences).** `collect-v2.integration.test.ts`: v2 fields (RED: absent); grandchild invisible + named → 409 with the pinned message (GREEN fence); identical bodies on repeat (RED once the marker exists — assert body equality, not "no write"); terminal-parent token → 409 (fence).
+- [x] **R1.2 — RED: `resultProfile` refusal table (AC-19).** `delegate-result-profile.integration.test.ts`: R1–R4 rows × both routes + the positive arm. RED: unknown key today.
+- [x] **R1.3 — RED: validity FSM + status predicate (AC-08, AC-09).** `status.test.ts` (pure table) + `ledger.integration.test.ts`. RED: modules/table absent.
+- [x] **R1.4 — RED: effective bounds (AC-25).** `bounds.test.ts`. RED: module absent.
 
 **Phase 1 exit** — four harnesses executed; RED reasons recorded; fences green.
 

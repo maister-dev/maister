@@ -1,0 +1,228 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  deriveResultStatus,
+  type DeriveResultStatusInput,
+} from "@/lib/run-results/status";
+import type { RunResultContract } from "@/lib/run-results/types";
+
+// ADR-165 AC-09 / spec C-3.4. `resultStatus` is derived by exactly ONE
+// predicate, consumed by the collect route, the run DTO and the Evaluation Lab.
+// This is the table from docs/system-analytics/run-results.md §B, transcribed
+// one row per outcome — all seven values, including the NULL-contract arm a
+// scratch or manual run takes.
+
+const REQUIRED_CONTRACT: RunResultContract = {
+  kind: "flow_export",
+  schemaRef: "pkg@abcdef123456:research-result.v1",
+  schemaVersion: 1,
+  sha256: "a".repeat(64),
+  required: true,
+  producerNodeIds: ["orchestrate"],
+  schema: { schemaVersion: 1, fields: [] },
+  flowRevisionId: "rev-1",
+};
+
+const OPTIONAL_CONTRACT: RunResultContract = {
+  ...REQUIRED_CONTRACT,
+  required: false,
+};
+
+const AGENT_CONTRACT: RunResultContract = {
+  kind: "agent_profile",
+  profileName: "research",
+  schemaRef: "pkg@abcdef123456:research-result.v1",
+  schemaVersion: 1,
+  sha256: "b".repeat(64),
+  required: true,
+  schema: { schemaVersion: 1, fields: [] },
+  sourceFlowRevisionId: "rev-1",
+};
+
+type Row = NonNullable<DeriveResultStatusInput["newestRow"]>;
+
+function row(over: Partial<Row> = {}): Row {
+  return {
+    id: "rr-1",
+    revision: 1,
+    validity: "valid",
+    invalidReason: null,
+    ...over,
+  } as Row;
+}
+
+const LIVE_STATUSES = [
+  "Pending",
+  "Running",
+  "NeedsInput",
+  "NeedsInputIdle",
+  "HumanWorking",
+  "WaitingOnChildren",
+] as const;
+
+const FAILURE_STATUSES = ["Failed", "Crashed", "Abandoned"] as const;
+
+describe("deriveResultStatus (ADR-165 §B table)", () => {
+  it.each(LIVE_STATUSES)(
+    "%s → pending regardless of rows or contract",
+    (runStatus) => {
+      expect(
+        deriveResultStatus({
+          runStatus,
+          contract: REQUIRED_CONTRACT,
+          newestRow: row(),
+          validRow: row(),
+        }),
+      ).toBe("pending");
+      expect(
+        deriveResultStatus({
+          runStatus,
+          contract: null,
+          newestRow: null,
+          validRow: null,
+        }),
+      ).toBe("pending");
+    },
+  );
+
+  it.each(["Review", "Done"] as const)("%s with a valid row → valid", (s) => {
+    expect(
+      deriveResultStatus({
+        runStatus: s,
+        contract: REQUIRED_CONTRACT,
+        newestRow: row(),
+        validRow: row(),
+      }),
+    ).toBe("valid");
+  });
+
+  it.each(["Review", "Done"] as const)(
+    "%s with a NULL contract and no rows → absent (a scratch or manual run)",
+    (s) => {
+      expect(
+        deriveResultStatus({
+          runStatus: s,
+          contract: null,
+          newestRow: null,
+          validRow: null,
+        }),
+      ).toBe("absent");
+    },
+  );
+
+  it.each(["Review", "Done"] as const)(
+    "%s with an OPTIONAL contract and no rows → absent",
+    (s) => {
+      expect(
+        deriveResultStatus({
+          runStatus: s,
+          contract: OPTIONAL_CONTRACT,
+          newestRow: null,
+          validRow: null,
+        }),
+      ).toBe("absent");
+    },
+  );
+
+  it.each(["Review", "Done"] as const)(
+    "%s with a REQUIRED contract and no rows → missing",
+    (s) => {
+      expect(
+        deriveResultStatus({
+          runStatus: s,
+          contract: REQUIRED_CONTRACT,
+          newestRow: null,
+          validRow: null,
+        }),
+      ).toBe("missing");
+      expect(
+        deriveResultStatus({
+          runStatus: s,
+          contract: AGENT_CONTRACT,
+          newestRow: null,
+          validRow: null,
+        }),
+      ).toBe("missing");
+    },
+  );
+
+  it.each(["Review", "Done"] as const)(
+    "%s whose newest row is stale → stale",
+    (s) => {
+      expect(
+        deriveResultStatus({
+          runStatus: s,
+          contract: REQUIRED_CONTRACT,
+          newestRow: row({ validity: "stale" }),
+          validRow: null,
+        }),
+      ).toBe("stale");
+    },
+  );
+
+  it.each(["Review", "Done"] as const)(
+    "%s whose newest row is invalid → invalid",
+    (s) => {
+      expect(
+        deriveResultStatus({
+          runStatus: s,
+          contract: REQUIRED_CONTRACT,
+          newestRow: row({ validity: "invalid", invalidReason: "oversize" }),
+          validRow: null,
+        }),
+      ).toBe("invalid");
+    },
+  );
+
+  // A `valid` row WINS over a newer stale/invalid sibling: the table's Review /
+  // Done rows are ordered, and "a valid row exists" is checked first. Without
+  // this case a naive implementation that only looked at `newestRow` would pass
+  // every row above.
+  it.each(["Review", "Done"] as const)(
+    "%s with a valid row AND a newer invalid row → valid",
+    (s) => {
+      expect(
+        deriveResultStatus({
+          runStatus: s,
+          contract: REQUIRED_CONTRACT,
+          newestRow: row({
+            id: "rr-2",
+            revision: 2,
+            validity: "invalid",
+            invalidReason: "schema_mismatch",
+          }),
+          validRow: row(),
+        }),
+      ).toBe("valid");
+    },
+  );
+
+  it.each(FAILURE_STATUSES)("%s → unavailable, whatever the rows say", (s) => {
+    expect(
+      deriveResultStatus({
+        runStatus: s,
+        contract: REQUIRED_CONTRACT,
+        newestRow: row({ validity: "invalid", invalidReason: "result_missing" }),
+        validRow: null,
+      }),
+    ).toBe("unavailable");
+    expect(
+      deriveResultStatus({
+        runStatus: s,
+        contract: null,
+        newestRow: null,
+        validRow: null,
+      }),
+    ).toBe("unavailable");
+    // Even a valid row loses to a failure-terminal status — the run did not
+    // finish, so its result is not a usable answer.
+    expect(
+      deriveResultStatus({
+        runStatus: s,
+        contract: REQUIRED_CONTRACT,
+        newestRow: row(),
+        validRow: row(),
+      }),
+    ).toBe("unavailable");
+  });
+});
