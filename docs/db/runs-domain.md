@@ -55,9 +55,9 @@ erDiagram
     RUNS ||--|{ RUN_SESSIONS : "per-session runner state (Implemented ADR-114)"
     PLATFORM_ACP_RUNNERS ||--o{ RUN_SESSIONS : "session runner (Implemented ADR-114, SET NULL)"
     RUNS ||--o{ NODE_ATTEMPTS : "per-node attempt (ADR-027)"
-    RUNS ||--o{ RUN_RESULTS : "public result revisions (Designed ADR-165, 0129)"
-    NODE_ATTEMPTS ||--o{ RUN_RESULTS : "producing attempt (Designed ADR-165, SET NULL)"
-    RUN_RESULTS ||--o| RUN_RESULTS : "superseded_by_id (Designed ADR-165, SET NULL)"
+    RUNS ||--o{ RUN_RESULTS : "public result revisions (Implemented ADR-165, 0129)"
+    NODE_ATTEMPTS ||--o{ RUN_RESULTS : "producing attempt (Implemented ADR-165, SET NULL)"
+    RUN_RESULTS ||--o| RUN_RESULTS : "superseded_by_id (Implemented ADR-165, SET NULL)"
     RUNS ||--o{ RUN_SYNC_ATTEMPTS : "sync attempts (ADR-141, 0106)"
     RUNS ||--o| RUN_COST_ROLLUPS : "derived token rollup (ADR-085)"
     RUNS ||--o{ GATE_RESULTS : "per-run gates (ADR-028)"
@@ -514,7 +514,7 @@ erDiagram
 > [`../system-analytics/manual-takeover.md`](../system-analytics/manual-takeover.md)
 > and [ADR-030](../decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status).
 
-> **(Designed — ADR-165, migration `0129`, additive.)** New table `RUN_RESULTS`
+> **(Implemented — ADR-165, migration `0129`, additive.)** New table `RUN_RESULTS`
 > — one row per public result REVISION of a run, any run kind. Four CHECK
 > constraints encode the invariants the application must not be trusted to keep:
 > `validity IN ('valid','stale','superseded','invalid')`,

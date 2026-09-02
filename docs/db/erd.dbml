@@ -893,6 +893,7 @@ table flow_revisions {
   package_status text [not null, default: 'Installing']
   exec_trust text [not null, default: 'untrusted']
   installed_at "timestamp with time zone" [not null, default: `now()`]
+  result_profiles jsonb
 
   indexes {
     (flow_ref_id, resolved_revision) [name: 'flow_revisions_ref_revision_uq', unique]
@@ -1474,6 +1475,38 @@ table run_messages {
   }
 }
 
+table run_results {
+  id text [pk, not null]
+  run_id text [not null]
+  revision integer [not null]
+  validity text [not null]
+  schema_ref text [not null]
+  schema_sha256 text [not null]
+  schema_version integer [not null]
+  producer_kind text [not null]
+  producer_ref text [not null]
+  node_attempt_id text
+  value jsonb
+  value_bytes integer [not null]
+  invalid_reason text
+  artifact_manifest jsonb [not null, default: `[]`]
+  engine_version text [not null]
+  superseded_by_id text
+  superseded_at "timestamp with time zone"
+  first_collected_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (run_id, revision) [name: 'run_results_run_revision_uq', unique]
+    run_id [name: 'run_results_one_valid_per_run_uq', unique]
+    run_id [name: 'run_results_run_idx']
+    
+    
+    
+    
+  }
+}
+
 table run_schedules {
   id text [pk, not null]
   project_id text [not null]
@@ -1607,6 +1640,8 @@ table runs {
   agent_memory_hash text
   agent_chain_depth integer [not null, default: 0]
   context_mounts jsonb
+  result_contract jsonb
+  delegation_bounds jsonb
 
   indexes {
     (project_id, status) [name: 'runs_project_status_idx']
@@ -2668,6 +2703,12 @@ ref run_cost_rollups_flow_id_flows_id_fk: run_cost_rollups.flow_id > flows.id [d
 ref run_messages_run_id_runs_id_fk: run_messages.run_id > runs.id [delete: cascade, update: no action]
 
 ref run_messages_node_attempt_id_node_attempts_id_fk: run_messages.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
+
+ref run_results_run_id_runs_id_fk: run_results.run_id > runs.id [delete: cascade, update: no action]
+
+ref run_results_node_attempt_id_node_attempts_id_fk: run_results.node_attempt_id > node_attempts.id [delete: set null, update: no action]
+
+ref run_results_superseded_by_id_run_results_id_fk: run_results.superseded_by_id > run_results.id [delete: set null, update: no action]
 
 ref run_schedules_project_id_projects_id_fk: run_schedules.project_id > projects.id [delete: cascade, update: no action]
 

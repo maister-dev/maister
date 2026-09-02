@@ -41,18 +41,43 @@ export function isPlainObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
+// ADR-165: the structural failure CLASS, so a caller that must persist a
+// machine-readable reason (a `run_results.invalid_reason`) does not have to
+// pattern-match the prose. Field-level failures carry no class — they are all
+// "the payload did not satisfy the declared schema".
+export type StructuredOutputFailureReason =
+  | "unsafe_key"
+  | "depth_limit"
+  | "key_limit"
+  | "array_limit";
+
+type StructuralFailure = {
+  message: string;
+  reason: StructuredOutputFailureReason;
+};
+
 // Walks the payload once for the bounds that no per-field rule can express.
 // Depth counts containers only, so a scalar leaf at MAX_OUTPUT_DEPTH is valid.
-function checkStructure(root: unknown): string | null {
+function checkStructure(root: unknown): StructuralFailure | null {
   let totalKeys = 0;
 
-  function walk(value: unknown, path: string, depth: number): string | null {
+  function walk(
+    value: unknown,
+    path: string,
+    depth: number,
+  ): StructuralFailure | null {
     if (Array.isArray(value)) {
       if (depth > MAX_OUTPUT_DEPTH) {
-        return `payload exceeds the maximum nesting depth (${MAX_OUTPUT_DEPTH}) at ${path}`;
+        return {
+          message: `payload exceeds the maximum nesting depth (${MAX_OUTPUT_DEPTH}) at ${path}`,
+          reason: "depth_limit",
+        };
       }
       if (value.length > MAX_OUTPUT_ARRAY_LENGTH) {
-        return `array at ${path} exceeds the maximum length (${MAX_OUTPUT_ARRAY_LENGTH})`;
+        return {
+          message: `array at ${path} exceeds the maximum length (${MAX_OUTPUT_ARRAY_LENGTH})`,
+          reason: "array_limit",
+        };
       }
       for (let i = 0; i < value.length; i += 1) {
         const err = walk(value[i], `${path}[${i}]`, depth + 1);
@@ -65,19 +90,28 @@ function checkStructure(root: unknown): string | null {
 
     if (isPlainObject(value)) {
       if (depth > MAX_OUTPUT_DEPTH) {
-        return `payload exceeds the maximum nesting depth (${MAX_OUTPUT_DEPTH}) at ${path}`;
+        return {
+          message: `payload exceeds the maximum nesting depth (${MAX_OUTPUT_DEPTH}) at ${path}`,
+          reason: "depth_limit",
+        };
       }
       const keys = Object.keys(value);
 
       totalKeys += keys.length;
       if (totalKeys > MAX_OUTPUT_OBJECT_KEYS) {
-        return `payload exceeds the maximum object key count (${MAX_OUTPUT_OBJECT_KEYS})`;
+        return {
+          message: `payload exceeds the maximum object key count (${MAX_OUTPUT_OBJECT_KEYS})`,
+          reason: "key_limit",
+        };
       }
       for (const key of keys) {
         const keyPath = `${path}.${key}`;
 
         if (UNSAFE_KEYS.has(key)) {
-          return `unsafe key "${key}" at ${keyPath}`;
+          return {
+            message: `unsafe key "${key}" at ${keyPath}`,
+            reason: "unsafe_key",
+          };
         }
         const err = walk(value[key], keyPath, depth + 1);
 
@@ -173,7 +207,9 @@ function checkField(value: unknown, field: SchemaField): string | null {
 export function validateStructuredOutput(
   value: unknown,
   schema: unknown,
-): { ok: true } | { ok: false; message: string } {
+):
+  | { ok: true }
+  | { ok: false; message: string; reason?: StructuredOutputFailureReason } {
   if (!schema || typeof schema !== "object") {
     return { ok: false, message: "schema is missing or malformed" };
   }
@@ -188,7 +224,13 @@ export function validateStructuredOutput(
 
   const structural = checkStructure(value);
 
-  if (structural) return { ok: false, message: structural };
+  if (structural) {
+    return {
+      ok: false,
+      message: structural.message,
+      reason: structural.reason,
+    };
+  }
 
   for (const field of rawFields as FormSchema["fields"]) {
     const err = checkField(value[field.name], field);

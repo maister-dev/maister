@@ -445,10 +445,10 @@ No AI co-author trailer (repo convention).
 
 - [x] **T3.1 — Migration 0129 + `schema.ts` (the quadruple).** RED: AC-07 (bootstrap applies; shape probes in R1.3). GREEN: SQL as §Persistence; `_journal.json` idx 129; `meta/0129_snapshot.json`; `schema.ts` `runResults` (+ TS types of Appendix A) and the three columns. Renumber check vs Stage A now (D14).
   *Acceptance*: AC-07. *Satisfies*: REQ-01, REQ-13. (depends on Phase 2)
-- [ ] **T3.2 — `web/lib/run-results/` module.** RED: AC-08, AC-09, AC-10. GREEN: `ledger.ts` (`publishRunResult`, `recordInvalidRunResult`, `markRunResultStale`, `markRunResultCollected`), `status.ts` (`deriveResultStatus`), `contract.ts` (`schemaRefFor`, `buildFlowExportContract`, `buildAgentProfileContract`), `artifact-manifest.ts` (`engineArtifactManifest`), `validate.ts` (`validateResultValue` = `parsePayload`/byte cap + `validateStructuredOutput` — a thin composition over the ADR-162 validator, **no second validator**). REFACTOR: reuse `output-schema.ts` constants by import.
+- [x] **T3.2 — `web/lib/run-results/` module.** RED: AC-08, AC-09, AC-10. GREEN: `ledger.ts` (`publishRunResult`, `recordInvalidRunResult`, `markRunResultStale`, `markRunResultCollected`), `status.ts` (`deriveResultStatus`), `contract.ts` (`schemaRefFor`, `buildFlowExportContract`, `buildAgentProfileContract`), `artifact-manifest.ts` (`engineArtifactManifest`), `validate.ts` (`validateResultValue` = `parsePayload`/byte cap + `validateStructuredOutput` — a thin composition over the ADR-162 validator, **no second validator**). REFACTOR: reuse `output-schema.ts` constants by import.
   *Logging*: `[run-result.publish] {runId, revision, schemaRef, sha256Prefix, valueBytes, producer}`, `[run-result.supersede]`, `[run-result.stale]`, `[run-result.invalid] {runId, reasonClass, valueBytes}` — never the value.
   *Satisfies*: REQ-01, REQ-05.
-- [ ] **T3.3 — DB docs as-built + integrity.** `pnpm --filter maister-web db:erd`; `runs-domain.md` + `database-schema.md` as-built; API-exposure sweep recorded; `git diff --stat docs/api/` empty in this commit. AC-07 outputs in the commit body.
+- [x] **T3.3 — DB docs as-built + integrity.** `pnpm --filter maister-web db:erd`; `runs-domain.md` + `database-schema.md` as-built; API-exposure sweep recorded; `git diff --stat docs/api/` empty in this commit. AC-07 outputs in the commit body.
 
 **Phase 3 exit** — unit + integration green; `pnpm validate:docs` green incl. `db:erd --check`.
 
