@@ -682,8 +682,12 @@ only for explicit HITL or permission waits.
   resolvedRevision, engineMin, engineMax, carrierTaskId, mode, runnerOverride,
   baseBranch, targetBranch}`. Both branch fields resolve to
   `PROJECTS.main_branch` — a delegated child never branches off its parent — and
-  the pinned `flowRevisionId` is the revision `loadRun` resolves the manifest
-  from, so advancing the project's enabled revision cannot re-point a live child.
+  `flowRevisionId` / `resolvedRevision` / the engine range are written by the
+  launcher from the revision it selected, mirroring `RUNS.flow_revision_id`
+  (what `loadRun` resolves the manifest from) — never a pin the route resolved
+  earlier **(Implemented — ADR-163 amendment)** — so advancing the project's
+  enabled revision cannot re-point a live child and the snapshot cannot
+  disagree with the run row.
 - `TASKS.delegation_spec` **(Implemented — ADR-163, NO DDL)** likewise becomes a
   `kind`-discriminated union: `{kind?: 'agent'; agentId; workspace?;
   runnerOverride?}` (legacy rows: no `kind` ⇒ read as agent) or

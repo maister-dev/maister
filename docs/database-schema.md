@@ -1430,10 +1430,14 @@ unread badge and inbox panel.
                                  //   — every launch-time decision a terminal or
                                  //   recovery path reads. baseBranch/targetBranch
                                  //   both resolve to project.main_branch (a child
-                                 //   never branches off its parent); the pinned
-                                 //   flowRevisionId is what loadRun resolves the
-                                 //   manifest from, so advancing the project's
-                                 //   enabled revision never re-points a live child.
+                                 //   never branches off its parent); the revision
+                                 //   fields are written by the launcher from the
+                                 //   revision it selected and mirror
+                                 //   runs.flow_revision_id (what loadRun resolves
+                                 //   the manifest from), so advancing the project's
+                                 //   enabled revision never re-points a live child
+                                 //   and the snapshot cannot disagree with the row
+                                 //   (ADR-163 amendment).
   launchMode?,                   // (Implemented, ADR-098, migration 0060):
                                  //   'auto' | 'manual'; nullable
   persistent,                    // (Implemented, ADR-099, migration 0060):

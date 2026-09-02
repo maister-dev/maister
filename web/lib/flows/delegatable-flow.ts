@@ -212,15 +212,23 @@ export async function resolveDelegatableFlow(
 
 export type FlowDelegationSnapshotInput = Omit<
   Extract<DelegationSnapshot, { kind: "flow" }>,
-  "baseBranch" | "targetBranch"
+  | "baseBranch"
+  | "targetBranch"
+  | "flowRevisionId"
+  | "resolvedRevision"
+  | "engineMin"
+  | "engineMax"
 >;
 
 /**
  * The launch-time `delegation_snapshot` a flow child carries — built in ONE
  * place for the three child-creation edges (`run_delegate`, `run_plan`, the
- * as-plan auto-launcher). `baseBranch` / `targetBranch` are deliberately absent:
- * `launchRunStaged` completes them from its own branch resolution (ADR-163 D7),
- * so the snapshot and the workspace cannot disagree.
+ * as-plan auto-launcher). `baseBranch` / `targetBranch` AND the revision
+ * fields (`flowRevisionId`, `resolvedRevision`, `engineMin`, `engineMax`) are
+ * deliberately absent: `launchRunStaged` completes them from its own branch and
+ * revision resolution (ADR-163 D7 + Codex review F4), so the snapshot cannot
+ * disagree with the workspace or with `runs.flow_revision_id` — this resolver's
+ * revision is a trust decision, not the pin the run executes.
  */
 export function flowDelegationSnapshot(
   resolved: DelegatableFlow,
@@ -234,10 +242,6 @@ export function flowDelegationSnapshot(
     kind: "flow",
     flowId: resolved.flowId,
     flowRefId: resolved.flowRefId,
-    flowRevisionId: resolved.revisionId,
-    resolvedRevision: resolved.resolvedRevision,
-    engineMin: resolved.engineMin,
-    engineMax: resolved.engineMax,
     carrierTaskId: args.carrierTaskId,
     mode: args.mode,
     runnerOverride: args.runnerOverride,

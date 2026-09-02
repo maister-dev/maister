@@ -220,6 +220,8 @@ describe("run_delegate flow arm (ADR-163 REQ-07..REQ-13)", () => {
         kind: "flow",
         flowId,
         flowRefId: "delegated-flow",
+        // Codex review F4: the launcher's own pin, never the route's resolve.
+        flowRevisionId: child.flow_revision_id,
         carrierTaskId: json.childTaskId,
         mode,
         runnerOverride: null,

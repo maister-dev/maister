@@ -1695,10 +1695,13 @@ export type DelegationSnapshot =
   // terminal or recovery path reads, so none of them has to be re-derived from
   // a live projection that may have moved since. `baseBranch`/`targetBranch`
   // both resolve to the project's main branch (a delegated child never branches
-  // off its parent), and `flowRevisionId` is the pinned revision the runner
-  // loads the manifest from — advancing the project's enabled revision cannot
-  // re-point a live child. No DDL: the column is jsonb and this is a `$type<>`
-  // widening only.
+  // off its parent). `flowRevisionId` / `resolvedRevision` / the engine range
+  // are written by the LAUNCHER from the revision it selected and mirror
+  // `runs.flow_revision_id` (what the runner loads the manifest from) — never a
+  // pin the caller resolved earlier — so advancing the project's enabled
+  // revision cannot re-point a live child and the snapshot cannot disagree with
+  // the run row. No DDL: the column is jsonb and this is a `$type<>` widening
+  // only.
   | {
       kind: "flow";
       flowId: string;

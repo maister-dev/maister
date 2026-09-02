@@ -1664,9 +1664,17 @@ export async function* launchRunStaged(
             // D7: the launcher completes the flow snapshot with the branch
             // pair IT resolved, so the snapshot and `workspaces` can never
             // disagree about what this child branched from and promotes into.
+            // Codex review F4: the same rule for the revision — the caller's
+            // resolve and this one are separated by a committed transaction
+            // and a supervisor round-trip, so the snapshot mirrors the
+            // `revision` selected HERE, never a pin the caller took earlier.
             delegationSnapshot: input.delegationSnapshot
               ? {
                   ...input.delegationSnapshot,
+                  flowRevisionId: revision.id,
+                  resolvedRevision: revision.resolvedRevision,
+                  engineMin: revision.engineMin ?? null,
+                  engineMax: revision.engineMax ?? null,
                   baseBranch: base,
                   targetBranch: target,
                 }

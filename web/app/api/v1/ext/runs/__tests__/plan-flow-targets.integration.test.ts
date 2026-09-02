@@ -207,7 +207,7 @@ describe("run_plan flow targets (ADR-163)", () => {
 
     const child = (
       await pool.query(
-        `SELECT "run_kind", "task_id", "flow_id", "launch_mode", "delegation_snapshot"
+        `SELECT "run_kind", "task_id", "flow_id", "flow_revision_id", "launch_mode", "delegation_snapshot"
            FROM "runs" WHERE "id" = $1`,
         [tasks[0].childRunId],
       )
@@ -221,6 +221,8 @@ describe("run_plan flow targets (ADR-163)", () => {
       kind: "flow",
       flowId,
       flowRefId: "delegated-flow",
+      // Codex review F4: the launcher's own pin, never the route's resolve.
+      flowRevisionId: child.flow_revision_id,
       carrierTaskId: tasks[0].taskId,
       baseBranch: "main",
       targetBranch: "main",

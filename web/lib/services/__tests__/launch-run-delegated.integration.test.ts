@@ -1,4 +1,4 @@
-import type { DelegationSnapshot } from "@/lib/db/schema";
+import type { FlowDelegationSnapshotInput } from "@/lib/flows/delegatable-flow";
 
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -204,22 +204,16 @@ async function seedParentRun(): Promise<string> {
   return parentRunId;
 }
 
-function flowSnapshot(
-  carrierTaskId: string,
-): Extract<DelegationSnapshot, { kind: "flow" }> {
+// What a child-creation edge may supply: the launcher owns the branch pair AND
+// the revision fields (ADR-163 D7 + Codex review F4).
+function flowSnapshot(carrierTaskId: string): FlowDelegationSnapshotInput {
   return {
     kind: "flow",
     flowId,
     flowRefId: "delegated",
-    flowRevisionId: revisionId,
-    resolvedRevision: "rev-one",
-    engineMin: null,
-    engineMax: null,
     carrierTaskId,
     mode: "task",
     runnerOverride: null,
-    baseBranch: "main",
-    targetBranch: "main",
   };
 }
 
@@ -260,7 +254,17 @@ describe("launchRun with delegation provenance (ADR-163 REQ-06/REQ-08)", () => {
     expect(run.parent_run_id).toBe(parentRunId);
     expect(run.root_run_id).toBe(parentRunId);
     expect(run.launch_mode).toBe("manual");
-    expect(run.delegation_snapshot).toEqual(flowSnapshot(carrierTaskId));
+    // The launcher completes the caller's snapshot with exactly the fields it
+    // resolved itself: the branch pair (D7) and the revision (Codex review F4).
+    expect(run.delegation_snapshot).toEqual({
+      ...flowSnapshot(carrierTaskId),
+      flowRevisionId: revisionId,
+      resolvedRevision: "rev-one",
+      engineMin: null,
+      engineMax: null,
+      baseBranch: "main",
+      targetBranch: "main",
+    });
 
     // The runner identity lives on run_sessions, never duplicated onto the
     // snapshot (skill-context rule 207).
@@ -348,6 +352,63 @@ describe("launchRun with delegation provenance (ADR-163 REQ-06/REQ-08)", () => {
 
     expect(loaded.run.flowRevisionId).toBe(revisionId);
     expect(loaded.manifest.name).toBe("delegated");
+  }, 60_000);
+
+  // Codex review F4: the route resolves the flow once (and built the snapshot
+  // from that), the launcher resolves it AGAIN for `runs.flow_revision_id`, and
+  // the two resolutions are separated by a committed carrier transaction plus
+  // the launcher's own preamble. A repoint of `flows.enabled_revision_id` in
+  // that window made the run execute revision B while its "immutable" snapshot
+  // claimed revision A. The launcher now owns the snapshot's revision fields
+  // exactly as it already owns the branch pair.
+  it("the snapshot's revision fields are the launcher's, not the caller's: an enablement repoint inside the launch window cannot make them diverge", async () => {
+    const parentRunId = await seedParentRun();
+    const carrierTaskId = await seedCarrierTask();
+    const newerRevisionId = randomUUID();
+
+    await seedRevision(newerRevisionId, "rev-two");
+
+    // The launcher's `authorize` hook runs after the caller resolved (the
+    // snapshot below still names the OLD revision) and before the launcher
+    // reads the `flows` row — the real window.
+    const repointDuringPreamble = {
+      actorUserId: null,
+      authorize: async () => {
+        await pool.query(
+          `UPDATE "flows" SET "enabled_revision_id" = $2 WHERE "id" = $1`,
+          [flowId, newerRevisionId],
+        );
+      },
+    } as unknown as Parameters<typeof launchRun>[1];
+
+    const { runId } = await launchRun(
+      {
+        taskId: carrierTaskId,
+        flowId,
+        parentRunId,
+        rootRunId: parentRunId,
+        launchMode: "manual",
+        delegationSnapshot: flowSnapshot(carrierTaskId),
+      },
+      repointDuringPreamble,
+      db,
+    );
+
+    const run = (
+      await pool.query(
+        `SELECT "flow_revision_id", "flow_revision", "delegation_snapshot" FROM "runs" WHERE "id" = $1`,
+        [runId],
+      )
+    ).rows[0];
+    const snapshot = run.delegation_snapshot as {
+      flowRevisionId: string;
+      resolvedRevision: string;
+    };
+
+    expect(run.flow_revision_id).toBe(newerRevisionId);
+    expect(snapshot.flowRevisionId).toBe(run.flow_revision_id);
+    expect(snapshot.resolvedRevision).toBe(run.flow_revision);
+    expect(snapshot.resolvedRevision).toBe("rev-two");
   }, 60_000);
 
   it("a NON-delegated launch leaves every run-tree column NULL", async () => {
