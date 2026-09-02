@@ -875,7 +875,7 @@ on** · **Logging/Failure** · **Acceptance**. "Suite green" = the package's
   (`scripts/validate-adapter-mirrors.ts`) reviewed for `SessionRecord`.
   RED: contract test `supervisor/src/__tests__/openapi-examples.test.ts` (supervisor `unit`): every example under `components/schemas/{CommandEnvelope, AdoptWorkspaceRequest, StartSessionRequest, CommandReceipt, SessionCommandEvent}` parses with the Zod schema; a deliberately broken example fixture fails (proves the harness).
   Depends on: T2.1–T2.4. Acceptance: redocly + asyncapi + `validate:contracts` green.
-- [ ] **T2.6 e2e in-process test supervisor speaks the transitional contract (moved up).**
+- [x] **T2.6 e2e in-process test supervisor speaks the transitional contract (moved up).**
   Spec: keeps the Playwright lane green from T4.1 on.
   RED (Playwright `authed`, existing `scratch-launch.spec.ts` — no new spec here): the existing lane must stay green after T4.1; T2.6 delivers the capability ahead of it.
   GREEN: `web/e2e/_seed/test-supervisor.ts` and `stub-supervisor.ts` implement
@@ -1420,6 +1420,24 @@ Appendix A.3.
   updated (not in the plan's surface table, but a contradicting boundary rule
   would have violated R7). `SendPromptStopReason += cancelled` records the
   existing `/cancel` behavior (drift #8).
+- **2026-09-02 Phase 2 events + e2e stub (T2.4–T2.6) — DONE, Commit 4.**
+  `session.command` rides the supervisor event union (web parse only) and the
+  scratch `MinimalSupervisorEvent`; the transcript projector ignores it (P1).
+  Both e2e supervisors (`stub-supervisor.ts`, `test-supervisor.ts`) speak the
+  transitional contract: `/health.host`, `POST /workspaces/adopt`,
+  `GET|DELETE /workspaces/:id`, per-run fence, in-memory receipts,
+  `session.command` emits, `GET /commands/:id`. **T2.6 acceptance is a SET
+  DIFF, not "green":** the full Playwright lane fails 35 specs on main
+  `73fa99915` itself (a detached baseline worktree was installed and run for
+  the comparison — `ORDER BY 0` in `lib/scheduled-launches/queries.ts:380`
+  crashes the project board for automation-bearing projects,
+  `manifest?.spec.flows` in `lib/queries/packages.ts:197`, the intl
+  `Page {page}` FORMATTING_ERROR, drift in run-sync/m11c/evaluation-lab
+  specs — none touch execution-host code). Branch: 35 failed / 123 passed;
+  baseline: 35 failed / 1 flaky / 122 passed; the failing NAME sets are
+  identical (comm: zero entries either way). Five stub log lines
+  `orchestrator session missing facade token/baseUrl` exist on main's stub
+  too (line 166). Quarantine list for T7.1 = `scratchpad/base-failed.txt`.
 - **2026-09-02 Phase 1 (T1.1–T1.3) — DONE, Commit 2.** `db:generate --name
   execution_hosts` produced `0128_execution_hosts.sql` matching Appendix C
   name-for-name (this drizzle-kit wraps in `IF NOT EXISTS` / `DO $$`; journal

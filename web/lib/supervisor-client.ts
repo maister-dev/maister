@@ -210,9 +210,23 @@ export type SupervisorModelCatalog = {
   ttlSeconds: number;
 };
 
+// ADR-164 (Designed): the durable execution-host identity reported on
+// `/health`. Optional on the transport parse so a pre-ADR-164 supervisor still
+// reads as ready; the registrar (lib/execution-host) REQUIRES it to register.
+export const ExecutionHostIdentitySchema = z
+  .object({
+    hostKey: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/),
+    bootId: z.string().uuid(),
+    protocolVersion: z.literal(1),
+  })
+  .strict();
+
+export type ExecutionHostIdentity = z.infer<typeof ExecutionHostIdentitySchema>;
+
 const SupervisorHealthSchema = z
   .object({
     status: z.literal("ready"),
+    host: ExecutionHostIdentitySchema.optional(),
     version: z.string().min(1),
     uptimeMs: z.number().int().nonnegative(),
     checkedAt: z.string().datetime(),
@@ -359,8 +373,9 @@ export type SupervisorEvent =
       // POST /sessions/{id}/checkpoint (sweeper or manual). "intentional"
       // = plain DELETE /sessions/{id}. Absent on natural process exit.
       // Mirrors supervisor/src/types.ts and docs/api/async/supervisor-sse
-      // .asyncapi.yaml SessionExitedEvent.
-      reason?: "checkpoint" | "intentional";
+      // .asyncapi.yaml SessionExitedEvent. ADR-164: "fenced" = evicted by a
+      // command carrying a higher assignment epoch.
+      reason?: "checkpoint" | "intentional" | "fenced";
     }
   | {
       type: "session.crashed";
@@ -394,6 +409,31 @@ export type SupervisorEvent =
       lifecycle: "pre_tool_call" | "post_turn";
       disposition: "deny" | "halt";
       toolCall: unknown;
+    }
+  // ADR-164 (Designed): command acceptance / completion for the enveloped
+  // session routes — the durable completion signal beside the long-lived HTTP
+  // response. Mirrors supervisor/src/types.ts + supervisor-sse.asyncapi.yaml.
+  // Consumed by the execution-host command ledger; every other consumer
+  // ignores it.
+  | {
+      type: "session.command";
+      sessionId: string;
+      monotonicId: number;
+      commandId: string;
+      kind:
+        | "session.prompt"
+        | "session.input"
+        | "session.cancel"
+        | "session.checkpoint"
+        | "session.delete";
+      phase: "accepted" | "completed";
+      status?: "succeeded" | "failed" | "fenced";
+      result?: Record<string, unknown>;
+      error?: {
+        code: string;
+        message: string;
+        details?: Record<string, unknown>;
+      };
     };
 
 function baseUrl(): string {

@@ -103,7 +103,7 @@ type MinimalSupervisorEvent =
   | {
       type: "session.exited";
       monotonicId: number;
-      reason?: "checkpoint" | "intentional";
+      reason?: "checkpoint" | "intentional" | "fenced";
     }
   | {
       type: "session.crashed";
@@ -128,6 +128,15 @@ type MinimalSupervisorEvent =
       rule: "path_guard" | "repetition" | "no_progress" | "capability_guard";
       lifecycle: "pre_tool_call" | "post_turn";
       disposition: "deny" | "halt";
+    }
+  // ADR-164: command acceptance / completion signal for the enveloped session
+  // routes. Consumed by the execution-host command ledger, never by the scratch
+  // projection (default → {}), mirrored here to keep the projection total.
+  | {
+      type: "session.command";
+      monotonicId: number;
+      commandId: string;
+      phase: "accepted" | "completed";
     };
 
 // Dialog-status / HITL side effects only. Message content is produced by the

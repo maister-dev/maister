@@ -39,6 +39,21 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import path from "node:path";
 
+import {
+  STUB_BOOT_ID,
+  STUB_HOST_KEY,
+  stubAdopt,
+  stubEnvelope,
+  stubFence,
+  stubHandle,
+  stubPayload,
+  stubReceipt,
+  stubRecord,
+  stubRelease,
+  stubReplay,
+  stubResolveCreate,
+} from "./stub-supervisor";
+
 const STUB_RELEASE_BACKSTOP_MS = 15_000;
 const STUB_RELEASE_POLL_MS = 150;
 
@@ -106,6 +121,11 @@ type SessionRecord = {
   stub: boolean;
   // The live SSE writer, set while a stream is connected.
   emit: ((event: Record<string, unknown>) => void) | null;
+  // ADR-164: the create envelope's fence + handle (undefined for legacy).
+  executionWorkspaceId?: string;
+  assignmentId?: string;
+  assignmentEpoch?: number;
+  createdByCommandId?: string;
 };
 
 export interface TestSupervisorOptions {
@@ -550,6 +570,11 @@ export async function startTestSupervisor(
       res.end(
         JSON.stringify({
           status: "ready",
+          host: {
+            hostKey: STUB_HOST_KEY,
+            bootId: STUB_BOOT_ID,
+            protocolVersion: 1,
+          },
           version: "e2e-test-supervisor",
           uptimeMs: 0,
           checkedAt: new Date().toISOString(),
@@ -599,6 +624,95 @@ export async function startTestSupervisor(
       return;
     }
 
+    // ---- ADR-164 workspace adoption + receipts (transitional, in-memory) --
+    const sendJson = (status: number, body: unknown, replayed = false) => {
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+      };
+      if (replayed) headers["x-maister-command-replayed"] = "true";
+      res.writeHead(status, headers);
+      res.end(JSON.stringify(body));
+    };
+    if (method === "POST" && url === "/workspaces/adopt") {
+      void readJsonBody(req).then((body) => {
+        const env = stubEnvelope(body);
+        if (!env) {
+          sendJson(409, {
+            code: "PRECONDITION",
+            message: "missing envelope",
+            details: { reason: "missing_envelope" },
+          });
+          return;
+        }
+        const replay = stubReplay(env);
+        if (replay) {
+          sendJson(replay.status, replay.body, true);
+          return;
+        }
+        const refused = stubFence(env, String(env.payload.runId ?? ""));
+        if (refused) {
+          stubRecord(env, refused.status, refused.body);
+          sendJson(refused.status, refused.body);
+          return;
+        }
+        const outcome = stubAdopt(env.payload);
+        stubRecord(env, outcome.status, outcome.body);
+        sendJson(outcome.status, outcome.body);
+      });
+    const workspaceMatch = url.match(/^\/workspaces\/(ws_[0-9a-f]{32})$/);
+    if (method === "GET" && workspaceMatch) {
+      const h = stubHandle(workspaceMatch[1]);
+      if (!h) {
+        sendJson(404, {
+          code: "PRECONDITION",
+          message: "unknown execution workspace",
+          details: { reason: "unknown_workspace" },
+        });
+        return;
+      }
+      sendJson(200, {
+        executionWorkspaceId: workspaceMatch[1],
+        runId: h.runId,
+        projectSlug: h.projectSlug,
+        kind: h.kind,
+        adoptedAt: h.adoptedAt,
+        releasedAt: h.releasedAt,
+      });
+    if (method === "DELETE" && workspaceMatch) {
+      void readJsonBody(req).then((body) => {
+        const h = stubHandle(workspaceMatch[1]);
+        if (!h) {
+          sendJson(404, {
+            code: "PRECONDITION",
+            message: "unknown execution workspace",
+            details: { reason: "unknown_workspace" },
+          });
+          return;
+        }
+        const env = stubEnvelope(body);
+        const replay = stubReplay(env);
+        if (replay) {
+          sendJson(replay.status, replay.body, true);
+          return;
+        }
+        const refused = stubFence(env, h.runId);
+        if (refused) {
+          stubRecord(env, refused.status, refused.body);
+          sendJson(refused.status, refused.body);
+          return;
+        }
+        const outcome = { released: stubRelease(workspaceMatch[1]) };
+        stubRecord(env, 200, outcome);
+        sendJson(200, outcome);
+      });
+    const commandMatch = url.match(/^\/commands\/([0-9a-f-]+)$/);
+    if (method === "GET" && commandMatch) {
+      const receipt = stubReceipt(commandMatch[1]);
+      if (!receipt) {
+        sendJson(404, { code: "PRECONDITION", message: "unknown command" });
+        return;
+      }
+      sendJson(200, receipt);
     // ---- GET /sessions — reconcile/keepalive/parkOrchestratorSession view --
     if (method === "GET" && url === "/sessions") {
       const records = [...sessions.values()]
@@ -614,6 +728,10 @@ export async function startTestSupervisor(
           logPath: "/tmp/x.log",
           monotonicId: monotonic,
           acpSessionId: s.acpSessionId,
+          executionWorkspaceId: s.executionWorkspaceId,
+          assignmentId: s.assignmentId,
+          assignmentEpoch: s.assignmentEpoch,
+          createdByCommandId: s.createdByCommandId,
         }));
 
       res.writeHead(200, { "content-type": "application/json" });
@@ -624,10 +742,35 @@ export async function startTestSupervisor(
 
     // ---- POST /sessions — create + run_kind lookup -----------------------
     if (method === "POST" && url === "/sessions") {
-      void readJsonBody(req).then(async (body) => {
+      void readJsonBody(req).then(async (rawBody) => {
+        const env = stubEnvelope(rawBody);
+        const replay = stubReplay(env);
+
+        if (replay) {
+          sendJson(replay.status, replay.body, true);
+
+          return;
+        }
+        const resolved = stubResolveCreate(stubPayload(rawBody));
+
+        if ("status" in resolved) {
+          stubRecord(env, resolved.status, resolved.body);
+          sendJson(resolved.status, resolved.body);
+
+          return;
+        }
+        const refused = stubFence(env, resolved.runId);
+
+        if (refused) {
+          stubRecord(env, refused.status, refused.body);
+          sendJson(refused.status, refused.body);
+
+          return;
+        }
+        const body = resolved.request as Record<string, unknown>;
         const sessionId = randomUUID();
         const acpSessionId = (body.resumeSessionId as string) || randomUUID();
-        const runId = String(body.runId ?? "");
+        const runId = resolved.runId;
         const mcpServers = (body.mcpServers as AgentMcpServer[]) ?? [];
         const runKind = await lookupRunKind(runId);
 
@@ -660,6 +803,13 @@ export async function startTestSupervisor(
           detached: false,
           stub,
           emit: null,
+          executionWorkspaceId:
+            typeof body.executionWorkspaceId === "string"
+              ? body.executionWorkspaceId
+              : undefined,
+          assignmentId: env?.fence.assignmentId,
+          assignmentEpoch: env?.fence.assignmentEpoch,
+          createdByCommandId: env?.command.id,
         };
 
         sessions.set(sessionId, rec);
@@ -671,8 +821,10 @@ export async function startTestSupervisor(
         });
         if (stub) stubWriteRecord(sessionId, acpSessionId, body);
 
-        res.writeHead(201, { "content-type": "application/json" });
-        res.end(JSON.stringify({ sessionId, pid: 4242, acpSessionId }));
+        const out = { sessionId, pid: 4242, acpSessionId };
+
+        stubRecord(env, 201, out);
+        sendJson(201, out);
       });
 
       return;
@@ -683,13 +835,44 @@ export async function startTestSupervisor(
     if (method === "POST" && promptMatch) {
       const rec = sessions.get(promptMatch[1]);
 
-      void readJsonBody(req).then(async (body) => {
+      void readJsonBody(req).then(async (rawBody) => {
+        const env = stubEnvelope(rawBody);
+        const replay = stubReplay(env);
+
+        if (replay) {
+          sendJson(replay.status, replay.body, true);
+
+          return;
+        }
+        const refused = stubFence(env, rec?.runId);
+
+        if (refused) {
+          stubRecord(env, refused.status, refused.body);
+          sendJson(refused.status, refused.body);
+
+          return;
+        }
+        const body = stubPayload(rawBody) as Record<string, unknown>;
+
+        // ADR-164: the durable completion signal beside the HTTP response.
+        if (env && rec?.emit) {
+          rec.emit({
+            type: "session.command",
+            sessionId: rec.sessionId,
+            monotonicId: nextId(),
+            commandId: env.command.id,
+            kind: "session.prompt",
+            phase: "accepted",
+          });
+        }
         // stub-compat: record the prompt; the stream stays held until release
         // (do NOT auto-drive — the spec controls termination).
         if (rec?.stub) {
           stubAppendPrompt(promptMatch[1], body);
-          res.writeHead(200, { "content-type": "application/json" });
-          res.end(JSON.stringify({ stopReason: "end_turn" }));
+          const out = { stopReason: "end_turn" };
+
+          stubRecord(env, 200, out);
+          sendJson(200, out);
 
           return;
         }
@@ -714,8 +897,22 @@ export async function startTestSupervisor(
             }
           }
         }
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ stopReason: "end_turn" }));
+        const out = { stopReason: "end_turn" };
+
+        stubRecord(env, 200, out);
+        if (env && rec?.emit) {
+          rec.emit({
+            type: "session.command",
+            sessionId: rec.sessionId,
+            monotonicId: nextId(),
+            commandId: env.command.id,
+            kind: "session.prompt",
+            phase: "completed",
+            status: "succeeded",
+            result: out,
+          });
+        }
+        sendJson(200, out);
       });
 
       return;
@@ -782,27 +979,68 @@ export async function startTestSupervisor(
     if (method === "POST" && checkpointMatch) {
       const rec = sessions.get(checkpointMatch[1]);
 
-      req.resume();
-      if (rec) rec.detached = true;
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(
-        JSON.stringify({
+      void readJsonBody(req).then((body) => {
+        const env = stubEnvelope(body);
+        const replay = stubReplay(env);
+
+        if (replay) {
+          sendJson(replay.status, replay.body, true);
+
+          return;
+        }
+        const refused = stubFence(env, rec?.runId);
+
+        if (refused) {
+          stubRecord(env, refused.status, refused.body);
+          sendJson(refused.status, refused.body);
+
+          return;
+        }
+        if (rec) rec.detached = true;
+        const out = {
           alreadyCheckpointed: false,
           sessionId: checkpointMatch[1],
           monotonicId: nextId(),
-        }),
-      );
+        };
+
+        stubRecord(env, 200, out);
+        sendJson(200, out);
+      });
 
       return;
     }
 
-    // ---- POST /sessions/:id/input — permission delivery (unused here) ----
-    const inputMatch = url.match(/^\/sessions\/([0-9a-f-]+)\/input$/);
+    // ---- POST /sessions/:id/input|cancel — permission delivery / interrupt --
+    const inputMatch = url.match(/^\/sessions\/([0-9a-f-]+)\/(input|cancel)$/);
 
     if (method === "POST" && inputMatch) {
-      req.resume();
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: true }));
+      const rec = sessions.get(inputMatch[1]);
+
+      void readJsonBody(req).then((body) => {
+        const env = stubEnvelope(body);
+        const replay = stubReplay(env);
+
+        if (replay) {
+          sendJson(replay.status, replay.body, true);
+
+          return;
+        }
+        const refused = stubFence(env, rec?.runId);
+
+        if (refused) {
+          stubRecord(env, refused.status, refused.body);
+          sendJson(refused.status, refused.body);
+
+          return;
+        }
+        const out =
+          inputMatch[2] === "cancel"
+            ? { cancelled: true, sessionId: inputMatch[1] }
+            : { ok: true };
+
+        stubRecord(env, 200, out);
+        sendJson(200, out);
+      });
 
       return;
     }
@@ -813,12 +1051,31 @@ export async function startTestSupervisor(
     if (method === "DELETE" && deleteMatch) {
       const rec = sessions.get(deleteMatch[1]);
 
-      if (rec) {
-        if (rec.emit) rec.emit = null;
-        sessions.delete(deleteMatch[1]);
-      }
-      res.writeHead(204);
-      res.end();
+      void readJsonBody(req).then((body) => {
+        const env = stubEnvelope(body);
+        const replay = stubReplay(env);
+
+        if (replay) {
+          sendJson(replay.status, replay.body, true);
+
+          return;
+        }
+        const refused = stubFence(env, rec?.runId);
+
+        if (refused) {
+          stubRecord(env, refused.status, refused.body);
+          sendJson(refused.status, refused.body);
+
+          return;
+        }
+        if (rec) {
+          if (rec.emit) rec.emit = null;
+          sessions.delete(deleteMatch[1]);
+        }
+        stubRecord(env, 204, {});
+        res.writeHead(204);
+        res.end();
+      });
 
       return;
     }

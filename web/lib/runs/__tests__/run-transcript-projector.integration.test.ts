@@ -143,7 +143,10 @@ async function seed(): Promise<{
   return { runId, slug, planAttemptId, implAttemptId };
 }
 
-async function seedStandaloneAgentRun(): Promise<{ runId: string; slug: string }> {
+async function seedStandaloneAgentRun(): Promise<{
+  runId: string;
+  slug: string;
+}> {
   const projectId = randomUUID();
   const runId = randomUUID();
   const slug = `agent-${projectId.slice(0, 8)}`;
@@ -247,6 +250,49 @@ describe("projectRunTranscript", () => {
     });
 
     expect(again.status).toBe("unchanged");
+  });
+
+  // ADR-164 (P1): the execution-host `session.command` acceptance/completion
+  // line rides the same durable log. It is ledger-only — the transcript
+  // projector neither renders it nor treats it as a coalescing reset.
+  it("ignores a session.command line (no message, no reset)", async () => {
+    const { runId, slug, planAttemptId } = await seed();
+
+    await writeEvents(slug, runId, [textLine(planAttemptId, 1, "plan output")]);
+    await projectRunTranscript(runId, { client: db, runtimeRoot });
+
+    await writeEvents(slug, runId, [
+      textLine(planAttemptId, 1, "plan output"),
+      JSON.stringify({
+        type: "session.command",
+        monotonicId: 2,
+        sessionName: "node",
+        nodeAttemptId: planAttemptId,
+        commandId: randomUUID(),
+        kind: "session.prompt",
+        phase: "completed",
+        status: "succeeded",
+        result: { stopReason: "end_turn" },
+      }),
+      textLine(planAttemptId, 3, " continued"),
+    ]);
+
+    const again = await projectRunTranscript(runId, {
+      client: db,
+      runtimeRoot,
+    });
+
+    expect(again.status).toBe("projected");
+
+    // No reset between the two chunks: they coalesce into ONE message, and no
+    // message was minted for the command line itself.
+    const plan = await getRunNodeTranscript(runId, "plan", { client: db });
+
+    expect(plan?.messages).toHaveLength(1);
+    expect(plan?.messages[0]).toMatchObject({
+      role: "assistant",
+      content: "plan output continued",
+    });
   });
 
   it("returns the LATEST attempt's transcript for a reworked node", async () => {

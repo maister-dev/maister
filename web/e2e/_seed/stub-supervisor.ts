@@ -33,6 +33,10 @@ import path from "node:path";
 export const STUB_SUPERVISOR_PORT = 7788;
 export const STUB_SUPERVISOR_URL = `http://127.0.0.1:${STUB_SUPERVISOR_PORT}`;
 export const STUB_SESSIONS_DIR = path.resolve("e2e/.runtime/stub-sessions");
+// ADR-164 (transitional contract): a fixed execution-host identity so the web
+// registrar upserts ONE stable execution_hosts row across every spec.
+export const STUB_HOST_KEY = "eh_e2e_stub_supervisor_0001";
+export const STUB_BOOT_ID = "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0";
 
 const RELEASE_BACKSTOP_MS = 15_000;
 const RELEASE_POLL_MS = 150;
@@ -58,6 +62,290 @@ function sessionFile(sessionId: string): string {
   return path.join(STUB_SESSIONS_DIR, `${sessionId}.json`);
 }
 
+// ---- ADR-164 transitional contract (in-memory: fences, receipts, handles) --
+// A body is enveloped iff it carries `command` + `fence`; the route's real
+// payload is `body.payload`. Fences are per-run epoch high-waters; receipts
+// replay a completed command id verbatim; handles are minted by adoption. All
+// in-memory — acceptable for the stub (documented in the plan, T2.6).
+type StubEnvelope = {
+  command: { id: string; kind: string };
+  fence: {
+    hostKey: string;
+    assignmentId: string;
+    assignmentEpoch: number;
+    runId: string;
+  };
+  payload: Record<string, unknown>;
+};
+
+const fences = new Map<string, { assignmentId: string; epoch: number }>();
+const receipts = new Map<
+  string,
+  {
+    status: number;
+    body: unknown;
+    runId: string;
+    kind: string;
+    epoch: number;
+    receivedAt: string;
+  }
+>();
+const handles = new Map<
+  string,
+  {
+    runId: string;
+    projectSlug: string;
+    kind: string;
+    path: string;
+    releasedAt: string | null;
+    adoptedAt: string;
+  }
+>();
+
+export function stubEnvelope(body: unknown): StubEnvelope | null {
+  const b = body as Partial<StubEnvelope> | null;
+
+  return b &&
+    typeof b === "object" &&
+    b.command &&
+    b.fence &&
+    typeof b.command.id === "string"
+    ? (b as StubEnvelope)
+    : null;
+}
+
+export function stubPayload(body: unknown): any {
+  const env = stubEnvelope(body);
+
+  return env ? (env.payload ?? {}) : (body ?? {});
+}
+
+// Returns an error body when the fence must be refused, else null.
+export function stubFence(
+  env: StubEnvelope | null,
+  expectedRunId?: string,
+): { status: number; body: unknown } | null {
+  if (!env) return null;
+  if (env.fence.hostKey !== STUB_HOST_KEY) {
+    return {
+      status: 409,
+      body: {
+        code: "PRECONDITION",
+        message: "host mismatch",
+        details: { reason: "host_mismatch" },
+      },
+    };
+  }
+  if (expectedRunId !== undefined && env.fence.runId !== expectedRunId) {
+    return {
+      status: 409,
+      body: {
+        code: "PRECONDITION",
+        message: "run mismatch",
+        details: { reason: "run_mismatch", runId: env.fence.runId },
+      },
+    };
+  }
+  const stored = fences.get(env.fence.runId);
+
+  if (stored && env.fence.assignmentEpoch < stored.epoch) {
+    return {
+      status: 409,
+      body: {
+        code: "FENCED",
+        message: `command epoch ${env.fence.assignmentEpoch} is below the host high-water ${stored.epoch}`,
+        details: {
+          reason: "assignment_fenced",
+          runId: env.fence.runId,
+          commandEpoch: env.fence.assignmentEpoch,
+          hostEpoch: stored.epoch,
+        },
+      },
+    };
+  }
+  if (
+    stored &&
+    env.fence.assignmentEpoch === stored.epoch &&
+    env.fence.assignmentId !== stored.assignmentId
+  ) {
+    return {
+      status: 409,
+      body: {
+        code: "PRECONDITION",
+        message: "assignment mismatch",
+        details: { reason: "assignment_mismatch" },
+      },
+    };
+  }
+  if (!stored || env.fence.assignmentEpoch > stored.epoch) {
+    fences.set(env.fence.runId, {
+      assignmentId: env.fence.assignmentId,
+      epoch: env.fence.assignmentEpoch,
+    });
+  }
+
+  return null;
+}
+
+export function stubReplay(
+  env: StubEnvelope | null,
+): { status: number; body: unknown } | null {
+  if (!env) return null;
+
+  return receipts.get(env.command.id) ?? null;
+}
+
+export function stubRecord(
+  env: StubEnvelope | null,
+  status: number,
+  body: unknown,
+): void {
+  if (!env) return;
+  receipts.set(env.command.id, {
+    status,
+    body,
+    runId: env.fence.runId,
+    kind: env.command.kind,
+    epoch: env.fence.assignmentEpoch,
+    receivedAt: new Date().toISOString(),
+  });
+}
+
+export function stubReceipt(commandId: string) {
+  const r = receipts.get(commandId);
+
+  return r
+    ? {
+        commandId,
+        runId: r.runId,
+        kind: r.kind,
+        assignmentEpoch: r.epoch,
+        phase: "completed",
+        httpStatus: r.status,
+        body: r.body ?? {},
+        receivedAt: r.receivedAt,
+        completedAt: r.receivedAt,
+      }
+    : null;
+}
+
+export function stubAdopt(payload: any): { status: number; body: unknown } {
+  const p = String(payload.path ?? "");
+
+  if (!path.isAbsolute(p)) {
+    return {
+      status: 409,
+      body: {
+        code: "PRECONDITION",
+        message: "relative path",
+        details: { reason: "workspace_rejected", rule: "relative_path" },
+      },
+    };
+  }
+  if (!existsSync(p)) {
+    return {
+      status: 409,
+      body: {
+        code: "PRECONDITION",
+        message: "not found",
+        details: { reason: "workspace_rejected", rule: "not_found" },
+      },
+    };
+  }
+  for (const [id, h] of handles) {
+    if (h.runId === payload.runId && h.path === p && !h.releasedAt) {
+      return {
+        status: 200,
+        body: { executionWorkspaceId: id, kind: h.kind, replayed: true },
+      };
+    }
+  }
+  const id = `ws_${randomUUID().replace(/-/g, "")}`;
+
+  handles.set(id, {
+    runId: String(payload.runId),
+    projectSlug: String(payload.projectSlug),
+    kind: String(payload.kind),
+    path: p,
+    releasedAt: null,
+    adoptedAt: new Date().toISOString(),
+  });
+
+  return {
+    status: 200,
+    body: { executionWorkspaceId: id, kind: payload.kind, replayed: false },
+  };
+}
+
+export function stubHandle(id: string) {
+  return handles.get(id) ?? null;
+}
+
+export function stubRelease(id: string): boolean {
+  const h = handles.get(id);
+
+  if (!h || h.releasedAt) return false;
+  h.releasedAt = new Date().toISOString();
+
+  return true;
+}
+
+// Resolve the create request (handle form or legacy) to the fields the stub
+// records. A handle-form create against an unknown/released handle refuses.
+export function stubResolveCreate(
+  payload: any,
+): { status: number; body: unknown } | { runId: string; request: any } {
+  if (typeof payload.executionWorkspaceId === "string") {
+    const h = handles.get(payload.executionWorkspaceId);
+
+    if (!h)
+      return {
+        status: 409,
+        body: {
+          code: "PRECONDITION",
+          message: "unknown execution workspace",
+          details: { reason: "unknown_workspace" },
+        },
+      };
+    if (h.releasedAt)
+      return {
+        status: 409,
+        body: {
+          code: "PRECONDITION",
+          message: "released",
+          details: { reason: "workspace_released", runId: h.runId },
+        },
+      };
+
+    return {
+      runId: h.runId,
+      request: {
+        ...payload,
+        runId: h.runId,
+        projectSlug: h.projectSlug,
+        worktreePath: h.path,
+      },
+    };
+  }
+
+  return { runId: String(payload.runId ?? ""), request: payload };
+}
+
+function sendJson(
+  res: import("node:http").ServerResponse,
+  status: number,
+  body: unknown,
+  replayed = false,
+): void {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+  };
+
+  if (replayed) headers["x-maister-command-replayed"] = "true";
+  res.writeHead(status, headers);
+  res.end(body === undefined ? undefined : JSON.stringify(body));
+}
+
 export function startStubSupervisor(): Promise<Server> {
   mkdirSync(STUB_SESSIONS_DIR, { recursive: true });
 
@@ -65,6 +353,11 @@ export function startStubSupervisor(): Promise<Server> {
     if (req.method === "GET" && req.url === "/health") {
       const body = JSON.stringify({
         status: "ready",
+        host: {
+          hostKey: STUB_HOST_KEY,
+          bootId: STUB_BOOT_ID,
+          protocolVersion: 1,
+        },
         version: "e2e-stub",
         uptimeMs: 0,
         checkedAt: new Date().toISOString(),
@@ -126,22 +419,168 @@ export function startStubSupervisor(): Promise<Server> {
       return;
     }
 
+    // ---- ADR-164 workspace adoption + receipts (transitional) ---------------
+    if (req.method === "POST" && req.url === "/workspaces/adopt") {
+      void readJsonBody(req).then((body) => {
+        const env = stubEnvelope(body);
+
+        if (!env) {
+          sendJson(res, 409, {
+            code: "PRECONDITION",
+            message: "missing envelope",
+            details: { reason: "missing_envelope" },
+          });
+
+          return;
+        }
+        const replay = stubReplay(env);
+
+        if (replay) {
+          sendJson(res, replay.status, replay.body, true);
+
+          return;
+        }
+        const refused = stubFence(env, String(env.payload.runId ?? ""));
+
+        if (refused) {
+          stubRecord(env, refused.status, refused.body);
+          sendJson(res, refused.status, refused.body);
+
+          return;
+        }
+        const outcome = stubAdopt(env.payload);
+
+        stubRecord(env, outcome.status, outcome.body);
+        sendJson(res, outcome.status, outcome.body);
+      });
+
+      return;
+    }
+
+    const workspaceMatch = req.url?.match(/^\/workspaces\/(ws_[0-9a-f]{32})$/);
+
+    if (req.method === "GET" && workspaceMatch) {
+      const h = stubHandle(workspaceMatch[1]);
+
+      if (!h) {
+        sendJson(res, 404, {
+          code: "PRECONDITION",
+          message: "unknown execution workspace",
+          details: { reason: "unknown_workspace" },
+        });
+
+        return;
+      }
+      sendJson(res, 200, {
+        executionWorkspaceId: workspaceMatch[1],
+        runId: h.runId,
+        projectSlug: h.projectSlug,
+        kind: h.kind,
+        adoptedAt: h.adoptedAt,
+        releasedAt: h.releasedAt,
+      });
+
+      return;
+    }
+
+    if (req.method === "DELETE" && workspaceMatch) {
+      void readJsonBody(req).then((body) => {
+        const h = stubHandle(workspaceMatch[1]);
+
+        if (!h) {
+          sendJson(res, 404, {
+            code: "PRECONDITION",
+            message: "unknown execution workspace",
+            details: { reason: "unknown_workspace" },
+          });
+
+          return;
+        }
+        const env = stubEnvelope(body);
+        const replay = stubReplay(env);
+
+        if (replay) {
+          sendJson(res, replay.status, replay.body, true);
+
+          return;
+        }
+        const refused = stubFence(env, h.runId);
+
+        if (refused) {
+          stubRecord(env, refused.status, refused.body);
+          sendJson(res, refused.status, refused.body);
+
+          return;
+        }
+        const outcome = { released: stubRelease(workspaceMatch[1]) };
+
+        stubRecord(env, 200, outcome);
+        sendJson(res, 200, outcome);
+      });
+
+      return;
+    }
+
+    const commandMatch = req.url?.match(/^\/commands\/([0-9a-f-]+)$/);
+
+    if (req.method === "GET" && commandMatch) {
+      const receipt = stubReceipt(commandMatch[1]);
+
+      if (!receipt) {
+        sendJson(res, 404, {
+          code: "PRECONDITION",
+          message: "unknown command",
+        });
+
+        return;
+      }
+      sendJson(res, 200, receipt);
+
+      return;
+    }
+
     // ---- M34 minimal /sessions surface (platform-agents e2e) --------------
     if (req.method === "POST" && req.url === "/sessions") {
       void readJsonBody(req).then((body) => {
+        const env = stubEnvelope(body);
+        const replay = stubReplay(env);
+
+        if (replay) {
+          sendJson(res, replay.status, replay.body, true);
+
+          return;
+        }
+        const resolved = stubResolveCreate(stubPayload(body));
+
+        if ("status" in resolved) {
+          stubRecord(env, resolved.status, resolved.body);
+          sendJson(res, resolved.status, resolved.body);
+
+          return;
+        }
+        const refused = stubFence(env, resolved.runId);
+
+        if (refused) {
+          stubRecord(env, refused.status, refused.body);
+          sendJson(res, refused.status, refused.body);
+
+          return;
+        }
         const sessionId = randomUUID();
         const acpSessionId = randomUUID();
 
         writeFileSync(
           sessionFile(sessionId),
           JSON.stringify(
-            { sessionId, acpSessionId, request: body, prompts: [] },
+            { sessionId, acpSessionId, request: resolved.request, prompts: [] },
             null,
             2,
           ),
         );
-        res.writeHead(201, { "content-type": "application/json" });
-        res.end(JSON.stringify({ sessionId, pid: 4242, acpSessionId }));
+        const out = { sessionId, pid: 4242, acpSessionId };
+
+        stubRecord(env, 201, out);
+        sendJson(res, 201, out);
       });
 
       return;
@@ -153,16 +592,75 @@ export function startStubSupervisor(): Promise<Server> {
       const file = sessionFile(promptMatch[1]);
 
       void readJsonBody(req).then((body) => {
+        const env = stubEnvelope(body);
+        const replay = stubReplay(env);
+
+        if (replay) {
+          sendJson(res, replay.status, replay.body, true);
+
+          return;
+        }
+        const refused = stubFence(env);
+
+        if (refused) {
+          stubRecord(env, refused.status, refused.body);
+          sendJson(res, refused.status, refused.body);
+
+          return;
+        }
         try {
           const record = JSON.parse(readFileSync(file, "utf8"));
 
-          record.prompts.push(body);
+          record.prompts.push(stubPayload(body));
           writeFileSync(file, JSON.stringify(record, null, 2));
         } catch {
           // Unknown session — still answer; the spec asserts on the files.
         }
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ stopReason: "end_turn" }));
+        const out = { stopReason: "end_turn" };
+
+        stubRecord(env, 200, out);
+        sendJson(res, 200, out);
+      });
+
+      return;
+    }
+
+    const teardownMatch = req.url?.match(
+      /^\/sessions\/([0-9a-f-]+)\/(checkpoint|cancel|input)$/,
+    );
+
+    if (req.method === "POST" && teardownMatch) {
+      void readJsonBody(req).then((body) => {
+        const env = stubEnvelope(body);
+        const replay = stubReplay(env);
+
+        if (replay) {
+          sendJson(res, replay.status, replay.body, true);
+
+          return;
+        }
+        const refused = stubFence(env);
+
+        if (refused) {
+          stubRecord(env, refused.status, refused.body);
+          sendJson(res, refused.status, refused.body);
+
+          return;
+        }
+        const kind = teardownMatch[2];
+        const out =
+          kind === "checkpoint"
+            ? {
+                alreadyCheckpointed: false,
+                sessionId: teardownMatch[1],
+                monotonicId: 2,
+              }
+            : kind === "cancel"
+              ? { cancelled: true, sessionId: teardownMatch[1] }
+              : { ok: true };
+
+        stubRecord(env, 200, out);
+        sendJson(res, 200, out);
       });
 
       return;
@@ -215,8 +713,27 @@ export function startStubSupervisor(): Promise<Server> {
     const deleteMatch = req.url?.match(/^\/sessions\/([0-9a-f-]+)$/);
 
     if (req.method === "DELETE" && deleteMatch) {
-      res.writeHead(204);
-      res.end();
+      void readJsonBody(req).then((body) => {
+        const env = stubEnvelope(body);
+        const replay = stubReplay(env);
+
+        if (replay) {
+          sendJson(res, replay.status, replay.body, true);
+
+          return;
+        }
+        const refused = stubFence(env);
+
+        if (refused) {
+          stubRecord(env, refused.status, refused.body);
+          sendJson(res, refused.status, refused.body);
+
+          return;
+        }
+        stubRecord(env, 204, {});
+        res.writeHead(204);
+        res.end();
+      });
 
       return;
     }
