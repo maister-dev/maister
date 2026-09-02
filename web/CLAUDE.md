@@ -349,7 +349,8 @@ CHECKPOINT`).
   Flow runner remaps, and launch-time runner resolution
   (launch override → Flow step target → project Flow default → platform Flow
   default → project default → platform default).
-- `lib/supervisor-client.ts` — HTTP+SSE client to `../supervisor/`:
+- `lib/execution-host/` — (Designed — ADR-164) the supervisor boundary: registrar/resolver, assignment mint, command ledger + deliverer, `BoundClient` per assignment / `HostAdminClient`.
+- `lib/supervisor-client.ts` — HTTP+SSE local-direct transport to `../supervisor/` (importable only from `lib/execution-host/**`):
   `POST /sessions`, `DELETE /sessions/:id`, `GET /sessions/:id/stream`,
   `POST /sessions/:id/input` (deliver HITL response when worker is live).
   Reconnect with `lastEventId`.
@@ -368,7 +369,8 @@ list` vs supervisor's live session set; orphan `Running` with no live
 
 There is NO `lib/runner.ts` — agent subprocess lifecycle lives in
 `../supervisor/`, not Next.js. The web tier talks to supervisor via
-`lib/supervisor-client.ts` only.
+`lib/execution-host/` only (ADR-164, Designed); `lib/supervisor-client.ts`
+is that module's transport.
 
 Drizzle schema sketch (server-only, `lib/db/schema.ts`):
 
@@ -608,5 +610,5 @@ Flag these in PRs but do NOT mass-delete in unrelated commits (surgical-changes 
 - All writes to `.maister/<project-slug>/runs/<run-id>/` are atomic (`tmp + rename` via `atomicWriteJson`). Flow / agent may read them mid-write otherwise.
 - Throw `MaisterError` with a `code` for known domain failures; UI branches on `code`. New codes: `EXECUTOR_UNAVAILABLE`, `FLOW_INSTALL`, `ACP_PROTOCOL`, `CHECKPOINT`.
 - Every ACP `session/update` line must be written to **both** the SSE bridge AND `.maister/<project-slug>/runs/<run-id>/<step-id>.log` — read-side tails the file for reconnect via `lastEventId`.
-- Agent processes live in `../supervisor/`, NOT in Next.js. Web tier talks to them via `lib/supervisor-client.ts` only.
+- Agent processes live in `../supervisor/`, NOT in Next.js. Web tier talks to them via `lib/execution-host/` only (ADR-164, Designed); `lib/supervisor-client.ts` is its lint-fenced transport.
 - Anything in the root CLAUDE.md "Out of POC scope" list does not get implemented here either.

@@ -37,7 +37,10 @@ Backend split:
 - `supervisor/` — separate Node daemon. Owns ACP sessions, spawns agent
   processes through the platform ACP runner registry, heartbeat, and
   permission input delivery. Reachable
-  from Next.js over HTTP+SSE; can run on a different host than the web tier.
+  from Next.js over HTTP+SSE. Both processes share the host filesystem
+  (ADR-023) — a different host for the supervisor is not supported today;
+  ADR-164 (Designed) makes the supervisor a registered *execution host*
+  behind `web/lib/execution-host/` so later stages can move it.
 
 ## How to run
 
@@ -84,8 +87,10 @@ Detailed code structure, conventions, HeroUI patterns: **`web/CLAUDE.md`**.
 - **Live updates**: SSE — supervisor publishes `session/update` events;
   Next.js Route Handler bridges to the browser at `/api/runs/[id]/stream`
   with `lastEventId` reconnect.
-- **IPC Next.js ↔ supervisor**: HTTP+SSE (supervisor may run on a
-  different host).
+- **IPC Next.js ↔ supervisor**: HTTP+SSE through `web/lib/execution-host/`
+  (Designed — ADR-164: durable host identity, per-run epoch-fenced
+  assignments, enveloped command ledger, opaque adopted-workspace handles);
+  same host, shared filesystem.
 - **Flow plugins**: git repos pinned by tag (`v1.2.3`); installed system-wide
   to `~/.maister/flows/<id>@<tag>/` and symlinked into each consuming
   project's `.maister/<slug>/flows/`.
@@ -133,6 +138,18 @@ HITL lifecycle:
 transitions. The live path is ACP notifications (kernel-level fd events
 inside the supervisor); the recovery path is supervisor-side heartbeat +
 artifact check on resume.
+
+**Execution-host addressing (ADR-164, Designed):** every host-bound command
+(create/prompt/input/cancel/checkpoint/delete, workspace adopt/release) is
+issued through a `BoundClient` bound to the run's active
+`execution_assignments` row — it carries a unique `command.id` and the
+fence `{hostKey, assignmentId, assignmentEpoch, runId}`, is persisted
+`queued` before the wire call, and the supervisor rejects a stale epoch with
+`409 FENCED` → `CONFLICT {details.reason:"assignment_fenced"}`, on which the
+driver MUST yield without writing run state. Placement re-entries mint the
+epoch inside their existing CAS claim. `POST /workspaces/adopt` is the only
+path-bearing route; session routes take the opaque `executionWorkspaceId`.
+→ `docs/system-analytics/execution-hosts.md`.
 
 ### 2. SSE pipe-to-disk
 
@@ -326,6 +343,12 @@ inject via `{{ artifacts.<id>.content }}` (ADR-120).
   promoted head, `promotion_state` stays `none`, and the workspace is GC'd by
   `scheduled_removal_at` on the existing path. Its answer is the result, not a
   diff.
+- **Execution assignments** (ADR-164, Designed): one `active`
+  `execution_assignments` row per run (epoch = driver-ownership generation,
+  minted at launch and at every resume/recover/rework/interrupt re-entry);
+  the worktree is adopted ONCE into a host-scoped opaque handle stored on the
+  assignment; `run_sessions.host_session_id` is written by the create ack.
+  → `docs/system-analytics/execution-hosts.md`.
 - **Manual takeover** (M11b): a reviewer at a `human_review` node claims the
   run (`NeedsInput → HumanWorking`), edits the existing worktree locally on
   the host, and returns it for re-validation (downstream nodes go stale). No
@@ -422,8 +445,8 @@ which stays the local-promotion merge commit.
   Per-step executor override resolution per §5.
 - **`supervisor/` daemon**: separate Node process owning ACP sessions,
   process-per-session spawn, heartbeat, permission input delivery,
-  cost-token metric on disk. Talks HTTP+SSE to Next.js (may live on a
-  different host).
+  cost-token metric on disk. Talks HTTP+SSE to Next.js (same host, shared
+  filesystem — ADR-023; addressed as a registered execution host, ADR-164).
 - **Project portfolio (home)**: superset.sh-style grid of every active
   workspace across all projects — project · branch · status · last activity ·
   executor · quick actions (View / Resume / Abandon). Filters by project +
@@ -582,6 +605,10 @@ executors.
   Never partial-write a JSON the Flow / agent will read.
 - **SSE messages**: one per ACP `session/update` event line. Include
   monotonic `id` for `lastEventId` reconnect.
+- **Supervisor boundary**: `web/lib/supervisor-client.ts` is the local-direct
+  transport and is importable ONLY from `web/lib/execution-host/**`
+  (ESLint-fenced, ADR-164 Designed); domain code uses `BoundClient` /
+  `HostAdminClient` from `@/lib/execution-host`.
 - **Agent process lifetime**: spawned and owned by `supervisor/`, NOT by
   Next.js. Permission HITL stays live through supervisor deferreds.
   Checkpoint/idle resume is implemented via the ACP `session/resume` protocol

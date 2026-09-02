@@ -68,8 +68,16 @@ C4Context
 ## C4 Container — deployable units
 
 MAIster ships as two long-running Node processes plus a Postgres
-instance. The supervisor MAY run on a different host than the web tier
-(only HTTP+SSE between them).
+instance on ONE host. The web tier and the supervisor share HTTP+SSE AND
+the host filesystem (`MAISTER_RUNTIME_ROOT`, worktrees root, flows cache —
+ADR-023): the run stream tails `run.events.jsonl` locally and
+worktree/diff/promotion are web-side git operations, so a different host for
+the supervisor is not supported in the current target. The web tier
+addresses the supervisor as a registered **execution host** with a durable
+identity, per-run epoch-fenced **execution assignments**, an enveloped
+**command ledger**, and opaque adopted-workspace handles (Designed —
+[ADR-164](decisions.md#adr-164-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces);
+[`system-analytics/execution-hosts.md`](system-analytics/execution-hosts.md)).
 
 ```mermaid
 C4Container
@@ -113,8 +121,8 @@ C4Container
 | Container           | Status      | Tech                                               | Purpose                                                                                                                                                                                                                                                                                                                                                                                               |
 | ------------------- | ----------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Web tier            | Implemented | Next.js 16 + React 19 + HeroUI v3 + Tailwind 4     | Route Handlers for run launch, HITL response, and durable run SSE; Drizzle access; Flow runner.                                                                                                                                                                                                                                                                                                       |
-| Supervisor daemon   | Implemented | Node 24 + Fastify + pino + Zod                     | Owns ACP sessions, spawns adapters, heartbeat watcher, cost accounting, permission deferreds, run event log.                                                                                                                                                                                                                                                                                          |
-| Database            | Implemented | Postgres 16                                        | Persistent state for projects, ACP runners, flows, tasks, runs, workspaces, node attempts, and HITL.                                                                                                                                                                                                                                                                                                  |
+| Supervisor daemon   | Implemented | Node 24 + Fastify + pino + Zod                     | Owns ACP sessions, spawns adapters, heartbeat watcher, cost accounting, permission deferreds, run event log. (Designed — ADR-164) Also the local execution host: durable identity + fences + receipts + adopted-workspace handles in a private `node:sqlite` state store under `<runtimeRoot>/.maister/execution-host/`. |
+| Database            | Implemented | Postgres 16                                        | Persistent state for projects, ACP runners, flows, tasks, runs, workspaces, node attempts, and HITL. (Designed — ADR-164) SSOT for `execution_hosts`, `execution_assignments`, `execution_commands`. |
 | `claude-agent-acp`  | Implemented | `@agentclientprotocol/claude-agent-acp@0.37.0`     | ACP adapter wrapping Claude Agent SDK. One process per session.                                                                                                                                                                                                                                                                                                                                       |
 | `codex-acp`         | Implemented | `@agentclientprotocol/codex-acp@0.0.44`            | ACP adapter bundling Codex. One process per session.                                                                                                                                                                                                                                                                                                                                                  |
 | MCP facade (`mcp/`) | Implemented | `@maister/mcp` — `@modelcontextprotocol/sdk`, Node | Standalone workspace package exposing external MCP tools as a thin REST client of `/api/v1/ext`, incl. `hitl_inbox`, `hitl_list`, and `hitl_respond` (ADR-055). Streamable-HTTP (default, remote): forwards per-request inbound bearer to the REST layer; no ambient token. stdio (local): reads `MAISTER_PROJECT_TOKEN`, then `MAISTER_ACCESS_TOKEN` as fallback. Zero DB/web coupling. See ADR-047. |
@@ -124,7 +132,9 @@ C4Container
 - **Web ↔ Supervisor** — HTTP + SSE.
   Contract: [`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml) (REST routes)
   - [`api/async/supervisor-sse.asyncapi.yaml`](api/async/supervisor-sse.asyncapi.yaml) (SSE event stream).
-    Client: `web/lib/supervisor-client.ts`.
+    Client: `web/lib/execution-host/` (Designed — ADR-164: `BoundClient` per
+    assignment + `HostAdminClient`; `web/lib/supervisor-client.ts` is its
+    local-direct transport, importable only inside that module — lint-fenced).
 - **Web ↔ Database** — Drizzle ORM over `postgres` driver.
   Contract: [`database-schema.md`](database-schema.md) + [`db/erd.md`](db/erd.md).
 - **Supervisor ↔ Adapter** — stdio JSONL (Adapter binary speaks ACP
@@ -152,6 +162,7 @@ C4Component
         Component(pending, "pending-permissions.ts", "Deferred registry", "Parks ACP permission requests until web responds or timeout fires.")
         Component(types, "types.ts", "Zod schemas + types", "StartSessionRequest, SessionEvent union, SupervisorError, httpStatusForCode.")
         Component(model_catalog, "model-catalog/", "Model resolver (ADR-076)", "ModelSource registry, ACP-probe/provider/curated sources, in-memory TTL cache, passive harvest.")
+        Component(host_state, "host-state.ts + execution-fence.ts + command-receipts.ts + workspace-registry.ts", "Execution-host substrate (Designed, ADR-164)", "node:sqlite state store: host identity, per-run epoch fences + eviction, command receipts, adopted-workspace handles.")
     }
 
     ContainerDb_Ext(fs, "Filesystem", ".maister/{slug}/runs/{runId}/")
@@ -167,6 +178,8 @@ C4Component
     Rel(http_api, pending, "resolve/cancel permission")
     Rel(http_api, types, "Zod parse / error mapping")
     Rel(http_api, model_catalog, "resolveModelCatalog()")
+    Rel(http_api, host_state, "withCommand(): fence, receipt, resolveForSession()")
+    Rel(host_state, fs, "state.sqlite under .maister/execution-host/")
     Rel(model_catalog, child, "ACP probe: initialize + session/new + teardown", "stdio JSONL")
 
     Rel(spawn, child, "child_process.spawn", "stdio JSONL")
@@ -195,6 +208,10 @@ C4Component
 | `pending-permissions` | `supervisor/src/pending-permissions.ts` | Permission deferreds.                                | Resolve or cancel ACP `requestPermission` handles by `(sessionId, requestId)`.                                                                                                                                                                    | `types`.                                                                  |
 | `types`               | `supervisor/src/types.ts`               | Schemas + error.                                     | Zod request/event schemas, `SessionEvent` union, `SupervisorError` class, `httpStatusForCode()`.                                                                                                                                                  | `zod`.                                                                    |
 | `model-catalog`       | `supervisor/src/model-catalog/*`        | Model discovery resolver (ADR-076). **Implemented.** | `ModelSource` registry keyed by `(adapter, provider.kind)`; ACP-probe/provider/curated sources; in-memory TTL cache; passive harvest. Serves `POST /model-catalog/resolve`; resolves `env:NAME` secrets supervisor-side only, never returns them. | `spawn` (`buildChildEnv`), `runner-provisioner`, `acp-client`, `types`.   |
+| `host-state` | `supervisor/src/host-state.ts` | Execution-host state store. **Designed — ADR-164.** | Open `state.sqlite` (WAL) under `MAISTER_EXECUTION_HOST_STATE_DIR`; mint or verify the pinned `hostKey` (conflict → fatal); per-process `bootId`; tables `host_identity`, `run_fences`, `workspaces`, `command_receipts`; receipt prune (7 d). | `node:sqlite`. |
+| `execution-fence` | `supervisor/src/execution-fence.ts` | Fence enforcement. **Designed — ADR-164.** | `hostKey` / epoch / `assignmentId` / `runId` rules in order; persist the high-water BEFORE execution; evict lower-epoch live sessions (`session.exited {reason: fenced}`). | `host-state`, `registry`, `pending-permissions`, `types`. |
+| `command-receipts` | `supervisor/src/command-receipts.ts` | Idempotency receipts. **Designed — ADR-164.** | Replay `completed` / `rejected` receipts verbatim (`X-Maister-Command-Replayed`), join in-flight duplicates, `turn_lost` for accepted-without-in-flight; serves `GET /commands/:id`. | `host-state`, `types`. |
+| `workspace-registry` | `supervisor/src/workspace-registry.ts` + `workspace-roots.ts` | Opaque workspace handles. **Designed — ADR-164.** | `POST /workspaces/adopt` validation per kind against `MAISTER_WORKSPACE_ROOTS`; `(runId, realpath)` idempotency; `resolveForSession(handle)` — the ONE path-derivation function feeding spawn, confinement, cost, and the events log. | `host-state`, `node:fs`, `types`. |
 
 The `model-catalog` resolver (Implemented, ADR-076) is the supervisor's
 model-discovery surface: `POST /model-catalog/resolve` fans a runner draft across
@@ -216,7 +233,7 @@ C4Component
         Component(atomic, "lib/atomic.ts", "Atomic file writer", "tmp + rename. Used for needs-input.json, input-{step}.json, etc.")
         Component(config_schema, "lib/config.schema.ts", "Zod schemas", "maister.yaml v2, flow.yaml v1, form_schema. Single source of truth for types.")
         Component(config, "lib/config.ts", "YAML loader", "Reads maister.yaml / flow.yaml, runs schema + cross-reference checks, throws MaisterError(CONFIG).")
-        Component(supervisor_client, "lib/supervisor-client.ts", "HTTP+SSE client", "createSession, sendPrompt, deliverPermission, cancelPermission, streamSession.")
+        Component(supervisor_client, "lib/execution-host/ + lib/supervisor-client.ts", "Execution-host client (Designed, ADR-164)", "Registrar/resolver, assignment mint, command ledger + deliverer, BoundClient per assignment; supervisor-client.ts is the local-direct transport.")
         Component(db_schema, "lib/db/schema.ts", "Drizzle schema", "8 tables, FKs with cascade, indexes.")
         Component(db_client, "lib/db/client.ts", "Drizzle factory", "buildClient, getDb (lazy singleton), maskUrl.")
         Component(flow_runner, "lib/flows/runner.ts", "Flow runner", "Traverses graph nodes, persists attempts and gates, pauses on NeedsInput, and resumes from durable inputs.")
@@ -247,13 +264,14 @@ C4Component
 | `lib/atomic`                                        | `web/lib/atomic.ts`                        | `atomicWriteJson(path, data)` — tmp + rename.                                                                                                                                       | `node:fs/promises`, `node:crypto`, `pino`.                |
 | `lib/config.schema`                                 | `web/lib/config.schema.ts`                 | Zod schemas for `maister.yaml` v2, `flow.yaml` v1, `form_schema`.                                                                                                                   | `zod`.                                                    |
 | `lib/config`                                        | `web/lib/config.ts`                        | `loadProjectConfig`, `loadFlowManifest`, `validateFormSchemaVersion`.                                                                                                               | `lib/config.schema`, `lib/errors`, `yaml`, `pino`.        |
-| `lib/supervisor-client`                             | `web/lib/supervisor-client.ts`             | `createSession`, `sendPrompt`, `deliverPermission`, `cancelPermission`, `deleteSession`, `listSessions`, `checkpointSession`, `streamSession`, `resolveModelSuggestions` (ADR-076). | `lib/errors`, `pino`.                                     |
+| `lib/supervisor-client`                             | `web/lib/supervisor-client.ts`             | `createSession`, `sendPrompt`, `deliverPermission`, `cancelPermission`, `deleteSession`, `listSessions`, `checkpointSession`, `streamSession`, `resolveModelSuggestions` (ADR-076). (Designed — ADR-164) Becomes the local-direct transport behind `lib/execution-host/`; gains enveloped variants + `adoptWorkspace` / `getWorkspace` / `releaseWorkspace` / `getCommandReceipt`. | `lib/errors`, `pino`.                                     |
+| `lib/execution-host` | `web/lib/execution-host/*` | (Designed — ADR-164) `registrar` (health → `execution_hosts` policy), `resolver` (30 s memo), `assignments` (`mintAssignment` in the claim tx, release), `commands` + `redact` (ledger rows), `ledger` + `deliverer` (per-kind policy table, CAS FSM, retry budgets), `adoption` (lazy `workspace.adopt` from server state), `recovery` (W1/W2/W4 + retention), `legacy` (evidence backfill + `ensureAssignment`), `client` (`forAssignment` → `BoundClient`, `local` → `HostAdminClient`). | `lib/db`, `lib/errors`, `lib/supervisor-client` (transport only), `pino`. |
 | `lib/db/schema`                                     | `web/lib/db/schema.ts`                     | Drizzle table definitions for the 8 tables.                                                                                                                                         | `drizzle-orm/pg-core`.                                    |
 | `lib/db/client`                                     | `web/lib/db/client.ts`                     | Drizzle client factory + lazy singleton.                                                                                                                                            | `drizzle-orm`, `lib/errors`.                              |
-| `lib/flows/runner`                                  | `web/lib/flows/runner.ts`                  | Flow graph execution and resume gate.                                                                                                                                               | `flows/*`, `db/schema`, `scheduler`, `supervisor-client`. |
+| `lib/flows/runner`                                  | `web/lib/flows/runner.ts`                  | Flow graph execution and resume gate.                                                                                                                                               | `flows/*`, `db/schema`, `scheduler`, `execution-host` (Designed — ADR-164; was `supervisor-client`). |
 | `app/api/runs`                                      | `web/app/api/runs/route.ts`                | Launch a run from a Backlog task.                                                                                                                                                   | `db`, `worktree`, `scheduler`, `flows/runner`.            |
 | `app/api/runs/[runId]/stream`                       | `web/app/api/runs/[runId]/stream/route.ts` | Browser-facing durable run SSE.                                                                                                                                                     | `db`, `run.events.jsonl`.                                 |
-| `app/api/runs/[runId]/hitl/[hitlRequestId]/respond` | Route Handler                              | HITL response two-phase claim, permission delivery or atomic artifact write, runner wake-up.                                                                                        | `db`, `atomic`, `supervisor-client`, `flows/runner`.      |
+| `app/api/runs/[runId]/hitl/[hitlRequestId]/respond` | Route Handler                              | HITL response two-phase claim, permission delivery or atomic artifact write, runner wake-up.                                                                                        | `db`, `atomic`, `execution-host` (Designed — ADR-164; was `supervisor-client`), `flows/runner`.      |
 
 ## Component map — remaining pieces
 
@@ -379,9 +397,14 @@ stateDiagram-v2
 
 ## Deployment
 
-Current deployment runs `web` and `supervisor` on the host and uses Docker
+Current deployment runs `web` and `supervisor` on ONE host and uses Docker
 Compose only for Postgres. `compose.yml` defines the local Postgres service;
-`compose.production.yml` is the hardened production overlay.
+`compose.production.yml` is the hardened production overlay. The shared
+host filesystem is REQUIRED (ADR-023; documented as a Stage-A limitation by
+ADR-164): both processes resolve `.maister/` from the same
+`MAISTER_RUNTIME_ROOT`, the supervisor keeps its execution-host state under
+`<runtimeRoot>/.maister/execution-host/`, and its `MAISTER_WORKSPACE_ROOTS`
+must mirror the web tier's worktrees / local-packages roots.
 
 ```mermaid
 flowchart LR
@@ -403,11 +426,14 @@ flowchart LR
     adapter -->|HTTPS| llm[(Anthropic / OpenAI /<br/>third-party LLM)]
 ```
 
-The supervisor MAY run on a different host than the web tier — the
-only coupling surface is the HTTP+SSE wire described in
-[`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml). For
-multi-host the operator sets `MAISTER_SUPERVISOR_URL` on the web tier
-to the supervisor's external address.
+The supervisor is addressed as a registered execution host
+(`execution_hosts`, `kind='local_direct'`); `MAISTER_SUPERVISOR_URL` is
+transport configuration read at call time by the local-direct transport,
+never stored. The HTTP+SSE wire is described in
+[`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml); a supervisor on
+a different host is NOT supported in the current target (the two processes
+share the filesystem — see ADR-023 and ADR-164 §D12 for the deferred
+stages).
 
 ## Typed Plan-review artifact boundary (Implemented — ADR-137)
 

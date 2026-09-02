@@ -500,6 +500,50 @@ remoteSha, aheadBy, behindBy, instructions[]}` as advisory detail so the UI
 > missing at restart time **degrades to workspace policy `keep` with a WARN**
 > rather than throwing — it is never guessed.
 
+## Execution-host contract (Designed — ADR-164)
+
+> **ADR-164 adds NO new `MaisterError` code.** The local execution-host
+> contract reuses the closed union: a stale assignment epoch rejected by the
+> supervisor (`409 FENCED`) surfaces as **`CONFLICT`** with
+> `details.reason = "assignment_fenced"` (+ `runId`, `commandEpoch`,
+> `hostEpoch`); a refused host registration (`readiness_reason =
+> identity_changed`) surfaces as **`EXECUTOR_UNAVAILABLE`** with
+> `details.reason = "host_identity_mismatch"` (web-minted); every host
+> refusal of an envelope, handle, or path reuses **`PRECONDITION`** with a
+> typed `details.reason` token; an unknown-outcome transport failure after
+> the per-kind retry budget is **`EXECUTOR_UNAVAILABLE`**; a prompt whose
+> acceptance receipt cannot be resolved after a transport failure is
+> **`ACP_PROTOCOL`** (`details.reason = "turn_lost" | "receipt_missing"`).
+> The UI still branches on `code`; `details.reason` is the discriminator for
+> internal callers and tests (ADR-093 pattern). A driver receiving
+> `assignment_fenced` MUST yield — no run, attempt, HITL, or scratch write.
+
+Supervisor-side codes the web client translates (`FENCED` is the only
+addition; the full table lives in
+[`supervisor.md` §Errors](supervisor.md#errors)):
+
+| Supervisor code | HTTP | Web `MaisterError` | `details.reason` |
+| --------------- | ---- | ------------------ | ---------------- |
+| `FENCED` | 409 | `CONFLICT` | `assignment_fenced` |
+| `PRECONDITION` | 409 | `PRECONDITION` (unchanged) | one of the tokens below |
+| `EXECUTOR_UNAVAILABLE` | 503 | `EXECUTOR_UNAVAILABLE` (unchanged) | — |
+
+Reason tokens (`SupervisorErrorBody.details.reason`, contract in
+[`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml)):
+
+| Token | Raised when | Web behavior |
+| ----- | ----------- | ------------ |
+| `host_mismatch` | `fence.hostKey` ≠ the host's own key | `PRECONDITION` passed through |
+| `assignment_mismatch` | same epoch as the high-water, different `assignmentId` | `PRECONDITION` passed through |
+| `run_mismatch` | `fence.runId` ≠ the session's / handle's run | `PRECONDITION` passed through |
+| `assignment_fenced` | `fence.assignmentEpoch` below the high-water, or an evicted session's pending prompt | `CONFLICT`; driver yields |
+| `turn_lost` | duplicate prompt id whose receipt is `accepted` with no in-flight turn (host restarted mid-turn) | ledger `failed{turn_lost}`; run follows reconcile |
+| `unknown_workspace` | `executionWorkspaceId` not in the host registry | client re-adopts ONCE, issues a NEW create |
+| `workspace_released` | handle already released | `PRECONDITION` passed through |
+| `workspace_rejected` | adopt path failed a kind rule (`details.rule ∈ relative_path, parent_segment, not_found, outside_roots, symlink_escape, gitdir_mismatch, not_a_repo, repo_path_mismatch, inside_state_dir, outside_workspace`) | `PRECONDITION` passed through |
+| `legacy_field` | a legacy path field after the strict flip | `PRECONDITION` passed through |
+| `missing_envelope` | no envelope after the strict flip | `PRECONDITION` passed through |
+
 ## Construction
 
 ```ts

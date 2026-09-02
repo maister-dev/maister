@@ -77,7 +77,11 @@ pnpm --filter maister-web dev            # http://localhost:3000
 ```
 
 Only Postgres is containerized; `web` and `supervisor` run on the host (they
-spawn agent CLIs and operate on host git repos — see ADR-023):
+spawn agent CLIs and operate on host git repos — see ADR-023). Both read the
+same `MAISTER_RUNTIME_ROOT`; the supervisor additionally keeps its
+execution-host state (identity, fences, adopted-workspace handles, command
+receipts — Designed, ADR-164) under `<runtimeRoot>/.maister/execution-host/`,
+created on first boot (override with `MAISTER_EXECUTION_HOST_STATE_DIR`):
 
 ```bash
 docker compose up -d postgres            # only Postgres runs in Docker
@@ -515,6 +519,15 @@ mAIster/
 - **Adding another component library** — HeroUI v3 + Tailwind 4 +
   `tailwind-variants` covers all primitives. Do not add shadcn/ui, MUI,
   Chakra, or hand-rolled equivalents (see `.ai-factory/rules/frontend.md`).
+- **Moving `MAISTER_WORKTREES_ROOT` without `MAISTER_WORKSPACE_ROOTS`**
+  (Designed — ADR-164) — the supervisor only adopts worktrees under its
+  configured roots; a moved web root that is not mirrored fails every launch
+  at adoption with `PRECONDITION workspace_rejected`. Mirror both in
+  `supervisor/.env`.
+- **Copying `.maister/execution-host/` between machines** (Designed —
+  ADR-164) — a `MAISTER_EXECUTION_HOST_KEY` pin that differs from the copied
+  `state.sqlite` refuses boot. Unset the pin or wipe the directory; never
+  point two supervisors at one state dir.
 
 ## See Also
 

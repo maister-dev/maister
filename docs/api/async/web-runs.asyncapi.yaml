@@ -1,7 +1,7 @@
 asyncapi: 2.6.0
 info:
   title: MAIster Web — per-run SSE bridge
-  version: "0.7.0"
+  version: "0.8.0"
   description: |
     Server-Sent Events delivered by the Next.js web tier's
     `GET /api/runs/{runId}/stream` endpoint (described in
@@ -12,8 +12,10 @@ info:
     supervisor appends to in lockstep with its own SSE side-channel.
     The durable event union matches the supervisor's SSE union
     (`session.line`, `session.update`, `session.permission_request`,
-    `session.exited`, `session.crashed`) plus web-only synthetic/advisory
-    events. `run.runner_resolution_warning` is appended by the web tier after
+    `session.exited`, `session.crashed`, and — Designed, ADR-164 —
+    `session.command`, forwarded as an OPAQUE pass-through the browser
+    ignores; it exists on this stream only because the durable log carries
+    it) plus web-only synthetic/advisory events. `run.runner_resolution_warning` is appended by the web tier after
     launch commit when a Flow runner slot launches on a same-capability runner
     with a soft model/provider mismatch; the persisted `run_sessions` warning is
     the source of truth and the event is the timeline mirror. A `session.update`
@@ -115,6 +117,7 @@ channels:
           - $ref: "#/components/messages/SessionHookTrip"
           - $ref: "#/components/messages/RunNeedsInput"
           - $ref: "#/components/messages/RunRunnerResolutionWarning"
+          - $ref: "#/components/messages/SessionCommand"
 components:
   messages:
     SessionLine:
@@ -180,6 +183,16 @@ components:
         `system-analytics/guardrail-hooks.md`.
       contentType: application/json
       payload: { $ref: "#/components/schemas/EventBase" }
+    SessionCommand:
+      name: session.command
+      title: Command accepted / completed (Designed — ADR-164, opaque pass-through)
+      summary: |
+        (Designed — ADR-164) Forwarded unchanged from `run.events.jsonl`. The
+        browser transcript / timeline consumers ignore it (unknown-type
+        tolerance); its consumer is the web-side command ledger. Full payload
+        in `supervisor-sse.asyncapi.yaml#SessionCommandEvent`.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/EventBase" }
     RunNeedsInput:
       name: run.needs_input
       title: Durable NeedsInput transition tick (run-detail transparency — Implemented)
@@ -223,6 +236,7 @@ components:
             - session.crashed
             - session.chat_turn
             - session.hook_trip
+            - session.command
             - run.needs_input
         sessionId:
           type: string

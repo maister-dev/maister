@@ -831,6 +831,7 @@ flowchart TD
 
 ### Linked artifacts
 
+- Execution-host contract (ADR-164, Designed): [`execution-hosts.md`](execution-hosts.md) — the worktree path is adopted ONCE into an opaque host-scoped `executionWorkspaceId` (validated against `MAISTER_WORKSPACE_ROOTS`, which MUST mirror a moved `MAISTER_WORKTREES_ROOT`); GC worktree removal issues a driverless `workspace.release`.
 - ADR: [ADR-126 Auto-promotion lanes](../decisions.md#adr-126-auto-promotion-lanes)
   (Proposed). Full requirements, predicate terms 1–17, invariants INV-1…13, edge
   cases E1…E10, and the test matrix live in the SDD plan

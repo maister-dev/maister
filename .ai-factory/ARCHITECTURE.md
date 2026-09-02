@@ -38,8 +38,10 @@ context.
 ## Decision Rationale
 
 - **Project type:** Web control plane (Next.js + separate supervisor
-  daemon, two Node processes; single host current target, supervisor can later move
-  to a different host without code change).
+  daemon, two Node processes; single host current target — the two share
+  the host filesystem (ADR-023), and the supervisor is addressed as a
+  registered execution host behind a typed boundary (ADR-164) so later
+  stages can move it without rewriting domain code).
 - **Tech stack:** Next.js 16 App Router · TypeScript 5.6 (strict) · HeroUI
   v3 · Tailwind 4 · Drizzle ORM · Postgres 16 · ACP (Zed-standard) via
   separate `supervisor/` daemon · Node `child_process.spawn` for agent
@@ -49,7 +51,8 @@ context.
   plugin engine, multi-executor (claude + codex), workspace lifecycle,
   ACP session keep-alive + checkpoint+resume state machine, hybrid HITL
   (ACP + artifact), supervisor↔web IPC, global concurrency scheduler.
-- **Scale:** current target, single host (multi-host capable),
+- **Scale:** current target, single host (one registered local execution
+  host; multi-host is a later stage behind the ADR-164 seam),
   `MAISTER_MAX_CONCURRENT_RUNS=6` (global cap).
 - **Key factors:**
   - ACP is the executor interface — the multi-executor pool is inherent,
@@ -109,8 +112,11 @@ mAIster/
 │       ├── acp-client.ts           # Zed-standard ACP client (one per session)
 │       ├── spawn.ts                # child_process.spawn per session (claude/codex)
 │       ├── heartbeat.ts            # crash detection → mark Crashed
-│       ├── checkpoint.ts           # graceful pause on idle timeout
-│       └── http-api.ts             # Route handlers (Express/Fastify)
+│       ├── http-api.ts             # Route handlers (Fastify); checkpoint is an inline handler here
+│       ├── host-state.ts           # (Designed — ADR-164) node:sqlite state store: identity, fences, handles, receipts
+│       ├── execution-fence.ts      # (Designed — ADR-164) envelope fence rules + lower-epoch eviction
+│       ├── command-receipts.ts     # (Designed — ADR-164) receipts: replay / join / turn_lost
+│       └── workspace-registry.ts   # (Designed — ADR-164) POST /workspaces/adopt + handle resolution
 │
 └── web/                            # ── NEXT.JS WEB TIER ──
     ├── app/                        # ── ROUTES & PRESENTATION (feature folders) ──
@@ -168,7 +174,8 @@ mAIster/
     │   ├── errors.ts               # MaisterError discriminated union (expanded taxonomy)
     │   ├── atomic.ts               # atomicWriteJson (tmp + rename)
     │   ├── worktree.ts             # git worktree add/remove/list wrapper (project-scoped paths)
-    │   ├── supervisor-client.ts    # HTTP+SSE client to ../supervisor/
+    │   ├── supervisor-client.ts    # HTTP+SSE local-direct transport to ../supervisor/ (importable only from lib/execution-host/**)
+    │   ├── execution-host/         # (Designed — ADR-164) registrar/resolver, assignments, command ledger+deliverer, adoption, recovery, BoundClient
     │   ├── config.ts               # maister.yaml v2 loader + flow.yaml manifest parser, zod-validated
     │   ├── flows.ts                # Flow plugin install: git clone --branch <tag>, symlink, manifest validation
     │   ├── executors.ts            # Executor registry + override resolution
@@ -278,10 +285,17 @@ affected editor e2e (`m27-flow-editor.spec.ts` precedent).
   for mutations triggered from forms. Use **Route Handlers** (`app/api/`)
   when you need a stable HTTP surface (SSE stream, cron, HITL response
   endpoint, activity ping).
-- **Web ↔ supervisor:** HTTP + SSE only. `lib/supervisor-client.ts` is the
-  single boundary; no other `lib/*` module talks to supervisor directly.
-  The supervisor URL is `MAISTER_SUPERVISOR_URL` (env), defaults to
-  `http://localhost:7777`. Supervisor may run on a different host.
+- **Web ↔ supervisor:** HTTP + SSE only. `lib/execution-host/` is the
+  single boundary (Designed — ADR-164): domain code obtains a
+  `BoundClient` via `executionHosts.forAssignment(assignment)` (every
+  command carries a unique id + the assignment fence and is written to the
+  `execution_commands` ledger before the wire call) or a `HostAdminClient`
+  via `executionHosts.local()`; `lib/supervisor-client.ts` is the
+  local-direct transport behind it and is lint-fenced to that module. The
+  supervisor URL is `MAISTER_SUPERVISOR_URL` (env, read at call time),
+  defaults to `http://localhost:7777`; it is never stored. The two
+  processes share the host filesystem — a supervisor on a different host is
+  not supported in the current target.
 - **Live updates:** supervisor emits SSE per ACP `session/update`; Next.js
   Route Handler (`app/api/runs/[id]/stream/route.ts`) bridges to the
   browser, tailing `.maister/<project-slug>/runs/<run-id>/<step-id>.log`
@@ -301,8 +315,8 @@ NeedsInputIdle | Review | Crashed | …`) reflected in the `runs` table.
 - **Cross-`lib` calls:** allowed but unidirectional. Suggested layering
   inside `web/lib/` (lowest first): `errors` → `atomic` → `config` →
   `db` → `executors` → `flows` → `projects` → `worktree` →
-  `supervisor-client` → `scheduler` → `reconcile`. A lower module never
-  imports a higher one.
+  `supervisor-client` → `execution-host` → `scheduler` → `reconcile`. A
+  lower module never imports a higher one.
 - **Error surfacing:** all known domain failures bubble up as
   `MaisterError` instances with a discriminated `code`. UI branches on
   `code`, never on string matching.

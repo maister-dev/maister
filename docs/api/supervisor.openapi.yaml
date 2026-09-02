@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: MAIster Supervisor HTTP API
-  version: "0.7.0"
+  version: "0.8.0"
   description: |
     HTTP + SSE surface exposed by `supervisor/` (the Node daemon that owns ACP
     sessions and spawns adapter binaries. Implemented adapters are
@@ -21,6 +21,25 @@ info:
     in `api/async/supervisor-sse.asyncapi.yaml`; as of M7 the stream
     carries `session.update`, `session.permission_request`, `session.line`,
     `session.exited`, and `session.crashed` events.
+
+    **Execution-host contract (Designed — ADR-164, 0.8.0).** The supervisor is
+    an *execution host* with a durable identity (`GET /health` → `host`).
+    Every host-bound mutating route (`POST /sessions`, every
+    `/sessions/{id}/*` mutation, `DELETE /sessions/{id}`,
+    `POST /workspaces/adopt`, `DELETE /workspaces/{id}`) takes a
+    `CommandEnvelope` — a unique `command.id`, a `fence`
+    (`hostKey`, `assignmentId`, `assignmentEpoch`, `runId`), and the
+    kind-specific `payload`. The host persists a per-run epoch high-water and
+    rejects stale epochs with `409 FENCED`; receipts (`GET /commands/{id}`)
+    make duplicate delivery safe; `POST /workspaces/adopt` is the ONLY
+    path-bearing route — session routes address the workspace through the
+    opaque `executionWorkspaceId` it returns. **Transitional acceptance:**
+    while the web call sites migrate inside the same branch, a bare legacy
+    body (no envelope; `worktreePath` instead of `executionWorkspaceId`) is
+    still accepted with a `legacy-unfenced-command` WARN; the strict flip
+    refuses it with `PRECONDITION {reason: missing_envelope | legacy_field}`.
+    Stage A is single-host, loopback, shared-filesystem, and unauthenticated —
+    see [`../system-analytics/execution-hosts.md`](../system-analytics/execution-hosts.md).
 
     See [`../architecture.md`](../architecture.md), [`../supervisor.md`](../supervisor.md),
     and [`../decisions.md#adr-002-supervisor-runs-as-a-separate-node-daemon`](../decisions.md).
@@ -54,6 +73,10 @@ tags:
     description: Model discovery resolver for a runner draft (ADR-076).
   - name: mcp-probe
     description: MCP server health probe — real `initialize` handshake (ADR-129).
+  - name: execution-host
+    description: |
+      (Designed — ADR-164) Execution-host contract: opaque workspace adoption
+      and command receipts.
 paths:
   /health:
     get:
@@ -64,6 +87,12 @@ paths:
         A `200` response means the daemon is reachable and can accept
         session work. The body intentionally excludes project ids, run ids,
         executor secrets, env vars, and filesystem paths.
+
+        (Designed — ADR-164) The `host` object carries the durable execution-host
+        identity: `hostKey` (minted into the supervisor's private state store on
+        first boot, or the `MAISTER_EXECUTION_HOST_KEY` pin), the per-process
+        `bootId` (changes on every restart), and `protocolVersion`. The web
+        registrar upserts `execution_hosts` from it. Never a path.
       operationId: getSupervisorHealth
       responses:
         "200":
@@ -90,6 +119,209 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SupervisorDiagnosticsResponse"
+  /workspaces/adopt:
+    post:
+      tags: [execution-host]
+      summary: Adopt a host-local path as an opaque execution workspace (Designed — ADR-164)
+      description: |
+        The ONLY path-bearing route. Registers `payload.path` for
+        `payload.runId` and returns a host-scoped opaque handle
+        `executionWorkspaceId` (`ws_<uuid>`) that every session route then
+        uses instead of raw paths. Idempotent on `(runId, realpath)`: a
+        re-adoption returns the same id with `replayed: true`.
+
+        Validation per `payload.kind` (rule token in `details.rule` on
+        refusal): every kind requires an absolute path with no `..` segment
+        whose realpath exists, does not escape through a symlink, and is not
+        inside the host state dir; `git_worktree` additionally requires the
+        realpath under `MAISTER_WORKSPACE_ROOTS`, a `.git` FILE whose
+        `gitdir:` resolves under `<repoPath>/.git/worktrees/`, and `repoPath`
+        to be a git repo root; `repo_checkout` requires the path to be a git
+        repo root equal to `repoPath` (arbitrary location — ADR-023);
+        `directory` requires the realpath under `MAISTER_WORKSPACE_ROOTS` and
+        no `repoPath`. The host derives and stores `run_dir` from its runtime
+        root + `projectSlug` + `runId` at adoption; later routes derive every
+        path from the handle. Filesystem errors map to 409, never 500.
+      operationId: adoptWorkspace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdoptWorkspaceRequest" }
+            examples:
+              gitWorktree:
+                summary: Adopt a flow run's worktree
+                value:
+                  command:
+                    id: "8d1a4f2e-3b6c-4e7f-9a1b-2c3d4e5f6a7b"
+                    kind: "workspace.adopt"
+                    issuedAt: "2026-09-02T10:00:00.000Z"
+                  fence:
+                    hostKey: "eh_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+                    assignmentId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"
+                    assignmentEpoch: 1
+                    runId: "run-abc"
+                  payload:
+                    runId: "run-abc"
+                    projectSlug: "myapp"
+                    kind: "git_worktree"
+                    path: "/home/maister/.maister/worktrees/myapp/run-abc"
+                    repoPath: "/repos/myapp"
+      responses:
+        "200":
+          description: Handle minted (or replayed for the same `(runId, realpath)`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdoptWorkspaceResponse" }
+              examples:
+                minted:
+                  value:
+                    executionWorkspaceId: "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c"
+                    kind: "git_worktree"
+                    replayed: false
+        "409":
+          description: |
+            Fence refusal (`host_mismatch`, `assignment_mismatch`) or path
+            rejection (`workspace_rejected` + `rule`); stale epoch → `FENCED`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+              examples:
+                outsideRoots:
+                  value:
+                    code: "PRECONDITION"
+                    message: "workspace path rejected: outside_roots"
+                    details: { reason: "workspace_rejected", rule: "outside_roots" }
+                fenced:
+                  value:
+                    code: "FENCED"
+                    message: "command epoch 1 is below the host high-water 2 for run run-abc"
+                    details:
+                      reason: "assignment_fenced"
+                      runId: "run-abc"
+                      commandEpoch: 1
+                      hostEpoch: 2
+  /workspaces/{id}:
+    get:
+      tags: [execution-host]
+      summary: Read an adopted workspace handle (Designed — ADR-164)
+      description: |
+        Path-free projection of a handle. Used by the web reconciler to verify
+        that an `active` assignment's handle still exists (a 404 logs
+        `workspace-handle-lost`; the next `session.create` re-adopts).
+      operationId: getWorkspace
+      parameters:
+        - $ref: "#/components/parameters/ExecutionWorkspaceId"
+      responses:
+        "200":
+          description: Handle projection. Never contains a filesystem path.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceRecord" }
+              examples:
+                active:
+                  value:
+                    executionWorkspaceId: "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c"
+                    runId: "run-abc"
+                    projectSlug: "myapp"
+                    kind: "git_worktree"
+                    adoptedAt: "2026-09-02T10:00:00.100Z"
+                    releasedAt: null
+        "404":
+          description: Unknown handle.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+    delete:
+      tags: [execution-host]
+      summary: Release an adopted workspace handle (Designed — ADR-164)
+      description: |
+        Marks the handle released (a later `session.create` against it is
+        refused with `workspace_released`). Issued as a `driverless`
+        `workspace.release` command by the GC workspace reconciler after
+        worktree removal and by run-terminal drop paths. The fence is checked
+        against the handle's stored `run_id` (server state) → `run_mismatch`.
+      operationId: releaseWorkspace
+      parameters:
+        - $ref: "#/components/parameters/ExecutionWorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReleaseWorkspaceCommand" }
+            examples:
+              release:
+                value:
+                  command:
+                    id: "1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e"
+                    kind: "workspace.release"
+                    issuedAt: "2026-09-09T10:00:00.000Z"
+                  fence:
+                    hostKey: "eh_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+                    assignmentId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"
+                    assignmentEpoch: 1
+                    runId: "run-abc"
+                  payload: {}
+      responses:
+        "200":
+          description: "Released (`released: false` when it already was)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReleaseWorkspaceResponse" }
+              examples:
+                released:
+                  value: { released: true }
+        "404":
+          description: Unknown handle (treated as "gone" by the web tier).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+        "409":
+          description: Fence refusal.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /commands/{commandId}:
+    get:
+      tags: [execution-host]
+      summary: Read a command receipt (Designed — ADR-164)
+      description: |
+        Returns the host's durable receipt for a command id: the phase
+        (`accepted` for a prompt whose turn is in flight, `completed` with the
+        stored response body, `rejected` with the stored error body) and the
+        HTTP status that was — or will be — returned. The web tier reads it
+        exactly once after an unknown-outcome transport failure on an accepted
+        prompt, and during startup recovery of `delivering` / `accepted`
+        ledger rows. Receipts are pruned on a 7-day TTL at boot and hourly.
+      operationId: getCommandReceipt
+      parameters:
+        - name: commandId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The receipt.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandReceipt" }
+              examples:
+                completedPrompt:
+                  value:
+                    commandId: "3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a"
+                    runId: "run-abc"
+                    kind: "session.prompt"
+                    assignmentEpoch: 1
+                    phase: "completed"
+                    httpStatus: 200
+                    body: { stopReason: "end_turn", meta: null }
+                    receivedAt: "2026-09-02T10:00:02.050Z"
+                    completedAt: "2026-09-02T10:04:41.900Z"
+        "404":
+          description: No receipt for that id (never received, or pruned).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
   /sessions:
     post:
       tags: [sessions]
@@ -116,12 +348,51 @@ paths:
         ADR-085 adds `nodeAttemptId` attribution metadata for graph-runner
         sessions. The supervisor validates it as a safe id and stamps it on
         cost records; it never grants filesystem, project, or session authority.
+
+        (Designed — ADR-164) The body is a `CreateSessionCommand` envelope
+        (`command.kind = session.create`) whose `payload` is the
+        `StartSessionRequest`. The handle form (`payload.executionWorkspaceId`)
+        derives `cwd`, the content-block confinement roots, the run dir, and
+        the context mounts from the adopted handle (server state); the fence
+        must satisfy `fence.runId === handle.runId` (`run_mismatch`). An
+        unknown handle → `unknown_workspace` (the client re-adopts once and
+        issues a NEW command); a released one → `workspace_released`. Handler
+        order: parse envelope → fence check → receipt lookup (duplicate id →
+        verbatim replay with `X-Maister-Command-Replayed: true`, in-flight →
+        join) → execute → write receipt → respond. A bare legacy body without
+        an envelope and with `worktreePath` is accepted only during the
+        transitional phase (WARN `legacy-unfenced-command`).
       operationId: createSession
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/StartSessionRequest" }
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/CreateSessionCommand"
+                - $ref: "#/components/schemas/StartSessionRequest"
+              description: |
+                `CreateSessionCommand` (enveloped, handle form) is the contract;
+                the bare `StartSessionRequest` arm is the transitional legacy
+                acceptance and is removed at the strict flip.
+            examples:
+              enveloped:
+                summary: Enveloped create against an adopted handle
+                value:
+                  command:
+                    id: "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f"
+                    kind: "session.create"
+                    issuedAt: "2026-09-02T10:00:01.000Z"
+                  fence:
+                    hostKey: "eh_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+                    assignmentId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"
+                    assignmentEpoch: 1
+                    runId: "run-abc"
+                  payload:
+                    executionWorkspaceId: "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c"
+                    stepId: "plan"
+                    sessionName: "default"
+                    executor: { agent: "claude", model: "claude-sonnet-4-6" }
       responses:
         "201":
           description: Spawn succeeded.
@@ -129,13 +400,35 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/StartSessionResponse" }
         "409":
-          description: Zod validation rejected the request body.
+          description: |
+            Zod validation rejected the request body; or (Designed — ADR-164)
+            a fence refusal (`host_mismatch`, `assignment_mismatch`,
+            `run_mismatch`), an unknown/released handle
+            (`unknown_workspace` / `workspace_released`), a stale epoch
+            (`FENCED`), a residual `capabilityProfilePath` outside the handle
+            (`workspace_rejected` + `outside_workspace`), or — after the strict
+            flip — a missing envelope / legacy path field
+            (`missing_envelope` / `legacy_field`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
               examples:
                 missingField:
                   value: { code: "PRECONDITION", message: "executor: Required" }
+                unknownWorkspace:
+                  value:
+                    code: "PRECONDITION"
+                    message: "unknown execution workspace"
+                    details: { reason: "unknown_workspace" }
+                fenced:
+                  value:
+                    code: "FENCED"
+                    message: "command epoch 1 is below the host high-water 2 for run run-abc"
+                    details:
+                      reason: "assignment_fenced"
+                      runId: "run-abc"
+                      commandEpoch: 1
+                      hostEpoch: 2
         "500":
           description: Spawn failed (binary missing, EACCES, first-run state failure, OOM at fork).
           content:
@@ -160,6 +453,12 @@ paths:
         Returns the in-memory `SessionRecord[]` for every session the
         supervisor knows about (live, exited, crashed — kept for the
         post-terminal grace window before GC).
+
+        (Designed — ADR-164) The projection gains `executionWorkspaceId`,
+        `assignmentId`, `assignmentEpoch`, and `createdByCommandId`; the raw
+        path fields (`logPath`, and the never-documented `worktreePath` /
+        `repoPath` / `confineRoot` / `contextMounts`) leave the projection at
+        the strict flip — no web reader consumes them.
       operationId: listSessions
       responses:
         "200":
@@ -197,6 +496,17 @@ paths:
         attribution changes at prompt time instead of relying on timestamp
         inference. Concurrent prompts in one reused session are refused by the
         web tier before they become ambiguous.
+
+        (Designed — ADR-164) Enveloped as a `PromptCommand`
+        (`command.kind = session.prompt`). Completion rides THREE durable
+        signals: the SSE `session.command {phase: accepted}` when the turn
+        starts, the SSE `session.command {phase: completed, status, result}`
+        plus the receipt (`GET /commands/{id}`) when it ends, and this HTTP
+        response. A duplicate id while the turn is in flight JOINS the
+        running turn; a duplicate after the host restarted mid-turn (receipt
+        `accepted`, no in-flight promise) → `409 PRECONDITION turn_lost`. A
+        session evicted by a higher epoch answers its pending prompt with
+        `409 FENCED`.
       operationId: sendSessionPrompt
       parameters:
         - $ref: "#/components/parameters/SessionId"
@@ -204,7 +514,29 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/SendPromptRequest" }
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/PromptCommand"
+                - $ref: "#/components/schemas/SendPromptRequest"
+              description: |
+                `PromptCommand` is the contract; the bare `SendPromptRequest`
+                arm is the transitional legacy acceptance.
+            examples:
+              enveloped:
+                value:
+                  command:
+                    id: "3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a"
+                    kind: "session.prompt"
+                    issuedAt: "2026-09-02T10:00:02.000Z"
+                  fence:
+                    hostKey: "eh_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+                    assignmentId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"
+                    assignmentEpoch: 1
+                    runId: "run-abc"
+                  payload:
+                    stepId: "plan"
+                    nodeAttemptId: "na-1"
+                    prompt: "/aif-plan Add a healthz route"
       responses:
         "200":
           description: |
@@ -248,6 +580,20 @@ paths:
                   value:
                     code: "PRECONDITION"
                     message: "stepId: Required"
+                turnLost:
+                  value:
+                    code: "PRECONDITION"
+                    message: "the turn for this command id was lost in a host restart"
+                    details: { reason: "turn_lost" }
+                fenced:
+                  value:
+                    code: "FENCED"
+                    message: "session evicted by assignment epoch 2"
+                    details:
+                      reason: "assignment_fenced"
+                      runId: "run-abc"
+                      commandEpoch: 1
+                      hostEpoch: 2
         "500":
           description: |
             Adapter returned a malformed or non-conforming ACP frame, or
@@ -271,6 +617,29 @@ paths:
       operationId: deleteSession
       parameters:
         - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: false
+        description: |
+          (Designed — ADR-164) `DeleteSessionCommand` envelope
+          (`command.kind = session.delete`, `payload: {}`). Optional during the
+          transitional phase, required after the strict flip. Issued as a
+          `driverless` command so startup recovery may re-deliver it.
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeleteSessionCommand" }
+            examples:
+              enveloped:
+                value:
+                  command:
+                    id: "4e5f6a7b-8c9d-4e0f-9a1b-2c3d4e5f6a7b"
+                    kind: "session.delete"
+                    issuedAt: "2026-09-02T10:30:00.000Z"
+                  fence:
+                    hostKey: "eh_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+                    assignmentId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"
+                    assignmentEpoch: 1
+                    runId: "run-abc"
+                  payload: {}
       responses:
         "204":
           description: Termination initiated. SSE will deliver the terminal event.
@@ -349,9 +718,24 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              description: Strictly empty. Unknown keys → 409.
+              oneOf:
+                - $ref: "#/components/schemas/CheckpointCommand"
+                - type: object
+                  additionalProperties: false
+                  description: Legacy strictly-empty body (transitional). Unknown keys → 409.
+            examples:
+              enveloped:
+                value:
+                  command:
+                    id: "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c"
+                    kind: "session.checkpoint"
+                    issuedAt: "2026-09-02T10:31:00.000Z"
+                  fence:
+                    hostKey: "eh_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+                    assignmentId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"
+                    assignmentEpoch: 1
+                    runId: "run-abc"
+                  payload: {}
       responses:
         "200":
           description: Graceful checkpoint completed (or idempotent ack).
@@ -364,7 +748,11 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
         "409":
-          description: Body validation failed (unknown keys).
+          description: |
+            Body validation failed (unknown keys); or (Designed — ADR-164) a
+            fence refusal / stale epoch (`FENCED`). A checkpoint arriving under
+            a HIGHER epoch than the live session's evicts that session first
+            (`session.exited {reason: fenced}`), then executes.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -396,8 +784,24 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
+              oneOf:
+                - $ref: "#/components/schemas/CancelCommand"
+                - type: object
+                  additionalProperties: false
+                  description: Legacy strictly-empty body (transitional).
+            examples:
+              enveloped:
+                value:
+                  command:
+                    id: "6a7b8c9d-0e1f-4a2b-9c3d-4e5f6a7b8c9d"
+                    kind: "session.cancel"
+                    issuedAt: "2026-09-02T10:32:00.000Z"
+                  fence:
+                    hostKey: "eh_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+                    assignmentId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"
+                    assignmentEpoch: 1
+                    runId: "run-abc"
+                  payload: {}
       responses:
         "200":
           description: Cancel requested (or idempotent ack when no live turn).
@@ -440,8 +844,32 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/InputBody" }
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/InputCommand"
+                - $ref: "#/components/schemas/InputBody"
+              description: |
+                `InputCommand` (Designed — ADR-164; `command.kind =
+                session.input`, `payload` = `InputBody`) is the contract; the
+                bare `InputBody` arm is the transitional legacy acceptance.
             examples:
+              envelopedSelect:
+                summary: Enveloped approve
+                value:
+                  command:
+                    id: "7b8c9d0e-1f2a-4b3c-8d4e-5f6a7b8c9d0e"
+                    kind: "session.input"
+                    issuedAt: "2026-09-02T10:05:00.000Z"
+                  fence:
+                    hostKey: "eh_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+                    assignmentId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"
+                    assignmentEpoch: 1
+                    runId: "run-abc"
+                  payload:
+                    kind: "permission"
+                    action: "select"
+                    requestId: "8a4a7b9d-0d6b-4b27-a09c-0a3f4f1e1d8e"
+                    optionId: "allow"
               select:
                 summary: Approve a pending permission
                 value:
@@ -638,6 +1066,14 @@ paths:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
 components:
   parameters:
+    ExecutionWorkspaceId:
+      name: id
+      in: path
+      required: true
+      description: Opaque host-scoped workspace handle (`ws_<uuid>`).
+      schema:
+        type: string
+        pattern: '^ws_[0-9a-f]{32}$'
     SessionId:
       name: id
       in: path
@@ -661,12 +1097,13 @@ components:
   schemas:
     SupervisorHealthResponse:
       type: object
-      required: [status, version, uptimeMs, sessions, checkedAt]
+      required: [status, version, uptimeMs, sessions, checkedAt, host]
       additionalProperties: false
       properties:
         status:
           type: string
           enum: [ready]
+        host: { $ref: "#/components/schemas/ExecutionHostIdentity" }
         version:
           type: string
           minLength: 1
@@ -1042,35 +1479,77 @@ components:
         backward compatibility.
     StartSessionRequest:
       type: object
-      required: [runId, projectSlug, worktreePath, stepId, executor]
+      required: [stepId, executor]
+      description: |
+        (Designed — ADR-164) The `session.create` payload. **Handle form:**
+        `executionWorkspaceId` names an adopted workspace; the host derives
+        `cwd`, the content-block confinement roots, the run dir, `runId`,
+        `projectSlug`, and the context mounts from the handle (server state).
+        **Legacy form (transitional, deprecated):** `runId` + `projectSlug` +
+        `worktreePath` (+ `repoPath` / `confineRoot` / `contextMounts`) as
+        before; the two forms are mutually exclusive (`executionWorkspaceId`
+        XOR the legacy path fields). The legacy form is removed at the strict
+        flip, after which its presence is `409 PRECONDITION legacy_field`.
+      example:
+        executionWorkspaceId: "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c"
+        stepId: "plan"
+        sessionName: "default"
+        nodeAttemptId: "na-1"
+        executor: { agent: "claude", model: "claude-sonnet-4-6" }
+        runner:
+          version: 1
+          runnerId: "claude-code-default"
+          adapter: "claude"
+          capabilityAgent: "claude"
+          model: "claude-sonnet-4-6"
+          provider: { kind: "anthropic" }
+          permissionPolicy: "default"
       properties:
+        executionWorkspaceId:
+          type: string
+          pattern: '^ws_[0-9a-f]{32}$'
+          description: |
+            (Designed — ADR-164) Opaque host-scoped handle returned by
+            `POST /workspaces/adopt`. The handle form of this request. Unknown
+            → `409 PRECONDITION unknown_workspace`; released →
+            `workspace_released`; the fence's `runId` must equal the handle's
+            run → `run_mismatch`.
         runId:
           type: string
           minLength: 1
           maxLength: 128
           pattern: "^[A-Za-z0-9._-]+$"
+          deprecated: true
           description: |
-            Application-generated run id. Doubles as a path segment under
-            `.maister/<slug>/runs/<runId>/`. Constrained to safe filesystem
-            characters.
+            (Legacy form — transitional.) Application-generated run id. Doubles
+            as a path segment under `.maister/<slug>/runs/<runId>/`.
+            Constrained to safe filesystem characters. In the handle form the
+            run id comes from the adopted handle.
         projectSlug:
           type: string
           minLength: 1
           maxLength: 64
-          pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
-          description: Kebab-case slug. Path segment under `.maister/<slug>/`.
+          pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'
+          deprecated: true
+          description: |
+            (Legacy form — transitional.) Kebab-case slug. Path segment under
+            `.maister/<slug>/`. In the handle form it comes from the handle.
         worktreePath:
           type: string
           minLength: 1
           maxLength: 4096
+          deprecated: true
           description: |
-            Absolute filesystem path. Becomes `cwd` for the spawned child.
-            MUST start with `/` and MUST NOT contain `..` segments.
+            (Legacy form — transitional.) Absolute filesystem path. Becomes
+            `cwd` for the spawned child. MUST start with `/` and MUST NOT
+            contain `..` segments. Replaced by `executionWorkspaceId`.
         repoPath:
           type: string
           minLength: 1
           maxLength: 4096
+          deprecated: true
           description: |
+            (Legacy form — transitional; the handle carries `repoPath`.)
             (Implemented — capability composer) Optional project repo root.
             Bound to the session and added to the prompt content-block URI
             confinement allow-set (repo ∪ worktree ∪ run dir) so a `file_path`
@@ -1081,7 +1560,10 @@ components:
           type: string
           minLength: 1
           maxLength: 4096
+          deprecated: true
           description: |
+            (Legacy form — transitional; a `directory` handle is its own sole
+            confinement root.)
             (Implemented — M36 Phase 5, ADR-097) SOLE content-block file-URI
             confinement root for a **project-less local-package assistant
             session** (the local package's `working_dir`). When set it REPLACES
@@ -1128,11 +1610,18 @@ components:
             Absolute filesystem path to the web-materialized, run-scoped
             capability profile. Must start with `/` and must not contain `..`
             segments. The supervisor passes it only through validated
-            `adapterLaunch` env/args; it does not inspect policy.
+            `adapterLaunch` env/args; it does not inspect policy. (Designed —
+            ADR-164) The one residual path in the handle form: it MUST resolve
+            inside the handle's path → otherwise `409 PRECONDITION
+            {reason: workspace_rejected, rule: outside_workspace}`. It leaves
+            with Stage C materialization.
         contextMounts:
           type: array
           maxItems: 8
+          deprecated: true
           description: |
+            (Legacy form — transitional; in the handle form the mounts travel
+            on the `workspace.adopt` payload and are derived from the handle.)
             (Implemented — ADR-157) Read-only sibling-repo context mounts the web
             tier already materialized for this session. Projected from the
             launch snapshot the run persists
@@ -1469,14 +1958,14 @@ components:
               mimeType: { type: string }
     SendPromptStopReason:
       type: string
-      enum: [end_turn, max_tokens, max_turn_requests, refusal]
+      enum: [end_turn, max_tokens, max_turn_requests, refusal, cancelled]
       description: |
-        ACP `stopReason` from `session/prompt`. Supervisor success responses
-        exclude `cancelled`: if an adapter returns `cancelled` for a direct
-        prompt, the supervisor treats it as `ACP_PROTOCOL`; user-initiated
-        graceful stop/checkpoint uses the DELETE/checkpoint paths instead.
-        The web tier may still expose a client-side `cancelled` state for
-        transport cancellation outside this supervisor response.
+        ACP `stopReason` from `session/prompt`. `cancelled` is a SUCCESS
+        response only after `POST /sessions/{id}/cancel` set the session's
+        `cancelRequested` flag (a clean user interrupt — the turn ends, the
+        session stays live). An unsolicited `cancelled` from the adapter is
+        still mapped to `500 ACP_PROTOCOL`. Graceful stop/checkpoint use the
+        DELETE/checkpoint paths.
     SendPromptResponse:
       type: object
       required: [stopReason]
@@ -1495,18 +1984,7 @@ components:
       enum: [live, exited, crashed]
     SessionRecord:
       type: object
-      required:
-        [
-          sessionId,
-          runId,
-          projectSlug,
-          stepId,
-          status,
-          pid,
-          startedAt,
-          logPath,
-          monotonicId,
-        ]
+      required: [sessionId, runId, projectSlug, stepId, status, pid, startedAt, monotonicId]
       properties:
         sessionId: { type: string, format: uuid }
         runId: { type: string }
@@ -1519,13 +1997,29 @@ components:
         exitCode: { type: integer, nullable: true }
         signal: { type: string, nullable: true, example: "SIGTERM" }
         logPath:
-          { type: string, description: Absolute path to the step .log file. }
-        monotonicId:
-          {
-            type: integer,
-            minimum: 0,
-            description: Highest event id emitted so far for this session.,
-          }
+          type: string
+          deprecated: true
+          description: |
+            Absolute path to the step .log file. (Designed — ADR-164) Leaves
+            the projection at the strict flip — no web reader consumes it;
+            paths are host-private after adoption.
+        monotonicId: { type: integer, minimum: 0, description: Highest event id emitted so far for this session. }
+        executionWorkspaceId:
+          type: string
+          pattern: '^ws_[0-9a-f]{32}$'
+          description: (Designed — ADR-164) The adopted handle this session runs in (handle-form sessions only).
+        assignmentId:
+          type: string
+          format: uuid
+          description: (Designed — ADR-164) `fence.assignmentId` of the `session.create` that spawned this session.
+        assignmentEpoch:
+          type: integer
+          minimum: 1
+          description: (Designed — ADR-164) `fence.assignmentEpoch` of the `session.create` that spawned this session.
+        createdByCommandId:
+          type: string
+          format: uuid
+          description: (Designed — ADR-164) `command.id` of the `session.create` that spawned this session.
         acpSessionId:
           type: string
           minLength: 1
@@ -1551,6 +2045,7 @@ components:
         - CRASH
         - HITL_TIMEOUT
         - NEEDS_INPUT
+        - FENCED
       description: |
         Subset of the web-tier `MaisterErrorCode`. The web client translates
         this body into `MaisterError({ code })` at the boundary.
@@ -1559,12 +2054,424 @@ components:
         ages past `MAISTER_KEEPALIVE_MINUTES`. `NEEDS_INPUT` (M7+) is
         returned by `POST /sessions/{id}/input` when no matching pending
         permission exists for the given `(sessionId, requestId)`.
+
+        `FENCED` (Designed — ADR-164, HTTP 409) is returned when
+        `fence.assignmentEpoch` is below the host's persisted high-water for
+        that run, or when a session evicted by a higher epoch answers its
+        pending prompt. It is NOT a `MaisterErrorCode`: the web client maps
+        it to `MaisterError("CONFLICT")` with
+        `details.reason = "assignment_fenced"`.
+    ReasonToken:
+      type: string
+      enum:
+        - host_mismatch
+        - assignment_mismatch
+        - run_mismatch
+        - assignment_fenced
+        - turn_lost
+        - unknown_workspace
+        - workspace_released
+        - workspace_rejected
+        - legacy_field
+        - missing_envelope
+      description: |
+        (Designed — ADR-164) Machine-readable refusal discriminator carried in
+        `SupervisorErrorBody.details.reason`. Tests assert the token, never
+        the message text.
+    WorkspaceRule:
+      type: string
+      enum:
+        - relative_path
+        - parent_segment
+        - not_found
+        - outside_roots
+        - symlink_escape
+        - gitdir_mismatch
+        - not_a_repo
+        - repo_path_mismatch
+        - inside_state_dir
+        - outside_workspace
+      description: |
+        (Designed — ADR-164) Which adoption rule rejected a path; present
+        iff `details.reason = workspace_rejected`.
+    SupervisorErrorDetails:
+      type: object
+      additionalProperties: false
+      description: |
+        (Designed — ADR-164) Typed error details. Passed through verbatim to
+        the web-tier `MaisterError.details`.
+      properties:
+        reason: { $ref: "#/components/schemas/ReasonToken" }
+        rule: { $ref: "#/components/schemas/WorkspaceRule" }
+        runId: { type: string }
+        commandEpoch: { type: integer, minimum: 0 }
+        hostEpoch: { type: integer, minimum: 0 }
     SupervisorErrorBody:
       type: object
       required: [code, message]
       properties:
         code: { $ref: "#/components/schemas/SupervisorErrorCode" }
         message: { type: string }
+        details: { $ref: "#/components/schemas/SupervisorErrorDetails" }
+    ExecutionHostIdentity:
+      type: object
+      required: [hostKey, bootId, protocolVersion]
+      additionalProperties: false
+      description: |
+        (Designed — ADR-164) Durable execution-host identity reported on
+        `GET /health`.
+      properties:
+        hostKey:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{8,64}$'
+          description: |
+            Stable across restarts — minted as `eh_<uuid-without-dashes>` into
+            the host state store on first boot, or the
+            `MAISTER_EXECUTION_HOST_KEY` pin. A pin that conflicts with the
+            stored key refuses boot.
+        bootId:
+          type: string
+          format: uuid
+          description: Per-process id; a change means the supervisor restarted.
+        protocolVersion:
+          type: integer
+          enum: [1]
+    CommandKind:
+      type: string
+      enum:
+        - workspace.adopt
+        - workspace.release
+        - session.create
+        - session.prompt
+        - session.input
+        - session.cancel
+        - session.checkpoint
+        - session.delete
+      description: (Designed — ADR-164) Must match the route the envelope is posted to.
+    CommandFence:
+      type: object
+      required: [hostKey, assignmentId, assignmentEpoch, runId]
+      additionalProperties: false
+      description: |
+        (Designed — ADR-164) The placement fence. Checked in order: `hostKey`
+        vs the host's own key (`host_mismatch`); `assignmentEpoch` vs the
+        persisted per-run high-water (`< → FENCED`, `= with a different
+        assignmentId → assignment_mismatch`, `> → persist + evict lower-epoch
+        sessions of the run`); `runId` vs the session's / handle's run
+        (`run_mismatch`).
+      properties:
+        hostKey:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{8,64}$'
+        assignmentId:
+          type: string
+          format: uuid
+        assignmentEpoch:
+          type: integer
+          minimum: 1
+        runId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9._-]+$'
+    CommandEnvelope:
+      type: object
+      required: [command, fence, payload]
+      description: |
+        (Designed — ADR-164) The JSON body of every host-bound mutating route;
+        the session id stays in the URL. `command.id` is the receipt dedup key.
+      example:
+        command:
+          id: "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c"
+          kind: "session.checkpoint"
+          issuedAt: "2026-09-02T10:31:00.000Z"
+        fence:
+          hostKey: "eh_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+          assignmentId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"
+          assignmentEpoch: 1
+          runId: "run-abc"
+        payload: {}
+      properties:
+        command:
+          type: object
+          required: [id, kind, issuedAt]
+          additionalProperties: false
+          properties:
+            id: { type: string, format: uuid }
+            kind: { $ref: "#/components/schemas/CommandKind" }
+            issuedAt: { type: string, format: date-time }
+        fence: { $ref: "#/components/schemas/CommandFence" }
+        payload:
+          type: object
+          description: Kind-specific; each per-kind command schema narrows it.
+    WorkspaceKind:
+      type: string
+      enum: [git_worktree, repo_checkout, directory]
+      description: |
+        (Designed — ADR-164) `git_worktree` — a run worktree under
+        `MAISTER_WORKSPACE_ROOTS` whose `.git` file points into
+        `<repoPath>/.git/worktrees/`; `repo_checkout` — a git repo root equal
+        to `repoPath` (arbitrary location); `directory` — a plain directory
+        under the roots (local-package assistant, ephemeral read-only
+        checkouts, agent `none`).
+    AdoptWorkspacePayload:
+      type: object
+      required: [runId, projectSlug, kind, path]
+      additionalProperties: false
+      properties:
+        runId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9._-]+$'
+          description: Stored on the handle; becomes server state for every later route.
+        projectSlug:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'
+          description: Stored on the handle; the host derives `run_dir` from it.
+        kind: { $ref: "#/components/schemas/WorkspaceKind" }
+        path:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: Absolute, no `..`; the ONLY path the web sends to a session-facing route.
+        repoPath:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: Required for `git_worktree` and `repo_checkout`; forbidden for `directory`.
+        contextMounts:
+          type: array
+          maxItems: 8
+          description: (ADR-157) Read-only sibling mounts, same items as the legacy `StartSessionRequest.contextMounts`; stored on the handle.
+          items:
+            type: object
+            additionalProperties: false
+            required: [slug, path, ref, commit]
+            properties:
+              slug: { type: string, minLength: 1, maxLength: 64, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$' }
+              path: { type: string, minLength: 1, maxLength: 4096 }
+              ref: { type: string, minLength: 1, maxLength: 255 }
+              commit: { type: string, minLength: 7, maxLength: 64 }
+    AdoptWorkspaceRequest:
+      type: object
+      required: [command, fence, payload]
+      additionalProperties: false
+      description: (Designed — ADR-164) `POST /workspaces/adopt` body.
+      properties:
+        command:
+          type: object
+          required: [id, kind, issuedAt]
+          additionalProperties: false
+          properties:
+            id: { type: string, format: uuid }
+            kind: { type: string, enum: [workspace.adopt] }
+            issuedAt: { type: string, format: date-time }
+        fence: { $ref: "#/components/schemas/CommandFence" }
+        payload: { $ref: "#/components/schemas/AdoptWorkspacePayload" }
+      example:
+        command:
+          id: "8d1a4f2e-3b6c-4e7f-9a1b-2c3d4e5f6a7b"
+          kind: "workspace.adopt"
+          issuedAt: "2026-09-02T10:00:00.000Z"
+        fence:
+          hostKey: "eh_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+          assignmentId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"
+          assignmentEpoch: 1
+          runId: "run-abc"
+        payload:
+          runId: "run-abc"
+          projectSlug: "myapp"
+          kind: "git_worktree"
+          path: "/home/maister/.maister/worktrees/myapp/run-abc"
+          repoPath: "/repos/myapp"
+    AdoptWorkspaceResponse:
+      type: object
+      required: [executionWorkspaceId, kind, replayed]
+      additionalProperties: false
+      properties:
+        executionWorkspaceId: { type: string, pattern: '^ws_[0-9a-f]{32}$' }
+        kind: { $ref: "#/components/schemas/WorkspaceKind" }
+        replayed:
+          type: boolean
+          description: True when `(runId, realpath)` was already adopted (same id returned).
+    WorkspaceRecord:
+      type: object
+      required: [executionWorkspaceId, runId, projectSlug, kind, adoptedAt]
+      additionalProperties: false
+      description: (Designed — ADR-164) Path-free projection of an adopted handle.
+      properties:
+        executionWorkspaceId: { type: string, pattern: '^ws_[0-9a-f]{32}$' }
+        runId: { type: string }
+        projectSlug: { type: string }
+        kind: { $ref: "#/components/schemas/WorkspaceKind" }
+        adoptedAt: { type: string, format: date-time }
+        releasedAt: { type: string, format: date-time, nullable: true }
+    ReleaseWorkspaceCommand:
+      type: object
+      required: [command, fence, payload]
+      additionalProperties: false
+      description: (Designed — ADR-164) `DELETE /workspaces/{id}` body; `payload` is `{}`.
+      properties:
+        command:
+          type: object
+          required: [id, kind, issuedAt]
+          additionalProperties: false
+          properties:
+            id: { type: string, format: uuid }
+            kind: { type: string, enum: [workspace.release] }
+            issuedAt: { type: string, format: date-time }
+        fence: { $ref: "#/components/schemas/CommandFence" }
+        payload:
+          type: object
+          additionalProperties: false
+    ReleaseWorkspaceResponse:
+      type: object
+      required: [released]
+      additionalProperties: false
+      properties:
+        released:
+          type: boolean
+          description: False when the handle was already released.
+    CreateSessionCommand:
+      type: object
+      required: [command, fence, payload]
+      additionalProperties: false
+      description: (Designed — ADR-164) Enveloped `POST /sessions` body.
+      properties:
+        command:
+          type: object
+          required: [id, kind, issuedAt]
+          additionalProperties: false
+          properties:
+            id: { type: string, format: uuid }
+            kind: { type: string, enum: [session.create] }
+            issuedAt: { type: string, format: date-time }
+        fence: { $ref: "#/components/schemas/CommandFence" }
+        payload: { $ref: "#/components/schemas/StartSessionRequest" }
+    PromptCommand:
+      type: object
+      required: [command, fence, payload]
+      additionalProperties: false
+      description: (Designed — ADR-164) Enveloped `POST /sessions/{id}/prompt` body.
+      properties:
+        command:
+          type: object
+          required: [id, kind, issuedAt]
+          additionalProperties: false
+          properties:
+            id: { type: string, format: uuid }
+            kind: { type: string, enum: [session.prompt] }
+            issuedAt: { type: string, format: date-time }
+        fence: { $ref: "#/components/schemas/CommandFence" }
+        payload: { $ref: "#/components/schemas/SendPromptRequest" }
+    InputCommand:
+      type: object
+      required: [command, fence, payload]
+      additionalProperties: false
+      description: (Designed — ADR-164) Enveloped `POST /sessions/{id}/input` body.
+      properties:
+        command:
+          type: object
+          required: [id, kind, issuedAt]
+          additionalProperties: false
+          properties:
+            id: { type: string, format: uuid }
+            kind: { type: string, enum: [session.input] }
+            issuedAt: { type: string, format: date-time }
+        fence: { $ref: "#/components/schemas/CommandFence" }
+        payload: { $ref: "#/components/schemas/InputBody" }
+    CancelCommand:
+      type: object
+      required: [command, fence, payload]
+      additionalProperties: false
+      description: (Designed — ADR-164) Enveloped `POST /sessions/{id}/cancel` body; `payload` is `{}`.
+      properties:
+        command:
+          type: object
+          required: [id, kind, issuedAt]
+          additionalProperties: false
+          properties:
+            id: { type: string, format: uuid }
+            kind: { type: string, enum: [session.cancel] }
+            issuedAt: { type: string, format: date-time }
+        fence: { $ref: "#/components/schemas/CommandFence" }
+        payload:
+          type: object
+          additionalProperties: false
+    CheckpointCommand:
+      type: object
+      required: [command, fence, payload]
+      additionalProperties: false
+      description: (Designed — ADR-164) Enveloped `POST /sessions/{id}/checkpoint` body; `payload` is `{}`.
+      properties:
+        command:
+          type: object
+          required: [id, kind, issuedAt]
+          additionalProperties: false
+          properties:
+            id: { type: string, format: uuid }
+            kind: { type: string, enum: [session.checkpoint] }
+            issuedAt: { type: string, format: date-time }
+        fence: { $ref: "#/components/schemas/CommandFence" }
+        payload:
+          type: object
+          additionalProperties: false
+    DeleteSessionCommand:
+      type: object
+      required: [command, fence, payload]
+      additionalProperties: false
+      description: (Designed — ADR-164) Enveloped `DELETE /sessions/{id}` body; `payload` is `{}`.
+      properties:
+        command:
+          type: object
+          required: [id, kind, issuedAt]
+          additionalProperties: false
+          properties:
+            id: { type: string, format: uuid }
+            kind: { type: string, enum: [session.delete] }
+            issuedAt: { type: string, format: date-time }
+        fence: { $ref: "#/components/schemas/CommandFence" }
+        payload:
+          type: object
+          additionalProperties: false
+    CommandReceipt:
+      type: object
+      required: [commandId, runId, kind, assignmentEpoch, phase, httpStatus, body, receivedAt]
+      additionalProperties: false
+      description: |
+        (Designed — ADR-164) The host's durable record of one command id.
+        `completed` and `rejected` receipts are replayed verbatim on a
+        duplicate (`X-Maister-Command-Replayed: true`); an `accepted` receipt
+        with no in-flight execution means the host restarted mid-turn
+        (`turn_lost`).
+      example:
+        commandId: "3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a"
+        runId: "run-abc"
+        kind: "session.prompt"
+        assignmentEpoch: 1
+        phase: "completed"
+        httpStatus: 200
+        body: { stopReason: "end_turn", meta: null }
+        receivedAt: "2026-09-02T10:00:02.050Z"
+        completedAt: "2026-09-02T10:04:41.900Z"
+      properties:
+        commandId: { type: string, format: uuid }
+        runId: { type: string }
+        kind: { $ref: "#/components/schemas/CommandKind" }
+        assignmentEpoch: { type: integer, minimum: 1 }
+        phase:
+          type: string
+          enum: [accepted, completed, rejected]
+        httpStatus: { type: integer, minimum: 100, maximum: 599 }
+        body:
+          type: object
+          additionalProperties: true
+          description: The stored response (success body or `SupervisorErrorBody`); empty while `accepted`.
+        receivedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time, nullable: true }
     CheckpointResponse:
       type: object
       description: |

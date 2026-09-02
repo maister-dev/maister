@@ -1,7 +1,7 @@
 asyncapi: 2.6.0
 info:
   title: MAIster Supervisor — SSE event stream
-  version: "0.7.0"
+  version: "0.8.0"
   description: |
     Server-Sent Events delivered by the supervisor's
     `GET /sessions/{id}/stream` endpoint (described in
@@ -14,6 +14,12 @@ info:
     - `session.permission_request` — ACP permission request waiting for
       a web-delivered decision through `POST /sessions/{id}/input`.
     - `session.exited` / `session.crashed` — terminal process events.
+    - `session.command` (Designed — ADR-164) — command acceptance and
+      completion for the enveloped session routes (`session.prompt`,
+      `session.cancel`, `session.checkpoint`, `session.input`,
+      `session.delete`): the durable completion signal that is NOT the
+      long-lived HTTP response. `session.exited.reason` gains `fenced` for
+      a session evicted by a higher assignment epoch.
 
     Permission deferreds age out after `MAISTER_KEEPALIVE_MINUTES`; a
     late response returns `HITL_TIMEOUT`.
@@ -46,7 +52,10 @@ channels:
   /sessions/{id}/stream:
     parameters:
       id:
-        description: ACP session id (UUID v4 generated at spawn).
+        description: |
+          Supervisor session id (`sessionId`, UUID v4 generated at spawn) —
+          NOT the ACP session id (`acpSessionId`), which is the adapter's
+          resume handle.
         schema:
           type: string
           format: uuid
@@ -76,6 +85,7 @@ channels:
           - $ref: "#/components/messages/SessionCrashed"
           - $ref: "#/components/messages/SessionChatTurn"
           - $ref: "#/components/messages/SessionHookTrip"
+          - $ref: "#/components/messages/SessionCommand"
 components:
   messages:
     SessionLine:
@@ -211,6 +221,55 @@ components:
         `mutationReverted` flag.
       contentType: application/json
       payload: { $ref: "#/components/schemas/SessionChatTurnEvent" }
+    SessionCommand:
+      name: session.command
+      title: Command accepted / completed (Designed — ADR-164)
+      summary: |
+        (Designed — ADR-164) Emitted around the host's command receipts for
+        every enveloped session route. `phase: accepted` when a
+        `session.prompt` turn starts (the web ledger folds `accepted_at`);
+        `phase: completed` with `status` and either `result` or `error` when
+        any session-kind command finishes (`succeeded` / `failed` /
+        `fenced`). Immediate kinds emit exactly ONE `completed` event after
+        their effect. Also appended to `run.events.jsonl`, so the web
+        `PromptHandle.completion` resolves from whichever durable signal
+        arrives first (this event, the receipt, or the HTTP response); a late
+        signal for an already-terminal ledger row is ignored. The
+        run-transcript projector ignores this type.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/SessionCommandEvent" }
+      examples:
+        - name: prompt-accepted
+          payload:
+            type: session.command
+            sessionId: "5f3a8a2b-7e34-4f6d-9d2c-1d4e5f6a7b8c"
+            monotonicId: 3
+            commandId: "3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a"
+            kind: session.prompt
+            phase: accepted
+        - name: prompt-completed
+          payload:
+            type: session.command
+            sessionId: "5f3a8a2b-7e34-4f6d-9d2c-1d4e5f6a7b8c"
+            monotonicId: 41
+            commandId: "3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a"
+            kind: session.prompt
+            phase: completed
+            status: succeeded
+            result: { stopReason: end_turn }
+        - name: checkpoint-fenced
+          payload:
+            type: session.command
+            sessionId: "5f3a8a2b-7e34-4f6d-9d2c-1d4e5f6a7b8c"
+            monotonicId: 42
+            commandId: "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c"
+            kind: session.checkpoint
+            phase: completed
+            status: fenced
+            error:
+              code: FENCED
+              message: "command epoch 1 is below the host high-water 2 for run run-abc"
+              details: { reason: assignment_fenced, runId: run-abc, commandEpoch: 1, hostEpoch: 2 }
     SessionHookTrip:
       name: session.hook_trip
       title: Guardrail/hook engine trip (Designed — ADR-108)
@@ -238,6 +297,7 @@ components:
             - session.crashed
             - session.chat_turn
             - session.hook_trip
+            - session.command
         sessionId:
           type: string
           format: uuid
@@ -358,12 +418,15 @@ components:
                 intentional (operator issued `DELETE /sessions/{id}`).
             reason:
               type: string
-              enum: [checkpoint, intentional]
+              enum: [checkpoint, intentional, fenced]
               description: |
                 M8 supervisor-side intentional-shutdown marker.
                 `checkpoint` = graceful checkpoint issued via
                 `POST /sessions/{id}/checkpoint` (web sweeper or
                 explicit). `intentional` = plain `DELETE /sessions/{id}`.
+                `fenced` (Designed — ADR-164) = the session was evicted
+                because a command with a HIGHER assignment epoch arrived for
+                its run; its pending prompt request answered `409 FENCED`.
                 Absent for natural process exit (the adapter ran to
                 completion on its own).
     SessionCrashedEvent:
@@ -442,6 +505,41 @@ components:
         HITL pause. Rendered in the chat surface, NOT the flow timeline. The
         prompt is tagged `stepId = gate-chat-<hitlRequestId>` (server-derived,
         dash not colon).
+    SessionCommandEvent:
+      allOf:
+        - $ref: "#/components/schemas/EventBase"
+        - type: object
+          required: [type, commandId, kind, phase]
+          properties:
+            type:
+              type: string
+              const: session.command
+            commandId:
+              type: string
+              format: uuid
+              description: The `command.id` of the envelope this event settles.
+            kind:
+              type: string
+              enum: [session.prompt, session.input, session.cancel, session.checkpoint, session.delete]
+            phase:
+              type: string
+              enum: [accepted, completed]
+            status:
+              type: string
+              enum: [succeeded, failed, fenced]
+              description: Present iff `phase = completed`.
+            result:
+              type: object
+              additionalProperties: true
+              description: The success body (e.g. `{stopReason}` for a prompt); present iff `status = succeeded`.
+            error:
+              type: object
+              additionalProperties: true
+              description: The `SupervisorErrorBody` (`code`, `message`, `details`); present iff `status ∈ {failed, fenced}`.
+      description: |
+        (Designed — ADR-164) Command acceptance/completion signal for the
+        enveloped session routes. See `../supervisor.openapi.yaml`
+        `CommandReceipt` for the durable equivalent.
     SessionHookTripEvent:
       allOf:
         - $ref: "#/components/schemas/EventBase"

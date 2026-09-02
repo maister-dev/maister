@@ -115,6 +115,26 @@ adapters, so its env is what they inherit).
 services — supervisor and web resolve `.maister/` from it, so a mismatch breaks
 the run event stream.
 
+**Execution-host state (Designed — [ADR-164](decisions.md#adr-164-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces)).**
+The supervisor keeps a private `node:sqlite` state store under
+`MAISTER_EXECUTION_HOST_STATE_DIR` (default
+`<MAISTER_RUNTIME_ROOT>/.maister/execution-host/` → `/opt/maister/.maister/execution-host/`;
+the `maister` user must be able to create it). It holds the host identity
+(`hostKey`), per-run epoch fences, adopted-workspace handles, and command
+receipts — back it up with `.maister/`, and never share one state dir
+between two supervisors. Optional pin `MAISTER_EXECUTION_HOST_KEY`: set it
+only when you deliberately restore a state dir on another machine (it must
+EQUAL the stored key); a conflicting pin refuses boot with
+`execution-host-key-conflict` — unset the pin or wipe the state dir.
+`MAISTER_WORKSPACE_ROOTS` (default
+`~/.maister/worktrees:~/.maister/local:<MAISTER_RUNTIME_ROOT>/.maister`) is
+the allow-list a run worktree / local-package dir must live under to be
+adopted: **if you move `MAISTER_WORKTREES_ROOT` or
+`MAISTER_LOCAL_PACKAGES_ROOT` in the web env, mirror the new path here** or
+every launch fails at adoption with `PRECONDITION workspace_rejected /
+outside_roots`. Both processes still share the filesystem — this is a
+single-host topology.
+
 Apply migrations and seed the first admin:
 
 ```bash
@@ -259,8 +279,9 @@ the local web/supervisor processes.
 ## 10. Smoke test
 
 ```bash
-curl -fsS http://127.0.0.1:7777/health        # supervisor: {"status":"ready",...}
+curl -fsS http://127.0.0.1:7777/health        # supervisor: {"status":"ready",..., "host":{"hostKey":"eh_…","bootId":"…","protocolVersion":1}}
 curl -fsS http://127.0.0.1:3000/ >/dev/null    # web responds
+journalctl -u maister-web -n 200 | grep execution-host-registered   # (Designed — ADR-164) the web tier registered the host
 ```
 
 Then open `https://maister.example.com/login` and sign in with the seeded admin.
@@ -278,7 +299,12 @@ sudo systemctl restart maister-supervisor maister-web
 
 Restart `maister-supervisor` during a quiet window: it drops its in-memory ACP
 session registry, so `Running` runs orphan until startup reconciliation lands
-(ADR-033..036).
+(ADR-033..036). **(Designed — ADR-164)** The first start after the
+execution-host upgrade mints the host identity into the state dir; the web
+tier registers it and backfills an assignment (epoch 1, `legacy_backfill`)
+for every `Running` / `NeedsInput` run that still has a live session —
+draining before the upgrade is recommended, not required. Runs that finished
+before the upgrade keep `runs.execution_assignment_id = NULL` forever.
 
 ## 12. Backup
 
@@ -570,4 +596,4 @@ token when the inbound bearer is missing. There is no `MAISTER_PROJECT_TOKEN` or
 - [`deploy/`](../deploy) — systemd units, env template, nginx config.
 - [`configuration.md`](configuration.md) — full environment variable reference.
 - [`getting-started.md`](getting-started.md) — local dev setup + seeded credentials.
-- ADR-023 (host-run topology), ADR-025 (repo onboarding), ADR-022 (run-data projection), ADR-049 (PR-mode promotion — host `gh`/`glab` / Gitea-API token prerequisites).
+- ADR-023 (host-run topology), ADR-025 (repo onboarding), ADR-022 (run-data projection), ADR-049 (PR-mode promotion — host `gh`/`glab` / Gitea-API token prerequisites), ADR-164 (execution-host state dir + workspace roots — Designed).

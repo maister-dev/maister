@@ -518,6 +518,7 @@ messages.
 
 ## Linked artifacts
 
+- Execution-host contract (ADR-164, Designed): [`execution-hosts.md`](execution-hosts.md) — scratch launch mints the `launch` assignment and adopts the worktree, the recover route mints `scratch_recover`, interrupt is a `session.cancel` command, and `scratch_runs.supervisor_session_id` is mirrored into `run_sessions.host_session_id` until Stage B.
 - Product model: [`../PRODUCT_VIEW.md`](../PRODUCT_VIEW.md).
 - Run lifecycle: [`runs.md`](runs.md).
 - Workspace lifecycle: [`workspaces.md`](workspaces.md).
