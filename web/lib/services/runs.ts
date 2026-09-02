@@ -33,10 +33,7 @@ import {
 import { resolvePinnedFlowRevisionForRefId } from "@/lib/packages/pin";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import {
-  type AgentExecutionPolicyRecommendation,
-  type DelegationSnapshot,
-} from "@/lib/db/schema";
+import { type AgentExecutionPolicyRecommendation } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
   formatFlowRefError,
@@ -61,6 +58,7 @@ import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { parseExecutableStoredFlowManifest } from "@/lib/flows/manifest-parser";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
+import type { FlowDelegationSnapshotInput } from "@/lib/flows/delegatable-flow";
 import { assertFlowLaunchable } from "@/lib/flows/launchability-gate";
 import { admitDelegatedChild } from "@/lib/orchestrator/admission";
 import { resolveEffectiveFlowRevision } from "@/lib/flows/lifecycle";
@@ -384,12 +382,7 @@ export type LaunchRunInput = {
   // what records them. A caller that supplied its own pair would be duplicating
   // a resolution it cannot see the inputs to, which is how the snapshot and the
   // workspace drift apart.
-  delegationSnapshot?:
-    | Exclude<DelegationSnapshot, { kind: "flow" }>
-    | Omit<
-        Extract<DelegationSnapshot, { kind: "flow" }>,
-        "baseBranch" | "targetBranch"
-      >;
+  delegationSnapshot?: FlowDelegationSnapshotInput;
 };
 
 function budgetRestartSourceRunId(
@@ -1672,13 +1665,11 @@ export async function* launchRunStaged(
             // pair IT resolved, so the snapshot and `workspaces` can never
             // disagree about what this child branched from and promotes into.
             delegationSnapshot: input.delegationSnapshot
-              ? input.delegationSnapshot.kind === "flow"
-                ? {
-                    ...input.delegationSnapshot,
-                    baseBranch: base,
-                    targetBranch: target,
-                  }
-                : input.delegationSnapshot
+              ? {
+                  ...input.delegationSnapshot,
+                  baseBranch: base,
+                  targetBranch: target,
+                }
               : null,
             status: "Pending",
             // Snapshot the enabled revision (M10, ADR-021). flow_revision_id is

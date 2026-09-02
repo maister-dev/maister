@@ -204,7 +204,9 @@ async function seedParentRun(): Promise<string> {
   return parentRunId;
 }
 
-function flowSnapshot(carrierTaskId: string): DelegationSnapshot {
+function flowSnapshot(
+  carrierTaskId: string,
+): Extract<DelegationSnapshot, { kind: "flow" }> {
   return {
     kind: "flow",
     flowId,

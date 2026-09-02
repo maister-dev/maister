@@ -60,6 +60,7 @@ import {
 } from "@/lib/runs/execution-policy";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
+import { teardownLiveSessionsForRuns } from "@/lib/runs/session-teardown";
 import { promoteNextPending, releaseSlotOnIdle } from "@/lib/scheduler";
 import {
   checkpointSession,
@@ -1790,28 +1791,12 @@ async function actBudgetTerminateTree(
     { db },
   );
 
-  // Best-effort teardown of each cascaded child's live ACP session. The cascade
-  // only flipped DB rows; without this the child agents keep running to
-  // completion and the tree token cap stays soft. Teardown errors are tolerated
-  // (the child is already Abandoned; supervisor-side reconcile reaps any
-  // orphan). Match by runId — a running child has one live session.
-  for (const childId of cascadedRunIds) {
-    const childLive = records.find(
-      (r) => r.status === "live" && r.runId === childId,
-    );
-
-    if (childLive) {
-      await deleteSession(childLive.sessionId).catch((err: unknown) => {
-        log.warn(
-          {
-            runId: childId,
-            err: err instanceof Error ? err.message : String(err),
-          },
-          "[budget] tree-terminate child session teardown failed — continuing",
-        );
-      });
-    }
-  }
+  // The cascade only flipped DB rows; without this the child agents keep
+  // running to completion and the tree token cap stays soft.
+  await teardownLiveSessionsForRuns(cascadedRunIds, {
+    records,
+    logLabel: "[budget] tree-terminate",
+  });
 
   const notified = mergedBudgetState(
     candidate.budgetState,

@@ -49,9 +49,9 @@ async function takeDelegationLock(tx: Db, parentRunId: string): Promise<void> {
 
 /**
  * Hops from `startId` up the `parent_run_id` chain. The parent run itself is
- * depth 0; each ancestor adds 1. The FK guarantees a DAG so the walk
- * terminates; the loop cap is a defensive backstop against a cycle a manual DB
- * edit could introduce.
+ * depth 0; each ancestor adds 1. A self-referencing FK does not rule out a
+ * cycle, so the loop cap is what guarantees termination; only a manual DB edit
+ * could introduce one.
  */
 async function delegationDepth(tx: Db, startId: string): Promise<number> {
   let depth = 0;

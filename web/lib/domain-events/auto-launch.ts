@@ -370,11 +370,6 @@ export function buildAutoLaunchRunPlanConsumer(
               continue;
             }
 
-            // ADR-163: `delegation_spec` is a discriminated union, so the kind
-            // is read through the shared helper rather than sniffed inline —
-            // `!spec.agentId` would silently reclassify a flow spec as a
-            // malformed agent one and skip it forever. Flow candidates are
-            // widened in a later phase; today only the agent arm launches.
             // ADR-163: dispatch on the spec's KIND. Reading it through the
             // shared helpers rather than sniffing `!spec.agentId` is what keeps
             // a flow spec from being silently reclassified as a malformed agent

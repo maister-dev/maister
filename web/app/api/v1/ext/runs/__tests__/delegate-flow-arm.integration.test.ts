@@ -341,12 +341,34 @@ describe("run_delegate flow arm — failure and crash windows (ADR-163 REQ-21)",
   // W6: the orchestrator terminalized between the pre-flight check and the
   // committed child. Its own cascade already ran, so nothing else would ever
   // reach this child.
-  it("W6: a parent that terminalizes during the launch leaves the child Abandoned and returns PRECONDITION", async () => {
+  it("W6: a parent that terminalizes during the launch leaves the child Abandoned, tears down its live session, and returns PRECONDITION", async () => {
     const { POST: realDelegatePost } = await import(
       "@/app/api/v1/ext/runs/delegate/route"
     );
     const runsModule = await import("@/lib/services/runs");
     const realLaunch = runsModule.launchRun;
+    // ADR-163 review S6: the cascade flips rows only. The newborn child may
+    // already hold a live supervisor session, which must be torn down or the
+    // agent keeps spending under a terminal tree.
+    const supervisor = await import("@/lib/supervisor-client");
+
+    vi.mocked(supervisor.listSessions).mockImplementation(async () =>
+      (
+        await pool.query(`SELECT "id" FROM "runs" WHERE "parent_run_id" = $1`, [
+          parentRunId,
+        ])
+      ).rows.map((row: { id: string }) => ({
+        sessionId: `sess-${row.id}`,
+        runId: row.id,
+        projectSlug: "p",
+        stepId: "work",
+        status: "live" as const,
+        pid: 1,
+        startedAt: new Date().toISOString(),
+        logPath: "/dev/null",
+        monotonicId: 1,
+      })),
+    );
 
     // Terminalize the parent INSIDE the launch, i.e. exactly in the window the
     // post-commit re-read exists to cover.
@@ -382,6 +404,16 @@ describe("run_delegate flow arm — failure and crash windows (ADR-163 REQ-21)",
       ).rows[0];
 
       expect(child.status).toBe("Abandoned");
+
+      const childId = (
+        await pool.query(`SELECT "id" FROM "runs" WHERE "parent_run_id" = $1`, [
+          parentRunId,
+        ])
+      ).rows[0].id;
+
+      expect(vi.mocked(supervisor.deleteSession)).toHaveBeenCalledWith(
+        `sess-${childId}`,
+      );
     } finally {
       spy.mockRestore();
     }

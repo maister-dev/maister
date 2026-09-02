@@ -316,7 +316,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   run_delegate: {
     description:
-      "Delegate work to a governed child run. Supply EXACTLY ONE target: target.agentId = a single-purpose catalog agent (one session, one turn-loop, package-qualified <flowRefId>:<stem>); target.flowId = a governed multi-node process from the project's enabled+trusted flows (its own graph, gates, review). Flow targets accept only title and runnerOverride — workspace, workspaceMode, persistent, addressableKey are agent-only and are refused, not ignored; a flow child always gets a linked board task (childTaskId is always returned) and run_rework/run_message do not apply to it. For an agent target, mode:'task' also creates a child board task linked parent_of under the orchestrator's task and mode:'run' spawns a board-less child. The parent orchestrator run is derived from the calling token — never accepted in the body. An untrusted/disabled/incompatible target is refused and no child run is created.",
+      "Delegate work to a governed child run. Supply EXACTLY ONE target: target.agentId = a single-purpose catalog agent (one session, one turn-loop, package-qualified <flowRefId>:<stem>); target.flowId = a governed multi-node process from the project's enabled+trusted flows (its own graph, gates, review). Flow targets accept only title and runnerOverride — workspace, workspaceMode, persistent, addressableKey are agent-only and are refused, not ignored; a flow child always gets a linked board task (childTaskId is always returned) and run_rework/run_message do not apply to it. For an agent target, mode:'task' also creates a child board task linked parent_of under the orchestrator's task and mode:'run' spawns a board-less child; for a flow target mode is only recorded (the carrier task always exists). The parent orchestrator run is derived from the calling token — never accepted in the body. An untrusted/disabled/incompatible target, or one with no Ready platform runner, is refused and no child run is created.",
     inputSchema: {
       type: "object",
       properties: {
@@ -335,7 +335,12 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
               type: "object",
               title: "FlowTarget",
               properties: {
-                flowId: { type: "string", minLength: 1 },
+                flowId: {
+                  type: "string",
+                  minLength: 1,
+                  description:
+                    "The flow's UUID or the project's flow ref, as returned by flow_list.",
+                },
               },
               required: ["flowId"],
               additionalProperties: false,
@@ -396,7 +401,12 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
                     type: "object",
                     title: "FlowTarget",
                     properties: {
-                      flowId: { type: "string", minLength: 1 },
+                      flowId: {
+                        type: "string",
+                        minLength: 1,
+                        description:
+                          "The flow's UUID or the project's flow ref, as returned by flow_list.",
+                      },
                     },
                     required: ["flowId"],
                     additionalProperties: false,
@@ -432,7 +442,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   run_cancel: {
     description:
-      "Cancel a delegated child run of the calling orchestrator. The child must be a direct child of the bound orchestrator run. Returns { childRunId, status }.",
+      "Cancel a delegated child run of the calling orchestrator: the child ends Abandoned (agent and flow children alike; a flow child's worktree is retained until GC), which frees its fan-out slot. The child must be a direct child of the bound orchestrator run. Returns { childRunId, status }.",
     inputSchema: {
       type: "object",
       properties: {
@@ -443,7 +453,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   run_message: {
     description:
-      "Re-message a PERSISTENT child agent in the calling orchestrator's run-tree by its addressableKey (or childRunId). If the child is parked between turns it is respawned and resumed with prior context; if live the prompt is delivered to the running session. The child re-parks on its next end_turn. Addressing is scoped to the caller's own tree — a child in another tree is invisible. Returns { childRunId, status }.",
+      "Re-message a PERSISTENT child agent in the calling orchestrator's run-tree by its addressableKey (or childRunId). If the child is parked between turns it is respawned and resumed with prior context; if live the prompt is delivered to the running session. The child re-parks on its next end_turn. Addressing is scoped to the caller's own tree — a child in another tree is invisible. Agent children only: a flow child has no addressable session and is refused PRECONDITION. Returns { childRunId, status }.",
     inputSchema: {
       type: "object",
       properties: {
@@ -467,7 +477,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   run_rework: {
     description:
-      "Re-open a reviewed delegated child of the calling orchestrator for another turn with a rework prompt. The child must be a direct child of the bound orchestrator run and currently in Review. It is respawned and resumed with prior context against its existing worktree, then re-reviews on its next end_turn. Returns { childRunId, status }.",
+      "Re-open a reviewed delegated child of the calling orchestrator for another turn with a rework prompt. Agent children only — a flow child owns its own review/rework loop and is refused PRECONDITION (promote or cancel it instead). The child must be a direct child of the bound orchestrator run and currently in Review. It is respawned and resumed with prior context against its existing worktree, then re-reviews on its next end_turn. Returns { childRunId, status }.",
     inputSchema: {
       type: "object",
       properties: {

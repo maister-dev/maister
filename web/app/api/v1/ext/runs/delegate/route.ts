@@ -23,6 +23,7 @@ import {
   titleFromPrompt,
 } from "@/lib/orchestrator/delegation-target";
 import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
+import { teardownLiveSessionsForRuns } from "@/lib/runs/session-teardown";
 import { addTaskRelation } from "@/lib/social/relations";
 import { launchRun } from "@/lib/services/runs";
 import { abandonUnlaunchedTasks, createTask } from "@/lib/services/tasks";
@@ -239,8 +240,9 @@ export async function POST(
       // ADR-163 D1: a FLOW target always gets a carrier task — a flow run
       // cannot exist without one, and the board renders a `parent_of` child as
       // its own card either way, so omitting the link would produce the same
-      // card with no provenance. `mode` therefore controls board LINKAGE for a
-      // flow target, never board PRESENCE.
+      // card with no provenance. `mode` therefore changes nothing for a flow
+      // target — presence and linkage are unconditional; it is only recorded
+      // in the delegation snapshot.
       const needsChildTask = targetKind === "flow" || body.mode === "task";
       let childTaskId: string | undefined;
 
@@ -424,24 +426,33 @@ export async function POST(
         );
 
         if (!parentNow.ok) {
+          // The cascade flips rows only; the just-born child may already hold
+          // a live supervisor session that would otherwise keep spending
+          // under the terminal tree.
           await cascadeAbandonRunTree(
             parentRunId,
             parent.taskId ?? null,
             "user_stopped",
             { db },
-          ).catch((cascadeErr: unknown) =>
-            log.error(
-              {
-                parentRunId,
-                childRunId,
-                err:
-                  cascadeErr instanceof Error
-                    ? cascadeErr.message
-                    : String(cascadeErr),
-              },
-              "[delegation.compensate] cascade of an orphaned child failed",
-            ),
-          );
+          )
+            .then(({ cascadedRunIds }) =>
+              teardownLiveSessionsForRuns(cascadedRunIds, {
+                logLabel: "[delegation.compensate]",
+              }),
+            )
+            .catch((cascadeErr: unknown) =>
+              log.error(
+                {
+                  parentRunId,
+                  childRunId,
+                  err:
+                    cascadeErr instanceof Error
+                      ? cascadeErr.message
+                      : String(cascadeErr),
+                },
+                "[delegation.compensate] cascade of an orphaned child failed",
+              ),
+            );
 
           return NextResponse.json(
             { code: parentNow.code, message: parentNow.message },
