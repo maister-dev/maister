@@ -130,8 +130,10 @@ maister-agents/<stem>.md # platform-agent (frontmatter + body); id is the stem
 skills/<name>/SKILL.md # a bundled skill (+ optional references/)
 mcps/<name>.yaml       # MCP capability descriptor
 rules/<name>.md        # rule capability
-schemas/<name>.json    # form_schema for a form/human node, and the
-                       #   output.result schema any other node references
+schemas/<name>.json    # form_schema for a form/human node, the
+                       #   output.result schema any other node references,
+                       #   a flow's result.export schema, and any
+                       #   result_profiles entry (ADR-165)
 \`\`\`
 
 ## maister-package.yaml
@@ -142,7 +144,15 @@ name: my-package
 flows:
   - id: bugfix
     path: flows/bugfix           # directory containing flow.yaml
+result_profiles:                 # optional (ADR-165) — NAMED public result
+  research:                      #   contracts a delegated AGENT child publishes
+    schema: ./schemas/research-result.v1.json   # package-root JSON document
 \`\`\`
+
+A \`result_profiles\` name matches \`/^[A-Za-z0-9._-]{1,64}$/\` and its \`schema\`
+MUST be a package-root \`./schemas/<name>.json\`. An orchestrator selects one by
+NAME (\`resultProfile\`) when delegating; the name resolves against the parent
+run's pinned revision, never as a path.
 
 ## File kind is inferred from the top directory
 

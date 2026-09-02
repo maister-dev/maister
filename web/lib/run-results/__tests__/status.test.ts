@@ -1,10 +1,11 @@
+import type { RunResultContract } from "@/lib/run-results/types";
+
 import { describe, expect, it } from "vitest";
 
 import {
   deriveResultStatus,
   type DeriveResultStatusInput,
 } from "@/lib/run-results/status";
-import type { RunResultContract } from "@/lib/run-results/types";
 
 // ADR-165 AC-09 / spec C-3.4. `resultStatus` is derived by exactly ONE
 // predicate, consumed by the collect route, the run DTO and the Evaluation Lab.
@@ -202,7 +203,10 @@ describe("deriveResultStatus (ADR-165 §B table)", () => {
       deriveResultStatus({
         runStatus: s,
         contract: REQUIRED_CONTRACT,
-        newestRow: row({ validity: "invalid", invalidReason: "result_missing" }),
+        newestRow: row({
+          validity: "invalid",
+          invalidReason: "result_missing",
+        }),
         validRow: null,
       }),
     ).toBe("unavailable");

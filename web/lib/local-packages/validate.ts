@@ -16,6 +16,7 @@ import {
   splitFrontmatter,
 } from "@/lib/flows/artifact-frontmatter";
 import { classifyPackageFilePath } from "@/lib/flows/editor/package-file-tree";
+import { semverGte } from "@/lib/flows/engine-version";
 import { buildAuthoredFlowGraph } from "@/lib/queries/authored-flow-graph";
 import { validatePackageManifestYaml } from "@/lib/local-packages/manifest";
 
@@ -123,6 +124,21 @@ function validateLifecycleSchemaArtifacts(
     }
   }
 
+  // ADR-165: a package-level `result_profiles` entry is a RUNTIME schema
+  // reference too — the delegation path resolves it from the pinned revision at
+  // launch. Mirror the installer here, or a profile pointing at a missing or
+  // below-floor document would install-fail after passing every Studio gate.
+  // The floor is the LOWEST member flow's, matching `addSchemaReferenceFloors`.
+  const lowestMemberFloor = lowestFloor([...referenceFloors.values()]);
+
+  for (const reference of collectPackageResultProfileSchemaPaths(input.files)) {
+    allReferences.add(reference);
+    if (!referenceFloors.has(reference)) {
+      referenceFloors.set(reference, lowestMemberFloor);
+    }
+    changedFlowReferences.add(reference);
+  }
+
   const schemaCandidates = input.files.filter(
     (file) =>
       classifyPackageFilePath(file.path) === "schema" && changed.has(file.path),
@@ -150,6 +166,59 @@ function validateLifecycleSchemaArtifacts(
       return true;
     })
     .map((issue) => ({ path: issue.path, message: issue.message }));
+}
+
+// ADR-165: the schema paths a package manifest's `result_profiles` block
+// references, normalized the way `collectReferencedSchemaPaths` normalizes
+// (leading `./` stripped) so they match the persisted `files[].path`.
+function collectPackageResultProfileSchemaPaths(
+  files: readonly PackageArtifactFile[],
+): Set<string> {
+  const refs = new Set<string>();
+
+  for (const file of files) {
+    if (classifyPackageFilePath(file.path) !== "manifest") continue;
+
+    let doc: unknown;
+
+    try {
+      doc = parseYaml(file.content);
+    } catch {
+      continue;
+    }
+    if (typeof doc !== "object" || doc === null || Array.isArray(doc)) continue;
+
+    const declared = (doc as { result_profiles?: unknown }).result_profiles;
+
+    if (typeof declared !== "object" || declared === null) continue;
+
+    for (const entry of Object.values(declared as Record<string, unknown>)) {
+      const schema = (entry as { schema?: unknown })?.schema;
+
+      if (typeof schema !== "string" || schema.length === 0) continue;
+      refs.add(schema.startsWith("./") ? schema.slice(2) : schema);
+    }
+  }
+
+  return refs;
+}
+
+// The weakest of a set of declared floors: `undefined` (no declaration) wins
+// outright, otherwise the lowest version. A profile document must satisfy the
+// floor of EVERY member flow that could resolve it.
+function lowestFloor(
+  floors: readonly (string | undefined)[],
+): string | undefined {
+  let lowest: string | undefined;
+  let seen = false;
+
+  for (const floor of floors) {
+    if (floor === undefined) return undefined;
+    if (!seen || !semverGte(floor, lowest as string)) lowest = floor;
+    seen = true;
+  }
+
+  return lowest;
 }
 
 // A flow manifest the canvas compiles. `classifyPackageFilePath` has no "flow"

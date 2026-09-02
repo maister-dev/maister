@@ -49,6 +49,13 @@ export function buildNodeSideFormLabels(te: Translator): NodeSideFormLabels {
     maxFanout: te("nodeForm.maxFanout"),
     maxDepth: te("nodeForm.maxDepth"),
     delegationAdvisory: te("nodeForm.delegationAdvisory"),
+    maxActiveChildren: te("nodeForm.maxActiveChildren"),
+    budget: te("nodeForm.budget"),
+    budgetMaxTokens: te("nodeForm.budgetMaxTokens"),
+    budgetWallClockMinutes: te("nodeForm.budgetWallClockMinutes"),
+    budgetMaxChildRuns: te("nodeForm.budgetMaxChildRuns"),
+    budgetConsecutiveFailures: te("nodeForm.budgetConsecutiveFailures"),
+    budgetHint: te("nodeForm.budgetHint"),
     enforcement: {
       title: te("nodeForm.enforcement.title"),
       mcps: te("nodeForm.enforcement.mcps"),

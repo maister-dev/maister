@@ -137,10 +137,10 @@ async function orchestratorTokenPinnedTo(revisionId: string | null): Promise<{
   });
 
   if (revisionId) {
-    await pool.query(`UPDATE "runs" SET "flow_revision_id" = $2 WHERE id = $1`, [
-      seeded.runId,
-      revisionId,
-    ]);
+    await pool.query(
+      `UPDATE "runs" SET "flow_revision_id" = $2 WHERE id = $1`,
+      [seeded.runId, revisionId],
+    );
   }
 
   return seeded;

@@ -220,6 +220,7 @@ export async function installPackageRevision(opts: {
           flowId: flow.id,
           resolvedRevisionOverride: existing.resolvedRevision,
           sharedSchemaDir: resolvedSchemaDir,
+          resultProfiles: existingManifest.spec.result_profiles,
           db,
           signal: opts.signal,
         });
@@ -303,6 +304,7 @@ export async function installPackageRevision(opts: {
         flowId: flow.id,
         resolvedRevisionOverride: resolved.resolvedRevision,
         sharedSchemaDir: join(cachePath, "schemas"),
+        resultProfiles: resolved.manifest.result_profiles,
         db,
         signal: opts.signal,
       });
@@ -643,6 +645,7 @@ async function wireMembers(
         roleRefs: opts.roleRefs,
         resolvedRevisionOverride: opts.install.resolvedRevision,
         sharedSchemaDir: join(opts.install.installedPath, "schemas"),
+        resultProfiles: manifest.spec.result_profiles,
         db: tx,
         signal: opts.signal,
       },

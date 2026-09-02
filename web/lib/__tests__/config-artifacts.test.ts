@@ -778,4 +778,370 @@ describe("validateGraphManifest — artifact validation (M12 Phase 2)", () => {
       expect(manifest.compat?.engine_min).toBe("1.3.0");
     });
   });
+
+  // ADR-165 AC-03 / AC-04 / AC-05, spec C-4 and C-10.5. `result.export` is
+  // flow-level (like `reentry`), so both the floor and the cross-reference
+  // rules are gated on the MANIFEST rather than per node.
+  describe("ADR-165 (AC-03): result.export cross-reference rules", () => {
+    function exportProducer(): Record<string, unknown> {
+      return {
+        id: "implement",
+        type: "ai_coding",
+        action: { prompt: "coordinate {{ task.prompt }}" },
+        output: { result: { schema: "./schemas/out.json" } },
+        transitions: { success: "test" },
+      };
+    }
+
+    async function loadErr(path: string): Promise<string> {
+      try {
+        await loadFlowManifest(path);
+      } catch (e) {
+        expect(isMaisterError(e)).toBe(true);
+        expect((e as any).code).toBe("CONFIG");
+
+        return e instanceof Error ? e.message : "";
+      }
+      expect.unreachable("manifest must be refused");
+
+      return "";
+    }
+
+    it("parses with required defaulting to true", async () => {
+      const path = await writeGraph("export-default-required.yaml", (m) => {
+        m.compat.engine_min = "3.7.0";
+        m.nodes[0] = exportProducer();
+        (m as any).result = {
+          export: { schema: "./schemas/out.json", from: ["implement"] },
+        };
+      });
+
+      const manifest = await loadFlowManifest(path);
+
+      expect((manifest as any).result.export.required).toBe(true);
+    });
+
+    it("refuses a from[] entry naming an unknown node", async () => {
+      const path = await writeGraph("export-unknown-node.yaml", (m) => {
+        m.compat.engine_min = "3.7.0";
+        m.nodes[0] = exportProducer();
+        (m as any).result = {
+          export: { schema: "./schemas/out.json", from: ["nope"] },
+        };
+      });
+
+      const msg = await loadErr(path);
+
+      expect(msg).toContain("nope");
+      expect(msg).toContain("no node with that id exists");
+    });
+
+    it.each(["review"])(
+      "refuses a from[] entry naming the %s (human) node",
+      async (nodeId) => {
+        const path = await writeGraph("export-human-node.yaml", (m) => {
+          m.compat.engine_min = "3.7.0";
+          (m as any).result = {
+            export: { schema: "./schemas/out.json", from: [nodeId] },
+          };
+        });
+
+        const msg = await loadErr(path);
+
+        expect(msg).toContain(nodeId);
+        expect(msg).toContain("human");
+      },
+    );
+
+    it("refuses a from[] node that declares no output.result", async () => {
+      const path = await writeGraph("export-no-output.yaml", (m) => {
+        m.compat.engine_min = "3.7.0";
+        (m as any).result = {
+          export: { schema: "./schemas/out.json", from: ["implement"] },
+        };
+      });
+
+      const msg = await loadErr(path);
+
+      expect(msg).toContain("implement");
+      expect(msg).toContain("declares no output.result");
+    });
+
+    it("refuses a from[] node whose output.result.schema differs from the export", async () => {
+      const path = await writeGraph("export-schema-mismatch.yaml", (m) => {
+        m.compat.engine_min = "3.7.0";
+        m.nodes[0] = {
+          ...exportProducer(),
+          output: { result: { schema: "./schemas/other.json" } },
+        };
+        (m as any).result = {
+          export: { schema: "./schemas/out.json", from: ["implement"] },
+        };
+      });
+
+      const msg = await loadErr(path);
+
+      expect(msg).toContain("implement");
+      expect(msg).toContain("SAME export schema");
+    });
+
+    it("treats ./schemas/x.json and schemas/x.json as the same contract", async () => {
+      const path = await writeGraph("export-normalized.yaml", (m) => {
+        m.compat.engine_min = "3.7.0";
+        m.nodes[0] = {
+          ...exportProducer(),
+          output: { result: { schema: "schemas/out.json" } },
+        };
+        (m as any).result = {
+          export: { schema: "./schemas/out.json", from: ["implement"] },
+        };
+      });
+
+      await expect(loadFlowManifest(path)).resolves.toBeTruthy();
+    });
+
+    it("FORCES a producer's output.result.required true under a required export", async () => {
+      const path = await writeGraph("export-forces-required.yaml", (m) => {
+        m.compat.engine_min = "3.7.0";
+        m.nodes[0] = {
+          ...exportProducer(),
+          output: {
+            result: { schema: "./schemas/out.json", required: false },
+          },
+        };
+        (m as any).result = {
+          export: {
+            schema: "./schemas/out.json",
+            from: ["implement"],
+            required: true,
+          },
+        };
+      });
+
+      const manifest = await loadFlowManifest(path);
+
+      // The LOADED manifest reflects it — the seam and the terminal gate must
+      // see the same contract, not two different ones.
+      expect((manifest.nodes![0].output as any).result.required).toBe(true);
+    });
+
+    it("leaves a producer optional under an OPTIONAL export", async () => {
+      const path = await writeGraph("export-optional.yaml", (m) => {
+        m.compat.engine_min = "3.7.0";
+        m.nodes[0] = {
+          ...exportProducer(),
+          output: {
+            result: { schema: "./schemas/out.json", required: false },
+          },
+        };
+        (m as any).result = {
+          export: {
+            schema: "./schemas/out.json",
+            from: ["implement"],
+            required: false,
+          },
+        };
+      });
+
+      const manifest = await loadFlowManifest(path);
+
+      expect((manifest.nodes![0].output as any).result.required).toBe(false);
+    });
+  });
+
+  describe("ADR-165 (AC-04): the 3.7.0 floor", () => {
+    const FLOOR_BUDGET = {
+      max_tokens: 1,
+      wall_clock_minutes: 1,
+      max_child_runs: 1,
+      consecutive_failures: 1,
+    };
+    const CASES: Array<{ name: string; mutate: (m: any) => void }> = [
+      {
+        name: "result.export",
+        mutate: (m) => {
+          m.nodes[0].output = { result: { schema: "./schemas/out.json" } };
+          m.result = {
+            export: { schema: "./schemas/out.json", from: ["implement"] },
+          };
+        },
+      },
+      {
+        // `delegation` lives only on orchestrator settings, so the fixture must
+        // be an orchestrator — and at 3.7.0 that ALSO needs a complete budget
+        // (AC-05), which is why the budget rides along here.
+        name: "delegation.max_active_children",
+        mutate: (m) => {
+          m.nodes[0] = {
+            id: "implement",
+            type: "orchestrator",
+            action: { prompt: "coordinate" },
+            settings: {
+              delegation: {
+                max_active_children: 2,
+                budget: FLOOR_BUDGET,
+              },
+            },
+            transitions: { success: "test" },
+          };
+        },
+      },
+      {
+        name: "delegation.budget",
+        mutate: (m) => {
+          m.nodes[0] = {
+            id: "implement",
+            type: "orchestrator",
+            action: { prompt: "coordinate" },
+            settings: { delegation: { budget: FLOOR_BUDGET } },
+            transitions: { success: "test" },
+          };
+        },
+      },
+    ];
+
+    it.each(CASES)(
+      "refuses $name below the floor, naming 3.7.0",
+      async ({ name, mutate }) => {
+        const path = await writeGraph(`floor-${name}-old.yaml`, (m) => {
+          m.compat.engine_min = "3.6.0";
+          mutate(m);
+        });
+
+        let caught: unknown;
+
+        try {
+          await loadFlowManifest(path);
+        } catch (e) {
+          caught = e;
+        }
+
+        expect(isMaisterError(caught)).toBe(true);
+        expect((caught as any).code).toBe("CONFIG");
+        expect(caught instanceof Error ? caught.message : "").toContain(
+          "3.7.0",
+        );
+      },
+    );
+
+    it.each(CASES)(
+      "accepts the identical $name manifest at 3.7.0",
+      async ({ name, mutate }) => {
+        const path = await writeGraph(`floor-${name}-new.yaml`, (m) => {
+          m.compat.engine_min = "3.7.0";
+          mutate(m);
+        });
+
+        await expect(loadFlowManifest(path)).resolves.toBeTruthy();
+      },
+    );
+
+    // The floor must not fire on the PRE-EXISTING advisory keys: they have
+    // parsed at any engine version since ADR-098 and turning them into a
+    // refusal would break shipped manifests.
+    it("does NOT refuse the pre-ADR-165 max_fanout / max_depth below the floor", async () => {
+      const path = await writeGraph("floor-legacy-delegation.yaml", (m) => {
+        m.compat.engine_min = "1.6.0";
+        m.nodes[0] = {
+          id: "implement",
+          type: "orchestrator",
+          action: { prompt: "coordinate" },
+          settings: { delegation: { max_fanout: 4, max_depth: 1 } },
+          transitions: { success: "test" },
+        } as any;
+      });
+
+      await expect(loadFlowManifest(path)).resolves.toBeTruthy();
+    });
+  });
+
+  describe("ADR-165 (AC-05): an orchestrator at 3.7.0+ needs a COMPLETE budget", () => {
+    const BUDGET = {
+      max_tokens: 100,
+      wall_clock_minutes: 10,
+      max_child_runs: 5,
+      consecutive_failures: 2,
+    };
+
+    function orchestratorWith(budget: unknown): Record<string, unknown> {
+      return {
+        id: "implement",
+        type: "orchestrator",
+        action: { prompt: "coordinate {{ task.prompt }}" },
+        settings: {
+          delegation: budget === undefined ? {} : { budget },
+        },
+        transitions: { success: "test" },
+      };
+    }
+
+    it("accepts a complete budget", async () => {
+      const path = await writeGraph("budget-complete.yaml", (m) => {
+        m.compat.engine_min = "3.7.0";
+        m.nodes[0] = orchestratorWith(BUDGET);
+      });
+
+      await expect(loadFlowManifest(path)).resolves.toBeTruthy();
+    });
+
+    it("refuses an orchestrator with NO budget block, naming the node", async () => {
+      const path = await writeGraph("budget-absent.yaml", (m) => {
+        m.compat.engine_min = "3.7.0";
+        m.nodes[0] = orchestratorWith(undefined);
+      });
+
+      let caught: unknown;
+
+      try {
+        await loadFlowManifest(path);
+      } catch (e) {
+        caught = e;
+      }
+
+      expect((caught as any)?.code).toBe("CONFIG");
+      const msg = caught instanceof Error ? caught.message : "";
+
+      expect(msg).toContain("implement");
+      expect(msg).toContain("budget");
+    });
+
+    it.each(Object.keys(BUDGET))(
+      "refuses an orchestrator whose budget is missing %s, naming the key",
+      async (missing) => {
+        const partial: Record<string, number> = { ...BUDGET };
+
+        delete partial[missing];
+
+        const path = await writeGraph(`budget-missing-${missing}.yaml`, (m) => {
+          m.compat.engine_min = "3.7.0";
+          m.nodes[0] = orchestratorWith(partial);
+        });
+
+        let caught: unknown;
+
+        try {
+          await loadFlowManifest(path);
+        } catch (e) {
+          caught = e;
+        }
+
+        const msg = caught instanceof Error ? caught.message : "";
+
+        expect((caught as any)?.code).toBe("CONFIG");
+        expect(msg).toContain(missing);
+      },
+    );
+
+    // Below the floor the node declaration is advisory, so a pre-3.7.0
+    // orchestrator manifest without a budget must still load — this is the
+    // "no shipped manifest changes behaviour" guarantee.
+    it("still loads a PRE-3.7.0 orchestrator manifest with no budget", async () => {
+      const path = await writeGraph("budget-legacy.yaml", (m) => {
+        m.compat.engine_min = "1.6.0";
+        m.nodes[0] = orchestratorWith(undefined);
+      });
+
+      await expect(loadFlowManifest(path)).resolves.toBeTruthy();
+    });
+  });
 });

@@ -11,6 +11,7 @@ import { parse as parseYaml } from "yaml";
 import {
   ARTIFACT_KINDS,
   OUTPUT_COORDINATOR_ENGINE_MIN,
+  RAH_ENGINE_MIN,
   TERMINAL_TRANSITION_TARGET,
   allNodeMcpRefs,
   formSchemaSchema,
@@ -1044,6 +1045,78 @@ function declaresReentry(manifest: FlowYamlV1): boolean {
   return typeof manifest.reentry === "string" && manifest.reentry.length > 0;
 }
 
+// ADR-165: schema references are compared NORMALIZED (a leading `./` stripped,
+// surrounding whitespace trimmed) so `./schemas/x.json` and `schemas/x.json`
+// are the same contract. Mirrors `schemaRefToFilePath` in the editor layer;
+// duplicated rather than imported so the server loader keeps no dependency on
+// the authoring surface.
+function normalizeSchemaRef(ref: string): string {
+  return ref.trim().replace(/^\.\//, "");
+}
+
+// ADR-165: the flow-level public-result export block, or null. Flow-level like
+// `reentry`, so it reads the manifest rather than the node list.
+type ResultExportDecl = { schema: string; from: string[]; required: boolean };
+
+function resultExportOf(manifest: FlowYamlV1): ResultExportDecl | null {
+  const declared = (manifest as { result?: { export?: ResultExportDecl } })
+    .result?.export;
+
+  return declared ?? null;
+}
+
+// The 3.7.0-floored orchestrator `delegation` keys. `max_fanout` / `max_depth`
+// predate ADR-165 and stay parseable (and advisory) at any engine version — only
+// the NEW keys carry the floor, so no shipped manifest gains a refusal.
+function firstNodeWithRahDelegationKey(nodes: NodeDef[]): {
+  node: NodeDef;
+  key: string;
+} | null {
+  for (const n of nodes) {
+    const delegation = (
+      n as { settings?: { delegation?: Record<string, unknown> } }
+    ).settings?.delegation;
+
+    if (!delegation) continue;
+    if (delegation.max_active_children !== undefined) {
+      return { node: n, key: "max_active_children" };
+    }
+    if (delegation.budget !== undefined) return { node: n, key: "budget" };
+  }
+
+  return null;
+}
+
+// R10: an orchestrator node in a >= 3.7.0 manifest MUST declare a COMPLETE
+// budget. Returns the first offender plus the first missing key, or null.
+const RAH_BUDGET_KEYS = [
+  "max_tokens",
+  "wall_clock_minutes",
+  "max_child_runs",
+  "consecutive_failures",
+] as const;
+
+function firstOrchestratorWithIncompleteBudget(nodes: NodeDef[]): {
+  node: NodeDef;
+  missing: string;
+} | null {
+  for (const n of nodes) {
+    if (n.type !== "orchestrator") continue;
+    const budget = (
+      n as {
+        settings?: { delegation?: { budget?: Record<string, unknown> } };
+      }
+    ).settings?.delegation?.budget;
+
+    if (!budget) return { node: n, missing: "budget" };
+    for (const key of RAH_BUDGET_KEYS) {
+      if (budget[key] === undefined) return { node: n, missing: key };
+    }
+  }
+
+  return null;
+}
+
 // Cross-reference + cycle + engine validation for a graph (`nodes[]`) manifest
 // (ADR-026). zod has already validated node/gate shape; this enforces the
 // graph-level invariants that zod cannot express.
@@ -1297,6 +1370,95 @@ export function validateGraphManifest(
       throw new MaisterError(
         "CONFIG",
         `graph flow ${flowYamlPath} declares reentry "${reentry}" but no node with that id exists`,
+      );
+    }
+  }
+
+  // ADR-165 (R8/R9): the flow-level `result.export` block. Gated on the
+  // MANIFEST, so a flow that never declares it stays valid at any engine_min and
+  // compiles byte-identically to before.
+  const resultExport = resultExportOf(manifest);
+
+  if (resultExport) {
+    const ok = semverGte(engineMin, RAH_ENGINE_MIN);
+
+    log.debug(
+      {
+        flowYamlPath,
+        declared: engineMin || "(unset)",
+        required: RAH_ENGINE_MIN,
+        ok,
+      },
+      "[engine-gate] result.export floor",
+    );
+    if (!ok) {
+      throw new MaisterError(
+        "CONFIG",
+        `graph flow ${flowYamlPath} declares result.export but engine_min "${engineMin}" < ${RAH_ENGINE_MIN} — bump compat.engine_min to ${RAH_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
+      );
+    }
+
+    const exportSchema = normalizeSchemaRef(resultExport.schema);
+
+    for (const producerId of resultExport.from) {
+      const producer = nodes.find((n) => n.id === producerId);
+
+      if (!producer) {
+        throw new MaisterError(
+          "CONFIG",
+          `graph flow ${flowYamlPath} declares result.export.from "${producerId}" but no node with that id exists`,
+        );
+      }
+      if (OUTPUT_HITL_NODE_TYPES.has(producer.type)) {
+        throw new MaisterError(
+          "CONFIG",
+          `graph flow ${flowYamlPath} declares result.export.from "${producerId}" but that node is a ${producer.type} node — human/form nodes have no structured-output transport and can never publish a result`,
+        );
+      }
+      if (!producer.output?.result) {
+        throw new MaisterError(
+          "CONFIG",
+          `graph flow ${flowYamlPath} declares result.export.from "${producerId}" but that node declares no output.result — every permitted producer must satisfy the export schema`,
+        );
+      }
+      if (normalizeSchemaRef(producer.output.result.schema) !== exportSchema) {
+        throw new MaisterError(
+          "CONFIG",
+          `graph flow ${flowYamlPath} declares result.export.schema "${resultExport.schema}" but node "${producerId}" declares output.result.schema "${producer.output.result.schema}" — every permitted producer must satisfy the SAME export schema`,
+        );
+      }
+      // A required export cannot be satisfied by an optional producer: absence
+      // at the producer would leave the run with no result and no failure. The
+      // loaded manifest reflects the forcing, so the seam and the terminal gate
+      // both see the same contract.
+      if (resultExport.required) {
+        producer.output.result.required = true;
+      }
+    }
+  }
+
+  // ADR-165 (R9): the NEW orchestrator delegation keys carry the same floor.
+  const rahDelegationNode = firstNodeWithRahDelegationKey(nodes);
+
+  if (rahDelegationNode && !semverGte(engineMin, RAH_ENGINE_MIN)) {
+    throw new MaisterError(
+      "CONFIG",
+      `graph flow ${flowYamlPath} declares settings.delegation.${rahDelegationNode.key} on node "${rahDelegationNode.node.id}" but engine_min "${engineMin}" < ${RAH_ENGINE_MIN} — bump compat.engine_min to ${RAH_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
+    );
+  }
+
+  // ADR-165 (R10): at or above the floor an orchestrator node's bounds are LIVE,
+  // and an unbounded spend dimension is exactly what the harness exists to
+  // prevent — so the budget is REQUIRED and COMPLETE. Below the floor the node
+  // declaration is advisory, so a pre-3.7.0 orchestrator manifest without a
+  // budget still loads.
+  if (semverGte(engineMin, RAH_ENGINE_MIN)) {
+    const incomplete = firstOrchestratorWithIncompleteBudget(nodes);
+
+    if (incomplete) {
+      throw new MaisterError(
+        "CONFIG",
+        `graph flow ${flowYamlPath} declares an orchestrator node "${incomplete.node.id}" at engine_min ${engineMin} but its settings.delegation.budget is missing "${incomplete.missing}" — an orchestrator at ${RAH_ENGINE_MIN}+ must declare a complete budget (${RAH_BUDGET_KEYS.join(", ")})`,
       );
     }
   }
@@ -1951,7 +2113,7 @@ export async function readAndValidateFormSchemaDoc(
 // returning the file's raw bytes so a caller can hash the exact document. Split
 // out rather than changing `readAndValidateFormSchemaDoc`'s signature — its
 // three callers keep behaving identically.
-async function readFormSchemaDocWithBytes(
+export async function readFormSchemaDocWithBytes(
   flowInstallPath: string,
   relPath: string,
 ): Promise<{ schema: FormSchema; bytes: Buffer }> {

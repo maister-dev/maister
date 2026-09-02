@@ -228,6 +228,7 @@ export async function installPackage(
           roleRefs: args.roleRefs,
           resolvedRevisionOverride: resolved.resolvedRevision,
           sharedSchemaDir: join(resolved.pkgRoot, "schemas"),
+          resultProfiles: resolved.manifest.result_profiles,
           db: args.db,
           signal: args.signal,
         },

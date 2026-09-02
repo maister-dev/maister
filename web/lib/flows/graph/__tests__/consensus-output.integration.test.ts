@@ -214,7 +214,7 @@ describe("runGraph — ADR-162 consensus engine_vars transport", () => {
       schemaVersion: 1,
       sha256: createHash("sha256").update(new Uint8Array(bytes)).digest("hex"),
       transport: "engine_vars",
-      engineVersion: "3.6.0",
+      engineVersion: "3.7.0",
     });
   }, 60_000);
 

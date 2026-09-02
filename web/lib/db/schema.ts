@@ -6,6 +6,15 @@ import type {
   ContextMountSnapshot,
   ContextRepoDecl,
 } from "@/lib/context-mounts/types";
+import type {
+  DelegationBounds,
+  ResultProfileMap,
+  RunResultArtifactRef,
+  RunResultContract,
+  RunResultInvalidReason,
+  RunResultProducerKind,
+  RunResultValidity,
+} from "@/lib/run-results/types";
 import type { BudgetState, ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { TaskQueueSettings } from "@/lib/tasks/queue-settings";
 import type {
@@ -385,6 +394,11 @@ export const flowRevisions = pgTable(
     })
       .notNull()
       .defaultNow(),
+    // ADR-165 (0129): the package's NAMED agent result contracts, resolved at
+    // install for EVERY member flow in the same statement that writes the
+    // revision. A delegated agent child's `resultProfile` resolves against THIS
+    // map on the parent run's PINNED revision. NULL = the package declares none.
+    resultProfiles: jsonb("result_profiles").$type<ResultProfileMap>(),
   },
   (t) => ({
     uniqRefRevision: unique("flow_revisions_ref_revision_uq").on(
@@ -1938,6 +1952,18 @@ export const runs = pgTable(
     // manifest or the attachment, either of which can change after launch and
     // point cleanup at paths this run never created. NULL = no mounts.
     contextMounts: jsonb("context_mounts").$type<ContextMountSnapshot[]>(),
+    // ADR-165 (0129): the run's PUBLIC result contract, snapshotted by the
+    // launcher in the run-insert transaction — from the pinned revision's
+    // `result.export` for a flow run, from the parent's pinned
+    // `flow_revisions.result_profiles` for a delegated agent child. The seam,
+    // the finalizer and the collect route read ONLY this snapshot, never a live
+    // catalog row. NULL = no public result contract.
+    resultContract: jsonb("result_contract").$type<RunResultContract>(),
+    // ADR-165 (0129): the EFFECTIVE delegation bounds an orchestrator node
+    // computed at its start, keyed by node attempt. Admission and the scheduler
+    // read it; an env change after the snapshot cannot alter a running tree.
+    // NULL = env-only bounds (a pre-3.7.0 manifest, or no orchestrator started).
+    delegationBounds: jsonb("delegation_bounds").$type<DelegationBounds>(),
   },
   (t) => ({
     idxProjectStatus: index("runs_project_status_idx").on(
@@ -4389,6 +4415,103 @@ export type ArtifactLocator =
       threadIds?: string[];
       feedbackFingerprint?: string;
     };
+
+// ADR-165 (0129): the PUBLIC result plane — one row per result REVISION of a
+// run, any run kind. `invalid` rows are first-class: they are the ONE durable
+// source for a coordinator's `resultFailure` reason. Plane-separated from
+// `artifact_instances` on purpose (ADR-162 D7): artifacts are node-keyed
+// evidence with a currency FSM; a result is a run-level public contract with
+// revisions and a supersession chain, and an agent run has no node identity at
+// all.
+export const runResults = pgTable(
+  "run_results",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    // 1-based, unique per run. The revision sequence is a database fact.
+    revision: integer("revision").notNull(),
+    validity: text("validity").$type<RunResultValidity>().notNull(),
+    // `<flowRefId>@<resolvedRevision[:12]>:<schemaStem>` — derived from server
+    // state alone, never from a request body.
+    schemaRef: text("schema_ref").notNull(),
+    // sha256 over the schema document's EXACT bytes, so a schema edited under a
+    // stable package ref is detectable from this row after the fact.
+    schemaSha256: text("schema_sha256").notNull(),
+    schemaVersion: integer("schema_version").notNull(),
+    producerKind: text("producer_kind")
+      .$type<RunResultProducerKind>()
+      .notNull(),
+    // A flow node id, or `session:default` for an agent session.
+    producerRef: text("producer_ref").notNull(),
+    nodeAttemptId: text("node_attempt_id").references(() => nodeAttempts.id, {
+      onDelete: "set null",
+    }),
+    // NULL iff validity = 'invalid' (CHECK). Open JSON: undeclared nested keys
+    // are preserved exactly as the producer emitted them.
+    value: jsonb("value"),
+    valueBytes: integer("value_bytes").notNull(),
+    // NOT NULL iff validity = 'invalid' (CHECK).
+    invalidReason: text("invalid_reason").$type<RunResultInvalidReason>(),
+    // The engine artifact manifest AT PUBLISH (audit). `run_collect.artifacts`
+    // is deliberately the LIVE manifest instead.
+    artifactManifest: jsonb("artifact_manifest")
+      .$type<RunResultArtifactRef[]>()
+      .notNull()
+      .default([]),
+    engineVersion: text("engine_version").notNull(),
+    supersededById: text("superseded_by_id").references(
+      (): AnyPgColumn => runResults.id,
+      { onDelete: "set null" },
+    ),
+    supersededAt: timestamp("superseded_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    // Write-once: `markRunResultCollected` guards on IS NULL, so repeated
+    // collects never move it. This is half of the Lab's "did the parent USE the
+    // results?" intersection metric.
+    firstCollectedAt: timestamp("first_collected_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqRunRevision: unique("run_results_run_revision_uq").on(
+      t.runId,
+      t.revision,
+    ),
+    // "At most one CURRENT result per run" as a database fact — a second
+    // `valid` INSERT that bypasses the publish helper violates this rather than
+    // silently winning.
+    uniqOneValidPerRun: uniqueIndex("run_results_one_valid_per_run_uq")
+      .on(t.runId)
+      .where(sql`${t.validity} = 'valid'`),
+    idxRun: index("run_results_run_idx").on(t.runId),
+    validityCheck: check(
+      "run_results_validity_check",
+      sql`${t.validity} IN ('valid','stale','superseded','invalid')`,
+    ),
+    producerKindCheck: check(
+      "run_results_producer_kind_check",
+      sql`${t.producerKind} IN ('flow_node','agent_session')`,
+    ),
+    // The mutual exclusion, both directions. A CHECK the schema never learned
+    // makes `drizzle-kit generate` propose reverting it, so both live here.
+    valueShapeCheck: check(
+      "run_results_value_shape_check",
+      sql`(${t.validity} = 'invalid') = (${t.value} IS NULL)`,
+    ),
+    invalidReasonCheck: check(
+      "run_results_invalid_reason_check",
+      sql`(${t.validity} = 'invalid') = (${t.invalidReason} IS NOT NULL)`,
+    ),
+  }),
+);
 
 // M12 (ADR-037): queryable evidence index. Payloads live on disk/git.
 // Two write paths: runner-inline (majority) and ADR-022 projector (event-stream).

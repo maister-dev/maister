@@ -69,6 +69,13 @@ export type NodeSideFormLabels = {
   maxFanout: string;
   maxDepth: string;
   delegationAdvisory: string;
+  maxActiveChildren: string;
+  budget: string;
+  budgetMaxTokens: string;
+  budgetWallClockMinutes: string;
+  budgetMaxChildRuns: string;
+  budgetConsecutiveFailures: string;
+  budgetHint: string;
   enforcement: {
     title: string;
     mcps: string;
@@ -173,6 +180,31 @@ const FIELD_CLS =
   "rounded-md border border-line bg-paper px-2.5 py-1.5 font-mono text-[12px] text-ink outline-none focus:border-amber";
 const LABEL_CLS =
   "font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-mute";
+// ADR-165: the four budget keys, table-driven so the form and the loader's
+// required-key list stay one list rather than two that drift.
+const BUDGET_FIELDS = [
+  {
+    key: "max_tokens",
+    label: "budgetMaxTokens",
+    testid: "node-delegation-budget-max-tokens",
+  },
+  {
+    key: "wall_clock_minutes",
+    label: "budgetWallClockMinutes",
+    testid: "node-delegation-budget-wall-clock-minutes",
+  },
+  {
+    key: "max_child_runs",
+    label: "budgetMaxChildRuns",
+    testid: "node-delegation-budget-max-child-runs",
+  },
+  {
+    key: "consecutive_failures",
+    label: "budgetConsecutiveFailures",
+    testid: "node-delegation-budget-consecutive-failures",
+  },
+] as const;
+
 const SECTION_CLS =
   "font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-ink";
 
@@ -486,6 +518,18 @@ export function NodeSideForm({
   // Orchestrator-only (M37/ADR-098): settings.delegation bounds the run-tree.
   // Sparse like hooks — clearing both fields removes the block entirely.
   const delegation = asRec(settings.delegation);
+  const budget = asRec(delegation.budget);
+  // ADR-165: the budget sub-block stays sparse the same way — clearing every
+  // field removes the block, so an author never persists a half-declared budget
+  // the loader would then refuse.
+  const setBudget = (patch: Rec): void => {
+    const next: Rec = { ...budget, ...patch };
+
+    for (const key of Object.keys(next)) {
+      if (next[key] === undefined) delete next[key];
+    }
+    setDelegation({ budget: Object.keys(next).length ? next : undefined });
+  };
   const setDelegation = (patch: Rec): void => {
     const next: Rec = { ...delegation, ...patch };
 
@@ -1000,6 +1044,38 @@ export function NodeSideForm({
                 setDelegation({ max_depth: v === "" ? undefined : Number(v) })
               }
             />
+            <TextField
+              label={labels.maxActiveChildren}
+              readOnly={readOnly}
+              testid="node-delegation-max-active-children"
+              type="number"
+              value={str(delegation.max_active_children)}
+              onChange={(v) =>
+                setDelegation({
+                  max_active_children: v === "" ? undefined : Number(v),
+                })
+              }
+            />
+            <h4 className={SECTION_CLS}>{labels.budget}</h4>
+            <p
+              className="m-0 font-mono text-[10px] leading-[1.4] text-mute"
+              data-testid="node-delegation-budget-hint"
+            >
+              {labels.budgetHint}
+            </p>
+            {BUDGET_FIELDS.map((field) => (
+              <TextField
+                key={field.key}
+                label={labels[field.label]}
+                readOnly={readOnly}
+                testid={field.testid}
+                type="number"
+                value={str(budget[field.key])}
+                onChange={(v) =>
+                  setBudget({ [field.key]: v === "" ? undefined : Number(v) })
+                }
+              />
+            ))}
           </div>
         ) : null}
         {type === "form" ? (

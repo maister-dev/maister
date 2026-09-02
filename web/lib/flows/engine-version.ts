@@ -80,7 +80,15 @@ const log = pino({
 // config.schema.ts). Below that floor an older engine would pick a transport
 // neither coordinator provisions, so the refusal is loud at manifest load and
 // at package install.
-export const MAISTER_ENGINE_VERSION = "3.6.0";
+// Bumped 3.6.0 -> 3.7.0 for the governed recursive agent harness (ADR-165): the
+// flow-level `result.export` key, package-level `result_profiles`, and the
+// orchestrator node's now-LIVE `settings.delegation` bounds
+// (`max_active_children` + the required `budget` block). A manifest declaring
+// any of them MUST `compat.engine_min >= 3.7.0` (RAH_ENGINE_MIN, see
+// config.schema.ts). The floor is the whole safety argument: below it the node
+// declaration stays advisory and the env ceilings alone bind, byte-identically
+// to ADR-163, so no shipped manifest changes behaviour.
+export const MAISTER_ENGINE_VERSION = "3.7.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.

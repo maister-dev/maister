@@ -9,6 +9,7 @@ import {
   formSchemaSchema,
   humanSettingsSchema,
   judgeSettingsSchema,
+  maisterPackageManifestSchema,
   maisterYamlV2Schema,
   maisterCapabilitiesSchema,
   nodeOutputSchema,
@@ -1209,5 +1210,84 @@ describe("form node (T4)", () => {
     );
 
     expect(result.success).toBe(false);
+  });
+});
+
+// ADR-165 AC-01 / spec C-5.1. `result_profiles` is a package-level map of NAMED
+// agent result contracts. The name is a body-controlled identifier at
+// delegation time, so it is validated at the SINK's invariant here — a
+// `z.string().min(1)` would be shape validation, not invariant validation.
+describe("maisterPackageManifestSchema.result_profiles (ADR-165)", () => {
+  const base = { schemaVersion: 1, name: "rah" };
+
+  it("parses a valid block", () => {
+    const parsed = maisterPackageManifestSchema.parse({
+      ...base,
+      result_profiles: {
+        research: { schema: "./schemas/research-result.v1.json" },
+        "triage.v2": { schema: "./schemas/triage.json" },
+      },
+    });
+
+    expect(parsed.result_profiles).toEqual({
+      research: { schema: "./schemas/research-result.v1.json" },
+      "triage.v2": { schema: "./schemas/triage.json" },
+    });
+  });
+
+  it("stays absent when undeclared (sparse — never defaulted to {})", () => {
+    expect(
+      maisterPackageManifestSchema.parse(base).result_profiles,
+    ).toBeUndefined();
+  });
+
+  it("refuses an unknown key inside a profile entry (.strict())", () => {
+    expect(
+      maisterPackageManifestSchema.safeParse({
+        ...base,
+        result_profiles: {
+          research: { schema: "./schemas/x.json", required: true },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it.each([
+    ["a non-root path", "./flows/dev/schemas/x.json"],
+    ["an escaping path", "./schemas/../setup.sh"],
+    ["a nested path", "./schemas/nested/x.json"],
+    ["a non-json document", "./schemas/x.yaml"],
+    ["a bare filename", "x.json"],
+    ["an absolute path", "/etc/passwd"],
+  ])("refuses %s as a profile schema", (_label, schema) => {
+    expect(
+      maisterPackageManifestSchema.safeParse({
+        ...base,
+        result_profiles: { research: { schema } },
+      }).success,
+    ).toBe(false);
+  });
+
+  it.each([
+    ["a slash", "res/earch"],
+    ["a space", "res earch"],
+    ["an empty name", ""],
+    ["65 characters", "a".repeat(65)],
+  ])("refuses %s as a profile NAME", (_label, name) => {
+    expect(
+      maisterPackageManifestSchema.safeParse({
+        ...base,
+        result_profiles: { [name]: { schema: "./schemas/x.json" } },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts a 64-character name (the boundary is inclusive)", () => {
+    expect(
+      maisterPackageManifestSchema.safeParse({
+        ...base,
+        result_profiles: { ["a".repeat(64)]: { schema: "./schemas/x.json" } },
+      }).success,
+    ).toBe(true);
   });
 });

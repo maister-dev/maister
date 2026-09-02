@@ -192,7 +192,7 @@ describe("node_attempts ledger (append-only)", () => {
     schemaVersion: 1,
     sha256: "a".repeat(64),
     transport: "sentinel" as const,
-    engineVersion: "3.6.0",
+    engineVersion: "3.7.0",
   };
 
   it("markNodeSucceeded persists outputContract on the closing UPDATE", async () => {

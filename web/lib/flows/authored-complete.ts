@@ -31,6 +31,16 @@ const FLOW_YAML_KEYS = [
   "artifacts",
   "external_ops",
   "presentation",
+  // ADR-165 adds `result`; the rest close pre-existing gaps in this completion
+  // list (it had drifted behind the grammar since ADR-091/114/118/137/160).
+  "result",
+  "reentry",
+  "sessions",
+  "mcps",
+  "requirements",
+  "metadata",
+  "defaults",
+  "verdict_calibration",
 ] as const;
 
 const RUNNER_NAMES = ["claude-code", "codex", "claude", "glm"] as const;

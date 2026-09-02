@@ -44,6 +44,10 @@ import {
   schemaDocUsesCoordinatorGrammar,
 } from "@/lib/flows/artifact-validate";
 import { isRootSchemaFilePath } from "@/lib/flows/editor/reference-sources";
+import {
+  type DeclaredResultProfiles,
+  resolveResultProfiles,
+} from "@/lib/flows/result-profiles";
 import { semverGte } from "@/lib/flows/engine-version";
 import { readAuthoredFlowPackageDirectory } from "@/lib/flows/package-authoring";
 import { resolveTrust } from "@/lib/flows/trust";
@@ -130,6 +134,9 @@ export type InstallFlowPluginArgs = {
   // executes from its own immutable revision directory. When supplied, those
   // root schemas are copied into the member revision before it becomes usable.
   sharedSchemaDir?: string;
+  // ADR-165: the PACKAGE's `result_profiles`, threaded to installRevision so the
+  // resolved map lands on EVERY member flow's revision row.
+  resultProfiles?: DeclaredResultProfiles;
   // FIXME(any): narrow this injected database seam to the operations used here.
   db?: any;
   signal?: AbortSignal;
@@ -366,6 +373,7 @@ async function materializeSharedPackageRootSchemas(args: {
       },
       "package has no root schemas; preserving member flow schemas",
     );
+
     return 0;
   }
 
@@ -891,6 +899,11 @@ export async function installRevision(opts: {
   // a validated mutation and opts into CONFIG/422 for an incompatible manifest.
   manifestErrorCode?: "CONFIG" | "FLOW_INSTALL";
   sharedSchemaDir?: string;
+  // ADR-165: the PACKAGE's `result_profiles` declaration. Resolved here and
+  // written to `flow_revisions.result_profiles` in the SAME statement that
+  // finalizes the revision (W7 — no window where a revision exists without its
+  // profile map). Undefined for a standalone flow install.
+  resultProfiles?: DeclaredResultProfiles;
   db?: any;
   signal?: AbortSignal;
 }): Promise<InstalledRevision> {
@@ -902,6 +915,7 @@ export async function installRevision(opts: {
     signal,
     capabilityRefIds,
     sharedSchemaDir,
+    resultProfiles: declaredResultProfiles,
   } = opts;
   const db = opts.db ?? getDb();
   const manifestErrorCode = opts.manifestErrorCode ?? "FLOW_INSTALL";
@@ -990,6 +1004,7 @@ export async function installRevision(opts: {
         version,
         { roleRefs, capabilityRefIds, errorCode: manifestErrorCode },
       );
+
       await materializePackageRootSchemas({
         sharedSchemaDir,
         installedPath: target,
@@ -1040,6 +1055,7 @@ export async function installRevision(opts: {
       version,
       { roleRefs, capabilityRefIds, errorCode: manifestErrorCode },
     );
+
     await materializePackageRootSchemas({
       sharedSchemaDir,
       installedPath: target,
@@ -1069,6 +1085,16 @@ export async function installRevision(opts: {
         engineMin: manifest.compat?.engine_min ?? null,
         engineMax: manifest.compat?.engine_max ?? null,
         contract: contractOf(manifest),
+        // ADR-165 (W7): the profile map is written by the SAME statement that
+        // flips the revision Installed, so a revision can never exist as
+        // Installed without it. A resolution failure throws FLOW_INSTALL before
+        // this update runs, and the catch below flips the revision Failed — no
+        // partial map is ever persisted.
+        resultProfiles: await resolveResultProfiles({
+          installedPath: target,
+          declared: declaredResultProfiles,
+          engineMin: manifest.compat?.engine_min ?? "",
+        }),
       })
       .where(eq(flowRevisions.id, revisionId));
 
@@ -1228,6 +1254,7 @@ async function installFlowPluginImpl(
     capabilityRefIds: args.capabilityRefIds,
     resolvedRevisionOverride: args.resolvedRevisionOverride,
     sharedSchemaDir: args.sharedSchemaDir,
+    resultProfiles: args.resultProfiles,
   });
 
   const trustStatus = trustStatusOverride ?? resolveTrust(source);

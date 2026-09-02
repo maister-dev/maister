@@ -347,6 +347,215 @@ nodes:
     expect(installed).toBeTruthy();
   });
 
+  // ADR-165 AC-02 / spec C-5.2. The package's `result_profiles` are resolved at
+  // INSTALL and written to `flow_revisions.result_profiles` for every member
+  // flow, in the SAME statement that finalizes the revision (W7). A bad profile
+  // fails the install and leaves NO partial map.
+  describe("result_profiles materialization (ADR-165)", () => {
+    async function writeProfileFlow(args: {
+      name: string;
+      engineMin?: string;
+      schemaBody?: unknown;
+      /** Omit to skip writing the schema file entirely (the ENOENT arm). */
+      writeSchema?: boolean;
+    }): Promise<string> {
+      const dir = join(fixturesDir, args.name);
+
+      await mkdir(join(dir, "schemas"), { recursive: true });
+      await writeFile(
+        join(dir, "flow.yaml"),
+        `schemaVersion: 1
+name: ${args.name}
+compat:
+  engine_min: "${args.engineMin ?? "3.7.0"}"
+nodes:
+  - id: plan
+    type: ai_coding
+    action:
+      prompt: "plan"
+    transitions:
+      success: done
+`,
+        "utf8",
+      );
+      if (args.writeSchema !== false) {
+        await writeFile(
+          join(dir, "schemas", "research-result.v1.json"),
+          typeof args.schemaBody === "string"
+            ? args.schemaBody
+            : JSON.stringify(
+                args.schemaBody ?? {
+                  schemaVersion: 3,
+                  fields: [{ name: "summary", type: "string", required: true }],
+                },
+              ),
+          "utf8",
+        );
+      }
+
+      return dir;
+    }
+
+    async function installWithProfiles(args: {
+      dir: string;
+      flowId: string;
+      profiles: Record<string, { schema: string }>;
+    }) {
+      return installFlowPlugin({
+        source: args.dir,
+        version: "local-dev",
+        projectId,
+        projectSlug: "demo-app",
+        flowId: args.flowId,
+        workspaceRoot,
+        resultProfiles: args.profiles,
+        db,
+      });
+    }
+
+    async function revisionProfiles(flowRefId: string): Promise<unknown> {
+      const rows = await db
+        .select({ p: schema.flowRevisions.resultProfiles })
+        .from(schema.flowRevisions)
+        .where(eq(schema.flowRevisions.flowRefId, flowRefId));
+
+      return rows[0]?.p ?? null;
+    }
+
+    it("writes the resolved map on the revision row", async () => {
+      const dir = await writeProfileFlow({ name: "rp-ok" });
+
+      await installWithProfiles({
+        dir,
+        flowId: "rp-ok",
+        profiles: { research: { schema: "./schemas/research-result.v1.json" } },
+      });
+
+      expect(await revisionProfiles("rp-ok")).toEqual({
+        research: {
+          schemaPath: "./schemas/research-result.v1.json",
+          schemaStem: "research-result.v1",
+          // Read from the document, not from the declaration.
+          schemaVersion: 3,
+          sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+          schema: {
+            schemaVersion: 3,
+            fields: [{ name: "summary", type: "string", required: true }],
+          },
+        },
+      });
+    });
+
+    it("leaves the column NULL when the package declares none", async () => {
+      const dir = await writeProfileFlow({ name: "rp-none" });
+
+      await installFlowPlugin({
+        source: dir,
+        version: "local-dev",
+        projectId,
+        projectSlug: "demo-app",
+        flowId: "rp-none",
+        workspaceRoot,
+        db,
+      });
+
+      expect(await revisionProfiles("rp-none")).toBeNull();
+    });
+
+    const BAD: Array<{
+      label: string;
+      flowId: string;
+      profiles: Record<string, { schema: string }>;
+      contains: string;
+      write?: Partial<Parameters<typeof writeProfileFlow>[0]>;
+    }> = [
+      {
+        label: "a missing file",
+        flowId: "rp-missing",
+        profiles: { research: { schema: "./schemas/research-result.v1.json" } },
+        contains: "research",
+        write: { writeSchema: false },
+      },
+      {
+        label: "a malformed document",
+        flowId: "rp-malformed",
+        profiles: { research: { schema: "./schemas/research-result.v1.json" } },
+        contains: "research",
+        write: { schemaBody: "{ not json" },
+      },
+      {
+        label: "a document failing the form_schema grammar",
+        flowId: "rp-badshape",
+        profiles: { research: { schema: "./schemas/research-result.v1.json" } },
+        contains: "research",
+        write: { schemaBody: { schemaVersion: 1, fields: "nope" } },
+      },
+      {
+        label: "an escaping path",
+        flowId: "rp-escape",
+        profiles: { research: { schema: "./schemas/../flow.yaml" } },
+        contains: "package-root",
+      },
+      {
+        label: "a non-root path",
+        flowId: "rp-nonroot",
+        profiles: { research: { schema: "./nested/schemas/x.json" } },
+        contains: "package-root",
+      },
+    ];
+
+    it.each(BAD)(
+      "fails the install on $label, leaving NO partial map",
+      async ({ flowId, profiles, contains, write }) => {
+        const dir = await writeProfileFlow({ name: flowId, ...(write ?? {}) });
+
+        await expect(
+          installWithProfiles({ dir, flowId, profiles }),
+        ).rejects.toMatchObject({
+          code: "FLOW_INSTALL",
+          message: expect.stringContaining(contains),
+        });
+
+        // The revision exists (the intent row is written first) but is Failed,
+        // and its profile map was never partially populated.
+        const rows = await db
+          .select({
+            p: schema.flowRevisions.resultProfiles,
+            status: schema.flowRevisions.packageStatus,
+          })
+          .from(schema.flowRevisions)
+          .where(eq(schema.flowRevisions.flowRefId, flowId));
+
+        expect(rows[0]?.p ?? null).toBeNull();
+        expect(rows[0]?.status).toBe("Failed");
+      },
+    );
+
+    it("fails the install when a profile document uses json/items below the member flow's floor", async () => {
+      const dir = await writeProfileFlow({
+        name: "rp-floor",
+        engineMin: "3.5.0",
+        schemaBody: {
+          schemaVersion: 1,
+          fields: [{ name: "payload", type: "json", required: true }],
+        },
+      });
+
+      await expect(
+        installWithProfiles({
+          dir,
+          flowId: "rp-floor",
+          profiles: {
+            research: { schema: "./schemas/research-result.v1.json" },
+          },
+        }),
+      ).rejects.toMatchObject({
+        code: "FLOW_INSTALL",
+        message: expect.stringContaining("3.6.0"),
+      });
+    });
+  });
+
   it("rejects a non-existent tag with FLOW_INSTALL carrying git stderr", async () => {
     try {
       await installFlowPlugin({

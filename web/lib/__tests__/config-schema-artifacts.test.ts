@@ -7,8 +7,8 @@ import {
 import { nodeOutputSchema } from "@/lib/config.schema";
 
 describe("config.schema — artifact produces[] fields", () => {
-  it("asserts MAISTER_ENGINE_VERSION is 3.6.0 for the universal structured-result contract (ADR-162)", () => {
-    expect(MAISTER_ENGINE_VERSION).toBe("3.6.0");
+  it("asserts MAISTER_ENGINE_VERSION is 3.7.0 for the governed recursive agent harness (ADR-165)", () => {
+    expect(MAISTER_ENGINE_VERSION).toBe("3.7.0");
   });
 
   it("asserts GRAPH_MIN_ENGINE_VERSION remains 1.1.0", () => {

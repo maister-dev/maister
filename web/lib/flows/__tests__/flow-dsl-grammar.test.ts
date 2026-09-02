@@ -291,4 +291,24 @@ describe("buildFlowDslGrammar drift guard", () => {
     expect(grammar).not.toContain("        /aif-fix");
     expect(grammar).not.toContain('prompt: "/aif-commit"');
   });
+
+  // ADR-165 AC-06. The grammar is what a flow-authoring agent reads EVERY turn.
+  // A contract that quietly falls out of it is a defect no wire test can see,
+  // so the prose is pinned at the definition level.
+  it("documents the ADR-165 public-result and delegation-bounds contract", () => {
+    expect(grammar).toContain("result.export");
+    expect(grammar).toContain("result_profiles");
+    expect(grammar).toContain("max_active_children");
+    expect(grammar).toContain("max_child_runs");
+    expect(grammar).toContain("3.7.0");
+    expect(grammar).toContain("resultProfile");
+    expect(grammar).toContain("run_collect");
+
+    // The three things an author gets WRONG without being told: the bound is a
+    // ceiling they can only lower, the active cap queues instead of refusing,
+    // and a clean result-bearing run skips Review entirely.
+    expect(grammar).toContain("min(instance ceiling, declared)");
+    expect(grammar).toContain("NOT a refusal");
+    expect(grammar).toContain("Result-only completion");
+  });
 });

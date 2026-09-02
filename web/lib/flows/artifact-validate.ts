@@ -540,7 +540,8 @@ function pushUnknownFrontmatterKeys(
 }
 
 // Collects every schema path the manifest REFERENCES on a runtime path: each
-// node's `settings.form_schema` and `output.result.schema`. Paths are normalized
+// node's `settings.form_schema` and `output.result.schema`, plus the flow-level
+// `result.export.schema` (ADR-165). Paths are normalized
 // (leading `./` stripped) so they
 // match the persisted `files[].path` (e.g. `schemas/review.json`).
 export function collectReferencedSchemaPaths(
@@ -549,6 +550,15 @@ export function collectReferencedSchemaPaths(
   const refs = new Set<string>();
 
   addSchemaRefsFromList(manifest.nodes, refs);
+
+  // ADR-165: the export schema is a RUNTIME reference — the launcher resolves it
+  // from the pinned install path, so it needs the same floor folding and the
+  // same "referenced schema files must exist and parse" treatment as a node's.
+  const result = manifest.result;
+
+  if (isRecord(result) && isRecord(result.export)) {
+    addRef(result.export.schema, refs);
+  }
 
   return refs;
 }

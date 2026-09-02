@@ -784,6 +784,24 @@ export const orchestratorSettingsSchema = aiCodingSettingsSchema
       .object({
         max_fanout: z.number().int().positive().optional(),
         max_depth: z.number().int().positive().optional(),
+        // ADR-165 (D5/D7): the per-orchestrator active-children cap. Not a
+        // refusal — a child over it stays `Pending` and starts when a sibling
+        // frees a slot. Requires engine_min >= 3.7.0.
+        max_active_children: z.number().int().positive().optional(),
+        // ADR-165 (D5/D8): REQUIRED and COMPLETE for an orchestrator node in a
+        // >= 3.7.0 manifest (enforced at load, not here — the grammar itself
+        // stays version-agnostic so an older document keeps parsing). All four
+        // keys are required INSIDE the block: a half-declared budget is the
+        // shape that silently leaves a dimension unbounded.
+        budget: z
+          .object({
+            max_tokens: z.number().int().positive(),
+            wall_clock_minutes: z.number().int().positive(),
+            max_child_runs: z.number().int().positive(),
+            consecutive_failures: z.number().int().positive(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),
@@ -1227,6 +1245,39 @@ const graphOnlyManifestInputSchema = z.unknown().superRefine((value, ctx) => {
   });
 });
 
+// ADR-165 floor: the flow-level `result.export` key, the package-level
+// `result_profiles` block, and the orchestrator node's LIVE delegation bounds
+// (`max_active_children` + the required `budget`) require this
+// `compat.engine_min`. It lives beside the grammar it gates so the server
+// loader (config.ts) and the client-side authoring validators
+// (flows/artifact-validate.ts) share one literal.
+export const RAH_ENGINE_MIN = "3.7.0";
+
+// A `result_profiles` entry name. It is a body-controlled identifier at
+// delegation time (`resultProfile`), resolved through an allow-list — so it is
+// validated at the SINK's invariant here, not merely as a non-empty string.
+export const resultProfileNameSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(
+    /^[A-Za-z0-9._-]+$/,
+    "result profile name must match /^[A-Za-z0-9._-]{1,64}$/",
+  );
+
+// A package-root schema document reference: `./schemas/<name>.json` and
+// nothing else. `ROOT_SCHEMA_PATTERN` (flows/editor/reference-sources.ts) is
+// the same shape; this is its schema-side twin, kept here so the manifest
+// parser has no import into the editor layer. A normalizer is not a validator
+// (patch 2026-06-08-13.05) — the `..`-free namespace predicate is the point.
+export const packageRootSchemaRefSchema = z
+  .string()
+  .min(1)
+  .regex(
+    /^\.\/schemas\/[^/]+\.json$/,
+    "schema must be a package-root document of the form ./schemas/<name>.json",
+  );
+
 export const flowYamlV1Schema = graphOnlyManifestInputSchema.pipe(
   z
     .object({
@@ -1273,6 +1324,23 @@ export const flowYamlV1Schema = graphOnlyManifestInputSchema.pipe(
         .strict()
         .optional(),
       nodes: z.array(nodeSchema).min(1),
+      // ADR-165: the flow's PUBLIC run result — the schema and the producer set
+      // an orchestrator reads through `run_collect`, and the fact that lets the
+      // run finish without a human review step. Flow-level, like `reentry`, so
+      // the engine floor and the cross-reference checks are gated on the
+      // MANIFEST in validateGraphManifest (config.ts) rather than per node.
+      result: z
+        .object({
+          export: z
+            .object({
+              schema: packageRootSchemaRefSchema,
+              from: z.array(z.string().min(1)).min(1),
+              required: z.boolean().default(true),
+            })
+            .strict(),
+        })
+        .strict()
+        .optional(),
       // ADR-160: the node an operator's rework claim re-enters the graph at.
       // Compile-time only — never persisted to a DB column, so the SET/CLEAR
       // symmetry rule does not apply. Cross-referenced against `nodes` and
@@ -1564,6 +1632,17 @@ export const maisterPackageManifestSchema = z
     // []`. Each entry points at `<path>/evaluation-method.yaml` + referenced
     // prompt/schema assets; content is INERT until trusted + compatible.
     evaluationMethods: z.array(packageManifestEntrySchema).default([]),
+    // ADR-165 (D4): NAMED public result contracts for delegated AGENT children.
+    // `run_delegate` / `run_plan` select one by NAME; the name is resolved
+    // through this map on the PARENT run's pinned revision, so it is never a
+    // path. Sparse and optional — a package that predates the entity parses
+    // unchanged and its member revisions get a NULL `result_profiles`.
+    result_profiles: z
+      .record(
+        resultProfileNameSchema,
+        z.object({ schema: packageRootSchemaRefSchema }).strict(),
+      )
+      .optional(),
   })
   .strict()
   .superRefine((manifest, ctx) => {

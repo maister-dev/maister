@@ -654,7 +654,7 @@ describe("validateNodeStructuredOutput", () => {
         schemaVersion: 1,
         sha256: SCHEMA_SHA256,
         transport: "sentinel",
-        engineVersion: "3.6.0",
+        engineVersion: "3.7.0",
       },
     });
   });
@@ -684,7 +684,7 @@ describe("validateNodeStructuredOutput", () => {
       schemaVersion: 1,
       sha256: SCHEMA_SHA256,
       transport: "file",
-      engineVersion: "3.6.0",
+      engineVersion: "3.7.0",
     });
   });
 

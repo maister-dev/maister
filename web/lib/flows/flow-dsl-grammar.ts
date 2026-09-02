@@ -51,7 +51,17 @@ Fields common to every node: \`id\`, \`type\`, \`transitions\`, \`input\`, \`out
   \`session_policy\`.
 - **orchestrator** — a supervisory agent session that spawns and coordinates
   child runs/tasks. \`action: { prompt }\`. \`settings\` = ai_coding settings plus a
-  \`delegation: { max_fanout, max_depth }\` block.
+  \`delegation\` block (v2, ADR-165):
+  \`{ max_depth, max_fanout, max_active_children, budget }\`. At
+  \`compat.engine_min >= 3.7.0\` these are LIVE: the effective bound is
+  \`min(instance ceiling, declared)\` — an author can only LOWER a ceiling, never
+  raise it — and the defaults when omitted are depth 2, fan-out 6, active
+  children 3. \`budget: { max_tokens, wall_clock_minutes, max_child_runs,
+  consecutive_failures }\` is REQUIRED and COMPLETE on an orchestrator at that
+  floor. \`max_child_runs\` binds at EVERY ancestor; the other three bind at the
+  tree ROOT. Going over \`max_active_children\` is NOT a refusal — the child stays
+  \`Pending\` and starts when a sibling frees a slot. Below \`3.7.0\` the whole
+  block stays advisory and the instance ceilings alone bind.
 - **consensus** — a FIRST-CLASS multi-agent agreement node. Emit
   \`type: consensus\` directly with \`prompt\`, \`participants\` (≥2, each
   \`{ id, agent|runner, workspace? }\`), a \`synthesizer\` (\`{ agent|runner }\`),
@@ -236,8 +246,64 @@ keys, <= 10 000 elements per array, and an own key \`__proto__\`/\`constructor\`
 **Engine floors:** \`output.result\` anywhere needs
 \`compat.engine_min >= 1.3.0\`; on \`orchestrator\`/\`consensus\`, and for any
 schema document using \`json\` or \`items\`, it needs \`compat.engine_min >= 3.6.0\`.
+The flow-level \`result.export\`, \`delegation.max_active_children\` and
+\`delegation.budget\` need \`compat.engine_min >= 3.7.0\`.
 \`required: true\` excuses ABSENCE only — a present-but-invalid payload always
 fails \`CONFIG\` unless \`on_mismatch\` routes it into rework.
+
+### Public run result (\`result.export\`, ADR-165; requires \`compat.engine_min >= 3.7.0\`)
+
+\`output.result\` is a NODE's result. \`result.export\` is the whole RUN's — the
+one value a delegating orchestrator reads back through \`run_collect\`. Declare it
+at the TOP LEVEL, beside \`nodes\`:
+
+\`\`\`yaml
+result:
+  export:
+    schema: ./schemas/research-result.v1.json   # same package-root JSON document
+    from: [orchestrate]                          # every permitted producer node
+    required: true                               # default
+\`\`\`
+
+Load rules (all CONFIG): each \`from\` entry must name an existing node, must not
+be \`human\`/\`form\`, must declare \`output.result\`, and must declare the SAME
+\`schema\` path. Under a required export a producer's \`output.result.required\` is
+FORCED true. The launcher resolves the schema from the PINNED revision before
+the worktree exists and snapshots it on the run, so re-pointing the flow later
+changes nothing for a run already in flight.
+
+**Result-only completion.** A run that declares \`result.export\`, published a
+valid result, and changed NOTHING in its worktree finishes \`Running -> Done\`
+WITHOUT a Review step and without promoting anything. Any other success exit is
+\`Review\`, exactly as before. This is what lets a research flow be delegated and
+then clean up after itself — the coordinator only collects.
+
+At \`graph_completed\` a REQUIRED export with no valid result FAILS the run
+(\`run.failed{reason: "result_missing"}\`) instead of reaching Review.
+
+### Delegated agent results (\`result_profiles\` + \`resultProfile\`, ADR-165)
+
+A delegated AGENT child publishes its result under a NAMED contract the PACKAGE
+declares in \`maister-package.yaml\`:
+
+\`\`\`yaml
+result_profiles:
+  research:
+    schema: ./schemas/research-result.v1.json
+\`\`\`
+
+The orchestrator selects one by NAME on \`run_delegate\` / \`run_plan\`
+(\`resultProfile: "research"\`), never by path; the name resolves against the
+PARENT run's pinned revision. The child must end its final turn with the same
+\`json maister:output\` sentinel block. A missing or invalid required result FAILS
+the child. \`resultProfile\` is refused on a flow target (a flow declares its own
+\`result.export\`) and with \`persistent: true\`.
+
+**\`run_collect\` v2.** Read \`result.value\` — the validated public result — not
+the deprecated \`outputText\`. \`resultStatus\` says why it is absent
+(\`pending | valid | absent | missing | stale | invalid | unavailable\`) and
+\`resultFailure\` carries the reason. Collect is idempotent and shows only DIRECT
+children.
 
 ### Artifact body injection (ADR-120; requires \`compat.engine_min >= 2.2.0\`)
 

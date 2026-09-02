@@ -7,8 +7,8 @@ import {
 } from "@/lib/flows/engine-version";
 
 describe("MAISTER_ENGINE_VERSION", () => {
-  it("is 3.6.0 for the universal structured-result contract (ADR-162)", () => {
-    expect(MAISTER_ENGINE_VERSION).toBe("3.6.0");
+  it("is 3.7.0 for the governed recursive agent harness (ADR-165)", () => {
+    expect(MAISTER_ENGINE_VERSION).toBe("3.7.0");
   });
 });
 

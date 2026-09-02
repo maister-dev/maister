@@ -148,6 +148,13 @@ const labels: NodeSideFormProps["labels"] = {
   maxFanout: "Max fanout",
   maxDepth: "Max depth",
   delegationAdvisory: "Advisory only",
+  maxActiveChildren: "Max active children",
+  budget: "Tree budget",
+  budgetMaxTokens: "Max tokens",
+  budgetWallClockMinutes: "Wall-clock minutes",
+  budgetMaxChildRuns: "Max child runs",
+  budgetConsecutiveFailures: "Consecutive failures",
+  budgetHint: "Required at 3.7.0+",
   enforcement: {
     title: "Enforcement",
     mcps: "MCPs",
