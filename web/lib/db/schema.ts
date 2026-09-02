@@ -1705,6 +1705,11 @@ export type TaskDelegationSpec =
       agentId: string;
       workspace?: "none" | "repo_read" | "worktree";
       runnerOverride?: string;
+      // ADR-165: the NAME the as-plan auto-launcher re-resolves at ITS launch,
+      // against the parent's pinned revision. The NAME is recorded, never the
+      // resolved schema, so the candidate launch and the source launch go
+      // through the identical allow-list.
+      resultProfile?: string;
     }
   | {
       kind: "flow";

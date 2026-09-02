@@ -16,6 +16,7 @@ import pino from "pino";
 import { renderStrict } from "./templating";
 
 import { normalizeCapabilityTokens } from "@/lib/capabilities/token-normalizer";
+import { appendCapped } from "@/lib/flows/capped-text";
 import {
   completeHitlAssignmentFromCurrentActor,
   createHitlAssignmentForRun,
@@ -49,6 +50,9 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+// ADR-165: the accumulator itself lives in lib/flows/capped-text.ts, shared
+// with the standalone-agent capture path. The cap value stays local — this is
+// the flow-node path's historic 1 MiB, and the two paths are free to differ.
 const STDOUT_CAP_BYTES = 1024 * 1024;
 
 export type AgentStepLike = {
@@ -540,16 +544,6 @@ function executorToSupervisorInput(
   };
 }
 
-function appendChunk(buf: string, chunk: string): string {
-  if (buf.length + chunk.length > STDOUT_CAP_BYTES) {
-    const remaining = Math.max(0, STDOUT_CAP_BYTES - buf.length);
-
-    return buf + chunk.slice(0, remaining);
-  }
-
-  return buf + chunk;
-}
-
 function startEventConsumer(
   sessionId: string,
   supervisor: SupervisorApi,
@@ -652,7 +646,7 @@ function startEventConsumer(
             update.content?.type === "text" &&
             typeof update.content.text === "string"
           ) {
-            buf = appendChunk(buf, update.content.text);
+            buf = appendCapped(buf, update.content.text, STDOUT_CAP_BYTES);
           }
         }
         if (ev.type === "session.line") {
@@ -661,7 +655,7 @@ function startEventConsumer(
             ev as Extract<SupervisorEvent, { type: "session.line" }>
           ).line;
 
-          buf = appendChunk(buf, line + "\n");
+          buf = appendCapped(buf, line + "\n", STDOUT_CAP_BYTES);
         }
         if (ev.type === "session.exited" || ev.type === "session.crashed") {
           if (ev.type === "session.exited" && ev.reason === "checkpoint") {

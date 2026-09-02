@@ -1,3 +1,4 @@
+import type { RunResultContract } from "@/lib/run-results/types";
 import "server-only";
 
 import { and, eq } from "drizzle-orm";
@@ -7,6 +8,8 @@ import { z } from "zod";
 
 import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
 import { launchAgentRun } from "@/lib/agents/launch";
+import { resultProfileNameSchema } from "@/lib/config.schema";
+import { resolveResultContractForDelegation } from "@/lib/run-results/resolve-profile";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, type MaisterError } from "@/lib/errors";
@@ -72,6 +75,8 @@ const planTaskSchema = z
     title: z.string().min(1).optional(),
     workspace: z.enum(["none", "repo_read", "worktree"]).optional(),
     runnerOverride: z.string().min(1).optional(),
+    // ADR-165: same shape and same refusals as run_delegate's.
+    resultProfile: resultProfileNameSchema.optional(),
     dependsOn: z.array(z.string().min(1)),
   })
   .strict();
@@ -210,7 +215,12 @@ export async function POST(
       const optionRefusals = planTasks.flatMap((t) => {
         const refusal = refuseUnsupportedDelegationOption(
           delegationTargetKind(t.target),
-          { mode: "task", title: t.title, workspace: t.workspace },
+          {
+            mode: "task",
+            title: t.title,
+            workspace: t.workspace,
+            resultProfile: t.resultProfile,
+          },
         );
 
         return refusal ? [`${t.key} (${targetRef(t.target)}): ${refusal}`] : [];
@@ -333,6 +343,10 @@ export async function POST(
         }
       };
 
+      // ADR-165: cached per key so the source launch reuses the contract the
+      // pre-transaction pass already resolved and validated.
+      const resolvedProfiles = new Map<string, RunResultContract>();
+
       for (const t of planTasks) {
         if (delegationTargetKind(t.target) === "flow") {
           await collectRefusal(t, async () => {
@@ -355,6 +369,18 @@ export async function POST(
             { agentId: t.target.agentId as string, projectId: ctx.projectId },
             db,
           );
+          // ADR-165 (C-5.4): resolve the profile HERE, in the pre-transaction
+          // pass, not at the source launch. The source launch happens AFTER the
+          // DAG commits, so a bad profile name there would refuse with the
+          // batch's tasks already written — and the contract is that a violating
+          // entry creates NO tasks. The resolved contract is cached so the
+          // launch below does not resolve twice.
+          const contract = await resolveResultContractForDelegation(db, {
+            parentRunId,
+            name: t.resultProfile,
+          });
+
+          if (contract) resolvedProfiles.set(t.key, contract);
         });
       }
 
@@ -427,6 +453,9 @@ export async function POST(
                       kind: "agent" as const,
                       agentId: t.target.agentId as string,
                       ...(t.workspace ? { workspace: t.workspace } : {}),
+                      ...(t.resultProfile
+                        ? { resultProfile: t.resultProfile }
+                        : {}),
                       ...(t.runnerOverride
                         ? { runnerOverride: t.runnerOverride }
                         : {}),
@@ -542,6 +571,11 @@ export async function POST(
                 projectId: ctx.projectId,
                 taskId: childTaskId,
                 launchOverrideRunnerId: t.runnerOverride ?? null,
+                // ADR-165: the contract the pre-transaction pass already
+                // resolved through the ONE resolver, against the PARENT's
+                // pinned revision — the same call the auto-launcher makes later
+                // for a dependent, so both edges enforce the same allow-list.
+                resultContract: resolvedProfiles.get(t.key) ?? null,
                 parentRunId,
                 rootRunId,
                 launchMode: "auto",

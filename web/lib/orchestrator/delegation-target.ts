@@ -73,6 +73,8 @@ export type DelegationOptions = {
   workspaceMode?: string;
   persistent?: boolean;
   addressableKey?: string;
+  // ADR-165: the NAME of a `result_profiles` entry the child publishes under.
+  resultProfile?: string;
 };
 
 const FLOW_FORBIDDEN: {
@@ -99,6 +101,13 @@ const FLOW_FORBIDDEN: {
     message:
       "addressableKey is agent-target only (a flow child has no addressable session)",
   },
+  {
+    // ADR-165 R1: a flow child declares its OWN `result.export` in its manifest;
+    // there is no profile for a caller to select on its behalf.
+    key: "resultProfile",
+    message:
+      "resultProfile is agent-target only (a flow child declares its own result.export)",
+  },
 ];
 
 /**
@@ -124,6 +133,15 @@ export function refuseUnsupportedDelegationOption(
   // to name. Refusing beats today's silent drop.
   if (options.mode === "run" && options.title !== undefined) {
     return "title is only meaningful with mode:task (an agent mode:run child has no task to name)";
+  }
+
+  // ADR-165 R2: the result is published in the child's TERMINAL transaction, and
+  // a persistent child never reaches one — it parks between turns. The
+  // combination is unsatisfiable, so it is refused rather than accepted and then
+  // silently never producing a result. Stated as an allow-list (resultProfile is
+  // valid iff agent AND not persistent), not a deny-list of shapes.
+  if (options.persistent && options.resultProfile !== undefined) {
+    return "resultProfile is not supported for persistent children (a persistent child never reaches a terminal, and the result is published there)";
   }
 
   return null;

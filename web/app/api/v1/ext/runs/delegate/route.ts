@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
+import { resultProfileNameSchema } from "@/lib/config.schema";
 import { launchAgentRun } from "@/lib/agents/launch";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -22,6 +23,7 @@ import {
   refuseUnsupportedDelegationOption,
   titleFromPrompt,
 } from "@/lib/orchestrator/delegation-target";
+import { resolveResultContractForDelegation } from "@/lib/run-results/resolve-profile";
 import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
 import { addTaskRelation } from "@/lib/social/relations";
 import { launchRun } from "@/lib/services/runs";
@@ -126,6 +128,11 @@ const bodySchema = z
       .max(128)
       .regex(/^[A-Za-z0-9._-]+$/)
       .optional(),
+    // ADR-165: a NAME, resolved server-side through the parent's pinned
+    // `flow_revisions.result_profiles`. Validated at the SINK's invariant here
+    // — it is a body-controlled identifier, and the shape is what keeps it from
+    // ever reading as a path.
+    resultProfile: resultProfileNameSchema.optional(),
   })
   .strict()
   .refine((b) => !b.persistent || b.addressableKey !== undefined, {
@@ -370,8 +377,17 @@ export async function POST(
               "[delegation.delegate] flow child launched",
             );
           } else {
+            // ADR-165: the name resolves against the PARENT's pinned revision
+            // — server state — and throws CONFIG 422 before anything is
+            // created. `parentRunId` here is the token binding, never a body
+            // field.
+            const resultContract = await resolveResultContractForDelegation(
+              db,
+              { parentRunId, name: body.resultProfile },
+            );
             const result = await launchAgentRun({
               agentId: body.target.agentId as string,
+              resultContract,
               projectId: ctx.projectId,
               taskId: childTaskId ?? null,
               launchOverrideRunnerId: body.runnerOverride ?? null,

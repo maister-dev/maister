@@ -398,7 +398,7 @@ describe("resultProfile refusal table (ADR-165 R1-R4)", () => {
     // The schemaRef is derived from the PARENT's pinned revision — flowRefId,
     // the first 12 chars of resolved_revision, and the schema stem.
     expect(contract.schemaRef).toBe(
-      "parent-pkg@rev-parent-pk:research-result.v1",
+      "parent-pkg@rev-parent-p:research-result.v1",
     );
     expect(typeof contract.sha256).toBe("string");
   });
@@ -426,7 +426,7 @@ describe("resultProfile refusal table (ADR-165 R1-R4)", () => {
       {},
     );
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(202);
     const rows = await pool.query(
       `SELECT "delegation_spec" AS s FROM "tasks" WHERE "delegation_spec" IS NOT NULL`,
     );

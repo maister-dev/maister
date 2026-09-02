@@ -7,6 +7,7 @@ import { and, eq, ne } from "drizzle-orm";
 import pino from "pino";
 
 import { launchAgentRun, type LaunchAgentRunResult } from "@/lib/agents/launch";
+import { resolveResultContractForDelegation } from "@/lib/run-results/resolve-profile";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import {
@@ -450,6 +451,14 @@ export function buildAutoLaunchRunPlanConsumer(
               launchOverrideRunnerId: spec.runnerOverride ?? null,
               // M37 (ADR-100): honor the plan task's declared workspace axis.
               workspace: spec.workspace ?? null,
+              // ADR-165: the THIRD creation edge. The spec records the NAME, so
+              // this launch re-resolves it against the parent's PINNED revision
+              // through the same resolver — which is why a profile removed from
+              // a newer package revision still resolves here.
+              resultContract: await resolveResultContractForDelegation(_db, {
+                parentRunId,
+                name: spec.resultProfile,
+              }),
               parentRunId,
               rootRunId,
               launchMode: "auto",

@@ -1,6 +1,8 @@
 import "server-only";
 
 import type { ContextRepoDecl } from "@/lib/context-mounts/types";
+import type { ResultStatus } from "@/lib/run-results/types";
+import type { RunResultContract } from "@/lib/run-results/types";
 
 import { randomUUID } from "node:crypto";
 import { mkdir, stat } from "node:fs/promises";
@@ -68,6 +70,13 @@ import {
   type DelegationSnapshot,
 } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { appendCapped } from "@/lib/flows/capped-text";
+import { decideAgentResult } from "@/lib/run-results/agent-result";
+import { engineArtifactManifest } from "@/lib/run-results/artifact-manifest";
+import {
+  publishRunResult,
+  recordInvalidRunResult,
+} from "@/lib/run-results/ledger";
 import { type RunReviewCause } from "@/lib/domain-events/taxonomy";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 import { cancelOpenAgentQuestionsForTaskInTransaction } from "@/lib/services/agent-question";
@@ -213,6 +222,11 @@ export type LaunchAgentRunInput = {
   // attempts record the id BEFORE spawning, then adopt-or-respawn on recovery).
   // The caller owns uniqueness; a reused id fails the run insert.
   runId?: string | null;
+  // ADR-165: the child's PUBLIC result contract, already resolved by the caller
+  // through `resolveResultProfile` against the PARENT's pinned revision. It is
+  // server-internal — never a wire field — and lands on `runs.result_contract`
+  // in the run-insert transaction (W8).
+  resultContract?: RunResultContract | null;
   db?: Db;
 };
 
@@ -1358,6 +1372,9 @@ export async function launchAgentRun(
           revisionId: ctx.effective.packageInstallId,
         }
       : null,
+    // ADR-165: the launch-time public-result contract, written in the SAME
+    // insert as the run it binds. NULL when the delegation named no profile.
+    resultContract: input.resultContract ?? null,
     // M37 Phase 8 (ADR-099): persistent swarm-member flags.
     persistent: input.persistent ?? false,
     addressableKey: input.addressableKey ?? null,
@@ -2257,6 +2274,10 @@ type AgentFinalizeOptions = {
   reason?: string;
   closeOpenHitl?: boolean;
   closeAssignments?: AgentAssignmentClose;
+  // ADR-165 (T5.4): the completing turn's agent text, from which the public
+  // result sentinel is extracted. Absent on every non-session caller (an
+  // explicit stop, a reconcile), which reads as "no result was emitted".
+  finalText?: string;
 };
 
 const TERMINAL_CAS_SOURCE: Record<AgentTerminalOutcome, string[]> = {
@@ -2338,6 +2359,9 @@ export async function finalizeAgentRun(
         workspaceMode: runs.workspaceMode,
         agentWorkspace: runs.agentWorkspace,
         rootRunId: runs.rootRunId,
+        // ADR-165: the launch-time public-result contract. The finalizer reads
+        // ONLY this snapshot — never the parent's revision again.
+        resultContract: runs.resultContract,
       })
       .from(runs)
       .where(eq(runs.id, runId))
@@ -2400,6 +2424,22 @@ export async function finalizeAgentRun(
         "agent clean-exit final status",
       );
     }
+
+    // ADR-165 (T5.4 / D10): the public-result decision, taken BEFORE the CAS so
+    // a result failure can turn a clean exit into `Failed`. `Failed` / `Crashed`
+    // / `Abandoned` outcomes never publish — the run did not finish, so whatever
+    // text it produced is not an answer.
+    const resultContract = (preRows[0]?.resultContract ??
+      null) as RunResultContract | null;
+    const resultDecision =
+      outcome === "Done" && resultContract
+        ? decideAgentResult({
+            contract: resultContract,
+            finalText: opts.finalText,
+          })
+        : { kind: "none" as const };
+    const effectiveStatus =
+      resultDecision.kind === "invalid" ? "Failed" : status;
     const endedAt = new Date();
 
     // M42 (ADR-114): the agent run's session resume handle lives on its
@@ -2409,7 +2449,7 @@ export async function finalizeAgentRun(
     const rows = await tx
       .update(runs)
       .set({
-        status,
+        status: effectiveStatus,
         endedAt,
         currentStepId: null,
       })
@@ -2431,7 +2471,45 @@ export async function finalizeAgentRun(
 
     if (!row) return false;
 
-    if (status === "Abandoned") {
+    // ADR-165 (D9/W3): the result row commits in THIS transaction — the same one
+    // that flips the status and emits the wake — so a woken parent's
+    // `run_collect` can never observe a settle without its result.
+    let resultStatus: ResultStatus | null = null;
+
+    if (resultDecision.kind === "valid") {
+      await publishRunResult(tx, {
+        runId,
+        value: resultDecision.value,
+        valueBytes: resultDecision.valueBytes,
+        contract: resultContract as RunResultContract,
+        producerKind: "agent_session",
+        producerRef: "session:default",
+        artifactManifest: await engineArtifactManifest(tx, runId),
+      });
+      resultStatus = "valid";
+    } else if (resultDecision.kind === "invalid") {
+      await recordInvalidRunResult(tx, {
+        runId,
+        contract: resultContract as RunResultContract,
+        reason: resultDecision.reason,
+        producerKind: "agent_session",
+        producerRef: "session:default",
+      });
+      resultStatus = "unavailable";
+      log.warn(
+        {
+          runId,
+          outcome,
+          resultStatus,
+          reasonClass: resultDecision.reason,
+        },
+        "[run-result.agent] public result rejected — finalizing Failed",
+      );
+    } else if (resultDecision.kind === "absent") {
+      resultStatus = "absent";
+    }
+
+    if (effectiveStatus === "Abandoned") {
       const scheduledRemovalAt = new Date(
         endedAt.getTime() + gcAgeDays() * 86_400_000,
       );
@@ -2469,7 +2547,7 @@ export async function finalizeAgentRun(
       const usedEphemeral = await pathIsDirectory(ephemeralPath);
       const l3Target = usedEphemeral ? ephemeralPath : project.repoPath;
 
-      if (shouldReleaseAgentMaterialization(status, ranAs)) {
+      if (shouldReleaseAgentMaterialization(effectiveStatus, ranAs)) {
         materializationCleanup = { cwd: l3Target, workspace: ranAs };
       }
 
@@ -2550,14 +2628,16 @@ export async function finalizeAgentRun(
 
     await emitWebhookEvent({
       db: tx,
-      type: WEBHOOK_TYPE_BY_STATUS[status],
+      type: WEBHOOK_TYPE_BY_STATUS[effectiveStatus],
       projectId: row.projectId,
       runId,
       data: {
         kind: "agent",
         agentId: row.agentId,
-        ...(status === "Review" ? { source: "agent" } : {}),
-        ...(opts.reason && status !== "Review" ? { reason: opts.reason } : {}),
+        ...(effectiveStatus === "Review" ? { source: "agent" } : {}),
+        ...(opts.reason && effectiveStatus !== "Review"
+          ? { reason: opts.reason }
+          : {}),
       },
     });
 
@@ -2565,7 +2645,7 @@ export async function finalizeAgentRun(
     // the parked coordinator wakes to promote/rework the diff (and as-plan
     // auto-promote fires). A top-level Review (no parent) emits nothing — there is
     // no orchestrator to route to. Terminal outcomes emit their terminal kind.
-    if (status === "Review") {
+    if (effectiveStatus === "Review") {
       if (row.parentRunId) {
         await emitDomainEvent({
           db: tx,
@@ -2578,18 +2658,28 @@ export async function finalizeAgentRun(
           payload: {
             runKind: "agent",
             agentId: row.agentId,
-            status,
+            status: effectiveStatus,
             // Codex review F1: the same cause field the flow emit helper
             // writes — a clean agent exit IS a completion and stays
             // auto-promotable.
             cause: "agent_exit" satisfies RunReviewCause,
+            // ADR-165 (Q10-A): additive, omitted when the run carries no
+            // contract — an omitted value is honestly absent.
+            ...(resultStatus ? { resultStatus } : {}),
           },
         });
       }
     } else {
       await emitDomainEvent({
         db: tx,
-        kind: DOMAIN_KIND_BY_OUTCOME[outcome],
+        // ADR-165: a result-caused failure emits `run.failed`, not the clean
+        // exit's `run.done` — the outcome the coordinator must react to is the
+        // FAILURE, and a `run.done` here would wake it into believing the child
+        // succeeded.
+        kind:
+          resultDecision.kind === "invalid"
+            ? "run.failed"
+            : DOMAIN_KIND_BY_OUTCOME[outcome],
         projectId: row.projectId,
         taskId: row.taskId,
         runId,
@@ -2598,13 +2688,22 @@ export async function finalizeAgentRun(
         payload: {
           runKind: "agent",
           agentId: row.agentId,
-          status,
+          status: effectiveStatus,
           ...(opts.reason ? { reason: opts.reason } : {}),
+          ...(resultDecision.kind === "invalid"
+            ? {
+                reason:
+                  resultDecision.reason === "result_missing"
+                    ? "result_missing"
+                    : "result_invalid",
+              }
+            : {}),
+          ...(resultStatus ? { resultStatus } : {}),
         },
       });
     }
 
-    return { finalized: true as const, status };
+    return { finalized: true as const, status: effectiveStatus };
   });
 
   if (finalizeResult !== false) {
@@ -3594,6 +3693,11 @@ export async function consumeAgentSession(args: {
   let sawPermissionRequest = false;
   const draftPayload = await loadConsensusDraftPayload(args.db, args.runId);
   let consensusDraftOutput = "";
+  // ADR-165 (T5.3): the agent's own text, accumulated per PROMPT TURN. It is
+  // reset when a new turn begins (a resume after a permission answer) so a
+  // sentinel block from an EARLIER turn can never be read as this turn's final
+  // answer — the contract is "the block that ends the completing turn".
+  let finalText = "";
 
   for await (const event of args.api.streamSession(args.sessionId)) {
     switch (event.type) {
@@ -3607,6 +3711,16 @@ export async function consumeAgentSession(args: {
               chunk,
             );
           }
+        }
+        // ADR-165: the reset comes BEFORE the append. This update both ENDS the
+        // permission wait and carries the first text of the NEW turn, so
+        // appending first and clearing after would discard the very chunk that
+        // starts the turn we care about.
+        if (sawPermissionRequest) finalText = "";
+        {
+          const chunk = consensusDraftUpdateText(event.update);
+
+          if (chunk) finalText = appendCapped(finalText, chunk);
         }
         if (sawPermissionRequest) {
           // The permission was answered (the session is active again);
@@ -3713,6 +3827,9 @@ export async function consumeAgentSession(args: {
               event.exitCode === 0
                 ? undefined
                 : `session exited with code ${event.exitCode}`,
+            // ADR-165: the completing turn's text, from which the finalizer
+            // extracts the public-result sentinel block.
+            finalText,
           },
         );
 
