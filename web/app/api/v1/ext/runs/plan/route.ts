@@ -17,6 +17,7 @@ import {
   resolveDelegatableFlow,
 } from "@/lib/flows/delegatable-flow";
 import { admitDelegatedChild } from "@/lib/orchestrator/admission";
+import { noteAsPlanRefusal } from "@/lib/orchestrator/as-plan-refusal";
 import {
   type DelegationTarget,
   delegationTargetKind,
@@ -27,7 +28,7 @@ import {
 import { launchRun } from "@/lib/services/runs";
 import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
 import { addTaskRelation } from "@/lib/social/relations";
-import { createTask } from "@/lib/services/tasks";
+import { abandonUnlaunchedTasks, createTask } from "@/lib/services/tasks";
 import {
   handleExt,
   httpStatusForExtCode,
@@ -47,6 +48,20 @@ const log = pino({
 });
 
 const ENDPOINT = "POST /api/v1/ext/runs/plan";
+
+type PlanResultItem = {
+  key: string;
+  taskId: string;
+  childRunId?: string;
+  launchError?: { code: string; message: string };
+};
+
+type SourceRefusal = {
+  key: string;
+  taskId: string;
+  code: MaisterError["code"];
+  message: string;
+};
 
 const planTaskSchema = z
   .object({
@@ -475,23 +490,26 @@ export async function POST(
       }
 
       // --- After commit: launch the SOURCE tasks (empty dependsOn) ---
-      // A source-launch failure must NOT roll back the committed DAG — the
-      // task stays Backlog and the auto-launcher (or a retry) picks it up.
-      const result: Array<{
-        key: string;
-        taskId: string;
-        childRunId?: string;
-      }> = [];
+      // Codex review F3: a PARTIAL source refusal must NOT roll back the
+      // committed DAG — the refused task stays Backlog, carries the refusal on
+      // its result row and as a system comment, and the auto-launcher retries
+      // it when a sibling child next settles. When EVERY source is refused
+      // nothing runs and nothing will ever settle: the DAG is abandoned
+      // (parity with run_delegate's compensation) and the refusal is the
+      // answer, because the parent — counting zero child RUNS — would
+      // otherwise complete its node over a dead DAG.
+      const result: PlanResultItem[] = [];
+      const refused: SourceRefusal[] = [];
+      let attempted = 0;
 
       for (const t of planTasks) {
         const childTaskId = keyToTaskId.get(t.key)!;
-        const entry: { key: string; taskId: string; childRunId?: string } = {
-          key: t.key,
-          taskId: childTaskId,
-        };
+        const entry: PlanResultItem = { key: t.key, taskId: childTaskId };
 
         if (t.dependsOn.length === 0) {
           const resolvedFlow = resolvedFlows.get(t.key) ?? null;
+
+          attempted += 1;
 
           try {
             // ADR-163: branch on the entry's target kind BEFORE calling a
@@ -545,6 +563,13 @@ export async function POST(
               "[delegation.plan] source task launched",
             );
           } catch (err) {
+            const code: MaisterError["code"] = isMaisterError(err)
+              ? err.code
+              : "CRASH";
+            const message = err instanceof Error ? err.message : String(err);
+
+            refused.push({ key: t.key, taskId: childTaskId, code, message });
+            entry.launchError = { code, message };
             log.warn(
               {
                 parentRunId,
@@ -553,15 +578,57 @@ export async function POST(
                 targetKind: resolvedFlow ? "flow" : "agent",
                 agentId: t.target.agentId,
                 flowId: t.target.flowId,
-                code: isMaisterError(err) ? err.code : "UNKNOWN",
-                err: err instanceof Error ? err.message : String(err),
+                code,
+                err: message,
               },
-              "[delegation.plan] source task launch refused — task stays Backlog for the auto-launcher",
+              "[delegation.plan] source task launch refused",
             );
           }
         }
 
         result.push(entry);
+      }
+
+      if (attempted > 0 && refused.length === attempted) {
+        const abandoned = await abandonUnlaunchedTasks(
+          db,
+          [...keyToTaskId.values()],
+          new Date(),
+        );
+        // One shared code when the sources agree; a MIXED batch aggregates to
+        // the conservative PRECONDITION, every line still tagged with its own
+        // code (the resolution-failure convention above).
+        const codes = new Set(refused.map((r) => r.code));
+        const code: MaisterError["code"] =
+          codes.size === 1 ? refused[0].code : "PRECONDITION";
+
+        log.warn(
+          {
+            parentRunId,
+            code,
+            abandonedTaskIds: abandoned,
+            refused: refused.map((r) => ({ key: r.key, code: r.code })),
+          },
+          "[delegation.plan.compensate] every source launch refused — plan abandoned",
+        );
+
+        return NextResponse.json(
+          {
+            code,
+            message: `unlaunchable plan sources: ${refused
+              .map((r) => `${r.key}: [${r.code}] ${r.message}`)
+              .join("; ")}`,
+          },
+          { status: httpStatusForExtCode(code) },
+        );
+      }
+
+      for (const r of refused) {
+        await noteAsPlanRefusal(
+          db,
+          { taskId: r.taskId },
+          { code: r.code, message: r.message },
+        );
       }
 
       await recordRequiredTokenAudit(

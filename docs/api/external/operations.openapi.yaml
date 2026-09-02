@@ -1670,7 +1670,14 @@ paths:
         (empty `dependsOn`) are launched after the DAG commits through the
         kind-specific launcher, whose run-insert transaction admits against the
         global cap and the shared fan-out bound, so a `childRunId` may be
-        present for those; a refused source stays `Backlog` for the auto-launcher.
+        present for those. **(Implemented — ADR-163 amendment)** A refused
+        source reports its refusal on its result row (`launchError`) and as a
+        system comment on the task, and stays `Backlog` for the auto-launcher's
+        retry on the next sibling settle; when EVERY source is refused nothing
+        runs, the committed DAG is abandoned (parity with `run_delegate`'s
+        compensation) and the response is the refusal's code — `503` for
+        `EXECUTOR_UNAVAILABLE`, `409` / `422` otherwise, `409 PRECONDITION` when
+        the codes mix — each message line tagged `[CODE]`.
 
         Writes a `token_audit_log` row with scope `runs:delegate` after success.
       operationId: extPlanRuns
@@ -1701,7 +1708,9 @@ paths:
         "202":
           description: |
             DAG written. One result row per submitted task `key`; `childRunId` is
-            present only for tasks that were immediately launchable.
+            present only for tasks that were immediately launchable, `launchError`
+            only for a source whose launch was refused (the DAG is kept — see the
+            operation description).
           content:
             application/json:
               schema:
@@ -1732,8 +1741,9 @@ paths:
               schema: { $ref: "#/components/schemas/ExtErrorBody" }
         "503":
           description: |
-            Executor or platform unavailable (`EXECUTOR_UNAVAILABLE`) for an
-            immediate launch; the DAG is still committed.
+            Every source launch was refused with `EXECUTOR_UNAVAILABLE`; the
+            committed DAG was abandoned (nothing runs) — re-plan once the
+            executor is back.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ExtErrorBody" }
@@ -5114,6 +5124,9 @@ components:
         (M37 — Implemented, ADR-098) Per-task result of a submitted DAG. `childRunId`
         is present only for a task that was immediately launchable (its
         dependencies were already clear) and folded into `promoteNextPending`.
+        **(Implemented — ADR-163 amendment)** `launchError` is present only for a
+        source whose post-commit launch was refused; the task stays `Backlog` for
+        the auto-launcher's retry on the next sibling settle.
       required: [key, taskId]
       additionalProperties: false
       properties:
@@ -5128,6 +5141,20 @@ components:
           type: string
           format: uuid
           description: Present only when the task was immediately launchable.
+        launchError:
+          type: object
+          description: |
+            Present only when this source task's launch was refused. The task
+            is kept (`Backlog`, `launch_mode='auto'`) and carries the same
+            refusal as a system comment.
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              description: The `MaisterError` code of the refusal.
+            message:
+              type: string
 
     ExtRunCollectBody:
       type: object

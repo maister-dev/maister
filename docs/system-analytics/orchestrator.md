@@ -197,13 +197,24 @@ launcher's run-insert transaction, so there is no separate `promoteNextPending`
 mark; the per-task `hasAnyRun` belt makes a redelivered window idempotent. A
 typed refusal at release time (the target was disabled, untrusted or upgraded
 past this engine) is posted as a system comment on the task, which stays
-`Backlog`/`auto` for the next settle.
+`Backlog`/`auto` for the next settle. `run_plan`'s own post-commit SOURCE launch
+follows the same rule **(Implemented — ADR-163 amendment)**: a refused source
+is reported on its result row (`launchError`) and as that system comment, and
+stays `Backlog` for the next sibling settle; when EVERY source is refused
+nothing can ever settle, so the committed DAG is abandoned
+(`abandonUnlaunchedTasks`, parity with `run_delegate`'s compensation) and the
+call answers the refusal's code (`PRECONDITION` when the codes mix, each line
+tagged `[CODE]`) — the parent, counting zero child runs, would otherwise
+complete its node over a dead DAG.
 
 ```mermaid
 flowchart TD
     RP[run_plan tasks + dependsOn] --> V{pre-tx validate:<br/>acyclic AND per-kind options allowed<br/>AND every target catalog-resolvable}
     V -- no --> CFG[CONFIG / PRECONDITION - NO rows written]
     V -- yes --> TX[one tx: INSERT N tasks parent_of + M requires<br/>all launch_mode=auto, status Backlog/blocked]
+    TX --> SRC[post-commit: launch the SOURCE tasks<br/>a refused source carries launchError on its row]
+    SRC -- some refused --> NOTE
+    SRC -- every source refused --> ABN[whole DAG Abandoned<br/>answer the refusal code - re-plan]
     TX --> WAIT[blocked tasks wait]
     CT([child settled: run.done/failed/crashed/abandoned/review<br/>payload parent_run_id]) --> AL[auto_launch_run_plan consumer]
     AL --> Q{required blockers all Done?}
@@ -540,6 +551,12 @@ none, so all three are covered by ONE helper, `admitDelegatedChild()`, called at
   under concurrent child settles, admitted by `admitDelegatedChild()` inside the
   launcher's run-insert transaction (no fast path on this edge), and gated by an ALLOW-LIST of accepted `run_kind`s (`agent | flow`) so
   `scratch` and any future kind stay rejected by default.
+- **(Implemented — ADR-163 amendment)** `run_plan`'s post-commit source launch
+  MUST report a refused source on its result row (`launchError`) and as a
+  system comment while keeping the task `Backlog`/`auto`; when EVERY source is
+  refused it MUST abandon the committed DAG (`abandonUnlaunchedTasks`) and
+  answer the refusal's code (`PRECONDITION` when the codes mix, each line
+  tagged `[CODE]`) — a `202` MUST never describe a plan nothing will ever run.
 - A child SETTLE (terminal `Done`/`Failed`/`Crashed`/`Abandoned` OR `run.review`)
   MUST wake a parked parent via `orchestrator_resume` — `Failed`/`Crashed`/
   `Abandoned` unconditionally, a success-side settle (`run.done`/`run.review`)
