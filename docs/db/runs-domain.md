@@ -55,6 +55,9 @@ erDiagram
     RUNS ||--|{ RUN_SESSIONS : "per-session runner state (Implemented ADR-114)"
     PLATFORM_ACP_RUNNERS ||--o{ RUN_SESSIONS : "session runner (Implemented ADR-114, SET NULL)"
     RUNS ||--o{ NODE_ATTEMPTS : "per-node attempt (ADR-027)"
+    RUNS ||--o{ RUN_RESULTS : "public result revisions (Designed ADR-165, 0129)"
+    NODE_ATTEMPTS ||--o{ RUN_RESULTS : "producing attempt (Designed ADR-165, SET NULL)"
+    RUN_RESULTS ||--o| RUN_RESULTS : "superseded_by_id (Designed ADR-165, SET NULL)"
     RUNS ||--o{ RUN_SYNC_ATTEMPTS : "sync attempts (ADR-141, 0106)"
     RUNS ||--o| RUN_COST_ROLLUPS : "derived token rollup (ADR-085)"
     RUNS ||--o{ GATE_RESULTS : "per-run gates (ADR-028)"
@@ -281,6 +284,27 @@ erDiagram
         timestamp updated_at
     }
 
+    RUN_RESULTS {
+        text id PK
+        text run_id FK "runs.id CASCADE"
+        integer revision "1-based; UNIQUE(run_id, revision)"
+        text validity "valid|stale|superseded|invalid (CHECK)"
+        text schema_ref "flowRefId@rev12:schemaStem"
+        text schema_sha256 "sha256 over the schema document bytes"
+        integer schema_version "form_schema schemaVersion"
+        text producer_kind "flow_node|agent_session (CHECK)"
+        text producer_ref "node id | session:default"
+        text node_attempt_id FK "node_attempts.id SET NULL"
+        jsonb value "NULL iff validity=invalid (CHECK)"
+        integer value_bytes "serialized size of the validated value"
+        text invalid_reason "NOT NULL iff validity=invalid (CHECK)"
+        jsonb artifact_manifest "DEFAULT []: engine manifest AT publish (audit)"
+        text engine_version "MAISTER_ENGINE_VERSION at publish"
+        text superseded_by_id FK "run_results.id SET NULL"
+        timestamptz superseded_at
+        timestamptz first_collected_at "write-once collect marker"
+        timestamptz created_at "DEFAULT now()"
+    }
     NODE_ATTEMPTS {
         text id PK
         text run_id FK
@@ -490,6 +514,24 @@ erDiagram
 > [`../system-analytics/manual-takeover.md`](../system-analytics/manual-takeover.md)
 > and [ADR-030](../decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status).
 
+> **(Designed — ADR-165, migration `0129`, additive.)** New table `RUN_RESULTS`
+> — one row per public result REVISION of a run, any run kind. Four CHECK
+> constraints encode the invariants the application must not be trusted to keep:
+> `validity IN ('valid','stale','superseded','invalid')`,
+> `producer_kind IN ('flow_node','agent_session')`,
+> `(validity = 'invalid') = (value IS NULL)`, and
+> `(validity = 'invalid') = (invalid_reason IS NOT NULL)`. `UNIQUE(run_id,
+> revision)` makes the revision sequence a database fact, and the partial unique
+> index `run_results_one_valid_per_run_uq ON (run_id) WHERE validity='valid'`
+> makes "at most one current result per run" one too — a second `valid` INSERT
+> that bypasses the publish helper violates it rather than silently winning.
+> Rows CASCADE from `RUNS`; `node_attempt_id` and `superseded_by_id` are
+> `ON DELETE SET NULL`. `RUNS` also gains the nullable `result_contract` and
+> `delegation_bounds` jsonb columns, and `FLOW_REVISIONS` gains nullable
+> `result_profiles`; all three are additive with no backfill. See
+> [`../system-analytics/run-results.md`](../system-analytics/run-results.md) and
+> [ADR-165](../decisions.md#adr-165-governed-recursive-agent-harness--public-run-results-result-profiles-effective-recursion-bounds-result-only-completion).
+
 > **(ADR-078 — Implemented, migration `0041`.)** `TASKS` gains `number`
 > (per-project, backfilled by `(created_at, id)` order); the five social
 > tables carry the polymorphic actor pair (`actor_type CHECK IN
@@ -626,8 +668,22 @@ Pending -> Running -> Review -> Done (promotion succeeds)
                   \-> Failed
 ```
 
+Runs also reach `Done` directly from `Running` by **result-only completion**
+(Designed — ADR-165): a flow run declaring `result.export` that published a
+`valid` result and left its workspace clean finishes without entering `Review`.
+
 See [`../system-analytics/runs.md`](../system-analytics/runs.md) for the
 full state diagram.
+
+**Run result validity** (Designed — ADR-165):
+
+```
+[*] -> valid     publish (seam success / agent finalize)
+[*] -> invalid   publish attempt failed (reason recorded, no value) -- terminal
+valid -> stale       markDownstreamStale touched the producer node
+valid -> superseded  a newer publish for the run -- terminal
+stale -> superseded  a newer publish for the run -- terminal
+```
 
 **Scratch dialog status** (manual dialog axis):
 

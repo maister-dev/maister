@@ -132,6 +132,8 @@ stateDiagram-v2
     Running --> NeedsInput: operator node interrupt<br/>(ADR-161, node_interrupt HITL)
 
     Running --> Review: agent exits 0
+    Running --> Done: result-only completion<br/>(ADR-165: valid result.export + clean workspace)
+    Running --> Failed: required result missing<br/>(ADR-165 completeness gate)
     Running --> Review: operator stop<br/>(workbench lifecycle)
     Running --> Crashed: heartbeat dead<br/>no checkpoint
     Running --> Failed: agent exits non-zero<br/>(no recovery path)
@@ -156,6 +158,40 @@ Status names exactly match the `runs.status` enum in
 `web/lib/db/schema.ts`. `Done` is therefore NOT a terminal node: ADR-141's reopen
 returns a `Done` run to `Review` so its stale or conflicted PR can be re-synced
 and re-promoted (`markReopenFromDone`).
+
+### Result-only completion (Designed — ADR-165)
+
+`Running → Done` is a new flow-run edge that skips `Review` entirely. It fires in
+`runGraph`'s success branch, inside the existing terminal transaction, iff **all
+three** hold:
+
+1. `runs.result_contract.kind === "flow_export"`,
+2. a `valid` current `run_results` row exists, and
+3. the workspace is clean — `diffNameStatus(base_commit..branch)` empty AND
+   `diffWorkingTree(HEAD)` empty. A NULL `workspaces.base_commit` is **not** clean.
+
+What it writes:
+
+| Store | Write |
+| --- | --- |
+| `runs` | `status='Done'`, `ended_at`, `current_step_id=NULL`, `diff_stat={files:0,additions:0,deletions:0}`; `promoted_head_sha` and `merge_commit_sha` stay NULL |
+| `workspaces` | `scheduled_removal_at = now + gcAgeDays`; `promotion_state` stays `'none'` |
+| assignments | `systemCloseActiveAssignmentsForRun` |
+| events | webhook `run.done{}` + domain `run.done{completion:"result_only", resultStatus:"valid", parentRunId}` — and **no** `run.review` |
+
+What it does **not** do: no promotion, no git side effect, no `run.promoted`, no
+`tasks` write (the board derives the Done column from the run), no
+`deliverRunIfAutoReady`, and `workspaces.promotion_hold` is never consulted.
+`assertEvidenceReady(runId, "review")` still gates it — it runs before the
+branch. Mounts are released and the token revoked by the existing post-transaction
+tail; `promoteNextPending` runs through the existing exit.
+
+Any other success exit — a committed diff, a dirty working tree, an
+optional-absent result, or a flow with no `result.export` — behaves
+**byte-identically to today** and lands in `Review`. A run that reaches `Done`
+this way is distinguishable in the UI by `promotion_state = 'none'` with no
+`promoted_head_sha`; nothing else in the system branches on it. Details:
+[`run-results.md`](run-results.md).
 
 ### Graph rework loop (Implemented)
 
@@ -376,8 +412,27 @@ delegation provenance. Four things distinguish it from a board flow run:
    parks indefinitely: it holds no scheduler slot, but its worktree and branch
    are retained and nothing reclaims them (ADR-163 residual W12).
 
+5. **Result semantics per terminal path (Designed — ADR-165).** Once flow runs
+   carry a public result the "always parks in `Review`" rule above narrows: a
+   child whose flow declares `result.export`, published a `valid` result and
+   changed nothing finishes `Done` by result-only completion, so residual W12
+   applies only to flows WITHOUT an export. What each terminal path reports to
+   `run_collect`:
+
+   | Terminal path | `runs.status` | `resultStatus` | Domain event |
+   | --- | --- | --- | --- |
+   | graph completed, valid result, clean workspace | `Done` | `valid` | `run.done{completion:"result_only"}` |
+   | graph completed, valid result, a diff | `Review` | `valid` | `run.review{cause:"graph_completed"}` |
+   | graph completed, required export, no valid row | `Failed` | `unavailable` (+ `resultFailure.reason="result_missing"`) | `run.failed{reason:"result_missing"}` |
+   | graph completed, optional export, absent | `Review` | `absent` | `run.review{cause:"graph_completed"}` |
+   | operator stop / rework release / sync return | `Review` | `missing` or `stale` — never failed | `run.review{cause}` |
+   | `run_cancel` | `Abandoned` | `unavailable` | `run.abandoned` |
+   | crash after `session.exited`, before finalize (W4) | `Crashed` | `unavailable`, `resultFailure: null` | `run.crashed` |
+   | promoted after `Review` | `Done` | `valid` \| `absent` | `run.done{completion:"promoted"}` |
+
 See [orchestrator.md](orchestrator.md) for the delegation contract, the refusal
-table, and the shared-dispatcher enumeration.
+table, and the shared-dispatcher enumeration; [run-results.md](run-results.md)
+for the result plane itself.
 
 ### Multi-run launch overrides (Implemented, ADR-087)
 
@@ -513,6 +568,26 @@ UI surfaces:
 
 Live updates reuse the existing run SSE/server-refresh path. No client
 `setInterval`, filesystem polling, `fs.watch`, or `chokidar` path is allowed.
+
+#### Tree-wide roll-up (Designed — ADR-165)
+
+Cost and wall-clock have been per-run everywhere except the ADR-101 budget
+sweeper, which meters `queryRunTreeTokens(rootRunId)` — a flat `SUM` by
+`root_run_id` — and surfaces nothing. A recursive harness needs the tree total
+to be readable:
+
+- `queryRunTreeTokensByKind(rootRunId)` is a `root_run_id`-scoped sibling of the
+  per-run query, folding the same rows by kind and by model.
+- `getRunTreeCostSummary(rootRunId)` adds `treeWallClockMinutes` — the span from
+  the earliest descendant `started_at` to the latest `coalesce(ended_at, now)` —
+  and a `runCount`.
+- `GET /api/runs/{runId}/cost-summary` returns an optional `tree` object **only**
+  for a tree root that has children; a non-root run yields no tree facts.
+- The run cost panel gains "Tree total tokens" and "Tree wall-clock" facts under
+  the same condition.
+
+The per-run and tree queries share one row-folding helper — there is no second
+cost derivation. Details: [`run-results.md`](run-results.md) §Observability.
 
 ### Resolved prompt capture (Implemented)
 

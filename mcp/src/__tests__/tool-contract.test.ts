@@ -549,4 +549,90 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
     expect(confidenceTypes).toContain("number");
     expect(confidenceTypes).toContain("null");
   });
+
+  // ADR-165 (AC-33): `run_collect` has no OUTPUT schema in TOOL_SPECS — the
+  // agent learns the shape from the tool description alone. That description is
+  // therefore the mirror surface, and `resultStatus` is the field whose values
+  // an orchestrator branches on. Anchor it on the OpenAPI enum so adding or
+  // renaming a status without telling the facade trips here.
+  const collectResultStatusEnum = (): Set<unknown> => {
+    const summary = deref(
+      openapi.components?.schemas?.ExtChildRunSummary ?? {},
+    );
+    const status = deref((summary.properties ?? {}).resultStatus ?? {});
+
+    return new Set(status.enum ?? []);
+  };
+
+  // The description carries the vocabulary as ONE pipe-joined parenthesised
+  // list. Parsing that list and comparing it as a SET is the honest mirror: a
+  // substring scan would pass on prose ("a failure-terminal child reports
+  // unavailable") and on overlaps ("valid" inside "invalid").
+  const declaredStatusList = (description: string): Set<string> | null => {
+    const m = /resultStatus[^(]*\(([a-z|]+)\)/.exec(description);
+
+    return m ? new Set(m[1].split("|")) : null;
+  };
+
+  it("run_collect declares exactly the ExtChildRunSummary.resultStatus values", () => {
+    const values = collectResultStatusEnum();
+
+    expect(values).toEqual(
+      new Set([
+        "pending",
+        "valid",
+        "absent",
+        "missing",
+        "stale",
+        "invalid",
+        "unavailable",
+      ]),
+    );
+
+    const declared = declaredStatusList(TOOL_SPECS.run_collect.description);
+
+    expect(declared, "run_collect must declare a resultStatus (a|b|c) list").not.toBeNull();
+    expect(declared).toEqual(values);
+    // The result envelope itself, not just the status vocabulary.
+    expect(TOOL_SPECS.run_collect.description).toContain("result.value");
+    expect(TOOL_SPECS.run_collect.description).toContain("resultFailure");
+  });
+
+  // Mutation check: proves the assertion above compares the parsed SET rather
+  // than passing on any non-empty description. Both drift directions must fail.
+  it("a drifted resultStatus enum fails the run_collect declaration guard", () => {
+    const declared = declaredStatusList(TOOL_SPECS.run_collect.description)!;
+    const added = new Set([...collectResultStatusEnum(), "quarantined"]);
+    const removed = new Set(
+      [...collectResultStatusEnum()].filter((v) => v !== "unavailable"),
+    );
+
+    expect(declared).not.toEqual(added);
+    expect(declared).not.toEqual(removed);
+    expect(declaredStatusList("no list here at all")).toBeNull();
+  });
+
+  it("resultProfile mirrors the spec bounds on both delegation tools", () => {
+    const specField = deref(
+      bodySchema(openapi.paths["/api/v1/ext/runs/delegate"].post)!.properties!
+        .resultProfile,
+    );
+    const toolField = toolSpec("run_delegate").properties!.resultProfile;
+
+    for (const bound of MIRRORED_BOUNDS) {
+      if (specField[bound] !== undefined) {
+        expect(toolField[bound], `run_delegate.resultProfile ${bound}`).toBe(
+          specField[bound],
+        );
+      }
+    }
+
+    const planItem = (toolSpec("run_plan").properties!.tasks.items ??
+      {}) as JsonSchema;
+
+    expect(
+      (planItem.properties ?? {}).resultProfile,
+      "run_plan.tasks[].resultProfile must exist",
+    ).toBeDefined();
+  });
 });

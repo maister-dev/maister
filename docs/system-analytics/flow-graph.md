@@ -245,6 +245,43 @@ rather than at run time:
 | `output.result` on an `orchestrator`/`consensus` node with `compat.engine_min < 3.6.0` | `validateGraphManifest` | `MaisterError("CONFIG")` naming the `3.6.0` floor |
 | A referenced schema document using `type: "json"` or array `items` with `compat.engine_min < 3.6.0` | package install (`validatePackageRootSchemaReferences`) · Studio lifecycle validation | `MaisterError("FLOW_INSTALL")` · `form_schema_invalid` (BLOCK) |
 
+#### Publish step for an export producer (Designed — ADR-165)
+
+When the run declares a public result (`runs.result_contract.kind ===
+"flow_export"`) **and** the succeeding node is one of the contract's
+`producerNodeIds`, step 5 above gains one write in the SAME transaction: a
+`run_results` row.
+
+- The seam validates against `runs.result_contract.schema` — the launch-time
+  snapshot, not a re-read of the pinned revision — and reports the snapshot's
+  identity.
+- One helper, `closeSucceededAttemptWithResult`, wraps `markNodeSucceeded` +
+  `publishRunResult` (insert revision N, supersede prior `valid | stale` rows).
+  It replaces the three direct `markNodeSucceeded` call sites, so there is no
+  path where an attempt closes without its result and none where a result
+  outlives a rolled-back attempt.
+- `node_attempts.vars` still receives the merged bag, and `output_contract` is
+  written exactly as before — the publish is additive.
+- A node that is not a producer, or a run with no contract, skips the extra write
+  entirely.
+
+Supersession on rework runs through `markDownstreamStale`, which flips the run's
+`valid` row to `stale` in its own transaction when the producer node is among the
+staled nodes. Details: [`run-results.md`](run-results.md).
+
+#### Terminal exits of a flow run (Designed — ADR-165)
+
+`graph_completed` no longer has one exit. In `runGraph`'s success branch, before
+the CAS (and after `assertEvidenceReady(runId, "review")`, which is unchanged):
+
+| Condition | Exit | Emitted |
+| --- | --- | --- |
+| required export, no current `valid` row | `Failed` + an `invalid` row (`result_missing`) | `run.failed{reason:"result_missing", resultStatus:"missing"}` |
+| `flow_export` contract, `valid` row, clean workspace | `Done` (result-only completion) | `run.done{completion:"result_only", resultStatus:"valid"}`, no `run.review` |
+| anything else | `Review`, byte-identical to today | `run.review{cause:"graph_completed", resultStatus}` |
+
+All three write inside the existing terminal transaction.
+
 ### Dynamic routing — `decide` + `on_mismatch` (Implemented)
 
 > **Status (Implemented.)** Output/verdict-driven outcome at the single

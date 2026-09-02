@@ -640,6 +640,57 @@ project-admin action rather than introducing a new one: a standardized recipe
   drop migration — which executes before the app accepts traffic, closing the
   window.
 
+## Recursive-harness comparison protocol (Designed — ADR-165)
+
+The question the Lab answers: **does a governed recursive harness beat a flat
+agent on the same task, and at what cost?** Four arms, nine measures, one Study.
+
+### Arms
+
+| Arm | Recipe | What it isolates |
+| --- | --- | --- |
+| `single-agent` | one `ai_coding` node, no delegation | the flat baseline |
+| `externalized-context` | one `ai_coding` node fed pre-gathered context artifacts | how much of any gain is just context, not recursion |
+| `rah-root-d1` | orchestrator → read-only **agent** researchers at depth 1 → writer → verify → review | recursion, one level |
+| `rah-root-d2` | orchestrator → **flow** research children (each fanning out its own agents) at depth 2 | recursion, two levels, with result-only child completion |
+
+All four run the same task set on the same project through the existing
+controlled-launch recipe / preflight / batch machinery. No new launch path.
+
+### Measures → providers
+
+Every provider reads RECORDED facts (ADR-143 D11) — none executes anything.
+
+| Measure | Provider | Source |
+| --- | --- | --- |
+| child run count | `child_run_count@1` | recursive CTE over `parent_run_id` from the participant root |
+| result-validation failures | `result_validation_failures@1` | `run_results` rows with `validity='invalid'` over the tree, `result_missing` included |
+| collected-results ratio | `collected_results_ratio@1` | child rows with `first_collected_at` set ÷ child rows with a `valid` result |
+| consumed-results ratio | `consumed_results_ratio@1` | the root result's `consumedChildRunIds` ∩ children holding a `valid` row ÷ children holding a `valid` row — a fabricated id is excluded, which is the whole point of the intersection |
+| rework count | `rework_count@1` | `node_attempts` rework provenance over the tree |
+| crash count | `crash_count@1` | `Crashed` runs over the tree |
+| tree tokens | `tree_tokens@1` | the `root_run_id`-scoped token roll-up |
+| tree wall-clock | `tree_wall_clock_minutes@1` | earliest descendant `started_at` → latest `coalesce(ended_at, now())` |
+| promotion readiness | `promotion_readiness@1` | the readiness classifier's recorded state |
+
+"Did the parent USE the results?" is deliberately the **intersection** of an
+engine marker (`first_collected_at` — the engine knows it served the row) and a
+self-report (`consumedChildRunIds` — the agent claims it read the row). Either
+alone is gameable: the engine cannot see reasoning, and the agent can name an id
+it never received.
+
+### Replicates and verdicts
+
+- Replicate policy is the Study's existing one; the harness arms need more
+  replicates than the flat arms to separate signal from run-to-run variance, so
+  the recipe sets it explicitly rather than inheriting a default.
+- Objective gate success is `gate_result@1`, unchanged.
+- Human corrections are SUPERSEDING verdicts per ADR-147 — a human verdict
+  replaces the judged one for that participant and is what the comparison view
+  reports.
+- `METRICS_FORMULA_VERSION` bumps only if an existing formula changes; adding
+  providers does not change existing numbers.
+
 ## Known lineage gaps (pre-existing; not introduced or worsened by ADR-150)
 
 An adversarial pass over the launched-lineage invariants found four gaps that
@@ -656,7 +707,10 @@ guarantee that holds.
   execution policy (the `unattended` preset arms `crashRetry: "ralph_loop"`
   **and** `promotion: "auto_on_ready"` together) but inherits no participation
   and no hold, so it can auto-deliver mid-Study. Any NEW relaunch lane is an
-  escape hatch by default rather than by mistake.
+  escape hatch by default rather than by mistake. **(Narrowed — ADR-165 D18,
+  Designed.)** The ralph-loop consumer now skips any run with `parent_run_id`,
+  so a DELEGATED child can no longer be relaunched lineage-less; the gap
+  survives for top-level task-bound runs, which is where it was found.
 - **The ADR-119 force-relaunch UI never sends `relaunchOfRunId`.**
   `buildLaunchBody` emits `allowConcurrent` only, so the `manual_relaunch`
   branch of the inheritance helper is unreachable from the product surface and

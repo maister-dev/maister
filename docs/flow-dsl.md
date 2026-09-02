@@ -615,9 +615,15 @@ nodes:
       runner: claude-code # inherits the ai_coding capability shape
       thinkingEffort: high
       mcps: [github]
-      delegation:
-        max_fanout: 16 # optional; defaults to MAISTER_MAX_ORCHESTRATOR_FANOUT
-        max_depth: 3 # optional; defaults to MAISTER_ORCHESTRATOR_MAX_DEPTH
+      delegation: # v2 — Designed, ADR-165, engine_min >= 3.7.0
+        max_depth: 2 # optional; effective = min(env, this ?? 2)
+        max_fanout: 6 # optional; effective = min(env, this ?? 6)
+        max_active_children: 3 # optional; effective = min(pool cap, this ?? 3)
+        budget: # REQUIRED and complete at engine_min >= 3.7.0
+          max_tokens: 2000000
+          wall_clock_minutes: 120
+          max_child_runs: 12
+          consecutive_failures: 3
     transitions:
       success: review
 ```
@@ -634,12 +640,32 @@ nodes:
   `MAISTER_MAX_ORCHESTRATOR_FANOUT` (`16`) and `MAISTER_ORCHESTRATOR_MAX_DEPTH`
   (`3`). An over-fanout or over-depth request is refused with
   `MaisterError("CONFIG")`; no partial run-tree is created.
-  **(Implemented — [ADR-163](decisions.md#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher))** the node-level `max_fanout` / `max_depth`
-  are ADVISORY (owner decision, 2026-09-02): no runtime reads them. The
-  enforced bounds are the platform env values — `MAISTER_MAX_ORCHESTRATOR_FANOUT`
-  counts the orchestrator's LIVE children of BOTH kinds (agent + flow), not the
-  size of one `run_plan` batch — applied by one shared helper inside every child
-  launcher's run-insert transaction. `web/lib/config.schema.ts` is UNCHANGED.
+  **(Designed — [ADR-165](decisions.md#adr-165-governed-recursive-agent-harness--public-run-results-result-profiles-effective-recursion-bounds-result-only-completion))**
+  the node-level bounds become **live for `compat.engine_min >= 3.7.0` manifests
+  only**; below the floor they stay exactly what ADR-163 made them — parsed and
+  ignored, with the platform env values enforced, byte for byte. At or above the
+  floor:
+
+  | Key | Effective value | Default when omitted |
+  | --- | --- | --- |
+  | `max_depth` | `min(MAISTER_ORCHESTRATOR_MAX_DEPTH, declared)` | `2` |
+  | `max_fanout` | `min(MAISTER_MAX_ORCHESTRATOR_FANOUT, declared)` | `6` |
+  | `max_active_children` | `min(pool cap for the child kind, declared)` | `3` |
+  | `budget` | copied verbatim | **no default — required** |
+
+  `max_fanout` counts the orchestrator's LIVE children of BOTH kinds (agent +
+  flow), not the size of one `run_plan` batch, and is applied by one shared
+  helper inside every child launcher's run-insert transaction. Over-depth,
+  over-fan-out and over-budget requests are refused with `MaisterError("CONFIG")`
+  and no partial run-tree. `max_active_children` is **not** a refusal — a child
+  over the cap stays `Pending` and starts when a sibling frees a slot.
+  `budget.max_child_runs` binds at **every ancestor** (subtree count);
+  `max_tokens` / `wall_clock_minutes` / `consecutive_failures` bind at the tree
+  **root**, min-merged into the ADR-101 budget ladder. Declaring any v2 key below
+  `3.7.0`, or an orchestrator node at or above `3.7.0` with an incomplete
+  `budget`, is refused at load with `CONFIG`.
+  See [`system-analytics/orchestrator.md`](system-analytics/orchestrator.md)
+  §Bounds and budgets.
 
 \*\*Delegation semantics (brief; full contract in
 [ADR-098](decisions.md#adr-098-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume)
@@ -1114,6 +1140,77 @@ nodes:
 
 See [ADR-160](decisions.md#adr-160-review-run-rework-claim-with-fast-forward-only-handoff-round-trip)
 and [`system-analytics/run-continuation.md`](system-analytics/run-continuation.md).
+
+## Flow result export (`result.export`) (Designed — ADR-165)
+
+A flow may declare, at the **top level beside `nodes`**, the schema and the
+producer set of its **public run result** — the value a delegating orchestrator
+reads through `run_collect`, and the fact that lets the run finish without a
+human review step:
+
+```yaml
+schemaVersion: 1
+name: RAH Research
+compat:
+  engine_min: 3.7.0
+result:
+  export:
+    schema: ./schemas/research-result.v1.json   # the contract; a package-root JSON doc
+    from: [orchestrate]                          # every permitted producer node
+    required: true                               # default
+nodes:
+  - id: orchestrate
+    type: orchestrator
+    output:
+      result:
+        schema: ./schemas/research-result.v1.json   # MUST be the same document
+        required: true
+    transitions:
+      success: done
+```
+
+- **The schema file is the contract.** It is an ordinary package-root
+  `./schemas/<name>.json` `form_schema` document — the same grammar, the same
+  loader, and the same limits as `output.result` (open objects, `json` fields,
+  recursive `items`, depth ≤ 64, ≤ 10 000 keys, ≤ 10 000 array elements, the
+  256 KiB `MAISTER_NODE_OUTPUT_MAX_BYTES` cap). `.yaml` schema documents are not
+  accepted anywhere. There is exactly ONE validator.
+- **Load-validated (all `CONFIG`, naming the node and the reason).** Every
+  `from[]` entry must (a) name a node present in `nodes[]`, (b) not be a `human`
+  or `form` node — they have no structured-output transport at any version, (c)
+  declare `output.result`, and (d) declare the SAME normalized `schema` path as
+  the export. When the export is `required`, each producer's
+  `output.result.required` is **forced** `true` in the loaded manifest.
+- **Engine floor.** Declaring `result.export` requires
+  `compat.engine_min >= 3.7.0`, else `CONFIG` naming the floor;
+  `MAISTER_ENGINE_VERSION` bumps `3.6.0 → 3.7.0`. The gate is on the
+  **manifest** — flows without `result` stay valid at any `engine_min` and
+  compile byte-identically to today.
+- **Resolved against the PINNED revision.** The launcher resolves the schema from
+  `flow_revisions.installed_path` **before** the worktree is created and
+  snapshots it on `runs.result_contract`. Re-pointing the flow's enabled revision
+  afterwards changes neither the snapshot nor which schema the seam validates
+  against. An unresolvable schema refuses `CONFIG` with zero `runs` /
+  `workspaces` rows written.
+- **Latest valid publish wins.** Each producer node that succeeds publishes a
+  new revision; the previous one is superseded in the same transaction. Rework
+  that stales a producer without re-running it marks the result `stale`.
+- **Completion gate.** At `graph_completed`, a `required` export with no current
+  `valid` result fails the run (`CONFIG`, `run.failed{reason:"result_missing"}`)
+  instead of reaching `Review`. A human-resolved `Review` flip (operator stop,
+  rework release, sync return) never fails the run.
+- **Result-only completion.** A run that holds a `valid` result and left its
+  workspace clean (`base_commit..branch` empty AND the working tree clean)
+  finishes `Running → Done` **without** entering `Review` and without promoting
+  anything. Any other success exit is `Review`, unchanged. A research flow
+  therefore needs no coordinator discipline to clean up after it.
+- **Compile-time only for the graph; snapshotted for the run.** `result.export`
+  participates in the compiled manifest and in `runs.result_contract`; removing
+  it from a republished manifest simply recompiles without it, and old runs keep
+  reading their own snapshot.
+
+See [ADR-165](decisions.md#adr-165-governed-recursive-agent-harness--public-run-results-result-profiles-effective-recursion-bounds-result-only-completion)
+and [`system-analytics/run-results.md`](system-analytics/run-results.md).
 
 ## Gate execution (Implemented)
 
@@ -1781,6 +1878,47 @@ enablement/launch (`web/lib/flows/engine-version.ts`); the lists are opaque
 until later engine work gives them runtime meaning. See
 [`configuration.md`](configuration.md) and
 [`system-analytics/flow-packages.md`](system-analytics/flow-packages.md).
+
+### `result_profiles` in `maister-package.yaml` (Designed — ADR-165)
+
+A **package** manifest may declare named agent result contracts. They are the
+only way a delegated **agent** child gets a public result: `run_delegate` /
+`run_plan` select one by NAME, never by path.
+
+```yaml
+# maister-package.yaml
+schemaVersion: 1
+name: rah
+result_profiles:
+  research:
+    schema: ./schemas/research-result.v1.json
+  triage:
+    schema: ./schemas/triage-result.v1.json
+flows:
+  - id: rah-root
+    path: flows/rah-root
+```
+
+- **Name grammar** — `/^[A-Za-z0-9._-]{1,64}$/`. The block is `.strict()`, like
+  the rest of `maister-package.yaml`: an unknown key inside a profile is a parse
+  error.
+- **Schema location** — a package-root `./schemas/*.json` document only. Install
+  already copies package-root `schemas/` into every member flow's
+  `installedPath/schemas/`, so no new materialization path exists.
+- **Resolved at install** into `flow_revisions.result_profiles` for **every**
+  member flow, in the same statement that writes the revision — there is no
+  window in which a revision exists without its profile map. A profile pointing
+  at a missing, malformed or escaping file, or one using `json` / typed array
+  `items` below a member flow's engine floor, fails the install with
+  `MaisterError("FLOW_INSTALL")` and the revision goes `Failed`; no partial map
+  is written.
+- **Resolved at delegation** against the PARENT run's pinned revision, so a
+  profile deleted from a newer package revision still resolves for a run pinned
+  to the older one. An unknown name, a flow target, or `persistent: true` is
+  refused `CONFIG` 422.
+- Requires the parent flow's `compat.engine_min >= 3.7.0`.
+
+See [`system-analytics/run-results.md`](system-analytics/run-results.md).
 
 ## Authored package files
 

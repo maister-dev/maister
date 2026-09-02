@@ -418,6 +418,18 @@ flowchart TD
   resume is cap-safe (the D2 bypass is removed) — see [`task-queue.md`](task-queue.md).
   Both apply the `MAISTER_TASK_QUEUE_AUTO_RESERVE` / per-project `maxInFlightAuto`
   capacity guards to C2.
+- (Designed — ADR-165) **Per-orchestrator active-children skip.** Beside the
+  existing shared-writer sibling gate, `tryStartRun` and `promoteNextPending`
+  MUST skip (and `continue` past) a `Pending` run whose `parent_run_id` names an
+  orchestrator already holding `delegation_bounds.maxActiveChildren` children in
+  `SLOT_HOLDING_RUN_STATUSES` (`Running | NeedsInput | HumanWorking` — the ONE
+  exported constant `countLiveRuns` and `sharedWriterSiblingActive` also use).
+  This is a **queue**, never a refusal: the run row already exists and
+  `run_delegate` reports `status: "Pending"`. A NULL `delegation_bounds` means
+  env-only and imposes no per-orchestrator cap. The global pool cap still
+  applies and a lower pool cap wins. Every settle path already calls
+  `promoteNextPending`, so a queued child always has a re-promotion edge. See
+  [`orchestrator.md`](orchestrator.md) §Bounds and budgets.
 
 ## Edge cases
 

@@ -370,6 +370,14 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
             "Stable key, unique within this orchestrator tree, used to address a persistent child via run_message. Required when persistent is true.",
         },
         runnerOverride: { type: "string", minLength: 1 },
+        resultProfile: {
+          type: "string",
+          minLength: 1,
+          maxLength: 64,
+          pattern: "^[A-Za-z0-9._-]+$",
+          description:
+            "AGENT targets only. Name of a result_profiles entry declared by the package that owns THIS orchestrator's pinned flow revision. The child must end its final turn with a ```json maister:output block matching that profile's schema; MAIster validates and stores it before the child becomes collectable, and run_collect returns it as result.value. Refused on a flow target (a flow declares its own result.export), with persistent:true, for an unknown name, or below engine 3.7.0. A missing or malformed required result FAILS the child.",
+        },
       },
       required: ["target", "mode", "prompt"],
     },
@@ -420,6 +428,14 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
                 enum: ["none", "repo_read", "worktree"],
               },
               runnerOverride: { type: "string", minLength: 1 },
+              resultProfile: {
+                type: "string",
+                minLength: 1,
+                maxLength: 64,
+                pattern: "^[A-Za-z0-9._-]+$",
+                description:
+                  "AGENT entries only. Same as run_delegate.resultProfile — the child publishes a validated public result under this named contract. Refused on a flow entry; a violating entry creates NO tasks.",
+              },
               dependsOn: { type: "array", items: { type: "string" } },
             },
             required: ["key", "target", "prompt", "dependsOn"],
@@ -431,7 +447,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   run_collect: {
     description:
-      "Collect status, output, and produced artifacts from the orchestrator's delegated child runs. Pass childRunId for one child, or all:true for every child of the calling orchestrator run. Returns an array of { childRunId, status, outputText?, artifacts, diffRef? }.",
+      "Collect results, status, and produced artifacts from the orchestrator's delegated child runs. Pass childRunId for one child, or all:true for every child. result.value is the validated public result — use it, not outputText (deprecated); resultStatus says why it is absent (pending|valid|absent|missing|stale|invalid|unavailable) and resultFailure carries the reason. Collect is idempotent and shows only your DIRECT children. Research flow children finish by themselves when they publish a result and change nothing; collect BEFORE run_cancel — a failure-terminal child reports unavailable. Returns an array of { childRunId, status, settled, resultStatus, result, resultRevision, resultFailure, artifacts, diffRef?, outputText? }.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1092,6 +1108,7 @@ function resolveRouting(
         persistent,
         addressableKey,
         runnerOverride,
+        resultProfile,
       } = args as {
         target: { agentId?: string; flowId?: string };
         mode: string;
@@ -1102,6 +1119,7 @@ function resolveRouting(
         persistent?: boolean;
         addressableKey?: string;
         runnerOverride?: string;
+        resultProfile?: string;
       };
       const body: Record<string, unknown> = { target, mode, prompt };
 
@@ -1111,6 +1129,7 @@ function resolveRouting(
       if (persistent !== undefined) body.persistent = persistent;
       if (addressableKey !== undefined) body.addressableKey = addressableKey;
       if (runnerOverride !== undefined) body.runnerOverride = runnerOverride;
+      if (resultProfile !== undefined) body.resultProfile = resultProfile;
 
       return { method: "POST", path: `/api/v1/ext/runs/delegate`, body };
     }

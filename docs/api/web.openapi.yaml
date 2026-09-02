@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: MAIster Web HTTP API
-  version: "0.9.0"
+  version: "0.10.0"
   description: |
     HTTP surface exposed by the Next.js web tier under `app/api/`. Consumed
     by the MAIster UI and (in M7+) by any process that wants to drive HITL
@@ -5756,6 +5756,33 @@ paths:
                     additionalProperties:
                       type: object
                       additionalProperties: { type: integer }
+                  tree:
+                    nullable: true
+                    type: object
+                    description: |
+                      (Designed — ADR-165) Tree-wide roll-up over this run and
+                      every descendant (`root_run_id` scope). Present ONLY when
+                      this run is a tree root that has at least one child;
+                      omitted or null otherwise, so a non-root run yields no tree
+                      facts. `wallClockMinutes` spans the earliest descendant
+                      `started_at` to the latest `coalesce(ended_at, now())`.
+                    required:
+                      - totalTokens
+                      - inputTokens
+                      - outputTokens
+                      - cacheReadTokens
+                      - cacheCreationTokens
+                      - wallClockMinutes
+                      - runCount
+                    additionalProperties: false
+                    properties:
+                      totalTokens: { type: integer }
+                      inputTokens: { type: integer }
+                      outputTokens: { type: integer }
+                      cacheReadTokens: { type: integer }
+                      cacheCreationTokens: { type: integer }
+                      wallClockMinutes: { type: number }
+                      runCount: { type: integer }
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":

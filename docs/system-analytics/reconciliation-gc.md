@@ -410,6 +410,15 @@ quarantine rows for paths that are working exactly as designed. A future change
 that relocates mounts must therefore land with a matching reconciler scope
 change in the same commit, never on its own.
 
+## Result-only completion feeds the ordinary GC shape (Designed — ADR-165)
+
+A flow run that finishes `Running → Done` by result-only completion stamps
+`workspaces.scheduled_removal_at = now + MAISTER_GC_AGE_DAYS` in the same
+terminal transaction, exactly like a promoted run. GC needs no new branch: the
+row is already `Done` with a deadline, which is what
+`DISPOSABLE_WORKSPACE_RUN_STATUSES` collects. See
+[`run-results.md`](run-results.md) and [`workspaces.md`](workspaces.md).
+
 ## Expectations
 
 - Reconcile is **allow-list `Running`-only**: a row whose `runs.status` is

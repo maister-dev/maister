@@ -356,6 +356,41 @@ appears — run detail, the HITL inbox, and the cross-project inbox — because 
 of them resolve the option matrix from one server loader. No surface falls back
 to a raw JSON response body.
 
+## Public result panel + tree cost facts (Designed — ADR-165)
+
+Surface only; the behaviour it renders lives in
+[`../../system-analytics/run-results.md`](../../system-analytics/run-results.md).
+
+**Public result panel** — rendered in the inspector column beside
+`NodeTranscriptPanel`, and ONLY when the run has a `result_contract` or at least
+one `run_results` row. A run without either renders nothing at all (no empty
+card):
+
+| Element | Content |
+| --- | --- |
+| Header | `schemaRef` (`<flowRefId>@<rev12>:<schemaStem>`), copyable |
+| Validity glyph | per `resultStatus` — `valid` green check · `stale` amber · `invalid` danger · `missing` danger · `absent` muted dash · `pending` spinner · `unavailable` muted |
+| Revision | `revision N`, with the superseded chain count when > 1 |
+| Collected marker | "collected" + relative time when `first_collected_at` is set; nothing otherwise |
+| Value | JSON viewer over the validated value; collapsed by default past a fold |
+| Failure | for `invalid` / `unavailable` with a reason: the `invalid_reason` class and its message |
+
+A `Done` run whose `workspaces.promotion_state` is still `'none'` and which has
+no `promoted_head_sha` shows a "completed without promotion" fact — derived, no
+new column.
+
+**Child result glyphs** — the orchestrator subtree and the inspector's child-runs
+list carry the same per-`resultStatus` glyph on each child row, so a coordinator's
+fan-out is readable at a glance without opening each child.
+
+**Tree cost facts** — the run cost panel gains "Tree total tokens" and "Tree
+wall-clock" beside the per-run facts, shown ONLY for a tree root that has
+children. Sourced from `GET /api/runs/{runId}/cost-summary`'s optional `tree`
+object.
+
+All strings are EN + RU; icons follow the repo's icon-affordance convention and a
+success state renders as a green check glyph, never the word.
+
 ## Linked artifacts
 
 - Blocks: [`run-inspector.md`](run-inspector.md), [`workbench.md`](workbench.md).

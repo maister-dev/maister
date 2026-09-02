@@ -160,6 +160,31 @@ sequenceDiagram
     W->>DB: INSERT workspaces { run_id, project_id, branch, base_branch, base_commit, target_branch, worktree_path, parent_repo_path }
 ```
 
+### Result-only completion (Designed — ADR-165)
+
+Not every `Done` is a promotion. A **flow** run that declares `result.export`,
+published a `valid` public result and changed nothing finishes `Running → Done`
+without ever entering `Review` ([`runs.md`](runs.md), [`run-results.md`](run-results.md)).
+From this domain's point of view it is a **terminal with no git side effect**:
+
+| Concern | Promote on Review | Result-only completion |
+| --- | --- | --- |
+| `workspaces.promotion_state` | `claiming → done` | stays `'none'` |
+| `promotion_attempt_id` | minted | never minted |
+| git / PR side effect | `git merge --no-ff` or a PR | **none** |
+| `runs.promoted_head_sha` / `merge_commit_sha` | set | stay NULL |
+| `runs.diff_stat` | the promoted delta | `{files:0, additions:0, deletions:0}` |
+| webhook | `run.promoted` then `run.done` | `run.done` only |
+| `workspaces.scheduled_removal_at` | `now + MAISTER_GC_AGE_DAYS` | `now + MAISTER_GC_AGE_DAYS` — identical |
+| `workspaces.promotion_hold` | re-checked under the claim | **never consulted** — nothing is promoted |
+
+The GC shape is therefore the ordinary one: `scheduled_removal_at` is stamped on
+the terminal transition and the preserve-then-prune countdown above runs
+unchanged. The clean-workspace precondition (`base_commit..branch` empty AND the
+working tree clean; a NULL `base_commit` is not clean) is a READ taken before the
+terminal transaction — safe because no session is live at the terminal branch,
+and the run row's own CAS is what makes the flip single-winner.
+
 ### Promote on Review — shared service over both run kinds (Implemented)
 
 Promotion is the product action after `Review`.

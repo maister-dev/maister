@@ -110,6 +110,39 @@ observe its failed child; success-gated dependents do not launch.
   free-form jsonb with no runtime validation. It carries directed summons to
   the `agent_triggers` consumer's additive mention branch; see
   [agent-mentions.md](agent-mentions.md).
+
+  **(Designed — ADR-165)** three further **migration-free** payload widenings on
+  existing kinds (no new kind, no CHECK change, free-form jsonb):
+
+  | Kind | Added field | Values |
+  | --- | --- | --- |
+  | `run.review` | `resultStatus` | `pending \| valid \| absent \| missing \| stale \| invalid \| unavailable` |
+  | `run.done` | `resultStatus`, `completion` | `completion ∈ {promoted, result_only}` |
+  | `run.failed` | `resultStatus`; `reason` gains two values | `reason += result_missing \| result_invalid` |
+
+  Consumer sweep for the widening — every consumer either ignores the new fields
+  or is explicitly changed:
+
+  | Consumer | Filter | Effect |
+  | --- | --- | --- |
+  | `orchestrator_resume` | settled set, routed by `parentRunId` | **reads nothing new**; a `run.done{completion:"result_only"}` wakes the parent exactly like any success-side settle, and `run.failed{reason:"result_missing"}` wakes it unconditionally |
+  | `auto_launch_run_plan` | settled set | unchanged — it branches on `cause`, not `resultStatus`; a result-only `run.done` advances the as-plan task and releases its `requires` dependents like any `run.done` |
+  | `agent_triggers` | generic kind allow-list | unaffected |
+  | `ralph_loop` | `run.failed` only | **changed** — see the D18 row below |
+  | `cost_rollup_reconcile` | `isRunTerminalEventKind` | unaffected |
+  | `memory_harvest` | run-terminal + `gate.failed` | unaffected |
+  | `brain_source_reindex` | run-terminal | unaffected |
+  | `mapDomainEvent` (ext activity) | kind switch | unaffected — it never reads unknown payload keys |
+
+- **`ralph_loop` consumer** (Implemented; **Designed change — ADR-165 D18**) —
+  relaunches a task-backed **flow** run on `run.failed` when the execution policy
+  says `ralph_loop` and the failed run is its task's latest. It has never checked
+  `parent_run_id`, so a delegated flow child would be relaunched **lineage-less**:
+  a new run with no `parent_run_id`, which the orchestrator never collects and
+  which never wakes it. ADR-165 skips (and logs) any run with
+  `parent_run_id IS NOT NULL`; a parentless run is relaunched exactly as before.
+  The orchestrator owns retries of its own children — bounded rework or human
+  escalation at the parent, per [`orchestrator.md`](orchestrator.md).
 - **`domain_event_dispatch` job kind** (Implemented) — singleton dispatcher on
   the polymorphic scheduler clock (one seeded `domain_event_dispatch.default`
   job, cadence 60s,

@@ -394,6 +394,9 @@ field names a filesystem path component.
 | `prompt`, `title` | body free-text | no locator role; stored as the carrier task's prompt / title |
 | carrier `taskId` | server-state | minted server-side; never accepted from the body |
 | child `flowRevisionId` | server-state | resolved inside `launchRunStaged` from the project's enablement pointer |
+| `resultProfile` | body-controlled (a NAME, `/^[A-Za-z0-9._-]{1,64}$/`) | **(Designed — ADR-165)** allow-list lookup in the PARENT run's pinned `flow_revisions.result_profiles`; never a path or a schema body; `CONFIG` on a miss |
+| allowed profile set, effective bounds, active node | server-state | `resolveActiveBoundRun` → `runs` → `flow_revisions`; `runs.delegation_bounds` is written by the runner **(Designed — ADR-165)** |
+| child `result_contract` | server-state | built by the launcher from the resolved profile / export **(Designed — ADR-165)** |
 
 ### Option compatibility by target kind
 
@@ -416,6 +419,7 @@ before resolution and reports all violations at once.
 | `runnerOverride` | ✅ (agent runner chain) | ✅ (Flow executor-resolution chain) | the chain's own `PRECONDITION` / `EXECUTOR_UNAVAILABLE` |
 | `persistent` | ✅ | ❌ | `CONFIG` 422 — agent-target only |
 | `addressableKey` | ✅ | ❌ | `CONFIG` 422 — agent-target only |
+| `resultProfile` | ✅ (a name from the parent's pinned `result_profiles`; forbidden with `persistent`) | ❌ | `CONFIG` 422 — a flow child declares its own `result.export` **(Designed — ADR-165)** |
 
 ### Tool support by child kind
 
@@ -461,6 +465,13 @@ Parameterized one row = one case. Every row above the carrier-task line writes
 | 25 | parent terminalized during launch | post-commit parent re-read (`run_delegate` only) | `PRECONDITION` 409 | child abandoned through `cascadeAbandonRunTree`, its live session torn down |
 | 26 | `run_rework` on a flow child | rework route, pre-dispatch | `PRECONDITION` 409 | none |
 | 27 | `run_message` on a flow child | message route, pre-dispatch | `PRECONDITION` 409 | none |
+| 28 | `resultProfile` on a flow target **(Designed — ADR-165)** | route allow-list (`refuseUnsupportedDelegationOption`), pre-lookup | `CONFIG` 422 | none |
+| 29 | `resultProfile` with `persistent: true` **(Designed — ADR-165)** | route refinement (allow-list: `resultProfile` iff agent ∧ ¬persistent) | `CONFIG` 422 | none |
+| 30 | `resultProfile` not a key of the parent's pinned `flow_revisions.result_profiles` **(Designed — ADR-165)** | `resolveResultProfile` | `CONFIG` 422 | none |
+| 31 | `resultProfile` while the parent flow's `engine_min < 3.7.0` **(Designed — ADR-165)** | `resolveResultProfile` | `CONFIG` 422 | none |
+| 32 | effective depth reached (`min(env, root.maxDepth, parent.maxDepth)`) **(Designed — ADR-165)** | `admitDelegatedChild`, under the lock | `CONFIG` 422 | none |
+| 33 | effective fan-out reached (`min(env, parent.maxFanout)`) **(Designed — ADR-165)** | `admitDelegatedChild`, under the lock | `CONFIG` 422 | none |
+| 34 | an ancestor's child-count budget exhausted (`subtree(ancestor) + incoming > ancestor.budget.maxChildRuns`) **(Designed — ADR-165)** | `admitDelegatedChild`, recursive CTE per ancestor | `CONFIG` 422 naming the ancestor | none |
 
 ### Shared dispatchers that branch on `run_kind`
 
@@ -500,6 +511,109 @@ none, so all three are covered by ONE helper, `admitDelegatedChild()`, called at
    worktree for an obviously over-cap request. It is never the decision: a
    count taken in a transaction that commits before the run exists is a
    read, not a mutex.
+
+## Bounds and budgets (Designed — ADR-165)
+
+Node-level bounds have parsed since ADR-098 and been ignored ever since:
+`admitDelegatedChild` reads the env ceilings only. They go **live behind an
+engine floor**, so no shipped manifest changes behaviour.
+
+### Effective bounds
+
+```
+engine_min <  3.7.0  →  { source: "env",  maxDepth: env.depth, maxFanout: env.fanout,
+                          maxActiveChildren: null, budget: null }
+
+engine_min >= 3.7.0  →  { source: "node",
+                          maxDepth:          min(MAISTER_ORCHESTRATOR_MAX_DEPTH,   max_depth  ?? 2),
+                          maxFanout:         min(MAISTER_MAX_ORCHESTRATOR_FANOUT,  max_fanout ?? 6),
+                          maxActiveChildren: min(poolCap(kind),  max_active_children ?? 3),
+                          budget:            node.budget }        // required, complete
+```
+
+`settings.delegation` gains `max_active_children?` and, for an orchestrator node
+in a `>= 3.7.0` manifest, a REQUIRED and complete
+`budget { max_tokens, wall_clock_minutes, max_child_runs, consecutive_failures }`
+(load refusal R10). No new environment variable is introduced.
+
+### Snapshot
+
+The effective bounds are written to `runs.delegation_bounds` on the
+**orchestrator run** at the token-issuance site, keyed by `nodeAttemptId`, and
+rewritten only when the active node **attempt** changes. Admission reads the
+parent's and the ancestors' snapshots; a NULL snapshot means env-only. Changing
+an environment ceiling after the snapshot cannot change a running tree's bounds —
+that is the guarantee, not a side effect.
+
+### Where each budget binds
+
+| Budget | Binds at | Metered by |
+| --- | --- | --- |
+| `max_child_runs` | **every ancestor** | `admitDelegatedChild` — a recursive CTE over `parent_run_id` (all statuses) per ancestor with the key set, under the per-orchestrator lock |
+| `max_tokens` | the tree **root** | the ADR-101 keep-alive budget sweeper, min-merged with the policy's `tree.maxTokens` |
+| `wall_clock_minutes` | the tree **root** | same sweeper |
+| `consecutive_failures` | the tree **root** | same sweeper |
+
+On a nested orchestrator the spend/time/failure budgets are **recorded and not
+metered** (residual R-nested). A flow launched as a child obeys the root's.
+
+### Active-children concurrency is a queue, not a refusal
+
+A child whose parent already has `maxActiveChildren` siblings in
+`SLOT_HOLDING_RUN_STATUSES` (`Running | NeedsInput | HumanWorking`) stays
+`Pending`. `tryStartRun` and `promoteNextPending` skip it exactly the way
+`sharedWriterSiblingActive` already does, and `run_delegate` reports the outcome
+additively as `status: "Pending" | "Running"`. Every settle path calls
+`promoteNextPending`, so a queued child always has a re-promotion edge.
+
+## `run_collect` contract (Designed — ADR-165)
+
+`POST /api/v1/ext/runs/collect` serves the **public result plane**
+([`run-results.md`](run-results.md)), not scavenged text.
+
+- **Direct children only.** A row is served iff `parent_run_id = <bound run>` AND
+  `project_id = <token project>`. A grandchild is invisible under `all: true` and
+  a named grandchild is refused `PRECONDITION` 409 — existence-hidden, the same
+  message as any mismatch.
+- **Idempotent.** Two consecutive collects return byte-identical bodies;
+  `first_collected_at` is stamped exactly once per `valid` row, in a transaction
+  before the response.
+- **Engine-derived artifacts.** `artifacts[]` is projected from
+  `artifact_instances` (LIVE), never from a request payload; each item carries
+  `nodeId` and `validity`. A payload naming a fake artifact id changes nothing.
+- **Stale token.** A token whose bound orchestrator is terminal is refused
+  `PRECONDITION` 409 by `resolveActiveBoundRun`.
+- **Result fields.** `settled`, `resultStatus` (7 values), `result`
+  (`{schemaRef, value}`, null unless `valid`), `resultRevision`, `resultFailure`.
+  `outputText` is deprecated and now deterministic
+  (`ORDER BY created_at DESC LIMIT 1`); the untruthful `"unknown"` status
+  fallback is removed.
+
+### Wake invariant
+
+A parent in `WaitingOnChildren` is woken by `orchestrator_resume` on exactly
+`run.review` (cause-tagged), `run.done` (including `completion: "result_only"`),
+`run.failed`, `run.crashed` and `run.abandoned`, routed by `payload.parentRunId`.
+
+> The child's `run_results` row — valid or invalid — is committed in the SAME
+> transaction as the settle flip that emits the event, so a woken parent's
+> `run_collect` never observes a half-published result.
+
+### Coordinator contract in the reference harness
+
+The reference RAH graph ([`run-results.md`](run-results.md) §Process flows (f))
+makes the coordinator's job **collect only**:
+
+- Research **flow** children declare `result.export` and finish `Done` by
+  result-only completion — nobody has to promote or archive them.
+- Research **agent** children are launched read-only (`workspace: repo_read`)
+  with a `resultProfile`; their result is published in the finalize transaction.
+- The coordinator's completing turn publishes the REDUCED result including
+  `consumedChildRunIds`, and the single worktree writer is a downstream
+  `ai_coding` node — never a child.
+- Hidden adapter subagents are excluded structurally: `enforcement.tools: strict`
+  plus a `tools` allow-list omitting the subagent tool, enforced by
+  `capability_guard` ([`guardrail-hooks.md`](guardrail-hooks.md)).
 
 ## Expectations
 

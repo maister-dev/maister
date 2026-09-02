@@ -284,6 +284,20 @@ E1–E12 invariants.)
 - A `tree`-scope breach MUST cascade-terminate the whole run-tree
   (`cascadeAbandonRunTree`, one transaction) then flip the root; tree scope has
   NO escalate rung.
+- (Designed — ADR-165) **Tree-budget min-merge with the orchestrator node's
+  declaration.** When the ROOT run carries `delegation_bounds.budget`, the
+  effective tree limit for tokens, wall-clock and consecutive failures MUST be
+  `min(policy tree limit, root.delegation_bounds.budget.<x>)`; the hard ceiling
+  keeps deriving from the effective limit through
+  `MAISTER_BUDGET_HARD_MULTIPLIER`. The disposition is unchanged
+  (terminate-cascade, no escalate rung), and budget logs record
+  `limitSource ∈ {policy, node, min}`. Spend, time and failure budgets bind at the
+  tree **root only** — a nested orchestrator's `budget` is recorded on its own
+  `runs.delegation_bounds` and never metered (residual R-nested).
+- (Designed — ADR-165) `delegation.budget.max_child_runs` is NOT part of this
+  ladder: it is a **count** budget enforced at admission, under the
+  per-orchestrator lock, at EVERY ancestor. See
+  [`orchestrator.md`](orchestrator.md) §Bounds and budgets.
 - `task` token spend MUST equal the SUM of the four token columns over all
   `runs WHERE task_id = T`; `task.consecutiveFailures` is the trailing streak of
   `Failed | Crashed | Abandoned` runs for the task.

@@ -186,9 +186,23 @@ sequenceDiagram
         R->>DB: markNodeFailed PRECONDITION and set run Failed
     else ready
         Ev-->>R: ready
-        R->>DB: set run Review
+        alt valid public result and clean workspace (ADR-165)
+            Ev-->>R: ready
+            R->>DB: set run Done (result-only completion)
+        else
+            Ev-->>R: ready
+            R->>DB: set run Review
+        end
     end
 ```
+
+The **ADR-165 result-only completion** exit sits strictly INSIDE the ready
+branch: `assertEvidenceReady(runId, "review")` runs before it and is unchanged,
+so a run with a failing blocking gate can never reach `Done` this way. A required
+`result.export` with no `valid` row is a separate refusal in the same branch
+(`Failed`, `MaisterError("CONFIG")`) — readiness is not consulted for it, because
+it is a contract failure, not missing evidence. See
+[`run-results.md`](run-results.md).
 
 The legacy `artifactEnforcementActive` (engine `1.2.0`) guard around this call is removed:
 enforcement now applies to **all** graph flows. The merge phase reuses the same

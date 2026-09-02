@@ -86,6 +86,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `repo_delivery_rollups`                | **(ADR-134 — Implemented, migration `0098`)** Cached, path-cleaned daily target-branch delivery denominator, written only by the scheduled repository scanner and read by project Observatory.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `projects.id`                                                                                                                                     |
 | `gate_results`                         | **(Designed, migration `0010`)** Gate execution verdicts (`command_check`/`ai_judgment`/`human_review`/…).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `runs.id`, `node_attempts.id`                                                                                                                     |
 | `consensus_round_verdicts`             | **(Implemented, migration `0070`)** Per-round cross-verification verdict ledger for `consensus` nodes. Unique by node attempt, round, verifier, and target; malformed verifier output is persisted as failed-closed disagree evidence.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | `runs.id`, `node_attempts.id`                                                                                                                     |
+| `run_results`                 | **(Designed — ADR-165, migration `0129`)** Public run-result ledger — one row per result REVISION (including `invalid` rows) for any run kind. Engine-owned identity (schema, producer, attempt, revision), validity FSM (`valid`/`stale`/`superseded`/`invalid`), supersession chain, publish-time artifact manifest, first-collected marker. At most one `valid` row per run. | `runs.id`, `node_attempts.id`, self-ref `superseded_by_id` |
 | `artifact_instances`                   | **(Implemented, migration `0015`)** Typed evidence index (diff/log/report/judgment/note/commit_set/checkpoint/preview/plan; + `mutation_report`, ADR-074 — text column, no migration). Deterministic upsert PK.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | `runs.id`, `node_attempts.id`, self-ref `superseded_by_id`                                                                                        |
 | `artifact_projection_cursors`          | **(Implemented, migration `0015`)** One projector cursor per run over `run.events.jsonl`. UNIQUE `(run_id, scope)`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `runs.id`                                                                                                                                         |
 | `hitl_requests`                        | HITL prompts emitted during a run (the graph engine adds review-decision columns).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `runs.id`                                                                                                                                         |
@@ -2275,6 +2276,79 @@ reference and must not expose absolute filesystem roots. Indexes:
 The profile row is the launch-time snapshot. It is resolved from platform,
 project, and trusted Flow-package catalogs before the supervisor session starts.
 The `UNIQUE (runId)` constraint supports session recovery and detail views.
+
+## `run_results` (Designed — ADR-165, migration `0129`)
+
+The **public result plane**: one row per result REVISION of a run, independent of
+run kind. `invalid` rows are first-class — they are the ONE durable source for a
+`resultFailure` reason. Domain doc:
+[`system-analytics/run-results.md`](system-analytics/run-results.md).
+
+```sql
+CREATE TABLE "run_results" (
+  "id" text PRIMARY KEY,
+  "run_id" text NOT NULL REFERENCES "runs"("id") ON DELETE CASCADE,
+  "revision" integer NOT NULL,
+  "validity" text NOT NULL,
+  "schema_ref" text NOT NULL,
+  "schema_sha256" text NOT NULL,
+  "schema_version" integer NOT NULL,
+  "producer_kind" text NOT NULL,
+  "producer_ref" text NOT NULL,
+  "node_attempt_id" text REFERENCES "node_attempts"("id") ON DELETE SET NULL,
+  "value" jsonb,
+  "value_bytes" integer NOT NULL,
+  "invalid_reason" text,
+  "artifact_manifest" jsonb NOT NULL DEFAULT '[]'::jsonb,
+  "engine_version" text NOT NULL,
+  "superseded_by_id" text REFERENCES "run_results"("id") ON DELETE SET NULL,
+  "superseded_at" timestamp with time zone,
+  "first_collected_at" timestamp with time zone,
+  "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT "run_results_validity_check" CHECK ("validity" IN ('valid','stale','superseded','invalid')),
+  CONSTRAINT "run_results_producer_kind_check" CHECK ("producer_kind" IN ('flow_node','agent_session')),
+  CONSTRAINT "run_results_value_shape_check" CHECK (("validity" = 'invalid') = ("value" IS NULL)),
+  CONSTRAINT "run_results_invalid_reason_check" CHECK (("validity" = 'invalid') = ("invalid_reason" IS NOT NULL)),
+  CONSTRAINT "run_results_run_revision_uq" UNIQUE ("run_id", "revision")
+);
+CREATE UNIQUE INDEX "run_results_one_valid_per_run_uq" ON "run_results" ("run_id") WHERE "validity" = 'valid';
+CREATE INDEX "run_results_run_idx" ON "run_results" ("run_id");
+```
+
+- `validity` ∈ `valid | stale | superseded | invalid`. `invalid` and `superseded`
+  are terminal. `run_results_one_valid_per_run_uq` is the backstop that makes "at
+  most one current result per run" a database fact, not a convention.
+- `run_results_value_shape_check` and `run_results_invalid_reason_check` encode
+  the mutual exclusion: an `invalid` row NEVER carries a value and ALWAYS carries
+  a reason; any other validity is the exact inverse.
+- `invalid_reason` ∈ `result_missing | malformed_json | oversize | unsafe_key |
+  depth_limit | key_limit | array_limit | schema_mismatch` (application-level;
+  not a DB CHECK, so the ADR-162 limit classes can grow without a migration).
+- `producer_ref` is the flow node id for `producer_kind='flow_node'` and
+  `'session:default'` for `'agent_session'`.
+- `schema_ref` is `<flowRefId>@<resolvedRevision[:12]>:<schemaStem>`;
+  `schema_sha256` hashes the schema document's exact bytes, so a schema edited
+  under a stable package ref is detectable after the fact.
+- `artifact_manifest` is the engine artifact manifest **at publish** (audit).
+  `run_collect.artifacts` is deliberately the LIVE manifest instead.
+- `first_collected_at` is write-once: `markRunResultCollected` uses
+  `WHERE first_collected_at IS NULL`, so repeated collects never move it.
+- **Completion time is not duplicated** — it is `runs.ended_at`, joined.
+- Rows CASCADE with the run. There is no backfill: absence of rows means "no
+  result", exactly as for a pre-feature run.
+
+### `runs` and `flow_revisions` columns added by migration `0129`
+
+| Column | Type | NULL means |
+| --- | --- | --- |
+| `runs.result_contract` | `jsonb` | no public result contract (scratch, manual, pre-feature, or a flow without `result.export`) |
+| `runs.delegation_bounds` | `jsonb` | env-only bounds (pre-3.7.0 manifest, or no orchestrator node has started) |
+| `flow_revisions.result_profiles` | `jsonb` | the package declares no `result_profiles` |
+
+All three are additive and nullable with **no backfill**; the migration performs
+no DROP and no re-key, so live data is untouched. TypeScript shapes:
+`RunResultContract`, `DelegationBounds`, `ResultProfileMap` in
+`web/lib/run-results/types.ts`, applied as Drizzle `$type<>()` on the columns.
 
 ## `node_attempts`
 
