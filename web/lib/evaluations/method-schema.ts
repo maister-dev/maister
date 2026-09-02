@@ -42,12 +42,24 @@ export type ScalarAggregationAlgorithm =
 // operator-configured trusted host check profiles. Build/test/lint runs only
 // through a pre-registered host `trusted_host_check@1` profile whose command
 // and sandbox are platform-owned — the method only NAMES the profile.
+// ADR-165 adds the recursive-harness measures. They read tree-scoped recorded
+// facts (`ObjectiveFactSource.tree`) and, like every provider here, execute
+// nothing.
 export const OBJECTIVE_CHECK_PROVIDERS = [
   "gate_result@1",
   "artifact_completeness@1",
   "schema_contract@1",
   "diff_stats@1",
   "trusted_host_check@1",
+  "child_run_count@1",
+  "result_validation_failures@1",
+  "collected_results_ratio@1",
+  "consumed_results_ratio@1",
+  "rework_count@1",
+  "crash_count@1",
+  "tree_tokens@1",
+  "tree_wall_clock_minutes@1",
+  "promotion_readiness@1",
 ] as const;
 export type ObjectiveCheckProvider = (typeof OBJECTIVE_CHECK_PROVIDERS)[number];
 

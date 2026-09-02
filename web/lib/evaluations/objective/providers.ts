@@ -25,6 +25,36 @@ export interface ObjectiveFactSource {
   // Operator-registered trusted host check profiles (platform-owned). A named
   // profile absent here → the check is `unavailable`, never PASS.
   registeredHostProfiles?: Set<string>;
+  // ADR-165: the participant's RUN TREE, as recorded facts. Absent for a
+  // participant that is not a tree root — the harness measures are then
+  // `unavailable`, which is what makes a flat arm and a harness arm comparable
+  // without inventing zeroes for the flat one.
+  tree?: ObjectiveTreeFacts;
+}
+
+/**
+ * Tree-scoped facts for the ADR-165 measures. Every field is a RECORDED value
+ * read by the execution layer — ids rather than counts where a measure is an
+ * INTERSECTION, because "did the parent use the results?" cannot be answered
+ * from two totals.
+ */
+export interface ObjectiveTreeFacts {
+  /** Descendants at any depth (recursive over `parent_run_id`). */
+  childRunCount: number;
+  /** `run_results` rows with `validity='invalid'` over the tree. */
+  invalidResultCount: number;
+  /** Children holding a `valid` result row — the denominator of both ratios. */
+  validResultChildRunIds: string[];
+  /** Of those, the ones the engine actually SERVED (`first_collected_at`). */
+  collectedChildRunIds: string[];
+  /** The root result's SELF-REPORTED `consumedChildRunIds`, verbatim. */
+  consumedChildRunIds: string[];
+  reworkCount: number;
+  crashCount: number;
+  treeTokens: number;
+  treeWallClockMinutes: number;
+  /** The readiness classifier's recorded state, or null when none. */
+  promotionReadiness: string | null;
 }
 
 export interface ObjectiveCheckSpec {
@@ -172,6 +202,72 @@ function trustedHostCheck(
   };
 }
 
+// --- ADR-165: the recursive-harness measures --------------------------------
+//
+// All nine are METRIC providers: they record what happened, never a verdict on
+// it. "Is 6 children too many?" is a judging question, and answering it here
+// would put a threshold nobody agreed to inside a fact.
+
+const NO_TREE = "no recorded run-tree facts for this participant";
+
+/** A measured tree value, or `unavailable` when the tree facts are absent. */
+function treeMetric(
+  facts: ObjectiveFactSource,
+  measure: (tree: ObjectiveTreeFacts) => ObjectiveCheckOutcome,
+): ObjectiveCheckOutcome {
+  return facts.tree
+    ? measure(facts.tree)
+    : { status: "unavailable", reason: NO_TREE };
+}
+
+function counted(
+  value: number,
+  key: string,
+  unit: string,
+): ObjectiveCheckOutcome {
+  return { status: "passed", metric: { value: { [key]: value }, unit } };
+}
+
+/**
+ * `hits ÷ validResultChildRunIds`, as a measured ratio.
+ *
+ * A denominator of zero is `unavailable`, NOT 0: no valid results means the
+ * ratio is undefined, and recording it as 0 would rank a tree that produced
+ * nothing to collect below one that collected everything it had.
+ */
+function resultRatio(
+  tree: ObjectiveTreeFacts,
+  hitIds: string[],
+  key: "collected" | "consumed",
+): ObjectiveCheckOutcome {
+  const valid = new Set(tree.validResultChildRunIds);
+
+  if (valid.size === 0) {
+    return {
+      status: "unavailable",
+      reason:
+        "no child holds a valid result — the ratio is undefined, not zero",
+    };
+  }
+
+  // The INTERSECTION is the point (ADR-165): an id the parent names but that
+  // holds no valid row — a fabricated one — contributes nothing, and a
+  // duplicate contributes once.
+  const hits = new Set(hitIds.filter((id) => valid.has(id)));
+
+  return {
+    status: "passed",
+    metric: {
+      value: {
+        [key]: hits.size,
+        valid: valid.size,
+        ratio: hits.size / valid.size,
+      },
+      unit: "ratio",
+    },
+  };
+}
+
 // Evaluate one closed provider against the recorded facts. An unknown provider
 // is a typed CONFIG-shaped guard (the method schema already closes the set, but
 // the runtime dispatch stays exhaustive so a new enum value can never silently
@@ -191,6 +287,46 @@ export function evaluateObjectiveCheck(
       return diffStats(facts);
     case "trusted_host_check@1":
       return trustedHostCheck(spec, facts);
+    case "child_run_count@1":
+      return treeMetric(facts, (t) =>
+        counted(t.childRunCount, "count", "count"),
+      );
+    case "result_validation_failures@1":
+      return treeMetric(facts, (t) =>
+        counted(t.invalidResultCount, "count", "count"),
+      );
+    case "collected_results_ratio@1":
+      return treeMetric(facts, (t) =>
+        resultRatio(t, t.collectedChildRunIds, "collected"),
+      );
+    case "consumed_results_ratio@1":
+      return treeMetric(facts, (t) =>
+        resultRatio(t, t.consumedChildRunIds, "consumed"),
+      );
+    case "rework_count@1":
+      return treeMetric(facts, (t) => counted(t.reworkCount, "count", "count"));
+    case "crash_count@1":
+      return treeMetric(facts, (t) => counted(t.crashCount, "count", "count"));
+    case "tree_tokens@1":
+      return treeMetric(facts, (t) =>
+        counted(t.treeTokens, "tokens", "tokens"),
+      );
+    case "tree_wall_clock_minutes@1":
+      return treeMetric(facts, (t) =>
+        counted(t.treeWallClockMinutes, "minutes", "minutes"),
+      );
+    case "promotion_readiness@1":
+      return treeMetric(facts, (t) =>
+        t.promotionReadiness === null
+          ? {
+              status: "unavailable",
+              reason: "no recorded readiness classification",
+            }
+          : {
+              status: "passed",
+              metric: { value: { state: t.promotionReadiness }, unit: "state" },
+            },
+      );
     default: {
       const exhaustive: never = spec.provider;
 

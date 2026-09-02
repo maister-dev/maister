@@ -8,6 +8,7 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import { artifactInstances, gateResults } from "@/lib/db/schema";
+import { loadObjectiveTreeFacts } from "@/lib/evaluations/objective/tree-source";
 
 const log = pino({
   name: "evaluations-objective-source",
@@ -113,11 +114,20 @@ export async function loadObjectiveFactSource(
     );
   }
 
+  // ADR-165: tree facts for a participant that IS a tree root. A flat arm
+  // (`single-agent`, `externalized-context`) has no tree, so the harness
+  // measures report `unavailable` — the honest answer, and the one that keeps a
+  // flat arm from being ranked as a harness that produced nothing.
+  const tree = await loadObjectiveTreeFacts(args.runId, d);
+
+  if (tree) source.tree = tree;
+
   log.debug(
     {
       runId: args.runId,
       gateVerdicts: source.gateResults?.length ?? 0,
       artifactChecked: Boolean(args.requiredArtifactDefIds?.length),
+      treeChildRunCount: tree?.childRunCount ?? null,
     },
     "objective fact source loaded",
   );

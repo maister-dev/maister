@@ -640,7 +640,7 @@ project-admin action rather than introducing a new one: a standardized recipe
   drop migration — which executes before the app accepts traffic, closing the
   window.
 
-## Recursive-harness comparison protocol (Designed — ADR-165)
+## Recursive-harness comparison protocol (Implemented — ADR-165)
 
 The question the Lab answers: **does a governed recursive harness beat a flat
 agent on the same task, and at what cost?** Four arms, nine measures, one Study.
@@ -671,13 +671,46 @@ Every provider reads RECORDED facts (ADR-143 D11) — none executes anything.
 | crash count | `crash_count@1` | `Crashed` runs over the tree |
 | tree tokens | `tree_tokens@1` | the `root_run_id`-scoped token roll-up |
 | tree wall-clock | `tree_wall_clock_minutes@1` | earliest descendant `started_at` → latest `coalesce(ended_at, now())` |
-| promotion readiness | `promotion_readiness@1` | the readiness classifier's recorded state |
+| promotion readiness | `promotion_readiness@1` | `assertEvidenceReady(root, "merge")` — the SAME classifier the merge guard consults |
 
 "Did the parent USE the results?" is deliberately the **intersection** of an
 engine marker (`first_collected_at` — the engine knows it served the row) and a
 self-report (`consumedChildRunIds` — the agent claims it read the row). Either
 alone is gameable: the engine cannot see reasoning, and the agent can name an id
 it never received.
+
+### As-built
+
+- The nine providers live in `web/lib/evaluations/objective/providers.ts`,
+  registered in the one closed set (`method-schema.ts`
+  `OBJECTIVE_CHECK_PROVIDERS`). Every arm is a METRIC provider: it records what
+  happened, never a verdict on it — "is six children too many?" is a judging
+  question, and answering it in a provider would bury an unagreed threshold
+  inside a fact.
+- The facts come from ONE recursive CTE over `parent_run_id`
+  (`objective/tree-source.ts`), loaded per participant by
+  `loadObjectiveFactSource`. Nine separate queries would be nine chances for the
+  arms to disagree about what "the tree" is, and a comparison whose measures
+  describe different trees compares nothing.
+- **Absence is `unavailable`, never `0`.** A participant with no tree (the two
+  flat arms) reports `unavailable` for every harness measure, and a ratio with a
+  zero denominator is undefined rather than zero — scoring "no data" as 0 would
+  rank a tree that produced nothing to collect below one that collected
+  everything it had.
+- The ratios intersect on RUN IDS, not counts: an id the root names that holds
+  no valid row contributes nothing, and a duplicated id counts once.
+- `METRICS_FORMULA_VERSION` is unchanged at `1` — adding providers changes no
+  existing formula. No UI change was needed: nothing outside the provider set
+  and its dispatch enumerates providers, so the Lab surfaces new metrics
+  generically.
+
+### Recipes
+
+The four arms are the four in-repo fixture flows under `web/test-fixtures/rah/`
+(`single-agent`, `externalized-context`, `rah-root-d1`, `rah-root-d2`), run
+through the existing controlled-launch recipe / preflight / batch machinery. The
+companion package (`maister-plugins/packages/rah`) carries the same graphs with
+production prompts for real Studies.
 
 ### Replicates and verdicts
 

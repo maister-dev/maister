@@ -557,11 +557,11 @@ No AI co-author trailer (repo convention).
 
 ### Phase 10 — Evaluation Lab
 
-- [ ] **T10.1 — Objective providers (F15 seams; Q7-C).** RED: AC-39 (pure arms). GREEN: `OBJECTIVE_CHECK_PROVIDERS` + `ObjectiveFactSource.tree?` + exhaustive arms: `child_run_count@1`, `result_validation_failures@1` (invalid rows incl. `result_missing` over the tree), `collected_results_ratio@1` (`first_collected_at` set ÷ valid child rows), `consumed_results_ratio@1` (root result `consumedChildRunIds` ∩ children with a `valid` row ÷ valid child rows — fabricated ids excluded), `rework_count@1`, `crash_count@1`, `tree_tokens@1`, `tree_wall_clock_minutes@1`, `promotion_readiness@1`. All read recorded facts (ADR-143 D11).
+- [x] **T10.1 — Objective providers (F15 seams; Q7-C).** RED: AC-39 (pure arms). GREEN: `OBJECTIVE_CHECK_PROVIDERS` + `ObjectiveFactSource.tree?` + exhaustive arms: `child_run_count@1`, `result_validation_failures@1` (invalid rows incl. `result_missing` over the tree), `collected_results_ratio@1` (`first_collected_at` set ÷ valid child rows), `consumed_results_ratio@1` (root result `consumedChildRunIds` ∩ children with a `valid` row ÷ valid child rows — fabricated ids excluded), `rework_count@1`, `crash_count@1`, `tree_tokens@1`, `tree_wall_clock_minutes@1`, `promotion_readiness@1`. All read recorded facts (ADR-143 D11).
   *Satisfies*: REQ-11. (depends on Phase 9)
-- [ ] **T10.2 — Fact population + persistence.** GREEN: `objective/execute.ts` (`ParticipantFacts.tree` via one recursive CTE) → `evaluation_metric_results`; `METRICS_FORMULA_VERSION` bump if any formula changes; the comparison view renders the new metrics generically.
-- [ ] **T10.3 — Protocol doc as-built.** `evaluations.md` §RAH protocol flipped `(Implemented)`; recipes over `single-agent`, `externalized-context`, `rah-root-d1`, `rah-root-d2`; the nine measures → providers/verdict mapping (human corrections = superseding verdicts; objective gate success = `gate_result@1`); replicate policy; human-verdict rule (ADR-147).
-- [ ] **T10.4 — Provider tests GREEN (AC-39)** — `providers.test.ts` (one row per arm) + `tree-facts.integration.test.ts` (seeded tree, exact values).
+- [x] **T10.2 — Fact population + persistence.** GREEN: `objective/execute.ts` (`ParticipantFacts.tree` via one recursive CTE) → `evaluation_metric_results`; `METRICS_FORMULA_VERSION` bump if any formula changes; the comparison view renders the new metrics generically.
+- [x] **T10.3 — Protocol doc as-built.** `evaluations.md` §RAH protocol flipped `(Implemented)`; recipes over `single-agent`, `externalized-context`, `rah-root-d1`, `rah-root-d2`; the nine measures → providers/verdict mapping (human corrections = superseding verdicts; objective gate success = `gate_result@1`); replicate policy; human-verdict rule (ADR-147).
+- [x] **T10.4 — Provider tests GREEN (AC-39)** — `providers.test.ts` (one row per arm) + `tree-facts.integration.test.ts` (seeded tree, exact values).
 
 **Phase 10 exit** — suite green.
 
