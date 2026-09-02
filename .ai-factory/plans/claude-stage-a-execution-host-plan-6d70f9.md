@@ -785,7 +785,7 @@ on** · **Logging/Failure** · **Acceptance**. "Suite green" = the package's
 
 ### Phase 2 — Supervisor host substrate
 
-- [ ] **T2.1 Host state store + identity bootstrap + `/health.host`.**
+- [x] **T2.1 Host state store + identity bootstrap + `/health.host`.**
   Spec: D1; E-EH-01 (host side); X-EH-01, X-EH-03.
   RED (supervisor `integration`, `supervisor/src/__tests__/host-identity.integration.test.ts`):
   H1 fresh state dir → key matches the regex, `/health.host` returns it with a `bootId`;
@@ -803,7 +803,7 @@ on** · **Logging/Failure** · **Acceptance**. "Suite green" = the package's
   Depends on: T0.4. Logging: `execution-host-identity {hostKey, bootId}`;
   fatal `execution-host-key-conflict`. Acceptance: H1–H7 green; existing
   `main-wiring.test.ts` updated; supervisor suites green.
-- [ ] **T2.2 Envelope, fence enforcement, receipts, `GET /commands/:id`, typed error details.**
+- [x] **T2.2 Envelope, fence enforcement, receipts, `GET /commands/:id`, typed error details.**
   Spec: D3, D4, D6; E-EH-03, E-EH-04, E-EH-05; X-EH-04..09, X-EH-19, X-EH-21.
   RED (supervisor `integration`, `execution-fence.integration.test.ts`, fixture `mock-acp-lifecycle.mjs`; every assertion checks `details.reason` or a state, never only the status code):
   F1 enveloped create with epoch 1 → 201, `run_fences` row persisted (read via the store API);
@@ -831,7 +831,7 @@ on** · **Logging/Failure** · **Acceptance**. "Suite green" = the package's
   one `sendSupervisorError(reply, err)` path for `details`.
   Depends on: T2.1. Logging: `debug` fence compare; `info` eviction; `warn`
   legacy-unfenced. Failure: per D6. Acceptance: F1–F8, R1–R6 green; suites green.
-- [ ] **T2.3 Workspace registry, adoption routes, handle-based session create.**
+- [x] **T2.3 Workspace registry, adoption routes, handle-based session create.**
   Spec: D7; E-EH-08, E-EH-09; X-EH-10..13.
   RED (supervisor `integration`, `workspace-adoption.integration.test.ts`; positive cases FIRST — patch rule 2026-08-06-19.10):
   W1 valid `git_worktree` (real `git worktree add` under a temp root passed as `MAISTER_WORKSPACE_ROOTS`) → 200 `{executionWorkspaceId, kind, replayed:false}`; re-adopt → same id, `replayed:true`;
@@ -857,7 +857,7 @@ on** · **Logging/Failure** · **Acceptance**. "Suite green" = the package's
   `lifecycle`, `m8-resume-spike`, `guardrail-interceptor`, `mcp-forwarding`,
   `adapter-compatibility` integration tests migrated to adopt-then-create;
   suites green; **Commit 3**.
-- [ ] **T2.4 `session.command` events + prompt receipts + fenced exit reason.**
+- [x] **T2.4 `session.command` events + prompt receipts + fenced exit reason.**
   Spec: D5; E-EH-10 (host half); X-EH-15, X-EH-19.
   RED (extend `command-receipts.integration.test.ts`):
   S1 a prompt turn emits `session.command{phase:"accepted"}` then `{phase:"completed", status:"succeeded", result:{stopReason}}` with strictly increasing `monotonicId`, both lines present in `run.events.jsonl`;
@@ -869,7 +869,7 @@ on** · **Logging/Failure** · **Acceptance**. "Suite green" = the package's
   (parse only).
   REFACTOR: one `emitCommandEvent(entry, phase, …)` helper.
   Depends on: T2.2. Acceptance: S1–S3, P1 green; suites green.
-- [ ] **T2.5 Contract parity + validators.** Update OpenAPI/AsyncAPI examples to
+- [x] **T2.5 Contract parity + validators.** Update OpenAPI/AsyncAPI examples to
   payloads captured by F1/W1/S1 (Appendix D §D.4 makes them fixtures);
   `scripts/validate-contracts.mjs` resolves the new `$ref`s; the mirrors check
   (`scripts/validate-adapter-mirrors.ts`) reviewed for `SessionRecord`.
@@ -1444,6 +1444,30 @@ Appendix A.3.
   integration green except `repair-trusted-package-flow-enablement`
   (`migration 0103 …`), which fails IDENTICALLY on main `73fa99915` —
   pre-existing, quarantine-by-name for T7.1's set diff.
+- **2026-09-02 Phase 2 supervisor substrate (T2.1–T2.5) — DONE, Commit 3.**
+  `host-state.ts` (node:sqlite, WAL; `openHostState` mints/pins/refuses;
+  `inMemory` for route-only boots), `execution-fence.ts` (rules in order +
+  lower-epoch eviction, legacy epoch-less sessions never evicted),
+  `command-receipts.ts` (replay/join/turn_lost; `accepted` receipt written for
+  EVERY kind before execution; write failure → 500 `ACP_PROTOCOL`),
+  `workspace-roots.ts` + `workspace-registry.ts` (`resolveForSession` is the
+  ONE path-derivation site — `legacyResolution` reproduces the pre-ADR-164
+  bytes; handles keyed `(runId, realpath)` but `cwd` keeps the lexical path
+  the web passed, so W7 is byte-identical on macOS `/tmp`), `http-api.ts`
+  pipeline `parseCommandBody → applyFence/evict → receipts.execute →
+  session.command`. Findings: (1) the checkpoint route must VALIDATE the body
+  before the session lookup (a unit test pins 409-before-404); (2) post-terminal
+  `session.command{completed}` (checkpoint/delete) is appended straight to
+  `run.events.jsonl` because the registry closes the writer on
+  `session.exited` — `EventsLogWriter.isClosed()` added; (3) a killed child
+  rejects its pending ACP prompt, so the evicted prompt maps to `FENCED`
+  without any SDK change (F6 uses the new `--hang-prompt` fixture flag); (4)
+  Zod shape-validates adopt paths only — the registry owns the rule tokens
+  (`relative_path`/`parent_segment` were being pre-empted by the old absolute
+  refinement); (5) `SendPromptStopReason += cancelled` already lived in the
+  code (`/cancel`). Suites: supervisor unit 413/413, integration 129/129 (17
+  files incl. H1–H7, F1–F8, R1–R6, S1–S3, W1–W9), `openapi-examples` 7/7; lint
+  warnings identical to main's baseline set (11 untouched files).
 
 ---
 

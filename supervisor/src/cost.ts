@@ -55,6 +55,8 @@ export type AttachCostOptions = {
   // M8 T13: true when the session was spawned via `--resume <id>`.
   // Stamped onto every appended cost.jsonl record. Default false.
   resumed?: boolean;
+  // ADR-164: absolute cost.jsonl path resolved from the adopted workspace.
+  costPath?: string;
 };
 
 export type CostHandle = {
@@ -63,14 +65,18 @@ export type CostHandle = {
 };
 
 export async function attachCost(opts: AttachCostOptions): Promise<CostHandle> {
-  const costPath = resolve(
-    opts.runtimeRoot,
-    ".maister",
-    opts.projectSlug,
-    "runs",
-    opts.runId,
-    "cost.jsonl",
-  );
+  // ADR-164: the resolved workspace owns every run-dir path; the legacy
+  // derivation stays for callers that still pass the raw segments.
+  const costPath =
+    opts.costPath ??
+    resolve(
+      opts.runtimeRoot,
+      ".maister",
+      opts.projectSlug,
+      "runs",
+      opts.runId,
+      "cost.jsonl",
+    );
 
   await mkdir(dirname(costPath), { recursive: true });
   const stream = createWriteStream(costPath, { flags: "a" });

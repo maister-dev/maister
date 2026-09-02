@@ -21,7 +21,7 @@ export const SESSION_EVENT_CHANNEL = "session.event";
 // graceful checkpoint). Heartbeat reads this on the child's `exit`
 // event and propagates it onto `session.exited.reason` so the web tier
 // can distinguish operator-cancel runs from sweeper-driven checkpoints.
-export type IntentionalReason = "intentional" | "checkpoint";
+export type IntentionalReason = "intentional" | "checkpoint" | "fenced";
 
 export type RegistryEntry = {
   record: SessionRecord;

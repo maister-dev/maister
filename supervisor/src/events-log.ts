@@ -11,6 +11,7 @@ export type EventsLogWriter = {
   close(): Promise<void>;
   bytesWritten(): number;
   path(): string;
+  isClosed(): boolean;
 };
 
 export type OpenEventsLogOptions = {
@@ -89,6 +90,9 @@ export async function openEventsLog(
     },
     path(): string {
       return path;
+    },
+    isClosed(): boolean {
+      return closed;
     },
   };
 }

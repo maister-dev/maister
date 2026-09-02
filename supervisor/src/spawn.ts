@@ -1,15 +1,17 @@
 import type { Logger } from "pino";
+import type { WorkspaceResolution } from "./workspace-registry";
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir, open as openFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname } from "node:path";
 import { PassThrough } from "node:stream";
 
 import { openEventsLog, type EventsLogWriter } from "./events-log";
 import { SESSION_EVENT_CHANNEL } from "./registry";
 import {
+  type ContextMount,
   SupervisorError,
   type SessionEvent,
   type SessionRecord,
@@ -17,6 +19,7 @@ import {
 } from "./types";
 import { getAdapterRuntime, resolveAdapterBinary } from "./adapter-registry";
 import { effectiveStartSessionRequest } from "./runner-provisioner";
+import { legacyResolution } from "./workspace-registry";
 
 const MAX_LINE_BYTES = 1024 * 1024;
 const TAIL_SCAN_BYTES = 64 * 1024;
@@ -81,6 +84,10 @@ async function tailMaxMonotonicId(path: string): Promise<number> {
 export type SpawnSessionOptions = {
   sessionId: string;
   request: StartSessionRequest;
+  // ADR-164: every run-dir path and the cwd come from the resolved workspace
+  // (an adopted handle, or the legacy request fields). Absent → derived from
+  // the legacy request fields (transitional; required after the strict flip).
+  workspace?: WorkspaceResolution;
   runtimeRoot: string;
   logger: Logger;
   binaryOverride?: string;
@@ -98,7 +105,14 @@ export type SpawnSessionResult = {
   eventsLogPath: string;
 };
 
-export function buildChildEnv(request: StartSessionRequest): NodeJS.ProcessEnv {
+export function buildChildEnv(
+  request: StartSessionRequest,
+  opts: { contextMounts?: ContextMount[] } = {},
+): NodeJS.ProcessEnv {
+  // ADR-164: mounts come from the resolved workspace (the adopted handle, or
+  // the legacy request field) — the caller passes the resolved set.
+  const contextMounts = opts.contextMounts ?? request.contextMounts;
+
   return {
     ...process.env,
     ...(request.executor.env ?? {}),
@@ -111,18 +125,41 @@ export function buildChildEnv(request: StartSessionRequest): NodeJS.ProcessEnv {
     // above, never an executor.env overload. Omitted entirely when the session has
     // no mounts (never an empty array). Reaches the ACP child ONLY — cli/check
     // children run under the ADR-153 allow-list, which excludes this var.
-    ...(request.contextMounts && request.contextMounts.length > 0
-      ? { MAISTER_CONTEXT_REPOS: JSON.stringify(request.contextMounts) }
+    ...(contextMounts && contextMounts.length > 0
+      ? { MAISTER_CONTEXT_REPOS: JSON.stringify(contextMounts) }
       : {}),
     ...(request.adapterLaunch?.env ?? {}),
   };
 }
 
+function legacyResolutionFromRequest(
+  request: StartSessionRequest,
+  runtimeRoot: string,
+): WorkspaceResolution {
+  if (!request.runId || !request.projectSlug || !request.worktreePath) {
+    throw new SupervisorError(
+      "PRECONDITION",
+      "session request carries neither executionWorkspaceId nor the legacy path fields",
+    );
+  }
+
+  return legacyResolution(
+    request as StartSessionRequest & {
+      runId: string;
+      projectSlug: string;
+      worktreePath: string;
+    },
+    runtimeRoot,
+  );
+}
+
 export async function spawnSession(
   opts: SpawnSessionOptions,
 ): Promise<SpawnSessionResult> {
-  const { sessionId, runtimeRoot, logger } = opts;
+  const { sessionId, logger } = opts;
   const request = effectiveStartSessionRequest(opts.request);
+  const workspace =
+    opts.workspace ?? legacyResolutionFromRequest(request, opts.runtimeRoot);
   const adapterRuntime = getAdapterRuntime(request.executor.agent);
   const binaryResolution = resolveAdapterBinary({
     adapter: request.executor.agent,
@@ -130,27 +167,10 @@ export async function spawnSession(
   });
   const binary = binaryResolution.binary;
 
-  const logPath = resolve(
-    runtimeRoot,
-    ".maister",
-    request.projectSlug,
-    "runs",
-    request.runId,
-    `${request.stepId}.log`,
-  );
-  // events.jsonl is per-RUN (not per-step) so that slash-in-existing
-  // sessions which span multiple steps and new-session-per-step spawns
-  // both append to the same ordered durable replay log. The web SSE
-  // bridge tails this single file and never has to switch handles
-  // when currentStepId advances.
-  const eventsLogPath = resolve(
-    runtimeRoot,
-    ".maister",
-    request.projectSlug,
-    "runs",
-    request.runId,
-    "run.events.jsonl",
-  );
+  // ADR-164: the step log and the per-RUN events log (shared by every session
+  // of the run so the web SSE bridge tails one file) both come from the
+  // resolved workspace — the single path-derivation site.
+  const { logPath, eventsLogPath } = workspace;
 
   await mkdir(dirname(logPath), { recursive: true });
   const logStream = createWriteStream(logPath, { flags: "a" });
@@ -184,7 +204,9 @@ export async function spawnSession(
     args.push(...request.adapterLaunch.postArgs);
   }
 
-  const childEnv = buildChildEnv(request);
+  const childEnv = buildChildEnv(request, {
+    contextMounts: workspace.contextMounts,
+  });
 
   logger.info(
     {
@@ -195,7 +217,8 @@ export async function spawnSession(
       binarySource: binaryResolution.source,
       binaryOverrideEnv: binaryResolution.overrideEnv ?? null,
       model: request.executor.model,
-      cwd: request.worktreePath,
+      cwd: workspace.cwd,
+      executionWorkspaceId: workspace.executionWorkspaceId ?? null,
       resume: Boolean(request.resumeSessionId),
       runnerId: opts.request.runner?.runnerId ?? null,
       runnerProvider: opts.request.runner?.provider.kind ?? null,
@@ -215,7 +238,7 @@ export async function spawnSession(
   );
 
   const child = spawn(binary, args, {
-    cwd: request.worktreePath,
+    cwd: workspace.cwd,
     env: childEnv,
     stdio: ["pipe", "pipe", "inherit"],
   });
@@ -259,8 +282,8 @@ export async function spawnSession(
   const record: SessionRecord = {
     sessionId,
     adapter: adapterRuntime.id,
-    runId: request.runId,
-    projectSlug: request.projectSlug,
+    runId: workspace.runId,
+    projectSlug: workspace.projectSlug,
     stepId: request.stepId,
     nodeAttemptId: request.nodeAttemptId,
     sessionName,
@@ -268,9 +291,10 @@ export async function spawnSession(
     pid,
     startedAt: new Date().toISOString(),
     logPath,
-    worktreePath: request.worktreePath,
-    repoPath: request.repoPath,
-    confineRoot: request.confineRoot,
+    worktreePath: workspace.cwd,
+    repoPath: workspace.repoPath,
+    confineRoot: workspace.confineRoot,
+    executionWorkspaceId: workspace.executionWorkspaceId,
     monotonicId: seedMonotonicId,
     // M34 (ADR-090 L1): session-scoped read-only permission arbitration.
     readOnlySession: request.readOnlySession === true,
@@ -285,7 +309,7 @@ export async function spawnSession(
     enforcementProfile: request.enforcementProfile,
     // ADR-157: arm the unconditional read-only mount guard + the prompt preamble
     // with the mounts the web tier materialized for this session.
-    contextMounts: request.contextMounts,
+    contextMounts: workspace.contextMounts,
     capabilityDenyCount: 0,
     capabilityPendingWriteIds: new Set<string>(),
     repeatCount: 0,

@@ -10,6 +10,7 @@ let exitCode = 0;
 let hang = false;
 let hangInitialize = false;
 let hangNewSession = false;
+let hangPrompt = false;
 let emitUsage = false;
 
 for (let i = 0; i < args.length; i += 1) {
@@ -25,6 +26,8 @@ for (let i = 0; i < args.length; i += 1) {
     hangInitialize = true;
   } else if (arg === "--hang-new-session") {
     hangNewSession = true;
+  } else if (arg === "--hang-prompt") {
+    hangPrompt = true;
   } else if (arg === "--emit-usage") {
     emitUsage = true;
   }
@@ -109,6 +112,9 @@ class LifecycleAgent {
         },
       });
     }
+
+    // ADR-164 F6: keep the turn open forever so an eviction lands mid-prompt.
+    if (hangPrompt) return never();
 
     if (!hang) {
       setTimeout(() => process.exit(exitCode), 10);

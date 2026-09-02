@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  errorBody,
   SendPromptRequestSchema,
   StartSessionRequestSchema,
   SupervisorDiagnosticsResponseSchema,
@@ -169,6 +170,56 @@ describe("StartSessionRequestSchema", () => {
     });
 
     expect(result.success).toBe(true);
+  });
+
+  // ADR-164: the handle form replaces the legacy path fields; the two are
+  // mutually exclusive during the transitional window.
+  it("accepts the handle form (executionWorkspaceId without any path field)", () => {
+    const result = StartSessionRequestSchema.safeParse({
+      executionWorkspaceId: "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c",
+      stepId: "plan",
+      executor: { agent: "claude", model: "claude-sonnet-4-6" },
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects the handle form combined with a legacy path field", () => {
+    const result = StartSessionRequestSchema.safeParse({
+      ...validRequest,
+      executionWorkspaceId: "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.map((i) => i.path[0])).toEqual(
+        expect.arrayContaining(["runId", "projectSlug", "worktreePath"]),
+      );
+    }
+  });
+
+  it("rejects a request with neither a handle nor the legacy path fields", () => {
+    const result = StartSessionRequestSchema.safeParse({
+      stepId: "plan",
+      executor: { agent: "claude", model: "claude-sonnet-4-6" },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.map((i) => i.path[0])).toEqual(
+        expect.arrayContaining(["runId", "projectSlug", "worktreePath"]),
+      );
+    }
+  });
+
+  it("rejects a malformed executionWorkspaceId", () => {
+    const result = StartSessionRequestSchema.safeParse({
+      executionWorkspaceId: "ws_short",
+      stepId: "plan",
+      executor: { agent: "claude", model: "claude-sonnet-4-6" },
+    });
+
+    expect(result.success).toBe(false);
   });
 
   it("rejects unknown agent", () => {
@@ -634,6 +685,38 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
         diagnosticsWithReadOnlySession(readOnlySession),
       ).success,
     ).toBe(false);
+  });
+});
+
+describe("SupervisorError details (ADR-164)", () => {
+  it("maps FENCED to 409 and serializes details on the body", () => {
+    const err = new SupervisorError("FENCED", "stale epoch", {
+      details: {
+        reason: "assignment_fenced",
+        runId: "run-1",
+        commandEpoch: 1,
+        hostEpoch: 2,
+      },
+    });
+
+    expect(httpStatusForCode(err.code)).toBe(409);
+    expect(errorBody(err)).toEqual({
+      code: "FENCED",
+      message: "stale epoch",
+      details: {
+        reason: "assignment_fenced",
+        runId: "run-1",
+        commandEpoch: 1,
+        hostEpoch: 2,
+      },
+    });
+  });
+
+  it("omits details from the body when none were attached", () => {
+    expect(errorBody(new SupervisorError("SPAWN", "boom"))).toEqual({
+      code: "SPAWN",
+      message: "boom",
+    });
   });
 });
 

@@ -201,19 +201,46 @@ export const ContextMountSchema = z
 
 export type ContextMount = z.infer<typeof ContextMountSchema>;
 
+export const EXECUTION_WORKSPACE_ID_PATTERN = /^ws_[0-9a-f]{32}$/;
+
+export const ExecutionWorkspaceIdSchema = z
+  .string()
+  .regex(
+    EXECUTION_WORKSPACE_ID_PATTERN,
+    "executionWorkspaceId must be ws_<32 hex>",
+  );
+
+const runIdSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(SAFE_PATH_SEGMENT, "runId must match /^[A-Za-z0-9._-]+$/");
+
+const projectSlugSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "projectSlug must be kebab-case");
+
+// The legacy path fields are the "transitional" form of the request; the
+// handle form (`executionWorkspaceId`) is the ADR-164 contract. The two are
+// mutually exclusive; the strict flip removes the legacy form.
+export const LEGACY_SESSION_PATH_FIELDS = [
+  "runId",
+  "projectSlug",
+  "worktreePath",
+  "repoPath",
+  "confineRoot",
+  "contextMounts",
+] as const;
+
 export const StartSessionRequestSchema = z
   .object({
-    runId: z
-      .string()
-      .min(1)
-      .max(128)
-      .regex(SAFE_PATH_SEGMENT, "runId must match /^[A-Za-z0-9._-]+$/"),
-    projectSlug: z
-      .string()
-      .min(1)
-      .max(64)
-      .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "projectSlug must be kebab-case"),
-    worktreePath: worktreePathSchema,
+    // ADR-164: opaque handle minted by POST /workspaces/adopt (handle form).
+    executionWorkspaceId: ExecutionWorkspaceIdSchema.optional(),
+    runId: runIdSchema.optional(),
+    projectSlug: projectSlugSchema.optional(),
+    worktreePath: worktreePathSchema.optional(),
     // Optional project repo root — the supervisor adds it to the prompt
     // content-block confinement allow-set so a `file_path` attachment that
     // references a repo-absolute path (web-confined to repo OR worktree) is not
@@ -304,7 +331,32 @@ export const StartSessionRequestSchema = z
   })
   .strict()
   .superRefine((value, ctx) => {
-    if (!value.capabilityProfilePath) return;
+    if (value.executionWorkspaceId) {
+      for (const field of LEGACY_SESSION_PATH_FIELDS) {
+        if (value[field] !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [field],
+            message: `${field} must be absent when executionWorkspaceId is set`,
+          });
+        }
+      }
+
+      // The residual path is checked against the handle at resolve time.
+      return;
+    }
+
+    for (const field of ["runId", "projectSlug", "worktreePath"] as const) {
+      if (value[field] === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [field],
+          message: `${field} is required without executionWorkspaceId`,
+        });
+      }
+    }
+
+    if (!value.capabilityProfilePath || !value.worktreePath) return;
 
     const relative = path.relative(
       value.worktreePath,
@@ -319,6 +371,226 @@ export const StartSessionRequestSchema = z
       });
     }
   });
+
+export function isHandleForm(
+  request: Pick<StartSessionRequest, "executionWorkspaceId">,
+): request is StartSessionRequest & { executionWorkspaceId: string } {
+  return typeof request.executionWorkspaceId === "string";
+}
+
+// --- ADR-164: execution-host contract (envelope, fences, adoption, receipts) ---
+
+export const HOST_KEY_SCHEMA = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{8,64}$/, "hostKey must match ^[A-Za-z0-9_-]{8,64}$");
+
+export const COMMAND_KINDS = [
+  "workspace.adopt",
+  "workspace.release",
+  "session.create",
+  "session.prompt",
+  "session.input",
+  "session.cancel",
+  "session.checkpoint",
+  "session.delete",
+] as const;
+
+export const CommandKindSchema = z.enum(COMMAND_KINDS);
+export type CommandKind = z.infer<typeof CommandKindSchema>;
+
+export const FenceSchema = z
+  .object({
+    hostKey: HOST_KEY_SCHEMA,
+    assignmentId: z.string().uuid(),
+    assignmentEpoch: z.number().int().min(1),
+    runId: runIdSchema,
+  })
+  .strict();
+
+export type CommandFence = z.infer<typeof FenceSchema>;
+
+export const CommandHeaderSchema = z
+  .object({
+    id: z.string().uuid(),
+    kind: CommandKindSchema,
+    issuedAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
+
+export const CommandEnvelopeSchema = z
+  .object({
+    command: CommandHeaderSchema,
+    fence: FenceSchema,
+    payload: z.record(z.string(), z.unknown()),
+  })
+  .strict();
+
+export type CommandEnvelope = z.infer<typeof CommandEnvelopeSchema>;
+
+// A body is enveloped iff it carries a `command` header. Everything else is
+// the transitional legacy form (removed at the strict flip).
+export function isEnvelopedBody(body: unknown): boolean {
+  if (!body || typeof body !== "object") return false;
+
+  const command = (body as { command?: unknown }).command;
+
+  return (
+    typeof command === "object" &&
+    command !== null &&
+    typeof (command as { id?: unknown }).id === "string" &&
+    typeof (command as { kind?: unknown }).kind === "string"
+  );
+}
+
+export const REASON_TOKENS = [
+  "host_mismatch",
+  "assignment_mismatch",
+  "run_mismatch",
+  "assignment_fenced",
+  "turn_lost",
+  "unknown_workspace",
+  "workspace_released",
+  "workspace_rejected",
+  "legacy_field",
+  "missing_envelope",
+] as const;
+
+export type ReasonToken = (typeof REASON_TOKENS)[number];
+
+export const WORKSPACE_RULES = [
+  "relative_path",
+  "parent_segment",
+  "not_found",
+  "outside_roots",
+  "symlink_escape",
+  "gitdir_mismatch",
+  "not_a_repo",
+  "repo_path_mismatch",
+  "inside_state_dir",
+  "outside_workspace",
+] as const;
+
+export type WorkspaceRule = (typeof WORKSPACE_RULES)[number];
+
+export type SupervisorErrorDetails = {
+  reason?: ReasonToken;
+  rule?: WorkspaceRule;
+  runId?: string;
+  commandEpoch?: number;
+  hostEpoch?: number;
+};
+
+export const WORKSPACE_KINDS = [
+  "git_worktree",
+  "repo_checkout",
+  "directory",
+] as const;
+
+export const WorkspaceKindSchema = z.enum(WORKSPACE_KINDS);
+export type WorkspaceKind = z.infer<typeof WorkspaceKindSchema>;
+
+// Paths are shape-validated only here: the workspace registry owns the D7
+// rule tokens (`relative_path`, `parent_segment`, …) so a refusal always
+// names its rule.
+const adoptPathSchema = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine((p) => !p.includes("\0"), "path must not contain null byte");
+
+export const AdoptWorkspacePayloadSchema = z
+  .object({
+    runId: runIdSchema,
+    projectSlug: projectSlugSchema,
+    kind: WorkspaceKindSchema,
+    path: adoptPathSchema,
+    repoPath: adoptPathSchema.optional(),
+    contextMounts: z.array(ContextMountSchema).max(8).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.kind === "directory" && value.repoPath !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["repoPath"],
+        message: "repoPath is forbidden for a directory workspace",
+      });
+    }
+    if (value.kind !== "directory" && value.repoPath === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["repoPath"],
+        message: `repoPath is required for a ${value.kind} workspace`,
+      });
+    }
+  });
+
+export type AdoptWorkspacePayload = z.infer<typeof AdoptWorkspacePayloadSchema>;
+
+export const AdoptWorkspaceRequestSchema = z
+  .object({
+    command: CommandHeaderSchema.extend({
+      kind: z.literal("workspace.adopt"),
+    }).strict(),
+    fence: FenceSchema,
+    payload: AdoptWorkspacePayloadSchema,
+  })
+  .strict();
+
+export type AdoptWorkspaceResponse = {
+  executionWorkspaceId: string;
+  kind: WorkspaceKind;
+  replayed: boolean;
+};
+
+export type WorkspaceRecordResponse = {
+  executionWorkspaceId: string;
+  runId: string;
+  projectSlug: string;
+  kind: WorkspaceKind;
+  adoptedAt: string;
+  releasedAt: string | null;
+};
+
+export const CommandReceiptSchema = z
+  .object({
+    commandId: z.string().uuid(),
+    runId: z.string().min(1),
+    kind: CommandKindSchema,
+    assignmentEpoch: z.number().int().min(1),
+    phase: z.enum(["accepted", "completed", "rejected"]),
+    httpStatus: z.number().int().min(100).max(599),
+    body: z.record(z.string(), z.unknown()),
+    receivedAt: z.string().datetime({ offset: true }),
+    completedAt: z.string().datetime({ offset: true }).nullable().optional(),
+  })
+  .strict();
+
+export type CommandReceiptResponse = z.infer<typeof CommandReceiptSchema>;
+
+export const SESSION_COMMAND_KINDS = [
+  "session.prompt",
+  "session.input",
+  "session.cancel",
+  "session.checkpoint",
+  "session.delete",
+] as const;
+
+export const SessionCommandEventSchema = z
+  .object({
+    type: z.literal("session.command"),
+    sessionId: z.string().min(1),
+    monotonicId: z.number().int().min(1),
+    commandId: z.string().uuid(),
+    kind: z.enum(SESSION_COMMAND_KINDS),
+    phase: z.enum(["accepted", "completed"]),
+    status: z.enum(["succeeded", "failed", "fenced"]).optional(),
+    result: z.record(z.string(), z.unknown()).optional(),
+    error: z.record(z.string(), z.unknown()).optional(),
+    sessionName: z.string().optional(),
+    nodeAttemptId: z.string().optional(),
+  })
+  .strict();
 
 // T5.4: structured ACP prompt content blocks. The web tier assembles these
 // (text + worktree-confined resource_link/resource) and the supervisor forwards
@@ -413,9 +685,20 @@ export type SendPromptResponse = {
 
 export type SessionStatus = "live" | "exited" | "crashed";
 
+export const ExecutionHostIdentitySchema = z
+  .object({
+    hostKey: HOST_KEY_SCHEMA,
+    bootId: z.string().uuid(),
+    protocolVersion: z.literal(1),
+  })
+  .strict();
+
+export type ExecutionHostIdentity = z.infer<typeof ExecutionHostIdentitySchema>;
+
 export const SupervisorHealthResponseSchema = z
   .object({
     status: z.literal("ready"),
+    host: ExecutionHostIdentitySchema,
     version: z.string().min(1),
     uptimeMs: z.number().int().nonnegative(),
     checkedAt: z.string().datetime(),
@@ -532,6 +815,15 @@ export type SessionRecord = {
   confineRoot?: string;
   monotonicId: number;
   acpSessionId?: string;
+  // ADR-164: the adopted handle this session runs in (handle-form sessions),
+  // and the fence of the `session.create` command that spawned it.
+  executionWorkspaceId?: string;
+  assignmentId?: string;
+  assignmentEpoch?: number;
+  createdByCommandId?: string;
+  // ADR-164: set when a command with a HIGHER assignment epoch evicted this
+  // session; its pending prompt answers 409 FENCED instead of a stop reason.
+  fencedByEpoch?: number;
   // M30 (ADR-078 L2): true while a read-only gate-chat prompt is in flight on
   // this session — drives the requestPermission auto-reject.
   readOnlyTurn?: boolean;
@@ -654,8 +946,22 @@ export type SessionEvent =
       // DELETE /sessions/:id. Absent on natural process exit (process
       // ran to completion). Web tier branches: `"checkpoint"` triggers
       // `markCheckpointed` reconciliation; `"intentional"` is the plain
-      // operator-cancel path.
-      reason?: "checkpoint" | "intentional";
+      // operator-cancel path. ADR-164: `"fenced"` = evicted by a command with a
+      // higher assignment epoch.
+      reason?: "checkpoint" | "intentional" | "fenced";
+    }
+  // ADR-164: command acceptance / completion for the enveloped session routes
+  // — the durable completion signal that is NOT the long-lived HTTP response.
+  | {
+      type: "session.command";
+      sessionId: string;
+      monotonicId: number;
+      commandId: string;
+      kind: (typeof SESSION_COMMAND_KINDS)[number];
+      phase: "accepted" | "completed";
+      status?: "succeeded" | "failed" | "fenced";
+      result?: Record<string, unknown>;
+      error?: SupervisorErrorBody;
     }
   | {
       type: "session.crashed";
@@ -686,19 +992,25 @@ export type SupervisorErrorCode =
   | "ACP_PROTOCOL"
   | "CHECKPOINT"
   | "CRASH"
-  | "HITL_TIMEOUT";
+  | "HITL_TIMEOUT"
+  // ADR-164: stale assignment epoch at the execution boundary (HTTP 409).
+  | "FENCED";
 
 export class SupervisorError extends Error {
   readonly code: SupervisorErrorCode;
+  // ADR-164: typed refusal discriminator passed through to the web tier's
+  // MaisterError.details — tests assert the token, never the message.
+  readonly details?: SupervisorErrorDetails;
 
   constructor(
     code: SupervisorErrorCode,
     message: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { details?: SupervisorErrorDetails },
   ) {
     super(message, options);
     this.name = "SupervisorError";
     this.code = code;
+    this.details = options?.details;
     Object.setPrototypeOf(this, SupervisorError.prototype);
   }
 }
@@ -710,11 +1022,19 @@ export function isSupervisorError(err: unknown): err is SupervisorError {
 export type SupervisorErrorBody = {
   code: SupervisorErrorCode;
   message: string;
+  details?: SupervisorErrorDetails;
 };
+
+export function errorBody(err: SupervisorError): SupervisorErrorBody {
+  return err.details
+    ? { code: err.code, message: err.message, details: err.details }
+    : { code: err.code, message: err.message };
+}
 
 export function httpStatusForCode(code: SupervisorErrorCode): number {
   switch (code) {
     case "PRECONDITION":
+    case "FENCED":
       return 409;
     case "EXECUTOR_UNAVAILABLE":
       return 503;

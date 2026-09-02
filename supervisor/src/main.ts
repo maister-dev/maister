@@ -1,14 +1,23 @@
+import type { HostState } from "./host-state";
 import type { RegisterRoutesOptions } from "./http-api";
 
 import Fastify, { type FastifyInstance } from "fastify";
 import pino, { type Logger } from "pino";
 
 import { startHeartbeatWatcher } from "./heartbeat";
+import {
+  HostKeyConflictError,
+  HostStateUnwritableError,
+  hostStateDirFromEnv,
+  openHostState,
+  startReceiptPruner,
+} from "./host-state";
 import { registerRoutes } from "./http-api";
 import { createDefaultModelSourceRegistry } from "./model-catalog/sources";
 import { pendingPermissions } from "./pending-permissions";
 import { SessionRegistry } from "./registry";
 import { runtimeRoot } from "./runtime-root";
+import { resolveWorkspaceRoots } from "./workspace-roots";
 
 const DEFAULT_PORT = 7777;
 const DEFAULT_SHUTDOWN_GRACE_MS = 15_000;
@@ -30,6 +39,10 @@ export function buildRegisterRoutesOptions(deps: {
   logger: Logger;
   runtimeRoot: string;
   killGraceMs: number;
+  // ADR-164: the execution-host state store + adoption roots. Required in
+  // production; tests that boot routes without them get an in-memory store.
+  hostState?: HostState;
+  workspaceRoots?: string[];
 }): RegisterRoutesOptions {
   return {
     app: deps.app,
@@ -40,7 +53,49 @@ export function buildRegisterRoutesOptions(deps: {
     modelCatalog: {
       registry: createDefaultModelSourceRegistry(),
     },
+    hostState: deps.hostState,
+    workspaceRoots: deps.workspaceRoots,
   };
+}
+
+// ADR-164 D1: open the execution-host state store BEFORE routes register. The
+// two boot-fatal errors are logged with their remediation and rethrown so the
+// process exits 1 — a conflicting pin never silently changes identity.
+export function bootExecutionHost(deps: {
+  runtimeRoot: string;
+  logger: Logger;
+  env?: NodeJS.ProcessEnv;
+}): HostState {
+  const env = deps.env ?? process.env;
+  const stateDir = hostStateDirFromEnv(deps.runtimeRoot, env);
+
+  try {
+    return openHostState({
+      stateDir,
+      pinnedKey: env.MAISTER_EXECUTION_HOST_KEY,
+      logger: deps.logger,
+    });
+  } catch (err) {
+    if (err instanceof HostKeyConflictError) {
+      deps.logger.fatal(
+        {
+          storedKeyPrefix: err.storedKeyPrefix,
+          pinnedKeyPrefix: err.pinnedKeyPrefix,
+          stateDir,
+          remediation:
+            "unset MAISTER_EXECUTION_HOST_KEY, or deliberately wipe the execution-host state dir",
+        },
+        "execution-host-key-conflict",
+      );
+    } else if (err instanceof HostStateUnwritableError) {
+      deps.logger.fatal(
+        { stateDir, err: err.message },
+        "execution-host-state-unwritable",
+      );
+    }
+
+    throw err;
+  }
 }
 
 export async function start(): Promise<void> {
@@ -71,6 +126,12 @@ export async function start(): Promise<void> {
 
   const registry = new SessionRegistry(logger);
   const app = Fastify({ logger: loggerConfig });
+  const hostState = bootExecutionHost({ runtimeRoot: root, logger });
+  const workspaceRoots = await resolveWorkspaceRoots({
+    runtimeRoot: root,
+    logger,
+  });
+  const stopReceiptPruner = startReceiptPruner(hostState, logger);
 
   registerRoutes(
     buildRegisterRoutesOptions({
@@ -79,6 +140,8 @@ export async function start(): Promise<void> {
       logger,
       runtimeRoot: root,
       killGraceMs,
+      hostState,
+      workspaceRoots,
     }),
   );
 
@@ -101,6 +164,7 @@ export async function start(): Promise<void> {
       "shutdown-start",
     );
     stopHeartbeat();
+    stopReceiptPruner();
 
     registry.forEach((entry) => {
       if (entry.record.status !== "live") return;
@@ -132,6 +196,7 @@ export async function start(): Promise<void> {
 
     await app.close();
 
+    hostState.close();
     logger.info({ elapsedMs: Date.now() - startedAt }, "shutdown-done");
     await new Promise<void>((r) => logger.flush(() => r()));
     process.exit(0);

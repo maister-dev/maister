@@ -1,0 +1,430 @@
+// ADR-164 T2.3 — workspace adoption + handle-based create (W1–W9).
+import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import {
+  bootHost,
+  cleanupRuntimeRoot,
+  envelope,
+  FIXTURES_DIR,
+  postJson,
+  type BootedHost,
+} from "./_fixtures/boot-host";
+
+const booted: BootedHost[] = [];
+const roots: string[] = [];
+
+afterEach(async () => {
+  for (const host of booted.splice(0)) await host.stop();
+  for (const root of roots.splice(0)) await cleanupRuntimeRoot(root);
+});
+
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "t",
+      GIT_AUTHOR_EMAIL: "t@example.com",
+      GIT_COMMITTER_NAME: "t",
+      GIT_COMMITTER_EMAIL: "t@example.com",
+      GIT_CONFIG_NOSYSTEM: "1",
+    },
+  }).trim();
+}
+
+type Lab = {
+  host: BootedHost;
+  root: string;
+  wtRoot: string;
+  repo: string;
+  worktree: string;
+  runId: string;
+};
+
+async function lab(): Promise<Lab> {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "eh-adopt-")));
+
+  roots.push(root);
+  const wtRoot = join(root, "worktrees");
+  const repo = join(root, "repos", "demo");
+
+  await mkdir(wtRoot, { recursive: true });
+  await mkdir(repo, { recursive: true });
+  git(repo, "init", "-q", "-b", "main");
+  await writeFile(join(repo, "README.md"), "hi\n");
+  git(repo, "add", ".");
+  git(repo, "commit", "-q", "-m", "init");
+  const runId = `run-${randomUUID().slice(0, 8)}`;
+  const worktree = join(wtRoot, "demo", runId);
+
+  await mkdir(join(wtRoot, "demo"), { recursive: true });
+  git(repo, "worktree", "add", "-q", "-b", `wt-${runId}`, worktree);
+
+  const host = await bootHost({
+    runtimeRoot: root,
+    workspaceRoots: [wtRoot],
+    fixtureArgs: ["--hang"],
+  });
+
+  booted.push(host);
+
+  return { host, root, wtRoot, repo, worktree, runId };
+}
+
+function adoptBody(
+  l: Lab,
+  payload: Record<string, unknown>,
+  commandId?: string,
+) {
+  return envelope(
+    "workspace.adopt",
+    {
+      hostKey: l.host.hostState.hostKey,
+      runId: (payload.runId as string) ?? l.runId,
+    },
+    payload,
+    commandId,
+  );
+}
+
+async function adopt(l: Lab, payload: Record<string, unknown>) {
+  return postJson(`${l.host.url}/workspaces/adopt`, adoptBody(l, payload));
+}
+
+describe("workspace adoption", () => {
+  it("W1: a valid git_worktree adopts; re-adoption returns the same id with replayed:true", async () => {
+    const l = await lab();
+    const payload = {
+      runId: l.runId,
+      projectSlug: "demo",
+      kind: "git_worktree",
+      path: l.worktree,
+      repoPath: l.repo,
+    };
+    const first = await adopt(l, payload);
+
+    expect(first.status).toBe(200);
+    expect(first.body).toMatchObject({ kind: "git_worktree", replayed: false });
+    expect(first.body.executionWorkspaceId).toMatch(/^ws_[0-9a-f]{32}$/);
+
+    const again = await adopt(l, payload);
+
+    expect(again.body).toEqual({ ...first.body, replayed: true });
+  });
+
+  it("W2: a repo_checkout at an arbitrary location adopts", async () => {
+    const l = await lab();
+    const res = await adopt(l, {
+      runId: l.runId,
+      projectSlug: "demo",
+      kind: "repo_checkout",
+      path: l.repo,
+      repoPath: l.repo,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.kind).toBe("repo_checkout");
+  });
+
+  it("W3: a plain directory under the roots adopts", async () => {
+    const l = await lab();
+    const dir = join(l.wtRoot, "plain");
+
+    await mkdir(dir);
+    const res = await adopt(l, {
+      runId: l.runId,
+      projectSlug: "demo",
+      kind: "directory",
+      path: dir,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.kind).toBe("directory");
+  });
+
+  it("W4: the same path adopted by two runs yields two handles", async () => {
+    const l = await lab();
+    const dir = join(l.wtRoot, "shared");
+
+    await mkdir(dir);
+    const a = await adopt(l, {
+      runId: l.runId,
+      projectSlug: "demo",
+      kind: "directory",
+      path: dir,
+    });
+    const b = await adopt(l, {
+      runId: `${l.runId}-b`,
+      projectSlug: "demo",
+      kind: "directory",
+      path: dir,
+    });
+
+    expect(a.body.executionWorkspaceId).not.toBe(b.body.executionWorkspaceId);
+  });
+
+  it("W5: the rejection matrix names the rule token per case", async () => {
+    const l = await lab();
+    const outside = await realpath(
+      await mkdtemp(join(tmpdir(), "eh-outside-")),
+    );
+
+    roots.push(outside);
+    const outsideRepo = join(outside, "repo-b");
+
+    await mkdir(outsideRepo);
+    git(outsideRepo, "init", "-q", "-b", "main");
+    const linked = join(l.wtRoot, "linked");
+
+    await symlink(outside, linked);
+    const missingRepoWorktree = join(l.wtRoot, "not-a-worktree");
+
+    await mkdir(missingRepoWorktree);
+
+    const cases: Array<[string, Record<string, unknown>]> = [
+      ["relative_path", { kind: "directory", path: "relative/dir" }],
+      ["parent_segment", { kind: "directory", path: `${l.wtRoot}/../x` }],
+      ["not_found", { kind: "directory", path: join(l.wtRoot, "missing") }],
+      ["outside_roots", { kind: "directory", path: outside }],
+      ["symlink_escape", { kind: "directory", path: linked }],
+      [
+        "gitdir_mismatch",
+        { kind: "git_worktree", path: l.worktree, repoPath: outsideRepo },
+      ],
+      [
+        "not_a_repo",
+        { kind: "git_worktree", path: l.worktree, repoPath: l.wtRoot },
+      ],
+      [
+        "repo_path_mismatch",
+        { kind: "repo_checkout", path: l.repo, repoPath: outsideRepo },
+      ],
+      ["inside_state_dir", { kind: "directory", path: l.host.stateDir }],
+    ];
+
+    for (const [rule, payload] of cases) {
+      const res = await adopt(l, {
+        runId: l.runId,
+        projectSlug: "demo",
+        ...payload,
+      });
+
+      expect(res.status, rule).toBe(409);
+      expect(res.body.code, rule).toBe("PRECONDITION");
+      expect(res.body.details, rule).toEqual({
+        reason: "workspace_rejected",
+        rule,
+      });
+    }
+  });
+
+  it("W6: create with an unknown handle is unknown_workspace; with a released handle is workspace_released", async () => {
+    const l = await lab();
+    const create = (executionWorkspaceId: string) =>
+      postJson(
+        `${l.host.url}/sessions`,
+        envelope(
+          "session.create",
+          { hostKey: l.host.hostState.hostKey, runId: l.runId },
+          {
+            executionWorkspaceId,
+            stepId: "step-1",
+            executor: { agent: "claude", model: "claude-sonnet-4-6" },
+          },
+        ),
+      );
+    const unknown = await create(`ws_${"0".repeat(32)}`);
+
+    expect(unknown.body.details.reason).toBe("unknown_workspace");
+
+    const adopted = await adopt(l, {
+      runId: l.runId,
+      projectSlug: "demo",
+      kind: "git_worktree",
+      path: l.worktree,
+      repoPath: l.repo,
+    });
+    const id = adopted.body.executionWorkspaceId as string;
+    const release = await postJson(
+      `${l.host.url}/workspaces/${id}`,
+      envelope(
+        "workspace.release",
+        { hostKey: l.host.hostState.hostKey, runId: l.runId },
+        {},
+      ),
+      "DELETE",
+    );
+
+    expect(release.body).toEqual({ released: true });
+    const released = await create(id);
+
+    expect(released.body.details.reason).toBe("workspace_released");
+  });
+
+  it("W7: a handle-form create derives cwd, step log, cost, confinement, and MAISTER_CONTEXT_REPOS exactly like the legacy form", async () => {
+    const l = await lab();
+    const mounts = [
+      {
+        slug: "api",
+        path: join(l.worktree, "ctx", "api"),
+        ref: "main",
+        commit: "0123456789abcdef",
+      },
+    ];
+    const recordLegacy = join(l.root, "legacy.json");
+    const recordHandle = join(l.root, "handle.json");
+    const runLegacy = `${l.runId}-legacy`;
+    const legacyHost = await bootHost({
+      runtimeRoot: l.root,
+      workspaceRoots: [l.wtRoot],
+      fixture: "mock-acp-record-newsession.mjs",
+    });
+
+    booted.push(legacyHost);
+    process.env.MOCK_ACP_NEWSESSION_RECORD_PATH = recordLegacy;
+    const legacy = await postJson(`${legacyHost.url}/sessions`, {
+      runId: runLegacy,
+      projectSlug: "demo",
+      worktreePath: l.worktree,
+      repoPath: l.repo,
+      stepId: "plan",
+      executor: { agent: "claude", model: "claude-sonnet-4-6" },
+      contextMounts: mounts,
+    });
+
+    expect(legacy.status).toBe(201);
+    const legacyRecord = legacyHost.registry.get(legacy.body.sessionId)!.record;
+
+    const adopted = await adopt(l, {
+      runId: l.runId,
+      projectSlug: "demo",
+      kind: "git_worktree",
+      path: l.worktree,
+      repoPath: l.repo,
+      contextMounts: mounts,
+    });
+    const handleHost = await bootHost({
+      runtimeRoot: l.root,
+      workspaceRoots: [l.wtRoot],
+      fixture: "mock-acp-record-newsession.mjs",
+      hostState: l.host.hostState,
+    });
+
+    booted.push(handleHost);
+    process.env.MOCK_ACP_NEWSESSION_RECORD_PATH = recordHandle;
+    const handle = await postJson(
+      `${handleHost.url}/sessions`,
+      envelope(
+        "session.create",
+        { hostKey: l.host.hostState.hostKey, runId: l.runId },
+        {
+          executionWorkspaceId: adopted.body.executionWorkspaceId,
+          stepId: "plan",
+          executor: { agent: "claude", model: "claude-sonnet-4-6" },
+        },
+      ),
+    );
+
+    expect(handle.status).toBe(201);
+    delete process.env.MOCK_ACP_NEWSESSION_RECORD_PATH;
+    const handleRecord = handleHost.registry.get(handle.body.sessionId)!.record;
+
+    expect(JSON.parse(await readFile(recordHandle, "utf8")).cwd).toBe(
+      JSON.parse(await readFile(recordLegacy, "utf8")).cwd,
+    );
+    expect(handleRecord.worktreePath).toBe(legacyRecord.worktreePath);
+    expect(handleRecord.repoPath).toBe(legacyRecord.repoPath);
+    expect(handleRecord.confineRoot).toBe(legacyRecord.confineRoot);
+    expect(handleRecord.contextMounts).toEqual(legacyRecord.contextMounts);
+    expect(handleRecord.logPath.replace(l.runId, "RUN")).toBe(
+      legacyRecord.logPath.replace(runLegacy, "RUN"),
+    );
+    expect(handleRecord.executionWorkspaceId).toBe(
+      adopted.body.executionWorkspaceId,
+    );
+    expect(handleRecord.runId).toBe(l.runId);
+    expect(handleRecord.projectSlug).toBe("demo");
+  });
+
+  it("W8: a capabilityProfilePath outside the handle path is workspace_rejected:outside_workspace", async () => {
+    const l = await lab();
+    const adopted = await adopt(l, {
+      runId: l.runId,
+      projectSlug: "demo",
+      kind: "git_worktree",
+      path: l.worktree,
+      repoPath: l.repo,
+    });
+    const res = await postJson(
+      `${l.host.url}/sessions`,
+      envelope(
+        "session.create",
+        { hostKey: l.host.hostState.hostKey, runId: l.runId },
+        {
+          executionWorkspaceId: adopted.body.executionWorkspaceId,
+          stepId: "plan",
+          executor: { agent: "claude", model: "claude-sonnet-4-6" },
+          capabilityProfilePath: join(l.repo, "profile.json"),
+        },
+      ),
+    );
+
+    expect(res.body.details).toEqual({
+      reason: "workspace_rejected",
+      rule: "outside_workspace",
+    });
+  });
+
+  it("W9: handles survive an in-process restart and GET /workspaces/:id never returns a path", async () => {
+    const l = await lab();
+    const adopted = await adopt(l, {
+      runId: l.runId,
+      projectSlug: "demo",
+      kind: "git_worktree",
+      path: l.worktree,
+      repoPath: l.repo,
+    });
+    const id = adopted.body.executionWorkspaceId as string;
+    const stateDir = l.host.stateDir;
+
+    await l.host.stop();
+    booted.splice(booted.indexOf(l.host), 1);
+    const restarted = await bootHost({
+      runtimeRoot: l.root,
+      stateDir,
+      workspaceRoots: [l.wtRoot],
+      fixtureArgs: ["--hang"],
+    });
+
+    booted.push(restarted);
+    const res = await fetch(`${restarted.url}/workspaces/${id}`);
+    const text = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(JSON.parse(text)).toEqual({
+      executionWorkspaceId: id,
+      runId: l.runId,
+      projectSlug: "demo",
+      kind: "git_worktree",
+      adoptedAt: expect.any(String),
+      releasedAt: null,
+    });
+    expect(text).not.toContain(l.worktree);
+    expect(text).not.toContain(l.repo);
+    expect(FIXTURES_DIR).toBeTruthy();
+  });
+});
