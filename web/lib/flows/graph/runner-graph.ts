@@ -1,6 +1,9 @@
 import "server-only";
 
-import type { RunResultContract } from "@/lib/run-results/types";
+import type {
+  DeclaredDelegationBounds,
+  RunResultContract,
+} from "@/lib/run-results/types";
 import type {
   ArtifactInstance,
   MaterializationPlan,
@@ -199,6 +202,10 @@ import {
   autoRetryMaxAttempts,
   nodeOutputMaxBytes,
 } from "@/lib/instance-config";
+import {
+  currentInstanceCeilings,
+  writeDelegationBoundsIfChanged,
+} from "@/lib/orchestrator/bounds-store";
 import { closeSucceededAttemptWithResult } from "@/lib/run-results/close-attempt";
 import {
   decideFlowTerminalExit,
@@ -3129,6 +3136,27 @@ export async function runGraph(
           // T4.2: persist the run-start materialization plan (write-once).
           if (materialized) {
             await setMaterializationPlan(nodeAttemptId, materialized.plan, db);
+          }
+
+          // ADR-165 (T6.1/D6): snapshot the EFFECTIVE delegation bounds on the
+          // orchestrator run, keyed by this node ATTEMPT. Written here — beside
+          // the token issuance, which already runs on every start AND every wake
+          // — so admission and the scheduler read a value that cannot drift when
+          // an env ceiling is edited mid-tree. Idempotent per attempt: a wake on
+          // the same attempt rewrites nothing (W5).
+          if (node.nodeType === "orchestrator") {
+            await writeDelegationBoundsIfChanged(db, runId, {
+              instance: currentInstanceCeilings(),
+              engineMin: loaded.manifest.compat?.engine_min ?? null,
+              declared:
+                (
+                  node as {
+                    settings?: { delegation?: DeclaredDelegationBounds };
+                  }
+                ).settings?.delegation ?? null,
+              nodeId: node.id,
+              nodeAttemptId,
+            });
           }
 
           // M37 (ADR-098): an orchestrator delegates through the maister MCP

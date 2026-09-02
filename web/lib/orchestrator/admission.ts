@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { DelegationBounds } from "@/lib/run-results/types";
+
 import { and, eq, notInArray, sql } from "drizzle-orm";
 import pino from "pino";
 
@@ -47,30 +49,76 @@ async function takeDelegationLock(tx: Db, parentRunId: string): Promise<void> {
   );
 }
 
+/** One link of the ancestor chain: the run id and its bounds snapshot. */
+type AncestorLink = { id: string; bounds: DelegationBounds | null };
+
 /**
- * Hops from `startId` up the `parent_run_id` chain. The parent run itself is
- * depth 0; each ancestor adds 1. A self-referencing FK does not rule out a
- * cycle, so the loop cap is what guarantees termination; only a manual DB edit
- * could introduce one.
+ * Walks up the `parent_run_id` chain from `startId`, collecting each ancestor's
+ * bounds snapshot on the way.
+ *
+ * ONE walk serves all three bounds checks (ADR-165 T6.2): the depth count, the
+ * root/parent min-merge, and the per-ancestor child-count budget. The chain is
+ * `[parent, grandparent, ..., root]` — `parent` itself is depth 0 — and the cap
+ * is what guarantees termination, since a self-referencing FK does not rule out
+ * a cycle a manual DB edit could introduce.
  */
-async function delegationDepth(tx: Db, startId: string): Promise<number> {
-  let depth = 0;
+async function walkAncestorChain(
+  tx: Db,
+  startId: string,
+): Promise<AncestorLink[]> {
+  const chain: AncestorLink[] = [];
   let currentId: string | null = startId;
   const cap = 64;
 
-  while (currentId && depth < cap) {
+  while (currentId && chain.length < cap) {
     const rows = (await tx
-      .select({ parentRunId: runs.parentRunId })
+      .select({
+        parentRunId: runs.parentRunId,
+        delegationBounds: runs.delegationBounds,
+      })
       .from(runs)
-      .where(eq(runs.id, currentId))) as { parentRunId: string | null }[];
-    const parentRunId: string | null = rows[0]?.parentRunId ?? null;
+      .where(eq(runs.id, currentId))) as {
+      parentRunId: string | null;
+      delegationBounds: DelegationBounds | null;
+    }[];
+    const row = rows[0];
 
-    if (!parentRunId) break;
-    depth += 1;
-    currentId = parentRunId;
+    if (!row) break;
+    chain.push({ id: currentId, bounds: row.delegationBounds ?? null });
+
+    if (!row.parentRunId) break;
+    currentId = row.parentRunId;
   }
 
-  return depth;
+  return chain;
+}
+
+/**
+ * Descendants of `ancestorId` at ANY depth and in ANY status — the count
+ * `budget.max_child_runs` bounds.
+ *
+ * All statuses on purpose: this is a "how much work has this coordinator caused"
+ * budget, not a liveness question. A terminal child already spent its tokens.
+ */
+async function countRunSubtree(tx: Db, ancestorId: string): Promise<number> {
+  const result: unknown = await tx.execute(sql`
+    WITH RECURSIVE subtree AS (
+      SELECT id FROM runs WHERE parent_run_id = ${ancestorId}
+      UNION ALL
+      SELECT r.id FROM runs r JOIN subtree s ON r.parent_run_id = s.id
+    )
+    SELECT count(*)::int AS n FROM subtree
+  `);
+  // node-postgres returns `{ rows }`; some drizzle drivers return the array
+  // directly. Handle both rather than assume one — the shape difference is a
+  // driver detail, not a contract.
+  const list = (
+    Array.isArray(result)
+      ? result
+      : ((result as { rows?: unknown[] }).rows ?? [])
+  ) as { n?: number }[];
+
+  return Number(list[0]?.n ?? 0);
 }
 
 /**
@@ -118,12 +166,35 @@ export async function admitDelegatedChild(
 
   await takeDelegationLock(tx, args.parentRunId);
 
-  const depth = await delegationDepth(tx, args.parentRunId);
-  const maxDepth = orchestratorMaxDepth();
+  // ONE walk for all three checks below.
+  const chain = await walkAncestorChain(tx, args.parentRunId);
+  const depth = chain.length - 1;
+  const parentBounds = chain[0]?.bounds ?? null;
+  const rootBounds = chain.at(-1)?.bounds ?? null;
+
+  // ADR-165 (D5): min-merge the instance ceiling with the ROOT's and the
+  // PARENT's snapshots. A NULL snapshot means env-only, which is what every
+  // pre-3.7.0 tree has — so those keep byte-identical ADR-163 semantics.
+  const envDepth = orchestratorMaxDepth();
+  const maxDepth = Math.min(
+    envDepth,
+    rootBounds?.maxDepth ?? envDepth,
+    parentBounds?.maxDepth ?? envDepth,
+  );
+  const boundsSource =
+    parentBounds?.source === "node" || rootBounds?.source === "node"
+      ? "node"
+      : "env";
 
   if (depth >= maxDepth) {
     log.warn(
-      { parentRunId: args.parentRunId, depth, cap: maxDepth },
+      {
+        parentRunId: args.parentRunId,
+        depth,
+        cap: maxDepth,
+        source: boundsSource,
+        effective: maxDepth,
+      },
       "[delegation.admit] refused — run-tree depth limit reached",
     );
     throw new MaisterError(
@@ -133,16 +204,53 @@ export async function admitDelegatedChild(
   }
 
   const live = await countLiveDelegatedChildren(tx, args.parentRunId);
-  const maxFanout = orchestratorMaxFanout();
+  const envFanout = orchestratorMaxFanout();
+  const maxFanout = Math.min(envFanout, parentBounds?.maxFanout ?? envFanout);
 
   if (live + incoming > maxFanout) {
     log.warn(
-      { parentRunId: args.parentRunId, live, incoming, cap: maxFanout },
+      {
+        parentRunId: args.parentRunId,
+        live,
+        incoming,
+        cap: maxFanout,
+        source: boundsSource,
+        effective: maxFanout,
+      },
       "[delegation.fanout] refused — orchestrator fan-out cap reached",
     );
     throw new MaisterError(
       "CONFIG",
       `orchestrator fan-out limit reached (${maxFanout}); ${live} live child run(s) already`,
     );
+  }
+
+  // ADR-165 (D8): the child-COUNT budget binds at EVERY ancestor. Depth and
+  // fan-out alone cannot stop a depth-2 x fan-out-6 tree from causing 42 runs;
+  // this is the bound that does, and it is checked under the same lock that
+  // already serializes this orchestrator's admissions.
+  for (const ancestor of chain) {
+    const cap = ancestor.bounds?.budget?.maxChildRuns;
+
+    if (cap === undefined) continue;
+
+    const descendants = await countRunSubtree(tx, ancestor.id);
+
+    if (descendants + incoming > cap) {
+      log.warn(
+        {
+          ancestorRunId: ancestor.id,
+          parentRunId: args.parentRunId,
+          descendants,
+          incoming,
+          cap,
+        },
+        "[budget.tree.children] refused — child-count budget exhausted",
+      );
+      throw new MaisterError(
+        "CONFIG",
+        `child-run budget exhausted at run ${ancestor.id} (max_child_runs ${cap}); ${descendants} descendant run(s) already`,
+      );
+    }
   }
 }

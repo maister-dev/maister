@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { DelegationBounds } from "@/lib/run-results/types";
+
 import {
   and,
   asc,
@@ -19,6 +21,7 @@ import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { markResumed } from "@/lib/runs/state-transitions";
+import { SLOT_HOLDING_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import {
   clearC2Claim,
   countLiveAutoFlowRuns,
@@ -155,7 +158,7 @@ export async function countLiveRuns(
         // parked orchestrator is checkpointed (its agent-pool slot already
         // released via releaseSlotOnIdle), so like NeedsInputIdle it must NOT
         // count against the concurrency cap. Adding it would starve the pool.
-        inArray(runs.status, ["Running", "NeedsInput", "HumanWorking"]),
+        inArray(runs.status, [...SLOT_HOLDING_RUN_STATUSES]),
         inArray(runs.runKind, POOL_RUN_KINDS[pool]),
         // Studio AI assistant runs (local_package_id set) hold the SEPARATE
         // assistant budget (assertAssistantCapacity*), never the flow/agent
@@ -185,11 +188,49 @@ async function sharedWriterSiblingActive(
         eq(runs.rootRunId, rootRunId),
         eq(runs.workspaceMode, "shared"),
         ne(runs.id, excludeRunId),
-        inArray(runs.status, ["Running", "NeedsInput", "HumanWorking"]),
+        inArray(runs.status, [...SLOT_HOLDING_RUN_STATUSES]),
       ),
     );
 
   return Number(rows[0]?.count ?? 0) > 0;
+}
+
+// ADR-165 (D7/T6.3): the per-orchestrator ACTIVE-CHILDREN cap. A child over it
+// is NOT refused — it stays `Pending` and starts when a sibling frees a slot,
+// which is what every other cap in MAIster does. Reads the parent's
+// `delegation_bounds` snapshot; NULL (a pre-3.7.0 tree, or no orchestrator node
+// started yet) imposes no per-orchestrator cap at all.
+//
+// Called only from inside the advisory-locked transactions of `tryStartRun` and
+// `promoteNextPending` — the two independent Pending→Running edges. A guard on
+// one of them is a guard on neither.
+async function orchestratorActiveChildrenAtCap(
+  tx: Db,
+  parentRunId: string,
+  excludeRunId: string,
+): Promise<{ atCap: boolean; active: number; cap: number } | null> {
+  const parentRows: Array<{ delegationBounds: DelegationBounds | null }> =
+    await tx
+      .select({ delegationBounds: runs.delegationBounds })
+      .from(runs)
+      .where(eq(runs.id, parentRunId));
+  const cap = parentRows[0]?.delegationBounds?.maxActiveChildren ?? null;
+
+  if (cap === null) return null;
+
+  const rows: Array<{ count: number }> = await tx
+    .select({ count: count() })
+    .from(runs)
+    .where(
+      and(
+        eq(runs.parentRunId, parentRunId),
+        ne(runs.id, excludeRunId),
+        inArray(runs.status, [...SLOT_HOLDING_RUN_STATUSES]),
+      ),
+    );
+  const active = Number(rows[0]?.count ?? 0);
+
+  return { atCap: active >= cap, active, cap };
 }
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -328,12 +369,14 @@ export async function tryStartRun(
       startedAt: Date;
       workspaceMode: string | null;
       rootRunId: string | null;
+      parentRunId: string | null;
     }> = await tx
       .select({
         runKind: runs.runKind,
         startedAt: runs.startedAt,
         workspaceMode: runs.workspaceMode,
         rootRunId: runs.rootRunId,
+        parentRunId: runs.parentRunId,
       })
       .from(runs)
       .where(eq(runs.id, runId));
@@ -353,14 +396,38 @@ export async function tryStartRun(
       !!targetRows[0]?.rootRunId &&
       (await sharedWriterSiblingActive(tx, targetRows[0].rootRunId, runId));
 
+    // ADR-165 (D7): the per-orchestrator active-children cap — a QUEUE, so the
+    // candidate simply stays Pending. Rides the same advisory lock as the pool
+    // count, so both reads are consistent.
+    const activeChildren = targetRows[0]?.parentRunId
+      ? await orchestratorActiveChildrenAtCap(
+          tx,
+          targetRows[0].parentRunId,
+          runId,
+        )
+      : null;
+    const activeChildrenBlocked = activeChildren?.atCap === true;
+
+    if (activeChildrenBlocked) {
+      log.info(
+        {
+          childRunId: runId,
+          parentRunId: targetRows[0]?.parentRunId,
+          active: activeChildren?.active,
+          cap: activeChildren?.cap,
+        },
+        "[delegation.active-cap] queued — parent at its active-children cap",
+      );
+    }
+
     const liveCount = await countLiveRuns(tx, pool);
 
     log.debug(
-      { runId, pool, liveCount, cap, sharedBlocked },
+      { runId, pool, liveCount, cap, sharedBlocked, activeChildrenBlocked },
       "tryStartRun cap-check",
     );
 
-    if (!sharedBlocked && liveCount < cap) {
+    if (!sharedBlocked && !activeChildrenBlocked && liveCount < cap) {
       const startedRows: Array<{ projectId: string }> = await tx
         .update(runs)
         .set({ status: "Running", startedAt: new Date() })
@@ -558,6 +625,7 @@ export async function promoteNextPending(
       runKind: string;
       workspaceMode: string | null;
       rootRunId: string | null;
+      parentRunId: string | null;
       priority: string | null;
       startedAt: Date | null;
     }> = await tx
@@ -566,6 +634,7 @@ export async function promoteNextPending(
         runKind: runs.runKind,
         workspaceMode: runs.workspaceMode,
         rootRunId: runs.rootRunId,
+        parentRunId: runs.parentRunId,
         priority: tasks.priority,
         startedAt: runs.startedAt,
       })
@@ -591,6 +660,7 @@ export async function promoteNextPending(
       runKind: string;
       workspaceMode: string | null;
       rootRunId: string | null;
+      parentRunId: string | null;
       priority: string | null;
       resumeRequestedAt: Date | null;
     }> = await tx
@@ -599,6 +669,7 @@ export async function promoteNextPending(
         runKind: runs.runKind,
         workspaceMode: runs.workspaceMode,
         rootRunId: runs.rootRunId,
+        parentRunId: runs.parentRunId,
         priority: tasks.priority,
         resumeRequestedAt: runs.resumeRequestedAt,
       })
@@ -711,6 +782,32 @@ export async function promoteNextPending(
             "promoteNextPending → shared-tree writer busy, skipping candidate",
           );
           continue;
+        }
+
+        // ADR-165 (D7): the SECOND Pending→Running edge. The same skip, so a
+        // queued child is admitted here the moment a sibling leaves a
+        // slot-holding status — which is what makes the cap a queue rather than
+        // a stall.
+        if (ref.parentRunId) {
+          const active = await orchestratorActiveChildrenAtCap(
+            tx,
+            ref.parentRunId as string,
+            runId,
+          );
+
+          if (active?.atCap) {
+            log.debug(
+              {
+                childRunId: runId,
+                parentRunId: ref.parentRunId,
+                active: active.active,
+                cap: active.cap,
+                cls: cand.cls,
+              },
+              "[delegation.active-cap] skipping candidate — parent at its active-children cap",
+            );
+            continue;
+          }
         }
 
         const isAgent = runKind === "agent";

@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { FlowYamlV1 } from "@/lib/config.schema";
+import type { DelegationBounds } from "@/lib/run-results/types";
 
 import { randomUUID } from "node:crypto";
 import { unlink } from "node:fs/promises";
@@ -804,6 +805,10 @@ type BudgetCandidate = {
   currentStepId: string | null;
   acpSessionId: string | null;
   executionPolicy: unknown;
+  // ADR-165 (D8/T6.4): the ROOT's effective delegation bounds. Its `budget` is
+  // min-merged into the tree meters below. NULL = env-only, so the policy's
+  // limits are the only ones.
+  delegationBounds: DelegationBounds | null;
   budgetState: {
     ceilingOverride?: BudgetAxis;
     notified?: Partial<Record<BudgetScope, BudgetRung>>;
@@ -823,6 +828,7 @@ async function fetchBudgetCandidates(db: Db): Promise<BudgetCandidate[]> {
       status: runs.status,
       taskId: runs.taskId,
       rootRunId: runs.rootRunId,
+      delegationBounds: runs.delegationBounds,
       parentRunId: runs.parentRunId,
       flowId: runs.flowId,
       currentStepId: runs.currentStepId,
@@ -1121,12 +1127,68 @@ async function evaluateBudgetForCandidate(
 
   // --- tree scope (only at the tree root: rootRunId === own id) --------------
   if (candidate.rootRunId === candidate.id) {
-    const treeTokenCeilings = tokenCeilings(
+    // ADR-165 (D8): min-merge the ROOT orchestrator node's declared budget into
+    // the policy's tree ceilings. The tighter of the two binds — a manifest can
+    // lower an instance policy, never raise it. Spend / time / failure budgets
+    // bind at the ROOT ONLY; a nested orchestrator's budget is recorded on its
+    // own run row and never metered (residual R-nested).
+    const nodeBudget = candidate.delegationBounds?.budget ?? null;
+    const mergeTree = (
+      policyLimit: number | null,
+      nodeLimit: number | undefined,
+    ): { limit: number | null; source: "policy" | "node" | "min" } => {
+      if (!isSetLimit(nodeLimit ?? null)) {
+        return { limit: policyLimit, source: "policy" };
+      }
+      if (!isSetLimit(policyLimit)) {
+        return { limit: nodeLimit as number, source: "node" };
+      }
+
+      return {
+        limit: Math.min(policyLimit, nodeLimit as number),
+        source:
+          (nodeLimit as number) < policyLimit
+            ? "node"
+            : (nodeLimit as number) === policyLimit
+              ? "min"
+              : "policy",
+      };
+    };
+
+    const policyTreeTokens = tokenCeilings(
       snapshotBudget,
       override,
       "tree",
       multiplier,
     );
+    const mergedTokens = mergeTree(
+      policyTreeTokens?.escalateLimit ?? null,
+      nodeBudget?.maxTokens,
+    );
+    const treeTokenCeilings =
+      mergedTokens.limit === null
+        ? null
+        : {
+            escalateLimit: mergedTokens.limit,
+            // The hard band re-derives from the EFFECTIVE escalate limit, so a
+            // node budget that lowers the escalate ceiling lowers the terminate
+            // ceiling with it rather than leaving a stale, higher one.
+            hardLimit:
+              mergedTokens.source === "policy" && policyTreeTokens
+                ? policyTreeTokens.hardLimit
+                : mergedTokens.limit * multiplier,
+          };
+
+    if (mergedTokens.limit !== null) {
+      log.debug(
+        {
+          rootRunId: candidate.id,
+          limitSource: mergedTokens.source,
+          escalateLimit: mergedTokens.limit,
+        },
+        "[budget.tree] effective token ceiling",
+      );
+    }
 
     if (treeTokenCeilings) {
       const current = await queryRunTreeTokens(candidate.id, { client: db });
@@ -1144,12 +1206,11 @@ async function evaluateBudgetForCandidate(
       );
     }
 
-    const treeFailLimit = effectiveLimit(
-      snapshotBudget,
-      override,
-      "tree",
-      "consecutiveFailures",
+    const treeFailMerged = mergeTree(
+      effectiveLimit(snapshotBudget, override, "tree", "consecutiveFailures"),
+      nodeBudget?.consecutiveFailures,
     );
+    const treeFailLimit = treeFailMerged.limit;
 
     if (isSetLimit(treeFailLimit)) {
       const current = await consecutiveFailedRuns(
@@ -1170,12 +1231,11 @@ async function evaluateBudgetForCandidate(
       );
     }
 
-    const treeWallLimit = effectiveLimit(
-      snapshotBudget,
-      override,
-      "tree",
-      "wallClockMinutes",
+    const treeWallMerged = mergeTree(
+      effectiveLimit(snapshotBudget, override, "tree", "wallClockMinutes"),
+      nodeBudget?.wallClockMinutes,
     );
+    const treeWallLimit = treeWallMerged.limit;
 
     if (isSetLimit(treeWallLimit)) {
       const current = await treeWallClockMinutes(candidate.id, { client: db });

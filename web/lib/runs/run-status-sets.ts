@@ -19,6 +19,20 @@ export const TERMINAL_RUN_STATUSES = [
 // decision before their worktrees may be removed.
 export const DISPOSABLE_WORKSPACE_RUN_STATUSES = ["Done", "Abandoned"] as const;
 
+// ADR-165 (D7): a run holds a SCHEDULER SLOT while it is in one of these. It is
+// the same list `countLiveRuns` and `sharedWriterSiblingActive` already used
+// inline; naming it once is what keeps the per-orchestrator active-children cap
+// counting the same population those two do.
+//
+// Deliberately NOT `WaitingOnChildren` / `NeedsInputIdle` / `Review`: those are
+// slot-FREED states (a parked orchestrator has released its slot), so counting
+// them would starve the pool.
+export const SLOT_HOLDING_RUN_STATUSES = [
+  "Running",
+  "NeedsInput",
+  "HumanWorking",
+] as const;
+
 export function isDisposableWorkspaceRunStatus(status: string): boolean {
   return (DISPOSABLE_WORKSPACE_RUN_STATUSES as readonly string[]).includes(
     status,

@@ -1098,6 +1098,172 @@ describe("budget watchdog — TREE scope (E6)", () => {
     expect(await getHitl(childA)).toHaveLength(0);
   }, 60_000);
 
+  // ADR-165 AC-30 / D8: the ROOT orchestrator node's declared budget MIN-MERGES
+  // into the policy's tree ceilings. A manifest can lower an instance policy,
+  // never raise it — and a nested orchestrator's budget is recorded, not metered.
+  async function seedTreeRoot(args: {
+    treeMaxTokens?: number;
+    nodeBudget?: Record<string, number> | null;
+  }): Promise<string> {
+    const rootId = randomUUID();
+
+    await db.insert(schema.runs).values({
+      id: rootId,
+      runKind: "flow",
+      projectId,
+      rootRunId: rootId,
+      status: "WaitingOnChildren",
+      currentStepId: null,
+      flowVersion: "v1.0.0",
+      executionPolicy: policyWithBudget({
+        tree: { maxTokens: args.treeMaxTokens ?? 1000 },
+      }),
+      delegationBounds: args.nodeBudget
+        ? {
+            nodeId: "orchestrate",
+            nodeAttemptId: randomUUID(),
+            engineMin: "3.7.0",
+            source: "node",
+            maxDepth: 2,
+            maxFanout: 6,
+            maxActiveChildren: 3,
+            budget: args.nodeBudget,
+            declared: null,
+            instance: {
+              maxDepth: 3,
+              maxFanout: 16,
+              flowPool: 6,
+              agentPool: 3,
+            },
+          }
+        : null,
+      startedAt: new Date(Date.now() - 60_000),
+    });
+    await db.insert(schema.runSessions).values({
+      id: randomUUID(),
+      runId: rootId,
+      sessionName: "default",
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
+    });
+
+    return rootId;
+  }
+
+  it("(ADR-165) a node max_tokens BELOW the policy limit becomes the effective ceiling", async () => {
+    // Policy tree limit 1000; the node declares 500. Spend of 600 is under the
+    // policy limit and OVER the node one, so only the min-merge can trip it.
+    const rootId = await seedTreeRoot({
+      treeMaxTokens: 1000,
+      nodeBudget: {
+        maxTokens: 500,
+        wallClockMinutes: 10_000,
+        maxChildRuns: 50,
+        consecutiveFailures: 50,
+      },
+    });
+    const child = await seedRun({
+      rootRunId: rootId,
+      parentRunId: rootId,
+      status: "Running",
+      acpSessionId: "acp-min-merge",
+    });
+
+    await seedRollup(rootId, null, 300);
+    await seedRollup(child, null, 300);
+
+    listSessionsSpy.mockResolvedValue([]);
+    await runSweepTick({ db });
+
+    expect((await getRun(rootId)).status).toBe("Failed");
+    expect((await getRun(child)).status).toBe("Abandoned");
+  }, 60_000);
+
+  it("(ADR-165) a node max_tokens ABOVE the policy limit does NOT raise the ceiling", async () => {
+    // The node asks for 100_000; the policy says 1000. Spend of 1200 must still
+    // trip — an author can only lower an instance policy.
+    const rootId = await seedTreeRoot({
+      treeMaxTokens: 1000,
+      nodeBudget: {
+        maxTokens: 100_000,
+        wallClockMinutes: 10_000,
+        maxChildRuns: 50,
+        consecutiveFailures: 50,
+      },
+    });
+    const child = await seedRun({
+      rootRunId: rootId,
+      parentRunId: rootId,
+      status: "Running",
+      acpSessionId: "acp-no-raise",
+    });
+
+    await seedRollup(rootId, null, 600);
+    await seedRollup(child, null, 600);
+
+    listSessionsSpy.mockResolvedValue([]);
+    await runSweepTick({ db });
+
+    expect((await getRun(rootId)).status).toBe("Failed");
+  }, 60_000);
+
+  it("(ADR-165) a NESTED orchestrator's budget is recorded but never metered", async () => {
+    // The nested run carries a tiny budget and plenty of spend, but it is NOT
+    // its own tree root — only the root's meters run (residual R-nested).
+    const rootId = await seedTreeRoot({
+      treeMaxTokens: 100_000,
+      nodeBudget: null,
+    });
+    const nestedId = randomUUID();
+
+    await db.insert(schema.runs).values({
+      id: nestedId,
+      runKind: "flow",
+      projectId,
+      rootRunId: rootId,
+      parentRunId: rootId,
+      status: "Running",
+      currentStepId: "implement",
+      flowVersion: "v1.0.0",
+      executionPolicy: { preset: "supervised" },
+      delegationBounds: {
+        nodeId: "orchestrate",
+        nodeAttemptId: randomUUID(),
+        engineMin: "3.7.0",
+        source: "node",
+        maxDepth: 2,
+        maxFanout: 6,
+        maxActiveChildren: 3,
+        budget: {
+          maxTokens: 1,
+          wallClockMinutes: 1,
+          maxChildRuns: 1,
+          consecutiveFailures: 1,
+        },
+        declared: null,
+        instance: { maxDepth: 3, maxFanout: 16, flowPool: 6, agentPool: 3 },
+      },
+      startedAt: new Date(Date.now() - 60_000),
+    });
+    await db.insert(schema.runSessions).values({
+      id: randomUUID(),
+      runId: nestedId,
+      sessionName: "default",
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
+    });
+    await seedRollup(nestedId, null, 5000);
+
+    listSessionsSpy.mockResolvedValue([]);
+    await runSweepTick({ db });
+
+    // Nothing terminated: the nested budget is inert, and the root's is huge.
+    expect((await getRun(nestedId)).status).toBe("Running");
+    expect((await getRun(rootId)).status).toBe("WaitingOnChildren");
+  }, 60_000);
+
   it("kills the root + every child live ACP session so the swarm stops spending (H1)", async () => {
     // Same tree breach, but with LIVE supervisor sessions for the root (Running
     // mid-plan) and both children. The tree-terminate must tear them all down —
