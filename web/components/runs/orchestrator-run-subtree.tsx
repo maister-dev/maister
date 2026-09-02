@@ -16,8 +16,11 @@ export interface OrchestratorRunSubtreeLabels {
   // server-side and crosses the RSC → Client boundary, where a function prop is
   // not serializable.
   title: string;
-  // Accessible name + visible eyebrow describing the delegation target column.
+  // Visible eyebrow naming the delegation target's kind (ADR-163: agent, flow,
+  // or consensus runner), keyed by ChildRunRef.delegationTarget.kind.
   agent: string;
+  flow: string;
+  runner: string;
   // Fallback ref shown for a task-less ("as-run") child.
   asRun: string;
   // Localized run-status labels, keyed by the runs.status string.
@@ -42,7 +45,7 @@ function statusLabel(
 // M37 Phase 6 (ADR-098): the dynamic run-tree subtree shown BELOW the flow
 // graph on an orchestrator run's workbench. Each child is a visually
 // subordinate (dashed, soft) sub-node card carrying its RUN-status dot/badge,
-// task ref (KEY-N) or the as-run fallback, the delegation target agent id, and
+// task ref (KEY-N) or the as-run fallback, the delegation target (kind + ref), and
 // a link to the child run. Pure presentational — the parent loads
 // getChildRuns(runId) and the localized labels.
 export function OrchestratorRunSubtree({
@@ -107,14 +110,17 @@ export function OrchestratorRunSubtree({
                     {statusLabel(labels, child.status)}
                   </span>
                 </div>
-                {child.delegationAgentId ? (
+                {child.delegationTarget ? (
                   <div className="mt-1.5 flex items-center gap-1.5 pl-4 font-mono text-[10px] tracking-[0.02em] text-mute">
-                    <span className="text-mute-2">{labels.agent}</span>
+                    <span className="text-mute-2">
+                      {labels[child.delegationTarget.kind]}
+                    </span>
                     <span
                       className="rounded border border-line bg-ivory px-1 py-px font-semibold text-ink-2"
-                      data-testid="orchestrator-child-agent"
+                      data-target-kind={child.delegationTarget.kind}
+                      data-testid="orchestrator-child-target"
                     >
-                      {child.delegationAgentId}
+                      {child.delegationTarget.ref}
                     </span>
                   </div>
                 ) : null}

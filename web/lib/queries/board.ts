@@ -130,6 +130,16 @@ export interface BacklogCard {
   // M37 Phase 6 (ADR-098): non-empty when this task is a `parent_of` SOURCE —
   // the run-plan children rendered as a collapsible decomposition group.
   childTasks: ChildTaskRef[];
+  // ADR-163: set when this task is a `parent_of` TARGET (a delegated child's
+  // carrier or an as-plan task) — the orchestrator task it belongs to, so the
+  // card carries its own provenance and a relaunch can be warned about.
+  parentTask: ParentTaskRef | null;
+}
+
+export interface ParentTaskRef {
+  keyRef: string;
+  number: number;
+  projectSlug: string;
 }
 
 export interface FlightCard {
@@ -200,6 +210,8 @@ export interface FlightCard {
   blockedBy: Array<{ key: string; number: number }>;
   // M37 Phase 6 (ADR-098): the orchestrator decomposition group (see BacklogCard).
   childTasks: ChildTaskRef[];
+  // ADR-163: the orchestrator task this card belongs to (see BacklogCard).
+  parentTask: ParentTaskRef | null;
 }
 
 export interface BoardColumnData {
@@ -465,6 +477,36 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     childTasksByTask.set(rel.parentTaskId, list);
   }
 
+  // ADR-163: the inverse edge — for every board task that is a `parent_of`
+  // TARGET, the orchestrator task it belongs to (its own project's key, so a
+  // cross-project parent links to the right board).
+  const parentRelRows = await client
+    .select({
+      childTaskId: taskRelations.toTaskId,
+      parentNumber: tasks.number,
+      parentTaskKey: projects.taskKey,
+      parentProjectSlug: projects.slug,
+    })
+    .from(taskRelations)
+    .innerJoin(tasks, eq(tasks.id, taskRelations.fromTaskId))
+    .innerJoin(projects, eq(projects.id, tasks.projectId))
+    .where(
+      and(
+        eq(taskRelations.kind, "parent_of"),
+        inArray(taskRelations.toTaskId, taskIds),
+      ),
+    );
+  const parentTaskByTask = new Map<string, ParentTaskRef>(
+    parentRelRows.map((rel) => [
+      rel.childTaskId,
+      {
+        keyRef: `${rel.parentTaskKey}-${rel.parentNumber}`,
+        number: rel.parentNumber,
+        projectSlug: rel.parentProjectSlug,
+      },
+    ]),
+  );
+
   const runCountRows = await client
     .select({
       taskId: runs.taskId,
@@ -675,6 +717,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
           (task.executionPolicy as ExecutionPolicy | null) ?? null,
         relations: relationsByTask.get(task.taskId) ?? [],
         childTasks: childTasksByTask.get(task.taskId) ?? [],
+        parentTask: parentTaskByTask.get(task.taskId) ?? null,
       });
       backlogPos += 1;
       continue;
@@ -762,6 +805,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       autoPromotedLane: run.promotionLane ?? null,
       blockedBy: openBlockers.get(task.taskId) ?? [],
       childTasks: childTasksByTask.get(task.taskId) ?? [],
+      parentTask: parentTaskByTask.get(task.taskId) ?? null,
     });
 
     if (

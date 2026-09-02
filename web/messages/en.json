@@ -1349,6 +1349,8 @@
     "unconfigured": "no flow",
     "decompositionTitle": "Decomposition ({count})",
     "decompositionNoRun": "no run",
+    "delegatedBy": "delegated by",
+    "delegatedRelaunchHint": "Delegated child of {key} — a launch from this card starts a run outside its orchestrator's tree.",
     "editTask": "Edit task",
     "editTitle": "Edit title",
     "editDescription": "Edit description",
@@ -2542,6 +2544,8 @@
     "subtreeTitle": "Child runs ({count})",
     "subtreeAgent": "agent",
     "subtreeAsRun": "(as-run)",
+    "subtreeFlow": "flow",
+    "subtreeRunner": "runner",
     "subtreeEmpty": "No child runs spawned yet.",
     "spawnedRunsTitle": "Spawned runs ({count})",
     "runStatus": {
@@ -4261,7 +4265,7 @@
       "status": "Run is not in review",
       "run_kind": "Only flow runs auto-promote",
       "no_task": "Run has no task",
-      "orchestrator_child": "Child runs promote via their orchestrator",
+      "orchestrator_child": "Delegated child — promote it from its orchestrator, or manually here",
       "shared_workspace": "Shared-workspace runs are excluded",
       "launched_lineage": "Launched evaluation runs never auto-promote",
       "auto_on_ready": "Run already auto-delivers"

@@ -1067,6 +1067,33 @@ describe("getBoardData — orchestrator decomposition (integration)", () => {
     expect(noRun?.latestRunStatus).toBeNull();
   });
 
+  // ADR-163: the CHILD cards carry their parent (provenance on the card itself,
+  // not only under the orchestrator's decomposition); the parent carries none.
+  it("each parent_of child card carries its parent's ref, and the parent card carries null", async () => {
+    const { projectId, taskKey, parentTaskId, childWithRunId, childNoRunId } =
+      await seedDecomposition();
+
+    const board = await getBoardData(projectId);
+    // Column placement is not what this pins — search every card on the board.
+    const cards = Object.values(board.columns).flatMap((c) => [
+      ...c.backlog,
+      ...c.flight,
+    ]);
+    const parentRef = {
+      keyRef: `${taskKey}-1`,
+      number: 1,
+      projectSlug: expect.any(String),
+    };
+
+    expect(cards.find((c) => c.taskId === parentTaskId)?.parentTask).toBeNull();
+    expect(cards.find((c) => c.taskId === childNoRunId)?.parentTask).toEqual(
+      parentRef,
+    );
+    expect(cards.find((c) => c.taskId === childWithRunId)?.parentTask).toEqual(
+      parentRef,
+    );
+  });
+
   // ADR-155: a parent_of edge may cross projects. The card must render the
   // CHILD's own KEY-N and slug — baking the board's task_key in names a task
   // that does not exist and links to the wrong board.

@@ -24,6 +24,10 @@ export interface TaskCardProps {
   launchDisabledLabel: string;
   launchDisabledReason?: string;
   blockedByLabel: string;
+  // ADR-163: provenance chip label for a delegated child, and the warning shown
+  // beside a relaunch affordance (a launch from the card leaves the tree).
+  delegatedByLabel: string;
+  delegatedRelaunchHint?: string;
   unconfiguredLabel: string;
   triagedLabel: string;
   flaggedLabel: string;
@@ -58,6 +62,8 @@ export function TaskCard({
   launchDisabledReason,
   launchLabel,
   blockedByLabel,
+  delegatedByLabel,
+  delegatedRelaunchHint,
   unconfiguredLabel,
   triagedLabel,
   flaggedLabel,
@@ -175,6 +181,20 @@ export function TaskCard({
           ))}
         </div>
       ) : null}
+      {card.parentTask ? (
+        <div
+          className="flex flex-wrap items-center gap-1 font-mono text-[10px] text-mute"
+          data-testid="task-card-delegated-by"
+        >
+          <span>↳ {delegatedByLabel}</span>
+          <Link
+            className="rounded border border-line bg-ivory px-1 py-px font-semibold text-ink-2 hover:border-amber hover:text-amber"
+            href={`/projects/${card.parentTask.projectSlug}/tasks/${card.parentTask.number}`}
+          >
+            {card.parentTask.keyRef}
+          </Link>
+        </div>
+      ) : null}
       {card.childTasks.length > 0 ? (
         <TaskDecomposition
           childTasks={card.childTasks}
@@ -207,6 +227,17 @@ export function TaskCard({
               data-testid="task-card-launch-unavailable-reason"
             >
               {launchDisabledReason}
+            </span>
+          ) : null}
+          {canAct &&
+          card.runCount > 0 &&
+          card.parentTask &&
+          delegatedRelaunchHint ? (
+            <span
+              className="block break-words text-[9px] leading-[1.35] text-amber"
+              data-testid="task-card-delegated-relaunch-hint"
+            >
+              {delegatedRelaunchHint}
             </span>
           ) : null}
         </div>

@@ -58,6 +58,8 @@ export interface FlightCardLabels {
   // M37 Phase 6 (ADR-098): localized labels for the orchestrator decomposition
   // group rendered under a parent task's flight card.
   decomposition: TaskDecompositionLabels;
+  // ADR-163: provenance chip label on a delegated child's card.
+  delegatedBy: string;
 }
 
 export interface FlightCardProps {
@@ -438,6 +440,20 @@ export function FlightCard({
         </div>
       ) : null}
 
+      {card.parentTask ? (
+        <div
+          className="relative z-10 flex flex-wrap items-center gap-1 font-mono text-[10px] text-mute"
+          data-testid="flight-card-delegated-by"
+        >
+          <span>↳ {labels.delegatedBy}</span>
+          <Link
+            className="rounded border border-line bg-ivory px-1 py-px font-semibold text-ink-2 hover:border-amber hover:text-amber"
+            href={`/projects/${card.parentTask.projectSlug}/tasks/${card.parentTask.number}`}
+          >
+            {card.parentTask.keyRef}
+          </Link>
+        </div>
+      ) : null}
       {card.childTasks.length > 0 ? (
         <div className="relative z-10">
           <TaskDecomposition

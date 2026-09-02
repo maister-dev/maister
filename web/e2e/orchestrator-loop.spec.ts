@@ -162,7 +162,7 @@ test("orchestrator loop: launch → park with child subtree → resume to termin
   // Two subordinate child cards, each carrying the delegation target agent id.
   await expect(subtree.locator("[data-child-run-id]")).toHaveCount(2);
   await expect(
-    subtree.getByTestId("orchestrator-child-agent").first(),
+    subtree.getByTestId("orchestrator-child-target").first(),
   ).toContainText(fx.workerAgentId);
 
   // ---- Drive the resume: release children, then tick the dispatcher. -------

@@ -158,6 +158,8 @@ test("flow-target delegation: launch → flow children in Review → the parked 
 
   await expect(subtree).toBeVisible();
   await expect(subtree.locator("[data-child-run-id]")).toHaveCount(2);
+  // ADR-163: each child is labelled as a FLOW target, not rendered as a bare row.
+  await expect(subtree.locator('[data-target-kind="flow"]')).toHaveCount(2);
 
   // ---- Each flow child runs its own graph to Review. ----------------------
   // A flow child always provisions a worktree, so it ALWAYS parks in `Review`

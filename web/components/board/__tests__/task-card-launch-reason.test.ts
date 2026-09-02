@@ -48,6 +48,7 @@ const card: BacklogCard = {
   executionPolicy: null,
   relations: [],
   childTasks: [],
+  parentTask: null,
 };
 
 describe("TaskCard launch incompatibility", () => {
@@ -57,6 +58,7 @@ describe("TaskCard launch incompatibility", () => {
     const html = renderToStaticMarkup(
       createElement(TaskCard, {
         blockedByLabel: "Blocked by",
+        delegatedByLabel: "delegated by",
         canAct: true,
         card,
         decompositionLabels: {
@@ -111,6 +113,7 @@ describe("TaskCard launch incompatibility", () => {
     const html = renderToStaticMarkup(
       createElement(TaskCard, {
         blockedByLabel: "Blocked by",
+        delegatedByLabel: "delegated by",
         canAct: false,
         card: awaitingCard,
         decompositionLabels: {

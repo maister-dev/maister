@@ -814,18 +814,29 @@ export interface ChildRunRef {
   taskNumber: number | null;
   taskKey: string | null;
   taskTitle: string | null;
-  // The delegation target agent-definition id (the catalog agent the child was
-  // launched as). Null on a child with no recorded delegation snapshot.
-  delegationAgentId: string | null;
+  // ADR-163: what the child was delegated TO, narrowed on the snapshot's kind —
+  // a catalog agent (its definition id), a flow (its flow ref) or a consensus
+  // runner. Null on a child with no recorded delegation snapshot.
+  delegationTarget: { kind: "agent" | "flow" | "runner"; ref: string } | null;
   launchMode: "auto" | "manual" | null;
   startedAt: Date;
   endedAt: Date | null;
 }
 
-function delegationAgentId(snapshot: DelegationSnapshot | null): string | null {
+function delegationTarget(
+  snapshot: DelegationSnapshot | null,
+): ChildRunRef["delegationTarget"] {
   if (!snapshot) return null;
+  if (snapshot.kind === "flow") {
+    return { kind: "flow", ref: snapshot.flowRefId };
+  }
+  if (snapshot.kind === "runner") {
+    return { kind: "runner", ref: snapshot.runnerId };
+  }
 
-  return "agentDefinitionId" in snapshot ? snapshot.agentDefinitionId : null;
+  return "agentDefinitionId" in snapshot
+    ? { kind: "agent", ref: snapshot.agentDefinitionId }
+    : null;
 }
 
 // The run-tree children of an orchestrator run, oldest-first. DTO-projected:
@@ -863,7 +874,7 @@ export async function getChildRuns(
     taskNumber: row.taskNumber,
     taskKey: row.taskNumber !== null ? row.projectTaskKey : null,
     taskTitle: row.taskTitle,
-    delegationAgentId: delegationAgentId(row.delegationSnapshot ?? null),
+    delegationTarget: delegationTarget(row.delegationSnapshot ?? null),
     launchMode: row.launchMode,
     startedAt: row.startedAt,
     endedAt: row.endedAt,

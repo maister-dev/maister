@@ -137,6 +137,7 @@ export async function Board({
       waiting: t("activeNodeWaiting"),
     },
     decomposition: decompositionLabels,
+    delegatedBy: t("delegatedBy"),
   };
   const launchDisabledReason =
     platformStatus.kind === "ready"
@@ -254,6 +255,14 @@ export async function Board({
                     canAct={canAct}
                     card={card}
                     decompositionLabels={decompositionLabels}
+                    delegatedByLabel={t("delegatedBy")}
+                    delegatedRelaunchHint={
+                      card.parentTask
+                        ? t("delegatedRelaunchHint", {
+                            key: card.parentTask.keyRef,
+                          })
+                        : undefined
+                    }
                     flaggedLabel={t("flagged")}
                     launchDisabledLabel={
                       card.blockedBy.length > 0 && !launchDisabledReason

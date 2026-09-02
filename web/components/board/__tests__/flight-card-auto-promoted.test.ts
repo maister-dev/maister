@@ -50,6 +50,7 @@ const labels: FlightCardLabels = {
   flagged: "Needs review",
   waitingOnChildren: "Waiting on children",
   openRun: "Open run",
+  delegatedBy: "delegated by",
   activeNodeStatus: {
     running: "running",
     needs: "needs input",
@@ -108,6 +109,7 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     autoPromotedLane: null,
     blockedBy: [],
     childTasks: [],
+    parentTask: null,
     activeNode: null,
     ...over,
   };

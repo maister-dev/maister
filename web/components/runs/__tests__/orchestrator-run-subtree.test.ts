@@ -20,6 +20,8 @@ const labels: OrchestratorRunSubtreeLabels = {
   // Pre-pluralized string (the caller counts; the component renders it verbatim).
   title: "Child runs (2)",
   agent: "agent",
+  flow: "flow",
+  runner: "runner",
   asRun: "(as-run)",
   empty: "No child runs spawned yet.",
   status: {
@@ -45,7 +47,7 @@ function child(over: Partial<ChildRunRef> = {}): ChildRunRef {
     taskNumber: 7,
     taskKey: "TST",
     taskTitle: "Child task",
-    delegationAgentId: "agent:planner",
+    delegationTarget: { kind: "agent", ref: "agent:planner" },
     launchMode: "auto",
     startedAt: new Date("2026-06-20T10:00:00.000Z"),
     endedAt: null,
@@ -77,7 +79,9 @@ describe("OrchestratorRunSubtree", () => {
     // KEY-N composed from taskKey + taskNumber.
     expect(html).toContain("TST-7");
     expect(html).toContain('data-as-run="false"');
-    // The delegation target agent id is surfaced.
+    // The delegation target is surfaced with its kind.
+    expect(html).toContain('data-testid="orchestrator-child-target"');
+    expect(html).toContain('data-target-kind="agent"');
     expect(html).toContain("agent:planner");
     expect(html).toContain('href="/runs/run-abc"');
     // The localized status label is rendered.
@@ -98,6 +102,35 @@ describe("OrchestratorRunSubtree", () => {
 
     expect(html).toContain('data-run-status="Crashed"');
     expect(html).toContain('data-run-tone="crashed"');
+  });
+
+  // ADR-163: a FLOW child's snapshot has no agentDefinitionId — before the
+  // kind-aware target it rendered as a bare row with no eyebrow at all.
+  it("renders a FLOW child's eyebrow with the flow label and its flow ref", () => {
+    const html = render([
+      child({ delegationTarget: { kind: "flow", ref: "bugfix" } }),
+    ]);
+
+    expect(html).toContain('data-target-kind="flow"');
+    expect(html).toContain(">flow<");
+    expect(html).toContain("bugfix");
+    expect(html).not.toContain(">agent<");
+  });
+
+  it("renders a RUNNER (consensus draft) child's eyebrow with the runner label", () => {
+    const html = render([
+      child({ delegationTarget: { kind: "runner", ref: "claude-code" } }),
+    ]);
+
+    expect(html).toContain('data-target-kind="runner"');
+    expect(html).toContain(">runner<");
+    expect(html).toContain("claude-code");
+  });
+
+  it("renders no target eyebrow for a child without a delegation snapshot", () => {
+    const html = render([child({ delegationTarget: null })]);
+
+    expect(html).not.toContain('data-testid="orchestrator-child-target"');
   });
 
   it("renders the empty state when there are no children", () => {

@@ -1349,6 +1349,8 @@
     "unconfigured": "без флоу",
     "decompositionTitle": "Декомпозиция ({count})",
     "decompositionNoRun": "нет запуска",
+    "delegatedBy": "делегировано из",
+    "delegatedRelaunchHint": "Дочерняя задача {key} — запуск с этой карточки создаст прогон вне дерева оркестратора.",
     "editTask": "Редактировать задачу",
     "editTitle": "Изменить название",
     "editDescription": "Изменить описание",
@@ -2542,6 +2544,8 @@
     "subtreeTitle": "Дочерние запуски ({count})",
     "subtreeAgent": "агент",
     "subtreeAsRun": "(как запуск)",
+    "subtreeFlow": "флоу",
+    "subtreeRunner": "раннер",
     "subtreeEmpty": "Дочерние запуски ещё не созданы.",
     "spawnedRunsTitle": "Порождённые запуски ({count})",
     "runStatus": {
@@ -4261,7 +4265,7 @@
       "status": "Прогон не на ревью",
       "run_kind": "Авто-промоушен только для flow-прогонов",
       "no_task": "У прогона нет задачи",
-      "orchestrator_child": "Дочерние прогоны промоутятся через оркестратор",
+      "orchestrator_child": "Дочерний прогон — промоутится из оркестратора или вручную здесь",
       "shared_workspace": "Прогоны с общим воркспейсом исключены",
       "launched_lineage": "Запущенные прогоны оценки не продвигаются автоматически",
       "auto_on_ready": "Прогон уже авто-доставляется"

@@ -373,6 +373,8 @@ export default async function RunDetailLayout({
     // the count is exact). The message is a plain `{count}` interpolation.
     title: t("subtreeTitle", { count: childRuns.length }),
     agent: t("subtreeAgent"),
+    flow: t("subtreeFlow"),
+    runner: t("subtreeRunner"),
     asRun: t("subtreeAsRun"),
     status: runStatusLabels,
     empty: t("subtreeEmpty"),
