@@ -1,6 +1,8 @@
 import type {
   DeclaredDelegationBounds,
+  DeclaredDelegationBudget,
   DelegationBounds,
+  DelegationBudget,
   DelegationInstanceCeilings,
 } from "@/lib/run-results/types";
 
@@ -20,6 +22,27 @@ import { semverGte } from "@/lib/flows/engine-version";
 export const DEFAULT_NODE_MAX_DEPTH = 2;
 export const DEFAULT_NODE_MAX_FANOUT = 6;
 export const DEFAULT_NODE_MAX_ACTIVE_CHILDREN = 3;
+
+/**
+ * The manifest declares `budget` in snake_case; admission reads
+ * `budget.maxChildRuns` and the sweeper reads `budget.maxTokens`. Publishing the
+ * declaration verbatim therefore publishes a budget nothing can read — every key
+ * lookup returns `undefined` and every budget silently stops binding, with no
+ * error anywhere. The mapping belongs here, at the one place the effective
+ * bounds are built.
+ */
+function effectiveBudget(
+  declared: DeclaredDelegationBudget | undefined,
+): DelegationBudget | null {
+  if (!declared) return null;
+
+  return {
+    maxTokens: declared.max_tokens,
+    wallClockMinutes: declared.wall_clock_minutes,
+    maxChildRuns: declared.max_child_runs,
+    consecutiveFailures: declared.consecutive_failures,
+  };
+}
 
 export type ComputeBoundsArgs = {
   instance: DelegationInstanceCeilings;
@@ -73,9 +96,9 @@ export function computeEffectiveDelegationBounds(
       instance.flowPool,
       declared?.max_active_children ?? DEFAULT_NODE_MAX_ACTIVE_CHILDREN,
     ),
-    // Verbatim. It is required and complete at this floor (load gate R10), so
-    // there is nothing to merge or default here — the min-merge against the
-    // execution policy happens at the ROOT meter, not per node.
-    budget: declared?.budget ?? null,
+    // Required and complete at this floor (load gate R10), so there is nothing
+    // to default here — only to translate. The min-merge against the execution
+    // policy happens at the ROOT meter, not per node.
+    budget: effectiveBudget(declared?.budget),
   };
 }

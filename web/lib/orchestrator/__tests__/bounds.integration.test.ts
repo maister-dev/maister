@@ -39,6 +39,16 @@ let db: NodePgDatabase;
 let projectId: string;
 let executorId: string;
 
+// Two casings on purpose. `DECLARED_BUDGET` is what a MANIFEST carries and is
+// the only shape `computeEffectiveDelegationBounds` accepts; `BUDGET` is the
+// EFFECTIVE shape, used where a test seeds `delegation_bounds` directly.
+const DECLARED_BUDGET = {
+  max_tokens: 1_000,
+  wall_clock_minutes: 60,
+  max_child_runs: 5,
+  consecutive_failures: 3,
+};
+
 const BUDGET = {
   maxTokens: 1_000,
   wallClockMinutes: 60,
@@ -166,7 +176,7 @@ describe("the bounds snapshot (AC-26)", () => {
     const args = {
       instance: { maxDepth: 3, maxFanout: 16, flowPool: 6, agentPool: 3 },
       engineMin: "3.7.0",
-      declared: { max_fanout: 4, budget: BUDGET },
+      declared: { max_fanout: 4, budget: DECLARED_BUDGET },
       nodeId: "orchestrate",
       nodeAttemptId: attemptId,
     };
@@ -197,7 +207,7 @@ describe("the bounds snapshot (AC-26)", () => {
     const base = {
       instance: { maxDepth: 3, maxFanout: 16, flowPool: 6, agentPool: 3 },
       engineMin: "3.7.0",
-      declared: { max_fanout: 4, budget: BUDGET },
+      declared: { max_fanout: 4, budget: DECLARED_BUDGET },
       nodeId: "orchestrate",
       nodeAttemptId: randomUUID(),
     };
@@ -207,7 +217,7 @@ describe("the bounds snapshot (AC-26)", () => {
       ...base,
       nodeId: "reduce",
       nodeAttemptId: randomUUID(),
-      declared: { max_fanout: 2, budget: BUDGET },
+      declared: { max_fanout: 2, budget: DECLARED_BUDGET },
     });
 
     expect(await boundsRow(runId)).toMatchObject({
@@ -223,7 +233,7 @@ describe("the bounds snapshot (AC-26)", () => {
     await writeDelegationBoundsIfChanged(db, runId, {
       instance: { maxDepth: 3, maxFanout: 16, flowPool: 6, agentPool: 3 },
       engineMin: "3.7.0",
-      declared: { budget: BUDGET },
+      declared: { budget: DECLARED_BUDGET },
       nodeId: "orchestrate",
       nodeAttemptId: attemptId,
     });
@@ -239,7 +249,7 @@ describe("the bounds snapshot (AC-26)", () => {
     await writeDelegationBoundsIfChanged(db, runId, {
       instance: { maxDepth: 3, maxFanout: 16, flowPool: 6, agentPool: 3 },
       engineMin: "3.6.0",
-      declared: { max_depth: 1, max_fanout: 1, budget: BUDGET },
+      declared: { max_depth: 1, max_fanout: 1, budget: DECLARED_BUDGET },
       nodeId: "orchestrate",
       nodeAttemptId: randomUUID(),
     });
@@ -328,6 +338,32 @@ describe("admission reads the snapshot (AC-27)", () => {
 });
 
 describe("the per-ancestor child-count budget (AC-28)", () => {
+  // Every other case in this block seeds `delegation_bounds` directly, so all of
+  // them would keep passing if the snapshot WRITER stopped producing a readable
+  // budget. This one goes through the writer, from a manifest-shaped declaration
+  // — the only path production uses, and the one where the snake_case
+  // declaration has to become the camelCase budget admission reads.
+  it("binds on a budget that came from a MANIFEST declaration, through the writer", async () => {
+    process.env.MAISTER_ORCHESTRATOR_MAX_DEPTH = "5";
+
+    const parentRunId = await seedRun({});
+
+    await writeDelegationBoundsIfChanged(db, parentRunId, {
+      instance: { maxDepth: 5, maxFanout: 16, flowPool: 6, agentPool: 3 },
+      engineMin: "3.7.0",
+      declared: { budget: { ...DECLARED_BUDGET, max_child_runs: 2 } },
+      nodeId: "orchestrate",
+      nodeAttemptId: randomUUID(),
+    });
+
+    await seedRun({ parentRunId, status: "Done" });
+    await seedRun({ parentRunId, status: "Running" });
+
+    expect(await expectRefused(admit(parentRunId))).toContain(
+      "max_child_runs 2",
+    );
+  });
+
   it("a NESTED orchestrator refuses before the root does", async () => {
     process.env.MAISTER_MAX_ORCHESTRATOR_FANOUT = "16";
     process.env.MAISTER_ORCHESTRATOR_MAX_DEPTH = "5";

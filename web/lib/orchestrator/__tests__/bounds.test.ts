@@ -17,7 +17,18 @@ const INSTANCE = {
 
 const NODE = { nodeId: "orchestrate", nodeAttemptId: "na-1" } as const;
 
-const BUDGET = {
+// The MANIFEST shape — snake_case, exactly as `settings.delegation.budget`
+// parses. The effective bounds publish the camelCase shape its two consumers
+// (admission, the budget sweeper) read; keeping the fixture in the manifest's
+// own casing is what makes that boundary testable.
+const DECLARED_BUDGET = {
+  max_tokens: 2_000_000,
+  wall_clock_minutes: 120,
+  max_child_runs: 12,
+  consecutive_failures: 3,
+} as const;
+
+const EFFECTIVE_BUDGET = {
   maxTokens: 2_000_000,
   wallClockMinutes: 120,
   maxChildRuns: 12,
@@ -36,7 +47,7 @@ describe("computeEffectiveDelegationBounds (ADR-165 D5)", () => {
             max_depth: 1,
             max_fanout: 2,
             max_active_children: 1,
-            budget: BUDGET,
+            budget: DECLARED_BUDGET,
           },
           ...NODE,
         });
@@ -74,7 +85,7 @@ describe("computeEffectiveDelegationBounds (ADR-165 D5)", () => {
           max_depth: 99,
           max_fanout: 99,
           max_active_children: 99,
-          budget: BUDGET,
+          budget: DECLARED_BUDGET,
         },
         ...NODE,
       });
@@ -93,7 +104,7 @@ describe("computeEffectiveDelegationBounds (ADR-165 D5)", () => {
           max_depth: 1,
           max_fanout: 4,
           max_active_children: 2,
-          budget: BUDGET,
+          budget: DECLARED_BUDGET,
         },
         ...NODE,
       });
@@ -103,15 +114,34 @@ describe("computeEffectiveDelegationBounds (ADR-165 D5)", () => {
       expect(bounds.maxActiveChildren).toBe(2);
     });
 
-    it("copies the budget verbatim", () => {
+    // The bug this pins: the declaration is snake_case and both consumers read
+    // camelCase, so a verbatim copy leaves `budget.maxChildRuns` undefined and
+    // every count budget silently stops binding.
+    it("NORMALIZES the declared snake_case budget into the consumed shape", () => {
       const bounds = computeEffectiveDelegationBounds({
         instance: INSTANCE,
         engineMin: "3.7.0",
-        declared: { budget: BUDGET },
+        declared: { budget: DECLARED_BUDGET },
         ...NODE,
       });
 
-      expect(bounds.budget).toEqual(BUDGET);
+      expect(bounds.budget).toEqual(EFFECTIVE_BUDGET);
+    });
+
+    it("leaves no snake_case key on the effective budget", () => {
+      const bounds = computeEffectiveDelegationBounds({
+        instance: INSTANCE,
+        engineMin: "3.7.0",
+        declared: { budget: DECLARED_BUDGET },
+        ...NODE,
+      });
+
+      expect(Object.keys(bounds.budget ?? {}).sort()).toEqual([
+        "consecutiveFailures",
+        "maxChildRuns",
+        "maxTokens",
+        "wallClockMinutes",
+      ]);
     });
 
     it.each(["3.7.0", "3.7.1", "3.8.0", "4.0.0"])(
@@ -133,14 +163,17 @@ describe("computeEffectiveDelegationBounds (ADR-165 D5)", () => {
     const bounds = computeEffectiveDelegationBounds({
       instance: INSTANCE,
       engineMin: "3.7.0",
-      declared: { max_fanout: 4, budget: BUDGET },
+      declared: { max_fanout: 4, budget: DECLARED_BUDGET },
       ...NODE,
     });
 
     expect(bounds.nodeId).toBe("orchestrate");
     expect(bounds.nodeAttemptId).toBe("na-1");
     expect(bounds.engineMin).toBe("3.7.0");
-    expect(bounds.declared).toEqual({ max_fanout: 4, budget: BUDGET });
+    expect(bounds.declared).toEqual({
+      max_fanout: 4,
+      budget: DECLARED_BUDGET,
+    });
     expect(bounds.instance).toEqual(INSTANCE);
   });
 });

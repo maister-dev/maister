@@ -538,6 +538,15 @@ in a `>= 3.7.0` manifest, a REQUIRED and complete
 
 ### Snapshot
 
+`max_depth` is an **absolute** depth from the tree root (root = depth 0), and
+admission min-merges the parent's declaration with the root's, so the tightest
+value on the ancestor chain binds. A flow authored to run as a CHILD declares
+the depth its own children occupy in the whole tree, not the levels it adds —
+see [`flow-dsl.md`](../flow-dsl.md) §`delegation`. `budget` is normalized from
+the manifest's snake_case keys into the shape admission and the sweeper read;
+publishing it verbatim would leave every budget lookup `undefined` and every
+count budget silently unbound.
+
 The effective bounds are written to `runs.delegation_bounds` on the
 **orchestrator run** at the token-issuance site, keyed by `nodeAttemptId`, and
 rewritten only when the active node **attempt** changes. Admission reads the

@@ -616,7 +616,8 @@ nodes:
       thinkingEffort: high
       mcps: [github]
       delegation: # v2 — Designed, ADR-165, engine_min >= 3.7.0
-        max_depth: 2 # optional; effective = min(env, this ?? 2)
+        max_depth: 2 # optional; ABSOLUTE depth from the tree root;
+        # effective = min(env, this ?? 2)
         max_fanout: 6 # optional; effective = min(env, this ?? 6)
         max_active_children: 3 # optional; effective = min(pool cap, this ?? 3)
         budget: # REQUIRED and complete at engine_min >= 3.7.0
@@ -651,7 +652,17 @@ nodes:
   | `max_depth` | `min(MAISTER_ORCHESTRATOR_MAX_DEPTH, declared)` | `2` |
   | `max_fanout` | `min(MAISTER_MAX_ORCHESTRATOR_FANOUT, declared)` | `6` |
   | `max_active_children` | `min(pool cap for the child kind, declared)` | `3` |
-  | `budget` | copied verbatim | **no default — required** |
+  | `budget` | normalized to the internal shape | **no default — required** |
+
+  **`max_depth` counts ABSOLUTE depth from the TREE root** (the root run is
+  depth 0), not depth relative to the declaring node, and admission min-merges
+  the declaration with the ROOT's — so the tightest declaration anywhere on the
+  ancestor chain binds. A flow that will run as a CHILD must therefore declare
+  the depth its own children will occupy **in the whole tree**: a research flow
+  nested one level down, whose agents sit at depth 2, needs `max_depth: 2` even
+  though it adds only one level of its own. Declaring the relative number
+  instead refuses the very fan-out the flow exists for, with
+  `delegation depth limit reached`.
 
   `max_fanout` counts the orchestrator's LIVE children of BOTH kinds (agent +
   flow), not the size of one `run_plan` batch, and is applied by one shared

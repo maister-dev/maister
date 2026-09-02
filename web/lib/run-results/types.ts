@@ -61,6 +61,7 @@ export type RunResultContract =
       sourceFlowRevisionId: string;
     };
 
+/** The EFFECTIVE budget, in the casing both consumers read. */
 export type DelegationBudget = {
   maxTokens: number;
   wallClockMinutes: number;
@@ -68,12 +69,24 @@ export type DelegationBudget = {
   consecutiveFailures: number;
 };
 
+/**
+ * The budget as a MANIFEST declares it. Deliberately a separate type from
+ * `DelegationBudget`: the two casings are a real seam, and collapsing them is
+ * how a verbatim copy left `budget.maxChildRuns` undefined on every snapshot.
+ */
+export type DeclaredDelegationBudget = {
+  max_tokens: number;
+  wall_clock_minutes: number;
+  max_child_runs: number;
+  consecutive_failures: number;
+};
+
 /** The raw `settings.delegation` block, kept verbatim for audit. */
 export type DeclaredDelegationBounds = {
   max_depth?: number;
   max_fanout?: number;
   max_active_children?: number;
-  budget?: DelegationBudget;
+  budget?: DeclaredDelegationBudget;
 };
 
 /** The instance ceilings the effective bounds were min-merged against. */
