@@ -340,6 +340,10 @@ export async function POST(
         // committed, so the compensation below must wrap the ENTIRE remainder —
         // not a convenient tail.
         let childRunId: string;
+        // ADR-165 (D7): the child may be QUEUED by the per-orchestrator
+        // active-children cap or the global pool — the run row exists either way,
+        // so the caller is told which rather than left to assume it started.
+        let childStatus: "Pending" | "Running" = "Pending";
 
         try {
           if (resolvedFlow) {
@@ -364,6 +368,7 @@ export async function POST(
             );
 
             childRunId = launched.runId;
+            childStatus = launched.status === "Running" ? "Running" : "Pending";
             log.info(
               {
                 parentRunId,
@@ -415,6 +420,7 @@ export async function POST(
             }
 
             childRunId = result.runId;
+            childStatus = result.status;
           }
         } catch (launchErr) {
           await compensateChildTask({
@@ -488,6 +494,7 @@ export async function POST(
         return NextResponse.json(
           {
             childRunId: result.runId,
+            status: childStatus,
             ...(childTaskId ? { childTaskId } : {}),
           },
           { status: 202 },

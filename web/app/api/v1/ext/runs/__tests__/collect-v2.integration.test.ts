@@ -452,8 +452,8 @@ describe("run_collect v2 — boundaries and idempotence (AC-32)", () => {
     for (const [i, text] of ["older", "newer"].entries()) {
       await pool.query(
         `INSERT INTO "artifact_instances"
-           ("id", "run_id", "artifact_def_id", "kind", "locator", "validity", "created_at")
-         VALUES ($1, $2, $3, 'log', $4::jsonb, 'current', now() + ($5 || ' seconds')::interval)`,
+           ("id", "run_id", "artifact_def_id", "kind", "producer", "locator", "validity", "created_at")
+         VALUES ($1, $2, $3, 'log', 'runner', $4::jsonb, 'current', now() + ($5 || ' seconds')::interval)`,
         [
           randomUUID(),
           child,
@@ -483,8 +483,8 @@ describe("run_collect v2 — boundaries and idempotence (AC-32)", () => {
 
     await pool.query(
       `INSERT INTO "artifact_instances"
-         ("id", "run_id", "artifact_def_id", "kind", "locator", "validity", "node_id")
-       VALUES ($1, $2, 'plan-summary', 'report', $3::jsonb, 'current', 'orchestrate')`,
+         ("id", "run_id", "artifact_def_id", "kind", "producer", "locator", "validity", "node_id")
+       VALUES ($1, $2, 'plan-summary', 'report', 'runner', $3::jsonb, 'current', 'orchestrate')`,
       [artifactId, child, JSON.stringify({ kind: "file", path: "plan.md" })],
     );
 

@@ -517,13 +517,13 @@ No AI co-author trailer (repo convention).
 
 ### Phase 7 — `run_collect` v2
 
-- [ ] **T7.1 — Route rewrite (additive, D12).** RED: AC-31. GREEN: assembly in `lib/run-results/collect.ts` (`collectChild(db, {parentRunId, childRunId})`): `runs` row + `result_contract`, newest + `valid` rows, `deriveResultStatus`, `resultFailure` from the newest `invalid` row, `engineArtifactManifest` (live), `diffRef` unchanged, `outputText` with `ORDER BY created_at DESC LIMIT 1`, `settled = isSettledRunStatus(status)`; missing row → `PRECONDITION` (existence-hidden, R16). Thin route. REFACTOR: `outputTextFromArtifacts` / `diffRefFromLocator` move into the module unchanged.
+- [x] **T7.1 — Route rewrite (additive, D12).** RED: AC-31. GREEN: assembly in `lib/run-results/collect.ts` (`collectChild(db, {parentRunId, childRunId})`): `runs` row + `result_contract`, newest + `valid` rows, `deriveResultStatus`, `resultFailure` from the newest `invalid` row, `engineArtifactManifest` (live), `diffRef` unchanged, `outputText` with `ORDER BY created_at DESC LIMIT 1`, `settled = isSettledRunStatus(status)`; missing row → `PRECONDITION` (existence-hidden, R16). Thin route. REFACTOR: `outputTextFromArtifacts` / `diffRefFromLocator` move into the module unchanged.
   *Logging*: `[run-result.collect] {parentRunId, childRunId, resultStatus, revision, settled}`.
   *Satisfies*: REQ-06. (depends on Phase 6)
-- [ ] **T7.2 — `first_collected_at` marker (Q7-C).** RED: AC-32 (marker rows). GREEN: in a tx before the response, `markRunResultCollected` for every `valid` row served (idempotent, W6).
+- [x] **T7.2 — `first_collected_at` marker (Q7-C).** RED: AC-32 (marker rows). GREEN: in a tx before the response, `markRunResultCollected` for every `valid` row served (idempotent, W6).
   *Satisfies*: REQ-06, REQ-11.
-- [ ] **T7.3 — OpenAPI/MCP GREEN (AC-33).** Contracts from S0.6/S0.7 now match; `pnpm --filter @maister/mcp build`.
-- [ ] **T7.4 — Collect tests GREEN (AC-31, AC-32)** in `collect-v2.integration.test.ts` (each `resultStatus` reached through the real seams; fake artifact id inert; idempotency; grandchild; stale token; deterministic `outputText`).
+- [x] **T7.3 — OpenAPI/MCP GREEN (AC-33).** Contracts from S0.6/S0.7 now match; `pnpm --filter @maister/mcp build`.
+- [x] **T7.4 — Collect tests GREEN (AC-31, AC-32)** in `collect-v2.integration.test.ts` (each `resultStatus` reached through the real seams; fake artifact id inert; idempotency; grandchild; stale token; deterministic `outputText`).
 
 **Phase 7 exit** — R1.1 GREEN; suite green vs baseline.
 
