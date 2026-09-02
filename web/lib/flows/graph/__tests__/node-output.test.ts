@@ -656,6 +656,12 @@ describe("validateNodeStructuredOutput", () => {
         transport: "sentinel",
         engineVersion: "3.7.0",
       },
+      // ADR-165: the seam also returns the PURE validated value. `result.vars`
+      // is a merged bag (engine vars + this payload), so a caller that must
+      // persist the value alone — the public-result publish — cannot recover it
+      // from there.
+      value: { verdict: "pass" },
+      valueBytes: Buffer.byteLength('{"verdict":"pass"}', "utf8"),
     });
   });
 

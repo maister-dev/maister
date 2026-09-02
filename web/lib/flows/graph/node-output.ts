@@ -1,6 +1,8 @@
 import "server-only";
 
+import type { FormSchema } from "@/lib/config.schema";
 import type { NodeAttemptOutputContract } from "@/lib/db/schema";
+import type { RunResultContract } from "@/lib/run-results/types";
 import type { StepResult } from "../types";
 import type { CompiledNode } from "./compile";
 
@@ -17,6 +19,7 @@ import { resolveOutputResultSchemaWithIdentity } from "@/lib/config";
 import { MaisterError } from "@/lib/errors";
 import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 import { nodeOutputMaxBytes } from "@/lib/instance-config";
+import { isResultProducerNode } from "@/lib/run-results/contract";
 
 // M26 P1 (ADR-063): structured node output — transport extraction + the
 // post-action validate seam. Frozen SSOT:
@@ -261,6 +264,11 @@ export type ValidateNodeStructuredOutputArgs = {
   projectSlug: string;
   runtimeRoot: string;
   flowInstallPath: string;
+  // ADR-165: the run's launch-time public-result contract, or null. When this
+  // node is one of its producers the seam validates against the SNAPSHOT rather
+  // than re-reading the pinned revision — re-pointing the flow mid-run must not
+  // change which schema an in-flight attempt is held to.
+  resultContract?: RunResultContract | null;
   db: Db;
 };
 
@@ -269,7 +277,15 @@ export type StructuredOutputOutcome =
   // — the caller persists it on the same UPDATE that closes the attempt. Absent
   // when the node declared no `output.result`, or when the seam failed before
   // the schema was read (no identity exists then).
-  | { ok: true; contract?: NodeAttemptOutputContract }
+  // ADR-165: `value` is the PURE validated payload — `result.vars` is a merged
+  // bag (engine vars + this value), so a caller that must persist the value
+  // alone cannot recover it from there. Present only when a payload existed.
+  | {
+      ok: true;
+      contract?: NodeAttemptOutputContract;
+      value?: Record<string, unknown>;
+      valueBytes?: number;
+    }
   | { ok: false; reason: string };
 
 // The post-action validate seam (spec §Transport & validation, D-B2/D-B4).
@@ -338,20 +354,35 @@ export async function validateNodeStructuredOutput(
     return failAttempt(args, payload.reason);
   }
 
-  let resolved: Awaited<
-    ReturnType<typeof resolveOutputResultSchemaWithIdentity>
-  >;
+  // ADR-165: a PRODUCER of the run's public result is judged by the launch
+  // snapshot, whose identity the run already committed. Every other node keeps
+  // the ADR-162 lazy resolve from the pinned install path. The two agree by
+  // construction — load-time R8 forces a producer's `output.result.schema` to
+  // equal the export's — so this is about WHICH copy is authoritative, not about
+  // two different schemas.
+  const isProducer = isResultProducerNode(
+    args.resultContract ?? null,
+    args.node.id,
+  );
+  let resolved: { schema: FormSchema; sha256: string };
 
-  try {
-    resolved = await resolveOutputResultSchemaWithIdentity(
-      args.flowInstallPath,
-      decl.schema,
-    );
-  } catch (err) {
-    return failAttempt(
-      args,
-      `output.result schema unresolvable: ${(err as Error).message}`,
-    );
+  if (isProducer && args.resultContract) {
+    resolved = {
+      schema: args.resultContract.schema,
+      sha256: args.resultContract.sha256,
+    };
+  } else {
+    try {
+      resolved = await resolveOutputResultSchemaWithIdentity(
+        args.flowInstallPath,
+        decl.schema,
+      );
+    } catch (err) {
+      return failAttempt(
+        args,
+        `output.result schema unresolvable: ${(err as Error).message}`,
+      );
+    }
   }
 
   const contract: NodeAttemptOutputContract = {
@@ -401,7 +432,12 @@ export async function validateNodeStructuredOutput(
     "structured output captured",
   );
 
-  return { ok: true, contract };
+  return {
+    ok: true,
+    contract,
+    value,
+    valueBytes: Buffer.byteLength(JSON.stringify(value) ?? "", "utf8"),
+  };
 }
 
 async function failAttempt(

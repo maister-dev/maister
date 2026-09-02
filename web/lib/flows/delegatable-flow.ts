@@ -1,18 +1,20 @@
 import "server-only";
 
+import type { DelegationSnapshot } from "@/lib/db/schema";
+
 import { eq } from "drizzle-orm";
 import pino from "pino";
 
 import { hasReadyPlatformRunner } from "@/lib/acp-runners/ready-runner";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import type { DelegationSnapshot } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
   describeFlowLaunchabilityRefusal,
   evaluateFlowLaunchability,
 } from "@/lib/flows/launchability-gate";
 import { resolveEffectiveFlowRevision } from "@/lib/flows/lifecycle";
+import { resolveFlowExportContract } from "@/lib/run-results/flow-export";
 import {
   classifyStoredFlowManifest,
   flowManifestIncompatibilityDetails,
@@ -184,6 +186,29 @@ export async function resolveDelegatableFlow(
       `flow "${flow.flowRefId}" stored manifest cannot be executed by this engine: ${stored.reason.message}`,
       "manifest_incompatible",
       flowManifestIncompatibilityDetails(stored.reason),
+    );
+  }
+
+  // ADR-165: pre-flight the public-result export. This is NOT the decisive
+  // resolve — `launchRunStaged` does that from the same pinned revision and its
+  // result is what lands on the run — but failing here means a flow with a
+  // broken export never mints a carrier task, so there is nothing to compensate.
+  try {
+    await resolveFlowExportContract({
+      flowRefId: flow.flowRefId,
+      manifest: stored.manifest,
+      revision: {
+        id: revision.id,
+        resolvedRevision: revision.resolvedRevision,
+        installedPath: revision.installedPath,
+      },
+    });
+  } catch (err) {
+    refuse(
+      "CONFIG",
+      (err as Error).message,
+      "manifest_incompatible",
+      undefined,
     );
   }
 

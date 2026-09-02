@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { RunResultContract } from "@/lib/run-results/types";
 import type {
   ArtifactInstance,
   MaterializationPlan,
@@ -69,7 +70,6 @@ import {
   markNodeNeedsInput,
   markNodeReworked,
   markNodeRunning,
-  markNodeSucceeded,
   resetReworkBaseline,
   setCheckpointRef,
   setEnforcementSnapshot,
@@ -199,6 +199,17 @@ import {
   autoRetryMaxAttempts,
   nodeOutputMaxBytes,
 } from "@/lib/instance-config";
+import { closeSucceededAttemptWithResult } from "@/lib/run-results/close-attempt";
+import {
+  decideFlowTerminalExit,
+  emitResultOnlyDone,
+  finalizeFlowRunDoneResultOnly,
+  loadRunWorkspaceForTerminal,
+} from "@/lib/run-results/flow-terminal";
+import {
+  recordInvalidRunResult,
+  resolvePublicResult,
+} from "@/lib/run-results/ledger";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import {
   isMaisterError,
@@ -3454,6 +3465,9 @@ export async function runGraph(
         projectSlug: loaded.projectSlug,
         runtimeRoot,
         flowInstallPath: loaded.flowInstallPath,
+        // ADR-165: a producer of the run's public result is judged by the
+        // LAUNCH snapshot, not by a fresh read of the pinned revision.
+        resultContract: loaded.run.resultContract ?? null,
         db,
       });
 
@@ -4241,20 +4255,21 @@ export async function runGraph(
             }
           }
 
-          await markNodeSucceeded(
+          await closeSucceededAttemptWithResult({
+            db,
+            runId: loaded.run.id,
+            nodeId: node.id,
             nodeAttemptId,
-            {
+            patch: {
               stdout: result.stdout,
               vars: result.vars as Record<string, unknown>,
               exitCode: result.exitCode,
               decision: onExhaustion,
               acpSessionId: result.acpSessionId,
-              ...(structuredOutput.ok && structuredOutput.contract
-                ? { outputContract: structuredOutput.contract }
-                : {}),
             },
-            db,
-          );
+            resultContract: loaded.run.resultContract ?? null,
+            structuredOutput,
+          });
           if (materialized) {
             await cleanupNodeMaterialization({
               nodeAttemptId,
@@ -4384,9 +4399,12 @@ export async function runGraph(
                 (o) => !reworkTargets.includes(node.transitions[o]),
               );
 
-        await markNodeSucceeded(
+        await closeSucceededAttemptWithResult({
+          db,
+          runId: loaded.run.id,
+          nodeId: node.id,
           nodeAttemptId,
-          {
+          patch: {
             stdout: result.stdout,
             vars: {
               ...(result.vars as Record<string, unknown>),
@@ -4395,12 +4413,10 @@ export async function runGraph(
             exitCode: result.exitCode,
             decision: forwardOutcome,
             acpSessionId: result.acpSessionId,
-            ...(structuredOutput.ok && structuredOutput.contract
-              ? { outputContract: structuredOutput.contract }
-              : {}),
           },
-          db,
-        );
+          resultContract: loaded.run.resultContract ?? null,
+          structuredOutput,
+        });
         if (materialized) {
           await cleanupNodeMaterialization({
             nodeAttemptId,
@@ -4702,23 +4718,24 @@ export async function runGraph(
           }
         }
       } else {
-        await markNodeSucceeded(
+        // ADR-162 (C-9): the contract identity rides the SAME closing UPDATE as
+        // the vars it validated. ADR-165 (D9) widens that transaction to carry
+        // the public result too, when this node is one of its producers.
+        await closeSucceededAttemptWithResult({
+          db,
+          runId: loaded.run.id,
+          nodeId: node.id,
           nodeAttemptId,
-          {
+          patch: {
             stdout: result.stdout,
             vars: result.vars,
             exitCode: result.exitCode,
             decision: outcome === "success" ? undefined : outcome,
             acpSessionId: result.acpSessionId,
-            // ADR-162 (C-9): the contract identity rides the SAME closing
-            // UPDATE as the vars it validated — no second write, no new
-            // crash window.
-            ...(structuredOutput.ok && structuredOutput.contract
-              ? { outputContract: structuredOutput.contract }
-              : {}),
           },
-          db,
-        );
+          resultContract: loaded.run.resultContract ?? null,
+          structuredOutput,
+        });
 
         if (materialized) {
           await cleanupNodeMaterialization({
@@ -4897,45 +4914,155 @@ export async function runGraph(
     });
     log2.warn({ runErrorCode }, "runGraph ended Failed");
   } else {
-    await db.transaction(async (tx: Db) => {
-      const rows = await tx
-        .update(runs)
-        // ADR-126 T8: stamp the auto-promotion grace anchor alongside the flip.
-        .set({
-          status: "Review",
-          endedAt,
-          reviewEnteredAt: endedAt,
-          currentStepId: null,
-        })
-        .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
-        .returning({
-          projectId: runs.projectId,
-          taskId: runs.taskId,
-          flowId: runs.flowId,
-          runKind: runs.runKind,
-          parentRunId: runs.parentRunId,
-        });
+    // ADR-165 (T4.5): the success branch now has THREE exits. The decision —
+    // including the git clean probe, which must not run inside a transaction —
+    // is taken here; only the write happens inside one. Safe because no session
+    // is live at this point and the run row's CAS is the single-winner guard.
+    // `assertEvidenceReady(runId, "review")` already ran upstream, so a run with
+    // a failing blocking gate cannot reach any of these exits.
+    const publicResult = await resolvePublicResult(db, runId);
+    const terminalWorkspace = await loadRunWorkspaceForTerminal(db, runId);
+    const terminal = await decideFlowTerminalExit({
+      runStatus: "Review",
+      contract: loaded.run.resultContract ?? null,
+      newest: publicResult.newest,
+      valid: publicResult.valid,
+      workspace: terminalWorkspace,
+    });
 
-      if (rows.length > 0) {
+    log2.info(
+      {
+        exit: terminal.exit,
+        resultStatus: terminal.resultStatus,
+        clean: terminal.exit === "done_result_only",
+      },
+      "[run-result.terminal] flow terminal exit selected",
+    );
+
+    if (terminal.exit === "failed_result_missing") {
+      const contract = loaded.run.resultContract as RunResultContract;
+
+      await db.transaction(async (tx: Db) => {
+        const rows = await tx
+          .update(runs)
+          // `runs` has no error_code column — the code rides the event payloads
+          // below, exactly as the sibling Failed branch does.
+          .set({ status: "Failed", endedAt, currentStepId: null })
+          .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+          .returning({
+            projectId: runs.projectId,
+            taskId: runs.taskId,
+            flowId: runs.flowId,
+            runKind: runs.runKind,
+            parentRunId: runs.parentRunId,
+          });
+
+        if (rows.length === 0) return;
+
+        // The `invalid` row is the ONE durable source for the coordinator's
+        // `resultFailure`, and it commits with the flip that emits the wake.
+        await recordInvalidRunResult(tx, {
+          runId,
+          contract,
+          reason: "result_missing",
+          producerKind: "flow_node",
+          producerRef:
+            contract.kind === "flow_export"
+              ? (contract.producerNodeIds[0] ?? "(unknown)")
+              : "(unknown)",
+        });
         await emitWebhookEvent({
           db: tx,
-          type: "run.review",
+          type: "run.failed",
           projectId: rows[0].projectId,
           runId,
-          data: { source: "runner" },
+          data: { errorCode: "CONFIG" },
+        });
+        await emitDomainEvent({
+          db: tx,
+          kind: "run.failed",
+          projectId: rows[0].projectId,
+          runId,
+          taskId: rows[0].taskId,
+          actor: { type: "system", id: null },
+          parentRunId: rows[0].parentRunId,
+          payload: {
+            runId,
+            taskId: rows[0].taskId,
+            flowId: rows[0].flowId,
+            runKind: rows[0].runKind,
+            reason: "result_missing",
+            resultStatus: "missing",
+          },
+        });
+      });
+      await systemCloseActiveAssignmentsForRun({
+        db,
+        runId,
+        reason: "graph flow completed without its required public result",
+      });
+      log2.warn({}, "runGraph ended Failed — required public result missing");
+    } else if (terminal.exit === "done_result_only") {
+      await db.transaction(async (tx: Db) => {
+        const row = await finalizeFlowRunDoneResultOnly(tx, {
+          runId,
+          endedAt,
+          workspaceId: terminalWorkspace?.id ?? null,
         });
 
-        // ADR-163: the delegated-child `run.review` domain emit is ONE helper
-        // shared by every Review flip, so no path can miss the parent wake.
-        await emitDelegatedReviewIfChild(tx, {
-          runId,
-          ...rows[0],
-          cause: "graph_completed",
-        });
-      }
-    });
-    log2.info({}, "runGraph ended Review");
-    await deliverRunIfAutoReady(runId, db);
+        if (!row) return;
+        await emitResultOnlyDone(tx, { runId, row });
+      });
+      await systemCloseActiveAssignmentsForRun({
+        db,
+        runId,
+        reason: "graph flow completed by result-only completion",
+      });
+      // No `deliverRunIfAutoReady`: nothing is promoted and there is no diff to
+      // deliver. The run is already terminal.
+      log2.info({}, "runGraph ended Done — result-only completion");
+    } else {
+      await db.transaction(async (tx: Db) => {
+        const rows = await tx
+          .update(runs)
+          // ADR-126 T8: stamp the auto-promotion grace anchor alongside the flip.
+          .set({
+            status: "Review",
+            endedAt,
+            reviewEnteredAt: endedAt,
+            currentStepId: null,
+          })
+          .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+          .returning({
+            projectId: runs.projectId,
+            taskId: runs.taskId,
+            flowId: runs.flowId,
+            runKind: runs.runKind,
+            parentRunId: runs.parentRunId,
+          });
+
+        if (rows.length > 0) {
+          await emitWebhookEvent({
+            db: tx,
+            type: "run.review",
+            projectId: rows[0].projectId,
+            runId,
+            data: { source: "runner" },
+          });
+
+          // ADR-163: the delegated-child `run.review` domain emit is ONE helper
+          // shared by every Review flip, so no path can miss the parent wake.
+          await emitDelegatedReviewIfChild(tx, {
+            runId,
+            ...rows[0],
+            cause: "graph_completed",
+            resultStatus: terminal.resultStatus,
+          });
+        }
+      });
+      log2.info({}, "runGraph ended Review");
+      await deliverRunIfAutoReady(runId, db);
+    }
   }
 
   // ADR-157 (T32): release this run's read-only sibling mounts once the terminal

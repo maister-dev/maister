@@ -160,6 +160,8 @@ async function settle(args: {
   // Codex review F1: a run.review says WHY the child entered Review; omitted
   // here deliberately for the cause-less regression case.
   cause?: string;
+  /** ADR-165: the additive payload widening (`completion`, `resultStatus`). */
+  extra?: Record<string, unknown>;
 }): Promise<DomainEventRow[]> {
   await emitDomainEvent({
     db,
@@ -173,6 +175,7 @@ async function settle(args: {
       runKind: args.runKind,
       status: args.status,
       ...(args.cause ? { cause: args.cause } : {}),
+      ...(args.extra ?? {}),
     },
   });
 
@@ -785,11 +788,76 @@ describe("the as-plan auto-launcher is bounded by the shared cap (ADR-163 REQ-15
     expect(await runsForTask(dependentTaskId)).toBe(1);
     expect(
       (
-        await pool.query(
-          `SELECT "run_kind" FROM "runs" WHERE "task_id" = $1`,
-          [dependentTaskId],
-        )
+        await pool.query(`SELECT "run_kind" FROM "runs" WHERE "task_id" = $1`, [
+          dependentTaskId,
+        ])
       ).rows[0].run_kind,
     ).toBe("flow");
+  }, 60_000);
+
+  // ADR-165 AC-18: a RESULT-ONLY `run.done` is still a `run.done`. The consumer
+  // branches on kind + taskId and reads nothing from `completion`, so a research
+  // flow child that finished without promotion must advance its as-plan task and
+  // release its `requires` dependents exactly like a promoted one.
+  it("(ADR-165) a result-only run.done advances the as-plan task and releases its dependent", async () => {
+    const launched: string[] = [];
+    const consumer = buildAutoLaunchRunPlanConsumer({
+      db,
+      launchFlow: (async (input: { taskId: string }) => {
+        launched.push(input.taskId);
+
+        return { runId: randomUUID(), status: "Pending" };
+      }) as never,
+      promote: (async () => ({ ok: true })) as never,
+    });
+    const dependencyTaskId = await seedAsPlanTask({
+      title: "result-only producer",
+      spec: { kind: "flow", flowId },
+      flowId,
+    });
+    const dependentTaskId = await seedAsPlanTask({
+      title: "result-only dependent",
+      spec: { kind: "flow", flowId },
+      flowId,
+    });
+    const { addTaskRelation } = await import("@/lib/social/relations");
+
+    await addTaskRelation(
+      {
+        projectId: ctx.projectId,
+        fromTaskId: dependentTaskId,
+        kind: "requires",
+        toTaskId: dependencyTaskId,
+        actor: { type: "system", id: null },
+      },
+      db,
+    );
+
+    const producerRunId = await seedChildRun(ctx, {
+      parentRunId,
+      runKind: "flow",
+      status: "Done",
+      taskId: dependencyTaskId,
+    });
+
+    await consumer.handle(
+      await settle({
+        runId: producerRunId,
+        taskId: dependencyTaskId,
+        kind: "run.done",
+        runKind: "flow",
+        status: "Done",
+        extra: { completion: "result_only", resultStatus: "valid" },
+      }),
+    );
+
+    expect(launched).toEqual([dependentTaskId]);
+    expect(
+      (
+        await pool.query(`SELECT "status" FROM "tasks" WHERE "id" = $1`, [
+          dependencyTaskId,
+        ])
+      ).rows[0].status,
+    ).toBe("Done");
   }, 60_000);
 });

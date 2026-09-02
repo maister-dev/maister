@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { RunReviewCause } from "@/lib/domain-events/taxonomy";
+import type { ResultStatus } from "@/lib/run-results/types";
 
 import pino from "pino";
 
@@ -25,6 +26,10 @@ export type ReviewFlipRow = {
   // the completion causes, so a writer that forgets to say why it flipped to
   // Review fails to compile rather than reading as "completed".
   cause: RunReviewCause;
+  // ADR-165 (Q10-A): additive payload widening, no new kind. Optional so every
+  // existing caller compiles unchanged and simply omits it — an omitted value
+  // is honestly absent rather than a fabricated "valid".
+  resultStatus?: ResultStatus;
 };
 
 /**
@@ -66,6 +71,7 @@ export async function emitDelegatedReviewIfChild(
       runKind: row.runKind,
       status: "Review",
       cause: row.cause,
+      ...(row.resultStatus ? { resultStatus: row.resultStatus } : {}),
     },
   });
   log.info(

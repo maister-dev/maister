@@ -57,6 +57,7 @@ import {
 import { normalizeNodeMcps } from "@/lib/config.schema";
 import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import { resolveFlowExportContract } from "@/lib/run-results/flow-export";
 import { parseExecutableStoredFlowManifest } from "@/lib/flows/manifest-parser";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { assertFlowLaunchable } from "@/lib/flows/launchability-gate";
@@ -943,6 +944,20 @@ export async function* launchRunStaged(
     await checkFlowRequirements(manifest.requirements, project.repoPath);
 
     const compiled = compileManifest(manifest);
+
+    // ADR-165 (T4.1 / R12): the run's PUBLIC result contract, resolved from the
+    // PINNED revision's install path BEFORE any worktree exists. An unresolvable
+    // export schema refuses CONFIG here, with zero `runs` / `workspaces` rows —
+    // resolving it later, at the seam, would mean the failure arrived after a
+    // worktree, a session and token spend. The snapshot is what the seam, the
+    // terminal gate and the collect route read; none of them re-reads the
+    // revision, so re-pointing the flow afterwards cannot change this run.
+    const resultContract = await resolveFlowExportContract({
+      flowRefId: flow.flowRefId,
+      manifest,
+      revision,
+    });
+
     const runtimeRows = await _db
       .select()
       .from(platformRuntimeSettings)
@@ -1664,6 +1679,10 @@ export async function* launchRunStaged(
             flowVersion: revision.versionLabel,
             flowRevision: revision.resolvedRevision,
             flowRevisionId: revision.id,
+            // ADR-165: the launch-time public-result contract, written in the
+            // SAME insert as the pin it came from (W8). NULL when the flow
+            // declares no `result.export`.
+            resultContract,
           })
           .onConflictDoNothing()
           .returning({ id: runs.id });

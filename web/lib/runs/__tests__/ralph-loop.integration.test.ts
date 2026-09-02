@@ -117,6 +117,7 @@ async function insertRun(args: {
   startedAt: Date;
   executionPolicy?: ExecutionPolicy;
   runKind?: "flow" | "scratch" | "agent";
+  parentRunId?: string | null;
 }): Promise<string> {
   const runId = randomUUID();
 
@@ -133,6 +134,7 @@ async function insertRun(args: {
     runKind: args.runKind ?? "flow",
     executionPolicy: args.executionPolicy ?? ralphPolicy,
     startedAt: args.startedAt,
+    parentRunId: args.parentRunId ?? null,
   });
 
   return runId;
@@ -370,5 +372,53 @@ describe("ralph-loop consumer (execution-policy axis A2)", () => {
     ]);
 
     expect(calls).toHaveLength(0);
+  });
+
+  // ADR-165 D18 / AC-18. A delegated child must NEVER ralph: the relaunch would
+  // mint a run with no `parent_run_id` — an orphan the orchestrator never
+  // collects and that never wakes it — while the parent waits in
+  // `WaitingOnChildren` believing the child is still working.
+  it("a DELEGATED child (parent_run_id set) never relaunches", async () => {
+    const parentTaskId = await seedTask({ attemptNumber: 1 });
+    const parentRunId = await insertRun({
+      taskId: parentTaskId,
+      status: "WaitingOnChildren",
+      startedAt: BASE,
+    });
+    const childTaskId = await seedTask({ attemptNumber: 1 });
+    const childRunId = await insertRun({
+      taskId: childTaskId,
+      status: "Failed",
+      startedAt: new Date(BASE.getTime() + 1000),
+      parentRunId,
+    });
+    const { calls, launch } = recordingLaunch();
+
+    await buildRalphLoopConsumer({ db, launch, maxAttempts: () => 5 }).handle([
+      runFailedEvent(childRunId),
+    ]);
+
+    expect(calls).toHaveLength(0);
+  });
+
+  // The POSITIVE arm of the same guard. Without it, an implementation that
+  // skipped EVERY run would pass the case above — the skip must be scoped to
+  // delegated children and nothing else.
+  it("a PARENTLESS run with the identical fixture still relaunches", async () => {
+    const taskId = await seedTask({ attemptNumber: 1 });
+    const runId = await insertRun({
+      taskId,
+      status: "Failed",
+      startedAt: BASE,
+      parentRunId: null,
+    });
+    const { calls, launch } = recordingLaunch();
+
+    await buildRalphLoopConsumer({ db, launch, maxAttempts: () => 5 }).handle([
+      runFailedEvent(runId),
+    ]);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].taskId).toBe(taskId);
   });
 });

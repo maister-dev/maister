@@ -74,6 +74,7 @@ export function buildRalphLoopConsumer(
               id: runs.id,
               taskId: runs.taskId,
               runKind: runs.runKind,
+              parentRunId: runs.parentRunId,
               executionPolicy: runs.executionPolicy,
             })
             .from(runs)
@@ -82,6 +83,24 @@ export function buildRalphLoopConsumer(
 
           // Only task-backed flow runs ralph; scratch/agent runs do not.
           if (!run || run.runKind !== "flow" || !run.taskId) continue;
+
+          // ADR-165 (D18): a DELEGATED child never ralphs. A relaunch here would
+          // mint a run with no `parent_run_id` — an orphan the orchestrator
+          // never collects and that never wakes it — while the parent sits in
+          // `WaitingOnChildren` believing its child is still working. The
+          // orchestrator owns retries of its own children: bounded rework, or
+          // human escalation, at the parent.
+          if (run.parentRunId) {
+            log.info(
+              {
+                runId: run.id,
+                parentRunId: run.parentRunId,
+                taskId: run.taskId,
+              },
+              "[ralph] relaunch skipped — delegated child, the orchestrator owns retries",
+            );
+            continue;
+          }
           if (crashRetryFromSnapshot(run.executionPolicy) !== "ralph_loop") {
             continue;
           }

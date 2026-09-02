@@ -266,7 +266,9 @@ describe("orchestrator_resume wakes on a FLOW child (ADR-163 REQ-18/REQ-20)", ()
   async function seedFlowChild(args: {
     parentRunId: string;
     status: string;
-    emit?: "run.review" | "run.failed" | null;
+    emit?: "run.review" | "run.failed" | "run.done" | null;
+    /** ADR-165: extra payload fields (`resultStatus`, `completion`). */
+    payload?: Record<string, unknown>;
   }): Promise<{ runId: string; event: DomainEventRow | null }> {
     const childTaskId = randomUUID();
     const childRunId = randomUUID();
@@ -308,7 +310,11 @@ describe("orchestrator_resume wakes on a FLOW child (ADR-163 REQ-18/REQ-20)", ()
       runId: childRunId,
       actor: { type: "system", id: null },
       parentRunId: args.parentRunId,
-      payload: { runKind: "flow", status: args.status },
+      payload: {
+        runKind: "flow",
+        status: args.status,
+        ...(args.payload ?? {}),
+      },
     });
 
     const rows = await domainEventsFor(childRunId, args.emit);
@@ -488,5 +494,58 @@ describe("orchestrator_resume wakes on a FLOW child (ADR-163 REQ-18/REQ-20)", ()
         expect(await domainEventsFor(runId, "run.review")).toHaveLength(0);
       },
     );
+  });
+
+  // ADR-165 AC-18: the payload widening is ADDITIVE. `orchestrator_resume`
+  // reads `kind` + `parentRunId` + the pending-sibling count and nothing else,
+  // so a result-only `run.done` and a result-caused `run.failed` must route
+  // exactly like their plain siblings.
+  it("(ADR-165) a result-only run.done wakes the parent like any success-side settle", async () => {
+    const parentRunId = await seedParkedOrchestrator();
+    const { event } = await seedFlowChild({
+      parentRunId,
+      status: "Done",
+      emit: "run.done",
+      payload: { completion: "result_only", resultStatus: "valid" },
+    });
+
+    const resumed: string[] = [];
+    const consumer = buildOrchestratorResumeConsumer({
+      db,
+      resumeFlow: async (runId) => {
+        resumed.push(runId);
+      },
+    });
+
+    await consumer.handle([event!]);
+
+    expect(await statusOf(parentRunId)).toBe("Running");
+    expect(resumed).toEqual([parentRunId]);
+  });
+
+  it("(ADR-165) run.failed{reason:result_missing} wakes the parent UNCONDITIONALLY, pending sibling and all", async () => {
+    const parentRunId = await seedParkedOrchestrator();
+
+    await seedFlowChild({ parentRunId, status: "Running" });
+
+    const { event } = await seedFlowChild({
+      parentRunId,
+      status: "Failed",
+      emit: "run.failed",
+      payload: { reason: "result_missing", resultStatus: "missing" },
+    });
+
+    const resumed: string[] = [];
+    const consumer = buildOrchestratorResumeConsumer({
+      db,
+      resumeFlow: async (runId) => {
+        resumed.push(runId);
+      },
+    });
+
+    await consumer.handle([event!]);
+
+    expect(await statusOf(parentRunId)).toBe("Running");
+    expect(resumed).toEqual([parentRunId]);
   });
 });

@@ -19,6 +19,7 @@ import pino from "pino";
 
 import { markArtifactsStale } from "./artifact-store";
 
+import { markRunResultStale } from "@/lib/run-results/ledger";
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
 import * as schemaModule from "@/lib/db/schema";
@@ -783,7 +784,11 @@ export async function markDownstreamStale(
   runId: string,
   downstreamNodeIds: string[],
   db?: Db,
-): Promise<{ staledNodes: number; staledGates: number }> {
+): Promise<{
+  staledNodes: number;
+  staledGates: number;
+  staledResult: boolean;
+}> {
   const d = db ?? getDb();
   const targets = new Set(downstreamNodeIds);
   const allRows = await getNodeAttemptsForRun(runId, d);
@@ -830,6 +835,13 @@ export async function markDownstreamStale(
   }
 
   await markArtifactsStale(runId, downstreamNodeIds, d);
+  // ADR-165 (D11/T4.3): the run's PUBLIC result goes stale by the same rule as
+  // its evidence — if the node that produced it was reworked, the answer it
+  // gave no longer describes the run. It rides this call rather than a separate
+  // sweep so every rework path (graph rework, operator restart, HITL release)
+  // gets it from the one site they all already go through. A no-op when the
+  // current result came from a node outside `downstreamNodeIds`.
+  const staledResult = await markRunResultStale(d, runId, downstreamNodeIds);
 
   log.info(
     {
@@ -838,9 +850,10 @@ export async function markDownstreamStale(
       staledNodes,
       staledGates,
       skippedClaimRows,
+      staledResult,
     },
     "markDownstreamStale",
   );
 
-  return { staledNodes, staledGates };
+  return { staledNodes, staledGates, staledResult };
 }
