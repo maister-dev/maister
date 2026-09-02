@@ -9,7 +9,10 @@ import pino from "pino";
 import { launchAgentRun, type LaunchAgentRunResult } from "@/lib/agents/launch";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { isRunSettledEventKind } from "@/lib/domain-events/taxonomy";
+import {
+  isAutoPromotableReviewCause,
+  isRunSettledEventKind,
+} from "@/lib/domain-events/taxonomy";
 import { isMaisterError, type MaisterError } from "@/lib/errors";
 import {
   promoteChildRunForToken,
@@ -282,7 +285,24 @@ export function buildAutoLaunchRunPlanConsumer(
         // kind-agnostic, and without it an as-plan flow child would sit in
         // Review forever and never release its dependents.
         if (event.kind === "run.review") {
-          await autoPromoteAsPlanChild(_db, event, promote);
+          // Codex review F1: only a COMPLETION may auto-promote. An operator
+          // stop, a released rework claim or a sync-resolver return emit the
+          // same event to wake the parent, but their diff is not finished
+          // work. Fail-closed: a cause-less event (emitted before the field
+          // existed, redelivered at-least-once) stays in Review for a human.
+          if (isAutoPromotableReviewCause(payload.cause)) {
+            await autoPromoteAsPlanChild(_db, event, promote);
+          } else if (payload.cause === undefined) {
+            log.warn(
+              { childRunId: event.runId, parentRunId },
+              "[delegation.auto-promote] skipped — run.review carries no cause",
+            );
+          } else {
+            log.info(
+              { childRunId: event.runId, parentRunId, cause: payload.cause },
+              "[delegation.auto-promote] skipped — Review cause is not a completion",
+            );
+          }
           continue;
         }
 

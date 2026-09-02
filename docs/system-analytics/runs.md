@@ -366,7 +366,9 @@ delegation provenance. Four things distinguish it from a board flow run:
    `human`/`rework` loop. `run_cancel` ENDS a flow child (`Abandoned`; owner
    decision at the 2026-09-02 review) while a human stop keeps the operator
    semantic `Review` — every Review flip of a delegated child emits `run.review`
-   through one helper. If the coordinator exits without promoting, the child
+   through one helper, tagged with its `cause`; the stop's `operator_stop` wakes
+   the parent but is never auto-promoted (only `graph_completed` /
+   `agent_exit` are). If the coordinator exits without promoting, the child
    parks indefinitely: it holds no scheduler slot, but its worktree and branch
    are retained and nothing reclaims them (ADR-163 residual W12).
 

@@ -539,20 +539,29 @@ describe("workbench stop — a delegated flow child wakes its parked parent (ADR
     projectId: string;
     flowId: string;
     parentRunId: string | null;
+    launchMode?: "auto" | "manual";
   }): Promise<{ runId: string; taskId: string }> {
     const taskId = randomUUID();
     const runId = randomUUID();
+    const launchMode = args.launchMode ?? "manual";
 
     await pool.query(
       `INSERT INTO "tasks" ("id", "project_id", "number", "title", "prompt", "launch_mode")
-       VALUES ($1, $2, $3, 'child', 'p', 'manual')`,
-      [taskId, args.projectId, Math.trunc(Math.random() * 1e9) + 1],
+       VALUES ($1, $2, $3, 'child', 'p', $4)`,
+      [taskId, args.projectId, Math.trunc(Math.random() * 1e9) + 1, launchMode],
     );
     await pool.query(
       `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "flow_id",
          "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id", "launch_mode")
-       VALUES ($1, 'flow', $2, $3, $4, 'Running', 'v1.0.0', 'unknown', $5, COALESCE($5, $1), 'manual')`,
-      [runId, args.projectId, taskId, args.flowId, args.parentRunId],
+       VALUES ($1, 'flow', $2, $3, $4, 'Running', 'v1.0.0', 'unknown', $5, COALESCE($5, $1), $6)`,
+      [
+        runId,
+        args.projectId,
+        taskId,
+        args.flowId,
+        args.parentRunId,
+        launchMode,
+      ],
     );
 
     return { runId, taskId };
@@ -599,6 +608,80 @@ describe("workbench stop — a delegated flow child wakes its parked parent (ADR
     });
 
     await consumer.handle(events);
+
+    const parent = await pool.query(
+      `SELECT "status" FROM "runs" WHERE "id" = $1`,
+      [parentRunId],
+    );
+
+    expect(parent.rows[0].status).toBe("Running");
+    expect(resumed).toEqual([parentRunId]);
+  });
+
+  // ADR-163 (Codex review F1): the stop's run.review must wake the parent (the
+  // locked Q1-A rule above) WITHOUT reading as a completion — before the cause
+  // field, the as-plan consumer merged whatever partial diff the stopped child
+  // had, turning Stop into delivery.
+  it("stopping an AS-PLAN (auto) flow child parks it in Review for the coordinator: the auto-launch consumer does NOT promote it, the parent still wakes", async () => {
+    const projectId = await seedProject();
+    const flowId = await seedChildFlow(projectId);
+    const parentRunId = await seedParkedOrchestrator(projectId, flowId);
+    const child = await seedFlowRun({
+      projectId,
+      flowId,
+      parentRunId,
+      launchMode: "auto",
+    });
+
+    expect(await stopWorkbenchRun(child.runId)).toMatchObject({
+      ok: true,
+      runStatus: "Review",
+    });
+
+    const events = await reviewDomainEvents(child.runId);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].payload).toMatchObject({
+      parentRunId,
+      runKind: "flow",
+      status: "Review",
+      cause: "operator_stop",
+    });
+
+    const { buildAutoLaunchRunPlanConsumer } = await import(
+      "@/lib/domain-events/auto-launch"
+    );
+    const promoted: string[] = [];
+
+    await buildAutoLaunchRunPlanConsumer({
+      db,
+      promote: (async (childRunId: string) => {
+        promoted.push(childRunId);
+
+        return { ok: true };
+      }) as never,
+    }).handle(events);
+
+    expect(promoted).toEqual([]);
+
+    const childRow = await pool.query(
+      `SELECT "status" FROM "runs" WHERE "id" = $1`,
+      [child.runId],
+    );
+
+    expect(childRow.rows[0].status).toBe("Review");
+
+    const { buildOrchestratorResumeConsumer } = await import(
+      "@/lib/domain-events/orchestrator-resume"
+    );
+    const resumed: string[] = [];
+
+    await buildOrchestratorResumeConsumer({
+      db,
+      resumeFlow: async (runId) => {
+        resumed.push(runId);
+      },
+    }).handle(events);
 
     const parent = await pool.query(
       `SELECT "status" FROM "runs" WHERE "id" = $1`,

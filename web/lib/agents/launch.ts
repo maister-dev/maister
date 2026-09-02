@@ -69,6 +69,7 @@ import {
   type DelegationSnapshot,
 } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { type RunReviewCause } from "@/lib/domain-events/taxonomy";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 import { cancelOpenAgentQuestionsForTaskInTransaction } from "@/lib/services/agent-question";
 import { resolveAgentChainDepth } from "@/lib/agents/chain-depth";
@@ -2603,6 +2604,10 @@ export async function finalizeAgentRun(
             runKind: "agent",
             agentId: row.agentId,
             status,
+            // Codex review F1: the same cause field the flow emit helper
+            // writes — a clean agent exit IS a completion and stays
+            // auto-promotable.
+            cause: "agent_exit" satisfies RunReviewCause,
           },
         });
       }

@@ -4933,7 +4933,11 @@ export async function runGraph(
 
         // ADR-163: the delegated-child `run.review` domain emit is ONE helper
         // shared by every Review flip, so no path can miss the parent wake.
-        await emitDelegatedReviewIfChild(tx, { runId, ...rows[0] });
+        await emitDelegatedReviewIfChild(tx, {
+          runId,
+          ...rows[0],
+          cause: "graph_completed",
+        });
       }
     });
     log2.info({}, "runGraph ended Review");

@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { RunReviewCause } from "@/lib/domain-events/taxonomy";
+
 import pino from "pino";
 
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
@@ -19,6 +21,10 @@ export type ReviewFlipRow = {
   flowId: string | null;
   runKind: string;
   parentRunId: string | null;
+  // Required, never defaulted: the as-plan auto-promote consumer allow-lists
+  // the completion causes, so a writer that forgets to say why it flipped to
+  // Review fails to compile rather than reading as "completed".
+  cause: RunReviewCause;
 };
 
 /**
@@ -33,7 +39,9 @@ export type ReviewFlipRow = {
  * here — the graph runner, the operator stop, the sync-resolver returns, and
  * the rework-claim release — so a new flip cannot silently miss the rule. A
  * top-level Review has no orchestrator to route to and emits nothing here; the
- * webhook `run.review` is a separate, unconditional surface.
+ * webhook `run.review` is a separate, unconditional surface. The agent
+ * finalizer (`lib/agents/launch.ts`) is the one sibling emitter with its own
+ * payload shape; it carries the same `cause` field.
  *
  * Returns whether an event was emitted.
  */
@@ -57,10 +65,11 @@ export async function emitDelegatedReviewIfChild(
       flowId: row.flowId,
       runKind: row.runKind,
       status: "Review",
+      cause: row.cause,
     },
   });
   log.info(
-    { runId: row.runId, parentRunId: row.parentRunId },
+    { runId: row.runId, parentRunId: row.parentRunId, cause: row.cause },
     "[delegation.wake] run.review emitted for a delegated child",
   );
 

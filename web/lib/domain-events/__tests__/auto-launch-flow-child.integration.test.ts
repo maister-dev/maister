@@ -157,6 +157,9 @@ async function settle(args: {
   kind: "run.done" | "run.review";
   runKind: "agent" | "flow";
   status: string;
+  // Codex review F1: a run.review says WHY the child entered Review; omitted
+  // here deliberately for the cause-less regression case.
+  cause?: string;
 }): Promise<DomainEventRow[]> {
   await emitDomainEvent({
     db,
@@ -166,7 +169,11 @@ async function settle(args: {
     runId: args.runId,
     actor: { type: "system", id: null },
     parentRunId,
-    payload: { runKind: args.runKind, status: args.status },
+    payload: {
+      runKind: args.runKind,
+      status: args.status,
+      ...(args.cause ? { cause: args.cause } : {}),
+    },
   });
 
   // Read the row back through DRIZZLE, not `pool.query`: a raw pg row is
@@ -402,11 +409,74 @@ describe("auto_launch_run_plan with FLOW children (ADR-163)", () => {
         kind: "run.review",
         runKind: "flow",
         status: "Review",
+        cause: "graph_completed",
       }),
     );
 
     expect(promoted).toEqual([childRunId]);
   }, 60_000);
+
+  // Codex review F1: the auto-promote consumer allow-lists the completion
+  // causes. Every other cause — and a cause-less event from a pre-cause emitter
+  // redelivered at-least-once — parks the child in Review for a human.
+  it.each([
+    { label: "an operator stop", cause: "operator_stop" },
+    { label: "a released rework claim", cause: "rework_released" },
+    { label: "a sync-resolver return", cause: "sync_returned" },
+    { label: "no cause at all", cause: undefined },
+  ])(
+    "a FLOW child's run.review from $label does NOT auto-promote an as-plan child",
+    async ({ cause }) => {
+      const promoted: string[] = [];
+      const consumer = buildAutoLaunchRunPlanConsumer({
+        db,
+        promote: (async (childRunId: string) => {
+          promoted.push(childRunId);
+
+          return { ok: true };
+        }) as never,
+      });
+
+      const taskId = await seedAsPlanTask({
+        title: "auto flow child (stopped)",
+        spec: { kind: "flow", flowId },
+        flowId,
+      });
+      const childRunId = await seedChildRun(ctx, {
+        parentRunId,
+        runKind: "flow",
+        status: "Review",
+        taskId,
+        flowId,
+      });
+
+      await pool.query(
+        `UPDATE "runs" SET "launch_mode" = 'auto' WHERE "id" = $1`,
+        [childRunId],
+      );
+
+      await consumer.handle(
+        await settle({
+          runId: childRunId,
+          taskId,
+          kind: "run.review",
+          runKind: "flow",
+          status: "Review",
+          cause,
+        }),
+      );
+
+      expect(promoted).toEqual([]);
+
+      const row = await pool.query(
+        `SELECT "status" FROM "runs" WHERE "id" = $1`,
+        [childRunId],
+      );
+
+      expect(row.rows[0].status).toBe("Review");
+    },
+    60_000,
+  );
 
   it("a MANUAL (as-run) flow child in Review is NOT auto-promoted — the launch_mode discriminant", async () => {
     const promoted: string[] = [];

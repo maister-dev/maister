@@ -142,11 +142,11 @@ stateDiagram-v2
     state "Flow-target child (Implemented - ADR-163)" as FlowChild {
         [*] --> F_Pending: launchRunStaged<br/>flow pool, carrier task
         F_Pending --> F_Running: tryStartRun / promoteNextPending
-        F_Running --> F_Review: runGraph ends Review<br/>emit run.review if parent_run_id
-        F_Running --> F_Review: human stop (UI / node-interrupt)<br/>emit run.review if parent_run_id
+        F_Running --> F_Review: runGraph ends Review<br/>emit run.review cause graph_completed if parent_run_id
+        F_Running --> F_Review: human stop (UI / node-interrupt)<br/>emit run.review cause operator_stop if parent_run_id<br/>never auto-promoted
         F_Running --> F_Abandoned: run_cancel (coordinator)<br/>emit run.abandoned
         F_Pending --> F_Abandoned: parent cancel cascade
-        F_Review --> F_Done: run_promote or as-plan auto-promote<br/>run_rework is REFUSED (PRECONDITION)
+        F_Review --> F_Done: run_promote or as-plan auto-promote (completion causes only)<br/>run_rework is REFUSED (PRECONDITION)
         F_Running --> F_Failed: runGraph ends Failed or Crashed<br/>emit run.failed / run.crashed
         F_Review --> F_Abandoned: parent cancel cascade or run_cancel
         F_Done --> [*]
@@ -267,7 +267,13 @@ or `run_rework` (`Review → Running` + `session/resume` with an override prompt
 an **as-plan** (`launch_mode='auto'`) child is **auto-promoted** by
 `auto_launch_run_plan` (system actor, `local_merge`) so the DAG flows without a
 live coordinator. A merge conflict surfaces as `CONFLICT` (409) and leaves the
-child in `Review` — never auto-resolved (§8).
+child in `Review` — never auto-resolved (§8). **(Implemented — ADR-163
+amendment)** `run.review` carries a `cause` (`graph_completed | agent_exit |
+operator_stop | rework_released | sync_returned`) and the auto-promote fires
+only for the two completion causes: an operator stop, a released rework claim
+or a sync-resolver return wakes the parent exactly the same way but parks the
+child in `Review` for the coordinator or a human — the stop's partial diff is
+not finished work. Fail-closed: a cause-less event is never promoted.
 
 ```mermaid
 flowchart TD
@@ -542,7 +548,12 @@ none, so all three are covered by ONE helper, `admitDelegatedChild()`, called at
   AGENT child additionally via `run_rework` (`Review → Running` + resume) — which
   MUST be refused `PRECONDITION` for a FLOW child at the route, before dispatch,
   as MUST `run_message`; a `launch_mode='auto'` child of either kind MUST instead
-  be auto-promoted (system actor, `local_merge`) by `auto_launch_run_plan`.
+  be auto-promoted (system actor, `local_merge`) by `auto_launch_run_plan` —
+  ONLY when the event's `payload.cause` is a completion (`graph_completed` /
+  `agent_exit`); every `run.review` MUST carry a `cause` from
+  `RUN_REVIEW_CAUSES`, and an `operator_stop` / `rework_released` /
+  `sync_returned` or cause-less event MUST leave the child in `Review`
+  **(Implemented — ADR-163 amendment)**.
 - **(Implemented — ADR-102)** A `workspace_mode='shared'` writable tree MUST be ONE
   Review and ONE promote: every shared writable child MUST finalize to `Review`
   (never straight to `Done`); the allocator (first) child's `workspaces` row

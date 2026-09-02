@@ -259,6 +259,8 @@ async function emitReview(args: {
       runKind: "agent",
       agentId: "test-pkg:worker",
       status: "Review",
+      // Codex review F1: only a completion cause reaches the auto-promoter.
+      cause: "agent_exit",
     },
   });
 

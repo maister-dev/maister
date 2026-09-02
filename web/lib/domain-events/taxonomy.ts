@@ -71,3 +71,36 @@ export function isRunSettledEventKind(
 ): value is RunSettledEventKind {
   return (RUN_SETTLED_EVENT_KINDS as readonly string[]).includes(value);
 }
+
+// ADR-163 (Codex review F1): WHY a delegated child entered `Review`, carried on
+// the `run.review` payload. An operator stop, a released rework claim and a
+// sync-resolver return all park a child in Review through the SAME helper as
+// graph completion, so without a cause the as-plan auto-promote consumer read
+// a stopped child's partial diff as finished work and merged it. Required on
+// the emit helper so a new Review path cannot default to "completed".
+export const RUN_REVIEW_CAUSES = [
+  "graph_completed",
+  "agent_exit",
+  "operator_stop",
+  "rework_released",
+  "sync_returned",
+] as const;
+
+export type RunReviewCause = (typeof RUN_REVIEW_CAUSES)[number];
+
+// The allow-list the auto-promote consumer applies — fail-closed: a cause that
+// is missing (an event emitted before the field existed, redelivered
+// at-least-once) or unknown leaves the child in Review for a human promote.
+export const AUTO_PROMOTABLE_REVIEW_CAUSES = [
+  "graph_completed",
+  "agent_exit",
+] as const satisfies readonly RunReviewCause[];
+
+export function isAutoPromotableReviewCause(
+  value: unknown,
+): value is (typeof AUTO_PROMOTABLE_REVIEW_CAUSES)[number] {
+  return (
+    typeof value === "string" &&
+    (AUTO_PROMOTABLE_REVIEW_CAUSES as readonly string[]).includes(value)
+  );
+}

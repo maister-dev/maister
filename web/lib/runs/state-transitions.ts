@@ -10,6 +10,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { type RunReviewCause } from "@/lib/domain-events/taxonomy";
 import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { gcAgeDays } from "@/lib/instance-config";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
@@ -443,6 +444,7 @@ async function casToReviewAndEmit(
   runId: string,
   set: Record<string, unknown>,
   fromStatus: string,
+  cause: RunReviewCause,
 ): Promise<{ id: string }[]> {
   return db.transaction(async (tx: Db) => {
     const rows = await tx
@@ -459,7 +461,7 @@ async function casToReviewAndEmit(
       });
 
     if (rows.length > 0) {
-      await emitDelegatedReviewIfChild(tx, { runId, ...rows[0] });
+      await emitDelegatedReviewIfChild(tx, { runId, ...rows[0], cause });
     }
 
     return rows;
@@ -478,6 +480,7 @@ export async function markReviewFromReworkClaim(
     runId,
     { status: "Review" },
     "HumanWorking",
+    "rework_released",
   );
 
   if (rows.length === 0) {
@@ -540,6 +543,7 @@ export async function markSyncReviewFromRunning(
     runId,
     { status: "Review", keepaliveUntil: null, checkpointAt: null },
     "Running",
+    "sync_returned",
   );
 
   if (rows.length === 0) {
@@ -576,6 +580,7 @@ export async function markSyncReviewFromNeedsInput(
     runId,
     { status: "Review", keepaliveUntil: null, checkpointAt: null },
     fromStatus,
+    "sync_returned",
   );
 
   if (rows.length === 0) {

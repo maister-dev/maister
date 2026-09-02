@@ -98,7 +98,7 @@ observe its failed child; success-gated dependents do not launch.
   | Consumer | Filter | Effect of a FLOW `run.review` |
   | --- | --- | --- |
   | `orchestrator_resume` | `isRunSettledEventKind`; branches on the PARENT's `run_kind`, child-agnostic | works unchanged — this is the wake path the emit exists for |
-  | `auto_launch_run_plan` | `isRunSettledEventKind` AND `payload.runKind ∈ {agent, flow}` (an allow-list — `scratch` and any later kind stay out) | dispatches a released dependent on its `delegation_spec` kind and auto-promotes an as-plan flow child's `Review` |
+  | `auto_launch_run_plan` | `isRunSettledEventKind` AND `payload.runKind ∈ {agent, flow}` (an allow-list — `scratch` and any later kind stay out) | dispatches a released dependent on its `delegation_spec` kind and auto-promotes an as-plan flow child's `Review` when `payload.cause` is a completion cause |
   | `agent_triggers` | generic `eventMatch.kinds` allow-list | an agent bound to `run.review` now ALSO fires on delegated flow children — an intended widening |
   | `ralph_loop` | `run.failed` only | unaffected |
   | `cost_rollup_reconcile` | `isRunTerminalEventKind` | unaffected (`run.review` is settled-not-terminal, so excluded) |
@@ -140,11 +140,15 @@ observe its failed child; success-gated dependents do not launch.
   (cap admission happens inside that call, NOT via a separate
   `promoteNextPending` mark), idempotent under the per-task
   `hasAnyRun` belt; and (3) **auto-promotes an as-plan child** — on
-  `run.review` for a `launch_mode='auto'` child it promotes it (system actor,
+  `run.review` for a `launch_mode='auto'` child whose `payload.cause` is a
+  completion (`graph_completed` / `agent_exit`) it promotes it (system actor,
   `local_merge`) so the auto-DAG flows without a live coordinator (a merge
   conflict leaves the child in `Review`, logged; manual as-run children are
-  coordinator-driven via `run_promote`, not promoted here). It branches on
-  `run_kind`/parent-linkage BEFORE acting. See [orchestrator.md](orchestrator.md).
+  coordinator-driven via `run_promote`, not promoted here; an `operator_stop`,
+  `rework_released`, `sync_returned` or cause-less `run.review` wakes the parent
+  but is never promoted — fail-closed, **Implemented — ADR-163 amendment**). It
+  branches on `run_kind`/parent-linkage BEFORE acting. See
+  [orchestrator.md](orchestrator.md).
 - **`orchestrator_resume` consumer** (Implemented, ADR-098/097) — the
   parked-coordinator wake consumer (`startFrom: "now"`), a SIBLING of
   `auto_launch_run_plan` and the ONLY consumer that wakes the parent. It
@@ -352,6 +356,10 @@ flowchart TD
   ADR-141 Review re-entries — MUST emit inside the SAME transaction as the
   status flip; a status a settled-event
   consumer waits on that nothing emits is a deadlock, not a missing feature.
+  **(Implemented — ADR-163 amendment)** every `run.review` payload MUST carry
+  `cause ∈ RUN_REVIEW_CAUSES` (`graph_completed | agent_exit | operator_stop |
+  rework_released | sync_returned`); the emit helper requires it at the type
+  level so no writer can default to "completed".
 
 ## Edge cases
 

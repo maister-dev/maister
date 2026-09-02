@@ -397,7 +397,14 @@ async function emitChildReview(args: {
     runId: childRunId,
     actor: { type: "agent", id: workerAgentId },
     parentRunId: args.parentRunId,
-    payload: { runKind: "agent", agentId: workerAgentId, status: "Review" },
+    // Codex review F1: a clean agent exit is a COMPLETION cause — the
+    // auto-promote consumer allow-lists it (an operator stop would not pass).
+    payload: {
+      runKind: "agent",
+      agentId: workerAgentId,
+      status: "Review",
+      cause: "agent_exit",
+    },
   });
 
   const rows = (await db
