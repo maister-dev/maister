@@ -65,8 +65,8 @@ export type C2CandidateRow = {
 };
 
 // The C2 candidate query: triaged + launch_mode='auto' + flow + NOT paused tasks,
-// DISJOINT from the orchestrator as-plan source (delegation_spec.agentId NULL, not
-// a parent_of child). Ordered by the criticality dictionary (weight DESC) then FIFO
+// DISJOINT from the orchestrator as-plan source (no delegation_spec at all, not a
+// parent_of child). Ordered by the criticality dictionary (weight DESC) then FIFO
 // (created_at ASC) so the most critical eligible Backlog task drains first.
 export async function loadC2CandidateRows(db: Db): Promise<C2CandidateRow[]> {
   return db
@@ -90,8 +90,10 @@ export async function loadC2CandidateRows(db: Db): Promise<C2CandidateRow[]> {
         // flow_id present → a triaged-enqueue task, not an as-plan one.
         sql`${tasks.flowId} IS NOT NULL`,
         // DISJOINT from auto_launch_run_plan: an as-plan task carries a
-        // delegation_spec.agentId (the agent target the auto-DAG launches).
-        sql`(${tasks.delegationSpec} -> 'agentId') IS NULL`,
+        // delegation_spec (agent OR flow target — ADR-163), a triaged-enqueue
+        // task never does. Never sniff a field inside the spec: a flow spec has
+        // no agentId and would leak into this source.
+        sql`${tasks.delegationSpec} IS NULL`,
         // Belt for disjointness: never a parent_of child of an orchestrator.
         // ADR-155: scoped to a SAME-PROJECT parent, because that is exactly the
         // set auto_launch_run_plan owns. A cross-project parent_of edge is a

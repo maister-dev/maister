@@ -54,9 +54,9 @@ export type AutoLaunchTriagedSummary = {
 // The auto_launch_triaged tick (ADR-112): a triaged + launch_mode='auto' + flow
 // task whose relation blockers have cleared is launched as a board flow run by
 // reusing launchRun (which owns git/worktree + the run insert + supervisor
-// spawn). DISJOINT from auto_launch_run_plan (ADR-098): that consumer launches
-// AGENT runs for as-plan tasks (delegation_spec.agentId set, parent_of under an
-// orchestrator); this tick excludes them. Idempotency across overlapping
+// spawn). DISJOINT from auto_launch_run_plan (ADR-098/163): that consumer
+// launches as-plan tasks (delegation_spec set — agent or flow target — and
+// parent_of under an orchestrator); this tick excludes them. Idempotency across overlapping
 // invocations is the budget-1 singleton lease (the M24 clock claims at most one
 // attempt) plus the per-task live-flow-run guard.
 //

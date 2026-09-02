@@ -404,6 +404,23 @@ describe("auto_launch_triaged tick", () => {
     expect(calls).toEqual([]);
   });
 
+  // ADR-163: an as-plan task may now be a FLOW target — it carries a
+  // `delegation_spec` with NO `agentId`, a flow_id, and nothing stops a later
+  // triage from marking it triaged. The disjointness term is "carries a
+  // delegation_spec at all", not "carries an agentId" — the exact inline shape
+  // test ADR-163 forbids. No parent_of belt is seeded here on purpose: this pins
+  // the PREDICATE, not the belt.
+  it("is disjoint from auto_launch_run_plan: a FLOW-target as-plan task is NOT picked either", async () => {
+    await seedTriagedAutoTask({
+      triageStatus: "triaged",
+      delegationSpec: { kind: "flow", flowId },
+    });
+    const { fn, calls } = recordingLaunch();
+
+    await runAutoLaunchTriagedJob({ launch: fn });
+    expect(calls).toEqual([]);
+  });
+
   it("does NOT double-launch a task that already has a live flow run", async () => {
     const taskId = await seedTriagedAutoTask();
 
