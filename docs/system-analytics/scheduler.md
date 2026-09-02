@@ -83,8 +83,9 @@ may call a GC bundle directly or create a second scheduler state machine.
   `systemManaged`, not user-creatable — `createSchedulerJobSchema` rejects it
   (`run_schedule` precedent). Its predicate is **disjoint** from the orchestrator
   `auto_launch_run_plan` domain-event consumer (ADR-098), which fires only on
-  `parent_of`-under-orchestrator tasks carrying a `delegation_spec.agentId` and
-  launches agent runs — this kind launches ordinary triaged FLOW tasks. See
+  `parent_of`-under-orchestrator tasks carrying a `delegation_spec` (agent or
+  flow target, ADR-163) and dispatches on its kind — this kind launches ordinary
+  triaged FLOW tasks. See
   [triage.md](triage.md).
 - **Scheduler admin** (`/admin/scheduler` page + `/api/admin/scheduler-jobs[/{jobId}]`,
   Implemented) — admin-only scheduler

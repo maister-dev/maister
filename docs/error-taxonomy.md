@@ -347,10 +347,14 @@ and `ACCOUNT_INACTIVE`; ADR-101 added `BUDGET_EXCEEDED`; ADR-122 added
 >   **(Implemented — [ADR-163](decisions.md#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher))** the same code covers a FLOW target that
 >   is unknown, outside the token's project, not `Enabled`/`UpdateAvailable`,
 >   `untrusted`, missing an enabled revision, on a revision that is not
->   `Installed`, or whose package setup is `pending`/`failed`; plus `run_rework`
->   or `run_message` addressed to a flow child (neither applies to one), and a
->   delegation whose orchestrator terminalized DURING the child's launch (the
->   just-born child is abandoned through the parent's cascade); a cross-batch
+>   `Installed`, or whose package setup is `pending`/`failed`, or with no Ready platform
+>   ACP runner to launch it; plus `run_rework` or `run_message` addressed to a
+>   flow child (neither applies to one), a `run_cancel` of an already-terminal
+>   child (`CONFLICT`, see below), and a delegation whose orchestrator
+>   terminalized DURING the child's launch (the just-born child is abandoned
+>   through the parent's cascade and its live session torn down); `run_plan`
+>   answers the ONE code every collected resolution failure shares, else
+>   `PRECONDITION` for a mixed batch, each line tagged `[CODE]`; a cross-batch
 >   `dependsOn` / `requires` reference outside the plan being written; **a run-bound
 >   ext token whose orchestrator has TERMINALIZED** (`Done`/`Failed`/`Crashed`/
 >   `Abandoned`) on any of delegate/plan/collect/cancel/promote/rework/message
@@ -364,12 +368,15 @@ and `ACCOUNT_INACTIVE`; ADR-101 added `BUDGET_EXCEEDED`; ADR-122 added
 >   no-op). All map to HTTP 409; no merge runs and no sibling is flipped.
 > - **`CONFIG` → HTTP 422** — a flow declaring an `orchestrator` node with
 >   `compat.engine_min < 1.6.0` (engine floor); an over-`max_fanout` /
->   over-`max_depth` request (bounds, enforced pre-tx); a cyclic task DAG in
+>   over-`max_depth` request (bounds, decided inside the launcher's run-insert
+>   transaction; nothing written); a cyclic task DAG in
 >   `run_plan`; **(Implemented — [ADR-163](decisions.md#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher))** a `target` carrying BOTH or
 >   NEITHER of `agentId`/`flowId`; an agent-only field (`workspace`,
 >   `workspaceMode`, `persistent`, `addressableKey`) on a flow target; `title` on
 >   an agent `mode: run` target; a flow whose manifest `schemaVersion` is
->   unsupported or whose engine range is incompatible with this engine;
+>   unsupported, whose engine range is incompatible with this engine, or whose
+>   stored manifest this engine cannot execute; a `run_plan` per-kind option
+>   violation (refused before resolution, every violating entry at once);
 >   a `strict` path-scope enforcement declaration (the Phase-2 policy
 >   gap — refused until [ADR-099](decisions.md#adr-099-persistent-swarm-layer-2--addressable-sessions-star-routed-messaging-worktree-modes-per-agent-read-only) lands). A `workspace_mode: shared`
 >   delegation with a writable worktree is NO LONGER a `CONFIG` launch gate — the

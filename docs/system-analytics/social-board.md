@@ -26,6 +26,10 @@ the ADR-155 cross-project rules. (Implemented, incl. cross-project relations)
 - **Task number** — `tasks.number`, per-project monotonic, allocated from
   `projects.next_task_number` in the `createTask` transaction. `KEY-N` =
   `task_key` + `number`. See [`tasks.md`](tasks.md).
+- **Delegated `parent_of` target** (ADR-163 — Implemented) — an orchestrator's
+  flow-target delegation mints a carrier task and links it `parent_of` under
+  the orchestrator's task in both delegation modes; the child card renders its
+  parent's `KEY-N` as a provenance chip (see [`tasks.md`](tasks.md)).
 - **Relation row ownership** (ADR-155 — Implemented) — a `task_relations` row is
   owned by its **from-end**: `task_relations.project_id` is the from-task's
   project, and the to-task MAY live in a different project. Both endpoints are

@@ -15,6 +15,12 @@ comment/activity/subscription/inbox substrate around tasks is owned by
 ## Domain entities
 
 - **Task** — board card. Persisted as `tasks` row.
+- **Carrier task** (Implemented, ADR-163) — the `tasks` row a flow-target
+  delegation mints server-side because a flow run cannot exist without one:
+  `launch_mode='manual'` (`run_delegate`) or `auto` (`run_plan`), `flowId` = the
+  selected child flow, always linked `parent_of` under the orchestrator's task.
+  Its board card carries `parentTask` (the orchestrator's `KEY-N`) and warns
+  before a relaunch. A failed launch leaves it `Abandoned`, never deleted.
 - **Run** — execution attempt. See [`runs.md`](runs.md).
 - **Assignment** — claimable human work item attached to the latest run,
   planned for role-owned waits such as permission, form, review, manual
@@ -292,8 +298,8 @@ launch. Because the tick reuses `classifyTaskLaunchability` +
 `triaged + blocked` and **self-launches on a later tick once the blocker
 clears** — "wait in queue for predecessors, then fly" with no extra wiring.
 The predicate is **disjoint** from the orchestrator's `auto_launch_run_plan`
-(which requires `parent_of`-under-orchestrator + `delegation_spec.agentId`
-and launches _agent_ runs, see [`orchestrator.md`](orchestrator.md)), so the
+(which requires `parent_of`-under-orchestrator + a `delegation_spec` — agent
+or flow target, ADR-163 — and dispatches on its kind, see [`orchestrator.md`](orchestrator.md)), so the
 two never collide. See [`triage.md`](triage.md) for the full intent → tick →
 dependency-release → give-up state machine.
 

@@ -3581,6 +3581,7 @@
       "delegation": "Delegation",
       "maxFanout": "Max fanout",
       "maxDepth": "Max depth",
+      "delegationAdvisory": "Advisory only — the platform bounds MAISTER_MAX_ORCHESTRATOR_FANOUT and MAISTER_ORCHESTRATOR_MAX_DEPTH are what is enforced.",
       "enforcement": {
         "title": "Enforcement",
         "mcps": "MCPs",

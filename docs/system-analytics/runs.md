@@ -341,7 +341,8 @@ delegation provenance. Four things distinguish it from a board flow run:
 1. **A carrier task.** A flow run cannot exist without a task
    (`assertFlowRunInvariant` requires `taskId && flowId`, `loadRun` throws
    `PRECONDITION` without one, and the flow prompt entry point IS `task.prompt`),
-   so the delegation seam mints one server-side: `launch_mode='manual'`,
+   so the delegation seam mints one server-side: `launch_mode='manual'` for
+   `run_delegate` (an as-plan `run_plan` entry's task is `auto`),
    `flowId` = the SELECTED child flow (never inherited from the orchestrator's
    task), prompt = the delegated prompt, always linked `parent_of` under the
    orchestrator's task in BOTH delegation modes. `mode` is therefore not a
@@ -362,7 +363,10 @@ delegation provenance. Four things distinguish it from a board flow run:
    `Review` emits the `run.review` DOMAIN event gated on `parent_run_id != null`,
    which is what wakes a parent parked in `WaitingOnChildren`. `run_rework` and
    `run_message` are refused (`PRECONDITION`) — a flow child owns its own
-   `human`/`rework` loop. If the coordinator exits without promoting, the child
+   `human`/`rework` loop. `run_cancel` ENDS a flow child (`Abandoned`; owner
+   decision at the 2026-09-02 review) while a human stop keeps the operator
+   semantic `Review` — every Review flip of a delegated child emits `run.review`
+   through one helper. If the coordinator exits without promoting, the child
    parks indefinitely: it holds no scheduler slot, but its worktree and branch
    are retained and nothing reclaims them (ADR-163 residual W12).
 

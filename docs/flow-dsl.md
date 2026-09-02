@@ -635,12 +635,12 @@ nodes:
   `MAISTER_MAX_ORCHESTRATOR_FANOUT` (`16`) and `MAISTER_ORCHESTRATOR_MAX_DEPTH`
   (`3`). An over-fanout or over-depth request is refused with
   `MaisterError("CONFIG")`; no partial run-tree is created.
-  **(Implemented — [ADR-163](decisions.md#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher))** `max_fanout` now bounds the
-  orchestrator's LIVE children of BOTH kinds (agent + flow), not the size of one
-  `run_plan` batch, and is enforced by one shared helper on every
-  child-creation edge. `web/lib/config.schema.ts` is UNCHANGED — the
-  `orchestratorSettingsSchema` gains no field; only the runtime semantics of the
-  existing one widen, so there is no new schema field to look for.
+  **(Implemented — [ADR-163](decisions.md#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher))** the node-level `max_fanout` / `max_depth`
+  are ADVISORY (owner decision, 2026-09-02): no runtime reads them. The
+  enforced bounds are the platform env values — `MAISTER_MAX_ORCHESTRATOR_FANOUT`
+  counts the orchestrator's LIVE children of BOTH kinds (agent + flow), not the
+  size of one `run_plan` batch — applied by one shared helper inside every child
+  launcher's run-insert transaction. `web/lib/config.schema.ts` is UNCHANGED.
 
 **Delegation semantics (brief; full contract in
 [ADR-098](decisions.md#adr-098-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume)
@@ -670,9 +670,9 @@ materialized into the orchestrator session's ACP `mcpServers` for
 - `run_collect` — read each child's terminal status, `{{ steps.<id>.output }}`
   stdout var, produced-artifact manifest, and base→run diff ref (never the child
   worktree directly — the reviewer-isolation contract).
-- `run_cancel` — stop a child run. **[ADR-163](decisions.md#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher)** — the OUTCOME differs
-  by kind: an agent child is `Abandoned`, while a flow child takes the ordinary
-  operator-stop-to-`Review` transition and parks with its diff intact.
+- `run_cancel` — stop a child run. **[ADR-163](decisions.md#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher)** — the child ends
+  `Abandoned` for BOTH kinds (a flow child's worktree is retained until GC; owner
+  decision at the 2026-09-02 review); a HUMAN stop of a flow child keeps `Review`.
   `run_rework` and `run_message` do NOT apply to a flow child and are refused
   `PRECONDITION`.
 

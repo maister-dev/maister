@@ -48,6 +48,7 @@ export function buildNodeSideFormLabels(te: Translator): NodeSideFormLabels {
     delegation: te("nodeForm.delegation"),
     maxFanout: te("nodeForm.maxFanout"),
     maxDepth: te("nodeForm.maxDepth"),
+    delegationAdvisory: te("nodeForm.delegationAdvisory"),
     enforcement: {
       title: te("nodeForm.enforcement.title"),
       mcps: te("nodeForm.enforcement.mcps"),

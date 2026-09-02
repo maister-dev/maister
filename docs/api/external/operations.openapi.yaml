@@ -1521,22 +1521,25 @@ paths:
         a **carrier task** server-side (`launch_mode = "manual"`, flow = the
         SELECTED flow, prompt = the delegated prompt) and links it `parent_of`
         under the orchestrator's task in BOTH modes, so `childTaskId` is always
-        returned for a flow target. Ordering is strict: pre-flight (token → bound
-        run → depth → shared fan-out → per-kind field allow-list → flow trust)
-        writes NOTHING; the carrier task + relation land in ONE transaction that
-        also holds the admission lock; `launchRunStaged` then owns its own run
-        transaction and starts execution only after that commit; and a
-        post-commit re-read of the parent abandons the just-born child
-        (`PRECONDITION` → 409) if the orchestrator terminalized meanwhile. If
-        anything after the carrier transaction throws, an outermost compensation
-        deletes the carrier task and its relation (guarded by "the task has no
-        runs"). `run_rework` and `run_message` do NOT apply to a flow child —
+        returned for a flow target. Ordering is strict: pre-flight (per-kind field allow-list → token →
+        bound run → flow trust) writes NOTHING; the carrier task + relation land
+        in ONE transaction that also takes the per-orchestrator admission lock for
+        a fast-path depth/fan-out count; `launchRunStaged` then owns its own run
+        transaction — where the DECISIVE admission runs — and starts execution
+        only after that commit; and a post-commit re-read of the parent abandons
+        the just-born child and tears down its live session (`PRECONDITION` →
+        409) if the orchestrator terminalized meanwhile. If anything after the
+        carrier transaction throws, an outermost compensation ABANDONS the
+        carrier task (never deletes it; the relation stays as provenance). `run_rework` and `run_message` do NOT apply to a flow child —
         both are refused `PRECONDITION` → 409; `run_collect`, `run_cancel`, and
-        `run_promote` work on both kinds.
+        `run_promote` work on both kinds, and `run_cancel` ends a flow child
+        `Abandoned` (a human stop keeps `Review`).
 
         Depth (`MAISTER_ORCHESTRATOR_MAX_DEPTH`) and per-orchestrator fan-out
         (`MAISTER_MAX_ORCHESTRATOR_FANOUT`, counting live children of BOTH kinds)
-        are rejected pre-tx (`CONFIG` → 422).
+        are decided inside the launcher's run-insert transaction (`CONFIG` → 422,
+        nothing written); the flow must also have a Ready platform runner and an
+        executable stored manifest — the same checks the board applies.
 
         Writes a `token_audit_log` row with scope `runs:delegate` (audit identity
         `agent:<id>`) after success.
@@ -1653,15 +1656,21 @@ paths:
         **Pre-transaction `CONFIG` bounds (→ 422):** a cyclic `dependsOn`, a
         batch that would push the orchestrator's LIVE child count of BOTH kinds
         past `MAISTER_MAX_ORCHESTRATOR_FANOUT` **(Implemented — ADR-163: live
-        children + batch size, under a per-orchestrator advisory lock — not the
-        batch length alone)**, or a run-tree depth past
+        children + batch size under the per-orchestrator lock in the DAG
+        transaction is a fast path; the DECISIVE bound is decided inside each
+        launcher's run-insert transaction)**, or a run-tree depth past
         `MAISTER_ORCHESTRATOR_MAX_DEPTH`. Validation is all-or-nothing — no
-        partial DAG is ever written. **(Implemented — ADR-163)** A batch may MIX
+        partial DAG is ever written. Per-kind option violations are refused
+        `CONFIG` → 422 BEFORE any resolution (every violating entry at once);
+        resolution failures answer the one code they all share, else
+        `PRECONDITION` → 409 for a mixed batch, each message line tagged
+        `[CODE]`. **(Implemented — ADR-163)** A batch may MIX
         agent and flow entries; the post-commit source launch dispatches per entry
         on its recorded `delegation_spec` kind. Tasks whose dependencies are already clear
-        are marked launchable and fold into the advisory-locked
-        `promoteNextPending` CAS (the route NEVER launches directly, preserving
-        the global cap), so a `childRunId` may be present for those.
+        (empty `dependsOn`) are launched after the DAG commits through the
+        kind-specific launcher, whose run-insert transaction admits against the
+        global cap and the shared fan-out bound, so a `childRunId` may be
+        present for those; a refused source stays `Backlog` for the auto-launcher.
 
         Writes a `token_audit_log` row with scope `runs:delegate` after success.
       operationId: extPlanRuns
@@ -1813,8 +1822,10 @@ paths:
                   status:
                     type: string
                     description: |
-                      The child's run status after the cancel was applied (e.g.
-                      `Abandoned`). A run-status string per the run state machine.
+                      The child's run status after the cancel was applied — `Abandoned` for
+                      both agent and flow children **(flow arm: ADR-163, owner
+                      decision at the 2026-09-02 review)**; a flow child's worktree is
+                      retained until GC. A run-status string per the run state machine.
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -5086,9 +5097,9 @@ components:
         (Implemented — ADR-098) `run_plan` payload. `projectId` and the parent
         `runId` are token-derived. **(Implemented — ADR-163)** The batch is bounded
         by `MAISTER_MAX_ORCHESTRATOR_FANOUT` counted as LIVE children of BOTH
-        kinds PLUS this batch's size — the same `admitDelegatedChild` helper
-        `run_delegate` and the as-plan auto-launcher use, under a
-        per-orchestrator advisory lock — not by the batch length alone.
+        kinds PLUS this batch's size — a fast path in the DAG transaction; the
+        same `admitDelegatedChild` helper decides again inside each launcher's
+        run-insert transaction, which is what binds.
       required: [tasks]
       additionalProperties: false
       properties:

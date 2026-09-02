@@ -68,6 +68,7 @@ export type NodeSideFormLabels = {
   delegation: string;
   maxFanout: string;
   maxDepth: string;
+  delegationAdvisory: string;
   enforcement: {
     title: string;
     mcps: string;
@@ -973,6 +974,12 @@ export function NodeSideForm({
         {type === "orchestrator" ? (
           <div className="grid gap-2" data-testid="node-delegation">
             <h4 className={SECTION_CLS}>{labels.delegation}</h4>
+            <p
+              className="m-0 font-mono text-[10px] leading-[1.4] text-mute"
+              data-testid="node-delegation-advisory"
+            >
+              {labels.delegationAdvisory}
+            </p>
             <TextField
               label={labels.maxFanout}
               readOnly={readOnly}

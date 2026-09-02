@@ -3581,6 +3581,7 @@
       "delegation": "Делегирование",
       "maxFanout": "Макс. ветвление",
       "maxDepth": "Макс. глубина",
+      "delegationAdvisory": "Только рекомендация — применяются платформенные лимиты MAISTER_MAX_ORCHESTRATOR_FANOUT и MAISTER_ORCHESTRATOR_MAX_DEPTH.",
       "enforcement": {
         "title": "Принуждение",
         "mcps": "MCP",

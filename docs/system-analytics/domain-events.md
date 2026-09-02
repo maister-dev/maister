@@ -98,7 +98,7 @@ observe its failed child; success-gated dependents do not launch.
   | Consumer | Filter | Effect of a FLOW `run.review` |
   | --- | --- | --- |
   | `orchestrator_resume` | `isRunSettledEventKind`; branches on the PARENT's `run_kind`, child-agnostic | works unchanged — this is the wake path the emit exists for |
-  | `auto_launch_run_plan` | `isRunSettledEventKind` AND `payload.runKind === "agent"` | must WIDEN to an allow-list (`agent \| flow`), else a flow child in an as-plan DAG never auto-promotes and never releases its dependents |
+  | `auto_launch_run_plan` | `isRunSettledEventKind` AND `payload.runKind ∈ {agent, flow}` (an allow-list — `scratch` and any later kind stay out) | dispatches a released dependent on its `delegation_spec` kind and auto-promotes an as-plan flow child's `Review` |
   | `agent_triggers` | generic `eventMatch.kinds` allow-list | an agent bound to `run.review` now ALSO fires on delegated flow children — an intended widening |
   | `ralph_loop` | `run.failed` only | unaffected |
   | `cost_rollup_reconcile` | `isRunTerminalEventKind` | unaffected (`run.review` is settled-not-terminal, so excluded) |
@@ -316,9 +316,10 @@ flowchart TD
   + `session/resume`). **(Implemented — ADR-163)** `auto_launch_run_plan`'s
   `run_kind` gate MUST be an ALLOW-LIST (`agent | flow`), never a deny-check, so
   a kind added later stays rejected by default; it MUST dispatch the candidate
-  launch on the task's `delegation_spec` kind; and it MUST call
-  `admitDelegatedChild()` before launching (this edge has never had a depth or
-  fan-out check).
+  launch on the task's `delegation_spec` kind; the depth/fan-out bound is decided
+  by `admitDelegatedChild()` inside the launcher's run-insert transaction (this
+  edge has no fast path); and a typed release-time refusal MUST be posted as a
+  system comment on the task, which stays `Backlog`/`auto`.
 - A handler failure MUST increment `consecutive_failures`, set `last_error`,
   release the lease, and leave the cursor unchanged; a subsequent success MUST
   reset `consecutive_failures` to 0. Redelivery of the failed window MUST wait
@@ -345,9 +346,11 @@ flowchart TD
   parentless) WITHOUT introducing a new kind. **(Implemented — ADR-100,
   migration 0060)** the settled-not-terminal `run.review` kind MUST be emitted
   ONLY for a child with a parent and MUST carry `parent_run_id`.
-  **(Implemented — ADR-163)** BOTH `run.review` emitters — the agent launcher's
-  `finalizeAgentRun` and the flow graph runner's `Review` branch — MUST emit
-  inside the SAME transaction as the status flip; a status a settled-event
+  **(Implemented — ADR-163)** every `run.review` emitter — the agent launcher's
+  `finalizeAgentRun` and, through the one `emitDelegatedReviewIfChild` helper,
+  the flow graph runner's `Review` branch, the operator stop and the ADR-160 /
+  ADR-141 Review re-entries — MUST emit inside the SAME transaction as the
+  status flip; a status a settled-event
   consumer waits on that nothing emits is a deadlock, not a missing feature.
 
 ## Edge cases

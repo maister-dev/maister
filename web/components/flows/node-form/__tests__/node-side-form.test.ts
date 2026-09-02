@@ -147,6 +147,7 @@ const labels: NodeSideFormProps["labels"] = {
   delegation: "Delegation",
   maxFanout: "Max fanout",
   maxDepth: "Max depth",
+  delegationAdvisory: "Advisory only",
   enforcement: {
     title: "Enforcement",
     mcps: "MCPs",

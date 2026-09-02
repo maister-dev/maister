@@ -42,9 +42,11 @@ Expectations/Edge-cases carry that tag.
   orchestrator (bounded by `MAISTER_ORCHESTRATOR_MAX_DEPTH`). See
   [db/runs-domain.md](../db/runs-domain.md).
 - **`runs.delegation_snapshot`** (Implemented) — jsonb on the child run holding
-  **only** the effective agent-definition id + pinned revision resolved at spawn;
-  the resolved runner stays in the run's `run_sessions.runner_snapshot` (never
-  duplicated). The terminal/enforcement path reads the snapshot, never a drifting
+  the launch-time identity resolved at spawn, discriminated by `kind`: the
+  effective agent-definition id + pinned revision for an agent child, a
+  consensus participant for `kind: 'runner'` (ADR-109), the flow ref + pinned
+  revision + branch pair for a flow child (ADR-163); the resolved runner stays
+  in the run's `run_sessions.runner_snapshot` (never duplicated). The terminal/enforcement path reads the snapshot, never a drifting
   live projection.
 - **`runs.launch_mode`** (Implemented) — `auto` | `manual`. `run_plan`-emitted child
   tasks are `auto` (the auto-launcher and cancel-cascade key on this); manually
@@ -140,10 +142,13 @@ stateDiagram-v2
     state "Flow-target child (Implemented - ADR-163)" as FlowChild {
         [*] --> F_Pending: launchRunStaged<br/>flow pool, carrier task
         F_Pending --> F_Running: tryStartRun / promoteNextPending
-        F_Running --> F_Review: runGraph ends Review<br/>emit run.review if parent_run_id (NEW)
+        F_Running --> F_Review: runGraph ends Review<br/>emit run.review if parent_run_id
+        F_Running --> F_Review: human stop (UI / node-interrupt)<br/>emit run.review if parent_run_id
+        F_Running --> F_Abandoned: run_cancel (coordinator)<br/>emit run.abandoned
+        F_Pending --> F_Abandoned: parent cancel cascade
         F_Review --> F_Done: run_promote or as-plan auto-promote<br/>run_rework is REFUSED (PRECONDITION)
         F_Running --> F_Failed: runGraph ends Failed or Crashed<br/>emit run.failed / run.crashed
-        F_Review --> F_Abandoned: parent cancel cascade
+        F_Review --> F_Abandoned: parent cancel cascade or run_cancel
         F_Done --> [*]
         F_Failed --> [*]
         F_Abandoned --> [*]
@@ -180,24 +185,30 @@ sequenceDiagram
 
 ### (b) as-plan task-DAG with `requires` success-gate + auto-launcher (Implemented)
 
-`run_plan` validates the DAG **before** any write (acyclic, fan-out, depth), then
-emits N child tasks + M `requires` relations in **one** transaction, all
-`launch_mode='auto'`. As each blocker terminates `Done`, the `auto_launch_run_plan`
-consumer flips the producer task `Done`, clears the `requires` edge, and calls
-`launchAgentRun` **directly** for the now-unblocked dependent — cap admission
-(Pending vs Running under the global cap) happens inside that call, so there is no
-separate `promoteNextPending` mark; the per-task `hasAnyRun` belt makes a
-redelivered window idempotent.
+`run_plan` validates the DAG **before** any write (acyclic, per-kind options,
+every target resolvable), takes the per-orchestrator admission lock in the DAG
+transaction, then emits N child tasks + M `requires` relations in **one**
+transaction, all `launch_mode='auto'`. As each blocker terminates `Done`, the
+`auto_launch_run_plan` consumer flips the producer task `Done`, clears the
+`requires` edge, and dispatches the now-unblocked dependent on its
+`delegation_spec` kind — `launchAgentRun` for an agent, `launchRun` for a flow
+(ADR-163) — with cap admission and the decisive depth/fan-out bound inside that
+launcher's run-insert transaction, so there is no separate `promoteNextPending`
+mark; the per-task `hasAnyRun` belt makes a redelivered window idempotent. A
+typed refusal at release time (the target was disabled, untrusted or upgraded
+past this engine) is posted as a system comment on the task, which stays
+`Backlog`/`auto` for the next settle.
 
 ```mermaid
 flowchart TD
-    RP[run_plan tasks + dependsOn] --> V{pre-tx validate:<br/>acyclic AND len &lt;= FANOUT AND depth &lt; MAX_DEPTH<br/>AND every target catalog-resolvable}
+    RP[run_plan tasks + dependsOn] --> V{pre-tx validate:<br/>acyclic AND per-kind options allowed<br/>AND every target catalog-resolvable}
     V -- no --> CFG[CONFIG / PRECONDITION - NO rows written]
     V -- yes --> TX[one tx: INSERT N tasks parent_of + M requires<br/>all launch_mode=auto, status Backlog/blocked]
     TX --> WAIT[blocked tasks wait]
     CT([child settled: run.done/failed/crashed/abandoned/review<br/>payload parent_run_id]) --> AL[auto_launch_run_plan consumer]
     AL --> Q{required blockers all Done?}
-    Q -- yes + launch_mode=auto + no open blockers --> LAU[launchAgentRun directly<br/>cap admission inside; hasAnyRun belt = idempotent]
+    Q -- yes + launch_mode=auto + no open blockers --> LAU[dispatch on delegation_spec kind:<br/>launchAgentRun or launchRun<br/>admission inside the launcher tx; hasAnyRun belt = idempotent]
+    LAU -- typed refusal --> NOTE[system comment on the task<br/>stays Backlog + auto]
     Q -- a required blocker Failed/Abandoned --> WK[do NOT release - wake the orchestrator]
 ```
 
@@ -314,12 +325,12 @@ sequenceDiagram
     participant L as launchRunStaged (canonical flow pipeline)
     participant S as supervisor
     O->>X: run_delegate target.flowId mode prompt title? runnerOverride?
-    X->>X: discriminated target + per-kind field allow-list<br/>agent-only key on the flow arm is a schema error
+    X->>X: strict target + exactly-one refinement<br/>per-kind option allow-list at the route (refuseUnsupportedDelegationOption)
     X->>X: resolveActiveBoundRun (projectId + parent runId are token-derived)
     X->>F: resolveDelegatableFlow projectId flowId
     F-->>X: flowId flowRefId revisionId engine range<br/>OR PRECONDITION/CONFIG (no rows written)
     X->>A: one tx - advisory lock on parent run id
-    Note over A: depth walk + live-child count under the lock<br/>over the cap - CONFIG 422, nothing written
+    Note over A: depth walk + live-child count under the lock (fast path)<br/>over the cap - CONFIG 422, nothing written<br/>the DECISIVE count runs again inside launchRunStaged's run-insert tx
     A->>A: INSERT carrier task (launch_mode manual, flowId = SELECTED flow)<br/>+ parent_of relation - BOTH modes
     A-->>X: committed
     X->>L: launchRun taskId=carrier parentRunId rootRunId launchMode delegationSnapshot
@@ -327,12 +338,12 @@ sequenceDiagram
     L-->>X: childRunId status
     X->>X: post-commit parent re-read
     alt parent terminalized during launch
-        X->>X: cascadeAbandonRunTree the just-born child, return PRECONDITION 409
+        X->>X: cascadeAbandonRunTree the just-born child + tear down its live session, return PRECONDITION 409
     else parent still live
         X-->>O: 202 childRunId childTaskId
     end
     L->>S: POST sessions (after commit, inside runFlow)
-    Note over X: launchRun throws after the carrier tx -><br/>outermost compensation deletes carrier task + relation<br/>(guarded by task-has-no-runs), typed error propagates
+    Note over X: launchRun throws after the carrier tx -><br/>outermost compensation ABANDONS the carrier task (relation kept as provenance)<br/>the task-has-no-runs guard is inside the UPDATE, typed error propagates
 ```
 
 ## Flow-target delegation contract (Implemented — ADR-163)
@@ -359,9 +370,12 @@ field names a filesystem path component.
 
 ### Option compatibility by target kind
 
-Enforced by a **discriminated Zod union** with `.strict()` on each arm, so an
-agent-only key on the flow arm is a schema error — never a silently dropped
-field.
+Enforced by a **strict target object with an exactly-one refinement** (both or
+neither identifier → `CONFIG`) plus a **per-kind option allow-list applied at
+the route before any lookup** (`refuseUnsupportedDelegationOption`), so an
+agent-only key on a flow target is refused with its own message — never a
+silently dropped field. `run_plan` runs the same allow-list over every entry
+before resolution and reports all violations at once.
 
 | Field | Agent target | Flow target | Refusal when violated |
 | --- | --- | --- | --- |
@@ -381,7 +395,7 @@ field.
 | Tool | Agent child | Flow child |
 | --- | --- | --- |
 | `run_collect` | ✅ | ✅ (kind-agnostic) |
-| `run_cancel` | ✅ → the child is `Abandoned` | ✅ but the OUTCOME differs: `stopRunByKind`'s `case "flow"` is the operator-stop-to-`Review` transition every flow run has, so the child parks in `Review` with its diff intact rather than terminating. Abandoning a flow child is what the PARENT's cascade does. |
+| `run_cancel` | ✅ → the child is `Abandoned` | ✅ → the child is `Abandoned` (owner decision at the 2026-09-02 review): `stopWorkbenchRunForToken` routes a flow child with `parent_run_id` through `markAbandoned` — `run.abandoned` wakes the parent, the fan-out slot is freed, assignments close in the same transaction, the worktree is retained until GC. A HUMAN stop (UI stop, node-interrupt `stop`) keeps the operator semantic `Review` and emits `run.review`. A terminal child refuses `CONFLICT`. |
 | `run_promote` | ✅ (`Review` only) | ✅ (`Review` only, kind-agnostic) |
 | `run_rework` | ✅ | ❌ `PRECONDITION` 409 — a flow child owns its own review/rework loop |
 | `run_message` | ✅ (persistent only) | ❌ `PRECONDITION` 409 — no addressable agent session |
@@ -393,12 +407,12 @@ Parameterized one row = one case. Every row above the carrier-task line writes
 
 | # | Condition | Where checked | Code / HTTP | Rows written |
 | --- | --- | --- | --- | --- |
-| 1 | both `agentId` and `flowId` present | Zod discriminated union, pre-everything | `CONFIG` 422 | none |
+| 1 | both `agentId` and `flowId` present | Zod exactly-one refinement on the strict target, pre-everything | `CONFIG` 422 | none |
 | 2 | neither present | Zod | `CONFIG` 422 | none |
-| 3 | `workspace` on a flow target | Zod flow arm `.strict()` | `CONFIG` 422 | none |
-| 4 | `workspaceMode` on a flow target | Zod flow arm `.strict()` | `CONFIG` 422 | none |
-| 5 | `persistent` on a flow target | Zod flow arm `.strict()` | `CONFIG` 422 | none |
-| 6 | `addressableKey` on a flow target | Zod flow arm `.strict()` | `CONFIG` 422 | none |
+| 3 | `workspace` on a flow target | route allow-list (`refuseUnsupportedDelegationOption`), post-parse, before any lookup | `CONFIG` 422 | none |
+| 4 | `workspaceMode` on a flow target | route allow-list (`refuseUnsupportedDelegationOption`), post-parse, before any lookup | `CONFIG` 422 | none |
+| 5 | `persistent` on a flow target | route allow-list (`refuseUnsupportedDelegationOption`), post-parse, before any lookup | `CONFIG` 422 | none |
+| 6 | `addressableKey` on a flow target | route allow-list (`refuseUnsupportedDelegationOption`), post-parse, before any lookup | `CONFIG` 422 | none |
 | 7 | `title` on an agent `mode: run` target | route refinement | `CONFIG` 422 | none |
 | 8 | no run-bound token | route | `PRECONDITION` 409 | none |
 | 9 | bound orchestrator terminal, or not in the token's project | `resolveActiveBoundRun` | `PRECONDITION` 409 — never `UNAUTHORIZED`: a cross-project bound run reads as "not found in this project", which is also what stops the route confirming another project's run ids | none |
@@ -411,13 +425,15 @@ Parameterized one row = one case. Every row above the carrier-task line writes
 | 16 | `packageStatus !== 'Installed'` | `resolveDelegatableFlow` | `PRECONDITION` 409 | none |
 | 17 | `setupStatus ∈ {pending, failed}` | `resolveDelegatableFlow` | `PRECONDITION` 409 | none |
 | 18 | unsupported manifest `schemaVersion` | `resolveDelegatableFlow` | `CONFIG` 422 | none |
-| 19 | engine incompatible (`engine_min` / `engine_max`) | `resolveDelegatableFlow` | `CONFIG` 422 | none |
-| 20 | flow host requirement missing (`checkFlowRequirements`) | `launchRunStaged` | `PRECONDITION` 409 | carrier task → compensated |
-| 21 | worktree creation failure | `launchRunStaged` inner catch | propagated code | worktree removed; carrier task → compensated |
-| 22 | supervisor unavailable | `checkSupervisorHealth` in `launchRunStaged` | `EXECUTOR_UNAVAILABLE` 503 | carrier task → compensated |
-| 23 | parent terminalized during launch | post-commit parent re-read | `PRECONDITION` 409 | child abandoned through `cascadeAbandonRunTree` |
-| 24 | `run_rework` on a flow child | rework route, pre-dispatch | `PRECONDITION` 409 | none |
-| 25 | `run_message` on a flow child | message route, pre-dispatch | `PRECONDITION` 409 | none |
+| 19 | engine incompatible (`engine_min` / `engine_max`) | `resolveDelegatableFlow` (shared launchability gate) | `CONFIG` 422 | none |
+| 20 | no Ready platform ACP runner is enabled | `resolveDelegatableFlow` (board-parity check) | `PRECONDITION` 409 | none |
+| 21 | stored manifest not executable by this engine (`classifyStoredFlowManifest`) | `resolveDelegatableFlow` (board-parity check) | `CONFIG` 422 | none |
+| 22 | flow host requirement missing (`checkFlowRequirements`) | `launchRunStaged` | `PRECONDITION` 409 | carrier task → Abandoned |
+| 23 | worktree creation failure | `launchRunStaged` inner catch | propagated code | worktree removed; carrier task → Abandoned |
+| 24 | supervisor unavailable | `checkSupervisorHealth` in `launchRunStaged` | `EXECUTOR_UNAVAILABLE` 503 | carrier task → Abandoned |
+| 25 | parent terminalized during launch | post-commit parent re-read (`run_delegate` only) | `PRECONDITION` 409 | child abandoned through `cascadeAbandonRunTree`, its live session torn down |
+| 26 | `run_rework` on a flow child | rework route, pre-dispatch | `PRECONDITION` 409 | none |
+| 27 | `run_message` on a flow child | message route, pre-dispatch | `PRECONDITION` 409 | none |
 
 ### Shared dispatchers that branch on `run_kind`
 
@@ -433,7 +449,7 @@ per discriminant.
 | 5 | `app/api/v1/ext/runs/message/route.ts` | NEW — explicit flow refusal |
 | 6 | `lib/flows/graph/runner-graph.ts` Review branch | NEW — `run.review` domain emit gated on `parent_run_id != null` |
 | 7 | `lib/domain-events/orchestrator-resume.ts` | VERIFY — branches on the PARENT's kind; child-agnostic |
-| 8 | `lib/workbench-lifecycle/service.ts` `stopRunByKind` | VERIFY — `case "flow"` present; note it stops a flow child to `Review`, not `Abandoned` |
+| 8 | `lib/workbench-lifecycle/service.ts` `stopWorkbenchRunForToken` | NEW — a flow child with `parent_run_id` takes `cancelDelegatedFlowChild` (Abandoned); `stopRunByKind`'s `case "flow"` keeps the human stop-to-`Review` (now with the `run.review` emit) |
 | 9 | `lib/orchestrator/cascade.ts` | VERIFY — kind-agnostic + `poolForRunKind` |
 | 10 | `lib/scheduler.ts` `poolForRunKind` | VERIFY + TEST — flow children draw `MAISTER_MAX_CONCURRENT_RUNS`, agent children `MAISTER_MAX_CONCURRENT_AGENTS` |
 | 11 | `lib/reconcile.ts` | VERIFY — the flow arm is already reached for `run_kind='flow'` |
@@ -505,8 +521,8 @@ none, so all three are covered by ONE helper, `admitDelegatedChild()`, called at
   dependent by dispatching on the task's `delegation_spec` kind — `launchAgentRun`
   for an agent, `launchRun` for a flow **(Implemented — ADR-163)** — guarded
   idempotent by the per-task `hasAnyRun` belt so the dependent starts exactly once
-  under concurrent child settles, admitted by `admitDelegatedChild()` before the
-  launch, and gated by an ALLOW-LIST of accepted `run_kind`s (`agent | flow`) so
+  under concurrent child settles, admitted by `admitDelegatedChild()` inside the
+  launcher's run-insert transaction (no fast path on this edge), and gated by an ALLOW-LIST of accepted `run_kind`s (`agent | flow`) so
   `scratch` and any future kind stay rejected by default.
 - A child SETTLE (terminal `Done`/`Failed`/`Crashed`/`Abandoned` OR `run.review`)
   MUST wake a parked parent via `orchestrator_resume` — `Failed`/`Crashed`/
@@ -517,9 +533,11 @@ none, so all three are covered by ONE helper, `admitDelegatedChild()`, called at
   concurrent resume converges to one).
 - A DELEGATED child of EITHER kind reaching `Review` MUST emit the `run.review`
   DOMAIN event in the same transaction as the status flip, gated on
-  `parent_run_id != null` (a top-level Review emits nothing) — the agent launcher
-  already does, and **(Implemented — ADR-163)** the graph runner's `Review` branch
-  MUST too, or a parked parent deadlocks. A manual child MUST be resolvable via
+  `parent_run_id != null` (a top-level Review emits nothing) — every
+  Review flip does so through ONE helper (`emitDelegatedReviewIfChild`): the
+  agent launcher, the graph runner's `Review` branch, the operator stop, the
+  ADR-160 rework-claim release and both ADR-141 sync-resolver returns
+  **(Implemented — ADR-163)** — or a parked parent deadlocks. A manual child MUST be resolvable via
   `run_promote` (merge → `Done`; conflict → `CONFLICT`, stays `Review`), and an
   AGENT child additionally via `run_rework` (`Review → Running` + resume) — which
   MUST be refused `PRECONDITION` for a FLOW child at the route, before dispatch,
@@ -563,7 +581,7 @@ none, so all three are covered by ONE helper, `admitDelegatedChild()`, called at
   else runs; no rows written.
 - **An agent-only field on a flow target** (`workspace`, `workspaceMode`,
   `persistent`, `addressableKey`) **(Implemented — ADR-163)** → `MaisterError("CONFIG")`
-  (422) from the flow arm's `.strict()`; REFUSED, never silently ignored. Same for
+  (422) from the route's per-kind allow-list; REFUSED, never silently ignored. Same for
   `title` on an AGENT `mode: run` target (an agent `mode: run` child creates no
   task, so there is nothing to name).
 - **A flow target that is unknown / not in the project / disabled / untrusted /
@@ -580,22 +598,25 @@ none, so all three are covered by ONE helper, `admitDelegatedChild()`, called at
 - **`launchRunStaged` throws after the carrier-task transaction committed**
   **(Implemented — ADR-163)** → an OUTERMOST compensation (a third layer, outside
   `launchRunStaged`'s own `removeWorktree` and `revertPackageVersionChoices`)
-  deletes the carrier task + relation, guarded by "the task has no runs", each
-  revert with its own `catch` + `log.error`; the typed error propagates unchanged.
+  ABANDONS the carrier task (never deletes it — `runs.task_id` and
+  `domain_events.task_id` cascade on delete), with the "task has no runs" guard
+  inside the UPDATE and the `parent_of` relation kept as provenance; the typed
+  error propagates unchanged.
 - **The orchestrator terminalizes WHILE its flow child is launching**
   **(Implemented — ADR-163)** → a post-commit parent re-read abandons the just-born
-  child through `cascadeAbandonRunTree` and returns `MaisterError("PRECONDITION")`
-  (409); the child is never left running under a terminal tree.
+  child through `cascadeAbandonRunTree`, tears down its live supervisor session,
+  and returns `MaisterError("PRECONDITION")` (409); the child is never left
+  running under a terminal tree.
 - **Process death between the carrier transaction and the run transaction**
   **(Implemented — ADR-163, residual W3)** → a visible `Backlog`,
   `launch_mode='manual'` carrier card with no run. NOT auto-rescued: no discovery
   query selects it (`auto_launch_run_plan` requires `launch_mode='auto'`; the C2
   auto-launch funnel requires a triaged/armed task). An operator abandons it.
-- **A duplicate `run_delegate`** (at-least-once MCP redelivery) **(Designed —
+- **A duplicate `run_delegate`** (at-least-once MCP redelivery) **(Implemented —
   ADR-163, residual W7)** → two governed children, both visible in `run_collect`,
   bounded by the shared fan-out cap. No idempotency key in this cut — parity with
   the shipped agent path.
-- **An abandoned orchestrator leaves relaunchable carrier cards** **(Designed —
+- **An abandoned orchestrator leaves relaunchable carrier cards** **(Implemented —
   ADR-163, residual W11)** → the cascade abandons the children's RUNS, not their
   TASKS (`getUnlaunchedAutoChildTaskIds` selects `launch_mode='auto'` tasks with
   NO run; a carrier task is `manual` and has one), and
@@ -609,10 +630,12 @@ none, so all three are covered by ONE helper, `admitDelegatedChild()`, called at
   only revokes the token. Pre-existing (ADR-100) but AMPLIFIED — an agent child
   may be `workspace: none` and reach `Done` with nothing to park, a flow child
   always provisions a worktree. The coordinator contract is "promote or cancel
-  every child before finishing", enforced by prompt, not by the engine. Note
-  that `run_cancel` does NOT settle a flow child either — it stops it to
-  `Review`, which is the same park. Only `run_promote` (or the parent's
-  cascade) takes a flow child out of `Review`.
+  every child before finishing", enforced by prompt, not by the engine. Since
+  the 2026-09-02 review `run_cancel` ENDS a flow child (`Abandoned`), so a
+  coordinator can clear its children before finishing; a human stop still parks
+  in `Review`. Among the orchestrator's own tools only `run_promote` and
+  `run_cancel` take a flow child out of `Review`; a board promote, a workbench
+  archive/drop and the ADR-160 rework claim also do.
 - **Orchestrator node with `engine_min < 1.6.0`** → `MaisterError("CONFIG")` at
   flow load.
 - **Concurrent manual-resume + event-resume** → guarded to a single resume
