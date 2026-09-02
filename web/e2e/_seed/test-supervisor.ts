@@ -42,6 +42,12 @@ import path from "node:path";
 const STUB_RELEASE_BACKSTOP_MS = 15_000;
 const STUB_RELEASE_POLL_MS = 150;
 
+// ADR-165 — the seeded RAH flow refs (e2e/_seed/seed-e2e.ts) this supervisor
+// branches on to build a depth-2 tree.
+const RAH_ROOT_FLOW_REF = "e2e-rah-root";
+const RAH_RESEARCH_FLOW_REF = "e2e-rah-research";
+const RAH_RESULT_PROFILE = "research";
+
 // ---- the delegation hook (the node-test vs browser-e2e substitution) --------
 //
 // In the BROWSER e2e the agent's MCP facade would POST the ext delegate route
@@ -61,10 +67,18 @@ export type DelegateRequest = {
   // 0-based child index (a sub-task ordinal).
   index: number;
   prompt: string;
-  // ADR-163: resolves the in-repo delegated flow ref IF the orchestrator's own
-  // project has one, else null. A per-run lookup rather than an env var,
-  // because both orchestrator specs share one supervisor process.
-  delegatedFlowRef?: () => Promise<string | null>;
+  // ADR-163 / ADR-165: resolves what THIS orchestrator delegates — the in-repo
+  // delegated flow, an RAH research flow, or the default agent — plus the
+  // `resultProfile` an RAH agent child is delegated under. A per-run lookup
+  // rather than an env var, because every orchestrator spec shares one
+  // supervisor process and a global switch would flip the others' children too.
+  resolveDelegation?: () => Promise<DelegationTarget>;
+};
+
+/** What one delegation asks for: an agent or a flow, optionally under a profile. */
+export type DelegationTarget = {
+  target: { agentId?: string; flowId?: string };
+  resultProfile?: string;
 };
 
 export type DelegateHook = (req: DelegateRequest) => Promise<void>;
@@ -80,6 +94,11 @@ type SessionRecord = {
   // handler flushes it as a `session.exited` frame the moment it is connected;
   // queuing here decouples the prompt POST from the stream GET race.
   exitPending: boolean;
+  // ADR-165: agent text frames awaiting the same flush. Queued for the SAME
+  // reason as the exit — a stream that connects after the prompt would drop a
+  // directly-written sentinel, and a dropped sentinel reads as `result_missing`
+  // rather than as a lost frame.
+  pendingText: string[];
   exitCode: number;
   detached: boolean;
   // stub-compat: this session uses the hold-until-`.release` stream path
@@ -172,15 +191,10 @@ const httpDelegateHook: DelegateHook = async (req) => {
     );
   }
 
-  // ADR-163: choose the delegation target PER RUN, from the orchestrator's own
-  // project — not from an env var. Both orchestrator specs share one supervisor
-  // process, so a global switch would flip the other spec's children too. A
-  // project that has the in-repo delegated flow gets a FLOW child; every other
-  // project keeps the agent target unchanged.
-  const flowRef = await req.delegatedFlowRef?.();
-  const target = flowRef
-    ? { flowId: flowRef }
-    : { agentId: process.env.MAISTER_TEST_CHILD_AGENT_ID };
+  // The delegation target is decided PER RUN (see resolveDelegation).
+  const resolved = (await req.resolveDelegation?.()) ?? {
+    target: { agentId: process.env.MAISTER_TEST_CHILD_AGENT_ID },
+  };
   const res = await fetch(`${req.apiBaseUrl}/api/v1/ext/runs/delegate`, {
     method: "POST",
     headers: {
@@ -188,9 +202,12 @@ const httpDelegateHook: DelegateHook = async (req) => {
       authorization: `Bearer ${req.facadeToken}`,
     },
     body: JSON.stringify({
-      target,
+      target: resolved.target,
       mode: "run",
       prompt: req.prompt,
+      ...(resolved.resultProfile
+        ? { resultProfile: resolved.resultProfile }
+        : {}),
     }),
   });
 
@@ -226,9 +243,23 @@ export async function startTestSupervisor(
     return monotonic;
   };
 
-  // Flush a queued clean exit onto a connected stream (idempotent).
+  // Flush queued text, then a queued clean exit, onto a connected stream
+  // (idempotent). Text always precedes the exit: the consumers read the
+  // completing turn's accumulated text at the exit frame.
   const flushExit = (rec: SessionRecord): void => {
-    if (!rec.exitPending || !rec.emit) return;
+    if (!rec.emit) return;
+    for (const text of rec.pendingText.splice(0)) {
+      rec.emit({
+        type: "session.update",
+        sessionId: rec.sessionId,
+        monotonicId: nextId(),
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text },
+        },
+      });
+    }
+    if (!rec.exitPending) return;
     rec.exitPending = false;
     rec.emit({
       type: "session.exited",
@@ -320,6 +351,80 @@ export async function startTestSupervisor(
     res.on("close", () => clearInterval(timer));
   };
 
+  // ---- ADR-165: the public-result plane --------------------------------------
+  //
+  // A run that owes a result emits it as a ```json maister:output``` block in
+  // the text of its COMPLETING turn — the same sentinel transport the real
+  // adapters carry, read by the same extractor. Simulating the transport rather
+  // than writing `run_results` directly is the point: the e2e proves the parse,
+  // the validation and the publish, not just the row.
+  const emitText = (rec: SessionRecord, text: string): void => {
+    rec.pendingText.push(text);
+  };
+
+  const sentinel = (value: unknown): string =>
+    ["```json maister:output", JSON.stringify(value), "```"].join("\n");
+
+  /** The flow ref a run is pinned to, or null (an agent run has none). */
+  async function flowRefOf(runId: string): Promise<string | null> {
+    const rows = await opts.pool.query(
+      `SELECT fr.flow_ref_id
+         FROM runs r JOIN flow_revisions fr ON fr.id = r.flow_revision_id
+        WHERE r.id = $1`,
+      [runId],
+    );
+
+    return (rows.rows[0]?.flow_ref_id as string | undefined) ?? null;
+  }
+
+  /** True when the run carries a result contract (an RAH agent grandchild). */
+  async function hasResultContract(runId: string): Promise<boolean> {
+    const rows = await opts.pool.query(
+      `SELECT result_contract IS NOT NULL AS has FROM runs WHERE id = $1`,
+      [runId],
+    );
+
+    return rows.rows[0]?.has === true;
+  }
+
+  /**
+   * The coordinator's REDUCE step: call the REAL collect route through the
+   * facade token, and report the child run ids whose result came back `valid`.
+   *
+   * This is the whole point of the resume turn — a coordinator that fabricated
+   * ids would produce a result the Lab's `consumed_results_ratio` marks down,
+   * so the e2e drives the honest path and asserts the row it produces.
+   */
+  async function collectValidChildren(rec: SessionRecord): Promise<string[]> {
+    const { token, apiBaseUrl } = readFacade(rec.mcpServers);
+
+    if (!token || !apiBaseUrl) return [];
+    const res = await fetch(`${apiBaseUrl}/api/v1/ext/runs/collect`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ all: true }),
+    });
+
+    if (!res.ok) {
+      throw new Error(
+        `test-supervisor: collect returned ${res.status}: ${await res
+          .text()
+          .catch(() => "<no body>")}`,
+      );
+    }
+    const items = (await res.json()) as {
+      childRunId: string;
+      resultStatus?: string;
+    }[];
+
+    return items
+      .filter((item) => item.resultStatus === "valid")
+      .map((item) => item.childRunId);
+  }
+
   // Decide + run the agent's turn for a session. Called on sendPrompt. For an
   // orchestrator turn 0 it spawns children first (awaited) so countPendingChildren
   // sees them when the runner makes the park decision after the prompt returns.
@@ -334,28 +439,92 @@ export async function startTestSupervisor(
           apiBaseUrl,
           index: i,
           prompt: childPrompt(i),
-          delegatedFlowRef: async () => {
-            const rows = await opts.pool.query(
-              `SELECT f.flow_ref_id
-                 FROM runs r
-                 JOIN flows f ON f.project_id = r.project_id
-                WHERE r.id = $1 AND f.flow_ref_id = 'e2e-delegated-flow'`,
-              [rec.runId],
-            );
-
-            return (rows.rows[0]?.flow_ref_id as string | undefined) ?? null;
-          },
+          resolveDelegation: () => resolveDelegationFor(rec.runId),
         };
 
         delegations.push(req);
         await delegate(req);
       }
     }
+
+    // ADR-165: the completing turn publishes the run's result.
+    //   • a flow RESUME turn is the coordinator reducing — it collects first and
+    //     reports the ids it actually consumed;
+    //   • an agent child with a contract answers its research profile.
+    if (rec.runKind === "flow" && rec.isResume) {
+      const flowRef = await flowRefOf(rec.runId);
+
+      if (flowRef === RAH_ROOT_FLOW_REF) {
+        emitText(
+          rec,
+          sentinel({
+            summary: "reduced the research findings",
+            outcome: "completed",
+            consumedChildRunIds: await collectValidChildren(rec),
+          }),
+        );
+      } else if (flowRef === RAH_RESEARCH_FLOW_REF) {
+        // The research coordinator collects its own agents, then exports.
+        await collectValidChildren(rec);
+        emitText(
+          rec,
+          sentinel({
+            summary: "researched the change surface",
+            outcome: "completed",
+          }),
+        );
+      }
+    } else if (
+      rec.runKind === "agent" &&
+      (await hasResultContract(rec.runId))
+    ) {
+      emitText(
+        rec,
+        sentinel({ summary: "one researcher's finding", outcome: "completed" }),
+      );
+    }
+
     // Every turn (orchestrator turn-0, orchestrator resume, child) ends with a
     // clean end_turn. Queue it; the stream flushes when connected.
     rec.exitPending = true;
     rec.exitCode = 0;
     flushExit(rec);
+  }
+
+  /**
+   * What a given orchestrator run delegates. One lookup, one place: the RAH
+   * root fans out RESEARCH FLOW children, an RAH research coordinator fans out
+   * AGENT grandchildren under the `research` profile, a project carrying the
+   * ADR-163 delegated flow gets a flow child, and everything else keeps the
+   * default agent target unchanged.
+   */
+  async function resolveDelegationFor(
+    runId: string,
+  ): Promise<DelegationTarget> {
+    const flowRef = await flowRefOf(runId);
+
+    if (flowRef === RAH_ROOT_FLOW_REF) {
+      return { target: { flowId: RAH_RESEARCH_FLOW_REF } };
+    }
+    if (flowRef === RAH_RESEARCH_FLOW_REF) {
+      return {
+        target: { agentId: process.env.MAISTER_TEST_CHILD_AGENT_ID },
+        resultProfile: RAH_RESULT_PROFILE,
+      };
+    }
+
+    const rows = await opts.pool.query(
+      `SELECT f.flow_ref_id
+         FROM runs r
+         JOIN flows f ON f.project_id = r.project_id
+        WHERE r.id = $1 AND f.flow_ref_id = 'e2e-delegated-flow'`,
+      [runId],
+    );
+    const delegatedFlow = rows.rows[0]?.flow_ref_id as string | undefined;
+
+    return delegatedFlow
+      ? { target: { flowId: delegatedFlow } }
+      : { target: { agentId: process.env.MAISTER_TEST_CHILD_AGENT_ID } };
   }
 
   const server = createServer((req, res) => {
@@ -451,7 +620,19 @@ export async function startTestSupervisor(
 
         // stub-compat path for non-orchestrator sessions (e.g. a platform-agents
         // `agent` run); orchestrator FLOW sessions always auto-drive.
-        const stub = !!opts.stubCompat && runKind !== "flow";
+        //
+        // ADR-165 carves out one case: an agent child carrying a
+        // `result_contract` is a DELEGATED researcher whose coordinator is
+        // parked waiting for it. The hold path exists so a spec can control a
+        // standalone agent run's termination, and it emits only
+        // `session.exited` — no text, so no sentinel, so the child would fail
+        // `result_missing` and the tree would never reduce. Such a child
+        // auto-drives instead. No pre-ADR-165 fixture sets the column, so no
+        // existing spec changes behaviour.
+        const stub =
+          !!opts.stubCompat &&
+          runKind !== "flow" &&
+          !(runKind === "agent" && (await hasResultContract(runId)));
 
         const rec: SessionRecord = {
           sessionId,
@@ -461,6 +642,7 @@ export async function startTestSupervisor(
           isResume: typeof body.resumeSessionId === "string",
           mcpServers,
           exitPending: false,
+          pendingText: [],
           exitCode: 0,
           detached: false,
           stub,

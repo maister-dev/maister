@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "fields": [
+    { "name": "summary", "type": "string", "required": true },
+    {
+      "name": "outcome",
+      "type": "enum",
+      "required": true,
+      "options": ["completed", "blocked", "needs_input"]
+    },
+    { "name": "payload", "type": "json", "required": true }
+  ]
+}

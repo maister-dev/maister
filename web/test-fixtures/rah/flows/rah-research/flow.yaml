@@ -1,0 +1,64 @@
+# ADR-165 D16/D17 — a RESEARCH flow, delegated as a child at depth 2.
+#
+# It declares `result.export`, publishes a result, and changes NOTHING in its
+# worktree. That is exactly the shape result-only completion exists for: it
+# finishes `Running -> Done` with no Review and no promotion, so the coordinator
+# only has to COLLECT it — no cleanup discipline, no parked child holding a
+# branch nobody will ever merge.
+schemaVersion: 1
+name: rah-research
+compat:
+  engine_min: 3.7.0
+metadata:
+  title: RAH research child
+  summary: A read-only research sub-harness that finishes by publishing a result.
+result:
+  export:
+    schema: ./schemas/research-result.v1.json
+    from: [orchestrate]
+    required: true
+nodes:
+  - id: orchestrate
+    type: orchestrator
+    action:
+      prompt: |
+        Answer {{ task.prompt }} by delegating read-only agent researchers with
+        `resultProfile: "research"`, collecting their results, and ending your
+        final turn with:
+
+        ```json maister:output
+        { "summary": "...", "outcome": "completed", "payload": { } }
+        ```
+    settings:
+      enforcement:
+        tools: strict
+      tools:
+        claude: [Read, Grep, Glob]
+        codex: [shell]
+      delegation:
+        # ABSOLUTE depth from the TREE root, not a depth relative to this node,
+        # and admission min-merges it with the root's. Nested under `rah-root-d2`
+        # this flow sits at depth 1 and its researchers land at depth 2, so a
+        # declaration of 1 here would refuse the very fan-out this flow exists
+        # for. Standalone it permits one level it never uses.
+        max_depth: 2
+        max_fanout: 3
+        max_active_children: 2
+        budget:
+          max_tokens: 500000
+          wall_clock_minutes: 45
+          max_child_runs: 4
+          consecutive_failures: 2
+    output:
+      result:
+        schema: ./schemas/research-result.v1.json
+        required: true
+        on_mismatch: retry
+    rework:
+      allowedTargets: [orchestrate]
+      workspacePolicies: [keep]
+      maxLoops: 2
+      commentsVar: review_comments
+    transitions:
+      success: done
+      retry: orchestrate

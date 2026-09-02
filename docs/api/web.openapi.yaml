@@ -5761,11 +5761,14 @@ paths:
                     type: object
                     description: |
                       (Designed — ADR-165) Tree-wide roll-up over this run and
-                      every descendant (`root_run_id` scope). Present ONLY when
-                      this run is a tree root that has at least one child;
+                      every descendant. Present ONLY when this run is a tree
+                      ROOT (no `parent_run_id`) that has at least one child;
                       omitted or null otherwise, so a non-root run yields no tree
                       facts. `wallClockMinutes` spans the earliest descendant
                       `started_at` to the latest `coalesce(ended_at, now())`.
+                      `runCount` is the number of runs in the tree that have
+                      RECORDED COST — not the size of the tree; a tree whose runs
+                      have written no cost rollups reports `0`.
                     required:
                       - totalTokens
                       - inputTokens

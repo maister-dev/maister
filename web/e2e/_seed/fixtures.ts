@@ -51,6 +51,15 @@ export type E2EOrchestratorFixture = E2EProjectFixture & {
   agentsRoot: string;
 };
 
+// ADR-165: the depth-2 recursive-harness project — a root coordinator, the
+// research flow it delegates to, and the profile name its agent grandchildren
+// are delegated under.
+export type E2ERahFixture = E2EProjectFixture & {
+  taskNumber: number;
+  researchFlowRef: string;
+  resultProfile: string;
+};
+
 export type E2ERegistrationFixture = {
   repoPath: string;
   duplicateRepoPath: string;
@@ -242,6 +251,8 @@ export type E2EFixtures = {
     orchestrator: E2EOrchestratorFixture;
     // ADR-163: the flow-target delegation project.
     orchestratorFlow: E2EOrchestratorFixture;
+    // ADR-165: the depth-2 recursive-harness project.
+    rah: E2ERahFixture;
     m38: E2EM38Fixture;
     m40: E2EM40Fixture;
     budgetFork: E2EBudgetForkFixture;

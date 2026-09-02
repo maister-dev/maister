@@ -576,13 +576,18 @@ sweeper, which meters `queryRunTreeTokens(rootRunId)` — a flat `SUM` by
 `root_run_id` — and surfaces nothing. A recursive harness needs the tree total
 to be readable:
 
-- `queryRunTreeTokensByKind(rootRunId)` is a `root_run_id`-scoped sibling of the
-  per-run query, folding the same rows by kind and by model.
+- `queryRunTreeTokensByKind(rootRunId)` is the sibling of the per-run query,
+  folding the same rows by kind and by model. Its scope is `id = root OR
+  root_run_id = root`: the launchers write `parent.rootRunId ?? parent.id`, so a
+  DESCENDANT carries the root's id while the ROOT ITSELF carries NULL, and a
+  `root_run_id`-only predicate would drop the root's own spend.
 - `getRunTreeCostSummary(rootRunId)` adds `treeWallClockMinutes` — the span from
   the earliest descendant `started_at` to the latest `coalesce(ended_at, now)` —
-  and a `runCount`.
+  and a `runCount` of the runs that have RECORDED COST (not the tree's size).
 - `GET /api/runs/{runId}/cost-summary` returns an optional `tree` object **only**
-  for a tree root that has children; a non-root run yields no tree facts.
+  for a tree root — a run with no `parent_run_id` — that has children; a non-root
+  run yields no tree facts. The root test is parentage, NOT `root_run_id = id`,
+  which nothing writes.
 - The run cost panel gains "Tree total tokens" and "Tree wall-clock" facts under
   the same condition.
 

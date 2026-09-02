@@ -1,0 +1,51 @@
+# The CONTROL arm (ADR-165 §9): the same single agent, but handed pre-gathered
+# context first. It separates "the harness helped" from "context helped" — the
+# question the flat baseline alone cannot answer.
+schemaVersion: 1
+name: externalized-context
+compat:
+  engine_min: 3.7.0
+metadata:
+  title: Externalized context (control)
+  summary: A context-gathering pass feeding one ai_coding node.
+nodes:
+  - id: gather
+    type: ai_coding
+    action:
+      prompt: |
+        Gather the context needed for {{ task.prompt }} WITHOUT changing
+        anything, and end your final turn with:
+
+        ```json maister:output
+        { "summary": "...", "outcome": "completed", "payload": { } }
+        ```
+    output:
+      result:
+        schema: ./schemas/research-result.v1.json
+        required: true
+    transitions:
+      success: implement
+  - id: implement
+    type: ai_coding
+    action:
+      prompt: |
+        {{ task.prompt }}
+
+        Context gathered for you: {{ steps.gather.vars.payload }}
+
+        {{ review_comments }}
+    transitions:
+      success: review
+  - id: review
+    type: human
+    finish:
+      human:
+        decisions: [approve, rework]
+    transitions:
+      approve: done
+      rework: implement
+    rework:
+      allowedTargets: [implement]
+      workspacePolicies: [keep]
+      maxLoops: 3
+      commentsVar: review_comments

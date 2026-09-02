@@ -1,0 +1,104 @@
+# ADR-165 D16 — the reference harness at DEPTH 2: the coordinator delegates
+# whole `rah-research` FLOW children (each of which fans out its own agents)
+# rather than single agents. The depth bound is what stops it recursing further.
+schemaVersion: 1
+name: rah-root-d2
+compat:
+  engine_min: 3.7.0
+metadata:
+  title: RAH root (depth 2)
+  summary: Coordinator + research FLOW children + one writer + verifier.
+nodes:
+  - id: orchestrate
+    type: orchestrator
+    action:
+      prompt: |
+        Decompose {{ task.prompt }} and delegate ONE `rah-research` FLOW child
+        per research area. Each finishes by itself once it publishes a result —
+        collect them with `run_collect` and read `result.value`, then end your
+        final turn with the reduce block:
+
+        ```json maister:output
+        { "summary": "...", "outcome": "completed",
+          "consumedChildRunIds": ["<the child run ids you actually read>"],
+          "plan": { } }
+        ```
+    settings:
+      enforcement:
+        tools: strict
+      tools:
+        claude: [Read, Grep, Glob]
+        codex: [shell]
+      delegation:
+        max_depth: 2
+        max_fanout: 4
+        max_active_children: 3
+        budget:
+          max_tokens: 4000000
+          wall_clock_minutes: 240
+          max_child_runs: 12
+          consecutive_failures: 3
+    output:
+      result:
+        schema: ./schemas/reduce-result.v1.json
+        required: true
+        on_mismatch: retry
+    decide:
+      from: output.outcome
+    rework:
+      allowedTargets: [orchestrate]
+      workspacePolicies: [keep]
+      maxLoops: 2
+      commentsVar: review_comments
+    transitions:
+      success: writer
+      retry: orchestrate
+      blocked: escalate
+  - id: escalate
+    type: human
+    finish:
+      human:
+        decisions: [approve, rework]
+    transitions:
+      approve: writer
+      rework: orchestrate
+    rework:
+      allowedTargets: [orchestrate]
+      workspacePolicies: [keep]
+      maxLoops: 2
+      commentsVar: review_comments
+  - id: writer
+    type: ai_coding
+    action:
+      prompt: |
+        Implement the plan the coordinator produced:
+        {{ steps.orchestrate.vars.plan }}
+
+        {{ review_comments }}
+    transitions:
+      success: verify
+  - id: verify
+    type: judge
+    action:
+      prompt: "Judge the implementation against the plan."
+    pre_finish:
+      gates:
+        - id: verify-gate
+          kind: ai_judgment
+          mode: blocking
+          prompt: "Does the diff implement the plan without regressions?"
+    transitions:
+      success: review
+  - id: review
+    type: human
+    finish:
+      human:
+        decisions: [approve, rework]
+    transitions:
+      approve: done
+      rework: writer
+    rework:
+      allowedTargets: [writer]
+      workspacePolicies: [keep]
+      maxLoops: 3
+      commentsVar: review_comments

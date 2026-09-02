@@ -1,0 +1,115 @@
+# ADR-165 D16 — the reference recursive-agent-harness graph at DEPTH 1.
+#
+# The whole point of the shape: ONE writer by construction. `orchestrate` fans
+# out READ-ONLY researchers and reduces their results; `writer` is the only node
+# that touches the worktree; `verify` is an independent judge behind a blocking
+# gate; `review` is the human. A researcher can never write, so there is no
+# concurrent-writer problem to solve.
+schemaVersion: 1
+name: rah-root-d1
+compat:
+  engine_min: 3.7.0
+metadata:
+  title: RAH root (depth 1)
+  summary: Coordinator + read-only agent researchers + one writer + verifier.
+nodes:
+  - id: orchestrate
+    type: orchestrator
+    action:
+      prompt: |
+        Decompose {{ task.prompt }} into independent research questions and
+        delegate ONE read-only agent child per question with
+        `resultProfile: "research"`. Collect their results with `run_collect`,
+        then end your final turn with the reduce block:
+
+        ```json maister:output
+        { "summary": "...", "outcome": "completed",
+          "consumedChildRunIds": ["<the child run ids you actually read>"],
+          "plan": { } }
+        ```
+    settings:
+      # D15: hidden adapter subagents are structurally excluded. `strict` +
+      # a tools allow-list that omits the adapter's subagent tool means the
+      # ONLY way to spawn work is `run_delegate` / `run_plan`, which is
+      # governed, budgeted and collectable. An adapter-internal subagent is
+      # none of those things.
+      enforcement:
+        tools: strict
+      tools:
+        claude: [Read, Grep, Glob]
+        codex: [shell]
+      delegation:
+        max_depth: 1
+        max_fanout: 4
+        max_active_children: 3
+        budget:
+          max_tokens: 2000000
+          wall_clock_minutes: 120
+          max_child_runs: 8
+          consecutive_failures: 3
+    output:
+      result:
+        schema: ./schemas/reduce-result.v1.json
+        required: true
+        # A malformed reduce block is an engine-driven rework of THIS node,
+        # bounded by rework.maxLoops — not a run failure on the first slip.
+        on_mismatch: retry
+    decide:
+      from: output.outcome
+    rework:
+      allowedTargets: [orchestrate]
+      workspacePolicies: [keep]
+      maxLoops: 2
+      commentsVar: review_comments
+    transitions:
+      success: writer
+      retry: orchestrate
+      blocked: escalate
+  - id: escalate
+    type: human
+    finish:
+      human:
+        decisions: [approve, rework]
+    transitions:
+      approve: writer
+      rework: orchestrate
+    rework:
+      allowedTargets: [orchestrate]
+      workspacePolicies: [keep]
+      maxLoops: 2
+      commentsVar: review_comments
+  - id: writer
+    type: ai_coding
+    action:
+      prompt: |
+        Implement the plan the coordinator produced:
+        {{ steps.orchestrate.vars.plan }}
+
+        {{ review_comments }}
+    transitions:
+      success: verify
+  - id: verify
+    type: judge
+    action:
+      prompt: "Judge the implementation against the plan."
+    pre_finish:
+      gates:
+        - id: verify-gate
+          kind: ai_judgment
+          mode: blocking
+          prompt: "Does the diff implement the plan without regressions?"
+    transitions:
+      success: review
+  - id: review
+    type: human
+    finish:
+      human:
+        decisions: [approve, rework]
+    transitions:
+      approve: done
+      rework: writer
+    rework:
+      allowedTargets: [writer]
+      workspacePolicies: [keep]
+      maxLoops: 3
+      commentsVar: review_comments

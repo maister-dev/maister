@@ -22,7 +22,7 @@
 //     gate reruns to a fresh review — so the return route's
 //     resolveBaseRef/logRange/diffRange operate on real git state.
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -597,6 +597,150 @@ const DELEGATED_FLOW_MANIFEST = {
       transitions: { success: "done" },
     },
   ],
+};
+
+// ADR-165 — the recursive-agent-harness e2e fixture: a DEPTH-2 tree.
+//
+//   rah-root-d2 (flow)              depth 0 — publishes a reduce result
+//     └─ rah-research (flow) × 2    depth 1 — exports a research result and
+//         └─ e2e-worker (agent) × 2 depth 2   finishes Done by RESULT-ONLY
+//                                             completion, changing nothing
+//
+// It mirrors `web/test-fixtures/rah/` — the same shapes, cut down to what an
+// e2e can drive: the fixture package proves the manifests, this proves the loop
+// over real HTTP. Both are in-repo (REQ-23).
+const RAH_ROOT_FLOW_REF = "e2e-rah-root";
+const RAH_RESEARCH_FLOW_REF = "e2e-rah-research";
+const RAH_RESEARCH_PROFILE = "research";
+
+const RAH_RESEARCH_SCHEMA_DOC = {
+  schemaVersion: 1,
+  fields: [
+    { name: "summary", type: "string", required: true },
+    {
+      name: "outcome",
+      type: "enum",
+      required: true,
+      options: ["completed", "blocked", "needs_input"],
+    },
+  ],
+};
+
+const RAH_REDUCE_SCHEMA_DOC = {
+  schemaVersion: 1,
+  fields: [
+    { name: "summary", type: "string", required: true },
+    {
+      name: "outcome",
+      type: "enum",
+      required: true,
+      options: ["completed", "blocked", "needs_input"],
+    },
+    {
+      name: "consumedChildRunIds",
+      type: "array",
+      required: true,
+      items: { type: "string" },
+    },
+  ],
+};
+
+// The root coordinator. One orchestrator node that delegates the research
+// children and publishes the REDUCE result.
+//
+// Unlike the in-repo `rah-root-d2` fixture, this root EXPORTS its result rather
+// than promoting a diff: it has no writer node, so a diff is not what it
+// produces, and a run whose answer is its reduce says so with `result.export`.
+// That also makes the root itself finish by result-only completion — the same
+// exit its children take, one level up.
+const RAH_ROOT_MANIFEST = {
+  schemaVersion: 1,
+  name: "E2E RAH Root",
+  compat: { engine_min: "3.7.0" },
+  result: {
+    export: {
+      schema: "./schemas/reduce-result.v1.json",
+      from: ["orchestrate"],
+      required: true,
+    },
+  },
+  nodes: [
+    {
+      id: "orchestrate",
+      type: "orchestrator",
+      action: { prompt: "Delegate the research and reduce the findings." },
+      settings: {
+        delegation: {
+          max_depth: 2,
+          max_fanout: 4,
+          max_active_children: 3,
+          budget: {
+            max_tokens: 2000000,
+            wall_clock_minutes: 120,
+            max_child_runs: 8,
+            consecutive_failures: 3,
+          },
+        },
+      },
+      output: {
+        result: {
+          schema: "./schemas/reduce-result.v1.json",
+          required: true,
+        },
+      },
+      transitions: { success: "done" },
+    },
+  ],
+};
+
+// The research child. Its `result.export` is what lets it finish `Done` by
+// result-only completion — it provisions a worktree, writes nothing, and its
+// answer IS the export. `max_depth: 2` because the bound is ABSOLUTE from the
+// tree root: its own agents sit at depth 2.
+const RAH_RESEARCH_MANIFEST = {
+  schemaVersion: 1,
+  name: "E2E RAH Research",
+  compat: { engine_min: "3.7.0" },
+  result: {
+    export: {
+      schema: "./schemas/research-result.v1.json",
+      from: ["orchestrate"],
+      required: true,
+    },
+  },
+  nodes: [
+    {
+      id: "orchestrate",
+      type: "orchestrator",
+      action: { prompt: "Fan out the researchers and summarize." },
+      settings: {
+        delegation: {
+          max_depth: 2,
+          max_fanout: 3,
+          max_active_children: 2,
+          budget: {
+            max_tokens: 500000,
+            wall_clock_minutes: 45,
+            max_child_runs: 4,
+            consecutive_failures: 2,
+          },
+        },
+      },
+      output: {
+        result: {
+          schema: "./schemas/research-result.v1.json",
+          required: true,
+        },
+      },
+      transitions: { success: "done" },
+    },
+  ],
+};
+
+type RahFixture = ProjectFixture & {
+  taskNumber: number;
+  researchFlowRef: string;
+  resultProfile: string;
 };
 
 type OrchestratorFixture = ProjectFixture & {
@@ -7081,6 +7225,139 @@ async function seedOrchestratorE2EFixture(
   };
 }
 
+// ADR-165 (T9.3) — the depth-2 harness fixture. Reuses the orchestrator
+// project shape (real git repo, Enabled/trusted/Installed flow, Backlog task),
+// then swaps in the RAH manifests, writes both schema docs into the install
+// dirs the runtime resolves against, and seeds `result_profiles` on the
+// RESEARCH revision — profiles resolve against the DELEGATING run's pinned
+// revision, and it is the research coordinator that delegates the agents.
+async function seedRahE2EFixture(
+  pool: Pool,
+  adminId: string,
+): Promise<RahFixture> {
+  const slug = "e2e-rah";
+  const base = await seedLaunchableProjectFixture(pool, {
+    slug,
+    projectName: "E2E Recursive Harness",
+    userId: adminId,
+    repoPath: path.join(RUNTIME_ROOT, "repos", slug),
+    task: {
+      title: "Research the change surface",
+      prompt: "Delegate the research and reduce what comes back.",
+      status: "Backlog",
+      stage: "Backlog",
+    },
+  });
+
+  const rootPath = path.join(RUNTIME_ROOT, "flows", `${slug}-flow`);
+  const researchPath = path.join(RUNTIME_ROOT, "flows", `${slug}-research`);
+
+  // Both schema docs live in BOTH install dirs: the root's reduce contract and
+  // the research flow's export are resolved relative to their own flow dirs,
+  // and the package-root `schemas/` copy at install is what makes that true in
+  // production (materializeSharedPackageRootSchemas).
+  for (const dir of [rootPath, researchPath]) {
+    mkdirSync(path.join(dir, "schemas"), { recursive: true });
+    writeFileSync(
+      path.join(dir, "schemas", "research-result.v1.json"),
+      `${JSON.stringify(RAH_RESEARCH_SCHEMA_DOC, null, 2)}\n`,
+      "utf8",
+    );
+    writeFileSync(
+      path.join(dir, "schemas", "reduce-result.v1.json"),
+      `${JSON.stringify(RAH_REDUCE_SCHEMA_DOC, null, 2)}\n`,
+      "utf8",
+    );
+  }
+
+  await pool.query(
+    `UPDATE flow_revisions SET manifest = $1, engine_min = '3.7.0', flow_ref_id = $2
+      WHERE flow_ref_id = 'acceptance' AND installed_path = $3`,
+    [JSON.stringify(RAH_ROOT_MANIFEST), RAH_ROOT_FLOW_REF, rootPath],
+  );
+  await pool.query(
+    `UPDATE flows SET manifest = $1, flow_ref_id = $2 WHERE id = $3`,
+    [JSON.stringify(RAH_ROOT_MANIFEST), RAH_ROOT_FLOW_REF, base.flowId],
+  );
+
+  // The research flow: its own revision + project row, with the resolved
+  // `result_profiles` map the agent delegation's `resultProfile: "research"`
+  // resolves through.
+  const researchRevisionId = randomUUID();
+  const researchSchemaBytes = Buffer.from(
+    `${JSON.stringify(RAH_RESEARCH_SCHEMA_DOC, null, 2)}\n`,
+    "utf8",
+  );
+  const resultProfiles = {
+    [RAH_RESEARCH_PROFILE]: {
+      schemaPath: "./schemas/research-result.v1.json",
+      schemaStem: "research-result.v1",
+      schemaVersion: RAH_RESEARCH_SCHEMA_DOC.schemaVersion,
+      sha256: createHash("sha256")
+        .update(new Uint8Array(researchSchemaBytes))
+        .digest("hex"),
+      schema: RAH_RESEARCH_SCHEMA_DOC,
+    },
+  };
+
+  await pool.query(
+    `INSERT INTO flow_revisions
+       (id, flow_ref_id, source, version_label, resolved_revision,
+        manifest_digest, manifest, schema_version, engine_min, installed_path,
+        package_status, setup_status, result_profiles)
+     VALUES ($1, $2, 'github.com/maister/e2e-rah', 'v1.0.0', 'rev-e2e-rah-research',
+             'digest', $3::jsonb, 1, '3.7.0', $4, 'Installed', 'done', $5::jsonb)`,
+    [
+      researchRevisionId,
+      RAH_RESEARCH_FLOW_REF,
+      JSON.stringify(RAH_RESEARCH_MANIFEST),
+      researchPath,
+      JSON.stringify(resultProfiles),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO flows
+       (id, project_id, flow_ref_id, source, version, installed_path,
+        manifest, schema_version, enabled_revision_id, enablement_state,
+        trust_status, version_binding)
+     VALUES ($1, $2, $3, 'github.com/maister/e2e-rah', 'v1.0.0', $4,
+             $5::jsonb, 1, $6, 'Enabled', 'trusted', 'pinned')`,
+    [
+      randomUUID(),
+      base.projectId,
+      RAH_RESEARCH_FLOW_REF,
+      researchPath,
+      JSON.stringify(RAH_RESEARCH_MANIFEST),
+      researchRevisionId,
+    ],
+  );
+
+  // The grandchildren are the SAME `e2e-orc-pkg:e2e-worker` agent the
+  // orchestrator specs use (workspace: none → finalizes Done). One agent
+  // package for the whole suite; this project just attaches it.
+  const orcPkgInstall = await pool.query(
+    `SELECT id FROM package_installs WHERE name = 'e2e-orc-pkg'`,
+  );
+
+  await attachOrchestratorAgentPackage(pool, {
+    projectId: base.projectId,
+    agentsRoot: path.join(RUNTIME_ROOT, "orc-agents"),
+    packageInstallId: orcPkgInstall.rows[0].id as string,
+  });
+
+  const taskNumber = Number(
+    (await pool.query(`SELECT number FROM tasks WHERE id = $1`, [base.taskId!]))
+      .rows[0].number,
+  );
+
+  return {
+    ...base,
+    taskNumber,
+    researchFlowRef: RAH_RESEARCH_FLOW_REF,
+    resultProfile: RAH_RESEARCH_PROFILE,
+  };
+}
+
 // The global `e2e-orc-pkg` agent package: definition file, catalog row, and the
 // Installed package_install every consuming project attaches to.
 async function seedOrchestratorAgentPackage(
@@ -7706,6 +7983,9 @@ You answer when summoned by an @mention.
       withDelegatedFlow: true,
       reuseAgentPackage: true,
     });
+    // ADR-165: the depth-2 recursive-harness project. Seeded AFTER the
+    // orchestrator fixtures because it attaches the same global agent package.
+    const rah = await seedRahE2EFixture(pool, admin.id);
     const m38 = await seedM38DecideFixture(pool, admin.id);
     const m40 = await seedM40Fixture(pool, admin.id);
     const capabilityEnforcement = await seedCapabilityEnforcementFixture(
@@ -7772,6 +8052,7 @@ You answer when summoned by an @mention.
         platformAgents,
         orchestrator,
         orchestratorFlow,
+        rah,
         m38,
         m40,
         capabilityEnforcement,

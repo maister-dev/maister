@@ -6,7 +6,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { eq, sql } from "drizzle-orm";
+import { eq, or, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -544,7 +544,12 @@ export async function queryTaskTokens(
  * Tree-wide token totals BY KIND and BY MODEL — the readable sibling of
  * `queryRunTreeTokens`, which returns one flat sum for the budget meter.
  *
- * `root_run_id`-scoped, so it covers the root and every descendant in one read.
+ * Covers the root AND every descendant in one read. The scope is `id = root OR
+ * root_run_id = root`, not `root_run_id` alone: the launchers write
+ * `parent.rootRunId ?? parent.id`, so a DESCENDANT carries the root's id while
+ * the ROOT ITSELF carries NULL. A `root_run_id`-only predicate silently drops
+ * the root's own spend from its own tree total.
+ *
  * Shares the row-folding helper with the per-run summary rather than
  * reimplementing the by-model merge (ADR-165 T8.3).
  */
@@ -571,7 +576,7 @@ export async function queryRunTreeTokensByKind(
     })
     .from(runCostRollups)
     .innerJoin(runs, eq(runs.id, runCostRollups.runId))
-    .where(eq(runs.rootRunId, rootRunId))) as {
+    .where(or(eq(runs.id, rootRunId), eq(runs.rootRunId, rootRunId)))) as {
     inputTokens: number;
     outputTokens: number;
     cacheReadTokens: number;

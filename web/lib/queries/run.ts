@@ -1119,12 +1119,15 @@ export async function getRunTreeCostSummary(
 ): Promise<RunTreeCostSummary | null> {
   const client = db();
   const runRows = await client
-    .select({ rootRunId: runs.rootRunId })
+    .select({ parentRunId: runs.parentRunId })
     .from(runs)
     .where(eq(runs.id, runId));
   const row = runRows[0];
 
-  if (!row || row.rootRunId !== runId) return null;
+  // A tree ROOT is a run with no PARENT. It is not `root_run_id === id`:
+  // nothing self-stamps a root, so that predicate is never true in production
+  // and the facts would never render on the one run they describe.
+  if (!row || row.parentRunId !== null) return null;
 
   const childRows = await client
     .select({ n: sql<number>`count(*)::int` })

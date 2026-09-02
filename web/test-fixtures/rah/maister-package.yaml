@@ -1,0 +1,27 @@
+# In-repo TEST fixture for the Governed Recursive Agent Harness (ADR-165) —
+# NOT a shipped package. The production companion lives outside this repo at
+# maister-plugins/packages/rah (REQ-12); this one exists so the integration
+# matrix and the e2e can drive the REAL loader, installer and runner against a
+# manifest set that is version-controlled beside the code it exercises.
+schemaVersion: 1
+name: rah-fixture
+metadata:
+  title: RAH fixture
+  summary: Reference recursive-agent-harness graphs for the ADR-165 test matrix.
+flows:
+  - id: rah-root-d1
+    path: flows/rah-root-d1
+  - id: rah-root-d2
+    path: flows/rah-root-d2
+  - id: rah-research
+    path: flows/rah-research
+  - id: single-agent
+    path: flows/single-agent
+  - id: externalized-context
+    path: flows/externalized-context
+# ADR-165: the NAMED public result contract a delegated AGENT researcher
+# publishes under. Selected by name at delegation (`resultProfile: research`);
+# resolved at install against the PARENT run's pinned revision.
+result_profiles:
+  research:
+    schema: ./schemas/research-result.v1.json

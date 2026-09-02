@@ -37,6 +37,13 @@ let getRunTreeCostSummary: typeof import("@/lib/queries/run").getRunTreeCostSumm
 
 // ADR-165 AC-35 / spec C-16.2. Tree-wide cost facts exist ONLY for a tree ROOT
 // that has children — a "tree total" equal to the run total is not a fact.
+//
+// The `root_run_id` convention these tests must honour is the one the launchers
+// write (`delegate/route.ts`: `parent.rootRunId ?? parent.id`): a DESCENDANT
+// carries the root's id, and the ROOT ITSELF carries NULL. Nothing self-stamps a
+// root. Seeding a root with `root_run_id = <its own id>` builds a shape
+// production never produces — and a predicate tested only against that shape
+// passes while being unreachable in the field.
 
 async function seedRun(args: {
   rootRunId?: string | null;
@@ -123,7 +130,7 @@ describe("getRunTreeCostSummary (AC-35)", () => {
 
     await pool.query(
       `INSERT INTO "runs" ("id", "run_kind", "project_id", "status", "flow_version", "flow_revision", "root_run_id", "started_at", "ended_at")
-       VALUES ($1, 'flow', $2, 'Done', 'v1', 'rev', $1, $3, $4)`,
+       VALUES ($1, 'flow', $2, 'Done', 'v1', 'rev', NULL, $3, $4)`,
       [
         rootId,
         projectId,
@@ -165,11 +172,15 @@ describe("getRunTreeCostSummary (AC-35)", () => {
 
     await pool.query(
       `INSERT INTO "runs" ("id", "run_kind", "project_id", "status", "flow_version", "flow_revision", "root_run_id")
-       VALUES ($1, 'flow', $2, 'Done', 'v1', 'rev', $1)`,
+       VALUES ($1, 'flow', $2, 'Done', 'v1', 'rev', NULL)`,
       [rootId, projectId],
     );
 
     const child = await seedRun({ rootRunId: rootId, parentRunId: rootId });
+
+    // A nested coordinator with descendants of its own is still not a tree root
+    // (ADR-165: spend facts bind at the root; R-nested stays a residual).
+    await seedRun({ rootRunId: rootId, parentRunId: child });
 
     expect(await getRunTreeCostSummary(child)).toBeNull();
   }, 60_000);
@@ -179,17 +190,11 @@ describe("getRunTreeCostSummary (AC-35)", () => {
 
     await pool.query(
       `INSERT INTO "runs" ("id", "run_kind", "project_id", "status", "flow_version", "flow_revision", "root_run_id")
-       VALUES ($1, 'flow', $2, 'Done', 'v1', 'rev', $1)`,
+       VALUES ($1, 'flow', $2, 'Done', 'v1', 'rev', NULL)`,
       [rootId, projectId],
     );
     await seedRollup(rootId, 100);
 
     expect(await getRunTreeCostSummary(rootId)).toBeNull();
-  }, 60_000);
-
-  it("returns null for a plain top-level run with no root_run_id at all", async () => {
-    const runId = await seedRun({ rootRunId: null });
-
-    expect(await getRunTreeCostSummary(runId)).toBeNull();
   }, 60_000);
 });
