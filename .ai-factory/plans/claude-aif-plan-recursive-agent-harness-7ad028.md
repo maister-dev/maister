@@ -531,12 +531,12 @@ No AI co-author trailer (repo convention).
 
 ### Phase 8 — Observability
 
-- [ ] **T8.1 — Public-result inspector panel.** RED: AC-34 (panel). GREEN: `lib/runs/run-result-dto.ts` (`RunPublicResultDto`, explicit columns), `components/runs/run-public-result-panel.tsx` rendered from `app/(app)/runs/[runId]/layout.tsx` beside `NodeTranscriptPanel` when a contract or rows exist; EN/RU messages; HeroUI; icon affordances; a "completed without promotion" fact for `Done` runs with `promotion_state='none'` (derivable, no column). `docs/screens/runs/flow-run.md` as-built.
+- [x] **T8.1 — Public-result inspector panel.** RED: AC-34 (panel). GREEN: `lib/runs/run-result-dto.ts` (`RunPublicResultDto`, explicit columns), `components/runs/run-public-result-panel.tsx` rendered from `app/(app)/runs/[runId]/layout.tsx` beside `NodeTranscriptPanel` when a contract or rows exist; EN/RU messages; HeroUI; icon affordances; a "completed without promotion" fact for `Done` runs with `promotion_state='none'` (derivable, no column). `docs/screens/runs/flow-run.md` as-built.
   *Satisfies*: REQ-10. (depends on Phase 7)
-- [ ] **T8.2 — Child result badges.** RED: AC-34 (badges). GREEN: `ChildRunRef.resultStatus` (`queries/run.ts:806`, one left join on the newest row via the status predicate); glyphs in `orchestrator-run-subtree.tsx` + `run-inspector-child-runs-list.tsx`; EN/RU.
-- [ ] **T8.3 — Tree cost + wall-clock roll-up.** RED: AC-35. GREEN: `cost-rollups.ts::queryRunTreeTokensByKind(rootRunId)` (a `root_run_id`-scoped sibling of the per-run query, by kind and model); `queries/run.ts::getRunTreeCostSummary(rootRunId)`; `treeWallClockMinutes` reused; `cost-summary-facts.ts` "Tree total tokens" / "Tree wall-clock" facts (tree roots with children only); `cost-summary/route.ts` returns `tree?` (documented in S0.6). REFACTOR: the per-run and tree queries share one row-folding helper.
-- [ ] **T8.4 — Structured decision records sweep + log gate (AC-36).** One structured line per decision class with stable keys; the grep gate output pasted in the commit body.
-- [ ] **T8.5 — Read-model tests GREEN (AC-34, AC-35)** (`renderToStaticMarkup` component tests; `run-tree-cost.integration.test.ts`; the cost-summary route case).
+- [x] **T8.2 — Child result badges.** RED: AC-34 (badges). GREEN: `ChildRunRef.resultStatus` (`queries/run.ts:806`, one left join on the newest row via the status predicate); glyphs in `orchestrator-run-subtree.tsx` + `run-inspector-child-runs-list.tsx`; EN/RU.
+- [x] **T8.3 — Tree cost + wall-clock roll-up.** RED: AC-35. GREEN: `cost-rollups.ts::queryRunTreeTokensByKind(rootRunId)` (a `root_run_id`-scoped sibling of the per-run query, by kind and model); `queries/run.ts::getRunTreeCostSummary(rootRunId)`; `treeWallClockMinutes` reused; `cost-summary-facts.ts` "Tree total tokens" / "Tree wall-clock" facts (tree roots with children only); `cost-summary/route.ts` returns `tree?` (documented in S0.6). REFACTOR: the per-run and tree queries share one row-folding helper.
+- [x] **T8.4 — Structured decision records sweep + log gate (AC-36).** One structured line per decision class with stable keys; the grep gate output pasted in the commit body.
+- [x] **T8.5 — Read-model tests GREEN (AC-34, AC-35)** (`renderToStaticMarkup` component tests; `run-tree-cost.integration.test.ts`; the cost-summary route case).
 
 **Phase 8 exit** — suite green; `pnpm exec eslint .` clean on touched files.
 

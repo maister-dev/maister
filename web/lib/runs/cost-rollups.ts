@@ -540,6 +540,104 @@ export async function queryTaskTokens(
   return total;
 }
 
+/**
+ * Tree-wide token totals BY KIND and BY MODEL — the readable sibling of
+ * `queryRunTreeTokens`, which returns one flat sum for the budget meter.
+ *
+ * `root_run_id`-scoped, so it covers the root and every descendant in one read.
+ * Shares the row-folding helper with the per-run summary rather than
+ * reimplementing the by-model merge (ADR-165 T8.3).
+ */
+export async function queryRunTreeTokensByKind(
+  rootRunId: string,
+  opts: { client?: DbClient } = {},
+): Promise<{
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  totalTokens: number;
+  byModel: Record<string, Record<string, number>>;
+  runCount: number;
+}> {
+  const client = opts.client ?? db();
+  const rows = (await client
+    .select({
+      inputTokens: runCostRollups.inputTokens,
+      outputTokens: runCostRollups.outputTokens,
+      cacheReadTokens: runCostRollups.cacheReadTokens,
+      cacheCreationTokens: runCostRollups.cacheCreationTokens,
+      byModel: runCostRollups.byModel,
+    })
+    .from(runCostRollups)
+    .innerJoin(runs, eq(runs.id, runCostRollups.runId))
+    .where(eq(runs.rootRunId, rootRunId))) as {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+    byModel: Record<string, Record<string, number>> | null;
+  }[];
+
+  return foldTokenRows(rows);
+}
+
+/**
+ * Sum a set of rollup rows into one total, merging `byModel` key by key.
+ *
+ * ONE folding rule, so the per-run and tree summaries can never disagree about
+ * what "total" or "by model" means.
+ */
+export function foldTokenRows(
+  rows: readonly {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+    byModel: Record<string, Record<string, number>> | null;
+  }[],
+): {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  totalTokens: number;
+  byModel: Record<string, Record<string, number>>;
+  runCount: number;
+} {
+  const byModel: Record<string, Record<string, number>> = {};
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheCreationTokens = 0;
+
+  for (const row of rows) {
+    inputTokens += row.inputTokens;
+    outputTokens += row.outputTokens;
+    cacheReadTokens += row.cacheReadTokens;
+    cacheCreationTokens += row.cacheCreationTokens;
+
+    for (const [model, kinds] of Object.entries(row.byModel ?? {})) {
+      const target = (byModel[model] ??= {});
+
+      for (const [kind, value] of Object.entries(kinds)) {
+        target[kind] = (target[kind] ?? 0) + value;
+      }
+    }
+  }
+
+  return {
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheCreationTokens,
+    totalTokens:
+      inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens,
+    byModel,
+    runCount: rows.length,
+  };
+}
+
 export async function queryRunTreeTokens(
   rootRunId: string,
   opts: { client?: DbClient } = {},

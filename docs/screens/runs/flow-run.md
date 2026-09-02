@@ -356,7 +356,7 @@ appears — run detail, the HITL inbox, and the cross-project inbox — because 
 of them resolve the option matrix from one server loader. No surface falls back
 to a raw JSON response body.
 
-## Public result panel + tree cost facts (Designed — ADR-165)
+## Public result panel + tree cost facts (Implemented — ADR-165)
 
 Surface only; the behaviour it renders lives in
 [`../../system-analytics/run-results.md`](../../system-analytics/run-results.md).

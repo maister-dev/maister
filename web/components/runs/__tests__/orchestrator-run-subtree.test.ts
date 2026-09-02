@@ -48,6 +48,9 @@ function child(over: Partial<ChildRunRef> = {}): ChildRunRef {
     taskKey: "TST",
     taskTitle: "Child task",
     delegationTarget: { kind: "agent", ref: "agent:planner" },
+    // ADR-165: most children publish no public result; null is the ordinary
+    // case and renders no glyph.
+    resultStatus: null,
     launchMode: "auto",
     startedAt: new Date("2026-06-20T10:00:00.000Z"),
     endedAt: null,

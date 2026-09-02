@@ -1,3 +1,4 @@
+import type { ResultStatus } from "@/lib/run-results/types";
 import type { RunStatusKey } from "@/lib/runs/run-status-tone";
 import type { ReactElement } from "react";
 
@@ -13,7 +14,33 @@ export interface RunInspectorChildRun {
   status: string;
   // KEY-N back-reference; null for a task-less ("as-run") child.
   taskRef: string | null;
+  // ADR-165: the child's public-result state, or null when it has no contract.
+  // Null renders NO glyph — most children publish nothing, and a placeholder on
+  // every row would drown the ones that do.
+  resultStatus?: ResultStatus | null;
 }
+
+// ADR-165: the same glyph vocabulary the public-result panel uses, so a child
+// row and the child's own page agree at a glance.
+const RESULT_GLYPH: Record<ResultStatus, string> = {
+  valid: "✓",
+  pending: "…",
+  absent: "—",
+  missing: "✗",
+  stale: "!",
+  invalid: "✗",
+  unavailable: "—",
+};
+
+const RESULT_TONE: Record<ResultStatus, string> = {
+  valid: "text-emerald",
+  pending: "text-mute",
+  absent: "text-mute",
+  missing: "text-danger",
+  stale: "text-amber",
+  invalid: "text-danger",
+  unavailable: "text-mute",
+};
 
 export interface RunInspectorChildRunsLabels {
   // Section title, e.g. "Spawned runs (2)" — already pluralized for the child
@@ -23,6 +50,9 @@ export interface RunInspectorChildRunsLabels {
   title: string;
   asRun: string;
   status: Record<RunStatusKey, string>;
+  // ADR-165: accessible names for the result glyph. Icon-only affordances MUST
+  // carry one (web/CLAUDE.md), and the glyph alone is not a name.
+  resultStatus?: Record<ResultStatus, string>;
 }
 
 export interface RunInspectorChildRunsListProps {
@@ -72,6 +102,20 @@ export function RunInspectorChildRunsList({
               >
                 {child.taskRef ?? labels.asRun}
               </a>
+              {child.resultStatus && labels.resultStatus ? (
+                <span
+                  aria-label={labels.resultStatus[child.resultStatus]}
+                  className={clsx(
+                    "flex-none font-mono text-[11px]",
+                    RESULT_TONE[child.resultStatus],
+                  )}
+                  data-result-status={child.resultStatus}
+                  data-testid="child-run-result-glyph"
+                  title={labels.resultStatus[child.resultStatus]}
+                >
+                  {RESULT_GLYPH[child.resultStatus]}
+                </span>
+              ) : null}
             </li>
           );
         })}

@@ -5,7 +5,7 @@ import pino from "pino";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { isMaisterError } from "@/lib/errors";
-import { getRunCostSummary } from "@/lib/queries/run";
+import { getRunCostSummary, getRunTreeCostSummary } from "@/lib/queries/run";
 import { loadRunChangeSummaryAccess } from "@/lib/runs/change-summary";
 
 const log = pino({
@@ -78,7 +78,15 @@ export async function GET(
       access.runKind === "scratch" ? "readScratchRun" : "readBoard",
     );
 
-    return NextResponse.json(await getRunCostSummary(runId));
+    // ADR-165 (T8.3): the tree roll-up rides the SAME response, and is present
+    // ONLY for a tree root that has children — a non-root run yields no tree
+    // facts at all rather than a total that merely equals its own.
+    const [summary, tree] = await Promise.all([
+      getRunCostSummary(runId),
+      getRunTreeCostSummary(runId),
+    ]);
+
+    return NextResponse.json(tree ? { ...summary, tree } : summary);
   } catch (err) {
     return errorResponse(err, runId);
   }

@@ -1,11 +1,18 @@
 import type { EnforcementSnapshotEntry } from "@/lib/db/schema";
 import type { FlowResultDegradationCode } from "@/lib/runs/flow-result-dto";
+import type { ResultStatus } from "@/lib/run-results/types";
 import type { ReactElement, ReactNode } from "react";
 
 import { getLocale, getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
 
+import { getDb } from "@/lib/db/client";
+import { loadRunPublicResult } from "@/lib/runs/run-result-dto";
+import {
+  RunPublicResultPanel,
+  type RunPublicResultLabels,
+} from "@/components/runs/run-public-result-panel";
 import { AssignmentActions } from "@/components/board/assignment-actions";
 import { PendingHitlFocusRestorer } from "@/components/board/pending-hitl-focus-restorer";
 import { EvidenceGraphSection } from "@/components/board/evidence-graph-section";
@@ -386,7 +393,35 @@ export default async function RunDetailLayout({
       child.taskKey !== null && child.taskNumber !== null
         ? `${child.taskKey}-${child.taskNumber}`
         : null,
+    // ADR-165: null for a child that publishes no public result — the row then
+    // renders no glyph at all.
+    resultStatus: child.resultStatus,
   }));
+  // ADR-165 (T8.1/T8.2): the run's own public result, and the labels the panel
+  // and the child glyphs share. `null` means "render no panel".
+  const publicResult = await loadRunPublicResult(getDb(), runId);
+  const resultStatusLabels: Record<ResultStatus, string> = {
+    pending: t("publicResultStatusPending"),
+    valid: t("publicResultStatusValid"),
+    absent: t("publicResultStatusAbsent"),
+    missing: t("publicResultStatusMissing"),
+    stale: t("publicResultStatusStale"),
+    invalid: t("publicResultStatusInvalid"),
+    unavailable: t("publicResultStatusUnavailable"),
+  };
+  const publicResultLabels: RunPublicResultLabels = {
+    title: t("publicResultTitle"),
+    schemaRef: t("publicResultSchemaRef"),
+    revision: t("publicResultRevision"),
+    superseded: t("publicResultSuperseded"),
+    collected: t("publicResultCollected"),
+    notCollected: t("publicResultNotCollected"),
+    value: t("publicResultValue"),
+    noValue: t("publicResultNoValue"),
+    completedWithoutPromotion: t("publicResultNoPromotion"),
+    failureReason: t("publicResultFailureReason"),
+    status: resultStatusLabels,
+  };
   const inspectorChildRunsLabels: RunInspectorChildRunsLabels = {
     // Render the title string server-side (same RSC→Client serialization
     // reason): the inspector renders `inspectorChildRuns` (length ===
@@ -394,6 +429,7 @@ export default async function RunDetailLayout({
     title: t("spawnedRunsTitle", { count: childRuns.length }),
     asRun: t("subtreeAsRun"),
     status: runStatusLabels,
+    resultStatus: resultStatusLabels,
   };
   const tEvidence = await getTranslations("evidence");
   const tReadiness = await getTranslations("readiness");
@@ -1350,26 +1386,34 @@ export default async function RunDetailLayout({
         canReopen={canAct}
         changeSummary={changeSummary}
         inspector={
-          <LiveRunInspector
-            actions={inspectorActions}
-            changeScope={inspectorChangeScope}
-            changeSummary={changeSummary}
-            childRuns={inspectorChildRuns}
-            childRunsLabels={inspectorChildRunsLabels}
-            facts={inspectorFacts}
-            flowExtras={flowInspectorExtras}
-            flowSummary={flowSummary}
-            labels={inspectorLabels}
-            liveCost={{ initial: costSummary, labels: costLabels, locale }}
-            liveWallClock={{
-              startedAtMs: detail.startedAt.getTime(),
-              endedAtMs: detail.endedAt ? detail.endedAt.getTime() : null,
-              label: wallClockLabel,
-            }}
-            runId={detail.runId}
-            runStatus={detail.status}
-            search={changeSummary?.dirty ? "scope=uncommitted" : ""}
-          />
+          <>
+            {/* ADR-165 (T8.1): renders nothing at all for a run with no public
+                result contract and no rows — most runs. */}
+            <RunPublicResultPanel
+              labels={publicResultLabels}
+              result={publicResult}
+            />
+            <LiveRunInspector
+              actions={inspectorActions}
+              changeScope={inspectorChangeScope}
+              changeSummary={changeSummary}
+              childRuns={inspectorChildRuns}
+              childRunsLabels={inspectorChildRunsLabels}
+              facts={inspectorFacts}
+              flowExtras={flowInspectorExtras}
+              flowSummary={flowSummary}
+              labels={inspectorLabels}
+              liveCost={{ initial: costSummary, labels: costLabels, locale }}
+              liveWallClock={{
+                startedAtMs: detail.startedAt.getTime(),
+                endedAtMs: detail.endedAt ? detail.endedAt.getTime() : null,
+                label: wallClockLabel,
+              }}
+              runId={detail.runId}
+              runStatus={detail.status}
+              search={changeSummary?.dirty ? "scope=uncommitted" : ""}
+            />
+          </>
         }
         keyRef={detail.taskRef}
         labels={shellLabels}

@@ -12,6 +12,9 @@ export interface CostSummaryFactLabels {
   cacheReadTokens: string;
   cacheCreationTokens: string;
   resumeTax: string;
+  // ADR-165: tree-wide facts, appended ONLY when a tree summary is supplied.
+  treeTokenTotal?: string;
+  treeWallClock?: string;
 }
 
 export function formatTokenCount(locale: string, value: number): string {
@@ -53,6 +56,32 @@ export function buildCostSummaryFacts(
     {
       label: labels.resumeTax,
       value: formatTokenCount(locale, summary.resumeTokens),
+    },
+  ];
+}
+
+/**
+ * ADR-165 (T8.3): the tree-wide facts, appended after the per-run ones.
+ *
+ * Returns an EMPTY list when there is no tree summary — the caller concatenates
+ * unconditionally, so "this run is not a tree root with children" renders as
+ * nothing rather than as a zero.
+ */
+export function buildTreeCostFacts(
+  tree: { totalTokens: number; wallClockMinutes: number } | null | undefined,
+  labels: CostSummaryFactLabels,
+  locale: string,
+): CostSummaryFact[] {
+  if (!tree || !labels.treeTokenTotal || !labels.treeWallClock) return [];
+
+  return [
+    {
+      label: labels.treeTokenTotal,
+      value: formatTokenCount(locale, tree.totalTokens),
+    },
+    {
+      label: labels.treeWallClock,
+      value: formatTokenCount(locale, Math.round(tree.wallClockMinutes)),
     },
   ];
 }

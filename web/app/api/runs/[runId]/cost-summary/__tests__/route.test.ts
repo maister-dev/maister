@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { requireProjectAction } from "@/lib/authz";
-import { getRunCostSummary } from "@/lib/queries/run";
+import { getRunCostSummary, getRunTreeCostSummary } from "@/lib/queries/run";
 import { MaisterError } from "@/lib/errors";
 import { loadRunChangeSummaryAccess } from "@/lib/runs/change-summary";
 
@@ -30,6 +30,9 @@ vi.mock("@/lib/runs/change-summary", () => ({
 
 vi.mock("@/lib/queries/run", () => ({
   getRunCostSummary: vi.fn(),
+  // ADR-165: the route now also asks for the tree roll-up. Default null (the
+  // ordinary run), so the existing cases keep asserting the flat shape.
+  getRunTreeCostSummary: vi.fn(),
 }));
 
 const COST = {
@@ -65,6 +68,8 @@ beforeEach(() => {
     role: "viewer",
   });
   vi.mocked(getRunCostSummary).mockReset();
+  vi.mocked(getRunTreeCostSummary).mockReset();
+  vi.mocked(getRunTreeCostSummary).mockResolvedValue(null);
   vi.mocked(getRunCostSummary).mockResolvedValue(COST);
   vi.mocked(loadRunChangeSummaryAccess).mockReset();
 });
@@ -139,5 +144,73 @@ describe("GET /api/runs/[runId]/cost-summary", () => {
     expect(res.status).toBe(403);
     expect(body.code).toBe("UNAUTHORIZED");
     expect(getRunCostSummary).not.toHaveBeenCalled();
+  });
+
+  // ADR-165 AC-35 (route half): `tree` is present ONLY when the query returns
+  // one, and it never displaces the flat per-run fields.
+  it("omits `tree` entirely for a run that is not a tree root with children", async () => {
+    vi.mocked(getRunCostSummary).mockResolvedValue({
+      inputTokens: 1,
+      outputTokens: 2,
+      cacheReadTokens: 3,
+      cacheCreationTokens: 4,
+      resumeTokens: 0,
+      totalTokens: 10,
+      byModel: {},
+    });
+    vi.mocked(getRunTreeCostSummary).mockResolvedValue(null);
+
+    vi.mocked(loadRunChangeSummaryAccess).mockResolvedValue({
+      runId: "run-1",
+      projectId: "project-1",
+      runKind: "flow",
+    });
+
+    const res = await invokeGet("run-1");
+    const body = (await res.json()) as Record<string, unknown>;
+
+    expect(res.status).toBe(200);
+    expect(body).not.toHaveProperty("tree");
+    expect(body.totalTokens).toBe(10);
+  });
+
+  it("includes `tree` alongside the per-run fields for a tree root", async () => {
+    vi.mocked(getRunCostSummary).mockResolvedValue({
+      inputTokens: 1,
+      outputTokens: 2,
+      cacheReadTokens: 3,
+      cacheCreationTokens: 4,
+      resumeTokens: 0,
+      totalTokens: 10,
+      byModel: {},
+    });
+    vi.mocked(getRunTreeCostSummary).mockResolvedValue({
+      totalTokens: 99,
+      inputTokens: 99,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      byModel: {},
+      wallClockMinutes: 12.5,
+      runCount: 3,
+    });
+
+    vi.mocked(loadRunChangeSummaryAccess).mockResolvedValue({
+      runId: "run-1",
+      projectId: "project-1",
+      runKind: "flow",
+    });
+
+    const res = await invokeGet("run-1");
+    const body = (await res.json()) as Record<string, unknown>;
+
+    expect(res.status).toBe(200);
+    // The flat fields are unchanged — `tree` is ADDITIVE.
+    expect(body.totalTokens).toBe(10);
+    expect(body.tree).toMatchObject({
+      totalTokens: 99,
+      wallClockMinutes: 12.5,
+      runCount: 3,
+    });
   });
 });

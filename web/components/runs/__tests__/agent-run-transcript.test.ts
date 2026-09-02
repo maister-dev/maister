@@ -1,11 +1,11 @@
+import type { TranscriptMessage } from "@/components/run-transcript/transcript-view";
+import type { NodeTranscriptPanelLabels } from "@/components/runs/node-transcript-panel";
+
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-
 import { describe, expect, it } from "vitest";
 
-import type { TranscriptMessage } from "@/components/run-transcript/transcript-view";
 import { AgentRunTranscript } from "@/components/runs/agent-run-transcript";
-import type { NodeTranscriptPanelLabels } from "@/components/runs/node-transcript-panel";
 
 const labels: NodeTranscriptPanelLabels = {
   title: "Transcript",

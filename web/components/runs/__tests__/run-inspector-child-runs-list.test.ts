@@ -69,3 +69,78 @@ describe("RunInspectorChildRunsList", () => {
     expect(html).toContain("(as-run)");
   });
 });
+
+// ADR-165 AC-34 (the badge half): a child row carries the same result glyph
+// vocabulary the run's own panel uses, so a fan-out reads at a glance.
+describe("child result glyphs (ADR-165)", () => {
+  const withResult: RunInspectorChildRunsLabels = {
+    ...labels,
+    resultStatus: {
+      pending: "Pending",
+      valid: "Valid",
+      absent: "Absent",
+      missing: "Missing",
+      stale: "Stale",
+      invalid: "Invalid",
+      unavailable: "Unavailable",
+    },
+  };
+
+  function render(
+    children: RunInspectorChildRun[],
+    withLabels = withResult,
+  ): string {
+    return renderToStaticMarkup(
+      createElement(RunInspectorChildRunsList, {
+        childRuns: children,
+        labels: withLabels,
+      }),
+    );
+  }
+
+  it("renders NO glyph for a child with no result contract", () => {
+    const html = render([
+      { runId: "r1", status: "Done", taskRef: "KEY-1", resultStatus: null },
+    ]);
+
+    expect(html).not.toContain('data-testid="child-run-result-glyph"');
+  });
+
+  it("renders the glyph with an ACCESSIBLE NAME for each status", () => {
+    for (const status of [
+      "pending",
+      "valid",
+      "absent",
+      "missing",
+      "stale",
+      "invalid",
+      "unavailable",
+    ] as const) {
+      const html = render([
+        { runId: "r1", status: "Done", taskRef: "KEY-1", resultStatus: status },
+      ]);
+
+      expect(html).toContain(`data-result-status="${status}"`);
+      // Icon-only affordances MUST carry a name (web/CLAUDE.md).
+      expect(html).toContain(
+        `aria-label="${withResult.resultStatus![status]}"`,
+      );
+    }
+  });
+
+  it("renders no glyph when the caller supplies no result labels", () => {
+    const html = render(
+      [
+        {
+          runId: "r1",
+          status: "Done",
+          taskRef: "KEY-1",
+          resultStatus: "valid",
+        },
+      ],
+      labels,
+    );
+
+    expect(html).not.toContain('data-testid="child-run-result-glyph"');
+  });
+});

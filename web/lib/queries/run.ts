@@ -26,6 +26,7 @@ import type {
   BudgetBreachClaimStage,
   BudgetBreachProgressDto,
 } from "@/lib/runs/budget-breach-fork";
+import type { ResultStatus } from "@/lib/run-results/types";
 
 import {
   and,
@@ -85,8 +86,11 @@ import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 import { loadRunManifest } from "@/lib/queries/run-manifest";
 import {
   queryRunTokens,
+  queryRunTreeTokensByKind,
   reconcileRunCostRollups,
 } from "@/lib/runs/cost-rollups";
+import { treeWallClockMinutes } from "@/lib/runs/budget-meters";
+import { deriveResultStatus } from "@/lib/run-results/status";
 import {
   budgetFromSnapshot,
   budgetWarnStatus,
@@ -821,6 +825,9 @@ export interface ChildRunRef {
   launchMode: "auto" | "manual" | null;
   startedAt: Date;
   endedAt: Date | null;
+  // ADR-165: the child's public-result state, or null when it declares no
+  // contract AND published nothing. Derived by the ONE predicate.
+  resultStatus: ResultStatus | null;
 }
 
 function delegationTarget(
@@ -860,6 +867,21 @@ export async function getChildRuns(
       taskNumber: tasks.number,
       taskTitle: tasks.title,
       projectTaskKey: projects.taskKey,
+      resultContract: runs.resultContract,
+      // ADR-165: the newest and the current-valid rows, as correlated scalars.
+      // `newestValidity` is the highest-revision row's validity; `hasValid` is
+      // whether a current `valid` row exists at all. Two scalars beat a join
+      // here — the derivation needs only these two facts, and a join would
+      // multiply the child rows.
+      newestValidity: sql<string | null>`(
+        SELECT rr.validity FROM run_results rr
+         WHERE rr.run_id = ${runs.id}
+         ORDER BY rr.revision DESC LIMIT 1
+      )`,
+      hasValid: sql<boolean>`EXISTS (
+        SELECT 1 FROM run_results rr
+         WHERE rr.run_id = ${runs.id} AND rr.validity = 'valid'
+      )`,
     })
     .from(runs)
     .innerJoin(projects, eq(projects.id, runs.projectId))
@@ -878,6 +900,24 @@ export async function getChildRuns(
     launchMode: row.launchMode,
     startedAt: row.startedAt,
     endedAt: row.endedAt,
+    resultStatus:
+      row.resultContract || row.newestValidity
+        ? deriveResultStatus({
+            runStatus: row.status,
+            contract: row.resultContract,
+            newestRow: row.newestValidity
+              ? {
+                  id: "",
+                  revision: 0,
+                  validity: row.newestValidity as never,
+                  invalidReason: null,
+                }
+              : null,
+            validRow: row.hasValid
+              ? { id: "", revision: 0, validity: "valid", invalidReason: null }
+              : null,
+          })
+        : null,
   }));
 }
 
@@ -1054,6 +1094,58 @@ export interface RunCostSummary {
   resumeTokens: number;
   totalTokens: number;
   byModel: Record<string, Record<string, number>>;
+}
+
+/**
+ * ADR-165 (T8.3): tree-wide cost facts for a TREE ROOT that has children.
+ *
+ * Returns null for a non-root run and for a childless root — a "tree total"
+ * that equals the run total is not a fact, it is noise, and rendering it would
+ * make every ordinary run look like a tree.
+ */
+export interface RunTreeCostSummary {
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  byModel: Record<string, Record<string, number>>;
+  wallClockMinutes: number;
+  runCount: number;
+}
+
+export async function getRunTreeCostSummary(
+  runId: string,
+): Promise<RunTreeCostSummary | null> {
+  const client = db();
+  const runRows = await client
+    .select({ rootRunId: runs.rootRunId })
+    .from(runs)
+    .where(eq(runs.id, runId));
+  const row = runRows[0];
+
+  if (!row || row.rootRunId !== runId) return null;
+
+  const childRows = await client
+    .select({ n: sql<number>`count(*)::int` })
+    .from(runs)
+    .where(eq(runs.parentRunId, runId));
+
+  if (Number(childRows[0]?.n ?? 0) === 0) return null;
+
+  const tokens = await queryRunTreeTokensByKind(runId, { client });
+  const wallClockMinutes = await treeWallClockMinutes(runId, { client });
+
+  return {
+    totalTokens: tokens.totalTokens,
+    inputTokens: tokens.inputTokens,
+    outputTokens: tokens.outputTokens,
+    cacheReadTokens: tokens.cacheReadTokens,
+    cacheCreationTokens: tokens.cacheCreationTokens,
+    byModel: tokens.byModel,
+    wallClockMinutes,
+    runCount: tokens.runCount,
+  };
 }
 
 function zeroCostSummary(): RunCostSummary {
