@@ -50,6 +50,15 @@ describe("delegatable-flow module isolation (ADR-163 REQ-05)", () => {
     expect(specifiers).not.toContain(forbidden);
   });
 
+  // A re-export wrapper (`@/lib/services/anything`) would dodge the exact list
+  // above; whole launcher-owning subtrees are forbidden by prefix.
+  it.each(["@/lib/services/", "@/lib/agents/"])(
+    "imports nothing under %s",
+    (prefix) => {
+      expect(specifiers.filter((s) => s.startsWith(prefix))).toEqual([]);
+    },
+  );
+
   it("imports something (the scan is reading a real module, not an empty file)", () => {
     expect(specifiers.length).toBeGreaterThan(0);
   });

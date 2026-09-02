@@ -467,6 +467,108 @@ describe("M37 Phase 10 — worktree allocation modes via launchAgentRun", () => 
     });
   });
 
+  // A NON-allocator must expect the tree's actual owner as the provenance
+  // runId, not its own: both non-allocating paths (orphan claim, TOCTOU catch)
+  // used to keep their own id and were refused PRECONDITION "managed worktree
+  // provenance conflicts with the delivery owner" — a benign concurrent
+  // allocation reported as an ownership violation. Deterministic pins for the
+  // fix the probabilistic C4 racer only exercised by chance.
+  it("(F3b) an orphan shared tree that already carries ANOTHER run's provenance is adopted, not refused", async () => {
+    const ids = await seedPackageWithAgents([
+      { stem: "coordinator", workspace: "worktree" },
+      { stem: "worker", workspace: "worktree" },
+    ]);
+    const root = await insertRoot();
+    const sharedPath = sharedAgentWorktreePath(projectSlug, root);
+    const { addWorktree } = await import("@/lib/worktree");
+    const { installWorktreeProvenance, readWorktreeProvenanceMetadata } =
+      await import("@/lib/worktree-provenance");
+    const winnerRunId = randomUUID();
+
+    await addWorktree({
+      projectRepoPath: repoPath,
+      worktreePath: sharedPath,
+      branch: `maister/agents/${root}`,
+      startPoint: "main",
+    });
+    // The winner registered the tree and wrote its provenance, but its
+    // workspaces row never committed (the orphan-claim window).
+    await installWorktreeProvenance({
+      worktreePath: sharedPath,
+      metadata: { runId: winnerRunId },
+    });
+
+    const result = await launchAgentRun({
+      agentId: ids.worker,
+      projectId,
+      parentRunId: root,
+      rootRunId: root,
+      launchMode: "manual",
+      workspaceMode: "shared",
+      trigger: { source: "manual" },
+      db,
+    });
+
+    if ("deduped" in result) throw new Error("unexpected dedup");
+
+    expect(await workspaceRows(sharedPath)).toHaveLength(1);
+    // Adopted, not overwritten: the tree still names its actual owner.
+    expect((await readWorktreeProvenanceMetadata(sharedPath)).runId).toBe(
+      winnerRunId,
+    );
+  });
+
+  it("(F3c) a DB-owned shared tree whose disk provenance names a DIFFERENT run is still refused", async () => {
+    const ids = await seedPackageWithAgents([
+      { stem: "coordinator", workspace: "worktree" },
+      { stem: "worker", workspace: "worktree" },
+    ]);
+    const root = await insertRoot();
+    const sharedPath = sharedAgentWorktreePath(projectSlug, root);
+
+    const allocator = await launchAgentRun({
+      agentId: ids.worker,
+      projectId,
+      parentRunId: root,
+      rootRunId: root,
+      launchMode: "manual",
+      workspaceMode: "shared",
+      trigger: { source: "manual" },
+      db,
+    });
+
+    if ("deduped" in allocator) throw new Error("unexpected dedup");
+    expect(await workspaceRows(sharedPath)).toHaveLength(1);
+
+    // Someone rewrote the tree's provenance under the allocator's row.
+    const { installWorktreeProvenance } = await import(
+      "@/lib/worktree-provenance"
+    );
+
+    await installWorktreeProvenance({
+      worktreePath: sharedPath,
+      metadata: { runId: randomUUID() },
+    });
+
+    // The reuse branch keeps the allocator's row as its expectation, so the
+    // real DB-vs-disk mismatch is still caught.
+    await expect(
+      launchAgentRun({
+        agentId: ids.worker,
+        projectId,
+        parentRunId: root,
+        rootRunId: root,
+        launchMode: "manual",
+        workspaceMode: "shared",
+        trigger: { source: "manual" },
+        db,
+      }),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      message: expect.stringContaining("provenance conflicts"),
+    });
+  });
+
   it("an own-mode (default) child gets a per-run worktree and no serialization linkage", async () => {
     const ids = await seedPackageWithAgents([
       { stem: "coordinator", workspace: "worktree" },

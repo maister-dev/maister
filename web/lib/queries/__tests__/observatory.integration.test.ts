@@ -386,10 +386,12 @@ describe("observatory read models", () => {
     // relative equality above would miss; the per-project dimension is covered
     // by the two-project visibility tests in this file.
     //
-    // Raised 16 → 21 when the budget summary gained its per-run_kind breakdown:
-    // the equality assertion above still holds at 8 runs / 16 attempts, so the
-    // extra queries are CONSTANT, not data-proportional — which is the property
-    // this ceiling exists to protect. Keep it tight: it should be raised only
+    // Raised 16 → 21 when the Observatory gained the agentization funnel and
+    // delivery provenance (a constant set of extra selects on the summary path;
+    // the per-run_kind budget breakdown itself is an in-memory fold): the
+    // equality assertion above still holds at 8 runs / 16 attempts, so the extra
+    // queries are CONSTANT, not data-proportional — which is the property this
+    // ceiling exists to protect. Keep it tight: it should be raised only
     // alongside a demonstrated constant, never to absorb a growing count.
     expect(singleRun.queryCount).toBeLessThanOrEqual(21);
   });
