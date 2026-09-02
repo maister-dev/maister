@@ -3,14 +3,14 @@ import "server-only";
 import type { DomainEventRow, TaskDelegationSpec } from "@/lib/db/schema";
 import type { DomainEventConsumer } from "@/lib/domain-events/consumers";
 
-import { and, eq, ne } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 import pino from "pino";
 
 import { launchAgentRun, type LaunchAgentRunResult } from "@/lib/agents/launch";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isRunSettledEventKind } from "@/lib/domain-events/taxonomy";
-import { isMaisterError } from "@/lib/errors";
+import { isMaisterError, type MaisterError } from "@/lib/errors";
 import {
   promoteChildRunForToken,
   type PromoteRunResult,
@@ -25,14 +25,15 @@ import {
   asFlowDelegationSpec,
   delegationSpecKind,
 } from "@/lib/orchestrator/delegation-spec";
+import { isTerminalLaunchRefusal } from "@/lib/scheduler/c2-eligibility";
 import { launchRun } from "@/lib/services/runs";
+import { actorForUserId } from "@/lib/social/activity";
+import { addTaskComment } from "@/lib/social/comments";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs, taskRelations, tasks } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { runs, taskComments, taskRelations, tasks } =
+  schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -186,6 +187,48 @@ async function autoPromoteAsPlanChild(
       "auto-launch: as-plan child auto-promote refused — left in Review",
     );
   }
+}
+
+// ADR-163 review S7: a TYPED refusal at release time — a flow disabled,
+// untrusted or upgraded past this engine, an agent no longer resolvable — is a
+// durable condition no sibling settle can fix, and the dependent DAG stalled
+// with nothing on the task. Post it where the task's readers look, once per
+// distinct refusal; launch_mode stays `auto` so an admin fix is retried on the
+// next settle. This is the C2 give-up's comment WITHOUT its flag/clear: an
+// as-plan task is never triaged, so that CAS could not match it, and a stall
+// here is recoverable by fixing the target.
+async function noteAsPlanRefusal(
+  db: Db,
+  candidate: { taskId: string },
+  err: MaisterError,
+): Promise<void> {
+  const body = `As-plan auto-launch refused (${err.code}): ${err.message}. The task stays queued (launch_mode auto); fix the target and it is retried when a sibling child next settles.`;
+  const latest = (await db
+    .select({ body: taskComments.body })
+    .from(taskComments)
+    .where(
+      and(
+        eq(taskComments.taskId, candidate.taskId),
+        eq(taskComments.actorType, "system"),
+      ),
+    )
+    .orderBy(desc(taskComments.createdAt))
+    .limit(1)) as { body: string }[];
+
+  if (latest[0]?.body === body) return;
+
+  await addTaskComment(
+    {
+      taskId: candidate.taskId,
+      body,
+      actor: actorForUserId(null),
+      activityPayloadExtra: {
+        reason: "as_plan_launch_refused",
+        code: err.code,
+      },
+    },
+    db,
+  );
 }
 
 // The auto_launch_run_plan outbox consumer (ADR-098): a child terminal event
@@ -469,6 +512,26 @@ export function buildAutoLaunchRunPlanConsumer(
               },
               "auto-launch: candidate launch refused",
             );
+
+            if (isTerminalLaunchRefusal(err)) {
+              await noteAsPlanRefusal(
+                _db,
+                candidate,
+                err as MaisterError,
+              ).catch((noteErr: unknown) =>
+                log.error(
+                  {
+                    eventId: event.id,
+                    taskId: candidate.taskId,
+                    err:
+                      noteErr instanceof Error
+                        ? noteErr.message
+                        : String(noteErr),
+                  },
+                  "auto-launch: refusal note failed",
+                ),
+              );
+            }
           }
         }
       }

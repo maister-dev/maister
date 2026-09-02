@@ -273,6 +273,97 @@ describe("auto_launch_run_plan with FLOW children (ADR-163)", () => {
     expect(producerTask.status).toBe("Done");
   }, 60_000);
 
+  // ADR-163 review S7: a TYPED refusal at release time (the flow was disabled,
+  // untrusted or upgraded to an incompatible revision after run_plan) used to be
+  // a logged skip and nothing else — the dependent DAG stalled with no trace on
+  // the task. The refusal is now posted as a system comment (once per distinct
+  // refusal); the task stays Backlog / launch_mode=auto so an admin fix is
+  // picked up on the next sibling settle.
+  it("a FLOW dependent refused at release time gets ONE system comment naming the refusal and stays queued", async () => {
+    const { flowId: untrustedFlowId } = await seedFlow(ctx, {
+      flowRefId: "untrusted-flow",
+      trustStatus: "untrusted",
+    });
+    const dependencyTaskId = await seedAsPlanTask({
+      title: "producer",
+      spec: { kind: "agent", agentId: "test-pkg:worker" },
+    });
+    const dependentTaskId = await seedAsPlanTask({
+      title: "flow dependent",
+      spec: { kind: "flow", flowId: untrustedFlowId },
+      flowId: untrustedFlowId,
+    });
+    const { addTaskRelation } = await import("@/lib/social/relations");
+
+    await addTaskRelation(
+      {
+        projectId: ctx.projectId,
+        fromTaskId: dependentTaskId,
+        kind: "requires",
+        toTaskId: dependencyTaskId,
+        actor: { type: "system", id: null },
+      },
+      db,
+    );
+
+    const producerRunId = await seedChildRun(ctx, {
+      parentRunId,
+      runKind: "agent",
+      status: "Done",
+      taskId: dependencyTaskId,
+    });
+    const launched: string[] = [];
+    const consumer = buildAutoLaunchRunPlanConsumer({
+      db,
+      launchFlow: (async (input: { taskId: string }) => {
+        launched.push(input.taskId);
+
+        return { runId: randomUUID(), status: "Pending" };
+      }) as never,
+      promote: (async () => ({ ok: true })) as never,
+    });
+    const events = await settle({
+      runId: producerRunId,
+      taskId: dependencyTaskId,
+      kind: "run.done",
+      runKind: "agent",
+      status: "Done",
+    });
+
+    // At-least-once contract: a refusal is never thrown out of the consumer.
+    await expect(consumer.handle(events)).resolves.toBeUndefined();
+
+    expect(launched).toEqual([]);
+
+    const task = (
+      await pool.query(
+        `SELECT "status", "launch_mode" FROM "tasks" WHERE "id" = $1`,
+        [dependentTaskId],
+      )
+    ).rows[0];
+
+    expect(task).toEqual({ status: "Backlog", launch_mode: "auto" });
+
+    const comments = async () =>
+      (
+        await pool.query(
+          `SELECT "body" FROM "task_comments" WHERE "task_id" = $1 ORDER BY "created_at"`,
+          [dependentTaskId],
+        )
+      ).rows as { body: string }[];
+
+    const first = await comments();
+
+    expect(first).toHaveLength(1);
+    expect(first[0].body).toContain("PRECONDITION");
+    expect(first[0].body).toContain("not trusted");
+
+    // A redelivered window (same refusal) does not post a second identical comment.
+    await consumer.handle(events);
+
+    expect(await comments()).toHaveLength(1);
+  }, 60_000);
+
   it("a FLOW child's run.review auto-promotes an as-plan (auto) child", async () => {
     const promoted: string[] = [];
     const consumer = buildAutoLaunchRunPlanConsumer({
