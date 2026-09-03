@@ -51,7 +51,7 @@ beforeAll(async () => {
     databaseName: "state_test",
   });
   db = testDatabase.db;
-  // ADR-164: the claim transitions mint their epoch on the local host — a fake
+  // ADR-165: the claim transitions mint their epoch on the local host — a fake
   // host backs every implicit resolution in this process.
   await fakeExecutionHosts(db);
 
@@ -630,10 +630,10 @@ describe("state-transitions — markAbandoned", () => {
   }, 60_000);
 });
 
-// ADR-164 D3 (E3): every claim that starts a new driver generation mints its
+// ADR-165 D3 (E3): every claim that starts a new driver generation mints its
 // epoch INSIDE the CAS tx with the claim's reason; a rolled-back wait-resume
 // releases the generation it minted.
-describe("state-transitions — execution-assignment placement (ADR-164)", () => {
+describe("state-transitions — execution-assignment placement (ADR-165)", () => {
   async function assignmentsOf(runId: string) {
     return db
       .select()

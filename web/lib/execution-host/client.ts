@@ -4,8 +4,6 @@ import type {
   CreateSessionResult,
   SendPromptInput,
   SupervisorEvent,
-  SidecarInstanceConfig,
-  SidecarStateResponse,
   SupervisorDiagnosticsStatus,
   SupervisorMcpProbeRequest,
   SupervisorMcpProbeResult,
@@ -71,7 +69,7 @@ export type CreateSessionOptions = {
   sessionName?: string;
 };
 
-// ADR-164 D5 ordering for `session.input`: the command row is queued inside the
+// ADR-165 D5 ordering for `session.input`: the command row is queued inside the
 // caller's own transaction (the HITL Phase-1 claim) and delivered after it
 // commits; `onAck` runs in the ack transaction together with `succeeded`.
 export type PreparedInput = {
@@ -82,7 +80,7 @@ export type PreparedInput = {
   }): Promise<InputDeliveryResult>;
 };
 
-// ADR-164 D3/D4: every host-bound command of a run goes through the client
+// ADR-165 D3/D4: every host-bound command of a run goes through the client
 // bound to the run's ACTIVE assignment. Each method is a thin wrapper over
 // ONE `issue → deliver` path; kind differences live in `COMMAND_POLICY`.
 export interface BoundClient {
@@ -131,11 +129,6 @@ export interface HostAdminClient {
     timeoutMs?: number;
   }): Promise<SupervisorDiagnosticsStatus>;
   platformStatus(opts?: { timeoutMs?: number }): Promise<PlatformStatus>;
-  startSidecar(
-    sidecarId: string,
-    instanceConfig: SidecarInstanceConfig,
-  ): Promise<SidecarStateResponse>;
-  stopSidecar(sidecarId: string): Promise<SidecarStateResponse>;
   resolveModelSuggestions(
     draft: SupervisorModelCatalogDraft,
     opts?: { force?: boolean },
@@ -453,12 +446,6 @@ export function createExecutionHosts(
     },
     platformStatus(opts) {
       return transport.platformStatus(opts);
-    },
-    startSidecar(sidecarId, instanceConfig) {
-      return transport.startSidecar(sidecarId, instanceConfig);
-    },
-    stopSidecar(sidecarId) {
-      return transport.stopSidecar(sidecarId);
     },
     resolveModelSuggestions(draft, opts) {
       return transport.resolveModelSuggestions(draft, opts);

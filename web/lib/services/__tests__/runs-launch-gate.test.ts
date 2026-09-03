@@ -163,7 +163,7 @@ const fakeDb: FakeDb = {
   transaction: async <T>(fn: (tx: FakeDb) => Promise<T>) => fn(fakeDb),
 };
 
-// ADR-164: the launch places the run on the local execution host inside its
+// ADR-165: the launch places the run on the local execution host inside its
 // run-insert transaction; the fake db here has no row locks, so the seam is
 // mocked (its own contract is pinned by lib/execution-host integration tests).
 vi.mock("@/lib/execution-host", () => ({

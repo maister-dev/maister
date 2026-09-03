@@ -1,4 +1,4 @@
-// ADR-164 T2.1 — host identity + state store (H1–H7).
+// ADR-165 T2.1 — host identity + state store (H1–H7).
 import { mkdtemp, chmod, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

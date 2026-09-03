@@ -76,7 +76,7 @@ export type AgentQuestionResult = {
 
 type ActivationDeps = {
   db?: Db;
-  // ADR-164: the source session is torn down through the client bound to
+  // ADR-165: the source session is torn down through the client bound to
   // the source run's assignment (a teardown kind — released incarnations bind).
   executionHosts?: ExecutionHosts;
   recordSuccessAudit?: (tx: Tx, statusCode: number) => Promise<void>;

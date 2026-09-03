@@ -339,7 +339,7 @@ describe("respondToHitl integration — permission response with real Postgres",
       label: "Test User",
     };
 
-    // ADR-164: the delivery is a `session.input` command issued through the
+    // ADR-165: the delivery is a `session.input` command issued through the
     // client bound to the run's assignment on the (fake) execution host.
     const { hosts, fake } = await fakeExecutionHosts(db, { runId });
 

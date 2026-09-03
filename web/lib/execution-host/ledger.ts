@@ -96,7 +96,7 @@ export function fencedLocallyError(args: {
   );
 }
 
-// ADR-164 E-EH-06: the `queued` row exists BEFORE any wire call, in the
+// ADR-165 E-EH-06: the `queued` row exists BEFORE any wire call, in the
 // caller's transaction when one is passed. Admission by assignment state
 // (D3): an inadmissible command is recorded and fenced locally — no wire call.
 export async function issueCommand<TPayload>(

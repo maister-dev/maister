@@ -252,7 +252,7 @@ describe("projectRunTranscript", () => {
     expect(again.status).toBe("unchanged");
   });
 
-  // ADR-164 (P1): the execution-host `session.command` acceptance/completion
+  // ADR-165 (P1): the execution-host `session.command` acceptance/completion
   // line rides the same durable log. It is ledger-only — the transcript
   // projector neither renders it nor treats it as a coalescing reset.
   it("ignores a session.command line (no message, no reset)", async () => {

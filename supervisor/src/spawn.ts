@@ -83,7 +83,7 @@ async function tailMaxMonotonicId(path: string): Promise<number> {
 export type SpawnSessionOptions = {
   sessionId: string;
   request: StartSessionRequest;
-  // ADR-164: every run-dir path and the cwd come from the resolved workspace
+  // ADR-165: every run-dir path and the cwd come from the resolved workspace
   // (the adopted handle) — the single path-derivation site.
   workspace: WorkspaceResolution;
   runtimeRoot: string;
@@ -115,7 +115,7 @@ export function buildChildEnv(
   request: ChildEnvRequest,
   opts: { contextMounts?: ContextMount[] } = {},
 ): NodeJS.ProcessEnv {
-  // ADR-164: mounts come from the resolved workspace (the adopted handle) —
+  // ADR-165: mounts come from the resolved workspace (the adopted handle) —
   // the request body never carries a path.
   const contextMounts = opts.contextMounts;
 
@@ -151,7 +151,7 @@ export async function spawnSession(
   });
   const binary = binaryResolution.binary;
 
-  // ADR-164: the step log and the per-RUN events log (shared by every session
+  // ADR-165: the step log and the per-RUN events log (shared by every session
   // of the run so the web SSE bridge tails one file) both come from the
   // resolved workspace — the single path-derivation site.
   const { logPath, eventsLogPath } = workspace;

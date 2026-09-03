@@ -1,4 +1,4 @@
-// ADR-164 T3.1 — wire shape (T1–T3): the envelope builder matches the OpenAPI
+// ADR-165 T3.1 — wire shape (T1–T3): the envelope builder matches the OpenAPI
 // contract fixture, the error mapper passes reason tokens through and folds
 // FENCED into CONFLICT, and the transport layer carries no DB edge.
 

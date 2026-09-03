@@ -52,7 +52,7 @@ vi.mock("@/lib/gc/agent-materialization-gc", () => ({
 vi.mock("@/lib/runs/sync-recovery", () => ({
   runSyncRecoverySweep: runSyncRecoverySweepMock,
 }));
-// ADR-164: the execution-host reconcile pass needs the DB + the local host;
+// ADR-165: the execution-host reconcile pass needs the DB + the local host;
 // mocked like every other arm so `errors: []` stays a real guard.
 vi.mock("@/lib/execution-host", () => ({
   executionCommandReconcilePass: vi.fn(async () => ({

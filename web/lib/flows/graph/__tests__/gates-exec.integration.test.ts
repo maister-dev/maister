@@ -676,7 +676,7 @@ function parseReport(row: ArtifactInstance): MutationReport {
   return JSON.parse(locator.text) as MutationReport;
 }
 
-// ADR-164: a fake execution host whose agent turn is a clean end-turn, so an
+// ADR-165: a fake execution host whose agent turn is a clean end-turn, so an
 // ai_coding node finishes without a real agent.
 async function makeEndTurnSupervisor(runId: string): Promise<ExecutionHosts> {
   return (await fakeGraphHosts(db, runId)).hosts;

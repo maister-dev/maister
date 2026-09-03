@@ -2,7 +2,7 @@
 // surfaces are covered here:
 //   1. the `contextMounts[]` acceptor on the `workspace.adopt` payload (paired
 //      with the shape in docs/api/supervisor.openapi.yaml — the acceptor must
-//      neither permit what the spec forbids nor forbid what it permits; ADR-164
+//      neither permit what the spec forbids nor forbid what it permits; ADR-165
 //      moved the mounts off the session request onto the adopted handle);
 //   2. the derived `MAISTER_CONTEXT_REPOS` child env var (D8b: JSON, omitted
 //      entirely when the session has no mounts);

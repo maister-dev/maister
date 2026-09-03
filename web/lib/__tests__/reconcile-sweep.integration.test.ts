@@ -301,7 +301,7 @@ async function readRun(runId: string): Promise<any> {
 // Inject a healthy supervisor that reports the given live records, an empty
 // worktree set by default (overridden per test), and spies for runFlow +
 // scheduleResumedSessionDrive.
-// ADR-164: the sweep addresses the host through `ExecutionHosts` — a fresh
+// ADR-165: the sweep addresses the host through `ExecutionHosts` — a fresh
 // fake local host per call whose session list (and, when given, teardown)
 // ride the injected functions.
 async function makeOpts(over: {
@@ -504,18 +504,16 @@ describe("runReconcileSweep (integration)", () => {
     await seedWorkspace(live, "/worktrees/reap-live");
 
     const stopSession = vi.fn(async () => undefined);
-    const { opts } = makeOpts({
+    const { opts } = await makeOpts({
       worktreePaths: ["/worktrees/reap-live"],
       liveSessions: [
         liveRecord(orphan, "acp-orphan"),
         liveRecord(live, "acp-live"),
       ],
-    });
-
-    const summary = await runReconcileSweep({
-      ...opts,
       deleteSession: stopSession,
     });
+
+    const summary = await runReconcileSweep(opts);
 
     expect(stopSession).toHaveBeenCalledWith(`sup-${orphan}`);
     expect(stopSession).not.toHaveBeenCalledWith(`sup-${live}`);
@@ -1149,7 +1147,7 @@ describe("runReconcileSweep (integration)", () => {
   }, 60_000);
 });
 
-describe("runReconcileSweep — workspace handle check (ADR-164 N6)", () => {
+describe("runReconcileSweep — workspace handle check (ADR-165 N6)", () => {
   it("warns workspace-handle-lost for an active assignment the host no longer knows and keeps sweeping", async () => {
     const runId = await seedRun({ acpSessionId: "acp-lost" });
 

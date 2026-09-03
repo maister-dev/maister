@@ -788,7 +788,7 @@ export async function* launchScratchRunStaged(
     reasoningEffort: policy.reasoningEffort,
     catalog,
   });
-  // ADR-164: the launch places the run on the local execution host; an
+  // ADR-165: the launch places the run on the local execution host; an
   // unavailable host refuses the launch before any row or worktree exists.
   const hosts = opts.executionHosts ?? createExecutionHosts({ db });
   const placementHost = await localHost({ db, transport: hosts.transport });

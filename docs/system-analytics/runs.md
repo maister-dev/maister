@@ -1308,7 +1308,7 @@ only to `NeedsInput`, and invokes `runFlow()`; at the cap it stays
 resume or depend on supervisor availability.
 ## Linked artifacts
 
-- Execution-host contract (ADR-164, Designed): [`execution-hosts.md`](execution-hosts.md) — every placement CAS re-entry (launch, resume, recover, wait-resume, rework return, node interrupt) mints an `execution_assignments` epoch, and a driver whose command is fenced yields without writing run state.
+- Execution-host contract (ADR-165, Implemented): [`execution-hosts.md`](execution-hosts.md) — every placement CAS re-entry (launch, resume, recover, wait-resume, rework return, node interrupt) mints an `execution_assignments` epoch, and a driver whose command is fenced yields without writing run state.
 - ADRs: [ADR-006 Hybrid HITL](../decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume),
   [ADR-011 Workspace lifecycle](../decisions.md#adr-011-workspace-lifecycle-via-git-worktree),
   [ADR-018 Task ↔ Run 1:N](../decisions.md#adr-018-task--run-cardinality-is-1n),

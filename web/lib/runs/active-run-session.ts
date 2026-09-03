@@ -32,7 +32,7 @@ type InsertDb = Pick<NodePgDatabase<typeof schema>, "insert">;
 export interface ActiveRunSession {
   sessionName: string;
   acpSessionId: string | null;
-  // ADR-164: the supervisor's own session id (URL key of every host-bound
+  // ADR-165: the supervisor's own session id (URL key of every host-bound
   // session command) — distinct from the ACP resume handle above.
   hostSessionId: string | null;
   runnerSnapshot: RunnerSnapshot | null;
@@ -160,7 +160,7 @@ export async function persistRunSessionAcpSessionId(
     );
 }
 
-// ADR-164 E-EH-07: the `session.create` ack binds the logical session to the
+// ADR-165 E-EH-07: the `session.create` ack binds the logical session to the
 // host (`host_session_id` = the supervisor's URL key, distinct from the ACP
 // resume handle) and to the assignment that created it — in the SAME
 // transaction as the command ack. Upsert on (run_id, session_name): the row

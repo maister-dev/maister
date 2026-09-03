@@ -121,7 +121,7 @@ async function releaseSyncClaimOnTerminal(
 export type StateTransitionOptions = {
   db?: Db;
   recordSuccessAudit?: (db: Db) => Promise<void>;
-  // ADR-164 D3: a claim transition that starts a new driver generation mints
+  // ADR-165 D3: a claim transition that starts a new driver generation mints
   // its epoch inside the CAS tx. A caller that already resolved the local host
   // (launch-style) passes it; otherwise the memoized local host resolves here.
   placement?: {
@@ -147,7 +147,7 @@ async function mintForClaim(
   });
 }
 
-// NeedsInput → NeedsInputIdle CAS + the ADR-164 assignment release in ONE tx:
+// NeedsInput → NeedsInputIdle CAS + the ADR-165 assignment release in ONE tx:
 // the checkpoint ends this driver incarnation (the resume mints the next epoch).
 async function idleFromNeedsInput(db: Db, runId: string): Promise<boolean> {
   return db.transaction(async (tx: Db) => {
@@ -306,7 +306,7 @@ export async function markWaitingOnChildren(
     return { ok: false, reason: "status-guard-mismatch" };
   }
 
-  // ADR-164 D2: a parked coordinator has no driver — its assignment ends here
+  // ADR-165 D2: a parked coordinator has no driver — its assignment ends here
   // and the wait-resume re-entry mints the next epoch.
   await releaseAssignmentForRun(db, runId, "waiting_on_children");
 
@@ -346,7 +346,7 @@ export async function markResumedFromWait(
         return { ok: false, reason: "status-guard-mismatch" };
       }
 
-      // The woken coordinator is a new driver generation (ADR-164 D3).
+      // The woken coordinator is a new driver generation (ADR-165 D3).
       await mintForClaim(tx, runId, "wait_resume", opts);
       await opts.recordSuccessAudit?.(tx);
 
@@ -385,7 +385,7 @@ export async function rollbackResumeFromWait(
 
     if (rows.length === 0) return false;
 
-    // ADR-164: the generation minted by the wait-resume claim never drove.
+    // ADR-165: the generation minted by the wait-resume claim never drove.
     await releaseAssignmentForRun(tx, runId, "wait_resume_rollback");
 
     return true;
@@ -603,7 +603,7 @@ export async function markSyncReviewFromRunning(
     return { ok: false, reason: "status-guard-mismatch" };
   }
 
-  // ADR-164 D7: the resolver's driver generation ends with the flip.
+  // ADR-165 D7: the resolver's driver generation ends with the flip.
   await releaseAssignmentForRun(db, runId, "sync_finished");
   log.info(
     { runId, from: "Running", to: "Review" },
@@ -642,7 +642,7 @@ export async function markSyncReviewFromNeedsInput(
     return { ok: false, reason: "status-guard-mismatch" };
   }
 
-  // ADR-164 D7: the resolver's driver generation ends with the flip.
+  // ADR-165 D7: the resolver's driver generation ends with the flip.
   await releaseAssignmentForRun(db, runId, "sync_finished");
   log.info(
     { runId, from: fromStatus, to: "Review" },
@@ -826,7 +826,7 @@ export async function rollbackResumedRun(
 
     if (rows.length === 0) return false;
 
-    // ADR-164: the fresh epoch the resume claim minted never got a driver.
+    // ADR-165: the fresh epoch the resume claim minted never got a driver.
     await releaseAssignmentForRun(tx, runId, "resume_rollback");
 
     return true;
@@ -902,7 +902,7 @@ export async function markReturnedToRunning(
 
     if (rows.length === 0) return false;
 
-    // The returned run is re-driven by a new generation (ADR-164 D3).
+    // The returned run is re-driven by a new generation (ADR-165 D3).
     await mintForClaim(tx, runId, "rework_return", opts);
 
     return true;

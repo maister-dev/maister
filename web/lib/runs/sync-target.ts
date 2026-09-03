@@ -127,7 +127,7 @@ export type SyncRunInput = {
   // rejects, so a scheduler may safely drop the promise; injecting one that
   // KEEPS it is how a caller awaits the resolve that the HTTP path does not.
   schedule?: (task: () => Promise<void>) => void;
-  // ADR-164: the execution host the resolver session is placed on and driven
+  // ADR-165: the execution host the resolver session is placed on and driven
   // through (injectable for tests; defaults to the process-wide client).
   executionHosts?: ExecutionHosts;
 };
@@ -1314,7 +1314,7 @@ async function prepareSyncResolver(
     runnerTier = resolution.runnerResolutionTier;
     const sessionName = `sync-${claim.attempt}`;
     const snapshot = resolution.runnerSnapshot;
-    // ADR-164 D3: the resolver is a new driver generation (`sync_resolver`)
+    // ADR-165 D3: the resolver is a new driver generation (`sync_resolver`)
     // minted inside the claim tx; the local host resolves BEFORE the CAS so an
     // unavailable host is a typed pre-session refusal.
     const placementHost = await localHost({

@@ -7,7 +7,7 @@ import type { CommandFence } from "./types";
 import { pendingPermissions as defaultPendingPermissions } from "./pending-permissions";
 import { SupervisorError } from "./types";
 
-// ADR-164 D3: fence enforcement at the execution boundary. Rules run in order —
+// ADR-165 D3: fence enforcement at the execution boundary. Rules run in order —
 // host key, run binding, epoch high-water, assignment identity — and the
 // high-water is persisted BEFORE the command executes, so it survives a
 // restart.
@@ -96,7 +96,7 @@ export function applyFence(args: {
   return { advanced: false, previousEpoch: stored.epoch };
 }
 
-// ADR-164 D3 / E-EH-04: when a higher epoch arrives, every live session of
+// ADR-165 D3 / E-EH-04: when a higher epoch arrives, every live session of
 // that run under a LOWER epoch is evicted before the command executes. Legacy
 // sessions (no epoch on the record) are never evicted by fence advancement.
 export async function evictLowerEpochSessions(args: {

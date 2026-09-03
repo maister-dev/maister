@@ -33,7 +33,7 @@ import path from "node:path";
 export const STUB_SUPERVISOR_PORT = 7788;
 export const STUB_SUPERVISOR_URL = `http://127.0.0.1:${STUB_SUPERVISOR_PORT}`;
 export const STUB_SESSIONS_DIR = path.resolve("e2e/.runtime/stub-sessions");
-// ADR-164 (transitional contract): a fixed execution-host identity so the web
+// ADR-165 (transitional contract): a fixed execution-host identity so the web
 // registrar upserts ONE stable execution_hosts row across every spec.
 export const STUB_HOST_KEY = "eh_e2e_stub_supervisor_0001";
 export const STUB_BOOT_ID = "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0";
@@ -62,7 +62,7 @@ function sessionFile(sessionId: string): string {
   return path.join(STUB_SESSIONS_DIR, `${sessionId}.json`);
 }
 
-// ---- ADR-164 transitional contract (in-memory: fences, receipts, handles) --
+// ---- ADR-165 transitional contract (in-memory: fences, receipts, handles) --
 // A body is enveloped iff it carries `command` + `fence`; the route's real
 // payload is `body.payload`. Fences are per-run epoch high-waters; receipts
 // replay a completed command id verbatim; handles are minted by adoption. All
@@ -301,7 +301,7 @@ const LEGACY_SESSION_PATH_FIELDS = [
   "contextMounts",
 ];
 
-// Resolve the create request (handle form ONLY — ADR-164 strict) to the fields
+// Resolve the create request (handle form ONLY — ADR-165 strict) to the fields
 // the stub records. A legacy path field is refused by name; an unknown or
 // released handle refuses like the real host.
 export function stubResolveCreate(
@@ -458,7 +458,7 @@ export function startStubSupervisor(): Promise<Server> {
       return;
     }
 
-    // ---- ADR-164 workspace adoption + receipts (transitional) ---------------
+    // ---- ADR-165 workspace adoption + receipts (transitional) ---------------
     if (req.method === "POST" && req.url === "/workspaces/adopt") {
       void readJsonBody(req).then((body) => {
         const env = stubEnvelope(body);

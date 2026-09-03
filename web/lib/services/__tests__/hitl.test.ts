@@ -197,7 +197,7 @@ vi.mock("@/lib/supervisor-client", () => ({
   streamSession: async function* () {},
 }));
 
-// ADR-164: the permission delivery is a `session.input` command queued in the
+// ADR-165: the permission delivery is a `session.input` command queued in the
 // Phase-1 claim tx and delivered afterwards through the client bound to the
 // run's assignment; the cancel on a failed delivery is the same command kind
 // with `action:"cancel"`. This fake client keeps the wire-level spies.

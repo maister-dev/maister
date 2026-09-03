@@ -132,7 +132,7 @@ async function seedRunningAgent(): Promise<string> {
   return runId;
 }
 
-// ADR-164: the consumer's execution seam is a DB-less fake host whose stream
+// ADR-165: the consumer's execution seam is a DB-less fake host whose stream
 // yields `events`; checkpoints land on the fake's recorded calls.
 function fakeApi(
   events: SupervisorEvent[],

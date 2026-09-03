@@ -207,7 +207,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-163](#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher)                                                            | Flow-target delegation — carrier task, shared admission, canonical Flow launcher                                                               | Implemented                                                          | 2026-09-01 |
 | [ADR-164](#adr-164-remove-managed-claude-code-router-support)                                                                                                | Remove managed Claude Code Router support                                                                                                      | Implemented                                                          | 2026-09-02 |
 | [ADR-165](#adr-165-governed-recursive-agent-harness--public-run-results-result-profiles-effective-recursion-bounds-result-only-completion)                   | Governed recursive agent harness — public run results, result profiles, effective recursion bounds, result-only completion                     | Implemented                                                          | 2026-09-02 |
-| [ADR-165](#adr-165-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces) | Local execution-host contract — durable host identity, epoch-fenced assignments, command ledger, opaque adopted workspaces | Proposed | 2026-09-02 |
+| [ADR-165](#adr-165-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces) | Local execution-host contract — durable host identity, epoch-fenced assignments, command ledger, opaque adopted workspaces | Implemented | 2026-09-02 |
 
 ---
 
@@ -1674,10 +1674,10 @@ Full record: [`decisions/adr-163.md`](decisions/adr-163.md)
 **Status:** Implemented
 ### ADR-165: Local execution-host contract — durable host identity, epoch-fenced assignments, command ledger, opaque adopted workspaces
 
-**Status:** Proposed
+**Status:** Implemented
 **Date:** 2026-09-02
 
-Full record: [`decisions/adr-164.md`](decisions/adr-164.md)
+Full record: [`decisions/adr-165.md`](decisions/adr-165.md)
 
 ### ADR-165: Governed recursive agent harness — public run results, result profiles, effective recursion bounds, result-only completion
 

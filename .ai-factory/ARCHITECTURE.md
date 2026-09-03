@@ -40,7 +40,7 @@ context.
 - **Project type:** Web control plane (Next.js + separate supervisor
   daemon, two Node processes; single host current target — the two share
   the host filesystem (ADR-023), and the supervisor is addressed as a
-  registered execution host behind a typed boundary (ADR-164) so later
+  registered execution host behind a typed boundary (ADR-165) so later
   stages can move it without rewriting domain code).
 - **Tech stack:** Next.js 16 App Router · TypeScript 5.6 (strict) · HeroUI
   v3 · Tailwind 4 · Drizzle ORM · Postgres 16 · ACP (Zed-standard) via
@@ -52,7 +52,7 @@ context.
   ACP session keep-alive + checkpoint+resume state machine, hybrid HITL
   (ACP + artifact), supervisor↔web IPC, global concurrency scheduler.
 - **Scale:** current target, single host (one registered local execution
-  host; multi-host is a later stage behind the ADR-164 seam),
+  host; multi-host is a later stage behind the ADR-165 seam),
   `MAISTER_MAX_CONCURRENT_RUNS=6` (global cap).
 - **Key factors:**
   - ACP is the executor interface — the multi-executor pool is inherent,
@@ -113,10 +113,10 @@ mAIster/
 │       ├── spawn.ts                # child_process.spawn per session (claude/codex)
 │       ├── heartbeat.ts            # crash detection → mark Crashed
 │       ├── http-api.ts             # Route handlers (Fastify); checkpoint is an inline handler here
-│       ├── host-state.ts           # (Designed — ADR-164) node:sqlite state store: identity, fences, handles, receipts
-│       ├── execution-fence.ts      # (Designed — ADR-164) envelope fence rules + lower-epoch eviction
-│       ├── command-receipts.ts     # (Designed — ADR-164) receipts: replay / join / turn_lost
-│       └── workspace-registry.ts   # (Designed — ADR-164) POST /workspaces/adopt + handle resolution
+│       ├── host-state.ts           # (Implemented — ADR-165) node:sqlite state store: identity, fences, handles, receipts
+│       ├── execution-fence.ts      # (Implemented — ADR-165) envelope fence rules + lower-epoch eviction
+│       ├── command-receipts.ts     # (Implemented — ADR-165) receipts: replay / join / turn_lost
+│       └── workspace-registry.ts   # (Implemented — ADR-165) POST /workspaces/adopt + handle resolution
 │
 └── web/                            # ── NEXT.JS WEB TIER ──
     ├── app/                        # ── ROUTES & PRESENTATION (feature folders) ──
@@ -175,7 +175,7 @@ mAIster/
     │   ├── atomic.ts               # atomicWriteJson (tmp + rename)
     │   ├── worktree.ts             # git worktree add/remove/list wrapper (project-scoped paths)
     │   ├── supervisor-client.ts    # HTTP+SSE local-direct transport to ../supervisor/ (importable only from lib/execution-host/**)
-    │   ├── execution-host/         # (Designed — ADR-164) registrar/resolver, assignments, command ledger+deliverer, adoption, recovery, BoundClient
+    │   ├── execution-host/         # (Implemented — ADR-165) registrar/resolver, assignments, command ledger+deliverer, adoption, recovery, BoundClient
     │   ├── config.ts               # maister.yaml v2 loader + flow.yaml manifest parser, zod-validated
     │   ├── flows.ts                # Flow plugin install: git clone --branch <tag>, symlink, manifest validation
     │   ├── executors.ts            # Executor registry + override resolution
@@ -286,7 +286,7 @@ affected editor e2e (`m27-flow-editor.spec.ts` precedent).
   when you need a stable HTTP surface (SSE stream, cron, HITL response
   endpoint, activity ping).
 - **Web ↔ supervisor:** HTTP + SSE only. `lib/execution-host/` is the
-  single boundary (Designed — ADR-164): domain code obtains a
+  single boundary (Implemented — ADR-165): domain code obtains a
   `BoundClient` via `executionHosts.forAssignment(assignment)` (every
   command carries a unique id + the assignment fence and is written to the
   `execution_commands` ledger before the wire call) or a `HostAdminClient`

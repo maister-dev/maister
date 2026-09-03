@@ -387,7 +387,7 @@ beforeAll(async () => {
     databaseName: "rework_claim_test",
   });
   db = testDatabase.db;
-  // ADR-164: the return claim mints on the local host — a fake host backs
+  // ADR-165: the return claim mints on the local host — a fake host backs
   // every implicit resolution in this process.
   await fakeExecutionHosts(db);
   dbRef.value = db;

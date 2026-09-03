@@ -220,8 +220,8 @@ const projectSlugSchema = z
   .max(64)
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "projectSlug must be kebab-case");
 
-// ADR-164 (strict): a session addresses its workspace ONLY through the opaque
-// handle minted by `POST /workspaces/adopt`. The pre-ADR-164 path fields are
+// ADR-165 (strict): a session addresses its workspace ONLY through the opaque
+// handle minted by `POST /workspaces/adopt`. The pre-ADR-165 path fields are
 // refused by name (`legacy_field`) BEFORE schema parsing so a stale client
 // learns which field to drop instead of a generic unknown-key rejection.
 export const LEGACY_SESSION_PATH_FIELDS = [
@@ -325,7 +325,7 @@ export const StartSessionRequestSchema = z
   })
   .strict();
 
-// --- ADR-164: execution-host contract (envelope, fences, adoption, receipts) ---
+// --- ADR-165: execution-host contract (envelope, fences, adoption, receipts) ---
 
 export const HOST_KEY_SCHEMA = z
   .string()
@@ -422,7 +422,7 @@ export type WorkspaceRule = (typeof WORKSPACE_RULES)[number];
 export type SupervisorErrorDetails = {
   reason?: ReasonToken;
   rule?: WorkspaceRule;
-  // `legacy_field`: the refused pre-ADR-164 path field, by name.
+  // `legacy_field`: the refused pre-ADR-165 path field, by name.
   field?: string;
   runId?: string;
   commandEpoch?: number;
@@ -766,13 +766,13 @@ export type SessionRecord = {
   confineRoot?: string;
   monotonicId: number;
   acpSessionId?: string;
-  // ADR-164: the adopted handle this session runs in (handle-form sessions),
+  // ADR-165: the adopted handle this session runs in (handle-form sessions),
   // and the fence of the `session.create` command that spawned it.
   executionWorkspaceId?: string;
   assignmentId?: string;
   assignmentEpoch?: number;
   createdByCommandId?: string;
-  // ADR-164: set when a command with a HIGHER assignment epoch evicted this
+  // ADR-165: set when a command with a HIGHER assignment epoch evicted this
   // session; its pending prompt answers 409 FENCED instead of a stop reason.
   fencedByEpoch?: number;
   // M30 (ADR-078 L2): true while a read-only gate-chat prompt is in flight on
@@ -846,7 +846,7 @@ export type SessionRecord = {
   cancelRequested?: boolean;
 };
 
-// ADR-164: the `GET /sessions` projection. Host-private paths (`logPath`,
+// ADR-165: the `GET /sessions` projection. Host-private paths (`logPath`,
 // `worktreePath`, `repoPath`, `confineRoot`, `contextMounts`) never leave the
 // host; the web tier addresses the workspace through `executionWorkspaceId`.
 export type SessionListEntry = Pick<
@@ -947,11 +947,11 @@ export type SessionEvent =
       // DELETE /sessions/:id. Absent on natural process exit (process
       // ran to completion). Web tier branches: `"checkpoint"` triggers
       // `markCheckpointed` reconciliation; `"intentional"` is the plain
-      // operator-cancel path. ADR-164: `"fenced"` = evicted by a command with a
+      // operator-cancel path. ADR-165: `"fenced"` = evicted by a command with a
       // higher assignment epoch.
       reason?: "checkpoint" | "intentional" | "fenced";
     }
-  // ADR-164: command acceptance / completion for the enveloped session routes
+  // ADR-165: command acceptance / completion for the enveloped session routes
   // — the durable completion signal that is NOT the long-lived HTTP response.
   | {
       type: "session.command";
@@ -994,12 +994,12 @@ export type SupervisorErrorCode =
   | "CHECKPOINT"
   | "CRASH"
   | "HITL_TIMEOUT"
-  // ADR-164: stale assignment epoch at the execution boundary (HTTP 409).
+  // ADR-165: stale assignment epoch at the execution boundary (HTTP 409).
   | "FENCED";
 
 export class SupervisorError extends Error {
   readonly code: SupervisorErrorCode;
-  // ADR-164: typed refusal discriminator passed through to the web tier's
+  // ADR-165: typed refusal discriminator passed through to the web tier's
   // MaisterError.details — tests assert the token, never the message.
   readonly details?: SupervisorErrorDetails;
 

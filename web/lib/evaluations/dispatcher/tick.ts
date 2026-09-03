@@ -79,7 +79,7 @@ export interface EvaluationDispatchDeps {
   launchPanel(executionId: string): Promise<void>;
   advancePanel(executionId: string): Promise<boolean>;
   now(): Date;
-  // ADR-164: the host the reaper tears live judge sessions down through.
+  // ADR-165: the host the reaper tears live judge sessions down through.
   executionHosts?: ExecutionHosts;
 }
 
@@ -390,7 +390,7 @@ async function stopReapedJudgeRun(
     );
 
     if (live.length > 0) {
-      // ADR-164: a fenced `session.delete` under the run's newest assignment.
+      // ADR-165: a fenced `session.delete` under the run's newest assignment.
       const client = await hosts.forRun(runId, { teardown: true });
 
       for (const session of live) {

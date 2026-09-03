@@ -269,7 +269,7 @@ async function loadScratchLaunchExecutor(
   );
 }
 
-// ADR-164: the recover re-enters the run under a new driver generation
+// ADR-165: the recover re-enters the run under a new driver generation
 // (`scratch_recover`) minted inside the Running flip; the resumed session is
 // created through the client bound to that assignment (an unavailable host
 // refuses the recover before the claim).

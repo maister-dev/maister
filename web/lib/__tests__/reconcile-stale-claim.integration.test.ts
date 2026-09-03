@@ -33,7 +33,7 @@ beforeAll(async () => {
 
   pool = testDatabase.pool;
   db = testDatabase.db;
-  // ADR-164: the sweep lists sessions through the local execution host.
+  // ADR-165: the sweep lists sessions through the local execution host.
   await fakeExecutionHosts(db);
 }, 180_000);
 

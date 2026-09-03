@@ -1,4 +1,4 @@
-// ADR-164 test harness: boot the supervisor routes in-process on a REAL
+// ADR-165 test harness: boot the supervisor routes in-process on a REAL
 // execution-host state store (temp dir) with a fake ACP adapter fixture.
 import type { FastifyInstance } from "fastify";
 import type { HostState } from "../../host-state";
@@ -187,7 +187,7 @@ export function fenceFor(
   return { hostKey: host.hostState.hostKey, runId, ...extra };
 }
 
-// ADR-164 strict contract: every create is handle-form, so a test adopts a
+// ADR-165 strict contract: every create is handle-form, so a test adopts a
 // plain directory under the host's runtime root first. ONE handle per
 // (host key, run): later creates for the same run reuse it, which keeps a
 // test's fence choreography (epochs, assignment ids, foreign host keys) on the

@@ -47,7 +47,7 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
   // returning a summary.
   syncRecovery: Awaited<ReturnType<typeof runSyncRecoverySweep>> | null;
   cost: Awaited<ReturnType<typeof reconcileTerminalCostRollups>> | null;
-  // ADR-164 D5/D8: execution-command crash-window recovery (W1/W2/W4 with the
+  // ADR-165 D5/D8: execution-command crash-window recovery (W1/W2/W4 with the
   // 60 s in-flight grace), the stale-active-assignment backstop, and the 7-day
   // terminal-row retention. null when it threw before returning a summary.
   executionHost: Awaited<

@@ -218,7 +218,7 @@ async function seedAgentDrivenFlowRun(
   return { runId, runtimeRoot };
 }
 
-// ADR-164: a fake execution host capturing every prompt sent to a session.
+// ADR-165: a fake execution host capturing every prompt sent to a session.
 async function makeCapturingSupervisor(
   runId: string,
   prompts: string[],

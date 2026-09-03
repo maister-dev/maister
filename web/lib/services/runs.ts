@@ -758,8 +758,8 @@ export async function* launchRunStaged(
   // project pin. The dominant transient failure (supervisor down/restarting) must
   // not leave the shared pin silently advanced on a launch that cannot run; a full
   // re-check with runner context still runs post-resolution below.
-  // ADR-164 D1: the registered local execution host is the readiness gate —
-  // unreachable, refused (identity changed under live runs), or pre-ADR-164
+  // ADR-165 D1: the registered local execution host is the readiness gate —
+  // unreachable, refused (identity changed under live runs), or pre-ADR-165
   // supervisors all surface as EXECUTOR_UNAVAILABLE here. The host row is what
   // the launch tx places the run on.
   const placementHost = await localHost({
@@ -1053,7 +1053,7 @@ export async function* launchRunStaged(
       ) ?? sessionResolutions[0];
     const capabilityAgent = runnerResolution.capabilityAgent as CapabilityAgent;
 
-    // ADR-164: re-check the local host with runner context (memoized 30 s;
+    // ADR-165: re-check the local host with runner context (memoized 30 s;
     // a host that went away mid-resolution refuses here, before any worktree).
     try {
       await localHost({ db: _db as unknown as ExecutionDb });
@@ -1777,7 +1777,7 @@ export async function* launchRunStaged(
           })),
         );
 
-        // ADR-164 D3: epoch 1 of the run's driver ownership, in the SAME tx as
+        // ADR-165 D3: epoch 1 of the run's driver ownership, in the SAME tx as
         // the run (no run ⇒ no assignment). Insert branch only — the ADR-150
         // adopted-run branch returned above without inserting anything.
         await mintPlacement(tx as unknown as ExecutionDb, {

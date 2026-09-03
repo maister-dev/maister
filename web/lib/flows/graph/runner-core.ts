@@ -40,7 +40,7 @@ export type Db = any;
 export type RunFlowOptions = {
   db?: Db;
   runtimeRoot?: string;
-  // ADR-164: the execution-host seam. `executionHosts` is what the graph
+  // ADR-165: the execution-host seam. `executionHosts` is what the graph
   // binds its driver generation on (defaults to a local-direct instance over
   // `db`); a prebound `execution` wins when a caller already holds one.
   executionHosts?: ExecutionHosts;
@@ -74,7 +74,7 @@ export type LoadedRunSession = {
   sessionName: string;
   runner: RunnerSnapshot;
   acpSessionId: string | null;
-  // ADR-164: the supervisor's session id written by the create ack — the key
+  // ADR-165: the supervisor's session id written by the create ack — the key
   // for every host-bound session command (checkpoint on park, interrupts).
   hostSessionId: string | null;
   capabilityAgent: string | null;

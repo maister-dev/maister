@@ -14,7 +14,7 @@ import { asExecutionWorkspaceId } from "../types";
 
 import * as wire from "@/lib/supervisor-client";
 
-// ADR-164 D10: the local-direct transport — the only importer of the
+// ADR-165 D10: the local-direct transport — the only importer of the
 // enveloped `supervisor-client` wire. Pure adaptation: no DB, no ledger, no
 // retry; classification (definitive vs unknown-outcome) is the wire's job and
 // the deliverer's to act on. `MAISTER_SUPERVISOR_URL` is read by the wire at
@@ -61,12 +61,6 @@ export function createLocalDirectTransport(): ExecutionHostTransport {
     },
     platformStatus(opts) {
       return wire.checkSupervisorHealth(opts);
-    },
-    startSidecar(sidecarId, instanceConfig) {
-      return wire.startSidecar(sidecarId, instanceConfig);
-    },
-    stopSidecar(sidecarId) {
-      return wire.stopSidecar(sidecarId);
     },
     resolveModelSuggestions(draft, opts) {
       return wire.resolveModelSuggestions(draft, opts);

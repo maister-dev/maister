@@ -14,7 +14,7 @@ import path from "node:path";
 import { SupervisorError } from "./types";
 import { isUnderRoot } from "./workspace-roots";
 
-// ADR-164 D7: opaque adopted-workspace handles. `POST /workspaces/adopt` is the
+// ADR-165 D7: opaque adopted-workspace handles. `POST /workspaces/adopt` is the
 // ONLY path-bearing route; every later route derives its paths from the handle
 // through `resolveForSession` — the single path-derivation function that
 // feeds spawn (cwd + step log), prompt confinement, cost, and the events log.

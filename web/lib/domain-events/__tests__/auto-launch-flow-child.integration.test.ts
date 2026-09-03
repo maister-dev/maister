@@ -28,6 +28,7 @@ import {
   seedFlow,
   seedTask,
 } from "@/test-support/delegation-seed";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -78,6 +79,8 @@ beforeAll(async () => {
   });
   pool = testDatabase.pool;
   db = testDatabase.db;
+  // ADR-165: every launch places the run on the local execution host.
+  await fakeExecutionHosts(db);
 
   ({ buildAutoLaunchRunPlanConsumer } = await import(
     "@/lib/domain-events/auto-launch"

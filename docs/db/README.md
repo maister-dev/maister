@@ -33,7 +33,7 @@ Two kinds of view live here (ADR-159):
 | [`evaluations-domain.md`](evaluations-domain.md) | Evaluation Lab tables (ADR-142..147, ADR-150). |
 | [`integrations-domain.md`](integrations-domain.md) | Project tokens + token audit log. |
 | [`scheduler-domain.md`](scheduler-domain.md) | Scheduler jobs + run schedules + scheduled task launches (ADR-060/071, ADR-139). |
-| [`execution-hosts-domain.md`](execution-hosts-domain.md) | Execution-host tables: `execution_hosts`, `execution_assignments`, `execution_commands` + the attribution columns on `runs` / `run_sessions` / `node_attempts` (ADR-164, migration `0128`, Designed). |
+| [`execution-hosts-domain.md`](execution-hosts-domain.md) | Execution-host tables: `execution_hosts`, `execution_assignments`, `execution_commands` + the attribution columns on `runs` / `run_sessions` / `node_attempts` (ADR-165, migration `0129`, Implemented). |
 | [`webhooks.md`](webhooks.md) | Webhook subscriptions + events outbox + deliveries + attempts (ADR-077). |
 
 ## Cardinality notation

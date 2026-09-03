@@ -318,7 +318,7 @@ vi.mock("@/lib/db/client", () => ({
   getDb: () => fakeDb,
 }));
 
-// ADR-164: the permission delivery is a `session.input` command queued in the
+// ADR-165: the permission delivery is a `session.input` command queued in the
 // Phase-1 claim tx (`prepareInput`) and delivered after it commits; the ack
 // callback runs the Phase-2 domain writes. The fake client below keeps the
 // wire-level spy (`deliverPermissionSpy`) and records the queue/cancel calls
@@ -680,7 +680,7 @@ describe("HITL respond route — kind=permission", () => {
     expect(hitl.respondedAt).toBeInstanceOf(Date);
   });
 
-  // ADR-164 I1: the `session.input` command is queued inside the Phase-1 claim
+  // ADR-165 I1: the `session.input` command is queued inside the Phase-1 claim
   // transaction (a tx handle, not the root db) BEFORE the wire delivery.
   it("I1: queues the session.input command in the Phase-1 tx, then delivers it", async () => {
     const { runId, hitlRequestId } = seedPermissionRow();
@@ -711,7 +711,7 @@ describe("HITL respond route — kind=permission", () => {
     });
   });
 
-  // ADR-164 I2: a definitive 503 leaves respondedAt NULL; the user's retry
+  // ADR-165 I2: a definitive 503 leaves respondedAt NULL; the user's retry
   // issues a NEW command (a fresh command id), never a replay of the failed one.
   it("I2: 503 leaves respondedAt NULL and the retry issues a NEW command", async () => {
     const { runId, hitlRequestId } = seedPermissionRow();
@@ -737,7 +737,7 @@ describe("HITL respond route — kind=permission", () => {
     expect(dbState.tables.hitl_requests[0].respondedAt).toBeInstanceOf(Date);
   });
 
-  // ADR-164 I3: a host replay (the same command id re-sent after an unknown
+  // ADR-165 I3: a host replay (the same command id re-sent after an unknown
   // outcome) records what actually reached the agent next to the stored choice.
   it("I3: a replayed delivery records _audit.deliveredOptionId", async () => {
     const { runId, hitlRequestId } = seedPermissionRow();
@@ -753,7 +753,7 @@ describe("HITL respond route — kind=permission", () => {
     });
   });
 
-  // ADR-164 I4: a delivery that fails terminally releases the live deferred
+  // ADR-165 I4: a delivery that fails terminally releases the live deferred
   // with exactly ONE `session.input{cancel}` command; a failure AFTER the wire
   // delivery (ack-tx write) cancels nothing — the deferred is already resolved.
   it("I4: terminal delivery failure issues exactly one session.input cancel", async () => {

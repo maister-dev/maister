@@ -31,6 +31,11 @@ import {
   seedTask,
 } from "@/test-support/delegation-seed";
 import {
+  createFakeExecutionHost,
+  fakeExecutionHosts,
+  memoryExecutionHosts,
+} from "@/test-support/fake-execution-host";
+import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
@@ -82,6 +87,21 @@ beforeAll(async () => {
   });
   pool = testDatabase.pool;
   db = testDatabase.db;
+  // ADR-165: every launch places the run on the local execution host; the
+  // fake host's session listing + teardown ride this suite's supervisor spies
+  // so the wire-level assertions keep their shape.
+  const supervisor = await import("@/lib/supervisor-client");
+  const fake = createFakeExecutionHost();
+
+  Object.assign(fake.transport, {
+    listSessions: () => supervisor.listSessions(),
+    deleteSession: async (sessionId: string) => {
+      await supervisor.deleteSession(sessionId);
+
+      return { outcome: "terminated" as const };
+    },
+  });
+  await fakeExecutionHosts(db, { fake });
 
   ({ issueOrchestratorRunToken } = await import("@/lib/agents/tokens"));
   ({ POST: delegatePost } = await import(
@@ -535,8 +555,7 @@ describe("run_delegate flow arm — failure and crash windows (ADR-163 REQ-21)",
 
     await runReconcileSweep({
       db,
-      listSessions: async () => [],
-      deleteSession: async () => undefined,
+      executionHosts: memoryExecutionHosts(createFakeExecutionHost()),
       listWorktrees: async () => [],
       runFlow: async () => undefined,
     });

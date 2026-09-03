@@ -101,7 +101,7 @@ async function deleteSupervisorSessionIfLive(
   sessionId: string,
   runId: string,
 ): Promise<boolean> {
-  // ADR-164: a `session.delete` is a teardown kind — it binds the run's newest
+  // ADR-165: a `session.delete` is a teardown kind — it binds the run's newest
   // assignment even when that incarnation is already released.
   const client = await createExecutionHosts().forRun(runId, {
     teardown: true,

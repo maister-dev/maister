@@ -1,4 +1,4 @@
-// ADR-164 T3.5 — workspace adoption client (K1–K6) against a REAL supervisor
+// ADR-165 T3.5 — workspace adoption client (K1–K6) against a REAL supervisor
 // (the D7 matrix inspects real git state) plus the fake for the no-loop rule.
 
 import type { Db } from "@/lib/execution-host/db";

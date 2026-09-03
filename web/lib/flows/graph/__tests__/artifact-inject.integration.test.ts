@@ -106,7 +106,7 @@ async function getAttempt(
   return rows.find((a) => a.nodeId === nodeId);
 }
 
-// ADR-164: a fake execution host streaming "done" then a clean end-turn, plus
+// ADR-165: a fake execution host streaming "done" then a clean end-turn, plus
 // a spy on every `session.create` the runner sends.
 async function makeAgentSupervisor(runId: string): Promise<{
   hosts: ExecutionHosts;
@@ -122,7 +122,7 @@ async function makeAgentSupervisor(runId: string): Promise<{
   return { hosts, createSession };
 }
 
-// ADR-164: a fake execution host that records every resolved prompt the runner
+// ADR-165: a fake execution host that records every resolved prompt the runner
 // sends and streams a `pass` verdict so a blocking ai_judgment gate clears
 // (letting the node finish). Used to assert the GATE prompt rendered the
 // injected body.

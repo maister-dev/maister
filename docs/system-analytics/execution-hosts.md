@@ -1,11 +1,11 @@
 # Execution hosts domain
 
-> **Status: Designed** (Stage A). Decision:
-> [ADR-164](../decisions.md#adr-164-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces).
+> **Status: Implemented** (Stage A). Decision:
+> [ADR-165](../decisions.md#adr-165-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces).
 > Working plan:
 > [`../../.ai-factory/plans/claude-stage-a-execution-host-plan-6d70f9.md`](../../.ai-factory/plans/claude-stage-a-execution-host-plan-6d70f9.md).
-> Every `Designed` tag in this file flips to `Implemented` at the as-built
-> checkpoint of the same branch.
+> As-built: every surface in this file is `Implemented` (Stage A shipped in
+> full; the `Designed` tags flipped at the branch's as-built checkpoint).
 
 ## Purpose
 
@@ -24,7 +24,7 @@ crash classification ([reconciliation-gc.md](reconciliation-gc.md)),
 worktree creation and promotion ([workspaces.md](workspaces.md)), or the
 runner/session model ([sessions.md](sessions.md)). Stage A keeps one host,
 loopback HTTP, and the shared filesystem: no remote transport, no multiple
-simultaneous hosts, no placement, no host UI (ADR-164 §D12).
+simultaneous hosts, no placement, no host UI (ADR-165 §D12).
 
 ## Domain entities
 
@@ -33,8 +33,8 @@ simultaneous hosts, no placement, no host UI (ADR-164 §D12).
   unique index `execution_hosts_local_active_uq`). Identity is `host_key`
   (`eh_<uuid>`, supervisor-minted, or the `MAISTER_EXECUTION_HOST_KEY` pin);
   `last_boot_id` marks the supervisor process incarnation; `readiness ∈
-  {unknown, ready, unavailable}` + `readiness_reason`; `capabilities =
-  {protocolVersion, supervisorVersion, adapters[]}`. The supervisor URL is
+{unknown, ready, unavailable}` + `readiness_reason`; `capabilities =
+{protocolVersion, supervisorVersion, adapters[]}`. The supervisor URL is
   transport configuration (`MAISTER_SUPERVISOR_URL`) read at call time by the
   local-direct transport — never stored on the row.
 - **Host state store** — the supervisor-private `node:sqlite` file
@@ -58,20 +58,20 @@ simultaneous hosts, no placement, no host UI (ADR-164 §D12).
 - **Fence** — `{hostKey, assignmentId, assignmentEpoch, runId}` on every
   enveloped command. The host keeps the per-run high-water in
   `run_fences(run_id, assignment_id, epoch)` and rejects `epoch <
-  high-water` with 409 `FENCED`.
+high-water` with 409 `FENCED`.
 - **Command** — one row in `execution_commands` (the wire `command.id`):
   `kind` (eight tokens), `assignment_epoch`, `target_session_id?`, a
   REDACTED `payload`, `state ∈ {queued, delivering, accepted, succeeded,
-  failed, fenced}`, `attempts` / `max_attempts` / `next_attempt_at`,
+failed, fenced}`, `attempts` / `max_attempts` / `next_attempt_at`,
   `delivering_since`, `accepted_at`, `completed_at`, `result`, `last_error`,
   `driverless`.
 - **Command envelope** — `{ command: {id, kind, issuedAt}, fence: {…},
-  payload: {…} }`, the JSON body of every host-bound mutating route; the
+payload: {…} }`, the JSON body of every host-bound mutating route; the
   session id stays in the URL. Wire schema: `CommandEnvelope` in
   [`../api/supervisor.openapi.yaml`](../api/supervisor.openapi.yaml).
 - **Receipt** — a host-side `command_receipts` row `(command_id, run_id,
-  kind, epoch, phase ∈ {accepted, completed, rejected}, http_status,
-  body_json, received_at, completed_at)`; readable through
+kind, epoch, phase ∈ {accepted, completed, rejected}, http_status,
+body_json, received_at, completed_at)`; readable through
   `GET /commands/{commandId}` (which adds the process-memory `inflight`
   flag — `accepted` + `inflight:false` is the restart-mid-turn signature the
   web folds as `turn_lost` without re-sending) and replayed verbatim on a
@@ -386,16 +386,16 @@ unreachable at boot is picked up later.
 
 ## Command kinds, routes, and completion signals
 
-| Kind | Route | Effect | Duration | Completion signal(s) |
-| --- | --- | --- | --- | --- |
-| `workspace.adopt` | `POST /workspaces/adopt` | register path → handle (idempotent on `(runId, realpath)`) | immediate | HTTP 200 |
-| `workspace.release` | `DELETE /workspaces/{id}` | unregister handle | immediate | HTTP 200 |
-| `session.create` | `POST /sessions` | spawn + ACP handshake | ≤ 60 s | HTTP 201 `{sessionId, pid, acpSessionId}` |
-| `session.prompt` | `POST /sessions/{id}/prompt` | start a turn | long | SSE `session.command{accepted}` → HTTP 200 `{stopReason}` and/or SSE `session.command{completed}` and receipt |
-| `session.input` | `POST /sessions/{id}/input` | resolve a deferred | immediate | HTTP 200 |
-| `session.cancel` | `POST /sessions/{id}/cancel` | ACP cancel | immediate | HTTP 200 |
-| `session.checkpoint` | `POST /sessions/{id}/checkpoint` | cancel deferreds + SIGTERM + wait | ≤ kill grace | HTTP 200 + SSE `session.exited{reason:"checkpoint"}` |
-| `session.delete` | `DELETE /sessions/{id}` | SIGTERM/SIGKILL | ≤ kill grace | HTTP 204 + SSE `session.exited` |
+| Kind                 | Route                            | Effect                                                     | Duration     | Completion signal(s)                                                                                          |
+| -------------------- | -------------------------------- | ---------------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------- |
+| `workspace.adopt`    | `POST /workspaces/adopt`         | register path → handle (idempotent on `(runId, realpath)`) | immediate    | HTTP 200                                                                                                      |
+| `workspace.release`  | `DELETE /workspaces/{id}`        | unregister handle                                          | immediate    | HTTP 200                                                                                                      |
+| `session.create`     | `POST /sessions`                 | spawn + ACP handshake                                      | ≤ 60 s       | HTTP 201 `{sessionId, pid, acpSessionId}`                                                                     |
+| `session.prompt`     | `POST /sessions/{id}/prompt`     | start a turn                                               | long         | SSE `session.command{accepted}` → HTTP 200 `{stopReason}` and/or SSE `session.command{completed}` and receipt |
+| `session.input`      | `POST /sessions/{id}/input`      | resolve a deferred                                         | immediate    | HTTP 200                                                                                                      |
+| `session.cancel`     | `POST /sessions/{id}/cancel`     | ACP cancel                                                 | immediate    | HTTP 200                                                                                                      |
+| `session.checkpoint` | `POST /sessions/{id}/checkpoint` | cancel deferreds + SIGTERM + wait                          | ≤ kill grace | HTTP 200 + SSE `session.exited{reason:"checkpoint"}`                                                          |
+| `session.delete`     | `DELETE /sessions/{id}`          | SIGTERM/SIGKILL                                            | ≤ kill grace | HTTP 204 + SSE `session.exited`                                                                               |
 
 Unknown-outcome retry budgets (same command id): adopt 3 (0.5 s·2ⁿ), create 3
 (1 s·2ⁿ), prompt 3 before acceptance / 0 after, input 3, cancel 3, checkpoint
@@ -404,11 +404,11 @@ Unknown-outcome retry budgets (same command id): adopt 3 (0.5 s·2ⁿ), create 3
 
 ## Command admission by assignment state
 
-| Assignment state | Admitted kinds | Otherwise |
-| --- | --- | --- |
-| `active` | all eight | — |
-| `released` | teardown only: `session.checkpoint`, `session.delete`, `session.cancel`, `session.input{action:"cancel"}`, `workspace.release` | local `fenced`, no wire call |
-| `superseded` | none | local `fenced`, no wire call |
+| Assignment state | Admitted kinds                                                                                                                 | Otherwise                    |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------- |
+| `active`         | all eight                                                                                                                      | —                            |
+| `released`       | teardown only: `session.checkpoint`, `session.delete`, `session.cancel`, `session.input{action:"cancel"}`, `workspace.release` | local `fenced`, no wire call |
+| `superseded`     | none                                                                                                                           | local `fenced`, no wire call |
 
 `session.create`, `session.prompt`, `session.input{select}`, and
 `workspace.adopt` require `active`. The orchestrator park checkpoint is the
@@ -419,19 +419,19 @@ reason teardown kinds stay admissible under `released`.
 `SupervisorErrorBody.details.reason` is the discriminator; tests assert the
 token, never the message.
 
-| Rule (in order) | HTTP / code | `details.reason` | Web sees |
-| --- | --- | --- | --- |
-| `fence.hostKey ≠` own key | 409 `PRECONDITION` | `host_mismatch` | `PRECONDITION` (details passed through) |
-| `fence.assignmentEpoch <` stored high-water | 409 `FENCED` | `assignment_fenced` (+ `runId`, `commandEpoch`, `hostEpoch`) | `CONFLICT {details.reason:"assignment_fenced"}` → driver yields |
-| epoch equal, `assignmentId` differs | 409 `PRECONDITION` | `assignment_mismatch` | `PRECONDITION` |
-| `fence.runId ≠` the session's / handle's run | 409 `PRECONDITION` | `run_mismatch` | `PRECONDITION` |
-| duplicate id, receipt `accepted`, no in-flight (host restarted mid-turn) | 409 `PRECONDITION` | `turn_lost` | `failed{turn_lost}` |
-| `executionWorkspaceId` unknown | 409 `PRECONDITION` | `unknown_workspace` | client re-adopts ONCE, issues a NEW create |
-| handle released | 409 `PRECONDITION` | `workspace_released` | `PRECONDITION` |
-| adopt path violates the kind matrix | 409 `PRECONDITION` | `workspace_rejected` + `rule ∈ {relative_path, parent_segment, not_found, outside_roots, symlink_escape, gitdir_mismatch, not_a_repo, repo_path_mismatch, inside_state_dir, outside_workspace}` | `PRECONDITION` |
-| legacy path field after the strict flip | 409 `PRECONDITION` | `legacy_field` | `PRECONDITION` |
-| envelope absent after the strict flip | 409 `PRECONDITION` | `missing_envelope` | `PRECONDITION` |
-| receipt write failed after executing | 500 `ACP_PROTOCOL` | — | definitive failure; reconcile catches an orphan session |
+| Rule (in order)                                                          | HTTP / code        | `details.reason`                                                                                                                                                                                | Web sees                                                        |
+| ------------------------------------------------------------------------ | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `fence.hostKey ≠` own key                                                | 409 `PRECONDITION` | `host_mismatch`                                                                                                                                                                                 | `PRECONDITION` (details passed through)                         |
+| `fence.assignmentEpoch <` stored high-water                              | 409 `FENCED`       | `assignment_fenced` (+ `runId`, `commandEpoch`, `hostEpoch`)                                                                                                                                    | `CONFLICT {details.reason:"assignment_fenced"}` → driver yields |
+| epoch equal, `assignmentId` differs                                      | 409 `PRECONDITION` | `assignment_mismatch`                                                                                                                                                                           | `PRECONDITION`                                                  |
+| `fence.runId ≠` the session's / handle's run                             | 409 `PRECONDITION` | `run_mismatch`                                                                                                                                                                                  | `PRECONDITION`                                                  |
+| duplicate id, receipt `accepted`, no in-flight (host restarted mid-turn) | 409 `PRECONDITION` | `turn_lost`                                                                                                                                                                                     | `failed{turn_lost}`                                             |
+| `executionWorkspaceId` unknown                                           | 409 `PRECONDITION` | `unknown_workspace`                                                                                                                                                                             | client re-adopts ONCE, issues a NEW create                      |
+| handle released                                                          | 409 `PRECONDITION` | `workspace_released`                                                                                                                                                                            | `PRECONDITION`                                                  |
+| adopt path violates the kind matrix                                      | 409 `PRECONDITION` | `workspace_rejected` + `rule ∈ {relative_path, parent_segment, not_found, outside_roots, symlink_escape, gitdir_mismatch, not_a_repo, repo_path_mismatch, inside_state_dir, outside_workspace}` | `PRECONDITION`                                                  |
+| legacy path field after the strict flip                                  | 409 `PRECONDITION` | `legacy_field`                                                                                                                                                                                  | `PRECONDITION`                                                  |
+| envelope absent after the strict flip                                    | 409 `PRECONDITION` | `missing_envelope`                                                                                                                                                                              | `PRECONDITION`                                                  |
+| receipt write failed after executing                                     | 500 `ACP_PROTOCOL` | —                                                                                                                                                                                               | definitive failure; reconcile catches an orphan session         |
 
 Web-minted: `EXECUTOR_UNAVAILABLE {details.reason:"host_identity_mismatch"}`
 while registration is refused. `FENCED → CONFLICT`; every other supervisor
@@ -439,22 +439,22 @@ code keeps its existing mapping ([`../error-taxonomy.md`](../error-taxonomy.md))
 
 ## Web-side classification per attempt
 
-| Host response | Class | Ledger row | Caller sees |
-| --- | --- | --- | --- |
-| network error, timeout, non-JSON 5xx (outcome UNKNOWN) | retry the SAME command id up to budget, then `failed` | `queued` + backoff | `EXECUTOR_UNAVAILABLE` after budget |
-| parsed 503 `EXECUTOR_UNAVAILABLE` (definitive) | `failed`; the caller's own retry issues a NEW command (sweeper tick, user retry) | `failed` | `EXECUTOR_UNAVAILABLE` |
-| 409 `FENCED` | terminal | `fenced` | `CONFLICT {details.reason:"assignment_fenced"}` |
-| 404 / 410 / 409 `PRECONDITION` (any reason) | terminal | `failed` | existing per-endpoint mapping, `details` passed through |
-| 409 `PRECONDITION unknown_workspace` on create | terminal for this command | `failed` | one re-adopt + a NEW create |
-| prompt after `accepted`: transport failure | ONE receipt lookup: `completed` → `succeeded{stopReason}`; `accepted` w/o in-flight → `failed{turn_lost}`; 404 → `failed{receipt_missing}` | as looked up | `stopReason` when completed, else `ACP_PROTOCOL` |
+| Host response                                          | Class                                                                                                                                      | Ledger row         | Caller sees                                             |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ | ------------------------------------------------------- |
+| network error, timeout, non-JSON 5xx (outcome UNKNOWN) | retry the SAME command id up to budget, then `failed`                                                                                      | `queued` + backoff | `EXECUTOR_UNAVAILABLE` after budget                     |
+| parsed 503 `EXECUTOR_UNAVAILABLE` (definitive)         | `failed`; the caller's own retry issues a NEW command (sweeper tick, user retry)                                                           | `failed`           | `EXECUTOR_UNAVAILABLE`                                  |
+| 409 `FENCED`                                           | terminal                                                                                                                                   | `fenced`           | `CONFLICT {details.reason:"assignment_fenced"}`         |
+| 404 / 410 / 409 `PRECONDITION` (any reason)            | terminal                                                                                                                                   | `failed`           | existing per-endpoint mapping, `details` passed through |
+| 409 `PRECONDITION unknown_workspace` on create         | terminal for this command                                                                                                                  | `failed`           | one re-adopt + a NEW create                             |
+| prompt after `accepted`: transport failure             | ONE receipt lookup: `completed` → `succeeded{stopReason}`; `accepted` w/o in-flight → `failed{turn_lost}`; 404 → `failed{receipt_missing}` | as looked up       | `stopReason` when completed, else `ACP_PROTOCOL`        |
 
 ## Workspace adoption kinds
 
-| Kind | Extra rule | Used by |
-| --- | --- | --- |
-| `git_worktree` | realpath under `MAISTER_WORKSPACE_ROOTS`; `.git` FILE whose `gitdir:` resolves under `<repoPath>/.git/worktrees/`; `repoPath` is a git repo root | flow, scratch, agent `worktree`, shared-tree children |
-| `repo_checkout` | path is a git repo root AND equals `repoPath` (arbitrary location, ADR-023) | agent `repo_read` on the parent checkout |
-| `directory` | realpath under `MAISTER_WORKSPACE_ROOTS`; `repoPath` absent | local-package assistant, ephemeral read-only checkouts, agent `none` |
+| Kind            | Extra rule                                                                                                                                       | Used by                                                              |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `git_worktree`  | realpath under `MAISTER_WORKSPACE_ROOTS`; `.git` FILE whose `gitdir:` resolves under `<repoPath>/.git/worktrees/`; `repoPath` is a git repo root | flow, scratch, agent `worktree`, shared-tree children                |
+| `repo_checkout` | path is a git repo root AND equals `repoPath` (arbitrary location, ADR-023)                                                                      | agent `repo_read` on the parent checkout                             |
+| `directory`     | realpath under `MAISTER_WORKSPACE_ROOTS`; `repoPath` absent                                                                                      | local-package assistant, ephemeral read-only checkouts, agent `none` |
 
 All kinds: absolute, no `..`, realpath exists, no symlink escape, not inside
 the state dir. The web derives every adopt value from server state
@@ -466,22 +466,22 @@ routes derive every path from the handle.
 
 ## Requirements (owner brief, 2026-09-02)
 
-| Id | Requirement |
-| --- | --- |
-| R-01 | The local execution host has a stable identity that survives supervisor restarts. |
-| R-02 | Web Core resolves the host through a durable registration; the transport URL is configuration, not a domain concept. |
-| R-03 | Every newly launched run has a durable assignment with a monotonically increasing epoch. |
-| R-04 | Assignment history is immutable and auditable; sessions and attempts are attributable to the assignment that created them. |
-| R-05 | Every host-bound command carries `hostKey`, `assignmentId`, `assignmentEpoch`, and a unique `commandId`. |
-| R-06 | The host rejects stale epochs; fencing survives host restart. |
-| R-07 | Duplicate delivery of any command is safe (host receipts). |
-| R-08 | Command intent is persisted before the side effect; delivery state only after acknowledgement. |
-| R-09 | Every Web crash window has a defined, tested recovery. |
-| R-10 | A long-lived HTTP request is never the only durable completion signal. |
-| R-11 | Normal session APIs carry no raw paths; adoption is the only path-bearing operation and validates against configured roots. |
+| Id   | Requirement                                                                                                                                                             |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R-01 | The local execution host has a stable identity that survives supervisor restarts.                                                                                       |
+| R-02 | Web Core resolves the host through a durable registration; the transport URL is configuration, not a domain concept.                                                    |
+| R-03 | Every newly launched run has a durable assignment with a monotonically increasing epoch.                                                                                |
+| R-04 | Assignment history is immutable and auditable; sessions and attempts are attributable to the assignment that created them.                                              |
+| R-05 | Every host-bound command carries `hostKey`, `assignmentId`, `assignmentEpoch`, and a unique `commandId`.                                                                |
+| R-06 | The host rejects stale epochs; fencing survives host restart.                                                                                                           |
+| R-07 | Duplicate delivery of any command is safe (host receipts).                                                                                                              |
+| R-08 | Command intent is persisted before the side effect; delivery state only after acknowledgement.                                                                          |
+| R-09 | Every Web crash window has a defined, tested recovery.                                                                                                                  |
+| R-10 | A long-lived HTTP request is never the only durable completion signal.                                                                                                  |
+| R-11 | Normal session APIs carry no raw paths; adoption is the only path-bearing operation and validates against configured roots.                                             |
 | R-12 | Flow runs, scratch/assistant runs, ACP lifecycle, HITL, checkpoint/resume, cancel/abandon, reconcile, concurrency accounting, local delivery/promotion behave as today. |
-| R-13 | Shared filesystem and local event coupling are documented as limitations; no remote/multi-host claims. |
-| R-14 | Domain code addresses hosts only through a typed boundary; the loopback transport is replaceable. |
+| R-13 | Shared filesystem and local event coupling are documented as limitations; no remote/multi-host claims.                                                                  |
+| R-14 | Domain code addresses hosts only through a typed boundary; the loopback transport is replaceable.                                                                       |
 
 ## Expectations
 
@@ -515,8 +515,8 @@ routes derive every path from the handle.
 - **E-EH-08** — `POST /sessions` and every `/sessions/{id}/*` route MUST
   accept only `executionWorkspaceId`; `POST /workspaces/adopt` is the only
   route accepting a path and MUST validate it per the kind matrix. Enforced
-  by: Zod strict schemas; tests W5, Z1–Z3, T1. (Transitional until the strict
-  flip of the same branch — Designed.)
+  by: Zod strict schemas; tests W5, Z1–Z3, T1. (Strict since the T5.1 flip;
+  the transitional bare-body acceptance is gone.)
 - **E-EH-09** — Adoption MUST be idempotent on `(runId, realpath)` and
   handles MUST survive a host restart. Enforced by: the sqlite `workspaces`
   table; tests W1, W9.
@@ -532,37 +532,37 @@ routes derive every path from the handle.
 
 ## Edge cases
 
-| Id | Case | Outcome / code | Owning test |
-| --- | --- | --- | --- |
-| X-EH-01 | Pinned key conflicts with the stored key | supervisor refuses boot, exit 1, `execution-host-key-conflict` | H5 |
-| X-EH-02 | New identity at the configured URL while the old host owns non-terminal runs | registration refused, `readiness='unavailable'`, `MaisterError("EXECUTOR_UNAVAILABLE")` `{details.reason:"host_identity_mismatch"}` | G4 |
-| X-EH-03 | Host state dir lost | new key (unless pinned) → idle-retire or X-EH-02; fences restart at the first command; handles re-adopted lazily | G3, K5 |
-| X-EH-04 | Command epoch below the host high-water | 409 `FENCED` → `MaisterError("CONFLICT")` `{details.reason:"assignment_fenced"}` | F2, E1 |
-| X-EH-05 | Same epoch, different assignment id | 409 `PRECONDITION assignment_mismatch` | F3 |
-| X-EH-06 | `fence.runId` differs from the session's run | 409 `PRECONDITION run_mismatch` | F5 |
-| X-EH-07 | Duplicate command with a completed/rejected receipt | verbatim replay + `X-Maister-Command-Replayed` | R1 |
-| X-EH-08 | Duplicate command while the original is executing | join, same result | R2 |
-| X-EH-09 | Receipt `accepted`, no in-flight (host restarted mid-turn) | 409 `PRECONDITION turn_lost` | R3 |
-| X-EH-10 | Adopt path outside roots / relative / `..` / missing / symlink escape / gitdir mismatch / not a repo / repo path mismatch / inside state dir | 409 `PRECONDITION {workspace_rejected, rule}` → `MaisterError("PRECONDITION")` | W5 |
-| X-EH-11 | Create with an unknown handle | 409 `unknown_workspace` → client re-adopts once | W6, K5 |
-| X-EH-12 | Create with a released handle | 409 `workspace_released` | W6 |
-| X-EH-13 | Legacy path field or missing envelope after the strict flip | 409 `legacy_field` / `missing_envelope` | Z1–Z2 |
-| X-EH-14 | Transport failure with unknown outcome before any receipt | retry the same command id up to budget, then `failed` → `MaisterError("EXECUTOR_UNAVAILABLE")` | L3 |
-| X-EH-15 | Transport failure after prompt acceptance | one receipt lookup → `succeeded{stopReason}` / `failed{turn_lost}` / `failed{receipt_missing}` (`MaisterError("ACP_PROTOCOL")`) | L8 |
-| X-EH-16 | Web crash W1 / W2 / W4 | per the recovery flow above | V1–V3 |
-| X-EH-17 | Supervisor restart during delivery | same key, new bootId, fences + receipts survive, sessions gone, reconcile classifies | V3, G2 |
-| X-EH-18 | Legacy run (NULL assignment) reaches a command issuer | lazy mint `legacy_backfill` with WARN `legacy-run-assigned-lazily` | Y5 |
-| X-EH-19 | Evicted session's pending prompt | 409 `FENCED` to the old driver → driver yields | F6, P3 |
-| X-EH-20 | Teardown command on a `released` assignment / any command on `superseded` | sent / locally `fenced` | A5, L6 |
-| X-EH-21 | Host receipt write fails after executing | 500 `ACP_PROTOCOL`; the effect may exist; reconcile catches an orphan session (accepted residual) | R5 |
-| X-EH-22 | Host unreachable at Web boot | readiness unavailable, backfill skipped once-logged, sweeps retry (accepted residual) | G5, Y4 |
+| Id      | Case                                                                                                                                         | Outcome / code                                                                                                                      | Owning test |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| X-EH-01 | Pinned key conflicts with the stored key                                                                                                     | supervisor refuses boot, exit 1, `execution-host-key-conflict`                                                                      | H5          |
+| X-EH-02 | New identity at the configured URL while the old host owns non-terminal runs                                                                 | registration refused, `readiness='unavailable'`, `MaisterError("EXECUTOR_UNAVAILABLE")` `{details.reason:"host_identity_mismatch"}` | G4          |
+| X-EH-03 | Host state dir lost                                                                                                                          | new key (unless pinned) → idle-retire or X-EH-02; fences restart at the first command; handles re-adopted lazily                    | G3, K5      |
+| X-EH-04 | Command epoch below the host high-water                                                                                                      | 409 `FENCED` → `MaisterError("CONFLICT")` `{details.reason:"assignment_fenced"}`                                                    | F2, E1      |
+| X-EH-05 | Same epoch, different assignment id                                                                                                          | 409 `PRECONDITION assignment_mismatch`                                                                                              | F3          |
+| X-EH-06 | `fence.runId` differs from the session's run                                                                                                 | 409 `PRECONDITION run_mismatch`                                                                                                     | F5          |
+| X-EH-07 | Duplicate command with a completed/rejected receipt                                                                                          | verbatim replay + `X-Maister-Command-Replayed`                                                                                      | R1          |
+| X-EH-08 | Duplicate command while the original is executing                                                                                            | join, same result                                                                                                                   | R2          |
+| X-EH-09 | Receipt `accepted`, no in-flight (host restarted mid-turn)                                                                                   | 409 `PRECONDITION turn_lost`                                                                                                        | R3          |
+| X-EH-10 | Adopt path outside roots / relative / `..` / missing / symlink escape / gitdir mismatch / not a repo / repo path mismatch / inside state dir | 409 `PRECONDITION {workspace_rejected, rule}` → `MaisterError("PRECONDITION")`                                                      | W5          |
+| X-EH-11 | Create with an unknown handle                                                                                                                | 409 `unknown_workspace` → client re-adopts once                                                                                     | W6, K5      |
+| X-EH-12 | Create with a released handle                                                                                                                | 409 `workspace_released`                                                                                                            | W6          |
+| X-EH-13 | Legacy path field or missing envelope after the strict flip                                                                                  | 409 `legacy_field` / `missing_envelope`                                                                                             | Z1–Z2       |
+| X-EH-14 | Transport failure with unknown outcome before any receipt                                                                                    | retry the same command id up to budget, then `failed` → `MaisterError("EXECUTOR_UNAVAILABLE")`                                      | L3          |
+| X-EH-15 | Transport failure after prompt acceptance                                                                                                    | one receipt lookup → `succeeded{stopReason}` / `failed{turn_lost}` / `failed{receipt_missing}` (`MaisterError("ACP_PROTOCOL")`)     | L8          |
+| X-EH-16 | Web crash W1 / W2 / W4                                                                                                                       | per the recovery flow above                                                                                                         | V1–V3       |
+| X-EH-17 | Supervisor restart during delivery                                                                                                           | same key, new bootId, fences + receipts survive, sessions gone, reconcile classifies                                                | V3, G2      |
+| X-EH-18 | Legacy run (NULL assignment) reaches a command issuer                                                                                        | lazy mint `legacy_backfill` with WARN `legacy-run-assigned-lazily`                                                                  | Y5          |
+| X-EH-19 | Evicted session's pending prompt                                                                                                             | 409 `FENCED` to the old driver → driver yields                                                                                      | F6, P3      |
+| X-EH-20 | Teardown command on a `released` assignment / any command on `superseded`                                                                    | sent / locally `fenced`                                                                                                             | A5, L6      |
+| X-EH-21 | Host receipt write fails after executing                                                                                                     | 500 `ACP_PROTOCOL`; the effect may exist; reconcile catches an orphan session (accepted residual)                                   | R5          |
+| X-EH-22 | Host unreachable at Web boot                                                                                                                 | readiness unavailable, backfill skipped once-logged, sweeps retry (accepted residual)                                               | G5, Y4      |
 
 ## Linked artifacts
 
-- Decision: [ADR-164](../decisions.md#adr-164-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces);
+- Decision: [ADR-165](../decisions.md#adr-165-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces);
   amended topology: [ADR-023](../decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres).
 - ERD: [`../db/execution-hosts-domain.md`](../db/execution-hosts-domain.md);
-  column reference: [`../database-schema.md`](../database-schema.md#execution-host-tables-designed--adr-164-migration-0128).
+  column reference: [`../database-schema.md`](../database-schema.md#execution-host-tables-implemented--adr-165-migration-0129).
 - Wire: [`../api/supervisor.openapi.yaml`](../api/supervisor.openapi.yaml)
   (`CommandEnvelope`, `AdoptWorkspaceRequest`, `WorkspaceRecord`,
   `CommandReceipt`, `SupervisorErrorBody.details`, `FENCED`),
@@ -579,7 +579,7 @@ routes derive every path from the handle.
   [`hitl.md`](hitl.md), [`reconciliation-gc.md`](reconciliation-gc.md),
   [`scratch-runs.md`](scratch-runs.md), [`agents.md`](agents.md),
   [`workspaces.md`](workspaces.md).
-- Source (Designed): `web/lib/execution-host/*`,
+- Source (Implemented): `web/lib/execution-host/*`,
   `web/lib/supervisor-client.ts`, `supervisor/src/{host-state,
-  execution-fence, command-receipts, workspace-registry, workspace-roots}.ts`,
+execution-fence, command-receipts, workspace-registry, workspace-roots}.ts`,
   `supervisor/src/http-api.ts`, `supervisor/src/types.ts`.

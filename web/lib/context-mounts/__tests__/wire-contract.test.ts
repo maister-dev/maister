@@ -9,7 +9,7 @@
  * The flow/agent integration suites could not catch it — they use a stub
  * SupervisorApi that never validates the payload.
  *
- * ADR-164 moved the mounts off `POST /sessions` onto the `workspace.adopt`
+ * ADR-165 moved the mounts off `POST /sessions` onto the `workspace.adopt`
  * payload (`POST /workspaces/adopt`, the only path-bearing route), so the
  * acceptor under test is `AdoptWorkspacePayloadSchema`, imported straight out of
  * `supervisor/src/types.ts` (it depends on nothing but `zod`, and both packages

@@ -48,7 +48,7 @@ import {
   asHostSessionId,
 } from "@/lib/execution-host/types";
 
-// ADR-164 T3.1: an in-memory `ExecutionHostTransport` with the host's
+// ADR-165 T3.1: an in-memory `ExecutionHostTransport` with the host's
 // observable semantics (fence high-water, receipts + replay, handles, sessions)
 // and programmable faults, for ledger/deliverer/driver tests that must not
 // spawn a supervisor. Errors are shaped exactly as the local-direct wire maps
@@ -378,16 +378,6 @@ export function createFakeExecutionHost(
       } as PlatformStatus;
     },
     // Admin operations a suite scripts by overriding the transport method.
-    async startSidecar(sidecarId) {
-      await record("startSidecar", null, [sidecarId]);
-
-      return { ok: true as const, state: "ready" as const };
-    },
-    async stopSidecar(sidecarId) {
-      await record("stopSidecar", null, [sidecarId]);
-
-      return { ok: true as const, state: "idle" as const };
-    },
     async resolveModelSuggestions(draft) {
       await record("resolveModelSuggestions", null, [draft]);
       throw new MaisterError(
@@ -1086,8 +1076,6 @@ export function memoryAdminClient(fake: FakeExecutionHost): HostAdminClient {
     health: (opts) => fake.transport.health(opts),
     diagnostics: (opts) => fake.transport.diagnostics(opts),
     platformStatus: (opts) => fake.transport.platformStatus(opts),
-    startSidecar: (id, config) => fake.transport.startSidecar(id, config),
-    stopSidecar: (id) => fake.transport.stopSidecar(id),
     resolveModelSuggestions: (draft, opts) =>
       fake.transport.resolveModelSuggestions(draft, opts),
     probeMcp: (req) => fake.transport.probeMcp(req),

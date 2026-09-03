@@ -54,7 +54,7 @@ vi.mock("@/lib/tokens/audit", async (importOriginal) => {
   };
 });
 vi.mock("@/lib/supervisor-client", () => ({
-  // ADR-164: the launch registers the local execution host from `/health`.
+  // ADR-165: the launch registers the local execution host from `/health`.
   checkSupervisorHealth: vi.fn(async () => readySupervisorHealth()),
 }));
 vi.mock("@/lib/worktree", () => ({

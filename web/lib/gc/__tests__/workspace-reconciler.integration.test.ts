@@ -439,7 +439,7 @@ describe("runWorkspaceReconciliationSweep", () => {
   });
 });
 
-describe("workspace release after removal (ADR-164 N5)", () => {
+describe("workspace release after removal (ADR-165 N5)", () => {
   // A trusted on-disk worktree whose workspace row is already removed and whose
   // run holds an adopted handle: the sweep removes the tree, then releases the
   // handle on the host as a driverless `workspace.release`.

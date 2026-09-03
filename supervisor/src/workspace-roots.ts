@@ -4,7 +4,7 @@ import { realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-// ADR-164 D7: the allow-list a `git_worktree` / `directory` adoption must live
+// ADR-165 D7: the allow-list a `git_worktree` / `directory` adoption must live
 // under. Mirrors the web tier's worktrees + local-packages roots by default; a
 // moved web root MUST be mirrored here (documented in both env samples).
 

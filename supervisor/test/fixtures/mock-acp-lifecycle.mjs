@@ -113,7 +113,7 @@ class LifecycleAgent {
       });
     }
 
-    // ADR-164 F6: keep the turn open forever so an eviction lands mid-prompt.
+    // ADR-165 F6: keep the turn open forever so an eviction lands mid-prompt.
     if (hangPrompt) return never();
 
     if (!hang) {

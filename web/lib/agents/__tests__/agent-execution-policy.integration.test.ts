@@ -80,7 +80,7 @@ beforeAll(async () => {
   pool = testDatabase.pool;
   db = testDatabase.db;
   process.env.DB_URL = container.getConnectionUri();
-  // ADR-164: every launch places the run on the local execution host.
+  // ADR-165: every launch places the run on the local execution host.
   await fakeExecutionHosts(db);
 
   ({ launchAgentRun, startAgentSession } = await import("@/lib/agents/launch"));
@@ -350,7 +350,7 @@ describe("launchAgentRun — execution-policy snapshot (M39 T5.1, ADR-106)", () 
   });
 });
 
-// ADR-164: a fake local host recording the (handle-form) createSession
+// ADR-165: a fake local host recording the (handle-form) createSession
 // payload and the adopted workspace; its session stream yields a single
 // `checkpoint` exit so consumeAgentSession detaches with no DB work (the
 // keep-alive sweeper owns the idle transition — never reached here). Built

@@ -1,12 +1,13 @@
 import "server-only";
 
+import type { SupervisorSessionRecord } from "@/lib/execution-host";
+
 import pino from "pino";
 
 import {
-  deleteSession,
-  listSessions,
-  type SupervisorSessionRecord,
-} from "@/lib/supervisor-client";
+  createExecutionHosts,
+  type ExecutionHosts,
+} from "@/lib/execution-host";
 
 const log = pino({
   name: "session-teardown",
@@ -22,17 +23,25 @@ const log = pino({
  * reconcile sweep reaps a live session under an `Abandoned` row on its next
  * tick. Matched by runId and never narrowed by stepId — a run may hold more
  * than one logical session, so EVERY live one is stopped.
+ *
+ * ADR-165: the host is listed ONCE through the admin client; each delete rides
+ * the run's own (teardown-bound) client so it is fenced and ledgered.
  */
 export async function teardownLiveSessionsForRuns(
   runIds: readonly string[],
-  opts: { records?: readonly SupervisorSessionRecord[]; logLabel: string },
+  opts: {
+    records?: readonly SupervisorSessionRecord[];
+    logLabel: string;
+    executionHosts?: ExecutionHosts;
+  },
 ): Promise<void> {
   if (runIds.length === 0) return;
 
+  const hosts = opts.executionHosts ?? createExecutionHosts();
   let records: readonly SupervisorSessionRecord[];
 
   try {
-    records = opts.records ?? (await listSessions());
+    records = opts.records ?? (await hosts.local().listSessions());
   } catch (err) {
     log.warn(
       { runIds, err: err instanceof Error ? err.message : String(err) },
@@ -43,14 +52,30 @@ export async function teardownLiveSessionsForRuns(
   }
 
   for (const runId of runIds) {
-    for (const live of records.filter(
+    const live = records.filter(
       (r) => r.status === "live" && r.runId === runId,
-    )) {
-      await deleteSession(live.sessionId).catch((err: unknown) => {
+    );
+
+    if (live.length === 0) continue;
+
+    let client: Awaited<ReturnType<ExecutionHosts["forRun"]>>;
+
+    try {
+      client = await hosts.forRun(runId, { teardown: true });
+    } catch (err) {
+      log.warn(
+        { runId, err: err instanceof Error ? err.message : String(err) },
+        `${opts.logLabel} host binding failed — leaving teardown to the reconcile sweep`,
+      );
+      continue;
+    }
+
+    for (const session of live) {
+      await client.deleteSession(session.sessionId).catch((err: unknown) => {
         log.warn(
           {
             runId,
-            sessionId: live.sessionId,
+            sessionId: session.sessionId,
             err: err instanceof Error ? err.message : String(err),
           },
           `${opts.logLabel} child session teardown failed — continuing`,

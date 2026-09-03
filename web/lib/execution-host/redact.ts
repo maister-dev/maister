@@ -1,4 +1,4 @@
-// Ledger payload redaction (ADR-164 E-EH-12). The `execution_commands.payload`
+// Ledger payload redaction (ADR-165 E-EH-12). The `execution_commands.payload`
 // column keeps enough of a command to explain and replay it — kind-specific
 // ids, session names, adapter/model — but NEVER a prompt body, an env value, or
 // a secret-looking value. Applied once, at insert, by the ledger.

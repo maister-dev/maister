@@ -201,7 +201,7 @@ export async function seedGraphRun(
   };
 }
 
-// ADR-164: register a local execution host row (idempotent on `hostKey`) and
+// ADR-165: register a local execution host row (idempotent on `hostKey`) and
 // mint the run's `launch` assignment on it — what `launchRun` does inside its
 // run-insert transaction, for suites that seed runs directly.
 export async function seedExecutionAssignment(

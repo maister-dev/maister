@@ -9,7 +9,7 @@ import {
   SupervisorError,
 } from "./types";
 
-// ADR-164 D6: a command id executes at most once per host. A duplicate with a
+// ADR-165 D6: a command id executes at most once per host. A duplicate with a
 // completed/rejected receipt is replayed verbatim; a duplicate while the
 // original is in flight joins it (any kind); an `accepted` receipt with no
 // in-flight promise means the host restarted mid-turn (`turn_lost`).

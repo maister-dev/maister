@@ -58,7 +58,7 @@ export type E2ERahFixture = E2EProjectFixture & {
   taskNumber: number;
   researchFlowRef: string;
   resultProfile: string;
-// ADR-164 (T6.2): a launchable single-`ai_coding` flow whose session the test
+// ADR-165 (T6.2): a launchable single-`ai_coding` flow whose session the test
 // supervisor drives through a permission request (the execution-host contract
 // spec). The slug is what the test supervisor keys the scenario on.
 export const E2E_EXECUTION_HOST_SLUG = "e2e-execution-host";

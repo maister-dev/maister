@@ -1,6 +1,9 @@
 import "server-only";
 
-import type { SupervisorSessionRecord } from "@/lib/supervisor-client";
+import type {
+  ExecutionHosts,
+  SupervisorSessionRecord,
+} from "@/lib/execution-host";
 
 import { and, inArray } from "drizzle-orm";
 import pino from "pino";
@@ -51,6 +54,9 @@ export interface CascadeAbandonResult {
 export interface CascadeAndStopOptions extends CascadeAbandonOptions {
   // A supervisor listing the caller already holds; omitted → listed here.
   records?: readonly SupervisorSessionRecord[];
+  // ADR-165: the caller's execution-host client (each teardown rides the
+  // child's own fenced client); omitted → the process default.
+  executionHosts?: ExecutionHosts;
   logLabel: string;
 }
 
@@ -228,6 +234,7 @@ export async function cascadeAbandonRunTreeAndStopSessions(
   await teardownLiveSessionsForRuns(result.cascadedRunIds, {
     records: opts.records,
     logLabel: opts.logLabel,
+    executionHosts: opts.executionHosts,
   });
 
   return result;

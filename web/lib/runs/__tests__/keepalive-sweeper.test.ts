@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// ADR-164 (K1): pass 1 checkpoints through the client bound to the run's
+// ADR-165 (K1): pass 1 checkpoints through the client bound to the run's
 // execution assignment, addressed by the host's own session id from
 // `run_sessions.host_session_id`. Only the delivery classification matters
 // here: an unknown outcome (5xx) keeps the row NeedsInput; a definitive

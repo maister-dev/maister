@@ -1988,7 +1988,7 @@ export const runs = pgTable(
     // read it; an env change after the snapshot cannot alter a running tree.
     // NULL = env-only bounds (a pre-3.7.0 manifest, or no orchestrator started).
     delegationBounds: jsonb("delegation_bounds").$type<DelegationBounds>(),
-    // ADR-164 (migration 0128): the run's ACTIVE execution assignment (the
+    // ADR-165 (migration 0129): the run's ACTIVE execution assignment (the
     // driver-ownership epoch). Circular like parent_run_id. NULL means
     // "pre-Stage-A, never placed" — historical rows keep it forever.
     executionAssignmentId: text("execution_assignment_id").references(
@@ -2055,7 +2055,7 @@ export const runs = pgTable(
   }),
 );
 
-// --- Execution hosts (ADR-164, migration 0128) ------------------------------
+// --- Execution hosts (ADR-165, migration 0129) ------------------------------
 // Postgres is the SSOT for hosts, assignments, and commands; the supervisor
 // keeps its own private state (identity, fences, handles, receipts) in a
 // node:sqlite file that is NOT part of this schema. All three tables are
@@ -3560,7 +3560,7 @@ export const runSessions = pgTable(
     resolutionWarning: jsonb(
       "resolution_warning",
     ).$type<RunnerResolutionWarning | null>(),
-    // ADR-164 (migration 0128): which assignment epoch spawned this session's
+    // ADR-165 (migration 0129): which assignment epoch spawned this session's
     // current process (updated per spawn), and the SUPERVISOR session id —
     // written by the session.create acknowledgement, so it is present from
     // spawn, unlike acp_session_id which lands only after the first prompt.
@@ -4506,7 +4506,7 @@ export const nodeAttempts = pgTable(
     outputContract: jsonb(
       "output_contract",
     ).$type<NodeAttemptOutputContract | null>(),
-    // ADR-164 (migration 0128): the assignment epoch this attempt ran under —
+    // ADR-165 (migration 0129): the assignment epoch this attempt ran under —
     // stamped at attempt start, immutable.
     executionAssignmentId: text("execution_assignment_id").references(
       () => executionAssignments.id,

@@ -381,7 +381,7 @@ export interface ReconcileSweepSummary {
   // `Abandoned` run row and stopped this tick — the recovery path for a
   // cascade whose best-effort session teardown did not complete.
   orphanSessionsReaped: number;
-  // ADR-164 D7/D8: ACTIVE assignments whose adopted workspace handle the host
+  // ADR-165 D7/D8: ACTIVE assignments whose adopted workspace handle the host
   // no longer knows (WARN `workspace-handle-lost`; the next create re-adopts).
   handlesLost: number;
 }
@@ -477,7 +477,7 @@ async function runWithConcurrency<T>(
   await Promise.all(workers);
 }
 
-// ADR-164 D7/D8: a read-only handle check for ACTIVE assignments — a host
+// ADR-165 D7/D8: a read-only handle check for ACTIVE assignments — a host
 // that forgot a handle it adopted (state dir wiped) → WARN
 // `workspace-handle-lost`; the next create self-heals by re-adopting. Never
 // throws: a host outage or a refused lookup is logged once and the tick goes
@@ -592,7 +592,9 @@ async function stopGraphOnlyCutoverSessions(args: {
 async function reapAbandonedRunSessions(args: {
   db: Db;
   records: readonly SupervisorSessionRecord[];
-  stopSession: (sessionId: string) => Promise<void>;
+  // ADR-165: the stop rides the run's own teardown-bound client (fenced +
+  // ledgered), so the reaper hands over the whole record, not a bare id.
+  stopSession: (record: SupervisorSessionRecord) => Promise<void>;
 }): Promise<number> {
   const live = args.records.filter((record) => record.status === "live");
   const liveRunIds = [...new Set(live.map((record) => record.runId))];
@@ -622,7 +624,7 @@ async function reapAbandonedRunSessions(args: {
 
   await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (record) => {
     try {
-      await args.stopSession(record.sessionId);
+      await args.stopSession(record);
       reaped += 1;
       log.warn(
         { runId: record.runId, sessionId: record.sessionId },
@@ -1184,7 +1186,11 @@ export async function runReconcileSweep(
     orphanSessionsReaped = await reapAbandonedRunSessions({
       db,
       records,
-      stopSession,
+      stopSession: async (record) => {
+        const client = await hosts.forRun(record.runId, { teardown: true });
+
+        await client.deleteSession(record.sessionId);
+      },
     });
     handlesLost = await checkWorkspaceHandles({ db, hosts });
 
@@ -1345,6 +1351,7 @@ export async function runReconcileSweep(
             "orchestrator-stuck",
             {
               db,
+              executionHosts: hosts,
               records: [...liveByRunStep.values()],
               logLabel: "[reconcile] orchestrator-stuck",
             },

@@ -104,7 +104,7 @@ beforeAll(async () => {
   });
   pool = testDatabase.pool;
   db = testDatabase.db;
-  // ADR-164: the resolver is placed on and driven through the local execution
+  // ADR-165: the resolver is placed on and driven through the local execution
   // host — a fake host whose wire is routed to the supervisor spies above, so
   // every assertion on those spies keeps its shape (handle-form payloads).
   fake = createFakeExecutionHost();
@@ -656,7 +656,7 @@ describe("syncRunTarget — agent resolver (ADR-141 Task 10)", () => {
     ).toBe(0);
     expect(supMock.deleteSession).toHaveBeenCalledWith(`sess-${runId}`);
     expect(schedulerSpy.promoteNextPending).toHaveBeenCalled();
-    // ADR-164 (N3): the resolver ran as its own `sync_resolver` generation,
+    // ADR-165 (N3): the resolver ran as its own `sync_resolver` generation,
     // released when the run returned to Review, and its teardown was a fenced
     // `session.delete` command under that generation.
     expect(await assignmentRows(runId)).toEqual([
@@ -953,7 +953,7 @@ describe("syncRunTarget — agent resolver (ADR-141 Task 10)", () => {
 
     await new Promise((r) => setTimeout(r, 5));
     // The respond path owns NeedsInput → Running AND the agent_running_since re-stamp.
-    // ADR-164: the response is a `session.input` command through the client
+    // ADR-165: the response is a `session.input` command through the client
     // bound to the run's assignment on the (fake) execution host.
     const { hosts } = await fakeExecutionHosts(db, { fake, runId });
 
@@ -1032,7 +1032,7 @@ describe("syncRunTarget — agent resolver (ADR-141 Task 10)", () => {
     await bg.settled();
 
     expect(supMock.deleteSession).toHaveBeenCalledWith(`sess-${runId}`);
-    // ADR-164 (N3): the fail-closed teardown is a fenced `session.delete` row.
+    // ADR-165 (N3): the fail-closed teardown is a fenced `session.delete` row.
     expect(await deleteCommandRows(runId)).toEqual([
       { kind: "session.delete", state: "succeeded", assignmentEpoch: 1 },
     ]);

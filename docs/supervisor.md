@@ -48,7 +48,7 @@ the HTTP+SSE wire AND, today, the host filesystem (`MAISTER_RUNTIME_ROOT`,
 the worktrees root, the flows cache — ADR-023): the browser run stream tails
 `run.events.jsonl` locally and worktree/diff/promotion are web-side git
 operations, so a different host for the supervisor is NOT supported in the
-current target. The execution-host contract below (Designed — ADR-164) is
+current target. The execution-host contract below (Implemented — ADR-165) is
 the seam later stages build on; it changes nothing about that topology.
 
 The architectural decision and its trade-offs live in
@@ -83,7 +83,7 @@ daemon is reachable and can accept new session work:
 ```
 
 The body intentionally contains no project ids, run ids, runner
-secrets, env vars, or filesystem paths. **(Designed — ADR-164)** `host` is
+secrets, env vars, or filesystem paths. **(Implemented — ADR-165)** `host` is
 the durable execution-host identity: `hostKey` survives restarts (it lives
 in the [state store](#execution-host-state-store)), `bootId` changes on
 every restart, `protocolVersion` is `1`. The web registrar upserts
@@ -101,10 +101,10 @@ Start a new agent process. Returns immediately after the child has been
 spawned successfully (after the `spawn` event fires) — the SSE stream is
 the source of truth for everything that happens next.
 
-**(Designed — ADR-164)** The body is a [command envelope](#command-envelope-fences-and-receipts-designed--adr-164)
+**(Implemented — ADR-165)** The body is a [command envelope](#command-envelope-fences-and-receipts-implemented--adr-165)
 with `command.kind = "session.create"` whose `payload` is the request shown
 below in its **handle form**: `executionWorkspaceId` (from
-[`POST /workspaces/adopt`](#post-workspacesadopt-designed--adr-164))
+[`POST /workspaces/adopt`](#post-workspacesadopt-implemented--adr-165))
 replaces `runId` + `projectSlug` + `worktreePath` + `repoPath` +
 `confineRoot` + `contextMounts` — the host derives `cwd`, the content-block
 confinement roots, the run dir, and the mounts from the handle. The contract
@@ -364,7 +364,7 @@ Responses:
 | `500`  | `{ "code": "SPAWN", "message": "spawn <bin> failed: ENOENT" }`      | Low-level spawn failed despite readiness: ENOENT, EACCES, first-run state failure, or OOM at fork.                                                                                                                                                                                                                   |
 | `503`  | `{ "code": "EXECUTOR_UNAVAILABLE", "message": "..." }`              | Runner, adapter, env-ref, or checkpoint strategy is not launchable before spawn: adapter unsupported, binary diagnostics unavailable, required env ref missing, unsupported provider or permission policy, or supervisor readiness failure. Web-tier translation: `MaisterError("EXECUTOR_UNAVAILABLE")` → HTTP 503. |
 
-### `POST /workspaces/adopt` _(Designed — ADR-164)_
+### `POST /workspaces/adopt` _(Implemented — ADR-165)_
 
 The ONLY path-bearing route. Body: a command envelope
 (`command.kind = "workspace.adopt"`) whose payload is
@@ -384,7 +384,7 @@ server state (`workspaces.worktree_path`, `projects.repo_path`,
 `local_packages.working_dir`, the agent launch snapshot,
 `runs.context_mounts`).
 
-### `GET /workspaces/:id` · `DELETE /workspaces/:id` _(Designed — ADR-164)_
+### `GET /workspaces/:id` · `DELETE /workspaces/:id` _(Implemented — ADR-165)_
 
 `GET` returns the path-free projection `{ executionWorkspaceId, runId,
 projectSlug, kind, adoptedAt, releasedAt? }` or 404 (the web reconciler
@@ -394,7 +394,7 @@ refused `workspace_released`), and returns `{ released }`; issued as a
 `driverless` command by GC after worktree removal and by run-terminal drop
 paths.
 
-### `GET /commands/:commandId` _(Designed — ADR-164)_
+### `GET /commands/:commandId` _(Implemented — ADR-165)_
 
 Returns the host's durable receipt for a command id —
 `{ commandId, runId, kind, assignmentEpoch, phase: accepted | completed |
@@ -403,7 +403,7 @@ the web tier exactly once after an unknown-outcome transport failure on an
 accepted prompt and during startup recovery of `delivering` / `accepted`
 ledger rows.
 
-### Command envelope, fences, and receipts _(Designed — ADR-164)_
+### Command envelope, fences, and receipts _(Implemented — ADR-165)_
 
 Every host-bound mutating route (`POST /sessions`, `POST /sessions/:id/
 {prompt,input,cancel,checkpoint}`, `DELETE /sessions/:id`,
@@ -411,9 +411,20 @@ Every host-bound mutating route (`POST /sessions`, `POST /sessions/:id/
 
 ```jsonc
 {
-  "command": { "id": "<uuid>", "kind": "session.prompt", "issuedAt": "<RFC 3339>" },
-  "fence":   { "hostKey": "eh_…", "assignmentId": "<uuid>", "assignmentEpoch": 2, "runId": "run-abc" },
-  "payload": { /* kind-specific — the pre-ADR-164 body of that route */ }
+  "command": {
+    "id": "<uuid>",
+    "kind": "session.prompt",
+    "issuedAt": "<RFC 3339>",
+  },
+  "fence": {
+    "hostKey": "eh_…",
+    "assignmentId": "<uuid>",
+    "assignmentEpoch": 2,
+    "runId": "run-abc",
+  },
+  "payload": {
+    /* kind-specific — the pre-ADR-165 body of that route */
+  },
 }
 ```
 
@@ -446,8 +457,8 @@ reconcile catches an orphan session). Receipts prune at boot and hourly
 Stop a running session: `SIGTERM` → grace (`MAISTER_KILL_GRACE_MS`,
 default 5000 ms) → `SIGKILL`. Marks the session as an
 **intentional shutdown** so the heartbeat reports `session.exited`,
-not `session.crashed`, even on non-zero exit codes. **(Designed —
-ADR-164)** Takes a `session.delete` envelope; issued `driverless` so web
+not `session.crashed`, even on non-zero exit codes. **(Implemented —
+ADR-165)** Takes a `session.delete` envelope; issued `driverless` so web
 startup recovery may re-deliver it.
 
 | Status | Body                                                       | When                                                                  |
@@ -495,7 +506,7 @@ structured ACP `session/update` events.
 Returns the current `SessionRecord[]` projection — sessionId, adapter, runId,
 projectSlug, stepId, sessionName, status (`live | exited | crashed`), pid,
 startedAt, exitedAt, exitCode, signal, monotonicId, acpSessionId. Used by
-`lib/reconcile.ts` and admin views. **(Designed — ADR-164)** The projection
+`lib/reconcile.ts` and admin views. **(Implemented — ADR-165)** The projection
 carries `executionWorkspaceId`, `assignmentId`, `assignmentEpoch`, and
 `createdByCommandId`; host-private paths (`logPath`, `worktreePath`,
 `repoPath`, `confineRoot`, `contextMounts`) never leave the host.
@@ -656,7 +667,7 @@ domain: [`system-analytics/model-catalog.md`](system-analytics/model-catalog.md)
 
 Every `SessionEvent` (`session.line`, `session.update`,
 `session.permission_request`, `session.exited`, `session.crashed`, and —
-Designed, ADR-164 — `session.command`)
+Implemented, ADR-165 — `session.command`)
 is appended to a single per-run JSONL file at
 `.maister/<projectSlug>/runs/<runId>/run.events.jsonl` alongside the
 existing per-step raw `<stepId>.log` and the in-memory ring buffer
@@ -668,7 +679,7 @@ the per-run event sequence stays strictly increasing across sessions
 — this is what the web SSE bridge at `GET /api/runs/[runId]/stream`
 relies on for cross-session `Last-Event-ID` resume.
 
-### Execution-host state store _(Designed — ADR-164)_
+### Execution-host state store _(Implemented — ADR-165)_
 
 The supervisor keeps a private `node:sqlite` database at
 `<MAISTER_EXECUTION_HOST_STATE_DIR>/state.sqlite` (default
@@ -703,11 +714,11 @@ supervisor/
 │   ├── heartbeat.ts               # exit/error → session.exited/crashed + orphan watcher
 │   ├── cost.ts                    # lenient JSON-parse → cost.jsonl
 │   ├── registry.ts                # in-memory Map + per-session event ring buffer
-│   ├── host-state.ts              # (Designed — ADR-164) node:sqlite state store: identity, fences, handles, receipts
-│   ├── execution-fence.ts         # (Designed — ADR-164) envelope fence rules + lower-epoch eviction
-│   ├── command-receipts.ts        # (Designed — ADR-164) receipt lookup / replay / in-flight join
-│   ├── workspace-registry.ts      # (Designed — ADR-164) POST /workspaces/adopt validation + handle resolution
-│   ├── workspace-roots.ts         # (Designed — ADR-164) MAISTER_WORKSPACE_ROOTS parsing
+│   ├── host-state.ts              # (Implemented — ADR-165) node:sqlite state store: identity, fences, handles, receipts
+│   ├── execution-fence.ts         # (Implemented — ADR-165) envelope fence rules + lower-epoch eviction
+│   ├── command-receipts.ts        # (Implemented — ADR-165) receipt lookup / replay / in-flight join
+│   ├── workspace-registry.ts      # (Implemented — ADR-165) POST /workspaces/adopt validation + handle resolution
+│   ├── workspace-roots.ts         # (Implemented — ADR-165) MAISTER_WORKSPACE_ROOTS parsing
 │   └── types.ts                   # Zod schemas + SessionEvent union + SupervisorError
 └── test/
     └── fixtures/
@@ -720,20 +731,20 @@ supervisor/
 `MaisterError`, which is server-only inside web). It is translated to
 JSON at the HTTP boundary.
 
-| Code                   | HTTP                             | When                                                                                                                                                     |
-| ---------------------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PRECONDITION`         | 409 (or 404 for unknown session) | Validation failure, duplicate sessionId.                                                                                                                 |
-| `SPAWN`                | 500                              | `child_process.spawn` failed (ENOENT, EACCES…).                                                                                                          |
-| `EXECUTOR_UNAVAILABLE` | 503                              | Adapter, required environment reference, or provider launch configuration is unavailable. Also reserved for future resource-cap rejections. Implemented. |
-| `ACP_PROTOCOL`         | 500                              | Wire-level failure while opening a session, sending a prompt, or delivering permission input.                                                            |
-| `CHECKPOINT`           | 500                              | Checkpoint or resume contract failure.                                                                                                                   |
-| `CRASH`                | 500                              | Reserved for heartbeat-promoted crash conditions.                                                                                                        |
-| `FENCED`               | 409                              | **(Designed — ADR-164)** `fence.assignmentEpoch` is below the host's persisted high-water for the run, or a session evicted by a higher epoch answered its pending prompt. Web maps it to `CONFLICT {details.reason: "assignment_fenced"}`; the driver yields. |
+| Code                   | HTTP                             | When                                                                                                                                                                                                                                                              |
+| ---------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PRECONDITION`         | 409 (or 404 for unknown session) | Validation failure, duplicate sessionId.                                                                                                                                                                                                                          |
+| `SPAWN`                | 500                              | `child_process.spawn` failed (ENOENT, EACCES…).                                                                                                                                                                                                                   |
+| `EXECUTOR_UNAVAILABLE` | 503                              | Adapter, required environment reference, or provider launch configuration is unavailable. Also reserved for future resource-cap rejections. Implemented.                                                                                                          |
+| `ACP_PROTOCOL`         | 500                              | Wire-level failure while opening a session, sending a prompt, or delivering permission input.                                                                                                                                                                     |
+| `CHECKPOINT`           | 500                              | Checkpoint or resume contract failure.                                                                                                                                                                                                                            |
+| `CRASH`                | 500                              | Reserved for heartbeat-promoted crash conditions.                                                                                                                                                                                                                 |
+| `FENCED`               | 409                              | **(Implemented — ADR-165)** `fence.assignmentEpoch` is below the host's persisted high-water for the run, or a session evicted by a higher epoch answered its pending prompt. Web maps it to `CONFLICT {details.reason: "assignment_fenced"}`; the driver yields. |
 
-`SupervisorErrorBody` **(Designed — ADR-164)** carries an optional typed
+`SupervisorErrorBody` **(Implemented — ADR-165)** carries an optional typed
 `details` object (`reason`, `rule`, `runId`, `commandEpoch`, `hostEpoch`);
 the reason tokens are listed in
-[Error Taxonomy §Execution-host contract](error-taxonomy.md#execution-host-contract-designed--adr-164).
+[Error Taxonomy §Execution-host contract](error-taxonomy.md#execution-host-contract-implemented--adr-165).
 
 The web client `web/lib/supervisor-client.ts` (the local-direct transport
 behind `web/lib/execution-host/`) parses `{ code, message, details }`
@@ -774,26 +785,26 @@ on malformed adapter output.
 All knobs are environment variables. Defaults assume a single-host
 docker compose; production overrides go in `.env`.
 
-| Var                               | Default                     | Purpose                                                                                                                                                                                           |
-| --------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MAISTER_SUPERVISOR_PORT`         | `7777`                      | Bind port on `0.0.0.0`.                                                                                                                                                                           |
-| `MAISTER_SUPERVISOR_URL`          | `http://localhost:7777`     | Read by `web/lib/supervisor-client.ts`.                                                                                                                                                           |
-| `MAISTER_RUNTIME_ROOT`            | `process.cwd()`             | Root under which `.maister/<slug>/runs/...` is written.                                                                                                                                           |
-| `MAISTER_EXECUTION_HOST_STATE_DIR` | `<MAISTER_RUNTIME_ROOT>/.maister/execution-host/`                                 | **(Designed — ADR-164)** Supervisor-private `node:sqlite` state dir (identity, fences, handles, receipts). Unwritable → fatal boot error.                                                                   |
-| `MAISTER_EXECUTION_HOST_KEY`      | unset                                                                              | **(Designed — ADR-164)** Optional identity pin (`^[A-Za-z0-9_-]{8,64}$`). Applied when no key is stored or equal to the stored key; a CONFLICTING pin refuses boot (exit 1).                             |
-| `MAISTER_WORKSPACE_ROOTS`         | `~/.maister/worktrees:~/.maister/local:<MAISTER_RUNTIME_ROOT>/.maister`            | **(Designed — ADR-164)** Colon-separated absolute dirs a `git_worktree` / `directory` adoption must live under. MUST mirror a moved web `MAISTER_WORKTREES_ROOT` / `MAISTER_LOCAL_PACKAGES_ROOT`.         |
-| `MAISTER_HEARTBEAT_INTERVAL_MS`   | `5000`                      | Orphan-child detection interval.                                                                                                                                                                  |
-| `MAISTER_KILL_GRACE_MS`           | `5000`                      | SIGTERM → SIGKILL grace per child on DELETE and graceful shutdown.                                                                                                                                |
-| `MAISTER_SHUTDOWN_GRACE_MS`       | `15000`                     | Total wall-clock budget for graceful supervisor shutdown.                                                                                                                                         |
-| `MAISTER_KEEPALIVE_MINUTES`       | `30`                        | NeedsInput keep-alive window (minutes). Bounds the pending-permission deferred timeout AND the web-side sweeper-driven NeedsInput → NeedsInputIdle transition. Bumped by every web activity ping. |
-| `ANTHROPIC_BASE_URL`              | `https://api.anthropic.com` | Process-wide default for Claude-compatible adapters. Platform runners should prefer typed provider config plus env refs.                                                                          |
-| `ANTHROPIC_AUTH_TOKEN`            | unset                       | Required when `ANTHROPIC_BASE_URL` points at a third-party (z.ai GLM, OpenRouter, …).                                                                                                             |
-| `MAISTER_ADAPTER_BINARY_CLAUDE`   | unset                       | Optional supervisor-side executable override for `claude`. When unset, PATH resolution uses `claude-agent-acp`.                                                                                   |
-| `MAISTER_ADAPTER_BINARY_CODEX`    | unset                       | Optional supervisor-side executable override for `codex`. When unset, PATH resolution uses `codex-acp`.                                                                                           |
-| `MAISTER_ADAPTER_BINARY_GEMINI`   | unset                       | Optional supervisor-side executable override for `gemini`. When unset, PATH resolution uses `gemini` plus the registry argv `--acp`.                                                              |
-| `MAISTER_ADAPTER_BINARY_OPENCODE` | unset                       | Optional supervisor-side executable override for `opencode`. When unset, PATH resolution uses `opencode` plus the registry argv `acp`.                                                            |
-| `MAISTER_ADAPTER_BINARY_MIMO`     | unset                       | Optional supervisor-side executable override for `mimo`. When unset, PATH resolution uses `mimo` plus the registry argv `acp`.                                                                    |
-| `LOG_LEVEL`                       | `debug`                     | pino level: `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or `silent`.                                                                                                                      |
+| Var                                | Default                                                                 | Purpose                                                                                                                                                                                              |
+| ---------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MAISTER_SUPERVISOR_PORT`          | `7777`                                                                  | Bind port on `0.0.0.0`.                                                                                                                                                                              |
+| `MAISTER_SUPERVISOR_URL`           | `http://localhost:7777`                                                 | Read by `web/lib/supervisor-client.ts`.                                                                                                                                                              |
+| `MAISTER_RUNTIME_ROOT`             | `process.cwd()`                                                         | Root under which `.maister/<slug>/runs/...` is written.                                                                                                                                              |
+| `MAISTER_EXECUTION_HOST_STATE_DIR` | `<MAISTER_RUNTIME_ROOT>/.maister/execution-host/`                       | **(Implemented — ADR-165)** Supervisor-private `node:sqlite` state dir (identity, fences, handles, receipts). Unwritable → fatal boot error.                                                         |
+| `MAISTER_EXECUTION_HOST_KEY`       | unset                                                                   | **(Implemented — ADR-165)** Optional identity pin (`^[A-Za-z0-9_-]{8,64}$`). Applied when no key is stored or equal to the stored key; a CONFLICTING pin refuses boot (exit 1).                      |
+| `MAISTER_WORKSPACE_ROOTS`          | `~/.maister/worktrees:~/.maister/local:<MAISTER_RUNTIME_ROOT>/.maister` | **(Implemented — ADR-165)** Colon-separated absolute dirs a `git_worktree` / `directory` adoption must live under. MUST mirror a moved web `MAISTER_WORKTREES_ROOT` / `MAISTER_LOCAL_PACKAGES_ROOT`. |
+| `MAISTER_HEARTBEAT_INTERVAL_MS`    | `5000`                                                                  | Orphan-child detection interval.                                                                                                                                                                     |
+| `MAISTER_KILL_GRACE_MS`            | `5000`                                                                  | SIGTERM → SIGKILL grace per child on DELETE and graceful shutdown.                                                                                                                                   |
+| `MAISTER_SHUTDOWN_GRACE_MS`        | `15000`                                                                 | Total wall-clock budget for graceful supervisor shutdown.                                                                                                                                            |
+| `MAISTER_KEEPALIVE_MINUTES`        | `30`                                                                    | NeedsInput keep-alive window (minutes). Bounds the pending-permission deferred timeout AND the web-side sweeper-driven NeedsInput → NeedsInputIdle transition. Bumped by every web activity ping.    |
+| `ANTHROPIC_BASE_URL`               | `https://api.anthropic.com`                                             | Process-wide default for Claude-compatible adapters. Platform runners should prefer typed provider config plus env refs.                                                                             |
+| `ANTHROPIC_AUTH_TOKEN`             | unset                                                                   | Required when `ANTHROPIC_BASE_URL` points at a third-party (z.ai GLM, OpenRouter, …).                                                                                                                |
+| `MAISTER_ADAPTER_BINARY_CLAUDE`    | unset                                                                   | Optional supervisor-side executable override for `claude`. When unset, PATH resolution uses `claude-agent-acp`.                                                                                      |
+| `MAISTER_ADAPTER_BINARY_CODEX`     | unset                                                                   | Optional supervisor-side executable override for `codex`. When unset, PATH resolution uses `codex-acp`.                                                                                              |
+| `MAISTER_ADAPTER_BINARY_GEMINI`    | unset                                                                   | Optional supervisor-side executable override for `gemini`. When unset, PATH resolution uses `gemini` plus the registry argv `--acp`.                                                                 |
+| `MAISTER_ADAPTER_BINARY_OPENCODE`  | unset                                                                   | Optional supervisor-side executable override for `opencode`. When unset, PATH resolution uses `opencode` plus the registry argv `acp`.                                                               |
+| `MAISTER_ADAPTER_BINARY_MIMO`      | unset                                                                   | Optional supervisor-side executable override for `mimo`. When unset, PATH resolution uses `mimo` plus the registry argv `acp`.                                                                       |
+| `LOG_LEVEL`                        | `debug`                                                                 | pino level: `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or `silent`.                                                                                                                         |
 
 Secrets MUST NEVER appear in:
 
@@ -963,7 +974,7 @@ through a `PassThrough` so both consumers see every chunk.
 ## Limitations on POC
 
 - **Single host, shared filesystem, unauthenticated loopback (Stage A —
-  ADR-164).** Exactly one non-retired local execution host; the web tier and
+  ADR-165).** Exactly one non-retired local execution host; the web tier and
   the supervisor MUST share `MAISTER_RUNTIME_ROOT`, the worktrees root, and
   the flows cache (the run stream tails `run.events.jsonl` locally;
   worktree/diff/promotion are web-side git). The HTTP wire carries no host

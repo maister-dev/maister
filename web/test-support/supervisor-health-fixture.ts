@@ -1,4 +1,4 @@
-// ADR-164: the `/health` body a mocked `checkSupervisorHealth` must return so
+// ADR-165: the `/health` body a mocked `checkSupervisorHealth` must return so
 // the execution-host registrar can register the (fake) local host. Tests that
 // mock `@/lib/supervisor-client` at the module level spread this in; the
 // identity is fixed so repeated registrations `touch` one row.

@@ -94,7 +94,7 @@ export async function POST(
     // The live session is looked up by the server-owned runId, never taken from
     // a body field. `loadActiveRunSession` already prefers a row with a live
     // `acp_session_id`; the checkpoint addresses the host's own session id
-    // (ADR-164) through the client bound to the run's active assignment.
+    // (ADR-165) through the client bound to the run's active assignment.
     const session = await loadActiveRunSession(db, runId);
     const sessionId = session?.hostSessionId ?? null;
 

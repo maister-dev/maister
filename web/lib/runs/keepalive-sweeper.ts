@@ -141,7 +141,7 @@ function needsInputIdleTtlHours(): number {
   return parsed;
 }
 
-// ADR-164: the live host session for the candidate's CURRENT node, read through
+// ADR-165: the live host session for the candidate's CURRENT node, read through
 // the client bound to the run's assignment. Matching by (runId, stepId) keeps
 // the "only the exact capped node's session" rule; a lookup failure is the
 // caller's "leave for the next tick" signal.
@@ -177,7 +177,7 @@ async function fetchPass1Candidates(db: Db): Promise<Pass1Candidate[]> {
     .limit(PER_TICK_LIMIT);
 
   // M42 (ADR-114): the checkpoint handle comes from the run's ACTIVE session —
-  // the host's own session id (ADR-164), written by the create ack.
+  // the host's own session id (ADR-165), written by the create ack.
   const activeByRun = await loadActiveRunSessionsByRunId(
     db,
     rows.map((row: { id: string }) => row.id),
@@ -1877,7 +1877,7 @@ async function actBudgetTerminateTree(
     candidate.id,
     candidate.taskId,
     "budget_exceeded",
-    { db, records, logLabel: "[budget] tree-terminate" },
+    { db, executionHosts: hosts, logLabel: "[budget] tree-terminate" },
   );
 
   const notified = mergedBudgetState(

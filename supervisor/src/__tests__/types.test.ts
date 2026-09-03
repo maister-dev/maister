@@ -90,7 +90,7 @@ describe("StartSessionRequestSchema", () => {
     }
   });
 
-  // ADR-164 (strict): the handle is the ONLY workspace address; every former
+  // ADR-165 (strict): the handle is the ONLY workspace address; every former
   // path field is an unknown key to the schema and is refused by name by the
   // route guard (`legacy_field`) before the schema runs.
   it("requires executionWorkspaceId", () => {
@@ -588,7 +588,7 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
   });
 });
 
-describe("SupervisorError details (ADR-164)", () => {
+describe("SupervisorError details (ADR-165)", () => {
   it("maps FENCED to 409 and serializes details on the body", () => {
     const err = new SupervisorError("FENCED", "stale epoch", {
       details: {

@@ -1,4 +1,4 @@
-// ADR-164: spawn-level unit tests feed `spawnSession` a resolved workspace
+// ADR-165: spawn-level unit tests feed `spawnSession` a resolved workspace
 // without booting the HTTP host. This is the test-side statement of the run-dir
 // layout the host derives from an adopted handle
 // (`<runtimeRoot>/.maister/<slug>/runs/<runId>/`).

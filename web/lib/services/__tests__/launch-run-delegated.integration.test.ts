@@ -22,6 +22,7 @@ import {
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 import { minimalGraphManifest } from "@/test-support/delegation-seed";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -68,6 +69,8 @@ beforeAll(async () => {
   });
   pool = testDatabase.pool;
   db = testDatabase.db;
+  // ADR-165: every launch places the run on the local execution host.
+  await fakeExecutionHosts(db);
 
   ({ launchRun } = await import("@/lib/services/runs"));
   ({ loadRun } = await import("@/lib/flows/graph/runner-core"));

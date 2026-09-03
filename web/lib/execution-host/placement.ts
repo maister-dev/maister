@@ -13,7 +13,7 @@ const defaultLog = pino({
   level: process.env.LOG_LEVEL ?? "info",
 }).child({ component: "placement" });
 
-// ADR-164 D2/D3: every placement re-entry (launch, resume, recover, …) mints
+// ADR-165 D2/D3: every placement re-entry (launch, resume, recover, …) mints
 // the next epoch INSIDE its existing CAS claim — `tx` is the caller's
 // transaction. The host is the memoized local host; resolution never runs
 // DB work inside the caller's tx (the registrar has its own).
@@ -44,10 +44,10 @@ export async function mintPlacement(
   });
 }
 
-// ADR-164 D9 lazy assignment: a command issuer meeting a run with NO active
+// ADR-165 D9 lazy assignment: a command issuer meeting a run with NO active
 // assignment (pre-Stage-A row) mints epoch 1 on the local host. Deterministic
 // because exactly one non-retired local host can exist. MUST be deleted in
-// Stage C (recorded in ADR-164).
+// Stage C (recorded in ADR-165).
 export async function ensureAssignment(
   db: Db,
   runId: string,

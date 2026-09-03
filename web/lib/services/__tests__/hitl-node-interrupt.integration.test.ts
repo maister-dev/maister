@@ -69,7 +69,7 @@ beforeAll(async () => {
   });
   pool = testDatabase.pool;
   db = testDatabase.db;
-  // ADR-164: a restart mints a `node_interrupt` placement on the local host.
+  // ADR-165: a restart mints a `node_interrupt` placement on the local host.
   ({ hosts } = await fakeExecutionHosts(db));
 }, 180_000);
 
@@ -719,10 +719,10 @@ describe("node_interrupt — restart_from stales the whole downstream", () => {
   });
 });
 
-// ADR-164 D3: a restart appends a fresh attempt under a NEW driver generation —
+// ADR-165 D3: a restart appends a fresh attempt under a NEW driver generation —
 // the restart claim mints a `node_interrupt` placement on the local host, and a
 // `resume` (same attempt continues) reuses the current epoch, minting nothing.
-describe("node_interrupt — execution-assignment placement (ADR-164)", () => {
+describe("node_interrupt — execution-assignment placement (ADR-165)", () => {
   async function assignmentsOf(runId: string) {
     return (db as any)
       .select()

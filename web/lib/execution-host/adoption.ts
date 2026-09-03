@@ -48,7 +48,7 @@ function missingWorkspace(runId: string, what: string): MaisterError {
   );
 }
 
-// ADR-164 D7: the ONE kind-mapping from a run's durable rows to the adopt
+// ADR-165 D7: the ONE kind-mapping from a run's durable rows to the adopt
 // payload. Pure — the integration cases K1–K4 exercise every branch through
 // the real loader; no duplicate unit test.
 export function workspaceSpecFor(
@@ -249,7 +249,7 @@ export type AdoptingClient = {
   adoptWorkspace(spec: AdoptWorkspaceWire): Promise<AdoptWorkspaceResult>;
 };
 
-// ADR-164 E-EH-08: adopt ONCE per assignment — the stored handle short-circuits
+// ADR-165 E-EH-08: adopt ONCE per assignment — the stored handle short-circuits
 // the wire; `force` re-adopts after the host answered `unknown_workspace`
 // (state dir wiped). The client persists the handle in the ack transaction.
 export async function ensureWorkspaceAdopted(args: {

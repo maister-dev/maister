@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { HostKeyConflictError, openHostState } from "../host-state";
 import { bootExecutionHost, buildRegisterRoutesOptions } from "../main";
@@ -22,7 +22,7 @@ describe("buildRegisterRoutesOptions", () => {
     expect(opts.modelCatalog?.registry).toBeDefined();
   });
 
-  // ADR-164: the production boot passes the execution-host state store and the
+  // ADR-165: the production boot passes the execution-host state store and the
   // adoption roots through; without them registerRoutes falls back to an
   // in-memory store, which is a test convenience, never a production topology.
   it("forwards the execution-host state store and workspace roots", () => {
@@ -33,7 +33,6 @@ describe("buildRegisterRoutesOptions", () => {
       logger: silentLogger,
       runtimeRoot: "/tmp/main-wiring-test",
       killGraceMs: 5_000,
-      ccrManager: mockCcr(),
       hostState,
       workspaceRoots: ["/tmp/main-wiring-test/worktrees"],
     });
@@ -44,7 +43,7 @@ describe("buildRegisterRoutesOptions", () => {
   });
 });
 
-describe("bootExecutionHost (ADR-164 boot fatals)", () => {
+describe("bootExecutionHost (ADR-165 boot fatals)", () => {
   it("refuses boot on a conflicting pin, logging the remediation", async () => {
     const dir = await mkdtemp(join(tmpdir(), "eh-boot-"));
     const first = openHostState({ stateDir: dir });

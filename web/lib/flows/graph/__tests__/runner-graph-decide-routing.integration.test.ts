@@ -76,7 +76,7 @@ async function getAttempts(runId: string): Promise<NodeAttempt[]> {
 
 // Streams `text` as one agent_message_chunk then a clean end-turn — the gate's
 // ai_judgment agent parses its verdict from this text.
-// ADR-164: a fake host scripted to stream `text` then a clean end-turn.
+// ADR-165: a fake host scripted to stream `text` then a clean end-turn.
 async function makeAgentSupervisor(
   runId: string,
   text: string,

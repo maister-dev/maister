@@ -175,7 +175,7 @@ export async function resumeRun(
     };
   }
 
-  // ADR-164: the resume is a new driver generation on the local host — resolve
+  // ADR-165: the resume is a new driver generation on the local host — resolve
   // it BEFORE the claim so an unavailable host is a retryable refusal with no
   // claim taken (the row stays NeedsInputIdle; the response stays stored).
   const hosts = opts.executionHosts ?? createExecutionHosts({ db });
@@ -314,7 +314,7 @@ export async function resumeRun(
       acpSessionId: result.acpSessionId,
     };
   } catch (err) {
-    // ADR-164 yield rule: a newer generation already owns this run — write no
+    // ADR-165 yield rule: a newer generation already owns this run — write no
     // run state (its own driver re-issues the stored intent).
     if (isFencedError(err)) {
       log.warn({ runId }, "resumeRun: driver-yielded — assignment fenced");

@@ -1272,7 +1272,7 @@ sequenceDiagram
 
 ### Linked artifacts
 
-- Execution-host contract (ADR-164, Designed): [`execution-hosts.md`](execution-hosts.md) — the permission-respond Phase-1 transaction also inserts the `session.input` command row; Phase 2 marks `responded_at` and the command `succeeded` in one transaction, and every persist-failure path cancels through a `session.input{action:"cancel"}` command.
+- Execution-host contract (ADR-165, Implemented): [`execution-hosts.md`](execution-hosts.md) — the permission-respond Phase-1 transaction also inserts the `session.input` command row; Phase 2 marks `responded_at` and the command `succeeded` in one transaction, and every persist-failure path cancels through a `session.input{action:"cancel"}` command.
 - [ADR-138](../decisions.md#adr-138-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery),
   [`review-comments.md`](review-comments.md), [`flow-graph.md`](flow-graph.md),
   [`../api/web.openapi.yaml`](../api/web.openapi.yaml), and

@@ -69,7 +69,7 @@ export function normalizeScratchPrompt(
 
 type DbClientLike = any;
 
-// ADR-164: a scratch turn talks to the host through the client bound to the
+// ADR-165: a scratch turn talks to the host through the client bound to the
 // run's execution assignment (prompt, permission input) and the host-scoped
 // admin stream. Callers that already hold a binding pass it; the default binds
 // the run's active assignment on the local host.
@@ -137,7 +137,7 @@ type MinimalSupervisorEvent =
       lifecycle: "pre_tool_call" | "post_turn";
       disposition: "deny" | "halt";
     }
-  // ADR-164: command acceptance / completion signal for the enveloped session
+  // ADR-165: command acceptance / completion signal for the enveloped session
   // routes. Consumed by the execution-host command ledger, never by the scratch
   // projection (default → {}), mirrored here to keep the projection total.
   | {

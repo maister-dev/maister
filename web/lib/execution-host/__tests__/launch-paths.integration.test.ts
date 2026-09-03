@@ -1,4 +1,4 @@
-// ADR-164 T4.1 — flow launch + runner-agent + runner-graph through the
+// ADR-165 T4.1 — flow launch + runner-agent + runner-graph through the
 // execution-host seam (P1–P4). P1 drives the real `launchRun`; P2–P4 drive the
 // graph runner over a fake host scripted turn by turn.
 
@@ -231,7 +231,7 @@ afterAll(async () => {
   await testDatabase?.stop();
 });
 
-describe("flow launch + graph driver (ADR-164 T4.1)", () => {
+describe("flow launch + graph driver (ADR-165 T4.1)", () => {
   it("P1: launchRun mints epoch 1 `launch` in the SAME transaction as the run — a tx abort leaves neither", async () => {
     const aborted = await seedLaunchableTask();
 

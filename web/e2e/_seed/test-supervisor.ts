@@ -125,7 +125,7 @@ type SessionRecord = {
   emit: ((event: Record<string, unknown>) => void) | null;
   // Events emitted before the stream connected — flushed on connect.
   queued: Array<Record<string, unknown>>;
-  // ADR-164 (T6.2) permission scenario (the execution-host contract project):
+  // ADR-165 (T6.2) permission scenario (the execution-host contract project):
   // the first prompt of every session parks on a permission request and its
   // HTTP response is HELD until `/input` answers it (end_turn) or a checkpoint
   // tears the session down (cancelled + session.exited{reason: checkpoint}).
@@ -135,7 +135,7 @@ type SessionRecord = {
     env: ReturnType<typeof stubEnvelope>;
     respond: (status: number, body: unknown) => void;
   } | null;
-  // ADR-164: the create envelope's fence + handle.
+  // ADR-165: the create envelope's fence + handle.
   executionWorkspaceId?: string;
   assignmentId?: string;
   assignmentEpoch?: number;
@@ -685,50 +685,66 @@ export async function startTestSupervisor(
       return;
     }
 
-    // ---- ADR-164 workspace adoption + receipts (transitional, in-memory) --
+    // ---- ADR-165 workspace adoption + receipts (transitional, in-memory) --
     const sendJson = (status: number, body: unknown, replayed = false) => {
       const headers: Record<string, string> = {
         "content-type": "application/json",
       };
+
       if (replayed) headers["x-maister-command-replayed"] = "true";
       res.writeHead(status, headers);
       res.end(JSON.stringify(body));
     };
+
     if (method === "POST" && url === "/workspaces/adopt") {
       void readJsonBody(req).then((body) => {
         const env = stubEnvelope(body);
+
         if (!env) {
           sendJson(409, {
             code: "PRECONDITION",
             message: "missing envelope",
             details: { reason: "missing_envelope" },
           });
+
           return;
         }
         const replay = stubReplay(env);
+
         if (replay) {
           sendJson(replay.status, replay.body, true);
+
           return;
         }
         const refused = stubFence(env, String(env.payload.runId ?? ""));
+
         if (refused) {
           stubRecord(env, refused.status, refused.body);
           sendJson(refused.status, refused.body);
+
           return;
         }
         const outcome = stubAdopt(env.payload);
+
         stubRecord(env, outcome.status, outcome.body);
         sendJson(outcome.status, outcome.body);
       });
+
+      return;
+    }
+
     const workspaceMatch = url.match(/^\/workspaces\/(ws_[0-9a-f]{32})$/);
+
     if (method === "GET" && workspaceMatch) {
       const h = stubHandle(workspaceMatch[1]);
+
       if (!h) {
         sendJson(404, {
           code: "PRECONDITION",
           message: "unknown execution workspace",
           details: { reason: "unknown_workspace" },
         });
+
         return;
       }
       sendJson(200, {
@@ -739,41 +755,63 @@ export async function startTestSupervisor(
         adoptedAt: h.adoptedAt,
         releasedAt: h.releasedAt,
       });
+
+      return;
+    }
+
     if (method === "DELETE" && workspaceMatch) {
       void readJsonBody(req).then((body) => {
         const h = stubHandle(workspaceMatch[1]);
+
         if (!h) {
           sendJson(404, {
             code: "PRECONDITION",
             message: "unknown execution workspace",
             details: { reason: "unknown_workspace" },
           });
+
           return;
         }
         const env = stubEnvelope(body);
         const replay = stubReplay(env);
+
         if (replay) {
           sendJson(replay.status, replay.body, true);
+
           return;
         }
         const refused = stubFence(env, h.runId);
+
         if (refused) {
           stubRecord(env, refused.status, refused.body);
           sendJson(refused.status, refused.body);
+
           return;
         }
         const outcome = { released: stubRelease(workspaceMatch[1]) };
+
         stubRecord(env, 200, outcome);
         sendJson(200, outcome);
       });
+
+      return;
+    }
+
     const commandMatch = url.match(/^\/commands\/([0-9a-f-]+)$/);
+
     if (method === "GET" && commandMatch) {
       const receipt = stubReceipt(commandMatch[1]);
+
       if (!receipt) {
         sendJson(404, { code: "PRECONDITION", message: "unknown command" });
+
         return;
       }
       sendJson(200, receipt);
+
+      return;
+    }
+
     // ---- GET /sessions — reconcile/keepalive/parkOrchestratorSession view --
     if (method === "GET" && url === "/sessions") {
       const records = [...sessions.values()]
@@ -926,7 +964,7 @@ export async function startTestSupervisor(
         }
         const body = stubPayload(rawBody) as Record<string, unknown>;
 
-        // ADR-164: the durable completion signal beside the HTTP response.
+        // ADR-165: the durable completion signal beside the HTTP response.
         if (env && rec?.emit) {
           rec.emit({
             type: "session.command",

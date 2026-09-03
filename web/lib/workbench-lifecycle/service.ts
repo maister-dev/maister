@@ -2,7 +2,6 @@ import "server-only";
 
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { ZodType } from "zod";
-import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
 import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type { ProjectAction } from "@/lib/authz";
 import type {
@@ -16,6 +15,7 @@ import { access } from "node:fs/promises";
 import { and, eq, gt, inArray, isNull, notInArray } from "drizzle-orm";
 import pino from "pino";
 
+import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import {
   REVIEW_REWORK_CLAIM_DECISION,
@@ -179,7 +179,7 @@ export type WorkbenchLifecycleDeps = {
   requireActiveSession: () => Promise<{ id: string } | void>;
   loadContext: (runId: string) => Promise<LifecycleContext>;
   authorize: (projectId: string, action: LifecycleAction) => Promise<void>;
-  // ADR-164: the host the stop tears live sessions down through (a fenced
+  // ADR-165: the host the stop tears live sessions down through (a fenced
   // `session.delete` under the run's newest assignment).
   executionHosts: ExecutionHosts;
   markStoppedAndCloseAssignments: (args: {
@@ -2091,6 +2091,7 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
     activeClaim?.decision === REVIEW_REWORK_CLAIM_DECISION
       ? activeClaim.ownerUserId
       : null;
+
   // `viewerUserId` is deliberately NOT read here: a DB loader must not reach
   // for the request session. Entry points attach it from the user their own
   // `requireActiveSession()` already authenticated.
@@ -2314,7 +2315,7 @@ async function markRunStoppedAndCloseAssignments(args: {
       );
     }
 
-    // ADR-164 D7: the stop ends the run's driver generation.
+    // ADR-165 D7: the stop ends the run's driver generation.
     await releaseAssignmentForRun(
       tx as unknown as ExecutionDb,
       args.runId,

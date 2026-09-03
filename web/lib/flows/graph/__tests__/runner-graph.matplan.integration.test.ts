@@ -185,7 +185,7 @@ async function getAttempts(runId: string): Promise<NodeAttempt[]> {
     .where(eq(schema.nodeAttempts.runId, runId))) as unknown as NodeAttempt[];
 }
 
-// ADR-164: a fake execution host whose agent turn is a clean end-turn, plus a
+// ADR-165: a fake execution host whose agent turn is a clean end-turn, plus a
 // spy that receives every `session.create` payload the runner sends (the
 // handle-form body still carries the capability material: mcpServers,
 // capabilityProfilePath, adapterLaunch, enforcementProfile).

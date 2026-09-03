@@ -77,7 +77,7 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
   return { ...actual, ...supervisorMocks };
 });
 vi.mock("@/lib/runs/resume-driver", () => resumeDriverMocks);
-// ADR-164: the permission delivery rides a `session.input` command through the
+// ADR-165: the permission delivery rides a `session.input` command through the
 // client bound to the run's assignment; route the wire call to the existing
 // `deliverPermission` mock so every case keeps its supervisor-level assertions.
 vi.mock("@/lib/execution-host", async (importOriginal) => {
@@ -173,7 +173,7 @@ beforeAll(async () => {
 
   pool = testDatabase.pool;
   db = testDatabase.db;
-  // ADR-164: the resume claim mints on the local host — register a fake one.
+  // ADR-165: the resume claim mints on the local host — register a fake one.
   await fakeExecutionHosts(db);
 }, 180_000);
 

@@ -1,4 +1,4 @@
-// ADR-164 T4.3 (E1–E2) — the ONLY end-to-end web test of Stage A: a flow run
+// ADR-165 T4.3 (E1–E2) — the ONLY end-to-end web test of Stage A: a flow run
 // driven by the real graph runner against a REAL supervisor (mock ACP adapter
 // that requests a permission on its first prompt and journals it for
 // session/resume):

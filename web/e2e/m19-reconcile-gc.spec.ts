@@ -34,6 +34,8 @@ import path from "node:path";
 
 import { test, expect } from "@playwright/test";
 
+import { withE2EDb } from "./_seed/db";
+
 type M19Fixture = {
   projectId: string;
   projectSlug: string;
@@ -168,6 +170,22 @@ test.describe("M19 reconcile + GC UI", () => {
     page,
   }) => {
     const fx = loadM19();
+
+    // The two TTL workspaces are consumables: ANY global `system_sweep` in the
+    // parallel authed lane (another spec ticking the scheduler — e.g. the
+    // execution-host contract spec's keep-alive step) collects the past-
+    // deadline "due" row before this assertion reads the rail. The GC only
+    // tombstones the row (`removed_at` + the drop record), so re-arm the seeded
+    // shape right before reading.
+    await withE2EDb((pool) =>
+      pool.query(
+        `UPDATE workspaces
+            SET removed_at = NULL, removal_kind = NULL, preservation_outcome = NULL,
+                archived_branch = NULL, archived_at = NULL, archived_commit = NULL
+          WHERE run_id IN ($1, $2)`,
+        [fx.warningRunId, fx.dueRunId],
+      ),
+    );
 
     await page.goto(`/projects/${fx.projectSlug}`);
 

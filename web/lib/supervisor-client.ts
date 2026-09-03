@@ -79,7 +79,7 @@ export type SupervisorRunnerInput = {
   env?: Record<string, string>;
 };
 
-// ADR-164 (strict): the `session.create` payload minus its workspace address —
+// ADR-165 (strict): the `session.create` payload minus its workspace address —
 // `CreateSessionPayload` (execution-host contracts) adds the opaque
 // `executionWorkspaceId`. Every path the host needs (cwd, confinement roots,
 // run dir, context mounts) derives from the adopted handle; only the
@@ -183,7 +183,7 @@ export type SupervisorSessionRecord = {
   // is the post-newSession ACP-level id the supervisor stored on
   // record.acpSessionId; mirrors supervisor/src/types.ts.
   acpSessionId?: string;
-  // ADR-164: the adopted handle this session runs in and the fence of the
+  // ADR-165: the adopted handle this session runs in and the fence of the
   // `session.create` command that spawned it.
   executionWorkspaceId?: string;
   assignmentId?: string;
@@ -208,8 +208,8 @@ export type SupervisorModelCatalog = {
   ttlSeconds: number;
 };
 
-// ADR-164 (Designed): the durable execution-host identity reported on
-// `/health`. Optional on the transport parse so a pre-ADR-164 supervisor still
+// ADR-165 (Implemented): the durable execution-host identity reported on
+// `/health`. Optional on the transport parse so a pre-ADR-165 supervisor still
 // reads as ready; the registrar (lib/execution-host) REQUIRES it to register.
 export const ExecutionHostIdentitySchema = z
   .object({
@@ -371,7 +371,7 @@ export type SupervisorEvent =
       // POST /sessions/{id}/checkpoint (sweeper or manual). "intentional"
       // = plain DELETE /sessions/{id}. Absent on natural process exit.
       // Mirrors supervisor/src/types.ts and docs/api/async/supervisor-sse
-      // .asyncapi.yaml SessionExitedEvent. ADR-164: "fenced" = evicted by a
+      // .asyncapi.yaml SessionExitedEvent. ADR-165: "fenced" = evicted by a
       // command carrying a higher assignment epoch.
       reason?: "checkpoint" | "intentional" | "fenced";
     }
@@ -408,7 +408,7 @@ export type SupervisorEvent =
       disposition: "deny" | "halt";
       toolCall: unknown;
     }
-  // ADR-164 (Designed): command acceptance / completion for the enveloped
+  // ADR-165 (Implemented): command acceptance / completion for the enveloped
   // session routes — the durable completion signal beside the long-lived HTTP
   // response. Mirrors supervisor/src/types.ts + supervisor-sse.asyncapi.yaml.
   // Consumed by the execution-host command ledger; every other consumer
@@ -455,7 +455,7 @@ function isKnownCode(value: unknown): value is MaisterErrorCode {
   );
 }
 
-// ADR-164 D5: the ONE status+body → MaisterError mapping. The supervisor's
+// ADR-165 D5: the ONE status+body → MaisterError mapping. The supervisor's
 // `details` travel through untouched (reason tokens are the contract), and the
 // wire-only `FENCED` code lands as `CONFLICT {details.reason:"assignment_fenced"}`
 // — no new MaisterError member. `details.httpStatus` lets an endpoint apply
@@ -1140,7 +1140,7 @@ export async function* streamSession(
 }
 
 // ============================================================================
-// ADR-164 (Designed) — enveloped wire. Importable ONLY from
+// ADR-165 (Implemented) — enveloped wire. Importable ONLY from
 // `web/lib/execution-host/**` (the local-direct transport); domain code goes
 // through `BoundClient` / `HostAdminClient`. Every enveloped variant shares the
 // ONE `request()` helper below, so status classification (definitive vs

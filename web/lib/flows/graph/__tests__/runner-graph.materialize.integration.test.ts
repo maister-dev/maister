@@ -178,7 +178,7 @@ async function seedCapabilityRecords(projectId: string): Promise<void> {
 
 // A SupervisorApi spy. createSession returns a canned session and streamSession
 // yields a clean end-turn so the ai_coding node finishes without a real agent.
-// ADR-164: a fake execution host whose agent turn is a clean end-turn, plus a
+// ADR-165: a fake execution host whose agent turn is a clean end-turn, plus a
 // spy that receives every `session.create` payload the runner sends.
 async function makeSupervisorSpy(runId: string): Promise<{
   hosts: ExecutionHosts;

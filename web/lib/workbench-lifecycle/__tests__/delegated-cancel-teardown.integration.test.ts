@@ -25,6 +25,10 @@ import {
   seedTask,
 } from "@/test-support/delegation-seed";
 import {
+  createFakeExecutionHost,
+  fakeExecutionHosts,
+} from "@/test-support/fake-execution-host";
+import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
@@ -82,6 +86,19 @@ beforeAll(async () => {
   });
   pool = testDatabase.pool;
   db = testDatabase.db;
+  // ADR-165: the cascade teardown lists and deletes through the execution-host
+  // client; the fake host routes both to this suite's spies.
+  const fake = createFakeExecutionHost();
+
+  Object.assign(fake.transport, {
+    listSessions: () => listSessionsSpy(),
+    deleteSession: async (sessionId: string) => {
+      await deleteSessionSpy(sessionId);
+
+      return { outcome: "terminated" as const };
+    },
+  });
+  await fakeExecutionHosts(db, { fake });
 
   ({ stopWorkbenchRun, stopWorkbenchRunForToken } = await import(
     "@/lib/workbench-lifecycle/service"
@@ -148,7 +165,6 @@ function liveRecord(runId: string, sessionId: string): SupervisorSessionRecord {
     status: "live",
     pid: 4321,
     startedAt: new Date().toISOString(),
-    logPath: "/tmp/log",
     monotonicId: 1,
     acpSessionId: `acp-${sessionId}`,
   };
