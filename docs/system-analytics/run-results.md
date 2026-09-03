@@ -1,4 +1,4 @@
-# Run results — the public result plane (Designed — ADR-165)
+# Run results — the public result plane (Implemented — ADR-165)
 
 ## Purpose
 

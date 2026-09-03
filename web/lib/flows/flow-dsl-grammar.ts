@@ -56,7 +56,11 @@ Fields common to every node: \`id\`, \`type\`, \`transitions\`, \`input\`, \`out
   \`compat.engine_min >= 3.7.0\` these are LIVE: the effective bound is
   \`min(instance ceiling, declared)\` — an author can only LOWER a ceiling, never
   raise it — and the defaults when omitted are depth 2, fan-out 6, active
-  children 3. \`budget: { max_tokens, wall_clock_minutes, max_child_runs,
+  children 3. \`max_depth\` counts ABSOLUTE depth from the TREE root and is
+  min-merged with the root's, so a flow that may run as a CHILD must declare the
+  depth its own children will occupy in the whole tree, not the levels it adds:
+  a research flow nested one level down, whose agents sit at depth 2, needs
+  \`max_depth: 2\`. \`budget: { max_tokens, wall_clock_minutes, max_child_runs,
   consecutive_failures }\` is REQUIRED and COMPLETE on an orchestrator at that
   floor. \`max_child_runs\` binds at EVERY ancestor; the other three bind at the
   tree ROOT. Going over \`max_active_children\` is NOT a refusal — the child stays

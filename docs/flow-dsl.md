@@ -615,7 +615,7 @@ nodes:
       runner: claude-code # inherits the ai_coding capability shape
       thinkingEffort: high
       mcps: [github]
-      delegation: # v2 — Designed, ADR-165, engine_min >= 3.7.0
+      delegation: # v2 — Implemented, ADR-165, engine_min >= 3.7.0
         max_depth: 2 # optional; ABSOLUTE depth from the tree root;
         # effective = min(env, this ?? 2)
         max_fanout: 6 # optional; effective = min(env, this ?? 6)
@@ -641,7 +641,7 @@ nodes:
   `MAISTER_MAX_ORCHESTRATOR_FANOUT` (`16`) and `MAISTER_ORCHESTRATOR_MAX_DEPTH`
   (`3`). An over-fanout or over-depth request is refused with
   `MaisterError("CONFIG")`; no partial run-tree is created.
-  **(Designed — [ADR-165](decisions.md#adr-165-governed-recursive-agent-harness--public-run-results-result-profiles-effective-recursion-bounds-result-only-completion))**
+  **(Implemented — [ADR-165](decisions.md#adr-165-governed-recursive-agent-harness--public-run-results-result-profiles-effective-recursion-bounds-result-only-completion))**
   the node-level bounds become **live for `compat.engine_min >= 3.7.0` manifests
   only**; below the floor they stay exactly what ADR-163 made them — parsed and
   ignored, with the platform env values enforced, byte for byte. At or above the
@@ -1152,7 +1152,7 @@ nodes:
 See [ADR-160](decisions.md#adr-160-review-run-rework-claim-with-fast-forward-only-handoff-round-trip)
 and [`system-analytics/run-continuation.md`](system-analytics/run-continuation.md).
 
-## Flow result export (`result.export`) (Designed — ADR-165)
+## Flow result export (`result.export`) (Implemented — ADR-165)
 
 A flow may declare, at the **top level beside `nodes`**, the schema and the
 producer set of its **public run result** — the value a delegating orchestrator
@@ -1890,7 +1890,7 @@ until later engine work gives them runtime meaning. See
 [`configuration.md`](configuration.md) and
 [`system-analytics/flow-packages.md`](system-analytics/flow-packages.md).
 
-### `result_profiles` in `maister-package.yaml` (Designed — ADR-165)
+### `result_profiles` in `maister-package.yaml` (Implemented — ADR-165)
 
 A **package** manifest may declare named agent result contracts. They are the
 only way a delegated **agent** child gets a public result: `run_delegate` /

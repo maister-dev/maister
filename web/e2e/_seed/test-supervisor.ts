@@ -235,6 +235,14 @@ export async function startTestSupervisor(
     mcpServers: AgentMcpServer[];
   }> = [];
   const delegations: DelegateRequest[] = [];
+  // Orchestrator runs whose turn-0 fan-out has already happened. `driveTurn`
+  // runs on EVERY `POST /sessions/:id/prompt`, so a second prompt on the same
+  // session — a retry, or a wake that re-prompts without a `resumeSessionId` —
+  // would spawn the sub-tasks a SECOND time and silently double the tree. A
+  // real coordinator does not re-delegate the same sub-tasks because it was
+  // prompted again; this keyed set is that behaviour, and it is what makes the
+  // simulated fan-out deterministic under parallel load.
+  const delegatedRuns = new Set<string>();
   let monotonic = 0;
 
   const nextId = (): number => {
@@ -429,7 +437,12 @@ export async function startTestSupervisor(
   // orchestrator turn 0 it spawns children first (awaited) so countPendingChildren
   // sees them when the runner makes the park decision after the prompt returns.
   async function driveTurn(rec: SessionRecord): Promise<void> {
-    if (rec.runKind === "flow" && !rec.isResume) {
+    if (
+      rec.runKind === "flow" &&
+      !rec.isResume &&
+      !delegatedRuns.has(rec.runId)
+    ) {
+      delegatedRuns.add(rec.runId);
       const { token, apiBaseUrl } = readFacade(rec.mcpServers);
 
       for (let i = 0; i < childCount; i += 1) {

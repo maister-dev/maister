@@ -29,3 +29,4 @@ fails when a file here is missing from it).
 | [`2026-06-21-shared-worktree-review-model-design.md`](2026-06-21-shared-worktree-review-model-design.md) | Shipped as ADR-102 (current truth: ` |
 | [`2026-06-26-node-form-reference-pickers-plan.md`](2026-06-26-node-form-reference-pickers-plan.md) | Shipped (Phases 0/A/B/C) |
 | [`2026-07-01-project-brain-architecture.md`](2026-07-01-project-brain-architecture.md) | Shipped — sub-projects A/B/C all landed (ADR-122/127/128) |
+| [`2026-09-02-rah-companion-package.md`](2026-09-02-rah-companion-package.md) | Pending — handoff pointer for `maister-plugins/packages/rah` (ADR-165); authored after this repo merges |

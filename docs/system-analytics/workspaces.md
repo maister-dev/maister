@@ -160,7 +160,7 @@ sequenceDiagram
     W->>DB: INSERT workspaces { run_id, project_id, branch, base_branch, base_commit, target_branch, worktree_path, parent_repo_path }
 ```
 
-### Result-only completion (Designed — ADR-165)
+### Result-only completion (Implemented — ADR-165)
 
 Not every `Done` is a promotion. A **flow** run that declares `result.export`,
 published a `valid` public result and changed nothing finishes `Running → Done`

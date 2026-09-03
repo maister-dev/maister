@@ -410,7 +410,7 @@ quarantine rows for paths that are working exactly as designed. A future change
 that relocates mounts must therefore land with a matching reconciler scope
 change in the same commit, never on its own.
 
-## Result-only completion feeds the ordinary GC shape (Designed — ADR-165)
+## Result-only completion feeds the ordinary GC shape (Implemented — ADR-165)
 
 A flow run that finishes `Running → Done` by result-only completion stamps
 `workspaces.scheduled_removal_at = now + MAISTER_GC_AGE_DAYS` in the same

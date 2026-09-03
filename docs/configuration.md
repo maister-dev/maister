@@ -427,7 +427,7 @@ section; `mcps[].env` values MUST match `/^env:[A-Z0-9_]+$/` (secret values
 are never stored — same convention as `platform_mcp_servers`). There is NO
 `version` field — the git tag is the only pin (ADR-021 semantics).
 
-**`result_profiles` (Designed — [ADR-165](decisions.md#adr-165-governed-recursive-agent-harness--public-run-results-result-profiles-effective-recursion-bounds-result-only-completion)).**
+**`result_profiles` (Implemented — [ADR-165](decisions.md#adr-165-governed-recursive-agent-harness--public-run-results-result-profiles-effective-recursion-bounds-result-only-completion)).**
 An optional package-level block declaring NAMED public result contracts for
 delegated **agent** children:
 

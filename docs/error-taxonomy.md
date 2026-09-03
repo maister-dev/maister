@@ -589,14 +589,14 @@ invalid Plan-review capability fails before a review card with existing
 conflicting decision response uses the existing `CONFLICT`/`PRECONDITION`
 classification; no new error code is introduced.
 
-## Public run results and recursion bounds (Designed — ADR-165)
+## Public run results and recursion bounds (Implemented — ADR-165)
 
 The result plane, the `resultProfile` option and the effective recursion bounds
 introduce **no new `MaisterError` code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror)
 closed union). Every refusal reuses an existing code; the reason vocabulary is
 what grows.
 
-**`CONFIG` new call sites (Designed):**
+**`CONFIG` new call sites (Implemented):**
 
 | Site | Condition | HTTP |
 | --- | --- | --- |
@@ -612,13 +612,13 @@ what grows.
 | `runGraph` terminal branch | `graph_completed` with a `required` export and no current `valid` result — recorded as an `invalid` `run_results` row (`result_missing`) and the run goes `Failed` | — |
 | `finalizeAgentRun` | a required agent result absent (`result_missing`) or present-but-invalid (`result_invalid`) — recorded as an `invalid` row and the run goes `Failed` | — |
 
-**`PRECONDITION` new call sites (Designed):** `run_collect` for a run that is not
+**`PRECONDITION` new call sites (Implemented):** `run_collect` for a run that is not
 a DIRECT child of the bound orchestrator (409, existence-hidden — the same
 message as any mismatch; the OpenAPI 404-vs-409 drift is corrected to the code).
 The terminal-orchestrator token refusal is the existing `resolveActiveBoundRun`
 behaviour, unchanged.
 
-**`FLOW_INSTALL` new call site (Designed):** a `result_profiles.<name>.schema`
+**`FLOW_INSTALL` new call site (Implemented):** a `result_profiles.<name>.schema`
 that is not a package-root `./schemas/*.json`, is unreadable or malformed, or
 uses `json` / typed array `items` below a member flow's engine floor — the
 revision goes `Failed` and no partial profile map is written.

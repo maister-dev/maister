@@ -394,9 +394,9 @@ field names a filesystem path component.
 | `prompt`, `title` | body free-text | no locator role; stored as the carrier task's prompt / title |
 | carrier `taskId` | server-state | minted server-side; never accepted from the body |
 | child `flowRevisionId` | server-state | resolved inside `launchRunStaged` from the project's enablement pointer |
-| `resultProfile` | body-controlled (a NAME, `/^[A-Za-z0-9._-]{1,64}$/`) | **(Designed — ADR-165)** allow-list lookup in the PARENT run's pinned `flow_revisions.result_profiles`; never a path or a schema body; `CONFIG` on a miss |
-| allowed profile set, effective bounds, active node | server-state | `resolveActiveBoundRun` → `runs` → `flow_revisions`; `runs.delegation_bounds` is written by the runner **(Designed — ADR-165)** |
-| child `result_contract` | server-state | built by the launcher from the resolved profile / export **(Designed — ADR-165)** |
+| `resultProfile` | body-controlled (a NAME, `/^[A-Za-z0-9._-]{1,64}$/`) | **(Implemented — ADR-165)** allow-list lookup in the PARENT run's pinned `flow_revisions.result_profiles`; never a path or a schema body; `CONFIG` on a miss |
+| allowed profile set, effective bounds, active node | server-state | `resolveActiveBoundRun` → `runs` → `flow_revisions`; `runs.delegation_bounds` is written by the runner **(Implemented — ADR-165)** |
+| child `result_contract` | server-state | built by the launcher from the resolved profile / export **(Implemented — ADR-165)** |
 
 ### Option compatibility by target kind
 
@@ -419,7 +419,7 @@ before resolution and reports all violations at once.
 | `runnerOverride` | ✅ (agent runner chain) | ✅ (Flow executor-resolution chain) | the chain's own `PRECONDITION` / `EXECUTOR_UNAVAILABLE` |
 | `persistent` | ✅ | ❌ | `CONFIG` 422 — agent-target only |
 | `addressableKey` | ✅ | ❌ | `CONFIG` 422 — agent-target only |
-| `resultProfile` | ✅ (a name from the parent's pinned `result_profiles`; forbidden with `persistent`) | ❌ | `CONFIG` 422 — a flow child declares its own `result.export` **(Designed — ADR-165)** |
+| `resultProfile` | ✅ (a name from the parent's pinned `result_profiles`; forbidden with `persistent`) | ❌ | `CONFIG` 422 — a flow child declares its own `result.export` **(Implemented — ADR-165)** |
 
 ### Tool support by child kind
 
@@ -465,13 +465,13 @@ Parameterized one row = one case. Every row above the carrier-task line writes
 | 25 | parent terminalized during launch | post-commit parent re-read (`run_delegate` only) | `PRECONDITION` 409 | child abandoned through `cascadeAbandonRunTree`, its live session torn down |
 | 26 | `run_rework` on a flow child | rework route, pre-dispatch | `PRECONDITION` 409 | none |
 | 27 | `run_message` on a flow child | message route, pre-dispatch | `PRECONDITION` 409 | none |
-| 28 | `resultProfile` on a flow target **(Designed — ADR-165)** | route allow-list (`refuseUnsupportedDelegationOption`), pre-lookup | `CONFIG` 422 | none |
-| 29 | `resultProfile` with `persistent: true` **(Designed — ADR-165)** | route refinement (allow-list: `resultProfile` iff agent ∧ ¬persistent) | `CONFIG` 422 | none |
-| 30 | `resultProfile` not a key of the parent's pinned `flow_revisions.result_profiles` **(Designed — ADR-165)** | `resolveResultProfile` | `CONFIG` 422 | none |
-| 31 | `resultProfile` while the parent flow's `engine_min < 3.7.0` **(Designed — ADR-165)** | `resolveResultProfile` | `CONFIG` 422 | none |
-| 32 | effective depth reached (`min(env, root.maxDepth, parent.maxDepth)`) **(Designed — ADR-165)** | `admitDelegatedChild`, under the lock | `CONFIG` 422 | none |
-| 33 | effective fan-out reached (`min(env, parent.maxFanout)`) **(Designed — ADR-165)** | `admitDelegatedChild`, under the lock | `CONFIG` 422 | none |
-| 34 | an ancestor's child-count budget exhausted (`subtree(ancestor) + incoming > ancestor.budget.maxChildRuns`) **(Designed — ADR-165)** | `admitDelegatedChild`, recursive CTE per ancestor | `CONFIG` 422 naming the ancestor | none |
+| 28 | `resultProfile` on a flow target **(Implemented — ADR-165)** | route allow-list (`refuseUnsupportedDelegationOption`), pre-lookup | `CONFIG` 422 | none |
+| 29 | `resultProfile` with `persistent: true` **(Implemented — ADR-165)** | route refinement (allow-list: `resultProfile` iff agent ∧ ¬persistent) | `CONFIG` 422 | none |
+| 30 | `resultProfile` not a key of the parent's pinned `flow_revisions.result_profiles` **(Implemented — ADR-165)** | `resolveResultProfile` | `CONFIG` 422 | none |
+| 31 | `resultProfile` while the parent flow's `engine_min < 3.7.0` **(Implemented — ADR-165)** | `resolveResultProfile` | `CONFIG` 422 | none |
+| 32 | effective depth reached (`min(env, root.maxDepth, parent.maxDepth)`) **(Implemented — ADR-165)** | `admitDelegatedChild`, under the lock | `CONFIG` 422 | none |
+| 33 | effective fan-out reached (`min(env, parent.maxFanout)`) **(Implemented — ADR-165)** | `admitDelegatedChild`, under the lock | `CONFIG` 422 | none |
+| 34 | an ancestor's child-count budget exhausted (`subtree(ancestor) + incoming > ancestor.budget.maxChildRuns`) **(Implemented — ADR-165)** | `admitDelegatedChild`, recursive CTE per ancestor | `CONFIG` 422 naming the ancestor | none |
 
 ### Shared dispatchers that branch on `run_kind`
 
@@ -512,7 +512,7 @@ none, so all three are covered by ONE helper, `admitDelegatedChild()`, called at
    count taken in a transaction that commits before the run exists is a
    read, not a mutex.
 
-## Bounds and budgets (Designed — ADR-165)
+## Bounds and budgets (Implemented — ADR-165)
 
 Node-level bounds have parsed since ADR-098 and been ignored ever since:
 `admitDelegatedChild` reads the env ceilings only. They go **live behind an
@@ -575,7 +575,7 @@ A child whose parent already has `maxActiveChildren` siblings in
 additively as `status: "Pending" | "Running"`. Every settle path calls
 `promoteNextPending`, so a queued child always has a re-promotion edge.
 
-## `run_collect` contract (Designed — ADR-165)
+## `run_collect` contract (Implemented — ADR-165)
 
 `POST /api/v1/ext/runs/collect` serves the **public result plane**
 ([`run-results.md`](run-results.md)), not scavenged text.

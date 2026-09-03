@@ -372,7 +372,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-161](#adr-161-operator-node-interrupt-with-corrective-restart) | Operator node interrupt with corrective restart | Accepted | 2026-08-31 |
 | [ADR-162](#adr-162-universal-structured-node-result--transport-matrix-open-json-grammar-schema-identity) | Universal structured node result — transport matrix, open JSON grammar, schema identity | Implemented | 2026-09-01 |
 | [ADR-163](#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher) | Flow-target delegation — carrier task, shared admission, canonical Flow launcher | Implemented | 2026-09-01 |
-| [ADR-165](#adr-165-governed-recursive-agent-harness--public-run-results-result-profiles-effective-recursion-bounds-result-only-completion) | Governed recursive agent harness — public run results, result profiles, effective recursion bounds, result-only completion | Designed | 2026-09-02 |
+| [ADR-165](#adr-165-governed-recursive-agent-harness--public-run-results-result-profiles-effective-recursion-bounds-result-only-completion) | Governed recursive agent harness — public run results, result profiles, effective recursion bounds, result-only completion | Implemented | 2026-09-02 |
 
 ---
 
@@ -1843,7 +1843,7 @@ Full record: [`decisions/adr-164.md`](decisions/adr-164.md)
 
 ### ADR-165: Governed recursive agent harness — public run results, result profiles, effective recursion bounds, result-only completion
 
-**Status:** Designed
+**Status:** Implemented
 **Date:** 2026-09-02
 
 Full record: [`decisions/adr-165.md`](decisions/adr-165.md)

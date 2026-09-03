@@ -98,7 +98,7 @@ These were earned in two review passes. Reopen them only with new evidence.
 
 ### 1. ACP-driven execution with hybrid HITL
 
-A Flow = a typed-node **graph** (`nodes[]`, current engine 3.6.0) — node
+A Flow = a typed-node **graph** (`nodes[]`, current engine 3.7.0) — node
 types `ai_coding | judge | cli | check | human | form | orchestrator`
 and `consensus`, wired by named `transitions` with bounded `rework` loops.
 Manifests with a top-level `steps` key are incompatible and must be
@@ -262,7 +262,7 @@ nodes:
       commentsVar: review_comments
 ```
 
-**The only runtime DSL is the typed-node graph (current engine `3.6.0`; the
+**The only runtime DSL is the typed-node graph (current engine `3.7.0`; the
 graph-only cut-over began at `3.0.0`).** Flows use
 `nodes:` with named
 `transitions`, bounded `rework`, typed `input.requires`/`output.produces`
@@ -274,7 +274,12 @@ and per-capability engine-version floors. Graph **gates** block. A node's
 opt-in `output.result` rides a transport fixed by node type (ADR-162, engine
 3.6.0): sentinel block for `ai_coding | judge | orchestrator`, per-attempt
 `MAISTER_OUTPUT_FILE` for `cli | check`, engine-produced `vars` validated in
-place for `consensus`, and a load-time refusal for `human | form`. Flows are
+place for `consensus`, and a load-time refusal for `human | form`. A run's
+**public result** is a separate, run-level plane (ADR-165, engine 3.7.0): a
+`{schemaRef, value}` envelope in the `run_results` revision ledger, produced by a
+flow's `result.export` or by an agent delegated under a package `result_profiles`
+name, contract snapshotted on `runs.result_contract` at launch, and served to a
+coordinator by `run_collect`. Flows are
 also authorable **in-app** (`authored_capabilities`, draft→publish,
 content-addressed, bridged into the same `flow_revisions` lineage) on the
 **Flow Studio** visual graph editor (M25/M27). See
@@ -315,6 +320,12 @@ inject via `{{ artifacts.<id>.content }}` (ADR-120).
 - Cron route GCs `Abandoned/Done` worktrees + checkpointed sessions older
   than 7d across all projects (now a `system_sweep` job of the polymorphic
   scheduler clock, M24).
+- **Result-only completion** (ADR-165): a flow whose manifest declares
+  `result.export` and which finishes with a valid public result over a CLEAN
+  workspace goes `Running -> Done` WITHOUT promotion — no merge commit, no
+  promoted head, `promotion_state` stays `none`, and the workspace is GC'd by
+  `scheduled_removal_at` on the existing path. Its answer is the result, not a
+  diff.
 - **Manual takeover** (M11b): a reviewer at a `human_review` node claims the
   run (`NeedsInput → HumanWorking`), edits the existing worktree locally on
   the host, and returns it for re-validation (downstream nodes go stale). No
@@ -357,6 +368,10 @@ selected target branch. Initial promotion modes are `local_merge` and
 `pull_request`. `local_merge` uses `git merge --no-ff`; conflict → abort, run
 stays `Review`, UI surfaces "Conflict — resolve manually" with parent repo
 path, run branch, target branch, and failing command. No auto-resolve.
+
+Not every `Done` run was promoted: a run that finishes by **result-only
+completion** (§7, ADR-165) never enters this path at all — it publishes a result
+and changes nothing, so there is no branch to promote.
 
 Promotion is manual by default, but **lane-bounded auto-promotion** exists
 (ADR-126, Implemented): project-scoped diff classes (`docs | tests | deps |

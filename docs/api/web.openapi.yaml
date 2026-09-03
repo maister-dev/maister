@@ -5760,7 +5760,7 @@ paths:
                     nullable: true
                     type: object
                     description: |
-                      (Designed — ADR-165) Tree-wide roll-up over this run and
+                      (Implemented — ADR-165) Tree-wide roll-up over this run and
                       every descendant. Present ONLY when this run is a tree
                       ROOT (no `parent_run_id`) that has at least one child;
                       omitted or null otherwise, so a non-root run yields no tree

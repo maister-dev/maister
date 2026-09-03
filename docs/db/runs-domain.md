@@ -669,13 +669,13 @@ Pending -> Running -> Review -> Done (promotion succeeds)
 ```
 
 Runs also reach `Done` directly from `Running` by **result-only completion**
-(Designed — ADR-165): a flow run declaring `result.export` that published a
+(Implemented — ADR-165): a flow run declaring `result.export` that published a
 `valid` result and left its workspace clean finishes without entering `Review`.
 
 See [`../system-analytics/runs.md`](../system-analytics/runs.md) for the
 full state diagram.
 
-**Run result validity** (Designed — ADR-165):
+**Run result validity** (Implemented — ADR-165):
 
 ```
 [*] -> valid     publish (seam success / agent finalize)

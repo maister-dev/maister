@@ -3,7 +3,7 @@
 **ADR:** [ADR-165](../../docs/decisions/adr-165.md) · **Migration:** `0129_run_results` ·
 **Engine:** `3.6.0 → 3.7.0` (`RAH_ENGINE_MIN = "3.7.0"`)
 **Domain doc:** [`docs/system-analytics/run-results.md`](../../docs/system-analytics/run-results.md)
-**Status:** normative. Implementation may not diverge; a genuine divergence is a
+**Status:** normative, IMPLEMENTED 2026-09-02. Implementation may not diverge; a genuine divergence is a
 spec bug fixed in BOTH places in the same commit.
 
 Every clause is mirrored by exactly one acceptance criterion in the plan

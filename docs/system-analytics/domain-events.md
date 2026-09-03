@@ -111,7 +111,7 @@ observe its failed child; success-gated dependents do not launch.
   the `agent_triggers` consumer's additive mention branch; see
   [agent-mentions.md](agent-mentions.md).
 
-  **(Designed — ADR-165)** three further **migration-free** payload widenings on
+  **(Implemented — ADR-165)** three further **migration-free** payload widenings on
   existing kinds (no new kind, no CHECK change, free-form jsonb):
 
   | Kind | Added field | Values |

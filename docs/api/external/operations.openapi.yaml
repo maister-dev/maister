@@ -1596,7 +1596,7 @@ paths:
                     type: string
                     enum: [Pending, Running]
                     description: |
-                      (Designed — ADR-165) The child run's status at commit.
+                      (Implemented — ADR-165) The child run's status at commit.
                       `Pending` when the orchestrator is already at its
                       `delegation.max_active_children` cap or the global pool is
                       full — the run row EXISTS and starts on the next
@@ -1776,18 +1776,18 @@ paths:
         orchestrator is returned. Exactly one of `childRunId` / `all` MUST be
         supplied.
 
-        **Direct children only (Designed — ADR-165).** A grandchild is invisible
+        **Direct children only (Implemented — ADR-165).** A grandchild is invisible
         under `all: true` and, when named, is refused `PRECONDITION` → **409**
         with the same existence-hiding message as any other mismatch. (Before
         ADR-165 this block documented 404 while the route returned 409; the spec
         is corrected to the code — the route's behaviour is unchanged.)
 
-        **Idempotent (Designed — ADR-165).** Two consecutive collects return
+        **Idempotent (Implemented — ADR-165).** Two consecutive collects return
         byte-identical bodies. Serving a `valid` result stamps
         `first_collected_at` exactly once, in a transaction before the response;
         a repeat never moves it.
 
-        **Stale token (Designed — ADR-165).** A token whose bound orchestrator has
+        **Stale token (Implemented — ADR-165).** A token whose bound orchestrator has
         reached a terminal status is refused `PRECONDITION` → 409 — collect the
         children BEFORE cancelling or finishing the coordinator.
 
@@ -1810,7 +1810,7 @@ paths:
                 items: { $ref: "#/components/schemas/ExtChildRunSummary" }
               examples:
                 validAgentResult:
-                  summary: A settled agent child with a valid public result (Designed — ADR-165)
+                  summary: A settled agent child with a valid public result (Implemented — ADR-165)
                   value:
                     - childRunId: "3f1b2c40-6d1e-4d0a-9f4a-8b0d1c2e3f40"
                       status: Done
@@ -1828,7 +1828,7 @@ paths:
                       diffRef: null
                       outputText: null
                 resultOnlyFlowChild:
-                  summary: A research flow child that finished Done without promotion (Designed — ADR-165)
+                  summary: A research flow child that finished Done without promotion (Implemented — ADR-165)
                   value:
                     - childRunId: "9a7c5e10-2b34-4c56-8d90-1e2f3a4b5c60"
                       status: Done
@@ -1848,7 +1848,7 @@ paths:
                       diffRef: null
                       outputText: null
                 failedChildWithReason:
-                  summary: A child that failed because its required result was malformed (Designed — ADR-165)
+                  summary: A child that failed because its required result was malformed (Implemented — ADR-165)
                   value:
                     - childRunId: "c4d5e6f7-a8b9-4c0d-9e1f-2a3b4c5d6e7f"
                       status: Failed
@@ -5131,7 +5131,7 @@ components:
           maxLength: 64
           pattern: "^[A-Za-z0-9._-]+$"
           description: |
-            (Designed — ADR-165) AGENT target only. The NAME of a
+            (Implemented — ADR-165) AGENT target only. The NAME of a
             `result_profiles` entry declared by the package that owns the PARENT
             run's pinned flow revision. The child must then emit a final
             ` ```json maister:output ` block satisfying that profile's schema; it
@@ -5204,7 +5204,7 @@ components:
           maxLength: 64
           pattern: "^[A-Za-z0-9._-]+$"
           description: |
-            (Designed — ADR-165) AGENT entries only — same semantics and same
+            (Implemented — ADR-165) AGENT entries only — same semantics and same
             refusals as `ExtRunDelegateBody.resultProfile`. The name is recorded
             on the created task's `delegation_spec` and re-resolved server-side at
             EVERY launch edge (the batch's own source launch AND the as-plan
@@ -5232,7 +5232,7 @@ components:
         same `admitDelegatedChild` helper decides again inside each launcher's
         run-insert transaction, which is what binds.
 
-        **(Designed — ADR-165.)** For a parent flow at `compat.engine_min >=
+        **(Implemented — ADR-165.)** For a parent flow at `compat.engine_min >=
         3.7.0` the batch pre-check uses the EFFECTIVE fan-out
         `min(MAISTER_MAX_ORCHESTRATOR_FANOUT, node.max_fanout ?? 6)` read from
         the parent's `runs.delegation_bounds` snapshot, and each ancestor's
@@ -5303,13 +5303,13 @@ components:
     ExtChildRunSummary:
       type: object
       description: |
-        (M37 — Implemented, ADR-098; v2 Designed — ADR-165) Summary for one
+        (M37 — Implemented, ADR-098; v2 Implemented — ADR-165) Summary for one
         orchestrator child. `artifacts` is the LIVE produced-artifact manifest
         from `artifact_instances`; `diffRef` locates the base→run diff. NEVER
         exposes the child worktree, `acp_session_id`, or any supervisor-internal
         handle.
 
-        **v2 (Designed — ADR-165).** `result` is the child's validated PUBLIC
+        **v2 (Implemented — ADR-165).** `result` is the child's validated PUBLIC
         result — the field a coordinator should read. `resultStatus` says why it
         is absent when it is. `settled` distinguishes "finished" from "still
         working" without the caller re-deriving the run-status vocabulary.
@@ -5334,7 +5334,7 @@ components:
         settled:
           type: boolean
           description: |
-            (Designed — ADR-165) True when the child's status is in
+            (Implemented — ADR-165) True when the child's status is in
             `SETTLED_RUN_STATUSES` — it will not advance on its own. A child that
             is not settled always reports `resultStatus: "pending"` and a null
             `result`.
@@ -5342,7 +5342,7 @@ components:
           type: string
           enum: [pending, valid, absent, missing, stale, invalid, unavailable]
           description: |
-            (Designed — ADR-165) Derived by ONE server-side predicate:
+            (Implemented — ADR-165) Derived by ONE server-side predicate:
             `pending` — still running.
             `valid` — a current public result exists and is in `result`.
             `absent` — settled, and the run declares no result contract or an
@@ -5356,7 +5356,7 @@ components:
           nullable: true
           type: object
           description: |
-            (Designed — ADR-165) The validated public result. Non-null ONLY when
+            (Implemented — ADR-165) The validated public result. Non-null ONLY when
             `resultStatus` is `valid`.
           required: [schemaRef, value]
           additionalProperties: false
@@ -5372,13 +5372,13 @@ components:
           type: integer
           nullable: true
           description: |
-            (Designed — ADR-165) 1-based revision number of the row `result`
+            (Implemented — ADR-165) 1-based revision number of the row `result`
             came from; null when there is no result row.
         resultFailure:
           nullable: true
           type: object
           description: |
-            (Designed — ADR-165) Why the child has no usable result. Non-null
+            (Implemented — ADR-165) Why the child has no usable result. Non-null
             only when an `invalid` result row exists (`resultStatus` `invalid`,
             or `unavailable` after a result-caused failure).
           required: [reason, message]
@@ -5413,11 +5413,11 @@ components:
               nodeId:
                 type: string
                 nullable: true
-                description: "(Designed — ADR-165) Producing graph node id; null for a non-graph producer."
+                description: "(Implemented — ADR-165) Producing graph node id; null for a non-graph producer."
               validity:
                 type: string
                 enum: [current, stale, superseded, failed, skipped]
-                description: "(Designed — ADR-165) Artifact validity at read time."
+                description: "(Implemented — ADR-165) Artifact validity at read time."
         diffRef:
           type: string
           nullable: true

@@ -245,7 +245,7 @@ rather than at run time:
 | `output.result` on an `orchestrator`/`consensus` node with `compat.engine_min < 3.6.0` | `validateGraphManifest` | `MaisterError("CONFIG")` naming the `3.6.0` floor |
 | A referenced schema document using `type: "json"` or array `items` with `compat.engine_min < 3.6.0` | package install (`validatePackageRootSchemaReferences`) · Studio lifecycle validation | `MaisterError("FLOW_INSTALL")` · `form_schema_invalid` (BLOCK) |
 
-#### Publish step for an export producer (Designed — ADR-165)
+#### Publish step for an export producer (Implemented — ADR-165)
 
 When the run declares a public result (`runs.result_contract.kind ===
 "flow_export"`) **and** the succeeding node is one of the contract's
@@ -269,7 +269,7 @@ Supersession on rework runs through `markDownstreamStale`, which flips the run's
 `valid` row to `stale` in its own transaction when the producer node is among the
 staled nodes. Details: [`run-results.md`](run-results.md).
 
-#### Terminal exits of a flow run (Designed — ADR-165)
+#### Terminal exits of a flow run (Implemented — ADR-165)
 
 `graph_completed` no longer has one exit. In `runGraph`'s success branch, before
 the CAS (and after `assertEvidenceReady(runId, "review")`, which is unchanged):

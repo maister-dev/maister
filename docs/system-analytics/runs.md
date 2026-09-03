@@ -159,7 +159,7 @@ Status names exactly match the `runs.status` enum in
 returns a `Done` run to `Review` so its stale or conflicted PR can be re-synced
 and re-promoted (`markReopenFromDone`).
 
-### Result-only completion (Designed — ADR-165)
+### Result-only completion (Implemented — ADR-165)
 
 `Running → Done` is a new flow-run edge that skips `Review` entirely. It fires in
 `runGraph`'s success branch, inside the existing terminal transaction, iff **all
@@ -412,7 +412,7 @@ delegation provenance. Four things distinguish it from a board flow run:
    parks indefinitely: it holds no scheduler slot, but its worktree and branch
    are retained and nothing reclaims them (ADR-163 residual W12).
 
-5. **Result semantics per terminal path (Designed — ADR-165).** Once flow runs
+5. **Result semantics per terminal path (Implemented — ADR-165).** Once flow runs
    carry a public result the "always parks in `Review`" rule above narrows: a
    child whose flow declares `result.export`, published a `valid` result and
    changed nothing finishes `Done` by result-only completion, so residual W12
@@ -569,7 +569,7 @@ UI surfaces:
 Live updates reuse the existing run SSE/server-refresh path. No client
 `setInterval`, filesystem polling, `fs.watch`, or `chokidar` path is allowed.
 
-#### Tree-wide roll-up (Designed — ADR-165)
+#### Tree-wide roll-up (Implemented — ADR-165)
 
 Cost and wall-clock have been per-run everywhere except the ADR-101 budget
 sweeper, which meters `queryRunTreeTokens(rootRunId)` — a flat `SUM` by
