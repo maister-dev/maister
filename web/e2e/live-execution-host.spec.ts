@@ -3,7 +3,7 @@
 //   S2 a scratch launch through the UI against the real adapter is placed on
 //      that host (epoch-1 assignment + an adopted workspace handle the host
 //      still knows).
-// Opt-in like the CCR live spec: the lane needs a real adapter + provider env.
+// Opt-in: the lane needs a real adapter + provider env, so it never runs in CI.
 import { test, expect } from "@playwright/test";
 
 import { singleValue } from "./_seed/db";

@@ -46,8 +46,8 @@ export type BootHostOptions = {
   killGraceMs?: number;
   logger?: Logger;
   hostState?: HostState;
-  // Full override (e.g. a CCR manager without a binary override); wins over
-  // `fixture` / `fixtureArgs`.
+  // Full override (a custom spawn function without a binary override); wins
+  // over `fixture` / `fixtureArgs`.
   spawnOverrides?: SpawnOverrides;
 };
 

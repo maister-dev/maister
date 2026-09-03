@@ -99,7 +99,7 @@ describe("insertCommand", () => {
           env: { ANTHROPIC_AUTH_TOKEN: SENTINEL_TOKEN },
         },
         runner: {
-          sidecar: { authTokenEnv: "MAISTER_CCR_AUTH_TOKEN" },
+          provider: { kind: "anthropic" },
           apiKey: SENTINEL_TOKEN,
         },
         adapterLaunch: { env: { MAISTER_CAPABILITY_PROFILE: "/p" } },
