@@ -4,6 +4,9 @@ import type {
   RunResultInvalidReason,
   RunResultValidity,
 } from "@/lib/run-results/types";
+import type { RunStatusValue } from "@/lib/runs/run-status-values";
+
+import { RUN_STATUS_VALUES } from "@/lib/runs/run-status-values";
 
 // ADR-165 (§B): the ONE `resultStatus` predicate. The collect route, the run DTO
 // and the Evaluation Lab all call it — a second derivation is how two surfaces
@@ -29,37 +32,60 @@ export type DeriveResultStatusInput = {
   validRow: ResultStatusRow | null;
 };
 
-// A run in one of these has not finished, so its result is not an answer yet —
-// whatever rows already exist. Kept as a local literal set rather than reusing
-// `SETTLED_RUN_STATUSES`: that constant answers "may the coordinator wake?",
-// which includes `Review`; this answers "is this run still working?", and the
-// two would drift the moment either question changes.
-const LIVE_RUN_STATUSES: ReadonlySet<string> = new Set([
-  "Pending",
-  "Running",
-  "NeedsInput",
-  "NeedsInputIdle",
-  "HumanWorking",
-  "WaitingOnChildren",
-]);
+// The predicate partitions `runs.status` into three arms. They are named for
+// THIS concern — `SETTLED_RUN_STATUSES` answers "may the coordinator wake?" and
+// includes `Review`, which is readable here — but they are DERIVED from the
+// schema's enum rather than re-typed, so a status added to the column cannot
+// silently land in the settled arm and report a result for a run that is still
+// working.
 
-const FAILURE_RUN_STATUSES: ReadonlySet<string> = new Set([
+/** Failure-terminal: the run did not finish, so nothing it published is an answer. */
+export const FAILURE_RESULT_RUN_STATUSES = [
   "Failed",
   "Crashed",
   "Abandoned",
-]);
+] as const satisfies readonly RunStatusValue[];
+
+/** The two statuses whose results are readable. Everything else is still working. */
+const SETTLED_RESULT_RUN_STATUSES = [
+  "Review",
+  "Done",
+] as const satisfies readonly RunStatusValue[];
+
+/**
+ * Still working — derived as the complement, so it needs no maintenance when the
+ * enum grows.
+ */
+export const LIVE_RESULT_RUN_STATUSES = RUN_STATUS_VALUES.filter(
+  (s): s is RunStatusValue =>
+    !(FAILURE_RESULT_RUN_STATUSES as readonly string[]).includes(s) &&
+    !(SETTLED_RESULT_RUN_STATUSES as readonly string[]).includes(s),
+);
+
+const FAILURE_RUN_STATUSES: ReadonlySet<string> = new Set(
+  FAILURE_RESULT_RUN_STATUSES,
+);
+
+const SETTLED_RUN_STATUSES: ReadonlySet<string> = new Set(
+  SETTLED_RESULT_RUN_STATUSES,
+);
 
 export function deriveResultStatus(
   input: DeriveResultStatusInput,
 ): ResultStatus {
   const { runStatus, contract, newestRow, validRow } = input;
 
-  if (LIVE_RUN_STATUSES.has(runStatus)) return "pending";
-
   // A failure-terminal run's result is never usable, even when a `valid` row
   // exists — the run did not finish, so what it published is not an answer.
   // `resultFailure` still surfaces from the newest `invalid` row separately.
   if (FAILURE_RUN_STATUSES.has(runStatus)) return "unavailable";
+
+  // The readable arm is an ALLOW-LIST, not the fallthrough. `runStatus` is a
+  // plain string at this boundary, so a status this predicate has never heard
+  // of — a newly added enum value, a caller passing something else — must land
+  // on the SAFE side and read as "still working", never as a publishable
+  // result. A deny-list here would report `valid` for it.
+  if (!SETTLED_RUN_STATUSES.has(runStatus)) return "pending";
 
   // Review | Done, in the table's order: a current valid result wins over any
   // newer stale/invalid sibling.

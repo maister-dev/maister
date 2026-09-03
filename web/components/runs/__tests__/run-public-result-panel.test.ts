@@ -55,6 +55,7 @@ function dto(over: Partial<RunPublicResultDto> = {}): RunPublicResultDto {
     supersededCount: 0,
     collectedAt: null,
     value: { summary: "found it", outcome: "completed" },
+    valueBytes: 48,
     failure: null,
     completedWithoutPromotion: false,
     ...over,
@@ -121,6 +122,16 @@ describe("RunPublicResultPanel", () => {
     );
     expect(render(dto({ completedWithoutPromotion: true }))).toContain(
       "Completed without promotion",
+    );
+  });
+
+  // A reader expanding a result should know its scale first — payloads run to
+  // the 256 KB validate-seam cap.
+  it("shows the payload size on the disclosure, and omits it when unknown", () => {
+    expect(render(dto())).toContain("48 B");
+    expect(render(dto({ valueBytes: 200_000 }))).toContain("195 KB");
+    expect(render(dto({ valueBytes: null }))).not.toContain(
+      'data-testid="run-public-result-value-size"',
     );
   });
 

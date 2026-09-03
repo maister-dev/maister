@@ -558,13 +558,24 @@ that is the guarantee, not a side effect.
 
 | Budget | Binds at | Metered by |
 | --- | --- | --- |
-| `max_child_runs` | **every ancestor** | `admitDelegatedChild` — a recursive CTE over `parent_run_id` (all statuses) per ancestor with the key set, under the per-orchestrator lock |
+| `max_child_runs` | **every ancestor** | `admitDelegatedChild` — a recursive CTE over `parent_run_id` (all statuses) per ancestor with the key set, under the per-orchestrator lock AND a per-TREE lock on the root (see below) |
 | `max_tokens` | the tree **root** | the ADR-101 keep-alive budget sweeper, min-merged with the policy's `tree.maxTokens` |
 | `wall_clock_minutes` | the tree **root** | same sweeper |
 | `consecutive_failures` | the tree **root** | same sweeper |
 
 On a nested orchestrator the spend/time/failure budgets are **recorded and not
 metered** (residual R-nested). A flow launched as a child obeys the root's.
+
+**Why the count budget needs a second lock.** The per-orchestrator lock is keyed
+on the PARENT run, but `max_child_runs` is scoped to an ANCESTOR's subtree. Two
+orchestrators in the same tree hash to different keys, cannot see each other's
+uncommitted children under READ COMMITTED, and would both read the same
+pre-insert count — so both would admit and the ancestor's cap would be blown.
+Admission therefore also takes the delegation lock on the **tree root** before
+counting: the coarsest scope that contains every ancestor, still per-tree rather
+than the platform-wide mutex. The order is always parent-then-root on every
+path, so admissions cannot deadlock; when the parent IS the root the key repeats
+and the advisory lock is re-entrant within the transaction.
 
 ### Active-children concurrency is a queue, not a refusal
 

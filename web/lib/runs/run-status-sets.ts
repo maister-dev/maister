@@ -1,5 +1,10 @@
 import "server-only";
 
+export {
+  RUN_STATUS_VALUES,
+  type RunStatusValue,
+} from "@/lib/runs/run-status-values";
+
 // M37: shared run-status sets for orchestrator child accounting — the single
 // source of truth so the three child-pending counters (the orchestrator node's
 // completion check, the resume consumer's wake gate, and reconcile's stuck

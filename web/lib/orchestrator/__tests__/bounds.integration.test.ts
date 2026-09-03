@@ -49,6 +49,9 @@ const DECLARED_BUDGET = {
   consecutive_failures: 3,
 };
 
+// The advisory-lock namespace `admitDelegatedChild` uses ("dlgt").
+const DELEGATION_LOCK_NAMESPACE = 0x646c6774;
+
 const BUDGET = {
   maxTokens: 1_000,
   wallClockMinutes: 60,
@@ -431,6 +434,89 @@ describe("the per-ancestor child-count budget (AC-28)", () => {
     );
   });
 
+  // The parent lock alone CANNOT protect this budget: its invariant is scoped to
+  // an ANCESTOR's subtree, but two orchestrators in the same tree hash to
+  // different lock keys and cannot see each other's uncommitted children. Both
+  // would read the same pre-insert count and both admit, blowing the ancestor's
+  // cap. Admission therefore serializes on the TREE ROOT before counting.
+  it("CROSS-PARENT racers serialize on the tree root, so the ancestor cap holds", async () => {
+    process.env.MAISTER_MAX_ORCHESTRATOR_FANOUT = "16";
+    process.env.MAISTER_ORCHESTRATOR_MAX_DEPTH = "5";
+
+    // The root allows 4 descendants and already has its two coordinators, so
+    // exactly 2 remain — and each coordinator below asks for 2.
+    const root = await seedRun({
+      bounds: { maxDepth: 5, budget: { ...BUDGET, maxChildRuns: 4 } },
+    });
+    const c1 = await seedRun({
+      parentRunId: root,
+      rootRunId: root,
+      bounds: { maxDepth: 5, budget: null },
+    });
+    const c2 = await seedRun({
+      parentRunId: root,
+      rootRunId: root,
+      bounds: { maxDepth: 5, budget: null },
+    });
+
+    const holder = await pool.connect();
+    let racerOutcome: "admitted" | "refused" | "pending" = "pending";
+
+    try {
+      await holder.query("BEGIN");
+      // A winning admission under c1, in admission's own lock order: its parent
+      // first, then the tree root, then its children — none yet committed.
+      await holder.query(
+        `SELECT pg_advisory_xact_lock($1::int, hashtext($2)::int)`,
+        [DELEGATION_LOCK_NAMESPACE, c1],
+      );
+      await holder.query(
+        `SELECT pg_advisory_xact_lock($1::int, hashtext($2)::int)`,
+        [DELEGATION_LOCK_NAMESPACE, root],
+      );
+      for (let i = 0; i < 2; i += 1) {
+        await holder.query(
+          `INSERT INTO "runs" ("id", "run_kind", "project_id", "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id")
+           VALUES ($1, 'flow', $2, 'Pending', 'v1', 'rev', $3, $4)`,
+          [randomUUID(), projectId, c1, root],
+        );
+      }
+
+      const racer = admit(c2, 2)
+        .then(() => {
+          racerOutcome = "admitted";
+        })
+        .catch((err: unknown) => {
+          racerOutcome = isMaisterError(err) ? "refused" : "pending";
+          if (racerOutcome !== "refused") throw err;
+        });
+
+      await waitForRacerBlockedOnDelegationLock();
+      // Parked on the ROOT's lock, under a DIFFERENT parent — without it the
+      // racer would sail past on a stale subtree count.
+      expect(racerOutcome).toBe("pending");
+
+      await holder.query("COMMIT");
+      await racer;
+    } finally {
+      holder.release();
+    }
+
+    expect(racerOutcome).toBe("refused");
+    // 2 coordinators + the winner's 2 children = 4, exactly the root's cap.
+    expect(
+      (
+        await pool.query(
+          `WITH RECURSIVE t AS (
+             SELECT id FROM runs WHERE parent_run_id = $1
+             UNION ALL SELECT r.id FROM runs r JOIN t ON r.parent_run_id = t.id)
+           SELECT count(*)::int AS n FROM t`,
+          [root],
+        )
+      ).rows[0].n,
+    ).toBe(4);
+  }, 60_000);
+
   it("two racers at cap-1: exactly one wins, and no extra row lands", async () => {
     process.env.MAISTER_MAX_ORCHESTRATOR_FANOUT = "16";
 
@@ -447,7 +533,7 @@ describe("the per-ancestor child-count budget (AC-28)", () => {
       await holder.query("BEGIN");
       await holder.query(
         `SELECT pg_advisory_xact_lock($1::int, hashtext($2)::int)`,
-        [0x646c6774, root],
+        [DELEGATION_LOCK_NAMESPACE, root],
       );
       // The winner's child, not yet visible to the racer.
       await holder.query(
@@ -599,7 +685,7 @@ async function waitForRacerBlockedOnDelegationLock(): Promise<void> {
         WHERE locktype = 'advisory'
           AND NOT granted
           AND classid = $1::int`,
-      [0x646c6774],
+      [DELEGATION_LOCK_NAMESPACE],
     );
 
     if (rows.length > 0) return;

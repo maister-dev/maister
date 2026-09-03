@@ -4,8 +4,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   deriveResultStatus,
+  FAILURE_RESULT_RUN_STATUSES,
+  LIVE_RESULT_RUN_STATUSES,
   type DeriveResultStatusInput,
 } from "@/lib/run-results/status";
+import { RUN_STATUS_VALUES } from "@/lib/runs/run-status-values";
 
 // ADR-165 AC-09 / spec C-3.4. `resultStatus` is derived by exactly ONE
 // predicate, consumed by the collect route, the run DTO and the Evaluation Lab.
@@ -62,6 +65,56 @@ const LIVE_STATUSES = [
 ] as const;
 
 const FAILURE_STATUSES = ["Failed", "Crashed", "Abandoned"] as const;
+
+// The predicate partitions `runs.status` into live / failure-terminal / settled.
+// That partition is only correct while it stays EXHAUSTIVE: a 12th status added
+// to the enum would fall through to the settled arm and report a result for a
+// run that is still working. Pin it against the schema's own enum rather than a
+// re-typed copy.
+describe("the status partition covers the whole runs.status enum", () => {
+  const ENUM_VALUES = [...RUN_STATUS_VALUES].sort();
+
+  it("live + failure + settled = every value, with no overlap", () => {
+    const live = [...LIVE_RESULT_RUN_STATUSES];
+    const failure = [...FAILURE_RESULT_RUN_STATUSES];
+    const settled = ENUM_VALUES.filter(
+      (v) => !live.includes(v as never) && !failure.includes(v as never),
+    );
+
+    expect([...live, ...failure, ...settled].sort()).toEqual(ENUM_VALUES);
+    expect(live.filter((v) => failure.includes(v as never))).toEqual([]);
+    // The settled arm is exactly the two statuses whose results are readable.
+    expect(settled.sort()).toEqual(["Done", "Review"]);
+  });
+
+  it("only Review/Done can report `valid`, over the whole enum", () => {
+    const reportingValid = ENUM_VALUES.filter(
+      (runStatus) =>
+        deriveResultStatus({
+          runStatus,
+          contract: REQUIRED_CONTRACT,
+          newestRow: row(),
+          validRow: row(),
+        }) === "valid",
+    );
+
+    expect(reportingValid.sort()).toEqual(["Done", "Review"]);
+  });
+
+  // The arm is an allow-list, so a status the predicate has never heard of
+  // reads as still-working. A deny-list would fall through and publish a
+  // result for it — the failure mode this guard exists for.
+  it("an UNKNOWN status reads as pending, never as a publishable result", () => {
+    expect(
+      deriveResultStatus({
+        runStatus: "SomeStatusAddedLater",
+        contract: REQUIRED_CONTRACT,
+        newestRow: row(),
+        validRow: row(),
+      }),
+    ).toBe("pending");
+  });
+});
 
 describe("deriveResultStatus (ADR-165 §B table)", () => {
   it.each(LIVE_STATUSES)(

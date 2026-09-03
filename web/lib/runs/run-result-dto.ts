@@ -27,6 +27,9 @@ export type RunPublicResultDto = {
   collectedAt: string | null;
   /** The validated payload — present only when `resultStatus` is `valid`. */
   value: unknown | null;
+  /** Size of that payload as published. Shown so a reader knows what they are
+   * expanding before they expand it — values run to the 256 KB seam cap. */
+  valueBytes: number | null;
   failure: { reason: string } | null;
   /**
    * True for a `Done` run that reached it WITHOUT a promotion — a result-only
@@ -88,6 +91,7 @@ export async function loadRunPublicResult(
     supersededCount: rows.filter((r) => r.validity === "superseded").length,
     collectedAt: valid?.firstCollectedAt?.toISOString() ?? null,
     value: valid?.value ?? null,
+    valueBytes: valid?.valueBytes ?? null,
     failure:
       newest?.validity === "invalid" && newest.invalidReason
         ? { reason: newest.invalidReason }

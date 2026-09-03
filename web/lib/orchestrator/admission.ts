@@ -227,8 +227,25 @@ export async function admitDelegatedChild(
 
   // ADR-165 (D8): the child-COUNT budget binds at EVERY ancestor. Depth and
   // fan-out alone cannot stop a depth-2 x fan-out-6 tree from causing 42 runs;
-  // this is the bound that does, and it is checked under the same lock that
-  // already serializes this orchestrator's admissions.
+  // this is the bound that does.
+  //
+  // The PARENT lock cannot protect it. Its invariant is scoped to an ANCESTOR's
+  // subtree, while the lock is keyed on the parent: two orchestrators in the
+  // same tree hash to different keys, cannot see each other's uncommitted
+  // children under READ COMMITTED, and both read the same pre-insert count —
+  // so both admit and the ancestor's cap is blown. Serializing the whole TREE
+  // on its ROOT is the coarsest scope that still contains every ancestor, and
+  // it is per-tree, never the platform-wide mutex D-note above rejects.
+  //
+  // Lock order is always parent-then-root, identical on every path, so no two
+  // admissions can deadlock; when the parent IS the root the key repeats and
+  // `pg_advisory_xact_lock` is re-entrant within one transaction.
+  const rootRunId = chain.at(-1)?.id;
+
+  if (rootRunId && rootRunId !== args.parentRunId) {
+    await takeDelegationLock(tx, rootRunId);
+  }
+
   for (const ancestor of chain) {
     const cap = ancestor.bounds?.budget?.maxChildRuns;
 

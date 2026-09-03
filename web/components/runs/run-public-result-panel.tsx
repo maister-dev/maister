@@ -51,6 +51,11 @@ const STATUS_GLYPH: Record<ResultStatus, string> = {
   unavailable: "—",
 };
 
+/** Compact size for the disclosure summary — a reader's cue, not a metric. */
+function formatBytes(bytes: number): string {
+  return bytes < 1024 ? `${bytes} B` : `${Math.round(bytes / 1024)} KB`;
+}
+
 export function RunPublicResultPanel({
   result,
   labels,
@@ -140,8 +145,13 @@ export function RunPublicResultPanel({
         </p>
       ) : (
         <details className="rounded-[6px] border border-line bg-ivory">
-          <summary className="cursor-pointer list-none px-2 py-1 font-mono text-[10px] uppercase text-mute marker:hidden">
-            {labels.value}
+          <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1 font-mono text-[10px] uppercase text-mute marker:hidden">
+            <span>{labels.value}</span>
+            {result.valueBytes !== null ? (
+              <span data-testid="run-public-result-value-size">
+                {formatBytes(result.valueBytes)}
+              </span>
+            ) : null}
           </summary>
           <pre
             className="m-0 max-h-[320px] overflow-auto p-2 font-mono text-[11px] text-ink"
