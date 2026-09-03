@@ -107,6 +107,27 @@ cleared so the raised band re-warns correctly.
 applies to run/task scope with a `Running` **flow** root; a non-flow run/task
 breach is likewise promoted to terminate (the raise-resume path is flow-only).
 
+The promotion happens **at classification, not after arbitration**. Verdicts are
+folded through `pickHigher`, which keeps the FIRST verdict at an equal rung, and
+run/task are folded before tree — so promoting afterwards let a same-tick run
+`escalate` win the tie and silently swallow the tree breach, leaving the tree over
+budget, unmarked, and (once the root parked in `NeedsInput`, which the candidate
+scan does not admit) never re-evaluated. Promoted at classification, a tree breach
+competes as `terminate` and wins on merit. This also settles a case the original
+text did not reach — a **`Running`** root whose tree breaches: it cascade-terminates
+rather than pausing. (`warn` is never promoted.)
+
+**A root with NO descendants does not evaluate the tree TOKENS meter** when
+run-scope tokens are set. Its tree total IS its run total by construction
+(`queryRunTreeTokens` covers `id = root OR root_run_id = root`), so the meter is
+pure redundancy — and harmful redundancy, because tree scope terminates without an
+escalate rung: it killed a lone run whose RUN ceiling an operator had just raised
+(a raise lifts `ceilingOverride[scope]` for the breached scope only), violating
+"the resumed run does not immediately re-escalate" in E10. The skip is conditioned
+on run tokens being set, so a flow configuring only `budget.tree` keeps its bound,
+and is scoped to TOKENS only: `wallClockMinutes` is enforced at tree scope ALONE,
+and tree `consecutiveFailures` is always 0 for a tree of one.
+
 ## 5. `run_kind` dispatch (D7 — branch BEFORE routing)
 
 The watchdog candidate set spans `flow | agent | scratch`; the breach mechanism
@@ -252,7 +273,15 @@ These become the Expectations bullets in
   `404` proceeds (skill-context CAS/never-mark-Failed rule).
 - **E6.** A `tree`-scope breach cascade-terminates the whole run-tree
   (`cascadeAbandonRunTree`, one tx, `promoteNextPending` per pool) then flips the
-  root; tree scope has no escalate rung.
+  root; tree scope has no escalate rung. The cascade commits BEFORE the root CAS,
+  so if the root advances out of `Running`/`WaitingOnChildren` in between (the
+  graph runner flips a root to `Review` on the normal execution path and takes no
+  lifecycle claim, so nothing serializes against it) the flip is lost while the
+  descendants are already irreversibly `Abandoned`. On that path the tree action
+  MUST still be recorded (`budget_state.notified.tree`), status-independently —
+  otherwise `alreadyActioned` cannot suppress a re-entry and the cascade re-runs
+  against an already-gutted tree. Sessions left live under an `Abandoned` row stay
+  the reconcile reaper's job (`reapAbandonedRunSessions`), by design.
 - **E7.** `task` token spend = SUM of the four token columns over all
   `runs WHERE task_id = T`; `task.consecutiveFailures` = trailing streak of
   `Failed|Crashed|Abandoned` runs for the task.
@@ -273,6 +302,11 @@ These become the Expectations bullets in
   candidate each tick; task/tree member runs are read from their existing rollups
   (reconciled by their own candidacy / the runner write path). A
   `sourceCursor`-based throttle is a possible future optimization, not v1.
+  **Re-reviewed 2026-09-03 and deliberately RETAINED**: an adversarial review
+  asked for every tree member's `cost.jsonl` to be reconciled before aggregating.
+  That reverses this clause, costs per-tick disk I/O across a whole tree, and for
+  consistency would have to apply to `task` scope too, which has shipped on these
+  terms since ADR-101. The bounded ~one-tick overshoot is the accepted tradeoff.
 - **E12.** New env vars `MAISTER_BUDGET_HARD_MULTIPLIER` and
   `MAISTER_DEFAULT_UNATTENDED_BUDGET_TOKENS` are documented in
   `docs/configuration.md` + `.env.example` (+ deployment overlays if

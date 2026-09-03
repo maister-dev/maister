@@ -11,11 +11,12 @@ import {
 // `tree.maxTokens` from the env var so a hands-off run is never unbounded by
 // accident. BOTH seeds are load-bearing: run scope bounds the single run, and
 // tree scope bounds an orchestrator swarm's TOTAL spend (summed at the root).
-// Seeding the two at the SAME value keeps a standalone run on the ESCALATE rung
-// rather than a hard kill: run scope is evaluated first and wins the equal-rung
-// tie in `pickHigher`, so the tree rung's force-promotion to terminate — which
-// tests the winning verdict's scope — does not apply to it. Only a real swarm,
-// whose tree total exceeds the root's own spend, trips tree scope alone.
+// Seeding the two at the SAME value is safe for a STANDALONE run because the
+// watchdog skips the redundant tree TOKENS meter for a root with no descendants
+// (its tree total is its run total by construction), so such a run rides the run
+// ceiling's escalate rung and an operator's raise of that ceiling actually holds.
+// Do NOT rely on `pickHigher`'s equal-rung tie for this — tree verdicts are now
+// promoted to terminate at classification, so the tie no longer protects anything.
 // Lives in a server module so the env read stays server-side and
 // execution-policy.ts stays client-safe. Never throws — a missing / invalid /
 // non-positive env value leaves the policy untouched (fail-OPEN, consistent with

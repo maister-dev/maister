@@ -966,6 +966,37 @@ function pickHigher(
   return RUNG_ORDER[b.rung] > RUNG_ORDER[a.rung] ? b : a;
 }
 
+// Tree scope has no escalate rung (spec E6): a breach goes straight to the
+// terminate-cascade. The promotion MUST happen here, at classification, and NOT
+// after arbitration — `pickHigher` keeps the FIRST verdict at an equal rung and
+// run/task are folded before tree, so a post-arbitration promotion let a
+// same-tick run `escalate` silently swallow a tree breach and leave the tree
+// over budget, unmarked and (once the root parked in NeedsInput) never
+// re-evaluated. Promoted here, a real tree breach competes as rung 3 and wins on
+// merit. `warn` is never promoted.
+function promoteTreeVerdict(
+  verdict: BudgetVerdict | null,
+): BudgetVerdict | null {
+  if (!verdict || verdict.rung !== "escalate") return verdict;
+
+  return { ...verdict, rung: "terminate" };
+}
+
+// Does this root actually have descendants? A root with none is a "tree of one",
+// whose tree token total IS its run token total by construction — see the D2
+// note at the tree-tokens meter. Existence probe only (LIMIT 1) on the
+// `runs_root_run_id_idx` index; deliberately NOT `getRunSubtreeIds`, which walks
+// the whole subtree one query per level.
+async function hasTreeDescendants(db: Db, rootRunId: string): Promise<boolean> {
+  const rows = await db
+    .select({ id: runs.id })
+    .from(runs)
+    .where(eq(runs.rootRunId, rootRunId))
+    .limit(1);
+
+  return rows.length > 0;
+}
+
 // Evaluate every active scope/meter for one candidate and return the single
 // highest-rung verdict (or null = within budget). The tree scope is gated to the
 // tree ROOT only (this run has no root_run_id of its own) — a non-root member
@@ -1171,19 +1202,35 @@ async function evaluateBudgetForCandidate(
       );
     }
 
-    if (treeTokenCeilings) {
+    // D2: for a root with NO descendants the tree token total is the run token
+    // total by construction (`queryRunTreeTokens` covers `id = root OR
+    // root_run_id = root`), so this meter is pure redundancy — and a harmful
+    // one: tree scope terminates without an escalate rung, so it killed a lone
+    // run whose RUN ceiling the operator had just raised (the raise lifts
+    // `ceilingOverride[scope]` for the breached scope only). Skipped only when
+    // run-scope tokens are actually set, so a flow configuring only
+    // `budget.tree` keeps its bound. Scoped to TOKENS: wall-clock is a
+    // tree-scope-only meter and failures are always 0 for a tree of one.
+    const skipRedundantTreeTokens =
+      treeTokenCeilings !== null &&
+      runTokenCeilings !== null &&
+      !(await hasTreeDescendants(db, candidate.id));
+
+    if (treeTokenCeilings && !skipRedundantTreeTokens) {
       const current = await queryRunTreeTokens(candidate.id, { client: db });
 
       verdict = pickHigher(
         verdict,
-        classifyMeter({
-          scope: "tree",
-          meter: "tokens",
-          current,
-          escalateLimit: treeTokenCeilings.escalateLimit,
-          hardLimit: treeTokenCeilings.hardLimit,
-          warnPct: warnPct("tree"),
-        }),
+        promoteTreeVerdict(
+          classifyMeter({
+            scope: "tree",
+            meter: "tokens",
+            current,
+            escalateLimit: treeTokenCeilings.escalateLimit,
+            hardLimit: treeTokenCeilings.hardLimit,
+            warnPct: warnPct("tree"),
+          }),
+        ),
       );
     }
 
@@ -1201,14 +1248,16 @@ async function evaluateBudgetForCandidate(
 
       verdict = pickHigher(
         verdict,
-        classifyMeter({
-          scope: "tree",
-          meter: "failures",
-          current,
-          escalateLimit: treeFailLimit,
-          hardLimit: null,
-          warnPct: warnPct("tree"),
-        }),
+        promoteTreeVerdict(
+          classifyMeter({
+            scope: "tree",
+            meter: "failures",
+            current,
+            escalateLimit: treeFailLimit,
+            hardLimit: null,
+            warnPct: warnPct("tree"),
+          }),
+        ),
       );
     }
 
@@ -1223,30 +1272,29 @@ async function evaluateBudgetForCandidate(
 
       verdict = pickHigher(
         verdict,
-        classifyMeter({
-          scope: "tree",
-          meter: "wallclock",
-          current,
-          escalateLimit: treeWallLimit,
-          hardLimit: null,
-          warnPct: warnPct("tree"),
-        }),
+        promoteTreeVerdict(
+          classifyMeter({
+            scope: "tree",
+            meter: "wallclock",
+            current,
+            escalateLimit: treeWallLimit,
+            hardLimit: null,
+            warnPct: warnPct("tree"),
+          }),
+        ),
       );
     }
   }
 
-  // Tree scope has no escalate→resume route — a parked WaitingOnChildren root has
-  // no → NeedsInput transition (spec §4: a tree breach goes straight to the
-  // terminate-cascade) — so a tree escalate verdict is force-promoted to
-  // terminate here. The run/task (non-tree) breach DISPOSITION is no longer
-  // hardcoded by run_kind: it is resolved from the onBudgetBreach policy axis at
-  // dispatch (escalate | terminate | terminate_restorable; ADR-106 M39 Phase 5),
-  // so a non-flow run can now escalate (agent resume via session/resume) or land
-  // in the recoverable NeedsInputIdle instead of an unconditional terminate.
-  if (verdict && verdict.rung === "escalate" && verdict.scope === "tree") {
-    return { ...verdict, rung: "terminate" };
-  }
-
+  // The tree escalate→terminate promotion happens at CLASSIFICATION
+  // (`promoteTreeVerdict`), not here: promoting after arbitration let a same-tick
+  // run/task escalate win the equal-rung tie and swallow the tree breach.
+  //
+  // The run/task (non-tree) breach DISPOSITION is not hardcoded by run_kind: it
+  // is resolved from the onBudgetBreach policy axis at dispatch (escalate |
+  // terminate | terminate_restorable; ADR-106 M39 Phase 5), so a non-flow run can
+  // escalate (agent resume via session/resume) or land in the recoverable
+  // NeedsInputIdle instead of an unconditional terminate.
   return verdict;
 }
 
@@ -1967,9 +2015,20 @@ async function actBudgetTerminateTree(
   });
 
   if (upd.length === 0) {
-    log.debug(
-      { runId: candidate.id },
-      "[budget] tree-root flip claim lost — concurrent transition won",
+    // The flip lost, but the cascade above already committed: every descendant is
+    // irreversibly Abandoned. Record the tree action anyway — it is only written
+    // inside the CAS `.set()`, so without this a re-entry (the root returning to
+    // Running) would pass `alreadyActioned` and re-run the whole cascade against
+    // an already-gutted tree. Status-independent by design: the row is terminal
+    // or advanced either way, and this stamps provenance only.
+    await db
+      .update(runs)
+      .set({ budgetState: notified })
+      .where(eq(runs.id, candidate.id));
+
+    log.warn(
+      { runId: candidate.id, scope: verdict.scope, meter: verdict.meter },
+      "[budget] tree-root flip claim lost — concurrent transition won; descendants already cascaded",
     );
 
     return false;

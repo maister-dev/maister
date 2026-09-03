@@ -567,14 +567,15 @@ describe("budget watchdog — ESCALATE (flow-only, E4) + non-flow promotion to t
     expect(ws[0].removedAt).toBeNull();
   }, 60_000);
 
-  it("standalone run with run+tree ceilings at the SAME value stays on ESCALATE (run scope wins the equal-rung tie)", async () => {
+  it("standalone run with run+tree ceilings at the SAME value stays on ESCALATE (redundant tree tokens meter is skipped)", async () => {
     // The `MAISTER_DEFAULT_UNATTENDED_BUDGET_TOKENS` shape: the seeder writes
     // run.maxTokens AND tree.maxTokens at one value. A standalone run carries
-    // root_run_id NULL, so it IS a tree root and evaluates tree scope too — and
-    // its "tree" total is just its own spend. Tree scope has NO escalate rung, so
-    // if the tree verdict won the tie this run would be hard-terminated instead
-    // of pausing for a human. `pickHigher` keeps the FIRST verdict at an equal
-    // rung and run scope is evaluated first, so the escalate survives.
+    // root_run_id NULL, so it IS a tree root — but with no descendants its "tree"
+    // total is just its own spend. Tree scope has NO escalate rung, so evaluating
+    // that redundant meter would hard-terminate this run instead of pausing for a
+    // human. D2 skips the tree TOKENS meter for a descendant-less root, so the run
+    // ceiling's escalate stands. (This does NOT rely on `pickHigher`'s equal-rung
+    // tie — tree verdicts are promoted to terminate at classification now.)
     const taskId = await seedTask();
     const sup = `sup-${randomUUID().slice(0, 8)}`;
     const runId = await seedRun({
@@ -1418,6 +1419,256 @@ describe("budget watchdog — TREE scope (E6)", () => {
     expect(killed).toContain("sup-root");
     expect(killed).toContain("sup-a");
     expect(killed).toContain("sup-b");
+  }, 60_000);
+});
+
+// D1/D2. Tree scope only began evaluating at all in f58a8895 (the gate had been
+// dead for every production row), which exposed two holes the spec never had to
+// answer because the case was unreachable:
+//
+//   D1 — `pickHigher` keeps the FIRST verdict at an equal rung and run scope is
+//   folded before tree, so a tree breach in the ESCALATE band was silently
+//   swallowed by a same-tick run escalate at a RUNNING root. Only that band: a
+//   tree verdict in the hard band is already rung 3 and outranks it on merit.
+//
+//   D2 — for a root with no descendants the tree token total IS the run token
+//   total by construction, so the redundant tree meter killed a run whose run
+//   ceiling had just been raised. Narrowed to the TOKENS meter: wall-clock is a
+//   tree-scope-only meter, and dropping the whole scope would silently disable
+//   every lone run's duration bound.
+describe("budget watchdog — tree arbitration (D1/D2)", () => {
+  it("D1: a RUNNING root with descendants cascade-terminates when run and tree both land in the escalate band", async () => {
+    // Both scopes trip at the escalate rung in the same tick. Pre-fix the run
+    // verdict won the tie and the root was merely paused — leaving the tree over
+    // budget, unmarked (`notified.tree` is never stamped for a losing verdict)
+    // and un-rechecked, because a NeedsInput run is not a budget candidate.
+    const taskId = await seedTask();
+    const rootId = await seedRun({
+      taskId,
+      status: "Running",
+      executionPolicy: policyWithBudget({
+        run: { maxTokens: 1000 },
+        tree: { maxTokens: 1000 },
+      }),
+      acpSessionId: "acp-d1-root",
+    });
+    const childA = await seedRun({
+      rootRunId: rootId,
+      parentRunId: rootId,
+      status: "Running",
+      acpSessionId: "acp-d1-a",
+    });
+
+    await seedAttempt({ runId: rootId, attempt: 1, status: "Running" });
+    await seedWorkspace(rootId);
+    // Root 1100 ≥ run 1000 (escalate; hard = 1250). Tree 1100 + 100 = 1200 ≥
+    // 1000 (escalate; below the 1250 hard band, so it cannot win on rung alone).
+    await seedRollup(rootId, taskId, 1100);
+    await seedRollup(childA, null, 100);
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(rootId, "sup-d1-root", "implement"),
+      liveSessionRecord(childA, "sup-d1-a", "implement"),
+    ]);
+
+    await runSweepTick({ db });
+
+    // The tree breach wins: whole tree down, no human pause.
+    expect((await getRun(childA)).status).toBe("Abandoned");
+    expect((await getRun(rootId)).status).toBe("Failed");
+    expect(await getHitl(rootId)).toHaveLength(0);
+  }, 60_000);
+
+  it("D2: a raised run ceiling is not undone by the unraised tree ceiling on the next tick", async () => {
+    // F1b — the regression f58a8895 introduced. `budget-default.ts` seeds run AND
+    // tree at one value for an unattended launch; the raise path
+    // (`hitl.ts:4095-4108`) lifts `ceilingOverride[scope]` for the BREACHED scope
+    // only. So run was raised, tree stayed at N, and the next tick killed the run
+    // the operator had just funded — violating execution-policy.md:294 ("the
+    // resumed run MUST NOT immediately re-escalate").
+    //
+    // NOTE: this seeds the post-raise STATE rather than driving the HITL route.
+    // `handleBudgetBreachResponse` is module-private and returns a NextResponse;
+    // the write shape asserted here is exactly what hitl.ts:4095-4108 produces,
+    // and the code under repair is the sweeper, not the raise path.
+    const taskId = await seedTask();
+    const runId = await seedRun({
+      taskId,
+      status: "Running",
+      executionPolicy: policyWithBudget({
+        run: { maxTokens: 1000 },
+        tree: { maxTokens: 1000 },
+      }),
+      budgetState: {
+        ceilingOverride: { run: { maxTokens: 4000 } },
+        notified: {},
+      },
+      acpSessionId: "acp-d2-raised",
+    });
+
+    await seedAttempt({ runId, attempt: 1, status: "Running" });
+    await seedWorkspace(runId);
+    // Past the ORIGINAL 1000 but well inside the raised 4000 ceiling.
+    await seedRollup(runId, taskId, 1200);
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(runId, "sup-d2", "implement"),
+    ]);
+
+    await runSweepTick({ db });
+
+    const run = await getRun(runId);
+
+    // The raise holds: neither killed by tree scope nor immediately re-paused.
+    expect(run.status).toBe("Running");
+    expect(deleteSessionSpy).not.toHaveBeenCalled();
+    expect(await getHitl(runId)).toHaveLength(0);
+  }, 60_000);
+
+  it("D2 carve-out: a singleton with ONLY a tree token ceiling is still bounded", async () => {
+    // The skip is conditioned on run-scope tokens being set. A flow that
+    // configures only `budget.tree` must not become unbounded just because its
+    // run happened not to delegate.
+    const taskId = await seedTask();
+    const runId = await seedRun({
+      taskId,
+      status: "Running",
+      executionPolicy: policyWithBudget({ tree: { maxTokens: 1000 } }),
+      acpSessionId: "acp-d2-treeonly",
+    });
+
+    await seedAttempt({ runId, attempt: 1, status: "Running" });
+    await seedRollup(runId, taskId, 1200);
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(runId, "sup-d2-treeonly", "implement"),
+    ]);
+
+    await runSweepTick({ db });
+
+    expect((await getRun(runId)).status).toBe("Failed");
+  }, 60_000);
+
+  it("D5: a retryable root-kill failure leaves the whole tree intact for the next tick (E5 at tree scope)", async () => {
+    // E5 discipline at tree scope: if we cannot confirm the root agent stopped,
+    // nothing may be flipped terminal — the cascade must not run at all. Paired
+    // with the supervisor-client fix that maps a supervisor 5xx to
+    // EXECUTOR_UNAVAILABLE instead of the terminal ACP_PROTOCOL, which is what
+    // made a supervisor-internal 500 take the "proceeding" branch and abandon a
+    // tree whose root agent was still alive.
+    const taskId = await seedTask();
+    const rootId = await seedRun({
+      taskId,
+      status: "Running",
+      executionPolicy: policyWithBudget({ tree: { maxTokens: 1000 } }),
+      acpSessionId: "acp-tree5xx-root",
+    });
+    const childA = await seedRun({
+      rootRunId: rootId,
+      parentRunId: rootId,
+      status: "Running",
+      acpSessionId: "acp-tree5xx-a",
+    });
+
+    await seedRollup(rootId, taskId, 800);
+    await seedRollup(childA, null, 400); // tree 1200 ≥ 1000
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(rootId, "sup-tree5xx-root", "implement"),
+      liveSessionRecord(childA, "sup-tree5xx-a", "implement"),
+    ]);
+    deleteSessionSpy.mockRejectedValueOnce(
+      new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor 500"),
+    );
+
+    await runSweepTick({ db });
+
+    // Nothing terminal, nothing cascaded — retried next tick.
+    expect((await getRun(rootId)).status).toBe("Running");
+    expect((await getRun(childA)).status).toBe("Running");
+    expect((await getRun(rootId)).budgetState?.notified?.tree).toBeUndefined();
+  }, 60_000);
+
+  it("D3: a lost root CAS still records notified.tree so the gutted tree is not re-cascaded", async () => {
+    // The cascade commits descendants BEFORE the root CAS (spec E6 prescribes
+    // that order). If the root advances out of Running/WaitingOnChildren in
+    // between, the CAS returns 0 rows and the terminate "fails" — but the
+    // descendants are already irreversibly Abandoned. `notified.tree` was
+    // computed and then dropped on that path, because it is only written inside
+    // the CAS `.set()`, so `alreadyActioned` could not suppress a repeat and a
+    // re-entry would re-run the whole cascade against an already-gutted tree.
+    const taskId = await seedTask();
+    const rootId = await seedRun({
+      taskId,
+      status: "Running",
+      executionPolicy: policyWithBudget({ tree: { maxTokens: 1000 } }),
+      acpSessionId: "acp-lostcas-root",
+    });
+    const childA = await seedRun({
+      rootRunId: rootId,
+      parentRunId: rootId,
+      status: "Running",
+      acpSessionId: "acp-lostcas-a",
+    });
+
+    await seedRollup(rootId, taskId, 800);
+    await seedRollup(childA, null, 400); // tree 1200 ≥ 1000
+
+    // Inject the race deterministically: the root's own session kill is the last
+    // step before the cascade, so advancing the root here reproduces "a
+    // concurrent transition won" without racing two real ticks.
+    deleteSessionSpy.mockImplementation(async (id: string) => {
+      if (id === "sup-lostcas-root") {
+        await db
+          .update(schema.runs)
+          .set({ status: "Review" })
+          .where(eq(schema.runs.id, rootId));
+      }
+
+      return undefined;
+    });
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(rootId, "sup-lostcas-root", "implement"),
+      liveSessionRecord(childA, "sup-lostcas-a", "implement"),
+    ]);
+
+    await runSweepTick({ db });
+
+    const root = await getRun(rootId);
+
+    // The concurrent transition kept the root; the cascade is already committed.
+    expect(root.status).toBe("Review");
+    expect((await getRun(childA)).status).toBe("Abandoned");
+    // The fix: the tree action is recorded even though the flip was lost.
+    expect(root.budgetState?.notified?.tree).toBe("terminate");
+  }, 60_000);
+
+  it("D2 carve-out: a singleton's tree WALL-CLOCK ceiling still terminates", async () => {
+    // Wall-clock is enforced at tree scope only (`meter: "wallclock"` appears
+    // once, in the tree block). Skipping the whole tree scope for a singleton
+    // would silently disable it, so only the TOKENS meter is skipped.
+    const taskId = await seedTask();
+    const runId = await seedRun({
+      taskId,
+      status: "Running",
+      startedAt: new Date(Date.now() - 120 * 60_000),
+      executionPolicy: policyWithBudget({
+        run: { maxTokens: 1_000_000 },
+        tree: { wallClockMinutes: 60 },
+      }),
+      acpSessionId: "acp-d2-wall",
+    });
+
+    await seedAttempt({ runId, attempt: 1, status: "Running" });
+    await seedRollup(runId, taskId, 10);
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(runId, "sup-d2-wall", "implement"),
+    ]);
+
+    await runSweepTick({ db });
+
+    expect((await getRun(runId)).status).toBe("Failed");
   }, 60_000);
 });
 

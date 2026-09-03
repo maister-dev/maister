@@ -146,7 +146,15 @@ and climbs a warn → escalate → terminate ladder; an unset or `0` meter is sk
 `NeedsInputIdle` with a `budget_breach` HITL and the worktree kept when the run
 kind has a resumable path. `tree` scope has NO escalate rung — a
 `WaitingOnChildren` root has no `→ NeedsInput` transition, so it goes straight to
-a cascade-terminate.
+a cascade-terminate. That promotion is applied when the tree verdict is
+classified, BEFORE the highest-rung arbitration across scopes (Implemented) —
+applied after, a same-tick run/task `escalate` won the equal-rung tie and
+swallowed the tree breach. A **`Running`** root whose tree breaches therefore
+cascade-terminates rather than pausing. A root with **no descendants** does not
+evaluate the tree token meter while run-scope tokens are set: its tree total is
+its run total, and the redundant meter otherwise killed a run whose run ceiling
+had just been raised. `wallClockMinutes` is enforced at tree scope alone and is
+never skipped.
 
 ```mermaid
 stateDiagram-v2
@@ -283,7 +291,10 @@ E1–E12 invariants.)
   the session is confirmed stopped/absent.
 - A `tree`-scope breach MUST cascade-terminate the whole run-tree
   (`cascadeAbandonRunTree`, one transaction) then flip the root; tree scope has
-  NO escalate rung.
+  NO escalate rung. The cascade commits before the root CAS, and nothing
+  serializes against the graph runner advancing that root, so when the flip is
+  lost the tree action MUST still be recorded on `budget_state.notified.tree` —
+  otherwise a re-entry re-cascades an already-gutted tree.
 - (Implemented — ADR-165) **Tree-budget min-merge with the orchestrator node's
   declaration.** When the ROOT run carries `delegation_bounds.budget`, the
   effective tree limit for tokens, wall-clock and consecutive failures MUST be
