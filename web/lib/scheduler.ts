@@ -713,6 +713,7 @@ export async function promoteNextPending(
           runKind: r.runKind,
           workspaceMode: r.workspaceMode,
           rootRunId: r.rootRunId,
+          parentRunId: r.parentRunId,
         },
       })),
       ...c3rows.map((r) => ({
@@ -724,6 +725,7 @@ export async function promoteNextPending(
           runKind: r.runKind,
           workspaceMode: r.workspaceMode,
           rootRunId: r.rootRunId,
+          parentRunId: r.parentRunId,
         },
       })),
       ...c2rows.map((r) => ({

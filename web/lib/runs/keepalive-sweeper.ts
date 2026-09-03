@@ -771,6 +771,17 @@ async function promoteAfterTimeoutKill(db: Db): Promise<void> {
   }
 }
 
+/** True when any run points at `runId` as its parent — i.e. it is a real tree. */
+async function hasDescendants(db: Db, runId: string): Promise<boolean> {
+  const rows = (await db
+    .select({ id: runs.id })
+    .from(runs)
+    .where(eq(runs.parentRunId, runId))
+    .limit(1)) as { id: string }[];
+
+  return rows.length > 0;
+}
+
 // --- Cost-budget governance: warn → escalate → terminate watchdog (ADR-101) --
 // A multi-kind pass (flow | agent | scratch) over Running / WaitingOnChildren
 // runs. For each ACTIVE budget scope (run always; task when task_id; tree when
@@ -1125,8 +1136,20 @@ async function evaluateBudgetForCandidate(
     }
   }
 
-  // --- tree scope (only at the tree root: rootRunId === own id) --------------
-  if (candidate.rootRunId === candidate.id) {
+  // --- tree scope (only at a tree root that HAS a tree) ----------------------
+  //
+  // Rootness is PARENTAGE. It is not `rootRunId === id`: the launchers write
+  // `parent.rootRunId ?? parent.id`, so a descendant carries the root's id and
+  // the ROOT ITSELF carries NULL — nothing self-stamps a root, so that predicate
+  // is never true in production and the whole tree ladder was unreachable.
+  //
+  // `hasDescendants` keeps the scope honest in the other direction: an ordinary
+  // childless run is not a tree, and metering it here would apply the tree
+  // ceiling to a single run on top of its own run-scope ceiling.
+  const isTreeRoot =
+    candidate.parentRunId === null && (await hasDescendants(db, candidate.id));
+
+  if (isTreeRoot) {
     // ADR-165 (D8): min-merge the ROOT orchestrator node's declared budget into
     // the policy's tree ceilings. The tighter of the two binds — a manifest can
     // lower an instance policy, never raise it. Spend / time / failure budgets

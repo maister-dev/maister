@@ -643,6 +643,14 @@ export function foldTokenRows(
   };
 }
 
+/**
+ * Flat token total for a whole tree — the ADR-101 budget meter.
+ *
+ * Scope is `id = root OR root_run_id = root`, for the same reason as
+ * `queryRunTreeTokensByKind`: a DESCENDANT carries the root's id while the ROOT
+ * ITSELF carries NULL, so a `root_run_id`-only predicate silently excludes the
+ * root coordinator's own spend from its own budget.
+ */
 export async function queryRunTreeTokens(
   rootRunId: string,
   opts: { client?: DbClient } = {},
@@ -652,7 +660,7 @@ export async function queryRunTreeTokens(
     .select({ total: baseTokenSumExpr })
     .from(runCostRollups)
     .innerJoin(runs, eq(runs.id, runCostRollups.runId))
-    .where(eq(runs.rootRunId, rootRunId));
+    .where(or(eq(runs.id, rootRunId), eq(runs.rootRunId, rootRunId)));
   const total = asTokenNumber(row?.total ?? 0);
 
   log.debug({ rootRunId, scope: "tree", total }, "budget token total");

@@ -26,8 +26,16 @@ export type AdmissionCandidate = {
   // FIFO key in epoch millis: started_at (C1), resume_requested_at (C3),
   // created_at (C2).
   fifoMs: number;
-  // Opaque payload the gate uses to claim/dispatch (runId or taskId).
-  ref: { runId?: string; taskId?: string } & Record<string, unknown>;
+  // Payload the gate uses to claim/dispatch (runId or taskId). `parentRunId` is
+  // NAMED rather than left to the index signature: the per-parent
+  // active-children guard reads it, and under `Record<string, unknown>` a
+  // mapping that forgot to set it still type-checks — the read just yields
+  // `undefined` and the guard silently never fires.
+  ref: {
+    runId?: string;
+    taskId?: string;
+    parentRunId?: string | null;
+  } & Record<string, unknown>;
 };
 
 // Pure order: criticality weight DESC (primary, D-A), then classRank ASC

@@ -79,19 +79,28 @@ export async function loadRunPublicResult(
     validity: string;
   }[];
 
+  const resultStatus = deriveResultStatus({
+    runStatus: run.status,
+    contract: (run.resultContract ?? null) as never,
+    newestRow: newest,
+    validRow: valid,
+  });
+  // The payload is gated on the DERIVED status, not merely on a `valid` row
+  // existing. A failure-terminal run reports `unavailable` while an earlier
+  // valid row can still sit in the ledger (rework published nothing usable);
+  // returning that payload anyway would render a superseded answer under a
+  // status saying there is none — and would contradict `run_collect`, which
+  // nulls `result` for exactly this case. One plane, one rule.
+  const served = resultStatus === "valid" ? valid : null;
+
   return {
     schemaRef: run.resultContract?.schemaRef ?? newest?.schemaRef ?? null,
-    resultStatus: deriveResultStatus({
-      runStatus: run.status,
-      contract: (run.resultContract ?? null) as never,
-      newestRow: newest,
-      validRow: valid,
-    }),
+    resultStatus,
     revision: valid?.revision ?? newest?.revision ?? null,
     supersededCount: rows.filter((r) => r.validity === "superseded").length,
-    collectedAt: valid?.firstCollectedAt?.toISOString() ?? null,
-    value: valid?.value ?? null,
-    valueBytes: valid?.valueBytes ?? null,
+    collectedAt: served?.firstCollectedAt?.toISOString() ?? null,
+    value: served?.value ?? null,
+    valueBytes: served?.valueBytes ?? null,
     failure:
       newest?.validity === "invalid" && newest.invalidReason
         ? { reason: newest.invalidReason }

@@ -242,6 +242,40 @@ describe("loadObjectiveTreeFacts over the AC-39 tree", () => {
     expect(measure("tree_tokens@1")).toEqual({ tokens: 300 });
   }, 60_000);
 
+  // A depth-2 tree: the root can only ever collect its DIRECT children, so a
+  // grandchild's valid result must not sit in the ratio denominator. Counting it
+  // would make the d2 arm structurally unable to score what the d1 arm scores —
+  // in the very comparison the Lab protocol exists to run.
+  it("scopes the ratio denominator to DIRECT children, not the whole subtree", async () => {
+    const rootId = await seedRun({});
+    const child = await seedRun({ parentRunId: rootId, rootRunId: rootId });
+    const grandchild = await seedRun({ parentRunId: child, rootRunId: rootId });
+
+    await seedResult({ runId: child, validity: "valid", collected: true });
+    await seedResult({ runId: grandchild, validity: "valid", collected: true });
+    await seedResult({
+      runId: rootId,
+      validity: "valid",
+      value: { consumedChildRunIds: [child] },
+    });
+
+    const tree = await loadObjectiveTreeFacts(rootId, db as never);
+
+    // The grandchild counts toward the SUBTREE size...
+    expect(tree!.childRunCount).toBe(2);
+    // ...but not toward what the root could have collected.
+    expect(tree!.validResultChildRunIds).toEqual([child]);
+    expect(tree!.collectedChildRunIds).toEqual([child]);
+
+    const value = evaluateObjectiveCheck(
+      { id: "c", provider: "consumed_results_ratio@1", policy: "metric" },
+      { tree: tree! },
+    ).metric!.value;
+
+    // A perfect score: the root collected and consumed the one result it could.
+    expect(value).toMatchObject({ consumed: 1, valid: 1, ratio: 1 });
+  }, 60_000);
+
   it("returns null for a run that has a PARENT — a flat arm has no tree", async () => {
     const rootId = await seedRun({});
     const child = await seedRun({ parentRunId: rootId, rootRunId: rootId });

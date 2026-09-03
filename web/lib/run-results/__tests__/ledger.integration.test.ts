@@ -320,14 +320,22 @@ describe("markRunResultCollected", () => {
     await publish({ summary: "one" });
 
     const early = new Date("2026-01-01T00:00:00.000Z");
+    const served = (await currentRunResult(db, runId))!;
 
-    expect(await markRunResultCollected(db, runId, early)).toBe(true);
+    expect(await markRunResultCollected(db, runId, served.id, early)).toBe(
+      true,
+    );
     expect((await currentRunResult(db, runId))?.firstCollectedAt).toEqual(
       early,
     );
 
     expect(
-      await markRunResultCollected(db, runId, new Date("2026-06-01T00:00:00Z")),
+      await markRunResultCollected(
+        db,
+        runId,
+        served.id,
+        new Date("2026-06-01T00:00:00Z"),
+      ),
     ).toBe(false);
     expect((await currentRunResult(db, runId))?.firstCollectedAt).toEqual(
       early,
@@ -335,7 +343,25 @@ describe("markRunResultCollected", () => {
   });
 
   it("does nothing when the run has no valid result", async () => {
-    expect(await markRunResultCollected(db, runId)).toBe(false);
+    expect(await markRunResultCollected(db, runId, randomUUID())).toBe(false);
+  });
+
+  // The marker is the Lab's ground truth for "the engine served this revision".
+  // Keyed on the run alone it would stamp whatever is valid at WRITE time, so a
+  // rework landing between the read and the write would credit a revision the
+  // caller never received.
+  it("does NOT stamp a revision that superseded the one served", async () => {
+    await publish({ summary: "one" });
+    const servedFirst = (await currentRunResult(db, runId))!;
+
+    // Rework republishes: revision 1 is superseded, revision 2 is now current.
+    await publish({ summary: "two" });
+    const current = (await currentRunResult(db, runId))!;
+
+    expect(current.id).not.toBe(servedFirst.id);
+    expect(await markRunResultCollected(db, runId, servedFirst.id)).toBe(false);
+    expect(current.firstCollectedAt).toBeNull();
+    expect((await currentRunResult(db, runId))?.firstCollectedAt).toBeNull();
   });
 });
 

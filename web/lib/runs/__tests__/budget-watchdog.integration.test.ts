@@ -1044,13 +1044,19 @@ describe("budget watchdog — TREE scope (E6)", () => {
     // 3 children sharing root_run_id; tree.maxTokens summed across them trips
     // TERMINATE directly (tree has no escalate rung). The root carries the tree
     // budget; children are non-root members (evaluate run/task only).
+    //
+    // The root is seeded in the PRODUCTION shape: `root_run_id` NULL. The
+    // launchers write `parent.rootRunId ?? parent.id`, so descendants carry the
+    // root's id and nothing ever self-stamps a root. Seeding `rootRunId: rootId`
+    // here would build a row production never produces — and the tree gate would
+    // be tested only against that impossible shape.
     const rootId = randomUUID();
 
     await db.insert(schema.runs).values({
       id: rootId,
       runKind: "flow",
       projectId,
-      rootRunId: rootId,
+      rootRunId: null,
       status: "WaitingOnChildren",
       currentStepId: null,
       flowVersion: "v1.0.0",

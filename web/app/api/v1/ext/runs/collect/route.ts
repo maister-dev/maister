@@ -10,7 +10,7 @@ import {
   collectChild,
   directChildRunIds,
   markCollected,
-  type CollectResult,
+  type CollectedChild,
 } from "@/lib/run-results/collect";
 import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
 
@@ -98,11 +98,11 @@ export async function POST(
             projectId: ctx.projectId,
           });
 
-      const results: CollectResult[] = [];
+      const collected: CollectedChild[] = [];
 
       try {
         for (const id of childRunIds) {
-          results.push(
+          collected.push(
             await collectChild(db, {
               parentRunId,
               projectId: ctx.projectId,
@@ -122,9 +122,14 @@ export async function POST(
       // ADR-165 (T7.2 / W6): the marker commits BEFORE the response. A caller
       // that never sees the body simply retries — the read is idempotent and
       // the marker is write-once, so the body is byte-identical either way.
-      await markCollected(db, results);
+      await markCollected(db, collected);
 
-      return NextResponse.json(results, { status: 200 });
+      // Only the wire DTO leaves the boundary — `servedResultId` is an internal
+      // ledger handle the marker needs and a caller must never see.
+      return NextResponse.json(
+        collected.map((c) => c.result),
+        { status: 200 },
+      );
     },
   );
 }

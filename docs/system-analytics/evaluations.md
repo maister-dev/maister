@@ -665,8 +665,8 @@ Every provider reads RECORDED facts (ADR-143 D11) — none executes anything.
 | --- | --- | --- |
 | child run count | `child_run_count@1` | recursive CTE over `parent_run_id` from the participant root |
 | result-validation failures | `result_validation_failures@1` | `run_results` rows with `validity='invalid'` over the tree, `result_missing` included |
-| collected-results ratio | `collected_results_ratio@1` | child rows with `first_collected_at` set ÷ child rows with a `valid` result |
-| consumed-results ratio | `consumed_results_ratio@1` | the root result's `consumedChildRunIds` ∩ children holding a `valid` row ÷ children holding a `valid` row — a fabricated id is excluded, which is the whole point of the intersection |
+| collected-results ratio | `collected_results_ratio@1` | DIRECT children with `first_collected_at` set ÷ direct children with a `valid` result |
+| consumed-results ratio | `consumed_results_ratio@1` | direct children satisfying BOTH signals — engine-collected (`first_collected_at`) AND named in the root result's `consumedChildRunIds` — ÷ direct children holding a `valid` row. An id that was served but never claimed, or claimed but never served, counts for neither |
 | rework count | `rework_count@1` | `node_attempts` rework provenance over the tree |
 | crash count | `crash_count@1` | `Crashed` runs over the tree |
 | tree tokens | `tree_tokens@1` | the `root_run_id`-scoped token roll-up |
@@ -677,7 +677,15 @@ Every provider reads RECORDED facts (ADR-143 D11) — none executes anything.
 engine marker (`first_collected_at` — the engine knows it served the row) and a
 self-report (`consumedChildRunIds` — the agent claims it read the row). Either
 alone is gameable: the engine cannot see reasoning, and the agent can name an id
-it never received.
+it never received. `consumed_results_ratio@1` therefore requires BOTH;
+`collected_results_ratio@1` deliberately keeps asking the engine's question
+alone, so the two can be read against each other.
+
+Both ratios are scoped to **direct children**, because `run_collect` serves a
+coordinator only its direct children. A grandchild's result in the denominator
+would be one the root could never have collected — and would make the depth-2
+arm structurally unable to score what the depth-1 arm scores, in the very
+comparison this protocol exists to run.
 
 ### As-built
 

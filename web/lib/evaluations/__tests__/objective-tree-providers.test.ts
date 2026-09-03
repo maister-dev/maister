@@ -155,20 +155,48 @@ describe("absence is unavailable, never zero", () => {
 });
 
 describe("the measures cannot be gamed by a self-report alone", () => {
-  it("a root claiming every child, having collected none, still scores 0", () => {
+  // The whole point of the measure: a coordinator that names every child while
+  // the engine served it none has USED nothing. Scoring the self-report alone
+  // would make the metric a claim-counter.
+  it("a root claiming every child, having collected none, scores 0", () => {
+    expect(
+      metricOf(
+        "consumed_results_ratio@1",
+        treeFacts({
+          collectedChildRunIds: [],
+          consumedChildRunIds: ["c1", "c2", "c3"],
+        }),
+      ),
+    ).toMatchObject({ consumed: 0, valid: 3 });
+  });
+
+  it("counts only ids that are BOTH engine-collected and self-reported", () => {
     const value = metricOf(
       "consumed_results_ratio@1",
       treeFacts({
-        collectedChildRunIds: [],
-        consumedChildRunIds: ["c1", "c2", "c3"],
+        // The engine served c1 and c2; the root claims c2 and c3.
+        collectedChildRunIds: ["c1", "c2"],
+        consumedChildRunIds: ["c2", "c3"],
       }),
     );
 
-    // The intersection is with children holding a VALID row, so a claim is not
-    // enough on its own — but neither is collection: this arm answers "did it
-    // name real results?", and `collected_results_ratio` answers "was it
-    // served them?". Both are reported; neither substitutes for the other.
-    expect(value).toMatchObject({ consumed: 3, valid: 3 });
+    // Only c2 satisfies both signals — c1 was served but never claimed, c3 was
+    // claimed but never served.
+    expect(value).toMatchObject({ consumed: 1, valid: 3 });
+  });
+
+  // `collected_results_ratio` keeps asking the ENGINE's question alone: it must
+  // NOT gain the self-report requirement.
+  it("collected_results_ratio still measures what the engine served", () => {
+    expect(
+      metricOf(
+        "collected_results_ratio@1",
+        treeFacts({
+          collectedChildRunIds: ["c1", "c2"],
+          consumedChildRunIds: [],
+        }),
+      ),
+    ).toMatchObject({ collected: 2, valid: 3 });
   });
 
   it("naming an id that holds NO valid result scores nothing for it", () => {

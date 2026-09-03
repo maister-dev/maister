@@ -234,11 +234,19 @@ function counted(
  * A denominator of zero is `unavailable`, NOT 0: no valid results means the
  * ratio is undefined, and recording it as 0 would rank a tree that produced
  * nothing to collect below one that collected everything it had.
+ *
+ * `requireCollected` is what separates the two measures. `collected_results`
+ * asks what the ENGINE served; `consumed_results` asks whether the coordinator
+ * actually USED what it was served, so its hits must satisfy BOTH signals — the
+ * engine's `first_collected_at` marker AND the root's self-report. Either alone
+ * is gameable: the engine cannot see reasoning, and an agent can name an id it
+ * never received.
  */
 function resultRatio(
   tree: ObjectiveTreeFacts,
   hitIds: string[],
   key: "collected" | "consumed",
+  requireCollected = false,
 ): ObjectiveCheckOutcome {
   const valid = new Set(tree.validResultChildRunIds);
 
@@ -250,10 +258,15 @@ function resultRatio(
     };
   }
 
+  const collected = new Set(tree.collectedChildRunIds);
   // The INTERSECTION is the point (ADR-165): an id the parent names but that
   // holds no valid row — a fabricated one — contributes nothing, and a
   // duplicate contributes once.
-  const hits = new Set(hitIds.filter((id) => valid.has(id)));
+  const hits = new Set(
+    hitIds.filter(
+      (id) => valid.has(id) && (!requireCollected || collected.has(id)),
+    ),
+  );
 
   return {
     status: "passed",
@@ -301,7 +314,7 @@ export function evaluateObjectiveCheck(
       );
     case "consumed_results_ratio@1":
       return treeMetric(facts, (t) =>
-        resultRatio(t, t.consumedChildRunIds, "consumed"),
+        resultRatio(t, t.consumedChildRunIds, "consumed", true),
       );
     case "rework_count@1":
       return treeMetric(facts, (t) => counted(t.reworkCount, "count", "count"));

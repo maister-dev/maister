@@ -253,6 +253,7 @@ export async function markRunResultStale(
 export async function markRunResultCollected(
   tx: Db,
   runId: string,
+  resultId: string,
   at: Date = new Date(),
 ): Promise<boolean> {
   const marked = (await tx
@@ -261,6 +262,12 @@ export async function markRunResultCollected(
     .where(
       and(
         eq(runResults.runId, runId),
+        // The EXACT row that was served. Keyed on the run alone, a rework that
+        // superseded revision 1 and published revision 2 between the read and
+        // this update would stamp revision 2 as "first collected" even though
+        // the caller received revision 1 — and the Lab's consumption metric
+        // reads this marker as ground truth about what the engine served.
+        eq(runResults.id, resultId),
         eq(runResults.validity, "valid"),
         isNull(runResults.firstCollectedAt),
       ),

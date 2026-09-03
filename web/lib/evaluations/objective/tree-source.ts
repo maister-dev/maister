@@ -80,6 +80,11 @@ export async function loadObjectiveTreeFacts(
         FROM runs r JOIN subtree s ON r.parent_run_id = s.id
     ),
     descendants AS (SELECT * FROM subtree WHERE id <> ${rootRunId}),
+    -- The ratio denominators are scoped to DIRECT children on purpose:
+    -- run_collect serves a coordinator only its direct children, so counting
+    -- grandchildren would make a depth-2 arm structurally unable to score what a
+    -- depth-1 arm scores, in the very comparison the protocol exists to run.
+    direct_children AS (SELECT id FROM runs WHERE parent_run_id = ${rootRunId}),
     root_result AS (
       SELECT value FROM run_results
        WHERE run_id = ${rootRunId} AND validity = 'valid'
@@ -100,10 +105,10 @@ export async function loadObjectiveTreeFacts(
                 0)::int
          FROM subtree WHERE started_at IS NOT NULL) AS tree_wall_clock_minutes,
       (SELECT coalesce(array_agg(rr.run_id::text), '{}')
-         FROM run_results rr JOIN descendants dd ON dd.id = rr.run_id
+         FROM run_results rr JOIN direct_children dc ON dc.id = rr.run_id
         WHERE rr.validity = 'valid') AS valid_result_child_run_ids,
       (SELECT coalesce(array_agg(rr.run_id::text), '{}')
-         FROM run_results rr JOIN descendants dd ON dd.id = rr.run_id
+         FROM run_results rr JOIN direct_children dc ON dc.id = rr.run_id
         WHERE rr.validity = 'valid' AND rr.first_collected_at IS NOT NULL)
         AS collected_child_run_ids,
       (SELECT value -> 'consumedChildRunIds' FROM root_result) AS consumed_child_run_ids

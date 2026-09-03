@@ -606,6 +606,50 @@ describe("the active-children cap is a QUEUE, not a refusal (AC-29)", () => {
     expect(await statusOf(children[3])).toBe("Running");
   }, 60_000);
 
+  // The existing cases only promote when a slot HAS freed, so they pass even if
+  // the per-parent guard on this edge never runs. This is the case that needs
+  // it: the parent stays saturated and an UNRELATED run frees the global slot.
+  it("an unrelated run freeing a global slot does NOT promote past a saturated parent", async () => {
+    const parent = await seedRun({
+      status: "WaitingOnChildren",
+      bounds: { maxActiveChildren: 2 },
+    });
+    const children: string[] = [];
+
+    for (let i = 0; i < 3; i += 1) {
+      children.push(await seedRun({ parentRunId: parent, status: "Pending" }));
+    }
+    for (const runId of children.slice(0, 2)) {
+      await expect(tryStartRun(runId, { db })).resolves.toMatchObject({
+        started: true,
+      });
+    }
+    await expect(tryStartRun(children[2], { db })).resolves.toMatchObject({
+      started: false,
+    });
+
+    // An unrelated run (no parent) starts and then settles, freeing a slot in
+    // the GLOBAL pool while the parent's own two children are still Running.
+    const unrelated = await seedRun({});
+
+    await tryStartRun(unrelated, { db });
+    await pool.query(`UPDATE "runs" SET "status" = 'Done' WHERE id = $1`, [
+      unrelated,
+    ]);
+
+    await promoteNextPending({ db });
+
+    expect(await statusOf(children[2])).toBe("Pending");
+
+    // ...and once a SIBLING frees a slot, the same edge does promote it.
+    await pool.query(`UPDATE "runs" SET "status" = 'Review' WHERE id = $1`, [
+      children[0],
+    ]);
+    await promoteNextPending({ db });
+
+    expect(await statusOf(children[2])).toBe("Running");
+  }, 60_000);
+
   it("a sibling reaching Done also frees the slot", async () => {
     const parent = await seedRun({
       status: "WaitingOnChildren",

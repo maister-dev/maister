@@ -130,10 +130,24 @@ const SETTLED: ReadonlySet<string> = new Set(SETTLED_RUN_STATUSES);
  * `"unknown"` status fallback, which reported a fictional child rather than
  * refusing.
  */
+/**
+ * What `collectChild` returns: the wire DTO plus the ledger row id that was
+ * actually served.
+ *
+ * `servedResultId` is deliberately NOT a field of `CollectResult` — that type is
+ * the public response body, and a ledger row id is an internal handle. It exists
+ * so the first-collected marker can target the EXACT revision the caller
+ * received rather than "whatever is valid at write time".
+ */
+export type CollectedChild = {
+  result: CollectResult;
+  servedResultId: string | null;
+};
+
 export async function collectChild(
   db: Db,
   args: { parentRunId: string; projectId: string; childRunId: string },
-): Promise<CollectResult> {
+): Promise<CollectedChild> {
   const runRows = (await db
     .select({
       status: runs.status,
@@ -187,34 +201,38 @@ export async function collectChild(
   const diffRef = diffRow ? diffRefFromLocator(diffRow.locator) : undefined;
   const outputText = outputTextFromArtifacts(artifactRows);
 
+  const servedRow = resultStatus === "valid" ? valid : null;
+
   return {
-    childRunId: args.childRunId,
-    status: run.status,
-    settled: SETTLED.has(run.status),
-    resultStatus,
-    result:
-      resultStatus === "valid" && valid
-        ? { schemaRef: valid.schemaRef, value: valid.value }
+    servedResultId: servedRow?.id ?? null,
+    result: {
+      childRunId: args.childRunId,
+      status: run.status,
+      settled: SETTLED.has(run.status),
+      resultStatus,
+      result: servedRow
+        ? { schemaRef: servedRow.schemaRef, value: servedRow.value }
         : null,
-    resultRevision: valid?.revision ?? newest?.revision ?? null,
-    // The invalid row is the ONE durable source. A failure-terminal child that
-    // simply died (W4) has none, and reports null rather than a guess.
-    resultFailure:
-      newest?.validity === "invalid" && newest.invalidReason
-        ? {
-            reason: newest.invalidReason,
-            message: invalidReasonMessage(newest.invalidReason),
-          }
-        : null,
-    artifacts: artifactRows.map((row) => ({
-      id: row.id,
-      kind: row.kind,
-      name: artifactName(row.locator, row.uri),
-      nodeId: row.nodeId,
-      validity: row.validity,
-    })),
-    ...(diffRef !== undefined ? { diffRef } : {}),
-    ...(outputText !== undefined ? { outputText } : {}),
+      resultRevision: valid?.revision ?? newest?.revision ?? null,
+      // The invalid row is the ONE durable source. A failure-terminal child that
+      // simply died (W4) has none, and reports null rather than a guess.
+      resultFailure:
+        newest?.validity === "invalid" && newest.invalidReason
+          ? {
+              reason: newest.invalidReason,
+              message: invalidReasonMessage(newest.invalidReason),
+            }
+          : null,
+      artifacts: artifactRows.map((row) => ({
+        id: row.id,
+        kind: row.kind,
+        name: artifactName(row.locator, row.uri),
+        nodeId: row.nodeId,
+        validity: row.validity,
+      })),
+      ...(diffRef !== undefined ? { diffRef } : {}),
+      ...(outputText !== undefined ? { outputText } : {}),
+    },
   };
 }
 
@@ -268,15 +286,25 @@ export async function directChildRunIds(
  */
 export async function markCollected(
   db: Db,
-  results: readonly CollectResult[],
+  collected: readonly CollectedChild[],
 ): Promise<void> {
-  const served = results.filter((r) => r.resultStatus === "valid");
+  const served = collected.filter(
+    (c): c is CollectedChild & { servedResultId: string } =>
+      c.result.resultStatus === "valid" && c.servedResultId !== null,
+  );
 
   if (served.length === 0) return;
 
   await db.transaction(async (tx: Db) => {
-    for (const result of served) {
-      await markRunResultCollected(tx, result.childRunId);
+    for (const item of served) {
+      // Keyed on the SERVED row, not the run: a rework that superseded it and
+      // published a new revision between the read above and this write must not
+      // have the new revision stamped as the one the caller received.
+      await markRunResultCollected(
+        tx,
+        item.result.childRunId,
+        item.servedResultId,
+      );
     }
   });
 
