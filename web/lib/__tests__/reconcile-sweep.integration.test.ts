@@ -301,7 +301,7 @@ async function readRun(runId: string): Promise<any> {
 // Inject a healthy supervisor that reports the given live records, an empty
 // worktree set by default (overridden per test), and spies for runFlow +
 // scheduleResumedSessionDrive.
-// ADR-165: the sweep addresses the host through `ExecutionHosts` — a fresh
+// ADR-166: the sweep addresses the host through `ExecutionHosts` — a fresh
 // fake local host per call whose session list (and, when given, teardown)
 // ride the injected functions.
 async function makeOpts(over: {
@@ -1147,7 +1147,7 @@ describe("runReconcileSweep (integration)", () => {
   }, 60_000);
 });
 
-describe("runReconcileSweep — workspace handle check (ADR-165 N6)", () => {
+describe("runReconcileSweep — workspace handle check (ADR-166 N6)", () => {
   it("warns workspace-handle-lost for an active assignment the host no longer knows and keeps sweeping", async () => {
     const runId = await seedRun({ acpSessionId: "acp-lost" });
 

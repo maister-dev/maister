@@ -2,7 +2,7 @@ import type { SupervisorEvent } from "@/lib/supervisor-client";
 
 import { EventEmitter } from "node:events";
 
-// ADR-165 D5: the `session.command` events observed on any SSE consumer are
+// ADR-166 D5: the `session.command` events observed on any SSE consumer are
 // published here so a prompt's `PromptHandle.completion` resolves from
 // whichever durable signal arrives first (SSE, receipt, or the HTTP response).
 // Process-local by design — the durable copies live in the ledger and in

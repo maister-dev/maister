@@ -1104,7 +1104,7 @@ export async function launchAgentRun(
     );
   }
 
-  // ADR-165 D1: the registered local execution host is the readiness gate —
+  // ADR-166 D1: the registered local execution host is the readiness gate —
   // unreachable/refused surfaces as EXECUTOR_UNAVAILABLE before any worktree
   // or row exists. The host row is what the launch tx places the run on.
   const placementHost = await localHost({ db: _db as unknown as ExecutionDb });
@@ -1438,7 +1438,7 @@ export async function launchAgentRun(
         id: randomUUID(),
         ...defaultRunSessionValues(runId, resolution),
       });
-      // ADR-165 D3: every new run is placed on the local host at launch (epoch
+      // ADR-166 D3: every new run is placed on the local host at launch (epoch
       // 1, `launch`); the driver binds to this assignment when it spawns.
       await mintPlacement(tx as unknown as ExecutionDb, {
         runId,
@@ -2260,7 +2260,7 @@ async function startConsensusRunnerDraftSession(args: {
     );
   } catch (err) {
     if (isFencedError(err)) {
-      // ADR-165: a newer driver generation owns the run — yield untouched.
+      // ADR-166: a newer driver generation owns the run — yield untouched.
       log.warn({ runId }, "consensus runner draft session fenced — yielding");
 
       return;
@@ -2493,7 +2493,7 @@ export async function finalizeAgentRun(
 
     if (!row) return false;
 
-    // ADR-165 D7: the terminal status ends the run's driver generation (a
+    // ADR-166 D7: the terminal status ends the run's driver generation (a
     // Review child re-enters through a NEW generation on rework/re-message).
     await releaseAssignmentForRun(
       tx as unknown as ExecutionDb,
@@ -2870,7 +2870,7 @@ export async function parkPersistentAgent(
       .returning({ id: runs.id });
 
     if (rows.length > 0) {
-      // ADR-165 D7: a parked agent's driver generation ended with the turn;
+      // ADR-166 D7: a parked agent's driver generation ended with the turn;
       // the next re-message mints a fresh `resume` generation.
       await releaseAssignmentForRun(
         tx as unknown as ExecutionDb,
@@ -2967,7 +2967,7 @@ export async function sendAgentMessage(
   // any non-Running status), then respawn + resume + deliver the new prompt.
   // Mirrors the agent-idle HITL resume CAS in lib/services/hitl.ts.
   if (run.status === "NeedsInputIdle") {
-    // ADR-165 D3: the re-message is a new driver generation (`resume`) minted
+    // ADR-166 D3: the re-message is a new driver generation (`resume`) minted
     // inside the same CAS claim; the local host resolves BEFORE the claim.
     const placementHost = await localHost({
       db: _db as unknown as ExecutionDb,
@@ -3137,7 +3137,7 @@ export async function reworkChildRun(
   // (shared: tree allocator row; own: this run's row) → no deadlock. A workspace-less
   // child (workspace 'none'/'repo_read', no row) can't be promoted → unfenced CAS.
   // F1 shipped the shared half; this adds the own half (sibling-sweep miss).
-  // ADR-165 D3: a rework re-entry is a new driver generation (`rework_return`)
+  // ADR-166 D3: a rework re-entry is a new driver generation (`rework_return`)
   // minted inside the claim transaction; the local host resolves first.
   const placementHost = await localHost({
     db: _db as unknown as ExecutionDb,
@@ -3230,7 +3230,7 @@ async function recordAgentPermissionRequest(args: {
   });
 }
 
-// ADR-165: the agent driver's execution seam — a client BOUND to the run's
+// ADR-166: the agent driver's execution seam — a client BOUND to the run's
 // active assignment (spawn/prompt/input/checkpoint carry its epoch, so a
 // superseded driver is fenced by the host, never silently re-bound) plus the
 // host's admin surface (the session event stream).
@@ -3691,7 +3691,7 @@ export async function startAgentSession(
       consent: { kind: "attach-time" },
     });
 
-    // ADR-165: the create is handle-form — the workspace (and its context
+    // ADR-166: the create is handle-form — the workspace (and its context
     // mounts, snapshotted on the run above) is adopted by the bound client.
     const execution = await bindAgentExecution(hosts, runId);
     const session = await execution.client.createSession({
@@ -3754,7 +3754,7 @@ export async function startAgentSession(
     ).completion;
   } catch (err) {
     if (isFencedError(err)) {
-      // ADR-165: a newer driver generation owns the run — yield without
+      // ADR-166: a newer driver generation owns the run — yield without
       // touching run state.
       log.warn({ runId }, "agent session spawn/prompt fenced — yielding");
 
@@ -3960,7 +3960,7 @@ export async function consumeAgentSession(args: {
             });
           } catch (err) {
             if (isFencedError(err)) {
-              // ADR-165: a newer driver generation owns the run — detach.
+              // ADR-166: a newer driver generation owns the run — detach.
               log.warn({ runId: args.runId }, "hook_trip checkpoint fenced");
 
               return;

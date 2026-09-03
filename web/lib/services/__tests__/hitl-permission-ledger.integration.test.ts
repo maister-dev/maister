@@ -1,4 +1,4 @@
-// ADR-165 (T4.2 I1–I3 + the driver yield rule) on real Postgres: the permission
+// ADR-166 (T4.2 I1–I3 + the driver yield rule) on real Postgres: the permission
 // response's `session.input` command is queued in the Phase-1 claim tx and
 // delivered afterwards; its ledger row and `hitl_requests.responded_at` land
 // together; a definitive 503 leaves the row `failed` and respondedAt NULL, and
@@ -168,7 +168,7 @@ async function hitlRow(id: string) {
   return rows[0];
 }
 
-describe("permission response ledger (ADR-165 I1–I3)", () => {
+describe("permission response ledger (ADR-166 I1–I3)", () => {
   it("I1: the session.input command lands `succeeded` together with respondedAt", async () => {
     const { runId, hitlRequestId, hosts, fake } = await seedLiveNeedsInput();
 

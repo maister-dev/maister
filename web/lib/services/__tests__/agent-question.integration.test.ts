@@ -49,7 +49,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await testDatabase.pool.query('TRUNCATE TABLE "projects" CASCADE');
-  // ADR-165: a fresh fake local host per case — the source session is torn
+  // ADR-166: a fresh fake local host per case — the source session is torn
   // down through the client bound to the source run's assignment.
   fake = createFakeExecutionHost();
 });
@@ -219,7 +219,7 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
     expect(result.activationState).toBe("active");
     expect(result.created).toBe(true);
     expect(deletedSessions()).toEqual(["supervisor-session-1"]);
-    // ADR-165: the teardown is a fenced `session.delete` under the source
+    // ADR-166: the teardown is a fenced `session.delete` under the source
     // run's assignment.
     expect(fake.callsOf("deleteSession")[0]?.envelope).toMatchObject({
       command: { kind: "session.delete" },

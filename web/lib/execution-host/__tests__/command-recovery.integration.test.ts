@@ -1,4 +1,4 @@
-// ADR-165 T3.4 — startup + periodic recovery + retention (V1–V6) against a
+// ADR-166 T3.4 — startup + periodic recovery + retention (V1–V6) against a
 // REAL supervisor child (SIGKILL + restart on the same state dir for W4).
 
 import type { Db } from "@/lib/execution-host/db";

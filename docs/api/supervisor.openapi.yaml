@@ -22,7 +22,7 @@ info:
     carries `session.update`, `session.permission_request`, `session.line`,
     `session.exited`, and `session.crashed` events.
 
-    **Execution-host contract (Implemented — ADR-165, 0.8.0).** The supervisor is
+    **Execution-host contract (Implemented — ADR-166, 0.8.0).** The supervisor is
     an *execution host* with a durable identity (`GET /health` → `host`).
     Every host-bound mutating route (`POST /sessions`, every
     `/sessions/{id}/*` mutation, `DELETE /sessions/{id}`,
@@ -36,7 +36,7 @@ info:
     opaque `executionWorkspaceId` it returns. The contract is strict: a bare
     body without an envelope is `409 PRECONDITION {reason: missing_envelope}`
     on every command route, and a `session.create` payload carrying a
-    pre-ADR-165 path field (`runId`, `projectSlug`, `worktreePath`,
+    pre-ADR-166 path field (`runId`, `projectSlug`, `worktreePath`,
     `repoPath`, `confineRoot`, `contextMounts`) is
     `409 PRECONDITION {reason: legacy_field, field}`.
     Stage A is single-host, loopback, shared-filesystem, and unauthenticated —
@@ -76,7 +76,7 @@ tags:
     description: MCP server health probe — real `initialize` handshake (ADR-129).
   - name: execution-host
     description: |
-      (Implemented — ADR-165) Execution-host contract: opaque workspace adoption
+      (Implemented — ADR-166) Execution-host contract: opaque workspace adoption
       and command receipts.
 paths:
   /health:
@@ -89,7 +89,7 @@ paths:
         session work. The body intentionally excludes project ids, run ids,
         executor secrets, env vars, and filesystem paths.
 
-        (Implemented — ADR-165) The `host` object carries the durable execution-host
+        (Implemented — ADR-166) The `host` object carries the durable execution-host
         identity: `hostKey` (minted into the supervisor's private state store on
         first boot, or the `MAISTER_EXECUTION_HOST_KEY` pin), the per-process
         `bootId` (changes on every restart), and `protocolVersion`. The web
@@ -123,7 +123,7 @@ paths:
   /workspaces/adopt:
     post:
       tags: [execution-host]
-      summary: Adopt a host-local path as an opaque execution workspace (Implemented — ADR-165)
+      summary: Adopt a host-local path as an opaque execution workspace (Implemented — ADR-166)
       description: |
         The ONLY path-bearing route. Registers `payload.path` for
         `payload.runId` and returns a host-scoped opaque handle
@@ -206,7 +206,7 @@ paths:
   /workspaces/{id}:
     get:
       tags: [execution-host]
-      summary: Read an adopted workspace handle (Implemented — ADR-165)
+      summary: Read an adopted workspace handle (Implemented — ADR-166)
       description: |
         Path-free projection of a handle. Used by the web reconciler to verify
         that an `active` assignment's handle still exists (a 404 logs
@@ -236,7 +236,7 @@ paths:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
     delete:
       tags: [execution-host]
-      summary: Release an adopted workspace handle (Implemented — ADR-165)
+      summary: Release an adopted workspace handle (Implemented — ADR-166)
       description: |
         Marks the handle released (a later `session.create` against it is
         refused with `workspace_released`). Issued as a `driverless`
@@ -286,7 +286,7 @@ paths:
   /commands/{commandId}:
     get:
       tags: [execution-host]
-      summary: Read a command receipt (Implemented — ADR-165)
+      summary: Read a command receipt (Implemented — ADR-166)
       description: |
         Returns the host's durable receipt for a command id: the phase
         (`accepted` for a prompt whose turn is in flight, `completed` with the
@@ -351,7 +351,7 @@ paths:
         sessions. The supervisor validates it as a safe id and stamps it on
         cost records; it never grants filesystem, project, or session authority.
 
-        (Implemented — ADR-165) The body is a `CreateSessionCommand` envelope
+        (Implemented — ADR-166) The body is a `CreateSessionCommand` envelope
         (`command.kind = session.create`) whose `payload` is the
         `StartSessionRequest`. The handle form (`payload.executionWorkspaceId`)
         derives `cwd`, the content-block confinement roots, the run dir, and
@@ -363,7 +363,7 @@ paths:
         verbatim replay with `X-Maister-Command-Replayed: true`, in-flight →
         join) → execute → write receipt → respond. A bare body without an
         envelope is `409 PRECONDITION missing_envelope`; a payload carrying a
-        pre-ADR-165 path field is `409 PRECONDITION legacy_field` naming the
+        pre-ADR-166 path field is `409 PRECONDITION legacy_field` naming the
         field (`details.field`).
       operationId: createSession
       requestBody:
@@ -397,7 +397,7 @@ paths:
               schema: { $ref: "#/components/schemas/StartSessionResponse" }
         "409":
           description: |
-            Zod validation rejected the request body; or (Implemented — ADR-165)
+            Zod validation rejected the request body; or (Implemented — ADR-166)
             a fence refusal (`host_mismatch`, `assignment_mismatch`,
             `run_mismatch`), an unknown/released handle
             (`unknown_workspace` / `workspace_released`), a stale epoch
@@ -450,7 +450,7 @@ paths:
         supervisor knows about (live, exited, crashed — kept for the
         post-terminal grace window before GC).
 
-        (Implemented — ADR-165) The projection carries `executionWorkspaceId`,
+        (Implemented — ADR-166) The projection carries `executionWorkspaceId`,
         `assignmentId`, `assignmentEpoch`, and `createdByCommandId`. Host-private
         paths (`logPath`, `worktreePath`, `repoPath`, `confineRoot`,
         `contextMounts`) never leave the host — no web reader consumes them.
@@ -492,7 +492,7 @@ paths:
         inference. Concurrent prompts in one reused session are refused by the
         web tier before they become ambiguous.
 
-        (Implemented — ADR-165) Enveloped as a `PromptCommand`
+        (Implemented — ADR-166) Enveloped as a `PromptCommand`
         (`command.kind = session.prompt`). Completion rides THREE durable
         signals: the SSE `session.command {phase: accepted}` when the turn
         starts, the SSE `session.command {phase: completed, status, result}`
@@ -609,7 +609,7 @@ paths:
       requestBody:
         required: true
         description: |
-          (Implemented — ADR-165) `DeleteSessionCommand` envelope
+          (Implemented — ADR-166) `DeleteSessionCommand` envelope
           (`command.kind = session.delete`, `payload: {}`). Issued as a
           `driverless` command so startup recovery may re-deliver it.
         content:
@@ -732,7 +732,7 @@ paths:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
         "409":
           description: |
-            Body validation failed (unknown keys); or (Implemented — ADR-165) a
+            Body validation failed (unknown keys); or (Implemented — ADR-166) a
             fence refusal / stale epoch (`FENCED`). A checkpoint arriving under
             a HIGHER epoch than the live session's evicts that session first
             (`session.exited {reason: fenced}`), then executes.
@@ -1453,10 +1453,10 @@ components:
       required: [executionWorkspaceId, stepId, executor]
       additionalProperties: false
       description: |
-        (Implemented — ADR-165) The `session.create` payload. `executionWorkspaceId`
+        (Implemented — ADR-166) The `session.create` payload. `executionWorkspaceId`
         names an adopted workspace; the host derives `cwd`, the content-block
         confinement roots, the run dir, `runId`, `projectSlug`, and the context
-        mounts from the handle (server state). The pre-ADR-165 path fields
+        mounts from the handle (server state). The pre-ADR-166 path fields
         (`runId`, `projectSlug`, `worktreePath`, `repoPath`, `confineRoot`,
         `contextMounts`) are refused by name: their presence is
         `409 PRECONDITION {reason: legacy_field, field}`. Context mounts travel
@@ -1480,7 +1480,7 @@ components:
           type: string
           pattern: "^ws_[0-9a-f]{32}$"
           description: |
-            (Implemented — ADR-165) Opaque host-scoped handle returned by
+            (Implemented — ADR-166) Opaque host-scoped handle returned by
             `POST /workspaces/adopt`. The handle form of this request. Unknown
             → `409 PRECONDITION unknown_workspace`; released →
             `workspace_released`; the fence's `runId` must equal the handle's
@@ -1525,7 +1525,7 @@ components:
             capability profile. Must start with `/` and must not contain `..`
             segments. The supervisor passes it only through validated
             `adapterLaunch` env/args; it does not inspect policy. (Implemented —
-            ADR-165) The one residual path in the handle form: it MUST resolve
+            ADR-166) The one residual path in the handle form: it MUST resolve
             inside the handle's path → otherwise `409 PRECONDITION
             {reason: workspace_rejected, rule: outside_workspace}`. It leaves
             with Stage C materialization.
@@ -1838,19 +1838,19 @@ components:
         executionWorkspaceId:
           type: string
           pattern: "^ws_[0-9a-f]{32}$"
-          description: (Implemented — ADR-165) The adopted handle this session runs in (handle-form sessions only).
+          description: (Implemented — ADR-166) The adopted handle this session runs in (handle-form sessions only).
         assignmentId:
           type: string
           format: uuid
-          description: (Implemented — ADR-165) `fence.assignmentId` of the `session.create` that spawned this session.
+          description: (Implemented — ADR-166) `fence.assignmentId` of the `session.create` that spawned this session.
         assignmentEpoch:
           type: integer
           minimum: 1
-          description: (Implemented — ADR-165) `fence.assignmentEpoch` of the `session.create` that spawned this session.
+          description: (Implemented — ADR-166) `fence.assignmentEpoch` of the `session.create` that spawned this session.
         createdByCommandId:
           type: string
           format: uuid
-          description: (Implemented — ADR-165) `command.id` of the `session.create` that spawned this session.
+          description: (Implemented — ADR-166) `command.id` of the `session.create` that spawned this session.
         acpSessionId:
           type: string
           minLength: 1
@@ -1886,7 +1886,7 @@ components:
         returned by `POST /sessions/{id}/input` when no matching pending
         permission exists for the given `(sessionId, requestId)`.
 
-        `FENCED` (Implemented — ADR-165, HTTP 409) is returned when
+        `FENCED` (Implemented — ADR-166, HTTP 409) is returned when
         `fence.assignmentEpoch` is below the host's persisted high-water for
         that run, or when a session evicted by a higher epoch answers its
         pending prompt. It is NOT a `MaisterErrorCode`: the web client maps
@@ -1906,7 +1906,7 @@ components:
         - legacy_field
         - missing_envelope
       description: |
-        (Implemented — ADR-165) Machine-readable refusal discriminator carried in
+        (Implemented — ADR-166) Machine-readable refusal discriminator carried in
         `SupervisorErrorBody.details.reason`. Tests assert the token, never
         the message text.
     WorkspaceRule:
@@ -1923,13 +1923,13 @@ components:
         - inside_state_dir
         - outside_workspace
       description: |
-        (Implemented — ADR-165) Which adoption rule rejected a path; present
+        (Implemented — ADR-166) Which adoption rule rejected a path; present
         iff `details.reason = workspace_rejected`.
     SupervisorErrorDetails:
       type: object
       additionalProperties: false
       description: |
-        (Implemented — ADR-165) Typed error details. Passed through verbatim to
+        (Implemented — ADR-166) Typed error details. Passed through verbatim to
         the web-tier `MaisterError.details`.
       properties:
         reason: { $ref: "#/components/schemas/ReasonToken" }
@@ -1949,7 +1949,7 @@ components:
       required: [hostKey, bootId, protocolVersion]
       additionalProperties: false
       description: |
-        (Implemented — ADR-165) Durable execution-host identity reported on
+        (Implemented — ADR-166) Durable execution-host identity reported on
         `GET /health`.
       properties:
         hostKey:
@@ -1978,13 +1978,13 @@ components:
         - session.cancel
         - session.checkpoint
         - session.delete
-      description: (Implemented — ADR-165) Must match the route the envelope is posted to.
+      description: (Implemented — ADR-166) Must match the route the envelope is posted to.
     CommandFence:
       type: object
       required: [hostKey, assignmentId, assignmentEpoch, runId]
       additionalProperties: false
       description: |
-        (Implemented — ADR-165) The placement fence. Checked in order: `hostKey`
+        (Implemented — ADR-166) The placement fence. Checked in order: `hostKey`
         vs the host's own key (`host_mismatch`); `assignmentEpoch` vs the
         persisted per-run high-water (`< → FENCED`, `= with a different
         assignmentId → assignment_mismatch`, `> → persist + evict lower-epoch
@@ -2009,7 +2009,7 @@ components:
       type: object
       required: [command, fence, payload]
       description: |
-        (Implemented — ADR-165) The JSON body of every host-bound mutating route;
+        (Implemented — ADR-166) The JSON body of every host-bound mutating route;
         the session id stays in the URL. `command.id` is the receipt dedup key.
       example:
         command:
@@ -2039,7 +2039,7 @@ components:
       type: string
       enum: [git_worktree, repo_checkout, directory]
       description: |
-        (Implemented — ADR-165) `git_worktree` — a run worktree under
+        (Implemented — ADR-166) `git_worktree` — a run worktree under
         `MAISTER_WORKSPACE_ROOTS` whose `.git` file points into
         `<repoPath>/.git/worktrees/`; `repo_checkout` — a git repo root equal
         to `repoPath` (arbitrary location); `directory` — a plain directory
@@ -2096,7 +2096,7 @@ components:
       type: object
       required: [command, fence, payload]
       additionalProperties: false
-      description: (Implemented — ADR-165) `POST /workspaces/adopt` body.
+      description: (Implemented — ADR-166) `POST /workspaces/adopt` body.
       properties:
         command:
           type: object
@@ -2138,7 +2138,7 @@ components:
       type: object
       required: [executionWorkspaceId, runId, projectSlug, kind, adoptedAt]
       additionalProperties: false
-      description: (Implemented — ADR-165) Path-free projection of an adopted handle.
+      description: (Implemented — ADR-166) Path-free projection of an adopted handle.
       properties:
         executionWorkspaceId: { type: string, pattern: "^ws_[0-9a-f]{32}$" }
         runId: { type: string }
@@ -2150,7 +2150,7 @@ components:
       type: object
       required: [command, fence, payload]
       additionalProperties: false
-      description: (Implemented — ADR-165) `DELETE /workspaces/{id}` body; `payload` is `{}`.
+      description: (Implemented — ADR-166) `DELETE /workspaces/{id}` body; `payload` is `{}`.
       properties:
         command:
           type: object
@@ -2176,7 +2176,7 @@ components:
       type: object
       required: [command, fence, payload]
       additionalProperties: false
-      description: (Implemented — ADR-165) Enveloped `POST /sessions` body.
+      description: (Implemented — ADR-166) Enveloped `POST /sessions` body.
       properties:
         command:
           type: object
@@ -2192,7 +2192,7 @@ components:
       type: object
       required: [command, fence, payload]
       additionalProperties: false
-      description: (Implemented — ADR-165) Enveloped `POST /sessions/{id}/prompt` body.
+      description: (Implemented — ADR-166) Enveloped `POST /sessions/{id}/prompt` body.
       properties:
         command:
           type: object
@@ -2208,7 +2208,7 @@ components:
       type: object
       required: [command, fence, payload]
       additionalProperties: false
-      description: (Implemented — ADR-165) Enveloped `POST /sessions/{id}/input` body.
+      description: (Implemented — ADR-166) Enveloped `POST /sessions/{id}/input` body.
       properties:
         command:
           type: object
@@ -2224,7 +2224,7 @@ components:
       type: object
       required: [command, fence, payload]
       additionalProperties: false
-      description: (Implemented — ADR-165) Enveloped `POST /sessions/{id}/cancel` body; `payload` is `{}`.
+      description: (Implemented — ADR-166) Enveloped `POST /sessions/{id}/cancel` body; `payload` is `{}`.
       properties:
         command:
           type: object
@@ -2242,7 +2242,7 @@ components:
       type: object
       required: [command, fence, payload]
       additionalProperties: false
-      description: (Implemented — ADR-165) Enveloped `POST /sessions/{id}/checkpoint` body; `payload` is `{}`.
+      description: (Implemented — ADR-166) Enveloped `POST /sessions/{id}/checkpoint` body; `payload` is `{}`.
       properties:
         command:
           type: object
@@ -2260,7 +2260,7 @@ components:
       type: object
       required: [command, fence, payload]
       additionalProperties: false
-      description: (Implemented — ADR-165) Enveloped `DELETE /sessions/{id}` body; `payload` is `{}`.
+      description: (Implemented — ADR-166) Enveloped `DELETE /sessions/{id}` body; `payload` is `{}`.
       properties:
         command:
           type: object
@@ -2290,7 +2290,7 @@ components:
         ]
       additionalProperties: false
       description: |
-        (Implemented — ADR-165) The host's durable record of one command id.
+        (Implemented — ADR-166) The host's durable record of one command id.
         `completed` and `rejected` receipts are replayed verbatim on a
         duplicate (`X-Maister-Command-Replayed: true`); an `accepted` receipt
         with `inflight: false` means the host restarted mid-turn

@@ -1,4 +1,4 @@
-// ADR-165 T1.2 — execution_commands ledger (C1–C5).
+// ADR-166 T1.2 — execution_commands ledger (C1–C5).
 
 import type { Db } from "@/lib/execution-host/db";
 

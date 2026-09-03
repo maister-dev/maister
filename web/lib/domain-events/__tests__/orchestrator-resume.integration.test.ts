@@ -56,7 +56,7 @@ beforeAll(async () => {
   });
   pool = testDatabase.pool;
   db = testDatabase.db;
-  // ADR-165: claim transitions mint on the local host — a fake host backs
+  // ADR-166: claim transitions mint on the local host — a fake host backs
   // every implicit resolution in this process.
   await fakeExecutionHosts(db);
 

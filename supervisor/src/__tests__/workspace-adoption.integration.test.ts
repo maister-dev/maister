@@ -1,4 +1,4 @@
-// ADR-165 T2.3 — workspace adoption + handle-based create (W1–W9).
+// ADR-166 T2.3 — workspace adoption + handle-based create (W1–W9).
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {

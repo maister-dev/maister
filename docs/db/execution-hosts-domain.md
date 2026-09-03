@@ -1,13 +1,13 @@
 # Execution-host domain ERD
 
 Tables for the local execution-host contract introduced by
-[ADR-165](../decisions.md#adr-165-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces).
+[ADR-166](../decisions.md#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces).
 Behavior lives in
 [`../system-analytics/execution-hosts.md`](../system-analytics/execution-hosts.md);
 the narrative column reference is
-[`../database-schema.md#execution-host-tables`](../database-schema.md#execution-host-tables-implemented--adr-165-migration-0129).
+[`../database-schema.md#execution-host-tables`](../database-schema.md#execution-host-tables-implemented--adr-166-migration-0130).
 
-> **Status: Implemented.** Migration `0129_execution_hosts` (single, additive,
+> **Status: Implemented.** Migration `0130_execution_hosts` (single, additive,
 > never data-dependent) adds the three tables, the four attribution columns,
 > and the indexes below. Historical rows keep `execution_assignment_id = NULL`
 > forever — the documented meaning is "pre-Stage-A, never placed".
@@ -82,19 +82,19 @@ erDiagram
 
     RUNS {
         text id PK
-        text execution_assignment_id FK "0129: execution_assignments(id) SET NULL — the ACTIVE placement; NULL = never placed"
+        text execution_assignment_id FK "0130: execution_assignments(id) SET NULL — the ACTIVE placement; NULL = never placed"
     }
 
     RUN_SESSIONS {
         text id PK
-        text execution_assignment_id FK "0129: execution_assignments(id) SET NULL — updated per spawn"
-        text host_session_id "0129: nullable; supervisor session id written by the session.create ack"
+        text execution_assignment_id FK "0130: execution_assignments(id) SET NULL — updated per spawn"
+        text host_session_id "0130: nullable; supervisor session id written by the session.create ack"
         text acp_session_id "ADR-114: unchanged"
     }
 
     NODE_ATTEMPTS {
         text id PK
-        text execution_assignment_id FK "0129: execution_assignments(id) SET NULL — stamped at attempt start, immutable"
+        text execution_assignment_id FK "0130: execution_assignments(id) SET NULL — stamped at attempt start, immutable"
     }
 ```
 
@@ -134,7 +134,7 @@ state = 'active'`: at most one active assignment per run (E-EH-02).
   `node_attempts_assignment_idx (execution_assignment_id)`.
 - FK constraint names follow drizzle's `<table>_<col>_<reftable>_<refcol>_fk`
   convention; the exact set is listed in
-  [`../database-schema.md`](../database-schema.md#execution-host-tables-implemented--adr-165-migration-0129).
+  [`../database-schema.md`](../database-schema.md#execution-host-tables-implemented--adr-166-migration-0130).
 
 ## Cascade chain
 
@@ -174,7 +174,7 @@ local host.
 
 ## Linked artifacts
 
-- Decision: [ADR-165](../decisions.md#adr-165-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces).
+- Decision: [ADR-166](../decisions.md#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces).
 - Behavior: [`../system-analytics/execution-hosts.md`](../system-analytics/execution-hosts.md).
 - Column reference: [`../database-schema.md`](../database-schema.md).
 - Related ERDs: [`runs-domain.md`](runs-domain.md) (`runs`, `run_sessions`,
@@ -182,5 +182,5 @@ local host.
 - Wire: [`../api/supervisor.openapi.yaml`](../api/supervisor.openapi.yaml)
   (`CommandEnvelope`, `AdoptWorkspaceRequest`, `CommandReceipt`).
 - Source (Implemented): `web/lib/db/schema.ts`,
-  `web/lib/db/migrations/0129_execution_hosts.sql`,
+  `web/lib/db/migrations/0130_execution_hosts.sql`,
   `web/lib/execution-host/{hosts,assignments,commands}.ts`.

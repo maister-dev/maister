@@ -22,7 +22,7 @@ import type {
   WorkspaceKind,
 } from "./types";
 
-// ADR-165 D10: the typed boundary domain code addresses execution through.
+// ADR-166 D10: the typed boundary domain code addresses execution through.
 // `ExecutionHostTransport` is the replaceable wire (local-direct today); the
 // deliverer depends on this interface and the ledger only — neither knows the
 // other (DIP).
@@ -112,7 +112,7 @@ export interface ExecutionHostTransport {
   }): Promise<SupervisorDiagnosticsStatus>;
   // The chrome's platform status (the `/health` body in its UI shape).
   platformStatus(opts?: { timeoutMs?: number }): Promise<PlatformStatus>;
-  // Host-scoped admin operations (ADR-165 T4.6): the model catalog and MCP
+  // Host-scoped admin operations (ADR-166 T4.6): the model catalog and MCP
   // probes — read/act on the host, never fenced.
   resolveModelSuggestions(
     draft: SupervisorModelCatalogDraft,

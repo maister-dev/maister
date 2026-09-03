@@ -184,7 +184,7 @@ export default defineConfig([
             {
               name: "@/lib/supervisor-client",
               message:
-                "ADR-165: domain code addresses execution through @/lib/execution-host (BoundClient / HostAdminClient); the supervisor wire is fenced to lib/execution-host/**.",
+                "ADR-166: domain code addresses execution through @/lib/execution-host (BoundClient / HostAdminClient); the supervisor wire is fenced to lib/execution-host/**.",
             },
           ],
         },
@@ -192,7 +192,7 @@ export default defineConfig([
     },
   },
   {
-    // ADR-165 D10: the local-direct transport, the test doubles and the test
+    // ADR-166 D10: the local-direct transport, the test doubles and the test
     // suites (module mocks by path) are the only places the wire may be named.
     files: [
       "lib/execution-host/**",

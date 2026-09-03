@@ -24,7 +24,7 @@ const log = pino({
  * tick. Matched by runId and never narrowed by stepId — a run may hold more
  * than one logical session, so EVERY live one is stopped.
  *
- * ADR-165: the host is listed ONCE through the admin client; each delete rides
+ * ADR-166: the host is listed ONCE through the admin client; each delete rides
  * the run's own (teardown-bound) client so it is fenced and ledgered.
  */
 export async function teardownLiveSessionsForRuns(

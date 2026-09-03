@@ -50,7 +50,7 @@ const checkpointSessionSpy = vi.fn(async (_id: string) => ({}) as unknown);
 // functions the watchdog actually calls with spies. None of the spawn/prompt
 // paths run in these tests.
 
-// ADR-165: the sweeper addresses the host through clients bound to each run's
+// ADR-166: the sweeper addresses the host through clients bound to each run's
 // execution assignment. The fake host below routes the three session calls the
 // watchdog makes to the existing spies, so every case keeps its wire-level
 // assertions while the real ledger/binding path runs underneath.

@@ -50,7 +50,7 @@ function worktreesRoot() {
   );
 }
 
-// ADR-165: the supervisor-private execution-host state store (host identity,
+// ADR-166: the supervisor-private execution-host state store (host identity,
 // fences, adopted-workspace handles, receipts). Defaults under the runtime
 // root's .maister/, which is the supervisor cwd when MAISTER_RUNTIME_ROOT is
 // unset — the repo checkout itself is never deleted, but its .maister/ state is.

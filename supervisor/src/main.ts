@@ -39,7 +39,7 @@ export function buildRegisterRoutesOptions(deps: {
   logger: Logger;
   runtimeRoot: string;
   killGraceMs: number;
-  // ADR-165: the execution-host state store + adoption roots. Required in
+  // ADR-166: the execution-host state store + adoption roots. Required in
   // production; tests that boot routes without them get an in-memory store.
   hostState?: HostState;
   workspaceRoots?: string[];
@@ -58,7 +58,7 @@ export function buildRegisterRoutesOptions(deps: {
   };
 }
 
-// ADR-165 D1: open the execution-host state store BEFORE routes register. The
+// ADR-166 D1: open the execution-host state store BEFORE routes register. The
 // two boot-fatal errors are logged with their remediation and rethrown so the
 // process exits 1 — a conflicting pin never silently changes identity.
 export function bootExecutionHost(deps: {

@@ -54,7 +54,7 @@ export interface CascadeAbandonResult {
 export interface CascadeAndStopOptions extends CascadeAbandonOptions {
   // A supervisor listing the caller already holds; omitted → listed here.
   records?: readonly SupervisorSessionRecord[];
-  // ADR-165: the caller's execution-host client (each teardown rides the
+  // ADR-166: the caller's execution-host client (each teardown rides the
   // child's own fenced client); omitted → the process default.
   executionHosts?: ExecutionHosts;
   logLabel: string;

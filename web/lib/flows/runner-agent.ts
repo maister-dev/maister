@@ -73,7 +73,7 @@ export type RunAgentStepCtx = {
   stepId: string;
   nodeAttemptId?: string;
   worktreePath: string;
-  // ADR-165: the caller's once-per-driver-generation binding, resolved lazily
+  // ADR-166: the caller's once-per-driver-generation binding, resolved lazily
   // at the first agent dispatch (so a mocked step never binds and a failed
   // binding surfaces as THIS step's failure, with its attempt in the ledger).
   bindExecution?: () => Promise<AgentExecution>;
@@ -120,7 +120,7 @@ export type RunAgentStepCtx = {
   db?: DbClientLike;
 };
 
-// ADR-165 D3/E-EH-11: the driver's execution seam — a client BOUND to the
+// ADR-166 D3/E-EH-11: the driver's execution seam — a client BOUND to the
 // run's active assignment (every host-bound command carries that epoch, so a
 // superseded driver is fenced by the host, never silently re-bound) plus the
 // host-scoped admin reads (the per-session event stream). Bound ONCE per
@@ -898,7 +898,7 @@ async function runNewSession(
   let fenced = false;
 
   try {
-    // ADR-165 D7: the handle form — the worktree, repo root, and context
+    // ADR-166 D7: the handle form — the worktree, repo root, and context
     // mounts are adopted ONCE per assignment (`runs.context_mounts` rides the
     // adopt payload); the session body carries no path.
     const createInput = {
@@ -1104,7 +1104,7 @@ async function runNewSession(
       sessionFallback,
     };
   } catch (err) {
-    // ADR-165 E-EH-11 (driver yield rule): `assignment_fenced` means a newer
+    // ADR-166 E-EH-11 (driver yield rule): `assignment_fenced` means a newer
     // driver generation owns this run — this incarnation must write no run,
     // ledger, HITL, or scratch state, and must not even tear the session down
     // (the host already evicted it under the newer epoch).

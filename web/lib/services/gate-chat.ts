@@ -298,7 +298,7 @@ async function failGateChatTurn(args: {
   });
 }
 
-// ADR-165: the chat turn rides the client bound to the run's assignment — the
+// ADR-166: the chat turn rides the client bound to the run's assignment — the
 // live driver's epoch on a NeedsInput run, a fresh `gate_chat` generation on
 // an idle one (D2). Host-scoped reads (session list, stream) go through the
 // admin client.

@@ -801,7 +801,7 @@ single-active-run guards.
 
 ## Linked artifacts
 
-- Execution-host contract (ADR-165, Implemented): [`execution-hosts.md`](execution-hosts.md) — agent `worktree` / `repo_read` / `none` workspaces adopt as `git_worktree` / `repo_checkout` / `directory` handles, and the idle `messageChildRun` branch mints a `resume` assignment.
+- Execution-host contract (ADR-166, Implemented): [`execution-hosts.md`](execution-hosts.md) — agent `worktree` / `repo_read` / `none` workspaces adopt as `git_worktree` / `repo_checkout` / `directory` handles, and the idle `messageChildRun` branch mints a `resume` assignment.
 - **Decisions:** [ADR-089](../decisions.md#adr-089-platform-agent-catalog-with-per-agent-runner-and-a-five-source-trigger-model),
   [ADR-090](../decisions.md#adr-090-agent-workspace-axis-with-three-layer-read-only-enforcement-and-quarantine),
   [ADR-106](../decisions.md#adr-106-package-based-platform-agents--package-identity-attachment-gating-optional-flow-enrichment-and-per-agent-runner-policy)

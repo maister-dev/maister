@@ -1,4 +1,4 @@
-// ADR-165 (Implemented): the execution-host module — the ONLY way domain code
+// ADR-166 (Implemented): the execution-host module — the ONLY way domain code
 // addresses the supervisor. `web/lib/supervisor-client.ts` is the local-direct
 // transport and is fenced to `web/lib/execution-host/**` by ESLint.
 

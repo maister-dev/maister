@@ -1,4 +1,4 @@
-// ADR-165 Stage A (T4.4, Q1–Q3): a project scratch run's placement lifecycle
+// ADR-166 Stage A (T4.4, Q1–Q3): a project scratch run's placement lifecycle
 // against a real Postgres + a real git worktree, on a fake local execution
 // host:
 //   Q1 the launch mints the `launch` generation, adopts the worktree ONCE and
@@ -196,7 +196,7 @@ function payloadOf(call: { envelope: { payload: unknown } | null }) {
   return call.envelope?.payload as Record<string, unknown>;
 }
 
-describe("scratch run placement (ADR-165 Q1–Q3)", () => {
+describe("scratch run placement (ADR-166 Q1–Q3)", () => {
   let runId: string;
   let adoptedWorkspaceId: string;
   let firstHostSessionId: string;

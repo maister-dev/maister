@@ -167,7 +167,7 @@ beforeAll(async () => {
     databaseName: "agent_human_ask_route_test",
   });
   database = testDatabase.db;
-  // ADR-165: the route binds the source run through the local execution
+  // ADR-166: the route binds the source run through the local execution
   // host — a fake host whose session list and teardown ride the spies.
   const fake = createFakeExecutionHost();
 

@@ -5,7 +5,7 @@ import { accessSync, constants as fsConstants, mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-// ADR-165 D1/D3/D6/D7: the supervisor-private execution-host state store. One
+// ADR-166 D1/D3/D6/D7: the supervisor-private execution-host state store. One
 // node:sqlite file holds the durable half of the host contract — its identity,
 // the per-run fence high-water, adopted-workspace handles, and command
 // receipts. The web tier never reads it.

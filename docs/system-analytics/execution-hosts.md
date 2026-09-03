@@ -1,7 +1,7 @@
 # Execution hosts domain
 
 > **Status: Implemented** (Stage A). Decision:
-> [ADR-165](../decisions.md#adr-165-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces).
+> [ADR-166](../decisions.md#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces).
 > Working plan:
 > [`../../.ai-factory/plans/claude-stage-a-execution-host-plan-6d70f9.md`](../../.ai-factory/plans/claude-stage-a-execution-host-plan-6d70f9.md).
 > As-built: every surface in this file is `Implemented` (Stage A shipped in
@@ -24,7 +24,7 @@ crash classification ([reconciliation-gc.md](reconciliation-gc.md)),
 worktree creation and promotion ([workspaces.md](workspaces.md)), or the
 runner/session model ([sessions.md](sessions.md)). Stage A keeps one host,
 loopback HTTP, and the shared filesystem: no remote transport, no multiple
-simultaneous hosts, no placement, no host UI (ADR-165 §D12).
+simultaneous hosts, no placement, no host UI (ADR-166 §D12).
 
 ## Domain entities
 
@@ -559,10 +559,10 @@ routes derive every path from the handle.
 
 ## Linked artifacts
 
-- Decision: [ADR-165](../decisions.md#adr-165-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces);
+- Decision: [ADR-166](../decisions.md#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces);
   amended topology: [ADR-023](../decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres).
 - ERD: [`../db/execution-hosts-domain.md`](../db/execution-hosts-domain.md);
-  column reference: [`../database-schema.md`](../database-schema.md#execution-host-tables-implemented--adr-165-migration-0129).
+  column reference: [`../database-schema.md`](../database-schema.md#execution-host-tables-implemented--adr-166-migration-0130).
 - Wire: [`../api/supervisor.openapi.yaml`](../api/supervisor.openapi.yaml)
   (`CommandEnvelope`, `AdoptWorkspaceRequest`, `WorkspaceRecord`,
   `CommandReceipt`, `SupervisorErrorBody.details`, `FENCED`),

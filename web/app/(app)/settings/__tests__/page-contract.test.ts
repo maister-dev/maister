@@ -33,7 +33,7 @@ vi.mock("@/lib/instance-config", () => ({
   worktreesRoot: () => "/worktrees",
 }));
 
-// ADR-165 T4.6: the page reads host diagnostics through the execution-host
+// ADR-166 T4.6: the page reads host diagnostics through the execution-host
 // barrel (React-cached); the wire module is fenced behind it.
 vi.mock("@/lib/execution-host", () => ({
   getPlatformDiagnostics: checkSupervisorDiagnosticsMock,

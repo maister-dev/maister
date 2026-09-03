@@ -450,7 +450,7 @@ type FinalOrphanRemovalCheck =
   | "ownership_reappeared"
   | "live_session";
 
-// ADR-165 D7: after the worktree is gone, release the run's adopted handle on
+// ADR-166 D7: after the worktree is gone, release the run's adopted handle on
 // the host — a driverless `workspace.release` under the run's newest
 // assignment (released included). Best-effort: a stopped host leaves the
 // command queued for recovery to re-deliver; a run that never adopted (or
@@ -1070,7 +1070,7 @@ export async function runWorkspaceReconciliationSweep(
     limit: RECONCILIATION_BATCH_SIZE,
   });
 
-  // ADR-165: ONE session listing per sweep (was one per candidate action) —
+  // ADR-166: ONE session listing per sweep (was one per candidate action) —
   // and never act on a transient host outage: a failed listing skips the tick.
   const hosts =
     options.executionHosts ??

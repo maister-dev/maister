@@ -101,7 +101,7 @@ export async function resumeCrashedRun(
   const cap = maxConcurrentRunsCap();
   const hosts = opts.executionHosts ?? createExecutionHosts({ db });
 
-  // ADR-165 D3: a recover is a new driver generation — its epoch is minted
+  // ADR-166 D3: a recover is a new driver generation — its epoch is minted
   // inside the Crashed → Running|Pending claim below. Resolve the host first
   // so an unavailable host refuses the recover as transient with no claim.
   let placementHost;
@@ -401,7 +401,7 @@ export async function driveResume(
 
     return { state: "resumed" };
   } catch (err) {
-    // ADR-165 yield rule: a newer generation owns the run — write nothing.
+    // ADR-166 yield rule: a newer generation owns the run — write nothing.
     if (isFencedError(err)) {
       log.warn({ runId }, "driveResume: driver-yielded — assignment fenced");
 

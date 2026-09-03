@@ -127,7 +127,7 @@ beforeAll(async () => {
   });
   container = testDatabase.container;
   db = testDatabase.db;
-  // ADR-165: the assistant launch/turn/stop ride the execution-host client; a
+  // ADR-166: the assistant launch/turn/stop ride the execution-host client; a
   // fake host registered as THE local host routes every wire call to this
   // suite's mutable supervisor spies (handle-form payloads on the wire).
   fake = createFakeExecutionHost();
@@ -570,7 +570,7 @@ describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
       >
     )[0][0];
 
-    // ADR-165 (Q4): the confinement rides the adopted handle — the package
+    // ADR-166 (Q4): the confinement rides the adopted handle — the package
     // working dir is adopted as a `directory` workspace; the create carries
     // only the read-only flag, never a path.
     expect(createArg).toMatchObject({ readOnlySession: true });

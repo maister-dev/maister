@@ -12,7 +12,7 @@ info:
     supervisor appends to in lockstep with its own SSE side-channel.
     The durable event union matches the supervisor's SSE union
     (`session.line`, `session.update`, `session.permission_request`,
-    `session.exited`, `session.crashed`, and — Implemented, ADR-165 —
+    `session.exited`, `session.crashed`, and — Implemented, ADR-166 —
     `session.command`, forwarded as an OPAQUE pass-through the browser
     ignores; it exists on this stream only because the durable log carries
     it) plus web-only synthetic/advisory events. `run.runner_resolution_warning` is appended by the web tier after
@@ -185,9 +185,9 @@ components:
       payload: { $ref: "#/components/schemas/EventBase" }
     SessionCommand:
       name: session.command
-      title: Command accepted / completed (Implemented — ADR-165, opaque pass-through)
+      title: Command accepted / completed (Implemented — ADR-166, opaque pass-through)
       summary: |
-        (Implemented — ADR-165) Forwarded unchanged from `run.events.jsonl`. The
+        (Implemented — ADR-166) Forwarded unchanged from `run.events.jsonl`. The
         browser transcript / timeline consumers ignore it (unknown-type
         tolerance); its consumer is the web-side command ledger. Full payload
         in `supervisor-sse.asyncapi.yaml#SessionCommandEvent`.

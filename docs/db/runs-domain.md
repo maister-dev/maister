@@ -30,7 +30,7 @@ agent schedule bindings (`agent_schedule_id`, `ON DELETE SET NULL`). The
 scheduled dispatcher remains outside the Run table: it first reserves identity
 in its own ledger, then the ordinary launch transaction writes this sole link.
 
-**ADR-165 (Implemented, migration `0129`)** adds the execution-host attribution
+**ADR-166 (Implemented, migration `0130`)** adds the execution-host attribution
 columns: `runs.execution_assignment_id` (the active placement),
 `run_sessions.execution_assignment_id` + `run_sessions.host_session_id`, and
 `node_attempts.execution_assignment_id`. The `execution_hosts` /
@@ -61,9 +61,9 @@ erDiagram
     WORKSPACES o|--o{ WORKSPACE_RECONCILIATION_FINDINGS : "ADR-148 optional correlation"
     RUNS ||--o{ RUNS : "run-tree delegation (parent_run_id, ADR-098)"
     RUNS ||--|{ RUN_SESSIONS : "per-session runner state (Implemented ADR-114)"
-    EXECUTION_ASSIGNMENTS o|--o| RUNS : "active placement — runs.execution_assignment_id (ADR-165 Implemented, 0129, SET NULL)"
-    EXECUTION_ASSIGNMENTS o|--o{ RUN_SESSIONS : "spawned under (ADR-165 Implemented, 0129, SET NULL)"
-    EXECUTION_ASSIGNMENTS o|--o{ NODE_ATTEMPTS : "attributed to (ADR-165 Implemented, 0129, SET NULL)"
+    EXECUTION_ASSIGNMENTS o|--o| RUNS : "active placement — runs.execution_assignment_id (ADR-166 Implemented, 0130, SET NULL)"
+    EXECUTION_ASSIGNMENTS o|--o{ RUN_SESSIONS : "spawned under (ADR-166 Implemented, 0130, SET NULL)"
+    EXECUTION_ASSIGNMENTS o|--o{ NODE_ATTEMPTS : "attributed to (ADR-166 Implemented, 0130, SET NULL)"
     PLATFORM_ACP_RUNNERS ||--o{ RUN_SESSIONS : "session runner (Implemented ADR-114, SET NULL)"
     RUNS ||--o{ NODE_ATTEMPTS : "per-node attempt (ADR-027)"
     RUNS ||--o{ RUN_RESULTS : "public result revisions (Implemented ADR-165, 0129)"
@@ -174,7 +174,7 @@ erDiagram
         text agent_memory_hash "ADR-152 0122: sha256 of the agent memory injected at spawn, nullable — NULL = this run injected none; survives the 7-day run-dir GC"
         integer agent_chain_depth "ADR-156 0123 Designed: NOT NULL DEFAULT 0 — agent-to-agent trigger hops snapshotted at launch; an agent-authored domain event inherits parentDepth+1, every other trigger source seeds 0; capped at MAISTER_MAX_AGENT_CHAIN_DEPTH (default 2) across AND within projects"
         jsonb context_mounts "ADR-157 0124 Designed: launch snapshot of read-only sibling mounts [{projectId,slug,repoPath,mountPath,committish}], nullable — terminal cleanup and crash recovery read THIS, never a manifest/link that can drift after launch; NULL = no mounts"
-        text execution_assignment_id FK "ADR-165 0129 Implemented: execution_assignments(id) SET NULL — the ACTIVE placement (epoch = driver-ownership generation); NULL = pre-Stage-A, never placed"
+        text execution_assignment_id FK "ADR-166 0130 Implemented: execution_assignments(id) SET NULL — the ACTIVE placement (epoch = driver-ownership generation); NULL = pre-Stage-A, never placed"
         timestamp started_at
         timestamp ended_at
     }
@@ -190,8 +190,8 @@ erDiagram
         text acp_session_id "ADR-114: per-session ACP session/resume handle"
         text resolution_source "ADR-114: concrete source audit (slot_key | chain scope | launch-dialog)"
         jsonb resolution_warning "nullable RunnerResolutionWarning for soft model/provider fallback"
-        text execution_assignment_id FK "ADR-165 0129 Implemented: execution_assignments(id) SET NULL — updated per spawn"
-        text host_session_id "ADR-165 0129 Implemented: the SUPERVISOR session id written by the session.create ack (present from spawn); indexed; distinct from acp_session_id"
+        text execution_assignment_id FK "ADR-166 0130 Implemented: execution_assignments(id) SET NULL — updated per spawn"
+        text host_session_id "ADR-166 0130 Implemented: the SUPERVISOR session id written by the session.create ack (present from spawn); indexed; distinct from acp_session_id"
         timestamp created_at
         timestamp updated_at
     }
@@ -341,7 +341,7 @@ erDiagram
         jsonb enforcement_snapshot "0013 append-only verdict audit"
         jsonb materialization_plan "0019 Implemented: resolved profile snapshot + cleanup substate"
         jsonb output_contract "0127 Implemented ADR-162: structured-output contract identity schemaRef/schemaVersion/sha256/transport/engineVersion; NULL when no output.result"
-        text execution_assignment_id FK "ADR-165 0129 Implemented: execution_assignments(id) SET NULL — stamped at attempt start, immutable"
+        text execution_assignment_id FK "ADR-166 0130 Implemented: execution_assignments(id) SET NULL — stamped at attempt start, immutable"
         text acp_session_id
         text stdout "truncated to 1 MiB"
         text resolved_prompt "0053 captured resolved agent prompt; nullable, pre-0053 rows null"

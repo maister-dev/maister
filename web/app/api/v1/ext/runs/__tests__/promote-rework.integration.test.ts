@@ -130,7 +130,7 @@ beforeAll(async () => {
 
   pool = testDatabase.pool;
   db = testDatabase.db;
-  // ADR-165: every launch places the run on the local execution host.
+  // ADR-166: every launch places the run on the local execution host.
   ({ fake } = await fakeExecutionHosts(db));
 
   ({ issueOrchestratorRunToken } = await import("@/lib/agents/tokens"));
@@ -722,7 +722,7 @@ describe("POST /api/v1/ext/runs/rework", () => {
 
     // The respawn resumed the child's retained acp session (context preserved),
     // not a fresh session.
-    // ADR-165: a handle-form create fenced by the child's `rework_return`
+    // ADR-166: a handle-form create fenced by the child's `rework_return`
     // generation, resuming the retained ACP session.
     const creates = fake.callsOf("createSession");
 

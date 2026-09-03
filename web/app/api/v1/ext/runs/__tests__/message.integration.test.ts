@@ -84,7 +84,7 @@ let messagePost: typeof import("@/app/api/v1/ext/runs/message/route").POST;
 let delegatePost: typeof import("@/app/api/v1/ext/runs/delegate/route").POST;
 let sendAgentMessage: typeof import("@/lib/agents/launch").sendAgentMessage;
 
-// ADR-165: the fake local host every launch/re-message rides; its wire is
+// ADR-166: the fake local host every launch/re-message rides; its wire is
 // spy-backed so the existing createSession assertions keep their shape.
 let fake: FakeExecutionHost;
 let hosts: import("@/lib/execution-host").ExecutionHosts;
@@ -431,7 +431,7 @@ describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
       runId: childRunId,
       assignmentEpoch: 1,
     });
-    // ADR-165 (N2): the idle re-message is a NEW driver generation minted as
+    // ADR-166 (N2): the idle re-message is a NEW driver generation minted as
     // `resume` inside the claim.
     const assignments = await pool.query(
       `SELECT "epoch", "state", "placement_reason" FROM "execution_assignments"

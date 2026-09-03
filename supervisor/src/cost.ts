@@ -55,7 +55,7 @@ export type AttachCostOptions = {
   // M8 T13: true when the session was spawned via `--resume <id>`.
   // Stamped onto every appended cost.jsonl record. Default false.
   resumed?: boolean;
-  // ADR-165: absolute cost.jsonl path resolved from the adopted workspace.
+  // ADR-166: absolute cost.jsonl path resolved from the adopted workspace.
   costPath?: string;
 };
 
@@ -65,7 +65,7 @@ export type CostHandle = {
 };
 
 export async function attachCost(opts: AttachCostOptions): Promise<CostHandle> {
-  // ADR-165: the resolved workspace owns every run-dir path; the legacy
+  // ADR-166: the resolved workspace owns every run-dir path; the legacy
   // derivation stays for callers that still pass the raw segments.
   const costPath =
     opts.costPath ??

@@ -62,7 +62,7 @@ vi.mock("@/lib/flows/runner-agent", async (importOriginal) => ({
   })),
 }));
 
-// Execution-host seam (ADR-165): the coordinator's live host session is
+// Execution-host seam (ADR-166): the coordinator's live host session is
 // pre-registered on a fake execution host under the id the create ack persisted
 // to `run_sessions.host_session_id`, so the park-time checkpoint goes through
 // the run's bound client and is observable as a `session.checkpoint` command.

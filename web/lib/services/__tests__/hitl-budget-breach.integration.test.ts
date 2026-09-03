@@ -37,7 +37,7 @@ let runtimeRoot: string;
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 // Partial mock: the service graph reads other client members at module load
 // (gate-chat's default api); the checkpoint itself now rides the execution-host
-// client (ADR-165), so this spy only pins that the legacy path is never used.
+// client (ADR-166), so this spy only pins that the legacy path is never used.
 vi.mock("@/lib/supervisor-client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/supervisor-client")>()),
   checkpointSession: vi.fn(async (sessionId: string) => ({
@@ -528,7 +528,7 @@ describe("respondToHitl budget_breach integration — restart and park composite
     expect(comments[0]?.body).toContain("flow-restart-new");
   });
 
-  // ADR-165 B1 (Verified #6): the pre-restart checkpoint must address the
+  // ADR-166 B1 (Verified #6): the pre-restart checkpoint must address the
   // host's OWN session id (`run_sessions.host_session_id`) through the client
   // bound to the run — never the ACP-level handle the host does not key by.
   it("restart checkpoints a live paused session by its HOST session id before terminalizing the old run", async () => {

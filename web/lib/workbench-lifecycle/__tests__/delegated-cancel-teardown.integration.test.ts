@@ -86,7 +86,7 @@ beforeAll(async () => {
   });
   pool = testDatabase.pool;
   db = testDatabase.db;
-  // ADR-165: the cascade teardown lists and deletes through the execution-host
+  // ADR-166: the cascade teardown lists and deletes through the execution-host
   // client; the fake host routes both to this suite's spies.
   const fake = createFakeExecutionHost();
 

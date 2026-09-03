@@ -579,7 +579,7 @@ type HandlerArgs = {
   startedAt: number;
   actor: HitlActor;
   recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
-  // ADR-165: every host-bound command of the run goes through a client bound
+  // ADR-166: every host-bound command of the run goes through a client bound
   // to its execution assignment.
   executionHosts: ExecutionHosts;
 };
@@ -740,7 +740,7 @@ async function markScratchPermissionTimedOut(
 }
 
 // `prepared`/`client`: the `session.input` command queued in the Phase-1 tx
-// (ADR-165 D5) for the live NeedsInput case — null when the run is idle (the
+// (ADR-166 D5) for the live NeedsInput case — null when the run is idle (the
 // resume path re-issues the intent) or when nothing is left to deliver.
 type PermissionClaim =
   | {
@@ -1304,7 +1304,7 @@ async function handlePermissionResponse(
       { status: 200 },
     );
   } catch (err) {
-    // ADR-165 driver yield rule: a fenced delivery means another driver
+    // ADR-166 driver yield rule: a fenced delivery means another driver
     // generation owns this run (a resume raced the response) — write nothing,
     // release nothing; the stored intent is auto-delivered by that driver.
     if (isFencedError(err)) {
@@ -3628,7 +3628,7 @@ async function checkpointBudgetLiveSession(args: {
 }): Promise<boolean> {
   const active = await loadActiveRunSession(args.db, args.runId);
 
-  // The host's own session id (ADR-165) — never the ACP-level handle, which
+  // The host's own session id (ADR-166) — never the ACP-level handle, which
   // the host does not key sessions by.
   if (!active?.hostSessionId) {
     return false;
@@ -5161,7 +5161,7 @@ async function handleNodeInterruptResponse(args: {
     );
   }
 
-  // ADR-165 D3: a restart appends a fresh attempt under a NEW driver generation;
+  // ADR-166 D3: a restart appends a fresh attempt under a NEW driver generation;
   // the host is resolved before the claim so an unavailable host refuses the
   // restart whole instead of recording a decision no driver can pick up.
   const placementHost = await localHost({

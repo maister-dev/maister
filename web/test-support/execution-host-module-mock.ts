@@ -1,4 +1,4 @@
-// ADR-165: a `@/lib/execution-host` module stand-in for unit suites that drive
+// ADR-166: a `@/lib/execution-host` module stand-in for unit suites that drive
 // production code over a hand-rolled fake db (no execution_* tables). The
 // bound client routes every host-bound call to legacy-shaped spies
 // (`createSession(payload)`, `sendPrompt(sessionId, input)`,
@@ -228,7 +228,7 @@ export function executionHostModuleMock(spies: ExecutionHostSpies) {
   };
 }
 
-// The pre-ADR-165 scratch turn seam (`{cancelPermission, sendPrompt,
+// The pre-ADR-166 scratch turn seam (`{cancelPermission, sendPrompt,
 // streamSession}`) as a `ScratchExecution` for suites that script turns.
 export function legacyScratchApiToExecution(api: {
   cancelPermission: (

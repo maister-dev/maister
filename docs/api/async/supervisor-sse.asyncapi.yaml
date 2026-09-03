@@ -14,7 +14,7 @@ info:
     - `session.permission_request` — ACP permission request waiting for
       a web-delivered decision through `POST /sessions/{id}/input`.
     - `session.exited` / `session.crashed` — terminal process events.
-    - `session.command` (Implemented — ADR-165) — command acceptance and
+    - `session.command` (Implemented — ADR-166) — command acceptance and
       completion for the enveloped session routes (`session.prompt`,
       `session.cancel`, `session.checkpoint`, `session.input`,
       `session.delete`): the durable completion signal that is NOT the
@@ -223,9 +223,9 @@ components:
       payload: { $ref: "#/components/schemas/SessionChatTurnEvent" }
     SessionCommand:
       name: session.command
-      title: Command accepted / completed (Implemented — ADR-165)
+      title: Command accepted / completed (Implemented — ADR-166)
       summary: |
-        (Implemented — ADR-165) Emitted around the host's command receipts for
+        (Implemented — ADR-166) Emitted around the host's command receipts for
         every enveloped session route. `phase: accepted` when a
         `session.prompt` turn starts (the web ledger folds `accepted_at`);
         `phase: completed` with `status` and either `result` or `error` when
@@ -430,7 +430,7 @@ components:
                 `checkpoint` = graceful checkpoint issued via
                 `POST /sessions/{id}/checkpoint` (web sweeper or
                 explicit). `intentional` = plain `DELETE /sessions/{id}`.
-                `fenced` (Implemented — ADR-165) = the session was evicted
+                `fenced` (Implemented — ADR-166) = the session was evicted
                 because a command with a HIGHER assignment epoch arrived for
                 its run; its pending prompt request answered `409 FENCED`.
                 Absent for natural process exit (the adapter ran to
@@ -550,7 +550,7 @@ components:
               additionalProperties: true
               description: The `SupervisorErrorBody` (`code`, `message`, `details`); present iff `status ∈ {failed, fenced}`.
       description: |
-        (Implemented — ADR-165) Command acceptance/completion signal for the
+        (Implemented — ADR-166) Command acceptance/completion signal for the
         enveloped session routes. See `../supervisor.openapi.yaml`
         `CommandReceipt` for the durable equivalent.
     SessionHookTripEvent:

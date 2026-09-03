@@ -66,7 +66,7 @@ export async function register(): Promise<void> {
   }
 
   try {
-    // ADR-165 D8: register the local execution host FIRST (identity-change
+    // ADR-166 D8: register the local execution host FIRST (identity-change
     // policy under the active row's lock; unreachable → readiness
     // `unavailable`, never a boot failure), then close the command crash
     // windows (W1/W2/W4) before any recovery sweep re-drives a run. Grace 0:
@@ -79,7 +79,7 @@ export async function register(): Promise<void> {
 
     await ensureLocalExecutionHost();
     await recoverExecutionCommands({ graceMs: 0 });
-    // ADR-165 D9: place pre-Stage-A active runs on the local host BEFORE the
+    // ADR-166 D9: place pre-Stage-A active runs on the local host BEFORE the
     // recovery sweeps re-drive them (evidence = a live host session; a run
     // without one stays NULL for the reconcile sweep to classify).
     await adoptLegacyActiveRuns();

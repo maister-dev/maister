@@ -142,7 +142,7 @@ async function seedRunningAgent(persistent: boolean): Promise<string> {
 }
 
 // A fake supervisor API that streams exactly one event then ends.
-// ADR-165: the consumer's execution seam is a DB-less fake host whose stream
+// ADR-166: the consumer's execution seam is a DB-less fake host whose stream
 // yields `event` once.
 function fakeApi(event: SupervisorEvent) {
   return fakeAgentExecution({ events: [event] });

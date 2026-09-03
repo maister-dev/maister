@@ -1,4 +1,4 @@
-// ADR-165 T3.3 — command ledger + deliverer + bound client (L1–L8) over the
+// ADR-166 T3.3 — command ledger + deliverer + bound client (L1–L8) over the
 // in-memory fake transport.
 
 import type { Db } from "@/lib/execution-host/db";

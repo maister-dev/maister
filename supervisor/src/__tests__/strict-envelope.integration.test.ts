@@ -1,4 +1,4 @@
-// ADR-165 T5.1 — the strict flip (E-EH-08 / X-EH-13): no envelope, no legacy
+// ADR-166 T5.1 — the strict flip (E-EH-08 / X-EH-13): no envelope, no legacy
 // path field, and no host-private path in the session projection.
 import { randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
@@ -128,7 +128,7 @@ describe("strict envelope contract", () => {
       });
     }
 
-    // The pre-ADR-165 body shape (paths, no handle) is refused by name too —
+    // The pre-ADR-166 body shape (paths, no handle) is refused by name too —
     // never as a generic unknown-key error.
     const legacyShape = await postJson(
       `${h.url}/sessions`,

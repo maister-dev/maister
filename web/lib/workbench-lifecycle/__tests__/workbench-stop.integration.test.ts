@@ -56,7 +56,7 @@ beforeAll(async () => {
 
   pool = testDatabase.pool;
   db = testDatabase.db;
-  // ADR-165: the default deps address the local execution host — a fake host
+  // ADR-166: the default deps address the local execution host — a fake host
   // (no sessions) backs the DB-real stop path.
   await fakeExecutionHosts(db);
 
@@ -136,7 +136,7 @@ describe("workbench stop — agent runs", () => {
       [runId, taskId, projectId],
     );
 
-    // ADR-165: the run was placed at launch; the stop ends that generation.
+    // ADR-166: the run was placed at launch; the stop ends that generation.
     await fakeExecutionHosts(db, { runId });
 
     const result = await stopWorkbenchRun(runId);
@@ -153,7 +153,7 @@ describe("workbench stop — agent runs", () => {
     );
 
     expect(rows[0].status).toBe("Abandoned");
-    // ADR-165 (N4): the terminal flip released the run's driver generation.
+    // ADR-166 (N4): the terminal flip released the run's driver generation.
     expect(await assignmentRows(runId)).toEqual([
       { epoch: 1, state: "released", released_reason: "run_terminal" },
     ]);
@@ -473,7 +473,7 @@ describe("workbench stop — orchestrator cascade (M37 T7.4)", () => {
       status: "NeedsInput",
     });
 
-    // ADR-165: the orchestrator was placed at launch.
+    // ADR-166: the orchestrator was placed at launch.
     await fakeExecutionHosts(db, { runId: orchestratorRunId });
 
     const result = await stopWorkbenchRun(orchestratorRunId);
@@ -489,7 +489,7 @@ describe("workbench stop — orchestrator cascade (M37 T7.4)", () => {
     expect(byId.get(orchestratorRunId)).toBe("Review");
     expect(byId.get(runningChild)).toBe("Abandoned");
     expect(byId.get(needsInputChild)).toBe("Abandoned");
-    // ADR-165 (N4): the stop released the orchestrator's driver generation.
+    // ADR-166 (N4): the stop released the orchestrator's driver generation.
     expect(await assignmentRows(orchestratorRunId)).toEqual([
       { epoch: 1, state: "released", released_reason: "stopped" },
     ]);

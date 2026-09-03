@@ -1,6 +1,5 @@
 import type { NodeAttempt, Run } from "@/lib/db/schema";
-import type { SupervisorApi } from "@/lib/flows/runner-agent";
-import type { SupervisorEvent } from "@/lib/supervisor-client";
+import type { ExecutionHosts, SupervisorEvent } from "@/lib/execution-host";
 import type { RunResultContract, RunResultRow } from "@/lib/run-results/types";
 
 import { resolve } from "node:path";
@@ -11,6 +10,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { closeDb } from "@/lib/db/client";
 import { runFlow } from "@/lib/flows/runner";
+import {
+  createFakeExecutionHost,
+  fakeExecutionHosts,
+  fakeGraphHosts,
+} from "@/test-support/fake-execution-host";
 import {
   schema,
   seedGraphRun as seedGraphRunShared,
@@ -97,50 +101,13 @@ async function getResults(runId: string): Promise<RunResultRow[]> {
     .orderBy(asc(schema.runResults.revision))) as unknown as RunResultRow[];
 }
 
-function makeAgentSupervisor(text: string): SupervisorApi {
-  async function* stream(): AsyncGenerator<SupervisorEvent> {
-    yield {
-      type: "session.update",
-      sessionId: "sup-1",
-      monotonicId: 1,
-      update: {
-        sessionUpdate: "agent_message_chunk",
-        content: { type: "text", text },
-      },
-    } as SupervisorEvent;
-    yield {
-      type: "session.exited",
-      sessionId: "sup-1",
-      monotonicId: 2,
-      exitCode: 0,
-    } as SupervisorEvent;
-  }
-
-  return {
-    createSession: (async () => ({
-      sessionId: "sup-1",
-      pid: 1,
-      acpSessionId: "acp-1",
-    })) as unknown as SupervisorApi["createSession"],
-    deleteSession: (async () =>
-      undefined) as unknown as SupervisorApi["deleteSession"],
-    sendPrompt: (async () => ({
-      stopReason: "end_turn" as const,
-    })) as unknown as SupervisorApi["sendPrompt"],
-    streamSession: (() =>
-      stream()) as unknown as SupervisorApi["streamSession"],
-    cancelPermission: (async () => ({
-      ok: true,
-    })) as unknown as SupervisorApi["cancelPermission"],
-    checkpointSession: async () => ({
-      alreadyCheckpointed: false,
-      sessionId: "s",
-      monotonicId: 0,
-    }),
-    deliverPermission: (async () => ({
-      ok: true,
-    })) as unknown as SupervisorApi["deliverPermission"],
-  };
+// ADR-166: the execution seam is a fake host scripted to stream `text` as one
+// agent_message_chunk, then a clean end-turn.
+async function makeAgentSupervisor(
+  runId: string,
+  text: string,
+): Promise<ExecutionHosts> {
+  return (await fakeGraphHosts(db, runId, { text })).hosts;
 }
 
 /** A one-node ai_coding graph whose producer is `plan`. */
@@ -170,14 +137,15 @@ function producerManifest(nodeType = "ai_coding"): Record<string, unknown> {
 describe("flow-run public result — publish at the seam (AC-13)", () => {
   it("publishes ONE valid row whose value deep-equals the payload, undeclared keys included", async () => {
     const seeded = await seedGraphRun(producerManifest());
-    const api = makeAgentSupervisor(
+    const api = await makeAgentSupervisor(
+      seeded.runId,
       `Plan ready.\n${OPEN}\n{"verdict":"pass","score":1,"undeclared":{"deep":[1,2]}}\n${CLOSE}\n`,
     );
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: api,
     });
 
     const rows = await getResults(seeded.runId);
@@ -221,7 +189,8 @@ describe("flow-run public result — publish at the seam (AC-13)", () => {
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeAgentSupervisor(
+      executionHosts: await makeAgentSupervisor(
+        seeded.runId,
         `${OPEN}\n{"verdict":"pass","score":2}\n${CLOSE}\n`,
       ),
     });
@@ -245,7 +214,8 @@ describe("flow-run public result — publish at the seam (AC-13)", () => {
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeAgentSupervisor(
+      executionHosts: await makeAgentSupervisor(
+        seeded.runId,
         `${OPEN}\n{"verdict":"pass"}\n${CLOSE}\n`,
       ),
     });
@@ -265,7 +235,8 @@ describe("flow-run public result — publish at the seam (AC-13)", () => {
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeAgentSupervisor(
+      executionHosts: await makeAgentSupervisor(
+        seeded.runId,
         `${OPEN}\n{"verdict":"pass"}\n${CLOSE}\n`,
       ),
     });
@@ -281,7 +252,7 @@ describe("flow-run public result — publish at the seam (AC-13)", () => {
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeAgentSupervisor(""),
+      executionHosts: await makeAgentSupervisor(seeded.runId, ""),
     });
 
     const rows = await getResults(seeded.runId);
@@ -298,7 +269,10 @@ describe("flow-run public result — publish at the seam (AC-13)", () => {
       db,
       runtimeRoot: seeded.runtimeRoot,
       // `verdict` must be a string.
-      supervisorApi: makeAgentSupervisor(`${OPEN}\n{"verdict":42}\n${CLOSE}\n`),
+      executionHosts: await makeAgentSupervisor(
+        seeded.runId,
+        `${OPEN}\n{"verdict":42}\n${CLOSE}\n`,
+      ),
     });
 
     const plan = (await getAttempts(seeded.runId)).find(
@@ -342,26 +316,44 @@ describe("flow-run public result — supersession and staleness (AC-14)", () => 
     // First a malformed payload (drives the on_mismatch retry), then a valid
     // one — two attempts of the SAME producer, so the second publish supersedes.
     let call = 0;
-    const api = makeAgentSupervisor("");
-    const originalStream = api.streamSession;
+    const fake = createFakeExecutionHost();
+    const { hosts } = await fakeExecutionHosts(db, {
+      fake,
+      runId: seeded.runId,
+    });
 
-    api.streamSession = ((...args: unknown[]) => {
+    // ADR-166: no shared stream script — each prompt turn pushes ITS OWN chunk
+    // + exit into that session's queue, so attempt 2 streams a different text.
+    fake.setPromptBehavior(async (ctx) => {
       call += 1;
       const text =
         call === 1
           ? `${OPEN}\n{"verdict":"pass"}\n${CLOSE}\n`
           : `${OPEN}\n{"verdict":"second"}\n${CLOSE}\n`;
 
-      return makeAgentSupervisor(text).streamSession(
-        ...(args as Parameters<SupervisorApi["streamSession"]>),
-      );
-    }) as SupervisorApi["streamSession"];
-    void originalStream;
+      fake.pushEvent(ctx.sessionId, {
+        type: "session.update",
+        sessionId: ctx.sessionId,
+        monotonicId: 1,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text },
+        },
+      } as SupervisorEvent);
+      fake.pushEvent(ctx.sessionId, {
+        type: "session.exited",
+        sessionId: ctx.sessionId,
+        monotonicId: 2,
+        exitCode: 0,
+      } as SupervisorEvent);
+
+      return { stopReason: "end_turn", meta: null };
+    });
 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: api,
+      executionHosts: hosts,
     });
 
     const rows = await getResults(seeded.runId);
@@ -402,7 +394,8 @@ describe("flow-run public result — supersession and staleness (AC-14)", () => 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: makeAgentSupervisor(
+      executionHosts: await makeAgentSupervisor(
+        seeded.runId,
         `${OPEN}\n{"verdict":"pass"}\n${CLOSE}\n`,
       ),
     });

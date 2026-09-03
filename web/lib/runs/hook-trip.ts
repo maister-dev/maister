@@ -50,7 +50,7 @@ export type EscalateHookTripArgs = {
   toolCall?: unknown;
   runKind: "flow" | "agent";
   // Injected so each consumer passes the `checkpoint` of the client bound to
-  // the run's execution assignment (ADR-165). An EXECUTOR_UNAVAILABLE
+  // the run's execution assignment (ADR-166). An EXECUTOR_UNAVAILABLE
   // checkpoint re-throws (live halt, undeliverable → CRASH) — no state mutation,
   // no split-brain.
   checkpointSession: (sessionId: string) => Promise<unknown>;

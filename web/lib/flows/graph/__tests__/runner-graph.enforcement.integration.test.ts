@@ -45,7 +45,7 @@ async function getAttempts(runId: string): Promise<NodeAttempt[]> {
     .where(eq(schema.nodeAttempts.runId, runId))) as unknown as NodeAttempt[];
 }
 
-// ADR-165: a fake execution host + a spy on every `session.create` payload.
+// ADR-166: a fake execution host + a spy on every `session.create` payload.
 // The refusal path MUST never reach the host — a create would mean an agent
 // process was spawned and a permission deferred could leak. The pass path
 // (instruct-only) WOULD spawn; the fake's clean end-turn lets the run finish

@@ -288,7 +288,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  // ADR-165: a fresh fake local host per case — the sweep lists sessions and
+  // ADR-166: a fresh fake local host per case — the sweep lists sessions and
   // tears resolver sessions down through it.
   fake = createFakeExecutionHost();
   await fakeExecutionHosts(db, { fake });

@@ -1,4 +1,4 @@
-// ADR-165 T5.2 (D9, X-EH-18, X-EH-22) — evidence-based backfill of pre-Stage-A
+// ADR-166 T5.2 (D9, X-EH-18, X-EH-22) — evidence-based backfill of pre-Stage-A
 // active runs against a REAL supervisor:
 //   Y1 Running + live host session + NULL assignment → epoch 1 legacy_backfill
 //      (the host's own assignment id, the adopted handle copied forward, the

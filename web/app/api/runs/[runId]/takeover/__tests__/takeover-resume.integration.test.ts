@@ -386,7 +386,7 @@ beforeAll(async () => {
   });
   container = testDatabase.container;
   db = testDatabase.db;
-  // ADR-165: the return claim mints on the local host — a fake host backs
+  // ADR-166: the return claim mints on the local host — a fake host backs
   // every implicit resolution in this process.
   await fakeExecutionHosts(db);
   runtimeRoot = await mkdtemp(path.join(tmpdir(), "m11b-res-rt-"));

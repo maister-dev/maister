@@ -179,7 +179,7 @@ vi.mock("@/lib/supervisor-client", () => ({
   sendPrompt: mocks.sendPrompt,
 }));
 
-// ADR-165: the service talks to the host through the execution-host client;
+// ADR-166: the service talks to the host through the execution-host client;
 // route every host-bound call to this suite's supervisor-client mocks so the
 // wire-level assertions stay as they are.
 vi.mock("@/lib/execution-host", async () => {
@@ -400,7 +400,7 @@ describe("POST /api/scratch-runs", () => {
         startPoint: "main",
       }),
     );
-    // ADR-165: the create is the handle form — no run/path fields on the wire.
+    // ADR-166: the create is the handle form — no run/path fields on the wire.
     expect(mocks.createSession).toHaveBeenCalledWith(
       expect.objectContaining({
         stepId: "dialog",

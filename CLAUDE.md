@@ -39,7 +39,7 @@ Backend split:
   permission input delivery. Reachable
   from Next.js over HTTP+SSE. Both processes share the host filesystem
   (ADR-023) — a different host for the supervisor is not supported today;
-  ADR-165 (Implemented) makes the supervisor a registered _execution host_
+  ADR-166 (Implemented) makes the supervisor a registered _execution host_
   behind `web/lib/execution-host/` so later stages can move it.
 
 ## How to run
@@ -88,7 +88,7 @@ Detailed code structure, conventions, HeroUI patterns: **`web/CLAUDE.md`**.
   Next.js Route Handler bridges to the browser at `/api/runs/[id]/stream`
   with `lastEventId` reconnect.
 - **IPC Next.js ↔ supervisor**: HTTP+SSE through `web/lib/execution-host/`
-  (Implemented — ADR-165: durable host identity, per-run epoch-fenced
+  (Implemented — ADR-166: durable host identity, per-run epoch-fenced
   assignments, enveloped command ledger, opaque adopted-workspace handles);
   same host, shared filesystem.
 - **Flow plugins**: git repos pinned by tag (`v1.2.3`); installed system-wide
@@ -139,7 +139,7 @@ transitions. The live path is ACP notifications (kernel-level fd events
 inside the supervisor); the recovery path is supervisor-side heartbeat +
 artifact check on resume.
 
-**Execution-host addressing (ADR-165, Implemented):** every host-bound command
+**Execution-host addressing (ADR-166, Implemented):** every host-bound command
 (create/prompt/input/cancel/checkpoint/delete, workspace adopt/release) is
 issued through a `BoundClient` bound to the run's active
 `execution_assignments` row — it carries a unique `command.id` and the
@@ -343,7 +343,7 @@ inject via `{{ artifacts.<id>.content }}` (ADR-120).
   promoted head, `promotion_state` stays `none`, and the workspace is GC'd by
   `scheduled_removal_at` on the existing path. Its answer is the result, not a
   diff.
-- **Execution assignments** (ADR-165, Implemented): one `active`
+- **Execution assignments** (ADR-166, Implemented): one `active`
   `execution_assignments` row per run (epoch = driver-ownership generation,
   minted at launch and at every resume/recover/rework/interrupt re-entry);
   the worktree is adopted ONCE into a host-scoped opaque handle stored on the
@@ -446,7 +446,7 @@ which stays the local-promotion merge commit.
 - **`supervisor/` daemon**: separate Node process owning ACP sessions,
   process-per-session spawn, heartbeat, permission input delivery,
   cost-token metric on disk. Talks HTTP+SSE to Next.js (same host, shared
-  filesystem — ADR-023; addressed as a registered execution host, ADR-165).
+  filesystem — ADR-023; addressed as a registered execution host, ADR-166).
 - **Project portfolio (home)**: superset.sh-style grid of every active
   workspace across all projects — project · branch · status · last activity ·
   executor · quick actions (View / Resume / Abandon). Filters by project +
@@ -569,7 +569,7 @@ agent_tick | flow_run | run_schedule`); user-facing task cron schedules
   / context mounts (M49, ADR-155/156/157) · RU user manual (ADR-158) ·
   generated DBML ERD + docs gates (ADR-159) · local execution-host contract
   — durable host identity, epoch-fenced assignments, command ledger, opaque
-  adopted workspaces, strict envelope (Stage A, ADR-165).
+  adopted workspaces, strict envelope (Stage A, ADR-166).
 
 Historical product backlog/wave rationale: `docs/pv/improvement-roadmap.md`.
 Current sequencing lives in `.ai-factory/ROADMAP.md`; M45 qualifies
@@ -609,7 +609,7 @@ executors.
   monotonic `id` for `lastEventId` reconnect.
 - **Supervisor boundary**: `web/lib/supervisor-client.ts` is the local-direct
   transport and is importable ONLY from `web/lib/execution-host/**`
-  (ESLint-fenced, ADR-165 Implemented); domain code uses `BoundClient` /
+  (ESLint-fenced, ADR-166 Implemented); domain code uses `BoundClient` /
   `HostAdminClient` from `@/lib/execution-host`.
 - **Agent process lifetime**: spawned and owned by `supervisor/`, NOT by
   Next.js. Permission HITL stays live through supervisor deferreds.

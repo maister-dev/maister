@@ -125,7 +125,7 @@ type SessionRecord = {
   emit: ((event: Record<string, unknown>) => void) | null;
   // Events emitted before the stream connected — flushed on connect.
   queued: Array<Record<string, unknown>>;
-  // ADR-165 (T6.2) permission scenario (the execution-host contract project):
+  // ADR-166 (T6.2) permission scenario (the execution-host contract project):
   // the first prompt of every session parks on a permission request and its
   // HTTP response is HELD until `/input` answers it (end_turn) or a checkpoint
   // tears the session down (cancelled + session.exited{reason: checkpoint}).
@@ -135,7 +135,7 @@ type SessionRecord = {
     env: ReturnType<typeof stubEnvelope>;
     respond: (status: number, body: unknown) => void;
   } | null;
-  // ADR-165: the create envelope's fence + handle.
+  // ADR-166: the create envelope's fence + handle.
   executionWorkspaceId?: string;
   assignmentId?: string;
   assignmentEpoch?: number;
@@ -685,7 +685,7 @@ export async function startTestSupervisor(
       return;
     }
 
-    // ---- ADR-165 workspace adoption + receipts (transitional, in-memory) --
+    // ---- ADR-166 workspace adoption + receipts (transitional, in-memory) --
     const sendJson = (status: number, body: unknown, replayed = false) => {
       const headers: Record<string, string> = {
         "content-type": "application/json",
@@ -964,7 +964,7 @@ export async function startTestSupervisor(
         }
         const body = stubPayload(rawBody) as Record<string, unknown>;
 
-        // ADR-165: the durable completion signal beside the HTTP response.
+        // ADR-166: the durable completion signal beside the HTTP response.
         if (env && rec?.emit) {
           rec.emit({
             type: "session.command",

@@ -73,7 +73,7 @@ export type StepResult = {
   durationMs?: number;
   acpSessionId?: string;
   needsInput?: boolean;
-  // ADR-165 E-EH-11: this driver's assignment was superseded (a command came
+  // ADR-166 E-EH-11: this driver's assignment was superseded (a command came
   // back `assignment_fenced`) — the caller MUST yield without writing run,
   // ledger, HITL, or scratch state.
   fenced?: boolean;

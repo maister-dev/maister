@@ -215,7 +215,7 @@ flowchart LR
 
 ## Linked artifacts
 
-- Execution-host contract (ADR-165, Implemented): [`execution-hosts.md`](execution-hosts.md) — `run_sessions.execution_assignment_id` attributes each spawn to the assignment epoch that created it, and `run_sessions.host_session_id` is written by the `session.create` acknowledgement instead of a post-prompt scan.
+- Execution-host contract (ADR-166, Implemented): [`execution-hosts.md`](execution-hosts.md) — `run_sessions.execution_assignment_id` attributes each spawn to the assignment epoch that created it, and `run_sessions.host_session_id` is written by the `session.create` acknowledgement instead of a post-prompt scan.
 - Decision: [ADR-114](../decisions.md#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth).
 - Working spec: [`../../.ai-factory/plans/feature-unified-flow-runner-sessions.md`](../../.ai-factory/plans/feature-unified-flow-runner-sessions.md).
 - DSL/config: [`../flow-dsl.md`](../flow-dsl.md), [`../configuration.md`](../configuration.md).

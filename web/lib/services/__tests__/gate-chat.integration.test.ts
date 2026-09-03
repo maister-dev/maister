@@ -1,5 +1,5 @@
 // M30 (ADR-078): gate-chat turns against a real DB + real git worktree with
-// a fake local execution host (ADR-165) scripting the agent session. Pins:
+// a fake local execution host (ADR-166) scripting the agent session. Pins:
 //   - live turn: user+agent rows (seq), L1 preamble + readOnlyTurn on the
 //     prompt, gate-chat-<hitlId> stepId, keepalive bump, HITL stays open,
 //     status stays NeedsInput;
@@ -115,7 +115,7 @@ beforeAll(async () => {
   });
   pool = testDatabase.pool;
   db = testDatabase.db;
-  // ADR-165: claim transitions mint on the local host — a fake host backs
+  // ADR-166: claim transitions mint on the local host — a fake host backs
   // every implicit resolution in this process.
   await fakeExecutionHosts(db);
 }, 180_000);
@@ -444,7 +444,7 @@ describe("sendGateChatTurn — live (DD3)", () => {
     ).toBe(true);
     expect(api.sendPromptCalls[0].prompt).toContain("why did you choose X?");
     expect(api.sendPromptCalls[0].readOnlyTurn).toBe(true);
-    // Q5 (ADR-165): a live turn rides the run's ACTIVE assignment — no new
+    // Q5 (ADR-166): a live turn rides the run's ACTIVE assignment — no new
     // generation is minted and the prompt carries its epoch.
     expect(api.sendPromptCalls[0].assignmentEpoch).toBe(1);
     expect(await assignmentRows(runId)).toEqual([
@@ -518,7 +518,7 @@ describe("sendGateChatTurn — idle chat-resume (DD3)", () => {
     expect(api.createSessionCalls).toHaveLength(1);
     expect(api.createSessionCalls[0].resumeSessionId).toBe("acp-1");
     expect(api.sendPromptCalls[0].sessionId).toBe(api.createdSessionIds()[0]);
-    // Q5 (ADR-165): the chat-resume is a NEW driver generation minted as
+    // Q5 (ADR-166): the chat-resume is a NEW driver generation minted as
     // `gate_chat` over the checkpoint-released launch generation; the spawn
     // and the prompt carry its epoch and the adopted workspace handle.
     expect(await assignmentRows(runId)).toEqual([
@@ -937,7 +937,7 @@ describe("sendGateChatTurn — idle claim-before-spawn (X-2PC)", () => {
     expect(stateSpies.rollbackResumedRun).toHaveBeenCalledTimes(1);
     expect((await runRow(runId)).status).toBe("NeedsInputIdle");
     expect(api.sendPromptCalls).toHaveLength(0);
-    // ADR-165: the rollback releases the `gate_chat` generation it minted.
+    // ADR-166: the rollback releases the `gate_chat` generation it minted.
     expect(await assignmentRows(runId)).toEqual([
       {
         epoch: 1,

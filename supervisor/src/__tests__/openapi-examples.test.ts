@@ -1,4 +1,4 @@
-// ADR-165 T2.5 — the OpenAPI/AsyncAPI examples are the shared contract
+// ADR-166 T2.5 — the OpenAPI/AsyncAPI examples are the shared contract
 // fixtures: every documented example must parse with the local Zod schema, and
 // a deliberately broken fixture proves the harness has teeth.
 import { readFileSync } from "node:fs";

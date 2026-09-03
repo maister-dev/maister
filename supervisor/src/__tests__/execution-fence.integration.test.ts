@@ -1,4 +1,4 @@
-// ADR-165 T2.2 — fence enforcement (F1–F8). Every assertion checks
+// ADR-166 T2.2 — fence enforcement (F1–F8). Every assertion checks
 // `details.reason` or a state, never a status code alone.
 import type { SessionEvent } from "../types";
 

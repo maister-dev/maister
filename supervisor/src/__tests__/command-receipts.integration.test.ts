@@ -1,4 +1,4 @@
-// ADR-165 T2.2/T2.4 — receipts (R1–R6) and session.command events (S1–S3).
+// ADR-166 T2.2/T2.4 — receipts (R1–R6) and session.command events (S1–S3).
 import type { SessionEvent } from "../types";
 
 import { randomUUID } from "node:crypto";

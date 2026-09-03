@@ -50,7 +50,7 @@ function context(over: Partial<LifecycleContext> = {}): LifecycleContext {
   };
 }
 
-// ADR-165: the deps address a DB-less fake local host; `fake` is the one the
+// ADR-166: the deps address a DB-less fake local host; `fake` is the one the
 // most recent `deps()` built (sessions seeded per case, teardowns asserted on
 // its recorded calls).
 let fake: FakeExecutionHost;

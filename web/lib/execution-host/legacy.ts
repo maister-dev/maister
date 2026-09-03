@@ -13,13 +13,13 @@ import { localHost } from "./resolver";
 import { getDb } from "@/lib/db/client";
 import { runs, runSessions } from "@/lib/db/schema";
 
-// ADR-165 D9: evidence-based backfill of pre-Stage-A active runs. A run that
+// ADR-166 D9: evidence-based backfill of pre-Stage-A active runs. A run that
 // still carries `execution_assignment_id = NULL` while a live driver status
 // says it is executing gets epoch 1 (`legacy_backfill`) iff the local host
 // reports a live session for it; a run without a session is left NULL for the
 // reconcile sweep to classify. Parked/queued statuses are untouched — their
 // next placement mints. Runs at boot (after command recovery) and on every
-// `executionCommandReconcilePass`. MUST be deleted in Stage C (ADR-165).
+// `executionCommandReconcilePass`. MUST be deleted in Stage C (ADR-166).
 
 const defaultLog = pino({
   name: "execution-host",

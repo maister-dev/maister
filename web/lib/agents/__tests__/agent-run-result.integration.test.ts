@@ -1,3 +1,4 @@
+import type { SupervisorEvent } from "@/lib/execution-host";
 import type { RunResultContract, RunResultRow } from "@/lib/run-results/types";
 
 import { randomUUID } from "node:crypto";
@@ -17,6 +18,7 @@ import {
 
 import * as fullSchema from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import { fakeAgentExecution } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -65,19 +67,10 @@ const CONTRACT: RunResultContract = {
  * drive a permission round-trip (which RESETS the per-turn buffer) as well as a
  * plain single-turn exit.
  */
+// ADR-166: the consumer's execution seam is a DB-less fake host whose stream
+// yields `events` in order (a permission round-trip included).
 function scriptedApi(events: unknown[]) {
-  return {
-    streamSession: async function* () {
-      for (const e of events) yield e as never;
-    },
-    checkpointSession: async () => ({
-      alreadyCheckpointed: false,
-      sessionId: "s",
-      monotonicId: 0,
-    }),
-    deliverPermission: async () => ({ ok: true }),
-    deleteSession: async () => undefined,
-  } as unknown as Parameters<typeof consumeAgentSession>[0]["api"];
+  return fakeAgentExecution({ events: events as SupervisorEvent[] });
 }
 
 function chunk(text: string): unknown {
@@ -214,7 +207,7 @@ describe("agent public result — the happy path", () => {
 
     await consumeAgentSession({
       db,
-      api: scriptedApi([
+      execution: scriptedApi([
         chunk(
           `Working...\n${OPEN}\n${JSON.stringify(VALID_VALUE)}\n${CLOSE}\n`,
         ),
@@ -256,7 +249,7 @@ describe("agent public result — the happy path", () => {
 
     await consumeAgentSession({
       db,
-      api: scriptedApi([
+      execution: scriptedApi([
         chunk(`${OPEN}\n${JSON.stringify(VALID_VALUE)}\n${CLOSE}\n`),
         exited(0),
       ]),
@@ -284,7 +277,7 @@ describe("agent public result — the D10 failure table", () => {
 
     await consumeAgentSession({
       db,
-      api: scriptedApi([chunk("I finished, no block."), exited(0)]),
+      execution: scriptedApi([chunk("I finished, no block."), exited(0)]),
       runId,
       sessionId: "sup-1",
     });
@@ -350,7 +343,10 @@ describe("agent public result — the D10 failure table", () => {
 
       await consumeAgentSession({
         db,
-        api: scriptedApi([chunk(`${OPEN}\n${block}\n${CLOSE}\n`), exited(0)]),
+        execution: scriptedApi([
+          chunk(`${OPEN}\n${block}\n${CLOSE}\n`),
+          exited(0),
+        ]),
         runId,
         sessionId: "sup-1",
       });
@@ -377,7 +373,7 @@ describe("agent public result — the D10 failure table", () => {
 
     await consumeAgentSession({
       db,
-      api: scriptedApi([
+      execution: scriptedApi([
         chunk(`${OPEN}\n${JSON.stringify(VALID_VALUE)}\n${CLOSE}\n`),
         exited(1),
       ]),
@@ -394,7 +390,7 @@ describe("agent public result — the D10 failure table", () => {
 
     await consumeAgentSession({
       db,
-      api: scriptedApi([
+      execution: scriptedApi([
         chunk(`${OPEN}\n{"anything":true}\n${CLOSE}\n`),
         exited(0),
       ]),
@@ -417,7 +413,7 @@ describe("agent public result — per-turn buffering", () => {
 
     await consumeAgentSession({
       db,
-      api: scriptedApi([
+      execution: scriptedApi([
         chunk(`${OPEN}\n${stale}\n${CLOSE}\n`),
         {
           type: "session.permission_request",
@@ -452,7 +448,7 @@ describe("W4 — death before the finalize transaction", () => {
 
     await consumeAgentSession({
       db,
-      api: scriptedApi([
+      execution: scriptedApi([
         // A valid block was already buffered — it still must not be published:
         // the run did not finish, so what it emitted is not an answer.
         chunk(`${OPEN}\n${JSON.stringify(VALID_VALUE)}\n${CLOSE}\n`),

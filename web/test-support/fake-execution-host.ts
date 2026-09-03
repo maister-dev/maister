@@ -48,7 +48,7 @@ import {
   asHostSessionId,
 } from "@/lib/execution-host/types";
 
-// ADR-165 T3.1: an in-memory `ExecutionHostTransport` with the host's
+// ADR-166 T3.1: an in-memory `ExecutionHostTransport` with the host's
 // observable semantics (fence high-water, receipts + replay, handles, sessions)
 // and programmable faults, for ledger/deliverer/driver tests that must not
 // spawn a supervisor. Errors are shaped exactly as the local-direct wire maps

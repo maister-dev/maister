@@ -560,7 +560,7 @@ const ORCHESTRATOR_SLUG = "e2e-orchestrator";
 const ORCHESTRATOR_FLOW_SLUG = "e2e-orchestrator-flow";
 const E2E_WORKER_AGENT = "e2e-orc-pkg:e2e-worker";
 
-// --- ADR-165 execution-host contract fixture (T6.2) -------------------------
+// --- ADR-166 execution-host contract fixture (T6.2) -------------------------
 // One launchable project with a Backlog task bound to a single-`ai_coding`
 // graph. The execution-host-contract spec launches it from the board; the test
 // supervisor (keyed on E2E_EXECUTION_HOST_SLUG) answers the first prompt with a

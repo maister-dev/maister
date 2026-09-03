@@ -1,4 +1,4 @@
-// Execution-host contract vocabulary (ADR-165). Pure constants + branded ids:
+// Execution-host contract vocabulary (ADR-166). Pure constants + branded ids:
 // no node:* imports, no DB, no env — `lib/db/schema.ts` aliases these arrays
 // for its CHECK constraints, so the wire, the ledger, and the schema can never
 // drift apart by hand-mirroring.

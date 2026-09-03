@@ -202,7 +202,7 @@ function makeFakeDb(
   };
 }
 
-// ADR-165: the runner's execution seam is a fake-backed BoundClient + admin
+// ADR-166: the runner's execution seam is a fake-backed BoundClient + admin
 // stream (no ledger, no database). `events` scripts the session stream; the
 // permission input the runner sends is observed on the fake transport.
 function makeApi(opts: {
@@ -540,9 +540,9 @@ describe("runner-agent — hooksConfig threading (ADR-108)", () => {
   });
 });
 
-// ADR-165 D7: the session body is the HANDLE form — no path, no run identity
+// ADR-166 D7: the session body is the HANDLE form — no path, no run identity
 // (both ride the fence and the adopted workspace handle).
-describe("runner-agent — handle-form session body (ADR-165)", () => {
+describe("runner-agent — handle-form session body (ADR-166)", () => {
   it("createSession carries executionWorkspaceId and no path fields", async () => {
     const db = makeFakeDb();
     const api = makeApi({ events: [update(1, "hi"), exited(2)] });
@@ -649,9 +649,9 @@ describe("runner-agent — session.exited.reason handling (M8 Codex fix #1)", ()
   });
 });
 
-// ADR-165 E-EH-11: a fenced command means a newer driver owns the run — the
+// ADR-166 E-EH-11: a fenced command means a newer driver owns the run — the
 // step yields without deleting the session or touching run state.
-describe("runner-agent — driver yield rule (ADR-165)", () => {
+describe("runner-agent — driver yield rule (ADR-166)", () => {
   it("a FENCED prompt returns {fenced:true} with no delete and no status write", async () => {
     const db = makeFakeDb();
     const api = makeApi({ events: [update(1, "hi"), exited(2)] });

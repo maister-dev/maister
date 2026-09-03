@@ -1,4 +1,4 @@
-// ADR-165 (T6.2) — live-supervisor lane smoke of the execution-host contract:
+// ADR-166 (T6.2) — live-supervisor lane smoke of the execution-host contract:
 //   S1 the REAL supervisor's /health carries its durable identity;
 //   S2 a scratch launch through the UI against the real adapter is placed on
 //      that host (epoch-1 assignment + an adopted workspace handle the host
@@ -32,7 +32,7 @@ test("S1: the real supervisor's /health carries the execution-host identity", as
   expect(body.host?.bootId).toBeTruthy();
   expect(body.host?.protocolVersion).toBe(1);
 
-  // The web tier registered exactly that host (ADR-165 D1).
+  // The web tier registered exactly that host (ADR-166 D1).
   const registered = await singleValue<string>(
     `SELECT host_key AS value FROM execution_hosts
       WHERE kind = 'local_direct' AND retired_at IS NULL`,

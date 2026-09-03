@@ -26,7 +26,7 @@ const defaultLog = pino({
   level: process.env.LOG_LEVEL ?? "info",
 }).child({ component: "deliverer" });
 
-// ADR-165 D5: per-kind delivery policy — a data table, never a switch (OCP).
+// ADR-166 D5: per-kind delivery policy — a data table, never a switch (OCP).
 // Budgets bound UNKNOWN-outcome retries of the SAME command id; a definitive
 // error never retries. Prompt: 3 attempts before acceptance, 0 after.
 export type KindPolicy = {
@@ -175,7 +175,7 @@ function summarize<T>(
   return null;
 }
 
-// ADR-165 D4/D5 for IMMEDIATE kinds: claim → wire → ack. Unknown-outcome
+// ADR-166 D4/D5 for IMMEDIATE kinds: claim → wire → ack. Unknown-outcome
 // failures retry the same id up to the kind's budget with exponential
 // backoff; FENCED is terminal (`fenced`); everything else is a definitive
 // `failed`. The caller sees the transport's MaisterError unchanged.
@@ -255,7 +255,7 @@ export async function deliverCommand<TResult>(
         if (!failed.exhausted && policy.driverless) {
           // A driverless kind (`session.delete`, `workspace.release`) needs no
           // waiting driver: after one unknown outcome the row stays `queued`
-          // for the recovery pass to re-deliver (ADR-165 D5 W1) instead of
+          // for the recovery pass to re-deliver (ADR-166 D5 W1) instead of
           // holding the caller through the retry budget.
           logger.warn(
             {
@@ -378,7 +378,7 @@ export type DeliverPromptOptions = {
   now?: () => Date;
 };
 
-// ADR-165 D5 for `session.prompt`: the long-lived HTTP response, the SSE
+// ADR-166 D5 for `session.prompt`: the long-lived HTTP response, the SSE
 // `session.command` event, and the receipt are all durable completion
 // signals; the first one to arrive wins and later folds are no-ops.
 export function deliverPrompt(opts: DeliverPromptOptions): PromptHandle {

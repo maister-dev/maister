@@ -19,7 +19,7 @@ const deleteSessionSpy = vi.fn();
 
 vi.mock("@/lib/supervisor-client", () => ({}));
 
-// ADR-165: the resumed-session driver talks to the host through the client
+// ADR-166: the resumed-session driver talks to the host through the client
 // bound to the run's assignment (prompt / input / delete) and the host-scoped
 // admin stream. The fake client routes each call to the existing spies with
 // the legacy argument shapes the cases assert on.

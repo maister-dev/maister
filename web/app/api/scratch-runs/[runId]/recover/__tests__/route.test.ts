@@ -12,7 +12,7 @@ import {
 import { sendScratchPromptAndProjectEvents } from "@/lib/scratch-runs/events";
 import { checkSupervisorHealth, listSessions } from "@/lib/supervisor-client";
 
-// ADR-165 (strict): the wire client no longer exports a bare `createSession`;
+// ADR-166 (strict): the wire client no longer exports a bare `createSession`;
 // the execution-host module mock still routes the fake's create to this spy.
 const { createSession } = vi.hoisted(() => ({
   createSession: vi.fn(async () => ({
@@ -165,7 +165,7 @@ vi.mock("@/lib/supervisor-client", () => ({
   listSessions: vi.fn(async () => []),
 }));
 
-// ADR-165: the service talks to the host through the execution-host client;
+// ADR-166: the service talks to the host through the execution-host client;
 // route every host-bound call to this suite's supervisor-client mocks so the
 // wire-level assertions stay as they are.
 vi.mock("@/lib/execution-host", async () => {

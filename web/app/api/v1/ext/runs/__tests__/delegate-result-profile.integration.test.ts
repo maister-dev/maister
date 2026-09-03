@@ -25,6 +25,7 @@ import {
   seedOrchestratorRun,
   seedTask,
 } from "@/test-support/delegation-seed";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -153,6 +154,8 @@ beforeAll(async () => {
   });
   pool = testDatabase.pool;
   db = testDatabase.db;
+  // ADR-166: launches gate on a registered local execution host.
+  await fakeExecutionHosts(db);
 
   ({ issueOrchestratorRunToken } = await import("@/lib/agents/tokens"));
   ({ POST: delegatePost } = await import(

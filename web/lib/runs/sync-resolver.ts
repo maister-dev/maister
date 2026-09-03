@@ -37,7 +37,7 @@ const log = pino({
 // The step id the resolver session (and its HITL rows) are stamped with.
 export const SYNC_STEP_ID = "sync";
 
-// ADR-165: the resolver's session create payload is handle-form — the run's
+// ADR-166: the resolver's session create payload is handle-form — the run's
 // worktree is the adopted workspace of its `sync_resolver` assignment; no path
 // rides the wire.
 export type ResolverSessionInput = Pick<

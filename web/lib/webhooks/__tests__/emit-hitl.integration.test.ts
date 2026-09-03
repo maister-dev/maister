@@ -63,7 +63,7 @@ vi.mock("@/lib/db/client", () => ({
 }));
 
 // Service deps that would reach out of process / require a session. Permission
-// delivery lands on a fake local execution host (ADR-165) holding the live
+// delivery lands on a fake local execution host (ADR-166) holding the live
 // session so the respond path stamps respondedAt; the resume wake + idle
 // resume are stubbed; authz is allowed.
 let fake: FakeExecutionHost;

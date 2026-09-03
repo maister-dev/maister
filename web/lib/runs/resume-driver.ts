@@ -298,7 +298,7 @@ export async function runResumedSession(
     "runResumedSession started",
   );
 
-  // ADR-165: every host-bound call of this driver rides the client bound to
+  // ADR-166: every host-bound call of this driver rides the client bound to
   // the run's active assignment (the generation the resume claim minted).
   const hosts = opts.executionHosts ?? createExecutionHosts({ db });
   let client: BoundClient;
@@ -518,7 +518,7 @@ export async function runResumedSession(
     );
   } catch (err) {
     if (isFencedError(err)) {
-      // ADR-165 yield rule: a newer generation owns the run — no terminal
+      // ADR-166 yield rule: a newer generation owns the run — no terminal
       // decision, no intent write, no teardown of a session that is not ours.
       fenced = true;
       log.warn({ runId }, "runResumedSession: driver-yielded — fenced");

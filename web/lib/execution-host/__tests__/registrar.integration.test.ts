@@ -1,4 +1,4 @@
-// ADR-165 T3.2 — local host registrar + resolver (G1–G6) against a REAL
+// ADR-166 T3.2 — local host registrar + resolver (G1–G6) against a REAL
 // supervisor child (identity minted into its own state store).
 
 import type { Db } from "@/lib/execution-host/db";

@@ -179,7 +179,7 @@ export type WorkbenchLifecycleDeps = {
   requireActiveSession: () => Promise<{ id: string } | void>;
   loadContext: (runId: string) => Promise<LifecycleContext>;
   authorize: (projectId: string, action: LifecycleAction) => Promise<void>;
-  // ADR-165: the host the stop tears live sessions down through (a fenced
+  // ADR-166: the host the stop tears live sessions down through (a fenced
   // `session.delete` under the run's newest assignment).
   executionHosts: ExecutionHosts;
   markStoppedAndCloseAssignments: (args: {
@@ -2315,7 +2315,7 @@ async function markRunStoppedAndCloseAssignments(args: {
       );
     }
 
-    // ADR-165 D7: the stop ends the run's driver generation.
+    // ADR-166 D7: the stop ends the run's driver generation.
     await releaseAssignmentForRun(
       tx as unknown as ExecutionDb,
       args.runId,

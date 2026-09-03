@@ -1,4 +1,4 @@
-// ADR-165 (T6.2) — the execution-host contract end-to-end through the real UI +
+// ADR-166 (T6.2) — the execution-host contract end-to-end through the real UI +
 // HTTP stack against the e2e test supervisor (global-setup):
 //   U1 launching the task from the board PLACES the run: one registered local
 //      host, `runs.execution_assignment_id` set, epoch 1 `launch`, and the

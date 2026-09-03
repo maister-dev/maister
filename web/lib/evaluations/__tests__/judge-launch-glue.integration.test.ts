@@ -132,7 +132,7 @@ Judge the bound evidence snapshot.
     databaseName: "judge_launch_glue_test",
   });
   db = testDatabase.db;
-  // ADR-165: every launch places the run on the local execution host.
+  // ADR-166: every launch places the run on the local execution host.
   await fakeExecutionHosts(db);
 
   ({ launchJudgePanel, provisionJudgeAttempts, defaultJudgeSpawn } =

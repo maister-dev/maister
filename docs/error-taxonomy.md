@@ -500,9 +500,9 @@ remoteSha, aheadBy, behindBy, instructions[]}` as advisory detail so the UI
 > missing at restart time **degrades to workspace policy `keep` with a WARN**
 > rather than throwing — it is never guessed.
 
-## Execution-host contract (Implemented — ADR-165)
+## Execution-host contract (Implemented — ADR-166)
 
-> **ADR-165 adds NO new `MaisterError` code.** The local execution-host
+> **ADR-166 adds NO new `MaisterError` code.** The local execution-host
 > contract reuses the closed union: a stale assignment epoch rejected by the
 > supervisor (`409 FENCED`) surfaces as **`CONFLICT`** with
 > `details.reason = "assignment_fenced"` (+ `runId`, `commandEpoch`,

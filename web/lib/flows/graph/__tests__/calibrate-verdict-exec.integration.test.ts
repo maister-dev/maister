@@ -69,7 +69,7 @@ function oneNodeWithAiJudgmentGate(gateConfig: unknown) {
 }
 
 /**
- * ADR-165: a fake execution host whose agent turn streams the controlled
+ * ADR-166: a fake execution host whose agent turn streams the controlled
  * verdict JSON as agent output (parseVerdict reads it from the collected
  * agent_message_chunk text), then a clean end-turn.
  */

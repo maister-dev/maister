@@ -65,7 +65,7 @@ vi.mock("@/lib/flows/runner-agent", async (importOriginal) => ({
       // The graph binds lazily at the first real dispatch; the scripted step
       // resolves the same provider so the stamp carries the run's generation.
       const execution = prebound ?? (await ctx.bindExecution!());
-      // ADR-165: the create ack (inside the real step) persists the host
+      // ADR-166: the create ack (inside the real step) persists the host
       // binding; the scripted step emulates that write so the retained
       // resume handle is observable after the park.
       const { persistRunSessionHostBinding } = await import(

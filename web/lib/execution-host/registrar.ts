@@ -43,7 +43,7 @@ export type RegistrationObservation = {
   liveAssignments: number;
 };
 
-// ADR-165 D1 identity-change policy as DATA — first matching row wins. The
+// ADR-166 D1 identity-change policy as DATA — first matching row wins. The
 // registrar applies the action under a `SELECT … FOR UPDATE` of the active
 // local row (lock → verify → commit), so two web processes cannot both insert.
 export const REGISTRATION_POLICY: ReadonlyArray<{
@@ -169,7 +169,7 @@ async function markUnavailable(
   return { status: "unavailable", reason, message, host: row };
 }
 
-// ADR-165 D1: observe `GET /health`, then apply the identity-change policy
+// ADR-166 D1: observe `GET /health`, then apply the identity-change policy
 // under the active row's lock. Never throws on an unreachable or refused
 // host — launches keep today's 503 through the resolver instead.
 export async function ensureLocalExecutionHost(
@@ -190,7 +190,7 @@ export async function ensureLocalExecutionHost(
     return markUnavailable(
       db,
       "no_identity",
-      "supervisor /health carries no execution-host identity (pre-ADR-165 supervisor)",
+      "supervisor /health carries no execution-host identity (pre-ADR-166 supervisor)",
       now(),
       logger,
     );

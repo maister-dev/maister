@@ -73,7 +73,7 @@ export function hostUnavailableError(result: RegistrationResult): MaisterError {
   return new MaisterError("EXECUTOR_UNAVAILABLE", "host resolution failed");
 }
 
-// ADR-165 D1 "web resolution": the registered local host, memoized 30 s
+// ADR-166 D1 "web resolution": the registered local host, memoized 30 s
 // (one health call per window, single-flight under concurrency). Throws
 // EXECUTOR_UNAVAILABLE when the host is unreachable or refused — the launch
 // path's existing 503.
@@ -130,7 +130,7 @@ export function hostIdentityMismatchError(args: {
   );
 }
 
-// ADR-165 X-EH-02: the host an assignment was placed on, verified against the
+// ADR-166 X-EH-02: the host an assignment was placed on, verified against the
 // host the registrar last observed. A retired row, a row refused for
 // `identity_changed`, or a key that differs from the live local host all
 // surface as `EXECUTOR_UNAVAILABLE {reason:"host_identity_mismatch"}`.

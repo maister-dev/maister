@@ -76,7 +76,7 @@ async function getAttempts(runId: string): Promise<NodeAttempt[]> {
     .where(eq(schema.nodeAttempts.runId, runId))) as unknown as NodeAttempt[];
 }
 
-// ADR-165: a fake host scripted to stream `text` then a clean end-turn.
+// ADR-166: a fake host scripted to stream `text` then a clean end-turn.
 async function makeAgentSupervisor(
   runId: string,
   text: string,

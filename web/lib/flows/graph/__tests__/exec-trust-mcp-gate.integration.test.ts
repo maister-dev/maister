@@ -101,7 +101,7 @@ async function seedRun(execTrust: FlowRevisionExecTrust) {
   return { runId: seeded.runId, runtimeRoot: seeded.runtimeRoot };
 }
 
-// ADR-165: a fake execution host whose agent turn is a clean end-turn, plus a
+// ADR-166: a fake execution host whose agent turn is a clean end-turn, plus a
 // spy that receives every `session.create` payload the runner sends.
 async function makeSupervisorSpy(runId: string): Promise<{
   hosts: ExecutionHosts;

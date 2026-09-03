@@ -119,9 +119,9 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `task_subscribers`                     | **(ADR-083 — Implemented, migration `0043`)** Per-task subscriber set (`user\|agent` pair + reason `creator\|commenter\|mentioned\|manual`). UNIQUE `(task_id, subscriber_type, subscriber_id)`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `tasks.id`                                                                                                                                        |
 | `inbox_items`                          | **(ADR-083 — Implemented, migration `0043`)** Per-recipient inbox fanned out from comment/mention events; `read_at` read marker; `source_ref` jsonb.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `projects.id`, `tasks.id`                                                                                                                         |
 
-| `execution_hosts` | **(ADR-165 — Implemented, migration `0129`)** Registered execution hosts. Stage A: exactly one non-retired `kind='local_direct'` row (partial unique index), identity `host_key` minted by the supervisor, readiness + capabilities refreshed by the web registrar. The supervisor URL is env, never a column. | (none — retired via `retired_at`, never deleted while referenced) |
-| `execution_assignments` | **(ADR-165 — Implemented, migration `0129`)** Append-only per-run placement ledger: one row per `(run_id, epoch)`, `state ∈ active|superseded|released`, `placement_reason`, the opaque `execution_workspace_id` handle. At most one `active` row per run (partial unique index). | `runs.id`, `execution_hosts.id` (RESTRICT), self-ref `superseded_by_id` (SET NULL) |
-| `execution_commands` | **(ADR-165 — Implemented, migration `0129`)** Host-bound command intent + delivery ledger (`queued → delivering → accepted → succeeded|failed|fenced`), one row per wire `command.id`, REDACTED payload, per-kind retry budget, `driverless` recovery flag. Terminal rows pruned after 7 days. | `runs.id`, `execution_assignments.id`, `execution_hosts.id` (RESTRICT) |
+| `execution_hosts` | **(ADR-166 — Implemented, migration `0130`)** Registered execution hosts. Stage A: exactly one non-retired `kind='local_direct'` row (partial unique index), identity `host_key` minted by the supervisor, readiness + capabilities refreshed by the web registrar. The supervisor URL is env, never a column. | (none — retired via `retired_at`, never deleted while referenced) |
+| `execution_assignments` | **(ADR-166 — Implemented, migration `0130`)** Append-only per-run placement ledger: one row per `(run_id, epoch)`, `state ∈ active|superseded|released`, `placement_reason`, the opaque `execution_workspace_id` handle. At most one `active` row per run (partial unique index). | `runs.id`, `execution_hosts.id` (RESTRICT), self-ref `superseded_by_id` (SET NULL) |
+| `execution_commands` | **(ADR-166 — Implemented, migration `0130`)** Host-bound command intent + delivery ledger (`queued → delivering → accepted → succeeded|failed|fenced`), one row per wire `command.id`, REDACTED payload, per-kind retry budget, `driverless` recovery flag. Terminal rows pruned after 7 days. | `runs.id`, `execution_assignments.id`, `execution_hosts.id` (RESTRICT) |
 
 ## `users`
 
@@ -1468,7 +1468,7 @@ unread badge and inbox panel.
                                  //   read THIS row; they never re-derive the mount set
                                  //   from a manifest or an attachment that can drift
                                  //   after launch. NULL ⇒ no mounts declared.
-  executionAssignmentId?,        // (Implemented — ADR-165, migration 0129) FK ->
+  executionAssignmentId?,        // (Implemented — ADR-166, migration 0130) FK ->
                                  //   execution_assignments.id ON DELETE SET NULL;
                                  //   the run's ACTIVE placement (epoch = the
                                  //   driver-ownership generation). NULL ⇒
@@ -1578,11 +1578,11 @@ stop, gate-chat, and diagnostics still target the correct ACP session).
                                  //   | 'launch-dialog'
   resolutionWarning?,            // jsonb RunnerResolutionWarning; nullable
                                  //   soft model/provider mismatch audit
-  executionAssignmentId?,        // (Implemented — ADR-165, 0129) FK ->
+  executionAssignmentId?,        // (Implemented — ADR-166, 0130) FK ->
                                  //   execution_assignments.id SET NULL; updated
                                  //   per spawn — which assignment epoch created
                                  //   this session's current process
-  hostSessionId?,                // (Implemented — ADR-165, 0129) the SUPERVISOR
+  hostSessionId?,                // (Implemented — ADR-166, 0130) the SUPERVISOR
                                  //   session id, written by the session.create
                                  //   acknowledgement transaction (present from
                                  //   spawn, not after the first prompt returns);
@@ -1619,17 +1619,17 @@ mappable to `slot_key`), so operators export/record and clear the table
 **before** running migrations, then re-map per slot via the project Flow runner
 UI **after** the upgrade succeeds.
 
-## Execution-host tables (Implemented — ADR-165, migration `0129`)
+## Execution-host tables (Implemented — ADR-166, migration `0130`)
 
 These tables are the durable half of the local execution-host contract
-([ADR-165](decisions.md#adr-165-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces);
+([ADR-166](decisions.md#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces);
 behavior in
 [`system-analytics/execution-hosts.md`](system-analytics/execution-hosts.md);
 ERD in [`db/execution-hosts-domain.md`](db/execution-hosts-domain.md)).
 Postgres is the SSOT for hosts, assignments, commands, and run state; the
 supervisor keeps its own private state (`host_identity`, `run_fences`,
 `workspaces`, `command_receipts`) in a `node:sqlite` file that is NOT part of
-this schema. Migration `0129_execution_hosts` is a single **additive** migration
+this schema. Migration `0130_execution_hosts` is a single **additive** migration
 that is never data-dependent: historical rows keep every new column `NULL`
 forever, and `NULL` on `runs.execution_assignment_id` means "pre-Stage-A, never
 placed" — never "unknown".
@@ -2517,7 +2517,7 @@ One immutable row per node execution; `attempt` auto-increments per
   outputContract?,                          // (Implemented, ADR-162, migration 0127)
                                             //   jsonb; per-attempt structured-output
                                             //   schema identity — see below
-  executionAssignmentId?,                   // (Implemented — ADR-165, 0129) FK ->
+  executionAssignmentId?,                   // (Implemented — ADR-166, 0130) FK ->
                                             //   execution_assignments.id SET NULL;
                                             //   stamped at attempt start, immutable
   exitCode?, errorCode?,                    // one of MaisterErrorCode literals
@@ -3849,13 +3849,13 @@ projects
   │     └── runs         (FK taskId,    cascade)
   │           ├── workspaces      (FK runId,        cascade)
   │           ├── run_sessions    (FK runId,        cascade)       ← ADR-114
-  │           ├── execution_assignments (FK runId, cascade)   ← ADR-165 (Implemented)
+  │           ├── execution_assignments (FK runId, cascade)   ← ADR-166 (Implemented)
   │           │     ├── execution_commands (FK executionAssignmentId, cascade)
   │           │     ├── execution_assignments.superseded_by_id (self-ref, SET NULL)
   │           │     ├── runs.execution_assignment_id          (SET NULL)
   │           │     ├── run_sessions.execution_assignment_id  (SET NULL)
   │           │     └── node_attempts.execution_assignment_id (SET NULL)
-  │           ├── execution_commands (FK runId,      cascade)   ← ADR-165 (also direct); execution_hosts FKs are RESTRICT
+  │           ├── execution_commands (FK runId,      cascade)   ← ADR-166 (also direct); execution_hosts FKs are RESTRICT
   │           ├── run_cost_rollups (FK runId,       cascade)       ← ADR-085
   │           ├── node_attempts   (FK runId,        cascade)   ←
   │           │     ├── gate_results      (FK nodeAttemptId, cascade)
@@ -4003,16 +4003,16 @@ Created via Drizzle:
 | `webhook_deliveries`        | `webhook_deliveries_due_idx`                     | `(next_attempt_at)` PARTIAL `WHERE status = 'pending'`                               | **(ADR-077 Implemented)** Ordered drain-pass claim scan                                                                                                                          |
 | `webhook_deliveries`        | `webhook_deliveries_subscription_log_idx`        | `(subscription_id, created_at DESC)`                                                 | **(ADR-077 Implemented)** Deliveries-drawer log UI                                                                                                                               |
 | `webhook_delivery_attempts` | `webhook_delivery_attempts_delivery_idx`         | `(delivery_id)`                                                                      | **(ADR-077 Implemented)** Attempt history for a delivery                                                                                                                         |
-| `execution_hosts`           | `execution_hosts_local_active_uq`                | `(kind)` UNIQUE WHERE `kind='local_direct' AND retired_at IS NULL`                   | **(ADR-165, Implemented, migration 0129)** At most one non-retired local host (E-EH-01).                                                                                         |
-| `execution_assignments`     | `execution_assignments_run_active_uq`            | `(runId)` UNIQUE WHERE `state='active'`                                              | **(ADR-165, Implemented)** At most one active assignment per run (E-EH-02).                                                                                                      |
-| `execution_assignments`     | `execution_assignments_host_state_idx`           | `(executionHostId, state)`                                                           | **(ADR-165, Implemented)** Registrar "does the old host still own active work" scan.                                                                                             |
-| `execution_commands`        | `execution_commands_open_idx`                    | `(state, nextAttemptAt)` PARTIAL WHERE `state IN ('queued','delivering','accepted')` | **(ADR-165, Implemented)** Recovery pass + deliverer due scan (`loadOpenCommands` mirrors the predicate).                                                                        |
-| `execution_commands`        | `execution_commands_run_created_idx`             | `(runId, createdAt)`                                                                 | **(ADR-165, Implemented)** Per-run command history.                                                                                                                              |
-| `execution_commands`        | `execution_commands_assignment_idx`              | `(executionAssignmentId)`                                                            | **(ADR-165, Implemented)** Commands under one assignment.                                                                                                                        |
-| `runs`                      | `runs_execution_assignment_idx`                  | `(executionAssignmentId)`                                                            | **(ADR-165, Implemented)** Active-placement lookups.                                                                                                                             |
-| `run_sessions`              | `run_sessions_host_session_idx`                  | `(hostSessionId)`                                                                    | **(ADR-165, Implemented)** Reconcile lookup by supervisor session id.                                                                                                            |
-| `run_sessions`              | `run_sessions_assignment_idx`                    | `(executionAssignmentId)`                                                            | **(ADR-165, Implemented)** Sessions spawned under one assignment.                                                                                                                |
-| `node_attempts`             | `node_attempts_assignment_idx`                   | `(executionAssignmentId)`                                                            | **(ADR-165, Implemented)** Attempts attributed to one assignment.                                                                                                                |
+| `execution_hosts`           | `execution_hosts_local_active_uq`                | `(kind)` UNIQUE WHERE `kind='local_direct' AND retired_at IS NULL`                   | **(ADR-166, Implemented, migration 0130)** At most one non-retired local host (E-EH-01).                                                                                         |
+| `execution_assignments`     | `execution_assignments_run_active_uq`            | `(runId)` UNIQUE WHERE `state='active'`                                              | **(ADR-166, Implemented)** At most one active assignment per run (E-EH-02).                                                                                                      |
+| `execution_assignments`     | `execution_assignments_host_state_idx`           | `(executionHostId, state)`                                                           | **(ADR-166, Implemented)** Registrar "does the old host still own active work" scan.                                                                                             |
+| `execution_commands`        | `execution_commands_open_idx`                    | `(state, nextAttemptAt)` PARTIAL WHERE `state IN ('queued','delivering','accepted')` | **(ADR-166, Implemented)** Recovery pass + deliverer due scan (`loadOpenCommands` mirrors the predicate).                                                                        |
+| `execution_commands`        | `execution_commands_run_created_idx`             | `(runId, createdAt)`                                                                 | **(ADR-166, Implemented)** Per-run command history.                                                                                                                              |
+| `execution_commands`        | `execution_commands_assignment_idx`              | `(executionAssignmentId)`                                                            | **(ADR-166, Implemented)** Commands under one assignment.                                                                                                                        |
+| `runs`                      | `runs_execution_assignment_idx`                  | `(executionAssignmentId)`                                                            | **(ADR-166, Implemented)** Active-placement lookups.                                                                                                                             |
+| `run_sessions`              | `run_sessions_host_session_idx`                  | `(hostSessionId)`                                                                    | **(ADR-166, Implemented)** Reconcile lookup by supervisor session id.                                                                                                            |
+| `run_sessions`              | `run_sessions_assignment_idx`                    | `(executionAssignmentId)`                                                            | **(ADR-166, Implemented)** Sessions spawned under one assignment.                                                                                                                |
+| `node_attempts`             | `node_attempts_assignment_idx`                   | `(executionAssignmentId)`                                                            | **(ADR-166, Implemented)** Attempts attributed to one assignment.                                                                                                                |
 
 Unique constraints (`slug`, `repoPath`, `worktreePath`, `(project_id,
 executor_ref_id)`, `(project_id, flow_ref_id)`, `(project_id, source, kind,

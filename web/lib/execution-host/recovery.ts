@@ -104,7 +104,7 @@ function driverlessSend(
   }
 }
 
-// ADR-165 D5 W2/W4: fold a host receipt into the ledger together with the
+// ADR-166 D5 W2/W4: fold a host receipt into the ledger together with the
 // result-derived domain writes the lost ack tx would have made.
 async function foldReceipt(
   db: Db,
@@ -228,7 +228,7 @@ async function orphan(
   );
 }
 
-// ADR-165 D5 crash windows W1/W2/W4 — startup and the periodic sweep pass.
+// ADR-166 D5 crash windows W1/W2/W4 — startup and the periodic sweep pass.
 export async function recoverExecutionCommands(
   opts: RecoveryOptions = {},
 ): Promise<ExecutionCommandRecoverySummary> {
@@ -325,7 +325,7 @@ export async function recoverExecutionCommands(
   return summary;
 }
 
-// ADR-165 sweep backstop (V5): an `active` assignment whose run has no live
+// ADR-166 sweep backstop (V5): an `active` assignment whose run has no live
 // driver (status outside Running/NeedsInput) was left behind by a crashed
 // re-entry — release it so the next placement mints cleanly.
 export async function releaseStaleAssignments(

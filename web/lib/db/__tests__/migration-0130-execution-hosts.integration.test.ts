@@ -1,4 +1,4 @@
-// ADR-165 T1.3 — migration 0129_execution_hosts against a DB with history
+// ADR-166 T1.3 — migration 0130_execution_hosts against a DB with history
 // (M1–M3): additive, never data-dependent, constraints + partial indexes
 // present, historical rows keep every new column NULL.
 
@@ -71,7 +71,7 @@ beforeAll(async () => {
     );
   }
 
-  await applyMainMigration(testDatabase.db, "0129_execution_hosts");
+  await applyMainMigration(testDatabase.db, "0130_execution_hosts");
 }, 240_000);
 
 afterAll(async () => {
@@ -86,7 +86,7 @@ async function count(table: string): Promise<number> {
   return rows[0].n;
 }
 
-describe("0129_execution_hosts", () => {
+describe("0130_execution_hosts", () => {
   it("M1: additive — row counts unchanged, new columns NULL, constraints + partial indexes present", async () => {
     expect(await count("runs")).toBe(RUN_STATUSES.length);
     expect(await count("run_sessions")).toBe(RUN_STATUSES.length);

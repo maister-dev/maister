@@ -58,7 +58,7 @@ beforeAll(async () => {
 
   pool = testDatabase.pool;
   db = testDatabase.db;
-  // ADR-165: every launch places the run on the local execution host.
+  // ADR-166: every launch places the run on the local execution host.
   await fakeExecutionHosts(db);
 
   ({ launchAgentRun, buildAgentPrompt } = await import("@/lib/agents/launch"));

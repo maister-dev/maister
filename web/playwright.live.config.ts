@@ -5,7 +5,7 @@ import { defineConfig, devices } from "@playwright/test";
 import { resolvePostgresDbUrl } from "./lib/db/postgres-url";
 import { resolveTestWorktreesRoot } from "./test-support/worktree-test-root";
 
-// The opt-in LIVE lane (ADR-165 T6.2): a REAL supervisor with the operator's
+// The opt-in LIVE lane (ADR-166 T6.2): a REAL supervisor with the operator's
 // configured adapter behind a dev web server. Specs gate themselves on
 // E2E_LIVE_SUPERVISOR=1; nothing here is stubbed.
 const WEB_PORT = Number(process.env.E2E_LIVE_WEB_PORT ?? 3101);
@@ -54,7 +54,7 @@ export default defineConfig({
       env: {
         MAISTER_SUPERVISOR_PORT: String(SUPERVISOR_PORT),
         MAISTER_RUNTIME_ROOT: path.resolve("e2e/.runtime-live-supervisor"),
-        // ADR-165: the lane owns its execution-host state dir and pins the
+        // ADR-166: the lane owns its execution-host state dir and pins the
         // host identity (never a developer's supervisor state), and its
         // adoption roots mirror the lane's worktrees root — a scratch launch
         // adopts the worktree it just created.

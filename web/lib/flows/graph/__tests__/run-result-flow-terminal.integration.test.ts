@@ -1,6 +1,5 @@
 import type { Run } from "@/lib/db/schema";
-import type { SupervisorApi } from "@/lib/flows/runner-agent";
-import type { SupervisorEvent } from "@/lib/supervisor-client";
+import type { ExecutionHosts } from "@/lib/execution-host";
 import type { RunResultContract, RunResultRow } from "@/lib/run-results/types";
 
 import { execFile } from "node:child_process";
@@ -15,6 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { closeDb } from "@/lib/db/client";
 import { runFlow } from "@/lib/flows/runner";
+import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import {
   schema,
   seedGraphRun as seedGraphRunShared,
@@ -133,50 +133,13 @@ async function seedRun(args: {
   });
 }
 
-function supervisor(text: string): SupervisorApi {
-  async function* stream(): AsyncGenerator<SupervisorEvent> {
-    yield {
-      type: "session.update",
-      sessionId: "sup-1",
-      monotonicId: 1,
-      update: {
-        sessionUpdate: "agent_message_chunk",
-        content: { type: "text", text },
-      },
-    } as SupervisorEvent;
-    yield {
-      type: "session.exited",
-      sessionId: "sup-1",
-      monotonicId: 2,
-      exitCode: 0,
-    } as SupervisorEvent;
-  }
-
-  return {
-    createSession: (async () => ({
-      sessionId: "sup-1",
-      pid: 1,
-      acpSessionId: "acp-1",
-    })) as unknown as SupervisorApi["createSession"],
-    deleteSession: (async () =>
-      undefined) as unknown as SupervisorApi["deleteSession"],
-    sendPrompt: (async () => ({
-      stopReason: "end_turn" as const,
-    })) as unknown as SupervisorApi["sendPrompt"],
-    streamSession: (() =>
-      stream()) as unknown as SupervisorApi["streamSession"],
-    cancelPermission: (async () => ({
-      ok: true,
-    })) as unknown as SupervisorApi["cancelPermission"],
-    checkpointSession: async () => ({
-      alreadyCheckpointed: false,
-      sessionId: "s",
-      monotonicId: 0,
-    }),
-    deliverPermission: (async () => ({
-      ok: true,
-    })) as unknown as SupervisorApi["deliverPermission"],
-  };
+// ADR-166: the execution seam is a fake host scripted to stream `text` as one
+// agent_message_chunk, then a clean end-turn.
+async function supervisor(
+  runId: string,
+  text: string,
+): Promise<ExecutionHosts> {
+  return (await fakeGraphHosts(db, runId, { text })).hosts;
 }
 
 const VALID_BLOCK = `${OPEN}\n{"verdict":"pass"}\n${CLOSE}\n`;
@@ -236,7 +199,7 @@ describe("terminal gate — required export with no result (AC-15)", () => {
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: supervisor("no block here"),
+      executionHosts: await supervisor(seeded.runId, "no block here"),
     });
 
     const run = await getRun(seeded.runId);
@@ -278,7 +241,7 @@ describe("terminal gate — required export with no result (AC-15)", () => {
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: supervisor("no block here"),
+      executionHosts: await supervisor(seeded.runId, "no block here"),
     });
 
     expect((await getRun(seeded.runId)).status).toBe("Review");
@@ -301,7 +264,7 @@ describe("terminal gate — result-only completion (AC-16)", () => {
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: supervisor(VALID_BLOCK),
+      executionHosts: await supervisor(seeded.runId, VALID_BLOCK),
     });
 
     const run = await getRun(seeded.runId);
@@ -380,7 +343,7 @@ describe("terminal gate — result-only completion (AC-16)", () => {
       await runFlow(seeded.runId, {
         db,
         runtimeRoot: seeded.runtimeRoot,
-        supervisorApi: supervisor(block ?? VALID_BLOCK),
+        executionHosts: await supervisor(seeded.runId, block ?? VALID_BLOCK),
       });
 
       const run = await getRun(seeded.runId);
@@ -407,7 +370,7 @@ describe("terminal gate — result-only completion (AC-16)", () => {
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: supervisor(VALID_BLOCK),
+      executionHosts: await supervisor(seeded.runId, VALID_BLOCK),
     });
 
     expect((await getRun(seeded.runId)).status).toBe("Done");
@@ -443,7 +406,7 @@ describe("terminal gate — Review carries the honest resultStatus (AC-17)", () 
     await runFlow(seeded.runId, {
       db,
       runtimeRoot: seeded.runtimeRoot,
-      supervisorApi: supervisor(VALID_BLOCK),
+      executionHosts: await supervisor(seeded.runId, VALID_BLOCK),
     });
 
     expect((await getRun(seeded.runId)).status).toBe("Review");

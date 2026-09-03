@@ -69,7 +69,7 @@ export type CreateSessionOptions = {
   sessionName?: string;
 };
 
-// ADR-165 D5 ordering for `session.input`: the command row is queued inside the
+// ADR-166 D5 ordering for `session.input`: the command row is queued inside the
 // caller's own transaction (the HITL Phase-1 claim) and delivered after it
 // commits; `onAck` runs in the ack transaction together with `succeeded`.
 export type PreparedInput = {
@@ -80,7 +80,7 @@ export type PreparedInput = {
   }): Promise<InputDeliveryResult>;
 };
 
-// ADR-165 D3/D4: every host-bound command of a run goes through the client
+// ADR-166 D3/D4: every host-bound command of a run goes through the client
 // bound to the run's ACTIVE assignment. Each method is a thin wrapper over
 // ONE `issue → deliver` path; kind differences live in `COMMAND_POLICY`.
 export interface BoundClient {

@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-// ADR-165 T3.1: a REAL supervisor child for web integration tests — the
+// ADR-166 T3.1: a REAL supervisor child for web integration tests — the
 // production `supervisor/src/main.ts` boot (host state store, fences,
 // receipts, adoption roots) with the mock ACP adapter fixture wired through
 // the adapter registry's own override env. Tests point the local-direct

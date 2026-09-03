@@ -75,7 +75,7 @@ import {
 import { WorkspaceRegistry } from "./workspace-registry";
 import { parseWorkspaceRoots } from "./workspace-roots";
 
-// ADR-165: the `payload` of every enveloped teardown-class command is `{}`.
+// ADR-166: the `payload` of every enveloped teardown-class command is `{}`.
 const EmptyPayloadSchema = z.object({}).strict();
 
 const InputBodySchema = z
@@ -172,7 +172,7 @@ export type RegisterRoutesOptions = {
     registry: ModelSourceRegistry;
     cache?: ModelCatalogCache;
   };
-  // ADR-165: the execution-host state store (identity, fences, receipts,
+  // ADR-166: the execution-host state store (identity, fences, receipts,
   // handles) and the adoption roots. A route-only boot (tests) gets an
   // in-memory store with a minted key.
   hostState?: HostState;
@@ -416,7 +416,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   });
   const fenceLog = logger.child({ component: "execution-fence" });
 
-  // ADR-165 D4/D10 (strict): every host-bound command is a `CommandEnvelope`
+  // ADR-166 D4/D10 (strict): every host-bound command is a `CommandEnvelope`
   // whose `payload` is the route's body. A bare body is refused by name
   // (`missing_envelope`) before anything else is read; `guard` lets a route
   // refuse a payload shape by name too (the create route's `legacy_field`).
@@ -448,7 +448,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     return { envelope, payload: payloadSchema.parse(envelope.payload) };
   }
 
-  // ADR-165 D5: the durable completion signal that is NOT the long-lived HTTP
+  // ADR-166 D5: the durable completion signal that is NOT the long-lived HTTP
   // response. After a terminal `session.exited` the registry has closed the
   // per-run events log, so a post-terminal completion is appended directly.
   function emitCommandEvent(
@@ -502,7 +502,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     return body?.code === "FENCED" ? "fenced" : "failed";
   }
 
-  // ADR-165 D6 handler order for every enveloped route: parse → fence (persist
+  // ADR-166 D6 handler order for every enveloped route: parse → fence (persist
   // the high-water, evict lower-epoch sessions) → receipt lookup / in-flight
   // join → execute → write receipt → respond (+ `session.command` events).
   async function runCommand(args: {
@@ -635,7 +635,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     reply.status(200).send(body);
   });
 
-  // ADR-165 D7: the ONLY path-bearing route. Registers a host-local path for a
+  // ADR-166 D7: the ONLY path-bearing route. Registers a host-local path for a
   // run as an opaque handle; every later route derives its paths from it.
   app.post("/workspaces/adopt", async (req, reply) => {
     const parsed = parseCommandBody(
@@ -776,7 +776,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       },
     );
     const request = parsed.payload;
-    // ADR-165 D7: cwd, confinement roots, run dir, and mounts all derive from
+    // ADR-166 D7: cwd, confinement roots, run dir, and mounts all derive from
     // the adopted handle (server state) — the single path-derivation site.
     const workspace: WorkspaceResolution = workspaces.resolveForSession(
       request.executionWorkspaceId,
@@ -1055,7 +1055,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
             logger,
           );
         } catch (err) {
-          // ADR-165 E-EH-04 / X-EH-19: a session evicted by a higher epoch
+          // ADR-166 E-EH-04 / X-EH-19: a session evicted by a higher epoch
           // answers its pending prompt with FENCED, never a protocol error.
           throwIfFenced(entry, parsed.envelope);
           throw err;
@@ -1582,7 +1582,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   });
 }
 
-// ADR-165 X-EH-19: an evicted session's pending prompt answers 409 FENCED.
+// ADR-166 X-EH-19: an evicted session's pending prompt answers 409 FENCED.
 function throwIfFenced(
   entry: RegistryEntry,
   envelope: CommandEnvelope | null,

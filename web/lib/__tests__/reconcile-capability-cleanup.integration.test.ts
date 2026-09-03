@@ -294,7 +294,7 @@ async function makeOpts(over: {
       })),
   );
 
-  // ADR-165: the sweep lists sessions through a fake local host.
+  // ADR-166: the sweep lists sessions through a fake local host.
   const fake = createFakeExecutionHost();
 
   Object.assign(fake.transport, {

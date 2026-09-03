@@ -439,7 +439,7 @@ async function parkCoordinatorSession(
 ): Promise<void> {
   if (hostSessionId) {
     try {
-      // ADR-165: the node's persisted host session id (written by the create
+      // ADR-166: the node's persisted host session id (written by the create
       // ack) is the key — no acp-id scan. Liveness is read first so a
       // long-exited one-shot session does not turn into a failed checkpoint
       // command on every park.
@@ -2187,7 +2187,7 @@ export async function runGraph(
     );
   }
 
-  // ADR-165 D3: bind THIS driver generation ONCE to the run's active
+  // ADR-166 D3: bind THIS driver generation ONCE to the run's active
   // assignment — every host-bound command below carries that epoch, so a
   // later re-entry (resume/recover/rework/interrupt) fences this traversal
   // instead of racing it. Bound lazily at the first agent-kind need (an
@@ -3312,7 +3312,7 @@ export async function runGraph(
             }
           }
 
-          // ADR-165 E-EH-11 (driver yield rule): a newer driver generation
+          // ADR-166 E-EH-11 (driver yield rule): a newer driver generation
           // owns this run — write NOTHING (no ledger, status, or projection)
           // and leave the traversal to the incarnation that fenced us.
           if (result.fenced) {
@@ -3383,7 +3383,7 @@ export async function runGraph(
         }
       }
 
-      // M42 (ADR-114) / ADR-165 E-EH-07: the per-session resume handle lives on
+      // M42 (ADR-114) / ADR-166 E-EH-07: the per-session resume handle lives on
       // the node's run_sessions row, written by the `session.create` ACK
       // transaction (`persistRunSessionHostBinding`) — never by a late
       // post-prompt update. Only the in-memory mirror is refreshed here.
@@ -5109,6 +5109,9 @@ export async function runGraph(
         });
 
         if (!row) return;
+        // ADR-166 D7: result-only completion is a terminal flip like every
+        // other Done/Failed/Crashed exit — it ends the driver generation.
+        await releaseAssignmentForRun(tx, runId, "run_terminal");
         await emitResultOnlyDone(tx, { runId, row });
       });
       await systemCloseActiveAssignmentsForRun({
@@ -5140,6 +5143,7 @@ export async function runGraph(
           });
 
         if (rows.length > 0) {
+          await releaseAssignmentForRun(tx, runId, "run_terminal");
           await emitWebhookEvent({
             db: tx,
             type: "run.review",

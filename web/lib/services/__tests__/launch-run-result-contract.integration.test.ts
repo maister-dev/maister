@@ -20,6 +20,7 @@ import {
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -178,6 +179,8 @@ beforeAll(async () => {
   });
   pool = testDatabase.pool;
   db = testDatabase.db;
+  // ADR-166: launches gate on a registered local execution host.
+  await fakeExecutionHosts(db);
   ({ launchRun } = await import("@/lib/services/runs"));
 }, 180_000);
 

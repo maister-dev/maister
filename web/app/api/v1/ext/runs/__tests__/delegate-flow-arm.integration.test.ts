@@ -87,7 +87,7 @@ beforeAll(async () => {
   });
   pool = testDatabase.pool;
   db = testDatabase.db;
-  // ADR-165: every launch places the run on the local execution host; the
+  // ADR-166: every launch places the run on the local execution host; the
   // fake host's session listing + teardown ride this suite's supervisor spies
   // so the wire-level assertions keep their shape.
   const supervisor = await import("@/lib/supervisor-client");

@@ -76,7 +76,7 @@ let flowId: string;
 let flowRevisionId: string;
 let userId: string;
 let originalCap: string | undefined;
-// ADR-165: the recover's `session.create` rides the client bound to the run's
+// ADR-166: the recover's `session.create` rides the client bound to the run's
 // `recover` assignment on a fake execution host; each case injects its own
 // create behaviour through this delegate (the spy shape the cases assert on).
 let hosts: ExecutionHosts;

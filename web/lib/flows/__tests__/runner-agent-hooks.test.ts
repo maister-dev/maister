@@ -83,7 +83,7 @@ function makeFakeDb(): any {
   return api;
 }
 
-// ADR-165: the runner's seam is a fake-backed BoundClient + admin stream; the
+// ADR-166: the runner's seam is a fake-backed BoundClient + admin stream; the
 // session body the runner sends is observed on the fake transport.
 function makeApi(events: SupervisorEvent[]) {
   const execution = fakeAgentExecution({ events });

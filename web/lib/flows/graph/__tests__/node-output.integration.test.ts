@@ -104,7 +104,7 @@ async function writeDecision(
   );
 }
 
-// ADR-165: the execution seam is a fake host scripted to stream `text` as one
+// ADR-166: the execution seam is a fake host scripted to stream `text` as one
 // agent_message_chunk, then a clean end-turn, so an ai_coding/judge node
 // finishes with result.stdout === text.
 async function makeAgentSupervisor(

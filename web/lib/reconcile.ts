@@ -381,7 +381,7 @@ export interface ReconcileSweepSummary {
   // `Abandoned` run row and stopped this tick — the recovery path for a
   // cascade whose best-effort session teardown did not complete.
   orphanSessionsReaped: number;
-  // ADR-165 D7/D8: ACTIVE assignments whose adopted workspace handle the host
+  // ADR-166 D7/D8: ACTIVE assignments whose adopted workspace handle the host
   // no longer knows (WARN `workspace-handle-lost`; the next create re-adopts).
   handlesLost: number;
 }
@@ -477,7 +477,7 @@ async function runWithConcurrency<T>(
   await Promise.all(workers);
 }
 
-// ADR-165 D7/D8: a read-only handle check for ACTIVE assignments — a host
+// ADR-166 D7/D8: a read-only handle check for ACTIVE assignments — a host
 // that forgot a handle it adopted (state dir wiped) → WARN
 // `workspace-handle-lost`; the next create self-heals by re-adopting. Never
 // throws: a host outage or a refused lookup is logged once and the tick goes
@@ -592,7 +592,7 @@ async function stopGraphOnlyCutoverSessions(args: {
 async function reapAbandonedRunSessions(args: {
   db: Db;
   records: readonly SupervisorSessionRecord[];
-  // ADR-165: the stop rides the run's own teardown-bound client (fenced +
+  // ADR-166: the stop rides the run's own teardown-bound client (fenced +
   // ledgered), so the reaper hands over the whole record, not a bare id.
   stopSession: (record: SupervisorSessionRecord) => Promise<void>;
 }): Promise<number> {

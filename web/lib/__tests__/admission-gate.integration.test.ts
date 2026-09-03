@@ -43,7 +43,7 @@ beforeAll(async () => {
 
   pool = testDatabase.pool;
   db = testDatabase.db;
-  // ADR-165: the resume claims mint on the local host — a fake host backs every implicit resolution.
+  // ADR-166: the resume claims mint on the local host — a fake host backs every implicit resolution.
   await fakeExecutionHosts(db);
   // The scheduler advisory lock (pg_advisory_xact_lock) only engages when DB_URL
   // is a postgres URL — point it at the container so the gate's count-then-claim is

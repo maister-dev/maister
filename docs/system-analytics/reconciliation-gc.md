@@ -551,7 +551,7 @@ For each run at reconcile time, gather: `run.status`, `run.runKind`,
 | `Running`, `runKind='scratch'` | session gone, past grace | **CRASH** via `markScratchCrashed` (sets both `runs.status` and `scratchRuns.dialogStatus`) | scratch parity |
 ## Linked artifacts
 
-- Execution-host contract (ADR-165, Implemented): [`execution-hosts.md`](execution-hosts.md) — `recoverExecutionCommands()` runs before the resume/takeover/reconcile sweeps, the `system_sweep` pass adds the command-recovery + 7-day retention passes and the `active`-assignment-on-parked-run backstop, and the reconciler checks adopted handles read-only (`workspace-handle-lost` WARN on 404).
+- Execution-host contract (ADR-166, Implemented): [`execution-hosts.md`](execution-hosts.md) — `recoverExecutionCommands()` runs before the resume/takeover/reconcile sweeps, the `system_sweep` pass adds the command-recovery + 7-day retention passes and the `active`-assignment-on-parked-run backstop, and the reconciler checks adopted handles read-only (`workspace-handle-lost` WARN on 404).
 - ADRs: [ADR-033 Crash reconciliation model](../decisions.md#adr-033),
   [ADR-034 Crashed-run recovery semantics](../decisions.md#adr-034),
   [ADR-035 Graceful workspace GC (preserve-then-prune)](../decisions.md#adr-035),

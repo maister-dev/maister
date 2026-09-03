@@ -1,4 +1,4 @@
-// ADR-165 T3.3 — the bound client through the REAL wire (D1–D2): a real
+// ADR-166 T3.3 — the bound client through the REAL wire (D1–D2): a real
 // supervisor child with the fake ACP adapter, real git worktree adoption.
 
 import type { Db } from "@/lib/execution-host/db";

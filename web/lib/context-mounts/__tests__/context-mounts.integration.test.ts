@@ -166,7 +166,7 @@ function mountDeclaringFlow(siblingSlug: string, ref?: string) {
   };
 }
 
-// ADR-165: a fake execution host (clean end-turn) plus spies on every
+// ADR-166: a fake execution host (clean end-turn) plus spies on every
 // `workspace.adopt` and `session.create` payload the runner sends. The
 // launch's context-mount snapshot rides the ADOPT payload (D7) — the session
 // body is the path-less handle form.
