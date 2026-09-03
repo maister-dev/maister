@@ -134,15 +134,30 @@ text did not reach — a **`Running`** root whose tree breaches: it cascade-term
 rather than pausing. (`warn` is never promoted.)
 
 **A root with NO descendants does not evaluate the tree TOKENS meter** when
-run-scope tokens are set. Its tree total IS its run total by construction
+run-scope tokens are set and the tree ceilings are not stricter than the run's.
+Its tree total IS its run total by construction
 (`queryRunTreeTokens` covers `id = root OR root_run_id = root`), so the meter is
 pure redundancy — and harmful redundancy, because tree scope terminates without an
 escalate rung: it killed a lone run whose RUN ceiling an operator had just raised
 (a raise lifts `ceilingOverride[scope]` for the breached scope only), violating
 "the resumed run does not immediately re-escalate" in E10. The skip is conditioned
-on run tokens being set, so a flow configuring only `budget.tree` keeps its bound,
-and is scoped to TOKENS only: `wallClockMinutes` is enforced at tree scope ALONE,
-and tree `consecutiveFailures` is always 0 for a tree of one.
+on run tokens being set, so a flow configuring only `budget.tree` keeps its bound;
+on the tree ceilings not being stricter (amended 2026-09-03 — two different
+ceilings over one measurement are not redundant, and a tighter tree ceiling is an
+operator's bound); and is scoped to TOKENS only: `wallClockMinutes` is enforced at
+tree scope ALONE, and tree `consecutiveFailures` is always 0 for a tree of one.
+
+**Every root enters tree scope, with or without descendants** (owner ruling
+2026-09-04). Rootness is parentage (`parent_run_id IS NULL`); descendants decide
+only the tokens skip above. The alternative — a childless root is "not a tree" —
+makes the tree-only meters (wall-clock, consecutive failures) unreachable for a
+standalone run and for an orchestrator before its first delegation, and silently
+ignores a stricter tree ceiling; that exclusion had landed on `main` during the
+ADR-165/166 window and was reverted on the rebase. Known cost, accepted: a tree
+breach at a childless root cascade-terminates like any tree breach — there is no
+escalate rung — so a preset that sets `tree.wallClockMinutes` kills, not pauses, a
+long standalone run. If that ever matters, route a childless root's tree breach
+through the run disposition instead; do not reintroduce the exclusion.
 
 ## 5. `run_kind` dispatch (D7 — branch BEFORE routing)
 
