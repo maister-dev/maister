@@ -214,6 +214,46 @@ describe("POST /api/runs/{runId}/abandon", () => {
     expect(res.status).toBe(409);
   }, 60_000);
 
+  it("a REFUSED abandon of a terminal orchestrator leaves its descendants alone", async () => {
+    // The orchestrator cascade (T7.4) used to run BEFORE any abandonability
+    // check — the only guard was `markAbandoned`'s CAS, which fires after it. So
+    // abandoning an already-terminal orchestrator destroyed its whole sub-tree
+    // and THEN returned 409: a rejected request with an irreversible side
+    // effect, and no way for the operator to learn the children were killed.
+    // Deterministic, not a race: the existing terminal-run case above has no
+    // children, so it never reaches the cascade.
+    const parentId = await seedRun("Done");
+    const [parent] = await db.select().from(runs).where(eq(runs.id, parentId));
+    const childId = randomUUID();
+
+    await db.insert(runs).values({
+      id: childId,
+      taskId: parent.taskId,
+      projectId,
+      flowId,
+      parentRunId: parentId,
+      rootRunId: parentId,
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
+      status: "Running",
+      currentStepId: "implement",
+      flowVersion: "v1.0.0",
+      startedAt: new Date(),
+    });
+
+    const res = await abandonPOST(req(parentId), {
+      params: Promise.resolve({ runId: parentId }),
+    });
+
+    expect(res.status).toBe(409);
+
+    const [child] = await db.select().from(runs).where(eq(runs.id, childId));
+
+    // The refusal must not have touched the sub-tree.
+    expect(child.status).toBe("Running");
+  }, 60_000);
+
   it("401 when unauthenticated", async () => {
     const runId = await seedRun("NeedsInput");
 

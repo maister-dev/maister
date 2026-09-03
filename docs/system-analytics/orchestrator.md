@@ -748,6 +748,18 @@ makes the coordinator's job **collect only**:
 
 ## Edge cases
 
+- **A refused tree-cancel MUST NOT cascade** **(Implemented)** — the cascade
+  (`cascadeAbandonRunTreeAndStopSessions`) is irreversible, so every caller that
+  can refuse MUST validate the root's status BEFORE calling it, never rely on a
+  status-guarded CAS that runs after. The abandon route did the latter, so
+  abandoning an already-terminal orchestrator destroyed its whole sub-tree and
+  then returned 409 — deterministic, not a race. Where a caller cascades and the
+  root's CAS is then genuinely lost to a concurrent transition (reconcile's
+  `orchestrator-stuck`, workbench `stop`), the descendants stay `Abandoned` with
+  no compensation: that outcome MUST be surfaced (a 409 to the operator, or a
+  WARN naming the already-cascaded sub-tree), never counted as a silent skip.
+  Sessions left live under an `Abandoned` row remain `reapAbandonedRunSessions`'
+  job by design.
 - **Unresolvable/untrusted delegation target** → `MaisterError("PRECONDITION")`;
   no child run created (resolve+trust is physically separate from launch).
 - **Cyclic / over-fanout / over-depth DAG** → `MaisterError("CONFIG")` pre-tx; no

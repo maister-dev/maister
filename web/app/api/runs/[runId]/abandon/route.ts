@@ -16,6 +16,7 @@ import { finalizeAgentRun } from "@/lib/agents/launch";
 import { runFlow } from "@/lib/flows/runner";
 import { promoteNextPending } from "@/lib/scheduler";
 import {
+  ABANDONABLE_STATUSES,
   markAbandoned,
   releaseHumanWorking,
 } from "@/lib/runs/state-transitions";
@@ -109,6 +110,29 @@ export async function POST(
     // sub-tree FIRST (children-first) — rows AND the cascaded children's live
     // sessions — then abandons the coordinator below. Idempotent; touches only
     // descendants, never the orchestrator row itself.
+    // Refuse BEFORE the cascade, not after. The cascade is irreversible and the
+    // only abandonability guard used to be `markAbandoned`'s CAS, which runs
+    // AFTER it — so abandoning an already-terminal orchestrator destroyed its
+    // whole sub-tree and then returned 409, mutating on a rejected request with
+    // no way for the operator to learn the children were killed. Deterministic,
+    // not a race. `HumanWorking` is allowed through because the transaction
+    // below releases it (→ NeedsInput) before the abandon fires.
+    if (
+      run.runKind === "flow" &&
+      run.status !== "HumanWorking" &&
+      !ABANDONABLE_STATUSES.includes(
+        run.status as (typeof ABANDONABLE_STATUSES)[number],
+      )
+    ) {
+      return NextResponse.json(
+        {
+          code: "PRECONDITION",
+          message: `run ${runId} is not in an abandonable state`,
+        },
+        { status: 409 },
+      );
+    }
+
     if (run.runKind === "flow") {
       const { getChildRuns } = await import("@/lib/queries/run");
       const isOrchestrator =

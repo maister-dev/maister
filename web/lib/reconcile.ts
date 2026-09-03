@@ -1365,10 +1365,19 @@ export async function runReconcileSweep(
           if (!crashResult.ok) {
             // A concurrent wake won the CAS — the run is Running again; nothing
             // to crash. Count as skipped, not crashed.
+            //
+            // "Skipped" understates it: the cascade above ALREADY committed, so
+            // this coordinator is now Running again with its whole sub-tree
+            // Abandoned under it, and nothing un-abandons them. WARN, and say so
+            // — an operator reading "skipped crash" would reasonably assume the
+            // tick was a no-op. (The cascade's own `run.abandoned` events are
+            // what wake a parked parent, but they reach the consumer on the
+            // dispatcher clock, so this stays a narrow window rather than a
+            // chain this code sets off itself.)
             skipped += 1;
-            log.info(
+            log.warn(
               { runId: cand.runId, reason },
-              "reconcile: orchestrator wake won — skipped crash",
+              "reconcile: orchestrator wake won — crash skipped, but its sub-tree was already cascade-abandoned",
             );
 
             return;
