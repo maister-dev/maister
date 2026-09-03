@@ -199,6 +199,31 @@ It is the only web Testcontainers constructor, owns pgvector image selection,
 main/Brain migration order, and pool-before-container teardown. Build/unit work
 must not require Docker; integration/E2E require it explicitly.
 
+### Suite baselines and known-flaky specs
+
+Compare failure **SETS**, never counts — two runs can tie while one spec traded
+places with another. As of 2026-09-03 on `main` + ADR-165:
+
+- **unit** — 0 failures.
+- **integration** — 0 failures, except the two-case
+  `lib/runs/__tests__/dirty-resolution-race.integration.test.ts` pair, which
+  flakes under parallel load and passes 4/4 in isolation.
+- **e2e** — **34 pre-existing failures**, plus one known-flaky spec below.
+  Ports 3100/7788 and the `maister_e2e` database are shared across worktrees;
+  kill both ports before a run.
+
+**Known-flaky:** `e2e/recursive-harness.spec.ts` fails roughly one run in three
+under the full parallel suite and passes in isolation. The test supervisor
+delegates SYNCHRONOUSLY inside its `sendPrompt` handler, so the supervisor's
+response waits on Next while Next's runner waits on the supervisor's response.
+When the dev server is saturated that round-trip is starved long enough for the
+coordinator's node to give up, its run-bound facade token is revoked, and the
+next delegation returns `401 UNAUTHENTICATED "revoked"` — leaving a short
+fan-out (one grandchild instead of two). `orchestrator-loop` shares the design
+but makes 2 delegations to this spec's 6, so it is far less exposed. Restructuring
+that handler is a backlog item; do NOT weaken the spec's fan-out assertion to
+hide this.
+
 ## Current code structure
 
 ```

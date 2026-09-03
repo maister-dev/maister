@@ -813,6 +813,7 @@
 > overlaps §A run-summary gap) is part of that triage.
 
 - [ ] Connect-time "run init?" prompt UX for scratch sessions (aif design §10).
+- [ ] **Restructure the e2e test supervisor so delegation does not block the prompt response** — `driveTurn` delegates synchronously inside the `POST /sessions/:id/prompt` handler (`web/e2e/_seed/test-supervisor.ts`), so the supervisor's response waits on Next while Next's runner waits on the supervisor. Under a saturated dev server that round-trip is starved until the coordinator's node gives up, its facade token is revoked, and the next delegation returns `401 "revoked"` with a short fan-out. Makes `recursive-harness.spec.ts` flake ~1 run in 3 under the full suite (see `web/CLAUDE.md` §Suite baselines). The current design deliberately awaits delegations so the park decision sees pending children, so any fix must keep `countPendingChildren` correct at park time and re-verify `orchestrator-loop` + `flow-target-delegation`, which share the handler.
 - [ ] Project archive/unarchive write-path + UI (`projects.archived_at` is read by ~10 guards, written by nothing; audit §A9).
 - [ ] Embedding-based duplicate detection for triage — cheaper now that the Brain pgvector substrate ships (triager spec §11).
 - [ ] Event-driven auto-launch: emit + consume `task.triaged` for lower-latency enqueue (tick-only today; triager spec §11).
