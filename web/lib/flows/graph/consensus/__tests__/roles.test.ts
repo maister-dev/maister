@@ -19,29 +19,19 @@ import {
   resolveConsensusRunnerSlot,
 } from "@/lib/flows/graph/consensus/roles";
 
-const ccrRunner: RunnerCatalogEntry = {
-  id: "runner-ccr",
+const envRunner: RunnerCatalogEntry = {
+  id: "runner-env",
   adapter: "claude",
   capabilityAgent: "claude",
   model: "sonnet",
-  env: { ANTHROPIC_BASE_URL: "http://ccr.local" },
+  env: { ANTHROPIC_BASE_URL: "http://router.local" },
   provider: {
     kind: "anthropic_compatible",
-    baseUrl: "http://ccr.local",
+    baseUrl: "http://router.local",
     authToken: "env:ANTHROPIC_API_KEY",
   },
   providerKind: "anthropic_compatible",
   permissionPolicy: "default",
-  sidecar: {
-    id: "sidecar-1",
-    kind: "ccr",
-    lifecycle: "managed",
-    configPath: "/tmp/ccr.json",
-    baseUrl: "http://ccr.local",
-    healthcheckUrl: "http://ccr.local/health",
-    authTokenRef: "env:CCR_TOKEN",
-  },
-  sidecarId: "sidecar-1",
   enabled: true,
   ready: true,
 };
@@ -55,12 +45,12 @@ describe("consensus role resolution", () => {
     });
   });
 
-  it("resolves a bound runner slot and preserves its provider + sidecar snapshot", async () => {
-    loadRunnerCatalog.mockResolvedValue([ccrRunner]);
+  it("resolves a bound runner slot and preserves its provider snapshot", async () => {
+    loadRunnerCatalog.mockResolvedValue([envRunner]);
     loadFlowRunnerBindings.mockResolvedValue([
       {
         slotKey: "consensus:gate:p1",
-        mappedRunnerId: "runner-ccr",
+        mappedRunnerId: "runner-env",
         status: "Mapped",
       },
     ]);
@@ -80,19 +70,17 @@ describe("consensus role resolution", () => {
     });
 
     expect(resolved).toMatchObject({
-      runnerId: "runner-ccr",
+      runnerId: "runner-env",
       runnerResolutionTier: "binding",
       runnerSnapshot: expect.objectContaining({
-        id: "runner-ccr",
+        id: "runner-env",
         providerKind: "anthropic_compatible",
-        sidecarId: "sidecar-1",
-        sidecar: expect.objectContaining({ id: "sidecar-1", kind: "ccr" }),
       }),
     });
   });
 
   it("auto-matches a unique host runner by intent when no binding exists", async () => {
-    loadRunnerCatalog.mockResolvedValue([ccrRunner]);
+    loadRunnerCatalog.mockResolvedValue([envRunner]);
     loadFlowRunnerBindings.mockResolvedValue([]);
 
     const resolved = await resolveConsensusRunnerSlot({
@@ -111,13 +99,13 @@ describe("consensus role resolution", () => {
     });
 
     expect(resolved.runnerResolutionTier).toBe("autoMatch");
-    expect(resolved.runnerId).toBe("runner-ccr");
+    expect(resolved.runnerId).toBe("runner-env");
   });
 
   it("uses project/platform defaults for soft mismatch fallback", async () => {
     loadRunnerCatalog.mockResolvedValue([
-      { ...ccrRunner, id: "runner-platform", model: "haiku" },
-      { ...ccrRunner, id: "runner-project", model: "sonnet-alt" },
+      { ...envRunner, id: "runner-platform", model: "haiku" },
+      { ...envRunner, id: "runner-project", model: "sonnet-alt" },
     ]);
     loadFlowRunnerBindings.mockResolvedValue([]);
     loadProjectPlatformRunnerDefaults.mockResolvedValue({
@@ -151,7 +139,7 @@ describe("consensus role resolution", () => {
   });
 
   it("fails when no host runner matches the slot intent", async () => {
-    loadRunnerCatalog.mockResolvedValue([ccrRunner]);
+    loadRunnerCatalog.mockResolvedValue([envRunner]);
     loadFlowRunnerBindings.mockResolvedValue([]);
 
     await expect(

@@ -1,5 +1,9 @@
 # Implementation Plan: M43 Postgres-only + Graph-only Cut-over
 
+> **Historical plan:** CCR/router-specific tasks and contracts below are
+> obsolete and superseded by [ADR-164](../../docs/decisions/adr-164.md). Do not
+> implement them; use current code and canonical docs.
+
 Branch: `feature/postgres-graph-only-cutover`
 Created: 2026-07-11
 Base observed: `main` at `5916d4ea`

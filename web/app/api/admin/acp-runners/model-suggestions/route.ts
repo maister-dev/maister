@@ -1,26 +1,17 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
 import { requireGlobalRole } from "@/lib/authz";
 import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
-import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
   resolveModelSuggestions,
   type SupervisorModelCatalog,
   type SupervisorModelCatalogDraft,
 } from "@/lib/supervisor-client";
-
-// FIXME(any): dual drizzle-orm peer-dep variants.
-const { platformRouterSidecars } = schemaModule as unknown as Record<
-  string,
-  any
->;
 
 const log = pino({
   name: "api-admin-acp-runner-model-suggestions",
@@ -75,8 +66,6 @@ const requestSchema = z
   .object({
     adapter: z.enum(ADAPTER_IDS),
     provider: providerSchema,
-    router: z.literal("ccr").optional(),
-    sidecarId: z.string().min(1).nullable().optional(),
     force: z.boolean().optional(),
   })
   .strict();
@@ -87,7 +76,6 @@ const GROUP_LABELS: Record<string, string> = {
   acp_probe: "Agent",
   provider_api: "Provider",
   curated: "Curated",
-  ccr: "CCR",
   agent_observed: "Observed",
 };
 
@@ -196,19 +184,6 @@ function toSupervisorProvider(
   return { kind: provider.kind };
 }
 
-async function assertSidecarExists(sidecarId: string): Promise<void> {
-  // FIXME(any): dual drizzle-orm peer-dep variants.
-  const db = getDb() as any;
-  const rows = await db
-    .select()
-    .from(platformRouterSidecars)
-    .where(eq(platformRouterSidecars.id, sidecarId));
-
-  if (rows.length === 0) {
-    throw new MaisterError("CONFIG", `unknown sidecarId: ${sidecarId}`);
-  }
-}
-
 function toGroupedResponse(catalog: SupervisorModelCatalog): {
   groups: Array<{
     source: string;
@@ -255,20 +230,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    if (parsed.data.router === "ccr") {
-      if (!parsed.data.sidecarId) {
-        throw new MaisterError("CONFIG", "router 'ccr' requires a sidecarId");
-      }
-      await assertSidecarExists(parsed.data.sidecarId);
-    }
-
     const draft: SupervisorModelCatalogDraft = {
       adapter: parsed.data.adapter,
       provider: toSupervisorProvider(parsed.data.provider),
-      ...(parsed.data.router ? { router: parsed.data.router } : {}),
-      ...(parsed.data.router === "ccr" && parsed.data.sidecarId
-        ? { sidecarId: parsed.data.sidecarId }
-        : {}),
     };
 
     const computed = await resolveModelSuggestions(draft, {

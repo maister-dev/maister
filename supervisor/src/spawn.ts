@@ -7,11 +7,6 @@ import { mkdir, open as openFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 
-import {
-  ccrManager as defaultCcrManager,
-  type CcrManager,
-  type CcrInstanceConfig,
-} from "./ccr-manager";
 import { openEventsLog, type EventsLogWriter } from "./events-log";
 import { SESSION_EVENT_CHANNEL } from "./registry";
 import {
@@ -90,7 +85,6 @@ export type SpawnSessionOptions = {
   logger: Logger;
   binaryOverride?: string;
   preArgs?: string[];
-  ccrManager?: CcrManager;
 };
 
 export type SpawnSessionResult = {
@@ -104,13 +98,9 @@ export type SpawnSessionResult = {
   eventsLogPath: string;
 };
 
-export function buildChildEnv(
-  request: StartSessionRequest,
-  opts: { ccrLayer: NodeJS.ProcessEnv },
-): NodeJS.ProcessEnv {
+export function buildChildEnv(request: StartSessionRequest): NodeJS.ProcessEnv {
   return {
     ...process.env,
-    ...opts.ccrLayer,
     ...(request.executor.env ?? {}),
     ...(request.capabilityProfilePath
       ? { MAISTER_CAPABILITY_PROFILE_PATH: request.capabilityProfilePath }
@@ -194,45 +184,7 @@ export async function spawnSession(
     args.push(...request.adapterLaunch.postArgs);
   }
 
-  const ccrLayer: NodeJS.ProcessEnv = {};
-
-  if (request.executor.router === "ccr") {
-    const ccr = opts.ccrManager ?? defaultCcrManager;
-    const sidecar = opts.request.runner?.sidecar;
-    const instance: CcrInstanceConfig | undefined = sidecar
-      ? {
-          id: sidecar.id,
-          lifecycle: sidecar.lifecycle,
-          configPath: sidecar.configPath,
-          baseUrl: sidecar.baseUrl,
-          healthcheckUrl: sidecar.healthcheckUrl,
-        }
-      : undefined;
-
-    await ccr.ensureRunning({ instance });
-
-    const explicitToken = request.executor.env?.ANTHROPIC_AUTH_TOKEN;
-    const fallbackToken = process.env.MAISTER_CCR_AUTH_TOKEN;
-    const authToken = explicitToken || fallbackToken;
-
-    if (!authToken) {
-      throw new SupervisorError(
-        "EXECUTOR_UNAVAILABLE",
-        "ANTHROPIC_AUTH_TOKEN missing for router=ccr executor; set MAISTER_CCR_AUTH_TOKEN or put it in executor.env",
-      );
-    }
-    const authTokenSource: "executor.env" | "MAISTER_CCR_AUTH_TOKEN" =
-      explicitToken ? "executor.env" : "MAISTER_CCR_AUTH_TOKEN";
-
-    ccrLayer.ANTHROPIC_BASE_URL = ccr.getProxyUrl(instance?.id);
-    ccrLayer.ANTHROPIC_AUTH_TOKEN = authToken;
-    logger.debug(
-      { sessionId, authTokenSource, proxyUrl: ccrLayer.ANTHROPIC_BASE_URL },
-      "ccr env layer composed",
-    );
-  }
-
-  const childEnv = buildChildEnv(request, { ccrLayer });
+  const childEnv = buildChildEnv(request);
 
   logger.info(
     {
@@ -245,11 +197,8 @@ export async function spawnSession(
       model: request.executor.model,
       cwd: request.worktreePath,
       resume: Boolean(request.resumeSessionId),
-      router: request.executor.router ?? null,
-      routerInjected: request.executor.router ?? null,
       runnerId: opts.request.runner?.runnerId ?? null,
       runnerProvider: opts.request.runner?.provider.kind ?? null,
-      runnerSidecar: Boolean(opts.request.runner?.sidecar),
       hasEnv: Boolean(
         request.executor.env && Object.keys(request.executor.env).length > 0,
       ),

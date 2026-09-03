@@ -37,7 +37,7 @@ export class ModelCatalogCache {
     this.ttlMs = (opts?.ttlSeconds ?? MODEL_CATALOG_TTL_SECONDS) * 1000;
   }
 
-  // Key = (adapter, provider.kind, base URL, sorted env-ref NAMES, router, sidecarId).
+  // Key = (adapter, provider.kind, base URL, sorted env-ref NAMES).
   // Env-ref names only (e.g. ZAI_API_KEY) — never secret values, by design.
   keyFor(draft: ModelCatalogDraft): string {
     return JSON.stringify([
@@ -45,8 +45,6 @@ export class ModelCatalogCache {
       draft.provider.kind,
       baseUrlForKey(draft.provider),
       envRefNames(draft.provider),
-      draft.router ?? "",
-      draft.sidecarId ?? "",
     ]);
   }
 

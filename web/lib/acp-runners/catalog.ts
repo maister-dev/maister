@@ -10,7 +10,6 @@ import { getAdapterSupportById } from "@/lib/acp-runners/adapter-support";
 
 const {
   platformAcpRunners,
-  platformRouterSidecars,
   flowRunnerRemaps,
   platformRuntimeSettings,
   projects,
@@ -36,12 +35,7 @@ function runnerProviderKind(provider: unknown): string {
   );
 }
 
-function runnerCatalogEntry(
-  row: Record<string, any>,
-  sidecarById: ReadonlyMap<string, Record<string, any>>,
-): RunnerCatalogEntry {
-  const sidecar = row.sidecarId ? sidecarById.get(row.sidecarId) : undefined;
-
+function runnerCatalogEntry(row: Record<string, any>): RunnerCatalogEntry {
   return {
     id: row.id,
     adapter: row.adapter,
@@ -53,18 +47,6 @@ function runnerCatalogEntry(
     permissionPolicy: row.permissionPolicy,
     readOnlyCapable:
       getAdapterSupportById(row.capabilityAgent)?.readOnlyCapable === true,
-    sidecar: sidecar
-      ? {
-          id: sidecar.id,
-          kind: sidecar.kind,
-          lifecycle: sidecar.lifecycle,
-          configPath: sidecar.configPath,
-          baseUrl: sidecar.baseUrl,
-          healthcheckUrl: sidecar.healthcheckUrl,
-          authTokenRef: sidecar.authTokenRef,
-        }
-      : null,
-    sidecarId: row.sidecarId,
     enabled: row.enabled,
     ready: row.readinessStatus === "Ready",
   };
@@ -72,19 +54,11 @@ function runnerCatalogEntry(
 
 // M42 (ADR-114): the single source for the platform ACP runner catalog used by
 // every launch-time resolution site (flow sessions, consensus slots, scratch,
-// task-launch preview). Resolves each runner's sidecar snapshot inline.
+// task-launch preview).
 export async function loadRunnerCatalog(db: Db): Promise<RunnerCatalogEntry[]> {
-  const [runnerRows, sidecarRows] = await Promise.all([
-    db.select().from(platformAcpRunners),
-    db.select().from(platformRouterSidecars),
-  ]);
-  const sidecarById = new Map<string, Record<string, any>>(
-    (sidecarRows as Record<string, any>[]).map((row) => [row.id, row]),
-  );
+  const runnerRows = await db.select().from(platformAcpRunners);
 
-  return (runnerRows as Record<string, any>[]).map((row) =>
-    runnerCatalogEntry(row, sidecarById),
-  );
+  return (runnerRows as Record<string, any>[]).map(runnerCatalogEntry);
 }
 
 // M42 (ADR-114): the per-slot bindings for a (project, flow revision). Keyed by

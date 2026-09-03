@@ -49,12 +49,9 @@ afterEach(() => {
 });
 
 describe("createAcpProbeSource", () => {
-  it("declines CCR-routed drafts (that is the CCR source's job)", () => {
+  it("supports direct provider drafts", () => {
     const source = createAcpProbeSource();
 
-    expect(
-      source.supports({ ...claudeDraft, router: "ccr", sidecarId: "x" }),
-    ).toBe(false);
     expect(source.supports(claudeDraft)).toBe(true);
   });
 

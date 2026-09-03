@@ -12,16 +12,15 @@ const EXECUTOR_AGENTS = [
 
 export const ExecutorAgentSchema = z.enum(EXECUTOR_AGENTS);
 
-export const ExecutorRouterSchema = z.enum(["ccr"]);
-
 const SAFE_PATH_SEGMENT = /^[A-Za-z0-9._-]+$/;
 
-export const ExecutorSchema = z.object({
-  agent: ExecutorAgentSchema,
-  model: z.string().min(1),
-  env: z.record(z.string(), z.string()).optional(),
-  router: ExecutorRouterSchema.optional(),
-});
+export const ExecutorSchema = z
+  .object({
+    agent: ExecutorAgentSchema,
+    model: z.string().min(1),
+    env: z.record(z.string(), z.string()).optional(),
+  })
+  .strict();
 
 const envNameSchema = z
   .string()
@@ -90,18 +89,6 @@ export const RunnerProviderSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("agent_native") }).strict(),
 ]);
 
-export const RunnerSidecarSchema = z
-  .object({
-    id: z.string().min(1).max(128).regex(SAFE_PATH_SEGMENT),
-    kind: z.literal("ccr"),
-    lifecycle: z.enum(["managed", "external"]).optional(),
-    configPath: worktreePathSchema.optional(),
-    baseUrl: z.string().url().optional(),
-    healthcheckUrl: z.string().url().optional(),
-    authTokenEnv: envNameSchema.optional(),
-  })
-  .strict();
-
 export const RunnerLaunchSchema = z
   .object({
     version: z.literal(1),
@@ -112,7 +99,6 @@ export const RunnerLaunchSchema = z
     provider: RunnerProviderSchema,
     permissionPolicy: z.enum(["default", "dangerously_skip_permissions"]),
     env: z.record(envNameSchema, runnerEnvValueSchema).optional(),
-    sidecar: RunnerSidecarSchema.optional(),
   })
   .strict();
 
@@ -392,7 +378,6 @@ export function parseGateChatHitlId(stepId: string): string | null {
 }
 
 export type ExecutorAgent = z.infer<typeof ExecutorAgentSchema>;
-export type ExecutorRouter = z.infer<typeof ExecutorRouterSchema>;
 export type Executor = z.infer<typeof ExecutorSchema>;
 export type RunnerLaunch = z.infer<typeof RunnerLaunchSchema>;
 export type AdapterLaunch = z.infer<typeof AdapterLaunchSchema>;
@@ -504,15 +489,6 @@ export const SupervisorDiagnosticsResponseSchema = z
           version: z.string().min(1).nullable(),
           error: z.string().min(1).nullable(),
           smoke: AdapterSmokeDiagnosticSchema,
-        })
-        .strict(),
-    ),
-    sidecars: z.array(
-      z
-        .object({
-          id: z.string().min(1),
-          kind: z.literal("ccr"),
-          state: z.enum(["idle", "starting", "ready", "failed", "stopping"]),
         })
         .strict(),
     ),

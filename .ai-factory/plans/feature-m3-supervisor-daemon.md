@@ -1,5 +1,9 @@
 # M3 — Supervisor daemon (`supervisor/`)
 
+> **Historical plan:** CCR/router-specific tasks and contracts below are
+> obsolete and superseded by [ADR-164](../../docs/decisions/adr-164.md). Do not
+> implement them; use current code and canonical docs.
+
 - **Branch:** `feature/m3-supervisor-daemon`
 - **Created:** 2026-05-26
 - **Base branch:** `main` (at commit `6a7b632`)

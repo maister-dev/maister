@@ -74,8 +74,6 @@ async function seedContextRun(): Promise<Seeded> {
       provider: { kind: "anthropic" },
       providerKind: "anthropic",
       permissionPolicy: "default",
-      sidecar: null,
-      sidecarId: null,
     };
 
     await pool.query(

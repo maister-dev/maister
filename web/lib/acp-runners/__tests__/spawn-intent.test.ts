@@ -10,18 +10,16 @@ describe("runner spawn intent", () => {
   it("converts a runner snapshot into the supervisor executor payload", () => {
     expect(
       runnerExecutorInput({
-        id: "claude-code-ccr",
+        id: "claude-code-env-router",
         adapter: "claude",
         capabilityAgent: "claude",
         model: "glm-5.1",
         providerKind: "anthropic_compatible",
         permissionPolicy: "default",
-        sidecarId: "ccr-default",
       }),
     ).toEqual({
       agent: "claude",
       model: "glm-5.1",
-      router: "ccr",
     });
   });
 
@@ -48,7 +46,7 @@ describe("runner spawn intent", () => {
     expect(
       runnerSupervisorInput({
         snapshot: {
-          id: "claude-code-ccr",
+          id: "claude-code-env-router",
           adapter: "claude",
           capabilityAgent: "claude",
           model: "glm-5.1",
@@ -62,17 +60,11 @@ describe("runner spawn intent", () => {
             ANTHROPIC_MODEL: "env:CLAUDE_MODEL_ENV",
             ANTHROPIC_SMALL_FAST_MODEL: "claude-haiku-4-5",
           },
-          sidecar: {
-            id: "ccr-default",
-            kind: "ccr",
-            authTokenRef: "env:MAISTER_CCR_AUTH_TOKEN",
-          },
-          sidecarId: "ccr-default",
         },
       }),
     ).toEqual({
       version: 1,
-      runnerId: "claude-code-ccr",
+      runnerId: "claude-code-env-router",
       adapter: "claude",
       capabilityAgent: "claude",
       model: "glm-5.1",
@@ -84,11 +76,6 @@ describe("runner spawn intent", () => {
       env: {
         ANTHROPIC_MODEL: "env:CLAUDE_MODEL_ENV",
         ANTHROPIC_SMALL_FAST_MODEL: "claude-haiku-4-5",
-      },
-      sidecar: {
-        id: "ccr-default",
-        kind: "ccr",
-        authTokenEnv: "MAISTER_CCR_AUTH_TOKEN",
       },
     });
   });

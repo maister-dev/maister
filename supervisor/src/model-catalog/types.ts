@@ -2,11 +2,7 @@ import type { Logger } from "pino";
 
 import { z } from "zod";
 
-import {
-  ExecutorAgentSchema,
-  ExecutorRouterSchema,
-  RunnerProviderSchema,
-} from "../types";
+import { ExecutorAgentSchema, RunnerProviderSchema } from "../types";
 
 const PROVIDERS_BY_ADAPTER = {
   claude: ["anthropic", "anthropic_compatible"],
@@ -31,7 +27,6 @@ export type SourceKind =
   | "acp_probe"
   | "provider_api"
   | "curated"
-  | "ccr"
   | "agent_observed";
 
 export type ModelEntry = {
@@ -51,13 +46,6 @@ export const ModelCatalogDraftSchema = z
   .object({
     adapter: ExecutorAgentSchema,
     provider: RunnerProviderSchema,
-    router: ExecutorRouterSchema.optional(),
-    sidecarId: z
-      .string()
-      .min(1)
-      .max(128)
-      .regex(/^[A-Za-z0-9._-]+$/)
-      .optional(),
     force: z.boolean().optional(),
   })
   .strict()
@@ -67,16 +55,6 @@ export const ModelCatalogDraftSchema = z
         code: z.ZodIssueCode.custom,
         path: ["provider", "kind"],
         message: `provider ${draft.provider.kind} is not supported by adapter ${draft.adapter}`,
-      });
-    }
-
-    // ADR-076 edge case: a router selects a sidecar instance, so `router`
-    // without `sidecarId` is a malformed draft → PRECONDITION (409).
-    if (draft.router && !draft.sidecarId) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["sidecarId"],
-        message: "sidecarId is required when router is set",
       });
     }
   });

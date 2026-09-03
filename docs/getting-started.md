@@ -89,15 +89,15 @@ see [`deployment.md`](deployment.md).
 What you should see: the MAIster login page at `/login`. Sign in with
 the credentials from `pnpm db:seed`. Active routes:
 
-| Route                        | Description                                                                 |
-| ---------------------------- | --------------------------------------------------------------------------- |
-| `/login`                     | Credentials sign-in (Auth.js v5).                                           |
-| `/`                          | Portfolio home — workspaces grid across all projects.                       |
-| `/projects`                  | Registered projects list + "Add project" button (admin only).               |
+| Route                        | Description                                                                                              |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `/login`                     | Credentials sign-in (Auth.js v5).                                                                        |
+| `/`                          | Portfolio home — workspaces grid across all projects.                                                    |
+| `/projects`                  | Registered projects list + "Add project" button (admin only).                                            |
 | `/projects/new`              | Add-project form (admin only). Accepts a repository directory and bootstraps `maister.yaml` when needed. |
-| `/projects/[slug]`           | Per-project board — Backlog, Prepare, In Delivery, In Review columns.       |
-| `/projects/[slug]/tasks/new` | Task creation form (member+).                                               |
-| `/flows`                     | Authored Flow drafts and installed package inventory.                       |
+| `/projects/[slug]`           | Per-project board — Backlog, Prepare, In Delivery, In Review columns.                                    |
+| `/projects/[slug]/tasks/new` | Task creation form (member+).                                                                            |
+| `/flows`                     | Authored Flow drafts and installed package inventory.                                                    |
 
 The old HeroUI template stubs (`/about`, `/blog`, `/docs`, `/pricing`) have
 been removed.
@@ -400,80 +400,27 @@ Flow default → project default → platform default`. The run snapshots
 `runnerId`, `runnerResolutionTier`, `capabilityAgent`, and `runnerSnapshot`
 before creating the workspace.
 
-### (Optional) CCR multi-provider routing
+### Anthropic-compatible provider routing
 
-CCR (Claude Code Router) is bundled out-of-the-box for platform ACP runners
-that need intelligent multi-provider routing inside one session (z.ai GLM,
-OpenRouter, MiniMax, …). There is NO need to globally install `ccr` —
-MAIster ships the npm package as a supervisor dep.
+Configure third-party Anthropic-compatible providers directly on the runner.
+Secret values remain supervisor environment references:
 
-1. Decide which providers you want to route through (see the upstream
-   project for the provider catalog).
-2. Create `~/.claude-code-router/config.json` per CCR's docs. Minimal
-   shape (placeholders only — replace with real keys):
-
-   ```json
-   {
-     "HOST": "127.0.0.1",
-     "PORT": 3456,
-     "Providers": [
-       {
-         "name": "z.ai",
-         "api_base_url": "https://api.z.ai/api/anthropic",
-         "api_key": "<Z_AI_KEY>",
-         "models": ["glm-4.6"]
-       }
-     ],
-     "Router": { "default": "z.ai,glm-4.6" }
-   }
-   ```
-
-3. Create a platform runner that points at the CCR sidecar:
-
-   ```yaml
-   platform:
-     default_runner: claude-glm-ccr
-   router_instances:
-     - id: ccr-default
-       kind: ccr
-       lifecycle: managed
-       command_preset: ccr_start
-       config_path: ~/.claude-code-router/config.json
-       auth_token: env:CCR_ADAPTER_TOKEN
-   acp_runners:
-     - id: claude-glm-ccr
-       adapter: claude
-       model: glm-5.1
-       provider:
-         kind: anthropic_compatible
-       router_instance: ccr-default
-   ```
-
-   (The adapter token here is consumed by the spawned adapter, not by
-   CCR itself — provider keys live in `~/.claude-code-router/config.json`.
-   Alternatively set `MAISTER_CCR_AUTH_TOKEN` on the supervisor's env.)
-
-4. The supervisor's CCR manager starts the daemon automatically for managed
-   CCR sidecars and reuses it across the supervisor
-   process lifetime. Missing config or health-check failure surfaces as
-   503 `EXECUTOR_UNAVAILABLE` with a pointer to
-   [executors §CCR setup](system-analytics/executors.md#ccr-setup).
-
-**Docker note.** The Docker runtime ships with CCR pre-wired in
-`compose.yml`: `MAISTER_CCR_AUTH_TOKEN` is forwarded into the
-supervisor container, and `~/.claude-code-router` on the host is
-bind-mounted read-only at `/app/.ccr` (overridable via
-`MAISTER_CCR_CONFIG_HOST_PATH`). If `~/.claude-code-router/config.json`
-is missing on the host, `router=ccr` sessions fail with 503
-`EXECUTOR_UNAVAILABLE` — that's the contract, not a bug. To smoke-test
-that the supervisor is reachable from inside the container:
-
-```bash
-docker compose run --rm supervisor node -e "fetch('http://127.0.0.1:7777/sessions').then(r=>console.log('supervisor ok', r.status))"
+```yaml
+platform:
+  default_runner: claude-glm
+acp_runners:
+  - id: claude-glm
+    adapter: claude
+    model: glm-5.1
+    provider:
+      kind: anthropic_compatible
+      base_url: https://api.z.ai/api/anthropic
+      auth_token: env:ZAI_API_KEY
+    permission_policy: default
 ```
 
-(Validating an actual `router=ccr` spawn end-to-end requires a real CCR
-config file with provider keys — that part stays operator-managed.)
+Set `ZAI_API_KEY` in the supervisor environment. MAIster resolves the env ref
+at launch and passes the resulting provider environment only to the adapter.
 
 **Via the dev CLI** (operates against an already-Pending run):
 
@@ -485,7 +432,7 @@ DB_URL=postgres://maister:maister@localhost:5432/maister \
 Behavior:
 
 - The Route Handler creates the workspace + run rows, runs `git
-  worktree add`, claims a global concurrency slot
+worktree add`, claims a global concurrency slot
   (`MAISTER_MAX_CONCURRENT_RUNS`, default 6), then kicks off the runner
   in the background.
 - The runner traverses the validated `flow.manifest.nodes[]` graph, persists

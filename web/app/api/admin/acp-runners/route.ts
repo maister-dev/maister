@@ -26,7 +26,7 @@ import {
   type SupervisorDiagnostics,
 } from "@/lib/supervisor-client";
 
-const { platformAcpRunners, platformRouterSidecars, platformRuntimeSettings } =
+const { platformAcpRunners, platformRuntimeSettings } =
   schemaModule as unknown as Record<string, any>;
 
 const log = pino({
@@ -120,7 +120,6 @@ const runnerBodySchema = z
     env: runnerEnvSchema,
     provider: providerSchema,
     permissionPolicy: z.enum(PERMISSION_POLICIES).default("default"),
-    sidecarId: z.string().min(1).nullable().optional(),
     enabled: z.boolean().default(true),
   })
   .strict();
@@ -219,7 +218,6 @@ async function assertReadyRunner(db: any, runnerId: string): Promise<void> {
       permissionPolicy: platformAcpRunners.permissionPolicy,
       provider: platformAcpRunners.provider,
       readinessStatus: platformAcpRunners.readinessStatus,
-      sidecarId: platformAcpRunners.sidecarId,
     })
     .from(platformAcpRunners)
     .where(eq(platformAcpRunners.id, runnerId));
@@ -235,12 +233,6 @@ async function assertReadyRunner(db: any, runnerId: string): Promise<void> {
     );
   }
 
-  const sidecarRows = runner.sidecarId
-    ? await db
-        .select()
-        .from(platformRouterSidecars)
-        .where(eq(platformRouterSidecars.id, runner.sidecarId))
-    : [];
   const diagnostics = await loadDiagnosticsForReadiness();
   const readiness = evaluateRunnerReadiness({
     runner: {
@@ -249,10 +241,8 @@ async function assertReadyRunner(db: any, runnerId: string): Promise<void> {
       enabled: runner.enabled,
       permissionPolicy: runner.permissionPolicy,
       provider: runner.provider,
-      sidecarId: runner.sidecarId ?? null,
     },
     diagnostics: diagnostics.diagnostics,
-    sidecar: sidecarRows[0] ?? null,
   });
 
   if (readiness.status !== "Ready") {
@@ -278,9 +268,8 @@ export async function GET(): Promise<NextResponse> {
     await requireGlobalRole("admin");
 
     const db = getDb() as any;
-    const [runners, sidecars, settingsRows] = await Promise.all([
+    const [runners, settingsRows] = await Promise.all([
       db.select().from(platformAcpRunners),
-      db.select().from(platformRouterSidecars),
       db.select().from(platformRuntimeSettings),
     ]);
 
@@ -289,7 +278,6 @@ export async function GET(): Promise<NextResponse> {
       defaultRunnerId: settingsRows[0]?.defaultRunnerId ?? null,
       presets: platformRunnerPresetRows(),
       runners,
-      sidecars,
     });
   } catch (err) {
     return errorResponse(err);
@@ -316,14 +304,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     const db = getDb() as any;
     const diagnostics = await loadDiagnosticsForReadiness();
-    const sidecarRows =
-      parsed.data.sidecarId !== null && parsed.data.sidecarId !== undefined
-        ? await db
-            .select()
-            .from(platformRouterSidecars)
-            .where(eq(platformRouterSidecars.id, parsed.data.sidecarId))
-        : [];
-    const sidecar = sidecarRows[0] ?? null;
     const readiness = evaluateRunnerReadiness({
       runner: {
         adapter: parsed.data.adapter,
@@ -331,10 +311,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         enabled: parsed.data.enabled,
         permissionPolicy: parsed.data.permissionPolicy,
         provider: parsed.data.provider,
-        sidecarId: parsed.data.sidecarId ?? null,
       },
       diagnostics: diagnostics.diagnostics,
-      sidecar,
     });
 
     // Race-safe create: rely on the id primary-key constraint, not a
@@ -351,7 +329,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         env: parsed.data.env,
         provider: parsed.data.provider,
         permissionPolicy: parsed.data.permissionPolicy,
-        sidecarId: parsed.data.sidecarId ?? null,
         enabled: parsed.data.enabled,
         readinessStatus: readiness.status,
         readinessReasons: readiness.reasons,

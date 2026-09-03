@@ -156,7 +156,6 @@ nodes:
       workspacePolicies: [keep, rewind-to-node-checkpoint, fresh-attempt]
       maxLoops: 3
       commentsVar: review_comments
-
 ```
 
 > The `transitions` above reference upstream node ids (`review`, `checks`) that
@@ -167,16 +166,16 @@ nodes:
 
 Lifecycle sections:
 
-| section       | purpose                                                                                        |
-| ------------- | ---------------------------------------------------------------------------------------------- |
-| `input`       | Declares required artifacts, prior outputs, human answers, and environment.                    |
-| `settings`    | Holds type-specific capability, role, policy, timeout, cost, and restriction controls.         |
+| section       | purpose                                                                                         |
+| ------------- | ----------------------------------------------------------------------------------------------- |
+| `input`       | Declares required artifacts, prior outputs, human answers, and environment.                     |
+| `settings`    | Holds type-specific capability, role, policy, timeout, cost, and restriction controls.          |
 | `action`      | Performs the node work: AI coding, orchestration, consensus, CLI, check, judge, human, or form. |
-| `output`      | Declares typed artifacts the node produces for later inputs, gates, review, and merge.         |
-| `pre_finish`  | Runs Flow-declared gates before the node can finish.                                           |
-| `finish`      | Captures final gates such as human review, branch return, or merge acceptance.                 |
-| `transitions` | Maps declared outcomes to declared node ids.                                                   |
-| `rework`      | Defines allowed targets, workspace policy, loop limits, and where comments become later input. |
+| `output`      | Declares typed artifacts the node produces for later inputs, gates, review, and merge.          |
+| `pre_finish`  | Runs Flow-declared gates before the node can finish.                                            |
+| `finish`      | Captures final gates such as human review, branch return, or merge acceptance.                  |
+| `transitions` | Maps declared outcomes to declared node ids.                                                    |
+| `rework`      | Defines allowed targets, workspace policy, loop limits, and where comments become later input.  |
 
 **Node `retry_safe?` (boolean, default `false`).** A per-node opt-in that gates operator crash-recovery
 re-dispatch of a **session-less** node (`cli`/`check`/`judge`/`human`/`form`).
@@ -269,7 +268,7 @@ A bare `string[]` remains back-compat (treated as `additional`). The explicit fo
 ```yaml
 settings:
   mcps:
-    required: [github]      # launch refused if cannot resolve+materialize
+    required: [github] # launch refused if cannot resolve+materialize
     additional: [filesystem] # non-fatal if absent; session augmented if present
 ```
 
@@ -295,7 +294,7 @@ symmetry). Re-adding it restores the requirement. Example:
 schemaVersion: 1
 name: bugfix
 mcps:
-  - github          # capability ref-id; validated at publish/install time
+  - github # capability ref-id; validated at publish/install time
   - filesystem
 nodes:
   - id: implement
@@ -341,7 +340,7 @@ graph flow, review routing is expressed only by node `transitions` and
 **`rework.commentsVar` composed payload — (Implemented — ADR-072, ADR-138
 verified-review extension).** The value
 injected as the top-level `{{ <commentsVar> }}` template var on the rework
-target's next attempt becomes a *composed* payload: the reviewer's free-text
+target's next attempt becomes a _composed_ payload: the reviewer's free-text
 `comments` summary first, then the run's OPEN line-anchored review-comment
 threads serialized as deterministic markdown (file/line-ordered, each root's
 exact `line_content` snapshot quoted, replies included; resolved threads never
@@ -418,21 +417,21 @@ connect-time / first launch** ([sessions.md](system-analytics/sessions.md)), and
 
 ```yaml
 sessions:
-  review:                                 # a named, shared session
-    runner: claude-opus                   # profile-ref OR inline object
+  review: # a named, shared session
+    runner: claude-opus # profile-ref OR inline object
 nodes:
   - id: implement
-    type: ai_coding                       # no session:/runner: → 'default' session
+    type: ai_coding # no session:/runner: → 'default' session
   - id: judge
     type: judge
-    runner:                               # inline unified runner config
+    runner: # inline unified runner config
       capability_agent: claude
       model: claude-opus-4-8
       effort: high
       env: { ANTHROPIC_LOG: "env:ANTHROPIC_LOG" }
   - id: review
     type: ai_coding
-    session: review                       # joins the named 'review' session
+    session: review # joins the named 'review' session
 ```
 
 ## Node `retry_policy` (Implemented)
@@ -446,7 +445,7 @@ nodes:
   - id: implement
     type: ai_coding
     retry_policy:
-      attempts: 3                     # integer >= 1 (total attempts incl. the first)
+      attempts: 3 # integer >= 1 (total attempts incl. the first)
       on_errors: [SPAWN, EXECUTOR_UNAVAILABLE, ACP_PROTOCOL, CHECKPOINT]
       workspace: rewind-to-node-checkpoint
 ```
@@ -494,7 +493,7 @@ nodes:
     action:
       prompt: "Review the diff for {{ task.title }}"
     settings:
-      agent: aif:code-reviewer        # package-qualified catalog agent id
+      agent: aif:code-reviewer # package-qualified catalog agent id
 ```
 
 - **Resolution** — the binding resolves through the HOST RUN project's pinned
@@ -532,25 +531,25 @@ an unknown key is refused with `MaisterError("CONFIG")` (ADR-089; the dead
 
 ```yaml
 ---
-name: Code reviewer                 # required
-description: Reviews diffs for ...   # required
-runner: claude-code                 # optional — the agent's own runner (tier-3 of the standalone chain)
-workspace: repo_read                # required — none | repo_read | worktree
-workspace_ref: trigger              # optional — 'trigger' | <branch>; ONLY with workspace=repo_read
-mode: session                       # required — session | subagent
-triggers: [manual, cron]            # required, ≥1 — manual | cron | domain_event | webhook | flow
-risk_tier: read_only                # required — read_only | standard | destructive
-flow: bugfix                        # (ADR-106) optional — a same-package flow id the agent drives
-capability_profile:                 # optional — strict standalone profile
-  mcps: [github, postgres]           # only MCP refs; no skills/restrictions keys
-recommended:                        # optional — SEEDS the attach panel + per-project instance defaults
+name: Code reviewer # required
+description: Reviews diffs for ... # required
+runner: claude-code # optional — the agent's own runner (tier-3 of the standalone chain)
+workspace: repo_read # required — none | repo_read | worktree
+workspace_ref: trigger # optional — 'trigger' | <branch>; ONLY with workspace=repo_read
+mode: session # required — session | subagent
+triggers: [manual, cron] # required, ≥1 — manual | cron | domain_event | webhook | flow
+risk_tier: read_only # required — read_only | standard | destructive
+flow: bugfix # (ADR-106) optional — a same-package flow id the agent drives
+capability_profile: # optional — strict standalone profile
+  mcps: [github, postgres] # only MCP refs; no skills/restrictions keys
+recommended: # optional — SEEDS the attach panel + per-project instance defaults
   runner: claude-code
-  branch_base: develop              # (ADR-106) seeds agents.branch_base (default: project main)
+  branch_base: develop # (ADR-106) seeds agents.branch_base (default: project main)
   cron: { expr: "0 9 * * 1", timezone: "Europe/Amsterdam" }
   events: [task.created]
-  executionPolicy:                  # (ADR-106) projection over ExecutionPolicy
-    autoApply: full                 # off | permissions | full
-    onBudgetBreach: terminate_restorable   # escalate | terminate | terminate_restorable
+  executionPolicy: # (ADR-106) projection over ExecutionPolicy
+    autoApply: full # off | permissions | full
+    onBudgetBreach: terminate_restorable # escalate | terminate | terminate_restorable
 ---
 The agent persona / system prompt (the body; MUST be non-empty).
 ```
@@ -613,12 +612,12 @@ nodes:
     action:
       prompt: "Decompose {{ task.prompt }} into child tasks, dispatch them, and merge the results."
     settings:
-      runner: claude-code              # inherits the ai_coding capability shape
+      runner: claude-code # inherits the ai_coding capability shape
       thinkingEffort: high
       mcps: [github]
       delegation:
-        max_fanout: 16                  # optional; defaults to MAISTER_MAX_ORCHESTRATOR_FANOUT
-        max_depth: 3                    # optional; defaults to MAISTER_ORCHESTRATOR_MAX_DEPTH
+        max_fanout: 16 # optional; defaults to MAISTER_MAX_ORCHESTRATOR_FANOUT
+        max_depth: 3 # optional; defaults to MAISTER_ORCHESTRATOR_MAX_DEPTH
     transitions:
       success: review
 ```
@@ -642,15 +641,16 @@ nodes:
   size of one `run_plan` batch — applied by one shared helper inside every child
   launcher's run-insert transaction. `web/lib/config.schema.ts` is UNCHANGED.
 
-**Delegation semantics (brief; full contract in
+\*\*Delegation semantics (brief; full contract in
 [ADR-098](decisions.md#adr-098-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume)
-+ [`system-analytics/orchestrator.md`](system-analytics/orchestrator.md)).** The
-orchestrator coordinates through a **delegation toolset** exposed over the MAIster
-MCP facade (a per-launch ephemeral `agent:<id>` token scoped `runs:delegate`,
-materialized into the orchestrator session's ACP `mcpServers` for
-`orchestrator` nodes only, revoked on terminal):
 
-- `run_delegate` — spawn one child from EXACTLY ONE target
+- [`system-analytics/orchestrator.md`](system-analytics/orchestrator.md)).** The
+  orchestrator coordinates through a **delegation toolset\*\* exposed over the MAIster
+  MCP facade (a per-launch ephemeral `agent:<id>` token scoped `runs:delegate`,
+  materialized into the orchestrator session's ACP `mcpServers` for
+  `orchestrator` nodes only, revoked on terminal):
+
+* `run_delegate` — spawn one child from EXACTLY ONE target
   (**[ADR-163](decisions.md#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher)**: `target.agentId` or `target.flowId`, a discriminated
   union). An AGENT target spawns `as-task` (a child task + run, board card via
   `parent_of`) or `as-run` (a child run only, `runs.parent_run_id`, workbench
@@ -660,17 +660,17 @@ materialized into the orchestrator session's ACP `mcpServers` for
   `parent_of`, in both modes. Flow targets accept only `title` and
   `runnerOverride` — `workspace`, `workspaceMode`, `persistent`, and
   `addressableKey` are agent-only and are REFUSED, never ignored.
-- `run_plan` — write a **success-gated** task DAG (N child tasks wired by the
+* `run_plan` — write a **success-gated** task DAG (N child tasks wired by the
   `requires` relation kind, which releases a dependent **only** on `Done` —
   `Failed`/`Abandoned` keeps it blocked and wakes the orchestrator) in one
   transaction after pre-tx cycle / depth / fanout validation. A batch may MIX
   agent and flow entries (**[ADR-163](decisions.md#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher)**); each created task records its
   target kind in `delegation_spec`, and the as-plan auto-launcher dispatches on
   it.
-- `run_collect` — read each child's terminal status, `{{ steps.<id>.output }}`
+* `run_collect` — read each child's terminal status, `{{ steps.<id>.output }}`
   stdout var, produced-artifact manifest, and base→run diff ref (never the child
   worktree directly — the reviewer-isolation contract).
-- `run_cancel` — stop a child run. **[ADR-163](decisions.md#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher)** — the child ends
+* `run_cancel` — stop a child run. **[ADR-163](decisions.md#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher)** — the child ends
   `Abandoned` for BOTH kinds (a flow child's worktree is retained until GC; owner
   decision at the 2026-09-02 review); a HUMAN stop of a flow child keeps `Review`.
   `run_rework` and `run_message` do NOT apply to a flow child and are refused
@@ -808,12 +808,13 @@ to today (action → `"success"`; `human` → its chosen decision).
 nodes:
   - id: triage
     type: ai_coding
-    action: { prompt: "Classify {{ task.prompt }}; end with a maister:output block." }
+    action:
+      { prompt: "Classify {{ task.prompt }}; end with a maister:output block." }
     output:
-      result: { schema: ./schemas/triage.json }   # must declare output.result
+      result: { schema: ./schemas/triage.json } # must declare output.result
     decide:
-      from: output.triage.outcome                  # nested path into the validated vars
-    transitions:                                   # every PRODUCIBLE outcome needs a target
+      from: output.triage.outcome # nested path into the validated vars
+    transitions: # every PRODUCIBLE outcome needs a target
       bug: fix
       feature: design
       question: answer
@@ -828,9 +829,9 @@ nodes:
     decide:
       from: verdict
       cases:
-        - { when: "confidence >= 0.8", target: approve }   # one predicate per case
-        - { when: "confidence < 0.4",  target: rework }
-        - { default: true,             target: human }     # EXACTLY ONE default
+        - { when: "confidence >= 0.8", target: approve } # one predicate per case
+        - { when: "confidence < 0.4", target: rework }
+        - { default: true, target: human } # EXACTLY ONE default
     transitions:
       approve: promote
       rework: implement
@@ -887,9 +888,9 @@ nodes:
     output:
       result:
         schema: ./schemas/extract.json
-        on_mismatch: retry          # reserved literal = re-run THIS node with the error fed back
+        on_mismatch: retry # reserved literal = re-run THIS node with the error fed back
     rework:
-      allowedTargets: [extract]      # not required for `retry`, but `rework` block IS
+      allowedTargets: [extract] # not required for `retry`, but `rework` block IS
       workspacePolicies: [keep]
       maxLoops: 2
       commentsVar: fix_notes
@@ -925,8 +926,8 @@ nodes:
     type: judge
     transitions:
       success: review
-      fix: implement          # the in-budget rework jump
-      exhausted: human_final  # NEW: where onExhaustion routes
+      fix: implement # the in-budget rework jump
+      exhausted: human_final # NEW: where onExhaustion routes
     rework:
       allowedTargets: [implement]
       workspacePolicies: [keep]
@@ -948,9 +949,9 @@ nodes:
     rework:
       allowedTargets: [implement]
       workspacePolicies: [keep]
-      maxLoops: 3             # bounds the number of RESET ROUNDS (not loop iters)
+      maxLoops: 3 # bounds the number of RESET ROUNDS (not loop iters)
       commentsVar: human_notes
-      resetTargets: [verify]  # NEW: loop nodes whose counter is re-baselined
+      resetTargets: [verify] # NEW: loop nodes whose counter is re-baselined
 ```
 
 - **`rework.onExhaustion: <outcome>`** (string, a `transitions` key) — on
@@ -994,15 +995,15 @@ session (keeping the critique context) or starts fresh.
 
 ```yaml
 defaults:
-  session_policy: resume            # flow-level default for all rework
+  session_policy: resume # flow-level default for all rework
 
 nodes:
   - id: implement
     type: ai_coding
-    session_policy: resume          # node-level override
+    session_policy: resume # node-level override
     rework:
       allowedTargets: [implement]
-      session_policy: new_session   # per-transition override (highest priority)
+      session_policy: new_session # per-transition override (highest priority)
 ```
 
 - **Values** — `resume | new_session`.
@@ -1038,7 +1039,7 @@ requirements:
     probe: "command -v openspec"
     hint: "run the os-init flow, or: npm i -g @fission-ai/openspec@1.4.1"
   - name: "node >= 20"
-    probe: "node -e \"process.exit(+process.versions.node.split('.')[0] >= 20 ? 0 : 1)\""
+    probe: 'node -e "process.exit(+process.versions.node.split(''.'')[0] >= 20 ? 0 : 1)"'
 ```
 
 - Each `probe` runs with `bash -c` in the **project repo** (10s timeout). A
@@ -1072,7 +1073,7 @@ schemaVersion: 1
 name: Bugfix
 compat:
   engine_min: 3.5.0
-reentry: verify          # must name a node id present in nodes[]
+reentry: verify # must name a node id present in nodes[]
 nodes:
   - id: implement
     type: ai_coding
@@ -1128,13 +1129,13 @@ A node's `pre_finish.gates` run in declared order before the node can finish.
 Each gate writes a `gate_results` row. Gate kinds and their execution
 status:
 
-| kind                | purpose                                                                                                               | execution                                                                                                                                                                  |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `command_check`     | Runs formatter, test, lint, typecheck, build, or custom command via `bash -c`; exit 0 = `passed`, else `failed`.      | **Executes**                                                                                                                                                          |
-| `ai_judgment`       | Produces a structured model verdict over the diff/logs/requirements via an agent session (defaults to `new-session`). | **Executes**                                                                                                                                                          |
-| `human_review`      | Captures approve/rework decisions through the review HITL.                                                            | **Executes**                                                                                                                                                          |
-| `skill_check`       | Runs an internal slash command (e.g. `/aif-review`) via an agent session.                                             | **Executes (best-effort)** — no capability scoping until capability materialization (ADR-041)                                                                                                          |
-| `artifact_required` | Verifies required evidence exists and is current.                                                                     | **Executes** — presence + validity, plus `must_touch`/`must_not_touch` mutation assertions (ADR-037/ADR-074)                                                                                           |
+| kind                | purpose                                                                                                               | execution                                                                                                                                                       |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `command_check`     | Runs formatter, test, lint, typecheck, build, or custom command via `bash -c`; exit 0 = `passed`, else `failed`.      | **Executes**                                                                                                                                                    |
+| `ai_judgment`       | Produces a structured model verdict over the diff/logs/requirements via an agent session (defaults to `new-session`). | **Executes**                                                                                                                                                    |
+| `human_review`      | Captures approve/rework decisions through the review HITL.                                                            | **Executes**                                                                                                                                                    |
+| `skill_check`       | Runs an internal slash command (e.g. `/aif-review`) via an agent session.                                             | **Executes (best-effort)** — no capability scoping until capability materialization (ADR-041)                                                                   |
+| `artifact_required` | Verifies required evidence exists and is current.                                                                     | **Executes** — presence + validity, plus `must_touch`/`must_not_touch` mutation assertions (ADR-037/ADR-074)                                                    |
 | `external_check`    | Waits for CI / another system to report through the operations API.                                                   | **Executes** → report ingestion via `POST /api/v1/ext/runs/{runId}/gates/{gateId}/report` flips `pending → passed\|failed` and records a `test_report` artifact |
 
 ### `gates[].external` block (Implemented)
@@ -1177,10 +1178,10 @@ The block is meaningful only for `kind: external_check`. Placing it on any other
     kind: mutation_report # declared output kind MUST be mutation_report
 ```
 
-| field            | type                     | meaning                                                                                                                                                                                                                       |
-| ---------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `must_touch?`    | `string[]` (min 1 glob)  | The gate FAILS when the **node-scoped** diff range (since this node's first attempt started; cumulative fallback when no start capture exists) touches NONE of the globs. Matched with `picomatch`, `dot: true`, repo-relative POSIX paths. |
-| `must_not_touch?`| `"restrictions"` literal | The gate FAILS when the **cumulative** branch diff (merge-base vs main → HEAD) touches any `paths` entry of the node's resolved restriction set. Restrictions without `paths` are reported `unmatchable`, never failed on. |
+| field             | type                     | meaning                                                                                                                                                                                                                                     |
+| ----------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `must_touch?`     | `string[]` (min 1 glob)  | The gate FAILS when the **node-scoped** diff range (since this node's first attempt started; cumulative fallback when no start capture exists) touches NONE of the globs. Matched with `picomatch`, `dot: true`, repo-relative POSIX paths. |
+| `must_not_touch?` | `"restrictions"` literal | The gate FAILS when the **cumulative** branch diff (merge-base vs main → HEAD) touches any `paths` entry of the node's resolved restriction set. Restrictions without `paths` are reported `unmatchable`, never failed on.                  |
 
 Both assertions evaluate under the gate's existing `mode`
 (`blocking | advisory`). Declaring either field on any other gate kind is a
@@ -1256,16 +1257,16 @@ validity: `current`, `stale`, `superseded`, `failed`, or `skipped`.
 **`output.produces[]`.** A node's `output` block declares the typed artifacts it
 produces. Each entry:
 
-| field          | type                                   | meaning                                                                                                                                        |
-| -------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`           | string, **unique within the manifest** | Stable artifact id other nodes' `input.requires` and `artifact_required` gates reference.                                                      |
+| field          | type                                   | meaning                                                                                                                                         |
+| -------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`           | string, **unique within the manifest** | Stable artifact id other nodes' `input.requires` and `artifact_required` gates reference.                                                       |
 | `kind`         | enum (closed catalog)                  | One of `diff`, `log`, `test_report`, `lint_report`, `ai_judgment`, `human_note`, `commit_set`, `checkpoint`, `preview`, `generic_file`, `plan`. |
-| `schema?`      | string                                 | Optional schema id/ref describing the payload shape.                                                                                           |
-| `path?`        | string                                 | Optional run-relative / worktree path to the payload.                                                                                          |
-| `ref?`         | string                                 | Optional git ref (used by `commit_set` / `diff`).                                                                                              |
-| `visibility?`  | `internal` \| `shared`                 | Who may read the artifact. **Declared/recorded here; access enforcement lives in capability materialization (ADR-041).**                                                            |
-| `retention?`   | `run` \| `ephemeral`                   | Lifetime policy. **Declared/recorded here; enforcement lives in capability materialization (ADR-041).**                                                                             |
-| `requiredFor?` | (`"review"` \| `"merge"`)[]            | Phases this artifact blocks if missing/stale. It is a field ON a `produces[]` entry, so the artifact is always produced by the declaring node. |
+| `schema?`      | string                                 | Optional schema id/ref describing the payload shape.                                                                                            |
+| `path?`        | string                                 | Optional run-relative / worktree path to the payload.                                                                                           |
+| `ref?`         | string                                 | Optional git ref (used by `commit_set` / `diff`).                                                                                               |
+| `visibility?`  | `internal` \| `shared`                 | Who may read the artifact. **Declared/recorded here; access enforcement lives in capability materialization (ADR-041).**                        |
+| `retention?`   | `run` \| `ephemeral`                   | Lifetime policy. **Declared/recorded here; enforcement lives in capability materialization (ADR-041).**                                         |
+| `requiredFor?` | (`"review"` \| `"merge"`)[]            | Phases this artifact blocks if missing/stale. It is a field ON a `produces[]` entry, so the artifact is always produced by the declaring node.  |
 
 **`input.requires[]`.** A node's `input` block declares the typed artifacts it
 consumes. Each entry is **either** a bare artifact id (string) — referencing an
@@ -1306,7 +1307,7 @@ contain fences (diffs, code, logs); an XML delimiter does not collide (D1).
   into the action prompt. (Gate `prompt`s are rendered in separate agent sessions,
   so a `{{ artifacts.X.content }}` there is not a double-injection of the action
   prompt and never suppresses the inline append; the gate-prompt + `cli.command`
-  scan feeds content *resolution* and the engine *floor*, not this dedup.)
+  scan feeds content _resolution_ and the engine _floor_, not this dedup.)
 - **Node-type restriction (D12):** `inline: true` is valid ONLY on prompt-bearing
   nodes — `ai_coding` / `judge` / `orchestrator`. On `cli` / `check` / `human` /
   `form` it is refused at manifest validation (`CONFIG`) — auto-appending an XML
@@ -1406,20 +1407,20 @@ output:
       kind: generic_file
 ```
 
-| field       | type    | meaning                                                                                                                                                                                                                                                                                                                                     |
-| ----------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| field       | type    | meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ----------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `schema`    | string  | A **package-root schema reference** (not inline): canonical `./schemas/<name>.json`, with the legacy bare form normalized. Every install path rejects non-root, escaping, missing, malformed, or grammar-invalid references before the revision is usable; runtime resolves the same file from the installed flow revision's `schemas/` directory. Grammar: `string \| number \| boolean \| enum \| array \| object \| json` — see **Schema grammar** below. Still no `ajv` and no new dep. |
-| `required?` | boolean | Default `false`. When `true`, an absent payload fails the attempt; when `false`, an absent payload leaves `vars: {}` and the node proceeds. It excuses **absence only** — a present-but-invalid payload always fails.                                                                                                                          |
+| `required?` | boolean | Default `false`. When `true`, an absent payload fails the attempt; when `false`, an absent payload leaves `vars: {}` and the node proceeds. It excuses **absence only** — a present-but-invalid payload always fails.                                                                                                                                                                                                                                                                       |
 
 **Per-node-type output transport.** Transport is chosen by the node's execution
 mechanism, not declared:
 
 | Node types                                            | Transport     | How the payload is acquired                                                                                                                                                                                                                                                                                                                                            |
-| ----------------------------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ai_coding`, `judge`, `orchestrator` (agent-executed)  | `sentinel`    | The agent ends its response with a **single** sentinel-tagged fenced block ` ```json maister:output … ``` `; the runner extracts the **last** such block from the **1 MiB-capped** `result.stdout` capture (a block pushed past the cap is treated as **absent** → `CONFIG` if `required`). The agent writes **no file** (it cannot write outside its worktree `cwd`). |
-| `cli`, `check` (cli-executed)                          | `file`        | The runner injects `MAISTER_OUTPUT_FILE=<runDir>/output-<nodeId>-<attempt>.json` into the command env; the command writes its JSON there and the runner reads that file. The filename is **per-attempt**, so a non-writing rework attempt never inherits a prior attempt's file.                                                                                       |
-| `consensus` (engine-executed)                          | `engine_vars` | The engine-produced `result.vars` object IS the payload — validated **in place**, never merged or mutated. Absent means zero own keys. The byte cap applies to the serialized value.                                                                                                                                                                                  |
-| `human`, `form`                                        | *(none)*      | Their `vars` come from the HITL input artifact. Declaring `output.result` on them is **refused at manifest load** (`CONFIG`) at every engine version — the combination has never had a transport.                                                                                                                                                                     |
+| ----------------------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ai_coding`, `judge`, `orchestrator` (agent-executed) | `sentinel`    | The agent ends its response with a **single** sentinel-tagged fenced block ` ```json maister:output … ``` `; the runner extracts the **last** such block from the **1 MiB-capped** `result.stdout` capture (a block pushed past the cap is treated as **absent** → `CONFIG` if `required`). The agent writes **no file** (it cannot write outside its worktree `cwd`). |
+| `cli`, `check` (cli-executed)                         | `file`        | The runner injects `MAISTER_OUTPUT_FILE=<runDir>/output-<nodeId>-<attempt>.json` into the command env; the command writes its JSON there and the runner reads that file. The filename is **per-attempt**, so a non-writing rework attempt never inherits a prior attempt's file.                                                                                       |
+| `consensus` (engine-executed)                         | `engine_vars` | The engine-produced `result.vars` object IS the payload — validated **in place**, never merged or mutated. Absent means zero own keys. The byte cap applies to the serialized value.                                                                                                                                                                                   |
+| `human`, `form`                                       | _(none)_      | Their `vars` come from the HITL input artifact. Declaring `output.result` on them is **refused at manifest load** (`CONFIG`) at every engine version — the combination has never had a transport.                                                                                                                                                                      |
 
 An **orchestrator is validated only on the turn that completes it**. A turn that
 parks on pending children yields before the seam, so a `required: true`
@@ -1445,11 +1446,20 @@ Field types: `string`, `number`, `boolean`, `enum` (with `options`), `array`,
 
 ```yaml
 # schemas/plan-output.json
-{ "schemaVersion": 1,
-  "fields": [
-    { "name": "verdict", "type": "enum", "options": ["pass", "fail"], "required": true },
-    { "name": "tags",    "type": "array", "items": { "type": "string" } },
-    { "name": "payload", "type": "json" } ] }
+{
+  "schemaVersion": 1,
+  "fields":
+    [
+      {
+        "name": "verdict",
+        "type": "enum",
+        "options": ["pass", "fail"],
+        "required": true,
+      },
+      { "name": "tags", "type": "array", "items": { "type": "string" } },
+      { "name": "payload", "type": "json" },
+    ],
+}
 ```
 
 ### Payload bounds
@@ -1457,13 +1467,13 @@ Field types: `string`, `number`, `boolean`, `enum` (with `options`), `array`,
 Enforced on every payload, before any field check, and shared by HITL form
 responses and Brain lesson distillation (the same validator):
 
-| Bound                              | Value       | On breach                                            |
-| ---------------------------------- | ----------- | ---------------------------------------------------- |
-| `MAISTER_NODE_OUTPUT_MAX_BYTES`    | 256 KiB     | `CONFIG` before parsing                              |
-| Nesting depth                      | 64          | `CONFIG` naming the limit and the JSON path           |
-| Total object keys (whole payload)  | 10 000      | `CONFIG` naming the limit                             |
-| Array length (any single array)    | 10 000      | `CONFIG` naming the limit and the JSON path           |
-| Own key `__proto__`/`constructor`/`prototype` at any depth | — | `CONFIG` naming the JSON path |
+| Bound                                                      | Value   | On breach                                   |
+| ---------------------------------------------------------- | ------- | ------------------------------------------- |
+| `MAISTER_NODE_OUTPUT_MAX_BYTES`                            | 256 KiB | `CONFIG` before parsing                     |
+| Nesting depth                                              | 64      | `CONFIG` naming the limit and the JSON path |
+| Total object keys (whole payload)                          | 10 000  | `CONFIG` naming the limit                   |
+| Array length (any single array)                            | 10 000  | `CONFIG` naming the limit and the JSON path |
+| Own key `__proto__`/`constructor`/`prototype` at any depth | —       | `CONFIG` naming the JSON path               |
 
 Only the byte cap is env-tunable; the structural bounds are constants, and the
 byte cap already subsumes per-string length.
@@ -1604,28 +1614,27 @@ engine-floor bump.
 
 Context paths available inside templates:
 
-| path                     | source                                                                                          |
-| ------------------------ | ----------------------------------------------------------------------------------------------- |
-| `task.id`                | `tasks.id`                                                                                      |
-| `task.title`             | `tasks.title`                                                                                   |
-| `task.prompt`            | `tasks.prompt`                                                                                  |
-| `task.attemptNumber`     | `tasks.attempt_number`                                                                          |
-| `run.id`                 | `runs.id`                                                                                       |
-| `run.attemptNumber`      | mirrors `task.attemptNumber` until run-level attempts land                                      |
-| `run.projectSlug`        | `projects.slug`                                                                                 |
-| `executor.id`            | Resolved platform ACP runner id                                                                 |
-| `executor.agent`         | Adapter-registry identity, e.g. `claude` or `codex`                                             |
-| `executor.model`         | Snapshotted runner model label                                                                  |
-| `executor.router`        | Optional runner router, e.g. `ccr`                                                              |
-| `steps.<id>.output`      | `node_attempts.stdout` (highest attempt), truncated to 8 KiB                                     |
-| `steps.<id>.vars.<name>` | `node_attempts.vars` jsonb (highest attempt)                                                    |
-| `steps.<id>.exitCode`    | `node_attempts.exit_code` (highest attempt)                                                     |
-| `env.<KEY>`              | filtered process.env (see below)                                                                |
-| `artifacts.<id>.kind`    | current artifact instance kind                                                                  |
-| `artifacts.<id>.uri`     | current artifact locator URI; optional, use `??` if it may be absent                            |
-| `artifacts.<id>.validity` | artifact validity (`current`, `stale`, etc.)                                                    |
-| `artifacts.<id>.nodeId`  | producing node id; optional, use `??` if it may be absent                                       |
-| `artifacts.<id>.content` | **(P2, ADR-120)** resolved body of the `current` artifact (diff/log/plan/test-report text, or pretty-printed JSON for a `gate-verdict`/`hitl-response` locator). Capped at the injection seam to `MAISTER_ARTIFACT_INLINE_MAX_BYTES` (256 KiB); for a `file` or `git-log` locator the read itself is bounded to the cap (a huge payload never loads fully into the web process; an oversized log truncates instead of throwing). Optional — use `??` if it may be absent. **Requires `compat.engine_min >= 2.2.0`.** Graph `nodes[]` only. |
+| path                      | source                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `task.id`                 | `tasks.id`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `task.title`              | `tasks.title`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `task.prompt`             | `tasks.prompt`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `task.attemptNumber`      | `tasks.attempt_number`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `run.id`                  | `runs.id`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `run.attemptNumber`       | mirrors `task.attemptNumber` until run-level attempts land                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `run.projectSlug`         | `projects.slug`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `executor.id`             | Resolved platform ACP runner id                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `executor.agent`          | Adapter-registry identity, e.g. `claude` or `codex`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `executor.model`          | Snapshotted runner model label                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `steps.<id>.output`       | `node_attempts.stdout` (highest attempt), truncated to 8 KiB                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `steps.<id>.vars.<name>`  | `node_attempts.vars` jsonb (highest attempt)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `steps.<id>.exitCode`     | `node_attempts.exit_code` (highest attempt)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `env.<KEY>`               | filtered process.env (see below)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `artifacts.<id>.kind`     | current artifact instance kind                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `artifacts.<id>.uri`      | current artifact locator URI; optional, use `??` if it may be absent                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `artifacts.<id>.validity` | artifact validity (`current`, `stale`, etc.)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `artifacts.<id>.nodeId`   | producing node id; optional, use `??` if it may be absent                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `artifacts.<id>.content`  | **(P2, ADR-120)** resolved body of the `current` artifact (diff/log/plan/test-report text, or pretty-printed JSON for a `gate-verdict`/`hitl-response` locator). Capped at the injection seam to `MAISTER_ARTIFACT_INLINE_MAX_BYTES` (256 KiB); for a `file` or `git-log` locator the read itself is bounded to the cap (a huge payload never loads fully into the web process; an oversized log truncates instead of throwing). Optional — use `??` if it may be absent. **Requires `compat.engine_min >= 2.2.0`.** Graph `nodes[]` only. |
 
 Highest-attempt-wins: when a node has been retried or reworked, `steps.<id>`
 resolves to the highest-`attempt` `node_attempts` row. The `steps` namespace is
@@ -1782,17 +1791,17 @@ supporting artifacts.
 
 Supported authored package artifact kinds:
 
-| Kind               | Purpose                                                     |
-| ------------------ | ----------------------------------------------------------- |
-| `skill`            | Agent skill instructions shipped with the Flow package.     |
-| `rule`             | Project or Flow-specific rule text.                         |
-| `script`           | CLI/helper script shipped with the package.                 |
-| `agent_definition` | Adapter or agent profile material.                          |
-| `schema`           | JSON schema such as HITL form schemas.                      |
-| `template`         | Text templates used by scripts or agents.                   |
-| `readme`           | Human package documentation.                                |
+| Kind               | Purpose                                                         |
+| ------------------ | --------------------------------------------------------------- |
+| `skill`            | Agent skill instructions shipped with the Flow package.         |
+| `rule`             | Project or Flow-specific rule text.                             |
+| `script`           | CLI/helper script shipped with the package.                     |
+| `agent_definition` | Adapter or agent profile material.                              |
+| `schema`           | JSON schema such as HITL form schemas.                          |
+| `template`         | Text templates used by scripts or agents.                       |
+| `readme`           | Human package documentation.                                    |
 | `setup`            | Setup hook content; executed only by trust-gated package setup. |
-| `asset`            | Unclassified portable text files retained during import.    |
+| `asset`            | Unclassified portable text files retained during import.        |
 
 Before publish/export, package file paths must be safe relative text paths with
 no duplicate normalized path and no file-vs-directory collisions. Package file
@@ -1829,8 +1838,8 @@ the other repo" without giving the run a second writable workspace.
 ```yaml
 settings:
   context_repos:
-    - project: other-service   # project SLUG, resolved at launch
-      ref: main                 # optional; default = that project's default branch
+    - project: other-service # project SLUG, resolved at launch
+      ref: main # optional; default = that project's default branch
 ```
 
 - `project` — a MAIster project **slug**, resolved at launch against the

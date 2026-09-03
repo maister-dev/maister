@@ -1,5 +1,9 @@
 # Implementation Plan: Platform ACP runner configurations
 
+> **Historical plan:** CCR/router-specific tasks and contracts below are
+> obsolete and superseded by [ADR-164](../../docs/decisions/adr-164.md). Do not
+> implement them; use current code and canonical docs.
+
 Branch: feature/acp-launch-configurations
 Created: 2026-06-03
 Base: detached HEAD @ 6beebf3

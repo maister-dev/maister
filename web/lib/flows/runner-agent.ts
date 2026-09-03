@@ -81,7 +81,6 @@ export type RunAgentStepCtx = {
     agent: CapabilityAgent;
     model: string;
     env?: Record<string, string>;
-    router?: "ccr";
   };
   runner?: SupervisorRunnerInput;
   // M42 (ADR-114): the logical Flow session this node runs in — forwarded to the
@@ -538,7 +537,6 @@ function executorToSupervisorInput(
     agent: exec.agent,
     model: exec.model,
     env: exec.env,
-    router: exec.router,
   };
 }
 

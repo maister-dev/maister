@@ -235,7 +235,6 @@ function input(overrides: Record<string, unknown> = {}) {
         agent: "claude",
         model: "sonnet",
         env: null,
-        router: null,
       },
       projectSlug: "project",
     },
@@ -253,7 +252,7 @@ function input(overrides: Record<string, unknown> = {}) {
     nodeAttemptNumber: 1,
     db: db(),
     ...overrides,
-  } as Parameters<typeof runConsensusNode>[0];
+  } as unknown as Parameters<typeof runConsensusNode>[0];
 }
 
 beforeEach(() => {

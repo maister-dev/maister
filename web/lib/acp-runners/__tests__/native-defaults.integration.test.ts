@@ -14,8 +14,7 @@ import {
 } from "@/test-support/pg-container";
 
 const schema = fullSchema as unknown as Record<string, any>;
-const { platformAcpRunners, platformRouterSidecars, platformRuntimeSettings } =
-  schema;
+const { platformAcpRunners, platformRuntimeSettings } = schema;
 
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
@@ -37,7 +36,6 @@ beforeEach(async () => {
   // so clear the singleton before the runners.
   await db.delete(platformRuntimeSettings);
   await db.delete(platformAcpRunners);
-  await db.delete(platformRouterSidecars);
 });
 
 function diagnostics(available: AdapterId[]): SupervisorDiagnostics {
@@ -60,7 +58,6 @@ function diagnostics(available: AdapterId[]): SupervisorDiagnostics {
         protocolVersion: 1,
       },
     })),
-    sidecars: [{ id: "ccr-default", kind: "ccr", state: "idle" }],
     envRefs: [
       { name: "GEMINI_API_KEY", present: true },
       { name: "ZAI_API_KEY", present: false },
@@ -139,7 +136,6 @@ describe("reconcilePlatformRunners (integration)", () => {
       model: "claude-sonnet-4-6",
       provider: { kind: "anthropic" },
       permissionPolicy: "default",
-      sidecarId: null,
       enabled: true,
       readinessStatus: "Ready",
       readinessReasons: [],
@@ -154,113 +150,5 @@ describe("reconcilePlatformRunners (integration)", () => {
     const settings = await db.select().from(platformRuntimeSettings);
 
     expect(settings).toHaveLength(0);
-  });
-
-  it("recomputes router-sidecar readiness and converges a sidecar-backed runner to Ready (ADR-094)", async () => {
-    // Fresh-install state before an admin clicks Start: a managed CCR sidecar
-    // stored NotReady (process not yet running) plus a runner routing through it.
-    await db.insert(platformRouterSidecars).values({
-      id: "ccr-default",
-      kind: "ccr",
-      lifecycle: "managed",
-      commandPreset: "ccr_start",
-      configPath: "~/.claude-code-router/config.json",
-      baseUrl: "http://127.0.0.1:3456",
-      healthcheckUrl: "http://127.0.0.1:3456/health",
-      authTokenRef: "env:MAISTER_CCR_AUTH_TOKEN",
-      readinessStatus: "NotReady",
-      readinessReasons: [
-        "CCR sidecar health must be confirmed by supervisor diagnostics",
-      ],
-      enabled: true,
-    });
-    await db.insert(platformAcpRunners).values({
-      id: "claude-code-ccr",
-      adapter: "claude",
-      capabilityAgent: "claude",
-      model: "claude-sonnet-4-6",
-      provider: {
-        kind: "anthropic_compatible",
-        baseUrl: "http://127.0.0.1:3456",
-      },
-      permissionPolicy: "default",
-      sidecarId: "ccr-default",
-      enabled: true,
-      readinessStatus: "NotReady",
-      readinessReasons: ["sidecar is not ready: ccr-default"],
-    });
-
-    // Supervisor now reports the CCR process ready (post-Start diagnostics).
-    await reconcilePlatformRunners({
-      db,
-      diagnostics: {
-        ...diagnostics(["claude"]),
-        sidecars: [{ id: "ccr-default", kind: "ccr", state: "ready" }],
-      } as unknown as SupervisorDiagnostics,
-    });
-
-    const sidecar = (await db.select().from(platformRouterSidecars)).find(
-      (row) => row.id === "ccr-default",
-    );
-    const runner = (await runners()).find(
-      (row) => row.id === "claude-code-ccr",
-    );
-
-    // Sidecar readiness is now persisted from diagnostics (was NotReady)...
-    expect(sidecar?.readinessStatus).toBe("Ready");
-    // ...and the dependent runner converges without a manual create/edit.
-    expect(runner?.readinessStatus).toBe("Ready");
-    expect(runner?.readinessReasons).toEqual([]);
-  });
-
-  it("drops a sidecar-backed runner to NotReady when diagnostics report the sidecar not ready", async () => {
-    await db.insert(platformRouterSidecars).values({
-      id: "ccr-default",
-      kind: "ccr",
-      lifecycle: "managed",
-      commandPreset: "ccr_start",
-      configPath: "~/.claude-code-router/config.json",
-      baseUrl: "http://127.0.0.1:3456",
-      healthcheckUrl: "http://127.0.0.1:3456/health",
-      authTokenRef: "env:MAISTER_CCR_AUTH_TOKEN",
-      // Stale "Ready" left over from a create/edit while the process was up.
-      readinessStatus: "Ready",
-      readinessReasons: [],
-      enabled: true,
-    });
-    await db.insert(platformAcpRunners).values({
-      id: "claude-code-ccr",
-      adapter: "claude",
-      capabilityAgent: "claude",
-      model: "claude-sonnet-4-6",
-      provider: {
-        kind: "anthropic_compatible",
-        baseUrl: "http://127.0.0.1:3456",
-      },
-      permissionPolicy: "default",
-      sidecarId: "ccr-default",
-      enabled: true,
-      readinessStatus: "Ready",
-      readinessReasons: [],
-    });
-
-    // Supervisor reports the CCR process stopped (post-Stop diagnostics).
-    await reconcilePlatformRunners({
-      db,
-      diagnostics: {
-        ...diagnostics(["claude"]),
-        sidecars: [{ id: "ccr-default", kind: "ccr", state: "stopping" }],
-      } as unknown as SupervisorDiagnostics,
-    });
-
-    const sidecar = (await db.select().from(platformRouterSidecars)).find(
-      (row) => row.id === "ccr-default",
-    );
-    const runner = (await runners()).find(
-      (row) => row.id === "claude-code-ccr",
-    );
-
-    expect(sidecar?.readinessStatus).toBe("NotReady");
-    expect(runner?.readinessStatus).toBe("NotReady");
   });
 });

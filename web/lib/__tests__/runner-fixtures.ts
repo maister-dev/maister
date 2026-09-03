@@ -48,8 +48,6 @@ export function testRunnerSnapshot(
     provider,
     providerKind,
     permissionPolicy: "default",
-    sidecar: null,
-    sidecarId: null,
   };
 }
 

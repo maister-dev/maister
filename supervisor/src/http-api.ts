@@ -23,7 +23,6 @@ import {
   resolveAdapterBinary,
   type AdapterRuntime,
 } from "./adapter-registry";
-import { type CcrManager, type CcrState } from "./ccr-manager";
 import { takeContextMountPreamble } from "./context-mounts";
 import { attachCost } from "./cost";
 import { attachHeartbeat } from "./heartbeat";
@@ -98,34 +97,6 @@ const McpProbeRequestSchema = z
     }
   });
 
-// ADR-094: admin CCR sidecar id — the path key for every /sidecars/:id route and
-// the start-body `id` field. Constrained to a filesystem-safe segment because it
-// keys the supervisor CcrManager instance map.
-const SidecarIdSchema = z
-  .string()
-  .min(1)
-  .max(128)
-  .regex(/^[A-Za-z0-9._-]+$/);
-
-// ADR-094: admin CCR sidecar start body — the full CcrInstanceConfig forwarded
-// by the admin-gated web tier. `id` must equal the path param (body-controlled,
-// trusted only because the sole caller is the server-to-server web tier).
-// `configPath` flows into supervisor-side fs.access/readFile, so it rejects `..`
-// traversal segments — the URL siblings already carry `.url()` constraints.
-const SidecarStartBodySchema = z
-  .object({
-    id: SidecarIdSchema,
-    lifecycle: z.enum(["managed", "external"]).optional(),
-    configPath: z
-      .string()
-      .min(1)
-      .regex(/^(?!.*\.\.).+$/, "configPath must not contain '..' path segments")
-      .optional(),
-    baseUrl: z.string().url().optional(),
-    healthcheckUrl: z.string().url().optional(),
-  })
-  .strict();
-
 export type CheckpointResponse = {
   alreadyCheckpointed: boolean;
   sessionId: string;
@@ -146,7 +117,6 @@ const DIAGNOSTIC_ENV_REFS: readonly string[] = [
   "GOOGLE_API_KEY",
   "GOOGLE_CLOUD_LOCATION",
   "GOOGLE_CLOUD_PROJECT",
-  "MAISTER_CCR_AUTH_TOKEN",
   "OPENAI_API_KEY",
   "ZAI_API_KEY",
 ];
@@ -159,7 +129,6 @@ const SESSION_STATUSES: readonly SessionStatus[] = [
 export type SpawnOverrides = {
   binary?: string;
   preArgs?: string[];
-  ccrManager?: CcrManager;
 };
 
 export type RegisterRoutesOptions = {
@@ -428,21 +397,9 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   });
 
   app.get("/diagnostics", async (_req, reply) => {
-    const ccr = opts.spawnOverrides?.ccrManager;
     const smokeCache = await readAdapterSmokeCache(
       adapterSmokeCachePath(runtimeRoot),
     );
-    // ADR-094: report keyed CCR instance states. Admin Start and
-    // session-spawn-with-sidecar both populate the KEYED `ccr-default` manager,
-    // not the anonymous default that `getState()` (no id) reads — so report
-    // listStates(). Always seed `ccr-default` as `idle` so readiness sees its
-    // state rather than "diagnostics missing"; overlay every started instance
-    // (incl. admin-created sidecar ids) on top.
-    const sidecarStates = new Map<string, CcrState>([["ccr-default", "idle"]]);
-
-    for (const entry of ccr?.listStates() ?? []) {
-      sidecarStates.set(entry.id, entry.state);
-    }
     const body: SupervisorDiagnosticsResponse = {
       status: "ready",
       version: SUPERVISOR_VERSION,
@@ -452,11 +409,6 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           diagnoseAdapterBinary(runtime, smokeCache, logger),
         ),
       ),
-      sidecars: [...sidecarStates].map(([id, state]) => ({
-        id,
-        kind: "ccr" as const,
-        state,
-      })),
       envRefs: diagnosticEnvRefs(),
     };
 
@@ -474,7 +426,6 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         logger,
         binaryOverride: opts.spawnOverrides?.binary,
         preArgs: opts.spawnOverrides?.preArgs,
-        ccrManager: opts.spawnOverrides?.ccrManager,
       });
 
     // M34 lifecycle: propagate the reap-on-end-turn flag onto the record so the
@@ -1161,89 +1112,6 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       "http POST /mcp-probe",
     );
     reply.status(200).send(result);
-  });
-
-  // ADR-094: admin-triggered CCR sidecar start/stop. Reuses the existing keyed
-  // CcrManager. Stop targets a SINGLE instance via the per-instance stop(id),
-  // never the manager-wide shutdown() (which would kill every instance and any
-  // live session routing through CCR). The route is a proxy over
-  // supervisor-owned process state — no DB idempotency marker is written.
-  app.post<SessionIdParams>("/sidecars/:id/start", async (req, reply) => {
-    const ccr = opts.spawnOverrides?.ccrManager;
-
-    if (!ccr) {
-      reply.status(409).send({
-        code: "PRECONDITION",
-        message: "CCR manager is not configured",
-      });
-
-      return;
-    }
-
-    const body = SidecarStartBodySchema.parse(req.body);
-
-    if (body.id !== req.params.id) {
-      reply.status(409).send({
-        code: "PRECONDITION",
-        message: "sidecar body id does not match path id",
-      });
-
-      return;
-    }
-
-    logger.debug(
-      { sidecarId: body.id, lifecycle: body.lifecycle ?? "managed" },
-      "http POST /sidecars/:id/start",
-    );
-
-    try {
-      await ccr.ensureRunning({ instance: body });
-    } catch (err) {
-      logger.error(
-        {
-          sidecarId: body.id,
-          err: err instanceof Error ? err.message : String(err),
-        },
-        "ccr sidecar start failed",
-      );
-      throw err;
-    }
-
-    const state = ccr.getState(body.id);
-
-    logger.info(
-      { sidecarId: body.id, state, status: 200 },
-      "ccr sidecar started",
-    );
-    reply.status(200).send({ ok: true, state });
-  });
-
-  app.post<SessionIdParams>("/sidecars/:id/stop", async (req, reply) => {
-    const ccr = opts.spawnOverrides?.ccrManager;
-
-    if (!ccr) {
-      reply.status(409).send({
-        code: "PRECONDITION",
-        message: "CCR manager is not configured",
-      });
-
-      return;
-    }
-
-    // ADR-094: the start route validates the id via the body schema + the
-    // body.id === params.id check; the bodiless stop route guards the path id
-    // here. Invalid id → ZodError → 409 PRECONDITION via the shared handler.
-    SidecarIdSchema.parse(req.params.id);
-
-    logger.debug({ sidecarId: req.params.id }, "http POST /sidecars/:id/stop");
-    await ccr.stop(req.params.id);
-    const state = ccr.getState(req.params.id);
-
-    logger.info(
-      { sidecarId: req.params.id, state, status: 200 },
-      "ccr sidecar stopped",
-    );
-    reply.status(200).send({ ok: true, state });
   });
 }
 

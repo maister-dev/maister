@@ -31,7 +31,6 @@ export type FlowContext = {
     id: string;
     agent: CapabilityAgent;
     model: string;
-    router?: "ccr";
   };
   steps: Record<
     string,

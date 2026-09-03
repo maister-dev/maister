@@ -1,5 +1,10 @@
 # Plan — Router-sidecar management: popup create + edit (+ delete)
 
+> **Obsolete historical plan:** The managed CCR/router-sidecar component
+> described here was removed by
+> [ADR-164](../../docs/decisions/adr-164.md). Do not implement or restore this
+> plan.
+
 **Branch:** `claude/trusting-kilby-378568` (existing worktree — no new branch created)
 **Created:** 2026-06-20
 **Type:** Enhancement / UI rework (data-management convention alignment)

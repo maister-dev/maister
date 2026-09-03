@@ -62,7 +62,6 @@ function readyDiag(adapters: DiagAdapter[]): SupervisorDiagnosticsStatus {
       version: "1.0.0",
       checkedAt: "2026-06-13T00:00:00.000Z",
       adapters,
-      sidecars: [],
       envRefs: [],
     },
   };

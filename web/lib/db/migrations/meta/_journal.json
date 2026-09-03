@@ -869,6 +869,13 @@
       "when": 1788257531779,
       "tag": "0127_output_contract",
       "breakpoints": true
+    },
+    {
+      "idx": 128,
+      "version": "7",
+      "when": 1788363134273,
+      "tag": "0128_remove_router_sidecars",
+      "breakpoints": true
     }
   ]
 }

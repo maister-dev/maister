@@ -13,7 +13,7 @@
 
 An **ACP runner** is a platform-level launch profile. It tells MAIster which
 ACP adapter to spawn, which model/provider route to use, which typed permission
-policy applies, and which optional router sidecar must be ready before launch.
+policy applies, and which environment references must be present before launch.
 
 Runners are not project-scoped. Projects, Flow packages, Flow attachments,
 AI-coding steps, task launches, scratch launches, and historical run snapshots
@@ -28,14 +28,11 @@ reference platform runner ids.
 - **Runner adapter** - code-owned support entry such as `claude` or `codex`.
   It exposes supported provider kinds, permission policies, diagnostics, and
   the stable `capability_agent` used by capability enforcement.
-- **Router sidecar** - platform-managed helper process such as CCR. Stored in
-  `platform_router_sidecars`; runners reference it by id.
 - **Runner snapshot** - immutable JSON captured on run/workspace start. It
   contains the resolved launch profile, `capability_agent`, provider shape,
-  sidecar reference, readiness decision, and safe display labels. It never
-  stores raw secret values.
+  readiness decision, and safe display labels. It never stores raw secret values.
 - **Usage reference** - a centralized index entry explaining why a runner or
-  sidecar cannot be disabled/deleted or where it is used.
+  runner cannot be disabled/deleted or where it is used.
 
 ## Platform config shape
 
@@ -45,16 +42,6 @@ Platform runtime configuration is separate from project `maister.yaml`.
 platform:
   default_runner: claude-code
 
-router_instances:
-  - id: ccr-default
-    kind: ccr
-    lifecycle: managed
-    command_preset: ccr_start
-    config_path: ~/.claude-code-router/config.json
-    base_url: http://127.0.0.1:3456
-    healthcheck_url: http://127.0.0.1:3456/health
-    auth_token: env:MAISTER_CCR_AUTH_TOKEN
-
 acp_runners:
   - id: claude-code
     adapter: claude
@@ -63,12 +50,13 @@ acp_runners:
       kind: anthropic
     permission_policy: default
 
-  - id: claude-code-ccr
+  - id: claude-code-env-router
     adapter: claude
     model: glm-5.1
     provider:
       kind: anthropic_compatible
-    router_instance: ccr-default
+      base_url: https://api.z.ai/api/anthropic
+      auth_token: env:ZAI_API_KEY
     permission_policy: default
 
   - id: claude-code-dangerous
@@ -103,7 +91,6 @@ Rules:
 - Adapter ids resolve against the code-owned adapter registry.
 - `capability_agent` is derived from the adapter registry and snapshotted on
   launch; it is not an operator-entered field.
-- Sidecar refs must resolve to `router_instances[]`.
 - Secret fields are references such as `env:NAME`, never literal tokens.
 - The platform default cannot be disabled or deleted while it is default.
 - A disabled runner can remain referenced by historical snapshots, but it
@@ -118,7 +105,7 @@ profiles.
 schemaVersion: 2
 project:
   name: myapp
-  default_runner: inherit # or claude-code-ccr
+  default_runner: inherit # or claude-code-env-router
 
 flows:
   - id: bugfix
@@ -134,7 +121,7 @@ nodes:
   - id: implement
     type: ai_coding
     runner_type: acp
-    runner: claude-code-ccr
+    runner: claude-code-env-router
 ```
 
 `runner_type` defaults to `acp` for this slice. Keeping the field explicit in
@@ -182,13 +169,13 @@ Missing target behavior:
 Adapter support is code-owned; operators cannot create arbitrary adapter
 families in this slice.
 
-| Adapter | Capability agent | Spawn binary | Ready launch families |
-| --- | --- | --- | --- |
-| `claude` | `claude` | `claude-agent-acp` | Claude direct, Claude CCR, Claude dangerous policy after adapter flag smoke |
-| `codex` | `codex` | `codex-acp` | Codex OpenAI direct; third-party Responses-wire routes only after endpoint smoke |
-| `gemini` | `gemini` | `gemini --acp` | Designed, ADR-084: Google Gemini/Vertex/Gateway only after SDK initialize/newSession/auth smoke |
-| `opencode` | `opencode` | `opencode acp` | Designed, ADR-084: native OpenCode provider config only after binary, writable-state, stdio ACP, permission, MCP, resume, and model-channel smoke |
-| `mimo` | `mimo` | `mimo acp` | Designed, ADR-085: MiMo Code native provider config only after binary, stdio ACP, permissions, MCP, resume, and model-channel smoke |
+| Adapter    | Capability agent | Spawn binary       | Ready launch families                                                                                                                             |
+| ---------- | ---------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claude`   | `claude`         | `claude-agent-acp` | Claude direct, Anthropic-compatible env routing, Claude dangerous policy after adapter flag smoke                                                 |
+| `codex`    | `codex`          | `codex-acp`        | Codex OpenAI direct; third-party Responses-wire routes only after endpoint smoke                                                                  |
+| `gemini`   | `gemini`         | `gemini --acp`     | Designed, ADR-084: Google Gemini/Vertex/Gateway only after SDK initialize/newSession/auth smoke                                                   |
+| `opencode` | `opencode`       | `opencode acp`     | Designed, ADR-084: native OpenCode provider config only after binary, writable-state, stdio ACP, permission, MCP, resume, and model-channel smoke |
+| `mimo`     | `mimo`           | `mimo acp`         | Designed, ADR-085: MiMo Code native provider config only after binary, stdio ACP, permissions, MCP, resume, and model-channel smoke               |
 
 The adapter registry is the only source for `capability_agent`. Capability
 selection, capability enforcement, native materialization, run detail, resume,
@@ -315,28 +302,6 @@ OpenCode docs say ACP mode carries configured MCP servers, agents, permissions,
 formatters, and linters. MAIster still records every capability class as
 `instructed` or `unsupported` until a live spike proves enforcement.
 
-### CCR
-
-CCR stores runtime configuration in `~/.claude-code-router/config.json`.
-Documented fields include `HOST`, `APIKEY`, `Providers`, `Router`,
-`NON_INTERACTIVE_MODE`, and env interpolation. The current supervisor manager
-already validates `/health` instead of generic `/` to avoid mistaking another
-process on the port for CCR.
-
-In the first platform-admin slice, sidecar config is intentionally flexible for
-admins:
-
-- typed command preset, not raw shell strings;
-- lifecycle mode (`managed`, `external`);
-- config path;
-- base URL/port;
-- healthcheck URL;
-- auth token env ref;
-- provider config refs;
-- readiness state and refresh action.
-
-Raw secret values and raw arbitrary commands are not accepted.
-
 ## Spawn intent
 
 The web tier resolves a runner and sends a normalized, supervisor-safe intent.
@@ -430,7 +395,7 @@ config bodies, or raw ACP payloads.
 - Runner resolution MUST follow the strict allow-list chain (launch override >
   step target > slot binding/auto-match > project Flow default > platform Flow
   default > project default > platform default) and MUST return `{ runnerId,
-  tier }`; it MUST NEVER guess from a missing reference.
+tier }`; it MUST NEVER guess from a missing reference.
 - A launch whose resolved runner is missing, disabled, or `NotReady` MUST
   refuse with `MaisterError("EXECUTOR_UNAVAILABLE")`/`("CONFIG")` BEFORE
   `git worktree add`, before any run/workspace DB write, and before supervisor
@@ -483,5 +448,5 @@ config bodies, or raw ACP payloads.
 - [Database schema](../database-schema.md)
 - [Error taxonomy](../error-taxonomy.md)
 - [Model catalog](model-catalog.md) — discovers valid `model` ids for a runner draft and applies the configured model to the agent (ADR-076).
-- [ADR-050](../decisions.md#adr-050-platform-acp-runners-adapter-provisioners-and-router-sidecars)
+- [ADR-050](../decisions/adr-050.md)
 - [ADR-084](../decisions.md#adr-084-acp-adapter-families-for-gemini-cli-and-opencode)

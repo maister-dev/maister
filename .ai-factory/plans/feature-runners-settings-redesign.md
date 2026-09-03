@@ -1,5 +1,9 @@
 # Implementation Plan: Runners settings screen redesign
 
+> **Historical plan:** CCR/router-specific tasks and contracts below are
+> obsolete and superseded by [ADR-164](../../docs/decisions/adr-164.md). Do not
+> implement them; use current code and canonical docs.
+
 Branch: claude/quirky-torvalds-2dd78e
 Created: 2026-06-18
 

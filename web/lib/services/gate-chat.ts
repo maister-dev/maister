@@ -1067,7 +1067,6 @@ export async function sendGateChatTurn(args: {
             | "claude"
             | "codex",
           model: run.runnerSnapshot?.model ?? "unknown",
-          router: run.runnerSnapshot?.sidecarId ? "ccr" : undefined,
         },
         runner: run.runnerSnapshot
           ? runnerSupervisorInput({ snapshot: run.runnerSnapshot })

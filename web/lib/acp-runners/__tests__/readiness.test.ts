@@ -61,7 +61,6 @@ const diagnostics = {
     { name: "GOOGLE_API_KEY", present: true },
     { name: "ZAI_API_KEY", present: false },
   ],
-  sidecars: [{ id: "ccr-default", state: "ready" }],
 } as const;
 
 const smokeReadyDiagnostics = {
@@ -380,26 +379,5 @@ describe("evaluateRunnerReadiness", () => {
     });
 
     expect(result).toEqual({ status: "Ready", reasons: [] });
-  });
-
-  it("requires ready sidecar diagnostics for CCR runners", () => {
-    const result = evaluateRunnerReadiness({
-      runner: {
-        adapter: "claude",
-        capabilityAgent: "claude",
-        enabled: true,
-        permissionPolicy: "default",
-        provider: { kind: "anthropic_compatible" },
-        sidecarId: "ccr-default",
-      },
-      diagnostics: {
-        ...diagnostics,
-        sidecars: [{ id: "ccr-default", state: "idle" }] as const,
-      },
-      sidecar: { id: "ccr-default", enabled: true, readinessStatus: "Ready" },
-    });
-
-    expect(result.status).toBe("NotReady");
-    expect(result.reasons).toContain("sidecar ccr-default is not ready: idle");
   });
 });

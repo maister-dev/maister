@@ -32,7 +32,6 @@ type Props = {
   defaultRunnerId: string | null;
   presets: PresetRow[];
   runners: RunnerRow[];
-  sidecars: { id: string }[];
   unavailableAdapters?: readonly AdapterId[];
 };
 
@@ -100,7 +99,6 @@ export function AcpRunnersPanel({
   defaultRunnerId,
   presets,
   runners,
-  sidecars,
   unavailableAdapters,
 }: Props): ReactElement {
   const t = useTranslations("settings");
@@ -258,7 +256,6 @@ export function AcpRunnersPanel({
               <th className="px-4 py-3">{t("colAdapter")}</th>
               <th className="px-4 py-3">{t("colModel")}</th>
               <th className="px-4 py-3">{t("colProvider")}</th>
-              <th className="px-4 py-3">{t("colSidecar")}</th>
               <th className="px-4 py-3">{t("colPolicy")}</th>
               <th className="px-4 py-3">{t("colReadiness")}</th>
               <th className="px-4 py-3">{t("colEnabled")}</th>
@@ -279,9 +276,6 @@ export function AcpRunnersPanel({
                   {runner.model}
                 </td>
                 <td className="px-4 py-3 text-ink-2">{runner.provider.kind}</td>
-                <td className="px-4 py-3 text-ink-2">
-                  {runner.sidecarId ?? "-"}
-                </td>
                 <td className="px-4 py-3 text-ink-2">
                   {runner.permissionPolicy}
                 </td>
@@ -417,7 +411,6 @@ export function AcpRunnersPanel({
           mode={editing ? "edit" : "create"}
           presets={presets}
           runner={editing ?? undefined}
-          sidecars={sidecars}
           unavailableAdapters={unavailableAdapters}
           onClose={() => {
             setCreating(false);

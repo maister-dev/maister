@@ -3,7 +3,6 @@ import { getTableName } from "drizzle-orm";
 
 import {
   collectRunnerUsageReferences,
-  collectSidecarUsageReferences,
   loadRunnerUsageReferences,
 } from "@/lib/acp-runners/usage";
 
@@ -67,24 +66,6 @@ describe("ACP runner usage references", () => {
       "activeRunSession",
       "historicalRunSnapshot",
       "scratchRun",
-    ]);
-  });
-
-  it("collects sidecar references through runners", () => {
-    const refs = collectSidecarUsageReferences({
-      sidecarId: "ccr-default",
-      runners: [
-        { runnerId: "runner-a", sidecarId: "ccr-default" },
-        { runnerId: "runner-b", sidecarId: null },
-      ],
-    });
-
-    expect(refs).toEqual([
-      {
-        kind: "runnerSidecar",
-        runnerId: "runner-a",
-        sidecarId: "ccr-default",
-      },
     ]);
   });
 

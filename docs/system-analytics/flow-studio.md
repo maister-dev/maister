@@ -550,9 +550,9 @@ agent options, schema options, `onWriteSchemaFile`, and the existing
   upstream declared artifacts.
 - **Two-axis safety classification.** Suggestions carry graph availability
   (`definite | conditional`) and value presence (`required | optional`).
-  Optional values include `executor.router`, non-`cli`/`check`
-  `steps.<id>.exitCode`, schema fields absent from JSON Schema `required`, and
-  `artifacts.<id>.uri`. `definite + required` inserts `{{ path }}`; every
+  Optional values include non-`cli`/`check` `steps.<id>.exitCode`, schema fields
+  absent from JSON Schema `required`, and `artifacts.<id>.uri`.
+  `definite + required` inserts `{{ path }}`; every
   `conditional` or `optional` suggestion inserts `{{ path ?? '' }}`.
 - **Warnings stay authoring-only.** Unknown/future/current-node variables and
   bare optional/conditional references surface non-blocking editor warnings.

@@ -18,7 +18,6 @@ type TableName =
   | "flow_runner_remaps"
   | "flows"
   | "platform_acp_runners"
-  | "platform_router_sidecars"
   | "platform_runtime_settings"
   | "project_flow_runner_defaults"
   | "projects"
@@ -30,7 +29,6 @@ const state: Record<TableName, Row[]> = {
   flow_runner_remaps: [],
   flows: [],
   platform_acp_runners: [],
-  platform_router_sidecars: [],
   platform_runtime_settings: [],
   project_flow_runner_defaults: [],
   projects: [],
@@ -122,7 +120,6 @@ async function invoke(): Promise<Response> {
 }
 
 function seedBase(): void {
-  state.platform_router_sidecars = [];
   state.tasks = [{ id: "task-1", projectId: "project-1", flowId: "flow-1" }];
   state.projects = [
     {
@@ -169,7 +166,6 @@ function seedBase(): void {
       model: "claude-sonnet-4-6",
       provider: { kind: "anthropic_compatible", authToken: "env:SECRET_TOKEN" },
       permissionPolicy: "default",
-      sidecarId: null,
       readinessStatus: "Ready",
       readinessReasons: [],
       enabled: true,
@@ -181,7 +177,6 @@ function seedBase(): void {
       model: "gpt-5",
       provider: { kind: "openai_compatible", apiKey: "env:OPENAI_SECRET" },
       permissionPolicy: "default",
-      sidecarId: null,
       readinessStatus: "Ready",
       readinessReasons: [],
       enabled: true,

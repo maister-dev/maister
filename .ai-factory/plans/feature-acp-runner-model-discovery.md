@@ -1,5 +1,9 @@
 # Implementation Plan — ACP Runner Model Discovery & Application
 
+> **Historical plan:** CCR/router-specific tasks and contracts below are
+> obsolete and superseded by [ADR-164](../../docs/decisions/adr-164.md). Do not
+> implement them; use current code and canonical docs.
+
 - **Branch:** `feature/acp-runner-model-discovery` (off `main` @ `633f74c7`)
 - **Created:** 2026-06-10
 - **Source design (owner-approved, to be deleted after this plan):**

@@ -192,9 +192,6 @@ export async function LeftRail({
           `${tPortfolio("runnerField.model")}: ${rd.model}`,
           `${tPortfolio("runnerField.adapter")}: ${rd.adapter}`,
           `${tPortfolio("runnerField.provider")}: ${rd.provider}`,
-          ...(rd.sidecar
-            ? [`${tPortfolio("runnerField.sidecar")}: ${rd.sidecar}`]
-            : []),
         ].join(" · ")
       : null;
     const ttlActive = ws.ttlState === "active";

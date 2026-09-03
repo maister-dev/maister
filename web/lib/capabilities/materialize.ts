@@ -62,7 +62,6 @@ export type MaterializeCapabilityProfileArgs = {
     executorRefId: string;
     agent: string;
     model: string;
-    router: string | null;
   };
   workMode?: "auto" | "plan_first" | "manual_approval";
   reasoningEffort?: "low" | "high" | "extra" | "ultra";

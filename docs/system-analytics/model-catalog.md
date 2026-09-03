@@ -3,10 +3,10 @@
 ## Purpose
 
 The model catalog domain answers two questions the runner catalog left open:
-*which model ids are valid for a given runner draft (adapter + provider +
-router)?* and *how does the configured model actually reach the running agent?*
+_which model ids are valid for a given runner draft (adapter + provider)?_ and
+_how does the configured model actually reach the running agent?_
 It owns a **supervisor-side resolver** that discovers model ids from layered
-sources (ACP active probe, provider listing APIs, a curated GLM list, and CCR),
+sources (ACP active probe, provider listing APIs, and a curated GLM list),
 an **in-memory TTL cache**, a passive harvest of model state from real sessions,
 and the **per-adapter application channel** that pins the configured model on the
 agent. It does NOT own the runner CRUD lifecycle (see
@@ -20,10 +20,10 @@ cache; `platform_acp_runners.model` stays free text.
 
 ## Domain entities
 
-- **Runner draft** — the resolve input: `{ adapter, provider, router?, sidecarId? }`
+- **Runner draft** — the resolve input: `{ adapter, provider }`
   plus a `force?` flag. `provider` reuses the `RunnerProvider` discriminated union
   from `supervisor/src/types.ts`. Implemented provider kinds are `anthropic |
-  anthropic_compatible | openai | openai_compatible`; ADR-084 designs
+anthropic_compatible | openai | openai_compatible`; ADR-084 designs
   `google_gemini | google_vertex | google_gateway | agent_native` for Gemini,
   OpenCode, and MiMo. Env-ref fields (`authTokenEnv`, `apiKeyEnv`) carry **bare** names
   (`^[A-Za-z_][A-Za-z0-9_]*$`); the supervisor rejects an `env:`-prefixed or
@@ -31,27 +31,24 @@ cache; `platform_acp_runners.model` stays free text.
   names via `envRefName()` before forwarding. (Implemented for current
   providers; Designed for ADR-084 providers)
 - **`ModelSource`** — a pluggable resolver: `{ kind; supports(draft): boolean;
-  resolve(draft, ctx): Promise<{ models: ModelEntry[]; status: SourceStatus }> }`.
-  `SourceKind = "acp_probe" | "provider_api" | "curated" | "ccr" | "agent_observed"`.
+resolve(draft, ctx): Promise<{ models: ModelEntry[]; status: SourceStatus }> }`.
+  `SourceKind = "acp_probe" | "provider_api" | "curated" | "agent_observed"`.
   The registry (`registry.ts`) holds an ordered list; a new adapter/provider = a
-  new `ModelSource` module, resolver core untouched. Routing: a CCR-routed draft
-  (`router:"ccr"`) resolves ONLY via the `ccr` source — the direct-provider
-  sources (`acp_probe` / `curated` / `provider_api`) decline it, because a CCR
-  runner's model namespace is CCR's `provider,model` format, not direct ids. (Implemented)
+  new `ModelSource` module, resolver core untouched. (Implemented)
 - **`ModelEntry`** — one discovered model: `{ id; displayName?; origins: SourceKind[] }`.
   `origins` accumulates every source that advertised the id (dedupe is by `id`,
   first-source-wins on the entry body). (Implemented)
 - **`SourceStatus`** — per-source outcome: `{ kind: SourceKind; status: "ok" |
-  "skipped" | "error"; reason?; count? }`. A failure of one source is reported here,
+"skipped" | "error"; reason?; count? }`. A failure of one source is reported here,
   never raised. (Implemented)
 - **Cache entry** — `{ key; models; sources; resolvedAt; ttlSeconds }` keyed by a
-  stable hash of `(adapter, provider.kind, base_url, sorted env-ref NAMES, router,
-  sidecarId)` — **names, never secret values**. Expiry is anchored to the entry's
+  stable hash of `(adapter, provider.kind, base_url, sorted env-ref NAMES)` —
+  **names, never secret values**. Expiry is anchored to the entry's
   first insertion (`insertedAt`, internal): a passive-harvest merge refreshes
   `resolvedAt` but never extends the expiry window. (Implemented)
 - **Suggestion DTO** — the web-facing, source-grouped shape the runner modal
   renders: `{ groups: [{ source; label; status; reason?; models: [{ id;
-  displayName? }] }]; resolvedAt; ttlSeconds }`. (Implemented)
+displayName? }] }]; resolvedAt; ttlSeconds }`. (Implemented)
 - **Application channel** — how the configured model is pinned: **claude** via the
   ADR-043 `settings.local.json { model, availableModels }` materialization;
   **codex** via ACP `unstable_setSessionModel`. ADR-084 extends this to
@@ -69,11 +66,11 @@ Gemini, OpenCode, and MiMo must not inherit Claude/Codex model defaults. Every
 model suggestion response for these adapters must be source-labelled as live,
 curated, observed, or skipped.
 
-| Adapter | Suggested sources | Application channel | Initial status |
-| --- | --- | --- | --- |
-| `gemini` | ACP probe when SDK smoke passes; Google provider API only for provider kinds with documented list APIs; passive `agent_observed` harvest | `unstable_setSessionModel` only if advertised, else advisory-only | `skipped` until auth and protocol smoke prove a source |
-| `opencode` | Native OpenCode ACP probe when binary/writable-state smoke passes; optional curated/native list only if OpenCode exposes stable output; passive `agent_observed` harvest | `unstable_setSessionModel` only if advertised, else advisory-only | `skipped` until stdio ACP smoke and model capability are proven |
-| `mimo` | Native MiMo ACP probe only after binary and stdio smoke pass; passive `agent_observed` harvest | `set_session_model` — live ACP smoke proved `session/set_model` (Implemented); the adapter returns `models` + accepts `unstable_setSessionModel` | `skipped` until stdio ACP smoke and model capability are proven |
+| Adapter    | Suggested sources                                                                                                                                                        | Application channel                                                                                                                              | Initial status                                                  |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| `gemini`   | ACP probe when SDK smoke passes; Google provider API only for provider kinds with documented list APIs; passive `agent_observed` harvest                                 | `unstable_setSessionModel` only if advertised, else advisory-only                                                                                | `skipped` until auth and protocol smoke prove a source          |
+| `opencode` | Native OpenCode ACP probe when binary/writable-state smoke passes; optional curated/native list only if OpenCode exposes stable output; passive `agent_observed` harvest | `unstable_setSessionModel` only if advertised, else advisory-only                                                                                | `skipped` until stdio ACP smoke and model capability are proven |
+| `mimo`     | Native MiMo ACP probe only after binary and stdio smoke pass; passive `agent_observed` harvest                                                                           | `set_session_model` — live ACP smoke proved `session/set_model` (Implemented); the adapter returns `models` + accepts `unstable_setSessionModel` | `skipped` until stdio ACP smoke and model capability are proven |
 
 Source statuses for the new adapters are part of the contract:
 
@@ -110,7 +107,7 @@ stateDiagram-v2
     refreshing --> fresh: re-resolved, entry replaced
     note right of fresh
       key = hash(adapter, provider.kind, base_url,
-      sorted env-ref NAMES, router, sidecarId)
+      sorted env-ref NAMES)
       — names, never secret values
     end note
 ```
@@ -120,7 +117,7 @@ stateDiagram-v2
 ### Resolve fan-out (admin → web proxy → supervisor)
 
 The modal resolves on open and on a debounced change of adapter / provider kind /
-base URL / sidecar. The web proxy is admin-gated and converts `env:NAME` → bare
+base URL. The web proxy is admin-gated and converts `env:NAME` → bare
 names; the supervisor fans out across `supports()`-matching sources, merges, and
 caches. (Implemented)
 
@@ -133,9 +130,8 @@ sequenceDiagram
     participant Reg as ModelSource registry
     participant Probe as ACP probe source
     participant Prov as Provider/curated source
-    participant CCR as CCR source
 
-    Admin->>Web: open modal / change adapter|provider|baseUrl|sidecar (debounced)
+    Admin->>Web: open modal / change adapter|provider|baseUrl (debounced)
     Web->>Web: requireGlobalRole(admin), reject raw secret, env:NAME to bare names
     Web->>Sup: POST /model-catalog/resolve {draft, force?}
     Sup->>Cache: get(key(draft))
@@ -146,7 +142,6 @@ sequenceDiagram
         par sources whose supports(draft) is true
             Reg->>Probe: resolve(draft)
             Reg->>Prov: resolve(draft)
-            Reg->>CCR: resolve(draft)
         end
         Reg-->>Sup: merge + dedupe by id, aggregate per-source status
         Sup->>Cache: set(key, result)
@@ -244,7 +239,7 @@ sequenceDiagram
 
 The steady-state acceptance contract. Each bullet is one testable invariant.
 (All **Implemented**. Discovery + application are CI-tested against
-mocks — mock ACP adapter, stubbed CCR, mocked provider fetch, stub-supervisor;
+mocks — mock ACP adapter, mocked provider fetch, and stub-supervisor;
 live-provider / live-agent verification is pending, consistent with the ACP
 spike baseline.)
 
@@ -265,7 +260,7 @@ spike baseline.)
 - `resolveModelCatalog` MUST dedupe models by `id` (first-source-wins on the entry
   body) and MUST accumulate `origins` across every source advertising that `id`.
 - The cache key MUST derive from `(adapter, provider.kind, base_url, sorted env-ref
-  NAMES, router, sidecarId)` — names, NEVER secret values; two drafts differing
+NAMES)` — names, NEVER secret values; two drafts differing
   only by an env-ref **value** MUST share one key.
 - A cache hit within `ttlSeconds` MUST call no source; `force:true` MUST bypass the
   cache and repopulate it.
@@ -273,11 +268,12 @@ spike baseline.)
   (z.ai); any authed `GET {base}/models` MUST be best-effort and MUST fall back to
   curated on any error.
 - For a claude runner with `model` set, the materialized `settings.local.json` MUST
-  carry `{ model }` (+ an `availableModels` allowlist for `anthropic_compatible` /
-  CCR) on EVERY claude session, not only when permission entries exist.
+  carry `{ model }` (+ an `availableModels` allowlist for
+  `anthropic_compatible`) on EVERY claude session, not only when permission
+  entries exist.
 - For a codex session the supervisor MUST call `unstable_setSessionModel(runner.model)`
   after `session/new` AND after `session/resume` iff `runner.model !==
-  currentModelId` (an absent `currentModelId` counts as different), and MUST NOT
+currentModelId` (an absent `currentModelId` counts as different), and MUST NOT
   call it when they are equal.
 - A claude-reported model mismatch or a failed codex `setSessionModel` call MUST
   emit an advisory `session.update` (`sessionUpdate = "model_advisory"`) and MUST
@@ -297,7 +293,7 @@ spike baseline.)
 ## Edge cases
 
 - **Malformed draft** (unknown adapter, `env:`-prefixed/raw secret, bad provider
-  union, `router` without `sidecarId`) → `SupervisorError("PRECONDITION")` (409) at
+  union) → `SupervisorError("PRECONDITION")` (409) at
   the supervisor Zod boundary, before any source runs. See
   [error-taxonomy.md](../error-taxonomy.md).
 - **Missing provider env-ref** (`authTokenEnv`/`apiKeyEnv` absent from supervisor
@@ -312,15 +308,11 @@ spike baseline.)
   provider source falls back to the curated GLM list with `status:"ok"` (curated)
   or `status:"error"` only if curated is also unavailable (it never is — it is
   static).
-- **CCR unreachable** (`router:"ccr"`, daemon down) → CCR source `status:"error"`;
-  resolve still returns other sources.
 - **ACP probe reject / timeout / malformed `models`** → probe source
   `status:"error"` with an `ACP_PROTOCOL`-class `reason`; the child is SIGTERM'd
   regardless. NOT a thrown 500.
 - **codex probe without non-interactive auth** → probe source `status:"skipped"`
   (`reason`), per the Phase 0A T0A.2 determination.
-- **Unknown `sidecarId`** (web proxy) → `MaisterError("CONFIG")` (422), validated
-  against the platform sidecar catalog before forwarding.
 - **Raw (non-`env:`) secret in a web draft** → `MaisterError("CONFIG")` (422); the
   bare name never leaves the supervisor host.
 - **Supervisor unreachable / 5xx** (web proxy) → `MaisterError("EXECUTOR_UNAVAILABLE")`
@@ -352,7 +344,7 @@ spike baseline.)
 - **Related domains:** [acp-runners.md](acp-runners.md) (runner CRUD),
   [executors.md](executors.md) (resolution + routing).
 - **Source (Implemented):** `supervisor/src/model-catalog/{types,registry,resolve,cache,harvest}.ts`,
-  `supervisor/src/model-catalog/sources/{acp-probe,provider-api,curated,ccr,index}.ts`,
+  `supervisor/src/model-catalog/sources/{acp-probe,provider-api,curated,index}.ts`,
   `supervisor/src/{spawn,acp-client,http-api,main}.ts`,
   `web/lib/capabilities/{agent-map,materialize}.ts`,
   `web/lib/supervisor-client.ts`,

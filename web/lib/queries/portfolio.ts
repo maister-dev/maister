@@ -1,6 +1,5 @@
 import "server-only";
 
-import { hasReadyPlatformRunner } from "@/lib/acp-runners/ready-runner";
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type {
   GlobalRole,
@@ -25,6 +24,7 @@ import {
   sql,
 } from "drizzle-orm";
 
+import { hasReadyPlatformRunner } from "@/lib/acp-runners/ready-runner";
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
 import { isProjectFlowLaunchable } from "@/lib/flows/project-flow-launchability";
@@ -772,7 +772,7 @@ export type RailWorkspaceTone =
 export type RailTtlState = "active" | "warning" | "due";
 
 // Runner detail for the rail row's runner info chip tooltip
-// (agent · model · adapter · provider · sidecar). Parsed null-safe from
+// (agent · model · adapter · provider). Parsed null-safe from
 // runs.runner_snapshot — a missing snapshot yields null and the chip hides.
 // Never carries the snapshot id, argv, or secret refs.
 export interface RailRunnerDetail {
@@ -780,7 +780,6 @@ export interface RailRunnerDetail {
   model: string;
   adapter: string;
   provider: string;
-  sidecar: string | null;
 }
 
 export interface RailWorkspaceRow {
@@ -867,7 +866,6 @@ function executorDisplay(row: {
     adapter: string;
     providerKind: string;
     permissionPolicy: string;
-    sidecarId?: string | null;
   } | null;
   runId: string;
 }): string {
@@ -1032,7 +1030,6 @@ export async function getRailWorkspaceGroups(
           model: row.runnerSnapshot.model,
           adapter: row.runnerSnapshot.adapter,
           provider: row.runnerSnapshot.providerKind,
-          sidecar: row.runnerSnapshot.sidecarId ?? null,
         }
       : null;
     const workspace: RailWorkspaceRow = {

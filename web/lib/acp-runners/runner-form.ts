@@ -21,7 +21,6 @@ export interface RunnerDraft {
   location?: string;
   wireApi?: boolean;
   permissionPolicy: PermissionPolicy;
-  sidecarId?: string | null;
   enabled: boolean;
 }
 
@@ -168,7 +167,6 @@ export function buildCreateBody(draft: RunnerDraft): Record<string, unknown> {
     ...(nonEmptyEnv(draft.env) ? { env: draft.env } : {}),
     provider: providerObject(draft),
     permissionPolicy: draft.permissionPolicy,
-    sidecarId: draft.sidecarId ?? null,
     enabled: draft.enabled,
   };
 }
@@ -193,9 +191,6 @@ export function buildPatchBody(
   }
   if (draft.permissionPolicy !== original.permissionPolicy) {
     body.permissionPolicy = draft.permissionPolicy;
-  }
-  if ((draft.sidecarId ?? null) !== (original.sidecarId ?? null)) {
-    body.sidecarId = draft.sidecarId ?? null;
   }
   if (draft.enabled !== original.enabled) body.enabled = draft.enabled;
 

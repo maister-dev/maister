@@ -40,7 +40,6 @@ describe("missingAcpRunnerTargets", () => {
               base_url: "https://api.z.ai/api/anthropic",
               requires_auth_token: true,
             },
-            sidecar: { kind: "ccr", optional: false },
           },
         },
       },
@@ -62,7 +61,6 @@ describe("missingAcpRunnerTargets", () => {
             base_url: "https://api.z.ai/api/anthropic",
             requires_auth_token: true,
           },
-          sidecar: { kind: "ccr", optional: false },
         },
       },
     ]);

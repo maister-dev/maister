@@ -225,7 +225,6 @@ beforeEach(async () => {
       model: "gpt-5",
       provider: { kind: "openai" },
       permissionPolicy: "default",
-      sidecarId: null,
       readinessStatus: "Ready",
       enabled: true,
     },

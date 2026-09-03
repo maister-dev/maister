@@ -107,7 +107,6 @@ export type RunnerExecutor = {
   agent: CapabilityAgent;
   model: string;
   env: Record<string, string> | null;
-  router: "ccr" | null;
 };
 
 function runnerSnapshotFromRunner(row: PlatformAcpRunner): RunnerSnapshot {
@@ -120,7 +119,6 @@ function runnerSnapshotFromRunner(row: PlatformAcpRunner): RunnerSnapshot {
     provider: row.provider,
     providerKind: row.provider.kind,
     permissionPolicy: row.permissionPolicy,
-    sidecarId: row.sidecarId,
   };
 }
 
@@ -133,7 +131,6 @@ export function executorFromRunnerSnapshot(
     agent: snapshot.capabilityAgent as RunnerExecutor["agent"],
     model: snapshot.model,
     env: null,
-    router: snapshot.sidecarId ? "ccr" : null,
   };
 }
 

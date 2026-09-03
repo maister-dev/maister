@@ -144,29 +144,12 @@ describe("POST /model-catalog/resolve", () => {
     await app.close();
   });
 
-  it("409 PRECONDITION on router without sidecarId", async () => {
-    const { app } = boot([fakeSource("curated", [])]);
-
-    const res = await app.inject({
-      method: "POST",
-      url: "/model-catalog/resolve",
-      payload: {
-        adapter: "claude",
-        provider: { kind: "anthropic" },
-        router: "ccr",
-      },
-    });
-
-    expect(res.statusCode).toBe(409);
-    expect(res.json().code).toBe("PRECONDITION");
-
-    await app.close();
-  });
-
   it("a per-source failure surfaces as status:error INSIDE a 200 (never a 5xx)", async () => {
     const { app } = boot([
       fakeSource("acp_probe", [{ id: "glm-5.1", origins: ["acp_probe"] }]),
-      fakeSource("ccr", [], { throwError: new Error("ccr unreachable") }),
+      fakeSource("provider_api", [], {
+        throwError: new Error("provider unreachable"),
+      }),
     ]);
 
     const res = await app.inject({
@@ -179,10 +162,12 @@ describe("POST /model-catalog/resolve", () => {
     const body = res.json();
 
     expect(body.models.map((m: ModelEntry) => m.id)).toEqual(["glm-5.1"]);
-    const ccr = body.sources.find((s: { kind: string }) => s.kind === "ccr");
+    const provider = body.sources.find(
+      (s: { kind: string }) => s.kind === "provider_api",
+    );
 
-    expect(ccr.status).toBe("error");
-    expect(ccr.reason).toContain("ccr unreachable");
+    expect(provider.status).toBe("error");
+    expect(provider.reason).toContain("provider unreachable");
 
     await app.close();
   });

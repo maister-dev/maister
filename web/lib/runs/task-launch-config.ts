@@ -8,11 +8,11 @@ import type {
   DeliveryPolicy,
   StoredDeliveryPolicy,
 } from "@/lib/runs/delivery-policy";
-import { LAUNCHABLE_FLOW_ENABLEMENT_STATES } from "@/lib/flows/enablement-states";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 
 import { and, eq } from "drizzle-orm";
 
+import { LAUNCHABLE_FLOW_ENABLEMENT_STATES } from "@/lib/flows/enablement-states";
 import { loadFlowRunnerBindings } from "@/lib/acp-runners/catalog";
 import { resolveRunSessions } from "@/lib/acp-runners/resolve";
 import { getDb } from "@/lib/db/client";
@@ -86,7 +86,6 @@ function runnerCatalogEntry(row: Record<string, any>): RunnerCatalogEntry {
     env: row.env,
     providerKind: providerKind(row.provider),
     permissionPolicy: row.permissionPolicy,
-    sidecarId: row.sidecarId,
     enabled: row.enabled,
     ready: row.readinessStatus === "Ready",
   };

@@ -3,6 +3,11 @@
 > MAIster is the self-hosted execution and governance layer for reproducible
 > AI-powered SDLC processes over private code. The current validation wedge is
 > repeatable core-package process execution across private projects.
+>
+> **Historical milestone note:** Completed M0/M6 entries preserve what shipped
+> in May 2026. Their CCR statements are obsolete: managed Claude Code Router
+> support was removed by [ADR-164](../docs/decisions/adr-164.md). Current
+> routing uses typed provider configuration plus environment references.
 
 ## Milestones
 

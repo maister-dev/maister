@@ -126,7 +126,6 @@ beforeEach(async () => {
       provider: { kind: "anthropic" },
       providerKind: "anthropic",
       permissionPolicy: "default",
-      sidecarId: null,
     },
   };
   dbState.workspace = {

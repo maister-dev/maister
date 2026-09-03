@@ -1,5 +1,10 @@
 # Implementation Plan: M6 — Executor Registry: claude + codex + CCR
 
+> **Obsolete historical plan:** The managed CCR/router-sidecar component
+> described here was removed by
+> [ADR-164](../../docs/decisions/adr-164.md). Do not implement or restore this
+> plan.
+
 Branch: feature/m6-executor-registry
 Created: 2026-05-27
 

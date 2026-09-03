@@ -410,7 +410,6 @@ async function runVerifier(
             env: (verifierRuntime.executor.env ?? undefined) as
               | Record<string, string>
               | undefined,
-            router: verifierRuntime.executor.router ?? undefined,
           },
           ...(verifierRuntime.runner ? { runner: verifierRuntime.runner } : {}),
           ...(verifierRuntime.adapterLaunch
@@ -666,7 +665,6 @@ async function synthesizeConsensus(
           env: (synthesizer.executor.env ?? undefined) as
             | Record<string, string>
             | undefined,
-          router: synthesizer.executor.router ?? undefined,
         },
         ...(synthesizer.runner ? { runner: synthesizer.runner } : {}),
         ...(synthesizer.adapterLaunch

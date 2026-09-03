@@ -27,7 +27,7 @@
 // `monotonicId`.
 //
 // It is a SUPERSET of stub-supervisor.ts: /health, /diagnostics,
-// /model-catalog/resolve and the CCR sidecar echoes all answer the same ready
+// /model-catalog/resolve answer the same ready
 // shapes, so an e2e suite can point MAISTER_SUPERVISOR_URL at this server for
 // EVERY spec without breaking the ones that never spawn an agent.
 import type { AddressInfo } from "node:net";
@@ -389,11 +389,7 @@ export async function startTestSupervisor(
             { id: "claude", binary: "claude-agent-acp", available: true },
             { id: "codex", binary: "codex-acp", available: true },
           ],
-          sidecars: [{ id: "ccr-default", kind: "ccr", state: "ready" }],
-          envRefs: [
-            { name: "MAISTER_CCR_AUTH_TOKEN", present: true },
-            { name: "ZAI_API_KEY", present: false },
-          ],
+          envRefs: [{ name: "ZAI_API_KEY", present: false }],
         }),
       );
 
@@ -417,26 +413,6 @@ export async function startTestSupervisor(
           ttlSeconds: 3600,
         }),
       );
-
-      return;
-    }
-
-    const sidecarStart = url.match(/^\/sidecars\/([A-Za-z0-9._-]+)\/start$/);
-
-    if (method === "POST" && sidecarStart) {
-      req.resume();
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: true, state: "ready" }));
-
-      return;
-    }
-
-    const sidecarStop = url.match(/^\/sidecars\/([A-Za-z0-9._-]+)\/stop$/);
-
-    if (method === "POST" && sidecarStop) {
-      req.resume();
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: true, state: "idle" }));
 
       return;
     }

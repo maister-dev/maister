@@ -73,7 +73,7 @@ contract and [Architecture](docs/architecture.md) for the boundary rules.
 - Next.js 16 (App Router) · React 19 · TypeScript 5 (strict)
 - HeroUI v3 · Tailwind CSS 4 · `tailwind-variants` · `next-themes`
 - Drizzle ORM · Postgres 16
-- Fastify supervisor · ACP adapter binaries · optional CCR router
+- Fastify supervisor · ACP adapter binaries · env-configured provider routing
 - vitest · Playwright · pnpm · Node 24
 
 ## Example
@@ -106,34 +106,34 @@ Full manifest reference: [Configuration](docs/configuration.md).
 
 ## Documentation
 
-| Guide | Description |
-| ----- | ----------- |
-| [Getting Started](docs/getting-started.md) | Install, dev workflow, first run |
-| [Russian Guide](docs/ru/README.md) | Purpose, first run, workflow, concepts, operator guide |
-| [Supervisor](docs/supervisor.md) | ACP daemon: HTTP+SSE API, lifecycle, env vars, cost.jsonl |
-| [Database Schema](docs/database-schema.md) | Drizzle/Postgres tables, FK cascade chain, indexes |
-| [Error Taxonomy](docs/error-taxonomy.md) | `MaisterError` codes — when each fires, what the UI does |
-| [Configuration](docs/configuration.md) | `maister.yaml` v2 + `flow.yaml` v1 + `form_schema` versioning + env vars |
-| [Flow Installer](docs/flow-installer.md) | `installFlowPlugin()` pipeline, system cache, symlink, DB upsert, ops CLI |
-| [Flow DSL](docs/flow-dsl.md) | Graph-only typed-node DSL and runner behavior |
-| [AIF Flow Plugin](docs/flow-aif-plugin.md) | Bundled `aif` Flow plugin walkthrough |
-| [Flow Studio](docs/system-analytics/flow-studio.md) | In-app flow authoring + visual graph editor |
-| [Observatory](docs/system-analytics/observatory.md) | Autonomy Score, correction-rate, signal clusters |
-| [Vision](docs/VISION.md) | One-liner, product spine, principles, validation goal |
-| [Product View](docs/PRODUCT_VIEW.md) | Target user, JTBD, current scope, Phase 2 |
-| [Architecture](docs/architecture.md) | C4 views, component map, data flows |
-| [Decisions](docs/decisions.md) | ADRs and locked technical choices |
-| [System Analytics](docs/system-analytics/README.md) | Domain state machines and process flows |
-| [Screens Reference](docs/screens/README.md) | User-facing screens and shared chrome |
-| [Database ERDs](docs/db/README.md) | Mermaid ERDs by domain |
-| [API: Web](docs/api/web.openapi.yaml) | Web Route Handler contract |
-| [API: Supervisor](docs/api/supervisor.openapi.yaml) | Supervisor HTTP contract |
-| [Events: Web Run SSE](docs/api/async/web-runs.asyncapi.yaml) | Browser-facing run event stream |
-| [Events: Supervisor SSE](docs/api/async/supervisor-sse.asyncapi.yaml) | Supervisor session event stream |
-| [External API References](docs/api/external/README.md) | ACP and transitive provider references |
-| [Docs Rules](docs/CLAUDE.md) | Documentation structure and validation rules |
-| [Project Spec](.ai-factory/DESCRIPTION.md) | Full project specification |
-| [Agent Map](AGENTS.md) | Structural map for AI agents and new contributors |
+| Guide                                                                 | Description                                                               |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| [Getting Started](docs/getting-started.md)                            | Install, dev workflow, first run                                          |
+| [Russian Guide](docs/ru/README.md)                                    | Purpose, first run, workflow, concepts, operator guide                    |
+| [Supervisor](docs/supervisor.md)                                      | ACP daemon: HTTP+SSE API, lifecycle, env vars, cost.jsonl                 |
+| [Database Schema](docs/database-schema.md)                            | Drizzle/Postgres tables, FK cascade chain, indexes                        |
+| [Error Taxonomy](docs/error-taxonomy.md)                              | `MaisterError` codes — when each fires, what the UI does                  |
+| [Configuration](docs/configuration.md)                                | `maister.yaml` v2 + `flow.yaml` v1 + `form_schema` versioning + env vars  |
+| [Flow Installer](docs/flow-installer.md)                              | `installFlowPlugin()` pipeline, system cache, symlink, DB upsert, ops CLI |
+| [Flow DSL](docs/flow-dsl.md)                                          | Graph-only typed-node DSL and runner behavior                             |
+| [AIF Flow Plugin](docs/flow-aif-plugin.md)                            | Bundled `aif` Flow plugin walkthrough                                     |
+| [Flow Studio](docs/system-analytics/flow-studio.md)                   | In-app flow authoring + visual graph editor                               |
+| [Observatory](docs/system-analytics/observatory.md)                   | Autonomy Score, correction-rate, signal clusters                          |
+| [Vision](docs/VISION.md)                                              | One-liner, product spine, principles, validation goal                     |
+| [Product View](docs/PRODUCT_VIEW.md)                                  | Target user, JTBD, current scope, Phase 2                                 |
+| [Architecture](docs/architecture.md)                                  | C4 views, component map, data flows                                       |
+| [Decisions](docs/decisions.md)                                        | ADRs and locked technical choices                                         |
+| [System Analytics](docs/system-analytics/README.md)                   | Domain state machines and process flows                                   |
+| [Screens Reference](docs/screens/README.md)                           | User-facing screens and shared chrome                                     |
+| [Database ERDs](docs/db/README.md)                                    | Mermaid ERDs by domain                                                    |
+| [API: Web](docs/api/web.openapi.yaml)                                 | Web Route Handler contract                                                |
+| [API: Supervisor](docs/api/supervisor.openapi.yaml)                   | Supervisor HTTP contract                                                  |
+| [Events: Web Run SSE](docs/api/async/web-runs.asyncapi.yaml)          | Browser-facing run event stream                                           |
+| [Events: Supervisor SSE](docs/api/async/supervisor-sse.asyncapi.yaml) | Supervisor session event stream                                           |
+| [External API References](docs/api/external/README.md)                | ACP and transitive provider references                                    |
+| [Docs Rules](docs/CLAUDE.md)                                          | Documentation structure and validation rules                              |
+| [Project Spec](.ai-factory/DESCRIPTION.md)                            | Full project specification                                                |
+| [Agent Map](AGENTS.md)                                                | Structural map for AI agents and new contributors                         |
 
 ## AI Context
 

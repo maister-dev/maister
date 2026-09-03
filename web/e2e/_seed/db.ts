@@ -55,8 +55,6 @@ export function e2eClaudeRunnerSnapshot(runnerId: string) {
     provider: { kind: "anthropic" },
     providerKind: "anthropic",
     permissionPolicy: "default",
-    sidecar: null,
-    sidecarId: null,
   };
 }
 

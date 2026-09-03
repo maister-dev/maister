@@ -13,14 +13,11 @@ import {
 // Derive the resolve-equivalent draft from a launched runner so a passive
 // harvest writes the SAME cache key a `/model-catalog/resolve` request for that
 // runner would read. provider (with its bare env-ref names + base URL) is
-// reused verbatim; a CCR sidecar maps to router="ccr" + its id.
+// reused verbatim.
 export function draftFromRunner(runner: RunnerLaunch): ModelCatalogDraft {
   return {
     adapter: runner.adapter,
     provider: runner.provider,
-    ...(runner.sidecar
-      ? { router: "ccr" as const, sidecarId: runner.sidecar.id }
-      : {}),
   };
 }
 

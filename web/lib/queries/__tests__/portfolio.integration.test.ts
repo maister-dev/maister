@@ -1306,7 +1306,6 @@ describe("portfolio queries (integration)", () => {
         model: "claude-sonnet-4-6",
         adapter: "claude",
         provider: "anthropic",
-        sidecar: null,
       });
     });
 

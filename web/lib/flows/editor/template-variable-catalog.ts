@@ -110,7 +110,6 @@ export const STATIC_TEMPLATE_VARIABLES: readonly TemplateVariableEntry[] = [
   staticEntry("executor.id"),
   staticEntry("executor.agent"),
   staticEntry("executor.model"),
-  staticEntry("executor.router", "optional"),
 ];
 
 export function buildTemplateVariableCatalog({

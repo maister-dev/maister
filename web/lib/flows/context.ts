@@ -123,7 +123,6 @@ export type BuildContextArgs = {
     id: string;
     agent: CapabilityAgent;
     model: string;
-    router?: "ccr" | null;
   };
   nodeAttempts: NodeAttemptRow[];
   projectSlug: string;
@@ -222,7 +221,6 @@ export function buildContext(args: BuildContextArgs): FlowContext {
       id: args.executor.id,
       agent: args.executor.agent,
       model: args.executor.model,
-      router: args.executor.router ?? undefined,
     },
     steps: reduceLedger(args.nodeAttempts, cap),
     env,

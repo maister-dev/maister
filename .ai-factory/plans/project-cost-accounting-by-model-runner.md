@@ -1,5 +1,9 @@
 # Plan — Project cost accounting: reliable scratch reconcile + by-model + by-runner breakdown
 
+> **Historical plan:** CCR/router-specific tasks and contracts below are
+> obsolete and superseded by [ADR-164](../../docs/decisions/adr-164.md). Do not
+> implement them; use current code and canonical docs.
+
 **Branch:** `claude/nostalgic-darwin-1d5f73` (worktree, at `main` HEAD — 0 divergence)
 **Created:** 2026-06-29
 **Type:** enhancement (analytics / cost observability)

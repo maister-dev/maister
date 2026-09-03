@@ -11,12 +11,11 @@ import pino from "pino";
 import * as schemaModule from "./schema";
 import { resolvePostgresDbUrl } from "./postgres-url";
 
-import { routerSidecarPresetRows } from "@/lib/acp-runners/presets";
 import { syncProjectFlowRolesFromConfig } from "@/lib/assignments/service";
 import { deriveTaskKey } from "@/lib/social/task-key";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (see schema.integration.test.ts).
-const { flows, platformRouterSidecars, projectMembers, projects, users } =
+const { flows, projectMembers, projects, users } =
   schemaModule as unknown as Record<string, any>;
 
 const log = pino({ name: "db:seed" });
@@ -55,25 +54,6 @@ async function ensureAdminUser(
   return id;
 }
 
-async function ensurePlatformRuntimeDefaults(
-  db: ReturnType<typeof drizzle>,
-): Promise<void> {
-  await db
-    .insert(platformRouterSidecars)
-    .values(routerSidecarPresetRows())
-    .onConflictDoNothing();
-
-  // ADR-094: the preset catalog is no longer seeded into platform_acp_runners,
-  // and the platform_runtime_settings singleton is no longer seeded either —
-  // both the default runners and the singleton (`default_runner_id` is NOT NULL)
-  // are materialized by reconcilePlatformRunners at the first admin /settings
-  // load, once a Ready native default exists.
-  log.info(
-    { sidecarId: "ccr-default" },
-    "platform runtime defaults ensured (runners + default materialize on settings load)",
-  );
-}
-
 async function main(): Promise<void> {
   const url = resolvePostgresDbUrl();
 
@@ -82,8 +62,6 @@ async function main(): Promise<void> {
 
   try {
     const adminUserId = await ensureAdminUser(db);
-
-    await ensurePlatformRuntimeDefaults(db);
 
     const existing = await db
       .select()

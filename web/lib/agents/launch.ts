@@ -20,7 +20,6 @@ import {
   type RunnerCatalogEntry,
   type RunnerResolution,
   type RunnerSnapshot,
-  type RunnerSidecarSnapshot,
 } from "@/lib/acp-runners/resolve";
 import {
   type AdapterId,
@@ -141,7 +140,6 @@ const {
   hitlRequests,
   flows,
   platformAcpRunners,
-  platformRouterSidecars,
   platformRuntimeSettings,
   projects,
   runs,
@@ -291,12 +289,7 @@ type TaskCommentPromptRow = {
   createdAt: Date;
 };
 
-function runnerCatalogEntry(
-  row: Record<string, any>,
-  sidecarById: Map<string, Record<string, any>>,
-): RunnerCatalogEntry {
-  const sidecar = row.sidecarId ? sidecarById.get(row.sidecarId) : undefined;
-
+function runnerCatalogEntry(row: Record<string, any>): RunnerCatalogEntry {
   return {
     id: row.id,
     adapter: row.adapter,
@@ -308,18 +301,6 @@ function runnerCatalogEntry(
     permissionPolicy: row.permissionPolicy,
     readOnlyCapable:
       getAdapterSupportById(row.adapter)?.readOnlyCapable === true,
-    sidecar: sidecar
-      ? ({
-          id: sidecar.id,
-          kind: sidecar.kind,
-          lifecycle: sidecar.lifecycle,
-          configPath: sidecar.configPath,
-          baseUrl: sidecar.baseUrl,
-          healthcheckUrl: sidecar.healthcheckUrl,
-          authTokenRef: sidecar.authTokenRef,
-        } satisfies RunnerSidecarSnapshot)
-      : null,
-    sidecarId: row.sidecarId,
     enabled: row.enabled,
     ready: row.readinessStatus === "Ready",
   };
@@ -466,10 +447,6 @@ async function resolveRunnerForAgent(
   }
 
   const runnerRows = await _db.select().from(platformAcpRunners);
-  const sidecarRows = await _db.select().from(platformRouterSidecars);
-  const sidecarById = new Map<string, Record<string, any>>(
-    sidecarRows.map((row: Record<string, any>) => [row.id, row]),
-  );
 
   const resolution = resolveAgentRunner({
     launchOverrideRunnerId,
@@ -481,9 +458,7 @@ async function resolveRunnerForAgent(
     },
     project: { defaultRunnerId: ctx.project.defaultRunnerId },
     platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
-    runners: runnerRows.map((row: Record<string, any>) =>
-      runnerCatalogEntry(row, sidecarById),
-    ),
+    runners: runnerRows.map(runnerCatalogEntry),
   });
 
   await assertReadOnlySessionEvidence({

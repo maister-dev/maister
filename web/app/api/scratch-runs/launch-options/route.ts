@@ -149,16 +149,13 @@ function runnerCatalogEntry(row: Record<string, any>): RunnerCatalogEntry {
     env: row.env,
     providerKind: runnerProviderKind(row.provider),
     permissionPolicy: row.permissionPolicy,
-    sidecarId: row.sidecarId,
     enabled: row.enabled,
     ready: row.readinessStatus === "Ready",
   };
 }
 
 function runnerLabel(row: RunnerCatalogEntry): string {
-  const sidecar = row.sidecarId ? ` via ${row.sidecarId}` : "";
-
-  return `${row.id} · ${row.model}${sidecar}`;
+  return `${row.id} · ${row.model}`;
 }
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
@@ -274,7 +271,6 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         model: row.model,
         providerKind: row.providerKind,
         permissionPolicy: row.permissionPolicy,
-        sidecarId: row.sidecarId ?? null,
         enabled: row.enabled,
         ready: row.ready,
       })),

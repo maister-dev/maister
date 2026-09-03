@@ -76,12 +76,7 @@ describe("harvestSessionModels", () => {
     const cache = new ModelCatalogCache();
 
     expect(() =>
-      harvestSessionModels(
-        runner,
-        {} as acp.SessionModelState,
-        cache,
-        silent,
-      ),
+      harvestSessionModels(runner, {} as acp.SessionModelState, cache, silent),
     ).not.toThrow();
     expect(() =>
       harvestSessionModels(
@@ -175,19 +170,5 @@ describe("harvestSessionModels", () => {
 
     nowMs += 20_000; // 110s after the ORIGINAL insert → must be expired
     expect(cache.get(draft)).toBeUndefined();
-  });
-
-  it("draftFromRunner maps a CCR sidecar to router + sidecarId", () => {
-    const ccrRunner: RunnerLaunch = {
-      ...runner,
-      sidecar: { id: "ccr-1", kind: "ccr" },
-    };
-
-    expect(draftFromRunner(ccrRunner)).toMatchObject({
-      adapter: "claude",
-      router: "ccr",
-      sidecarId: "ccr-1",
-    });
-    expect(draftFromRunner(runner).router).toBeUndefined();
   });
 });

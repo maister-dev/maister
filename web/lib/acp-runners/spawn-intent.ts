@@ -8,7 +8,6 @@ import type {
 } from "@/lib/supervisor-client";
 import type {
   PlatformRunnerProvider,
-  RunnerSidecarSnapshot,
   RunnerSnapshot,
 } from "@/lib/acp-runners/resolve";
 
@@ -64,7 +63,6 @@ export function runnerExecutorInput(
   return {
     agent: snapshot.capabilityAgent as SupervisorExecutorInput["agent"],
     model: snapshot.model,
-    router: snapshot.sidecarId ? "ccr" : undefined,
   };
 }
 
@@ -145,10 +143,8 @@ function toSupervisorProvider(
 export function runnerSupervisorInput(input: {
   snapshot: RunnerSnapshot;
   provider?: PlatformRunnerProvider | null;
-  sidecar?: RunnerSidecarSnapshot | null;
 }): SupervisorRunnerInput {
   const provider = input.provider ?? providerFromSnapshot(input.snapshot);
-  const sidecar = input.sidecar ?? input.snapshot.sidecar;
   const runnerProvider = toSupervisorProvider(provider);
   const env = nonEmptyRecord(input.snapshot.env);
 
@@ -163,20 +159,5 @@ export function runnerSupervisorInput(input: {
     permissionPolicy: input.snapshot
       .permissionPolicy as SupervisorRunnerInput["permissionPolicy"],
     ...(env ? { env } : {}),
-    ...(sidecar
-      ? {
-          sidecar: {
-            id: sidecar.id,
-            kind: sidecar.kind,
-            ...(sidecar.lifecycle ? { lifecycle: sidecar.lifecycle } : {}),
-            ...(sidecar.configPath ? { configPath: sidecar.configPath } : {}),
-            ...(sidecar.baseUrl ? { baseUrl: sidecar.baseUrl } : {}),
-            ...(sidecar.healthcheckUrl
-              ? { healthcheckUrl: sidecar.healthcheckUrl }
-              : {}),
-            authTokenEnv: envRefName(sidecar.authTokenRef ?? undefined),
-          },
-        }
-      : {}),
   };
 }

@@ -467,7 +467,6 @@ describe("cleanup reclaims worktree settings.local.json (M14 T4.5-E)", () => {
         executorRefId: "runner-1",
         agent: "claude",
         model: "glm-5.1",
-        router: null,
       },
     });
 

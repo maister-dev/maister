@@ -22,7 +22,6 @@ const claudeRunner: RunnerRow = {
   model: "claude-sonnet-4-6",
   provider: { kind: "anthropic" },
   permissionPolicy: "default",
-  sidecarId: null,
   readinessStatus: "Ready",
   readinessReasons: [],
   enabled: true,
@@ -35,7 +34,6 @@ const codexRunner: RunnerRow = {
   model: "gpt-5-codex",
   provider: { kind: "openai" },
   permissionPolicy: "default",
-  sidecarId: null,
   readinessStatus: "Ready",
   readinessReasons: [],
   enabled: true,
@@ -47,7 +45,6 @@ describe("AcpRunnersPanel", () => {
       createElement(AcpRunnersPanel, {
         defaultRunnerId: "claude-code",
         presets: [],
-        sidecars: [],
         runners: [claudeRunner, codexRunner],
       }),
     );
@@ -69,7 +66,6 @@ describe("AcpRunnersPanel", () => {
       createElement(AcpRunnersPanel, {
         defaultRunnerId: "claude-code",
         presets: [],
-        sidecars: [],
         runners: [codexRunner],
       }),
     );
@@ -90,7 +86,6 @@ describe("AcpRunnersPanel", () => {
       model: "glm-5.1",
       provider: { kind: "openai_compatible" },
       permissionPolicy: "default" as const,
-      sidecarId: null,
       readinessStatus: "NotReady" as const,
       readinessReasons: [] as readonly string[],
     };
@@ -98,7 +93,6 @@ describe("AcpRunnersPanel", () => {
       createElement(AcpRunnersPanel, {
         defaultRunnerId: "claude-code",
         presets: [preset],
-        sidecars: [],
         runners: [claudeRunner],
       }),
     );
@@ -116,7 +110,6 @@ describe("AcpRunnersPanel", () => {
       createElement(AcpRunnersPanel, {
         defaultRunnerId: "claude-code",
         presets: [],
-        sidecars: [],
         runners: [claudeRunner],
       }),
     );
@@ -136,7 +129,6 @@ describe("AcpRunnersPanel", () => {
       createElement(AcpRunnersPanel, {
         defaultRunnerId: "claude-code",
         presets: [],
-        sidecars: [],
         runners: [notReady],
       }),
     );
@@ -156,7 +148,6 @@ describe("AcpRunnersPanel", () => {
       createElement(AcpRunnersPanel, {
         defaultRunnerId: "claude-code",
         presets: [],
-        sidecars: [],
         runners: [unknown],
       }),
     );

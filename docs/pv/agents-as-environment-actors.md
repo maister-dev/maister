@@ -27,18 +27,18 @@
 Triggered by research into Anthropic's current agent offerings. Three distinct
 things are easy to conflate; only one is new to us:
 
-| Offering | What it is | Where the loop runs | Multi-vendor | We already use it? |
-|---|---|---|---|---|
-| **`ant` CLI** | Thin Go wrapper over the Anthropic API; also the client for Managed Agents | n/a | Anthropic API only | No |
-| **Claude Agent SDK** | Library running the agent loop **in your process** | Your host (we wrap it via `claude-agent-acp`) | **Yes** (ACP seam: claude + codex + GLM/CCR) | **Yes** |
-| **Managed Agents** (beta) | **Hosted** agent loop + sandbox + session store (`Agent`/`Environment`/`Session`/`Events`) | **Anthropic control plane** (even self-hosted sandbox runs only *tool execution* on your infra; tool I/O still flows to Anthropic) | **No — Anthropic-only orchestration** | No |
+| Offering                  | What it is                                                                                 | Where the loop runs                                                                                                                | Multi-vendor                                                        | We already use it? |
+| ------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------ |
+| **`ant` CLI**             | Thin Go wrapper over the Anthropic API; also the client for Managed Agents                 | n/a                                                                                                                                | Anthropic API only                                                  | No                 |
+| **Claude Agent SDK**      | Library running the agent loop **in your process**                                         | Your host (we wrap it via `claude-agent-acp`)                                                                                      | **Yes** (ACP seam: claude + codex + Anthropic-compatible providers) | **Yes**            |
+| **Managed Agents** (beta) | **Hosted** agent loop + sandbox + session store (`Agent`/`Environment`/`Session`/`Events`) | **Anthropic control plane** (even self-hosted sandbox runs only _tool execution_ on your infra; tool I/O still flows to Anthropic) | **No — Anthropic-only orchestration**                               | No                 |
 
 **Conclusion that shapes this concept:** the vendor-neutral seam for "adapters
 to other ecosystems" is **ACP, which we already have** — not Managed Agents
 (whose whole value is that the loop is Anthropic's, so codex/GLM can't sit
 behind it). Managed Agents stays a **future Option C** runtime for
-long-running asynchronous Anthropic-only flows, *not* the unifying layer and
-*not* a quiet walk-back of ADR #5 (multi-executor). This concept therefore
+long-running asynchronous Anthropic-only flows, _not_ the unifying layer and
+_not_ a quiet walk-back of ADR #5 (multi-executor). This concept therefore
 builds on the existing ACP + capability-materialization (M14) foundation.
 
 ## The concept
@@ -74,7 +74,7 @@ Claude-subagent format plus MAIster extensions:
 
 Decoupling agent identity from executor is correct and cheap in the data model.
 But "fully runner-independent" is partly aspirational: `.claude/agents/*.md` is a
-*Claude Agent SDK* artifact — codex can't consume it. Runner coverage is gated by
+_Claude Agent SDK_ artifact — codex can't consume it. Runner coverage is gated by
 **which materializers we write**. So: neutral MAIster definition + one CC
 materializer now, leave seams for codex/hosted. The over-engineering trap is
 writing all materializers up front — don't (YAGNI). This mirrors the existing
@@ -108,7 +108,7 @@ sweeps**:
    `event` = inbound webhook route (not cron). `manual` = UI button.
 2. **Continuous reconcile** (opt-in daemons) — **not** state-transition polling
    (forbidden by ADR #1). Daemon liveness = **supervisor heartbeat** (already
-   exists). The tick runs only the ADR #1-sanctioned *recovery sweep*: daemon
+   exists). The tick runs only the ADR #1-sanctioned _recovery sweep_: daemon
    with no live session but a valid checkpoint → respawn + `session/resume`; otherwise
    `Crashed` + "Recover/discard".
 3. **GC** — current 7-day worktree/checkpoint logic, unchanged.
@@ -117,20 +117,21 @@ Placement rationale: domain state (`runs`, `tasks`, `agent_schedules`), Drizzle,
 precondition logic, and the concurrency budget already live in the web tier; the
 supervisor is effectively DB-free. Putting the scheduler in the supervisor would
 force DB access and duplicate ADR #4/#7 logic. "Scheduler in Next.js" means a
-**stateless tick-route** (claim → enqueue → spawn-request), *not* a resident
+**stateless tick-route** (claim → enqueue → spawn-request), _not_ a resident
 `setInterval` loop (which would violate "no long-running processes in Next.js"
 and can't run reliably on serverless anyway). Clock source: **external cron**
 preferred (reuses the current GC clock); **supervisor timer** as a fallback for
 single-box deployments — logic stays in Next.js either way.
 
 Guards:
+
 - **ADR #1** — tick = clock + recovery sweep, never a state-transition poller; no
   `fs.watch`/`chokidar`. Live path stays ACP notifications.
 - **Concurrency** — separate `MAISTER_MAX_CONCURRENT_AGENTS` budget (shipped:
   default 3; the flow/scratch cap was later raised to 6 via ADR-089/090).
   Ops agents must not evict delivery runs.
 - **Idempotency** — atomic claim (`UPDATE … WHERE next_run_at <= now()
-  RETURNING`) so overlapping ticks can't double-spawn.
+RETURNING`) so overlapping ticks can't double-spawn.
 - **Workspace by mode** (light ADR #7 bifurcation) — monitoring/stats agents
   usually need **no git worktree** → lightweight workdir
   `.maister/<slug>/agents/<id>/runs/<run-id>/`; flow-bound agents reuse the
@@ -143,7 +144,7 @@ Guards:
   controls belong to flow/package capability settings and execution policy.
 - **Materialization (M14):** on spawn, scoped `settings.local.json` + ACP
   `mcpServers` (reuse ADR-043). Runner-specific: CC → `.claude/agents/<name>.md`
-  + `settings.local.json`; codex/hosted are later seams.
+  - `settings.local.json`; codex/hosted are later seams.
 - **Enforced-flip dependency (ADR-041 currently blocked):** start in
   **materialize-only** (best-effort least-privilege). Read-only/monitoring agents
   ship immediately (materialize-only suffices for read scope). **Destructive /
@@ -168,11 +169,11 @@ Guards:
   budget counted by `kind=agent`).
 - **New tables** (mirror the flow registry over plugins):
   - `agents` — index over the `.md` source: `id, scope, project_id?, slug,
-    recommended_runner, capability_profile jsonb, risk_tier, mode, version`.
+recommended_runner, capability_profile jsonb, risk_tier, mode, version`.
     Canonical source is the `.md`; frontmatter parsed into columns for
     validation/queries.
   - `agent_schedules` — `agent_id, trigger_type, cron_expr?, event_match?,
-    next_run_at?, desired_state?, enabled`.
+next_run_at?, desired_state?, enabled`.
 - **Flow-bound is nearly free:** the DSL already has `type: agent` steps. Bind
   one to the catalog via `agent: <id>` (instead of/over inline `prompt`); the
   flow engine already runs `agent` steps as ACP sessions. Only profile
@@ -201,14 +202,16 @@ No new error codes — map onto `lib/errors.ts`:
 - Destructive agent while enforcement blocked (ADR-041) → `PRECONDITION`.
 - Spawn / protocol → `SPAWN` / `ACP_PROTOCOL`. HITL timeout on an agent-run →
   `HITL_TIMEOUT` + the idle-checkpoint path (`NeedsInput → NeedsInputIdle →
-  session/resume`); N/A for continuous (guard above).
+session/resume`); N/A for continuous (guard above).
 
 Scheduler:
+
 - Budget full → run goes `Pending` with queue position (ADR #4).
 - Clock outage → next tick does **one catch-up fire**, not backfill (no
   thundering herd); `next_run_at` advances one period.
 
 Continuous daemons (the one genuinely new guard):
+
 - Crash → supervisor heartbeat + reconcile-sweep respawns + `session/resume` (valid
   checkpoint) or `CRASH` + "Recover/discard".
 - **Crash-loop → exponential backoff; after N attempts → `Crashed` + stop.** No
@@ -265,6 +268,6 @@ Continuous daemons (the one genuinely new guard):
   item 4 (automation as product surface), item 3 (narrow tools / permissioned
   hands), item 1 (specialist checks).
 - Builds on ADR #1 (ACP-driven, no polling), #4 (concurrency), #5 (multi-executor
-  + override chain), #6 (plugin packaging / materialization), #7 (workspace
-  lifecycle), and M14 capability materialization (ADR-043) + its blocked
-  enforced-flip (ADR-041).
+  - override chain), #6 (plugin packaging / materialization), #7 (workspace
+    lifecycle), and M14 capability materialization (ADR-043) + its blocked
+    enforced-flip (ADR-041).

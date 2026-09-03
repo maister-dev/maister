@@ -7,18 +7,13 @@ import { getSessionUser } from "@/lib/authz";
 import { AcpRunnersPanel } from "@/components/settings/acp-runners-panel";
 import { AdapterSupportPanel } from "@/components/settings/adapter-support-panel";
 import { BrainSettingsPanel } from "@/components/settings/brain-settings-panel";
-import { RouterSidecarsPanel } from "@/components/settings/router-sidecars-panel";
 import { WebhooksPanel } from "@/components/settings/webhooks-panel";
 import { getBrainSettings } from "@/lib/brain/settings";
 import { reconcilePlatformRunners } from "@/lib/acp-runners/native-defaults";
 import { platformRunnerPresetRows } from "@/lib/acp-runners/presets";
 import { getAdapterSupport } from "@/lib/acp-runners/schema";
 import { getDb } from "@/lib/db/client";
-import {
-  platformAcpRunners,
-  platformRouterSidecars,
-  platformRuntimeSettings,
-} from "@/lib/db/schema";
+import { platformAcpRunners, platformRuntimeSettings } from "@/lib/db/schema";
 import {
   hostToolStatus,
   reposRoot,
@@ -46,15 +41,6 @@ export default async function SettingsPage(): Promise<ReactElement> {
           .filter((adapter) => !adapter.available)
           .map((adapter) => adapter.id)
       : [];
-  const sidecarStateById =
-    diagnostics?.kind === "ready"
-      ? Object.fromEntries(
-          diagnostics.diagnostics.sidecars.map((sidecar) => [
-            sidecar.id,
-            sidecar.state,
-          ]),
-        )
-      : {};
 
   return (
     <div className="w-full">
@@ -153,12 +139,7 @@ export default async function SettingsPage(): Promise<ReactElement> {
                 defaultRunnerId={runtime.defaultRunnerId}
                 presets={runtime.presets}
                 runners={runtime.runners}
-                sidecars={runtime.sidecars}
                 unavailableAdapters={unavailableAdapters}
-              />
-              <RouterSidecarsPanel
-                processStateById={sidecarStateById}
-                sidecars={runtime.sidecars}
               />
               <WebhooksPanel />
               <BrainSettingsPanel settings={runtime.brainSettings} />
@@ -189,9 +170,8 @@ async function loadPlatformRuntimeView(
     diagnostics: diagnostics?.kind === "ready" ? diagnostics.diagnostics : null,
   });
 
-  const [runners, sidecars, settingsRows, brainSettings] = await Promise.all([
+  const [runners, settingsRows, brainSettings] = await Promise.all([
     db.select().from(platformAcpRunners),
-    db.select().from(platformRouterSidecars),
     db.select().from(platformRuntimeSettings),
     getBrainSettings(db),
   ]);
@@ -201,7 +181,6 @@ async function loadPlatformRuntimeView(
     defaultRunnerId: settingsRows[0]?.defaultRunnerId ?? null,
     presets: platformRunnerPresetRows(),
     runners,
-    sidecars,
     brainSettings,
   };
 }

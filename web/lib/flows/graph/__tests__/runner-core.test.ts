@@ -24,7 +24,6 @@ describe("loadRun — per-session set (M42)", () => {
       provider: { kind: "anthropic" },
       providerKind: "anthropic",
       permissionPolicy: "default",
-      sidecarId: null,
     };
   }
 

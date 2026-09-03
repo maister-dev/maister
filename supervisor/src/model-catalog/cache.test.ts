@@ -168,42 +168,7 @@ describe("ModelCatalogCache", () => {
     expect(cache.get(b)).toBeUndefined();
   });
 
-  it("key isolation: drafts differing by router get independent entries", () => {
-    const cache = new ModelCatalogCache();
-    const a: ModelCatalogDraft = {
-      adapter: "claude",
-      provider: { kind: "anthropic" },
-    };
-    const b: ModelCatalogDraft = {
-      adapter: "claude",
-      provider: { kind: "anthropic" },
-      router: "ccr",
-    };
-
-    cache.set(a, makeResult());
-    expect(cache.get(b)).toBeUndefined();
-  });
-
-  it("key isolation: drafts differing by sidecarId get independent entries", () => {
-    const cache = new ModelCatalogCache();
-    const a: ModelCatalogDraft = {
-      adapter: "claude",
-      provider: { kind: "anthropic" },
-      router: "ccr",
-      sidecarId: "ccr-main",
-    };
-    const b: ModelCatalogDraft = {
-      adapter: "claude",
-      provider: { kind: "anthropic" },
-      router: "ccr",
-      sidecarId: "ccr-alt",
-    };
-
-    cache.set(a, makeResult());
-    expect(cache.get(b)).toBeUndefined();
-  });
-
-  it("same names -> same key: identical (adapter, kind, baseUrl, env-ref names, router, sidecarId) share one entry", () => {
+  it("same names -> same key: identical adapter, provider, base URL, and env-ref names share one entry", () => {
     const cache = new ModelCatalogCache();
     const a: ModelCatalogDraft = {
       adapter: "claude",

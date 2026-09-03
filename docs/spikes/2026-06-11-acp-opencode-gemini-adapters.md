@@ -1,5 +1,10 @@
 # ACP OpenCode and Gemini CLI Adapter Spike
 
+> **Historical snapshot:** CCR-specific findings are obsolete and superseded by
+> [ADR-164](../decisions/adr-164.md). Do not use them as current setup or
+> runtime guidance; current routing uses typed provider configuration plus
+> environment references.
+
 Date: 2026-06-11
 
 ## Purpose

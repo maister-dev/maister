@@ -113,7 +113,6 @@ describe("buildPromptAssistsForNode", () => {
       "executor.id",
       "executor.agent",
       "executor.model",
-      "executor.router",
     ]);
     expect(assists.variableWarnings).toEqual([]);
   });

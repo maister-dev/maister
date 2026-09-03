@@ -41,7 +41,7 @@ const BASE_REQUEST = {
   projectSlug: "web-app",
   worktreePath: "/runtime/worktrees/web-app/run-1",
   stepId: "implement",
-  executor: { id: "r1", agent: "claude", model: "claude-sonnet-4-6" },
+  executor: { agent: "claude", model: "claude-sonnet-4-6" },
 };
 
 function snapshot(

@@ -34,7 +34,6 @@ type RunnerOption = {
   model: string | null;
   providerKind: string;
   permissionPolicy: string;
-  sidecarId: string | null;
   enabled: boolean;
   ready: boolean;
 };

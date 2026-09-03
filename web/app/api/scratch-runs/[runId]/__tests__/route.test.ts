@@ -139,7 +139,6 @@ function seedScratchRun(): string {
         model: "sonnet",
         providerKind: "anthropic",
         permissionPolicy: "default",
-        sidecarId: null,
       },
       runKind: "scratch",
       status: "Running",
@@ -261,7 +260,6 @@ describe("GET /api/scratch-runs/[runId]", () => {
         model: "sonnet",
         providerKind: "anthropic",
         permissionPolicy: "default",
-        sidecarId: null,
       },
     });
     expect(body.scratch).not.toHaveProperty("supervisorSessionId");

@@ -30,8 +30,6 @@ export type RunnerCatalogEntry = {
   readonly providerKind: string;
   readonly permissionPolicy: string;
   readonly readOnlyCapable?: boolean;
-  readonly sidecar?: RunnerSidecarSnapshot | null;
-  readonly sidecarId?: string | null;
   readonly enabled: boolean;
   readonly ready: boolean;
 };
@@ -56,16 +54,6 @@ export type PlatformRunnerProvider =
   | { kind: "google_gateway"; baseUrl?: string; apiKey?: string }
   | { kind: "agent_native" };
 
-export type RunnerSidecarSnapshot = {
-  readonly id: string;
-  readonly kind: "ccr";
-  readonly lifecycle?: "managed" | "external";
-  readonly configPath?: string | null;
-  readonly baseUrl?: string | null;
-  readonly healthcheckUrl?: string | null;
-  readonly authTokenRef?: string | null;
-};
-
 export type RunnerResolutionInput = {
   readonly launchOverrideRunnerId?: string | null;
   readonly step: { readonly runnerId?: string | null };
@@ -86,8 +74,6 @@ export type RunnerSnapshot = {
   readonly providerKind: string;
   readonly permissionPolicy: string;
   readonly readOnlyCapable?: boolean;
-  readonly sidecar?: RunnerSidecarSnapshot | null;
-  readonly sidecarId?: string | null;
 };
 
 export type RunnerResolution = {
@@ -141,8 +127,6 @@ function snapshotRunner(runner: RunnerCatalogEntry): RunnerSnapshot {
     providerKind: runner.providerKind,
     permissionPolicy: runner.permissionPolicy,
     readOnlyCapable: runner.readOnlyCapable,
-    sidecar: runner.sidecar,
-    sidecarId: runner.sidecarId,
   };
 }
 

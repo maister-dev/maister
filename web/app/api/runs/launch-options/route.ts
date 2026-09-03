@@ -136,7 +136,6 @@ function runnerCatalogEntry(row: Record<string, any>): RunnerCatalogEntry {
     env: row.env,
     providerKind: runnerProviderKind(row.provider),
     permissionPolicy: row.permissionPolicy,
-    sidecarId: row.sidecarId,
     enabled: row.enabled,
     ready: row.readinessStatus === "Ready",
   };
@@ -543,7 +542,6 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       model: runner.model,
       providerKind: runnerProviderKind(runner.provider),
       permissionPolicy: runner.permissionPolicy,
-      sidecarId: runner.sidecarId,
       readinessStatus: runner.readinessStatus,
       readinessReasons: runner.readinessReasons,
       enabled: runner.enabled,

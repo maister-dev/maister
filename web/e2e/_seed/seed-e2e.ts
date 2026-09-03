@@ -55,7 +55,6 @@ const BOARD_SLUG = "e2e-acceptance-board";
 const SCRATCH_SLUG = "e2e-acceptance-scratch";
 const REGISTRATION_SLUG = "e2e-registerable";
 const REGISTRATION_DUP_SLUG = "e2e-registerable-dup";
-const LIVE_CCR_SLUG = "e2e-live-ccr";
 const HUMAN_ASK_SLUG = "e2e-human-ask";
 const HUMAN_ASK_QUESTION =
   "Which deployment environment should receive this release?";
@@ -63,8 +62,6 @@ const HUMAN_ASK_QUESTION =
 const RUNTIME_ROOT = "/tmp/maister-e2e";
 const PLATFORM_DEFAULT_RUNNER_ID = "claude-code";
 const CODEX_RUNNER_ID = "codex-openai";
-const CCR_SIDECAR_ID = "ccr-default";
-const CCR_RUNNER_ID = "claude-code-ccr";
 const NOT_READY_RUNNER_ID = "codex-zai-glm";
 
 // M42 (ADR-114): `runs` no longer carries the runner/resume mirror columns
@@ -81,8 +78,6 @@ function e2eClaudeRunnerSnapshot(runnerId: string) {
     provider: { kind: "anthropic" },
     providerKind: "anthropic",
     permissionPolicy: "default",
-    sidecar: null,
-    sidecarId: null,
   };
 }
 
@@ -1533,33 +1528,7 @@ async function seedPlatformRuntime(pool: Pool): Promise<void> {
   );
   await pool.query(
     `DELETE FROM platform_acp_runners WHERE id = ANY($1::text[])`,
-    [
-      [
-        PLATFORM_DEFAULT_RUNNER_ID,
-        CODEX_RUNNER_ID,
-        CCR_RUNNER_ID,
-        NOT_READY_RUNNER_ID,
-      ],
-    ],
-  );
-  await pool.query(`DELETE FROM platform_router_sidecars WHERE id = $1`, [
-    CCR_SIDECAR_ID,
-  ]);
-
-  await pool.query(
-    `INSERT INTO platform_router_sidecars
-       (id, kind, lifecycle, command_preset, config_path, base_url,
-        healthcheck_url, auth_token_ref, readiness_status, readiness_reasons,
-        enabled)
-     VALUES ($1, 'ccr', 'managed', 'ccr_start', $2, $3, $4, $5, 'Ready',
-        '[]'::jsonb, true)`,
-    [
-      CCR_SIDECAR_ID,
-      "~/.claude-code-router/config.json",
-      "http://127.0.0.1:3456",
-      "http://127.0.0.1:3456/health",
-      "env:MAISTER_CCR_AUTH_TOKEN",
-    ],
+    [[PLATFORM_DEFAULT_RUNNER_ID, CODEX_RUNNER_ID, NOT_READY_RUNNER_ID]],
   );
   // ADR-094: the readiness seeded here equals what reconcilePlatformRunners
   // derives from the stub diagnostics (claude + codex binaries available,
@@ -1571,24 +1540,19 @@ async function seedPlatformRuntime(pool: Pool): Promise<void> {
   await pool.query(
     `INSERT INTO platform_acp_runners
        (id, adapter, capability_agent, model, provider, permission_policy,
-        sidecar_id, readiness_status, readiness_reasons, enabled)
+        readiness_status, readiness_reasons, enabled)
      VALUES
        ($1, 'claude', 'claude', 'claude-sonnet-4-6', $2::jsonb, 'default',
-        null, 'Ready', '[]'::jsonb, true),
+        'Ready', '[]'::jsonb, true),
        ($3, 'codex', 'codex', 'gpt-5-codex', $4::jsonb, 'default',
-        null, 'Ready', '[]'::jsonb, true),
-       ($5, 'claude', 'claude', 'glm-5.1', $6::jsonb, 'default',
-        $7, 'Ready', '[]'::jsonb, true),
-       ($8, 'codex', 'codex', 'glm-5.1', $9::jsonb, 'default',
-        null, 'NotReady', $10::jsonb, true)`,
+        'Ready', '[]'::jsonb, true),
+       ($5, 'codex', 'codex', 'glm-5.1', $6::jsonb, 'default',
+        'NotReady', $7::jsonb, true)`,
     [
       PLATFORM_DEFAULT_RUNNER_ID,
       JSON.stringify({ kind: "anthropic" }),
       CODEX_RUNNER_ID,
       JSON.stringify({ kind: "openai" }),
-      CCR_RUNNER_ID,
-      JSON.stringify({ kind: "anthropic_compatible" }),
-      CCR_SIDECAR_ID,
       NOT_READY_RUNNER_ID,
       JSON.stringify({
         kind: "openai_compatible",
@@ -2913,7 +2877,6 @@ async function seedLaunchableProjectFixture(
       refId: string;
       agent: SeedAdapterId;
       model: string;
-      router?: "ccr";
     };
   },
 ): Promise<ProjectFixture> {
@@ -4030,8 +3993,6 @@ async function seedM16Fixture(
       provider: { kind: "anthropic" },
       providerKind: "anthropic",
       permissionPolicy: "default",
-      sidecar: null,
-      sidecarId: null,
     },
   });
   await pool.query(
@@ -7455,7 +7416,6 @@ async function main(): Promise<void> {
         SCRATCH_SLUG,
         REGISTRATION_SLUG,
         REGISTRATION_DUP_SLUG,
-        LIVE_CCR_SLUG,
         M11C_VISIBLE_SLUG,
         M11C_REFUSE_SLUG,
         M19_SLUG,
@@ -7623,19 +7583,6 @@ async function main(): Promise<void> {
        FROM projects p WHERE p.slug = $2`,
       [randomUUID(), SCRATCH_SLUG],
     );
-    const liveCcr = await seedLaunchableProjectFixture(pool, {
-      slug: LIVE_CCR_SLUG,
-      projectName: "E2E Live CCR",
-      userId: admin.id,
-      repoPath: path.join(RUNTIME_ROOT, "repos", LIVE_CCR_SLUG),
-      defaultRunnerId: CCR_RUNNER_ID,
-      executor: {
-        refId: "claude-ccr-live",
-        agent: "claude",
-        model: process.env.E2E_CCR_EXECUTOR_MODEL ?? "e2e-live-model",
-        router: "ccr",
-      },
-    });
     const registration = await createRegistrationFixture();
     const m11cVisible = await seedM11cVisibleFixture(pool, admin.id);
     const m11cRefuse = await seedM11cRefuseFixture(pool, admin.id);
@@ -7802,7 +7749,6 @@ You answer when summoned by an @mention.
         board,
         humanAsk,
         scratch,
-        liveCcr,
         registration,
         m11cVisible,
         m11cRefuse,

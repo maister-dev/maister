@@ -1,5 +1,9 @@
 # Implementation Plan: Flow Editor Prompt Assists
 
+> **Historical plan:** CCR/router-specific tasks and contracts below are
+> obsolete and superseded by [ADR-164](../../docs/decisions/adr-164.md). Do not
+> implement them; use current code and canonical docs.
+
 > For agentic workers: implement this plan task-by-task. The implementation
 > phase is strict TDD: each behavior change must go RED -> GREEN -> refactor
 > before moving on.

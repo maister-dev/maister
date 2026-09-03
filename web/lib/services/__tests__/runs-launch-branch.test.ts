@@ -30,7 +30,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 // `from()` is both awaitable (for selects with no `.where()`, e.g.
-// platformAcpRunners / platformRouterSidecars) AND chainable to `.where()`.
+// platformAcpRunners) AND chainable to `.where()`.
 // Either terminal consumes exactly one positional `state.selectResults` slot.
 // It is a lazy thenable (NOT an eager Promise) so chained `.where()` selects do
 // not also consume a slot via an auto-scheduled `from()` microtask.
@@ -268,13 +268,12 @@ function project(overrides: Record<string, unknown> = {}) {
   };
 }
 
-// The 11 sequential `_db.select()` calls launchRun performs, in order
+// The 10 sequential `_db.select()` calls launchRun performs, in order
 // (ADR-050 platform-runner work):
 //   1 tasks, 2 projects, 3 flows, 4 flowRevisions, 5 platformRuntimeSettings,
-//   6 platformAcpRunners (no .where), 7 platformRouterSidecars (no .where),
-//   8 projectFlowRunnerDefaults, 9 flowRunnerRemaps, 10 projectFlowRoles,
-//   11 capabilityRecords.
-// Slots 8-11 are intentionally omitted: the fake DB returns `[]` past the
+//   6 platformAcpRunners (no .where), 7 projectFlowRunnerDefaults,
+//   8 flowRunnerRemaps, 9 projectFlowRoles, 10 capabilityRecords.
+// Slots 7-10 are intentionally omitted: the fake DB returns `[]` past the
 // array end, which is the correct empty-result for those four (resolution
 // falls through to the platform default runner; no roles/capabilities seeded).
 function seedSelects(
@@ -341,13 +340,10 @@ function seedSelects(
         model: "claude-sonnet-4-6",
         provider: { kind: "anthropic" },
         permissionPolicy: "default",
-        sidecarId: null,
         readinessStatus: "Ready",
         enabled: true,
       },
     ],
-    // 7 platformRouterSidecars — none needed for this runner.
-    [],
   ];
 }
 

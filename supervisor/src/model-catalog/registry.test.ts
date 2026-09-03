@@ -43,7 +43,7 @@ describe("ModelSourceRegistry", () => {
   it("register() appends to the end", () => {
     const a = fakeSource("acp_probe", true);
     const b = fakeSource("curated", true);
-    const c = fakeSource("ccr", true);
+    const c = fakeSource("agent_observed", true);
     const registry = new ModelSourceRegistry([a, b]);
 
     registry.register(c);
@@ -63,7 +63,7 @@ describe("ModelSourceRegistry", () => {
   it("supporting() is empty when no source supports the draft", () => {
     const registry = new ModelSourceRegistry([
       fakeSource("acp_probe", false),
-      fakeSource("ccr", false),
+      fakeSource("curated", false),
     ]);
 
     expect(registry.supporting(draft)).toEqual([]);

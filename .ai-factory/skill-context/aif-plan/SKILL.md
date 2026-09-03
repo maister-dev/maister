@@ -4,53 +4,57 @@
 > Sections under "Auto-generated rules" are managed by `/aif-evolve`; do not hand-edit them.
 > Last updated: 2026-07-11
 > Based on: 2 adversarial-review pass-throughs (M6 / 2026-05-28, M7 / 2026-05-28)
-> + M10 verify pass-through (2026-05-30); /aif-evolve patch analysis (2026-05-30,
-> 2026-06-01 — M11b/M11c adversarial-review batch)
-> + /aif-evolve 107-patch batch (2026-06-17, cursor 2026-05-30 → 2026-06-16)
-> + /aif-evolve 114-patch batch (2026-07-11, cursor 2026-06-16 → 2026-07-07)
+>
+> - M10 verify pass-through (2026-05-30); /aif-evolve patch analysis (2026-05-30,
+>   2026-06-01 — M11b/M11c adversarial-review batch)
+> - /aif-evolve 107-patch batch (2026-06-17, cursor 2026-05-30 → 2026-06-16)
+> - /aif-evolve 114-patch batch (2026-07-11, cursor 2026-06-16 → 2026-07-07)
 
 ## Rules
 
 ### Plan MUST enumerate deployment touchpoints
+
 **Source**: M6 adversarial review pass-through (2026-05-28)
 **Rule**: For every task that introduces a new env var, config file path, sidecar binary, bound port, or host-mounted file, the plan MUST include a dedicated "Deployment wiring" task in the same phase (or a clearly named follow-up). That task touches the deployment artifacts: `Dockerfile`, `compose.yml`, `compose.override.yml`, `compose.production.yml`, `.env.example`. The task's acceptance criteria explicitly call out which file each new dep lands in.
 
-If runtime wiring is deliberately deferred (e.g. "CCR is dev-only on POC"), the plan MUST include an explicit "Not yet supported in Docker — enable in Phase X by …" doc task that updates `docs/getting-started.md` AND the relevant `docs/configuration.md` section. Silent dev/prod skew is not an option — either wire it or document the gap.
+If runtime wiring is deliberately deferred, the plan MUST include an explicit "Not yet supported in Docker — enable in Phase X by …" doc task that updates `docs/getting-started.md` AND the relevant `docs/configuration.md` section. Silent dev/prod skew is not an option — either wire it or document the gap.
 
 Concrete checklist to apply at plan-write time:
 
-| If the plan adds … | The plan MUST include a task that touches … |
-| ------------------ | -------------------------------------------- |
-| A new env var the web or supervisor reads | `.env.example` + the relevant service's `environment:` block in `compose.yml` (+ prod overlay if production-relevant) |
-| A new config file read at runtime | A bind mount or named volume on the consuming service in compose + a `.env.example` toggle for the host path if it's tunable |
-| A new sidecar process spawned by web or supervisor | Dep listed in the consuming `package.json` + lockfile commit + smoke check that the binary is on PATH inside the container |
-| A new bound port | Port mapping on the service in compose (if externally reachable) + collision check against the existing service set |
+| If the plan adds …                                 | The plan MUST include a task that touches …                                                                                  |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| A new env var the web or supervisor reads          | `.env.example` + the relevant service's `environment:` block in `compose.yml` (+ prod overlay if production-relevant)        |
+| A new config file read at runtime                  | A bind mount or named volume on the consuming service in compose + a `.env.example` toggle for the host path if it's tunable |
+| A new sidecar process spawned by web or supervisor | Dep listed in the consuming `package.json` + lockfile commit + smoke check that the binary is on PATH inside the container   |
+| A new bound port                                   | Port mapping on the service in compose (if externally reachable) + collision check against the existing service set          |
 
-Reason: M6 added `router=ccr` end-to-end in code, including new env vars and a new sidecar daemon, but the compose files were untouched. The shipped runtime cannot exercise the feature, and the gap surfaced only at adversarial review.
+Reason: a runtime feature can be wired end-to-end in code while its compose configuration remains untouched. The shipped runtime then cannot exercise the feature, and the gap may surface only at adversarial review.
 
 ### Plan MUST trace every contract surface to its spec file
+
 **Source**: M6 adversarial review pass-through (2026-05-28)
 **Rule**: Separate from "what narrative docs to update", the plan's docs phase MUST list every external-facing CONTRACT surface that changes and the spec file that names it. The plan is the place to enumerate this so the implementation phase has an explicit checklist — `/aif-verify` then re-derives the same list from the diff as a cross-check.
 
 Surfaces to enumerate (the right side names the spec file by default; add others as the project grows):
 
-| Surface | Default spec location |
-| ------- | --------------------- |
-| HTTP route added/changed (path, method, status codes, body shape) | `docs/api/<service>.openapi.yaml` + the prose contract doc (e.g. `docs/supervisor.md` for the supervisor) |
-| Wire field changing semantics (e.g. from "reserved" to "load-bearing") | The same `.openapi.yaml` AND the same prose contract doc — both prose and example payloads need to move |
-| SSE / WebSocket event added/changed | `docs/api/async/<channel>.asyncapi.yaml` + the relevant `docs/system-analytics/*.md` |
-| New domain error code | `docs/error-taxonomy.md` |
-| New env var or config-file path | env-vars table in `docs/configuration.md` (the prose CCR-bundling section is not enough — the table is canonical) AND `.env.example` |
-| New DB column / table / index | Drizzle migration + `docs/database-schema.md` + the relevant `docs/db/*.md` ERD |
-| New `package.json` script or CLI entry point | `docs/getting-started.md` "Scripts" section + the relevant `CLAUDE.md` slice |
-| New Flow DSL step type / mode / field | `docs/flow-dsl.md` + the schema in `web/lib/config.schema.ts` |
+| Surface                                                                | Default spec location                                                                                     |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| HTTP route added/changed (path, method, status codes, body shape)      | `docs/api/<service>.openapi.yaml` + the prose contract doc (e.g. `docs/supervisor.md` for the supervisor) |
+| Wire field changing semantics (e.g. from "reserved" to "load-bearing") | The same `.openapi.yaml` AND the same prose contract doc — both prose and example payloads need to move   |
+| SSE / WebSocket event added/changed                                    | `docs/api/async/<channel>.asyncapi.yaml` + the relevant `docs/system-analytics/*.md`                      |
+| New domain error code                                                  | `docs/error-taxonomy.md`                                                                                  |
+| New env var or config-file path                                        | env-vars table in `docs/configuration.md` (the table is canonical) AND `.env.example`                     |
+| New DB column / table / index                                          | Drizzle migration + `docs/database-schema.md` + the relevant `docs/db/*.md` ERD                           |
+| New `package.json` script or CLI entry point                           | `docs/getting-started.md` "Scripts" section + the relevant `CLAUDE.md` slice                              |
+| New Flow DSL step type / mode / field                                  | `docs/flow-dsl.md` + the schema in `web/lib/config.schema.ts`                                             |
 
-Reason: in M6 the `POST /sessions` body field `router: ccr` became load-bearing (could return 503 for missing config / token / health failures), but `docs/supervisor.md` (the supervisor's prose contract doc) was not on the plan's docs list and remained stale. Tracing each surface to a spec file at plan-write time prevents this.
+Reason: a load-bearing `POST /sessions` field can introduce new 503 paths while `docs/supervisor.md` remains stale if the prose contract is omitted from the plan. Tracing each surface to a spec file at plan-write time prevents this.
 
 In-code SSOTs count as contract surfaces: grammar/prompt/assistant files shipped to agents every turn (`flow-dsl-grammar.ts`, also shipped as the `/flow-authoring` skill) and their drift-guard tests must be enumerated alongside `docs/` whenever the schema/DSL they teach changes — a docs-only surface sweep misses them.
 **Source (addition)**: 2026-07-01-11.19
 
 ### Plan MUST call out config-state symmetry for YAML→DB persistence tasks
+
 **Source**: M6 adversarial review pass-through (2026-05-28)
 **Rule**: For any task that persists a YAML/config field into a DB column (or any other persistent store) that downstream readers consume, the task's acceptance criteria MUST include the round-trip:
 
@@ -63,15 +67,16 @@ Both halves are mandatory tests. The plan MUST NOT mark the SET-only test as suf
 Reason: M6's `upsertExecutorsFromConfig()` skipped flows without an `executor_override` entry, leaving a stale `flows.executor_override_id` after operator-removal. The integration test then enshrined this stale behavior as "documented" — a defect promoted to contract.
 
 ### Plan MUST identify body-controlled cross-resource identifiers and require server-state derivation
+
 **Source**: M7 adversarial review pass-through (2026-05-28)
 **Rule**: For every new or modified HTTP route in the plan that operates on a server-held resource (live session, run, project, tenant, workspace), the Decisions section MUST enumerate every identifier the handler consumes and label each as one of:
 
-| Label | Source | Trust-boundary implication |
-| ----- | ------ | -------------------------- |
-| `url-param` | path parameter validated by route shape | Trusted iff the URL itself is access-controlled. |
-| `auth-context` | session / JWT claim / API key binding | Trusted (server-issued). |
-| `server-state` | registry lookup, DB join through a trusted id | Trusted (server-derived). |
-| `body-controlled` | request body field | **Untrusted** — every downstream use (filesystem path, cross-resource lookup, SQL WHERE) requires either strict validation against an allow-list OR comparison against a corresponding `server-state` value. |
+| Label             | Source                                        | Trust-boundary implication                                                                                                                                                                                   |
+| ----------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `url-param`       | path parameter validated by route shape       | Trusted iff the URL itself is access-controlled.                                                                                                                                                             |
+| `auth-context`    | session / JWT claim / API key binding         | Trusted (server-issued).                                                                                                                                                                                     |
+| `server-state`    | registry lookup, DB join through a trusted id | Trusted (server-derived).                                                                                                                                                                                    |
+| `body-controlled` | request body field                            | **Untrusted** — every downstream use (filesystem path, cross-resource lookup, SQL WHERE) requires either strict validation against an allow-list OR comparison against a corresponding `server-state` value. |
 
 When a `body-controlled` field names a cross-resource locator (project slug, run id, step id, filesystem path component) AND the handler already has a `server-state` source for the same locator (registry record, current session, authenticated context), the plan MUST default to deriving from server state. Body fields naming such locators are a code smell — challenge each one in the plan and either drop it or explicitly compare against the server-state value with a stated mismatch response (e.g. 409).
 
@@ -84,6 +89,7 @@ Concrete checklist to apply at plan-write time:
 Reason: M7's first design accepted `runId`/`projectSlug`/`stepId` as body fields on the supervisor's `POST /sessions/:id/input` route. Because the session registry already held those three values for the live session, the body fields were redundant AND opened a path-injection vector across runs. Codex caught it in adversarial review. The fix was to drop the body fields entirely and derive from `registry.get(sessionId).record`. The lesson generalizes: redundant body identifiers are a trust-boundary gap waiting to happen.
 
 ### Plan MUST specify two-phase commit for routes with downstream side-effects
+
 **Source**: M7 adversarial review pass-through (2026-05-28)
 **Rule**: For every plan task that introduces a route whose successful terminal response (200 / 202 / 410-with-side-effect) depends on a downstream side-effect outside the route's own DB (HTTP call to a sibling service, file write to disk, queue publish, supervisor RPC), the task's Decisions sub-bullet MUST explicitly specify:
 
@@ -119,6 +125,7 @@ catch (err) {
 Reason: M7's first design committed `respondedAt` before calling `deliverPermission()`. On supervisor 404, the route returned 410 to the user but the row was already marked responded — the next retry hit the already-responded 409 and the user's selection was effectively lost. Codex flagged this as the second high-severity finding. The two-phase pattern is the only way to make response routes retry-safe; the plan must enforce it at design time, not catch it at review.
 
 ### Plan MUST require explicit deferred-release on every failure path in code that creates a deferred
+
 **Source**: M7 adversarial review pass-through (2026-05-28)
 **Rule**: When a plan task involves code that creates a deferred (a pending promise registered with a remote process, a setTimeout-armed entry in an in-memory map, an outstanding ACP request, a long-poll handle), the task MUST identify:
 
@@ -137,6 +144,7 @@ Concrete checklist to apply at plan-write time:
 Reason: M7's first design specced `runner-agent.ts` to log-and-continue on DB-insert failure when handling a `session.permission_request` SSE event. The supervisor was holding a deferred ACP promise for that request; the runner-agent was the only consumer that could trigger its release (via the response route). On DB-insert failure, the deferred stayed pending until the 30-min keep-alive timeout — invisible to the user, who saw the run as `Running` with no actionable prompt. Codex flagged it as the third finding. The fix was to add `cancelPermission(sessionId, requestId, reason)` and call it from every catch path that breaks the happy-path persistence; the plan now enforces a regression test asserting no hidden deferred remains.
 
 ### Plan MUST make test-runnability and per-phase suite-green explicit acceptance
+
 **Source**: M10 verify pass-through (2026-05-30)
 **Rule**: A plan that promises tests but never states they must EXECUTE and the suite must stay GREEN lets the implementation ship dead or stale tests under deadline pressure. Every plan whose phases add or change behavior MUST encode three test-integrity acceptance criteria:
 
@@ -149,6 +157,7 @@ The plan's "migrate the existing suite" task (when present) MUST enumerate each 
 Reason: M10's T7.3 said "migrate the existing suite" and promised lifecycle/two-phase/RBAC/trust-boundary tests, but the trust-boundary test was committed under a path no runner globbed (never ran), three loader assertions went stale against the new behavior, and the promised lifecycle/integration tests were never written — none of which blocked a phase because no phase had a runnability + green gate.
 
 ### Plan MUST front-load a complete, internally consistent analytics/design spec before any code phase
+
 **Source**: M7 adversarial review passes 3-4 (2026-05-28-20.01, 2026-05-28-20.32); M10 verify pass-through (2026-05-30)
 **Rule**: Analytics is an INPUT to implementation, not a trailing sync task. For any milestone or feature that changes a state machine, a wire/API surface, a DB schema, or a process flow, the plan MUST place a docs-first/analytics phase (a "Phase 0") BEFORE any code phase, and that phase's exit criteria MUST require the analytics artifacts to be COMPLETE and INTERNALLY CONSISTENT so implementation can follow them as the single source of truth. The Phase-0 exit checklist MUST cover, for every domain the milestone touches:
 
@@ -160,6 +169,7 @@ Reason: M10's T7.3 said "migrate the existing suite" and promised lifecycle/two-
 A plan that schedules "docs as a final as-built sync" after the code phases is the drift pattern that produced repeated "specs still describe pre-Mx behavior" review rounds. (M10 verify: the analytics launch-refusal table described a deny-list while the shipped code used a stricter allow-list, and the `docs/db/*.md` ERDs were never updated — both because the analytics work was treated as a trailing sync rather than a leading source of truth.)
 
 ### Plan MUST physically separate trust from execution for any fetch-then-execute of third-party content
+
 **Source**: M10 second adversarial review (2026-05-30-13.03)
 **Rule**: Any feature whose code path fetches/installs external content (clone a repo, download a package, pull a plugin) and later EXECUTES code from it (`setup.sh`, `postinstall`, hooks, plugin entrypoints) MUST be planned so that:
 
@@ -172,14 +182,15 @@ Plan acceptance criteria MUST name, for each executable hook the feature ships: 
 ## Auto-generated rules (managed by `/aif-evolve` — do not hand-edit below this line)
 
 ### Plan MUST make a multi-store state transition atomic and enumerate its crash-window recovery
+
 **Source**: 2026-05-31-22.46, 2026-05-31-23.49, 2026-06-01-12.55
 **Rule**: This GENERALIZES the existing "two-phase commit" rule (single DB write + one external side-effect) to a transition that performs N persistent writes across MORE THAN ONE store — e.g. `runs.status` column + a `node_attempts`/ledger row + the `current_step_id` cursor + an on-disk artifact. For every such transition the plan MUST require:
 
 1. **One transaction / one CAS-guarded claim for all the persistent writes.** Fold the ledger write, the status CAS, and the cursor repark into a SINGLE `db.transaction` so there is no committed intermediate state: either fully transitioned or fully not (and retryable). Git/external side-effects stay BEFORE the tx (a failure is a clean 409 with no ledger write); an async runner/resume stays AFTER the commit (a death there is recoverable by the sweep).
-2. **If full atomicity is impossible**, the plan MUST enumerate every CRASH WINDOW — process death BETWEEN each pair of independent commits, not just the exception paths — and give EACH reachable partial state an explicit, *tested* recovery path. A recovery sweep that filters on a single status (`status='Running'`) only rescues partial states that reach that status; the plan MUST name which partial states the sweep covers and which it does not.
+2. **If full atomicity is impossible**, the plan MUST enumerate every CRASH WINDOW — process death BETWEEN each pair of independent commits, not just the exception paths — and give EACH reachable partial state an explicit, _tested_ recovery path. A recovery sweep that filters on a single status (`status='Running'`) only rescues partial states that reach that status; the plan MUST name which partial states the sweep covers and which it does not.
 3. **A release / abandon / terminal transition MUST close EVERY store that represents the lifecycle** (status column + ledger row + artifact) in the same transaction — updating only `runs.status` while leaving an open `node_attempts` row makes `getActiveTakeover` report an active handoff on a released run.
 
-Reason: M11b's takeover *return* made two of four writes atomic and left the status flip + cursor repark as separate auto-commits; a crash between them stranded the run (`HumanWorking` with an ended ledger row had no rescuer; `Running` with the cursor still at the review node re-dispatched at the wrong node, skipping re-validation gates). M11c's duration-cap watchdog clobbered a concurrently-`Succeeded` attempt because the ledger write had no status predicate. "Two-phase commit" was reasoned about as exception-handling, never as process-crash windows.
+Reason: M11b's takeover _return_ made two of four writes atomic and left the status flip + cursor repark as separate auto-commits; a crash between them stranded the run (`HumanWorking` with an ended ledger row had no rescuer; `Running` with the cursor still at the review node re-dispatched at the wrong node, skipping re-validation gates). M11c's duration-cap watchdog clobbered a concurrently-`Succeeded` attempt because the ledger write had no status predicate. "Two-phase commit" was reasoned about as exception-handling, never as process-crash windows.
 
 Compensation completeness: sequence durable/shared-state mutations as LATE as possible after all cheap deterministic preconditions, hoisting the dominant failure ahead of the mutation (`checkSupervisorHealth()` pre-adopt); when a mutation must precede fallible work, the compensation `try` spans the ENTIRE fallible remainder — not the convenient tail (the pin-advance boundary drawn at "after `addWorktree`" left refusals, health checks, preconditions, and `addWorktree` itself uncompensated) — and the mutator returns an UNDO handle (`AdoptRevert[]`, `[]` on no-op, never a boolean) applied on the throw path with per-revert catch+log. "Deterministic, the user chose it, they'll re-run" is NOT a reason to leave SHARED state (pins, defaults, enablement) mutated on failure — per-request determinism ≠ safe for shared state. Every accepted residual crash window is documented in the ADR; compensation reverts get their own failure-simulation test.
 
@@ -187,27 +198,30 @@ Recovery predicates: a "the reconcile/crash sweep will handle it" justification 
 **Source (additions)**: 2026-06-25-20.14, 2026-06-25-17.19, 2026-06-24-03.08, 2026-07-03-00.00-budget-breach-review-followup
 
 ### Plan MUST fan a new run status / enum value / state-changing route out to ALL consumers, and require allow-list guards
+
 **Source**: 2026-05-31-22.46 (#3/#4), 2026-05-31-23.49 (#1), 2026-06-01-12.55 (#3)
 **Rule**: Adding a `runs.status` value, an enum case, or a state-changing route, the plan's acceptance MUST enumerate the FULL consumer set — not only the narrative docs the contract-surface rule already covers, but every CODE consumer:
 
-| Consumer class | What to update |
-| -------------- | -------------- |
-| Read models | EVERY one — board read model AND portfolio/home (cross-project) read model AND any rail/sidebar query. A status added to one read model but not another makes a claimed run vanish from the home grid while still holding a capacity slot. |
-| Scheduler / concurrency cap | the active-status predicate and the cap accounting. |
-| Recovery / idle sweeps | each sweep's candidate filter — does the new status belong in its WHERE clause? |
-| State / precondition guards | every state guard INCLUDING the HITL form/human-response guard. |
-| API spec | a new state-changing route gets an OpenAPI/AsyncAPI path in the SAME change. |
+| Consumer class              | What to update                                                                                                                                                                                                                             |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Read models                 | EVERY one — board read model AND portfolio/home (cross-project) read model AND any rail/sidebar query. A status added to one read model but not another makes a claimed run vanish from the home grid while still holding a capacity slot. |
+| Scheduler / concurrency cap | the active-status predicate and the cap accounting.                                                                                                                                                                                        |
+| Recovery / idle sweeps      | each sweep's candidate filter — does the new status belong in its WHERE clause?                                                                                                                                                            |
+| State / precondition guards | every state guard INCLUDING the HITL form/human-response guard.                                                                                                                                                                            |
+| API spec                    | a new state-changing route gets an OpenAPI/AsyncAPI path in the SAME change.                                                                                                                                                               |
 
 Two hard requirements on the guards themselves:
+
 - **Allow-list exact states, never deny-list a coarse complement.** A guard written `if (terminal) reject` (deny-list) silently ADMITS every future non-terminal status — M11b's `HumanWorking` slipped past a `!terminal` HITL guard and let a reviewer store a stale pre-takeover approve. Specify guards as `status ∈ {NeedsInput, NeedsInputIdle}` (allow-list) so a new status is rejected by default until explicitly admitted.
 - **A new terminal transition that frees a concurrency slot MUST honor the slot-release contract** (`promoteNextPending` / `releaseSlotOnIdle`) — M11c's duration-cap kill freed a slot but never promoted the queue, stranding `Pending` runs.
 
-Reason: a new enum/route was propagated to the surfaces named in the plan's file list but not to *every* consumer (a second read model, the scheduler, the API spec, a coarse guard). The plan/file-list was the checklist and predated the later-added surfaces; the plan must require grepping the new value into every consumer class above.
+Reason: a new enum/route was propagated to the surfaces named in the plan's file list but not to _every_ consumer (a second read model, the scheduler, the API spec, a coarse guard). The plan/file-list was the checklist and predated the later-added surfaces; the plan must require grepping the new value into every consumer class above.
 
 Fanout extensions: a column going NULLABLE is a new-value fanout exactly like a new enum member — grep every consumer that branches on it (slot counters, per-project sweep candidate queries that structurally never see `IS NULL` rows, route authz gates that throw on null). Changing an identifier SCHEME whose prefix downstream code decodes is a grep-every-DECODER task — enumerate every reader of the id FIRST and pre-commit that gate in the plan (the launch resolver + attach gate + available-list all parse `<flowRefId>:<stem>`; the gate blocked a plausible false fix). Relocating a canonical path moves EVERY coupled consumer in the same pass (inventory moved while registration/effective-resolution/attach still read the old location = a visible-but-unusable surface). An "agent gains an op" change moves the route scope + scope→action map + `AGENT_TOKEN_SCOPES` grant list together.
 **Source (additions)**: 2026-06-27-23.45, 2026-06-23-18.38, 2026-07-02-11.12
 
 ### Plan MUST allocate ADR + migration numbers up front for parallel branches and budget a renumber pass
+
 **Source**: 2026-06-05-14.42, 2026-06-07-20.16, 2026-06-09-18.47, 2026-06-09-20.30, 2026-06-11-09.20, 2026-06-12-12.46, 2026-06-10-23.57, 2026-06-11-12.51
 **Rule**: ADR numbers (`### ADR-NNN` in `docs/decisions.md`) and Drizzle migration `idx`/`tag` (in `migrations/meta/_journal.json`) are a GLOBALLY sequential, shared namespace. Two branches forked from one base each grab "the next number" and the clash is invisible on each branch (every gate is green) until merge. For any plan that adds an ADR or a migration:
 
@@ -216,15 +230,18 @@ Fanout extensions: a column going NULLABLE is a new-value fanout exactly like a 
 3. **Budget an explicit renumber pass** (its own focused session, AFTER rebasing onto main) into every long-lived branch — it is a deliverable, not a merge-time surprise.
 4. `pnpm validate:docs` only parses Mermaid; it does NOT resolve `[ADR-NNN](decisions.md#...)` anchors. Plan a real anchor check (`scripts/validate-docs-adr-anchors.mjs`) and treat a green docs gate as non-evidence for ADR/migration numbering.
 5. A new migration is a TRIPLE — SQL file + `_journal.json` entry + `meta/<NNNN>_snapshot.json`; plan the integrity check that the NEWEST journal entry has a matching snapshot (a missing snapshot silently starves future `db:generate`). Budget prose-form greps (`pre-NNNN`, `since NNNN`, `as of NNNN`) into the renumber pass and prefer number-agnostic phrasing (`pre-ADR-118`) in long-lived comments. Migrations introduced mid-implementation beyond the plan's frozen preflight set are folded back into plan/preflight artifacts in the same pass.
-**Source (additions)**: 2026-07-07-13.51, 2026-06-30-00.47, 2026-07-04-01.04
+   **Source (additions)**: 2026-07-07-13.51, 2026-06-30-00.47, 2026-07-04-01.04
 
 ### Plan MUST persist the launch-time decision the terminal path reads, and branch shared dispatch on run_kind
+
 **Source**: 2026-06-13-16.55, 2026-06-16-22.45
 **Rule**: When a launch resolves a field X from an "effective"/pinned/mutable source (a catalog projection, a package's newest revision, a policy snapshot), the plan MUST require persisting X on the run row at spawn (e.g. `runs.agent_workspace`, the runner snapshot, the delivery-policy snapshot) so the terminal/enforcement path acts on **what the run actually launched with**, never re-derives it from a projection that can drift after launch. The acceptance criteria must name: where X is snapshotted, and that the terminal path reads the snapshot (`row.x ?? wsCtx?.x`). Separately: any SHARED dispatch site that feeds a kind-specific mechanism (reconcile classifier, sweep, a composed/aggregating op switching on `run_kind`) MUST branch on `run_kind`/the discriminant BEFORE routing — a scratch/agent run driven into the flow-only resume driver replies context-less and `Crashed`s. Require a guard at the irreversible apply site in addition to the pure classifier, and a test per discriminant arm (half-A-tested + half-B-tested ≠ A∘B-tested).
 
 ### Plan MUST design background automation for progress, bounded retries, and poison items
+
 **Source**: 2026-06-25-17.42, 2026-06-25-19.58, 2026-06-29-17.25, 2026-07-03-14.58, 2026-07-02-17.03
 **Rule**: For any timer/sweep/unattended launcher, the plan MUST specify:
+
 1. **Progress guarantee** for capped scans — a durable per-item attempt marker stamped on every attempt AND/OR a rotating keyset cursor persisted in the job's state, answering the reviewer question "if the first N rows are permanently ineligible and never change, does row N+1 ever get processed?".
 2. **Bounded retries with an intent-scoped budget** — an attempt cap filtered by `armed_at` (a deliberate re-arm earns a fresh budget) plus explicit backoff; auto-launchers never reuse a human-retry launchability classifier without re-deriving what each terminal state means for an unattended caller.
 3. **A poison-item policy** — deterministic per-item failure → permanent `failed` + recorded evidence; transient → bounded retry — so one bad row cannot stall the singleton job into platform-wide disablement.
@@ -232,13 +249,16 @@ Fanout extensions: a column going NULLABLE is a new-value fanout exactly like a 
 5. **Exactly one achievable validation gate**, naming the exact command — "validator-clean" AND "zero-new-vs-count-baseline" cannot both be the gate (a count delta masks a new error when a pre-existing one coincidentally resolves); pin baselines by enumerated `{ruleId, pointer}`.
 
 ### Plan MUST treat statuses as signals and predicates as per-concern
+
 **Source**: 2026-06-20-23.22, 2026-06-22-11.08, 2026-07-01-12.55
 **Rule**: When a plan adds or uses a run status that gates a coordinator/loop, it MUST answer "what WAKES the waiter when a child reaches it?" — a status nothing emits on is a deadlock (Review children never woke `WaitingOnChildren`). Enumerated status sets in feature code are a smell: derive a `SETTLED`/`PENDING` predicate from ONE source (`run-status-sets.ts`) so every counter agrees. Never reuse a status set across CONCERNS without checking semantics align — "done writing" (writer-safety) ≠ "safe to auto-merge" (a `Failed|Crashed|Abandoned` sibling is settled-for-writing but its partial work is NOT auto-shippable); name predicates after the concern (`countFailureTerminalSharedSiblings` vs `countUnsettledSharedSiblings`). Slot-freed states (`NeedsInputIdle | WaitingOnChildren | Review`) reclaiming a slot on any transition back to live MUST be cap-gated or explicitly exempted with a recorded reason.
 
 ### Plan MUST make migrations preserve live data or refuse loudly
+
 **Source**: 2026-06-27-16.03, 2026-06-24-18.55, 2026-06-29-17.25, 2026-07-04-01.04
 **Rule**: A migration that DROPs a column or re-keys a table holding LIVE state ships with either a backfill (`INSERT INTO … SELECT … ON CONFLICT DO NOTHING` before the drops) or an abort-guard (`RAISE EXCEPTION` if non-empty) — the plan states which and why; when the new key is not SQL-derivable from the old (multiple old rows collapse onto one slot), the loud guard is the honest choice, never a guessed mapping. A migration opening with `DELETE FROM <table>` whose FKs cascade over per-project attachments/config is acceptable only pre-release/single-operator — the plan flags the re-attach requirement or re-keys instead. A NOT-NULL-default column needing per-row computation plans the backfill explicitly — a constant default is a "looks populated but isn't" trap that permanently excludes pre-migration rows from sweeps (a NULL marker is the natural "never swept" seed). Migrations added mid-implementation beyond the frozen preflight set are folded back into the plan artifacts in the same pass.
 
 ### Plan MUST carry launch preconditions into create/picker UIs and test policy-axis interactions
+
 **Source**: 2026-07-04-22.53-experiment-create-flow-advisory-json, 2026-06-20-18.20, 2026-07-02-17.03
 **Rule**: When a create UI feeds a later launch path, the plan requires the picker/inline-create payload to enforce the downstream launch preconditions (filter task options to tasks whose `flowId` is in the launchable set; require `flowId` on inline creation) — "creatable now, unlaunchable later" is a design defect. When two policy axes can act on the same site (`reworkExhaustion=escalate` × `humanGate=auto_pass`), the plan requires explicit interaction tests — full single-axis coverage with zero interaction coverage is how emergent, undocumented invariants ship one refactor away from a stuck run. Any feature that auto-actions dependency/lockfile diffs gates specifier SHAPE both-sided (`isRegistryVersionSpecifier` rejecting `file:` / `git` / `github:` / `http(s):` / `workspace:` / path forms) and disqualifies lockfile-only diffs; security-sensitive autopilot features budget an adversarial refute-the-design pass — completeness/consistency self-review passes miss this class.

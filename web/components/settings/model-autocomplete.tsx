@@ -30,7 +30,6 @@ const SOURCE_LABEL_KEYS: Record<string, string> = {
   acp_probe: "agent",
   provider_api: "provider",
   curated: "curated",
-  ccr: "ccr",
   agent_observed: "observed",
   preset: "preset",
 };

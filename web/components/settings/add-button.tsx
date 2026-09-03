@@ -4,7 +4,7 @@ import type { ReactElement } from "react";
 
 import { PlusIcon } from "@heroicons/react/24/outline";
 
-// Shared primary "Add" button for the /settings panels (runners, sidecars,
+// Shared primary "Add" button for the /settings panels (runners,
 // webhooks) so they render at one size/style with a leading plus icon. The
 // visible label is the accessible name.
 export function AddButton({

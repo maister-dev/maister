@@ -10,7 +10,6 @@ const selectedTables = vi.hoisted(() => [] as unknown[]);
 const schemaTables = vi.hoisted(() => ({
   platformAcpRunners: { name: "platform_acp_runners" },
   platformMcpServers: { name: "platform_mcp_servers" },
-  platformRouterSidecars: { name: "platform_router_sidecars" },
   platformRuntimeSettings: { name: "platform_runtime_settings" },
 }));
 
@@ -54,9 +53,6 @@ vi.mock("@/components/settings/mcp-servers-panel", () => ({
 }));
 vi.mock("@/components/settings/brain-settings-panel", () => ({
   BrainSettingsPanel: () => null,
-}));
-vi.mock("@/components/settings/router-sidecars-panel", () => ({
-  RouterSidecarsPanel: () => null,
 }));
 vi.mock("@/components/settings/webhooks-panel", () => ({
   WebhooksPanel: () => null,

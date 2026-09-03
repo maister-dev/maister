@@ -501,8 +501,7 @@ describe("checkSupervisorDiagnostics", () => {
         },
       },
     ],
-    sidecars: [{ id: "ccr-default", kind: "ccr", state: "idle" }],
-    envRefs: [{ name: "MAISTER_CCR_AUTH_TOKEN", present: true }],
+    envRefs: [{ name: "ZAI_API_KEY", present: true }],
   };
 
   it("maps valid diagnostics to ready", async () => {
@@ -525,7 +524,7 @@ describe("checkSupervisorDiagnostics", () => {
           ...diagnostics,
           envRefs: [
             {
-              name: "MAISTER_CCR_AUTH_TOKEN",
+              name: "ZAI_API_KEY",
               present: true,
               value: "secret",
             },

@@ -99,7 +99,7 @@ describe("resolveModelCatalog", () => {
 
   it("aggregates per-source status: ok + skipped + thrower(error) all surfaced; thrower carries its message; ok models still returned", async () => {
     const ok = okSource("acp_probe", [{ id: "m1", origins: ["acp_probe"] }]);
-    const skipped = skippedSource("ccr", "router not configured");
+    const skipped = skippedSource("curated", "not configured");
     const thrower = throwingSource("provider_api", "boom: provider 500");
     const registry = new ModelSourceRegistry([ok, skipped, thrower]);
 
@@ -108,7 +108,7 @@ describe("resolveModelCatalog", () => {
     expect(result.models).toEqual([{ id: "m1", origins: ["acp_probe"] }]);
     expect(result.sources).toEqual([
       { kind: "acp_probe", status: "ok", count: 1 },
-      { kind: "ccr", status: "skipped", reason: "router not configured" },
+      { kind: "curated", status: "skipped", reason: "not configured" },
       { kind: "provider_api", status: "error", reason: "boom: provider 500" },
     ]);
   });
@@ -175,12 +175,15 @@ describe("resolveModelCatalog", () => {
       { id: "m1", origins: ["acp_probe"] },
     ]);
     const notSupporting: ModelSource = {
-      kind: "ccr",
+      kind: "agent_observed",
       supports: () => false,
       resolve: async () => {
         called = true;
 
-        return { models: [], status: { kind: "ccr", status: "ok" } };
+        return {
+          models: [],
+          status: { kind: "agent_observed", status: "ok" },
+        };
       },
     };
     const registry = new ModelSourceRegistry([supporting, notSupporting]);
@@ -227,33 +230,11 @@ describe("ModelCatalogDraftSchema", () => {
     expect(parsed.success).toBe(false);
   });
 
-  it("accepts a ccr router draft with a valid sidecarId", () => {
-    const parsed = ModelCatalogDraftSchema.safeParse({
-      adapter: "claude",
-      provider: { kind: "anthropic" },
-      router: "ccr",
-      sidecarId: "ccr-main",
-      force: true,
-    });
-
-    expect(parsed.success).toBe(true);
-  });
-
   it("rejects unknown top-level keys (strict)", () => {
     const parsed = ModelCatalogDraftSchema.safeParse({
       adapter: "claude",
       provider: { kind: "anthropic" },
       bogus: 1,
-    });
-
-    expect(parsed.success).toBe(false);
-  });
-
-  it("rejects a sidecarId with a path separator", () => {
-    const parsed = ModelCatalogDraftSchema.safeParse({
-      adapter: "codex",
-      provider: { kind: "openai" },
-      sidecarId: "bad/id",
     });
 
     expect(parsed.success).toBe(false);

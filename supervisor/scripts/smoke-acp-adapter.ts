@@ -625,7 +625,7 @@ export async function smokeAdapter(
     runner,
     mcpServers: [] satisfies McpServerInput[],
   };
-  const childEnv = buildChildEnv(request, { ccrLayer: {} });
+  const childEnv = buildChildEnv(request);
   const child = spawn(resolvedPath, runtime.defaultArgs, {
     cwd,
     env: childEnv,

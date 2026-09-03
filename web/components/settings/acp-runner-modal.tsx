@@ -49,7 +49,6 @@ export interface RunnerRow {
   env?: Record<string, string>;
   provider: Provider;
   permissionPolicy: PermissionPolicy;
-  sidecarId: string | null;
   readinessStatus: "Unknown" | "Ready" | "NotReady";
   readinessReasons: readonly string[];
   enabled: boolean;
@@ -62,13 +61,11 @@ export interface PresetRow {
   env?: Record<string, string>;
   provider: Provider;
   permissionPolicy: PermissionPolicy;
-  sidecarId?: string | null;
 }
 
 export interface AcpRunnerModalProps {
   mode: "create" | "edit";
   runner?: RunnerRow;
-  sidecars: { id: string }[];
   presets: PresetRow[];
   initialPresetId?: string;
   unavailableAdapters?: readonly AdapterId[];
@@ -86,7 +83,6 @@ function draftFromProvider(
   adapter: AdapterId,
   provider: Provider,
   permissionPolicy: PermissionPolicy,
-  sidecarId: string | null,
   enabled: boolean,
   id: string,
   model: string,
@@ -105,7 +101,6 @@ function draftFromProvider(
     location: provider.location,
     wireApi: provider.wireApi === "responses",
     permissionPolicy,
-    sidecarId,
     enabled,
   };
 }
@@ -116,7 +111,6 @@ function seedDraft(mode: "create" | "edit", runner?: RunnerRow): RunnerDraft {
       runner.adapter,
       runner.provider,
       runner.permissionPolicy,
-      runner.sidecarId,
       runner.enabled,
       runner.id,
       runner.model,
@@ -130,7 +124,6 @@ function seedDraft(mode: "create" | "edit", runner?: RunnerRow): RunnerDraft {
     model: "",
     providerKind: "anthropic",
     permissionPolicy: "default",
-    sidecarId: null,
     enabled: true,
   };
 }
@@ -188,7 +181,6 @@ async function sendJson(
 export function AcpRunnerModal({
   mode,
   runner,
-  sidecars,
   presets,
   initialPresetId,
   unavailableAdapters,
@@ -201,16 +193,10 @@ export function AcpRunnerModal({
       const preset = presets.find((item) => item.id === initialPresetId);
 
       if (preset) {
-        const sidecarId =
-          preset.sidecarId && sidecars.some((s) => s.id === preset.sidecarId)
-            ? preset.sidecarId
-            : null;
-
         return draftFromProvider(
           preset.adapter,
           preset.provider,
           preset.permissionPolicy,
-          sidecarId,
           true,
           "",
           preset.model,
@@ -325,17 +311,11 @@ export function AcpRunnerModal({
 
     if (!preset) return;
 
-    const sidecarId =
-      preset.sidecarId && sidecars.some((s) => s.id === preset.sidecarId)
-        ? preset.sidecarId
-        : null;
-
     setDraft((current) =>
       draftFromProvider(
         preset.adapter,
         preset.provider,
         preset.permissionPolicy,
-        sidecarId,
         true,
         current.id,
         preset.model,
@@ -864,25 +844,6 @@ export function AcpRunnerModal({
                 {errorFor("permissionPolicy")}
               </span>
             ) : null}
-          </label>
-
-          <label className="flex flex-col gap-1.5">
-            <span className={fieldLabel}>{t("fieldSidecar")}</span>
-            <select
-              className={inputClass}
-              disabled={busy}
-              value={draft.sidecarId ?? ""}
-              onChange={(e) =>
-                patchDraft({ sidecarId: e.target.value || null })
-              }
-            >
-              <option value="">{t("sidecarNone")}</option>
-              {sidecars.map((sidecar) => (
-                <option key={sidecar.id} value={sidecar.id}>
-                  {sidecar.id}
-                </option>
-              ))}
-            </select>
           </label>
 
           <label className="flex items-center gap-2 text-[12px] text-mute">

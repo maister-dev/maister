@@ -519,7 +519,6 @@ async function runOneGate(
               env: (loaded.executor.env ?? undefined) as
                 | Record<string, string>
                 | undefined,
-              router: loaded.executor.router ?? undefined,
             },
           },
           ctx.supervisorApi,

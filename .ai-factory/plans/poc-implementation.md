@@ -1,5 +1,9 @@
 # MAIster POC — Master Implementation Plan
 
+> **Historical plan:** CCR/router-specific tasks and contracts below are
+> obsolete and superseded by [ADR-164](../../docs/decisions/adr-164.md). Do not
+> implement them; use current code and canonical docs.
+
 - **Branch**: `main` (no feature branch — this is a coordination artifact; per-milestone branches are created during `/aif-implement` calls against sub-plans)
 - **Created**: 2026-05-25
 - **Target window**: T+4 to T+5 weeks for technical POC (M1-M12); T+5 to T+6 weeks for dogfood (M13a); T+8 weeks for external validation (M13b)

@@ -62,12 +62,9 @@ export function buildModelSuggestionRequestBody(
   draft: RunnerDraft,
   force: boolean,
 ): Record<string, unknown> {
-  const ccr = draft.sidecarId != null && draft.sidecarId.length > 0;
-
   return {
     adapter: draft.adapter,
     provider: modelSuggestionProviderBody(draft),
-    ...(ccr ? { router: "ccr", sidecarId: draft.sidecarId } : {}),
     ...(force ? { force: true } : {}),
   };
 }
@@ -190,7 +187,6 @@ export function useModelSuggestions(
     draft.projectId,
     draft.location,
     draft.wireApi,
-    draft.sidecarId,
   ]);
 
   useEffect(() => {
@@ -211,7 +207,6 @@ export function useModelSuggestions(
     draft.projectId,
     draft.location,
     draft.wireApi,
-    draft.sidecarId,
   ]);
 
   useEffect(() => () => abortRef.current?.abort(), []);

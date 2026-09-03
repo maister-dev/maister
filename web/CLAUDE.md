@@ -19,18 +19,18 @@ is template demo material to be **replaced** as we implement MAIster routes.
 
 ## Stack (concrete versions in `package.json`)
 
-| Layer       | Choice                                           |
-| ----------- | ------------------------------------------------ |
-| Framework   | Next.js `16.2.6` (App Router)                    |
-| React       | `19.2.6`                                         |
-| Language    | TypeScript `5.6.3`, strict, `@/*` → `./*`        |
-| UI library  | `@heroui/react` `3.0.4` + `@heroui/styles`       |
-| Styling     | Tailwind CSS `4.1.11` via `@tailwindcss/postcss` |
-| Variants    | `tailwind-variants` `3.2.2`                      |
+| Layer       | Choice                                            |
+| ----------- | ------------------------------------------------- |
+| Framework   | Next.js `16.2.6` (App Router)                     |
+| React       | `19.2.6`                                          |
+| Language    | TypeScript `5.6.3`, strict, `@/*` → `./*`         |
+| UI library  | `@heroui/react` `3.0.4` + `@heroui/styles`        |
+| Styling     | Tailwind CSS `4.1.11` via `@tailwindcss/postcss`  |
+| Variants    | `tailwind-variants` `3.2.2`                       |
 | Theming     | Local script-free theme provider (default `dark`) |
-| Lint        | ESLint `9` flat config + Prettier                |
-| Pkg manager | pnpm                                             |
-| Node        | 24 (per root CLAUDE.md container target)         |
+| Lint        | ESLint `9` flat config + Prettier                 |
+| Pkg manager | pnpm                                              |
+| Node        | 24 (per root CLAUDE.md container target)          |
 
 **Do not** add other component libraries (no shadcn/ui, no MUI, no Chakra).
 HeroUI v3 + Tailwind 4 + `tailwind-variants` covers all UI primitives.
@@ -320,8 +320,8 @@ CHECKPOINT`).
 - `lib/flows.ts` — Flow plugin loader: `git clone --branch <tag>` into
   `~/.maister/flows/<id>@<tag>/` system cache, symlink into
   `.maister/<slug>/flows/<id>/`, manifest validation, version-pin enforcement.
-- `lib/acp-runners/*` — platform runner catalog, sidecar readiness, usage
-  references, Flow runner remaps, and launch-time runner resolution
+- `lib/acp-runners/*` — platform runner catalog, readiness, usage references,
+  Flow runner remaps, and launch-time runner resolution
   (launch override → Flow step target → project Flow default → platform Flow
   default → project default → platform default).
 - `lib/supervisor-client.ts` — HTTP+SSE client to `../supervisor/`:
@@ -333,8 +333,8 @@ CHECKPOINT`).
   Flow plugin install on register.
 - `lib/scheduler.ts` — global concurrency cap (`MAISTER_MAX_CONCURRENT_RUNS`),
   Pending queue, auto-promote on slot free.
-- `lib/db/` — Drizzle schema (`projects`, `platform_acp_runners`,
-  `platform_router_sidecars`, `flows`, `flow_revisions`, `tasks`, `runs`,
+- `lib/db/` — Drizzle schema (`projects`, `platform_acp_runners`, `flows`,
+  `flow_revisions`, `tasks`, `runs`,
   `workspaces`, `hitl_requests`) + client.
 - `lib/reconcile.ts` — startup hook: per-project `runs` vs `git worktree
 list` vs supervisor's live session set; orphan `Running` with no live
@@ -354,7 +354,7 @@ Drizzle schema sketch (server-only, `lib/db/schema.ts`):
 
 // platform_acp_runners                   // platform-scoped launch catalog
 { id, adapter: 'claude' | 'codex', capability_agent: 'claude' | 'codex',
-  model, provider (jsonb), permission_policy, sidecar_id?,
+  model, provider (jsonb), permission_policy,
   readiness_status, enabled, created_at, updated_at }
 
 // flows                                  // installed Flow plugins per project
@@ -491,37 +491,38 @@ this pattern: `components/settings/acp-runners-panel.tsx` (view-only table) +
 delete) + the `DELETE /api/admin/acp-runners/[runnerId]` usage-guard. Runner
 CRUD is admin-only and the page is reachable from the admin section of
 `left-rail.tsx`. Domain contract: [`docs/system-analytics/acp-runners.md`](../docs/system-analytics/acp-runners.md)
-+ ADR-065. (Filters are intentionally omitted — small N.)
 
-- **Tables are view-only.** No inline editing, row dropdowns, or row-level
+- ADR-065. (Filters are intentionally omitted — small N.)
+
+* **Tables are view-only.** No inline editing, row dropdowns, or row-level
   mutate buttons. Rows display data only.
-- **Edit lives in a popup or a dedicated edit page**, never inline. Popup =
+* **Edit lives in a popup or a dedicated edit page**, never inline. Popup =
   modal following `user-edit-modal.tsx`; heavier edits get their own route.
-- **Filter on the main fields** of the list (e.g. users: name search, role,
+* **Filter on the main fields** of the list (e.g. users: name search, role,
   status, project access) — not just one field.
-- **Apply changes through ONE aggregating endpoint** (partial body in a single
+* **Apply changes through ONE aggregating endpoint** (partial body in a single
   server transaction), never a client-side fan-out of per-field calls + manual
   compensation. See `lib/users.ts` `updateAdminUser` + `PATCH
-  /api/admin/users/[userId]`.
-- **Full-width** list/table pages: drop `mx-auto max-w-[...]`; rely on the
+/api/admin/users/[userId]`.
+* **Full-width** list/table pages: drop `mx-auto max-w-[...]`; rely on the
   `main` px gutter for air, put a `min-w-[...]` on the table inside
   `overflow-x-auto`, and use responsive `md:` breakpoints (mobile is a target).
   **Forms stay narrow** (520–760px) — do not widen forms.
-- **URL-synchronized, deep-linkable state.** Filters, tabs, pagination, and
+* **URL-synchronized, deep-linkable state.** Filters, tabs, pagination, and
   expanded/selected state belong in URL query params (anchors / `searchParams`,
   or nuqs) so views are shareable, survive refresh, and respect back/forward —
   not `useState`-only.
-- **Accessible interactions, built right:** modals get focus-trap + initial
+* **Accessible interactions, built right:** modals get focus-trap + initial
   focus + focus-restore via refs, Escape-to-close, body scroll lock,
   `aria-labelledby`; form controls get `<label>`/`aria-label`; async
   updates/errors get `role="alert"`/`aria-live`; locale dates use `Intl` +
   `suppressHydrationWarning`. Use refs for focus/measurement, not to mask
   re-renders.
-- **Role-driven nav + access:** admin-only areas live in the left sidebar
+* **Role-driven nav + access:** admin-only areas live in the left sidebar
   (`components/chrome/left-rail.tsx`), gated by role; the route still enforces
   `requireGlobalRole`. The hidden nav item is convenience, never the
   authorization boundary.
-- **Cursor:** enabled `<button>`/`[role=button]` get `cursor: pointer`
+* **Cursor:** enabled `<button>`/`[role=button]` get `cursor: pointer`
   app-wide via the `@layer base` rule in `styles/globals.css` — don't add
   per-button `cursor-pointer`.
 

@@ -36,7 +36,7 @@ import {
 // binary in an isolated tmp cwd, drives a promptless ACP handshake
 // (initialize → session/new, ~0 tokens), reads NewSessionResponse.models, and
 // SIGTERMs the child on EVERY exit path (deferred-release — success, reject,
-// parse error, timeout). CCR-routed drafts are the CCR source's job, so the
+// parse error, timeout). Provider-specific drafts are handled by the other
 // probe declines them. openai_compatible (codex) cannot be provisioned for a
 // direct spawn → the probe degrades to status:"skipped".
 export type AcpProbeOptions = {
@@ -199,7 +199,7 @@ export function createAcpProbeSource(opts: AcpProbeOptions = {}): ModelSource {
 
   return {
     kind: "acp_probe",
-    supports: (draft: ModelCatalogDraft) => draft.router !== "ccr",
+    supports: (_draft: ModelCatalogDraft) => true,
     resolve: async (draft: ModelCatalogDraft, ctx: ResolveContext) => {
       const logger: Logger = ctx.logger;
       const runtime = getAdapterRuntime(draft.adapter);
@@ -241,7 +241,7 @@ export function createAcpProbeSource(opts: AcpProbeOptions = {}): ModelSource {
         stepId: "probe",
         executor,
       };
-      const childEnv = buildChildEnv(synthRequest, { ccrLayer: {} });
+      const childEnv = buildChildEnv(synthRequest);
       const args = [...runtime.defaultArgs, ...(opts.preArgs ?? [])];
 
       try {

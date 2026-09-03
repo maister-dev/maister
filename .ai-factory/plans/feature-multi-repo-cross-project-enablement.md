@@ -1,5 +1,9 @@
 # Multi-repo enablement: cross-project task graph, agent facade reach, read-only sibling context
 
+> **Historical plan:** The CCR-specific implementation detail below is obsolete
+> and superseded by [ADR-164](../../docs/decisions/adr-164.md). Do not use it as
+> a current spawn-env contract; use current code and canonical docs.
+
 **Branch:** `claude/eager-nash-8fea98` (no feature branch created — owner chose to stay on the current worktree branch)
 **Base:** `main` @ `208764791`
 **Created:** 2026-08-05

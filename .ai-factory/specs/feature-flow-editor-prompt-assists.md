@@ -41,7 +41,7 @@ that may legitimately be absent:
 
 ```mustache
 {{ steps.plan.vars.summary ?? '' }}
-{{ executor.router ?? "none" }}
+{{ artifacts.report.uri ?? "none" }}
 ```
 
 Semantics:
@@ -85,7 +85,6 @@ and rework loops must use visited sets/fixed-point traversal.
 
 Optional paths include:
 
-- `executor.router`;
 - `steps.<id>.exitCode` for non-`cli`/`check` producers;
 - schema fields not listed in the JSON Schema `required` array;
 - `artifacts.<id>.uri`;
@@ -102,7 +101,7 @@ Static globals:
 
 - `task.id`, `task.title`, `task.prompt`, `task.attemptNumber`;
 - `run.id`, `run.attemptNumber`, `run.projectSlug`;
-- `executor.id`, `executor.agent`, `executor.model`, `executor.router`.
+- `executor.id`, `executor.agent`, `executor.model`.
 
 Step variables:
 

@@ -1,7 +1,7 @@
 // T5.1 — model-catalog end-to-end resolve through POST /model-catalog/resolve
 // with a REAL ModelSource registry: the ACP probe drives the mock adapter
 // (test/fixtures/mock-acp-models.mjs), the curated source is static, the
-// provider-API + CCR sources use a mocked fetch. Proves the sources compose,
+// provider-API source uses a mocked fetch. Proves the sources compose,
 // merge + dedupe by id (origins accumulate), per-source status is surfaced,
 // the cache short-circuits a second resolve, force bypasses it, and a malformed
 // draft maps to 409.
@@ -12,12 +12,10 @@ import Fastify, { type FastifyInstance } from "fastify";
 import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { CcrManager } from "../ccr-manager";
 import { registerRoutes } from "../http-api";
 import { ModelCatalogCache } from "../model-catalog/cache";
 import { ModelSourceRegistry } from "../model-catalog/registry";
 import { createAcpProbeSource } from "../model-catalog/sources/acp-probe";
-import { createCcrSource } from "../model-catalog/sources/ccr";
 import { createCuratedSource } from "../model-catalog/sources/curated";
 import { createProviderApiSource } from "../model-catalog/sources/provider-api";
 import { SessionRegistry } from "../registry";
@@ -34,16 +32,13 @@ function jsonResponse(status: number, body: unknown): Response {
   } as unknown as Response;
 }
 
-function bootWithRealSources(opts: {
-  providerFetch: typeof fetch;
-  ccrFetch: typeof fetch;
-  ccrManager: CcrManager;
-}): { app: FastifyInstance } {
+function bootWithRealSources(opts: { providerFetch: typeof fetch }): {
+  app: FastifyInstance;
+} {
   const registry = new ModelSourceRegistry([
     createAcpProbeSource({ binaryOverride: "node", preArgs: [mockAdapter] }),
     createCuratedSource(),
     createProviderApiSource({ fetchImpl: opts.providerFetch }),
-    createCcrSource(opts.ccrManager, { fetchImpl: opts.ccrFetch }),
   ]);
   const app = Fastify({ logger: false });
 
@@ -72,11 +67,8 @@ describe("model-catalog end-to-end resolve", () => {
     const providerFetch = vi
       .fn()
       .mockResolvedValue(jsonResponse(200, { data: [{ id: "glm-5.1" }] }));
-    const ccrManager = {} as unknown as CcrManager;
     const { app } = bootWithRealSources({
       providerFetch,
-      ccrFetch: vi.fn(),
-      ccrManager,
     });
 
     const res = await app.inject({
@@ -105,55 +97,14 @@ describe("model-catalog end-to-end resolve", () => {
     expect(glm51.origins).toEqual(
       expect.arrayContaining(["acp_probe", "curated", "provider_api"]),
     );
-    // ccr does not support a non-ccr draft → not in the source list.
     const kinds = body.sources.map((s: { kind: string }) => s.kind);
 
     expect(kinds).toEqual(
       expect.arrayContaining(["acp_probe", "curated", "provider_api"]),
     );
-    expect(kinds).not.toContain("ccr");
     expect(
       body.sources.every((s: { status: string }) => s.status === "ok"),
     ).toBe(true);
-
-    await app.close();
-  });
-
-  it("a CCR-routed draft resolves only the CCR source via the proxy config", async () => {
-    const ccrFetch = vi.fn().mockResolvedValue(
-      jsonResponse(200, {
-        Providers: [{ name: "zai", models: ["glm-5.1", "glm-5"] }],
-      }),
-    );
-    const ccrManager = {
-      ensureRunning: vi.fn().mockResolvedValue(undefined),
-      getProxyUrl: vi.fn().mockReturnValue("http://ccr.local:3456"),
-    } as unknown as CcrManager;
-    const { app } = bootWithRealSources({
-      providerFetch: vi.fn(),
-      ccrFetch,
-      ccrManager,
-    });
-
-    const res = await app.inject({
-      method: "POST",
-      url: "/model-catalog/resolve",
-      payload: {
-        adapter: "claude",
-        provider: { kind: "anthropic_compatible" },
-        router: "ccr",
-        sidecarId: "ccr-default",
-      },
-    });
-
-    expect(res.statusCode).toBe(200);
-    const body = res.json();
-
-    expect(body.models.map((m: { id: string }) => m.id)).toEqual([
-      "zai,glm-5.1",
-      "zai,glm-5",
-    ]);
-    expect(body.sources.map((s: { kind: string }) => s.kind)).toContain("ccr");
 
     await app.close();
   });
@@ -164,8 +115,6 @@ describe("model-catalog end-to-end resolve", () => {
       .mockResolvedValue(jsonResponse(200, { data: [] }));
     const { app } = bootWithRealSources({
       providerFetch,
-      ccrFetch: vi.fn(),
-      ccrManager: {} as unknown as CcrManager,
     });
     const draft = {
       adapter: "claude",
@@ -176,11 +125,19 @@ describe("model-catalog end-to-end resolve", () => {
       },
     };
 
-    await app.inject({ method: "POST", url: "/model-catalog/resolve", payload: draft });
+    await app.inject({
+      method: "POST",
+      url: "/model-catalog/resolve",
+      payload: draft,
+    });
     expect(providerFetch).toHaveBeenCalledTimes(1);
 
     // cache hit — no new source calls.
-    await app.inject({ method: "POST", url: "/model-catalog/resolve", payload: draft });
+    await app.inject({
+      method: "POST",
+      url: "/model-catalog/resolve",
+      payload: draft,
+    });
     expect(providerFetch).toHaveBeenCalledTimes(1);
 
     // force bypasses the cache.
@@ -197,8 +154,6 @@ describe("model-catalog end-to-end resolve", () => {
   it("malformed draft (env:-prefixed secret) → 409 PRECONDITION", async () => {
     const { app } = bootWithRealSources({
       providerFetch: vi.fn(),
-      ccrFetch: vi.fn(),
-      ccrManager: {} as unknown as CcrManager,
     });
 
     const res = await app.inject({
@@ -206,7 +161,10 @@ describe("model-catalog end-to-end resolve", () => {
       url: "/model-catalog/resolve",
       payload: {
         adapter: "claude",
-        provider: { kind: "anthropic_compatible", authTokenEnv: "env:ZAI_API_KEY" },
+        provider: {
+          kind: "anthropic_compatible",
+          authTokenEnv: "env:ZAI_API_KEY",
+        },
       },
     });
 

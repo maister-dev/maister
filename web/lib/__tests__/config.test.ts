@@ -112,7 +112,7 @@ describe("loadProjectConfig", () => {
       "bad-override.yaml",
       goldenYaml.replace(
         "    version: v0.1.0",
-        "    version: v0.1.0\n    executor_override: claude-ccr",
+        "    version: v0.1.0\n    executor_override: claude-env",
       ),
     );
 

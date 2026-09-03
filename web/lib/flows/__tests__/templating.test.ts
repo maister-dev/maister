@@ -131,7 +131,7 @@ describe("renderStrict — Mustache strict resolver", () => {
   });
 
   it("resolves guarded default operator paths to empty literals when absent", () => {
-    expect(renderStrict("{{ executor.router ?? '' }}", baseContext)).toBe("");
+    expect(renderStrict("{{ task.description ?? '' }}", baseContext)).toBe("");
   });
 
   it("resolves guarded nested paths to double-quoted literals when absent", () => {
@@ -158,39 +158,42 @@ describe("renderStrict — Mustache strict resolver", () => {
   });
 
   it("keeps bare paths strict when guarded paths use defaults", () => {
-    expect(() => renderStrict("{{ executor.router }}", baseContext)).toThrow(
+    expect(() => renderStrict("{{ task.description }}", baseContext)).toThrow(
       MaisterError,
     );
   });
 
   it("parses single-quote, double-quote, and empty guarded literals", () => {
-    expect(renderStrict("{{ executor.router ?? 'single' }}", baseContext)).toBe(
-      "single",
-    );
-    expect(renderStrict('{{ executor.router ?? "double" }}', baseContext)).toBe(
-      "double",
-    );
-    expect(renderStrict('{{ executor.router ?? "" }}', baseContext)).toBe("");
+    expect(
+      renderStrict("{{ task.description ?? 'single' }}", baseContext),
+    ).toBe("single");
+    expect(
+      renderStrict('{{ task.description ?? "double" }}', baseContext),
+    ).toBe("double");
+    expect(renderStrict('{{ task.description ?? "" }}', baseContext)).toBe("");
   });
 
   it("renders templates that mix bare required and guarded optional paths", () => {
     expect(
       renderStrict(
-        "{{ task.prompt }} / {{ executor.router ?? 'no router' }}",
+        "{{ task.prompt }} / {{ task.description ?? 'no description' }}",
         baseContext,
       ),
-    ).toBe("Hello / no router");
+    ).toBe("Hello / no description");
   });
 
   it("inserts guarded literals containing braces without re-parsing them", () => {
     expect(
-      renderStrict("{{ executor.router ?? '{{ task.prompt }}' }}", baseContext),
+      renderStrict(
+        "{{ task.description ?? '{{ task.prompt }}' }}",
+        baseContext,
+      ),
     ).toBe("{{ task.prompt }}");
   });
 
   it("restores resolved guarded values that look like later placeholders without corrupting them", () => {
     const template =
-      '{{ executor.model ?? "unused" }} {{ executor.router ?? "tail" }}';
+      '{{ executor.model ?? "unused" }} {{ task.description ?? "tail" }}';
     const secondStart = template.lastIndexOf("{{");
     const collisionValue = `__MAISTER_TEMPLATE_DEFAULT_1_${template.length}_${secondStart}__`;
     const ctx = {

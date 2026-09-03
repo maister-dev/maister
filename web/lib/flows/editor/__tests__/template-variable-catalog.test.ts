@@ -29,7 +29,7 @@ function byPath(entries: readonly Entry[]): Map<string, Entry> {
 }
 
 describe("buildTemplateVariableCatalog", () => {
-  it("exposes static globals with executor.router optional and no env keys", () => {
+  it("exposes static executor globals and no env keys", () => {
     const catalog = buildTemplateVariableCatalog({
       manifest: nodeManifest([
         { id: "plan", type: "ai_coding", action: { prompt: "p" } },
@@ -51,17 +51,11 @@ describe("buildTemplateVariableCatalog", () => {
       "executor.id",
       "executor.agent",
       "executor.model",
-      "executor.router",
     ]);
     expect(entries.get("executor.model")).toMatchObject({
       availability: "definite",
       presence: "required",
       insertText: "executor.model",
-    });
-    expect(entries.get("executor.router")).toMatchObject({
-      availability: "definite",
-      presence: "optional",
-      insertText: "executor.router ?? ''",
     });
     expect(catalog.entries.some((entry) => entry.path.startsWith("env."))).toBe(
       false,

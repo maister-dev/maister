@@ -6,21 +6,9 @@ import {
 } from "@/lib/acp-runners/schema";
 
 describe("platform ACP runner config schema", () => {
-  it("parses platform runners, router sidecars, and derives capability agent from adapter registry", () => {
+  it("parses platform runners and derives capability agent from adapter registry", () => {
     const config = parsePlatformRuntimeConfig({
       platform: { default_runner: "claude-code" },
-      router_instances: [
-        {
-          id: "ccr-default",
-          kind: "ccr",
-          lifecycle: "managed",
-          command_preset: "ccr_start",
-          config_path: "~/.claude-code-router/config.json",
-          base_url: "http://127.0.0.1:3456",
-          healthcheck_url: "http://127.0.0.1:3456/health",
-          auth_token: "env:MAISTER_CCR_AUTH_TOKEN",
-        },
-      ],
       acp_runners: [
         {
           id: "claude-code",
@@ -30,21 +18,19 @@ describe("platform ACP runner config schema", () => {
           permission_policy: "default",
         },
         {
-          id: "claude-code-ccr",
+          id: "claude-code-env-router",
           adapter: "claude",
           model: "glm-5.1",
           provider: {
             kind: "anthropic_compatible",
             auth_token: "env:ZAI_API_KEY",
           },
-          router_instance: "ccr-default",
           permission_policy: "default",
         },
       ],
     });
 
     expect(config.platform.defaultRunnerId).toBe("claude-code");
-    expect(config.routerInstances).toHaveLength(1);
     expect(config.acpRunners).toEqual([
       expect.objectContaining({
         id: "claude-code",
@@ -52,8 +38,7 @@ describe("platform ACP runner config schema", () => {
         capabilityAgent: "claude",
       }),
       expect.objectContaining({
-        id: "claude-code-ccr",
-        sidecarId: "ccr-default",
+        id: "claude-code-env-router",
         capabilityAgent: "claude",
         provider: expect.objectContaining({
           authToken: "env:ZAI_API_KEY",
@@ -135,7 +120,7 @@ describe("platform ACP runner config schema", () => {
     ]);
   });
 
-  it("rejects unknown adapters, missing sidecars, and invalid defaults", () => {
+  it("rejects unknown adapters and invalid defaults", () => {
     expect(() =>
       parsePlatformRuntimeConfig({
         platform: { default_runner: "unknown-default" },
@@ -165,22 +150,6 @@ describe("platform ACP runner config schema", () => {
         ],
       }),
     ).toThrow(/adapter.*gemini.*provider.*openai_compatible/);
-
-    expect(() =>
-      parsePlatformRuntimeConfig({
-        platform: { default_runner: "claude-code-ccr" },
-        acp_runners: [
-          {
-            id: "claude-code-ccr",
-            adapter: "claude",
-            model: "glm-5.1",
-            provider: { kind: "anthropic_compatible" },
-            router_instance: "missing-sidecar",
-            permission_policy: "default",
-          },
-        ],
-      }),
-    ).toThrow(/router_instance.*missing-sidecar/);
   });
 
   it("exposes adapters as code-owned diagnostics, not CRUD config", () => {

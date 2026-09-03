@@ -19,10 +19,8 @@ const CURATED_GLM_MODELS: ReadonlyArray<{ id: string; displayName: string }> = [
 export function createCuratedSource(): ModelSource {
   return {
     kind: "curated",
-    // Direct (non-CCR) z.ai only — a CCR-routed runner's model namespace is
-    // CCR's "provider,model" format (the CCR source's job), not direct GLM ids.
     supports: (draft: ModelCatalogDraft) =>
-      draft.provider.kind === "anthropic_compatible" && draft.router !== "ccr",
+      draft.provider.kind === "anthropic_compatible",
     resolve: async (_draft: ModelCatalogDraft, ctx: ResolveContext) => {
       const models: ModelEntry[] = CURATED_GLM_MODELS.map((m) => ({
         id: m.id,

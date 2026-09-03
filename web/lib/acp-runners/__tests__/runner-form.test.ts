@@ -17,7 +17,7 @@ import { describe, expect, it } from "vitest";
 //     id: string; adapter: AdapterId; model: string;
 //     providerKind: ProviderKind; baseUrl?: string;
 //     authToken?: string; apiKey?: string; wireApi?: boolean;
-//     permissionPolicy: PermissionPolicy; sidecarId?: string | null;
+//     permissionPolicy: PermissionPolicy;
 //     enabled: boolean;
 //   }
 //   providerKindsForAdapter(adapter): ProviderKind[]
@@ -43,7 +43,6 @@ function validClaudeDraft(overrides: Partial<RunnerDraft> = {}): RunnerDraft {
     model: "m",
     providerKind: "anthropic",
     permissionPolicy: "default",
-    sidecarId: null,
     enabled: true,
     ...overrides,
   };
@@ -194,7 +193,6 @@ describe("validateRunnerDraft", () => {
       model: "m",
       providerKind: "openai",
       permissionPolicy: "dangerously_skip_permissions",
-      sidecarId: null,
       enabled: true,
     });
 
@@ -209,7 +207,6 @@ describe("validateRunnerDraft", () => {
       model: "m",
       providerKind: "anthropic",
       permissionPolicy: "default",
-      sidecarId: null,
       enabled: true,
     });
 
@@ -225,7 +222,6 @@ describe("validateRunnerDraft", () => {
       providerKind: "google_gemini",
       apiKey: "raw",
       permissionPolicy: "default",
-      sidecarId: null,
       enabled: true,
     });
 
@@ -240,7 +236,6 @@ describe("validateRunnerDraft", () => {
       model: "gemini-3-pro",
       providerKind: "agent_native",
       permissionPolicy: "default",
-      sidecarId: null,
       enabled: true,
     });
 
@@ -259,7 +254,6 @@ describe("buildCreateBody", () => {
       baseUrl: "https://x.y",
       authToken: "env:K",
       permissionPolicy: "default",
-      sidecarId: null,
       enabled: true,
     });
 
@@ -273,7 +267,6 @@ describe("buildCreateBody", () => {
         authToken: "env:K",
       },
       permissionPolicy: "default",
-      sidecarId: null,
       enabled: true,
     });
   });
@@ -310,7 +303,6 @@ describe("buildCreateBody", () => {
       apiKey: "env:K",
       wireApi: true,
       permissionPolicy: "default",
-      sidecarId: null,
       enabled: true,
     }) as { provider: { wireApi?: string } };
 
@@ -325,7 +317,6 @@ describe("buildCreateBody", () => {
       providerKind: "google_gemini",
       apiKey: "env:GEMINI_API_KEY",
       permissionPolicy: "default",
-      sidecarId: null,
       enabled: true,
     }) as { provider: unknown };
 
@@ -342,7 +333,6 @@ describe("buildCreateBody", () => {
       model: "opencode-default",
       providerKind: "agent_native",
       permissionPolicy: "default",
-      sidecarId: null,
       enabled: true,
     }) as { provider: unknown };
 

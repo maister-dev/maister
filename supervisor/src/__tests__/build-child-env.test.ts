@@ -22,7 +22,7 @@ describe("buildChildEnv — env layering precedence", () => {
     process.env.MAISTER_BCE_BASELINE = "baseline-value";
 
     try {
-      const env = buildChildEnv(makeRequest(), { ccrLayer: {} });
+      const env = buildChildEnv(makeRequest());
 
       expect(env.MAISTER_BCE_BASELINE).toBe("baseline-value");
     } finally {
@@ -30,21 +30,8 @@ describe("buildChildEnv — env layering precedence", () => {
     }
   });
 
-  it("ccrLayer overrides process.env on key collision", () => {
-    process.env.MAISTER_BCE_COLLIDE = "from-process";
-
-    try {
-      const env = buildChildEnv(makeRequest(), {
-        ccrLayer: { MAISTER_BCE_COLLIDE: "from-ccr" },
-      });
-
-      expect(env.MAISTER_BCE_COLLIDE).toBe("from-ccr");
-    } finally {
-      delete process.env.MAISTER_BCE_COLLIDE;
-    }
-  });
-
-  it("executor.env overrides ccrLayer on key collision", () => {
+  it("executor.env overrides process.env on key collision", () => {
+    process.env.SHARED_KEY = "from-process";
     const env = buildChildEnv(
       makeRequest({
         executor: {
@@ -53,10 +40,10 @@ describe("buildChildEnv — env layering precedence", () => {
           env: { SHARED_KEY: "from-executor" },
         },
       }),
-      { ccrLayer: { SHARED_KEY: "from-ccr" } },
     );
 
     expect(env.SHARED_KEY).toBe("from-executor");
+    delete process.env.SHARED_KEY;
   });
 
   it("adapterLaunch.env overrides executor.env on key collision", () => {
@@ -69,7 +56,6 @@ describe("buildChildEnv — env layering precedence", () => {
         },
         adapterLaunch: { env: { SHARED_KEY: "from-adapter" } },
       }),
-      { ccrLayer: {} },
     );
 
     expect(env.SHARED_KEY).toBe("from-adapter");
@@ -79,7 +65,6 @@ describe("buildChildEnv — env layering precedence", () => {
     const profilePath = `${process.cwd()}/profile.json`;
     const env = buildChildEnv(
       makeRequest({ capabilityProfilePath: profilePath }),
-      { ccrLayer: {} },
     );
 
     expect(env.MAISTER_CAPABILITY_PROFILE_PATH).toBe(profilePath);
@@ -88,7 +73,7 @@ describe("buildChildEnv — env layering precedence", () => {
   it("omits MAISTER_CAPABILITY_PROFILE_PATH when capabilityProfilePath is absent", () => {
     delete process.env.MAISTER_CAPABILITY_PROFILE_PATH;
 
-    const env = buildChildEnv(makeRequest(), { ccrLayer: {} });
+    const env = buildChildEnv(makeRequest());
 
     expect("MAISTER_CAPABILITY_PROFILE_PATH" in env).toBe(false);
   });
@@ -101,13 +86,12 @@ describe("buildChildEnv — env layering precedence", () => {
           env: { MAISTER_CAPABILITY_PROFILE_PATH: "from-adapter" },
         },
       }),
-      { ccrLayer: {} },
     );
 
     expect(env.MAISTER_CAPABILITY_PROFILE_PATH).toBe("from-adapter");
   });
 
-  it("empty ccrLayer is a no-op (no spurious keys added beyond the other layers)", () => {
+  it("adds no spurious keys beyond the configured layers", () => {
     const profilePath = `${process.cwd()}/profile.json`;
     const withEmpty = buildChildEnv(
       makeRequest({
@@ -119,7 +103,6 @@ describe("buildChildEnv — env layering precedence", () => {
         capabilityProfilePath: profilePath,
         adapterLaunch: { env: { B: "2" } },
       }),
-      { ccrLayer: {} },
     );
 
     const expected: NodeJS.ProcessEnv = {

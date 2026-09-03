@@ -243,26 +243,6 @@ export function provisionRunnerLaunch(
       break;
   }
 
-  if (runner.sidecar) {
-    if (runner.sidecar.kind !== "ccr" || runner.adapter !== "claude") {
-      throw new SupervisorError(
-        "EXECUTOR_UNAVAILABLE",
-        `runner ${runner.runnerId} sidecar ${runner.sidecar.kind} is unsupported by ${runner.adapter}`,
-      );
-    }
-
-    executor.router = "ccr";
-    if (runner.sidecar.authTokenEnv) {
-      executor.env = {
-        ...(executor.env ?? {}),
-        ANTHROPIC_AUTH_TOKEN: resolveEnvRef(
-          runner.sidecar.authTokenEnv,
-          `runner ${runner.runnerId} sidecar auth token`,
-        ),
-      };
-    }
-  }
-
   const runnerEnv = resolveRunnerEnv(runner);
 
   if (Object.keys(runnerEnv).length > 0) {

@@ -131,7 +131,6 @@ const {
   capabilityImports,
   localPackages,
   platformAcpRunners,
-  platformRouterSidecars,
   platformRuntimeSettings,
   projects,
   runs,
@@ -155,7 +154,6 @@ type ScratchResolvedRunner = {
     model: string;
     executorRefId: string;
     env: null;
-    router: "ccr" | null;
   };
 };
 
@@ -286,12 +284,7 @@ function runnerProviderKind(provider: unknown): string {
   );
 }
 
-function runnerCatalogEntry(
-  row: Record<string, any>,
-  sidecarById: ReadonlyMap<string, Record<string, any>>,
-): RunnerCatalogEntry {
-  const sidecar = row.sidecarId ? sidecarById.get(row.sidecarId) : undefined;
-
+function runnerCatalogEntry(row: Record<string, any>): RunnerCatalogEntry {
   return {
     id: row.id,
     adapter: row.adapter,
@@ -301,18 +294,6 @@ function runnerCatalogEntry(
     provider: row.provider,
     providerKind: runnerProviderKind(row.provider),
     permissionPolicy: row.permissionPolicy,
-    sidecar: sidecar
-      ? {
-          id: sidecar.id,
-          kind: sidecar.kind,
-          lifecycle: sidecar.lifecycle,
-          configPath: sidecar.configPath,
-          baseUrl: sidecar.baseUrl,
-          healthcheckUrl: sidecar.healthcheckUrl,
-          authTokenRef: sidecar.authTokenRef,
-        }
-      : null,
-    sidecarId: row.sidecarId,
     enabled: row.enabled,
     ready: row.readinessStatus === "Ready",
   };
@@ -337,10 +318,6 @@ async function resolveScratchRunner(
   }
 
   const runnerRows = await db.select().from(platformAcpRunners);
-  const sidecarRows = await db.select().from(platformRouterSidecars);
-  const sidecarById = new Map<string, Record<string, any>>(
-    sidecarRows.map((row: Record<string, any>) => [row.id, row]),
-  );
   const resolution = resolveRunner({
     launchOverrideRunnerId: body.runnerId,
     step: { runnerId: null },
@@ -348,9 +325,7 @@ async function resolveScratchRunner(
     platformFlow: { defaultRunnerId: null },
     project: { defaultRunnerId: project.defaultRunnerId },
     platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
-    runners: runnerRows.map((row: Record<string, any>) =>
-      runnerCatalogEntry(row, sidecarById),
-    ),
+    runners: runnerRows.map(runnerCatalogEntry),
   });
 
   return {
@@ -361,7 +336,6 @@ async function resolveScratchRunner(
       model: resolution.runnerSnapshot.model,
       executorRefId: resolution.runnerId,
       env: null,
-      router: resolution.runnerSnapshot.sidecarId ? "ccr" : null,
     },
   };
 }
@@ -901,7 +875,6 @@ export async function* launchScratchRunStaged(
         agent: executor.agent,
         model: executor.model,
         executorRefId: executor.executorRefId,
-        router: executor.router ?? null,
       },
       workMode: policy.workMode,
       reasoningEffort: policy.reasoningEffort,
@@ -1369,10 +1342,6 @@ async function resolveLocalPackageAssistantRunner(
   }
 
   const runnerRows = await db.select().from(platformAcpRunners);
-  const sidecarRows = await db.select().from(platformRouterSidecars);
-  const sidecarById = new Map<string, Record<string, any>>(
-    sidecarRows.map((row: Record<string, any>) => [row.id, row]),
-  );
   const resolution = resolveRunner({
     launchOverrideRunnerId: body.runnerId,
     step: { runnerId: null },
@@ -1380,9 +1349,7 @@ async function resolveLocalPackageAssistantRunner(
     platformFlow: { defaultRunnerId: null },
     project: { defaultRunnerId: null },
     platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
-    runners: runnerRows.map((row: Record<string, any>) =>
-      runnerCatalogEntry(row, sidecarById),
-    ),
+    runners: runnerRows.map(runnerCatalogEntry),
   });
 
   return {
@@ -1393,7 +1360,6 @@ async function resolveLocalPackageAssistantRunner(
       model: resolution.runnerSnapshot.model,
       executorRefId: resolution.runnerId,
       env: null,
-      router: resolution.runnerSnapshot.sidecarId ? "ccr" : null,
     },
   };
 }
@@ -1593,7 +1559,6 @@ export async function* launchLocalPackageAssistantStaged(
         agent: executor.agent,
         model: executor.model,
         executorRefId: executor.executorRefId,
-        router: executor.router ?? null,
       },
       workMode: policy.workMode,
       reasoningEffort: policy.reasoningEffort,

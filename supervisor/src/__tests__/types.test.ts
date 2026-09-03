@@ -24,14 +24,13 @@ describe("StartSessionRequestSchema", () => {
     );
   });
 
-  it("accepts executor.env and router=ccr", () => {
+  it("accepts executor.env", () => {
     const result = StartSessionRequestSchema.safeParse({
       ...validRequest,
       executor: {
         agent: "codex",
         model: "gpt-5-codex",
         env: { ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic" },
-        router: "ccr",
       },
       resumeSessionId: "uuid-abc",
     });
@@ -181,10 +180,10 @@ describe("StartSessionRequestSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects unknown router", () => {
+  it("rejects unknown executor fields", () => {
     const result = StartSessionRequestSchema.safeParse({
       ...validRequest,
-      executor: { agent: "claude", model: "x", router: "litellm" },
+      executor: { agent: "claude", model: "x", unsupported: "value" },
     });
 
     expect(result.success).toBe(false);
@@ -433,7 +432,6 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
           },
         },
       ],
-      sidecars: [],
       envRefs: [],
     };
   }
@@ -591,7 +589,6 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
           },
         },
       ],
-      sidecars: [],
       envRefs: [],
     });
 

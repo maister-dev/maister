@@ -47,7 +47,6 @@ export function executorFromRunnerSnapshot(
     agent: snapshot.capabilityAgent as LoadedRun["executor"]["agent"],
     model: snapshot.model,
     env: snapshot.env ?? null,
-    router: snapshot.sidecarId ? "ccr" : null,
   };
 }
 

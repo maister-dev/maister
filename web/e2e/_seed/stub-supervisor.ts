@@ -94,11 +94,7 @@ export function startStubSupervisor(): Promise<Server> {
             available: true,
           },
         ],
-        sidecars: [{ id: "ccr-default", kind: "ccr", state: "ready" }],
-        envRefs: [
-          { name: "MAISTER_CCR_AUTH_TOKEN", present: true },
-          { name: "ZAI_API_KEY", present: false },
-        ],
+        envRefs: [{ name: "ZAI_API_KEY", present: false }],
       });
 
       res.writeHead(200, { "content-type": "application/json" });
@@ -221,31 +217,6 @@ export function startStubSupervisor(): Promise<Server> {
     if (req.method === "DELETE" && deleteMatch) {
       res.writeHead(204);
       res.end();
-
-      return;
-    }
-
-    // ---- ADR-094 CCR sidecar start/stop (echo state) ----------------------
-    const sidecarStartMatch = req.url?.match(
-      /^\/sidecars\/([A-Za-z0-9._-]+)\/start$/,
-    );
-
-    if (req.method === "POST" && sidecarStartMatch) {
-      req.resume(); // drain the body
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: true, state: "ready" }));
-
-      return;
-    }
-
-    const sidecarStopMatch = req.url?.match(
-      /^\/sidecars\/([A-Za-z0-9._-]+)\/stop$/,
-    );
-
-    if (req.method === "POST" && sidecarStopMatch) {
-      req.resume();
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: true, state: "idle" }));
 
       return;
     }

@@ -73,7 +73,6 @@ type ScratchLaunchExecutor = {
   agent: AdapterId;
   model: string;
   env?: Record<string, string>;
-  router?: "ccr";
 };
 type ScratchRecoveredRunner = {
   executor: ScratchLaunchExecutor;
@@ -227,7 +226,6 @@ async function loadScratchLaunchExecutor(
       executor: {
         agent: active.runnerSnapshot.capabilityAgent as AdapterId,
         model: active.runnerSnapshot.model,
-        router: active.runnerSnapshot.sidecarId ? "ccr" : undefined,
       },
       snapshot: active.runnerSnapshot,
     };
@@ -251,7 +249,6 @@ async function loadScratchLaunchExecutor(
       executor: {
         agent: runner.capabilityAgent,
         model: runner.model,
-        router: runner.sidecarId ? "ccr" : undefined,
       },
       snapshot: {
         id: runner.id,
@@ -261,7 +258,6 @@ async function loadScratchLaunchExecutor(
         provider: runner.provider,
         providerKind: runner.provider.kind,
         permissionPolicy: runner.permissionPolicy,
-        sidecarId: runner.sidecarId,
       },
     };
   }

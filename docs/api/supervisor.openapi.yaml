@@ -54,8 +54,6 @@ tags:
     description: Model discovery resolver for a runner draft (ADR-076).
   - name: mcp-probe
     description: MCP server health probe — real `initialize` handshake (ADR-129).
-  - name: sidecars
-    description: CCR router-sidecar admin lifecycle — start/stop (ADR-094).
 paths:
   /health:
     get:
@@ -80,7 +78,7 @@ paths:
       description: |
         Read-only diagnostics for remote supervisor runtime configuration:
         adapter binary availability, binary source/path/version/error,
-        adapter smoke evidence, sidecar readiness state, env-ref presence, and launcher version
+        adapter smoke evidence, env-ref presence, and launcher version
         metadata. Does not return raw secret values. A binary that exists but
         cannot initialize its first-run writable state is reported as
         `available: false` with an adapter-specific `error`, not as a raw 500.
@@ -145,7 +143,11 @@ paths:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
               examples:
                 enoent:
-                  value: { code: "SPAWN", message: "spawn claude-agent-acp failed: ENOENT" }
+                  value:
+                    {
+                      code: "SPAWN",
+                      message: "spawn claude-agent-acp failed: ENOENT",
+                    }
         "503":
           description: Executor unavailable (missing env ref, unsupported adapter readiness, or reserved pool exhaustion).
           content:
@@ -491,10 +493,10 @@ paths:
       tags: [model-catalog]
       summary: Resolve the model catalog for a runner draft
       description: |
-        Discovers valid model ids for a runner **draft** (adapter + provider +
-        optional `router`/`sidecarId`) by fanning out across the registered
+        Discovers valid model ids for a runner **draft** (adapter + provider)
+        by fanning out across the registered
         `ModelSource`s — ACP active probe (primary), provider listing API,
-        curated GLM list, and CCR — then merging and deduping by model `id` and
+        and curated GLM list — then merging and deduping by model `id` and
         caching the result in memory (TTL). A `force` flag bypasses the cache.
 
         Env-ref fields inside `provider` (`authTokenEnv` / `apiKeyEnv`) carry
@@ -506,8 +508,7 @@ paths:
 
         The only request-level rejection is `409 PRECONDITION` on a malformed
         draft (unknown adapter, an `env:`-prefixed or raw-secret value in an
-        env-ref field, a malformed provider union, or `router` without
-        `sidecarId`). See [ADR-076](../decisions.md#adr-076-acp-runner-model-discovery-resolver-on-supervisor--configured-model-application) and
+        env-ref field, or a malformed provider union). See [ADR-076](../decisions.md#adr-076-acp-runner-model-discovery-resolver-on-supervisor--configured-model-application) and
         [`../system-analytics/model-catalog.md`](../system-analytics/model-catalog.md).
 
         **Identifiers.** Every body field is draft config (`body-controlled`),
@@ -537,7 +538,8 @@ paths:
             while others are `ok`).
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ModelCatalogResolveResponse" }
+              schema:
+                { $ref: "#/components/schemas/ModelCatalogResolveResponse" }
         "409":
           description: Malformed draft (Zod rejection → `PRECONDITION`).
           content:
@@ -634,82 +636,6 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
-  /sidecars/{id}/start:
-    post:
-      tags: [sidecars]
-      summary: (ADR-094) Start a managed CCR router sidecar
-      description: |
-        Admin-triggered start for a CCR router sidecar. The web tier forwards the
-        sidecar's `CcrInstanceConfig` (`{ id, lifecycle, configPath, baseUrl,
-        healthcheckUrl }`) loaded from `platform_router_sidecars`; the supervisor
-        validates `lifecycle` and that the body `id` matches the path `id`, then
-        calls `ccrManager.ensureRunning({ instance })`. Idempotent — an already
-        `ready` instance returns 200 with `state: "ready"`. The route is a proxy
-        over supervisor-owned process state — no DB idempotency marker is written.
-        Requires the CCR manager to be wired (`spawnOverrides.ccrManager`);
-        otherwise 409.
-
-        **Note (ADR-094):** start only launches the CCR process. CCR routing
-        configuration (config.json contents) is a separate, deferred concern; a
-        started-without-config CCR healthchecks red and `state` stays `failed`.
-
-        **Identifiers.** `id` is the path key (`url-param`); the request body is
-        the sidecar config (`body-controlled`, trusted because the only caller is
-        the admin-gated web tier), validated so body `id` equals path `id`.
-      operationId: startSidecar
-      parameters:
-        - $ref: "#/components/parameters/SidecarId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/CcrInstanceConfig" }
-      responses:
-        "200":
-          description: Start initiated (or idempotent ack); current state echoed.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SidecarStateResponse" }
-        "409":
-          description: |
-            CCR manager not wired, body `id` ≠ path `id`, or invalid `lifecycle`
-            (`PRECONDITION`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
-        "503":
-          description: |
-            CCR failed to start or become ready — config missing/malformed, health
-            probe failure or identity mismatch, or child exited before ready
-            (`EXECUTOR_UNAVAILABLE`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
-  /sidecars/{id}/stop:
-    post:
-      tags: [sidecars]
-      summary: (ADR-094) Stop a single managed CCR router sidecar
-      description: |
-        Admin-triggered stop for ONE CCR sidecar instance. Calls the per-instance
-        `ccrManager.stop(id)` (SIGTERM → grace → SIGKILL on the targeted child
-        only) — NOT the manager-wide `shutdown()`, which stops every instance and
-        any live session routing through CCR. Idempotent — stopping an already
-        `idle` instance returns 200 with `state: "idle"`. Requires the CCR manager
-        to be wired; otherwise 409.
-      operationId: stopSidecar
-      parameters:
-        - $ref: "#/components/parameters/SidecarId"
-      responses:
-        "200":
-          description: Stop completed (or idempotent ack); state echoed.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SidecarStateResponse" }
-        "409":
-          description: CCR manager not wired (`PRECONDITION`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
 components:
   parameters:
     SessionId:
@@ -732,57 +658,7 @@ components:
         format: uuid
         minLength: 1
         maxLength: 128
-    SidecarId:
-      name: id
-      in: path
-      required: true
-      description: |
-        Router-sidecar id (e.g. `ccr-default`). The path key for every
-        `/sidecars/{id}/...` endpoint; the supervisor validates that a `start`
-        body's `id` equals this path value.
-      schema:
-        type: string
-        minLength: 1
-        maxLength: 128
-        pattern: "^[A-Za-z0-9._-]+$"
   schemas:
-    CcrInstanceConfig:
-      type: object
-      required: [id]
-      additionalProperties: false
-      description: |
-        Router-sidecar launch config forwarded by the web tier on
-        `POST /sidecars/{id}/start`. Mirrors the supervisor `CcrInstanceConfig`
-        type. No secret values — auth tokens live only as env refs resolved
-        supervisor-side.
-      properties:
-        id:
-          type: string
-          minLength: 1
-          maxLength: 128
-          pattern: "^[A-Za-z0-9._-]+$"
-        lifecycle:
-          type: string
-          enum: [managed, external]
-        configPath:
-          type: string
-          minLength: 1
-          pattern: "^(?!.*\\.\\.).+$"
-          description: |
-            Must not contain '..' path segments — the supervisor reads it via
-            fs.access/readFile.
-        baseUrl: { type: string, format: uri }
-        healthcheckUrl: { type: string, format: uri }
-    SidecarStateResponse:
-      type: object
-      required: [ok, state]
-      additionalProperties: false
-      properties:
-        ok: { type: boolean, enum: [true] }
-        state:
-          type: string
-          enum: [idle, starting, ready, failed, stopping]
-          description: CCR instance state as reported by the supervisor manager.
     SupervisorHealthResponse:
       type: object
       required: [status, version, uptimeMs, sessions, checkedAt]
@@ -806,7 +682,7 @@ components:
           format: date-time
     SupervisorDiagnosticsResponse:
       type: object
-      required: [status, version, checkedAt, adapters, sidecars, envRefs]
+      required: [status, version, checkedAt, adapters, envRefs]
       additionalProperties: false
       properties:
         status:
@@ -896,7 +772,14 @@ components:
                     oneOf:
                       - type: object
                         required:
-                          [status, reason, checkedAt, protocolVersion, probeVersion, staleReason]
+                          [
+                            status,
+                            reason,
+                            checkedAt,
+                            protocolVersion,
+                            probeVersion,
+                            staleReason,
+                          ]
                         additionalProperties: false
                         properties:
                           status:
@@ -933,7 +816,14 @@ components:
                               `reason`.
                       - type: object
                         required:
-                          [status, reason, checkedAt, protocolVersion, probeVersion, staleReason]
+                          [
+                            status,
+                            reason,
+                            checkedAt,
+                            protocolVersion,
+                            probeVersion,
+                            staleReason,
+                          ]
                         additionalProperties: false
                         properties:
                           status:
@@ -988,18 +878,6 @@ components:
                       protocolVersion:
                         type: integer
                         nullable: true
-        sidecars:
-          type: array
-          items:
-            type: object
-            required: [id, kind, state]
-            additionalProperties: false
-            properties:
-              id: { type: string, minLength: 1 }
-              kind: { type: string, enum: [ccr] }
-              state:
-                type: string
-                enum: [idle, starting, ready, failed, stopping]
         envRefs:
           type: array
           items:
@@ -1009,7 +887,7 @@ components:
             properties:
               name:
                 type: string
-                pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
+                pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
               present: { type: boolean }
     SupervisorSessionCounts:
       type: object
@@ -1033,10 +911,6 @@ components:
         `opencode`, and `mimo` are implemented adapter ids, but workflow
         readiness remains launch-gated by diagnostics and adapter-specific
         smoke evidence.
-    ExecutorRouter:
-      type: string
-      enum: [ccr]
-      description: Optional in-session multi-provider router. See ADR-005.
     Executor:
       type: object
       required: [agent, model]
@@ -1057,7 +931,6 @@ components:
             the child. Per-executor env wins over the supervisor's env. Used
             for env-router routing (e.g. `ANTHROPIC_BASE_URL`,
             `ANTHROPIC_AUTH_TOKEN`).
-        router: { $ref: "#/components/schemas/ExecutorRouter" }
     RunnerProvider:
       oneOf:
         - type: object
@@ -1073,7 +946,7 @@ components:
             baseUrl: { type: string, format: uri }
             authTokenEnv:
               type: string
-              pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
+              pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
         - type: object
           additionalProperties: false
           required: [kind]
@@ -1087,7 +960,7 @@ components:
             baseUrl: { type: string, format: uri }
             apiKeyEnv:
               type: string
-              pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
+              pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
             wireApi: { type: string, enum: [responses] }
         - type: object
           additionalProperties: false
@@ -1096,7 +969,7 @@ components:
             kind: { type: string, enum: [google_gemini] }
             apiKeyEnv:
               type: string
-              pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
+              pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
         - type: object
           additionalProperties: false
           required: [kind]
@@ -1106,7 +979,7 @@ components:
             location: { type: string, minLength: 1 }
             apiKeyEnv:
               type: string
-              pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
+              pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
         - type: object
           additionalProperties: false
           required: [kind]
@@ -1115,7 +988,7 @@ components:
             baseUrl: { type: string, format: uri }
             apiKeyEnv:
               type: string
-              pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
+              pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
         - type: object
           additionalProperties: false
           required: [kind]
@@ -1128,33 +1001,6 @@ components:
         `google_gateway`, and `agent_native` are implemented provider intents
         for the Gemini/OpenCode/MiMo adapter families and remain adapter-readiness
         gated until the selected workflow is smoke-proven.
-    RunnerSidecar:
-      type: object
-      additionalProperties: false
-      required: [id, kind]
-      properties:
-        id:
-          type: string
-          minLength: 1
-          maxLength: 128
-          pattern: '^[A-Za-z0-9._-]+$'
-        kind: { type: string, enum: [ccr] }
-        lifecycle: { type: string, enum: [managed, external] }
-        configPath:
-          type: string
-          description: Absolute config path for managed CCR sidecar instances.
-        baseUrl:
-          type: string
-          format: uri
-          description: Proxy base URL for external CCR sidecar instances.
-        healthcheckUrl:
-          type: string
-          format: uri
-          description: Optional healthcheck URL for external CCR sidecars.
-        authTokenEnv:
-          type: string
-          pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
-      description: Optional keyed router sidecar intent.
     RunnerLaunch:
       type: object
       additionalProperties: false
@@ -1172,7 +1018,7 @@ components:
           type: string
           minLength: 1
           maxLength: 128
-          pattern: '^[A-Za-z0-9._-]+$'
+          pattern: "^[A-Za-z0-9._-]+$"
         adapter: { $ref: "#/components/schemas/ExecutorAgent" }
         capabilityAgent: { $ref: "#/components/schemas/ExecutorAgent" }
         model:
@@ -1189,7 +1035,6 @@ components:
             Child-process env overrides, keyed by target env var name. Raw
             values are passed as-is; values with `env:NAME` form are resolved
             from `process.env` immediately before spawning the ACP adapter.
-        sidecar: { $ref: "#/components/schemas/RunnerSidecar" }
       description: |
         Platform ACP runner launch intent. When present, the supervisor maps it
         through allow-listed provisioners and overwrites the legacy `executor`
@@ -1203,7 +1048,7 @@ components:
           type: string
           minLength: 1
           maxLength: 128
-          pattern: '^[A-Za-z0-9._-]+$'
+          pattern: "^[A-Za-z0-9._-]+$"
           description: |
             Application-generated run id. Doubles as a path segment under
             `.maister/<slug>/runs/<runId>/`. Constrained to safe filesystem
@@ -1212,7 +1057,7 @@ components:
           type: string
           minLength: 1
           maxLength: 64
-          pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'
+          pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
           description: Kebab-case slug. Path segment under `.maister/<slug>/`.
         worktreePath:
           type: string
@@ -1248,7 +1093,7 @@ components:
           type: string
           minLength: 1
           maxLength: 128
-          pattern: '^[A-Za-z0-9._-]+$'
+          pattern: "^[A-Za-z0-9._-]+$"
           description: |
             Graph node id carried under the stable `stepId` wire name. The node
             log lands at `<runId>/<stepId>.log`. Constrained to safe filesystem
@@ -1257,7 +1102,7 @@ components:
           type: string
           minLength: 1
           maxLength: 128
-          pattern: '^[A-Za-z0-9._-]+$'
+          pattern: "^[A-Za-z0-9._-]+$"
           description: |
             (M42 — Implemented, ADR-114) Logical Flow session this ACP process
             serves (`default` | solo node id | named session). Stamped onto
@@ -1268,7 +1113,7 @@ components:
           type: string
           minLength: 1
           maxLength: 128
-          pattern: '^[A-Za-z0-9._-]+$'
+          pattern: "^[A-Za-z0-9._-]+$"
           description: |
             ADR-085 graph-runner attribution id. Required by the web tier for
             graph sessions and stamped on cost records when present. Metadata
@@ -1342,7 +1187,7 @@ components:
                 type: string
                 minLength: 1
                 maxLength: 64
-                pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'
+                pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
                 description: |
                   Kebab-case slug of the SIBLING project this mount exposes.
                   Also the last path segment of `path`. Metadata only — it
@@ -1378,7 +1223,7 @@ components:
           type: string
           minLength: 1
           maxLength: 128
-          pattern: '^[A-Za-z0-9._-]+$'
+          pattern: "^[A-Za-z0-9._-]+$"
           description: |
             Optional checkpoint-resume handle (M8). When set, the supervisor
             restores the prior conversation via the ACP `session/resume`
@@ -1580,7 +1425,7 @@ components:
           type: string
           minLength: 1
           maxLength: 128
-          pattern: '^[A-Za-z0-9._-]+$'
+          pattern: "^[A-Za-z0-9._-]+$"
           description: |
             Graph node id this prompt belongs to, carried under the stable
             `stepId` wire name. Echoed in supervisor logs and used to attribute
@@ -1589,7 +1434,7 @@ components:
           type: string
           minLength: 1
           maxLength: 128
-          pattern: '^[A-Za-z0-9._-]+$'
+          pattern: "^[A-Za-z0-9._-]+$"
           description: |
             ADR-085 active prompt attribution id for graph runs. On
             `slash-in-existing` sessions this updates the cost-record context
@@ -1650,7 +1495,18 @@ components:
       enum: [live, exited, crashed]
     SessionRecord:
       type: object
-      required: [sessionId, runId, projectSlug, stepId, status, pid, startedAt, logPath, monotonicId]
+      required:
+        [
+          sessionId,
+          runId,
+          projectSlug,
+          stepId,
+          status,
+          pid,
+          startedAt,
+          logPath,
+          monotonicId,
+        ]
       properties:
         sessionId: { type: string, format: uuid }
         runId: { type: string }
@@ -1662,8 +1518,14 @@ components:
         exitedAt: { type: string, format: date-time, nullable: true }
         exitCode: { type: integer, nullable: true }
         signal: { type: string, nullable: true, example: "SIGTERM" }
-        logPath: { type: string, description: Absolute path to the step .log file. }
-        monotonicId: { type: integer, minimum: 0, description: Highest event id emitted so far for this session. }
+        logPath:
+          { type: string, description: Absolute path to the step .log file. }
+        monotonicId:
+          {
+            type: integer,
+            minimum: 0,
+            description: Highest event id emitted so far for this session.,
+          }
         acpSessionId:
           type: string
           minLength: 1
@@ -1767,12 +1629,12 @@ components:
             agent. Truncated to 256 chars upstream.
     ModelSourceKind:
       type: string
-      enum: [acp_probe, provider_api, curated, ccr, agent_observed]
+      enum: [acp_probe, provider_api, curated, agent_observed]
       description: |
         Origin of a discovered model id. `acp_probe` = active adapter probe
         (primary); `provider_api` = provider listing endpoint; `curated` =
-        static GLM list for z.ai (`anthropic_compatible`); `ccr` = CCR
-        `/api/config`; `agent_observed` = passive harvest from a real session.
+        static GLM list for z.ai (`anthropic_compatible`); `agent_observed` =
+        passive harvest from a real session.
     ModelCatalogResolveRequest:
       type: object
       additionalProperties: false
@@ -1787,13 +1649,6 @@ components:
       properties:
         adapter: { $ref: "#/components/schemas/ExecutorAgent" }
         provider: { $ref: "#/components/schemas/RunnerProvider" }
-        router: { $ref: "#/components/schemas/ExecutorRouter" }
-        sidecarId:
-          type: string
-          minLength: 1
-          maxLength: 128
-          pattern: '^[A-Za-z0-9._-]+$'
-          description: Required when `router == "ccr"`; selects the CCR sidecar instance.
         force:
           type: boolean
           default: false

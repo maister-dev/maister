@@ -1197,7 +1197,6 @@ table platform_acp_runners {
   provider jsonb [not null]
   env jsonb [not null, default: `{}`]
   permission_policy text [not null, default: 'default']
-  sidecar_id text
   readiness_status text [not null, default: 'Unknown']
   readiness_reasons jsonb [not null, default: `[]`]
   enabled boolean [not null, default: true]
@@ -1206,7 +1205,6 @@ table platform_acp_runners {
 
   indexes {
     (adapter, enabled) [name: 'platform_acp_runners_adapter_enabled_idx']
-    sidecar_id [name: 'platform_acp_runners_sidecar_idx']
   }
 }
 
@@ -1232,22 +1230,6 @@ table platform_mcp_servers {
   indexes {
     (transport, enabled) [name: 'platform_mcp_servers_transport_enabled_idx']
   }
-}
-
-table platform_router_sidecars {
-  id text [pk, not null]
-  kind text [not null]
-  lifecycle text [not null]
-  command_preset text
-  config_path text
-  base_url text
-  healthcheck_url text
-  auth_token_ref text
-  readiness_status text [not null, default: 'Unknown']
-  readiness_reasons jsonb [not null, default: `[]`]
-  enabled boolean [not null, default: true]
-  created_at "timestamp with time zone" [not null, default: `now()`]
-  updated_at "timestamp with time zone" [not null, default: `now()`]
 }
 
 table platform_runtime_settings {
@@ -2632,8 +2614,6 @@ ref node_attempts_run_id_runs_id_fk: node_attempts.run_id > runs.id [delete: cas
 ref node_attempts_owner_user_id_users_id_fk: node_attempts.owner_user_id > users.id [delete: set null, update: no action]
 
 ref package_installs_source_local_package_id_local_packages_id_fk: package_installs.source_local_package_id > local_packages.id [delete: set null, update: no action]
-
-ref platform_acp_runners_sidecar_id_platform_router_sidecars_id_fk: platform_acp_runners.sidecar_id > platform_router_sidecars.id [delete: set null, update: no action]
 
 ref platform_runtime_settings_default_runner_id_platform_acp_runners_id_fk: platform_runtime_settings.default_runner_id > platform_acp_runners.id [delete: no action, update: no action]
 

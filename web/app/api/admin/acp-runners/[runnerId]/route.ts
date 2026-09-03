@@ -28,8 +28,7 @@ import {
   type SupervisorDiagnostics,
 } from "@/lib/supervisor-client";
 
-const { platformAcpRunners, platformRouterSidecars } =
-  schemaModule as unknown as Record<string, any>;
+const { platformAcpRunners } = schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "api-admin-acp-runner",
@@ -114,7 +113,6 @@ const patchBodySchema = z
     env: runnerEnvSchema.optional(),
     provider: providerSchema.optional(),
     permissionPolicy: z.enum(PERMISSION_POLICIES).optional(),
-    sidecarId: z.string().min(1).nullable().optional(),
     enabled: z.boolean().optional(),
   })
   .strict()
@@ -129,7 +127,6 @@ type LoadedRunner = {
   readonly enabled: boolean;
   readonly permissionPolicy: PermissionPolicy;
   readonly provider: PlatformRunnerProvider;
-  readonly sidecarId?: string | null;
 };
 
 function statusForCode(code: string): number {
@@ -341,12 +338,6 @@ export async function PATCH(
       providerKind: nextRunner.provider.kind,
       permissionPolicy: nextRunner.permissionPolicy,
     });
-    const sidecarRows = nextRunner.sidecarId
-      ? await db
-          .select()
-          .from(platformRouterSidecars)
-          .where(eq(platformRouterSidecars.id, nextRunner.sidecarId))
-      : [];
     const diagnostics = await loadDiagnosticsForReadiness();
     const readiness = evaluateRunnerReadiness({
       runner: {
@@ -355,10 +346,8 @@ export async function PATCH(
         enabled: nextRunner.enabled,
         permissionPolicy: nextRunner.permissionPolicy,
         provider: nextRunner.provider,
-        sidecarId: nextRunner.sidecarId ?? null,
       },
       diagnostics: diagnostics.diagnostics,
-      sidecar: sidecarRows[0] ?? null,
     });
 
     await db

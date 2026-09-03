@@ -124,16 +124,14 @@ const fakeDb: FakeDb = {
       }
       if (name === "flow_revisions") {
         const whereChain = {
-          then: (
-            onFulfilled: (rows: Record<string, unknown>[]) => unknown,
-          ) => Promise.resolve(state.flowRevisionRows).then(onFulfilled),
+          then: (onFulfilled: (rows: Record<string, unknown>[]) => unknown) =>
+            Promise.resolve(state.flowRevisionRows).then(onFulfilled),
           limit: async () => state.pinRevisionLookupRows,
         };
 
         return {
-          then: (
-            onFulfilled: (rows: Record<string, unknown>[]) => unknown,
-          ) => Promise.resolve(state.flowRevisionRows).then(onFulfilled),
+          then: (onFulfilled: (rows: Record<string, unknown>[]) => unknown) =>
+            Promise.resolve(state.flowRevisionRows).then(onFulfilled),
           where: () => whereChain,
         } as unknown as FromResult;
       }
@@ -283,12 +281,10 @@ function enabledRevisionRow(): Record<string, unknown> {
 }
 
 // Positional slots: task, project, flow, runtime settings, runner catalog,
-// sidecars. `flow_revisions` dispatches by identity (state.flowRevisionRows
+// platform configuration. `flow_revisions` dispatches by identity (state.flowRevisionRows
 // feeds BOTH the pin lookup and the un-pinned enabled-revision site), so the
 // gate test's positional revision slot does not exist here.
-function seedSelects(
-  opts: { flow?: Record<string, unknown> } = {},
-): void {
+function seedSelects(opts: { flow?: Record<string, unknown> } = {}): void {
   state.latestFlowRuns = [];
   state.packageInstallRows = [pinInstallRow()];
   state.flowRevisionRows = [enabledRevisionRow()];
@@ -327,7 +323,6 @@ function seedSelects(
         model: "claude-sonnet-4-6",
         provider: { kind: "anthropic" },
         permissionPolicy: "default",
-        sidecarId: null,
         readinessStatus: "Ready",
         enabled: true,
       },

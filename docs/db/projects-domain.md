@@ -55,7 +55,6 @@ erDiagram
         text model
         jsonb provider
         text permission_policy
-        text sidecar_id FK
         text readiness_status
         boolean enabled
     }
@@ -275,7 +274,7 @@ tree, and initial git commit.
 
 - **(Implemented, ADR-088)** `flows.package_install_id` and
   `capability_imports.package_install_id` are nullable FKs (`ON DELETE SET
-  NULL` is NOT used — group removal happens through the detach transaction;
+NULL` is NOT used — group removal happens through the detach transaction;
   the FK exists for grouping/joins). Standalone flows keep the column null.
 
 ## Linked artifacts

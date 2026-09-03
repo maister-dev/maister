@@ -231,7 +231,6 @@ export type E2EFixtures = {
     prReopen: E2EProjectFixture;
     board: E2EProjectFixture;
     scratch: E2EProjectFixture;
-    liveCcr: E2EProjectFixture;
     registration: E2ERegistrationFixture;
     m17: E2EM17Fixture;
     planReview: E2EPlanReviewFixture;

@@ -3,6 +3,7 @@ import "server-only";
 import type { CapabilityAgent } from "@/lib/config.schema";
 import type { ProjectAction } from "@/lib/authz";
 import type { ScheduledLaunchReservation } from "@/lib/scheduled-launches/types";
+import type { FlowDelegationSnapshotInput } from "@/lib/flows/delegatable-flow";
 
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
@@ -58,7 +59,6 @@ import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { parseExecutableStoredFlowManifest } from "@/lib/flows/manifest-parser";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
-import type { FlowDelegationSnapshotInput } from "@/lib/flows/delegatable-flow";
 import { assertFlowLaunchable } from "@/lib/flows/launchability-gate";
 import { admitDelegatedChild } from "@/lib/orchestrator/admission";
 import { resolveEffectiveFlowRevision } from "@/lib/flows/lifecycle";
@@ -111,7 +111,6 @@ const {
   flowRevisions,
   flows,
   platformAcpRunners,
-  platformRouterSidecars,
   platformRuntimeSettings,
   projectFlowRunnerDefaults,
   projectFlowRoles,
@@ -501,12 +500,7 @@ function runnerProviderKind(provider: unknown): string {
   );
 }
 
-function runnerCatalogEntry(
-  row: Record<string, any>,
-  sidecarById: ReadonlyMap<string, Record<string, any>>,
-): RunnerCatalogEntry {
-  const sidecar = row.sidecarId ? sidecarById.get(row.sidecarId) : undefined;
-
+function runnerCatalogEntry(row: Record<string, any>): RunnerCatalogEntry {
   return {
     id: row.id,
     adapter: row.adapter,
@@ -516,18 +510,6 @@ function runnerCatalogEntry(
     provider: row.provider,
     providerKind: runnerProviderKind(row.provider),
     permissionPolicy: row.permissionPolicy,
-    sidecar: sidecar
-      ? {
-          id: sidecar.id,
-          kind: sidecar.kind,
-          lifecycle: sidecar.lifecycle,
-          configPath: sidecar.configPath,
-          baseUrl: sidecar.baseUrl,
-          healthcheckUrl: sidecar.healthcheckUrl,
-          authTokenRef: sidecar.authTokenRef,
-        }
-      : null,
-    sidecarId: row.sidecarId,
     enabled: row.enabled,
     ready: row.readinessStatus === "Ready",
   };
@@ -975,13 +957,7 @@ export async function* launchRunStaged(
     }
 
     const runnerRows = await _db.select().from(platformAcpRunners);
-    const sidecarRows = await _db.select().from(platformRouterSidecars);
-    const sidecarById = new Map<string, Record<string, any>>(
-      sidecarRows.map((row: Record<string, any>) => [row.id, row]),
-    );
-    const runnerCatalog = runnerRows.map((row: Record<string, any>) =>
-      runnerCatalogEntry(row, sidecarById),
-    );
+    const runnerCatalog = runnerRows.map(runnerCatalogEntry);
 
     const projectFlowDefaultRows = await _db
       .select({ runnerId: projectFlowRunnerDefaults.runnerId })

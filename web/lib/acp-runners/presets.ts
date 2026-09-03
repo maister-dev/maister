@@ -13,21 +13,6 @@ export type PlatformRunnerPresetRow = {
   readonly model: string;
   readonly provider: PlatformRunnerProvider;
   readonly permissionPolicy: PermissionPolicy;
-  readonly sidecarId?: string | null;
-  readonly readinessStatus: "Ready" | "NotReady";
-  readonly readinessReasons: readonly string[];
-  readonly enabled: boolean;
-};
-
-export type RouterSidecarPresetRow = {
-  readonly id: string;
-  readonly kind: "ccr";
-  readonly lifecycle: "managed" | "external";
-  readonly commandPreset?: "ccr_start";
-  readonly configPath?: string | null;
-  readonly baseUrl?: string | null;
-  readonly healthcheckUrl?: string | null;
-  readonly authTokenRef?: string | null;
   readonly readinessStatus: "Ready" | "NotReady";
   readonly readinessReasons: readonly string[];
   readonly enabled: boolean;
@@ -44,26 +29,6 @@ const notReadyOpencodeSmokeReason =
 const notReadyMimoSmokeReason =
   "MiMo Code ACP stdio and writable-state smoke must be confirmed";
 
-export function routerSidecarPresetRows(): RouterSidecarPresetRow[] {
-  return [
-    {
-      id: "ccr-default",
-      kind: "ccr",
-      lifecycle: "managed",
-      commandPreset: "ccr_start",
-      configPath: "~/.claude-code-router/config.json",
-      baseUrl: "http://127.0.0.1:3456",
-      healthcheckUrl: "http://127.0.0.1:3456/health",
-      authTokenRef: "env:MAISTER_CCR_AUTH_TOKEN",
-      readinessStatus: "NotReady",
-      readinessReasons: [
-        "CCR sidecar health must be confirmed by supervisor diagnostics",
-      ],
-      enabled: true,
-    },
-  ];
-}
-
 export function platformRunnerPresetRows(): PlatformRunnerPresetRow[] {
   return [
     {
@@ -75,20 +40,6 @@ export function platformRunnerPresetRows(): PlatformRunnerPresetRow[] {
       permissionPolicy: "default",
       readinessStatus: "Ready",
       readinessReasons: [],
-      enabled: true,
-    },
-    {
-      id: "claude-code-ccr",
-      adapter: "claude",
-      capabilityAgent: "claude",
-      model: "glm-5.1",
-      provider: { kind: "anthropic_compatible" },
-      permissionPolicy: "default",
-      sidecarId: "ccr-default",
-      readinessStatus: "NotReady",
-      readinessReasons: [
-        "CCR sidecar health must be confirmed by supervisor diagnostics",
-      ],
       enabled: true,
     },
     {

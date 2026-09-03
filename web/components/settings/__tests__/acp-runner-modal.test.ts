@@ -31,7 +31,6 @@ const claudeRunner: RunnerRow = {
   model: "claude-sonnet-4-6",
   provider: { kind: "anthropic" },
   permissionPolicy: "default",
-  sidecarId: null,
   readinessStatus: "Ready",
   readinessReasons: [],
   enabled: true,
@@ -50,7 +49,6 @@ const geminiVertexRunner: RunnerRow = {
     apiKey: "env:GOOGLE_API_KEY",
   },
   permissionPolicy: "default",
-  sidecarId: null,
   readinessStatus: "NotReady",
   readinessReasons: [],
   enabled: true,
@@ -61,7 +59,6 @@ describe("AcpRunnerModal", () => {
     const markup = renderToStaticMarkup(
       createElement(AcpRunnerModal, {
         mode: "create",
-        sidecars: [],
         presets: [codexPreset],
         onClose() {},
         onSaved() {},
@@ -83,7 +80,6 @@ describe("AcpRunnerModal", () => {
     const markup = renderToStaticMarkup(
       createElement(AcpRunnerModal, {
         mode: "create",
-        sidecars: [],
         presets: [codexPreset],
         initialPresetId: "codex-openai",
         onClose() {},
@@ -103,7 +99,6 @@ describe("AcpRunnerModal", () => {
       createElement(AcpRunnerModal, {
         mode: "edit",
         runner: claudeRunner,
-        sidecars: [],
         presets: [],
         onClose() {},
         onSaved() {},
@@ -125,7 +120,6 @@ describe("AcpRunnerModal", () => {
       createElement(AcpRunnerModal, {
         mode: "edit",
         runner: geminiVertexRunner,
-        sidecars: [],
         presets: [],
         onClose() {},
         onSaved() {},

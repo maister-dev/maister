@@ -1,10 +1,8 @@
-import type { CcrManager } from "./ccr-manager";
 import type { RegisterRoutesOptions } from "./http-api";
 
 import Fastify, { type FastifyInstance } from "fastify";
 import pino, { type Logger } from "pino";
 
-import { ccrManager } from "./ccr-manager";
 import { startHeartbeatWatcher } from "./heartbeat";
 import { registerRoutes } from "./http-api";
 import { createDefaultModelSourceRegistry } from "./model-catalog/sources";
@@ -26,18 +24,12 @@ function envInt(name: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-// ADR-094: build the production registerRoutes options. Extracted so a unit test
-// asserts the CCR manager is wired into spawnOverrides — without it the admin
-// /sidecars/:id/start|stop routes 409 in production (those routes have no
-// defaultCcrManager fallback, unlike the session-spawn path). main.ts is the
-// only production caller of registerRoutes.
 export function buildRegisterRoutesOptions(deps: {
   app: FastifyInstance;
   registry: SessionRegistry;
   logger: Logger;
   runtimeRoot: string;
   killGraceMs: number;
-  ccrManager: CcrManager;
 }): RegisterRoutesOptions {
   return {
     app: deps.app,
@@ -46,9 +38,8 @@ export function buildRegisterRoutesOptions(deps: {
     runtimeRoot: deps.runtimeRoot,
     killGraceMs: deps.killGraceMs,
     modelCatalog: {
-      registry: createDefaultModelSourceRegistry(deps.ccrManager),
+      registry: createDefaultModelSourceRegistry(),
     },
-    spawnOverrides: { ccrManager: deps.ccrManager },
   };
 }
 
@@ -88,7 +79,6 @@ export async function start(): Promise<void> {
       logger,
       runtimeRoot: root,
       killGraceMs,
-      ccrManager,
     }),
   );
 
@@ -141,15 +131,6 @@ export async function start(): Promise<void> {
     });
 
     await app.close();
-
-    try {
-      await ccrManager.shutdown({ timeoutMs: 5_000 });
-    } catch (err) {
-      logger.warn(
-        { err: (err as Error).message },
-        "ccr-manager shutdown failed; continuing",
-      );
-    }
 
     logger.info({ elapsedMs: Date.now() - startedAt }, "shutdown-done");
     await new Promise<void>((r) => logger.flush(() => r()));

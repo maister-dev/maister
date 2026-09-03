@@ -30,14 +30,14 @@ C4Context
 
     System_Ext(anthropic, "Anthropic API", "Claude Sonnet / Haiku / Opus inference. Default LLM provider.")
     System_Ext(openai, "OpenAI Codex API", "Codex (GPT-5-Codex) inference for the codex executor.")
-    System_Ext(thirdparty, "Third-party LLM provider", "Anthropic-API-compatible: z.ai GLM, OpenRouter, anyscale. Routed via env-router or CCR.")
+    System_Ext(thirdparty, "Third-party LLM provider", "Anthropic-API-compatible: z.ai GLM, OpenRouter, anyscale. Configured through runner environment.")
     System_Ext(git, "Git host", "GitHub or self-hosted git remote for parent repos and Flow plugins.")
     System_Ext(fs, "Host filesystem", "Parent repos, .maister/ subtree, system Flow cache.")
 
     Rel(operator, maister, "Registers projects, launches tasks, reviews diffs, answers HITL", "HTTPS")
     Rel(maister, anthropic, "Claude inference", "HTTPS (via claude-agent-acp)")
     Rel(maister, openai, "Codex inference", "HTTPS (via codex-acp)")
-    Rel(maister, thirdparty, "Alternative inference", "HTTPS (env-router or CCR)")
+    Rel(maister, thirdparty, "Alternative inference", "HTTPS")
     Rel(maister, git, "Clones Flow plugins, may push promoted run branches", "HTTPS / SSH")
     Rel(maister, fs, "Reads parent repos, writes .maister/ subtree", "POSIX")
 ```
@@ -47,7 +47,7 @@ C4Context
 - **Operator** — primary persona. One human running several projects.
   Credentials auth + global/project RBAC are implemented (`web/lib/authz.ts`);
   still effectively single-operator (no team invites yet).
-- *(Phase 2)* Small-team member — receives HITL items via the same UI.
+- _(Phase 2)_ Small-team member — receives HITL items via the same UI.
 
 **External systems.**
 
@@ -58,7 +58,7 @@ C4Context
   `codex-acp`.
 - **Third-party LLM provider** — any Anthropic-API-compatible endpoint
   (z.ai GLM, OpenRouter, anyscale) configured per-executor via
-  `executor.env` (env-router) or via CCR.
+  runner provider configuration and `executor.env`.
 - **Git host** — GitHub or self-hosted. Read-only for Flow plugin
   install. Push semantics for promoted run branches are operator-controlled.
 - **Host filesystem** — parent repos at `projects.repo_path`,
@@ -85,7 +85,6 @@ C4Container
             Container(claude_acp, "claude-agent-acp", "Node binary", "ACP adapter wrapping @anthropic-ai/claude-agent-sdk.")
             Container(codex_acp, "codex-acp", "Node binary", "ACP adapter bundling @openai/codex.")
         }
-        Container(ccr_daemon, "CCR daemon", "Node — @musistudio/claude-code-router@2.0.0", "Multi-provider Anthropic-API-compatible proxy. Lazy-started by the supervisor on the first router=ccr session; one daemon per supervisor process.")
     }
 
     System_Ext(anthropic, "Anthropic API", "HTTPS")
@@ -102,34 +101,30 @@ C4Container
 
     Rel(supervisor, claude_acp, "child_process.spawn", "stdio JSONL")
     Rel(supervisor, codex_acp, "child_process.spawn", "stdio JSONL")
-    Rel(supervisor, ccr_daemon, "Spawn + health-check + SIGTERM on shutdown", "child_process.spawn")
     Rel(supervisor, fs, "Writes step .log + cost.jsonl", "POSIX")
 
     Rel(claude_acp, anthropic, "Inference", "HTTPS")
-    Rel(claude_acp, thirdparty, "Inference (env-router or CCR)", "HTTPS")
-    Rel(claude_acp, ccr_daemon, "Inference (router=ccr)", "HTTP 127.0.0.1")
-    Rel(ccr_daemon, thirdparty, "Routed inference (multi-provider)", "HTTPS")
+    Rel(claude_acp, thirdparty, "Inference (runner env)", "HTTPS")
     Rel(codex_acp, openai, "Inference", "HTTPS")
 ```
 
 **Containers.**
 
-| Container | Status | Tech | Purpose |
-| --------- | ------ | ---- | ------- |
-| Web tier | Implemented | Next.js 16 + React 19 + HeroUI v3 + Tailwind 4 | Route Handlers for run launch, HITL response, and durable run SSE; Drizzle access; Flow runner. |
-| Supervisor daemon | Implemented | Node 24 + Fastify + pino + Zod | Owns ACP sessions, spawns adapters, heartbeat watcher, cost accounting, permission deferreds, run event log. |
-| Database | Implemented | Postgres 16 | Persistent state for projects, ACP runners, router sidecars, flows, tasks, runs, workspaces, node attempts, and HITL. |
-| `claude-agent-acp` | Implemented | `@agentclientprotocol/claude-agent-acp@0.37.0` | ACP adapter wrapping Claude Agent SDK. One process per session. |
-| `codex-acp` | Implemented | `@agentclientprotocol/codex-acp@0.0.44` | ACP adapter bundling Codex. One process per session. |
-| CCR daemon | Implemented | `@musistudio/claude-code-router@2.0.0` (MIT) | Multi-provider Anthropic-compatible proxy. Supervisor-owned: lazy `ensureRunning()` on first `router=ccr` spawn, graceful shutdown on supervisor SIGTERM/SIGINT, one daemon per supervisor process. |
+| Container           | Status      | Tech                                               | Purpose                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------- | ----------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Web tier            | Implemented | Next.js 16 + React 19 + HeroUI v3 + Tailwind 4     | Route Handlers for run launch, HITL response, and durable run SSE; Drizzle access; Flow runner.                                                                                                                                                                                                                                                                                                       |
+| Supervisor daemon   | Implemented | Node 24 + Fastify + pino + Zod                     | Owns ACP sessions, spawns adapters, heartbeat watcher, cost accounting, permission deferreds, run event log.                                                                                                                                                                                                                                                                                          |
+| Database            | Implemented | Postgres 16                                        | Persistent state for projects, ACP runners, flows, tasks, runs, workspaces, node attempts, and HITL.                                                                                                                                                                                                                                                                                                  |
+| `claude-agent-acp`  | Implemented | `@agentclientprotocol/claude-agent-acp@0.37.0`     | ACP adapter wrapping Claude Agent SDK. One process per session.                                                                                                                                                                                                                                                                                                                                       |
+| `codex-acp`         | Implemented | `@agentclientprotocol/codex-acp@0.0.44`            | ACP adapter bundling Codex. One process per session.                                                                                                                                                                                                                                                                                                                                                  |
 | MCP facade (`mcp/`) | Implemented | `@maister/mcp` — `@modelcontextprotocol/sdk`, Node | Standalone workspace package exposing external MCP tools as a thin REST client of `/api/v1/ext`, incl. `hitl_inbox`, `hitl_list`, and `hitl_respond` (ADR-055). Streamable-HTTP (default, remote): forwards per-request inbound bearer to the REST layer; no ambient token. stdio (local): reads `MAISTER_PROJECT_TOKEN`, then `MAISTER_ACCESS_TOKEN` as fallback. Zero DB/web coupling. See ADR-047. |
 
 **Inter-container contracts.**
 
 - **Web ↔ Supervisor** — HTTP + SSE.
   Contract: [`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml) (REST routes)
-  + [`api/async/supervisor-sse.asyncapi.yaml`](api/async/supervisor-sse.asyncapi.yaml) (SSE event stream).
-  Client: `web/lib/supervisor-client.ts`.
+  - [`api/async/supervisor-sse.asyncapi.yaml`](api/async/supervisor-sse.asyncapi.yaml) (SSE event stream).
+    Client: `web/lib/supervisor-client.ts`.
 - **Web ↔ Database** — Drizzle ORM over `postgres` driver.
   Contract: [`database-schema.md`](database-schema.md) + [`db/erd.md`](db/erd.md).
 - **Supervisor ↔ Adapter** — stdio JSONL (Adapter binary speaks ACP
@@ -156,7 +151,7 @@ C4Component
         Component(events_log, "events-log.ts", "Run event writer", "Appends every SessionEvent to run.events.jsonl.")
         Component(pending, "pending-permissions.ts", "Deferred registry", "Parks ACP permission requests until web responds or timeout fires.")
         Component(types, "types.ts", "Zod schemas + types", "StartSessionRequest, SessionEvent union, SupervisorError, httpStatusForCode.")
-        Component(model_catalog, "model-catalog/", "Model resolver (ADR-076)", "ModelSource registry, ACP-probe/provider/curated/CCR sources, in-memory TTL cache, passive harvest.")
+        Component(model_catalog, "model-catalog/", "Model resolver (ADR-076)", "ModelSource registry, ACP-probe/provider/curated sources, in-memory TTL cache, passive harvest.")
     }
 
     ContainerDb_Ext(fs, "Filesystem", ".maister/{slug}/runs/{runId}/")
@@ -188,19 +183,18 @@ C4Component
 
 **Component table — Supervisor.**
 
-| Name | File | Purpose | Responsibilities | Dependencies |
-| ---- | ---- | ------- | ---------------- | ------------ |
-| `main` | `supervisor/src/main.ts` | Process entrypoint. | Read env, build Fastify + pino, wire components, listen, graceful shutdown. | `http-api`, `registry`, `heartbeat`. |
-| `http-api` | `supervisor/src/http-api.ts` | HTTP surface. | Session lifecycle routes, prompt route, permission input route, checkpoint route, SSE pipe with `Last-Event-ID` replay, error mapping. | `spawn`, `registry`, `heartbeat`, `cost`, `pending-permissions`, `types`. |
-| `spawn` | `supervisor/src/spawn.ts` | Process launcher. | Pick binary by `executor.agent`, merge env, line-buffer stdout, write `<stepId>.log`, emit `session.line` events. (Resume is NOT a spawn arg — it is the ACP `session/resume` call in `acp-client.ts`; the adapters ignore `--resume` on argv.) When `executor.router === "ccr"`, await `ccr-manager.ensureRunning()` and inject `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` into childEnv beneath the explicit `executor.env` overlay. | `registry` (channel constant), `ccr-manager`, `types`. |
-| `ccr-manager` | `supervisor/src/ccr-manager.ts` | CCR daemon lifecycle controller. **Implemented.** | Singleton state machine (`idle | starting | ready | failed | stopping`). Lazy-start the bundled CCR proxy on demand. Parse host+port from `~/.claude-code-router/config.json` (defaults `127.0.0.1:3456`). Exponential-backoff `GET /` health check ≤10 s. Graceful shutdown on SIGTERM/SIGINT via existing `main.ts` handler. | `node:child_process`, `node:fs/promises`, `types`. |
-| `registry` | `supervisor/src/registry.ts` | In-memory session table. | Register, get, list, subscribe, snapshotEvents (1000-entry ring), markIntentionalShutdown. | `types`. |
-| `heartbeat` | `supervisor/src/heartbeat.ts` | Lifecycle watcher. | exit/error → `session.exited`/`session.crashed`, orphan-PID polling via `process.kill(pid, 0)`. | `registry`, `types`. |
-| `cost` | `supervisor/src/cost.ts` | Cost accounting. | Lenient JSON parse on every line, traverse for `usage` (depth ≤ 8), append record to `cost.jsonl`. | `registry` (channel constant). |
-| `events-log` | `supervisor/src/events-log.ts` | Durable run events. | Append every `SessionEvent` to `.maister/<slug>/runs/<runId>/run.events.jsonl`. | `node:fs`. |
-| `pending-permissions` | `supervisor/src/pending-permissions.ts` | Permission deferreds. | Resolve or cancel ACP `requestPermission` handles by `(sessionId, requestId)`. | `types`. |
-| `types` | `supervisor/src/types.ts` | Schemas + error. | Zod request/event schemas, `SessionEvent` union, `SupervisorError` class, `httpStatusForCode()`. | `zod`. |
-| `model-catalog` | `supervisor/src/model-catalog/*` | Model discovery resolver (ADR-076). **Implemented.** | `ModelSource` registry keyed by `(adapter, provider.kind, router)`; ACP-probe/provider/curated/CCR sources; in-memory TTL cache; passive harvest. Serves `POST /model-catalog/resolve`; resolves `env:NAME` secrets supervisor-side only, never returns them. | `spawn` (`buildChildEnv`), `runner-provisioner`, `acp-client`, `ccr-manager`, `types`. |
+| Name                  | File                                    | Purpose                                              | Responsibilities                                                                                                                                                                                                                                  | Dependencies                                                              |
+| --------------------- | --------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `main`                | `supervisor/src/main.ts`                | Process entrypoint.                                  | Read env, build Fastify + pino, wire components, listen, graceful shutdown.                                                                                                                                                                       | `http-api`, `registry`, `heartbeat`.                                      |
+| `http-api`            | `supervisor/src/http-api.ts`            | HTTP surface.                                        | Session lifecycle routes, prompt route, permission input route, checkpoint route, SSE pipe with `Last-Event-ID` replay, error mapping.                                                                                                            | `spawn`, `registry`, `heartbeat`, `cost`, `pending-permissions`, `types`. |
+| `spawn`               | `supervisor/src/spawn.ts`               | Process launcher.                                    | Pick binary by `executor.agent`, merge env, line-buffer stdout, write `<stepId>.log`, emit `session.line` events. (Resume is NOT a spawn arg — it is the ACP `session/resume` call in `acp-client.ts`; the adapters ignore `--resume` on argv.)   | `registry` (channel constant), `types`.                                   |
+| `registry`            | `supervisor/src/registry.ts`            | In-memory session table.                             | Register, get, list, subscribe, snapshotEvents (1000-entry ring), markIntentionalShutdown.                                                                                                                                                        | `types`.                                                                  |
+| `heartbeat`           | `supervisor/src/heartbeat.ts`           | Lifecycle watcher.                                   | exit/error → `session.exited`/`session.crashed`, orphan-PID polling via `process.kill(pid, 0)`.                                                                                                                                                   | `registry`, `types`.                                                      |
+| `cost`                | `supervisor/src/cost.ts`                | Cost accounting.                                     | Lenient JSON parse on every line, traverse for `usage` (depth ≤ 8), append record to `cost.jsonl`.                                                                                                                                                | `registry` (channel constant).                                            |
+| `events-log`          | `supervisor/src/events-log.ts`          | Durable run events.                                  | Append every `SessionEvent` to `.maister/<slug>/runs/<runId>/run.events.jsonl`.                                                                                                                                                                   | `node:fs`.                                                                |
+| `pending-permissions` | `supervisor/src/pending-permissions.ts` | Permission deferreds.                                | Resolve or cancel ACP `requestPermission` handles by `(sessionId, requestId)`.                                                                                                                                                                    | `types`.                                                                  |
+| `types`               | `supervisor/src/types.ts`               | Schemas + error.                                     | Zod request/event schemas, `SessionEvent` union, `SupervisorError` class, `httpStatusForCode()`.                                                                                                                                                  | `zod`.                                                                    |
+| `model-catalog`       | `supervisor/src/model-catalog/*`        | Model discovery resolver (ADR-076). **Implemented.** | `ModelSource` registry keyed by `(adapter, provider.kind)`; ACP-probe/provider/curated sources; in-memory TTL cache; passive harvest. Serves `POST /model-catalog/resolve`; resolves `env:NAME` secrets supervisor-side only, never returns them. | `spawn` (`buildChildEnv`), `runner-provisioner`, `acp-client`, `types`.   |
 
 The `model-catalog` resolver (Implemented, ADR-076) is the supervisor's
 model-discovery surface: `POST /model-catalog/resolve` fans a runner draft across
@@ -247,44 +241,44 @@ C4Component
 
 **Component table — Web foundation.**
 
-| Name | File | Purpose | Dependencies |
-| ---- | ---- | ------- | ------------ |
-| `lib/errors` | `web/lib/errors.ts` | `MaisterError` + `isMaisterError` type guard. | (none) |
-| `lib/atomic` | `web/lib/atomic.ts` | `atomicWriteJson(path, data)` — tmp + rename. | `node:fs/promises`, `node:crypto`, `pino`. |
-| `lib/config.schema` | `web/lib/config.schema.ts` | Zod schemas for `maister.yaml` v2, `flow.yaml` v1, `form_schema`. | `zod`. |
-| `lib/config` | `web/lib/config.ts` | `loadProjectConfig`, `loadFlowManifest`, `validateFormSchemaVersion`. | `lib/config.schema`, `lib/errors`, `yaml`, `pino`. |
-| `lib/supervisor-client` | `web/lib/supervisor-client.ts` | `createSession`, `sendPrompt`, `deliverPermission`, `cancelPermission`, `deleteSession`, `listSessions`, `checkpointSession`, `streamSession`, `resolveModelSuggestions` (ADR-076). | `lib/errors`, `pino`. |
-| `lib/db/schema` | `web/lib/db/schema.ts` | Drizzle table definitions for the 8 tables. | `drizzle-orm/pg-core`. |
-| `lib/db/client` | `web/lib/db/client.ts` | Drizzle client factory + lazy singleton. | `drizzle-orm`, `lib/errors`. |
-| `lib/flows/runner` | `web/lib/flows/runner.ts` | Flow graph execution and resume gate. | `flows/*`, `db/schema`, `scheduler`, `supervisor-client`. |
-| `app/api/runs` | `web/app/api/runs/route.ts` | Launch a run from a Backlog task. | `db`, `worktree`, `scheduler`, `flows/runner`. |
-| `app/api/runs/[runId]/stream` | `web/app/api/runs/[runId]/stream/route.ts` | Browser-facing durable run SSE. | `db`, `run.events.jsonl`. |
-| `app/api/runs/[runId]/hitl/[hitlRequestId]/respond` | Route Handler | HITL response two-phase claim, permission delivery or atomic artifact write, runner wake-up. | `db`, `atomic`, `supervisor-client`, `flows/runner`. |
+| Name                                                | File                                       | Purpose                                                                                                                                                                             | Dependencies                                              |
+| --------------------------------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `lib/errors`                                        | `web/lib/errors.ts`                        | `MaisterError` + `isMaisterError` type guard.                                                                                                                                       | (none)                                                    |
+| `lib/atomic`                                        | `web/lib/atomic.ts`                        | `atomicWriteJson(path, data)` — tmp + rename.                                                                                                                                       | `node:fs/promises`, `node:crypto`, `pino`.                |
+| `lib/config.schema`                                 | `web/lib/config.schema.ts`                 | Zod schemas for `maister.yaml` v2, `flow.yaml` v1, `form_schema`.                                                                                                                   | `zod`.                                                    |
+| `lib/config`                                        | `web/lib/config.ts`                        | `loadProjectConfig`, `loadFlowManifest`, `validateFormSchemaVersion`.                                                                                                               | `lib/config.schema`, `lib/errors`, `yaml`, `pino`.        |
+| `lib/supervisor-client`                             | `web/lib/supervisor-client.ts`             | `createSession`, `sendPrompt`, `deliverPermission`, `cancelPermission`, `deleteSession`, `listSessions`, `checkpointSession`, `streamSession`, `resolveModelSuggestions` (ADR-076). | `lib/errors`, `pino`.                                     |
+| `lib/db/schema`                                     | `web/lib/db/schema.ts`                     | Drizzle table definitions for the 8 tables.                                                                                                                                         | `drizzle-orm/pg-core`.                                    |
+| `lib/db/client`                                     | `web/lib/db/client.ts`                     | Drizzle client factory + lazy singleton.                                                                                                                                            | `drizzle-orm`, `lib/errors`.                              |
+| `lib/flows/runner`                                  | `web/lib/flows/runner.ts`                  | Flow graph execution and resume gate.                                                                                                                                               | `flows/*`, `db/schema`, `scheduler`, `supervisor-client`. |
+| `app/api/runs`                                      | `web/app/api/runs/route.ts`                | Launch a run from a Backlog task.                                                                                                                                                   | `db`, `worktree`, `scheduler`, `flows/runner`.            |
+| `app/api/runs/[runId]/stream`                       | `web/app/api/runs/[runId]/stream/route.ts` | Browser-facing durable run SSE.                                                                                                                                                     | `db`, `run.events.jsonl`.                                 |
+| `app/api/runs/[runId]/hitl/[hitlRequestId]/respond` | Route Handler                              | HITL response two-phase claim, permission delivery or atomic artifact write, runner wake-up.                                                                                        | `db`, `atomic`, `supervisor-client`, `flows/runner`.      |
 
 ## Component map — remaining pieces
 
 These components are implemented unless the status column says otherwise:
 
-| Component | File | Purpose | Status |
-| --------- | -------------- | ------- | ------ |
-| `app/api/projects/route.ts` | Route Handler | Register projects from a local path or repo source, slug derivation, slug + repo_path uniqueness, Flow plugin install on register, owner membership. | Implemented |
-| `lib/flows` | `web/lib/flows.ts` | Flow plugin loader: `git clone --branch <tag>`, symlink into project subtree, manifest validation. | Implemented |
-| `lib/acp-runners` | `web/lib/acp-runners/*` | Platform runner catalog + `resolveRunner()` precedence chain — owned by [`system-analytics/executors.md`](system-analytics/executors.md). | Implemented |
-| `lib/worktree` | `web/lib/worktree.ts` | `git worktree add/remove/list` wrapper, project-scoped paths. | Implemented |
-| `lib/scheduler` | `web/lib/scheduler.ts` | Global concurrency cap, Pending queue, auto-promote on slot free. | Implemented |
-| `app/api/projects/[slug]/tasks/route.ts` | Route Handler | Create tasks → `Backlog`. | Implemented |
-| `app/api/runs/route.ts` | Route Handler | Precondition + ACP runner resolution (delegates to `lib/acp-runners/resolve`, snapshots runner identity) + worktree add + supervisor `POST /sessions`. | Implemented |
-| `app/api/runs/[runId]/stream/route.ts` | Route Handler | SSE bridge tailing `run.events.jsonl`. | Implemented |
-| `app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route.ts` | Route Handler | Two-phase HITL response, permission delivery, atomic input artifact, runner wake-up. | Implemented |
-| `app/api/runs/[id]/activity/route.ts` | Route Handler | Bump `keepalive_until` by 30 min while user on the page. | Implemented |
-| `app/api/runs/[id]/diff/route.ts` | Route Handler | Raw `git diff` rendered in `<pre>`. | Implemented |
-| `app/api/runs/[id]/promote/route.ts` | Route Handler | Promote the run branch by delivery-policy mode (`merge`/`rebase_merge`/`ai_rebase_merge`/`pull_request`) — owned by [`system-analytics/workspaces.md`](system-analytics/workspaces.md) + [`branch-sync.md`](system-analytics/branch-sync.md). | Implemented |
-| `app/api/scratch-runs/[runId]/recover/route.ts` | Route Handler | Recover a crashed scratch session through the stored ACP session id. | Implemented |
-| Projector | `web/lib/projector/artifact-projector.ts` | Web-side. Derives event-stream evidence — the tool-call activity log + preview — from the per-run `run.events.jsonl`. Pull-based at runner sync points + startup catch-up. **Never drives run state.** | Implemented |
-| ArtifactStore | `web/lib/flows/graph/artifact-store.ts` | Web-side. CRUD + lifecycle (record / supersede / stale / fail) over the `artifact_instances` evidence index. | Implemented |
-| MCP facade | `mcp/src/` | Standalone `@maister/mcp`: external MCP tools as thin REST clients of `/api/v1/ext` — owned by [`system-analytics/external-operations.md`](system-analytics/external-operations.md). | Implemented |
-| Cross-project HITL inbox | `web/lib/queries/portfolio.ts` + `app/(app)/page.tsx` | Portfolio block listing pending HITL across visible projects (ADR-057) — behavior owned by [`system-analytics/hitl.md`](system-analytics/hitl.md). | Implemented |
-| Project Brain | `web/lib/brain/*` | Owned + indexed memory tiers with recall/retain MCP tools (ADR-122/127/128; own migration lineage) — owned by [`system-analytics/project-brain.md`](system-analytics/project-brain.md). | Implemented |
+| Component                                                    | File                                                  | Purpose                                                                                                                                                                                                                                       | Status      |
+| ------------------------------------------------------------ | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| `app/api/projects/route.ts`                                  | Route Handler                                         | Register projects from a local path or repo source, slug derivation, slug + repo_path uniqueness, Flow plugin install on register, owner membership.                                                                                          | Implemented |
+| `lib/flows`                                                  | `web/lib/flows.ts`                                    | Flow plugin loader: `git clone --branch <tag>`, symlink into project subtree, manifest validation.                                                                                                                                            | Implemented |
+| `lib/acp-runners`                                            | `web/lib/acp-runners/*`                               | Platform runner catalog + `resolveRunner()` precedence chain — owned by [`system-analytics/executors.md`](system-analytics/executors.md).                                                                                                     | Implemented |
+| `lib/worktree`                                               | `web/lib/worktree.ts`                                 | `git worktree add/remove/list` wrapper, project-scoped paths.                                                                                                                                                                                 | Implemented |
+| `lib/scheduler`                                              | `web/lib/scheduler.ts`                                | Global concurrency cap, Pending queue, auto-promote on slot free.                                                                                                                                                                             | Implemented |
+| `app/api/projects/[slug]/tasks/route.ts`                     | Route Handler                                         | Create tasks → `Backlog`.                                                                                                                                                                                                                     | Implemented |
+| `app/api/runs/route.ts`                                      | Route Handler                                         | Precondition + ACP runner resolution (delegates to `lib/acp-runners/resolve`, snapshots runner identity) + worktree add + supervisor `POST /sessions`.                                                                                        | Implemented |
+| `app/api/runs/[runId]/stream/route.ts`                       | Route Handler                                         | SSE bridge tailing `run.events.jsonl`.                                                                                                                                                                                                        | Implemented |
+| `app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route.ts` | Route Handler                                         | Two-phase HITL response, permission delivery, atomic input artifact, runner wake-up.                                                                                                                                                          | Implemented |
+| `app/api/runs/[id]/activity/route.ts`                        | Route Handler                                         | Bump `keepalive_until` by 30 min while user on the page.                                                                                                                                                                                      | Implemented |
+| `app/api/runs/[id]/diff/route.ts`                            | Route Handler                                         | Raw `git diff` rendered in `<pre>`.                                                                                                                                                                                                           | Implemented |
+| `app/api/runs/[id]/promote/route.ts`                         | Route Handler                                         | Promote the run branch by delivery-policy mode (`merge`/`rebase_merge`/`ai_rebase_merge`/`pull_request`) — owned by [`system-analytics/workspaces.md`](system-analytics/workspaces.md) + [`branch-sync.md`](system-analytics/branch-sync.md). | Implemented |
+| `app/api/scratch-runs/[runId]/recover/route.ts`              | Route Handler                                         | Recover a crashed scratch session through the stored ACP session id.                                                                                                                                                                          | Implemented |
+| Projector                                                    | `web/lib/projector/artifact-projector.ts`             | Web-side. Derives event-stream evidence — the tool-call activity log + preview — from the per-run `run.events.jsonl`. Pull-based at runner sync points + startup catch-up. **Never drives run state.**                                        | Implemented |
+| ArtifactStore                                                | `web/lib/flows/graph/artifact-store.ts`               | Web-side. CRUD + lifecycle (record / supersede / stale / fail) over the `artifact_instances` evidence index.                                                                                                                                  | Implemented |
+| MCP facade                                                   | `mcp/src/`                                            | Standalone `@maister/mcp`: external MCP tools as thin REST clients of `/api/v1/ext` — owned by [`system-analytics/external-operations.md`](system-analytics/external-operations.md).                                                          | Implemented |
+| Cross-project HITL inbox                                     | `web/lib/queries/portfolio.ts` + `app/(app)/page.tsx` | Portfolio block listing pending HITL across visible projects (ADR-057) — behavior owned by [`system-analytics/hitl.md`](system-analytics/hitl.md).                                                                                            | Implemented |
+| Project Brain                                                | `web/lib/brain/*`                                     | Owned + indexed memory tiers with recall/retain MCP tools (ADR-122/127/128; own migration lineage) — owned by [`system-analytics/project-brain.md`](system-analytics/project-brain.md).                                                       | Implemented |
 
 ## Dependency rules
 
@@ -330,10 +324,7 @@ sequenceDiagram
     W->>DB: tryStartRun claims a concurrency slot
     W->>W: runFlow(runId) in background
     W->>S: POST /sessions { runId, projectSlug, worktreePath, stepId, executor }
-    opt executor.router is ccr (first session only)
-        S->>S: ccrManager.ensureRunning starts CCR if idle
-    end
-    S->>A: spawn claude-agent-acp with merged env (ANTHROPIC_BASE_URL/TOKEN injected for router=ccr)
+    S->>A: spawn claude-agent-acp with merged runner environment
     A-->>S: spawn event fires
     S-->>W: 201 { sessionId, pid, acpSessionId }
     W->>DB: run_sessions.acp_session_id = acpSessionId

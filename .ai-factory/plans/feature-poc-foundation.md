@@ -1,5 +1,9 @@
 # Phase 0 — POC Foundation: M1 + M2 + Test Infra
 
+> **Historical plan:** CCR/router-specific tasks and contracts below are
+> obsolete and superseded by [ADR-164](../../docs/decisions/adr-164.md). Do not
+> implement them; use current code and canonical docs.
+
 - **Branch**: `feature/poc-foundation` (off `main`)
 - **Created**: 2026-05-25
 - **Parent plan**: [`poc-implementation.md`](./poc-implementation.md) — Phase 0 (sequential, ~3-5 days)

@@ -21,7 +21,6 @@ const executor = {
   id: "exec-1",
   agent: "claude",
   model: "claude-sonnet-4-6",
-  router: null,
 } as const;
 
 function makeNodeAttempt(
@@ -51,7 +50,8 @@ describe("buildContext — FlowContext builder", () => {
       executor,
       nodeAttempts: [],
       projectSlug: "demo",
-      effectivePrompt: "Do the thing\n\n## Human clarifications\n\nAnswer: production",
+      effectivePrompt:
+        "Do the thing\n\n## Human clarifications\n\nAnswer: production",
       clarifications: [
         {
           id: "clarification-1",
@@ -67,7 +67,8 @@ describe("buildContext — FlowContext builder", () => {
       id: "task-1",
       title: "Demo",
       prompt: "Do the thing",
-      effectivePrompt: "Do the thing\n\n## Human clarifications\n\nAnswer: production",
+      effectivePrompt:
+        "Do the thing\n\n## Human clarifications\n\nAnswer: production",
       clarifications: [
         {
           id: "clarification-1",
@@ -87,7 +88,6 @@ describe("buildContext — FlowContext builder", () => {
       id: "exec-1",
       agent: "claude",
       model: "claude-sonnet-4-6",
-      router: undefined,
     });
     expect(ctx.steps).toEqual({});
     expect(ctx.env).toEqual({ PATH: "/usr/bin" });
@@ -197,19 +197,6 @@ describe("buildContext — FlowContext builder", () => {
     });
 
     expect(ctx.steps.x.vars).toEqual({ foo: "bar", num: 42 });
-  });
-
-  it("executor.router is undefined when not set on the row", () => {
-    const ctx = buildContext({
-      task,
-      run,
-      executor: { ...executor, router: null },
-      nodeAttempts: [],
-      projectSlug: "demo",
-      envSource: {},
-    });
-
-    expect(ctx.executor.router).toBeUndefined();
   });
 
   it("propagates task.attemptNumber to ctx.task and ctx.run", () => {

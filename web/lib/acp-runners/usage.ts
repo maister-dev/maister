@@ -6,7 +6,6 @@ import type { PgTable } from "drizzle-orm/pg-core";
 import {
   flowRevisions,
   flowRunnerRemaps,
-  platformAcpRunners,
   platformRuntimeSettings,
   projectFlowRunnerDefaults,
   projects,
@@ -90,12 +89,6 @@ export type RunnerUsageReference =
       readonly runnerId: string;
     };
 
-export type SidecarUsageReference = {
-  readonly kind: "runnerSidecar";
-  readonly runnerId: string;
-  readonly sidecarId: string;
-};
-
 type RunnerUsageInput = {
   readonly runnerId: string;
   readonly platformDefaultRunnerId?: string | null;
@@ -139,14 +132,6 @@ type RunnerUsageInput = {
     readonly runId: string;
     readonly projectId: string | null;
     readonly runnerId?: string | null;
-  }[];
-};
-
-type SidecarUsageInput = {
-  readonly sidecarId: string;
-  readonly runners: readonly {
-    readonly runnerId: string;
-    readonly sidecarId?: string | null;
   }[];
 };
 
@@ -243,18 +228,6 @@ export function collectRunnerUsageReferences(
   return refs;
 }
 
-export function collectSidecarUsageReferences(
-  input: SidecarUsageInput,
-): SidecarUsageReference[] {
-  return input.runners
-    .filter((runner) => runner.sidecarId === input.sidecarId)
-    .map((runner) => ({
-      kind: "runnerSidecar",
-      runnerId: runner.runnerId,
-      sidecarId: input.sidecarId,
-    }));
-}
-
 function snapshotRunnerId(snapshot: unknown): string | null {
   if (
     snapshot &&
@@ -345,20 +318,5 @@ export async function loadRunnerUsageReferences(
         projectId: runById.get(session.runId)?.projectId ?? null,
         runnerId: session.runnerId ?? null,
       })),
-  });
-}
-
-export async function loadSidecarUsageReferences(
-  db: Db,
-  sidecarId: string,
-): Promise<SidecarUsageReference[]> {
-  const runnerRows = await db.select().from(platformAcpRunners);
-
-  return collectSidecarUsageReferences({
-    sidecarId,
-    runners: runnerRows.map((runner) => ({
-      runnerId: runner.id,
-      sidecarId: runner.sidecarId ?? null,
-    })),
   });
 }

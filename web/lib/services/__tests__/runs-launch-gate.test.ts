@@ -260,7 +260,6 @@ function seedSelects(opts: { task?: Record<string, unknown> } = {}): void {
         model: "claude-sonnet-4-6",
         provider: { kind: "anthropic" },
         permissionPolicy: "default",
-        sidecarId: null,
         readinessStatus: "Ready",
         enabled: true,
       },

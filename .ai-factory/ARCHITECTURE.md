@@ -43,7 +43,7 @@ context.
 - **Tech stack:** Next.js 16 App Router · TypeScript 5.6 (strict) · HeroUI
   v3 · Tailwind 4 · Drizzle ORM · Postgres 16 · ACP (Zed-standard) via
   separate `supervisor/` daemon · Node `child_process.spawn` for agent
-  processes · CCR for model routing · pnpm.
+  processes · environment-configured model routing · pnpm.
 - **Team size:** 1 (solo dev).
 - **Domain complexity:** Medium-High — multi-project registry, Flow
   plugin engine, multi-executor (claude + codex), workspace lifecycle,
@@ -171,7 +171,7 @@ mAIster/
     │   ├── supervisor-client.ts    # HTTP+SSE client to ../supervisor/
     │   ├── config.ts               # maister.yaml v2 loader + flow.yaml manifest parser, zod-validated
     │   ├── flows.ts                # Flow plugin install: git clone --branch <tag>, symlink, manifest validation
-    │   ├── executors.ts            # Executor registry + override-resolution + CCR env construction
+    │   ├── executors.ts            # Executor registry + override resolution
     │   ├── projects.ts             # Project registry CRUD, recursive MAISTER_PROJECTS_DIR scan, Flow install on register
     │   ├── scheduler.ts            # Global concurrency cap + Pending queue
     │   ├── reconcile.ts            # Startup: runs vs git worktree list vs supervisor sessions
@@ -291,7 +291,7 @@ affected editor e2e (`m27-flow-editor.spec.ts` precedent).
   `fs.watch`, `chokidar`, or polling on the web tier. The state machine
   is split: supervisor owns process-level state (live / checkpointed /
   crashed); web tier owns run-level state (`Running | NeedsInput |
-  NeedsInputIdle | Review | Crashed | …`) reflected in the `runs` table.
+NeedsInputIdle | Review | Crashed | …`) reflected in the `runs` table.
 - **HITL handoff:** adapter emits ACP `requestPermission` or the runner
   reaches a form/human step -> web tier records `hitl_requests` row ->
   UI renders an option picker or schema form -> response route performs
@@ -350,10 +350,10 @@ affected editor e2e (`m27-flow-editor.spec.ts` precedent).
 
 ```typescript
 // app/api/runs/route.ts
-import { spawnRun } from '@/lib/runner';
-import { MaisterError } from '@/lib/errors';
-import { db } from '@/lib/db/client';
-import { runs } from '@/lib/db/schema';
+import { spawnRun } from "@/lib/runner";
+import { MaisterError } from "@/lib/errors";
+import { db } from "@/lib/db/client";
+import { runs } from "@/lib/db/schema";
 
 export async function POST(req: Request) {
   const { taskId, workspacePath } = await req.json();
@@ -365,7 +365,7 @@ export async function POST(req: Request) {
     if (err instanceof MaisterError) {
       return Response.json(
         { code: err.code, message: err.message },
-        { status: err.code === 'PRECONDITION' ? 409 : 500 },
+        { status: err.code === "PRECONDITION" ? 409 : 500 },
       );
     }
     throw err;
@@ -378,20 +378,20 @@ export async function POST(req: Request) {
 ```typescript
 // lib/errors.ts
 export type MaisterErrorCode =
-  | 'PRECONDITION'
-  | 'SPAWN'
-  | 'NEEDS_INPUT'
-  | 'HITL_TIMEOUT'
-  | 'CRASH'
-  | 'CONFLICT'
-  | 'CONFIG';
+  | "PRECONDITION"
+  | "SPAWN"
+  | "NEEDS_INPUT"
+  | "HITL_TIMEOUT"
+  | "CRASH"
+  | "CONFLICT"
+  | "CONFIG";
 
 export class MaisterError extends Error {
   readonly code: MaisterErrorCode;
 
   constructor(code: MaisterErrorCode, message: string, options?: ErrorOptions) {
     super(message, options);
-    this.name = 'MaisterError';
+    this.name = "MaisterError";
     this.code = code;
   }
 }
@@ -401,14 +401,17 @@ export class MaisterError extends Error {
 
 ```typescript
 // lib/atomic.ts
-import { writeFile, rename, mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { writeFile, rename, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
+import { randomUUID } from "node:crypto";
 
-export async function atomicWriteJson(path: string, data: unknown): Promise<void> {
+export async function atomicWriteJson(
+  path: string,
+  data: unknown,
+): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const tmpPath = `${path}.${randomUUID()}.tmp`;
-  await writeFile(tmpPath, JSON.stringify(data, null, 2), { encoding: 'utf8' });
+  await writeFile(tmpPath, JSON.stringify(data, null, 2), { encoding: "utf8" });
   await rename(tmpPath, path);
 }
 ```
@@ -417,21 +420,25 @@ export async function atomicWriteJson(path: string, data: unknown): Promise<void
 
 ```typescript
 // web/lib/supervisor-client.ts (excerpt)
-import { MaisterError } from '@/lib/errors';
+import { MaisterError } from "@/lib/errors";
 
-const BASE = process.env.MAISTER_SUPERVISOR_URL ?? 'http://localhost:7777';
+const BASE = process.env.MAISTER_SUPERVISOR_URL ?? "http://localhost:7777";
 
 export async function createSession(opts: {
   runId: string;
   projectSlug: string;
   worktreePath: string;
-  executor: { agent: 'claude' | 'codex'; model: string; env?: Record<string, string>; router?: 'ccr' };
+  executor: {
+    agent: "claude" | "codex";
+    model: string;
+    env?: Record<string, string>;
+  };
   flowManifest: unknown;
   prompt: string;
 }): Promise<{ acpSessionId: string }> {
   const res = await fetch(`${BASE}/sessions`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    method: "POST",
+    headers: { "content-type": "application/json" },
     body: JSON.stringify(opts),
   });
 
@@ -439,7 +446,7 @@ export async function createSession(opts: {
     const body = await res.json().catch(() => ({}));
 
     throw new MaisterError(
-      body?.code ?? 'SPAWN',
+      body?.code ?? "SPAWN",
       body?.message ?? `supervisor POST /sessions ${res.status}`,
     );
   }
@@ -447,15 +454,19 @@ export async function createSession(opts: {
   return res.json();
 }
 
-export async function deliverInput(runId: string, stepId: string, value: unknown): Promise<void> {
+export async function deliverInput(
+  runId: string,
+  stepId: string,
+  value: unknown,
+): Promise<void> {
   const res = await fetch(`${BASE}/sessions/${runId}/input`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    method: "POST",
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({ stepId, value }),
   });
 
   if (!res.ok) {
-    throw new MaisterError('ACP_PROTOCOL', `deliverInput ${res.status}`);
+    throw new MaisterError("ACP_PROTOCOL", `deliverInput ${res.status}`);
   }
 }
 ```
@@ -464,12 +475,12 @@ export async function deliverInput(runId: string, stepId: string, value: unknown
 
 ```typescript
 // supervisor/src/spawn.ts (excerpt)
-import { spawn } from 'node:child_process';
-import { createWriteStream } from 'node:fs';
-import { join } from 'node:path';
+import { spawn } from "node:child_process";
+import { createWriteStream } from "node:fs";
+import { join } from "node:path";
 
 export function spawnAgent(opts: {
-  agent: 'claude' | 'codex';
+  agent: "claude" | "codex";
   resumeSessionId?: string;
   projectSlug: string;
   runId: string;
@@ -478,25 +489,31 @@ export function spawnAgent(opts: {
   env: NodeJS.ProcessEnv;
   onAcpEvent: (line: string, monotonicId: number) => void;
 }): { kill: () => void } {
-  const logPath = join('.maister', opts.projectSlug, 'runs', opts.runId, `${opts.stepId}.log`);
-  const fileStream = createWriteStream(logPath, { flags: 'a' });
+  const logPath = join(
+    ".maister",
+    opts.projectSlug,
+    "runs",
+    opts.runId,
+    `${opts.stepId}.log`,
+  );
+  const fileStream = createWriteStream(logPath, { flags: "a" });
 
-  const args = ['--acp'];                          // pseudocode; exact adapter CLI verified by local spike
+  const args = ["--acp"]; // pseudocode; exact adapter CLI verified by local spike
 
   // NOTE: resume is NOT a CLI flag — the ACP adapters ignore `--resume` on
   // argv. To resume, spawn fresh and call the ACP `session/resume` method on
   // opts.resumeSessionId (restores context, no history replay).
   const child = spawn(opts.agent, args, { cwd: opts.cwd, env: opts.env });
 
-  let buffer = '';
+  let buffer = "";
   let monotonicId = 0;
 
-  child.stdout.on('data', (chunk: Buffer) => {
+  child.stdout.on("data", (chunk: Buffer) => {
     fileStream.write(chunk);
-    buffer += chunk.toString('utf8');
+    buffer += chunk.toString("utf8");
     let nl;
 
-    while ((nl = buffer.indexOf('\n')) !== -1) {
+    while ((nl = buffer.indexOf("\n")) !== -1) {
       const line = buffer.slice(0, nl);
 
       buffer = buffer.slice(nl + 1);
@@ -504,7 +521,7 @@ export function spawnAgent(opts: {
     }
   });
 
-  child.on('exit', () => fileStream.end());
+  child.on("exit", () => fileStream.end());
 
   return { kill: () => child.kill() };
 }
@@ -539,24 +556,24 @@ export function RunStatus({ runId }: { runId: string }) {
 
 ```typescript
 // ❌ BAD — app/api/runs/[id]/merge/route.ts
-import { execSync } from 'node:child_process';
+import { execSync } from "node:child_process";
 
 export async function POST(_req: Request, ctx: { params: { id: string } }) {
-  execSync(`git merge --no-ff feature/${ctx.params.id}`);  // ← logic in controller
+  execSync(`git merge --no-ff feature/${ctx.params.id}`); // ← logic in controller
   return Response.json({ ok: true });
 }
 
 // ✅ GOOD — orchestrate via lib/worktree.ts
-import { mergeWorktree } from '@/lib/worktree';
-import { MaisterError } from '@/lib/errors';
+import { mergeWorktree } from "@/lib/worktree";
+import { MaisterError } from "@/lib/errors";
 
 export async function POST(_req: Request, ctx: { params: { id: string } }) {
   try {
     await mergeWorktree(ctx.params.id);
     return Response.json({ ok: true });
   } catch (err) {
-    if (err instanceof MaisterError && err.code === 'CONFLICT') {
-      return Response.json({ code: 'CONFLICT' }, { status: 409 });
+    if (err instanceof MaisterError && err.code === "CONFLICT") {
+      return Response.json({ code: "CONFLICT" }, { status: 409 });
     }
     throw err;
   }

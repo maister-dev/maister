@@ -42,7 +42,6 @@ vi.mock("@/lib/supervisor-client", () => ({
       version: "1.0.0",
       checkedAt: "2026-06-13T00:00:00.000Z",
       adapters: [],
-      sidecars: [],
       envRefs: [{ name: "GITHUB_TOKEN", present: true }],
     },
   })),

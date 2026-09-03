@@ -206,7 +206,6 @@ function seedScratchRun(
       provider: { kind: "anthropic" },
       providerKind: "anthropic",
       permissionPolicy: "default",
-      sidecarId: null,
     },
     status: "Crashed",
     acpSessionId: Object.hasOwn(overrides, "acpSessionId")
@@ -272,7 +271,6 @@ function seedAssistantRun(
       provider: { kind: "anthropic" },
       providerKind: "anthropic",
       permissionPolicy: "default",
-      sidecarId: null,
     },
     status: "Crashed",
     acpSessionId: "acp-old",

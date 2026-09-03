@@ -18,17 +18,6 @@ export {
   type ProviderKind,
 } from "@/lib/acp-runners/adapter-support";
 
-export type RouterSidecarConfig = {
-  readonly id: string;
-  readonly kind: "ccr";
-  readonly lifecycle: "managed" | "external";
-  readonly commandPreset?: "ccr_start";
-  readonly configPath?: string;
-  readonly baseUrl?: string;
-  readonly healthcheckUrl?: string;
-  readonly authToken?: string;
-};
-
 export type PlatformAcpRunnerConfig = {
   readonly id: string;
   readonly adapter: AdapterId;
@@ -37,7 +26,6 @@ export type PlatformAcpRunnerConfig = {
   readonly env?: Record<string, string>;
   readonly provider: ProviderConfig;
   readonly permissionPolicy: PermissionPolicy;
-  readonly sidecarId?: string;
   readonly enabled: boolean;
 };
 
@@ -74,7 +62,6 @@ export type ProviderConfig =
 
 export type PlatformRuntimeConfig = {
   readonly platform: { readonly defaultRunnerId: string };
-  readonly routerInstances: readonly RouterSidecarConfig[];
   readonly acpRunners: readonly PlatformAcpRunnerConfig[];
 };
 
@@ -106,19 +93,6 @@ const runnerEnvValueSchema = z
 const platformBlockSchema = z
   .object({
     default_runner: safeIdSchema,
-  })
-  .strict();
-
-const routerSidecarInputSchema = z
-  .object({
-    id: safeIdSchema,
-    kind: z.literal("ccr"),
-    lifecycle: z.enum(["managed", "external"]),
-    command_preset: z.literal("ccr_start").optional(),
-    config_path: z.string().min(1).optional(),
-    base_url: z.string().url().optional(),
-    healthcheck_url: z.string().url().optional(),
-    auth_token: secretRefSchema.optional(),
   })
   .strict();
 
@@ -172,7 +146,6 @@ const runnerInputSchema = z
     env: z.record(envNameSchema, runnerEnvValueSchema).default({}),
     provider: providerSchema,
     permission_policy: z.enum(PERMISSION_POLICIES).default("default"),
-    router_instance: safeIdSchema.optional(),
     enabled: z.boolean().default(true),
   })
   .strict();
@@ -180,13 +153,11 @@ const runnerInputSchema = z
 const platformRuntimeInputSchema = z
   .object({
     platform: platformBlockSchema,
-    router_instances: z.array(routerSidecarInputSchema).default([]),
     acp_runners: z.array(runnerInputSchema).min(1),
   })
   .strict();
 
 type RunnerInput = z.infer<typeof runnerInputSchema>;
-type RouterInput = z.infer<typeof routerSidecarInputSchema>;
 
 function formatIssues(error: z.ZodError): string {
   return error.issues
@@ -239,19 +210,6 @@ function mapProvider(provider: z.infer<typeof providerSchema>): ProviderConfig {
   return { kind: provider.kind };
 }
 
-function mapSidecar(input: RouterInput): RouterSidecarConfig {
-  return {
-    id: input.id,
-    kind: input.kind,
-    lifecycle: input.lifecycle,
-    commandPreset: input.command_preset,
-    configPath: input.config_path,
-    baseUrl: input.base_url,
-    healthcheckUrl: input.healthcheck_url,
-    authToken: input.auth_token,
-  };
-}
-
 function mapRunner(
   input: RunnerInput,
   adapter: AdapterSupport,
@@ -264,7 +222,6 @@ function mapRunner(
     env: input.env,
     provider: mapProvider(input.provider),
     permissionPolicy: input.permission_policy,
-    sidecarId: input.router_instance,
     enabled: input.enabled,
   };
 }
@@ -280,9 +237,6 @@ export function parsePlatformRuntimeConfig(
     );
   }
 
-  const sidecarIds = new Set(
-    parsed.data.router_instances.map((sidecar) => sidecar.id),
-  );
   const runners = parsed.data.acp_runners.map((runner) => {
     const adapter = getAdapterSupportById(runner.adapter);
 
@@ -301,12 +255,6 @@ export function parsePlatformRuntimeConfig(
     if (!adapter.permissionPolicies.includes(runner.permission_policy)) {
       throw new Error(
         `platform runtime config invalid: adapter ${runner.adapter} does not support permission_policy ${runner.permission_policy}`,
-      );
-    }
-
-    if (runner.router_instance && !sidecarIds.has(runner.router_instance)) {
-      throw new Error(
-        `platform runtime config invalid: router_instance ${runner.router_instance} for runner ${runner.id} is missing`,
       );
     }
 
@@ -330,7 +278,6 @@ export function parsePlatformRuntimeConfig(
 
   return {
     platform: { defaultRunnerId: parsed.data.platform.default_runner },
-    routerInstances: parsed.data.router_instances.map(mapSidecar),
     acpRunners: runners,
   };
 }

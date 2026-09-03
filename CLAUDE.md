@@ -31,6 +31,7 @@ LICENSE      # MIT, Albert Kanischev, 2026
 ```
 
 Backend split:
+
 - `web/` — Next.js (UI + Route Handlers + Drizzle + server actions). NO
   long-running agent processes live here.
 - `supervisor/` — separate Node daemon. Owns ACP sessions, spawns agent
@@ -75,14 +76,10 @@ Detailed code structure, conventions, HeroUI patterns: **`web/CLAUDE.md`**.
   CLI flag — both adapters ignore that on argv; `session/resume` restores
   context without replaying history). Each respawn costs roughly `$0.28`
   cache_creation tokens.
-- **Model routing**: Two modes supported. **(a) env-router** — set
+- **Model routing**: set
   `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` in `executor.env` for
   single Anthropic-API-compatible third-party provider (z.ai GLM:
   `https://api.z.ai/api/anthropic`; OpenRouter; anyscale; etc.).
-  Default and simplest. **(b) CCR**
-  (`@musistudio/claude-code-router@2.0.0`, MIT) — optional, bundled for
-  intelligent multi-provider routing within one session. Marked
-  `router: ccr` on the executor.
 - **Git**: thin worktree wrapper around `git worktree add/remove/list`.
 - **Live updates**: SSE — supervisor publishes `session/update` events;
   Next.js Route Handler bridges to the browser at `/api/runs/[id]/stream`
@@ -113,6 +110,7 @@ which spawns one adapter process per active session. State transitions are drive
 the live path and by durable input artifacts for form/human responses.
 
 HITL lifecycle:
+
 - Agent emits ACP `requestPermission` or the runner reaches a form/human
   step. The runner persists a `hitl_requests` row before the run enters
   `NeedsInput`.
@@ -168,6 +166,7 @@ ACP standardizes the agent surface via vendor-neutral
 adapter families; `gemini`, `opencode`, and `mimo` are code-owned adapter families
 whose launch/default readiness is gated by supervisor diagnostics and cached
 ACP smoke evidence. The supervisor spawns adapters via per-agent binaries:
+
 - `claude` → `claude-agent-acp` (from
   `@agentclientprotocol/claude-agent-acp`, wraps
   `@anthropic-ai/claude-agent-sdk`)
@@ -180,19 +179,18 @@ ACP smoke evidence. The supervisor spawns adapters via per-agent binaries:
 Other ACP-capable agents land after their registry, diagnostics, and smoke
 contracts are proven. Runner identity is platform-scoped in
 `platform_acp_runners`: `{adapter, capability_agent, model, provider,
-permission_policy, sidecar?}`. Launches snapshot the effective runner into
+permission_policy}`. Launches snapshot the effective runner into
 `runs.runner_snapshot`; resume/recover reads the snapshot, not a mutable
 catalog row.
 
 Model routing:
+
 - **provider config** — `anthropic`, `anthropic_compatible`, `openai`, and
   `openai_compatible` providers are runner config. Secret values are stored as
   `env:NAME` references only.
-- **CCR sidecar** — for intelligent multi-provider Claude routing within one
-  session, via
-  `@musistudio/claude-code-router@2.0.0` (MIT).
 
 Runner resolution (highest priority wins):
+
 1. Launch override (set at Launch click, optional).
 2. Flow node `settings.runner` target, remapped when imported if the platform
    does not have that runner id.
@@ -222,8 +220,8 @@ project:
 flows:
   - id: bugfix
     source: github.com/<org>/maister-flow-bugfix
-    version: v1.2.3                    # tag-pinned (lock semantics)
-    runner: claude-code                # optional project binding
+    version: v1.2.3 # tag-pinned (lock semantics)
+    runner: claude-code # optional project binding
   - id: spec-kit
     source: github.com/<org>/maister-flow-spec-kit
     version: v0.4.1
@@ -241,7 +239,7 @@ runner_profiles:
     model: claude-sonnet-4-6
     provider:
       kind: anthropic
-setup: ./setup.sh                      # optional one-time install script
+setup: ./setup.sh # optional one-time install script
 nodes:
   - id: plan
     type: ai_coding
@@ -322,14 +320,14 @@ inject via `{{ artifacts.<id>.content }}` (ADR-120).
   the host, and returns it for re-validation (downstream nodes go stale). No
   new branch/session. → `docs/system-analytics/manual-takeover.md`.
 - **Workbench lifecycle** (M27): per-run `stop | archive | drop |
-  snapshot-commit | export-branch | handoff-branch` to preserve/free work or
+snapshot-commit | export-branch | handoff-branch` to preserve/free work or
   hand a branch to a local dev. → `docs/system-analytics/workbench-lifecycle.md`.
 - **Scratch runs**: ad-hoc conversational ACP session in a managed worktree
   (`run_kind=scratch`), outside the task board, reusing the run/HITL/diff/
   promote substrate. → `docs/system-analytics/scratch-runs.md`.
 - **Branch sync + reopen** (ADR-141, Implemented): `sync` claims the same
   `lifecycle_operation_name` slot as `archive | drop | snapshot-commit |
-  export-branch | handoff-branch` above (its 6th value — `stop` takes no
+export-branch | handoff-branch` above (its 6th value — `stop` takes no
   claim) to rebase/merge a `Review` run's branch onto the moved target
   inside its worktree (mechanical, or an AI resolver ACP session on
   conflict), and `reopen` flips a `Done` run back to `Review` when its PR
@@ -406,7 +404,7 @@ which stays the local-promotion merge commit.
   project's `.maister/<slug>/flows/`. Manifest (`flow.yaml`) is the source
   of the typed-node graph DSL. Trust internal Flow sources today.
 - **Multi-executor via ACP**: `claude` and `codex` both required.
-  Per-step executor override resolution per §5. CCR support bundled.
+  Per-step executor override resolution per §5.
 - **`supervisor/` daemon**: separate Node process owning ACP sessions,
   process-per-session spawn, heartbeat, permission input delivery,
   cost-token metric on disk. Talks HTTP+SSE to Next.js (may live on a
@@ -418,8 +416,8 @@ which stays the local-promotion merge commit.
 - **Per-project task board**: Kanban-**styled**. Task state is 4 values
   (`Backlog | InFlight | Done | Abandoned`), rendered as **7 derived columns**
   (`Backlog · Prepare · InProduction · OnReview · InDelivery · Crashed ·
-  Done`). In-Flight covers `Running | NeedsInput | NeedsInputIdle |
-  HumanWorking | Review | Crashed`. A Backlog card's **Launch** = precondition
+Done`). In-Flight covers `Running | NeedsInput | NeedsInputIdle |
+HumanWorking | Review | Crashed`. A Backlog card's **Launch** = precondition
   checks → create Run. **No drag-and-drop, no WIP limits** (full Kanban is
   Phase 2). → `docs/system-analytics/tasks.md`.
 - **HITL Inbox block**: dedicated panel on the per-project board listing
@@ -460,14 +458,14 @@ Current Scope, these are **Implemented** today:
 - **Observatory** (M23): read-only Autonomy Score, correction-rate, signal
   clusters. → `observatory.md`
 - **Scheduler** (M24): one polymorphic cron tick (`system_sweep | command |
-  agent_tick | flow_run | run_schedule`); user-facing task cron schedules
+agent_tick | flow_run | run_schedule`); user-facing task cron schedules
   shipped (M28) → `run-schedules.md`, `scheduler.md`
 - **Authored catalog + Flow Studio** (M25/M27): in-app create/version of
   rules/skills/flows + visual graph editor; publish→PR to the package source
   (ADR-113) and bidirectional upstream sync (ADR-132) shipped. →
   `flow-studio.md`, `local-packages.md`
 - **Platform + project MCP & ACP-runner catalogs** (M27, ADR-065/070): CRUD
-  + resolver precedence (project > platform > flow-package). → `acp-runners.md`
+  - resolver precedence (project > platform > flow-package). → `acp-runners.md`
 - **External operations API + project tokens + MCP facade** (M16/M17):
   `/api/v1/ext/*`, scoped tokens, HITL-over-MCP (`hitl_list`/`hitl_respond`).
   → `external-operations.md`
@@ -590,13 +588,13 @@ executors.
 ## ACP Spike Findings (Current Baseline)
 
 1. ✅ **ACP packages pinned**: `@agentclientprotocol/claude-agent-acp@0.37.0`
-   + `@agentclientprotocol/codex-acp@0.0.44` + `@agentclientprotocol/sdk@0.22.1`
-   (all Apache-2.0). Canonical npm org `@agentclientprotocol`,
-   GitHub: `github.com/agentclientprotocol`. The `@zed-industries/*` name
-   was deprecated — moved to vendor-neutral org. Both adapters ship a CLI
-   binary (`claude-agent-acp`, `codex-acp`). Underlying SDK is
-   `@anthropic-ai/claude-agent-sdk@0.3.146` (NOT the `@anthropic-ai/claude-code`
-   CLI package).
+   - `@agentclientprotocol/codex-acp@0.0.44` + `@agentclientprotocol/sdk@0.22.1`
+     (all Apache-2.0). Canonical npm org `@agentclientprotocol`,
+     GitHub: `github.com/agentclientprotocol`. The `@zed-industries/*` name
+     was deprecated — moved to vendor-neutral org. Both adapters ship a CLI
+     binary (`claude-agent-acp`, `codex-acp`). Underlying SDK is
+     `@anthropic-ai/claude-agent-sdk@0.3.146` (NOT the `@anthropic-ai/claude-code`
+     CLI package).
 2. ✅ **Cross-process resume**. The M0 spike verified the raw CLI
    (`claude --session-id <uuid>` + `claude --resume <uuid>` returns prior
    context, "ALBATROSS-42" round-trip). Sessions persist at
@@ -614,12 +612,9 @@ executors.
    `@openai/codex@^0.128.0`) exposes the same wire protocol as
    `claude-agent-acp`. Supervisor `spawn.ts` dispatches on
    `executor.agent` to pick the right binary.
-4. ✅ **z.ai GLM works as plain env-router** — no CCR needed for
-   single-provider routing. Set
+4. ✅ **z.ai GLM works through environment configuration.** Set
    `ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic` +
-   `ANTHROPIC_AUTH_TOKEN=<key>` in `executor.env`. CCR
-   (`@musistudio/claude-code-router@2.0.0`, MIT) is for intelligent
-   multi-provider routing in one session — keep optional.
+   `ANTHROPIC_AUTH_TOKEN=<key>` in `executor.env`.
 5. ⚠ **Cache-creation cost per respawn** (~$0.28 of cache_creation
    tokens on each cross-process resume — cache key does NOT survive
    process boundary even within 5-min Anthropic prompt-cache TTL). The
@@ -627,6 +622,7 @@ executors.
    `MAISTER_KEEPALIVE_MINUTES` env var for ops tuning.
 
 **Remaining loose ends**:
+
 - **tausik** — repo URL still TBD; defer to Phase 2.
 - **External validation** — 3 installations target. Friend names not
   required in advance.

@@ -4,7 +4,6 @@ import { nativeDefaultRunnerByAdapter } from "@/lib/acp-runners/native-defaults"
 import {
   defaultPlatformRunnerId,
   platformRunnerPresetRows,
-  routerSidecarPresetRows,
 } from "@/lib/acp-runners/presets";
 
 describe("platform ACP runner presets", () => {
@@ -13,7 +12,6 @@ describe("platform ACP runner presets", () => {
 
     expect(runners.map((runner) => runner.id)).toEqual([
       "claude-code",
-      "claude-code-ccr",
       "claude-code-env-router",
       "claude-code-dangerous",
       "codex-openai",
@@ -123,16 +121,6 @@ describe("platform ACP runner presets", () => {
     ).toContain(
       "MiMo Code ACP stdio and writable-state smoke must be confirmed",
     );
-  });
-
-  it("exposes the managed CCR sidecar preset without raw secrets", () => {
-    expect(routerSidecarPresetRows()).toEqual([
-      expect.objectContaining({
-        id: "ccr-default",
-        authTokenRef: "env:MAISTER_CCR_AUTH_TOKEN",
-        readinessStatus: "NotReady",
-      }),
-    ]);
   });
 
   it("maps every native default runner id (ADR-094) to a real preset row", () => {

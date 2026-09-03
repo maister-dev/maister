@@ -287,7 +287,6 @@ describe("buildFlowDslGrammar drift guard", () => {
     expect(grammar).toContain("@skill:aif-fix");
     expect(grammar).toContain("@skill:aif-commit");
     expect(grammar).toContain("{{ <path> ?? '<literal>' }}");
-    expect(grammar).toContain("{{ executor.router ?? '' }}");
     expect(grammar.toLowerCase()).toContain("optional/conditional");
     expect(grammar).not.toContain("        /aif-fix");
     expect(grammar).not.toContain('prompt: "/aif-commit"');

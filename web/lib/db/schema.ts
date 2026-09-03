@@ -219,44 +219,7 @@ export type RunnerSnapshot = {
   provider?: PlatformRunnerProvider;
   providerKind: string;
   permissionPolicy: string;
-  sidecar?: {
-    id: string;
-    kind: "ccr";
-    lifecycle?: "managed" | "external";
-    configPath?: string | null;
-    baseUrl?: string | null;
-    healthcheckUrl?: string | null;
-    authTokenRef?: string | null;
-  } | null;
-  sidecarId?: string | null;
 };
-
-export const platformRouterSidecars = pgTable("platform_router_sidecars", {
-  id: text("id").primaryKey(),
-  kind: text("kind", { enum: ["ccr"] }).notNull(),
-  lifecycle: text("lifecycle", { enum: ["managed", "external"] }).notNull(),
-  commandPreset: text("command_preset", { enum: ["ccr_start"] }),
-  configPath: text("config_path"),
-  baseUrl: text("base_url"),
-  healthcheckUrl: text("healthcheck_url"),
-  authTokenRef: text("auth_token_ref"),
-  readinessStatus: text("readiness_status", {
-    enum: ["Unknown", "Ready", "NotReady"],
-  })
-    .notNull()
-    .default("Unknown"),
-  readinessReasons: jsonb("readiness_reasons")
-    .$type<string[]>()
-    .notNull()
-    .default([]),
-  enabled: boolean("enabled").notNull().default(true),
-  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
-    .notNull()
-    .defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
-    .notNull()
-    .defaultNow(),
-});
 
 export const platformAcpRunners = pgTable(
   "platform_acp_runners",
@@ -274,9 +237,6 @@ export const platformAcpRunners = pgTable(
     })
       .notNull()
       .default("default"),
-    sidecarId: text("sidecar_id").references(() => platformRouterSidecars.id, {
-      onDelete: "set null",
-    }),
     readinessStatus: text("readiness_status", {
       enum: ["Unknown", "Ready", "NotReady"],
     })
@@ -299,7 +259,6 @@ export const platformAcpRunners = pgTable(
       t.adapter,
       t.enabled,
     ),
-    idxSidecar: index("platform_acp_runners_sidecar_idx").on(t.sidecarId),
   }),
 );
 
@@ -5541,7 +5500,6 @@ export type ProjectRole = ProjectMember["role"];
 export type GlobalRole = User["role"];
 export type Project = typeof projects.$inferSelect;
 export type PlatformAcpRunner = typeof platformAcpRunners.$inferSelect;
-export type PlatformRouterSidecar = typeof platformRouterSidecars.$inferSelect;
 export type PlatformRuntimeSettings =
   typeof platformRuntimeSettings.$inferSelect;
 export type ProjectFlowRunnerDefault =

@@ -73,7 +73,6 @@ type PublicRunnerSnapshot = {
   model: string;
   providerKind: string;
   permissionPolicy: string;
-  sidecarId: string | null;
 };
 
 function httpStatusForCode(code: string): number {
@@ -230,7 +229,6 @@ function publicRunnerSnapshot(raw: unknown): PublicRunnerSnapshot | null {
     model?: unknown;
     providerKind?: unknown;
     permissionPolicy?: unknown;
-    sidecarId?: unknown;
   };
 
   if (
@@ -251,8 +249,6 @@ function publicRunnerSnapshot(raw: unknown): PublicRunnerSnapshot | null {
     model: snapshot.model,
     providerKind: snapshot.providerKind,
     permissionPolicy: snapshot.permissionPolicy,
-    sidecarId:
-      typeof snapshot.sidecarId === "string" ? snapshot.sidecarId : null,
   };
 }
 

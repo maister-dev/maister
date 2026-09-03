@@ -169,7 +169,7 @@ nodes:
 **Unified runner config** — \`runner_profiles\` values, \`sessions[].runner\`, node
 \`settings.runner\`, and consensus participant/synthesizer \`runner\` all accept the
 same shape (a profile-ref string OR an inline object):
-\`{ runner_type, capability_agent, adapter?, model?, model_family?, provider?, permission_policy, sidecar?, effort?, env? }\`.
+\`{ runner_type, capability_agent, adapter?, model?, model_family?, provider?, permission_policy, effort?, env? }\`.
 \`effort\` is the thinking effort (low | medium | high); \`env\` is a passthrough
 NAME map whose values are \`env:NAME\` references only (never literal secrets).
 
@@ -272,7 +272,7 @@ Forward a prior artifact's resolved **body** into a prompt (not just its metadat
   \`availability=definite\` and \`presence=required\`, for example
   \`{{ task.prompt }}\`.
 - Optional/conditional variables MUST use the guarded default form
-  \`{{ <path> ?? '<literal>' }}\`, for example \`{{ executor.router ?? '' }}\`,
+  \`{{ <path> ?? '<literal>' }}\`, for example \`{{ task.title ?? '' }}\`,
   \`{{ artifacts.plan_doc.uri ?? '' }}\`, or
   \`{{ steps.plan.vars.notes ?? 'none' }}\`.
 - \`env.*\` variables are runtime-provided and deliberately unenumerated; use

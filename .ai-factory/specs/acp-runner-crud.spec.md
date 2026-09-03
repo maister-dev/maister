@@ -17,7 +17,6 @@ does not.
 - Filters in the runner table (explicitly dropped — small N).
 - A separate route / menu item (decided: everything stays in `/settings`).
 - Touching the `enable/disable` semantics or `assertCanDisable` behaviour.
-- Sidecar CRUD changes (router sidecars panel stays as-is).
 - Changing runner resolution, launch, or readiness evaluation logic.
 - Editing `id` or `adapter` of an existing runner (identity is immutable; the
   `PATCH` schema already rejects both).
@@ -25,9 +24,10 @@ does not.
 ## 3. Behaviors & acceptance criteria
 
 ### B1 — Create runner (UI → existing `POST /api/admin/acp-runners`)
+
 - GIVEN an admin on `/settings`, WHEN they click **Add runner**, THEN a modal
   opens with fields: `id`, `adapter`, `model`, `provider.kind` (+ conditional
-  provider fields), `permissionPolicy`, `sidecarId` (optional), `enabled`.
+  provider fields), `permissionPolicy`, `enabled`.
 - Provider/policy options are constrained by adapter:
   - `claude` → providers `anthropic | anthropic_compatible`; policies
     `default | dangerously_skip_permissions`.
@@ -47,19 +47,22 @@ does not.
   `platformRunnerPresetRows()`; `id` stays editable to avoid PK collision.
 
 ### B2 — Read / list (UI table)
+
 - The runner list renders as a **view-only table**: columns `id`, `adapter`,
-  `model`, `provider`, `sidecar`, `policy`, `readiness`, `enabled`, plus a
+  `model`, `provider`, `policy`, `readiness`, `enabled`, plus a
   per-row **Edit** action. No inline mutation. Matches the data-management bar
   (`users-table.tsx`).
 - Platform-default selector and provider-presets display are preserved.
 
 ### B3 — Update runner (UI → existing `PATCH /api/admin/acp-runners/{id}`)
+
 - GIVEN a runner row, WHEN admin clicks **Edit**, THEN the modal opens in edit
   mode with `id` + `adapter` shown read-only and the other fields editable.
 - Only changed fields are sent (single aggregating PATCH). Server recomputes
   readiness; UI reflects it via `router.refresh()`.
 
 ### B4 — Delete runner (NEW `DELETE /api/admin/acp-runners/{id}`)
+
 - Hard delete (physical row removal); `enabled=false` already covers soft
   disable.
 - Auth: non-admin → `403`. Unknown id → `PRECONDITION` (`409`).
@@ -78,26 +81,26 @@ does not.
   "disable instead" (disable is blocked by the same refs).
 
 ### B5 — Settings layout (full-width, multi-column)
+
 - Remove `mx-auto max-w-[520px]`; the page becomes full-width (relies on the
   `main` px gutter), responsive (single column on mobile).
 - Top: `md:grid-cols-2` — left **Host & tools** (repo home, worktrees root, host
   tools, env note), right **Adapter support**.
-- Below, full-width: **ACP Runners** (default selector + table + modals), then
-  **Router sidecars**.
+- Below, full-width: **ACP Runners** (default selector + table + modals).
 - Modals/forms stay narrow (≤520px) — "forms stay narrow" rule.
 
 ## 4. Test matrix (TDD red→green)
 
-| Behavior | Test kind | Location |
-| --- | --- | --- |
-| B4 auth 403 | route unit | `app/api/admin/acp-runners/[runnerId]/__tests__/route.test.ts` |
-| B4 block-by-ref → 409 + enumerated blockers | route unit | same |
-| B4 success (no refs) → row removed | route unit | same |
-| B4 unknown id → PRECONDITION 409 | route unit | same |
-| B1/B3 form logic: adapter→providers/policies, env:/url validation, payload build | unit | `lib/acp-runners/__tests__/runner-form.test.ts` |
-| B1/B3 modal renders create & edit modes | render (renderToStaticMarkup) | `components/settings/__tests__/acp-runner-modal.test.ts` |
-| B2 panel renders table headers + rows + Add button | render | `components/settings/__tests__/acp-runners-panel.test.ts` |
-| B1→B3→B4 end-to-end (admin) | e2e (stub-supervisor seeded) | `e2e/…/runner-crud.spec.ts` |
+| Behavior                                                                         | Test kind                     | Location                                                       |
+| -------------------------------------------------------------------------------- | ----------------------------- | -------------------------------------------------------------- |
+| B4 auth 403                                                                      | route unit                    | `app/api/admin/acp-runners/[runnerId]/__tests__/route.test.ts` |
+| B4 block-by-ref → 409 + enumerated blockers                                      | route unit                    | same                                                           |
+| B4 success (no refs) → row removed                                               | route unit                    | same                                                           |
+| B4 unknown id → PRECONDITION 409                                                 | route unit                    | same                                                           |
+| B1/B3 form logic: adapter→providers/policies, env:/url validation, payload build | unit                          | `lib/acp-runners/__tests__/runner-form.test.ts`                |
+| B1/B3 modal renders create & edit modes                                          | render (renderToStaticMarkup) | `components/settings/__tests__/acp-runner-modal.test.ts`       |
+| B2 panel renders table headers + rows + Add button                               | render                        | `components/settings/__tests__/acp-runners-panel.test.ts`      |
+| B1→B3→B4 end-to-end (admin)                                                      | e2e (stub-supervisor seeded)  | `e2e/…/runner-crud.spec.ts`                                    |
 
 Render tests use `renderToStaticMarkup` (no jsdom) per project testing
 conventions; interactive flows are covered by the seeded Playwright e2e.
@@ -141,21 +144,21 @@ with global `admin`; owns the host's runner catalog.
 
 ## 7. Acceptance criteria (testable checklist)
 
-| # | Criterion | Verified by |
-| - | --------- | ----------- |
-| AC1 | `DELETE` with zero usage refs → 204, row removed | route unit test |
-| AC2 | `DELETE` with ≥1 usage ref → 409 CONFLICT, row kept, blockers enumerated | route unit test |
-| AC3 | `DELETE` unknown id → 409 PRECONDITION | route unit test |
-| AC4 | `DELETE`/`POST`/`PATCH` as non-admin → 403 | route unit test |
-| AC5 | `POST` duplicate id → 409 CONFLICT (not 500) | route unit test |
-| AC6 | Raw (non-`env:`) secret → 422 CONFIG | route unit test (existing) |
-| AC7 | `runner-form` maps adapter→providers/policies, validates env:/url, builds POST/PATCH bodies | helper unit test |
-| AC8 | i18n: every new `settings.*` key present in EN AND RU | i18n parity test |
-| AC9 | Modal renders create AND edit modes with adapter-driven fields | render test |
-| AC10 | Panel renders a view-only table + Add runner button + a row per runner | render test |
-| AC11 | `/settings` is a clickable admin sidebar link | manual / e2e |
-| AC12 | Settings page is full-width, 2-column on desktop | manual / e2e |
-| AC13 | End-to-end admin create→edit→delete(blocked→repoint→success) | Playwright e2e |
+| #    | Criterion                                                                                   | Verified by                |
+| ---- | ------------------------------------------------------------------------------------------- | -------------------------- |
+| AC1  | `DELETE` with zero usage refs → 204, row removed                                            | route unit test            |
+| AC2  | `DELETE` with ≥1 usage ref → 409 CONFLICT, row kept, blockers enumerated                    | route unit test            |
+| AC3  | `DELETE` unknown id → 409 PRECONDITION                                                      | route unit test            |
+| AC4  | `DELETE`/`POST`/`PATCH` as non-admin → 403                                                  | route unit test            |
+| AC5  | `POST` duplicate id → 409 CONFLICT (not 500)                                                | route unit test            |
+| AC6  | Raw (non-`env:`) secret → 422 CONFIG                                                        | route unit test (existing) |
+| AC7  | `runner-form` maps adapter→providers/policies, validates env:/url, builds POST/PATCH bodies | helper unit test           |
+| AC8  | i18n: every new `settings.*` key present in EN AND RU                                       | i18n parity test           |
+| AC9  | Modal renders create AND edit modes with adapter-driven fields                              | render test                |
+| AC10 | Panel renders a view-only table + Add runner button + a row per runner                      | render test                |
+| AC11 | `/settings` is a clickable admin sidebar link                                               | manual / e2e               |
+| AC12 | Settings page is full-width, 2-column on desktop                                            | manual / e2e               |
+| AC13 | End-to-end admin create→edit→delete(blocked→repoint→success)                                | Playwright e2e             |
 
 ## 8. Observability / analytics expectations
 

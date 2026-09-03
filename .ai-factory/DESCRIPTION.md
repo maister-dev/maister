@@ -49,9 +49,9 @@ For the full vision, product model, architecture, and roadmap see
   adapters; `gemini`, `opencode`, and `mimo` are code-owned adapter families
   whose launch/default readiness is gated by supervisor diagnostics and cached
   ACP smoke evidence.
-  Executor identity = `{agent, model, env?, router?}` defined per project in
-  `executors[]`. CCR (Claude Code Router) bundled for `router: ccr` to route
-  z.ai GLM / MiniMax through `claude`. Per-step override resolution: run
+  Executor identity = `{agent, model, env?}` defined per project in
+  `executors[]`. Anthropic-compatible providers are configured through runner
+  provider fields and supervisor environment references. Per-step override resolution: run
   launcher -> task override -> project per-flow override -> project
   default -> flow recommended.
 - **Portfolio and active workspaces**: project-grouped active workspaces across
@@ -89,8 +89,8 @@ For the full vision, product model, architecture, and roadmap see
   One agent process per session. Spawned on Launch; permission HITL is
   resolved live. Checkpoint/idle resume is implemented.
 - **Hybrid HITL**: ACP `session/request_permission` for binary approve/deny
-  + artifact `input-<nodeId>.json` for structured forms (JSON Schema) + graph
-  human-review finishes with typed decisions and bounded rework targets.
+  - artifact `input-<nodeId>.json` for structured forms (JSON Schema) + graph
+    human-review finishes with typed decisions and bounded rework targets.
 - **Live log streaming**: supervisor publishes ACP `session/update` →
   per-step log file on disk + SSE stream → Next.js Route Handler bridge
   (`/api/runs/[id]/stream`) with `lastEventId` reconnect.
@@ -102,8 +102,8 @@ For the full vision, product model, architecture, and roadmap see
   `Pending`; UI shows queue position; auto-promote on slot free.
 - **Typed error taxonomy**: `MaisterError` with discriminated `code`
   (`PRECONDITION | SPAWN | NEEDS_INPUT | HITL_TIMEOUT | CRASH | CONFLICT |
-  CONFIG | EXECUTOR_UNAVAILABLE | FLOW_INSTALL | ACP_PROTOCOL |
-  CHECKPOINT`). UI branches on `code`, never on string matching.
+CONFIG | EXECUTOR_UNAVAILABLE | FLOW_INSTALL | ACP_PROTOCOL |
+CHECKPOINT`). UI branches on `code`, never on string matching.
 - **i18n**: EN + RU from day one.
 - **Evaluation Lab** (M46, in progress; ADR-142..147): a project-level
   Evaluation Study compares 2..N observed (existing) or launched Runs for one
@@ -118,36 +118,36 @@ For the full vision, product model, architecture, and roadmap see
 
 ## Tech Stack
 
-| Layer            | Choice                                                            |
-| ---------------- | ----------------------------------------------------------------- |
-| Framework        | Next.js 16+ App Router (server actions + RSC where it fits)       |
-| Language         | TypeScript end-to-end, strict mode                                |
-| UI library       | HeroUI v3 (`@heroui/react`), no other component lib               |
-| Styling          | Tailwind CSS 4 via `@tailwindcss/postcss`, `tailwind-variants`    |
-| Theming          | `next-themes` (default `dark`)                                    |
-| i18n             | EN + RU from day one (REQUIRED)                                   |
-| Database         | Postgres 16 only (docker, named volume)                           |
-| ORM              | Drizzle (SQL-flavored, JOOQ-like). Not Prisma.                    |
-| Agent runtime    | ACP hosted by `supervisor/`, via                                  |
-|                  | `@agentclientprotocol/claude-agent-acp`,                          |
-|                  | `@agentclientprotocol/codex-acp`, and                             |
-|                  | `@agentclientprotocol/sdk`.                                       |
-|                  | One agent process (`claude`, `codex`) per active session via      |
-|                  | Node `child_process.spawn`. Permission HITL resolves live;         |
-|                  | checkpoint+respawn via the ACP `session/resume` call implemented. |
-| Model routing    | CCR (Claude Code Router) bundled for `router: ccr` — z.ai GLM,    |
-|                  | MiniMax via Anthropic-API-compatible providers.                   |
+| Layer             | Choice                                                            |
+| ----------------- | ----------------------------------------------------------------- |
+| Framework         | Next.js 16+ App Router (server actions + RSC where it fits)       |
+| Language          | TypeScript end-to-end, strict mode                                |
+| UI library        | HeroUI v3 (`@heroui/react`), no other component lib               |
+| Styling           | Tailwind CSS 4 via `@tailwindcss/postcss`, `tailwind-variants`    |
+| Theming           | `next-themes` (default `dark`)                                    |
+| i18n              | EN + RU from day one (REQUIRED)                                   |
+| Database          | Postgres 16 only (docker, named volume)                           |
+| ORM               | Drizzle (SQL-flavored, JOOQ-like). Not Prisma.                    |
+| Agent runtime     | ACP hosted by `supervisor/`, via                                  |
+|                   | `@agentclientprotocol/claude-agent-acp`,                          |
+|                   | `@agentclientprotocol/codex-acp`, and                             |
+|                   | `@agentclientprotocol/sdk`.                                       |
+|                   | One agent process (`claude`, `codex`) per active session via      |
+|                   | Node `child_process.spawn`. Permission HITL resolves live;        |
+|                   | checkpoint+respawn via the ACP `session/resume` call implemented. |
+| Model routing     | Anthropic-compatible providers configured through runner fields   |
+|                   | and supervisor environment references.                            |
 | Web ↔ supervisor | HTTP + SSE (supervisor may run on a different host)               |
-| Flow plugins     | git repos pinned by tag; installed to                             |
-|                  | `~/.maister/flows/<id>@<tag>/` and symlinked per project          |
-| Git workspaces   | Thin wrapper around `git worktree add/remove/list`                |
-| Live updates     | SSE — supervisor publishes ACP `session/update`; Next.js Route    |
-|                  | Handler bridges to browser                                        |
-| Python           | Optional — only when a specific Flow plugin ships Python CLIs     |
-|                  | (no longer required in the base container image).                 |
-| Tests            | vitest (unit/integration), Playwright (E2E)                       |
-| Lint             | ESLint 9 flat config + Prettier                                   |
-| Package manager  | pnpm                                                              |
+| Flow plugins      | git repos pinned by tag; installed to                             |
+|                   | `~/.maister/flows/<id>@<tag>/` and symlinked per project          |
+| Git workspaces    | Thin wrapper around `git worktree add/remove/list`                |
+| Live updates      | SSE — supervisor publishes ACP `session/update`; Next.js Route    |
+|                   | Handler bridges to browser                                        |
+| Python            | Optional — only when a specific Flow plugin ships Python CLIs     |
+|                   | (no longer required in the base container image).                 |
+| Tests             | vitest (unit/integration), Playwright (E2E)                       |
+| Lint              | ESLint 9 flat config + Prettier                                   |
+| Package manager   | pnpm                                                              |
 
 ## Architecture
 
@@ -179,7 +179,7 @@ Hard architectural commitments (post-ACP revision — see root `CLAUDE.md`
    and later respawns + resumes via the ACP `session/resume` call.
    No `fs.watch`, no `chokidar`, no polling for state transitions.
 2. **SSE pipe-to-disk**: every ACP `session/update` line streamed to per-
-   step log file via `fs.createWriteStream` *in parallel* with SSE
+   step log file via `fs.createWriteStream` _in parallel_ with SSE
    emission, so neither tier OOMs on >10MB output. SSE read-side tails
    the file for `lastEventId` reconnect.
 3. **Typed error taxonomy**: `MaisterError extends Error` with
@@ -188,7 +188,7 @@ Hard architectural commitments (post-ACP revision — see root `CLAUDE.md`
 4. **Multi-executor via ACP**: claude + codex both required. ACP
    IS the adapter interface. Override resolution: run launcher ->
    task override -> project per-flow override -> project default ->
-   flow recommended. CCR bundled.
+   flow recommended.
 5. **Flow Engine 3 graph-only plugin model**: Flows are git-tag-pinned plugin
    bundles with a typed `nodes[]` `flow.yaml` graph, optional `setup.sh`, and
    shipped skills/CLIs. Installed to
@@ -210,7 +210,7 @@ stay later.
 ## Non-Functional Requirements
 
 - **Crash recovery**: on startup, reconcile `runs` table vs `git worktree
-  list` vs supervisor's live session set. `Running` rows with no live ACP
+list` vs supervisor's live session set. `Running` rows with no live ACP
   session AND no checkpoint → `Crashed`; UI surfaces "Recover or discard"
   (Recover attempts the ACP `session/resume` call if `acp_session_id` present).
   `NeedsInputIdle` rows with a valid checkpoint stay valid.

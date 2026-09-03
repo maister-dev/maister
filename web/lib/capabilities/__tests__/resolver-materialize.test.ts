@@ -25,7 +25,9 @@ let workDir: string;
 beforeEach(async () => {
   // realpath so the macOS /var -> /private/var tmp symlink does not trip the
   // in-worktree path-safety checks (production worktrees are not symlinked).
-  workDir = await realpath(await mkdtemp(path.join(tmpdir(), "capability-profile-test-")));
+  workDir = await realpath(
+    await mkdtemp(path.join(tmpdir(), "capability-profile-test-")),
+  );
 });
 
 afterEach(async () => {
@@ -477,7 +479,6 @@ describe("materializeCapabilityProfile", () => {
         executorRefId: "runner-1",
         agent: "claude",
         model: "default",
-        router: null,
       },
     });
     const settingsLocalPath = path.join(
@@ -772,7 +773,6 @@ describe("materializeCapabilityProfile", () => {
         executorRefId: "mimo-code-native",
         agent: "mimo",
         model: "mimo-native",
-        router: null,
       },
     });
 

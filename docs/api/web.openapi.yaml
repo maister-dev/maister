@@ -175,8 +175,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required:
-                  [runners, defaultRunnerId, presets, adapters, sidecars]
+                required: [runners, defaultRunnerId, presets, adapters]
                 properties:
                   runners:
                     type: array
@@ -186,9 +185,6 @@ paths:
                     type: array
                     items: { type: object }
                   adapters:
-                    type: array
-                    items: { type: object }
-                  sidecars:
                     type: array
                     items: { type: object }
         "401": { $ref: "#/components/responses/Unauthenticated" }
@@ -271,7 +267,6 @@ paths:
                     enum: [default, dangerously_skip_permissions],
                     default: default,
                   }
-                sidecarId: { type: string, nullable: true }
                 enabled: { type: boolean, default: true }
       responses:
         "201":
@@ -301,7 +296,7 @@ paths:
       tags: [admin]
       summary: Update a platform ACP runner
       description: |
-        Admin-only. Mutates runner provider/model/env/sidecar/readiness/enabled
+        Admin-only. Mutates runner provider/model/env/readiness/enabled
         fields. Disabling is refused while usage references exist. Adapter and
         capability-agent identity are immutable after create.
       operationId: patchAdminAcpRunner
@@ -333,7 +328,6 @@ paths:
                     type: string,
                     enum: [default, dangerously_skip_permissions],
                   }
-                sidecarId: { type: string, nullable: true }
                 enabled: { type: boolean }
       responses:
         "200":
@@ -380,9 +374,8 @@ paths:
         `POST /model-catalog/resolve` and returns model suggestions **grouped by
         source** for the runner modal's combobox. Secret material is accepted
         ONLY as `env:NAME` references — converted to bare names via `envRefName()`
-        before forwarding — and is never returned to the client. `sidecarId` is
-        validated against the platform sidecar catalog (server-state) before
-        forwarding. Discovery never blocks a save: `model` stays free text and an
+        before forwarding — and is never returned to the client. Discovery
+        never blocks a save: `model` stays free text and an
         unknown model is an advisory hint, not a validation error. See
         [ADR-076](../decisions.md#adr-076-acp-runner-model-discovery-resolver-on-supervisor--configured-model-application) and
         [`../system-analytics/model-catalog.md`](../system-analytics/model-catalog.md).
@@ -402,8 +395,8 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "422":
           description: |
-            Invalid body, a raw (non-`env:`) secret, or an unknown `sidecarId`
-            (`CONFIG`). A missing/unset env-ref degrades to a per-source
+            Invalid body or a raw (non-`env:`) secret (`CONFIG`). A
+            missing/unset env-ref degrades to a per-source
             `status:"error"` inside a 200, not a 422 (ADR-076 §2).
           content:
             application/json:
@@ -447,7 +440,10 @@ paths:
           description: Bounded redacted finding page.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/WorkspaceReconciliationFindingPage" }
+              schema:
+                {
+                  $ref: "#/components/schemas/WorkspaceReconciliationFindingPage",
+                }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "400":
@@ -804,205 +800,6 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "422":
           description: Invalid body (`CONFIG`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-  /api/admin/router-sidecars:
-    get:
-      tags: [admin]
-      summary: List router sidecars
-      description: Admin-only. Returns CCR sidecar configuration and readiness state.
-      operationId: getAdminRouterSidecars
-      responses:
-        "200":
-          description: Router sidecars.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [sidecars]
-                properties:
-                  sidecars:
-                    type: array
-                    items: { type: object }
-        "401": { $ref: "#/components/responses/Unauthenticated" }
-        "403": { $ref: "#/components/responses/Forbidden" }
-    post:
-      tags: [admin]
-      summary: Create a router sidecar
-      description: Admin-only. Creates a managed or external CCR sidecar; auth tokens are stored only as env references.
-      operationId: postAdminRouterSidecar
-      responses:
-        "201":
-          description: Sidecar created.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [sidecar]
-                properties:
-                  sidecar: { type: object }
-        "401": { $ref: "#/components/responses/Unauthenticated" }
-        "403": { $ref: "#/components/responses/Forbidden" }
-        "409":
-          description: Sidecar id already exists.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-  /api/admin/router-sidecars/{sidecarId}:
-    patch:
-      tags: [admin]
-      summary: Update a router sidecar
-      description: |
-        Admin-only. Mutates sidecar lifecycle/config/enabled fields; auth tokens
-        persist only as env references. Disabling is refused while a runner
-        references the sidecar. Readiness is recomputed server-side and is never
-        accepted from the request body.
-      operationId: patchAdminRouterSidecar
-      parameters:
-        - name: sidecarId
-          in: path
-          required: true
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                lifecycle: { type: string, enum: [managed, external] }
-                commandPreset: { type: string, nullable: true }
-                configPath: { type: string, nullable: true }
-                baseUrl: { type: string, nullable: true }
-                healthcheckUrl: { type: string, nullable: true }
-                authTokenRef: { type: string, nullable: true }
-                enabled: { type: boolean }
-      responses:
-        "200":
-          description: Sidecar updated. Readiness is derived server-side (never accepted from the body).
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [ok, id]
-                properties:
-                  ok: { type: boolean, enum: [true] }
-                  id: { type: string }
-                  readinessStatus:
-                    { type: string, enum: [Unknown, Ready, NotReady] }
-                  readinessReasons: { type: array, items: { type: string } }
-        "401": { $ref: "#/components/responses/Unauthenticated" }
-        "403": { $ref: "#/components/responses/Forbidden" }
-        "409":
-          description: Sidecar not found (`PRECONDITION`) or referenced while disabling (`CONFLICT`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "422":
-          description: Invalid body (`CONFIG`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-    delete:
-      tags: [admin]
-      summary: Delete a router sidecar
-      description: |
-        Admin-only. The usage-guard, the managed stop, and the row delete run in
-        one serialized transaction holding a `FOR UPDATE` lock on the sidecar
-        row. Refuses deletion (`CONFLICT`) while any runner references the sidecar
-        via `sidecar_id`; the FK is `ON DELETE SET NULL`, and the lock prevents a
-        concurrent runner bind from being silently unbound by the delete. A
-        managed sidecar is stopped before the row is removed; an unconfirmed stop
-        aborts the delete with `503` so the config row — the only handle to stop
-        the process — survives for a retry.
-      operationId: deleteAdminRouterSidecar
-      parameters:
-        - name: sidecarId
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        "204": { description: Sidecar deleted. }
-        "401": { $ref: "#/components/responses/Unauthenticated" }
-        "403": { $ref: "#/components/responses/Forbidden" }
-        "409":
-          description: Sidecar is still referenced (`CONFLICT`) or not found (`PRECONDITION`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "503":
-          description: Managed sidecar stop not confirmed (`EXECUTOR_UNAVAILABLE`); the row was not deleted.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-  /api/admin/router-sidecars/{sidecarId}/start:
-    post:
-      tags: [admin]
-      summary: Start a managed CCR router sidecar
-      description: |
-        Admin-only (ADR-094). Loads the sidecar from `platform_router_sidecars`,
-        forwards its config to the supervisor `POST /sidecars/{id}/start`, and
-        returns the supervisor-reported process state. No DB idempotency marker is
-        written — CCR process state is owned by the supervisor. Start only
-        launches the process; CCR routing configuration is a separate, deferred
-        concern, so a started-without-config sidecar reports `state: "failed"`.
-      operationId: startAdminRouterSidecar
-      parameters:
-        - name: sidecarId
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        "200":
-          description: Start initiated; supervisor process state echoed.
-          content:
-            application/json:
-              schema:
-                { $ref: "#/components/schemas/RouterSidecarStateResponse" }
-        "401": { $ref: "#/components/responses/Unauthenticated" }
-        "403": { $ref: "#/components/responses/Forbidden" }
-        "409":
-          description: Sidecar not found (`PRECONDITION`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "503":
-          description: Supervisor or CCR unavailable (`EXECUTOR_UNAVAILABLE`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-  /api/admin/router-sidecars/{sidecarId}/stop:
-    post:
-      tags: [admin]
-      summary: Stop a managed CCR router sidecar
-      description: |
-        Admin-only (ADR-094). Loads the sidecar, forwards to the supervisor
-        per-instance `POST /sidecars/{id}/stop` (stops ONLY this instance, not the
-        manager-wide shutdown), and returns the supervisor-reported state.
-      operationId: stopAdminRouterSidecar
-      parameters:
-        - name: sidecarId
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        "200":
-          description: Stop completed; supervisor process state echoed.
-          content:
-            application/json:
-              schema:
-                { $ref: "#/components/schemas/RouterSidecarStateResponse" }
-        "401": { $ref: "#/components/responses/Unauthenticated" }
-        "403": { $ref: "#/components/responses/Forbidden" }
-        "409":
-          description: Sidecar not found (`PRECONDITION`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "503":
-          description: Supervisor or CCR unavailable (`EXECUTOR_UNAVAILABLE`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -2158,8 +1955,7 @@ paths:
               properties:
                 taskId: { type: string, format: uuid }
                 runnerId: { type: string }
-                workspace:
-                  { type: string, enum: [none, repo_read, worktree] }
+                workspace: { type: string, enum: [none, repo_read, worktree] }
       responses:
         "202":
           description: Agent run created (`Running` or queued `Pending`).
@@ -4175,7 +3971,9 @@ paths:
                         description: An existing recipe in THIS Study. Mutually exclusive with `definition`.
                       definition:
                         allOf:
-                          - { $ref: "#/components/schemas/EvaluationRecipeDefinition" }
+                          - {
+                              $ref: "#/components/schemas/EvaluationRecipeDefinition",
+                            }
                         description: Create the recipe inline, then launch it. Mutually exclusive with `recipeId`.
                       replicateCount:
                         type: integer
@@ -4281,7 +4079,9 @@ paths:
                 properties:
                   current:
                     allOf:
-                      - { $ref: "#/components/schemas/EvaluationStandardizedRecipe" }
+                      - {
+                          $ref: "#/components/schemas/EvaluationStandardizedRecipe",
+                        }
                     nullable: true
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -4305,7 +4105,9 @@ paths:
           content:
             application/json:
               schema:
-                { $ref: "#/components/schemas/EvaluationStandardizationEligibility" }
+                {
+                  $ref: "#/components/schemas/EvaluationStandardizationEligibility",
+                }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/EvaluationNotFound" }
@@ -5519,7 +5321,10 @@ paths:
           description: Workspace removed after preservation, or an idempotent replay.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/WorkspaceLifecycleRemovalResponse" }
+              schema:
+                {
+                  $ref: "#/components/schemas/WorkspaceLifecycleRemovalResponse",
+                }
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -5690,8 +5495,10 @@ paths:
                     scopes:
                       run: { available: true }
                       review: { available: true }
-                      since-last-review: { available: false, reason: last-review-missing }
-                      last-node: { available: false, reason: current-node-missing }
+                      since-last-review:
+                        { available: false, reason: last-review-missing }
+                      last-node:
+                        { available: false, reason: current-node-missing }
                       uncommitted: { available: true }
                     baseCommit: abc123
                     reviewSourceFingerprint: "sha256:source-digest"
@@ -5845,8 +5652,10 @@ paths:
                     scopes:
                       run: { available: true }
                       review: { available: true }
-                      since-last-review: { available: false, reason: last-review-missing }
-                      last-node: { available: false, reason: current-node-missing }
+                      since-last-review:
+                        { available: false, reason: last-review-missing }
+                      last-node:
+                        { available: false, reason: current-node-missing }
                       uncommitted: { available: true }
                     baseCommit: abc123
                     reviewSourceFingerprint: "sha256:source-digest"
@@ -6939,7 +6748,8 @@ paths:
           description: Current deterministic feedback packet. No mutation occurred.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ReviewFeedbackPreviewResponse" }
+              schema:
+                { $ref: "#/components/schemas/ReviewFeedbackPreviewResponse" }
               examples:
                 current:
                   value:
@@ -6956,7 +6766,11 @@ paths:
                       payload: "## Review summary\nPlease validate empty input."
         "400":
           description: Malformed response shape (`CONFIG`).
-          content: { application/json: { schema: { $ref: "#/components/schemas/MaisterErrorBody" } } }
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/MaisterErrorBody" } },
+            }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
@@ -6964,11 +6778,19 @@ paths:
             `PRECONDITION`: run or review gate is absent/closed, the run is not
             awaiting review, the workspace/source is unavailable, a gate-chat
             turn is pending, or a legacy graph lacks a proven feedback consumer.
-          content: { application/json: { schema: { $ref: "#/components/schemas/MaisterErrorBody" } } }
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/MaisterErrorBody" } },
+            }
         "422":
           description: |
             `NEEDS_INPUT`: rework has neither a non-blank summary nor an open root thread.
-          content: { application/json: { schema: { $ref: "#/components/schemas/MaisterErrorBody" } } }
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/MaisterErrorBody" } },
+            }
 
   /api/runs/{runId}/hitl/{hitlRequestId}/respond:
     post:
@@ -7945,7 +7767,14 @@ paths:
               schema:
                 type: object
                 additionalProperties: false
-                required: [worktreePath, branch, ownerUserId, reentryNodeId, reentrySource]
+                required:
+                  [
+                    worktreePath,
+                    branch,
+                    ownerUserId,
+                    reentryNodeId,
+                    reentrySource,
+                  ]
                 properties:
                   worktreePath:
                     type: string
@@ -8151,10 +7980,22 @@ paths:
               examples:
                 returnedAfterPush:
                   summary: Fixes pushed from another machine were fast-forwarded in
-                  value: { ok: true, runStatus: Running, returnedCommitCount: 3, fastForwarded: true }
+                  value:
+                    {
+                      ok: true,
+                      runStatus: Running,
+                      returnedCommitCount: 3,
+                      fastForwarded: true,
+                    }
                 returnedLocalOnly:
                   summary: Purely local edits, nothing to fetch
-                  value: { ok: true, runStatus: Running, returnedCommitCount: 1, fastForwarded: false }
+                  value:
+                    {
+                      ok: true,
+                      runStatus: Running,
+                      returnedCommitCount: 1,
+                      fastForwarded: false,
+                    }
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -8663,7 +8504,10 @@ paths:
           description: Workspace removed after preservation, or an idempotent replay.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/WorkspaceLifecycleRemovalResponse" }
+              schema:
+                {
+                  $ref: "#/components/schemas/WorkspaceLifecycleRemovalResponse",
+                }
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -8855,7 +8699,10 @@ paths:
           description: Workspace was removed after preservation, or an idempotent replay.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/WorkspaceLifecycleRemovalResponse" }
+              schema:
+                {
+                  $ref: "#/components/schemas/WorkspaceLifecycleRemovalResponse",
+                }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -8891,7 +8738,10 @@ paths:
           description: Worktree was removed after preservation.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/WorkspaceLifecycleRemovalResponse" }
+              schema:
+                {
+                  $ref: "#/components/schemas/WorkspaceLifecycleRemovalResponse",
+                }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -10692,7 +10542,8 @@ paths:
           description: Created as an uncommitted working-tree change.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/LocalPackageFlowCreateResult" }
+              schema:
+                { $ref: "#/components/schemas/LocalPackageFlowCreateResult" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -10722,7 +10573,8 @@ paths:
           description: Recovery completed or the package was already ready.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/LocalPackageRecoveryResult" }
+              schema:
+                { $ref: "#/components/schemas/LocalPackageRecoveryResult" }
         "400": { $ref: "#/components/responses/Config" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -13561,11 +13413,7 @@ paths:
                   value: { outcome: launch_failed, errorCode: PRECONDITION }
                 incompatible-disabled:
                   summary: Graph-only manifest refusal paused the schedule
-                  value:
-                    {
-                      outcome: incompatible_disabled,
-                      errorCode: CONFIG,
-                    }
+                  value: { outcome: incompatible_disabled, errorCode: CONFIG }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -13670,7 +13518,8 @@ paths:
               schema: { type: string, example: '"3"' }
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ScheduledLaunchDetailResponse" }
+              schema:
+                { $ref: "#/components/schemas/ScheduledLaunchDetailResponse" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -13849,7 +13698,13 @@ paths:
           required: true
           schema:
             type: string
-            enum: [one_time_task_launch, recurring_task_schedule, agent_cron, agent_event]
+            enum:
+              [
+                one_time_task_launch,
+                recurring_task_schedule,
+                agent_cron,
+                agent_event,
+              ]
         - name: automationId
           in: path
           required: true
@@ -15655,7 +15510,7 @@ components:
             (`CONFIG`, self-relation). Mutually exclusive with `toTaskKey`.
         toTaskKey:
           type: string
-          pattern: '^[A-Za-z][A-Za-z0-9]*-[0-9]+$'
+          pattern: "^[A-Za-z][A-Za-z0-9]*-[0-9]+$"
           example: "API-42"
           description: |
             **(Implemented — ADR-155)** Platform-unique `KEY-N` address
@@ -16395,12 +16250,21 @@ components:
         and their stopped variants. The run status is retained history; the
         workspace fact is represented independently by `workspaceRemoved`.
       required:
-        [ok, runId, operation, runStatus, workspaceRemoved, idempotent, preservationOutcome]
+        [
+          ok,
+          runId,
+          operation,
+          runStatus,
+          workspaceRemoved,
+          idempotent,
+          preservationOutcome,
+        ]
       properties:
         ok: { type: boolean, enum: [true] }
         runId: { type: string, format: uuid }
         operation: { type: string, enum: [archive, drop, discard] }
-        runStatus: { type: string, enum: [Review, Crashed, Failed, Done, Abandoned] }
+        runStatus:
+          { type: string, enum: [Review, Crashed, Failed, Done, Abandoned] }
         workspaceRemoved: { type: boolean, enum: [true] }
         idempotent: { type: boolean }
         preservationOutcome:
@@ -16412,13 +16276,19 @@ components:
       description: |
         Implemented (ADR-148) redacted, read-only operational projection. Absolute
         paths, raw provenance, file contents, and mutation controls are absent.
-      required: [id, state, candidateKind, relativePath, firstSeenAt, lastSeenAt]
+      required:
+        [id, state, candidateKind, relativePath, firstSeenAt, lastSeenAt]
       properties:
         id: { type: string }
         state:
           type: string
           enum: [observed, held, retry_waiting, failed, quarantined, resolved]
-        candidateKind: { type: string, enum: [row_missing_path, row_removed_path, rowless_managed, untrusted] }
+        candidateKind:
+          {
+            type: string,
+            enum:
+              [row_missing_path, row_removed_path, rowless_managed, untrusted],
+          }
         relativePath: { type: string }
         projectId: { type: string, nullable: true }
         runId: { type: string, format: uuid, nullable: true }
@@ -16695,7 +16565,16 @@ components:
       type: string
       nullable: true
       enum:
-        [created, rearmed, claimed, retry_scheduled, cancelled, launched, failed, null]
+        [
+          created,
+          rearmed,
+          claimed,
+          retry_scheduled,
+          cancelled,
+          launched,
+          failed,
+          null,
+        ]
     ScheduledLaunchDisambiguation:
       type: string
       nullable: true
@@ -16740,7 +16619,8 @@ components:
           minLength: 1
           maxLength: 255
           description: IANA timezone name, validated by the server Temporal conversion.
-        disambiguation: { $ref: "#/components/schemas/ScheduledLaunchDisambiguation" }
+        disambiguation:
+          { $ref: "#/components/schemas/ScheduledLaunchDisambiguation" }
         launchRequest: { $ref: "#/components/schemas/ScheduledLaunchRequest" }
     PatchScheduledLaunchBody:
       type: object
@@ -16755,7 +16635,8 @@ components:
           type: string
           minLength: 1
           maxLength: 255
-        disambiguation: { $ref: "#/components/schemas/ScheduledLaunchDisambiguation" }
+        disambiguation:
+          { $ref: "#/components/schemas/ScheduledLaunchDisambiguation" }
         launchRequest: { $ref: "#/components/schemas/ScheduledLaunchRequest" }
     ScheduledLaunchTaskSnapshot:
       type: object
@@ -16773,7 +16654,19 @@ components:
         id: { type: string, format: uuid }
         status:
           type: string
-          enum: [Pending, Running, NeedsInput, NeedsInputIdle, HumanWorking, Review, Done, Abandoned, Crashed, Failed]
+          enum:
+            [
+              Pending,
+              Running,
+              NeedsInput,
+              NeedsInputIdle,
+              HumanWorking,
+              Review,
+              Done,
+              Abandoned,
+              Crashed,
+              Failed,
+            ]
     ScheduledLaunchEvent:
       type: object
       required: [id, kind, actorType, claimFence, errorCode, message, createdAt]
@@ -16781,7 +16674,16 @@ components:
         id: { type: string, format: uuid }
         kind:
           type: string
-          enum: [created, edited_rearmed, claimed, retry_scheduled, cancelled, launched, failed]
+          enum:
+            [
+              created,
+              edited_rearmed,
+              claimed,
+              retry_scheduled,
+              cancelled,
+              launched,
+              failed,
+            ]
         createdAt: { type: string, format: date-time }
         actorType: { type: string, enum: [user, system] }
         claimFence: { type: integer, nullable: true }
@@ -16820,7 +16722,8 @@ components:
         task: { $ref: "#/components/schemas/ScheduledLaunchTaskSnapshot" }
         scheduledLocalTime: { type: string }
         timezone: { type: string }
-        disambiguation: { $ref: "#/components/schemas/ScheduledLaunchDisambiguation" }
+        disambiguation:
+          { $ref: "#/components/schemas/ScheduledLaunchDisambiguation" }
         scheduledForAt: { type: string, format: date-time }
         state: { $ref: "#/components/schemas/ScheduledLaunchState" }
         revision: { type: integer, minimum: 1 }
@@ -16870,10 +16773,39 @@ components:
         id: { type: string, format: uuid }
         status:
           type: string
-          enum: [Pending, Running, NeedsInput, NeedsInputIdle, HumanWorking, Review, Done, Abandoned, Crashed, Failed]
+          enum:
+            [
+              Pending,
+              Running,
+              NeedsInput,
+              NeedsInputIdle,
+              HumanWorking,
+              Review,
+              Done,
+              Abandoned,
+              Crashed,
+              Failed,
+            ]
     OneTimeTaskLaunchAutomationRow:
       type: object
-      required: [type, id, name, target, trigger, timezone, state, nextActionAt, latestOutcome, errorCode, errorMessage, lateByMs, resultingRun, detailHref, updatedAt]
+      required:
+        [
+          type,
+          id,
+          name,
+          target,
+          trigger,
+          timezone,
+          state,
+          nextActionAt,
+          latestOutcome,
+          errorCode,
+          errorMessage,
+          lateByMs,
+          resultingRun,
+          detailHref,
+          updatedAt,
+        ]
       properties:
         type: { type: string, enum: [one_time_task_launch] }
         id: { type: string, format: uuid }
@@ -16892,7 +16824,24 @@ components:
         updatedAt: { type: string, format: date-time }
     RecurringTaskScheduleAutomationRow:
       type: object
-      required: [type, id, name, target, trigger, timezone, state, nextActionAt, latestOutcome, errorCode, errorMessage, lateByMs, resultingRun, detailHref, updatedAt]
+      required:
+        [
+          type,
+          id,
+          name,
+          target,
+          trigger,
+          timezone,
+          state,
+          nextActionAt,
+          latestOutcome,
+          errorCode,
+          errorMessage,
+          lateByMs,
+          resultingRun,
+          detailHref,
+          updatedAt,
+        ]
       properties:
         type: { type: string, enum: [recurring_task_schedule] }
         id: { type: string, format: uuid }
@@ -16911,7 +16860,24 @@ components:
         updatedAt: { type: string, format: date-time }
     AgentCronAutomationRow:
       type: object
-      required: [type, id, name, target, trigger, timezone, state, nextActionAt, latestOutcome, errorCode, errorMessage, lateByMs, resultingRun, detailHref, updatedAt]
+      required:
+        [
+          type,
+          id,
+          name,
+          target,
+          trigger,
+          timezone,
+          state,
+          nextActionAt,
+          latestOutcome,
+          errorCode,
+          errorMessage,
+          lateByMs,
+          resultingRun,
+          detailHref,
+          updatedAt,
+        ]
       properties:
         type: { type: string, enum: [agent_cron] }
         id: { type: string, format: uuid }
@@ -16930,14 +16896,35 @@ components:
         updatedAt: { type: string, format: date-time }
     AgentEventAutomationRow:
       type: object
-      required: [type, id, name, target, trigger, timezone, state, nextActionAt, latestOutcome, errorCode, errorMessage, lateByMs, resultingRun, detailHref, updatedAt]
+      required:
+        [
+          type,
+          id,
+          name,
+          target,
+          trigger,
+          timezone,
+          state,
+          nextActionAt,
+          latestOutcome,
+          errorCode,
+          errorMessage,
+          lateByMs,
+          resultingRun,
+          detailHref,
+          updatedAt,
+        ]
       properties:
         type: { type: string, enum: [agent_event] }
         id: { type: string, format: uuid }
         name: { type: string }
         target: { type: string }
         state: { type: string, enum: [Enabled, Disabled] }
-        trigger: { type: string, description: Effective subscribed domain-event kinds. }
+        trigger:
+          {
+            type: string,
+            description: Effective subscribed domain-event kinds.,
+          }
         timezone: { type: string, nullable: true }
         nextActionAt: { type: string, format: date-time, nullable: true }
         latestOutcome: { type: string, nullable: true }
@@ -17266,7 +17253,16 @@ components:
             type: object
             additionalProperties: false
             required:
-              [id, refId, name, version, enabled, disabledReason, disabledReasonMessage, isTaskDefault]
+              [
+                id,
+                refId,
+                name,
+                version,
+                enabled,
+                disabledReason,
+                disabledReasonMessage,
+                isTaskDefault,
+              ]
             properties:
               id: { type: string, format: uuid }
               refId: { type: string }
@@ -17277,7 +17273,18 @@ components:
                 type: string
                 nullable: true
                 enum:
-                  [unconfigured, flow_missing, no_revision, not_enabled, not_installed, setup_failed, setup_pending, unsupported_schema, incompatible, null]
+                  [
+                    unconfigured,
+                    flow_missing,
+                    no_revision,
+                    not_enabled,
+                    not_installed,
+                    setup_failed,
+                    setup_pending,
+                    unsupported_schema,
+                    incompatible,
+                    null,
+                  ]
               disabledReasonMessage: { type: string, nullable: true }
               isTaskDefault: { type: boolean }
         selectedFlowId: { type: string }
@@ -17307,7 +17314,19 @@ components:
             type: object
             additionalProperties: false
             required:
-              [id, label, adapter, capabilityAgent, model, providerKind, permissionPolicy, sidecarId, readinessStatus, readinessReasons, enabled, pinnedModel]
+              [
+                id,
+                label,
+                adapter,
+                capabilityAgent,
+                model,
+                providerKind,
+                permissionPolicy,
+                readinessStatus,
+                readinessReasons,
+                enabled,
+                pinnedModel,
+              ]
             properties:
               id: { type: string }
               label: { type: string }
@@ -17316,7 +17335,6 @@ components:
               model: { type: string }
               providerKind: { type: string }
               permissionPolicy: { type: string }
-              sidecarId: { type: string, nullable: true }
               readinessStatus:
                 type: string
                 enum: [Unknown, Ready, NotReady]
@@ -17363,7 +17381,7 @@ components:
         Non-fatal runner intent warning emitted when a Flow runner slot's hard
         `capability_agent` matches an enabled+ready host runner but soft intent
         fields (`model` and/or `provider.kind`) differ. The object never exposes
-        provider secrets, env values, sidecar auth, or full provider objects.
+        provider secrets, env values, or full provider objects.
       properties:
         code:
           type: string
@@ -17493,7 +17511,6 @@ components:
               model: { type: string }
               providerKind: { type: string }
               permissionPolicy: { type: string }
-              sidecarId: { type: string, nullable: true }
               enabled: { type: boolean }
               ready: { type: boolean }
         workModes:
@@ -18535,7 +18552,8 @@ components:
       oneOf:
         - type: object
           additionalProperties: false
-          required: [compatible, incompatibility, currentStepId, runStatus, nodes]
+          required:
+            [compatible, incompatibility, currentStepId, runStatus, nodes]
           properties:
             compatible: { type: boolean, enum: [true] }
             incompatibility: { type: object, nullable: true, enum: [null] }
@@ -18826,7 +18844,15 @@ components:
             fingerprint: { type: string, pattern: "^sha256:[0-9A-Za-z_-]+$" }
         feedback:
           type: object
-          required: [fingerprint, target, openThreadIds, resolvedThreadCount, gateChatMessageCount, payload]
+          required:
+            [
+              fingerprint,
+              target,
+              openThreadIds,
+              resolvedThreadCount,
+              gateChatMessageCount,
+              payload,
+            ]
           properties:
             fingerprint: { type: string, pattern: "^sha256:[0-9A-Za-z_-]+$" }
             target:
@@ -19127,18 +19153,6 @@ components:
             status:
               type: string
               enum: [open, resolved]
-    RouterSidecarStateResponse:
-      type: object
-      required: [ok, state]
-      additionalProperties: false
-      description: |
-        Result of an admin CCR sidecar start/stop. `state` is the
-        supervisor-reported process state (ADR-094); no DB marker is persisted.
-      properties:
-        ok: { type: boolean, enum: [true] }
-        state:
-          type: string
-          enum: [idle, starting, ready, failed, stopping]
     EvaluationJudgePanelRoleBinding:
       type: object
       additionalProperties: false
@@ -19216,7 +19230,8 @@ components:
           description: Optimistic revision — echo back via `If-Match`.
         roleBindings:
           type: array
-          items: { $ref: "#/components/schemas/EvaluationJudgePanelRoleBinding" }
+          items:
+            { $ref: "#/components/schemas/EvaluationJudgePanelRoleBinding" }
         policy: { $ref: "#/components/schemas/EvaluationJudgePanelPolicy" }
         enabled: { type: boolean }
         updatedAt: { type: string, format: date-time, nullable: true }
@@ -19422,7 +19437,13 @@ components:
         flow:
           type: object
           additionalProperties: false
-          required: [flowRefId, flowRevisionId, inputContractDigest, artifactContractDigest]
+          required:
+            [
+              flowRefId,
+              flowRevisionId,
+              inputContractDigest,
+              artifactContractDigest,
+            ]
           description: |
             The pinned Flow/package revision plus the contract digests captured
             at freeze time, so later drift never silently changes what a
@@ -20692,7 +20713,11 @@ components:
       required: [id, path]
       properties:
         id: { type: string }
-        path: { type: string, description: "Server-generated editor-relative Flow path." }
+        path:
+          {
+            type: string,
+            description: "Server-generated editor-relative Flow path.",
+          }
     LocalPackageCreateResult:
       type: object
       required: [localPackage, createdFlow]
@@ -21411,11 +21436,6 @@ components:
             anthropic_compatible | openai | openai_compatible`; ADR-084 designs
             `google_gemini | google_vertex | google_gateway | agent_native`.
             Secret fields use `env:NAME` refs only.
-        router: { type: string, enum: [ccr] }
-        sidecarId:
-          type: string
-          nullable: true
-          description: Validated against the platform sidecar catalog when `router == "ccr"`.
         force:
           type: boolean
           default: false
@@ -21435,10 +21455,10 @@ components:
             properties:
               source:
                 type: string
-                enum: [acp_probe, provider_api, curated, ccr, agent_observed]
+                enum: [acp_probe, provider_api, curated, agent_observed]
               label:
                 type: string
-                description: Localized-at-render group label (Agent / Provider / Curated / CCR / Observed).
+                description: Localized-at-render group label (Agent / Provider / Curated / Observed).
               status:
                 type: string
                 enum: [ok, skipped, error]
@@ -21815,7 +21835,8 @@ components:
 
     BrainIndexedHit:
       type: object
-      required: [tier, chunkId, kind, title, preview, confidence, score, pointer]
+      required:
+        [tier, chunkId, kind, title, preview, confidence, score, pointer]
       properties:
         tier: { type: string, enum: [indexed] }
         chunkId: { type: string }
@@ -21833,13 +21854,35 @@ components:
     BrainSource:
       type: object
       required:
-        [id, kind, path, chunkerId, chunkerVersion, enabled, indexedFileCount, indexedFilePaths, chunkCount]
+        [
+          id,
+          kind,
+          path,
+          chunkerId,
+          chunkerVersion,
+          enabled,
+          indexedFileCount,
+          indexedFilePaths,
+          chunkCount,
+        ]
       properties:
         id: { type: string }
         kind:
           type: string
           enum:
-            [repo_file, markdown, html, openapi, asyncapi, sql, flow_yaml, package_yaml, agent_md, code, text]
+            [
+              repo_file,
+              markdown,
+              html,
+              openapi,
+              asyncapi,
+              sql,
+              flow_yaml,
+              package_yaml,
+              agent_md,
+              code,
+              text,
+            ]
         path: { type: string }
         chunkerId: { type: string }
         chunkerVersion: { type: string }
@@ -21872,7 +21915,19 @@ components:
         kind:
           type: string
           enum:
-            [repo_file, markdown, html, openapi, asyncapi, sql, flow_yaml, package_yaml, agent_md, code, text]
+            [
+              repo_file,
+              markdown,
+              html,
+              openapi,
+              asyncapi,
+              sql,
+              flow_yaml,
+              package_yaml,
+              agent_md,
+              code,
+              text,
+            ]
         path:
           type: string
           minLength: 1

@@ -76,9 +76,9 @@ describe("analyzeTemplateVariableUsage", () => {
 
   it("warns when optional or conditional paths are referenced bare", () => {
     const result = analyzeTemplateVariableUsage(
-      "{{ executor.router }} {{ steps.branch.vars.verdict }}",
+      "{{ steps.plan.vars.notes }} {{ steps.branch.vars.verdict }}",
       catalog([
-        entry("executor.router", { source: "global", presence: "optional" }),
+        entry("steps.plan.vars.notes", { presence: "optional" }),
         entry("steps.branch.vars.verdict", {
           availability: "conditional",
           presence: "optional",

@@ -4,18 +4,21 @@
 > Sections above the marker are curated from review pass-through findings.
 > Last updated: 2026-07-11
 > Based on: 2 analyzed patches + 1 adversarial-review pass-through (M6 / 2026-05-28)
-> + M10 verify pass-through (2026-05-30)
-> + /aif-evolve M11b/M11c adversarial-review batch (2026-06-01)
-> + /aif-evolve 107-patch batch (2026-06-17, cursor 2026-05-30 → 2026-06-16)
-> + /aif-evolve 114-patch batch (2026-07-11, cursor 2026-06-16 → 2026-07-07)
+>
+> - M10 verify pass-through (2026-05-30)
+> - /aif-evolve M11b/M11c adversarial-review batch (2026-06-01)
+> - /aif-evolve 107-patch batch (2026-06-17, cursor 2026-05-30 → 2026-06-16)
+> - /aif-evolve 114-patch batch (2026-07-11, cursor 2026-06-16 → 2026-07-07)
 
 ## Rules
 
 ### Bidirectional contract for config→DB persistence (SET and CLEAR symmetry)
+
 **Source**: M6 adversarial review pass-through (2026-05-28)
 **Rule**: A helper that materializes a YAML/config field into a DB column that downstream readers rely on MUST handle BOTH the SET path (`field present` → write resolved value) AND the CLEAR/UNSET path (`field absent` → reset to the column default — usually `null`, `false`, or zero) inside the SAME transaction. Looping `for (entry of config) { if (!entry.field) continue; ... }` is a bug: the previous DB value persists after the operator removes the YAML field, but the reader believes "absent = default". A bug enshrined in an integration test as "documented behavior" is the worst possible outcome — it makes the asymmetry load-bearing.
 
 Concrete pattern (Drizzle, pseudo-code):
+
 ```ts
 // Wrong — only the SET branch
 for (const entry of cfg.entries) {
@@ -33,32 +36,35 @@ for (const entry of cfg.entries) {
 Mandatory test shape: a round-trip integration case that (a) writes with the field set, asserts the column equals the resolved value, (b) re-runs with the field removed, asserts the column equals the default. Both halves are required.
 
 ### Runtime contract symmetry — never half-ship an env/config dep
+
 **Source**: M6 adversarial review pass-through (2026-05-28)
 **Rule**: When a server process newly consumes an env var, reads a new config file, depends on a new sidecar binary, or binds a new port, the deployment artifacts in the SAME PR MUST be touched: `Dockerfile`, `compose.yml`, `compose.override.yml`, `compose.production.yml`, `.env.example`. The minimum touch set per change:
 
-| New dependency | Files to update |
-| -------------- | --------------- |
-| New env var consumed by web or supervisor | `.env.example` + the consuming service's `environment:` block in `compose.yml` (+ prod overlay) |
-| New config file read from a host path | host-path mount (bind or named volume) on the consuming service + a `.env.example` toggle for the host path if it's tunable |
+| New dependency                               | Files to update                                                                                                                                   |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| New env var consumed by web or supervisor    | `.env.example` + the consuming service's `environment:` block in `compose.yml` (+ prod overlay)                                                   |
+| New config file read from a host path        | host-path mount (bind or named volume) on the consuming service + a `.env.example` toggle for the host path if it's tunable                       |
 | New sidecar binary spawned by the supervisor | dep listed in the consuming package.json (lockfile committed), and `pnpm exec <bin> --help` smoke check covered in CI or a documented manual step |
-| New listening port | port declared on the service (when reachable from outside) + firewall/expose notes |
+| New listening port                           | port declared on the service (when reachable from outside) + firewall/expose notes                                                                |
 
-If you intentionally defer the runtime wiring (e.g. "CCR is dev-only on POC"), the docs MUST contain an explicit "not supported in Docker — enable by …" callout in both `docs/getting-started.md` and the relevant `docs/configuration.md` section. Silent dev/prod skew is forbidden: tests passing under mocks do not prove the deployment runs the new path.
+If you intentionally defer runtime wiring, the docs MUST contain an explicit "not supported in Docker — enable by …" callout in both `docs/getting-started.md` and the relevant `docs/configuration.md` section. Silent dev/prod skew is forbidden: tests passing under mocks do not prove the deployment runs the new path.
 
 **Wire contracts span deploy units:** adding a field to a cross-process request body (e.g. `hooksConfig` on supervisor `POST /sessions`) requires the OTHER deploy unit's acceptor schema (`StartSessionRequestSchema`, which ends `.strict()` and `.parse()`s) to change in the SAME commit — even if it only accepts-and-ignores until a later phase; "this phase is web-only" is not a license to draw a phase boundary through a contract. Pin it with a test that feeds a representative resolved payload through the REAL acceptor schema (a web-side mock proves nothing; the two sides' types are structurally unrelated). Review wire schemas as a PAIR: even when the emitter is stricter today, make the acceptor symmetric (`z.array(z.string().min(1)).min(1)` + mirrored `minItems`/`minLength` in the OpenAPI) so a direct POST can't smuggle a shape the authoring layer forbids.
 **Source (additions)**: 2026-06-23-13.22, 2026-06-23-18.25
 
 ### Process lifecycle: never trust `subprocess.killed` for escalation
+
 **Source**: M6 adversarial review pass-through (2026-05-28)
-**Rule**: Node's `subprocess.killed === true` after `subprocess.kill(sig)` successfully *sends* the signal — NOT after the child exits. A child that ignores or hangs on SIGTERM sets `killed=true` and `exitedInTime=false`, but the predicate `!exitedInTime && !proc.killed` then evaluates FALSE and SIGKILL never fires; the daemon stays alive and keeps its port bound across supervisor restarts.
+**Rule**: Node's `subprocess.killed === true` after `subprocess.kill(sig)` successfully _sends_ the signal — NOT after the child exits. A child that ignores or hangs on SIGTERM sets `killed=true` and `exitedInTime=false`, but the predicate `!exitedInTime && !proc.killed` then evaluates FALSE and SIGKILL never fires; the daemon stays alive and keeps its port bound across supervisor restarts.
 
 Correct pattern:
+
 ```ts
 // Wrong
 if (!exitedInTime && !proc.killed) proc.kill("SIGKILL");
 
 // Right — escalate based on the observed exit event, not `killed`
-const exited = new Promise<void>(r => proc.once("exit", () => r()));
+const exited = new Promise<void>((r) => proc.once("exit", () => r()));
 proc.kill("SIGTERM");
 const exitedInTime = await Promise.race([
   exited.then(() => true),
@@ -73,23 +79,26 @@ if (!exitedInTime) {
 Mandatory test shape: a fixture child that traps SIGTERM (`process.on("SIGTERM", () => {})` ignoring it OR a long-running blocker) and asserts the port is freed / pid is gone after `shutdown()` returns. The cooperative-exit happy path does not exercise this branch.
 
 ### Health probes must validate target identity, not just liveness
+
 **Source**: M6 adversarial review pass-through (2026-05-28)
-**Rule**: For sidecar/proxy daemons managed by the supervisor, the readiness probe MUST identify the *intended* service, not merely "something answered on `host:port`". Generic `GET /` returning any non-5xx is insufficient: if the configured port is already occupied and the spawned child fails to bind (`EADDRINUSE`) and exits, an unrelated local HTTP service can answer 200/404 and the manager will transition to `ready`. Later traffic routes into the wrong process and surfaces failures far from the real cause.
+**Rule**: For sidecar/proxy daemons managed by the supervisor, the readiness probe MUST identify the _intended_ service, not merely "something answered on `host:port`". Generic `GET /` returning any non-5xx is insufficient: if the configured port is already occupied and the spawned child fails to bind (`EADDRINUSE`) and exits, an unrelated local HTTP service can answer 200/404 and the manager will transition to `ready`. Later traffic routes into the wrong process and surfaces failures far from the real cause.
 
 Acceptable identity signals (pick one):
+
 1. A target-specific endpoint that the daemon exposes (e.g. `GET /health` returning a known body shape, `GET /version` returning a known name string).
 2. A recognizable response header set by the target.
 3. A response body matching a known schema, validated before transition.
 
-Additionally, register `child.once("exit", ...)` BEFORE starting the health-probe loop. If the *target* child exits before becoming ready, abort the probe immediately and surface `EXECUTOR_UNAVAILABLE` (or the equivalent domain error) with the exit code/signal in the message.
+Additionally, register `child.once("exit", ...)` BEFORE starting the health-probe loop. If the _target_ child exits before becoming ready, abort the probe immediately and surface `EXECUTOR_UNAVAILABLE` (or the equivalent domain error) with the exit code/signal in the message.
 
 Mandatory test shape: a case where another HTTP server is bound to the configured port BEFORE the manager starts the target child. Assert the manager either (a) detects the port is occupied and fails fast, or (b) detects the target child exited before readiness and fails with a target-identifying error. A green test against an empty port does not cover this branch.
 
 ### Every committed test MUST execute, and the suite stays green (or is explicitly quarantined) at each phase
+
 **Source**: M10 verify pass-through (2026-05-30)
 **Rule**: A committed test that no runner runs gives false confidence; a suite left silently red across phases hides regressions. Two obligations, checked at every phase-completion checkpoint:
 
-1. **No dead tests.** Every committed `*.test.ts` / `*.integration.test.ts` MUST be matched by exactly one runner project's `include` glob and not swallowed by an `exclude`. After adding a test — *especially in a new location* — prove it runs: `vitest list --project <unit|integration>` must show the file, and it must appear in the run summary's collected set. A test under a path the config does not glob never runs (M10: `app/api/runs/__tests__/route.trust-boundary.integration.test.ts` lived under `app/**` while the integration project only globbed `lib/**` — it never executed). If a test lands in a new location, update the runner config in the SAME commit.
+1. **No dead tests.** Every committed `*.test.ts` / `*.integration.test.ts` MUST be matched by exactly one runner project's `include` glob and not swallowed by an `exclude`. After adding a test — _especially in a new location_ — prove it runs: `vitest list --project <unit|integration>` must show the file, and it must appear in the run summary's collected set. A test under a path the config does not glob never runs (M10: `app/api/runs/__tests__/route.trust-boundary.integration.test.ts` lived under `app/**` while the integration project only globbed `lib/**` — it never executed). If a test lands in a new location, update the runner config in the SAME commit.
 2. **Phase-green or explicit quarantine.** At each phase checkpoint run the full suite (`pnpm test:unit && pnpm test:integration`, or the project equivalent). The phase is NOT done while a test the phase touched is red. A test red for a reason genuinely outside the phase's scope (pre-existing breakage, or a harness limit like an unresolvable import) MUST be quarantined VISIBLY — a config-level `exclude` or `*.skip` carrying a one-line reason + tracked follow-up — NEVER left silently red and NEVER deleted to "go green". Note: a module that throws at IMPORT time cannot be quarantined with `describe.skip` (the skip never evaluates) — exclude it at the runner-config level instead.
 
 When a refactor changes observable behavior an existing test asserts (error-message text, resolved cache paths, addressing scheme), migrating those assertions is part of the SAME task that changes the behavior — a stale assertion is a red test today, not a follow-up (M10: the loader's new `flow install failed [stage=clone] …` message and digest-addressed local cache paths left three loader assertions stale).
@@ -97,6 +106,7 @@ When a refactor changes observable behavior an existing test asserts (error-mess
 Mandatory before declaring a phase done: (a) `vitest list` (or equivalent) shows every new test file; (b) the suite summary shows zero unexplained failures; (c) every quarantined test carries a reason + follow-up reference.
 
 ### DB-schema and contract edits are not done until the spec set is updated AND verified by grep
+
 **Source**: M10 verify pass-through (2026-05-30)
 **Rule**: Extend the "Runtime contract symmetry" discipline to DB schema and every contract surface, and VERIFY each wire rather than assuming it — a surface silently skipped passes every code test yet ships a broken contract.
 
@@ -109,8 +119,10 @@ This is the implement-side enforcement of the plan-side "trace every contract su
 ## Auto-generated rules (managed by `/aif-evolve` — do not hand-edit below this line)
 
 ### Validate at the SINK's invariant, not just the type's shape
+
 **Source**: 2026-05-26-12.45.md, 2026-05-26-12.53.md
 **Rule**: When implementing input validators (Zod or any boundary validator) whose fields flow into `path.resolve` / `path.join` / `fs.*` / `child_process.spawn` argv (including `cwd`) / SQL / HTML, add a regex or `.refine()` matching the sink's invariant. Concrete patterns:
+
 - Filesystem path **segment** (no `/`, no `..`): `z.string().min(1).max(128).regex(/^[A-Za-z0-9._-]+$/)`
 - **Absolute** filesystem path: `z.string().min(1).refine(p => p.startsWith("/") && !p.split("/").includes(".."), { message: "must be absolute and contain no .. segment" })`
 - SQL: parameterized query — never string concat
@@ -122,12 +134,15 @@ Extensions: (a) any value interpolated into a STRUCTURED sink — XML attribute,
 **Source (additions)**: 2026-07-01-01.27, 2026-06-26-03.12, 2026-07-02-17.52, 2026-06-25-17.42
 
 ### AbortSignal on every async generator/iterator that talks to a network resource
+
 **Source**: 2026-05-26-12.53.md
 **Rule**: Any consumer-facing async iterator, async generator, or streaming function that wraps `fetch` / SSE / WebSocket / any cancellable network call MUST accept `opts.signal?: AbortSignal` and forward it to the underlying transport (e.g. `fetch(url, { headers, signal: opts.signal })`). Do not ship the public API surface without it — every consumer (Route Handlers, Server Actions, UI hooks) will eventually need a clean cancel path, and retrofitting later is painful. Concrete shape: add `opts.signal?: AbortSignal` to the function signature, document it, write at least one test asserting forwarding.
 
 ### Cap buffers + fast-path expensive parsers + uncap legitimate listeners — in the SAME commit as the data path
+
 **Source**: 2026-05-26-12.53.md
 **Rule**: When implementing a data path that consumes external bytes (subprocess stdout, network stream, file tail), the following defenses are part of the shipping bar, not "Phase 2 hardening":
+
 1. **Cap unbounded line/chunk buffer.** Pick a sane `MAX_LINE_BYTES` (default 1 MB for log-like streams). When `buffer.length > MAX_LINE_BYTES`, emit the truncated line (`buffer.slice(0, MAX_LINE_BYTES)`), log `WARN line-buffer-overflow` with the source, then drop the rest of the buffer. Add a test that drives the overflow path via a fixture (e.g. supervisor uses a `--giant-bytes N` flag on `fake-acp.mjs`).
 2. **Fast-path expensive parsers.** If a per-line operation (`JSON.parse` + tree walk) is only needed for ~1% of lines, short-circuit with a cheap substring check first: `if (!line.includes("usage")) return;` before `JSON.parse`. Pick the substring from a stable token the target structure always contains.
 3. **Uncap legitimate listener counts.** For per-session `EventEmitter`s with multiple legitimate subscribers (cost tracker + registry auto-subscribe + N SSE consumers), call `emitter.setMaxListeners(0)` right after construction. Node's default 10-listener cap exists to detect leaks, not to enforce a real ceiling.
@@ -138,10 +153,12 @@ Cap placement rules: enforce size/count limits at the REQUEST boundary on declar
 **Source (additions)**: 2026-06-21-01.26, 2026-06-20-21.18-m36-flow-package-viewer, 2026-07-01-01.27, 2026-07-01-11.51, 2026-07-04-01.04, 2026-07-04-14.15, 2026-07-02-17.52
 
 ### `logger.flush()` before `process.exit` when transport is async
+
 **Source**: 2026-05-26-12.53.md
 **Rule**: In any shutdown handler that calls `process.exit`, await `logger.flush()` (wrap in a promise if needed) before exiting. Otherwise the final log lines — including the shutdown reason — are truncated mid-flight. This applies to pino with pretty-print or transport workers (a worker thread holds the unflushed output) and to any logger whose sink is async (network, batched file writes). Treat it as part of the shutdown template, not a per-service decision.
 
 ### Claim the transition FIRST (status CAS), then the unique-constrained write; never mark Failed until execution is confirmed stopped
+
 **Source**: 2026-05-31-22.46 (#1/#2), 2026-06-01-12.55 (#1/#2)
 **Rule**: For a state-changing handler OR a background sweep/watchdog that performs a contention guard plus other writes:
 
@@ -155,6 +172,7 @@ Session-teardown extensions: a "find the live supervisor session for this run" l
 **Source (additions)**: 2026-06-27-17.49, 2026-06-24-03.08, 2026-06-22-13.05, 2026-07-02-22.22-budget-breach-review-fixes
 
 ### Public route responses are explicit DTO projections — never serialize a DB row or a server-only handle
+
 **Source**: 2026-05-30-13.38, 2026-05-31-20.48, 2026-05-31-23.58, 2026-06-01-01.29
 **Rule**: A public route handler / server action MUST project an explicit response DTO at the boundary — never `return` a DB row or a service object verbatim. Service/internal return types may stay rich; the route narrows them. The following MUST NOT appear in any client-visible response: `acp_session_id`, supervisor session id, adapter launch argv/env, materialized instruction/profile paths, worktree paths, internal cost handles. Mirror the projected DTO in `docs/api/web.openapi.yaml` AND a focused integration/unit test asserting the EXACT shape (no extra keys). Keep `runs.status` and any `*.dialog_status` as a single contract: stop/discard/abandon on already-terminal runs are idempotent (a `Done` run is never resurrected to `Review`, an `Abandoned` discard is a no-op). Route handlers stay thin — request parsing, auth/session checks, service calls, HTTP error mapping — with launch/message/lifecycle orchestration in the service layer.
 
@@ -162,6 +180,7 @@ Redaction proof obligations: the safe-projection boundary gets a test at the MAP
 **Source (additions)**: 2026-06-18-12.07, 2026-06-18-12.57, 2026-06-25-17.16-flow-assistant-review-followup
 
 ### Honesty + write-once guard + sparse-default + enforce-external-contracts
+
 **Source**: 2026-06-01-13.16 (#1/#2/#3), 2026-05-31-23.49 (#2), 2026-05-31-22.48
 **Rule**: Four habits adversarial review keeps re-finding:
 
@@ -172,11 +191,13 @@ Redaction proof obligations: the safe-projection boundary gets a test at the MAP
 
 5. **Phase-honest vocabulary.** In a phased feature, log/comment/UI words like "armed"/"enforced"/"active" must describe what THIS phase does — `"guardrail hooks resolved (enforcement: Phase 2)"`, not `"armed"`; add a `// NOTE: resolved-and-sent ≠ enforced` at each site. A reviewer flagging a "false safety boundary" on a deliberately-phased branch means make the intermediate state HONEST, not build the next phase early.
 6. **Write-once timestamps via a shared helper.** First-occurrence timestamps (`launchedAt`) go through one status-timestamp transition helper so recompute transitions back to an earlier state never rewrite them.
-**Source (additions)**: 2026-06-23-14.19, 2026-07-04-14.25-experiment-comparison-review-followup
+   **Source (additions)**: 2026-06-23-14.19, 2026-07-04-14.25-experiment-comparison-review-followup
 
 ### Concurrency control: a transaction is atomicity, NOT mutual exclusion
+
 **Source**: 2026-06-02-18.44, 2026-06-03-00.52, 2026-06-03-01.27, 2026-06-07-18.35, 2026-06-08-13.13, 2026-06-10-11.42, 2026-06-10-20.48, 2026-06-11-11.54, 2026-06-11-15.00
 **Rule**: This GENERALIZES the existing CAS-first rule. For any read-then-write that can run concurrently:
+
 1. **Re-read the guarded state UNDER the lock.** A `SELECT id … FOR UPDATE` that selects only `id` does NOT re-read `status`; re-read `{ id, status }` under the lock before mutating. A pre-check outside the lock is a fast-path optimization, never the decision.
 2. **Lock the row whose invariant you protect.** Locking `runs` while the mutation writes `gate_results` does not serialize writers to `gate_results` (`markGateOverridden`/`markDownstreamStale` bypass the run lock). Put the lock/CAS on the row being protected.
 3. **CAS on the EXACT observed value**, not a permissive set. `casLiveTransition(d, id, fromStatus, toStatus)` → `UPDATE … WHERE id = $1 AND status = $fromStatus RETURNING id`; 0 rows → throw the mapped domain error (409), never let a raw Postgres `23505` surface as 500. A set CAS (`status IN LIVE_STATUSES`) silently permits within-set transitions.
@@ -186,7 +207,7 @@ Redaction proof obligations: the safe-projection boundary gets a test at the MAP
 7. **Batch loops** staging side-effects must thread accumulated state (`reservedSlots: intents.length`; `capFull = countLiveRuns(tx) + reservedSlots >= cap`) into per-item decisions — a pre-batch snapshot read let cap-3 launch 10 (staged runs create no rows until the claim tx commits).
 8. **Claim-before-side-effect** when the side-effect is destructive or racers' effects diverge (irreversible `discard` BEFORE the CAS is a bug; reuse the `promote.ts` 3-phase / `resumeRun` claim-before-spawn-with-rollback shape). Marker-after is acceptable ONLY when every racer's side-effect is idempotent AND identical.
 9. `NOT (nullable_col = X AND …)` is a three-valued-logic row-drop (`NULL = 'x'` is NULL, a NULL WHERE term drops the row) — write `IS DISTINCT FROM` / explicit `IS NULL` arms, and re-run the happy-path suite after touching any claim predicate.
-Prove the 409-vs-500 contract with a REAL two-racer test (hold an uncommitted write on a 2nd pg connection, wait on `pg_stat_activity` `wait_event_type='Lock'`, then commit), never a single-threaded one.
+   Prove the 409-vs-500 contract with a REAL two-racer test (hold an uncommitted write on a 2nd pg connection, wait on `pg_stat_activity` `wait_event_type='Lock'`, then commit), never a single-threaded one.
 10. **Re-assert the selecting predicate in the UPDATE's WHERE.** Under READ COMMITTED the SELECT's view is not the UPDATE's view — an UPDATE acting on a row selected earlier re-asserts the predicate (+ `RETURNING`, fall-through on 0 rows) whenever another writer can flip it; likewise a claim tx re-checks EVERY precondition written by out-of-band transactions (`promotion_hold`, master toggles) under the lock, not just `status` — one TOCTOU per un-rechecked predicate.
 11. **Verify a claimed unique-constraint backstop actually applies.** A partial index keyed on a column that is NULL for the racing path is INERT (`runs_auto_task_uq (task_id) WHERE launch_mode='auto'` + targetless `onConflictDoNothing()` was the fix); prove backstops with a CONCURRENT test — "call it twice" passes while the index is inert.
 12. **Insert-first claims before filesystem work.** Claim the unique identity via DB INSERT (23505 → CONFLICT) BEFORE scaffolding; give each attempt a UNIQUE path (`${slug}-${uuid8}`) so a loser's cleanup can never `rm` the winner's dir.
@@ -195,11 +216,13 @@ Prove the 409-vs-500 contract with a REAL two-racer test (hold an uncommitted wr
 15. **Guard-on-every-edge.** Grep every transition INTO a guarded state (`tryStartRun` AND `promoteNextPending` are independent Pending→Running edges) and guard each, or factor one shared admit() helper — a guard on one of N edges is a guard on none.
 16. **Idempotency-key sharing changes downstream identity.** When a dedup key makes two callers share a `taskId`, every derived identity (branch `task-<id>/attempt-N`) collides — only the claim winner launches; losers converge via a bounded one-shot reselect of the winner's run (`convergeToTriggerWinner`, ≤1s, `deduped` fallback), never state-polling.
 17. **Deterministic race tests.** Use a controllable barrier (blocking stub inside the locked tx) or stream-FIFO ordering instead of sleeps; a flaky single-winner test flaking to `[200,200]` is a REAL lost-update bug — read what it flaked TO before blaming infra.
-**Source (additions)**: 2026-07-02-17.52, 2026-07-03-14.58, 2026-06-20-23.22, 2026-06-21-01.26, 2026-06-21-02.04, 2026-06-21-03.05, 2026-06-23-18.38, 2026-06-25-20.14, 2026-06-24-20.47, 2026-06-22-14.06, 2026-06-23-18.25, 2026-06-30-01.37
+    **Source (additions)**: 2026-07-02-17.52, 2026-07-03-14.58, 2026-06-20-23.22, 2026-06-21-01.26, 2026-06-21-02.04, 2026-06-21-03.05, 2026-06-23-18.38, 2026-06-25-20.14, 2026-06-24-20.47, 2026-06-22-14.06, 2026-06-23-18.25, 2026-06-30-01.37
 
 ### Git mechanics: diff range, immutable refs, worktree isolation, branch-ref sinks
+
 **Source**: 2026-06-02-03.12, 2026-06-04-13.03, 2026-06-05-15.06, 2026-06-09-13.01, 2026-06-09-20.30, 2026-06-01-15.31, 2026-05-31-14.18
 **Rule**:
+
 - **2-dot vs 3-dot:** a fixed stored SHA base → `git diff base..branch` (literal tree delta); two MOVING branch tips where excluding the base's own advancement is intended → `base...branch` (3-dot). A `...` against a fixed point silently omits committed changes on a history-rewritten branch (`diffRunWorkspace`/`diffNameStatus` used 3-dot wrongly).
 - **Immutable refs for stored evidence:** persist `resolveRefSha` = `git rev-parse --verify <ref>^{commit}` (schema-hardened, no shell), never a live branch NAME — an old artifact renders the wrong diff once the branch advances.
 - **Worktree ignore:** materialized run files go in a worktree `.gitignore` (+ `git update-index --skip-worktree` on the `.gitignore` itself), NEVER `.git/info/exclude` — in a LINKED worktree `git rev-parse --git-path info/exclude` resolves to the SHARED common dir (`<main>/.git/info/exclude`) and leaks the rule to every worktree + main. `--skip-worktree` hides changes to TRACKED files only; a freshly-materialized UNTRACKED file needs gitignore. First ask whether the artifact NEEDS to be in the worktree at all (a `command_check` script runs with CWD=worktree, so its logic can stay inline in the manifest — nothing to materialize or leak).
@@ -211,9 +234,10 @@ Prove the 409-vs-500 contract with a REAL two-racer test (hold an uncommitted wr
 - **Counter/sequence bumps another feature reads as a budget** (`tasks.attempt_number` as the ralph-loop cap) are side-effects — sequence them after every cheap throwing precondition (launchability, branch allow-list, `resolveBaseCommit`), immediately before the point of no return; grep every reader of the column before accepting a "burned value is meaningless" claim.
 - **Relaunch/restart pins to the STORED immutable base commit**, never re-resolves a moving ref.
 - **`git check-ignore` is the ground-truth ignore test**, but first branch on `rev-parse --is-inside-work-tree` ("not a git tree" = no leak surface = write; "git tree, not ignored" = skip), and a best-effort `ensureWorktreeGitExclude` has its OUTCOME confirmed before the dependent write.
-**Source (additions)**: 2026-06-22-11.08, 2026-06-22-13.40, 2026-06-18-15.42, 2026-06-30-12.23, 2026-07-04-00.47-experiment-comparison-review-fixes, 2026-06-22-22.14
+  **Source (additions)**: 2026-06-22-11.08, 2026-06-22-13.40, 2026-06-18-15.42, 2026-06-30-12.23, 2026-07-04-00.47-experiment-comparison-review-fixes, 2026-06-22-22.14
 
 ### Validate the wire, not the schema — fail-closed on present-but-invalid
+
 **Source**: 2026-06-04-17.50, 2026-06-08-13.13
 **Rule**: A zod range (`z.number().min(0).max(1)`) on the producer/config side does NOT hold for an untrusted producer (agent stdout `{"confidence":2}`, `Infinity`, an external report, a request body). Re-check the domain at every untrusted sink. **Out-of-range ≠ missing**: range-guard INSIDE the present branch (`!Number.isFinite(c) || c < 0 || c > 1` → fail-closed with a distinct outcome like `invalid_confidence`) so a `allow_missing_*` branch can never rescue an out-of-range value (it fail-OPENED a promotion gate). Every `typeof x === "number"` before a comparison that gates promotion needs `Number.isFinite` + the domain bound in the SAME expression. Server-authoritative fields (`readinessStatus`, ids, timestamps) stay out of request Zod schemas; use `z.string().trim().min(1)` to reject whitespace-only; trust-boundary wire responses get optional-chained access (`!models?.availableModels?.length`) even when the SDK type says the field is required — a type is not validation, and a guard protecting a no-throw contract belongs INSIDE the `try` it guards.
 
@@ -221,6 +245,7 @@ Parse-boundary extensions: `await req.json()` runs as an explicit step BEFORE Zo
 **Source (additions)**: 2026-07-04-22.53-experiment-create-flow-advisory-json, 2026-06-22-13.05, 2026-07-04-00.47-experiment-comparison-review-fixes
 
 ### Centralize authored / flow-package validation at every entrypoint; check original path bytes
+
 **Source**: 2026-06-08-12.02, 2026-06-08-12.15, 2026-06-08-13.05, 2026-06-08-13.59, 2026-06-08-14.41
 **Rule**: Validation belongs at the shared authored-package contract, not the newest UI boundary. Wire ONE `assertPublishableAuthoredFlowRevision` into UI publish, the catalog API publish route, AND the install bridge (which must validate the authored directory before invoking the generic Flow installer). For path validators: reject `..` in the ORIGINAL slash/backslash segments BEFORE normalization (`schemas/../setup.sh` collapses to `setup.sh`); test both normalized and original forms and both POSIX `../` and Windows `..\`; every `stat`→`readFile` sink needs an `isFile()` check (a directory passes realpath+stat then throws `EISDIR` → 500). Read package bytes as bytes, then decode with FATAL UTF-8 (`readFile(..,"utf8")` silently replaces invalid bytes); reject non-regular entries (a symlinked `setup.sh` enters the cache as untrusted bytes); reject ancestor/descendant path collisions, not just exact duplicates. Canonicalize a source dir to an ABSOLUTE path before the installer boundary (the installer classifies only absolute paths / `file://` as local → a relative dir is misclassified as a git source). Keep display label separate from filesystem slug (don't overload `flow.yaml.name`). Hidden form fields (`capabilitySlug`) and body fields are locators/concurrency tokens, never identity — load the server-owned value after authorization. Repo-local precedence over a bundled multi-file artifact (a skill dir) is PER-ENTRY, not per-file (`cp force:false` merging produced a Frankenstein skill of repo `SKILL.md` + bundle `references/*`).
 
@@ -228,10 +253,12 @@ Path/identity extensions: confinement realpaths the FINAL resolved leaf when it 
 **Source (additions)**: 2026-06-21-01.26, 2026-06-20-21.18-m36-flow-package-viewer, 2026-06-30-13.04, 2026-06-24-18.55, 2026-06-29-01.03
 
 ### Flow rework-target prompts read the top-level commentsVar; strict templating throws into the run
+
 **Source**: 2026-06-09-19.23
 **Rule**: A rework-target node prompt MUST read reviewer feedback via the TOP-LEVEL `{{ <commentsVar> }}`, NEVER `{{ steps.<reviewNode>.vars.<commentsVar> }}` — `markNodeReworked` persists status/decision only (no vars); comments are injected as a top-level context var named by the node's `commentsVar` (`pendingInjectedVars`). `renderStrict` THROWS `MaisterError("CONFIG", "undefined template var: …")` on a missing deep leaf → node Failed → run Failed. When a node is reachable on BOTH its initial visit AND a rework jump (entry == rework target), seed EVERY declared `commentsVar` to `""` once per run (`collectDeclaredCommentsVars`, overlaid by real comments on rework) — `pendingInjectedVars` is set only on a rework jump, so a naive `{{ review_comments }}` append swaps a rework crash for an ENTRY crash. A new authored flow needs a RUNTIME test rendering its rework prompts through real `buildContext` + `renderStrict` (RED before, GREEN after), not just a manifest-load test.
 
 ### No write may be sequenced after a terminal status flip; required accountability writes share the success tx
+
 **Source**: 2026-06-10-23.44, 2026-06-08-21.13, 2026-06-08-21.45, 2026-06-08-22.26
 **Rule**: A terminal row is never re-executed, so an `UPDATE … SET outputArtifactRef` AFTER `markGatePassed`/`markGateFailed` leaves a crash-window where the terminal gate permanently lacks its back-ref. Write every outcome field (back-refs, evidence links, payload columns) in the SAME UPDATE as the terminal transition, or strictly BEFORE it — record the report while the row is still `running` and rely on the re-execution-of-non-terminal-rows recovery path. Required accountability/audit writes are part of the success commit: never wrap `recordTokenAudit()` in `.catch(() => {})` — use `recordRequiredTokenAudit()` that logs `[FIX:token-audit-required]` and RETHROWS (fail-closed), and write the success audit in the SAME transaction as the durable success marker (task create/update, run launch inside the launch tx so audit failure triggers worktree compensation, HITL respond in the delivered-marker tx, idle resume `NeedsInputIdle → NeedsInput` with the 202 audit). A mutating `/api/v1/ext/*` route needs `successAuditInWork: true` — `handleExt` writes the default success audit AFTER `work()`, safe only for read-only routes. Close active `open`/`claimed` assignments from EVERY terminal lifecycle path (promote, discard/abandon, crash, reconcile, keepalive/HITL timeout) through a system actor, in the same status-guarded transaction.
 
@@ -239,6 +266,7 @@ Extensions: a durable outbox row (`emitDomainEvent`/`emitWebhookEvent`) is a per
 **Source (additions)**: 2026-06-22-11.32, 2026-07-03-16.16, 2026-06-30-01.37, 2026-06-24-18.46
 
 ### Enforcement acts on what the run DID; shared dispatch branches on run_kind
+
 **Source**: 2026-06-13-16.55, 2026-06-16-22.45
 **Rule**: Terminal/enforcement logic must act on the value SNAPSHOTTED on the run row at spawn, never re-derive it from a mutable catalog/projection that can drift after launch. `finalizeAgentRun` gated the L3 dirty-watchdog + ephemeral `-ro` cleanup on `agents.workspace` (the catalog INDEX of the package's NEWEST installed revision) while launch / L1 / L2 / cwd used the project's PINNED effective definition — a pinned-older `repo_read` run that dirtied the parent checkout was NOT quarantined and its checkout leaked. Persist the decisive field (`runs.agent_workspace`, migration `0052`) at the single launch insert from `ctx.effective.parsed.workspace`; gate `row.agentWorkspace ?? wsCtx?.workspace` (the `??` keeps legacy/seeded rows working). Any SHARED dispatch site that feeds a kind-specific mechanism (reconcile `classifyRunReconcile`, a sweep, a composed op switching on `run_kind`) MUST branch on `run_kind` BEFORE routing — a scratch dialog driven into the flow-only `RESUME_CONTINUATION_PROMPT` resume driver replies context-less and `Crashed`s; add a belt-and-suspenders guard at the impure apply site (`case "reattach"` refuses `driveResumed` for any non-`flow` run_kind) in addition to the pure classifier.
 
@@ -246,6 +274,7 @@ Extensions: validate against the SAME source the executor reads — write-time v
 **Source (additions)**: 2026-06-25-19.58, 2026-06-20-19.48, 2026-06-24-14.22
 
 ### Degrade with a structured flag, never an in-band marker; gate irreversible actions on incomplete evidence
+
 **Source**: 2026-06-09-13.01, 2026-06-15-12.31
 **Rule**: When a reader truncates/caps/samples instead of failing, the result MUST carry a structured boolean/enum the typed consumer branches on — thread `{ text, truncated }` end-to-end (`DiffPrepResult` → `RunDiffResponse` + OpenAPI → `ReviewPanelDiff` → `DiffView`), NEVER append a magic marker string to the payload (a swallowed marker left Promote enabled on a partial diff). Two duplicated readers of the same thing MUST agree on the degradation mode (`diffRange` truncated while `diffRunWorkspace` threw 409 — share one `streamGitDiffTruncated`). Any "you can't fully see X" state at a promote/merge/approve gate MUST gate the action (block, or block + explicit "Promote anyway (diff truncated)" override), never just annotate. Filter runtime-materialized files (flow `.claude/skills/**` bundle paths) BEFORE computing user-facing review counts or building a heavyweight diff payload, with a summary-only fallback when full bundle prep throws `Invalid string length`.
 
@@ -253,74 +282,92 @@ Extensions: "degrade, never 500" needs BOTH halves — every loader catch that d
 **Source (additions)**: 2026-06-19-00.02, 2026-07-02-17.52, 2026-07-04-13.37-experiment-comparison-review-fix-followup, 2026-07-07-11.08
 
 ### i18n: every key needs a render site; $count not {count} for client templates; EN+RU parity
+
 **Source**: 2026-06-11-12.25, 2026-06-07-19.53, 2026-06-10-20.48, 2026-06-13-20.02, 2026-06-05-11.29, 2026-06-01-15.31
 **Rule**: A new i18n key is done only when something CONSUMES it — parity tests check key PRESENCE, not wiring (server-hardcoded EN strings shipped while EN/RU `modelSuggestions.sources.*` keys sat unused); grep the key's usage before calling an i18n task complete, and the i18n key-coverage test must include every key the component actually uses. Use `$count`, not `{count}`, for strings loaded as client-side templates — `intl-messageformat` treats `{count}` as an ICU variable and THROWS when no value is supplied. Localize status/enum labels (never render the raw enum); route API errors through a client-safe `readApiError` + a shared `apiErrors` (EN+RU) namespace that keeps server detail behind a translated label, not a copied untranslated-English fallback. Prune orphan keys when their UI is deleted (line-based, JSON-validated, EN/RU parity preserved); use a local theme token (`danger`/`danger-soft`), not a bare framework `danger` class with no matching token. Route every new UI string through i18n EN+RU. Format token/usage/cost totals with `Intl.NumberFormat(locale)` from the active `next-intl` locale (never fixed `en-US` or raw integers), with RU-grouped regression coverage in shared formatters. Give a new key distinct copy from its neighbors or alias it explicitly — a byte-identical duplicate EN value while RU differs is a latent bug.
 **Source (additions)**: 2026-06-30-14.45, 2026-06-30-13.02
 
 ### ACP resume uses session/resume and fails loud; CLI-native providers need no host API key
+
 **Source**: 2026-06-08-13.13, 2026-06-11-17.19, 2026-06-11-23.39
 **Rule**: Resume MUST use the ACP `session/resume` protocol call; if the adapter does not advertise `sessionCapabilities.resume`, fail loud (`throw new SupervisorError("CHECKPOINT", …)`) — NEVER silently fall back to `session/new`, which creates an EMPTY session and orphans the conversation (the original resume-bug class). CLI-native providers (`anthropic`, `openai`, `google_gemini`, `agent_native`) default to the tool's OWN configured auth — a missing `GEMINI_API_KEY` / `GOOGLE_API_KEY` is NOT a smoke blocker; optional env refs are valid only as explicit operator overrides / compatible-provider routing / gateway / sidecar config. Prove a new adapter's readiness with binary diagnostics + cached SDK smoke (`pnpm -C supervisor smoke:acp --cache <path> <agent>`), not host API-key vars, and its fixture must cover the FULL shared lifecycle (new session, prompt permission round-trip, model advisory, resume/checkpoint), not just registration + resume at the enum level.
 
 ### ACP/supervisor calls that wait on agent work bypass undici's default timeouts
+
 **Source**: 2026-06-26-14.42
 **Rule**: Node's global `fetch` inherits undici's ~5-minute headers/body timeouts. Any web→supervisor call that intentionally waits on agent work (`sendPrompt` — response headers not sent until the ACP turn completes) or a quiet SSE stream (`streamSession`) must go through package-`undici`'s `fetch` with a dedicated `Agent({ headersTimeout: 0, bodyTimeout: 0 })` dispatcher. Never `setGlobalDispatcher` (built-in fetch and package-undici dispatchers can be incompatible); ordinary calls stay on global fetch defaults. Fixed ceilings belong to explicit watchdogs/budgets/run time-limit policy, never the transport — a transport timeout converts a LIVE session into `EXECUTOR_UNAVAILABLE` and tears down a healthy supervisor session. Regression tests assert the transport choice (mock package `undici.fetch`, assert the dispatcher reaches `sendPrompt`/`streamSession` while ordinary calls keep `globalThis.fetch`), not a 5-minute sleep.
 
 ### ACP usage/cost parsing: accept both key casings, dedup per turn by position
+
 **Source**: 2026-06-29-20.55-cost-camelcase-usage, 2026-06-29-22.16
 **Rule**: Usage/telemetry parsers accept snake_case AND camelCase adapter shapes per field with snake-wins fallback (`input_tokens ?? inputTokens`, `output_tokens ?? outputTokens`, `cache_read_input_tokens ?? cachedReadTokens`, `cache_creation_input_tokens ?? cachedWriteTokens`) — the adapter's end-turn `result.usage` is camelCase; a snake-only reader hits the all-undefined guard and silently drops the record. "Never count both / per-turn" is enforced across the EMISSION boundary, stateful per session: classify usage by POSITION (`source:"result"` when under the top-level JSON-RPC `result`, else `"stream"`) and collapse per turn (`createTurnUsageRecorder`: a `result` usage writes immediately and discards buffered same-turn `stream` usage; a `stream` usage buffers and flushes at session close only if no `result` superseded; flush on detach) — a per-field guard inside one object is not dedup. Before trusting any shape assumption, replay the REAL on-disk `.maister/<slug>/runs/<id>/<step>.log` JSON-RPC lines; synthetic one-record-per-node fixtures never exercise a turn emitting both nested and end-turn usage.
 
 ### Persistent ACP chat sessions ground once, then send minimal follow-ups
+
 **Source**: 2026-06-28-19.44
 **Rule**: A session that retains history gets its heavy grounding block (DSL grammar + editing contract + file inventory + full YAML/graph dump, ~28k tokens) exactly ONCE, on the first turn. Follow-ups send just the user's text plus a one-line delta hint for anything that can change since launch (`(editor focus: …)`), trusting session memory — the action-JSON contract + grammar remain in session history from turn 1. Re-injecting the context each turn wastes tokens AND makes the model re-anchor, re-emitting its first answer verbatim while ignoring the short follow-up.
 
 ### Capability materialization is adapter-surface driven; watchdog manifests track every generated path class
+
 **Source**: 2026-06-29-22.01, 2026-07-07-18.55, 2026-07-07-18.04-review-blockers
 **Rule**: `skills` and `subagents` are SEPARATE adapter surfaces, never collapsed into one mode: Claude cwd-dir materialization copies both `skills/` and `agents/` (native `.claude/agents/` gets capability-local subagents from the same pinned package roots); Gemini stays skills-only into `<worktree>/.gemini/skills` with NO redirect env (per-run `GEMINI_CLI_HOME` detaches `gemini --acp` from the user/workspace settings merge) and NO forced ACP `authenticate` when the runner has no `apiKeyEnv` (`session/new` reads `~/.gemini/settings.json` natively; forcing `oauth-personal` can open an interactive browser login); home-redirect adapters keep their existing skill homes. Gate adapter behavior on an explicit capability descriptor (`readOnlySessionSmoke`), never a private adapter-name set. When changing the shared materializer, check EVERY caller category (standalone package-agent, scratch, flow authoring, flow-node binding). The dirty-watchdog ownership manifest tracks EVERY generated path class (copied `.claude/agents/...` too); restore logic never deletes user-owned same-name files; tests cover generated + user-owned entries per path class. Never cache `ok` operational evidence for behavior the code path did not actually exercise — report `skipped` until a dedicated probe exists, and diagnostics ignore `ok` evidence when the generic adapter smoke itself was skipped/failed.
 
 ### React state & layout for long agent output
+
 **Source**: 2026-06-29-01.37, 2026-06-28-19.20, 2026-06-23-14.56, 2026-06-30-14.12, 2026-06-23-23.03, 2026-06-24-19.45
 **Rule**: A value that gates conditional RENDERING (`disabled`, a className, a branch) lives in `useState`, never a `useRef` — a ref set in `onDragStart` and read during render is a silent no-re-render bug (browsers suppress `onDrop` on disabled targets; pair with `onDragEnd` cleanup); reserve refs for focus/measurement/event-only reads. A drawer that must preserve live state (running ACP session, unsent draft) stays MOUNTED and toggles via `hidden` — never conditional unmount; never tear down a React Flow `createPortal` target; when two surfaces share one slot, define precedence explicitly and bubble the flipping trigger (node-select → `aiOpen=false`). ReactFlow `nodeTypes`/`edgeTypes` must be referentially stable — per-node render state goes through `node.data` (grep changed `useMemo<NodeTypes>` deps for per-interaction values). Any grid column containing logs/commands/transcripts/diffs uses `minmax(0,1fr)` (bare `1fr` keeps an auto minimum that long unbroken content inflates past the shell); intermediate flex/grid children need `min-w-0` (+ `max-w-full`/local `overflow-hidden`) or inner `truncate`/`overflow-auto` cannot engage. A height-capped grid modal needs the ROW track bounded (`grid-rows-[minmax(0,1fr)]`, `lg:`-scoped) for child `overflow-y-auto` to engage — `min-h-0` on the item is necessary but NOT sufficient. Two regions with tall fixed chrome never share one bounded vertical axis (graph = full column, chat = right drawer `w-[clamp(420px,34vw,560px)]`). Measure the actual DOM (`getBoundingClientRect`, `scrollHeight`/`clientHeight`) before assuming a className idiom transfers between call sites; scroll-regression e2e pins a SHORT viewport (1280×600) and asserts `scrollHeight > clientHeight`. Reuse existing `--cv-*` tokens (new `globals.css` tokens hit the stale-Turbopack-CSS trap). A `cond && labels.x ? <Right/> : <Wrong/>` dispatch whose wrong branch corrupts data is made unreachable and asserted (`labels.mcp!` + WHY comment), never left to fall through.
 
 ### Form/serialize normalization, tri-state controls, sparse payloads
+
 **Source**: 2026-06-26-12.17, 2026-06-26-12.43, 2026-06-26-03.12, 2026-07-01-11.45, 2026-07-01-12.55, 2026-07-07-11.08, 2026-06-24-19.45
 **Rule**: Normalize collection inputs at the SERIALIZE boundary (the single canvas→YAML conversion point), never per-keystroke — per-keystroke filtering erases the transient blank row the author just added; prune the serialized output AND the in-memory ref together so `parse(yaml) === canvasManifestRef` holds. When replacing an input control, diff the OLD control's onChange for implicit normalization (`value.split(",").map(s=>s.trim()).filter(Boolean)`-style split/trim/filter/dedupe) and re-establish it explicitly. A normalizer/sanitizer walking a `.passthrough()` schema operates on a KNOWN-key allowlist (`PRUNED_LIST_FIELDS.has(key)`), never a structural predicate — tested `x-*` extension fields are the tell that a blanket transform will corrupt author data. A setting whose server contract has an inherit/null state gets a tri-state Inherit/On/Off control showing the env-resolved effective default — never a boolean checkbox that silently invents an override; save builds the override from explicitly-set keys only and PATCHes `null` to clear. Client request builders emit SPARSE objects (omit empty optional fields entirely; no `undefined`-valued keys). Web settings controls use HeroUI (`Select`/`Input`/`Button`) with dirty-state Save gating and a green-check success glyph — never hand-rolled native elements. Editor "blank node" scaffolds satisfy the schema's min-constraints (`prompt: "TODO"` for `min(1)`, required `settings.form_schema`) — verify brief-suggested literals against the schema. React state seeded from props needs an interaction test that rerenders with changed props BEFORE the consuming action (stale content otherwise writes into the newly-selected item).
 
 ### Bounded background sweeps must guarantee progress and isolate poison items
+
 **Source**: 2026-06-29-17.25, 2026-07-03-14.58, 2026-07-03-16.16, 2026-07-02-17.52, 2026-06-22-13.05
 **Rule**: A capped (`LIMIT`ed) periodic scan over rows that can stay ineligible indefinitely needs BOTH: (a) a durable per-item attempt marker stamped in a `finally` on EVERY attempt (`runs.cost_reconciled_at`: reconciled / missing-cost / error) — never key candidacy on the OUTPUT artifact's row state, or unprocessable items monopolize the scan forever; and (b) where eligibility is external ("Review + auto-promo enabled"), a durable rotating keyset cursor (deterministic `ORDER BY coalesce(ts,'infinity'), id`; persisted in the singleton job's `scheduler_jobs.target` jsonb; reset at a short tail) so every candidate is visited within `ceil(N/LIMIT)` ticks. Per-row work inside a shared singleton job is crash-proof: one malformed row must not fail the tick (after `max_failures` the platform-wide job is disabled) — per-candidate load/compile errors fail closed to empty-set + WARN. Classify deterministic provider 4xx as PERMANENT per-item failure (`CONFIG`; item marked `failed`, error recorded in `resumable_cursor`, sweep continues) vs transient (timeout/429/5xx/network/malformed-200 → bounded retry, `EMBEDDING_UNAVAILABLE`); skip disabled projects; reconcile-enqueue on settings save AND re-enable. Every outbound `fetch` in a sweep/request path carries an explicit `signal: AbortSignal.timeout(ms)` — a stalled provider otherwise never triggers the retry branch. `setInterval` sweepers carry a re-entrancy guard (`running` flag); a lost-race cleanup never unlinks resources the winner depends on (`needs-input.json`).
 
 ### Unattended launchers: bounded, intent-scoped, semantics re-derived per caller
+
 **Source**: 2026-06-25-17.42, 2026-06-25-19.13, 2026-06-25-19.58
 **Rule**: An automated/level-triggered launcher bounds retries (attempt cap, e.g. `MAX_AUTO_LAUNCH_ATTEMPTS = 3`, + exponential backoff keyed on the last failed run's `endedAt`) and never reuses a classifier whose "launchable" verdict was designed for human retry without re-deriving what each terminal state means for THIS caller (`Failed`-latest = "offer manual relaunch" to a human, "back off / stop" to a timer; `Crashed` is held for human recover — never auto-relaunched). An attempt cap is SCOPED to the intent it bounds: stamp `armed_at` when arming, count `started_at >= launch_armed_at` (null → count all, legacy-safe), and pin `armed_at` into the give-up CAS — bare `count(*)` over all failure history conflates intents and makes a deliberate re-arm unrecoverable. A consumed intent column (`launch_mode='auto'`) has an explicit lifecycle — cleared on consumption (one-shot) or bounded by a cap (level-triggered) — with ONE authoritative writer semantics across ALL write paths (grep every writer when adding a consumer; one path clearing while siblings leave-stale is the tell). Retry/give-up loops classify the FULL non-retryable set explicitly per `MaisterError.code`: `CONFIG` is non-retryable alongside `PRECONDITION`; `EXECUTOR_UNAVAILABLE`/`CONFLICT` stay transient; a `default → transient` fallback in a no-silent-stall loop is a latent infinite retry. Selection→act windows spanning async I/O get a CAS over the full selected identity tuple (`triage_status='triaged' AND launch_mode='auto' AND flow_id=<candidate>`) + `.returning()` row-count check BEFORE any side-effect — a singleton lease only guards tick-vs-tick, never tick-vs-route. When a system action posts a comment that emits a trigger event the agent subscribes to (`task.comment_added`), the agent prompt no-ops on the resulting state (`flagged` → human-owned) to prevent comment/trigger storms.
 
 ### Column DROP / table re-key is a whole-tree sweep with data preservation
+
 **Source**: 2026-06-27-14.28, 2026-06-27-16.03, 2026-06-27-17.08
 **Rule**: Dropping/moving a column sweeps every reader AND writer in ALL forms — the camelCase accessor (`runs.capabilityAgent`) AND raw snake_case SQL incl. aliases (`\b(r|runs)\.(capability_agent|…)\b`, `INSERT INTO runs`, `SELECT … FROM runs`) — raw `sql`-template readers are invisible to symbol refactors and schema-accessor greps; `tsc` is blind, Drizzle silently drops unknown INSERT keys, and a stale-keys-only `.set({})` reduces to an empty SET → Postgres "syntax error at or near WHERE" that crashes AFTER the session spawns (leaking it). Sweep test seeds across ALL harnesses — integration + e2e `seed-e2e.ts` + per-spec files (e2e is not CI-gated, so grep-to-zero over `e2e/`, don't rely on a green suite). A migration DROPping/re-keying LIVE state either backfills (`INSERT INTO … SELECT … ON CONFLICT DO NOTHING` BEFORE the drops) or abort-guards (`RAISE EXCEPTION` if non-empty) — never silently drops; when the new key is not SQL-derivable from the old, the loud guard is the honest fix. When moving per-row state to a side table, use the merge-at-load idiom (merge the active session's fields once via `loadActiveRunSession` at each read site; ONE persist helper — `persistRunSessionAcpSessionId` — for writes). A migration's abort message is an operator CONTRACT: instructions must be order-correct against the failure path it fires in ("export/record → clear → re-run migrations → re-map via UI after upgrade" — never "do X after upgrade" when the guard blocks the upgrade).
 
 ### Slot-freed states, claim counting, and resume dispatch per lifecycle
+
 **Source**: 2026-07-01-12.55, 2026-07-01-11.45, 2026-06-27-23.45
 **Rule**: `NeedsInputIdle`, `WaitingOnChildren`, and `Review` are slot-FREED states (excluded from `countLiveRuns`); ANY transition from them back to `Running`/`NeedsInput` reclaims a slot and is cap-gated (under the scheduler advisory lock: at cap, stamp `resume_requested_at` and return `"queued"` for the admission gate to pick up) or consciously exempted with a recorded reason; direct `NeedsInput` flips are slot-neutral. Capacity guards gating two-phase claims count in-flight claim markers (`tasks.queue_claimed_at NOT NULL`) in addition to committed occupancy rows — `liveCount + outstandingClaims` (also in the poll baseline) so serialized admitters see prior claims as consumed capacity. Sibling concurrency counters apply the SAME predicate — grep ALL cap-count sites in one pass when changing pool membership (`isNull(runs.localPackageId)` had three flow-pool counters). Before reusing a resume/recover dispatcher across lifecycles, grep the downstream driver for `eq(runs.status, …)` guards: a flow HITL resume keeps the run `NeedsInput` (its completion transitions are `NeedsInput`-guarded) unlike agent/crash recovery's `→Running` flip — a mismatched claim status fails the completion CAS and strands the run holding a slot. A terminal/`worktree-gone` reconcile check that precedes the live-session skip must resolve `worktreeExists=true` for runs that legitimately have no worktree (agent `none`/`repo_read`, project-less assistant), keyed on the precise discriminant (`cand.projectId == null`), or a LIVE session gets crashed.
 
 ### Fail-closed verdict routing and enum honesty
+
 **Source**: 2026-06-22-20.53, 2026-06-22-22.14, 2026-06-20-18.20, 2026-07-03-16.16, 2026-06-30-00.47, 2026-06-22-19.56
 **Rule**: A producer FAILURE never shares a code path with "value produced but unmatched": the decide `default` branch serves only the latter — a suppressed/failed verdict gate must fail closed, tested with the empty/unparseable-producer case (exactly where fail-open hides). Put the no-verdict check on the DIRECT signal (`routedVerdict === undefined`) as a single post-loop invariant at the decision point — never behind a relaxable predicate like `isEffectivelyBlockingGate` (advisory mode / policy downgrades silently disarm it). A schema must not accept a value with no implementation: implement it or reject at the entry boundary with typed `CONFIG` (`assertExecutionPolicySupported`) — a dispatcher matching only implemented arms turns an unimplemented enum into a silent no-op; grep every consumer of the enum's resolver when adding a value. Don't ship contract states the producer can never emit (`not_declared` driven only via mocks) — implement or remove them. Never discard the return of a function that may pause/escalate — honor "did I actually pause?" or pass an explicit `forcePause` so a policy short-circuit (`humanGate=auto_pass`) cannot fire (a `NeedsInput` run with no HITL request is invisible and unresolvable). A statically-decidable misconfiguration is rejected at COMPILE/load time (`verifyReworkReset` refusing `transitions[onExhaustion] ∈ rework.allowedTargets` with `CONFIG`), with the runtime re-assert as defense in depth. A source selector (`decide:{from:…}`) verifies the selected producer exists at compile — exactly one verdict-producing gate (zero → silent default; >1 → last-wins), declared outputs for `output.<path>`; a compile guard requiring a parent block also requires the specific sub-field the runtime consumes (`rework.commentsVar` for `on_mismatch`). Adding stricter `compileManifest` validation is safe only after grepping every fixture that compiles a manifest (unit + integration + e2e seed) — compile runs on READ paths (run-detail, packages viewer, inbox, topology), so a non-compliant fixture turns a view into a throw.
 
 ### Error-handling precision: try scope, controlled boundaries, honest sentinels
+
 **Source**: 2026-07-03-16.16, 2026-07-01-12.38, 2026-06-24-03.08, 2026-06-18-15.42, 2026-06-21-02.04, 2026-07-04-13.37-experiment-comparison-review-fix-followup, 2026-06-29-22.01, 2026-06-23-23.16
 **Rule**: A `try` wraps exactly the operation whose failure it classifies — never one span across an irreversible side-effect (`promote()`) and a best-effort follow-up (`addTaskComment`); follow-ups get their own WARN-only try/catch. Before deferring a possible domain throw to a later path, verify that path wraps it into the domain's terminal FSM (`runGateStepGuarded` → `markGateFailed`, route by blocking/advisory, rethrow non-domain) — otherwise the throw escapes to a generic catch and leaks half-created rows (`gate_results` stuck `running`); prefer failing BEFORE a side-effecting step (pre-spawn `markNodeFailed(CONFIG)`) over deferring into an unguarded call site. A sentinel must not conflate benign no-op with failed-critical (`{escalated:false}` covered both "run advanced" and "stranded live halt") — throw (`EXECUTOR_UNAVAILABLE`) or return a distinct consumer-handled variant, and audit every consumer of the sentinel. When an internal caller must distinguish benign-expected from real failure, use `MaisterError.details` (`details.autoPromotionSuperseded: 'held' | 'disabled'`, per ADR-093), never a new code or message match — UI still branches on `code`. Presence probes allow-list the exact "absent" errnos (`ENOENT`/`ENOTDIR`) and rethrow the rest as `CONFIG` — `catch → false` routes `EACCES`/`ELOOP` into the fallback branch. Catches mapping to success/advisory filter by ERROR CLASS (`GitPushRejectedError`, `EXECUTOR_UNAVAILABLE` → `{ok:true, warning}`) and rethrow everything else. Child-process stream readers resolve/reject on `close` (process exit), never stdout `end` — stream-finished ≠ process-succeeded (a valid-shaped nonexistent ref read as `{text:'', truncated:false}`); track intentional byte-bound SIGKILL truncation, buffer bounded stderr, reject non-zero exits with `CONFLICT`. New failure modes reuse `statusForCode` conventions (`EXECUTOR_UNAVAILABLE → 503` across ~20 routes), never fall to generic 500. Pages map only the TYPED not-found to `notFound()`/404 — other read failures propagate. Post-`session_ready` prompt failures route to the retryable path (`markScratchPromptRetryable`, dialog stays `WaitingForUser`), not the generic crash handler — the session and worktree are still valid. A `.then(onFulfilled)` pushed into `Promise.allSettled` is a swallowed-rejection trap: pair success-only flag mutations with an `onRejected`.
 
 ### Runtime roots, git identity, SSE offsets, streamed frames, wire forms
+
 **Source**: 2026-06-29-16.21-flow-runtime-root, 2026-06-28-22.10, 2026-06-25-17.19, 2026-06-29-14.59, 2026-06-24-03.55, 2026-06-17-19.53
 **Rule**: All runtime artifact readers/writers resolve through the shared `runtimeRoot()`/`resolveFlowRuntimeRoot()` contract — never bare `process.cwd()` in long-lived runner code (Next's cwd can be `web/`, splitting `.maister/` from `web/.maister/`). Every server-side `git commit` routes through `commitIdentityArgs(repo)`/`commitFile` (per-field `-c user.<field>=<default>` only when unset; grep for the helper when adding a commit site — an identity-less host dies `fatal: empty ident name`); tests doing real commits run green under empty `HOME` + `GIT_CONFIG_NOSYSTEM=1` + no `GIT_AUTHOR_*`/`GIT_COMMITTER_*`. Never hardcode `main` as PR base/default branch — `gitRemoteDefaultBranch(dir, remote)` via `git ls-remote --symref <remote> HEAD` (batch-mode env, null on failure) with `?? DEFAULT_PR_BASE`. Coalesced transcript rows are display records AND offset checkpoints — every row update advances `content` AND the stored `supervisor_event_id` (a frozen offset makes `Last-Event-ID` resume replay the previous turn); keep offset math dialect-agnostic (compute the max projected event id in TypeScript, not a Postgres-only cast); fake SSE streams in tests honor `Last-Event-ID`. A launch-progress stream carries `runId`/`dialogUrl` in the EARLIEST frame that unblocks navigation (`session_ready`), not only the final result frame. Every `JSON.parse` of a streamed/partial frame (SSE/NDJSON `data:`) is guarded — skip the malformed line, keep reading. Cross-runner wire forms: only re-derive a value from a canonical token when it HAS a canonical identity (`staticSkillBySlug.get(slug)` hit); anything sourced from a live/native stream is preserved verbatim or excluded — never re-apply a per-adapter sigil to a string you didn't mint (codex `/` built-ins vs `$` skills turned `/status` into unrecognized `$status`).
 
 ### MCP facade mirrors move in lockstep with ext routes, locked by an OpenAPI-anchored contract test
+
 **Source**: 2026-07-02-11.12, 2026-07-02-14.14, 2026-07-02-16.42, 2026-07-02-17.52
 **Rule**: `mcp/src/tools.ts` `TOOL_SPECS` + the per-tool `dispatchTool` destructuring are a hand-maintained mirror of the ext routes with no shared source — destructuring known keys DROPS unknown args silently, so the agent sees "success" while its fields never leave the facade. Any ext-route body/enum change updates TOOL_SPECS + dispatchTool forwarding + the external OpenAPI in the SAME pass; any "agent gains an op" change moves the route scope, the scope→action map, AND `AGENT_TOKEN_SCOPES` together (the fixed grant list is the one that gets forgotten → 403 on a documented capability). Lock the mirror with an OpenAPI-anchored contract test (`mcp/src/__tests__/tool-contract.test.ts`): for every tool assert the inputSchema property-name set, required set, per-field base types, enum values (incl. `null`), AND declared bounds (`minimum`/`maximum`/`minLength`) equal the operation's path params ∪ query params ∪ request-body schema; write it RED-first (it caught drift no human spotted); new tools register in the `TOOL_OP` map via a "maps every registered tool" case; record what stays unlocked (`format`, `pattern`, nested inner types). Cheap grant-list guard: mint a token holding exactly `AGENT_TOKEN_SCOPES` and hit the route in a real-PG integration test. Table-driven contract tests fail with clean per-item assertions on missing fixtures (collection-time `?.` + per-tool existence case), never a collection-crashing TypeError; tests formatting relative/local time stub the `Intl` timezone.
 
 ### Raw-SQL correctness: qualification, non-throwing predicates, scoped KNN, temporal reducers
+
 **Source**: 2026-06-29-16.04-run-session-scalar, 2026-07-03-16.16, 2026-07-02-17.52, 2026-07-03-16.40
 **Rule**: Correlated scalar subqueries built with raw Drizzle SQL construct the outer reference explicitly (`sql.identifier(getTableName(runIdCol.table))` + `sql.identifier(runIdCol.name)`) — `AnyColumn` interpolation can render an unqualified `"id"` that Postgres resolves against the INNER table; add a unit test compiling the query to SQL asserting the qualified form (`rs.run_id = "runs"."id"`), and smoke BOTH read-model shapes (`getRunDetail` AND `getRunSettings` — the simple `FROM runs` selector is where it broke). Never push a value a TS parser deliberately fail-closes into an SQL cast — `(col->>'enabled')::boolean` THROWS on stored data the tolerant parser degrades to `config_invalid`; use non-throwing predicates (`@> '{"enabled": true}'::jsonb` or `->> = 'literal'`) and keep the tolerant parser as the authority. Vector KNN scopes tenant + status (project/active/unexpired) INSIDE the CTE BEFORE top-K — a global top-K filtered afterwards starves cross-project recall. Any consumer reducing the append-only `gate_results` ledger routes through readiness-core SSOT helpers (`getNodeAttemptsForRun` + `latestAttemptIdsByNode` + `collapseLatestExternalPerGate` + `isExternalGateReady`) — `rows.some(passed)` any-ever-true reads stale superseded evidence; grep `gate_results` consumers when adding one. Graph gate declarations come from `compileManifest` over `flow_revisions.manifest` (pinned) else `flows.manifest` — never a bundle re-read.
 
 ### Mirror-pair syncs diff first; prompt invariants get pinning tests
+
 **Source**: 2026-07-02-12.48
 **Rule**: Before `cp`-syncing a contractual mirror pair (test fixture ↔ package deliverable), `diff` the two FULL current bodies (frontmatter-only checks miss body divergence); if they diverge, reconcile the delta explicitly — syncing in either direction destroys whichever side was ahead (a fixture-only hold guard was silently clobbered by a deliverable→fixture sync). Load-bearing prompt/persona invariants (early-stop guards, no-op wording) get `toContain` pinning tests at the definition-parse level so silent prose loss turns into a red test — a wire test cannot exercise agent reasoning; the parse level is the honest enforcement point.

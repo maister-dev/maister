@@ -17,14 +17,12 @@ type FakeQuery = {
 
 const state: {
   runners: Record<string, unknown>[];
-  sidecars: Record<string, unknown>[];
   settings: Record<string, unknown>[];
   inserts: Array<{ tableName: string; values: unknown }>;
   updates: Array<{ tableName: string; values: unknown }>;
   deletes: Array<{ tableName: string }>;
 } = {
   runners: [],
-  sidecars: [],
   settings: [],
   inserts: [],
   updates: [],
@@ -35,7 +33,6 @@ function rowsForTable(table: unknown): Record<string, unknown>[] {
   const tableName = getTableName(table as never);
 
   if (tableName === "platform_acp_runners") return state.runners;
-  if (tableName === "platform_router_sidecars") return state.sidecars;
   if (tableName === "platform_runtime_settings") return state.settings;
 
   return [];
@@ -130,7 +127,6 @@ describe("admin ACP runner API", () => {
         enabled: true,
       },
     ];
-    state.sidecars = [];
     state.settings = [{ id: "singleton", defaultRunnerId: "claude-code" }];
     state.inserts = [];
     state.updates = [];
@@ -146,7 +142,6 @@ describe("admin ACP runner API", () => {
           { id: "codex", binary: "codex-acp", available: true },
         ],
         envRefs: [{ name: "ZAI_API_KEY", present: false }],
-        sidecars: [{ id: "ccr-default", kind: "ccr", state: "ready" }],
       },
     });
     mocks.requireGlobalRole.mockResolvedValue({ id: "admin", role: "admin" });
@@ -531,7 +526,6 @@ describe("admin ACP runner API", () => {
           model: "m",
           provider: { kind: "anthropic" },
           permissionPolicy: "default",
-          sidecarId: null,
           readinessStatus: "Ready",
           readinessReasons: [],
           enabled: true,

@@ -4,7 +4,6 @@ import type {
   SupervisorModelCatalogDraft,
 } from "@/lib/supervisor-client";
 
-import { getTableName } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
@@ -14,49 +13,9 @@ const mocks = vi.hoisted(() => ({
   resolveModelSuggestions: vi.fn(),
 }));
 
-const state: { sidecars: Record<string, unknown>[] } = { sidecars: [] };
-
-function rowsForTable(table: unknown): Record<string, unknown>[] {
-  const tableName = getTableName(table as never);
-
-  if (tableName === "platform_router_sidecars") return state.sidecars;
-
-  return [];
-}
-
-// The route filters sidecars with `eq(platformRouterSidecars.id, sidecarId)`.
-// Extract the bound id from drizzle's condition so the fake honors the WHERE
-// (a real DB returns [] for an unknown id — the whole point of this test).
-function eqIdValue(condition: unknown): string | undefined {
-  const chunks = (condition as { queryChunks?: { value?: unknown }[] })
-    ?.queryChunks;
-
-  if (!Array.isArray(chunks)) return undefined;
-  const param = chunks.find(
-    (chunk) => typeof (chunk as { value?: unknown })?.value === "string",
-  );
-
-  return param?.value as string | undefined;
-}
-
-const fakeDb = {
-  select: () => ({
-    from: (table: unknown) => ({
-      where: async (condition: unknown) => {
-        const id = eqIdValue(condition);
-
-        return rowsForTable(table).filter(
-          (row) => (row as { id?: string }).id === id,
-        );
-      },
-    }),
-  }),
-};
-
 vi.mock("@/lib/authz", () => ({
   requireGlobalRole: mocks.requireGlobalRole,
 }));
-vi.mock("@/lib/db/client", () => ({ getDb: () => fakeDb }));
 vi.mock("@/lib/supervisor-client", () => ({
   resolveModelSuggestions: mocks.resolveModelSuggestions,
 }));
@@ -95,7 +54,6 @@ function catalog(
 describe("admin ACP runner model-suggestions proxy", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    state.sidecars = [{ id: "ccr-default", kind: "ccr" }];
     mocks.requireGlobalRole.mockResolvedValue({ id: "admin", role: "admin" });
     mocks.resolveModelSuggestions.mockResolvedValue(catalog());
   });
@@ -170,47 +128,6 @@ describe("admin ACP runner model-suggestions proxy", () => {
     expect(res.status).toBe(422);
     expect(body.code).toBe("CONFIG");
     expect(mocks.resolveModelSuggestions).not.toHaveBeenCalled();
-  });
-
-  it("rejects router=ccr with an unknown sidecarId with CONFIG", async () => {
-    state.sidecars = [{ id: "ccr-default", kind: "ccr" }];
-
-    const { POST } = await import("../route");
-    const res = await POST(
-      jsonRequest({
-        adapter: "claude",
-        provider: { kind: "anthropic" },
-        router: "ccr",
-        sidecarId: "ccr-missing",
-      }),
-    );
-    const body = (await res.json()) as { code?: string };
-
-    expect(res.status).toBe(422);
-    expect(body.code).toBe("CONFIG");
-    expect(mocks.resolveModelSuggestions).not.toHaveBeenCalled();
-  });
-
-  it("forwards a known sidecarId for router=ccr drafts", async () => {
-    state.sidecars = [{ id: "ccr-default", kind: "ccr" }];
-
-    const { POST } = await import("../route");
-    const res = await POST(
-      jsonRequest({
-        adapter: "claude",
-        provider: { kind: "anthropic" },
-        router: "ccr",
-        sidecarId: "ccr-default",
-      }),
-    );
-
-    expect(res.status).toBe(200);
-    const [draft] = mocks.resolveModelSuggestions.mock.calls[0] as [
-      SupervisorModelCatalogDraft,
-    ];
-
-    expect(draft.router).toBe("ccr");
-    expect(draft.sidecarId).toBe("ccr-default");
   });
 
   it("forwards bare env-ref names (env: prefix stripped) to the supervisor", async () => {

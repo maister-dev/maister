@@ -76,12 +76,7 @@ import {
   setMaterializationPlan,
   setSessionFallback,
 } from "./ledger";
-import {
-  effectiveAttempts,
-  operatorInterruptCount,
-} from "./rework-baseline";
-
-import { loadPendingOperatorCorrection } from "@/lib/runs/node-interrupt";
+import { effectiveAttempts, operatorInterruptCount } from "./rework-baseline";
 import {
   applyWorkspacePolicy,
   captureCheckpoint,
@@ -121,6 +116,7 @@ import {
   type RestrictionPathSet,
 } from "./mutation-check";
 
+import { loadPendingOperatorCorrection } from "@/lib/runs/node-interrupt";
 import { isReviewSchema } from "@/lib/flows/hitl-validate";
 import {
   clearWorktreeProvenanceNode,
@@ -1673,7 +1669,6 @@ async function executeNodeAction(
                     }
                   : {}),
               },
-              router: sessionExecutor.router ?? undefined,
             },
             runner: runnerSupervisorInput({ snapshot: sessionRunner }),
             capabilityProfilePath: ctx.capabilityProfilePath,
@@ -2021,7 +2016,6 @@ async function materializeNodeCapabilities(
       executorRefId: executor.executorRefId,
       agent,
       model: executor.model,
-      router: executor.router ?? null,
     },
   });
 

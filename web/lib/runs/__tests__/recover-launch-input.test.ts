@@ -14,14 +14,12 @@ describe("recoveredRunLaunchInput", () => {
           provider: { kind: "anthropic" },
           providerKind: "anthropic",
           permissionPolicy: "dangerously_skip_permissions",
-          sidecarId: null,
         },
       }),
     ).toEqual({
       executor: {
         agent: "claude",
         model: "sonnet",
-        router: undefined,
       },
       runner: {
         version: 1,
@@ -60,14 +58,12 @@ describe("recoveredRunLaunchInput", () => {
           },
           providerKind: "openai_compatible",
           permissionPolicy: "default",
-          sidecarId: null,
         },
       }),
     ).toEqual({
       executor: {
         agent: "codex",
         model: "glm-5.1",
-        router: undefined,
       },
       runner: {
         version: 1,

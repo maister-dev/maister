@@ -7,13 +7,13 @@
 
 ## What MAIster consumes today
 
-| External API | Consumed by | Wire | Spec lives at |
-| ------------ | ----------- | ---- | -------------- |
-| [Agent Client Protocol](https://github.com/agentclientprotocol/protocol) | `supervisor/` → adapter binaries | stdio JSONL (JSON-RPC 2.0) | [`./acp.asyncapi.yaml`](./acp.asyncapi.yaml) — narrow excerpt of the messages MAIster handles. Full spec upstream. |
-| [Anthropic Messages API](https://docs.claude.com/en/api/messages) | `claude-agent-acp` (transitive — not called directly by MAIster) | HTTPS | Upstream. MAIster does not call it directly; the adapter binary does. |
-| [OpenAI Responses API](https://platform.openai.com/docs/api-reference) | `codex-acp` (transitive — not called directly by MAIster) | HTTPS | Upstream. MAIster does not call it directly; the adapter binary does. |
-| Anthropic-API-compatible third-party providers (z.ai GLM, OpenRouter, anyscale, …) | Same as Anthropic — adapter switches base URL via `ANTHROPIC_BASE_URL` | HTTPS | Provider-specific. The shape is Anthropic-compatible; no MAIster-specific divergence. See [ADR-005](../../decisions.md#adr-005-model-routing-env-router-default-ccr-optional). |
-| Git CLI (`git worktree`, `git diff`, `git merge`) | `web/lib/worktree.ts` | POSIX subprocess | No contract file — invoked via `child_process`. The exact argv and exit codes used are documented inline in `worktree.ts`. |
+| External API                                                                       | Consumed by                                                            | Wire                       | Spec lives at                                                                                                                                                            |
+| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [Agent Client Protocol](https://github.com/agentclientprotocol/protocol)           | `supervisor/` → adapter binaries                                       | stdio JSONL (JSON-RPC 2.0) | [`./acp.asyncapi.yaml`](./acp.asyncapi.yaml) — narrow excerpt of the messages MAIster handles. Full spec upstream.                                                       |
+| [Anthropic Messages API](https://docs.claude.com/en/api/messages)                  | `claude-agent-acp` (transitive — not called directly by MAIster)       | HTTPS                      | Upstream. MAIster does not call it directly; the adapter binary does.                                                                                                    |
+| [OpenAI Responses API](https://platform.openai.com/docs/api-reference)             | `codex-acp` (transitive — not called directly by MAIster)              | HTTPS                      | Upstream. MAIster does not call it directly; the adapter binary does.                                                                                                    |
+| Anthropic-API-compatible third-party providers (z.ai GLM, OpenRouter, anyscale, …) | Same as Anthropic — adapter switches base URL via `ANTHROPIC_BASE_URL` | HTTPS                      | Provider-specific. The shape is Anthropic-compatible; no MAIster-specific divergence. See [configuration](../../configuration.md#anthropic-compatible-provider-routing). |
+| Git CLI (`git worktree`, `git diff`, `git merge`)                                  | `web/lib/worktree.ts`                                                  | POSIX subprocess           | No contract file — invoked via `child_process`. The exact argv and exit codes used are documented inline in `worktree.ts`.                                               |
 
 ## When to add a file here
 

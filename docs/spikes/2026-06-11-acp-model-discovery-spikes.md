@@ -1,5 +1,10 @@
 # Spike findings — ACP runner model discovery & application (Phase 0A)
 
+> **Historical snapshot:** CCR-specific findings are obsolete and superseded by
+> [ADR-164](../decisions/adr-164.md). Do not use them as current setup or
+> runtime guidance; current routing uses typed provider configuration plus
+> environment references.
+
 - **Date:** 2026-06-11
 - **Plan:** `.ai-factory/plans/feature-acp-runner-model-discovery.md` (Phase 0A)
 - **Feeds:** Phase 0B spec freeze; **gates** the Phase 3 application channel (T0A.3 → T3.1).

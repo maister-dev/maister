@@ -11,7 +11,6 @@ function draft(overrides: Partial<RunnerDraft>): RunnerDraft {
     model: "model",
     providerKind: "anthropic",
     permissionPolicy: "default",
-    sidecarId: null,
     enabled: true,
     ...overrides,
   };

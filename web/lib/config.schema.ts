@@ -627,13 +627,6 @@ const runnerProviderRequirementSchema = z
   })
   .strict();
 
-const runnerSidecarRequirementSchema = z
-  .object({
-    kind: z.literal("ccr"),
-    optional: z.boolean().default(false),
-  })
-  .strict();
-
 const runnerProfileCapabilitiesSchema = z
   .object({
     mcps: z.array(z.string().min(1)).optional(),
@@ -664,7 +657,6 @@ export const flowRunnerConfigSchema = z
     model_family: z.string().min(1).optional(),
     provider: runnerProviderRequirementSchema.optional(),
     permission_policy: runnerPermissionPolicySchema.default("default"),
-    sidecar: runnerSidecarRequirementSchema.optional(),
     effort: thinkingEffortSchema.optional(),
     env: z.record(z.string().min(1), runnerEnvRefSchema).optional(),
     capabilities: runnerProfileCapabilitiesSchema.optional(),

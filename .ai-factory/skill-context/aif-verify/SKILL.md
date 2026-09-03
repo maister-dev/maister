@@ -4,30 +4,33 @@
 > Sections under "Auto-generated rules" are managed by `/aif-evolve`; do not hand-edit them.
 > Last updated: 2026-07-11
 > Based on: 2 adversarial-review pass-throughs (M6 / 2026-05-28, M7 / 2026-05-28)
-> + /aif-evolve M11b/M11c adversarial-review batch (2026-06-01)
-> + /aif-evolve 107-patch batch (2026-06-17, cursor 2026-05-30 → 2026-06-16)
-> + /aif-evolve 114-patch batch (2026-07-11, cursor 2026-06-16 → 2026-07-07)
+>
+> - /aif-evolve M11b/M11c adversarial-review batch (2026-06-01)
+> - /aif-evolve 107-patch batch (2026-06-17, cursor 2026-05-30 → 2026-06-16)
+> - /aif-evolve 114-patch batch (2026-07-11, cursor 2026-06-16 → 2026-07-07)
 
 ## Rules
 
 ### Re-derive the contract-surface list from the diff, not from the plan
+
 **Source**: M6 adversarial review pass-through (2026-05-28)
 **Rule**: Before declaring verify pass, enumerate every external-facing contract changed in the diff and confirm each has a corresponding spec/doc edit. Do NOT trust the plan's docs-list alone — the plan often misses spec files that nobody traced from the changed code.
 
 Concrete enumeration checklist (apply to every changed file):
 
-| Surface | Where the spec lives |
-| ------- | -------------------- |
-| HTTP route status codes, request shape, response shape | `docs/api/*.openapi.yaml` AND any prose contract doc (`docs/supervisor.md` for the supervisor; component-level docs under `docs/system-analytics/` for cross-tier flows). |
-| SSE event types, payload shape, terminal signals | `docs/api/async/*.asyncapi.yaml` AND the relevant `docs/system-analytics/*.md`. |
-| Wire fields that changed semantics (e.g. `router: ccr` from "reserved" to "load-bearing") | The same spec file as above — both the prose and the example payloads need to move. |
-| New env var or config-file path consumed at runtime | `.env.example` AND the env-vars table in `docs/configuration.md` (do not rely on a narrative mention; the table is the canonical source). |
-| New CLI flag, `package.json` script, or `pnpm exec` target | `docs/getting-started.md` "Scripts" section AND the relevant `web/` or `supervisor/` `CLAUDE.md` slice. |
-| New DB column, new table, new index | Drizzle migration committed AND `docs/database-schema.md` AND the relevant `docs/db/*.md` ERD file. |
+| Surface                                                              | Where the spec lives                                                                                                                                                      |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| HTTP route status codes, request shape, response shape               | `docs/api/*.openapi.yaml` AND any prose contract doc (`docs/supervisor.md` for the supervisor; component-level docs under `docs/system-analytics/` for cross-tier flows). |
+| SSE event types, payload shape, terminal signals                     | `docs/api/async/*.asyncapi.yaml` AND the relevant `docs/system-analytics/*.md`.                                                                                           |
+| Wire fields that changed semantics from "reserved" to "load-bearing" | The same spec file as above — both the prose and the example payloads need to move.                                                                                       |
+| New env var or config-file path consumed at runtime                  | `.env.example` AND the env-vars table in `docs/configuration.md` (do not rely on a narrative mention; the table is the canonical source).                                 |
+| New CLI flag, `package.json` script, or `pnpm exec` target           | `docs/getting-started.md` "Scripts" section AND the relevant `web/` or `supervisor/` `CLAUDE.md` slice.                                                                   |
+| New DB column, new table, new index                                  | Drizzle migration committed AND `docs/database-schema.md` AND the relevant `docs/db/*.md` ERD file.                                                                       |
 
 Mandatory gate: produce the list explicitly in the verification report (even if some entries are "no change required"), so reviewers can see the enumeration was performed. A passing verify report MUST cite the surfaces it checked. If a surface is on the list and the spec was NOT updated, escalate to a blocking finding — not a warning.
 
 **High-drift sub-surfaces the diff scan must also reconcile (each is "code lands, docs lie"):**
+
 - **Documented edge-case bullets** are the MOST dangerous drift — they read as a reviewed invariant and steer future implementers back to the old shape. A behavior that converged/removed a special case MUST delete or rewrite its old edge-case bullet, not just update the diagrams/enums.
 - **Dormant-capability flip:** when a change turns a previously-dormant capability ON (e.g. the polymorphic `agent` actor going live), grep the older-stage analytics for `never` / `not yet` / `MUST NOT` claims and `(Designed)` / future status tags that the flip invalidates.
 - **DB cascade/default claims** must be derived from the migration SQL `ON DELETE` clause, not the plan prose (docs claimed "no cascade"; migration `0040` shipped `ON DELETE CASCADE`).
@@ -36,9 +39,10 @@ Mandatory gate: produce the list explicitly in the verification report (even if 
 - **In-code SSOTs are contract surfaces**: grammar/prompt/assistant files shipped to agents (`flow-dsl-grammar.ts`, the `/flow-authoring` skill) and their drift-guard tests move with the DSL/schema change — a `docs/`-only sweep misses them.
 - **Route-tree ↔ OpenAPI grep before exit**: when a phase adds an HTTP route — including READ aggregators (`capability-catalog` was missed next to its documented `…/commands` sibling) — grep the route tree against the spec paths.
 - **Both directions, both cases**: sweep for phantom spec params the code never reads AND code fields the spec lost; docs greps for columns try snake_case AND the Drizzle camelCase field name (`database-schema.md` documents camelCase — a snake-only grep yields false "missing column" findings).
-**Source (additions)**: 2026-07-01-11.19, 2026-06-17-19.53, 2026-07-02-14.14, 2026-07-01-12.55
+  **Source (additions)**: 2026-07-01-11.19, 2026-06-17-19.53, 2026-07-02-14.14, 2026-07-01-12.55
 
 ### Runtime parity gate — verify deployment can actually exercise the new path
+
 **Source**: M6 adversarial review pass-through (2026-05-28)
 **Rule**: For features that introduce env vars, config files, sidecar processes, new ports, or new host-mounted paths, verify the SHIPPED runtime (Docker compose files) can run the new path. Passing tests against mocks or testcontainer fixtures do NOT prove deployment readiness — they bypass the container boundary entirely.
 
@@ -52,6 +56,7 @@ Concrete checks per change class:
 The verify report MUST contain an explicit "Runtime parity" section listing each new dependency and its compose status (✅ wired / ❌ missing / ⏭️ explicitly deferred with docs link). Skipping this section = automatic warning; finding a missing wire that the plan did NOT mark deferred = blocker.
 
 ### Config→DB round-trip gate (SET and CLEAR symmetry)
+
 **Source**: M6 adversarial review pass-through (2026-05-28)
 **Rule**: When a feature introduces a YAML→DB column mapping that downstream readers use, the verify step MUST confirm the test suite covers BOTH halves of the round-trip:
 
@@ -63,14 +68,15 @@ Asymmetric coverage is a blocker, not a documented limitation. If the SET-only t
 This rule applies to any persistence layer (Postgres column, SQLite column, JSON file on disk that downstream code reads, env var written by a config materializer). The pattern "for entry in config: if !entry.field continue" is the giveaway.
 
 ### Regression-test enumeration for trust-boundary, retry-semantics, and deferred-release classes
+
 **Source**: M7 adversarial review pass-through (2026-05-28)
 **Rule**: When the plan or diff touches any HTTP route handler, SSE event handler, or queue consumer that the plan-side rules in `.ai-factory/skill-context/aif-plan/SKILL.md` flag as relevant ("cross-resource identifier", "two-phase commit", "no hidden deferreds"), the verify step MUST confirm a regression test exists for EACH of the following classes that applies to the diff:
 
-| Class | Test must assert |
-| ----- | ---------------- |
-| Trust-boundary (body-controlled cross-resource id) | A request whose body field tries to name a different resource than the server-state-derived one is rejected — OR the body field is absent from the route entirely. Concrete shape: a test that constructs a request bound to session A but with a body claim of session B's runId, and asserts the handler does not write under session B's path. |
-| Retry-semantics (two-phase commit) | (a) The happy path leaves the idempotency marker set ONLY after the downstream ack. (b) Simulated downstream 4xx (terminal class) transitions the parent resource to its terminal state AND marks the row terminal-failed in the same call. (c) Simulated downstream 5xx / network error returns the retryable status and leaves the row in a state a retry can recover (response set, marker null); a follow-up retry under the same row succeeds when the downstream comes back. |
-| Deferred-release (no hidden deferreds) | A test that simulates a failure in the releasing-side code (DB error during the persist step, etc.) and asserts the deferred-creating-side release API was invoked exactly once with the right arguments. Use a spy on the cancel / reject API; without the spy, the regression cannot regress safely. |
+| Class                                              | Test must assert                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Trust-boundary (body-controlled cross-resource id) | A request whose body field tries to name a different resource than the server-state-derived one is rejected — OR the body field is absent from the route entirely. Concrete shape: a test that constructs a request bound to session A but with a body claim of session B's runId, and asserts the handler does not write under session B's path.                                                                                                                                  |
+| Retry-semantics (two-phase commit)                 | (a) The happy path leaves the idempotency marker set ONLY after the downstream ack. (b) Simulated downstream 4xx (terminal class) transitions the parent resource to its terminal state AND marks the row terminal-failed in the same call. (c) Simulated downstream 5xx / network error returns the retryable status and leaves the row in a state a retry can recover (response set, marker null); a follow-up retry under the same row succeeds when the downstream comes back. |
+| Deferred-release (no hidden deferreds)             | A test that simulates a failure in the releasing-side code (DB error during the persist step, etc.) and asserts the deferred-creating-side release API was invoked exactly once with the right arguments. Use a spy on the cancel / reject API; without the spy, the regression cannot regress safely.                                                                                                                                                                             |
 
 The verify report MUST contain an explicit "Failure-class regression coverage" subsection listing each applicable class and the test file + test name(s) that cover it. A class that applies to the diff with no matching test is a blocking finding, NOT a warning. A class that does not apply (e.g. the diff added a pure read-only route with no downstream effects) is marked `n/a` with a one-line justification.
 
@@ -82,6 +88,7 @@ Degraded/temporal matrix additions (confirm coverage per applicable class): disa
 ## Auto-generated rules (managed by `/aif-evolve` — do not hand-edit below this line)
 
 ### "Logic exists + unit test passes" is NOT proof the behavior runs in production
+
 **Source**: 2026-06-01-12.16, 2026-06-01-13.16 (#3), 2026-06-01-01.29, 2026-05-31-14.34
 **Rule**: Before declaring verify pass, for every validation/branch the plan promises, PROVE it executes on the production path and that its test exercises the production path — a green test is not evidence by itself. Four concrete false-green gates:
 
@@ -109,7 +116,7 @@ Degraded/temporal matrix additions (confirm coverage per applicable class): disa
 
 12. **Cross-tier payloads test the REAL acceptor schema.** A web payload mocked at the supervisor-client boundary proves nothing and tsc can't help (the two sides' types are structurally unrelated) — feed a representative resolved payload through the actual `.strict()` acceptor (`StartSessionRequestSchema`).
 
-13. **Composition-root wiring.** A handler reading an OPTIONAL injected dependency with no fallback (`opts.spawnOverrides?.ccrManager` → 409) is certified by unit tests but dead in prod if the entrypoint never sets it — require a test on the real composition root (extract `buildRegisterRoutesOptions(deps)`), and treat a "409 when not configured" test passing with `boot(undefined)` as a smell that encodes broken prod as expected; grep every `opts.<dep>?` read for a fallback or a wiring test.
+13. **Composition-root wiring.** A handler reading an OPTIONAL injected dependency with no fallback (`opts.optionalDeps?.lifecycleManager` → 409) is certified by unit tests but dead in prod if the entrypoint never sets it — require a test on the real composition root (extract `buildRegisterRoutesOptions(deps)`), and treat a "409 when not configured" test passing with `boot(undefined)` as a smell that encodes broken prod as expected; grep every `opts.<dep>?` read for a fallback or a wiring test.
 
 14. **Guard-neutralize RED proof.** Prove a guard test non-vacuous by neutralizing the guard line and watching the test go RED, then restore; "no leak / size === 0" assertions must first ARRANGE a non-zero leakable state (assert the count was >0 before cleanup) or they pass vacuously.
 
@@ -123,16 +130,19 @@ The verify report MUST state, for each applicable gate, the production call site
 **Source (additions)**: 2026-06-27-14.28, 2026-06-27-16.03, 2026-06-27-23.45, 2026-06-30-01.37, 2026-06-30-12.23, 2026-06-21-03.05, 2026-06-22-12.47, 2026-06-23-13.22, 2026-06-20-18.43, 2026-06-18-22.18, 2026-06-23-18.25, 2026-06-22-19.56, 2026-07-04-22.53, 2026-07-02-16.42, 2026-06-25-17.19, 2026-07-02-14.14, 2026-06-17-19.53, 2026-06-20-23.22, 2026-07-02-17.52
 
 ### ADR / migration numbers and journal integrity — re-grep main's HEAD at merge, never trust a checkbox
+
 **Source**: 2026-06-07-20.16, 2026-06-09-18.47, 2026-06-11-09.20, 2026-06-11-12.51, 2026-06-10-23.57, 2026-06-09-20.30
 **Rule**: ADR numbers and Drizzle migration `idx`/`tag` are a globally-sequential shared namespace, so a collision is invisible on a single branch (every gate green). Before declaring verify pass on a branch that adds an ADR or migration:
+
 - Re-grep `git show main:docs/decisions.md | grep "^### ADR-"` AND `git show main:web/lib/db/migrations/meta/_journal.json` for the claimed numbers — immediately before merge AND again every time main moves. A `[x]` checkbox or commit subject is NOT evidence the ADR/migration landed (a Task marked `[x]` "write ADR-063" shipped with the ADR silently omitted).
 - Verify each migration number against the JOURNAL, not the prose (`0029` documented in 5 places shipped as `0030`).
 - `pnpm validate:docs` only parses Mermaid; `validate-docs-adr-anchors.mjs` only checks an anchor RESOLVES, not that the visible `[ADR-NNN]` link text matches the `#adr-NNN-…` slug it targets — an over-reached `[ADR-072](#adr-071-…)` passes green. Verify link-text↔slug agreement manually.
 - Keep/confirm a `migration-journal-integrity` test asserting every tag↔file, unique `idx`, unique `tag` (Drizzle's `readMigrationFiles` ignores `idx`, iterates by array order, resolves `${tag}.sql`, dedups by `when` — so a reserved idx-gap is safe but an orphan/dup tag is not).
 - A new migration is a TRIPLE: SQL file + `_journal.json` entry + `meta/<NNNN>_snapshot.json` — the NEWEST journal entry MUST have a matching Drizzle snapshot (a missing snapshot silently starves future `db:generate`; newest-only so legacy gaps stay tolerated); journal `when` must never be future-dated (a later `Date.now()` migration would be silently skipped); hand-authored second lineages (brain) get the same journal lint, parameterized over BOTH lineages, and `pnpm db:generate` must report "No schema changes" after.
 - **Claims are not evidence**: "covered by suite X" → open X and confirm it actually imports/calls the SUT (directory adjacency ≠ coverage); a ✅-checked task whose plan listed explicit test cases stays PARTIAL until each listed case is found in the diff; an implementer deviating from a LOCKED plan decision without sign-off is a finding, not a silent pass — and an accepted deviation rewrites every stale plan/spec sibling in the same pass (one prominent superseding note naming them all suffices); when the test strategy changes (planned Playwright replaced by SSR/route coverage), the traceability matrix and acceptance rows are amended — never a checked task promising absent tests.
-**Source (additions)**: 2026-07-07-13.51, 2026-07-02-17.52, 2026-06-18-23.21, 2026-06-18-12.07, 2026-06-18-12.19, 2026-07-04-01.04, 2026-06-24-20.47
+  **Source (additions)**: 2026-07-07-13.51, 2026-07-02-17.52, 2026-06-18-23.21, 2026-06-18-12.07, 2026-06-18-12.19, 2026-07-04-01.04, 2026-06-24-20.47
 
 ### Tool authorities: what counts as build / binary / diagnostic evidence
+
 **Source**: 2026-06-29-01.37, 2026-06-24-19.45, 2026-06-22-12.47, 2026-06-29-01.03
 **Rule**: (1) Next.js 71007 "serializable props" warnings on `"use client"` files are LSP heuristics, distinct from real build failures — the only build authority is `pnpm build` (exit 0 + BUILD_ID generated); don't chase them as errors and don't accept them as evidence of breakage. (2) A fresh git worktree has no `node_modules` — a blizzard of "Cannot find module 'react'"/JSX-intrinsics diagnostics is pure env noise; run `pnpm install --frozen-lockfile` first, then trust real `tsc`/`eslint`/`vitest` over inline diagnostics. (3) Binary/NUL verification targets the WORKING TREE (`tr -cd '\000' < f | wc -c` or a python bytes count) — `git diff --stat` shows `Bin` when EITHER blob contains a NUL (HEAD still has it after the fix), and `grep -c $'\x00'` reads the pattern as EMPTY and counts every line (a false positive that looks like thousands of NULs). (4) For behavior-preserving refactors of a shared path, a characterization snapshot (byte-identical output before/after, e.g. the installed-source snapshot) is the cheapest non-regression proof — keep such snapshots.

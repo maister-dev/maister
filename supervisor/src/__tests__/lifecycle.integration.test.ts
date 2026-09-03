@@ -250,12 +250,10 @@ describe("supervisor lifecycle integration", () => {
     expect(live.sessions).toEqual({ live: 1, exited: 0, crashed: 0 });
   });
 
-  it("GET /diagnostics reports adapters, sidecars, and env-ref presence without secret values", async () => {
-    const previousCcr = process.env.MAISTER_CCR_AUTH_TOKEN;
+  it("GET /diagnostics reports adapters and env-ref presence without secret values", async () => {
     const previousGemini = process.env.GEMINI_API_KEY;
     const previousEnvRefs = process.env.MAISTER_DIAGNOSTIC_ENV_REFS;
 
-    process.env.MAISTER_CCR_AUTH_TOKEN = "diagnostic-secret";
     process.env.GEMINI_API_KEY = "gemini-secret";
     process.env.MAISTER_DIAGNOSTIC_ENV_REFS = "CUSTOM_RUNNER_TOKEN";
     const { url } = await bootFor(["--hang"]);
@@ -264,11 +262,6 @@ describe("supervisor lifecycle integration", () => {
     try {
       res = await fetch(`${url}/diagnostics`);
     } finally {
-      if (previousCcr === undefined) {
-        delete process.env.MAISTER_CCR_AUTH_TOKEN;
-      } else {
-        process.env.MAISTER_CCR_AUTH_TOKEN = previousCcr;
-      }
       if (previousGemini === undefined) {
         delete process.env.GEMINI_API_KEY;
       } else {
@@ -299,7 +292,6 @@ describe("supervisor lifecycle integration", () => {
           protocolVersion: number | null;
         };
       }>;
-      sidecars: Array<{ id: string; kind: string; state: string }>;
       envRefs: Array<{ name: string; present: boolean; value?: string }>;
     };
 
@@ -336,15 +328,6 @@ describe("supervisor lifecycle integration", () => {
     ).toMatchObject({
       status: "pending",
       reason: "mimo ACP compatibility smoke has not been cached",
-    });
-    expect(body.sidecars).toContainEqual({
-      id: "ccr-default",
-      kind: "ccr",
-      state: "idle",
-    });
-    expect(body.envRefs).toContainEqual({
-      name: "MAISTER_CCR_AUTH_TOKEN",
-      present: true,
     });
     expect(body.envRefs).toContainEqual({
       name: "GEMINI_API_KEY",
@@ -383,7 +366,9 @@ describe("supervisor lifecycle integration", () => {
     const response = await fetch(`${url}/diagnostics`);
     const body = await response.json();
     const parsed = SupervisorDiagnosticsResponseSchema.parse(body);
-    const opencode = parsed.adapters.find((adapter) => adapter.id === "opencode");
+    const opencode = parsed.adapters.find(
+      (adapter) => adapter.id === "opencode",
+    );
 
     expect(opencode?.smoke.readOnlySession).toMatchObject({
       status: "stale",

@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 import {
   flowRunnerRemaps,
   platformAcpRunners,
-  platformRouterSidecars,
   platformRuntimeSettings,
   projectFlowRunnerDefaults,
   projects,
@@ -16,11 +15,8 @@ import {
 } from "@/lib/db/schema";
 
 describe("platform runner persistence schema shape", () => {
-  it("defines platform runner, sidecar, default, project-flow, and remap tables", () => {
+  it("defines platform runner, default, project-flow, and remap tables", () => {
     expect(getTableName(platformAcpRunners)).toBe("platform_acp_runners");
-    expect(getTableName(platformRouterSidecars)).toBe(
-      "platform_router_sidecars",
-    );
     expect(getTableName(platformRuntimeSettings)).toBe(
       "platform_runtime_settings",
     );
@@ -56,7 +52,6 @@ describe("platform runner persistence schema shape", () => {
       env: {},
       provider: { kind: "anthropic" },
       permissionPolicy: "default",
-      sidecarId: null,
       readinessStatus: "Ready",
       readinessReasons: [],
       enabled: true,
@@ -84,7 +79,6 @@ describe("platform runner persistence schema shape", () => {
       env: {},
       provider: { kind: "google_gemini", apiKey: "env:GEMINI_API_KEY" },
       permissionPolicy: "default",
-      sidecarId: null,
       readinessStatus: "NotReady",
       readinessReasons: ["adapter smoke has not been verified"],
       enabled: true,

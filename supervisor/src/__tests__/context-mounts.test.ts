@@ -144,7 +144,7 @@ describe("buildChildEnv MAISTER_CONTEXT_REPOS (ADR-157 D8b)", () => {
       ...BASE_SESSION,
       contextMounts: [MOUNT],
     });
-    const env = buildChildEnv(parsed, { ccrLayer: {} });
+    const env = buildChildEnv(parsed);
 
     expect(JSON.parse(env.MAISTER_CONTEXT_REPOS ?? "null")).toEqual([MOUNT]);
   });
@@ -155,7 +155,6 @@ describe("buildChildEnv MAISTER_CONTEXT_REPOS (ADR-157 D8b)", () => {
     for (const contextMounts of [undefined, []]) {
       const env = buildChildEnv(
         StartSessionRequestSchema.parse({ ...BASE_SESSION, contextMounts }),
-        { ccrLayer: {} },
       );
 
       expect("MAISTER_CONTEXT_REPOS" in env).toBe(false);
