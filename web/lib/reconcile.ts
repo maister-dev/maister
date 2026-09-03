@@ -23,6 +23,7 @@ import {
   ne,
   notInArray,
   or,
+  sql,
 } from "drizzle-orm";
 import pino from "pino";
 
@@ -37,15 +38,19 @@ import {
   reconcileGraceSeconds,
   reconcileSweepIntervalSeconds,
 } from "@/lib/instance-config";
-import { MaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import { loadActiveRunSessionsByRunId } from "@/lib/runs/active-run-session";
 import { scheduleResumedSessionDrive } from "@/lib/runs/resume-driver";
-import { SETTLED_RUN_STATUSES } from "@/lib/runs/run-status-sets";
+import {
+  isTerminalRunStatus,
+  SETTLED_RUN_STATUSES,
+  TERMINAL_RUN_STATUSES,
+} from "@/lib/runs/run-status-sets";
 import { findSharedTreeWorkspace } from "@/lib/runs/shared-tree";
 import { crashRunningRun } from "@/lib/runs/state-transitions";
 import { hasSyncDriver } from "@/lib/runs/sync-driver-registry";
 import { promoteNextPending } from "@/lib/scheduler";
-import { createExecutionHosts } from "@/lib/execution-host";
+import { createExecutionHosts, isFencedError } from "@/lib/execution-host";
 import { listWorktrees } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -88,7 +93,12 @@ export type ReconcileAction =
   // ADR-141: a `Running` run with a non-terminal `run_sync_attempts`
   // row is routed to the branch-sync recovery executor, NEVER the flow
   // reattach/redispatch arms.
-  | "sync-recover";
+  | "sync-recover"
+  // An orphaned `Pending` child: it never started, so there is nothing to
+  // recover — abandon it rather than surface a "Crashed" run that has no
+  // session to resume, and stop the scheduler starting it under a dead
+  // coordinator later.
+  | "abandon";
 
 export type ReconcileReason =
   | "not-running"
@@ -105,8 +115,17 @@ export type ReconcileReason =
   | "sync-orphaned-live"
   | "sync-orphaned-idle"
   // M36 (ADR-095) T7.1: a Running child whose coordinator parent is gone
-  // (Crashed/Abandoned/missing) can no longer be coordinated → crash it.
+  // (terminal/missing) can no longer be coordinated → crash it. Also
+  // the reason for a Pending/NeedsInput/NeedsInputIdle/Review orphan: the
+  // action differs by status (abandon vs crash), the cause is the same.
   | "orphaned-child"
+  // A parked sub-orchestrator whose OWN parent is gone. Routed through the
+  // stuck path so its children are cascaded first — crashing it directly would
+  // recreate the orphan problem one level down.
+  | "orphaned-orchestrator"
+  // A HumanWorking child of a dead coordinator: a human holds the worktree, so
+  // reconcile MUST NOT terminalize it. Skipped, but at WARN — it needs a person.
+  | "orphaned-human-working"
   // M36 (ADR-095) T7.1: a parked orchestrator whose session died, with no
   // pending children left and past the grace window → genuinely stuck → crash.
   | "orchestrator-stuck"
@@ -144,7 +163,7 @@ export interface ReconcileInput {
   graceSeconds: number;
   // M36 (ADR-095) T7.1: the run's delegator (null for a top-level run). When
   // set, the sweep also loads `parentStatus` so an orphaned child (parent
-  // Crashed/Abandoned/missing) is caught regardless of session liveness.
+  // terminal/missing) is caught regardless of session liveness.
   parentRunId?: string | null;
   // The parent run's status, loaded by the sweep when `parentRunId` is set;
   // null when the parent row is missing (a hard orphan) OR there is no parent.
@@ -188,6 +207,30 @@ export function classifyRunReconcile(
   return decision;
 }
 
+// The delegator can no longer drive this run: its parent row is in ANY
+// terminal status, or missing. The single predicate every orphan arm keys on.
+// Keyed on TERMINAL_RUN_STATUSES, not on the two statuses a cascade writes:
+// a `Running` orchestrator that trips its own run-scope budget or fails at a
+// node goes `Failed` WITHOUT cascading, and a `Done` coordinator can leave a
+// child behind too — both stranded their children while only Crashed/Abandoned
+// counted as death. The candidate loader below MUST use the same set.
+function coordinatorGone(input: ReconcileInput): boolean {
+  return (
+    input.parentRunId != null &&
+    (input.parentStatus == null || isTerminalRunStatus(input.parentStatus))
+  );
+}
+
+// Non-Running statuses a child can be stranded in under a dead coordinator.
+// The candidate loader fetches these ONLY when the parent is gone, so the
+// orphan arm is the sole thing that can fire for them; a healthy-parent run in
+// any of these statuses is never a candidate and would `not-running` anyway.
+const ORPHANABLE_PAUSED_STATUSES: ReadonlySet<string> = new Set([
+  "NeedsInput",
+  "NeedsInputIdle",
+  "Review",
+]);
+
 function classifyInner(input: ReconcileInput): ReconcileDecision {
   // 0. M36 (ADR-095) T7.1: a parked orchestrator (WaitingOnChildren). It is
   //    woken by a child-terminal event (orchestrator_resume) or a manual resume,
@@ -196,6 +239,12 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
   //    past the grace window. A live session (came back) or remaining pending
   //    children → leave it parked.
   if (input.runStatus === "WaitingOnChildren") {
+    // A sub-orchestrator whose own coordinator is gone can never be woken by
+    // it — checked BEFORE liveness/pending/grace, which only describe whether
+    // it could still be resumed by a parent that no longer exists.
+    if (coordinatorGone(input)) {
+      return { action: "crash", reason: "orphaned-orchestrator" };
+    }
     if (input.liveSession) {
       return { action: "skip", reason: "orchestrator-waiting" };
     }
@@ -218,6 +267,24 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
     return { action: "crash", reason: "orchestrator-stuck" };
   }
 
+  // 0.5. Orphans in a NON-Running status. The Running-only allow-list below
+  //      used to hide these forever: a Running orchestrator that crashes via
+  //      worktree-gone / heartbeat does not cascade, so its children were left
+  //      in whatever status they held — a Pending child kept its queue place
+  //      and promoteNextPending would start it under a dead coordinator; a
+  //      paused or reviewing child waited on a resume that could never come.
+  if (coordinatorGone(input)) {
+    if (input.runStatus === "Pending") {
+      return { action: "abandon", reason: "orphaned-child" };
+    }
+    if (ORPHANABLE_PAUSED_STATUSES.has(input.runStatus)) {
+      return { action: "crash", reason: "orphaned-child" };
+    }
+    if (input.runStatus === "HumanWorking") {
+      return { action: "skip", reason: "orphaned-human-working" };
+    }
+  }
+
   // 1. allow-list: reconcile only owns `Running` rows.
   if (input.runStatus !== "Running") {
     return { action: "skip", reason: "not-running" };
@@ -229,15 +296,10 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
   }
 
   // 2.5. M36 (ADR-095) T7.1: an orphaned child — a Running run whose delegator
-  //      parent is gone (Crashed/Abandoned/missing). The coordinator can no
+  //      parent is gone (terminal/missing). The coordinator can no
   //      longer drive it, so crash it. Checked BEFORE the session/grace checks
   //      so an orphan is caught even while its own session still looks live.
-  if (
-    input.parentRunId != null &&
-    (input.parentStatus == null ||
-      input.parentStatus === "Crashed" ||
-      input.parentStatus === "Abandoned")
-  ) {
+  if (coordinatorGone(input)) {
     return { action: "crash", reason: "orphaned-child" };
   }
 
@@ -384,11 +446,16 @@ export interface ReconcileSweepSummary {
   // ADR-166 D7/D8: ACTIVE assignments whose adopted workspace handle the host
   // no longer knows (WARN `workspace-handle-lost`; the next create re-adopts).
   handlesLost: number;
+  // Orphaned `Pending` children abandoned this tick (never started under a
+  // coordinator that is now gone) — distinct from `crashed`, which is a
+  // recoverable outcome; these have nothing to recover.
+  abandoned: number;
 }
 
 const ZERO_SUMMARY: ReconcileSweepSummary = {
   candidates: 0,
   crashed: 0,
+  abandoned: 0,
   redispatched: 0,
   reattached: 0,
   skipped: 0,
@@ -421,6 +488,7 @@ function mapReasonToCrashReason(reason: ReconcileReason): CrashReason {
     case "cli-not-retry-safe":
       return "cli-not-retry-safe";
     case "orphaned-child":
+    case "orphaned-orchestrator":
       return "orphaned-child";
     case "orchestrator-stuck":
       return "orchestrator-stuck";
@@ -773,6 +841,57 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
       )
       .orderBy(asc(runs.startedAt))
       .limit(PER_TICK_LIMIT);
+
+    // Orphans in a non-Running status. Deliberately NOT folded into the status
+    // list above: that would pull every paused, queued and reviewing run in the
+    // project through the sweep each tick and let them starve real candidates
+    // under PER_TICK_LIMIT. This loads only children whose coordinator is
+    // gone — no row for the parent exists that is still alive — which is small
+    // by construction. Same shape as the main query so the mapping below is
+    // shared.
+    const orphanRows: typeof rows = await db
+      .select({
+        runId: runs.id,
+        runKind: runs.runKind,
+        status: runs.status,
+        currentStepId: runs.currentStepId,
+        resumeStartedAt: runs.resumeStartedAt,
+        runStartedAt: runs.startedAt,
+        flowId: runs.flowId,
+        flowRevisionId: runs.flowRevisionId,
+        parentRunId: runs.parentRunId,
+        taskId: runs.taskId,
+        worktreePath: workspaces.worktreePath,
+      })
+      .from(runs)
+      .leftJoin(workspaces, eq(workspaces.runId, runs.id))
+      .where(
+        and(
+          eq(runs.projectId, project.id),
+          inArray(runs.status, [
+            "Pending",
+            "NeedsInput",
+            "NeedsInputIdle",
+            "Review",
+            "HumanWorking",
+          ]),
+          isNotNull(runs.parentRunId),
+          // The SQL twin of `coordinatorGone`: derived from the same set so the
+          // loader can never hide an orphan the classifier would recover.
+          sql`NOT EXISTS (
+            SELECT 1 FROM runs AS parent
+            WHERE parent.id = ${runs.parentRunId}
+              AND parent.status NOT IN (${sql.join(
+                TERMINAL_RUN_STATUSES.map((status) => sql`${status}`),
+                sql`, `,
+              )})
+          )`,
+        ),
+      )
+      .orderBy(asc(runs.startedAt))
+      .limit(PER_TICK_LIMIT);
+
+    rows.push(...orphanRows);
 
     // M42 (ADR-114): the resume handle now lives on `run_sessions`, not the run
     // row. Classification keys on the run's ACTIVE session's acp_session_id.
@@ -1248,6 +1367,7 @@ export async function runReconcileSweep(
   const nowMs = now().getTime();
 
   let crashed = 0;
+  let abandoned = 0;
   let redispatched = 0;
   let reattached = 0;
   let skipped = 0;
@@ -1332,7 +1452,10 @@ export async function runReconcileSweep(
 
     switch (action) {
       case "crash": {
-        if (reason === "orchestrator-stuck") {
+        if (
+          reason === "orchestrator-stuck" ||
+          reason === "orphaned-orchestrator"
+        ) {
           // M36 (ADR-095) T7.1: a stuck parked orchestrator. Cascade-abandon any
           // leftover children FIRST (children-first), THEN crash the coordinator
           // via the WaitingOnChildren-guarded transition. The cascade owns its
@@ -1344,6 +1467,54 @@ export async function runReconcileSweep(
           const { crashWaitingOnChildren } = await import(
             "@/lib/runs/state-transitions"
           );
+
+          // Stop the coordinator's OWN live session(s) FIRST (E5 discipline,
+          // as the budget tree arm does). `orphaned-orchestrator` is the one
+          // crash reason that can carry a live session — coordinator death is
+          // checked before liveness — and the cascade tears down DESCENDANT
+          // sessions only, while nothing reaps a live session under a Crashed
+          // row. A supervisor 5xx means "cannot confirm it stopped": leave the
+          // whole sub-tree for the next tick rather than cascade under a
+          // coordinator that is still spending. A terminal (non-5xx) failure
+          // means the session is already gone; proceed.
+          const ownSessions = [...liveByRunStep.values()].filter(
+            (record) => record.runId === cand.runId,
+          );
+
+          for (const record of ownSessions) {
+            try {
+              const client = await hosts.forRun(cand.runId, { teardown: true });
+
+              await client.deleteSession(record.sessionId);
+            } catch (err) {
+              if (
+                (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") ||
+                isFencedError(err)
+              ) {
+                skipped += 1;
+                log.warn(
+                  {
+                    runId: cand.runId,
+                    reason,
+                    sessionId: record.sessionId,
+                    err: err instanceof Error ? err.message : String(err),
+                  },
+                  "reconcile: could not confirm the orchestrator's own session stopped — leaving its sub-tree for the next tick",
+                );
+
+                return;
+              }
+              log.warn(
+                {
+                  runId: cand.runId,
+                  reason,
+                  sessionId: record.sessionId,
+                  err: err instanceof Error ? err.message : String(err),
+                },
+                "reconcile: orchestrator session teardown failed terminally — proceeding",
+              );
+            }
+          }
 
           await cascadeAbandonRunTreeAndStopSessions(
             cand.runId,
@@ -1358,7 +1529,7 @@ export async function runReconcileSweep(
           );
           const crashResult = await crashWaitingOnChildren(
             cand.runId,
-            "orchestrator-stuck",
+            mapReasonToCrashReason(reason),
             { db },
           );
 
@@ -1413,10 +1584,28 @@ export async function runReconcileSweep(
           // pure classifier importable standalone.
           const { finalizeAgentRun } = await import("@/lib/agents/launch");
 
-          await finalizeAgentRun(cand.runId, "Crashed", {
+          // closeOpenHitl: an orphan paused on a permission request must not
+          // keep counting toward "Needs you" under a Crashed row — the flow
+          // crash transition closes its open hitl_requests in-tx for the same
+          // reason. `finalized: false` means NO row was touched (a concurrent
+          // transition won the CAS, or the finalize is deferred to a pending
+          // human-ask activation): nothing was crashed, so nothing downstream
+          // may pretend it was.
+          const result = await finalizeAgentRun(cand.runId, "Crashed", {
             db,
             reason: `reconcile: ${reason}`,
+            closeOpenHitl: true,
           });
+
+          if (!result.finalized) {
+            skipped += 1;
+            log.warn(
+              { runId: cand.runId, reason },
+              "reconcile: agent crash not finalized — a concurrent transition or a pending human-ask activation owns the run; left alone",
+            );
+
+            return;
+          }
           await systemCloseActiveAssignmentsForRun({
             db,
             runId: cand.runId,
@@ -1441,9 +1630,34 @@ export async function runReconcileSweep(
             err: new MaisterError("CRASH", `reconcile: ${reason}`),
           });
         } else {
-          await crashRunningRun(cand.runId, mapReasonToCrashReason(reason), {
-            db,
-          });
+          // Guard on the status this candidate was CLASSIFIED in — for every
+          // pre-existing reason that is `Running`, unchanged; for a paused or
+          // reviewing orphan it is the status the orphan arm saw. A run that
+          // moved in between loses the CAS instead of being clobbered.
+          const crashResult = await crashRunningRun(
+            cand.runId,
+            mapReasonToCrashReason(reason),
+            { db, fromStatuses: [cand.status] },
+          );
+
+          if (!crashResult.ok) {
+            // A concurrent transition moved the run after it was loaded — the
+            // CAS is the only thing that says "this crash landed". Nothing
+            // below (materialization cleanup, assignment close, slot promote,
+            // the crashed count) may run against a row that is still alive.
+            skipped += 1;
+            log.warn(
+              {
+                runId: cand.runId,
+                reason,
+                from: cand.status,
+                cause: crashResult.reason,
+              },
+              "reconcile: crash CAS lost — a concurrent transition moved the run; left alone",
+            );
+
+            return;
+          }
           if (cand.worktreePath) {
             await cleanupRunMaterializations({
               runId: cand.runId,
@@ -1463,6 +1677,35 @@ export async function runReconcileSweep(
         });
         crashed += 1;
         log.info({ runId: cand.runId, reason }, "reconcile: crashed");
+
+        return;
+      }
+      case "abandon": {
+        // An orphaned Pending child. markAbandoned's guard admits Pending; it
+        // emits run.abandoned, stamps the workspace for GC and releases context
+        // mounts. No promote: a queued run never held a slot.
+        const { markAbandoned } = await import("@/lib/runs/state-transitions");
+        const result = await markAbandoned(cand.runId, { db });
+
+        if (!result.ok) {
+          skipped += 1;
+          log.info(
+            { runId: cand.runId, reason },
+            "reconcile: orphan abandon lost the status guard — skipped",
+          );
+
+          return;
+        }
+        await systemCloseActiveAssignmentsForRun({
+          db,
+          runId: cand.runId,
+          reason: `reconcile abandoned orphan: ${reason}`,
+        });
+        abandoned += 1;
+        log.warn(
+          { runId: cand.runId, parentRunId: cand.parentRunId, reason },
+          "reconcile: abandoned a queued child of a dead coordinator",
+        );
 
         return;
       }
@@ -1537,6 +1780,16 @@ export async function runReconcileSweep(
       }
       case "skip": {
         skipped += 1;
+        if (reason === "orphaned-human-working") {
+          // Deliberately untouched — a person holds the worktree — but this
+          // run now has no coordinator and only a human can settle it.
+          log.warn(
+            { runId: cand.runId, parentRunId: cand.parentRunId },
+            "reconcile: HumanWorking child of a dead coordinator left in place — needs a person",
+          );
+
+          return;
+        }
         log.debug({ runId: cand.runId, reason }, "reconcile: skipped");
 
         return;
@@ -1547,6 +1800,7 @@ export async function runReconcileSweep(
   const summary: ReconcileSweepSummary = {
     candidates: candidates.length,
     crashed,
+    abandoned,
     redispatched,
     reattached,
     skipped,

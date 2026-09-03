@@ -292,9 +292,13 @@ E1–E12 invariants.)
 - A `tree`-scope breach MUST cascade-terminate the whole run-tree
   (`cascadeAbandonRunTree`, one transaction) then flip the root; tree scope has
   NO escalate rung. The cascade commits before the root CAS, and nothing
-  serializes against the graph runner advancing that root, so when the flip is
-  lost the tree action MUST still be recorded on `budget_state.notified.tree` —
-  otherwise a re-entry re-cascades an already-gutted tree.
+  serializes against the graph runner advancing that root, so the flip can be
+  lost after the descendants are already `Abandoned`. On that path the tree
+  action MUST NOT be recorded on `budget_state.notified.tree`: `alreadyActioned`
+  compares rungs with `>=` and nothing outranks `terminate`, so stamping a flip
+  that never landed permanently disables tree enforcement for a root that can
+  still resume. A re-entry re-running the idempotent cascade is the lesser
+  harm; the lost flip is logged at WARN with the already-cascaded sub-tree named.
 - (Implemented — ADR-165) **Tree-budget min-merge with the orchestrator node's
   declaration.** When the ROOT run carries `delegation_bounds.budget`, the
   effective tree limit for tokens, wall-clock and consecutive failures MUST be
@@ -316,7 +320,13 @@ E1–E12 invariants.)
   `Failed`; escalate/terminate idempotency is `runs.status`-derived.
 - Raise-and-resume MUST write `runs.budget_state.ceilingOverride` (additive; the
   `runs.execution_policy` snapshot stays immutable), log `budget_raised`, clear
-  `notified[scope]`, and the resumed run MUST NOT immediately re-escalate.
+  `notified[scope]`, and the resumed run MUST NOT immediately re-escalate. A
+  `run` raise also lifts a `tree` ceiling whose effective value EQUALS the run's
+  (the shape the unattended default seeds) — otherwise the unraised tree bound
+  terminates the run one tick later, tree having no escalate rung. Exact
+  equality is the only coupling signal: a tighter or a looser tree ceiling is an
+  operator's independent bound and is left alone. `budget_raised.coupledScopes`
+  names every scope the raise moved besides the breached one.
 - Restart MUST terminalize the old run before launching the new one. The new run
   MUST omit the old policy snapshot so policy resolution and cost rollups start
   fresh. If caps are full, the new run may be `Pending` with a queue position.

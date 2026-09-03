@@ -1,19 +1,21 @@
 // M19 Phase 1 (T1.A): crashRunningRun — the Running → Crashed CAS used by
 // reconciliation/GC when a Running row has lost its worktree, its agent
 // session, or sits on a not-retry-safe CLI step. Mirrors crashResumedRun's
-// shape but guards on status='Running' and additionally clears
+// shape but guards on status IN fromStatuses (default 'Running'; reconcile
+// passes the status it classified an orphan in) and additionally clears
 // current_step_id + resume_started_at.
 //
 // Unit-level proof: the .set payload (status/currentStepId/resumeStartedAt)
-// and the WHERE guard (id + status='Running'), driven off the .returning()
+// and the WHERE guard (id + status IN fromStatuses), driven off the .returning()
 // row count for the CAS-win vs CAS-miss branches. The real SQL-level CAS is
 // re-proven against Postgres in state-transitions-crash.integration.test.ts.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Record eq()/and() predicate calls without losing the real drizzle module.
+// Record eq()/inArray() predicate calls without losing the real drizzle module.
 const predicateCalls = vi.hoisted(() => ({
   eq: [] as Array<{ col: unknown; val: unknown }>,
+  inArray: [] as Array<{ col: unknown; val: unknown }>,
 }));
 
 vi.mock("drizzle-orm", async (importOriginal) => {
@@ -25,6 +27,11 @@ vi.mock("drizzle-orm", async (importOriginal) => {
       predicateCalls.eq.push({ col, val });
 
       return { __eq: true, col, val };
+    },
+    inArray: (col: unknown, val: unknown) => {
+      predicateCalls.inArray.push({ col, val });
+
+      return { __inArray: true, col, val };
     },
     and: (...parts: unknown[]) => ({ __and: true, parts }),
   };
@@ -81,6 +88,7 @@ let crashRunningRun: typeof import("@/lib/runs/state-transitions").crashRunningR
 
 beforeEach(async () => {
   predicateCalls.eq.length = 0;
+  predicateCalls.inArray.length = 0;
   ({ crashRunningRun } = await import("@/lib/runs/state-transitions"));
 });
 
@@ -111,7 +119,7 @@ describe("crashRunningRun — Running → Crashed CAS", () => {
     expect(r).toEqual({ ok: false, reason: "status-guard-mismatch" });
   });
 
-  it("WHERE guards on id and status='Running'", async () => {
+  it("WHERE guards on id and status IN ['Running'] by default", async () => {
     const { db } = mockDb([{ id: "run-3" }]);
 
     await crashRunningRun("run-3", "cli-not-retry-safe", { db: db as never });
@@ -119,12 +127,33 @@ describe("crashRunningRun — Running → Crashed CAS", () => {
     const onId = predicateCalls.eq.find(
       (c) => (c.col as { name?: string })?.name === "id",
     );
-    const onStatus = predicateCalls.eq.find(
+    // The status guard is an IN-list so reconcile can crash an orphan in the
+    // status it classified it in; with no fromStatuses it is exactly the
+    // original single-status guard.
+    const onStatus = predicateCalls.inArray.find(
       (c) => (c.col as { name?: string })?.name === "status",
     );
 
     expect(onId?.val).toBe("run-3");
-    expect(onStatus?.val).toBe("Running");
+    expect(onStatus?.val).toEqual(["Running"]);
+  });
+
+  it("fromStatuses widens the status guard to exactly the statuses given", async () => {
+    // A paused/reviewing orphan of a dead coordinator: reconcile passes the
+    // status it observed, so a run that moved since classification loses the
+    // CAS instead of being clobbered.
+    const { db } = mockDb([{ id: "run-3b" }]);
+
+    await crashRunningRun("run-3b", "orphaned-child", {
+      db: db as never,
+      fromStatuses: ["NeedsInputIdle", "Review"],
+    });
+
+    const onStatus = predicateCalls.inArray.find(
+      (c) => (c.col as { name?: string })?.name === "status",
+    );
+
+    expect(onStatus?.val).toEqual(["NeedsInputIdle", "Review"]);
   });
 
   it("does not call set with a Running status guard value as the update target", async () => {

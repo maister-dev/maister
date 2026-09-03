@@ -197,29 +197,31 @@ export function budgetMeterToPolicyField(
 }
 
 // A raise lifts the breached scope's ceiling. When `run` is raised, a `tree`
-// ceiling that was NOT already stricter must move with it, or it silently
-// becomes the stricter bound and terminates the run the operator just funded —
-// tree scope has no escalate rung, so that is a kill, not another pause. This is
-// the coupled shape `applyDefaultBudgetForUnattended` writes (run + tree seeded
-// at one value for an unattended launch).
+// ceiling seeded at the SAME value must move with it, or it silently becomes
+// the stricter bound and terminates the run the operator just funded — tree
+// scope has no escalate rung, so that is a kill, not another pause. Exact
+// equality is the coupling signal: it is the shape `applyDefaultBudgetForUnattended`
+// writes (run + tree seeded at one value for an unattended launch).
 //
-// A DELIBERATELY tighter tree ceiling is preserved: if it was already stricter
-// than run before the raise, the operator meant the tree to bind, and raising
-// `run` does not overrule that.
+// Anything else is an operator's independent tree bound and is preserved: a
+// tighter one was meant to bind, and a looser one is an aggregate cap that a
+// per-run raise must not silently widen (ordering alone does not prove the two
+// were seeded together). `coupledScopes` names every scope the raise moved
+// besides the breached one, so the audit line can say what was actually raised.
 export function coupledRaiseOverride(args: {
   snapshotBudget: BudgetAxis;
   priorOverride: BudgetAxis;
   scope: BudgetScope;
   field: BudgetBreachPolicyField;
   newLimit: number;
-}): BudgetAxis {
+}): { override: BudgetAxis; coupledScopes: BudgetScope[] } {
   const { snapshotBudget, priorOverride, scope, field, newLimit } = args;
-  const next: BudgetAxis = {
+  const override: BudgetAxis = {
     ...priorOverride,
     [scope]: { ...(priorOverride[scope] ?? {}), [field]: newLimit },
   };
 
-  if (scope !== "run") return next;
+  if (scope !== "run") return { override, coupledScopes: [] };
 
   // Override wins over snapshot, mirroring `effectiveLimit`; 0 / absent means
   // unlimited (fail-open), so there is nothing to couple.
@@ -232,14 +234,17 @@ export function coupledRaiseOverride(args: {
     return typeof fromSnapshot === "number" ? fromSnapshot : 0;
   };
   const treeBefore = effective("tree");
-  const runBefore = effective("run");
 
-  // No tree bound ⇒ nothing to couple. Already stricter ⇒ deliberate, keep it.
-  if (treeBefore <= 0 || treeBefore < runBefore) return next;
+  if (treeBefore <= 0 || treeBefore !== effective("run")) {
+    return { override, coupledScopes: [] };
+  }
 
   return {
-    ...next,
-    tree: { ...(next.tree ?? {}), [field]: newLimit },
+    override: {
+      ...override,
+      tree: { ...(override.tree ?? {}), [field]: newLimit },
+    },
+    coupledScopes: ["tree"],
   };
 }
 

@@ -21,6 +21,7 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
+import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { respondToHitl, HitlActor } from "@/lib/services/hitl";
 import {
   startMainPostgresTestDb,
@@ -35,6 +36,13 @@ let db: NodePgDatabase;
 let runtimeRoot: string;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+// Pass-through spy: the raise audit must name every scope the raise moved.
+vi.mock("@/lib/runs/exec-policy-audit", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/runs/exec-policy-audit")>();
+
+  return { ...actual, logExecPolicyAction: vi.fn(actual.logExecPolicyAction) };
+});
 // Partial mock: the service graph reads other client members at module load
 // (gate-chat's default api); the checkpoint itself now rides the execution-host
 // client (ADR-166), so this spy only pins that the legacy path is never used.
@@ -185,6 +193,7 @@ async function seedRun(
     flowId?: string | null;
     agentId?: string | null;
     agentWorkspace?: "none" | "repo_read" | "worktree" | null;
+    executionPolicy?: unknown;
   } = {},
 ) {
   const runId = randomUUID();
@@ -202,6 +211,11 @@ async function seedRun(
     currentStepId: "plan",
     flowVersion: "v1.0.0",
     budgetState: budgetState ?? null,
+    // `execution_policy` is NOT NULL with a DB default — only override it when
+    // a test supplies a snapshot, never write an explicit null.
+    ...(opts.executionPolicy !== undefined
+      ? { executionPolicy: opts.executionPolicy }
+      : {}),
   });
   await (db as any).insert(schema.runSessions).values({
     id: randomUUID(),
@@ -940,6 +954,111 @@ describe("respondToHitl budget_breach integration — restart and park composite
 
     expect(hitlRow.response).toBeNull();
     expect(hitlRow.respondedAt).toBeNull();
+  });
+});
+
+describe("respondToHitl budget_breach integration — coupled raise (D2)", () => {
+  // `applyDefaultBudgetForUnattended` seeds run AND tree at one value; a raise
+  // of `run` alone leaves the tree ceiling as the stricter bound and the next
+  // tick terminates the run the operator just funded (tree has no escalate
+  // rung). Equality is the coupling signal — and the audit must say so.
+  it("raise on a run breach lifts a tree ceiling seeded at the SAME value and audits the coupled scope", async () => {
+    const projectId = await seedProject("budget-raise-coupled");
+    const runId = await seedRun(projectId, null, {
+      executionPolicy: {
+        preset: "supervised",
+        overrides: {
+          budget: { run: { maxTokens: 1000 }, tree: { maxTokens: 1000 } },
+        },
+      },
+    });
+    const hitlRequestId = await seedBudgetBreachHitl(runId, {
+      scope: "run",
+      meter: "tokens",
+      limit: 1000,
+      current: 1200,
+    });
+
+    await seedOpenAssignment(projectId, runId, hitlRequestId);
+
+    const res = await respondToHitl(
+      { runId, hitlRequestId, body: { optionId: "raise", raiseTo: 4000 } },
+      userActor,
+      { db },
+    );
+
+    expect(res.status).toBe(202);
+
+    const runRow = (
+      await (db as any)
+        .select()
+        .from(schema.runs)
+        .where(eq(schema.runs.id, runId))
+    )[0];
+
+    expect(runRow.budgetState.ceilingOverride).toEqual({
+      run: { maxTokens: 4000 },
+      tree: { maxTokens: 4000 },
+    });
+    expect(vi.mocked(logExecPolicyAction)).toHaveBeenCalledWith({
+      runId,
+      kind: "budget_raised",
+      detail: {
+        scope: "run",
+        meter: "tokens",
+        raiseTo: 4000,
+        coupledScopes: ["tree"],
+      },
+    });
+  });
+
+  it("raise on a run breach leaves a LOOSER tree ceiling alone and audits no coupling", async () => {
+    const projectId = await seedProject("budget-raise-uncoupled");
+    const runId = await seedRun(projectId, null, {
+      executionPolicy: {
+        preset: "supervised",
+        overrides: {
+          budget: { run: { maxTokens: 1000 }, tree: { maxTokens: 10_000 } },
+        },
+      },
+    });
+    const hitlRequestId = await seedBudgetBreachHitl(runId, {
+      scope: "run",
+      meter: "tokens",
+      limit: 1000,
+      current: 1200,
+    });
+
+    await seedOpenAssignment(projectId, runId, hitlRequestId);
+
+    const res = await respondToHitl(
+      { runId, hitlRequestId, body: { optionId: "raise", raiseTo: 4000 } },
+      userActor,
+      { db },
+    );
+
+    expect(res.status).toBe(202);
+
+    const runRow = (
+      await (db as any)
+        .select()
+        .from(schema.runs)
+        .where(eq(schema.runs.id, runId))
+    )[0];
+
+    expect(runRow.budgetState.ceilingOverride).toEqual({
+      run: { maxTokens: 4000 },
+    });
+    expect(vi.mocked(logExecPolicyAction)).toHaveBeenCalledWith({
+      runId,
+      kind: "budget_raised",
+      detail: {
+        scope: "run",
+        meter: "tokens",
+        raiseTo: 4000,
+        coupledScopes: [],
+      },
+    });
   });
 });
 

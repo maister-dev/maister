@@ -4239,11 +4239,12 @@ async function handleBudgetBreachResponse(args: {
       current?.executionPolicy,
     );
     const field = budgetMeterToPolicyField(meter);
-    // Coupled raise: lifting `run` also lifts a `tree` ceiling that was not
-    // already stricter. Otherwise the unraised tree ceiling becomes the stricter
-    // bound and TERMINATES the run one tick later — tree scope has no escalate
-    // rung — undoing the raise the operator just granted.
-    const nextOverride: BudgetAxis = coupledRaiseOverride({
+    // Coupled raise: lifting `run` also lifts a `tree` ceiling seeded at the
+    // same value (the unattended-default shape). Otherwise the unraised tree
+    // ceiling becomes the stricter bound and TERMINATES the run one tick later
+    // — tree scope has no escalate rung — undoing the raise the operator just
+    // granted.
+    const { override: nextOverride, coupledScopes } = coupledRaiseOverride({
       snapshotBudget,
       priorOverride,
       scope,
@@ -4285,7 +4286,7 @@ async function handleBudgetBreachResponse(args: {
     logExecPolicyAction({
       runId,
       kind: "budget_raised",
-      detail: { scope, meter, raiseTo: decision.newLimit },
+      detail: { scope, meter, raiseTo: decision.newLimit, coupledScopes },
     });
     await recordSuccessAudit?.(tx, 200);
 

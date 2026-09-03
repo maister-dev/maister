@@ -1471,7 +1471,7 @@ describe("budget watchdog — tree arbitration (D1/D2)", () => {
       liveSessionRecord(childA, "sup-d1-a", "implement"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     // The tree breach wins: whole tree down, no human pause.
     expect((await getRun(childA)).status).toBe("Abandoned");
@@ -1514,7 +1514,7 @@ describe("budget watchdog — tree arbitration (D1/D2)", () => {
       liveSessionRecord(runId, "sup-tree-scratch", "dialog"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect((await getRun(runId)).status).toBe("Failed");
 
@@ -1531,12 +1531,52 @@ describe("budget watchdog — tree arbitration (D1/D2)", () => {
     // scheduler pool. `finalizeAgentRun`'s own CAS accepts only Running|NeedsInput
     // for a Failed outcome, so this also pins that a Running agent root is
     // actually accepted rather than silently refused.
+    // `status === "Failed"` alone cannot discriminate: the old raw update produced
+    // it too. The two effects only finalizeAgentRun performs are the real proof —
+    // revoking the run-bound agent token and promoting the AGENT pool (the raw
+    // path called promoteAfterTimeoutKill, which is flow-pool only).
+    const agentId = `agent-${randomUUID().slice(0, 8)}`;
+
+    await db.insert(schema.agents).values({
+      id: agentId,
+      packageName: "test-pkg",
+      versionLabel: "v1.0.0",
+      origin: "git",
+      name: "tree-root-agent",
+      description: "d",
+      workspace: "none",
+      mode: "session",
+      triggers: ["manual"],
+      riskTier: "read_only",
+      sourcePath: "/tmp/tree-root-agent.md",
+      enabled: true,
+    });
+
     const runId = await seedRun({
       runKind: "agent",
       status: "Running",
+      agentId,
       startedAt: new Date(Date.now() - 120 * 60_000),
       executionPolicy: policyWithBudget({ tree: { wallClockMinutes: 60 } }),
       acpSessionId: "acp-tree-agent",
+    });
+
+    // The per-launch ephemeral token the launcher mints (M34): the CHECK pairs
+    // token_kind='agent' with a non-null agent_id + project_id.
+    await db.insert(schema.projectTokens).values({
+      project_id: projectId,
+      name: `agent-run:${runId}`,
+      token_kind: "agent",
+      agent_id: agentId,
+      prefix: "mst_test",
+      token_hash: "hash",
+    });
+    // A queued AGENT run: only an agent-pool promotion can start it.
+    const pendingAgentId = await seedRun({
+      runKind: "agent",
+      status: "Pending",
+      currentStepId: null,
+      startedAt: new Date(Date.now() - 60_000),
     });
 
     await seedRollup(runId, null, 10);
@@ -1545,9 +1585,98 @@ describe("budget watchdog — tree arbitration (D1/D2)", () => {
       liveSessionRecord(runId, "sup-tree-agent", "agent"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect((await getRun(runId)).status).toBe("Failed");
+
+    const [token] = await db
+      .select({ revokedAt: schema.projectTokens.revoked_at })
+      .from(schema.projectTokens)
+      .where(eq(schema.projectTokens.name, `agent-run:${runId}`));
+
+    expect(token.revokedAt).not.toBeNull();
+    // The freed AGENT slot was promoted (status flip is committed before the
+    // starter is dispatched, so this holds even though no real agent launches).
+    expect((await getRun(pendingAgentId)).status).toBe("Running");
+  }, 60_000);
+
+  it("F6: a root that advances to its next node mid-terminate loses the CAS and its ledger is untouched", async () => {
+    // The tree arm resolved the active attempt BEFORE its transaction and CASed
+    // the root on status alone. If the root moved from node A to node B while
+    // staying Running, the CAS still won and the stale attempt A — by then
+    // Succeeded — was overwritten to Failed while B stayed Running under a
+    // Failed run. The run-scope arm guards on `current_step_id` for exactly
+    // this reason; the tree arm must too.
+    const taskId = await seedTask();
+    const rootId = await seedRun({
+      taskId,
+      status: "Running",
+      currentStepId: "implement",
+      executionPolicy: policyWithBudget({ tree: { maxTokens: 1000 } }),
+      acpSessionId: "acp-f6-root",
+    });
+    const childA = await seedRun({
+      rootRunId: rootId,
+      parentRunId: rootId,
+      status: "Running",
+      acpSessionId: "acp-f6-a",
+    });
+
+    await seedAttempt({
+      runId: rootId,
+      nodeId: "implement",
+      attempt: 1,
+      status: "Running",
+    });
+    await seedRollup(rootId, taskId, 800);
+    await seedRollup(childA, null, 400); // tree 1200 ≥ 1000
+
+    // Inject at the root's session kill — the last step before the CAS: node A
+    // completes, node B starts, the run stays Running.
+    deleteSessionSpy.mockImplementation(async (id: string) => {
+      if (id === "sup-f6-root") {
+        await db
+          .update(schema.nodeAttempts)
+          .set({ status: "Succeeded" })
+          .where(eq(schema.nodeAttempts.runId, rootId));
+        await db.insert(schema.nodeAttempts).values({
+          id: randomUUID(),
+          runId: rootId,
+          nodeId: "review",
+          nodeType: "human",
+          attempt: 1,
+          status: "Running",
+          startedAt: new Date(),
+        });
+        await db
+          .update(schema.runs)
+          .set({ currentStepId: "review" })
+          .where(eq(schema.runs.id, rootId));
+      }
+
+      return undefined;
+    });
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(rootId, "sup-f6-root", "implement"),
+      liveSessionRecord(childA, "sup-f6-a", "implement"),
+    ]);
+
+    await runSweepTick({ db, executionHosts: hosts });
+
+    const attempts = await db
+      .select()
+      .from(schema.nodeAttempts)
+      .where(eq(schema.nodeAttempts.runId, rootId));
+
+    // The completed attempt keeps its outcome; the live one is not stranded
+    // under a Failed run — the CAS lost on the step guard.
+    expect(attempts.find((a) => a.nodeId === "implement")?.status).toBe(
+      "Succeeded",
+    );
+    expect(attempts.find((a) => a.nodeId === "review")?.status).toBe(
+      "Running",
+    );
+    expect((await getRun(rootId)).status).toBe("Running");
   }, 60_000);
 
   it("D2: a raised run ceiling is not undone by the unraised tree ceiling on the next tick", async () => {
@@ -1593,7 +1722,7 @@ describe("budget watchdog — tree arbitration (D1/D2)", () => {
       liveSessionRecord(runId, "sup-d2", "implement"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     const run = await getRun(runId);
 
@@ -1628,7 +1757,7 @@ describe("budget watchdog — tree arbitration (D1/D2)", () => {
       liveSessionRecord(runId, "sup-f4-strict", "implement"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect((await getRun(runId)).status).toBe("Failed");
   }, 60_000);
@@ -1656,7 +1785,7 @@ describe("budget watchdog — tree arbitration (D1/D2)", () => {
       liveSessionRecord(runId, "sup-f4-loose", "implement"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     const run = await getRun(runId);
 
@@ -1683,7 +1812,7 @@ describe("budget watchdog — tree arbitration (D1/D2)", () => {
       liveSessionRecord(runId, "sup-d2-treeonly", "implement"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect((await getRun(runId)).status).toBe("Failed");
   }, 60_000);
@@ -1720,7 +1849,7 @@ describe("budget watchdog — tree arbitration (D1/D2)", () => {
       new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor 500"),
     );
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     // Nothing terminal, nothing cascaded — retried next tick.
     expect((await getRun(rootId)).status).toBe("Running");
@@ -1777,7 +1906,7 @@ describe("budget watchdog — tree arbitration (D1/D2)", () => {
       liveSessionRecord(childA, "sup-lostcas-a", "implement"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     const root = await getRun(rootId);
 
@@ -1810,7 +1939,7 @@ describe("budget watchdog — tree arbitration (D1/D2)", () => {
       liveSessionRecord(childB, "sup-lostcas-b", "implement"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     // The second breach acts: the tree budget is still live for this root.
     expect((await getRun(rootId)).status).toBe("Failed");
@@ -1840,7 +1969,7 @@ describe("budget watchdog — tree arbitration (D1/D2)", () => {
       liveSessionRecord(runId, "sup-d2-wall", "implement"),
     ]);
 
-    await runSweepTick({ db });
+    await runSweepTick({ db, executionHosts: hosts });
 
     expect((await getRun(runId)).status).toBe("Failed");
   }, 60_000);

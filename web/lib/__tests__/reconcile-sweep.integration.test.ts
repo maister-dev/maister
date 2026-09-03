@@ -42,6 +42,7 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
@@ -947,6 +948,7 @@ describe("runReconcileSweep (integration)", () => {
     expect(summary).toEqual({
       candidates: 0,
       crashed: 0,
+      abandoned: 0,
       redispatched: 0,
       reattached: 0,
       skipped: 0,
@@ -1144,6 +1146,323 @@ describe("runReconcileSweep (integration)", () => {
     // survives — neither is crashed.
     expect((await readRun(liveParent)).status).toBe("WaitingOnChildren");
     expect(summary.crashed).toBe(0);
+  }, 60_000);
+
+  it("does not leave a PENDING child stranded under an Abandoned parent", async () => {
+    // The orphaned-child arm (2.5) sits below the `Running`-only allow-list and
+    // the candidate query loads only Running/WaitingOnChildren, so a child in
+    // any OTHER non-terminal status under a terminal parent is never revisited.
+    // A Running orchestrator that crashes via worktree-gone / heartbeat does not
+    // cascade, so this shape is reachable: the queued child holds its pool slot
+    // forever and promoteNextPending will happily start it under a dead
+    // coordinator. This pins only "not stranded" — the recovery outcome is the
+    // arm's decision, not this test's.
+    const deadParent = await seedRun({
+      status: "Abandoned",
+      acpSessionId: null,
+      currentStepId: null,
+    });
+    const orphan = await seedChildRun(deadParent, "Pending");
+
+    const { opts } = await makeOpts({ worktreePaths: [], liveSessions: [] });
+
+    const summary = await runReconcileSweep(opts);
+
+    // Never started ⇒ nothing to recover ⇒ Abandoned, not a "Crashed" run
+    // offering a Recover that has no session to resume.
+    expect((await readRun(orphan)).status).toBe("Abandoned");
+    expect(summary.abandoned).toBe(1);
+  }, 60_000);
+
+  for (const status of ["NeedsInput", "NeedsInputIdle", "Review"] as const) {
+    it(`crashes a ${status} child stranded under a Crashed parent (recoverable, like the Running orphan)`, async () => {
+      // A paused or reviewing child waits on a resume / promotion decision its
+      // coordinator can no longer make. Crashed surfaces Recover-or-discard to
+      // the operator; the work is not destroyed.
+      const deadParent = await seedRun({
+        status: "Crashed",
+        acpSessionId: null,
+        currentStepId: null,
+      });
+      const orphan = await seedChildRun(deadParent, status);
+
+      const { opts } = await makeOpts({ worktreePaths: [], liveSessions: [] });
+
+      const summary = await runReconcileSweep(opts);
+
+      expect((await readRun(orphan)).status).toBe("Crashed");
+      expect(summary.crashed).toBeGreaterThanOrEqual(1);
+    }, 60_000);
+  }
+
+  it("leaves a HumanWorking child of a dead coordinator in place", async () => {
+    // A person holds that worktree. Terminalizing it would destroy their work;
+    // it is skipped (and logged at WARN — it needs a human to settle it).
+    const deadParent = await seedRun({
+      status: "Abandoned",
+      acpSessionId: null,
+      currentStepId: null,
+    });
+    const held = await seedChildRun(deadParent, "HumanWorking");
+
+    const { opts } = await makeOpts({ worktreePaths: [], liveSessions: [] });
+
+    const summary = await runReconcileSweep(opts);
+
+    expect((await readRun(held)).status).toBe("HumanWorking");
+    expect(summary.crashed).toBe(0);
+    expect(summary.abandoned).toBe(0);
+  }, 60_000);
+
+  it("cascades a parked sub-orchestrator's own children before crashing it, when ITS parent is gone", async () => {
+    // Depth 2: a dead root, a WaitingOnChildren sub-orchestrator, a Running
+    // grandchild. The sub-orchestrator's `orchestrator-waiting` skip used to
+    // win (it has a pending child) and the grandchild's orphan arm never fired
+    // (its OWN parent was non-terminal) — a whole sub-tree left running with
+    // no recovery. Routed through the stuck path, children first.
+    const deadRoot = await seedRun({
+      status: "Abandoned",
+      acpSessionId: null,
+      currentStepId: null,
+    });
+    const subOrchestrator = await seedChildRun(deadRoot, "WaitingOnChildren");
+    const grandchild = await seedChildRun(subOrchestrator, "Running");
+
+    await seedWorkspace(grandchild, "/worktrees/grandchild");
+
+    const { opts } = await makeOpts({
+      worktreePaths: ["/worktrees/grandchild"],
+      liveSessions: [],
+    });
+
+    await runReconcileSweep(opts);
+
+    expect((await readRun(grandchild)).status).toBe("Abandoned");
+    expect((await readRun(subOrchestrator)).status).toBe("Crashed");
+  }, 60_000);
+
+  it("recovers a NeedsInput child stranded under a FAILED parent", async () => {
+    // Failed is terminal too, and reachable without a cascade: a Running
+    // orchestrator that trips its own run-scope token ceiling is terminated to
+    // Failed by the run-scope arm, which never touches its children. Treating
+    // only Crashed/Abandoned as coordinator death left those children invisible.
+    const deadParent = await seedRun({
+      status: "Failed",
+      acpSessionId: null,
+      currentStepId: null,
+    });
+    const orphan = await seedChildRun(deadParent, "NeedsInput");
+
+    const { opts } = await makeOpts({ worktreePaths: [], liveSessions: [] });
+
+    await runReconcileSweep(opts);
+
+    expect((await readRun(orphan)).status).toBe("Crashed");
+  }, 60_000);
+
+  it("abandons a Pending child stranded under a DONE parent", async () => {
+    const deadParent = await seedRun({
+      status: "Done",
+      acpSessionId: null,
+      currentStepId: null,
+    });
+    const orphan = await seedChildRun(deadParent, "Pending");
+
+    const { opts } = await makeOpts({ worktreePaths: [], liveSessions: [] });
+
+    await runReconcileSweep(opts);
+
+    expect((await readRun(orphan)).status).toBe("Abandoned");
+  }, 60_000);
+  it("F1: a Running candidate that a racer moves before the crash CAS is neither counted crashed nor stripped of its assignments", async () => {
+    // The flow crash arm ignored crashRunningRun's result. A run that a
+    // concurrent transition moved between candidate load and the CAS (here:
+    // paused into NeedsInput with a fresh assignment) lost the status-guarded
+    // CAS — and then had its materializations cleaned, its assignments closed,
+    // a slot promoted and `crashed` incremented as if the crash had landed.
+    const racer = await seedRun({
+      status: "Running",
+      currentStepId: "implement",
+    });
+
+    // Absent from listWorktrees → classified `worktree-gone`.
+    await seedWorkspace(racer, "/worktrees/racer-f1");
+
+    const hitlRequestId = randomUUID();
+
+    await db.insert(schema.hitlRequests).values({
+      id: hitlRequestId,
+      runId: racer,
+      stepId: "implement",
+      kind: "permission",
+      prompt: "May I run the tests?",
+    });
+    await db.insert(schema.assignments).values({
+      id: randomUUID(),
+      projectId,
+      runId: racer,
+      hitlRequestId,
+      actionKind: "permission",
+      status: "open",
+      title: "Permission",
+    });
+
+    const { opts } = await makeOpts({ worktreePaths: [], liveSessions: [] });
+    // listWorktrees runs AFTER candidate load and BEFORE classification — the
+    // deterministic slot for a concurrent transition.
+    const listWorktrees = vi.fn(async (): Promise<WorktreeInfo[]> => {
+      await db
+        .update(runs)
+        .set({ status: "NeedsInput" })
+        .where(eq(runs.id, racer));
+
+      return [];
+    });
+
+    const summary = await runReconcileSweep({ ...opts, listWorktrees });
+
+    expect((await readRun(racer)).status).toBe("NeedsInput");
+    expect(summary.crashed).toBe(0);
+    expect(summary.skipped).toBe(1);
+
+    const [assignment] = await db
+      .select({ status: schema.assignments.status })
+      .from(schema.assignments)
+      .where(eq(schema.assignments.hitlRequestId, hitlRequestId));
+
+    expect(assignment?.status).toBe("open");
+  }, 60_000);
+
+  it("F2: stops an orphaned sub-orchestrator's OWN live session before cascading its children and crashing it", async () => {
+    // `orphaned-orchestrator` is the one crash reason that can carry a live
+    // session (coordinator death is checked before liveness). The cascade tears
+    // down the DESCENDANTS' sessions only, and nothing reaps a live session
+    // under a Crashed row — so the coordinator's own adapter kept spending
+    // under a terminal row with nothing left to coordinate.
+    const deadRoot = await seedRun({
+      status: "Abandoned",
+      acpSessionId: null,
+      currentStepId: null,
+    });
+    const subOrchestrator = await seedRun({
+      status: "WaitingOnChildren",
+      parentRunId: deadRoot,
+      acpSessionId: "acp-sub-f2",
+      currentStepId: "orchestrate",
+    });
+    const grandchild = await seedChildRun(subOrchestrator, "Running");
+    const stopSession = vi.fn(async () => {});
+    const { opts } = await makeOpts({
+      worktreePaths: [],
+      liveSessions: [liveRecord(subOrchestrator, "acp-sub-f2", "orchestrate")],
+      deleteSession: stopSession,
+    });
+
+    await runReconcileSweep(opts);
+
+    expect(stopSession).toHaveBeenCalledWith(`sup-${subOrchestrator}`);
+    expect((await readRun(subOrchestrator)).status).toBe("Crashed");
+    expect((await readRun(grandchild)).status).toBe("Abandoned");
+  }, 60_000);
+
+  it("F2: leaves an orphaned sub-orchestrator and its sub-tree untouched when its own session cannot be confirmed stopped", async () => {
+    // E5: a supervisor 5xx means "cannot confirm the agent stopped". Flipping
+    // the row (and cascading the children) with the coordinator still spending
+    // is exactly what the budget tree arm refuses to do — next tick instead.
+    const deadRoot = await seedRun({
+      status: "Abandoned",
+      acpSessionId: null,
+      currentStepId: null,
+    });
+    const subOrchestrator = await seedRun({
+      status: "WaitingOnChildren",
+      parentRunId: deadRoot,
+      acpSessionId: "acp-sub-f2-5xx",
+      currentStepId: "orchestrate",
+    });
+    const grandchild = await seedChildRun(subOrchestrator, "Running");
+    const stopSession = vi.fn(async () => {
+      throw new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor 503");
+    });
+    const { opts } = await makeOpts({
+      worktreePaths: [],
+      liveSessions: [
+        liveRecord(subOrchestrator, "acp-sub-f2-5xx", "orchestrate"),
+      ],
+      deleteSession: stopSession,
+    });
+
+    const summary = await runReconcileSweep(opts);
+
+    expect(stopSession).toHaveBeenCalledWith(`sup-${subOrchestrator}`);
+    expect((await readRun(subOrchestrator)).status).toBe("WaitingOnChildren");
+    expect((await readRun(grandchild)).status).toBe("Running");
+    expect(summary.crashed).toBe(0);
+  }, 60_000);
+
+  it("F4: crashing an agent orphan closes its open HITL row so the inbox stops asking for a dead run", async () => {
+    // The flow crash transition closes the run's open hitl_requests in the same
+    // transaction; the agent choke point only does so when asked. Left open, a
+    // permission request kept counting toward "Needs you" for a Crashed run.
+    const deadParent = await seedRun({
+      status: "Crashed",
+      acpSessionId: null,
+      currentStepId: null,
+    });
+    const orphan = await seedChildRun(deadParent, "NeedsInput");
+    const hitlRequestId = randomUUID();
+
+    await db.insert(schema.hitlRequests).values({
+      id: hitlRequestId,
+      runId: orphan,
+      stepId: "agent",
+      kind: "permission",
+      prompt: "May I write the file?",
+    });
+
+    const { opts } = await makeOpts({ worktreePaths: [], liveSessions: [] });
+
+    await runReconcileSweep(opts);
+
+    expect((await readRun(orphan)).status).toBe("Crashed");
+
+    const [request] = await db
+      .select({ respondedAt: schema.hitlRequests.respondedAt })
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.id, hitlRequestId));
+
+    expect(request?.respondedAt).toBeInstanceOf(Date);
+  }, 60_000);
+
+  it("F4: an agent orphan that a concurrent transition terminalizes before the finalize CAS is not counted as crashed", async () => {
+    // finalizeAgentRun returns `finalized: false` (no row touched) when its
+    // status CAS loses — or when the finalize is deferred to a pending
+    // human-ask activation, the same branch. The crash arm ignored that and
+    // reported a crash plus closed the run's assignments anyway. Here an
+    // operator abandons the orphan between candidate load and the CAS.
+    const deadParent = await seedRun({
+      status: "Crashed",
+      acpSessionId: null,
+      currentStepId: null,
+    });
+    const orphan = await seedChildRun(deadParent, "Running");
+
+    const { opts } = await makeOpts({ worktreePaths: [], liveSessions: [] });
+    const listWorktrees = vi.fn(async (): Promise<WorktreeInfo[]> => {
+      await db
+        .update(runs)
+        .set({ status: "Abandoned", endedAt: new Date() })
+        .where(eq(runs.id, orphan));
+
+      return [];
+    });
+
+    const summary = await runReconcileSweep({ ...opts, listWorktrees });
+
+    expect(listWorktrees).toHaveBeenCalled();
+    expect((await readRun(orphan)).status).toBe("Abandoned");
+    expect(summary.crashed).toBe(0);
+    expect(summary.skipped).toBe(1);
   }, 60_000);
 });
 

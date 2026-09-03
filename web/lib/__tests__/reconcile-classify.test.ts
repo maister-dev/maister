@@ -381,7 +381,17 @@ describe("classifyRunReconcile — M37 T7.1: orphaned child (parent gone)", () =
   // A Running child whose delegator parent is Crashed/Abandoned/missing can no
   // longer be coordinated → crash. Caught BEFORE the session/grace checks, so an
   // orphan is crashed even while its OWN session still looks live or fresh.
-  for (const parentStatus of ["Crashed", "Abandoned", null] as const) {
+  // Every TERMINAL parent status counts as gone, plus a missing row. Failed was
+  // the live hole: a Running orchestrator tripping its own run-scope budget, or
+  // failing at a node, goes Failed WITHOUT cascading — its children were never
+  // recovered because only Crashed/Abandoned were treated as coordinator death.
+  for (const parentStatus of [
+    "Crashed",
+    "Abandoned",
+    "Failed",
+    "Done",
+    null,
+  ] as const) {
     it(`Running child + parent ${String(parentStatus)} → crash / orphaned-child`, () => {
       expect(
         classifyRunReconcile(
@@ -444,6 +454,79 @@ describe("classifyRunReconcile — M37 T7.1: orphaned child (parent gone)", () =
         input({ parentRunId: null, parentStatus: null, liveSession: true }),
       ),
     ).toEqual({ action: "reattach", reason: "live-session" });
+  });
+});
+
+describe("classifyRunReconcile — orphans in a NON-Running status (per-status recovery)", () => {
+  // The Running-only allow-list used to hide every other orphan forever. The
+  // outcome is by status: a queued child never started (abandon); a paused or
+  // reviewing child waits on a decision its coordinator can no longer make
+  // (crash — recoverable); a HumanWorking child is a person's worktree (skip,
+  // loudly); a parked sub-orchestrator must cascade its own children first.
+  it("Pending child + parent gone → abandon / orphaned-child", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          runStatus: "Pending",
+          parentRunId: "parent-1",
+          parentStatus: "Abandoned",
+        }),
+      ),
+    ).toEqual({ action: "abandon", reason: "orphaned-child" });
+  });
+
+  for (const runStatus of ["NeedsInput", "NeedsInputIdle", "Review"] as const) {
+    it(`${runStatus} child + parent gone → crash / orphaned-child`, () => {
+      expect(
+        classifyRunReconcile(
+          input({
+            runStatus,
+            parentRunId: "parent-1",
+            parentStatus: "Crashed",
+          }),
+        ),
+      ).toEqual({ action: "crash", reason: "orphaned-child" });
+    });
+  }
+
+  it("HumanWorking child + parent gone → skip / orphaned-human-working (never terminalized)", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          runStatus: "HumanWorking",
+          parentRunId: "parent-1",
+          parentStatus: "Abandoned",
+        }),
+      ),
+    ).toEqual({ action: "skip", reason: "orphaned-human-working" });
+  });
+
+  it("parked sub-orchestrator + parent gone → crash / orphaned-orchestrator, even with a live session and pending children", () => {
+    // Liveness and pending children only say it COULD still be woken — by a
+    // parent that no longer exists. Checked first.
+    expect(
+      classifyRunReconcile(
+        input({
+          runStatus: "WaitingOnChildren",
+          parentRunId: "parent-1",
+          parentStatus: "Crashed",
+          liveSession: true,
+          hasPendingChildren: true,
+        }),
+      ),
+    ).toEqual({ action: "crash", reason: "orphaned-orchestrator" });
+  });
+
+  it("a NeedsInput child of a HEALTHY parent is still not-running (the arm fires only for orphans)", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          runStatus: "NeedsInput",
+          parentRunId: "parent-1",
+          parentStatus: "WaitingOnChildren",
+        }),
+      ),
+    ).toEqual({ action: "skip", reason: "not-running" });
   });
 });
 

@@ -6,7 +6,7 @@ import type {
   PlacementReason,
 } from "@/lib/execution-host";
 
-import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { nextKeepaliveAt } from "./keepalive-config";
@@ -23,10 +23,8 @@ import { gcAgeDays } from "@/lib/instance-config";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs, workspaces, runSyncAttempts } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { hitlRequests, runs, workspaces, runSyncAttempts } =
+  schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -1247,11 +1245,21 @@ export type CrashReason =
 export async function crashRunningRun(
   runId: string,
   reason: CrashReason,
-  opts: StateTransitionOptions = {},
+  opts: StateTransitionOptions & {
+    // The statuses the CAS admits. Default `Running` (the name's contract).
+    // Reconcile passes the status it CLASSIFIED the run in, so a paused or
+    // reviewing orphan of a dead coordinator can be crashed too — while a run
+    // that moved since classification loses the CAS instead of being clobbered.
+    fromStatuses?: readonly string[];
+  } = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
+  const fromStatuses = [...(opts.fromStatuses ?? ["Running"])];
 
-  log.debug({ runId, reason }, "[state-transitions.crashRunningRun] entry");
+  log.debug(
+    { runId, reason, fromStatuses },
+    "[state-transitions.crashRunningRun] entry",
+  );
 
   const crashed: boolean = await db.transaction(async (tx: Db) => {
     // M19 crash-recover (ADR-034): retain the crashed node id in
@@ -1269,7 +1277,7 @@ export async function crashRunningRun(
         currentStepId: null,
         resumeStartedAt: null,
       })
-      .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+      .where(and(eq(runs.id, runId), inArray(runs.status, fromStatuses)))
       .returning({
         id: runs.id,
         projectId: runs.projectId,
@@ -1280,6 +1288,17 @@ export async function crashRunningRun(
       });
 
     if (rows.length === 0) return false;
+
+    // A paused run (NeedsInput/NeedsInputIdle) carries an open hitl_requests
+    // row. Close it in the SAME tx, mirroring the keep-alive TTL abandon, so the
+    // operator surfaces show it as settled rather than answerable under a
+    // Crashed run. A no-op for a Running run, which has none open.
+    await tx
+      .update(hitlRequests)
+      .set({ respondedAt: new Date() })
+      .where(
+        and(eq(hitlRequests.runId, runId), isNull(hitlRequests.respondedAt)),
+      );
 
     await releaseSyncClaimOnTerminal(tx, runId, reason ?? "CRASH");
     await releaseAssignmentForRun(tx, runId, "crashed");
@@ -1314,7 +1333,7 @@ export async function crashRunningRun(
 
   if (!crashed) {
     log.warn(
-      { runId, from: "Running", to: "Crashed", reason },
+      { runId, from: fromStatuses, to: "Crashed", reason },
       "crashRunningRun: status-guard mismatch",
     );
 

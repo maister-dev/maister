@@ -771,6 +771,32 @@ makes the coordinator's job **collect only**:
   terminate that stamps `notified.tree` on a lost CAS permanently disables that
   root's tree enforcement. Sessions left live under an `Abandoned` row remain
   `reapAbandonedRunSessions`' job by design.
+- **Orphans of a dead coordinator are recovered per status, not only when
+  `Running`** **(Implemented)**. A `Running` orchestrator that crashes
+  (`worktree-gone`, heartbeat) does NOT cascade, so its children are stranded in
+  whatever status they hold; the reconcile sweep's orphan arm used to reach only
+  a `Running` child. It now loads children whose parent row is in ANY terminal
+  status (`Done | Failed | Crashed | Abandoned`) or missing — not only the two a
+  cascade writes: a `Running` orchestrator that trips its own run-scope budget
+  or fails at a node goes `Failed` without cascading, and a `Done` coordinator
+  can leave a child behind — and never the whole paused/queued/reviewing
+  population, which would starve real candidates under `PER_TICK_LIMIT`. The
+  loader's SQL and the classifier's predicate MUST derive from the same
+  `TERMINAL_RUN_STATUSES` set. It MUST resolve them by status: `Pending` → `Abandoned` (never started; nothing to recover, and
+  the scheduler must not start it under a dead coordinator); `NeedsInput` /
+  `NeedsInputIdle` / `Review` → `Crashed` (recoverable, like the `Running` orphan;
+  the open `hitl_requests` row is closed in the same transaction); `HumanWorking`
+  → left in place at WARN (a person holds the worktree); a parked
+  `WaitingOnChildren` sub-orchestrator → the stuck path, cascading its own
+  children first, or the orphan problem recurs one level down. A parked
+  sub-orchestrator is the one orphan that can still hold a LIVE session
+  (coordinator death is checked before liveness): its own session(s) MUST be
+  stopped BEFORE the cascade, with the budget tree arm's E5 discipline — a
+  supervisor 5xx leaves the whole sub-tree for the next tick, since nothing
+  reaps a live session under a `Crashed` row. Every crash arm MUST honour its
+  transition's result: a lost status CAS or a deferred agent finalize means
+  no row was touched, so materialization cleanup, assignment close, slot
+  promotion and the `crashed` count are skipped for it.
 - **Unresolvable/untrusted delegation target** → `MaisterError("PRECONDITION")`;
   no child run created (resolve+trust is physically separate from launch).
 - **Cyclic / over-fanout / over-depth DAG** → `MaisterError("CONFIG")` pre-tx; no

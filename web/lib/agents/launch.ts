@@ -2311,7 +2311,13 @@ type AgentFinalizeOptions = {
 const TERMINAL_CAS_SOURCE: Record<AgentTerminalOutcome, string[]> = {
   Done: ["Running", "NeedsInput"],
   Failed: ["Running", "NeedsInput"],
-  Crashed: ["Running", "NeedsInput"],
+  // Crashed also admits a checkpointed (NeedsInputIdle) or reviewing agent
+  // child: the reconcile sweep crashes an orphan of a dead coordinator in ANY
+  // paused/reviewing status (per-status orphan recovery), and it does so via
+  // this choke point so token revocation, HITL close and the agent-pool
+  // promote still run. Pending is deliberately absent — a never-started orphan
+  // is abandoned, not crashed.
+  Crashed: ["Running", "NeedsInput", "NeedsInputIdle", "Review"],
   Abandoned: [
     "Pending",
     "Running",

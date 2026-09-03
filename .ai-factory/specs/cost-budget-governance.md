@@ -294,10 +294,13 @@ These become the Expectations bullets in
   graph runner flips a root to `Review` on the normal execution path and takes no
   lifecycle claim, so nothing serializes against it) the flip is lost while the
   descendants are already irreversibly `Abandoned`. On that path the tree action
-  MUST still be recorded (`budget_state.notified.tree`), status-independently —
-  otherwise `alreadyActioned` cannot suppress a re-entry and the cascade re-runs
-  against an already-gutted tree. Sessions left live under an `Abandoned` row stay
-  the reconcile reaper's job (`reapAbandonedRunSessions`), by design.
+  MUST NOT be recorded on `budget_state.notified.tree` (amended 2026-09-03 — the
+  first cut stamped it and permanently disabled tree enforcement for the surviving
+  root, because `alreadyActioned` compares rungs with `>=` and nothing outranks
+  `terminate`). A re-entry re-running the idempotent cascade is the lesser harm;
+  the lost flip is logged at WARN naming the already-cascaded sub-tree. Sessions
+  left live under an `Abandoned` row stay the reconcile reaper's job
+  (`reapAbandonedRunSessions`), by design.
 - **E7.** `task` token spend = SUM of the four token columns over all
   `runs WHERE task_id = T`; `task.consecutiveFailures` = trailing streak of
   `Failed|Crashed|Abandoned` runs for the task.
@@ -312,6 +315,13 @@ These become the Expectations bullets in
 - **E10.** Raise-and-resume writes `budget_state.ceilingOverride` (additive, the
   snapshot stays immutable), logs `budget_raised`, clears `notified[scope]`, and
   the resumed run does not immediately re-escalate (effective ceiling raised).
+  A `run` raise also lifts a `tree` ceiling whose effective value EQUALS the
+  run's — the shape `applyDefaultBudgetForUnattended` seeds — or the unraised
+  tree bound terminates the run one tick later (amended 2026-09-03: exact
+  equality is the only coupling signal; the first cut coupled any tree ceiling
+  that was not stricter, silently widening an operator's independent, looser
+  aggregate cap). `budget_raised.coupledScopes` names every scope the raise
+  moved besides the breached one.
 - **E11.** The budget pass forces `reconcileRunCostRollups` for the candidate run
   before reading its meters, bounding overshoot to ~one tick. The reconcile is a
   cheap no-op (`missing-cost-file`) when nothing is on disk, so it runs per

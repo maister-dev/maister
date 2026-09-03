@@ -2023,6 +2023,14 @@ async function actBudgetTerminateTree(
         and(
           eq(runs.id, candidate.id),
           inArray(runs.status, ["Running", "WaitingOnChildren"]),
+          // Guard on the node `treeRootAttempt` was resolved for, exactly like
+          // the run-scope arm: a root that advanced to its next node while
+          // staying Running must LOSE this CAS, or the stale (already
+          // Succeeded) attempt is failed below under a run whose live node
+          // keeps running.
+          candidate.currentStepId
+            ? eq(runs.currentStepId, candidate.currentStepId)
+            : isNull(runs.currentStepId),
         ),
       )
       .returning({
