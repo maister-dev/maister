@@ -1,6 +1,6 @@
 {
-  "id": "9ad6edf2-ae1b-4435-8e4e-4bc7ef294588",
-  "prevId": "92ecf74f-0246-498c-9974-128bd6369731",
+  "id": "9b453f95-5d76-4f5f-9cc4-4936a7f8e1da",
+  "prevId": "e0841dec-269c-4f88-9044-88e27c6fd017",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -8955,12 +8955,6 @@
           "notNull": true,
           "default": "'default'"
         },
-        "sidecar_id": {
-          "name": "sidecar_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "readiness_status": {
           "name": "readiness_status",
           "type": "text",
@@ -9018,38 +9012,9 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "platform_acp_runners_sidecar_idx": {
-          "name": "platform_acp_runners_sidecar_idx",
-          "columns": [
-            {
-              "expression": "sidecar_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
-      "foreignKeys": {
-        "platform_acp_runners_sidecar_id_platform_router_sidecars_id_fk": {
-          "name": "platform_acp_runners_sidecar_id_platform_router_sidecars_id_fk",
-          "tableFrom": "platform_acp_runners",
-          "tableTo": "platform_router_sidecars",
-          "columnsFrom": [
-            "sidecar_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
+      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
@@ -9197,102 +9162,6 @@
           "with": {}
         }
       },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.platform_router_sidecars": {
-      "name": "platform_router_sidecars",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "lifecycle": {
-          "name": "lifecycle",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "command_preset": {
-          "name": "command_preset",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "config_path": {
-          "name": "config_path",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "base_url": {
-          "name": "base_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "healthcheck_url": {
-          "name": "healthcheck_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "auth_token_ref": {
-          "name": "auth_token_ref",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "readiness_status": {
-          "name": "readiness_status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'Unknown'"
-        },
-        "readiness_reasons": {
-          "name": "readiness_reasons",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
-        },
-        "enabled": {
-          "name": "enabled",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
