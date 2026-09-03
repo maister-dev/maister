@@ -800,7 +800,6 @@ describe("recoverExpiredGateChatTurns — process-restart fence", () => {
           status: "live",
           pid: 1,
           startedAt: new Date().toISOString(),
-          logPath: "/tmp/x.log",
           monotonicId: 1,
           acpSessionId: "acp-1",
         },

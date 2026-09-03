@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   errorBody,
+  LEGACY_SESSION_PATH_FIELDS,
+  legacySessionPathField,
   SendPromptRequestSchema,
   StartSessionRequestSchema,
   SupervisorDiagnosticsResponseSchema,
@@ -11,9 +13,7 @@ import {
 } from "../types";
 
 const validRequest = {
-  runId: "run-1",
-  projectSlug: "my-project",
-  worktreePath: "/repos/x",
+  executionWorkspaceId: "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c",
   stepId: "plan",
   executor: { agent: "claude", model: "claude-sonnet-4-6" },
 } as const;
@@ -39,48 +39,6 @@ describe("StartSessionRequestSchema", () => {
     expect(result.success).toBe(true);
   });
 
-  it("rejects empty runId", () => {
-    const result = StartSessionRequestSchema.safeParse({
-      ...validRequest,
-      runId: "",
-    });
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues[0].path).toEqual(["runId"]);
-    }
-  });
-
-  it("rejects non-kebab projectSlug", () => {
-    const result = StartSessionRequestSchema.safeParse({
-      ...validRequest,
-      projectSlug: "My_Project",
-    });
-
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects runId with path traversal segment", () => {
-    const result = StartSessionRequestSchema.safeParse({
-      ...validRequest,
-      runId: "../../../etc",
-    });
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues[0].path).toEqual(["runId"]);
-    }
-  });
-
-  it("rejects runId with forward slash", () => {
-    const result = StartSessionRequestSchema.safeParse({
-      ...validRequest,
-      runId: "run/with/slash",
-    });
-
-    expect(result.success).toBe(false);
-  });
-
   it("rejects stepId with path traversal segment", () => {
     const result = StartSessionRequestSchema.safeParse({
       ...validRequest,
@@ -102,19 +60,9 @@ describe("StartSessionRequestSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects runId longer than 128 chars", () => {
+  it("accepts stepId with dots, dashes, underscores", () => {
     const result = StartSessionRequestSchema.safeParse({
       ...validRequest,
-      runId: "a".repeat(129),
-    });
-
-    expect(result.success).toBe(false);
-  });
-
-  it("accepts runId/stepId with dots, dashes, underscores", () => {
-    const result = StartSessionRequestSchema.safeParse({
-      ...validRequest,
-      runId: "run_abc.1-2",
       stepId: "step.plan_v2-final",
     });
 
@@ -142,63 +90,10 @@ describe("StartSessionRequestSchema", () => {
     }
   });
 
-  it("rejects relative worktreePath", () => {
-    const result = StartSessionRequestSchema.safeParse({
-      ...validRequest,
-      worktreePath: "relative/path",
-    });
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues[0].path).toEqual(["worktreePath"]);
-    }
-  });
-
-  it("rejects worktreePath with .. segment", () => {
-    const result = StartSessionRequestSchema.safeParse({
-      ...validRequest,
-      worktreePath: "/repos/../etc",
-    });
-
-    expect(result.success).toBe(false);
-  });
-
-  it("accepts absolute worktreePath without traversal", () => {
-    const result = StartSessionRequestSchema.safeParse({
-      ...validRequest,
-      worktreePath: "/repos/myapp-wt",
-    });
-
-    expect(result.success).toBe(true);
-  });
-
-  // ADR-164: the handle form replaces the legacy path fields; the two are
-  // mutually exclusive during the transitional window.
-  it("accepts the handle form (executionWorkspaceId without any path field)", () => {
-    const result = StartSessionRequestSchema.safeParse({
-      executionWorkspaceId: "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c",
-      stepId: "plan",
-      executor: { agent: "claude", model: "claude-sonnet-4-6" },
-    });
-
-    expect(result.success).toBe(true);
-  });
-
-  it("rejects the handle form combined with a legacy path field", () => {
-    const result = StartSessionRequestSchema.safeParse({
-      ...validRequest,
-      executionWorkspaceId: "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c",
-    });
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues.map((i) => i.path[0])).toEqual(
-        expect.arrayContaining(["runId", "projectSlug", "worktreePath"]),
-      );
-    }
-  });
-
-  it("rejects a request with neither a handle nor the legacy path fields", () => {
+  // ADR-164 (strict): the handle is the ONLY workspace address; every former
+  // path field is an unknown key to the schema and is refused by name by the
+  // route guard (`legacy_field`) before the schema runs.
+  it("requires executionWorkspaceId", () => {
     const result = StartSessionRequestSchema.safeParse({
       stepId: "plan",
       executor: { agent: "claude", model: "claude-sonnet-4-6" },
@@ -206,10 +101,35 @@ describe("StartSessionRequestSchema", () => {
 
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues.map((i) => i.path[0])).toEqual(
-        expect.arrayContaining(["runId", "projectSlug", "worktreePath"]),
-      );
+      expect(result.error.issues[0].path).toEqual(["executionWorkspaceId"]);
     }
+  });
+
+  it("rejects every legacy path field as an unknown key", () => {
+    for (const field of LEGACY_SESSION_PATH_FIELDS) {
+      const result = StartSessionRequestSchema.safeParse({
+        ...validRequest,
+        [field]: field === "contextMounts" ? [] : "/repos/x",
+      });
+
+      expect(result.success, field).toBe(false);
+    }
+  });
+
+  it("legacySessionPathField names the first legacy field present, else null", () => {
+    expect(legacySessionPathField(validRequest)).toBeNull();
+    expect(legacySessionPathField(null)).toBeNull();
+    expect(legacySessionPathField("nope")).toBeNull();
+    expect(
+      legacySessionPathField({ ...validRequest, worktreePath: "/repos/x" }),
+    ).toBe("worktreePath");
+    expect(
+      legacySessionPathField({ runId: "r", projectSlug: "p", stepId: "s" }),
+    ).toBe("runId");
+    // `undefined` is absence, not presence.
+    expect(
+      legacySessionPathField({ ...validRequest, repoPath: undefined }),
+    ).toBeNull();
   });
 
   it("rejects a malformed executionWorkspaceId", () => {
@@ -261,18 +181,6 @@ describe("StartSessionRequestSchema", () => {
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.error.issues[0].path).toEqual(["resumeSessionId"]);
-    }
-  });
-
-  it("rejects projectSlug longer than 64 chars", () => {
-    const result = StartSessionRequestSchema.safeParse({
-      ...validRequest,
-      projectSlug: "a".repeat(65),
-    });
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues[0].path).toEqual(["projectSlug"]);
     }
   });
 
@@ -372,17 +280,9 @@ describe("StartSessionRequestSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects capabilityProfilePath outside worktreePath", () => {
-    const result = StartSessionRequestSchema.safeParse({
-      ...validRequest,
-      capabilityProfilePath: "/tmp/profile.json",
-    });
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues[0].path).toEqual(["capabilityProfilePath"]);
-    }
-  });
+  // The residual capabilityProfilePath is checked against the ADOPTED handle
+  // at resolve time (workspace-adoption W8: `outside_workspace`), not here —
+  // the schema no longer knows any worktree path.
 
   it("rejects unknown start-session fields", () => {
     const result = StartSessionRequestSchema.safeParse({

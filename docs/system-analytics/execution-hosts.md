@@ -376,6 +376,14 @@ sequenceDiagram
     Note over WEB,PG: parked or queued statuses are untouched — their next placement mints. A command issuer meeting a NULL assignment calls ensureAssignment(runId, legacy_backfill) with WARN legacy-run-assigned-lazily — deleted in Stage C.
 ```
 
+The backfilled row reuses the `assignmentId` the host stamped on the live
+session (the `GET /sessions` projection carries the fence of the create that
+spawned it) and copies its `executionWorkspaceId` forward, so later commands
+for the run pass the host's own fence without a re-adopt; the run's
+`run_sessions` row is linked to the new assignment. The backfill also runs on
+every `executionCommandReconcilePass`, which is how a host that was
+unreachable at boot is picked up later.
+
 ## Command kinds, routes, and completion signals
 
 | Kind | Route | Effect | Duration | Completion signal(s) |

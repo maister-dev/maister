@@ -1,8 +1,9 @@
 // ADR-157: read-only sibling-repo context mounts. Three supervisor-side
 // surfaces are covered here:
-//   1. the `contextMounts[]` acceptor (paired with the shape in
-//      docs/api/supervisor.openapi.yaml — the acceptor must neither permit what
-//      the spec forbids nor forbid what it permits);
+//   1. the `contextMounts[]` acceptor on the `workspace.adopt` payload (paired
+//      with the shape in docs/api/supervisor.openapi.yaml — the acceptor must
+//      neither permit what the spec forbids nor forbid what it permits; ADR-164
+//      moved the mounts off the session request onto the adopted handle);
 //   2. the derived `MAISTER_CONTEXT_REPOS` child env var (D8b: JSON, omitted
 //      entirely when the session has no mounts);
 //   3. **L2** — the UNCONDITIONAL write-class deny over every declared mount
@@ -33,12 +34,24 @@ import {
   takeContextMountPreamble,
 } from "../context-mounts";
 import { buildChildEnv } from "../spawn";
-import { StartSessionRequestSchema } from "../types";
+import { AdoptWorkspacePayloadSchema } from "../types";
+
+const BASE_ADOPT = {
+  runId: "run-1",
+  projectSlug: "consumer",
+  kind: "git_worktree",
+  path: "/repos/consumer/.maister/worktrees/run-1",
+  repoPath: "/repos/consumer",
+} as const;
 
 const BASE_SESSION = {
   runId: "run-1",
   projectSlug: "consumer",
-  worktreePath: "/repos/consumer/.maister/worktrees/run-1",
+  stepId: "plan",
+} as const;
+
+const BASE_REQUEST = {
+  executionWorkspaceId: "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c",
   stepId: "plan",
   executor: { agent: "claude", model: "claude-sonnet-4-6" },
 } as const;
@@ -55,10 +68,10 @@ const OPTIONS = [
   { optionId: "reject-1", kind: "reject_once", name: "Reject" },
 ];
 
-describe("StartSessionRequestSchema contextMounts (ADR-157 acceptor)", () => {
+describe("AdoptWorkspacePayloadSchema contextMounts (ADR-157 acceptor)", () => {
   it("accepts a resolved mount payload", () => {
-    const r = StartSessionRequestSchema.safeParse({
-      ...BASE_SESSION,
+    const r = AdoptWorkspacePayloadSchema.safeParse({
+      ...BASE_ADOPT,
       contextMounts: [MOUNT],
     });
 
@@ -67,7 +80,7 @@ describe("StartSessionRequestSchema contextMounts (ADR-157 acceptor)", () => {
   });
 
   it("stays valid without the field (existing senders unchanged)", () => {
-    const r = StartSessionRequestSchema.safeParse(BASE_SESSION);
+    const r = AdoptWorkspacePayloadSchema.safeParse(BASE_ADOPT);
 
     expect(r.success).toBe(true);
     expect(r.success && r.data.contextMounts).toBeUndefined();
@@ -81,14 +94,14 @@ describe("StartSessionRequestSchema contextMounts (ADR-157 acceptor)", () => {
     }));
 
     expect(
-      StartSessionRequestSchema.safeParse({
-        ...BASE_SESSION,
+      AdoptWorkspacePayloadSchema.safeParse({
+        ...BASE_ADOPT,
         contextMounts: mounts.slice(0, 8),
       }).success,
     ).toBe(true);
     expect(
-      StartSessionRequestSchema.safeParse({
-        ...BASE_SESSION,
+      AdoptWorkspacePayloadSchema.safeParse({
+        ...BASE_ADOPT,
         contextMounts: mounts,
       }).success,
     ).toBe(false);
@@ -96,8 +109,8 @@ describe("StartSessionRequestSchema contextMounts (ADR-157 acceptor)", () => {
 
   it("rejects a relative path and a `..` segment (worktreePathSchema shape)", () => {
     for (const path of ["relative/context/api", "/repos/x/../../etc"]) {
-      const r = StartSessionRequestSchema.safeParse({
-        ...BASE_SESSION,
+      const r = AdoptWorkspacePayloadSchema.safeParse({
+        ...BASE_ADOPT,
         contextMounts: [{ ...MOUNT, path }],
       });
 
@@ -114,8 +127,8 @@ describe("StartSessionRequestSchema contextMounts (ADR-157 acceptor)", () => {
 
     for (const entry of bad) {
       expect(
-        StartSessionRequestSchema.safeParse({
-          ...BASE_SESSION,
+        AdoptWorkspacePayloadSchema.safeParse({
+          ...BASE_ADOPT,
           contextMounts: [entry],
         }).success,
       ).toBe(false);
@@ -124,14 +137,14 @@ describe("StartSessionRequestSchema contextMounts (ADR-157 acceptor)", () => {
 
   it("accepts an abbreviated sha and rejects a shorter one (spec bounds 7..64)", () => {
     expect(
-      StartSessionRequestSchema.safeParse({
-        ...BASE_SESSION,
+      AdoptWorkspacePayloadSchema.safeParse({
+        ...BASE_ADOPT,
         contextMounts: [{ ...MOUNT, commit: "0f1e2d3" }],
       }).success,
     ).toBe(true);
     expect(
-      StartSessionRequestSchema.safeParse({
-        ...BASE_SESSION,
+      AdoptWorkspacePayloadSchema.safeParse({
+        ...BASE_ADOPT,
         contextMounts: [{ ...MOUNT, commit: "0f1e2d" }],
       }).success,
     ).toBe(false);
@@ -139,12 +152,14 @@ describe("StartSessionRequestSchema contextMounts (ADR-157 acceptor)", () => {
 });
 
 describe("buildChildEnv MAISTER_CONTEXT_REPOS (ADR-157 D8b)", () => {
-  it("injects the JSON array parsed from the REAL request schema", () => {
-    const parsed = StartSessionRequestSchema.parse({
-      ...BASE_SESSION,
+  it("injects the JSON array parsed from the REAL adopt schema", () => {
+    const parsed = AdoptWorkspacePayloadSchema.parse({
+      ...BASE_ADOPT,
       contextMounts: [MOUNT],
     });
-    const env = buildChildEnv(parsed);
+    const env = buildChildEnv(BASE_REQUEST, {
+      contextMounts: parsed.contextMounts,
+    });
 
     expect(JSON.parse(env.MAISTER_CONTEXT_REPOS ?? "null")).toEqual([MOUNT]);
   });
@@ -153,9 +168,12 @@ describe("buildChildEnv MAISTER_CONTEXT_REPOS (ADR-157 D8b)", () => {
     delete process.env.MAISTER_CONTEXT_REPOS;
 
     for (const contextMounts of [undefined, []]) {
-      const env = buildChildEnv(
-        StartSessionRequestSchema.parse({ ...BASE_SESSION, contextMounts }),
-      );
+      const env = buildChildEnv(BASE_REQUEST, {
+        contextMounts: AdoptWorkspacePayloadSchema.parse({
+          ...BASE_ADOPT,
+          contextMounts,
+        }).contextMounts,
+      });
 
       expect("MAISTER_CONTEXT_REPOS" in env).toBe(false);
     }

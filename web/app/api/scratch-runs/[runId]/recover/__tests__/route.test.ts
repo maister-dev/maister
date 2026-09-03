@@ -10,11 +10,17 @@ import {
   workspaces as workspacesTable,
 } from "@/lib/db/schema";
 import { sendScratchPromptAndProjectEvents } from "@/lib/scratch-runs/events";
-import {
-  checkSupervisorHealth,
-  createSession,
-  listSessions,
-} from "@/lib/supervisor-client";
+import { checkSupervisorHealth, listSessions } from "@/lib/supervisor-client";
+
+// ADR-164 (strict): the wire client no longer exports a bare `createSession`;
+// the execution-host module mock still routes the fake's create to this spy.
+const { createSession } = vi.hoisted(() => ({
+  createSession: vi.fn(async () => ({
+    sessionId: "sup-new",
+    pid: 123,
+    acpSessionId: "acp-new",
+  })),
+}));
 
 type Row = Record<string, unknown>;
 type Tables = {
@@ -155,11 +161,7 @@ vi.mock("@/lib/supervisor-client", () => ({
       sessions: { live: 0, exited: 0, crashed: 0 },
     },
   })),
-  createSession: vi.fn(async () => ({
-    sessionId: "sup-new",
-    pid: 123,
-    acpSessionId: "acp-new",
-  })),
+  createSession,
   listSessions: vi.fn(async () => []),
 }));
 
@@ -366,7 +368,6 @@ describe("POST /api/scratch-runs/[runId]/recover", () => {
         status: "live",
         pid: 123,
         startedAt: new Date().toISOString(),
-        logPath: "/tmp/log",
         monotonicId: 1,
         acpSessionId: "acp-old",
       },

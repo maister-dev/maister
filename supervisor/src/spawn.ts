@@ -19,7 +19,6 @@ import {
 } from "./types";
 import { getAdapterRuntime, resolveAdapterBinary } from "./adapter-registry";
 import { effectiveStartSessionRequest } from "./runner-provisioner";
-import { legacyResolution } from "./workspace-registry";
 
 const MAX_LINE_BYTES = 1024 * 1024;
 const TAIL_SCAN_BYTES = 64 * 1024;
@@ -85,9 +84,8 @@ export type SpawnSessionOptions = {
   sessionId: string;
   request: StartSessionRequest;
   // ADR-164: every run-dir path and the cwd come from the resolved workspace
-  // (an adopted handle, or the legacy request fields). Absent → derived from
-  // the legacy request fields (transitional; required after the strict flip).
-  workspace?: WorkspaceResolution;
+  // (the adopted handle) — the single path-derivation site.
+  workspace: WorkspaceResolution;
   runtimeRoot: string;
   logger: Logger;
   binaryOverride?: string;
@@ -105,13 +103,21 @@ export type SpawnSessionResult = {
   eventsLogPath: string;
 };
 
+// The request fields the child environment is layered from. The model-catalog
+// probe and the adapter smoke build one without a session, so the parameter is
+// the subset rather than a full StartSessionRequest.
+export type ChildEnvRequest = Pick<
+  StartSessionRequest,
+  "executor" | "capabilityProfilePath" | "adapterLaunch"
+>;
+
 export function buildChildEnv(
-  request: StartSessionRequest,
+  request: ChildEnvRequest,
   opts: { contextMounts?: ContextMount[] } = {},
 ): NodeJS.ProcessEnv {
-  // ADR-164: mounts come from the resolved workspace (the adopted handle, or
-  // the legacy request field) — the caller passes the resolved set.
-  const contextMounts = opts.contextMounts ?? request.contextMounts;
+  // ADR-164: mounts come from the resolved workspace (the adopted handle) —
+  // the request body never carries a path.
+  const contextMounts = opts.contextMounts;
 
   return {
     ...process.env,
@@ -132,34 +138,12 @@ export function buildChildEnv(
   };
 }
 
-function legacyResolutionFromRequest(
-  request: StartSessionRequest,
-  runtimeRoot: string,
-): WorkspaceResolution {
-  if (!request.runId || !request.projectSlug || !request.worktreePath) {
-    throw new SupervisorError(
-      "PRECONDITION",
-      "session request carries neither executionWorkspaceId nor the legacy path fields",
-    );
-  }
-
-  return legacyResolution(
-    request as StartSessionRequest & {
-      runId: string;
-      projectSlug: string;
-      worktreePath: string;
-    },
-    runtimeRoot,
-  );
-}
-
 export async function spawnSession(
   opts: SpawnSessionOptions,
 ): Promise<SpawnSessionResult> {
   const { sessionId, logger } = opts;
   const request = effectiveStartSessionRequest(opts.request);
-  const workspace =
-    opts.workspace ?? legacyResolutionFromRequest(request, opts.runtimeRoot);
+  const workspace = opts.workspace;
   const adapterRuntime = getAdapterRuntime(request.executor.agent);
   const binaryResolution = resolveAdapterBinary({
     adapter: request.executor.agent,

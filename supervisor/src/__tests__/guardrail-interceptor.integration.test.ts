@@ -6,59 +6,37 @@
 // deny/halt, proving the interceptor runs BEFORE B1 (not bypassed by auto-approve).
 
 import type { SessionEvent } from "../types";
+import type { Logger } from "pino";
 
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
-import Fastify, { type FastifyInstance } from "fastify";
 import pino from "pino";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { registerRoutes, type SpawnOverrides } from "../http-api";
 import { pendingPermissions } from "../pending-permissions";
-import { SessionRegistry } from "../registry";
 
-const FIXTURE_PATH = resolve(
-  fileURLToPath(import.meta.url),
-  "../../../test/fixtures/mock-acp-guardrail.mjs",
-);
-const silentLogger = pino({ level: "silent" });
+import {
+  adoptDirectory,
+  bootHost,
+  cleanupRuntimeRoot,
+  createBody,
+  envelope,
+  fenceFor,
+  postJson,
+  type BootedHost,
+} from "./_fixtures/boot-host";
 
-type BootResult = {
-  app: FastifyInstance;
-  url: string;
-  registry: SessionRegistry;
-  runtimeRoot: string;
-};
+const RUN_ID = "run-guard";
 
-let booted: BootResult | null = null;
+let booted: BootedHost | null = null;
 
 async function boot(
   fixtureArgs: string[],
-  logger = silentLogger,
-): Promise<BootResult> {
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "guardrail-it-"));
-  const registry = new SessionRegistry(logger);
-  const app = Fastify({ logger: false });
-  const spawnOverrides: SpawnOverrides = {
-    binary: "node",
-    preArgs: [FIXTURE_PATH, ...fixtureArgs],
-  };
-
-  registerRoutes({
-    app,
-    registry,
+  logger?: Logger,
+): Promise<BootedHost> {
+  booted = await bootHost({
+    fixture: "mock-acp-guardrail.mjs",
+    fixtureArgs,
     logger,
-    runtimeRoot,
-    killGraceMs: 2_000,
-    spawnOverrides,
   });
-
-  const url = await app.listen({ port: 0, host: "127.0.0.1" });
-
-  booted = { app, url, registry, runtimeRoot };
 
   return booted;
 }
@@ -67,43 +45,54 @@ type SessionOpts = {
   hooksConfig?: unknown;
   enforcementProfile?: unknown;
   autoApprovePermissions?: boolean;
-  worktreePath: string;
+  // The directory adopted as the session workspace (cwd + path-guard root).
+  cwd: string;
 };
 
-async function createSession(url: string, opts: SessionOpts): Promise<string> {
-  const res = await fetch(`${url}/sessions`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      runId: "run-guard",
-      projectSlug: "demo",
-      worktreePath: opts.worktreePath,
-      stepId: "step-1",
-      executor: { agent: "claude", model: "claude-sonnet-4-6" },
-      autoApprovePermissions: opts.autoApprovePermissions ?? true,
-      ...(opts.hooksConfig ? { hooksConfig: opts.hooksConfig } : {}),
-      ...(opts.enforcementProfile
-        ? { enforcementProfile: opts.enforcementProfile }
-        : {}),
-    }),
-  });
+async function createSession(
+  host: BootedHost,
+  opts: SessionOpts,
+): Promise<string> {
+  const handle = await adoptDirectory(
+    host,
+    { runId: RUN_ID },
+    { dir: opts.cwd },
+  );
+  const res = await postJson(
+    `${host.url}/sessions`,
+    envelope(
+      "session.create",
+      fenceFor(host, RUN_ID),
+      createBody(handle, {
+        autoApprovePermissions: opts.autoApprovePermissions ?? true,
+        ...(opts.hooksConfig ? { hooksConfig: opts.hooksConfig } : {}),
+        ...(opts.enforcementProfile
+          ? { enforcementProfile: opts.enforcementProfile }
+          : {}),
+      }),
+    ),
+  );
 
   if (res.status !== 201) {
-    throw new Error(`POST /sessions failed: ${res.status} ${await res.text()}`);
+    throw new Error(
+      `POST /sessions failed: ${res.status} ${JSON.stringify(res.body)}`,
+    );
   }
 
-  return ((await res.json()) as { sessionId: string }).sessionId;
+  return (res.body as { sessionId: string }).sessionId;
 }
 
-async function sendPrompt(url: string, sessionId: string): Promise<void> {
-  const res = await fetch(`${url}/sessions/${sessionId}/prompt`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ stepId: "step-1", prompt: "go" }),
-  });
+async function sendPrompt(host: BootedHost, sessionId: string): Promise<void> {
+  const res = await postJson(
+    `${host.url}/sessions/${sessionId}/prompt`,
+    envelope("session.prompt", fenceFor(host, RUN_ID), {
+      stepId: "step-1",
+      prompt: "go",
+    }),
+  );
 
   if (res.status !== 200) {
-    throw new Error(`prompt failed: ${res.status} ${await res.text()}`);
+    throw new Error(`prompt failed: ${res.status} ${JSON.stringify(res.body)}`);
   }
 }
 
@@ -116,26 +105,21 @@ function hookTrips(events: SessionEvent[]) {
 
 afterEach(async () => {
   if (!booted) return;
-  booted.registry.forEach((entry) => entry.child.kill("SIGKILL"));
-  await booted.app.close();
-  await rm(booted.runtimeRoot, { recursive: true, force: true });
+  await booted.stop();
+  await cleanupRuntimeRoot(booted.runtimeRoot);
   booted = null;
 });
 
 describe("guardrail interceptor (universal supervisor seam)", () => {
   it("repetition: halts at EXACTLY max identical tool calls (overriding auto-approve)", async () => {
-    const { url, registry, runtimeRoot } = await boot([
-      "--scenario",
-      "repetition",
-      "--count",
-      "5",
-    ]);
-    const sessionId = await createSession(url, {
-      worktreePath: runtimeRoot,
+    const host = await boot(["--scenario", "repetition", "--count", "5"]);
+    const { registry, runtimeRoot } = host;
+    const sessionId = await createSession(host, {
+      cwd: runtimeRoot,
       hooksConfig: { repetition: { max: 5 } },
     });
 
-    await sendPrompt(url, sessionId);
+    await sendPrompt(host, sessionId);
 
     const trips = hookTrips(registry.snapshotEvents(sessionId));
 
@@ -151,16 +135,14 @@ describe("guardrail interceptor (universal supervisor seam)", () => {
   });
 
   it("path_guard: denies an out-of-lane write but allows the in-lane one (deny-and-continue)", async () => {
-    const { url, registry, runtimeRoot } = await boot([
-      "--scenario",
-      "path_guard",
-    ]);
-    const sessionId = await createSession(url, {
-      worktreePath: runtimeRoot,
+    const host = await boot(["--scenario", "path_guard"]);
+    const { registry, runtimeRoot } = host;
+    const sessionId = await createSession(host, {
+      cwd: runtimeRoot,
       hooksConfig: { pathGuard: { allowedPaths: ["src/**"] } },
     });
 
-    await sendPrompt(url, sessionId);
+    await sendPrompt(host, sessionId);
 
     const trips = hookTrips(registry.snapshotEvents(sessionId));
 
@@ -176,18 +158,14 @@ describe("guardrail interceptor (universal supervisor seam)", () => {
   });
 
   it("no_progress: halts after maxTurns idle tool-call turns", async () => {
-    const { url, registry, runtimeRoot } = await boot([
-      "--scenario",
-      "no_progress",
-      "--count",
-      "4",
-    ]);
-    const sessionId = await createSession(url, {
-      worktreePath: runtimeRoot,
+    const host = await boot(["--scenario", "no_progress", "--count", "4"]);
+    const { registry, runtimeRoot } = host;
+    const sessionId = await createSession(host, {
+      cwd: runtimeRoot,
       hooksConfig: { noProgress: { maxTurns: 4 } },
     });
 
-    await sendPrompt(url, sessionId);
+    await sendPrompt(host, sessionId);
 
     const trips = hookTrips(registry.snapshotEvents(sessionId));
 
@@ -202,36 +180,28 @@ describe("guardrail interceptor (universal supervisor seam)", () => {
   });
 
   it("no hooksConfig: the interceptor is a no-op (byte-identical to a pre-hook run)", async () => {
-    const { url, registry, runtimeRoot } = await boot([
-      "--scenario",
-      "repetition",
-      "--count",
-      "5",
-    ]);
-    const sessionId = await createSession(url, {
-      worktreePath: runtimeRoot,
+    const host = await boot(["--scenario", "repetition", "--count", "5"]);
+    const { registry, runtimeRoot } = host;
+    const sessionId = await createSession(host, {
+      cwd: runtimeRoot,
       // No hooksConfig — every call just auto-approves via B1.
     });
 
-    await sendPrompt(url, sessionId);
+    await sendPrompt(host, sessionId);
 
     expect(hookTrips(registry.snapshotEvents(sessionId))).toHaveLength(0);
     expect(pendingPermissions.size(sessionId)).toBe(0);
   });
 
   it("repetition: trips exactly once, then short-circuits every later call (hookHalted)", async () => {
-    const { url, registry, runtimeRoot } = await boot([
-      "--scenario",
-      "repetition",
-      "--count",
-      "7",
-    ]);
-    const sessionId = await createSession(url, {
-      worktreePath: runtimeRoot,
+    const host = await boot(["--scenario", "repetition", "--count", "7"]);
+    const { registry, runtimeRoot } = host;
+    const sessionId = await createSession(host, {
+      cwd: runtimeRoot,
       hooksConfig: { repetition: { max: 5 } },
     });
 
-    await sendPrompt(url, sessionId);
+    await sendPrompt(host, sessionId);
 
     const trips = hookTrips(registry.snapshotEvents(sessionId));
 
@@ -243,14 +213,10 @@ describe("guardrail interceptor (universal supervisor seam)", () => {
   });
 
   it("halt cancels an OPEN permission deferred (no leaked deferred)", async () => {
-    const { url, registry, runtimeRoot } = await boot([
-      "--scenario",
-      "deferred_cancel",
-      "--count",
-      "3",
-    ]);
-    const sessionId = await createSession(url, {
-      worktreePath: runtimeRoot,
+    const host = await boot(["--scenario", "deferred_cancel", "--count", "3"]);
+    const { registry, runtimeRoot } = host;
+    const sessionId = await createSession(host, {
+      cwd: runtimeRoot,
       // autoApprove OFF → the write opens a real HITL deferred (no inline allow).
       autoApprovePermissions: false,
       hooksConfig: { noProgress: { maxTurns: 3 } },
@@ -258,7 +224,7 @@ describe("guardrail interceptor (universal supervisor seam)", () => {
 
     // Resolves ONLY because the no_progress halt cancels the open deferred (the
     // mock awaits it); a leak would hang the prompt past the test timeout.
-    await sendPrompt(url, sessionId);
+    await sendPrompt(host, sessionId);
 
     const trips = hookTrips(registry.snapshotEvents(sessionId));
 
@@ -271,18 +237,19 @@ describe("guardrail interceptor (universal supervisor seam)", () => {
   });
 
   it("no_progress: a write turn resets the counter (no trip below maxTurns idle)", async () => {
-    const { url, registry, runtimeRoot } = await boot([
+    const host = await boot([
       "--scenario",
       "no_progress_reset",
       "--count",
       "4",
     ]);
-    const sessionId = await createSession(url, {
-      worktreePath: runtimeRoot,
+    const { registry, runtimeRoot } = host;
+    const sessionId = await createSession(host, {
+      cwd: runtimeRoot,
       hooksConfig: { noProgress: { maxTurns: 4 } },
     });
 
-    await sendPrompt(url, sessionId);
+    await sendPrompt(host, sessionId);
 
     // 3 idle, one write (reset), 3 idle — never 4 consecutive idle → no halt.
     expect(hookTrips(registry.snapshotEvents(sessionId))).toHaveLength(0);
@@ -298,16 +265,17 @@ describe("guardrail interceptor (universal supervisor seam)", () => {
           warns.push(JSON.parse(s) as Record<string, unknown>),
       },
     );
-    const { url, registry, runtimeRoot } = await boot(
+    const host = await boot(
       ["--scenario", "path_guard_kindonly", "--count", "2"],
       captureLogger,
     );
-    const sessionId = await createSession(url, {
-      worktreePath: runtimeRoot,
+    const { registry, runtimeRoot } = host;
+    const sessionId = await createSession(host, {
+      cwd: runtimeRoot,
       hooksConfig: { pathGuard: { allowedPaths: ["src/**"] } },
     });
 
-    await sendPrompt(url, sessionId);
+    await sendPrompt(host, sessionId);
 
     const trips = hookTrips(registry.snapshotEvents(sessionId));
 
@@ -324,14 +292,15 @@ describe("guardrail interceptor (universal supervisor seam)", () => {
   });
 
   it("path_guard + repetition + no_progress armed: repeated identical denied writes halt EXACTLY once", async () => {
-    const { url, registry, runtimeRoot } = await boot([
+    const host = await boot([
       "--scenario",
       "path_guard_repeat",
       "--count",
       "6",
     ]);
-    const sessionId = await createSession(url, {
-      worktreePath: runtimeRoot,
+    const { registry, runtimeRoot } = host;
+    const sessionId = await createSession(host, {
+      cwd: runtimeRoot,
       hooksConfig: {
         pathGuard: { allowedPaths: ["src/**"] },
         repetition: { max: 3 },
@@ -339,7 +308,7 @@ describe("guardrail interceptor (universal supervisor seam)", () => {
       },
     });
 
-    await sendPrompt(url, sessionId);
+    await sendPrompt(host, sessionId);
 
     const trips = hookTrips(registry.snapshotEvents(sessionId));
     const halts = trips.filter((t) => t.disposition === "halt");
@@ -356,14 +325,15 @@ describe("guardrail interceptor (universal supervisor seam)", () => {
   });
 
   it("path_guard + no_progress only: repeated denied writes halt via the deny-branch no_progress tick", async () => {
-    const { url, registry, runtimeRoot } = await boot([
+    const host = await boot([
       "--scenario",
       "path_guard_repeat",
       "--count",
       "6",
     ]);
-    const sessionId = await createSession(url, {
-      worktreePath: runtimeRoot,
+    const { registry, runtimeRoot } = host;
+    const sessionId = await createSession(host, {
+      cwd: runtimeRoot,
       // No repetition armed → only the deny-branch no_progress tick can halt a
       // stream of denied writes (proves the tick fires independently).
       hooksConfig: {
@@ -372,7 +342,7 @@ describe("guardrail interceptor (universal supervisor seam)", () => {
       },
     });
 
-    await sendPrompt(url, sessionId);
+    await sendPrompt(host, sessionId);
 
     const trips = hookTrips(registry.snapshotEvents(sessionId));
     const halts = trips.filter((t) => t.disposition === "halt");
@@ -397,38 +367,34 @@ describe("capability_guard interceptor (ADR-130)", () => {
   };
 
   it("in-profile: auto-allows inline (zero HITL) even with autoApprove OFF", async () => {
-    const { url, registry, runtimeRoot } = await boot([
-      "--scenario",
-      "capability_allow",
-    ]);
-    const sessionId = await createSession(url, {
-      worktreePath: runtimeRoot,
+    const host = await boot(["--scenario", "capability_allow"]);
+    const { registry, runtimeRoot } = host;
+    const sessionId = await createSession(host, {
+      cwd: runtimeRoot,
       // autoApprove OFF → the ONLY way this in-profile call resolves without a
       // hanging HITL deferred is capability_guard's inline auto-allow.
       autoApprovePermissions: false,
       enforcementProfile: toolsProfile,
     });
 
-    await sendPrompt(url, sessionId);
+    await sendPrompt(host, sessionId);
 
     expect(hookTrips(registry.snapshotEvents(sessionId))).toHaveLength(0);
     expect(pendingPermissions.size(sessionId)).toBe(0);
   });
 
   it("out-of-profile: denies at the seam (wins over B1 auto-approve), run continues", async () => {
-    const { url, registry, runtimeRoot } = await boot([
-      "--scenario",
-      "capability_deny",
-    ]);
-    const sessionId = await createSession(url, {
-      worktreePath: runtimeRoot,
+    const host = await boot(["--scenario", "capability_deny"]);
+    const { registry, runtimeRoot } = host;
+    const sessionId = await createSession(host, {
+      cwd: runtimeRoot,
       // autoApprove ON → if capability_guard did NOT run before B1, this would
       // auto-approve with no trip. The deny trip proves the before-B1 ordering.
       autoApprovePermissions: true,
       enforcementProfile: toolsProfile,
     });
 
-    await sendPrompt(url, sessionId);
+    await sendPrompt(host, sessionId);
 
     const trips = hookTrips(registry.snapshotEvents(sessionId));
 
@@ -442,12 +408,10 @@ describe("capability_guard interceptor (ADR-130)", () => {
   });
 
   it("out-of-profile MCP server: denied by the mcps allow-list", async () => {
-    const { url, registry, runtimeRoot } = await boot([
-      "--scenario",
-      "capability_deny_mcp",
-    ]);
-    const sessionId = await createSession(url, {
-      worktreePath: runtimeRoot,
+    const host = await boot(["--scenario", "capability_deny_mcp"]);
+    const { registry, runtimeRoot } = host;
+    const sessionId = await createSession(host, {
+      cwd: runtimeRoot,
       enforcementProfile: {
         mcps: { allowServers: ["github"] },
         enforcedClasses: ["mcps"],
@@ -455,7 +419,7 @@ describe("capability_guard interceptor (ADR-130)", () => {
       },
     });
 
-    await sendPrompt(url, sessionId);
+    await sendPrompt(host, sessionId);
 
     const trips = hookTrips(registry.snapshotEvents(sessionId));
 
@@ -468,18 +432,19 @@ describe("capability_guard interceptor (ADR-130)", () => {
   });
 
   it("breaker: the Nth consecutive out-of-profile deny halts (once)", async () => {
-    const { url, registry, runtimeRoot } = await boot([
+    const host = await boot([
       "--scenario",
       "capability_deny_repeat",
       "--count",
       "5",
     ]);
-    const sessionId = await createSession(url, {
-      worktreePath: runtimeRoot,
+    const { registry, runtimeRoot } = host;
+    const sessionId = await createSession(host, {
+      cwd: runtimeRoot,
       enforcementProfile: toolsProfile, // escalationThreshold 3
     });
 
-    await sendPrompt(url, sessionId);
+    await sendPrompt(host, sessionId);
 
     const trips = hookTrips(registry.snapshotEvents(sessionId));
     const halts = trips.filter((t) => t.disposition === "halt");
@@ -494,16 +459,14 @@ describe("capability_guard interceptor (ADR-130)", () => {
   });
 
   it("D5 sentinel: a WRITE that executes without reaching the seam halts", async () => {
-    const { url, registry, runtimeRoot } = await boot([
-      "--scenario",
-      "capability_sentinel",
-    ]);
-    const sessionId = await createSession(url, {
-      worktreePath: runtimeRoot,
+    const host = await boot(["--scenario", "capability_sentinel"]);
+    const { registry, runtimeRoot } = host;
+    const sessionId = await createSession(host, {
+      cwd: runtimeRoot,
       enforcementProfile: toolsProfile,
     });
 
-    await sendPrompt(url, sessionId);
+    await sendPrompt(host, sessionId);
 
     const trips = hookTrips(registry.snapshotEvents(sessionId));
 
@@ -519,12 +482,10 @@ describe("capability_guard interceptor (ADR-130)", () => {
     // Regression for the pending-notification false-halt: the claude adapter
     // streams the pending tool_call BEFORE requestPermission, so keying the
     // sentinel off the pending event halted every legitimate write on its first.
-    const { url, registry, runtimeRoot } = await boot([
-      "--scenario",
-      "capability_arbitrated_write",
-    ]);
-    const sessionId = await createSession(url, {
-      worktreePath: runtimeRoot,
+    const host = await boot(["--scenario", "capability_arbitrated_write"]);
+    const { registry, runtimeRoot } = host;
+    const sessionId = await createSession(host, {
+      cwd: runtimeRoot,
       // "Edit" is in-profile, so capability_guard auto-allows the write AND the
       // sentinel must not fire → zero trips.
       enforcementProfile: {
@@ -534,19 +495,17 @@ describe("capability_guard interceptor (ADR-130)", () => {
       },
     });
 
-    await sendPrompt(url, sessionId);
+    await sendPrompt(host, sessionId);
 
     expect(hookTrips(registry.snapshotEvents(sessionId))).toHaveLength(0);
     expect(pendingPermissions.size(sessionId)).toBe(0);
   });
 
   it("anti-evasion: an ungoverned pass_through between denies does NOT reset the breaker (REQ-8)", async () => {
-    const { url, registry, runtimeRoot } = await boot([
-      "--scenario",
-      "capability_passthrough_no_reset",
-    ]);
-    const sessionId = await createSession(url, {
-      worktreePath: runtimeRoot,
+    const host = await boot(["--scenario", "capability_passthrough_no_reset"]);
+    const { registry, runtimeRoot } = host;
+    const sessionId = await createSession(host, {
+      cwd: runtimeRoot,
       // mcps-strict: a non-MCP call (WebFetch) is ungoverned → pass_through, which
       // must NOT reset capabilityDenyCount. autoApprove ON so the pass_through
       // resolves via B1 without a hanging deferred.
@@ -558,7 +517,7 @@ describe("capability_guard interceptor (ADR-130)", () => {
       },
     });
 
-    await sendPrompt(url, sessionId);
+    await sendPrompt(host, sessionId);
 
     const trips = hookTrips(registry.snapshotEvents(sessionId));
     const halts = trips.filter((t) => t.disposition === "halt");
@@ -574,17 +533,15 @@ describe("capability_guard interceptor (ADR-130)", () => {
   });
 
   it("no enforcementProfile: capability_guard is inert (auto-approves via B1)", async () => {
-    const { url, registry, runtimeRoot } = await boot([
-      "--scenario",
-      "capability_deny",
-    ]);
-    const sessionId = await createSession(url, {
-      worktreePath: runtimeRoot,
+    const host = await boot(["--scenario", "capability_deny"]);
+    const { registry, runtimeRoot } = host;
+    const sessionId = await createSession(host, {
+      cwd: runtimeRoot,
       autoApprovePermissions: true,
       // No enforcementProfile → capability_guard never runs.
     });
 
-    await sendPrompt(url, sessionId);
+    await sendPrompt(host, sessionId);
 
     expect(hookTrips(registry.snapshotEvents(sessionId))).toHaveLength(0);
     expect(pendingPermissions.size(sessionId)).toBe(0);

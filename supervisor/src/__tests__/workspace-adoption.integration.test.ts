@@ -275,7 +275,7 @@ describe("workspace adoption", () => {
     expect(released.body.details.reason).toBe("workspace_released");
   });
 
-  it("W7: a handle-form create derives cwd, step log, cost, confinement, and MAISTER_CONTEXT_REPOS exactly like the legacy form", async () => {
+  it("W7: a handle-form create derives cwd, step log, confinement roots, and the mounts from the handle", async () => {
     const l = await lab();
     const mounts = [
       {
@@ -285,30 +285,7 @@ describe("workspace adoption", () => {
         commit: "0123456789abcdef",
       },
     ];
-    const recordLegacy = join(l.root, "legacy.json");
-    const recordHandle = join(l.root, "handle.json");
-    const runLegacy = `${l.runId}-legacy`;
-    const legacyHost = await bootHost({
-      runtimeRoot: l.root,
-      workspaceRoots: [l.wtRoot],
-      fixture: "mock-acp-record-newsession.mjs",
-    });
-
-    booted.push(legacyHost);
-    process.env.MOCK_ACP_NEWSESSION_RECORD_PATH = recordLegacy;
-    const legacy = await postJson(`${legacyHost.url}/sessions`, {
-      runId: runLegacy,
-      projectSlug: "demo",
-      worktreePath: l.worktree,
-      repoPath: l.repo,
-      stepId: "plan",
-      executor: { agent: "claude", model: "claude-sonnet-4-6" },
-      contextMounts: mounts,
-    });
-
-    expect(legacy.status).toBe(201);
-    const legacyRecord = legacyHost.registry.get(legacy.body.sessionId)!.record;
-
+    const recordPath = join(l.root, "handle.json");
     const adopted = await adopt(l, {
       runId: l.runId,
       projectSlug: "demo",
@@ -325,7 +302,7 @@ describe("workspace adoption", () => {
     });
 
     booted.push(handleHost);
-    process.env.MOCK_ACP_NEWSESSION_RECORD_PATH = recordHandle;
+    process.env.MOCK_ACP_NEWSESSION_RECORD_PATH = recordPath;
     const handle = await postJson(
       `${handleHost.url}/sessions`,
       envelope(
@@ -341,23 +318,20 @@ describe("workspace adoption", () => {
 
     expect(handle.status).toBe(201);
     delete process.env.MOCK_ACP_NEWSESSION_RECORD_PATH;
-    const handleRecord = handleHost.registry.get(handle.body.sessionId)!.record;
+    const record = handleHost.registry.get(handle.body.sessionId)!.record;
+    const runDir = join(l.root, ".maister", "demo", "runs", l.runId);
 
-    expect(JSON.parse(await readFile(recordHandle, "utf8")).cwd).toBe(
-      JSON.parse(await readFile(recordLegacy, "utf8")).cwd,
-    );
-    expect(handleRecord.worktreePath).toBe(legacyRecord.worktreePath);
-    expect(handleRecord.repoPath).toBe(legacyRecord.repoPath);
-    expect(handleRecord.confineRoot).toBe(legacyRecord.confineRoot);
-    expect(handleRecord.contextMounts).toEqual(legacyRecord.contextMounts);
-    expect(handleRecord.logPath.replace(l.runId, "RUN")).toBe(
-      legacyRecord.logPath.replace(runLegacy, "RUN"),
-    );
-    expect(handleRecord.executionWorkspaceId).toBe(
-      adopted.body.executionWorkspaceId,
-    );
-    expect(handleRecord.runId).toBe(l.runId);
-    expect(handleRecord.projectSlug).toBe("demo");
+    // The adapter was spawned in the adopted worktree ...
+    expect(JSON.parse(await readFile(recordPath, "utf8")).cwd).toBe(l.worktree);
+    // ... and every session-bound path came from the handle, not the body.
+    expect(record.worktreePath).toBe(l.worktree);
+    expect(record.repoPath).toBe(l.repo);
+    expect(record.confineRoot).toBeUndefined();
+    expect(record.contextMounts).toEqual(mounts);
+    expect(record.logPath).toBe(join(runDir, "plan.log"));
+    expect(record.executionWorkspaceId).toBe(adopted.body.executionWorkspaceId);
+    expect(record.runId).toBe(l.runId);
+    expect(record.projectSlug).toBe("demo");
   });
 
   it("W8: a capabilityProfilePath outside the handle path is workspace_rejected:outside_workspace", async () => {

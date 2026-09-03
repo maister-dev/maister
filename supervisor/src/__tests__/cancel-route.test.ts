@@ -3,51 +3,44 @@
 // 404 path, the idempotent no-live-turn ack, and the live-session path (cancel
 // notification fired + pending permissions released + cancelRequested flag set).
 import type { ChildProcess } from "node:child_process";
-import type { FastifyInstance } from "fastify";
 
 import { EventEmitter } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import Fastify from "fastify";
 import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { openEventsLog } from "../events-log";
-import { registerRoutes } from "../http-api";
 import { pendingPermissions } from "../pending-permissions";
 import { SessionRegistry } from "../registry";
 
-const silentLogger = pino({ level: "silent" });
+import {
+  bootHost,
+  cleanupRuntimeRoot,
+  envelope,
+  fenceFor,
+  postJson,
+  type BootedHost,
+} from "./_fixtures/boot-host";
 
-type BootResult = {
-  app: FastifyInstance;
-  url: string;
-  registry: SessionRegistry;
-  runtimeRoot: string;
-};
+const silentLogger = pino({ level: "silent" });
 
 function makeFakeChild(): ChildProcess {
   return new EventEmitter() as unknown as ChildProcess;
 }
 
-async function bootBare(): Promise<BootResult> {
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "cancel-unit-"));
-  const registry = new SessionRegistry(silentLogger);
-  const app = Fastify({ logger: false });
+function bootBare(): Promise<BootedHost> {
+  return bootHost({ killGraceMs: 250 });
+}
 
-  registerRoutes({
-    app,
-    registry,
-    logger: silentLogger,
-    runtimeRoot,
-    killGraceMs: 250,
-  });
-
-  const address = await app.listen({ port: 0, host: "127.0.0.1" });
-
-  return { app, url: address, registry, runtimeRoot };
+// The registered fake records carry `runId: run-<sessionId>`; a fence must
+// name that run for the command to reach the route's own checks.
+function command(
+  kind: "session.input" | "session.cancel" | "session.checkpoint",
+  sessionId: string,
+  payload: Record<string, unknown> = {},
+) {
+  return envelope(kind, fenceFor(booted!, `run-${sessionId}`), payload);
 }
 
 async function registerSession(
@@ -91,7 +84,7 @@ async function registerSession(
   );
 }
 
-let booted: BootResult | null = null;
+let booted: BootedHost | null = null;
 
 beforeEach(() => {
   booted = null;
@@ -102,8 +95,8 @@ afterEach(async () => {
     for (const entry of booted.registry.list()) {
       pendingPermissions.purgeSession(entry.sessionId);
     }
-    await booted.app.close();
-    await rm(booted.runtimeRoot, { recursive: true, force: true });
+    await booted.stop();
+    await cleanupRuntimeRoot(booted.runtimeRoot);
     booted = null;
   }
 });
@@ -111,11 +104,10 @@ afterEach(async () => {
 describe("POST /sessions/:id/cancel", () => {
   it("returns 404 for an unknown session", async () => {
     booted = await bootBare();
-    const res = await fetch(`${booted.url}/sessions/missing/cancel`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    });
+    const res = await postJson(
+      `${booted.url}/sessions/missing/cancel`,
+      command("session.cancel", "missing"),
+    );
 
     expect(res.status).toBe(404);
   });
@@ -126,14 +118,13 @@ describe("POST /sessions/:id/cancel", () => {
       status: "exited",
     });
 
-    const res = await fetch(`${booted.url}/sessions/s-exited/cancel`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    });
+    const res = await postJson(
+      `${booted.url}/sessions/s-exited/cancel`,
+      command("session.cancel", "s-exited"),
+    );
 
     expect(res.status).toBe(200);
-    expect((await res.json()) as { cancelled: boolean }).toMatchObject({
+    expect(res.body as { cancelled: boolean }).toMatchObject({
       cancelled: false,
     });
   });
@@ -161,14 +152,13 @@ describe("POST /sessions/:id/cancel", () => {
       },
     );
 
-    const res = await fetch(`${booted.url}/sessions/s-live/cancel`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    });
+    const res = await postJson(
+      `${booted.url}/sessions/s-live/cancel`,
+      command("session.cancel", "s-live"),
+    );
 
     expect(res.status).toBe(200);
-    expect((await res.json()) as { cancelled: boolean }).toMatchObject({
+    expect(res.body as { cancelled: boolean }).toMatchObject({
       cancelled: true,
     });
     expect(cancel).toHaveBeenCalledWith({ sessionId: "acp-1" });

@@ -292,11 +292,36 @@ export function stubRelease(id: string): boolean {
   return true;
 }
 
-// Resolve the create request (handle form or legacy) to the fields the stub
-// records. A handle-form create against an unknown/released handle refuses.
+const LEGACY_SESSION_PATH_FIELDS = [
+  "runId",
+  "projectSlug",
+  "worktreePath",
+  "repoPath",
+  "confineRoot",
+  "contextMounts",
+];
+
+// Resolve the create request (handle form ONLY — ADR-164 strict) to the fields
+// the stub records. A legacy path field is refused by name; an unknown or
+// released handle refuses like the real host.
 export function stubResolveCreate(
   payload: any,
 ): { status: number; body: unknown } | { runId: string; request: any } {
+  const legacyField = LEGACY_SESSION_PATH_FIELDS.find(
+    (field) => payload[field] !== undefined,
+  );
+
+  if (legacyField) {
+    return {
+      status: 409,
+      body: {
+        code: "PRECONDITION",
+        message: `${legacyField} is a legacy path field; adopt the workspace and send executionWorkspaceId`,
+        details: { reason: "legacy_field", field: legacyField },
+      },
+    };
+  }
+
   if (typeof payload.executionWorkspaceId === "string") {
     const h = handles.get(payload.executionWorkspaceId);
 
@@ -330,8 +355,20 @@ export function stubResolveCreate(
     };
   }
 
-  return { runId: String(payload.runId ?? ""), request: payload };
+  return {
+    status: 409,
+    body: {
+      code: "PRECONDITION",
+      message: "executionWorkspaceId: Required",
+    },
+  };
 }
+
+export const MISSING_ENVELOPE_BODY = {
+  code: "PRECONDITION",
+  message: "missing envelope",
+  details: { reason: "missing_envelope" },
+};
 
 function sendJson(
   res: import("node:http").ServerResponse,
@@ -545,6 +582,12 @@ export function startStubSupervisor(): Promise<Server> {
     if (req.method === "POST" && req.url === "/sessions") {
       void readJsonBody(req).then((body) => {
         const env = stubEnvelope(body);
+
+        if (!env) {
+          sendJson(res, 409, MISSING_ENVELOPE_BODY);
+
+          return;
+        }
         const replay = stubReplay(env);
 
         if (replay) {

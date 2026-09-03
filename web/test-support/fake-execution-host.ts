@@ -410,7 +410,6 @@ export function createFakeExecutionHost(
         status: s.status,
         pid: 4242,
         startedAt: new Date(0).toISOString(),
-        logPath: "/dev/null",
         monotonicId,
         acpSessionId: s.acpSessionId,
       })) as unknown as SupervisorSessionRecord[];

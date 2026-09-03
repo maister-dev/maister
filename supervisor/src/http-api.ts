@@ -54,12 +54,13 @@ import {
   errorBody,
   httpStatusForCode,
   isEnvelopedBody,
-  isHandleForm,
+  legacySessionPathField,
   isSupervisorError,
   parseGateChatHitlId,
   SendPromptRequestSchema,
   StartSessionRequestSchema,
   SupervisorError,
+  toSessionListEntry,
   type AdoptWorkspaceResponse,
   type CommandEnvelope,
   type CommandKind,
@@ -71,7 +72,7 @@ import {
   type WorkspaceKind,
   type WorkspaceRecordResponse,
 } from "./types";
-import { legacyResolution, WorkspaceRegistry } from "./workspace-registry";
+import { WorkspaceRegistry } from "./workspace-registry";
 import { parseWorkspaceRoots } from "./workspace-roots";
 
 // ADR-164: the `payload` of every enveloped teardown-class command is `{}`.
@@ -182,7 +183,7 @@ type SessionIdParams = { Params: { id: string } };
 type CommandIdParams = { Params: { commandId: string } };
 
 type ParsedCommand<T> = {
-  envelope: CommandEnvelope | null;
+  envelope: CommandEnvelope;
   payload: T;
 };
 
@@ -415,29 +416,17 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   });
   const fenceLog = logger.child({ component: "execution-fence" });
 
-  // ADR-164 D4/D10 (transitional): an enveloped body is parsed as
-  // `CommandEnvelope` whose `payload` is the route's pre-ADR-164 body; a bare
-  // body is the legacy form, accepted with a WARN until the strict flip.
+  // ADR-164 D4/D10 (strict): every host-bound command is a `CommandEnvelope`
+  // whose `payload` is the route's body. A bare body is refused by name
+  // (`missing_envelope`) before anything else is read; `guard` lets a route
+  // refuse a payload shape by name too (the create route's `legacy_field`).
   function parseCommandBody<T>(
     body: unknown,
     kind: CommandKind,
     payloadSchema: ZodType<T, ZodTypeDef, unknown>,
-    options: { route: string; allowLegacy: boolean },
+    options: { route: string; guard?: (payload: unknown) => void },
   ): ParsedCommand<T> {
-    if (isEnvelopedBody(body)) {
-      const envelope = CommandEnvelopeSchema.parse(body);
-
-      if (envelope.command.kind !== kind) {
-        throw new SupervisorError(
-          "PRECONDITION",
-          `command.kind ${envelope.command.kind} does not match route kind ${kind}`,
-        );
-      }
-
-      return { envelope, payload: payloadSchema.parse(envelope.payload) };
-    }
-
-    if (!options.allowLegacy) {
+    if (!isEnvelopedBody(body)) {
       throw new SupervisorError(
         "PRECONDITION",
         `${options.route} requires a command envelope`,
@@ -445,9 +434,18 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       );
     }
 
-    logger.warn({ route: options.route, kind }, "legacy-unfenced-command");
+    const envelope = CommandEnvelopeSchema.parse(body);
 
-    return { envelope: null, payload: payloadSchema.parse(body ?? {}) };
+    if (envelope.command.kind !== kind) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        `command.kind ${envelope.command.kind} does not match route kind ${kind}`,
+      );
+    }
+
+    options.guard?.(envelope.payload);
+
+    return { envelope, payload: payloadSchema.parse(envelope.payload) };
   }
 
   // ADR-164 D5: the durable completion signal that is NOT the long-lived HTTP
@@ -518,45 +516,39 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     const { reply, parsed, kind, entry } = args;
     const envelope = parsed.envelope;
     const sessionKind = SESSION_COMMAND_KIND_SET.has(kind);
-    let outcome: CommandOutcome & { replayed: boolean };
+    const fence = applyFence({
+      state: hostState,
+      fence: envelope.fence,
+      expectedRunId: args.expectedRunId,
+      logger: fenceLog,
+    });
 
-    if (envelope) {
-      const fence = applyFence({
-        state: hostState,
-        fence: envelope.fence,
-        expectedRunId: args.expectedRunId,
+    if (fence.advanced) {
+      await evictLowerEpochSessions({
+        registry,
+        runId: envelope.fence.runId,
+        epoch: envelope.fence.assignmentEpoch,
+        killGraceMs,
         logger: fenceLog,
       });
-
-      if (fence.advanced) {
-        await evictLowerEpochSessions({
-          registry,
-          runId: envelope.fence.runId,
-          epoch: envelope.fence.assignmentEpoch,
-          killGraceMs,
-          logger: fenceLog,
-        });
-      }
-
-      outcome = await receipts.execute({
-        envelope,
-        onAccepted:
-          entry && kind === "session.prompt"
-            ? () =>
-                emitCommandEvent(entry, {
-                  type: "session.command",
-                  commandId: envelope.command.id,
-                  kind,
-                  phase: "accepted",
-                })
-            : undefined,
-        run: args.execute,
-      });
-    } else {
-      outcome = { ...(await args.execute()), replayed: false };
     }
 
-    if (envelope && entry && sessionKind && !outcome.replayed) {
+    const outcome = await receipts.execute({
+      envelope,
+      onAccepted:
+        entry && kind === "session.prompt"
+          ? () =>
+              emitCommandEvent(entry, {
+                type: "session.command",
+                commandId: envelope.command.id,
+                kind,
+                phase: "accepted",
+              })
+          : undefined,
+      run: args.execute,
+    });
+
+    if (entry && sessionKind && !outcome.replayed) {
       const status = commandStatus(outcome);
 
       emitCommandEvent(entry, {
@@ -650,7 +642,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       req.body,
       "workspace.adopt",
       AdoptWorkspacePayloadSchema,
-      { route: "POST /workspaces/adopt", allowLegacy: false },
+      { route: "POST /workspaces/adopt" },
     );
 
     await runCommand({
@@ -724,7 +716,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       req.body,
       "workspace.release",
       EmptyPayloadSchema,
-      { route: "DELETE /workspaces/:id", allowLegacy: false },
+      { route: "DELETE /workspaces/:id" },
     );
 
     await runCommand({
@@ -768,21 +760,31 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       req.body,
       "session.create",
       StartSessionRequestSchema,
-      { route: "POST /sessions", allowLegacy: true },
+      {
+        route: "POST /sessions",
+        guard: (payload) => {
+          const field = legacySessionPathField(payload);
+
+          if (field) {
+            throw new SupervisorError(
+              "PRECONDITION",
+              `${field} is a legacy path field; adopt the workspace and send executionWorkspaceId`,
+              { details: { reason: "legacy_field", field } },
+            );
+          }
+        },
+      },
     );
     const request = parsed.payload;
-    // ADR-164 D7: the handle form derives cwd, confinement roots, run dir, and
-    // mounts from the adopted handle (server state); the legacy form reads
-    // them off the request until the strict flip.
-    const workspace: WorkspaceResolution = isHandleForm(request)
-      ? workspaces.resolveForSession(request.executionWorkspaceId, {
-          stepId: request.stepId,
-          capabilityProfilePath: request.capabilityProfilePath,
-        })
-      : legacyResolution(
-          request as Parameters<typeof legacyResolution>[0],
-          runtimeRoot,
-        );
+    // ADR-164 D7: cwd, confinement roots, run dir, and mounts all derive from
+    // the adopted handle (server state) — the single path-derivation site.
+    const workspace: WorkspaceResolution = workspaces.resolveForSession(
+      request.executionWorkspaceId,
+      {
+        stepId: request.stepId,
+        capabilityProfilePath: request.capabilityProfilePath,
+      },
+    );
 
     await runCommand({
       reply,
@@ -806,11 +808,9 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         // M34 lifecycle: propagate the reap-on-end-turn flag onto the record so
         // the prompt handler can reap a one-shot agent session when its turn ends.
         record.reapOnEndTurn = request.reapOnEndTurn === true;
-        if (parsed.envelope) {
-          record.assignmentId = parsed.envelope.fence.assignmentId;
-          record.assignmentEpoch = parsed.envelope.fence.assignmentEpoch;
-          record.createdByCommandId = parsed.envelope.command.id;
-        }
+        record.assignmentId = parsed.envelope.fence.assignmentId;
+        record.assignmentEpoch = parsed.envelope.fence.assignmentEpoch;
+        record.createdByCommandId = parsed.envelope.command.id;
         registry.register(record, child, emitter, { eventsLog });
         attachHeartbeat({ sessionId, child, registry, logger });
         await attachCost({
@@ -950,7 +950,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       req.body,
       "session.prompt",
       SendPromptRequestSchema,
-      { route: "POST /sessions/:id/prompt", allowLegacy: true },
+      { route: "POST /sessions/:id/prompt" },
     );
     const body = parsed.payload;
     const connection = entry.connection;
@@ -1091,7 +1091,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
             stopReason: resp.stopReason,
             status: 200,
             readOnlyTurn: body.readOnlyTurn === true,
-            commandId: parsed.envelope?.command.id ?? null,
+            commandId: parsed.envelope.command.id,
           },
           "http POST /sessions/:id/prompt",
         );
@@ -1141,7 +1141,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       req.body,
       "session.cancel",
       EmptyPayloadSchema,
-      { route: "POST /sessions/:id/cancel", allowLegacy: true },
+      { route: "POST /sessions/:id/cancel" },
     );
 
     await runCommand({
@@ -1198,7 +1198,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       req.body,
       "session.delete",
       EmptyPayloadSchema,
-      { route: "DELETE /sessions/:id", allowLegacy: true },
+      { route: "DELETE /sessions/:id" },
     );
 
     await runCommand({
@@ -1231,7 +1231,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   });
 
   app.get("/sessions", async (_req, reply) => {
-    reply.send(registry.list());
+    reply.send(registry.list().map(toSessionListEntry));
   });
 
   app.get<SessionIdParams>("/sessions/:id/stream", (req, reply) => {
@@ -1328,7 +1328,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       req.body,
       "session.checkpoint",
       CheckpointBodySchema,
-      { route: "POST /sessions/:id/checkpoint", allowLegacy: true },
+      { route: "POST /sessions/:id/checkpoint" },
     );
     const entry = registry.get(sessionId);
 
@@ -1438,10 +1438,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       req.body,
       "session.input",
       InputBodySchema,
-      {
-        route: "POST /sessions/:id/input",
-        allowLegacy: true,
-      },
+      { route: "POST /sessions/:id/input" },
     );
     const body = parsed.payload;
     const entry = registry.get(sessionId);

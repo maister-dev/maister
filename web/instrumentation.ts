@@ -71,12 +71,18 @@ export async function register(): Promise<void> {
     // `unavailable`, never a boot failure), then close the command crash
     // windows (W1/W2/W4) before any recovery sweep re-drives a run. Grace 0:
     // no driver of THIS process exists yet, so every open row is stale.
-    const { ensureLocalExecutionHost, recoverExecutionCommands } = await import(
-      "@/lib/execution-host"
-    );
+    const {
+      adoptLegacyActiveRuns,
+      ensureLocalExecutionHost,
+      recoverExecutionCommands,
+    } = await import("@/lib/execution-host");
 
     await ensureLocalExecutionHost();
     await recoverExecutionCommands({ graceMs: 0 });
+    // ADR-164 D9: place pre-Stage-A active runs on the local host BEFORE the
+    // recovery sweeps re-drive them (evidence = a live host session; a run
+    // without one stays NULL for the reconcile sweep to classify).
+    await adoptLegacyActiveRuns();
 
     const { runResumeRecoverySweep, runTakeoverReturnRecoverySweep } =
       await import("@/lib/runs/resume-recovery");

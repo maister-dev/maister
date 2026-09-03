@@ -2,12 +2,7 @@ import type {
   ReadableStream as NodeReadableStream,
   WritableStream as NodeWritableStream,
 } from "node:stream/web";
-import type {
-  ExecutorAgent,
-  McpServerInput,
-  RunnerLaunch,
-  StartSessionRequest,
-} from "../src/types";
+import type { ExecutorAgent, RunnerLaunch } from "../src/types";
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { access, mkdtemp, rm } from "node:fs/promises";
@@ -616,16 +611,7 @@ export async function smokeAdapter(
   const cwd = await mkdtemp(join(tmpdir(), `maister-acp-smoke-${adapter}-`));
   const runner = runnerFor(adapter);
   const provisioned = provisionRunnerLaunch(runner);
-  const request: StartSessionRequest = {
-    runId: `smoke-${adapter}`,
-    projectSlug: "smoke",
-    worktreePath: cwd,
-    stepId: "smoke",
-    executor: provisioned.executor,
-    runner,
-    mcpServers: [] satisfies McpServerInput[],
-  };
-  const childEnv = buildChildEnv(request);
+  const childEnv = buildChildEnv({ executor: provisioned.executor });
   const child = spawn(resolvedPath, runtime.defaultArgs, {
     cwd,
     env: childEnv,

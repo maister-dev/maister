@@ -268,7 +268,6 @@ function liveSessionRecord(
     status: "live" as const,
     pid: 1,
     startedAt: "",
-    logPath: "",
     monotonicId: 0,
     acpSessionId,
   };

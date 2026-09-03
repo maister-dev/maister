@@ -375,7 +375,6 @@ function liveRecord(
     status: "live",
     pid: 1234,
     startedAt: new Date().toISOString(),
-    logPath: "/tmp/log",
     monotonicId: 1,
     acpSessionId,
   };

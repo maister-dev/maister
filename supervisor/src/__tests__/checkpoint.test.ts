@@ -3,54 +3,48 @@
 // schema, the registry reason marker, and the idempotency path.
 // Full process-spawn coverage lives in lifecycle.integration.test.ts.
 import type { ChildProcess } from "node:child_process";
-import type { FastifyInstance } from "fastify";
 
 import { EventEmitter } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import Fastify from "fastify";
 import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { openEventsLog } from "../events-log";
-import { CheckpointBodySchema, registerRoutes } from "../http-api";
+import { CheckpointBodySchema } from "../http-api";
 import {
   createPendingPermissions,
   pendingPermissions,
 } from "../pending-permissions";
 import { SessionRegistry } from "../registry";
 
-const silentLogger = pino({ level: "silent" });
+import {
+  bootHost,
+  cleanupRuntimeRoot,
+  envelope,
+  fenceFor,
+  postJson,
+  type BootedHost,
+} from "./_fixtures/boot-host";
 
-type BootResult = {
-  app: FastifyInstance;
-  url: string;
-  registry: SessionRegistry;
-  runtimeRoot: string;
-};
+const silentLogger = pino({ level: "silent" });
 
 function makeFakeChild(): ChildProcess {
   return new EventEmitter() as unknown as ChildProcess;
 }
 
-async function bootBare(): Promise<BootResult> {
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "checkpoint-unit-"));
-  const registry = new SessionRegistry(silentLogger);
-  const app = Fastify({ logger: false });
+function bootBare(): Promise<BootedHost> {
+  return bootHost({ killGraceMs: 250 });
+}
 
-  registerRoutes({
-    app,
-    registry,
-    logger: silentLogger,
-    runtimeRoot,
-    killGraceMs: 250,
-  });
-
-  const address = await app.listen({ port: 0, host: "127.0.0.1" });
-
-  return { app, url: address, registry, runtimeRoot };
+// The registered fake records carry `runId: run-<sessionId>`; a fence must
+// name that run for the command to reach the route's own checks.
+function command(
+  kind: "session.input" | "session.cancel" | "session.checkpoint",
+  sessionId: string,
+  payload: Record<string, unknown> = {},
+) {
+  return envelope(kind, fenceFor(booted!, `run-${sessionId}`), payload);
 }
 
 async function registerExitedSession(
@@ -85,7 +79,7 @@ async function registerExitedSession(
   );
 }
 
-let booted: BootResult | null = null;
+let booted: BootedHost | null = null;
 
 beforeEach(() => {
   booted = null;
@@ -96,8 +90,8 @@ afterEach(async () => {
     for (const entry of booted.registry.list()) {
       pendingPermissions.purgeSession(entry.sessionId);
     }
-    await booted.app.close();
-    await rm(booted.runtimeRoot, { recursive: true, force: true });
+    await booted.stop();
+    await cleanupRuntimeRoot(booted.runtimeRoot);
     booted = null;
   }
 });
@@ -146,22 +140,20 @@ describe("pendingPermissions.requestIds", () => {
 describe("POST /sessions/:id/checkpoint — direct route coverage", () => {
   it("unknown session returns 404 PRECONDITION", async () => {
     booted = await bootBare();
-    const res = await fetch(`${booted.url}/sessions/no-such/checkpoint`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    });
+    const res = await postJson(
+      `${booted.url}/sessions/no-such/checkpoint`,
+      command("session.checkpoint", "no-such"),
+    );
 
     expect(res.status).toBe(404);
   });
 
   it("body with unknown keys returns 409 PRECONDITION", async () => {
     booted = await bootBare();
-    const res = await fetch(`${booted.url}/sessions/anything/checkpoint`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ smuggled: "field" }),
-    });
+    const res = await postJson(
+      `${booted.url}/sessions/anything/checkpoint`,
+      command("session.checkpoint", "anything", { smuggled: "field" }),
+    );
 
     expect(res.status).toBe(409);
   });
@@ -169,14 +161,13 @@ describe("POST /sessions/:id/checkpoint — direct route coverage", () => {
   it("already-exited session returns 200 with alreadyCheckpointed: true (idempotency)", async () => {
     booted = await bootBare();
     await registerExitedSession(booted.registry, booted.runtimeRoot, "s-done");
-    const res = await fetch(`${booted.url}/sessions/s-done/checkpoint`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    });
+    const res = await postJson(
+      `${booted.url}/sessions/s-done/checkpoint`,
+      command("session.checkpoint", "s-done"),
+    );
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
+    const body = res.body as {
       alreadyCheckpointed: boolean;
       sessionId: string;
       monotonicId: number;

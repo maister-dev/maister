@@ -5,7 +5,7 @@ import type { HostState } from "../../host-state";
 import type { CommandEnvelope, CommandKind } from "../../types";
 
 import { randomUUID } from "node:crypto";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,6 +46,9 @@ export type BootHostOptions = {
   killGraceMs?: number;
   logger?: Logger;
   hostState?: HostState;
+  // Full override (e.g. a CCR manager without a binary override); wins over
+  // `fixture` / `fixtureArgs`.
+  spawnOverrides?: SpawnOverrides;
 };
 
 export async function bootHost(
@@ -63,7 +66,7 @@ export async function bootHost(
   const registry = new SessionRegistry(logger);
   const app = Fastify({ logger: false });
   const workspaceRoots = opts.workspaceRoots ?? [await realpath(runtimeRoot)];
-  const spawnOverrides: SpawnOverrides = {
+  const spawnOverrides: SpawnOverrides = opts.spawnOverrides ?? {
     binary: "node",
     preArgs: [
       join(FIXTURES_DIR, opts.fixture ?? "mock-acp-lifecycle.mjs"),
@@ -102,7 +105,13 @@ export async function bootHost(
       for (const entry of registry.list()) {
         const live = registry.get(entry.sessionId);
 
-        if (live && live.record.status === "live") live.child.kill("SIGKILL");
+        // Unit suites register fake children (bare EventEmitters) — nothing to kill.
+        if (
+          live?.record.status === "live" &&
+          typeof live.child.kill === "function"
+        ) {
+          live.child.kill("SIGKILL");
+        }
       }
       await app.close();
       if (ownsHostState) hostState.close();
@@ -157,19 +166,120 @@ export async function postJson(
   };
 }
 
-export function legacyCreateBody(
+export type HostTarget = {
+  url: string;
+  runtimeRoot: string;
+  hostState: Pick<HostState, "hostKey">;
+};
+
+export type FenceInput = {
+  runId: string;
+  hostKey?: string;
+  assignmentId?: string;
+  assignmentEpoch?: number;
+};
+
+export function fenceFor(
+  host: HostTarget,
   runId: string,
-  worktreePath: string,
+  extra: Omit<FenceInput, "runId"> = {},
+): FenceInput & { hostKey: string } {
+  return { hostKey: host.hostState.hostKey, runId, ...extra };
+}
+
+// ADR-164 strict contract: every create is handle-form, so a test adopts a
+// plain directory under the host's runtime root first. ONE handle per
+// (host key, run): later creates for the same run reuse it, which keeps a
+// test's fence choreography (epochs, assignment ids, foreign host keys) on the
+// CREATE rather than on the adoption. Adoption itself always fences with the
+// real host key and the first caller's assignment.
+const adoptedHandles = new Map<string, string>();
+
+export async function adoptDirectory(
+  host: HostTarget,
+  fence: FenceInput,
+  opts: { projectSlug?: string; dir?: string } = {},
+): Promise<string> {
+  const key = `${host.hostState.hostKey}:${fence.runId}`;
+  const cached = adoptedHandles.get(key);
+
+  if (cached) return cached;
+
+  const dir = opts.dir ?? join(host.runtimeRoot, "workspaces", fence.runId);
+
+  await mkdir(dir, { recursive: true });
+  const res = await postJson(
+    `${host.url}/workspaces/adopt`,
+    envelope(
+      "workspace.adopt",
+      { ...fence, hostKey: host.hostState.hostKey },
+      {
+        runId: fence.runId,
+        projectSlug: opts.projectSlug ?? "demo",
+        kind: "directory",
+        path: dir,
+      },
+    ),
+  );
+
+  if (res.status !== 200) {
+    throw new Error(
+      `POST /workspaces/adopt failed: ${res.status} ${JSON.stringify(res.body)}`,
+    );
+  }
+
+  const id = res.body.executionWorkspaceId as string;
+
+  adoptedHandles.set(key, id);
+
+  return id;
+}
+
+export function createBody(
+  executionWorkspaceId: string,
   extra: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
-    runId,
-    projectSlug: "demo",
-    worktreePath,
+    executionWorkspaceId,
     stepId: "step-1",
     executor: { agent: "claude", model: "claude-sonnet-4-6" },
     ...extra,
   };
+}
+
+export async function createEnvelope(
+  host: HostTarget,
+  fence: FenceInput,
+  extra: Record<string, unknown> = {},
+  commandId?: string,
+): Promise<CommandEnvelope> {
+  const executionWorkspaceId = await adoptDirectory(host, fence);
+
+  return envelope(
+    "session.create",
+    { hostKey: host.hostState.hostKey, ...fence },
+    createBody(executionWorkspaceId, extra),
+    commandId,
+  );
+}
+
+export async function createSession(
+  host: HostTarget,
+  fence: FenceInput,
+  extra: Record<string, unknown> = {},
+): Promise<{ sessionId: string; pid: number; acpSessionId: string }> {
+  const res = await postJson(
+    `${host.url}/sessions`,
+    await createEnvelope(host, fence, extra),
+  );
+
+  if (res.status !== 201) {
+    throw new Error(
+      `POST /sessions failed: ${res.status} ${JSON.stringify(res.body)}`,
+    );
+  }
+
+  return res.body as { sessionId: string; pid: number; acpSessionId: string };
 }
 
 export async function readEventsLog(

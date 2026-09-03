@@ -78,17 +78,11 @@ export type CommandReceipt = {
 
 export type DeleteSessionOutcome = "terminated" | "gone";
 
-// The handle form of `POST /sessions`: every path field is derived by the host
-// from the adopted handle (server state), never carried on the wire.
-export type CreateSessionPayload = Omit<
-  CreateSessionInput,
-  | "runId"
-  | "projectSlug"
-  | "worktreePath"
-  | "repoPath"
-  | "confineRoot"
-  | "contextMounts"
-> & { executionWorkspaceId: ExecutionWorkspaceId };
+// The `POST /sessions` payload: every path the host needs is derived from the
+// adopted handle (server state), never carried on the wire.
+export type CreateSessionPayload = CreateSessionInput & {
+  executionWorkspaceId: ExecutionWorkspaceId;
+};
 
 export type InputPayload = {
   kind: "permission";

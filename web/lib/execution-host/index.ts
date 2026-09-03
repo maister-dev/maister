@@ -72,6 +72,11 @@ export {
   releaseAssignmentForRun,
 } from "./assignments";
 export { ensureAssignment, mintPlacement } from "./placement";
+export type { LegacyBackfillOptions, LegacyBackfillSummary } from "./legacy";
+export {
+  adoptLegacyActiveRuns,
+  resetLegacyBackfillStateForTests,
+} from "./legacy";
 export {
   decideRegistration,
   ensureLocalExecutionHost,

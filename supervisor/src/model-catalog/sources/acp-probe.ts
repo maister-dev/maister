@@ -3,7 +3,7 @@ import type {
   ReadableStream as NodeReadableStream,
   WritableStream as NodeWritableStream,
 } from "node:stream/web";
-import type { RunnerLaunch, StartSessionRequest } from "../../types";
+import type { RunnerLaunch } from "../../types";
 
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -234,14 +234,7 @@ export function createAcpProbeSource(opts: AcpProbeOptions = {}): ModelSource {
 
       const cwd = await mkdtemp(join(tmpdir(), "maister-model-probe-"));
       const binary = opts.binaryOverride ?? runtime.defaultBinary;
-      const synthRequest: StartSessionRequest = {
-        runId: "model-probe",
-        projectSlug: "model-probe",
-        worktreePath: cwd,
-        stepId: "probe",
-        executor,
-      };
-      const childEnv = buildChildEnv(synthRequest);
+      const childEnv = buildChildEnv({ executor });
       const args = [...runtime.defaultArgs, ...(opts.preArgs ?? [])];
 
       try {

@@ -13,78 +13,41 @@
 // params it receives in `newSession` (cwd + mcpServers) to a JSON file. The
 // test reads that file back and asserts the github server arrived with its
 // env resolved to the sentinel value.
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
-import Fastify, { type FastifyInstance } from "fastify";
-import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { registerRoutes, type SpawnOverrides } from "../http-api";
-import { SessionRegistry } from "../registry";
-
-const FIXTURE_PATH = resolve(
-  fileURLToPath(import.meta.url),
-  "../../../test/fixtures/mock-acp-record-newsession.mjs",
-);
-const silentLogger = pino({ level: "silent" });
+import {
+  bootHost,
+  cleanupRuntimeRoot,
+  createEnvelope,
+  postJson,
+  type BootedHost,
+} from "./_fixtures/boot-host";
 
 const SENTINEL_ENV_KEY = "TEST_MCP_TOKEN";
 const SENTINEL_ENV_VALUE = "tok-123";
 
-type BootResult = {
-  app: FastifyInstance;
-  url: string;
-  registry: SessionRegistry;
-  runtimeRoot: string;
-  recordPath: string;
-};
+type BootResult = BootedHost & { recordPath: string };
 
 async function boot(): Promise<BootResult> {
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "supervisor-mcp-fwd-"));
-  const recordPath = join(runtimeRoot, "newsession-record.json");
-  const registry = new SessionRegistry(silentLogger);
-  const app = Fastify({ logger: false });
-  const spawnOverrides: SpawnOverrides = {
-    binary: "node",
-    preArgs: [FIXTURE_PATH],
+  const host = await bootHost({ fixture: "mock-acp-record-newsession.mjs" });
+
+  return {
+    ...host,
+    recordPath: join(host.runtimeRoot, "newsession-record.json"),
   };
-
-  registerRoutes({
-    app,
-    registry,
-    logger: silentLogger,
-    runtimeRoot,
-    killGraceMs: 2_000,
-    spawnOverrides,
-  });
-
-  const url = await app.listen({ port: 0, host: "127.0.0.1" });
-
-  return { app, url, registry, runtimeRoot, recordPath };
 }
 
 async function createSession(
-  url: string,
+  host: BootedHost,
   mcpServers: Array<Record<string, unknown>>,
-): Promise<Response> {
-  return fetch(`${url}/sessions`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      runId: "run-mcp",
-      projectSlug: "demo",
-      worktreePath: process.cwd(),
-      stepId: "step-1",
-      executor: {
-        agent: "claude",
-        model: "claude-sonnet-4-6",
-      },
-      mcpServers,
-    }),
-  });
+) {
+  return postJson(
+    `${host.url}/sessions`,
+    await createEnvelope(host, { runId: "run-mcp" }, { mcpServers }),
+  );
 }
 
 async function readRecord(
@@ -118,15 +81,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   if (booted) {
-    booted.registry.forEach((entry) => {
-      try {
-        entry.child.kill("SIGKILL");
-      } catch {
-        /* ignore */
-      }
-    });
-    await booted.app.close();
-    await rm(booted.runtimeRoot, { recursive: true, force: true });
+    await booted.stop();
+    await cleanupRuntimeRoot(booted.runtimeRoot);
     booted = null;
   }
   delete process.env[RECORD_PATH_ENV];
@@ -140,9 +96,9 @@ afterEach(async () => {
 describe("T4.5-C — supervisor forwards capability MCP servers to ACP adapter", () => {
   it("passes mcpServers to newSession with env resolved from supervisor process.env", async () => {
     if (!booted) throw new Error("not booted");
-    const { url, recordPath } = booted;
+    const { recordPath } = booted;
 
-    const res = await createSession(url, [
+    const res = await createSession(booted, [
       {
         name: "github",
         command: "github-mcp",
@@ -174,9 +130,9 @@ describe("T4.5-C — supervisor forwards capability MCP servers to ACP adapter",
 
   it("forwards literal env values, which win over same-named envKeys (M34, agent-token channel)", async () => {
     if (!booted) throw new Error("not booted");
-    const { url, recordPath } = booted;
+    const { recordPath } = booted;
 
-    const res = await createSession(url, [
+    const res = await createSession(booted, [
       {
         name: "maister",
         command: "maister-facade",
@@ -210,9 +166,9 @@ describe("T4.5-C — supervisor forwards capability MCP servers to ACP adapter",
 
   it("forwards an http MCP server as type=http with url + headers resolved from process.env (M27/T-C4)", async () => {
     if (!booted) throw new Error("not booted");
-    const { url, recordPath } = booted;
+    const { recordPath } = booted;
 
-    const res = await createSession(url, [
+    const res = await createSession(booted, [
       {
         name: "remote",
         transport: "http",

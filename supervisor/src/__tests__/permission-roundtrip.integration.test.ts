@@ -2,51 +2,45 @@ import type { ChildProcess } from "node:child_process";
 import type { SessionRecord } from "../types";
 
 import { EventEmitter } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import Fastify, { type FastifyInstance } from "fastify";
 import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { openEventsLog } from "../events-log";
-import { registerRoutes } from "../http-api";
 import {
   pendingPermissions,
   type AcpPermissionOutcome,
 } from "../pending-permissions";
 import { SessionRegistry } from "../registry";
 
-const silentLogger = pino({ level: "silent" });
+import {
+  bootHost,
+  cleanupRuntimeRoot,
+  envelope,
+  fenceFor,
+  postJson,
+  type BootedHost,
+} from "./_fixtures/boot-host";
 
-type BootResult = {
-  app: FastifyInstance;
-  url: string;
-  registry: SessionRegistry;
-  runtimeRoot: string;
-};
+const silentLogger = pino({ level: "silent" });
 
 function makeFakeChild(): ChildProcess {
   return new EventEmitter() as unknown as ChildProcess;
 }
 
-async function bootBare(): Promise<BootResult> {
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "permission-it-"));
-  const registry = new SessionRegistry(silentLogger);
-  const app = Fastify({ logger: false });
+function bootBare(): Promise<BootedHost> {
+  return bootHost({ killGraceMs: 1_000 });
+}
 
-  registerRoutes({
-    app,
-    registry,
-    logger: silentLogger,
-    runtimeRoot,
-    killGraceMs: 1_000,
-  });
-
-  const address = await app.listen({ port: 0, host: "127.0.0.1" });
-
-  return { app, url: address, registry, runtimeRoot };
+// The registered fake records carry `runId: run-<sessionId>`; a fence must
+// name that run for the command to reach the route's own checks.
+function command(
+  kind: "session.input" | "session.cancel" | "session.checkpoint",
+  sessionId: string,
+  payload: Record<string, unknown> = {},
+) {
+  return envelope(kind, fenceFor(booted!, `run-${sessionId}`), payload);
 }
 
 async function registerFakeSession(
@@ -112,7 +106,7 @@ function deferredCapture(): {
   };
 }
 
-let booted: BootResult | null = null;
+let booted: BootedHost | null = null;
 
 beforeEach(() => {
   booted = null;
@@ -123,8 +117,8 @@ afterEach(async () => {
     booted.registry.forEach((entry) => {
       pendingPermissions.purgeSession(entry.record.sessionId);
     });
-    await booted.app.close();
-    await rm(booted.runtimeRoot, { recursive: true, force: true });
+    await booted.stop();
+    await cleanupRuntimeRoot(booted.runtimeRoot);
     booted = null;
   }
 });
@@ -133,33 +127,31 @@ describe("POST /sessions/:id/input direct validation paths", () => {
   it("malformed body returns 409 PRECONDITION", async () => {
     booted = await bootBare();
     await registerFakeSession(booted.registry, booted.runtimeRoot, "s-mb");
-    const res = await fetch(`${booted.url}/sessions/s-mb/input`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({}),
-    });
+    const res = await postJson(
+      `${booted.url}/sessions/s-mb/input`,
+      command("session.input", "s-mb"),
+    );
 
     expect(res.status).toBe(409);
-    const body = (await res.json()) as { code: string };
+    const body = res.body as { code: string };
 
     expect(body.code).toBe("PRECONDITION");
   });
 
   it("unknown session returns 503 EXECUTOR_UNAVAILABLE (retryable — supervisor likely restarted)", async () => {
     booted = await bootBare();
-    const res = await fetch(`${booted.url}/sessions/no-such-session/input`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    const res = await postJson(
+      `${booted.url}/sessions/no-such-session/input`,
+      command("session.input", "no-such-session", {
         kind: "permission",
         action: "select",
         requestId: "00000000-0000-0000-0000-000000000000",
         optionId: "allow",
       }),
-    });
+    );
 
     expect(res.status).toBe(503);
-    const body = (await res.json()) as { code: string };
+    const body = res.body as { code: string };
 
     expect(body.code).toBe("EXECUTOR_UNAVAILABLE");
   });
@@ -167,19 +159,18 @@ describe("POST /sessions/:id/input direct validation paths", () => {
   it("known session with unknown requestId returns 410 HITL_TIMEOUT (terminal — deferred expired)", async () => {
     booted = await bootBare();
     await registerFakeSession(booted.registry, booted.runtimeRoot, "s-unknown");
-    const res = await fetch(`${booted.url}/sessions/s-unknown/input`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    const res = await postJson(
+      `${booted.url}/sessions/s-unknown/input`,
+      command("session.input", "s-unknown", {
         kind: "permission",
         action: "select",
         requestId: "11111111-1111-1111-1111-111111111111",
         optionId: "allow",
       }),
-    });
+    );
 
     expect(res.status).toBe(410);
-    const body = (await res.json()) as { code: string; message: string };
+    const body = res.body as { code: string; message: string };
 
     expect(body.code).toBe("HITL_TIMEOUT");
     expect(body.message).toContain("pending");
@@ -188,18 +179,17 @@ describe("POST /sessions/:id/input direct validation paths", () => {
   it("action=select without optionId returns 409 PRECONDITION", async () => {
     booted = await bootBare();
     await registerFakeSession(booted.registry, booted.runtimeRoot, "s-nopt");
-    const res = await fetch(`${booted.url}/sessions/s-nopt/input`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    const res = await postJson(
+      `${booted.url}/sessions/s-nopt/input`,
+      command("session.input", "s-nopt", {
         kind: "permission",
         action: "select",
         requestId: "22222222-2222-2222-2222-222222222222",
       }),
-    });
+    );
 
     expect(res.status).toBe(409);
-    const body = (await res.json()) as { code: string; message: string };
+    const body = res.body as { code: string; message: string };
 
     expect(body.code).toBe("PRECONDITION");
     expect(body.message).toContain("optionId");
@@ -208,19 +198,18 @@ describe("POST /sessions/:id/input direct validation paths", () => {
   it("action=cancel on unknown requestId returns 410 HITL_TIMEOUT", async () => {
     booted = await bootBare();
     await registerFakeSession(booted.registry, booted.runtimeRoot, "s-canc");
-    const res = await fetch(`${booted.url}/sessions/s-canc/input`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    const res = await postJson(
+      `${booted.url}/sessions/s-canc/input`,
+      command("session.input", "s-canc", {
         kind: "permission",
         action: "cancel",
         requestId: "33333333-3333-3333-3333-333333333333",
         reason: "test",
       }),
-    });
+    );
 
     expect(res.status).toBe(410);
-    const body = (await res.json()) as { code: string };
+    const body = res.body as { code: string };
 
     expect(body.code).toBe("HITL_TIMEOUT");
   });
@@ -237,16 +226,15 @@ describe("POST /sessions/:id/input permission round-trip", () => {
       reject: d.reject,
     });
 
-    const res = await fetch(`${booted.url}/sessions/s-select/input`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    const res = await postJson(
+      `${booted.url}/sessions/s-select/input`,
+      command("session.input", "s-select", {
         kind: "permission",
         action: "select",
         requestId: "req-1",
         optionId: "allow",
       }),
-    });
+    );
 
     expect(res.status).toBe(409);
     expect(d.resolved()).toBeNull();
@@ -264,16 +252,15 @@ describe("POST /sessions/:id/input permission round-trip", () => {
       reject: d.reject,
     });
 
-    const res = await fetch(`${booted.url}/sessions/s-uuid/input`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    const res = await postJson(
+      `${booted.url}/sessions/s-uuid/input`,
+      command("session.input", "s-uuid", {
         kind: "permission",
         action: "select",
         requestId,
         optionId: "allow",
       }),
-    });
+    );
 
     expect(res.status).toBe(200);
     const outcome = await d.promise;
@@ -292,16 +279,15 @@ describe("POST /sessions/:id/input permission round-trip", () => {
       reject: d.reject,
     });
 
-    const res = await fetch(`${booted.url}/sessions/s-cancel/input`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    const res = await postJson(
+      `${booted.url}/sessions/s-cancel/input`,
+      command("session.input", "s-cancel", {
         kind: "permission",
         action: "cancel",
         requestId,
         reason: "DB_PERSIST_FAILED",
       }),
-    });
+    );
 
     expect(res.status).toBe(200);
     const outcome = await d.promise;
@@ -320,29 +306,27 @@ describe("POST /sessions/:id/input permission round-trip", () => {
       reject: d.reject,
     });
 
-    const first = await fetch(`${booted.url}/sessions/s-idem/input`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    const first = await postJson(
+      `${booted.url}/sessions/s-idem/input`,
+      command("session.input", "s-idem", {
         kind: "permission",
         action: "select",
         requestId,
         optionId: "allow",
       }),
-    });
+    );
 
     expect(first.status).toBe(200);
 
-    const second = await fetch(`${booted.url}/sessions/s-idem/input`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    const second = await postJson(
+      `${booted.url}/sessions/s-idem/input`,
+      command("session.input", "s-idem", {
         kind: "permission",
         action: "select",
         requestId,
         optionId: "allow",
       }),
-    });
+    );
 
     expect(second.status).toBe(410);
   });
@@ -365,16 +349,15 @@ describe("POST /sessions/:id/input permission round-trip", () => {
       reject: dB.reject,
     });
 
-    const res = await fetch(`${booted.url}/sessions/sA/input`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    const res = await postJson(
+      `${booted.url}/sessions/sA/input`,
+      command("session.input", "sA", {
         kind: "permission",
         action: "select",
         requestId: reqIdA,
         optionId: "allow",
       }),
-    });
+    );
 
     expect(res.status).toBe(200);
     expect(dA.resolved()).toEqual({ outcome: "selected", optionId: "allow" });
@@ -394,16 +377,15 @@ describe("POST /sessions/:id/input permission round-trip", () => {
       reject: dA.reject,
     });
 
-    const res = await fetch(`${booted.url}/sessions/owner-B/input`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    const res = await postJson(
+      `${booted.url}/sessions/owner-B/input`,
+      command("session.input", "owner-B", {
         kind: "permission",
         action: "select",
         requestId: reqIdA,
         optionId: "allow",
       }),
-    });
+    );
 
     expect(res.status).toBe(410);
     expect(dA.resolved()).toBeNull();

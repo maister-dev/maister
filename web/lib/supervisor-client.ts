@@ -79,18 +79,12 @@ export type SupervisorRunnerInput = {
   env?: Record<string, string>;
 };
 
+// ADR-164 (strict): the `session.create` payload minus its workspace address —
+// `CreateSessionPayload` (execution-host contracts) adds the opaque
+// `executionWorkspaceId`. Every path the host needs (cwd, confinement roots,
+// run dir, context mounts) derives from the adopted handle; only the
+// `workspace.adopt` payload built in `execution-host/adoption.ts` carries one.
 export type CreateSessionInput = {
-  runId: string;
-  projectSlug: string;
-  worktreePath: string;
-  // Project repo root — forwarded so the supervisor can confine prompt
-  // content-block file URIs to repo ∪ worktree ∪ run dir (matches the web-side
-  // attachment confinement). Only set where the run can send file references.
-  repoPath?: string;
-  // M36 Phase 5 (ADR-097): SOLE content-block confinement root for a
-  // project-less local-package assistant session (the working dir). Replaces
-  // worktree ∪ repo as the supervisor allow-set; the run dir stays allowed.
-  confineRoot?: string;
   stepId: string;
   nodeAttemptId?: string;
   // M42 (ADR-114): the logical Flow session this ACP process serves — stamped
@@ -106,11 +100,6 @@ export type CreateSessionInput = {
   // write-class tool permission requests for the whole session. Used for
   // none/repo_read platform-agent runs.
   readOnlySession?: boolean;
-  // ADR-157 (L2): read-only sibling-repo checkouts this session may READ. The
-  // supervisor derives MAISTER_CONTEXT_REPOS for the ACP child from these and
-  // denies every write-class tool call resolving under a mount root —
-  // unconditionally, because L1 is unavailable to a writable-worktree session.
-  contextMounts?: ContextMountSnapshot[];
   // B1 (execution-policy permissions=auto_approve): the supervisor auto-selects
   // the allow option for every permission request in this session (below the
   // read-only layers). Derived from the run's execution_policy snapshot.
@@ -173,24 +162,33 @@ export type SendPromptInput = {
   readOnlyTurn?: boolean;
 };
 
+// The `GET /sessions` projection (mirrors `SessionListEntry` in
+// supervisor/src/types.ts). Host-private paths never cross the wire.
 export type SupervisorSessionRecord = {
   sessionId: string;
+  adapter?: string;
   runId: string;
   projectSlug: string;
   stepId: string;
   nodeAttemptId?: string;
+  sessionName?: string;
   status: "live" | "exited" | "crashed";
   pid: number;
   startedAt: string;
   exitedAt?: string;
   exitCode?: number | null;
   signal?: string | null;
-  logPath: string;
   monotonicId: number;
   // M8 T6: keep-alive sweeper looks up sessions by acpSessionId. This
   // is the post-newSession ACP-level id the supervisor stored on
   // record.acpSessionId; mirrors supervisor/src/types.ts.
   acpSessionId?: string;
+  // ADR-164: the adopted handle this session runs in and the fence of the
+  // `session.create` command that spawned it.
+  executionWorkspaceId?: string;
+  assignmentId?: string;
+  assignmentEpoch?: number;
+  createdByCommandId?: string;
 };
 
 export type SupervisorModelCatalogDraft = {
@@ -680,39 +678,6 @@ export async function checkSupervisorDiagnostics(
   }
 
   return { kind: "ready", diagnostics: parsed.data };
-}
-
-export async function createSession(
-  input: CreateSessionInput,
-): Promise<CreateSessionResult> {
-  const url = `${baseUrl()}/sessions`;
-
-  logger.debug({ url, runId: input.runId }, "createSession");
-  let res: Response;
-
-  // ADR-157: the supervisor's ContextMountSchema is `.strict()` and names its
-  // fields `{slug, path, ref, commit}`. Callers hold the DB snapshot shape
-  // (`{projectId, repoPath, mountPath, committish, …}`), so it MUST be projected
-  // here — the one place the body is built — or the request 400s on unknown keys.
-  const body =
-    input.contextMounts && input.contextMounts.length > 0
-      ? { ...input, contextMounts: contextMountsToWire(input.contextMounts) }
-      : input;
-
-  try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  } catch (err) {
-    throw networkErrorToMaister(err, "createSession");
-  }
-  if (!res.ok) {
-    throw await asMaisterError(res, "ACP_PROTOCOL");
-  }
-
-  return (await res.json()) as CreateSessionResult;
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {

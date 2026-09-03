@@ -240,7 +240,6 @@ describe("POST /api/v1/ext/projects/[slug]/tasks/[taskId]/human-asks", () => {
         status: "live",
         pid: 1,
         startedAt: new Date().toISOString(),
-        logPath: "/tmp/supervisor.log",
         monotonicId: 1,
         acpSessionId: seeded.sessionId,
       },

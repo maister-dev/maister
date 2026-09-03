@@ -1,5 +1,3 @@
-import path from "node:path";
-
 import { z } from "zod";
 
 const EXECUTOR_AGENTS = [
@@ -222,9 +220,10 @@ const projectSlugSchema = z
   .max(64)
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "projectSlug must be kebab-case");
 
-// The legacy path fields are the "transitional" form of the request; the
-// handle form (`executionWorkspaceId`) is the ADR-164 contract. The two are
-// mutually exclusive; the strict flip removes the legacy form.
+// ADR-164 (strict): a session addresses its workspace ONLY through the opaque
+// handle minted by `POST /workspaces/adopt`. The pre-ADR-164 path fields are
+// refused by name (`legacy_field`) BEFORE schema parsing so a stale client
+// learns which field to drop instead of a generic unknown-key rejection.
 export const LEGACY_SESSION_PATH_FIELDS = [
   "runId",
   "projectSlug",
@@ -234,23 +233,21 @@ export const LEGACY_SESSION_PATH_FIELDS = [
   "contextMounts",
 ] as const;
 
+export function legacySessionPathField(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+
+  for (const field of LEGACY_SESSION_PATH_FIELDS) {
+    if ((payload as Record<string, unknown>)[field] !== undefined) return field;
+  }
+
+  return null;
+}
+
 export const StartSessionRequestSchema = z
   .object({
-    // ADR-164: opaque handle minted by POST /workspaces/adopt (handle form).
-    executionWorkspaceId: ExecutionWorkspaceIdSchema.optional(),
-    runId: runIdSchema.optional(),
-    projectSlug: projectSlugSchema.optional(),
-    worktreePath: worktreePathSchema.optional(),
-    // Optional project repo root — the supervisor adds it to the prompt
-    // content-block confinement allow-set so a `file_path` attachment that
-    // references a repo-absolute path (web-confined to repo OR worktree) is not
-    // rejected. Absent for runs that never send file references.
-    repoPath: worktreePathSchema.optional(),
-    // M36 Phase 5 (ADR-097): SOLE content-block file-URI confinement root for a
-    // project-less local-package assistant session (the local-package working
-    // dir). When set it replaces worktree ∪ repo as the allow-set. The cwd is
-    // still `worktreePath` (= the working dir for these sessions).
-    confineRoot: worktreePathSchema.optional(),
+    // The host derives cwd, the confinement roots, the run dir, and the
+    // context mounts from the handle (server state) — never from the body.
+    executionWorkspaceId: ExecutionWorkspaceIdSchema,
     stepId: z
       .string()
       .min(1)
@@ -282,6 +279,8 @@ export const StartSessionRequestSchema = z
         "resumeSessionId must match /^[A-Za-z0-9._-]+$/",
       )
       .optional(),
+    // The one residual path in the request: it MUST resolve inside the
+    // handle's path (WorkspaceRegistry.resolveForSession → `outside_workspace`).
     capabilityProfilePath: worktreePathSchema.optional(),
     adapterLaunch: AdapterLaunchSchema.optional(),
     mcpServers: z.array(McpServerInputSchema).max(64).optional(),
@@ -323,60 +322,8 @@ export const StartSessionRequestSchema = z
     // ADR-130: derived capability-enforcement set (capability_guard). Optional;
     // present only for a session enforcing strict tools/mcps.
     enforcementProfile: SessionEnforcementProfileSchema.optional(),
-    // ADR-157: read-only sibling-repo context mounts (max 8). Non-empty arms
-    // three derived behaviors: `MAISTER_CONTEXT_REPOS` on the ACP child, the
-    // one-shot prompt preamble, and the UNCONDITIONAL write-class path guard in
-    // the permission handler.
-    contextMounts: z.array(ContextMountSchema).max(8).optional(),
   })
-  .strict()
-  .superRefine((value, ctx) => {
-    if (value.executionWorkspaceId) {
-      for (const field of LEGACY_SESSION_PATH_FIELDS) {
-        if (value[field] !== undefined) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: [field],
-            message: `${field} must be absent when executionWorkspaceId is set`,
-          });
-        }
-      }
-
-      // The residual path is checked against the handle at resolve time.
-      return;
-    }
-
-    for (const field of ["runId", "projectSlug", "worktreePath"] as const) {
-      if (value[field] === undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [field],
-          message: `${field} is required without executionWorkspaceId`,
-        });
-      }
-    }
-
-    if (!value.capabilityProfilePath || !value.worktreePath) return;
-
-    const relative = path.relative(
-      value.worktreePath,
-      value.capabilityProfilePath,
-    );
-
-    if (relative.startsWith("..") || path.isAbsolute(relative)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["capabilityProfilePath"],
-        message: "capabilityProfilePath must be inside worktreePath",
-      });
-    }
-  });
-
-export function isHandleForm(
-  request: Pick<StartSessionRequest, "executionWorkspaceId">,
-): request is StartSessionRequest & { executionWorkspaceId: string } {
-  return typeof request.executionWorkspaceId === "string";
-}
+  .strict();
 
 // --- ADR-164: execution-host contract (envelope, fences, adoption, receipts) ---
 
@@ -475,6 +422,8 @@ export type WorkspaceRule = (typeof WORKSPACE_RULES)[number];
 export type SupervisorErrorDetails = {
   reason?: ReasonToken;
   rule?: WorkspaceRule;
+  // `legacy_field`: the refused pre-ADR-164 path field, by name.
+  field?: string;
   runId?: string;
   commandEpoch?: number;
   hostEpoch?: number;
@@ -896,6 +845,56 @@ export type SessionRecord = {
   // Cleared once the prompt request settles.
   cancelRequested?: boolean;
 };
+
+// ADR-164: the `GET /sessions` projection. Host-private paths (`logPath`,
+// `worktreePath`, `repoPath`, `confineRoot`, `contextMounts`) never leave the
+// host; the web tier addresses the workspace through `executionWorkspaceId`.
+export type SessionListEntry = Pick<
+  SessionRecord,
+  | "sessionId"
+  | "adapter"
+  | "runId"
+  | "projectSlug"
+  | "stepId"
+  | "nodeAttemptId"
+  | "sessionName"
+  | "status"
+  | "pid"
+  | "startedAt"
+  | "exitedAt"
+  | "exitCode"
+  | "signal"
+  | "monotonicId"
+  | "acpSessionId"
+  | "executionWorkspaceId"
+  | "assignmentId"
+  | "assignmentEpoch"
+  | "createdByCommandId"
+>;
+
+export function toSessionListEntry(record: SessionRecord): SessionListEntry {
+  return {
+    sessionId: record.sessionId,
+    adapter: record.adapter,
+    runId: record.runId,
+    projectSlug: record.projectSlug,
+    stepId: record.stepId,
+    nodeAttemptId: record.nodeAttemptId,
+    sessionName: record.sessionName,
+    status: record.status,
+    pid: record.pid,
+    startedAt: record.startedAt,
+    exitedAt: record.exitedAt,
+    exitCode: record.exitCode,
+    signal: record.signal,
+    monotonicId: record.monotonicId,
+    acpSessionId: record.acpSessionId,
+    executionWorkspaceId: record.executionWorkspaceId,
+    assignmentId: record.assignmentId,
+    assignmentEpoch: record.assignmentEpoch,
+    createdByCommandId: record.createdByCommandId,
+  };
+}
 
 export type PermissionOptionDescriptor = {
   optionId: string;

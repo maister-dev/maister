@@ -2,6 +2,7 @@ import type { Db } from "./db";
 import type { ExecutionCommand, ExecutionHost } from "@/lib/db/schema";
 import type { CommandReceipt, ExecutionHostTransport } from "./contracts";
 import type { CommandEnvelope, CommandKind } from "./types";
+import type { LegacyBackfillSummary } from "./legacy";
 
 import { and, eq, inArray, lt, notInArray } from "drizzle-orm";
 import pino, { type Logger } from "pino";
@@ -18,6 +19,7 @@ import { deliverCommand } from "./deliverer";
 import { getHostById, LIVE_DRIVER_RUN_STATUSES } from "./hosts";
 import { buildEnvelope } from "./ledger";
 import { defaultTransport } from "./default-transport";
+import { adoptLegacyActiveRuns } from "./legacy";
 import {
   DELIVERING_IN_FLIGHT_GRACE_MS,
   EXECUTION_COMMAND_RETENTION_DAYS,
@@ -390,6 +392,9 @@ export type ExecutionHostSweepSummary = {
   commands: ExecutionCommandRecoverySummary;
   assignmentsReleased: number;
   commandsPruned: number;
+  // D9: the boot-time backfill retried on every pass (a host that was
+  // unreachable at boot is picked up here).
+  legacy: LegacyBackfillSummary;
 };
 
 // Joins `runSystemSweep()` — no new scheduler job kind (D8).
@@ -397,6 +402,12 @@ export async function executionCommandReconcilePass(
   opts: RecoveryOptions = {},
 ): Promise<ExecutionHostSweepSummary> {
   const commands = await recoverExecutionCommands(opts);
+  const legacy = await adoptLegacyActiveRuns({
+    db: opts.db,
+    transport: opts.transport,
+    now: opts.now,
+    logger: opts.logger,
+  });
   const assignmentsReleased = await releaseStaleAssignments({
     db: opts.db,
     now: opts.now,
@@ -407,5 +418,5 @@ export async function executionCommandReconcilePass(
     now: opts.now,
   });
 
-  return { commands, assignmentsReleased, commandsPruned };
+  return { commands, assignmentsReleased, commandsPruned, legacy };
 }

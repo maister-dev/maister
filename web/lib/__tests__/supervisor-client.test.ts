@@ -20,7 +20,7 @@ import {
   checkSupervisorDiagnostics,
   checkSupervisorHealth,
   checkpointSession,
-  createSession,
+  createSessionEnveloped,
   deleteSession,
   deleteSessionIfPresent,
   deliverPermission,
@@ -69,15 +69,27 @@ afterEach(() => {
   delete process.env.MAISTER_SUPERVISOR_URL;
 });
 
-const validInput = {
-  runId: "run-1",
-  projectSlug: "demo",
-  worktreePath: "/repos/x",
-  stepId: "plan",
-  executor: { agent: "claude" as const, model: "claude-sonnet-4-6" },
+// ADR-164 (strict): the create is an enveloped, handle-form command.
+const validEnvelope = {
+  command: {
+    id: "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f",
+    kind: "session.create",
+    issuedAt: "2026-09-02T10:00:01.000Z",
+  },
+  fence: {
+    hostKey: "eh_0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    assignmentId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d",
+    assignmentEpoch: 1,
+    runId: "run-1",
+  },
+  payload: {
+    executionWorkspaceId: "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c",
+    stepId: "plan",
+    executor: { agent: "claude" as const, model: "claude-sonnet-4-6" },
+  },
 };
 
-describe("createSession", () => {
+describe("createSessionEnveloped", () => {
   it("returns sessionId+pid+acpSessionId on 201", async () => {
     mockOnce(
       new Response(
@@ -90,7 +102,7 @@ describe("createSession", () => {
       ),
     );
 
-    const result = await createSession(validInput);
+    const result = await createSessionEnveloped(validEnvelope);
 
     expect(result).toEqual({
       sessionId: "s1",
@@ -103,7 +115,7 @@ describe("createSession", () => {
     );
   });
 
-  it("serializes capability launch fields into createSession", async () => {
+  it("serializes the envelope verbatim, capability launch fields inside the payload", async () => {
     mockOnce(
       new Response(
         JSON.stringify({ sessionId: "s1", pid: 4242, acpSessionId: "acp-1" }),
@@ -111,12 +123,16 @@ describe("createSession", () => {
       ),
     );
 
-    await createSession({
-      ...validInput,
-      capabilityProfilePath: "/repos/x/.maister/capabilities/run/profile.json",
-      adapterLaunch: {
-        env: { MAISTER_CAPABILITY_PROFILE_PATH: "/repos/x/profile.json" },
-        preArgs: ["--capability-profile"],
+    await createSessionEnveloped({
+      ...validEnvelope,
+      payload: {
+        ...validEnvelope.payload,
+        capabilityProfilePath:
+          "/repos/x/.maister/capabilities/run/profile.json",
+        adapterLaunch: {
+          env: { MAISTER_CAPABILITY_PROFILE_PATH: "/repos/x/profile.json" },
+          preArgs: ["--capability-profile"],
+        },
       },
     });
 
@@ -124,12 +140,19 @@ describe("createSession", () => {
     const body = JSON.parse(String(init.body)) as Record<string, unknown>;
 
     expect(body).toMatchObject({
-      capabilityProfilePath: "/repos/x/.maister/capabilities/run/profile.json",
-      adapterLaunch: {
-        env: { MAISTER_CAPABILITY_PROFILE_PATH: "/repos/x/profile.json" },
-        preArgs: ["--capability-profile"],
+      command: { id: validEnvelope.command.id, kind: "session.create" },
+      fence: validEnvelope.fence,
+      payload: {
+        executionWorkspaceId: "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c",
+        capabilityProfilePath:
+          "/repos/x/.maister/capabilities/run/profile.json",
+        adapterLaunch: {
+          env: { MAISTER_CAPABILITY_PROFILE_PATH: "/repos/x/profile.json" },
+          preArgs: ["--capability-profile"],
+        },
       },
     });
+    expect(body.payload).not.toHaveProperty("worktreePath");
   });
 
   it("translates 409 PRECONDITION to MaisterError", async () => {
@@ -139,7 +162,7 @@ describe("createSession", () => {
       }),
     );
 
-    await expect(createSession(validInput)).rejects.toMatchObject({
+    await expect(createSessionEnveloped(validEnvelope)).rejects.toMatchObject({
       code: "PRECONDITION",
       message: "bad",
     });
@@ -156,7 +179,7 @@ describe("createSession", () => {
       ),
     );
 
-    await expect(createSession(validInput)).rejects.toMatchObject({
+    await expect(createSessionEnveloped(validEnvelope)).rejects.toMatchObject({
       code: "EXECUTOR_UNAVAILABLE",
     });
   });
@@ -168,7 +191,7 @@ describe("createSession", () => {
       }),
     );
 
-    await expect(createSession(validInput)).rejects.toMatchObject({
+    await expect(createSessionEnveloped(validEnvelope)).rejects.toMatchObject({
       code: "SPAWN",
     });
   });
@@ -180,7 +203,7 @@ describe("createSession", () => {
       }),
     );
 
-    await expect(createSession(validInput)).rejects.toMatchObject({
+    await expect(createSessionEnveloped(validEnvelope)).rejects.toMatchObject({
       code: "ACP_PROTOCOL",
     });
   });
@@ -188,7 +211,7 @@ describe("createSession", () => {
   it("translates network failure to EXECUTOR_UNAVAILABLE", async () => {
     mockReject(new TypeError("fetch failed"));
 
-    const promise = createSession(validInput);
+    const promise = createSessionEnveloped(validEnvelope);
 
     await expect(promise).rejects.toBeInstanceOf(MaisterError);
     await expect(promise).rejects.toMatchObject({

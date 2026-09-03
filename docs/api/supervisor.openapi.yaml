@@ -33,11 +33,12 @@ info:
     rejects stale epochs with `409 FENCED`; receipts (`GET /commands/{id}`)
     make duplicate delivery safe; `POST /workspaces/adopt` is the ONLY
     path-bearing route — session routes address the workspace through the
-    opaque `executionWorkspaceId` it returns. **Transitional acceptance:**
-    while the web call sites migrate inside the same branch, a bare legacy
-    body (no envelope; `worktreePath` instead of `executionWorkspaceId`) is
-    still accepted with a `legacy-unfenced-command` WARN; the strict flip
-    refuses it with `PRECONDITION {reason: missing_envelope | legacy_field}`.
+    opaque `executionWorkspaceId` it returns. The contract is strict: a bare
+    body without an envelope is `409 PRECONDITION {reason: missing_envelope}`
+    on every command route, and a `session.create` payload carrying a
+    pre-ADR-164 path field (`runId`, `projectSlug`, `worktreePath`,
+    `repoPath`, `confineRoot`, `contextMounts`) is
+    `409 PRECONDITION {reason: legacy_field, field}`.
     Stage A is single-host, loopback, shared-filesystem, and unauthenticated —
     see [`../system-analytics/execution-hosts.md`](../system-analytics/execution-hosts.md).
 
@@ -359,22 +360,16 @@ paths:
         issues a NEW command); a released one → `workspace_released`. Handler
         order: parse envelope → fence check → receipt lookup (duplicate id →
         verbatim replay with `X-Maister-Command-Replayed: true`, in-flight →
-        join) → execute → write receipt → respond. A bare legacy body without
-        an envelope and with `worktreePath` is accepted only during the
-        transitional phase (WARN `legacy-unfenced-command`).
+        join) → execute → write receipt → respond. A bare body without an
+        envelope is `409 PRECONDITION missing_envelope`; a payload carrying a
+        pre-ADR-164 path field is `409 PRECONDITION legacy_field` naming the
+        field (`details.field`).
       operationId: createSession
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              oneOf:
-                - $ref: "#/components/schemas/CreateSessionCommand"
-                - $ref: "#/components/schemas/StartSessionRequest"
-              description: |
-                `CreateSessionCommand` (enveloped, handle form) is the contract;
-                the bare `StartSessionRequest` arm is the transitional legacy
-                acceptance and is removed at the strict flip.
+            schema: { $ref: "#/components/schemas/CreateSessionCommand" }
             examples:
               enveloped:
                 summary: Enveloped create against an adopted handle
@@ -406,9 +401,9 @@ paths:
             `run_mismatch`), an unknown/released handle
             (`unknown_workspace` / `workspace_released`), a stale epoch
             (`FENCED`), a residual `capabilityProfilePath` outside the handle
-            (`workspace_rejected` + `outside_workspace`), or — after the strict
-            flip — a missing envelope / legacy path field
-            (`missing_envelope` / `legacy_field`).
+            (`workspace_rejected` + `outside_workspace`), a missing envelope
+            (`missing_envelope`), or a legacy path field (`legacy_field` +
+            `details.field`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -450,15 +445,14 @@ paths:
       tags: [sessions]
       summary: List all currently registered sessions
       description: |
-        Returns the in-memory `SessionRecord[]` for every session the
+        Returns the `SessionRecord[]` projection for every session the
         supervisor knows about (live, exited, crashed — kept for the
         post-terminal grace window before GC).
 
-        (Designed — ADR-164) The projection gains `executionWorkspaceId`,
-        `assignmentId`, `assignmentEpoch`, and `createdByCommandId`; the raw
-        path fields (`logPath`, and the never-documented `worktreePath` /
-        `repoPath` / `confineRoot` / `contextMounts`) leave the projection at
-        the strict flip — no web reader consumes them.
+        (Designed — ADR-164) The projection carries `executionWorkspaceId`,
+        `assignmentId`, `assignmentEpoch`, and `createdByCommandId`. Host-private
+        paths (`logPath`, `worktreePath`, `repoPath`, `confineRoot`,
+        `contextMounts`) never leave the host — no web reader consumes them.
       operationId: listSessions
       responses:
         "200":
@@ -514,13 +508,7 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              oneOf:
-                - $ref: "#/components/schemas/PromptCommand"
-                - $ref: "#/components/schemas/SendPromptRequest"
-              description: |
-                `PromptCommand` is the contract; the bare `SendPromptRequest`
-                arm is the transitional legacy acceptance.
+            schema: { $ref: "#/components/schemas/PromptCommand" }
             examples:
               enveloped:
                 value:
@@ -618,11 +606,10 @@ paths:
       parameters:
         - $ref: "#/components/parameters/SessionId"
       requestBody:
-        required: false
+        required: true
         description: |
           (Designed — ADR-164) `DeleteSessionCommand` envelope
-          (`command.kind = session.delete`, `payload: {}`). Optional during the
-          transitional phase, required after the strict flip. Issued as a
+          (`command.kind = session.delete`, `payload: {}`). Issued as a
           `driverless` command so startup recovery may re-deliver it.
         content:
           application/json:
@@ -714,15 +701,10 @@ paths:
       parameters:
         - $ref: "#/components/parameters/SessionId"
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
-            schema:
-              oneOf:
-                - $ref: "#/components/schemas/CheckpointCommand"
-                - type: object
-                  additionalProperties: false
-                  description: Legacy strictly-empty body (transitional). Unknown keys → 409.
+            schema: { $ref: "#/components/schemas/CheckpointCommand" }
             examples:
               enveloped:
                 value:
@@ -783,12 +765,7 @@ paths:
         required: false
         content:
           application/json:
-            schema:
-              oneOf:
-                - $ref: "#/components/schemas/CancelCommand"
-                - type: object
-                  additionalProperties: false
-                  description: Legacy strictly-empty body (transitional).
+            schema: { $ref: "#/components/schemas/CancelCommand" }
             examples:
               enveloped:
                 value:
@@ -844,14 +821,7 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              oneOf:
-                - $ref: "#/components/schemas/InputCommand"
-                - $ref: "#/components/schemas/InputBody"
-              description: |
-                `InputCommand` (Designed — ADR-164; `command.kind =
-                session.input`, `payload` = `InputBody`) is the contract; the
-                bare `InputBody` arm is the transitional legacy acceptance.
+            schema: { $ref: "#/components/schemas/InputCommand" }
             examples:
               envelopedSelect:
                 summary: Enveloped approve
@@ -1479,17 +1449,17 @@ components:
         backward compatibility.
     StartSessionRequest:
       type: object
-      required: [stepId, executor]
+      required: [executionWorkspaceId, stepId, executor]
+      additionalProperties: false
       description: |
-        (Designed — ADR-164) The `session.create` payload. **Handle form:**
-        `executionWorkspaceId` names an adopted workspace; the host derives
-        `cwd`, the content-block confinement roots, the run dir, `runId`,
-        `projectSlug`, and the context mounts from the handle (server state).
-        **Legacy form (transitional, deprecated):** `runId` + `projectSlug` +
-        `worktreePath` (+ `repoPath` / `confineRoot` / `contextMounts`) as
-        before; the two forms are mutually exclusive (`executionWorkspaceId`
-        XOR the legacy path fields). The legacy form is removed at the strict
-        flip, after which its presence is `409 PRECONDITION legacy_field`.
+        (Designed — ADR-164) The `session.create` payload. `executionWorkspaceId`
+        names an adopted workspace; the host derives `cwd`, the content-block
+        confinement roots, the run dir, `runId`, `projectSlug`, and the context
+        mounts from the handle (server state). The pre-ADR-164 path fields
+        (`runId`, `projectSlug`, `worktreePath`, `repoPath`, `confineRoot`,
+        `contextMounts`) are refused by name: their presence is
+        `409 PRECONDITION {reason: legacy_field, field}`. Context mounts travel
+        on the `workspace.adopt` payload (`AdoptWorkspacePayload.contextMounts`).
       example:
         executionWorkspaceId: "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c"
         stepId: "plan"
@@ -1514,63 +1484,6 @@ components:
             → `409 PRECONDITION unknown_workspace`; released →
             `workspace_released`; the fence's `runId` must equal the handle's
             run → `run_mismatch`.
-        runId:
-          type: string
-          minLength: 1
-          maxLength: 128
-          pattern: "^[A-Za-z0-9._-]+$"
-          deprecated: true
-          description: |
-            (Legacy form — transitional.) Application-generated run id. Doubles
-            as a path segment under `.maister/<slug>/runs/<runId>/`.
-            Constrained to safe filesystem characters. In the handle form the
-            run id comes from the adopted handle.
-        projectSlug:
-          type: string
-          minLength: 1
-          maxLength: 64
-          pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'
-          deprecated: true
-          description: |
-            (Legacy form — transitional.) Kebab-case slug. Path segment under
-            `.maister/<slug>/`. In the handle form it comes from the handle.
-        worktreePath:
-          type: string
-          minLength: 1
-          maxLength: 4096
-          deprecated: true
-          description: |
-            (Legacy form — transitional.) Absolute filesystem path. Becomes
-            `cwd` for the spawned child. MUST start with `/` and MUST NOT
-            contain `..` segments. Replaced by `executionWorkspaceId`.
-        repoPath:
-          type: string
-          minLength: 1
-          maxLength: 4096
-          deprecated: true
-          description: |
-            (Legacy form — transitional; the handle carries `repoPath`.)
-            (Implemented — capability composer) Optional project repo root.
-            Bound to the session and added to the prompt content-block URI
-            confinement allow-set (repo ∪ worktree ∪ run dir) so a `file_path`
-            attachment that references a repo-absolute path is accepted. Same
-            shape as `worktreePath` (absolute, no `..`). Sent only by runs that
-            can carry file content-blocks (scratch).
-        confineRoot:
-          type: string
-          minLength: 1
-          maxLength: 4096
-          deprecated: true
-          description: |
-            (Legacy form — transitional; a `directory` handle is its own sole
-            confinement root.)
-            (Implemented — M36 Phase 5, ADR-097) SOLE content-block file-URI
-            confinement root for a **project-less local-package assistant
-            session** (the local package's `working_dir`). When set it REPLACES
-            the worktree ∪ repo allow-set (the run dir stays allowed for
-            uploads); a `file:` URI outside it is rejected with `PRECONDITION`.
-            `cwd` is still `worktreePath` (= the working dir for these sessions).
-            Same shape as `worktreePath` (absolute, no `..`).
         stepId:
           type: string
           minLength: 1
@@ -1615,97 +1528,6 @@ components:
             inside the handle's path → otherwise `409 PRECONDITION
             {reason: workspace_rejected, rule: outside_workspace}`. It leaves
             with Stage C materialization.
-        contextMounts:
-          type: array
-          maxItems: 8
-          deprecated: true
-          description: |
-            (Legacy form — transitional; in the handle form the mounts travel
-            on the `workspace.adopt` payload and are derived from the handle.)
-            (Implemented — ADR-157) Read-only sibling-repo context mounts the web
-            tier already materialized for this session. Projected from the
-            launch snapshot the run persists
-            (`runs.context_mounts jsonb` —
-            `[{projectId, slug, repoPath, mountPath, committish}]`) down to the
-            four fields the child actually needs; the supervisor never resolves
-            a slug, a ref, or a repo path, and never creates or removes a
-            worktree.
-
-            This is a **first-class request field**, exactly like
-            `capabilityProfilePath` — NOT an overload of `executor.env`, which
-            is the provider-secret channel and must stay that. From it the
-            supervisor derives one child environment variable for the ACP
-            adapter process:
-
-            ```
-            MAISTER_CONTEXT_REPOS=[{"slug":"api","path":"/abs/mount","ref":"main","commit":"<sha40>"}]
-            ```
-
-            — a JSON array of exactly these objects (self-describing: a
-            `:`-joined path list would drop the slug and the resolved commit,
-            which are the two fields a consumer actually wants). It is injected
-            into the ACP child only. It is NOT given to `cli`/`check` children:
-            those receive the ADR-153 allow-listed env, and this variable is
-            deliberately not on that list.
-
-            The supervisor also renders a prompt preamble naming each mount's
-            slug, path, ref, and read-only status — the env var serves scripts,
-            the preamble is how the agent learns the mounts exist.
-
-            **Mounts are read-only.** When this array is non-empty the ACP
-            permission handler denies, UNCONDITIONALLY, every write-class tool
-            call whose resolved path lands under any mount root — not opt-in
-            via `hooksConfig.pathGuard`, because the read-only contract is the
-            mount's whole point. This composes with `readOnlySession` (which
-            covers only `none`/`repo_read` agent runs; a writable-worktree
-            session cannot use it) and with `hooksConfig.pathGuard`; all are
-            pre-hoc denies and the strictest wins.
-
-            Each `path` is inside the session's run dir
-            (`.maister/<slug>/runs/<runId>/context/<siblingSlug>/`), which is
-            already in the prompt content-block confinement allow-set, so no
-            confinement change is implied. Malformed paths, `..` segments, and
-            an over-length array are rejected with `409 PRECONDITION` like
-            every other path field.
-          items:
-            type: object
-            additionalProperties: false
-            required: [slug, path, ref, commit]
-            properties:
-              slug:
-                type: string
-                minLength: 1
-                maxLength: 64
-                pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
-                description: |
-                  Kebab-case slug of the SIBLING project this mount exposes.
-                  Also the last path segment of `path`. Metadata only — it
-                  never authorizes access.
-              path:
-                type: string
-                minLength: 1
-                maxLength: 4096
-                description: |
-                  Absolute worktree path of the mount root. MUST start with `/`
-                  and MUST NOT contain `..` segments — same shape as
-                  `worktreePath`. Web-derived; the request body can never make
-                  the supervisor mount, create, or remove a worktree.
-              ref:
-                type: string
-                minLength: 1
-                maxLength: 255
-                description: |
-                  The committish the web tier resolved the mount from (a branch
-                  name, tag, or sha). Reported in the preamble and the env var
-                  so the agent can say WHAT it read.
-              commit:
-                type: string
-                minLength: 7
-                maxLength: 64
-                description: |
-                  The resolved commit sha the mount is detached at. Pinning it
-                  on the wire is what makes "which revision did the agent read"
-                  answerable after the fact.
         adapterLaunch:
           $ref: "#/components/schemas/AdapterLaunch"
         resumeSessionId:
@@ -1996,13 +1818,6 @@ components:
         exitedAt: { type: string, format: date-time, nullable: true }
         exitCode: { type: integer, nullable: true }
         signal: { type: string, nullable: true, example: "SIGTERM" }
-        logPath:
-          type: string
-          deprecated: true
-          description: |
-            Absolute path to the step .log file. (Designed — ADR-164) Leaves
-            the projection at the strict flip — no web reader consumes it;
-            paths are host-private after adoption.
         monotonicId: { type: integer, minimum: 0, description: Highest event id emitted so far for this session. }
         executionWorkspaceId:
           type: string

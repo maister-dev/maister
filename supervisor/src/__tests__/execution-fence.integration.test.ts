@@ -7,16 +7,16 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import pino from "pino";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { SESSION_EVENT_CHANNEL } from "../registry";
 
 import {
+  adoptDirectory,
   bootHost,
   cleanupRuntimeRoot,
+  createEnvelope,
   envelope,
-  legacyCreateBody,
   postJson,
   waitFor,
   type BootedHost,
@@ -38,7 +38,9 @@ async function tempRoot(): Promise<string> {
   return root;
 }
 
-async function createLegacyEnveloped(
+// Adoption fences with the real host key and the FIRST fence seen for the run;
+// every create below carries the fence under test.
+async function createEnveloped(
   host: BootedHost,
   runId: string,
   fence: { assignmentId?: string; assignmentEpoch?: number; hostKey?: string },
@@ -46,12 +48,7 @@ async function createLegacyEnveloped(
 ) {
   return postJson(
     `${host.url}/sessions`,
-    envelope(
-      "session.create",
-      { hostKey: fence.hostKey ?? host.hostState.hostKey, runId, ...fence },
-      legacyCreateBody(runId, process.cwd()),
-      commandId,
-    ),
+    await createEnvelope(host, { runId, ...fence }, {}, commandId),
   );
 }
 
@@ -65,7 +62,7 @@ describe("execution fence", () => {
     booted.push(host);
     const runId = `run-${randomUUID().slice(0, 8)}`;
     const assignmentId = randomUUID();
-    const res = await createLegacyEnveloped(host, runId, {
+    const res = await createEnveloped(host, runId, {
       assignmentId,
       assignmentEpoch: 1,
     });
@@ -93,8 +90,8 @@ describe("execution fence", () => {
     booted.push(host);
     const runId = `run-${randomUUID().slice(0, 8)}`;
 
-    await createLegacyEnveloped(host, runId, { assignmentEpoch: 2 });
-    const res = await createLegacyEnveloped(host, runId, {
+    await createEnveloped(host, runId, { assignmentEpoch: 2 });
+    const res = await createEnveloped(host, runId, {
       assignmentEpoch: 1,
     });
 
@@ -117,11 +114,11 @@ describe("execution fence", () => {
     booted.push(host);
     const runId = `run-${randomUUID().slice(0, 8)}`;
 
-    await createLegacyEnveloped(host, runId, {
+    await createEnveloped(host, runId, {
       assignmentId: randomUUID(),
       assignmentEpoch: 1,
     });
-    const res = await createLegacyEnveloped(host, runId, {
+    const res = await createEnveloped(host, runId, {
       assignmentId: randomUUID(),
       assignmentEpoch: 1,
     });
@@ -138,13 +135,21 @@ describe("execution fence", () => {
 
     booted.push(host);
     const runId = `run-${randomUUID().slice(0, 8)}`;
-    const res = await createLegacyEnveloped(host, runId, {
+
+    // Adoption (real host key) is the only fence write for this run ...
+    await adoptDirectory(host, { runId });
+    const fenceAfterAdopt = host.hostState.getFence(runId);
+
+    expect(fenceAfterAdopt).toMatchObject({ runId, epoch: 1 });
+
+    // ... the foreign-keyed create leaves it byte-identical and spawns nothing.
+    const res = await createEnveloped(host, runId, {
       hostKey: "eh_not_this_host_0",
     });
 
     expect(res.body.code).toBe("PRECONDITION");
     expect(res.body.details.reason).toBe("host_mismatch");
-    expect(host.hostState.getFence(runId)).toBeNull();
+    expect(host.hostState.getFence(runId)).toEqual(fenceAfterAdopt);
     expect(host.registry.size()).toBe(0);
   });
 
@@ -156,7 +161,7 @@ describe("execution fence", () => {
 
     booted.push(host);
     const runId = `run-${randomUUID().slice(0, 8)}`;
-    const created = await createLegacyEnveloped(host, runId, {
+    const created = await createEnveloped(host, runId, {
       assignmentEpoch: 1,
     });
     const res = await postJson(
@@ -183,7 +188,7 @@ describe("execution fence", () => {
     const runId = `run-${randomUUID().slice(0, 8)}`;
     const a1 = randomUUID();
     const a2 = randomUUID();
-    const created = await createLegacyEnveloped(host, runId, {
+    const created = await createEnveloped(host, runId, {
       assignmentId: a1,
       assignmentEpoch: 1,
     });
@@ -261,7 +266,7 @@ describe("execution fence", () => {
     });
     const runId = `run-${randomUUID().slice(0, 8)}`;
 
-    await createLegacyEnveloped(first, runId, { assignmentEpoch: 3 });
+    await createEnveloped(first, runId, { assignmentEpoch: 3 });
     const key = first.hostState.hostKey;
 
     await first.stop();
@@ -274,7 +279,7 @@ describe("execution fence", () => {
 
     booted.push(second);
     expect(second.hostState.hostKey).toBe(key);
-    const res = await createLegacyEnveloped(second, runId, {
+    const res = await createEnveloped(second, runId, {
       assignmentEpoch: 2,
     });
 
@@ -286,26 +291,21 @@ describe("execution fence", () => {
     });
   });
 
-  it("F8: a missing envelope still executes (transitional) and WARNs legacy-unfenced-command", async () => {
-    const logger = pino({ level: "silent" });
-    const warn = vi.spyOn(logger, "warn");
+  it("F8: a missing envelope is refused before any fence or session state is touched", async () => {
     const host = await bootHost({
       runtimeRoot: await tempRoot(),
       fixtureArgs: ["--hang"],
-      logger,
     });
 
     booted.push(host);
     const runId = `run-${randomUUID().slice(0, 8)}`;
-    const res = await postJson(
-      `${host.url}/sessions`,
-      legacyCreateBody(runId, process.cwd()),
-    );
+    const enveloped = await createEnvelope(host, { runId });
+    const res = await postJson(`${host.url}/sessions`, enveloped.payload);
 
-    expect(res.status).toBe(201);
-    expect(host.hostState.getFence(runId)).toBeNull();
-    expect(
-      warn.mock.calls.some((call) => call[1] === "legacy-unfenced-command"),
-    ).toBe(true);
+    expect(res.status).toBe(409);
+    expect(res.body.details).toEqual({ reason: "missing_envelope" });
+    // Adoption fenced the run at epoch 1; the bare create advanced nothing.
+    expect(host.hostState.getFence(runId)?.epoch).toBe(1);
+    expect(host.registry.size()).toBe(0);
   });
 });

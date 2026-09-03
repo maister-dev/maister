@@ -3,7 +3,6 @@ import type { HostState, WorkspaceRow } from "./host-state";
 import type {
   AdoptWorkspacePayload,
   ContextMount,
-  StartSessionRequest,
   WorkspaceKind,
   WorkspaceRule,
 } from "./types";
@@ -48,30 +47,6 @@ function runPaths(runDir: string, stepId: string) {
     logPath: path.join(runDir, `${stepId}.log`),
     eventsLogPath: path.join(runDir, "run.events.jsonl"),
     costPath: path.join(runDir, "cost.jsonl"),
-  };
-}
-
-// The transitional legacy form: paths straight off the request. Byte-identical
-// to the pre-ADR-164 derivation in spawn.ts / cost.ts.
-export function legacyResolution(
-  request: StartSessionRequest & {
-    runId: string;
-    projectSlug: string;
-    worktreePath: string;
-  },
-  runtimeRoot: string,
-): WorkspaceResolution {
-  const runDir = runDirFor(runtimeRoot, request.projectSlug, request.runId);
-
-  return {
-    runId: request.runId,
-    projectSlug: request.projectSlug,
-    cwd: request.worktreePath,
-    repoPath: request.repoPath,
-    confineRoot: request.confineRoot,
-    runDir,
-    ...runPaths(runDir, request.stepId),
-    contextMounts: request.contextMounts,
   };
 }
 

@@ -12,6 +12,8 @@ import pino from "pino";
 import { spawnSession } from "../spawn";
 import { SESSION_EVENT_CHANNEL, SessionRegistry } from "../registry";
 
+import { directoryWorkspace, HANDLE } from "./_fixtures/workspace";
+
 const FIXTURE_PATH = resolve(
   fileURLToPath(import.meta.url),
   "../../../test/fixtures/fake-acp.mjs",
@@ -22,13 +24,21 @@ function makeRequest(
   over: Partial<StartSessionRequest> = {},
 ): StartSessionRequest {
   return {
-    runId: "run-1",
-    projectSlug: "demo",
-    worktreePath: process.cwd(),
+    executionWorkspaceId: HANDLE,
     stepId: "step-1",
     executor: { agent: "claude", model: "claude-sonnet-4-6" },
     ...over,
   };
+}
+
+// The resolved workspace the HTTP host would derive from the adopted handle.
+function ws(runId = "run-1", stepId = "step-1") {
+  return directoryWorkspace({
+    runtimeRoot: tempDir,
+    cwd: process.cwd(),
+    runId,
+    stepId,
+  });
 }
 
 function collectEvents(emitter: EventEmitter): Promise<SessionEvent[]> {
@@ -58,6 +68,7 @@ describe("spawnSession", () => {
       sessionId,
       request,
       runtimeRoot: tempDir,
+      workspace: ws("run-1", "step-1"),
       logger: silentLogger,
       binaryOverride: "node",
       preArgs: [FIXTURE_PATH, "--lines", "3", "--emit-usage"],
@@ -87,11 +98,12 @@ describe("spawnSession", () => {
   });
 
   it("writes child stdout to log file", async () => {
-    const request = makeRequest({ runId: "run-log", stepId: "stepX" });
+    const request = makeRequest({ stepId: "stepX" });
     const { child, logPath } = await spawnSession({
       sessionId: "session-log",
       request,
       runtimeRoot: tempDir,
+      workspace: ws("run-log", "stepX"),
       logger: silentLogger,
       binaryOverride: "node",
       preArgs: [FIXTURE_PATH, "--lines", "2"],
@@ -112,13 +124,13 @@ describe("spawnSession", () => {
     // createAcpConnection, not a CLI flag — both adapters ignore `--resume` on
     // argv. spawn.ts must therefore never inject it.
     const request = makeRequest({
-      runId: "run-resume",
       resumeSessionId: "uuid-abc-123",
     });
     const { child } = await spawnSession({
       sessionId: "session-r",
       request,
       runtimeRoot: tempDir,
+      workspace: ws("run-resume", "step-1"),
       logger: silentLogger,
       binaryOverride: "node",
       preArgs: [FIXTURE_PATH, "--lines", "0"],
@@ -132,7 +144,6 @@ describe("spawnSession", () => {
 
   it("applies versioned runner payload before spawning", async () => {
     const request = makeRequest({
-      runId: "run-runner",
       executor: { agent: "codex", model: "legacy-ignored" },
       runner: {
         version: 1,
@@ -149,6 +160,7 @@ describe("spawnSession", () => {
       sessionId: "session-runner",
       request,
       runtimeRoot: tempDir,
+      workspace: ws("run-runner", "step-1"),
       logger: silentLogger,
       binaryOverride: "node",
       preArgs: [FIXTURE_PATH, "--lines", "0"],
@@ -163,7 +175,6 @@ describe("spawnSession", () => {
 
   it("passes capability launch args and env to the adapter process", async () => {
     const request = makeRequest({
-      runId: "run-cap",
       capabilityProfilePath: `${process.cwd()}/.maister/capabilities/run-cap/profile.json`,
       adapterLaunch: {
         env: { MAISTER_TEST_PROFILE_ENV: "profile-ready" },
@@ -175,6 +186,7 @@ describe("spawnSession", () => {
       sessionId: "session-cap",
       request,
       runtimeRoot: tempDir,
+      workspace: ws("run-cap", "step-1"),
       logger: silentLogger,
       binaryOverride: "node",
       preArgs: [
@@ -214,6 +226,7 @@ describe("spawnSession", () => {
         sessionId: "session-bad",
         request,
         runtimeRoot: tempDir,
+        workspace: ws("run-1", "step-1"),
         logger: silentLogger,
         binaryOverride: "/definitely/not/a/real/binary",
       }),
@@ -222,12 +235,13 @@ describe("spawnSession", () => {
 
   it("writes events.jsonl with one line per emitted SessionEvent after registry hookup", async () => {
     const sessionId = "session-elog";
-    const request = makeRequest({ runId: "run-elog", stepId: "elog" });
+    const request = makeRequest({ stepId: "elog" });
     const { child, emitter, record, eventsLog, eventsLogPath } =
       await spawnSession({
         sessionId,
         request,
         runtimeRoot: tempDir,
+        workspace: ws("run-elog", "elog"),
         logger: silentLogger,
         binaryOverride: "node",
         preArgs: [FIXTURE_PATH, "--lines", "3"],
@@ -262,12 +276,13 @@ describe("spawnSession", () => {
   it("uses run-scoped run.events.jsonl shared across multiple spawns for the same run (regression: multi-step SSE)", async () => {
     const sessionA = "sess-A";
     const sessionB = "sess-B";
-    const request = makeRequest({ runId: "run-multi", stepId: "stepA" });
+    const request = makeRequest({ stepId: "stepA" });
 
     const a = await spawnSession({
       sessionId: sessionA,
       request,
       runtimeRoot: tempDir,
+      workspace: ws("run-multi", "stepA"),
       logger: silentLogger,
       binaryOverride: "node",
       preArgs: [FIXTURE_PATH, "--lines", "2"],
@@ -295,6 +310,7 @@ describe("spawnSession", () => {
       sessionId: sessionB,
       request: { ...request, stepId: "stepB" },
       runtimeRoot: tempDir,
+      workspace: ws("run-multi", "stepB"),
       logger: silentLogger,
       binaryOverride: "node",
       preArgs: [FIXTURE_PATH, "--lines", "1"],
@@ -352,7 +368,6 @@ describe("spawnSession", () => {
   it("closes events.jsonl after terminal event so the file stat is stable", async () => {
     const sessionId = "session-elog-close";
     const request = makeRequest({
-      runId: "run-elog-close",
       stepId: "elog-close",
     });
     const { child, emitter, record, eventsLog, eventsLogPath } =
@@ -360,6 +375,7 @@ describe("spawnSession", () => {
         sessionId,
         request,
         runtimeRoot: tempDir,
+        workspace: ws("run-elog-close", "elog-close"),
         logger: silentLogger,
         binaryOverride: "node",
         preArgs: [FIXTURE_PATH, "--lines", "1"],
@@ -390,12 +406,13 @@ describe("spawnSession", () => {
   });
 
   it("caps single line at MAX_LINE_BYTES and emits a truncated event", async () => {
-    const request = makeRequest({ runId: "run-giant", stepId: "giant" });
+    const request = makeRequest({ stepId: "giant" });
     const giantBytes = 1024 * 1024 + 1024;
     const { child, emitter, record } = await spawnSession({
       sessionId: "session-giant",
       request,
       runtimeRoot: tempDir,
+      workspace: ws("run-giant", "giant"),
       logger: silentLogger,
       binaryOverride: "node",
       preArgs: [FIXTURE_PATH, "--giant-bytes", String(giantBytes)],

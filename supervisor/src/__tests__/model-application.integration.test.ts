@@ -4,79 +4,48 @@
 // model differs is verified via the settings channel here, so the supervisor
 // emits a model_advisory session.update (informational, never fails the run);
 // a matching model emits none. Asserted against the durable run.events.jsonl.
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
 import type { RunnerLaunch } from "../types";
 
-import Fastify, { type FastifyInstance } from "fastify";
-import pino from "pino";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { registerRoutes, type SpawnOverrides } from "../http-api";
 import { modelCatalogCache } from "../model-catalog/cache";
 import { draftFromRunner } from "../model-catalog/harvest";
-import { SessionRegistry } from "../registry";
 
-const FIXTURE_PATH = resolve(
-  fileURLToPath(import.meta.url),
-  "../../../test/fixtures/mock-acp-models.mjs",
-);
-const silent = pino({ level: "silent" });
+import {
+  bootHost,
+  cleanupRuntimeRoot,
+  createEnvelope,
+  postJson,
+  type BootedHost,
+} from "./_fixtures/boot-host";
 
-type BootResult = {
-  app: FastifyInstance;
-  url: string;
-  registry: SessionRegistry;
-  runtimeRoot: string;
-};
-
-async function boot(): Promise<BootResult> {
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "supervisor-model-app-"));
-  const registry = new SessionRegistry(silent);
-  const app = Fastify({ logger: false });
-  const spawnOverrides: SpawnOverrides = {
-    binary: "node",
-    preArgs: [FIXTURE_PATH],
-  };
-
-  registerRoutes({
-    app,
-    registry,
-    logger: silent,
-    runtimeRoot,
-    killGraceMs: 2_000,
-    spawnOverrides,
-  });
-
-  const url = await app.listen({ port: 0, host: "127.0.0.1" });
-
-  return { app, url, registry, runtimeRoot };
+function boot(): Promise<BootedHost> {
+  return bootHost({ fixture: "mock-acp-models.mjs" });
 }
 
-async function createSession(url: string, model: string): Promise<Response> {
-  return fetch(`${url}/sessions`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      runId: "run-adv",
-      projectSlug: "demo",
-      worktreePath: process.cwd(),
-      stepId: "step-1",
-      executor: { agent: "claude", model },
-      runner: {
-        version: 1,
-        runnerId: "r-adv",
-        adapter: "claude",
-        capabilityAgent: "claude",
-        model,
-        provider: { kind: "anthropic" },
-        permissionPolicy: "default",
+async function createSession(host: BootedHost, model: string) {
+  return postJson(
+    `${host.url}/sessions`,
+    await createEnvelope(
+      host,
+      { runId: "run-adv" },
+      {
+        executor: { agent: "claude", model },
+        runner: {
+          version: 1,
+          runnerId: "r-adv",
+          adapter: "claude",
+          capabilityAgent: "claude",
+          model,
+          provider: { kind: "anthropic" },
+          permissionPolicy: "default",
+        },
       },
-    }),
-  });
+    ),
+  );
 }
 
 async function readEvents(
@@ -105,11 +74,13 @@ function advisoryOf(
   return events.find((e) => {
     const update = e.update as { sessionUpdate?: string } | undefined;
 
-    return e.type === "session.update" && update?.sessionUpdate === "model_advisory";
+    return (
+      e.type === "session.update" && update?.sessionUpdate === "model_advisory"
+    );
   });
 }
 
-let booted: BootResult | null = null;
+let booted: BootedHost | null = null;
 
 beforeEach(async () => {
   process.env.MOCK_ACP_MODELS_MODE = "ok";
@@ -118,15 +89,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   if (booted) {
-    booted.registry.forEach((entry) => {
-      try {
-        entry.child.kill("SIGKILL");
-      } catch {
-        /* ignore */
-      }
-    });
-    await booted.app.close();
-    await rm(booted.runtimeRoot, { recursive: true, force: true });
+    await booted.stop();
+    await cleanupRuntimeRoot(booted.runtimeRoot);
     booted = null;
   }
   delete process.env.MOCK_ACP_MODELS_MODE;
@@ -141,7 +105,7 @@ describe("T5.3 — configured model application + advisory", () => {
     );
 
     // mock advertises currentModelId "glm-5.1"; configure a different model.
-    const res = await createSession(booted.url, "glm-5-turbo");
+    const res = await createSession(booted, "glm-5-turbo");
 
     expect(res.status).toBe(201);
 
@@ -170,7 +134,7 @@ describe("T5.3 — configured model application + advisory", () => {
       ".maister/demo/runs/run-adv/run.events.jsonl",
     );
 
-    const res = await createSession(booted.url, "glm-5.1");
+    const res = await createSession(booted, "glm-5.1");
 
     expect(res.status).toBe(201);
     // Give the handshake a beat, then confirm no advisory was written.
@@ -207,19 +171,18 @@ describe("T3.2 — resumed-session model application + harvest (codex)", () => {
       ".maister/demo/runs/run-resume/run.events.jsonl",
     );
 
-    const res = await fetch(`${booted.url}/sessions`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        runId: "run-resume",
-        projectSlug: "demo",
-        worktreePath: process.cwd(),
-        stepId: "step-1",
-        resumeSessionId: "prior-acp-session-id",
-        executor: { agent: "codex", model: codexRunner.model },
-        runner: codexRunner,
-      }),
-    });
+    const res = await postJson(
+      `${booted.url}/sessions`,
+      await createEnvelope(
+        booted,
+        { runId: "run-resume" },
+        {
+          resumeSessionId: "prior-acp-session-id",
+          executor: { agent: "codex", model: codexRunner.model },
+          runner: codexRunner,
+        },
+      ),
+    );
 
     expect(res.status).toBe(201);
 

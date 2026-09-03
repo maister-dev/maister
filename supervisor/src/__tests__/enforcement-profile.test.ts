@@ -7,9 +7,7 @@ import {
 
 // ADR-130 T2.1: the wire acceptor for the derived capability-enforcement set.
 const validRequest = {
-  runId: "run-1",
-  projectSlug: "my-project",
-  worktreePath: "/repos/x",
+  executionWorkspaceId: "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c",
   stepId: "plan",
   executor: { agent: "claude", model: "claude-sonnet-4-6" },
 } as const;
@@ -23,9 +21,9 @@ const validProfile = {
 
 describe("SessionEnforcementProfileSchema", () => {
   it("accepts a fully-populated profile", () => {
-    expect(SessionEnforcementProfileSchema.safeParse(validProfile).success).toBe(
-      true,
-    );
+    expect(
+      SessionEnforcementProfileSchema.safeParse(validProfile).success,
+    ).toBe(true);
   });
 
   it("accepts a tools-only profile (mcps absent)", () => {
@@ -116,7 +114,9 @@ describe("StartSessionRequestSchema enforcementProfile", () => {
   });
 
   it("accepts a request with no enforcementProfile (optional)", () => {
-    expect(StartSessionRequestSchema.safeParse(validRequest).success).toBe(true);
+    expect(StartSessionRequestSchema.safeParse(validRequest).success).toBe(
+      true,
+    );
   });
 
   it("rejects a request whose enforcementProfile is malformed", () => {

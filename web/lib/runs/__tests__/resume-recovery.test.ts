@@ -193,7 +193,6 @@ describe("runResumeRecoverySweep (Codex fix #2)", () => {
             status: "live" as const,
             pid: 1,
             startedAt: "2026-05-29T00:00:00Z",
-            logPath: "x",
             monotonicId: 0,
             acpSessionId: "acp-1",
           },

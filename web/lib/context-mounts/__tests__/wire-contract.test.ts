@@ -3,18 +3,20 @@
  *
  * This test exists because the bug it pins actually shipped into the branch: the
  * launch snapshot (`{projectId, slug, repoPath, mountPath, committish}`) was
- * threaded onto `POST /sessions` verbatim, while the supervisor's
+ * threaded onto the supervisor verbatim, while the supervisor's
  * `ContextMountSchema` (`supervisor/src/types.ts`) is `.strict()` and names its
  * fields `{slug, path, ref, commit}`. Every mount-bearing launch would have 400'd.
  * The flow/agent integration suites could not catch it — they use a stub
  * SupervisorApi that never validates the payload.
  *
- * The decisive assertions run the REAL acceptor: `StartSessionRequestSchema` is
- * imported straight out of `supervisor/src/types.ts` (it depends on nothing but
- * `node:path` + `zod`, and both packages pin the same zod), so a change to
- * `ContextMountSchema` fails THIS test rather than only production. A mirrored
- * hand-copy would have been the weaker guard — it can agree with itself forever
- * while drifting from the schema it claims to describe.
+ * ADR-164 moved the mounts off `POST /sessions` onto the `workspace.adopt`
+ * payload (`POST /workspaces/adopt`, the only path-bearing route), so the
+ * acceptor under test is `AdoptWorkspacePayloadSchema`, imported straight out of
+ * `supervisor/src/types.ts` (it depends on nothing but `zod`, and both packages
+ * pin the same zod) — a change to `ContextMountSchema` fails THIS test rather
+ * than only production. A mirrored hand-copy would have been the weaker guard —
+ * it can agree with itself forever while drifting from the schema it claims to
+ * describe.
  */
 import { describe, expect, it } from "vitest";
 
@@ -22,7 +24,7 @@ import { describe, expect, it } from "vitest";
 // not a layering violation to be "tidied": a contract test that does not execute
 // the real acceptor cannot detect drift, which is the entire failure mode that
 // let this bug through two green suites.
-import { StartSessionRequestSchema } from "../../../../supervisor/src/types";
+import { AdoptWorkspacePayloadSchema } from "../../../../supervisor/src/types";
 
 import {
   CONTEXT_REPOS_MAX,
@@ -34,14 +36,14 @@ import {
 const SUPERVISOR_WIRE_KEYS = ["slug", "path", "ref", "commit"] as const;
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-// The minimum StartSessionRequest the schema accepts, so `contextMounts` is the
-// only field under test.
-const BASE_REQUEST = {
+// The minimum AdoptWorkspacePayload the schema accepts, so `contextMounts` is
+// the only field under test.
+const BASE_ADOPT = {
   runId: "run-1",
   projectSlug: "web-app",
-  worktreePath: "/runtime/worktrees/web-app/run-1",
-  stepId: "implement",
-  executor: { agent: "claude", model: "claude-sonnet-4-6" },
+  kind: "git_worktree",
+  path: "/runtime/worktrees/web-app/run-1",
+  repoPath: "/repos/web-app",
 };
 
 function snapshot(
@@ -58,7 +60,7 @@ function snapshot(
   };
 }
 
-describe("contextMountsToWire — supervisor POST /sessions contract", () => {
+describe("contextMountsToWire — supervisor POST /workspaces/adopt contract", () => {
   it("emits EXACTLY the supervisor's four keys and drops every snapshot-only field", () => {
     const [wire] = contextMountsToWire([snapshot()]);
 
@@ -146,10 +148,10 @@ describe("contextMountsToWire — supervisor POST /sessions contract", () => {
   });
 });
 
-describe("the REAL supervisor acceptor (StartSessionRequestSchema)", () => {
+describe("the REAL supervisor acceptor (AdoptWorkspacePayloadSchema)", () => {
   it("REJECTS a raw snapshot — the shipped bug, pinned so it cannot return", () => {
-    const result = StartSessionRequestSchema.safeParse({
-      ...BASE_REQUEST,
+    const result = AdoptWorkspacePayloadSchema.safeParse({
+      ...BASE_ADOPT,
       contextMounts: [snapshot()],
     });
 
@@ -171,8 +173,8 @@ describe("the REAL supervisor acceptor (StartSessionRequestSchema)", () => {
   });
 
   it("ACCEPTS the mapped wire payload", () => {
-    const result = StartSessionRequestSchema.safeParse({
-      ...BASE_REQUEST,
+    const result = AdoptWorkspacePayloadSchema.safeParse({
+      ...BASE_ADOPT,
       contextMounts: contextMountsToWire([snapshot()]),
     });
 
@@ -195,21 +197,21 @@ describe("the REAL supervisor acceptor (StartSessionRequestSchema)", () => {
       );
 
     expect(
-      StartSessionRequestSchema.safeParse({
-        ...BASE_REQUEST,
+      AdoptWorkspacePayloadSchema.safeParse({
+        ...BASE_ADOPT,
         contextMounts: mounts(CONTEXT_REPOS_MAX),
       }).success,
     ).toBe(true);
     expect(
-      StartSessionRequestSchema.safeParse({
-        ...BASE_REQUEST,
+      AdoptWorkspacePayloadSchema.safeParse({
+        ...BASE_ADOPT,
         contextMounts: mounts(CONTEXT_REPOS_MAX + 1),
       }).success,
     ).toBe(false);
   });
 
   it("stays valid with no mounts at all (existing senders unaffected)", () => {
-    expect(StartSessionRequestSchema.safeParse(BASE_REQUEST).success).toBe(
+    expect(AdoptWorkspacePayloadSchema.safeParse(BASE_ADOPT).success).toBe(
       true,
     );
   });

@@ -8,9 +8,7 @@ function makeRequest(
   over: Partial<StartSessionRequest> = {},
 ): StartSessionRequest {
   return {
-    runId: "run-1",
-    projectSlug: "demo",
-    worktreePath: process.cwd(),
+    executionWorkspaceId: "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c",
     stepId: "step-1",
     executor: { agent: "claude", model: "claude-sonnet-4-6" },
     ...over,

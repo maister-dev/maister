@@ -107,19 +107,16 @@ below in its **handle form**: `executionWorkspaceId` (from
 [`POST /workspaces/adopt`](#post-workspacesadopt-designed--adr-164))
 replaces `runId` + `projectSlug` + `worktreePath` + `repoPath` +
 `confineRoot` + `contextMounts` — the host derives `cwd`, the content-block
-confinement roots, the run dir, and the mounts from the handle. The legacy
-path form (shown below for the migration window) is accepted bare — without
-an envelope — only until the strict flip, with a `legacy-unfenced-command`
-WARN; afterwards it is `409 PRECONDITION {reason: legacy_field |
-missing_envelope}`.
+confinement roots, the run dir, and the mounts from the handle. The contract
+is strict: a bare body without an envelope is `409 PRECONDITION
+{reason: missing_envelope}` on every command route; a payload carrying one of
+the former path fields is `409 PRECONDITION {reason: legacy_field, field}`.
 
-Request body (legacy path form, transitional):
+Request payload (`envelope.payload`):
 
 ```jsonc
 {
-  "runId": "run-abc",
-  "projectSlug": "myapp",                   // kebab-case
-  "worktreePath": "/repos/myapp-wt",        // cwd for the child
+  "executionWorkspaceId": "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c",
   "stepId": "plan",                         // log file: <runId>/<stepId>.log
   "runner": {
     "version": 1,
@@ -141,14 +138,6 @@ Request body (legacy path form, transitional):
     "env": { "ANTHROPIC_BASE_URL": "...", "ANTHROPIC_AUTH_TOKEN": "..." }
   },
   "capabilityProfilePath": "/repos/myapp/.maister/runs/run-abc/profile.json",
-  "contextMounts": [                        // optional, Designed — ADR-157; max 8
-    {
-      "slug": "api",
-      "path": "/repos/myapp/.maister/myapp/runs/run-abc/context/api",
-      "ref": "main",
-      "commit": "0f1e2d3c4b5a69788796a5b4c3d2e1f001234567"
-    }
-  ],
   "adapterLaunch": {
     "env": { "MAISTER_CAPABILITY_PROFILE": "/repos/myapp/.maister/runs/run-abc/profile.json" },
     "preArgs": ["--config", "/repos/myapp/.maister/runs/run-abc/adapter.json"],
@@ -159,7 +148,8 @@ Request body (legacy path form, transitional):
 ```
 
 (Note: prompts are sent separately via `POST /sessions/:id/prompt`
-— the body field is gone.)
+— the body field is gone. Context mounts — ADR-157, max 8 — travel on the
+`workspace.adopt` payload and are derived from the handle.)
 
 (Note: `readOnlySession` (ADR-090) and `hooksConfig` (Designed — ADR-108)
 are optional behavioral-policy fields beside the launch fields; both arbitrate
@@ -457,9 +447,8 @@ Stop a running session: `SIGTERM` → grace (`MAISTER_KILL_GRACE_MS`,
 default 5000 ms) → `SIGKILL`. Marks the session as an
 **intentional shutdown** so the heartbeat reports `session.exited`,
 not `session.crashed`, even on non-zero exit codes. **(Designed —
-ADR-164)** Takes an optional (required after the strict flip)
-`session.delete` envelope; issued `driverless` so web startup recovery may
-re-deliver it.
+ADR-164)** Takes a `session.delete` envelope; issued `driverless` so web
+startup recovery may re-deliver it.
 
 | Status | Body                                                       | When                                                                  |
 | ------ | ---------------------------------------------------------- | --------------------------------------------------------------------- |
@@ -503,13 +492,13 @@ structured ACP `session/update` events.
 
 ### `GET /sessions`
 
-Returns the current `SessionRecord[]` — sessionId, runId, projectSlug,
-stepId, status (`live | exited | crashed`), pid, startedAt, exitedAt,
-exitCode, signal, logPath, monotonicId. Used by `lib/reconcile.ts` and
-admin views. **(Designed — ADR-164)** The projection gains
-`executionWorkspaceId`, `assignmentId`, `assignmentEpoch`, and
-`createdByCommandId`; `logPath` and the raw path fields leave it at the
-strict flip (no web reader consumes them).
+Returns the current `SessionRecord[]` projection — sessionId, adapter, runId,
+projectSlug, stepId, sessionName, status (`live | exited | crashed`), pid,
+startedAt, exitedAt, exitCode, signal, monotonicId, acpSessionId. Used by
+`lib/reconcile.ts` and admin views. **(Designed — ADR-164)** The projection
+carries `executionWorkspaceId`, `assignmentId`, `assignmentEpoch`, and
+`createdByCommandId`; host-private paths (`logPath`, `worktreePath`,
+`repoPath`, `confineRoot`, `contextMounts`) never leave the host.
 
 ### `POST /sessions/:id/checkpoint` _(Implemented)_
 
@@ -892,13 +881,11 @@ session. `POST /sessions` creates the adapter process and ACP session;
 notifications are bridged over SSE; permission requests are held open
 until the web tier calls `POST /sessions/:id/input`.
 
-`POST /sessions` does not accept a `prompt` field. The body is:
+`POST /sessions` does not accept a `prompt` field. The envelope payload is:
 
 ```json
 {
-  "runId": "run-1",
-  "projectSlug": "demo-app",
-  "worktreePath": "/abs/path",
+  "executionWorkspaceId": "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c",
   "stepId": "plan",
   "runner": {
     "version": 1,

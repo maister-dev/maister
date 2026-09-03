@@ -67,6 +67,13 @@ vi.mock("@/lib/execution-host", () => ({
     },
     assignmentsReleased: 0,
     commandsPruned: 0,
+    legacy: {
+      candidates: 0,
+      minted: 0,
+      leftNull: 0,
+      skipped: null,
+      errors: [],
+    },
   })),
 }));
 // Same exposure, PRE-EXISTING (ADR-122, not this branch): both brain sweeps were

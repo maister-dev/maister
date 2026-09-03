@@ -15,83 +15,50 @@ import type { SessionEvent } from "../types";
 import { EventEmitter } from "node:events";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
-import Fastify, { type FastifyInstance } from "fastify";
-import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { registerRoutes, type SpawnOverrides } from "../http-api";
 import { pendingPermissions } from "../pending-permissions";
 import { SessionRegistry, SESSION_EVENT_CHANNEL } from "../registry";
 
-const RESUMABLE_MOCK = resolve(
-  fileURLToPath(import.meta.url),
-  "../../../test/fixtures/mock-acp-adapter-resumable.mjs",
-);
-const silentLogger = pino({ level: "silent" });
+import {
+  bootHost,
+  cleanupRuntimeRoot,
+  createSession as createHandleSession,
+  envelope,
+  fenceFor,
+  postJson,
+  type BootedHost,
+} from "./_fixtures/boot-host";
 
-type BootResult = {
-  app: FastifyInstance;
-  url: string;
-  registry: SessionRegistry;
-  runtimeRoot: string;
-  stateDir: string;
-};
+const RUN_ID = "run-spike";
+
+type BootResult = BootedHost & { stateDir: string };
 
 async function boot(stateDir: string): Promise<BootResult> {
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "m8-spike-rt-"));
-  const registry = new SessionRegistry(silentLogger);
-  const app = Fastify({ logger: false });
-  const spawnOverrides: SpawnOverrides = {
-    binary: "node",
-    preArgs: [RESUMABLE_MOCK],
-  };
+  const host = await bootHost({ fixture: "mock-acp-adapter-resumable.mjs" });
 
-  registerRoutes({
-    app,
-    registry,
-    logger: silentLogger,
-    runtimeRoot,
-    killGraceMs: 2_000,
-    spawnOverrides,
-  });
-
-  const address = await app.listen({ port: 0, host: "127.0.0.1" });
-
-  return { app, url: address, registry, runtimeRoot, stateDir };
+  return { ...host, stateDir };
 }
 
-async function createSession(
-  url: string,
+function createSession(
+  host: BootedHost,
   resumeSessionId?: string,
 ): Promise<{ sessionId: string; pid: number; acpSessionId: string }> {
-  const res = await fetch(`${url}/sessions`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      runId: "run-spike",
-      projectSlug: "demo",
-      worktreePath: process.cwd(),
-      stepId: "step-1",
-      executor: {
-        agent: "claude",
-        model: "claude-sonnet-4-6",
-      },
-      ...(resumeSessionId ? { resumeSessionId } : {}),
-    }),
-  });
+  return createHandleSession(
+    host,
+    { runId: RUN_ID },
+    resumeSessionId ? { resumeSessionId } : {},
+  );
+}
 
-  if (res.status !== 201) {
-    throw new Error(`POST /sessions failed: ${res.status} ${await res.text()}`);
-  }
-
-  return (await res.json()) as {
-    sessionId: string;
-    pid: number;
-    acpSessionId: string;
-  };
+function command(
+  host: BootedHost,
+  kind: "session.prompt" | "session.input" | "session.delete",
+  payload: Record<string, unknown> = {},
+) {
+  return envelope(kind, fenceFor(host, RUN_ID), payload);
 }
 
 function listenForEvent(
@@ -172,8 +139,8 @@ afterEach(async () => {
     for (const entry of booted.registry.list()) {
       pendingPermissions.purgeSession(entry.sessionId);
     }
-    await booted.app.close();
-    await rm(booted.runtimeRoot, { recursive: true, force: true });
+    await booted.stop();
+    await cleanupRuntimeRoot(booted.runtimeRoot);
     booted = null;
   }
   if (stateDirRoot) {
@@ -191,20 +158,20 @@ afterEach(async () => {
 describe("M8 T1 spike — cancel→checkpoint→resume→re-issue round-trip", () => {
   it("journals a cancelled-with-reason permission and replays it on session/resume", async () => {
     if (!booted) throw new Error("not booted");
-    const { url, registry, stateDir } = booted;
+    const host = booted;
+    const { url, registry, stateDir } = host;
 
-    const first = await createSession(url);
+    const first = await createSession(host);
 
     const entry1 = registry.get(first.sessionId);
 
     expect(entry1).toBeDefined();
 
     // Drive the first prompt in the background; it parks on requestPermission.
-    const prompt1 = fetch(`${url}/sessions/${first.sessionId}/prompt`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ stepId: "step-1", prompt: "do thing" }),
-    });
+    const prompt1 = postJson(
+      `${url}/sessions/${first.sessionId}/prompt`,
+      command(host, "session.prompt", { stepId: "step-1", prompt: "do thing" }),
+    );
 
     const permEvent = await listenForEvent(
       registry,
@@ -238,9 +205,11 @@ describe("M8 T1 spike — cancel→checkpoint→resume→re-issue round-trip", (
     expect(r1.status).toBe(200);
 
     // Now SIMULATED CHECKPOINT step 2: SIGTERM the worker.
-    const delRes = await fetch(`${url}/sessions/${first.sessionId}`, {
-      method: "DELETE",
-    });
+    const delRes = await postJson(
+      `${url}/sessions/${first.sessionId}`,
+      command(host, "session.delete"),
+      "DELETE",
+    );
 
     expect(delRes.status).toBe(204);
     await awaitChildExit(entry1!.child as ChildProcess);
@@ -257,7 +226,7 @@ describe("M8 T1 spike — cancel→checkpoint→resume→re-issue round-trip", (
     // Spawn a FRESH supervisor session that resumes <acpSessionId>. Resume is
     // an ACP protocol call: createAcpConnection invokes session/resume (the
     // adapter advertises sessionCapabilities.resume) — NOT a --resume CLI flag.
-    const second = await createSession(url, first.acpSessionId);
+    const second = await createSession(host, first.acpSessionId);
 
     // Resume REUSES the prior acpSessionId (never mints a new one), so the
     // checkpoint handle keeps pointing at the real conversation. The supervisor
@@ -265,11 +234,10 @@ describe("M8 T1 spike — cancel→checkpoint→resume→re-issue round-trip", (
     expect(second.acpSessionId).toBe(first.acpSessionId);
     expect(second.sessionId).not.toBe(first.sessionId);
 
-    const prompt2 = fetch(`${url}/sessions/${second.sessionId}/prompt`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ stepId: "step-1", prompt: "resumed" }),
-    });
+    const prompt2 = postJson(
+      `${url}/sessions/${second.sessionId}/prompt`,
+      command(host, "session.prompt", { stepId: "step-1", prompt: "resumed" }),
+    );
 
     // The re-issued permission MUST carry the original toolCall.
     const reissued = await listenForEvent(
@@ -288,16 +256,15 @@ describe("M8 T1 spike — cancel→checkpoint→resume→re-issue round-trip", (
     expect(reissued.requestId).not.toBe(requestId);
 
     // Resolve the re-issued permission so prompt2 returns.
-    const inputRes = await fetch(`${url}/sessions/${second.sessionId}/input`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    const inputRes = await postJson(
+      `${url}/sessions/${second.sessionId}/input`,
+      command(host, "session.input", {
         kind: "permission",
         action: "select",
         requestId: reissued.requestId,
         optionId: "allow",
       }),
-    });
+    );
 
     expect(inputRes.status).toBe(200);
 

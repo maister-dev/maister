@@ -15,9 +15,7 @@ const OPTIONS = [
 ];
 
 const BASE_SESSION = {
-  runId: "run-1",
-  projectSlug: "proj",
-  worktreePath: "/tmp/agent-run",
+  executionWorkspaceId: "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c",
   stepId: "agent",
   executor: { agent: "claude", model: "claude-sonnet-4-6" },
 };

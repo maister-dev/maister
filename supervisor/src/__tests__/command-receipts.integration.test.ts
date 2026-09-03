@@ -12,10 +12,11 @@ import { openHostState } from "../host-state";
 import { SESSION_EVENT_CHANNEL } from "../registry";
 
 import {
+  adoptDirectory,
   bootHost,
   cleanupRuntimeRoot,
+  createEnvelope,
   envelope,
-  legacyCreateBody,
   postJson,
   readEventsLog,
   waitFor,
@@ -52,12 +53,7 @@ describe("command receipts", () => {
     booted.push(host);
     const runId = `run-${randomUUID().slice(0, 8)}`;
     const commandId = randomUUID();
-    const body = envelope(
-      "session.create",
-      fenceFor(host, runId),
-      legacyCreateBody(runId, process.cwd()),
-      commandId,
-    );
+    const body = await createEnvelope(host, { runId }, {}, commandId);
     const first = await postJson(`${host.url}/sessions`, body);
     const second = await postJson(`${host.url}/sessions`, body);
 
@@ -79,11 +75,7 @@ describe("command receipts", () => {
     const runId = `run-${randomUUID().slice(0, 8)}`;
     const created = await postJson(
       `${host.url}/sessions`,
-      envelope(
-        "session.create",
-        fenceFor(host, runId),
-        legacyCreateBody(runId, process.cwd()),
-      ),
+      await createEnvelope(host, { runId }),
     );
     const sessionId = created.body.sessionId as string;
     const commandId = randomUUID();
@@ -143,11 +135,7 @@ describe("command receipts", () => {
     booted.push(second);
     const created = await postJson(
       `${second.url}/sessions`,
-      envelope(
-        "session.create",
-        fenceFor(second, runId),
-        legacyCreateBody(runId, process.cwd()),
-      ),
+      await createEnvelope(second, { runId }),
     );
     const res = await postJson(
       `${second.url}/sessions/${created.body.sessionId}/prompt`,
@@ -176,12 +164,7 @@ describe("command receipts", () => {
 
     await postJson(
       `${host.url}/sessions`,
-      envelope(
-        "session.create",
-        fenceFor(host, runId),
-        legacyCreateBody(runId, process.cwd()),
-        commandId,
-      ),
+      await createEnvelope(host, { runId }, {}, commandId),
     );
     const res = await fetch(`${host.url}/commands/${commandId}`);
     const receipt = (await res.json()) as Record<string, unknown>;
@@ -217,17 +200,15 @@ describe("command receipts", () => {
     const runId = `run-${randomUUID().slice(0, 8)}`;
     const commandId = randomUUID();
 
+    // Adopt BEFORE the fault is injected: the failure under test is the
+    // create's receipt write, not the adoption's.
+    await adoptDirectory(host, { runId });
     vi.spyOn(hostState, "putReceipt").mockImplementation(() => {
       throw new Error("disk full");
     });
     const res = await postJson(
       `${host.url}/sessions`,
-      envelope(
-        "session.create",
-        fenceFor(host, runId),
-        legacyCreateBody(runId, process.cwd()),
-        commandId,
-      ),
+      await createEnvelope(host, { runId }, {}, commandId),
     );
 
     expect(res.status).toBe(500);
@@ -288,11 +269,7 @@ describe("session.command events", () => {
     const runId = `run-${randomUUID().slice(0, 8)}`;
     const created = await postJson(
       `${host.url}/sessions`,
-      envelope(
-        "session.create",
-        fenceFor(host, runId),
-        legacyCreateBody(runId, process.cwd()),
-      ),
+      await createEnvelope(host, { runId }),
     );
     const sessionId = created.body.sessionId as string;
     const commandId = randomUUID();
@@ -339,11 +316,7 @@ describe("session.command events", () => {
     const runId = `run-${randomUUID().slice(0, 8)}`;
     const created = await postJson(
       `${host.url}/sessions`,
-      envelope(
-        "session.create",
-        fenceFor(host, runId),
-        legacyCreateBody(runId, process.cwd()),
-      ),
+      await createEnvelope(host, { runId }),
     );
     const sessionId = created.body.sessionId as string;
     const base = `${host.url}/sessions/${sessionId}`;
@@ -424,11 +397,7 @@ describe("session.command events", () => {
     const runId = `run-${randomUUID().slice(0, 8)}`;
     const created = await postJson(
       `${host.url}/sessions`,
-      envelope(
-        "session.create",
-        fenceFor(host, runId, 1),
-        legacyCreateBody(runId, process.cwd()),
-      ),
+      await createEnvelope(host, { runId, assignmentEpoch: 1 }),
     );
     const sessionId = created.body.sessionId as string;
     const entry = host.registry.get(sessionId)!;

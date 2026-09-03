@@ -50,6 +50,7 @@ import {
   stubReceipt,
   stubRecord,
   stubRelease,
+  MISSING_ENVELOPE_BODY,
   stubReplay,
   stubResolveCreate,
 } from "./stub-supervisor";
@@ -121,7 +122,7 @@ type SessionRecord = {
   stub: boolean;
   // The live SSE writer, set while a stream is connected.
   emit: ((event: Record<string, unknown>) => void) | null;
-  // ADR-164: the create envelope's fence + handle (undefined for legacy).
+  // ADR-164: the create envelope's fence + handle.
   executionWorkspaceId?: string;
   assignmentId?: string;
   assignmentEpoch?: number;
@@ -725,7 +726,6 @@ export async function startTestSupervisor(
           status: "live" as const,
           pid: 4242,
           startedAt: new Date().toISOString(),
-          logPath: "/tmp/x.log",
           monotonicId: monotonic,
           acpSessionId: s.acpSessionId,
           executionWorkspaceId: s.executionWorkspaceId,
@@ -744,6 +744,12 @@ export async function startTestSupervisor(
     if (method === "POST" && url === "/sessions") {
       void readJsonBody(req).then(async (rawBody) => {
         const env = stubEnvelope(rawBody);
+
+        if (!env) {
+          sendJson(409, MISSING_ENVELOPE_BODY);
+
+          return;
+        }
         const replay = stubReplay(env);
 
         if (replay) {

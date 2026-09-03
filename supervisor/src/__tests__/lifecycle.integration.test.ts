@@ -1,103 +1,70 @@
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
-import Fastify, { type FastifyInstance } from "fastify";
-import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { startHeartbeatWatcher } from "../heartbeat";
-import { registerRoutes, type SpawnOverrides } from "../http-api";
-import { SessionRegistry } from "../registry";
 import { SupervisorDiagnosticsResponseSchema } from "../types";
 
-const FIXTURE_PATH = resolve(
-  fileURLToPath(import.meta.url),
-  "../../../test/fixtures/mock-acp-lifecycle.mjs",
-);
-const silentLogger = pino({ level: "silent" });
+import {
+  bootHost,
+  cleanupRuntimeRoot,
+  createEnvelope,
+  envelope,
+  fenceFor,
+  postJson,
+  type BootedHost,
+} from "./_fixtures/boot-host";
 
-type BootResult = {
-  app: FastifyInstance;
-  url: string;
-  registry: SessionRegistry;
-  runtimeRoot: string;
-  stopHeartbeat: () => void;
-};
+const RUN_ID = "run-int";
 
-async function boot(fixtureArgs: string[]): Promise<BootResult> {
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "supervisor-it-"));
-  const registry = new SessionRegistry(silentLogger);
-  const app = Fastify({ logger: false });
-  const spawnOverrides: SpawnOverrides = {
-    binary: "node",
-    preArgs: [FIXTURE_PATH, ...fixtureArgs],
-  };
-
-  registerRoutes({
-    app,
-    registry,
-    logger: silentLogger,
-    runtimeRoot,
-    killGraceMs: 2_000,
-    spawnOverrides,
-  });
-
-  const stopHeartbeat = startHeartbeatWatcher({
-    registry,
-    logger: silentLogger,
-    intervalMs: 60_000,
-  });
-
-  const address = await app.listen({ port: 0, host: "127.0.0.1" });
-
-  return { app, url: address, registry, runtimeRoot, stopHeartbeat };
+function boot(fixtureArgs: string[]): Promise<BootedHost> {
+  return bootHost({ fixtureArgs });
 }
 
 type CreateOpts = { executorEnv?: Record<string, string> };
 
 async function createSession(
-  url: string,
+  host: BootedHost,
   opts: CreateOpts = {},
 ): Promise<string> {
-  const res = await fetch(`${url}/sessions`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      runId: "run-int",
-      projectSlug: "demo",
-      worktreePath: process.cwd(),
-      stepId: "step-1",
-      executor: {
-        agent: "claude",
-        model: "claude-sonnet-4-6",
-        env: opts.executorEnv,
+  const res = await postJson(
+    `${host.url}/sessions`,
+    await createEnvelope(
+      host,
+      { runId: RUN_ID },
+      {
+        executor: {
+          agent: "claude",
+          model: "claude-sonnet-4-6",
+          env: opts.executorEnv,
+        },
       },
-    }),
-  });
+    ),
+  );
 
   if (res.status !== 201) {
-    throw new Error(`POST /sessions failed: ${res.status} ${await res.text()}`);
+    throw new Error(
+      `POST /sessions failed: ${res.status} ${JSON.stringify(res.body)}`,
+    );
   }
 
-  const body = (await res.json()) as { sessionId: string };
-
-  return body.sessionId;
+  return (res.body as { sessionId: string }).sessionId;
 }
 
-async function sendPrompt(url: string, sessionId: string): Promise<void> {
-  const res = await fetch(`${url}/sessions/${sessionId}/prompt`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ stepId: "step-1", prompt: "hello" }),
-  });
+async function sendPrompt(host: BootedHost, sessionId: string): Promise<void> {
+  const res = await postJson(
+    `${host.url}/sessions/${sessionId}/prompt`,
+    envelope("session.prompt", fenceFor(host, RUN_ID), {
+      stepId: "step-1",
+      prompt: "hello",
+    }),
+  );
 
   if (res.status !== 200) {
     throw new Error(
-      `POST /sessions/${sessionId}/prompt failed: ${res.status} ${await res.text()}`,
+      `POST /sessions/${sessionId}/prompt failed: ${res.status} ${JSON.stringify(res.body)}`,
     );
   }
 }
@@ -164,9 +131,9 @@ async function collectSSE(
   return events;
 }
 
-let booted: BootResult | null = null;
+let booted: BootedHost | null = null;
 
-async function bootFor(fixtureArgs: string[]): Promise<BootResult> {
+async function bootFor(fixtureArgs: string[]): Promise<BootedHost> {
   booted = await boot(fixtureArgs);
 
   return booted;
@@ -178,23 +145,16 @@ beforeEach(() => {
 
 afterEach(async () => {
   if (booted) {
-    booted.stopHeartbeat();
-    booted.registry.forEach((entry) => {
-      try {
-        entry.child.kill("SIGKILL");
-      } catch {
-        /* ignore */
-      }
-    });
-    await booted.app.close();
-    await rm(booted.runtimeRoot, { recursive: true, force: true });
+    await booted.stop();
+    await cleanupRuntimeRoot(booted.runtimeRoot);
     booted = null;
   }
 });
 
 describe("supervisor lifecycle integration", () => {
   it("GET /health reports readiness and session status counts", async () => {
-    const { url, registry } = await bootFor(["--hang"]);
+    const host = await bootFor(["--hang"]);
+    const { url, registry } = host;
     const emptyRes = await fetch(`${url}/health`);
 
     expect(emptyRes.status).toBe(200);
@@ -256,7 +216,8 @@ describe("supervisor lifecycle integration", () => {
 
     process.env.GEMINI_API_KEY = "gemini-secret";
     process.env.MAISTER_DIAGNOSTIC_ENV_REFS = "CUSTOM_RUNNER_TOKEN";
-    const { url } = await bootFor(["--hang"]);
+    const host = await bootFor(["--hang"]);
+    const { url } = host;
     let res: Response;
 
     try {
@@ -342,7 +303,8 @@ describe("supervisor lifecycle integration", () => {
   });
 
   it("GET /diagnostics emits a schema-valid nested stale reason", async () => {
-    const { url, runtimeRoot } = await bootFor(["--hang"]);
+    const host = await bootFor(["--hang"]);
+    const { url, runtimeRoot } = host;
 
     await writeFile(
       join(runtimeRoot, "adapter-smoke-cache.json"),
@@ -377,8 +339,9 @@ describe("supervisor lifecycle integration", () => {
   });
 
   it("POST /sessions returns 201 with sessionId+pid; GET /sessions lists it", async () => {
-    const { url } = await bootFor(["--hang"]);
-    const sessionId = await createSession(url);
+    const host = await bootFor(["--hang"]);
+    const { url } = host;
+    const sessionId = await createSession(host);
 
     expect(sessionId).toMatch(/[0-9a-f-]{36}/);
     const listed = (await (await fetch(`${url}/sessions`)).json()) as unknown[];
@@ -387,11 +350,12 @@ describe("supervisor lifecycle integration", () => {
   });
 
   it("SSE stream emits N line events then session.exited (clean exit)", async () => {
-    const { url } = await bootFor(["--lines", "3", "--emit-usage"]);
-    const sessionId = await createSession(url);
+    const host = await bootFor(["--lines", "3", "--emit-usage"]);
+    const { url } = host;
+    const sessionId = await createSession(host);
     const eventPromise = collectSSE(`${url}/sessions/${sessionId}/stream`);
 
-    await sendPrompt(url, sessionId);
+    await sendPrompt(host, sessionId);
 
     const events = await eventPromise;
     const lines = events.filter((e) => e.event === "session.update");
@@ -404,11 +368,12 @@ describe("supervisor lifecycle integration", () => {
   });
 
   it("session.crashed when fixture exits non-zero", async () => {
-    const { url } = await bootFor(["--lines", "1", "--exit-code", "1"]);
-    const sessionId = await createSession(url);
+    const host = await bootFor(["--lines", "1", "--exit-code", "1"]);
+    const { url } = host;
+    const sessionId = await createSession(host);
     const eventPromise = collectSSE(`${url}/sessions/${sessionId}/stream`);
 
-    await sendPrompt(url, sessionId);
+    await sendPrompt(host, sessionId);
 
     const events = await eventPromise;
     const crashed = events.find((e) => e.event === "session.crashed");
@@ -418,11 +383,14 @@ describe("supervisor lifecycle integration", () => {
   });
 
   it("DELETE /sessions/:id returns 204 and the child exits", async () => {
-    const { url, registry } = await bootFor(["--hang"]);
-    const sessionId = await createSession(url);
-    const res = await fetch(`${url}/sessions/${sessionId}`, {
-      method: "DELETE",
-    });
+    const host = await bootFor(["--hang"]);
+    const { url, registry } = host;
+    const sessionId = await createSession(host);
+    const res = await postJson(
+      `${url}/sessions/${sessionId}`,
+      envelope("session.delete", fenceFor(host, RUN_ID), {}),
+      "DELETE",
+    );
 
     expect(res.status).toBe(204);
     await new Promise<void>((r) => setTimeout(r, 200));
@@ -441,24 +409,15 @@ describe("supervisor lifecycle integration", () => {
     process.env.MAISTER_ACP_HANDSHAKE_TIMEOUT_MS = "500";
 
     try {
-      const { url, registry } = await bootFor(["--hang-new-session"]);
-      const res = await fetch(`${url}/sessions`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          runId: "run-int",
-          projectSlug: "demo",
-          worktreePath: process.cwd(),
-          stepId: "step-1",
-          executor: {
-            agent: "claude",
-            model: "claude-sonnet-4-6",
-          },
-        }),
-      });
+      const host = await bootFor(["--hang-new-session"]);
+      const { url, registry } = host;
+      const res = await postJson(
+        `${url}/sessions`,
+        await createEnvelope(host, { runId: RUN_ID }),
+      );
 
       expect(res.status).toBe(503);
-      const body = (await res.json()) as { code: string; message: string };
+      const body = res.body as { code: string; message: string };
 
       expect(body.code).toBe("EXECUTOR_UNAVAILABLE");
       expect(body.message).toContain("newSession");
@@ -473,8 +432,9 @@ describe("supervisor lifecycle integration", () => {
     }
   });
 
-  it("POST /sessions with malformed body returns 409 PRECONDITION", async () => {
-    const { url } = await bootFor(["--lines", "0"]);
+  it("POST /sessions with a bare (unenveloped) body returns 409 PRECONDITION", async () => {
+    const host = await bootFor(["--lines", "0"]);
+    const { url } = host;
     const res = await fetch(`${url}/sessions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -492,16 +452,21 @@ describe("supervisor lifecycle integration", () => {
   // does not speak the ACP protocol).
 
   it("POST /sessions/:id/checkpoint on unknown session returns 404 (M8)", async () => {
-    const { url } = await bootFor(["--hang"]);
-    const res = await fetch(`${url}/sessions/unknown-checkpoint/checkpoint`, {
-      method: "POST",
-    });
+    const host = await bootFor(["--hang"]);
+    const { url } = host;
+    // The body is validated before the session lookup, so the envelope must be
+    // well-formed for the 404 to be reachable.
+    const res = await postJson(
+      `${url}/sessions/unknown-checkpoint/checkpoint`,
+      envelope("session.checkpoint", fenceFor(host, RUN_ID), {}),
+    );
 
     expect(res.status).toBe(404);
   });
 
   it("DELETE for unknown session returns 404", async () => {
-    const { url } = await bootFor(["--hang"]);
+    const host = await bootFor(["--hang"]);
+    const { url } = host;
     const res = await fetch(`${url}/sessions/unknown-id`, {
       method: "DELETE",
     });
@@ -511,13 +476,14 @@ describe("supervisor lifecycle integration", () => {
 
   it("logs do NOT contain the sentinel ANTHROPIC_AUTH_TOKEN value", async () => {
     const sentinel = "sk-test-redact-sentinel";
-    const { url, runtimeRoot } = await bootFor(["--lines", "2"]);
-    const sessionId = await createSession(url, {
+    const host = await bootFor(["--lines", "2"]);
+    const { url, runtimeRoot } = host;
+    const sessionId = await createSession(host, {
       executorEnv: { ANTHROPIC_AUTH_TOKEN: sentinel },
     });
     const eventPromise = collectSSE(`${url}/sessions/${sessionId}/stream`);
 
-    await sendPrompt(url, sessionId);
+    await sendPrompt(host, sessionId);
     await eventPromise;
 
     const logPath = `${runtimeRoot}/.maister/demo/runs/run-int/step-1.log`;
