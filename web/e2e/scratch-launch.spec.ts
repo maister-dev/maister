@@ -62,12 +62,12 @@ test("scratch launch controls render, while a launch precondition (existing bran
     await form.getByLabel("Work mode").selectOption("plan_first");
     await form.getByLabel("Reasoning effort").selectOption("extra");
 
-    await form.getByLabel("Workspace name").fill("Unreachable supervisor");
+    await form.getByLabel("Workspace name").fill("Existing branch");
     await form.getByLabel("Branch name").fill(branchName);
     await form
       .getByLabel("What do you want to do?")
       .fill(
-        "Try a deterministic scratch launch against an unavailable daemon.",
+        "Try a deterministic scratch launch onto a branch that already exists.",
       );
 
     await form.getByLabel("Files").setInputFiles(uploadPath);
