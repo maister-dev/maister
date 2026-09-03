@@ -1264,7 +1264,15 @@ const M17_MANIFEST = {
 };
 
 const M18_SLUG = "e2e-m18";
-const M18_TARGET_BRANCH = "release";
+// One target branch PER SCENARIO. They used to share a single `release`, which
+// coupled the tests: the merge scenario's promote advances its target, and the
+// conflict scenario carries a `reviewedTargetCommit` read at page load — so
+// under `fullyParallel` a merge landing between the conflict test's render and
+// its promote click made the promote fail target-drift (`PRECONDITION`) instead
+// of reaching the merge that is supposed to conflict (`CONFLICT`).
+const M18_MERGE_TARGET_BRANCH = "release-merge";
+const M18_CONFLICT_TARGET_BRANCH = "release-conflict";
+const M18_PR_TARGET_BRANCH = "release-pr";
 const M18_MERGE_BRANCH = "maister/e2e-m18-merge";
 const M18_CONFLICT_BRANCH = "maister/e2e-m18-conflict";
 const M18_PR_BRANCH = "maister/e2e-m18-pr";
@@ -5015,11 +5023,12 @@ async function seedCapabilityEnforcementFixture(
 type M18FixtureRecord = {
   projectSlug: string;
   repoPath: string;
-  targetBranch: string;
   mergeRunId: string;
   mergeBranch: string;
+  mergeTargetBranch: string;
   conflictRunId: string;
   conflictBranch: string;
+  conflictTargetBranch: string;
   prRunId: string;
   prBranch: string;
   prUrl: string;
@@ -5035,24 +5044,40 @@ type M27FixtureRecord = {
   scratchBranch: string;
 };
 
-// Build one run-branch worktree per scenario, off the `release` target, carrying
-// a committed change. The base commit = the `release` HEAD the run branched from
-// (so `diffRange(base...runBranch)` shows only the run's change). For the
-// conflict scenario, `conflictOnRelease` advances `release` on the SAME line
-// AFTER the run branched — so the two diverge from their common ancestor and a
-// later `git merge --no-ff release ← runBranch` aborts on a textual conflict.
+// Build one run-branch worktree per scenario, off that scenario's OWN target
+// branch, carrying a committed change. The base commit = the target HEAD the run
+// branched from (so `diffRange(base...runBranch)` shows only the run's change).
+// For the conflict scenario, `conflictOnRelease` advances ITS target on the SAME
+// line AFTER the run branched — so the two diverge from their common ancestor
+// and a later `git merge --no-ff <target> ← runBranch` aborts on a textual
+// conflict. Each scenario owning its target is what keeps one scenario's promote
+// from moving another's tip.
 async function provisionM18RunBranch(
   repoPath: string,
   branch: string,
   worktreePath: string,
-  opts: { fileName: string; runLine: string; conflictOnRelease?: string },
+  opts: {
+    fileName: string;
+    runLine: string;
+    conflictOnRelease?: string;
+    targetBranch: string;
+  },
 ): Promise<{ baseCommit: string }> {
-  // Base = the current `release` HEAD (the common ancestor the run forks from).
+  // The scenario's own target branch, forked from `main`.
+  await execFileAsync("git", [
+    "-C",
+    repoPath,
+    "branch",
+    opts.targetBranch,
+    "main",
+  ]);
+
+  // Base = that target's HEAD (the common ancestor the run forks from).
   const { stdout: baseSha } = await execFileAsync("git", [
     "-C",
     repoPath,
     "rev-parse",
-    M18_TARGET_BRANCH,
+    opts.targetBranch,
   ]);
   const baseCommit = baseSha.trim();
 
@@ -5065,7 +5090,7 @@ async function provisionM18RunBranch(
     "-b",
     branch,
     worktreePath,
-    M18_TARGET_BRANCH,
+    opts.targetBranch,
   ]);
   writeFileSync(path.join(worktreePath, opts.fileName), opts.runLine);
   await execFileAsync("git", ["-C", worktreePath, "add", opts.fileName]);
@@ -5088,7 +5113,7 @@ async function provisionM18RunBranch(
       "worktree",
       "add",
       relWt,
-      M18_TARGET_BRANCH,
+      opts.targetBranch,
     ]);
     writeFileSync(path.join(relWt, opts.fileName), opts.conflictOnRelease);
     await execFileAsync("git", ["-C", relWt, "add", opts.fileName]);
@@ -5216,16 +5241,10 @@ async function seedM18Fixture(
 
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [M18_SLUG]);
 
-  // Real parent repo + `release` target branch (points at base initially).
+  // Real parent repo. Each scenario creates its OWN target branch off `main`
+  // inside provisionM18RunBranch — there is no shared target to move.
   mkdirSync(path.dirname(repoPath), { recursive: true });
   await createGitRepo(repoPath);
-  await execFileAsync("git", [
-    "-C",
-    repoPath,
-    "branch",
-    M18_TARGET_BRANCH,
-    "main",
-  ]);
 
   // Scenario worktrees + run-branch commits.
   const mergeWt = `${repoPath}/.worktrees/e2e-m18-merge`;
@@ -5239,6 +5258,7 @@ async function seedM18Fixture(
     {
       fileName: "feature-merge.txt",
       runLine: "clean merge change\n",
+      targetBranch: M18_MERGE_TARGET_BRANCH,
     },
   );
   const conflict = await provisionM18RunBranch(
@@ -5249,11 +5269,13 @@ async function seedM18Fixture(
       fileName: "shared.txt",
       runLine: "run side of the conflict\n",
       conflictOnRelease: "release side of the conflict\n",
+      targetBranch: M18_CONFLICT_TARGET_BRANCH,
     },
   );
   const pr = await provisionM18RunBranch(repoPath, M18_PR_BRANCH, prWt, {
     fileName: "feature-pr.txt",
     runLine: "pr-mode change\n",
+    targetBranch: M18_PR_TARGET_BRANCH,
   });
 
   await pool.query(
@@ -5310,6 +5332,7 @@ async function seedM18Fixture(
     promotionMode: "local_merge" | "pull_request";
     prUrl: string | null;
     prNumber: number | null;
+    targetBranch: string;
   };
 
   const scenarios: Scenario[] = [
@@ -5327,6 +5350,7 @@ async function seedM18Fixture(
       promotionMode: "local_merge",
       prUrl: null,
       prNumber: null,
+      targetBranch: M18_MERGE_TARGET_BRANCH,
     },
     {
       taskTitle: "E2E M18 merge conflict",
@@ -5342,6 +5366,7 @@ async function seedM18Fixture(
       promotionMode: "local_merge",
       prUrl: null,
       prNumber: null,
+      targetBranch: M18_CONFLICT_TARGET_BRANCH,
     },
     {
       taskTitle: "E2E M18 PR display",
@@ -5357,6 +5382,7 @@ async function seedM18Fixture(
       promotionMode: "pull_request",
       prUrl: M18_PR_URL,
       prNumber: M18_PR_NUMBER,
+      targetBranch: M18_PR_TARGET_BRANCH,
     },
   ];
 
@@ -5390,9 +5416,9 @@ async function seedM18Fixture(
         s.branch,
         s.worktreePath,
         repoPath,
-        M18_TARGET_BRANCH,
+        s.targetBranch,
         s.baseCommit,
-        M18_TARGET_BRANCH,
+        s.targetBranch,
         s.promotionMode,
         s.prUrl,
         s.prNumber,
@@ -5424,11 +5450,12 @@ async function seedM18Fixture(
   return {
     projectSlug: M18_SLUG,
     repoPath,
-    targetBranch: M18_TARGET_BRANCH,
     mergeRunId: ids.mergeRun,
     mergeBranch: M18_MERGE_BRANCH,
+    mergeTargetBranch: M18_MERGE_TARGET_BRANCH,
     conflictRunId: ids.conflictRun,
     conflictBranch: M18_CONFLICT_BRANCH,
+    conflictTargetBranch: M18_CONFLICT_TARGET_BRANCH,
     prRunId: ids.prRun,
     prBranch: M18_PR_BRANCH,
     prUrl: M18_PR_URL,

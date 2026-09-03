@@ -27,11 +27,12 @@ import { test, expect } from "@playwright/test";
 type M18Fixture = {
   projectSlug: string;
   repoPath: string;
-  targetBranch: string;
   mergeRunId: string;
   mergeBranch: string;
+  mergeTargetBranch: string;
   conflictRunId: string;
   conflictBranch: string;
+  conflictTargetBranch: string;
   prRunId: string;
   prBranch: string;
   prUrl: string;
@@ -60,7 +61,7 @@ test("merge scenario — ReviewPanel shows the diff and promotes (local_merge) t
     page.getByText(fx.mergeBranch, { exact: false }).first(),
   ).toBeVisible();
   await expect(
-    page.getByText(fx.targetBranch, { exact: false }).first(),
+    page.getByText(fx.mergeTargetBranch, { exact: false }).first(),
   ).toBeVisible();
   const diffView = page.locator('[data-testid="diff-view"]');
 
@@ -87,17 +88,20 @@ test("merge scenario — ReviewPanel shows the diff and promotes (local_merge) t
 
   expect(res.status()).toBe(200);
   expect(res.request().postDataJSON()).toMatchObject({
-    targetBranch: fx.targetBranch,
+    targetBranch: fx.mergeTargetBranch,
     deliveryPolicyOverride: {
-      targetBranch: fx.targetBranch,
+      targetBranch: fx.mergeTargetBranch,
       trigger: "manual",
     },
   });
 
-  // The run reaches `Done` — reload the run-detail page and assert the terminal
-  // status badge.
+  // The run reaches `Done` — reload the run-detail page and assert THIS run's
+  // status badge. Deliberately not a page-wide `getByText("Done")`: the
+  // active-workspaces rail is shared chrome on every page and renders a
+  // hover-only `status-tooltip` span per sibling run, so a text match resolves
+  // a hidden element (or another run's status) instead of this run's badge.
   await page.goto(`/runs/${fx.mergeRunId}`);
-  await expect(page.getByText("Done", { exact: true }).first()).toBeVisible();
+  await expect(page.getByTestId("run-header-status")).toHaveText("Done");
 });
 
 test("conflict scenario — a failed local_merge surfaces the conflict/assignment card", async ({
@@ -108,7 +112,7 @@ test("conflict scenario — a failed local_merge surfaces the conflict/assignmen
   await page.goto(`/runs/${fx.conflictRunId}`);
 
   const promote = page.getByRole("button", {
-    name: new RegExp(fx.targetBranch),
+    name: new RegExp(fx.conflictTargetBranch),
   });
 
   await expect(promote).toBeVisible();
@@ -140,8 +144,10 @@ test("conflict scenario — a failed local_merge surfaces the conflict/assignmen
     page.getByText(fx.conflictBranch, { exact: false }).first(),
   ).toBeVisible();
 
-  // The run did NOT advance to Done.
-  await expect(page.getByText("Done", { exact: true })).toHaveCount(0);
+  // The run did NOT advance to Done — read THIS run's badge rather than
+  // counting page-wide "Done" text, which the shared active-workspaces rail
+  // supplies for sibling runs.
+  await expect(page.getByTestId("run-header-status")).toHaveText("Review");
 });
 
 test("pr scenario — pull_request promotion mode renders the pre-seeded PR link (display only)", async ({
