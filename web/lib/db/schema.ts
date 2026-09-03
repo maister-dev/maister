@@ -54,6 +54,16 @@ import {
 
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { DOMAIN_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
+import {
+  ASSIGNMENT_STATES,
+  COMMAND_KINDS,
+  COMMAND_STATES,
+  EXECUTION_HOST_KINDS,
+  EXECUTION_HOST_READINESS,
+  OPEN_COMMAND_STATES,
+  PLACEMENT_REASONS,
+  TERMINAL_COMMAND_STATES,
+} from "@/lib/execution-host/types";
 
 export const users = pgTable(
   "users",
@@ -145,6 +155,15 @@ export const verificationTokens = pgTable(
     pk: primaryKey({ columns: [t.identifier, t.token] }),
   }),
 );
+
+// Renders `<col> in ('a', 'b')` for a CHECK from a shared constant array so the
+// DB constraint aliases the TypeScript vocabulary instead of hand-mirroring it.
+function inLiteralList(
+  column: AnyPgColumn,
+  values: readonly string[],
+): ReturnType<typeof sql> {
+  return sql`${column} in (${sql.raw(values.map((v) => `'${v}'`).join(", "))})`;
+}
 
 export const projects = pgTable("projects", {
   id: text("id").primaryKey(),
@@ -1969,6 +1988,13 @@ export const runs = pgTable(
     // read it; an env change after the snapshot cannot alter a running tree.
     // NULL = env-only bounds (a pre-3.7.0 manifest, or no orchestrator started).
     delegationBounds: jsonb("delegation_bounds").$type<DelegationBounds>(),
+    // ADR-164 (migration 0128): the run's ACTIVE execution assignment (the
+    // driver-ownership epoch). Circular like parent_run_id. NULL means
+    // "pre-Stage-A, never placed" — historical rows keep it forever.
+    executionAssignmentId: text("execution_assignment_id").references(
+      (): AnyPgColumn => executionAssignments.id,
+      { onDelete: "set null" },
+    ),
   },
   (t) => ({
     idxProjectStatus: index("runs_project_status_idx").on(
@@ -2023,8 +2049,219 @@ export const runs = pgTable(
     idxEndedAt: index("runs_ended_at_idx")
       .on(t.endedAt)
       .where(sql`ended_at is not null`),
+    idxExecutionAssignment: index("runs_execution_assignment_idx").on(
+      t.executionAssignmentId,
+    ),
   }),
 );
+
+// --- Execution hosts (ADR-164, migration 0128) ------------------------------
+// Postgres is the SSOT for hosts, assignments, and commands; the supervisor
+// keeps its own private state (identity, fences, handles, receipts) in a
+// node:sqlite file that is NOT part of this schema. All three tables are
+// additive and never data-dependent.
+
+export const executionHosts = pgTable(
+  "execution_hosts",
+  {
+    id: text("id").primaryKey(),
+    // Supervisor-minted `eh_<uuid>` or the MAISTER_EXECUTION_HOST_KEY pin.
+    hostKey: text("host_key").notNull().unique(),
+    kind: text("kind", { enum: EXECUTION_HOST_KINDS }).notNull(),
+    displayName: text("display_name").notNull(),
+    // {kind:'local_direct'} — the URL is env, never a column.
+    transport: jsonb("transport").$type<{ kind: "local_direct" }>().notNull(),
+    capabilities: jsonb("capabilities")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    readiness: text("readiness", { enum: EXECUTION_HOST_READINESS })
+      .notNull()
+      .default("unknown"),
+    readinessReason: text("readiness_reason"),
+    lastBootId: text("last_boot_id"),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true, mode: "date" }),
+    registeredAt: timestamp("registered_at", {
+      withTimezone: true,
+      mode: "date",
+    })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    retiredAt: timestamp("retired_at", { withTimezone: true, mode: "date" }),
+  },
+  (t) => ({
+    // E-EH-01: at most one non-retired local host.
+    uniqLocalActive: uniqueIndex("execution_hosts_local_active_uq")
+      .on(t.kind)
+      .where(sql`${t.kind} = 'local_direct' AND ${t.retiredAt} IS NULL`),
+    kindCheck: check(
+      "execution_hosts_kind_check",
+      inLiteralList(t.kind, EXECUTION_HOST_KINDS),
+    ),
+    readinessCheck: check(
+      "execution_hosts_readiness_check",
+      inLiteralList(t.readiness, EXECUTION_HOST_READINESS),
+    ),
+  }),
+);
+
+export const executionAssignments = pgTable(
+  "execution_assignments",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    // RESTRICT: a host with placement history is retired, never deleted.
+    executionHostId: text("execution_host_id")
+      .notNull()
+      .references(() => executionHosts.id, { onDelete: "restrict" }),
+    // The driver-ownership generation; strictly increasing per run.
+    epoch: integer("epoch").notNull(),
+    state: text("state", { enum: ASSIGNMENT_STATES }).notNull(),
+    placementReason: text("placement_reason", {
+      enum: PLACEMENT_REASONS,
+    }).notNull(),
+    // Host-scoped opaque `ws_<uuid>` handle, copied forward on a same-host mint.
+    executionWorkspaceId: text("execution_workspace_id"),
+    workspaceAdoptedAt: timestamp("workspace_adopted_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    // Reserved for Stage C lease renewal; always NULL in Stage A.
+    leaseExpiresAt: timestamp("lease_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    supersededById: text("superseded_by_id").references(
+      (): AnyPgColumn => executionAssignments.id,
+      { onDelete: "set null" },
+    ),
+    releasedReason: text("released_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
+  },
+  (t) => ({
+    // E-EH-02: a mint never reuses an epoch (race backstop, 23505 → CONFLICT).
+    uniqRunEpoch: unique("execution_assignments_run_epoch_uq").on(
+      t.runId,
+      t.epoch,
+    ),
+    // E-EH-02: at most one active assignment per run.
+    uniqRunActive: uniqueIndex("execution_assignments_run_active_uq")
+      .on(t.runId)
+      .where(sql`${t.state} = 'active'`),
+    idxHostState: index("execution_assignments_host_state_idx").on(
+      t.executionHostId,
+      t.state,
+    ),
+    epochCheck: check(
+      "execution_assignments_epoch_check",
+      sql`${t.epoch} >= 1`,
+    ),
+    stateCheck: check(
+      "execution_assignments_state_check",
+      inLiteralList(t.state, ASSIGNMENT_STATES),
+    ),
+    placementReasonCheck: check(
+      "execution_assignments_placement_reason_check",
+      inLiteralList(t.placementReason, PLACEMENT_REASONS),
+    ),
+    // An active row never carries ended_at; a terminal row always does.
+    activeShapeCheck: check(
+      "execution_assignments_active_shape_check",
+      sql`(${t.state} = 'active') = (${t.endedAt} IS NULL)`,
+    ),
+  }),
+);
+
+export const executionCommands = pgTable(
+  "execution_commands",
+  {
+    // The wire `command.id` — the host's receipt dedup key.
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    executionAssignmentId: text("execution_assignment_id")
+      .notNull()
+      .references(() => executionAssignments.id, { onDelete: "cascade" }),
+    executionHostId: text("execution_host_id")
+      .notNull()
+      .references(() => executionHosts.id, { onDelete: "restrict" }),
+    assignmentEpoch: integer("assignment_epoch").notNull(),
+    kind: text("kind", { enum: COMMAND_KINDS }).notNull(),
+    targetSessionId: text("target_session_id"),
+    // REDACTED at insert: no prompt text, no secret-looking values (E-EH-12).
+    payload: jsonb("payload")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    state: text("state", { enum: COMMAND_STATES }).notNull().default("queued"),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    deliveringSince: timestamp("delivering_since", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true, mode: "date" }),
+    completedAt: timestamp("completed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    result: jsonb("result").$type<Record<string, unknown>>(),
+    lastError: jsonb("last_error").$type<Record<string, unknown>>(),
+    // Startup recovery re-delivers ONLY driverless rows (delete, release).
+    driverless: boolean("driverless").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    // The recovery pass + deliverer due scan; `loadOpenCommands` mirrors it.
+    idxOpen: index("execution_commands_open_idx")
+      .on(t.state, t.nextAttemptAt)
+      .where(inLiteralList(t.state, OPEN_COMMAND_STATES)),
+    idxRunCreated: index("execution_commands_run_created_idx").on(
+      t.runId,
+      t.createdAt,
+    ),
+    idxAssignment: index("execution_commands_assignment_idx").on(
+      t.executionAssignmentId,
+    ),
+    kindCheck: check(
+      "execution_commands_kind_check",
+      inLiteralList(t.kind, COMMAND_KINDS),
+    ),
+    stateCheck: check(
+      "execution_commands_state_check",
+      inLiteralList(t.state, COMMAND_STATES),
+    ),
+    terminalShapeCheck: check(
+      "execution_commands_terminal_shape_check",
+      sql`(${inLiteralList(t.state, TERMINAL_COMMAND_STATES)}) = (${t.completedAt} IS NOT NULL)`,
+    ),
+  }),
+);
+
+export type ExecutionHost = typeof executionHosts.$inferSelect;
+export type ExecutionAssignment = typeof executionAssignments.$inferSelect;
+export type ExecutionCommand = typeof executionCommands.$inferSelect;
 
 // --- Evaluation Lab (M46, ADR-142..145) ------------------------------------
 // The neutral Study/participant/recipe model that supersedes the task-bound
@@ -3323,6 +3560,15 @@ export const runSessions = pgTable(
     resolutionWarning: jsonb(
       "resolution_warning",
     ).$type<RunnerResolutionWarning | null>(),
+    // ADR-164 (migration 0128): which assignment epoch spawned this session's
+    // current process (updated per spawn), and the SUPERVISOR session id —
+    // written by the session.create acknowledgement, so it is present from
+    // spawn, unlike acp_session_id which lands only after the first prompt.
+    executionAssignmentId: text("execution_assignment_id").references(
+      () => executionAssignments.id,
+      { onDelete: "set null" },
+    ),
+    hostSessionId: text("host_session_id"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -3336,6 +3582,10 @@ export const runSessions = pgTable(
       t.sessionName,
     ),
     idxRunner: index("run_sessions_runner_idx").on(t.runnerId),
+    idxHostSession: index("run_sessions_host_session_idx").on(t.hostSessionId),
+    idxAssignment: index("run_sessions_assignment_idx").on(
+      t.executionAssignmentId,
+    ),
   }),
 );
 
@@ -4256,6 +4506,12 @@ export const nodeAttempts = pgTable(
     outputContract: jsonb(
       "output_contract",
     ).$type<NodeAttemptOutputContract | null>(),
+    // ADR-164 (migration 0128): the assignment epoch this attempt ran under —
+    // stamped at attempt start, immutable.
+    executionAssignmentId: text("execution_assignment_id").references(
+      () => executionAssignments.id,
+      { onDelete: "set null" },
+    ),
     startedAt: timestamp("started_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -4268,6 +4524,9 @@ export const nodeAttempts = pgTable(
       t.attempt,
     ),
     idxRun: index("node_attempts_run_idx").on(t.runId),
+    idxAssignment: index("node_attempts_assignment_idx").on(
+      t.executionAssignmentId,
+    ),
   }),
 );
 

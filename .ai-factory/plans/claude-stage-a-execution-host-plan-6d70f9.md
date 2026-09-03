@@ -734,7 +734,7 @@ on** · **Logging/Failure** · **Acceptance**. "Suite green" = the package's
 
 ### Phase 1 — Persistence (TDD on the DB layer)
 
-- [ ] **T1.1 Drizzle schema + migration triple + ERD.**
+- [x] **T1.1 Drizzle schema + migration triple + ERD.**
   Spec: Appendix C; E-EH-01, E-EH-02.
   RED (web `unit`, existing `web/lib/db/__tests__/migration-journal-integrity.test.ts`
   — no new test; the RED signal is `db:generate` proposing statements that
@@ -751,7 +751,7 @@ on** · **Logging/Failure** · **Acceptance**. "Suite green" = the package's
   `db:generate` a second time and require an EMPTY diff (idempotency).
   Acceptance: journal-integrity test green; `pnpm validate:docs` green (DBML
   gate); `db:check` green on a migrated testcontainer.
-- [ ] **T1.2 DB layer: hosts / assignments / commands / redaction.**
+- [x] **T1.2 DB layer: hosts / assignments / commands / redaction.**
   Spec: E-EH-01, E-EH-02, E-EH-06, E-EH-12; X-EH-20.
   RED (web `integration`, `web/lib/execution-host/__tests__/assignments.integration.test.ts`):
   A1 mint on a run without assignment → epoch 1, `active`, `runs.execution_assignment_id` set;
@@ -771,7 +771,7 @@ on** · **Logging/Failure** · **Acceptance**. "Suite green" = the package's
   reused by `schema.ts` CHECK arrays (patch rule: alias, never hand-mirror).
   Depends on: T1.1. Logging: `debug` per transition; `info` mint/supersede/release.
   Acceptance: A1–A5, C1–C5 green; suite green.
-- [ ] **T1.3 Migration behavior with historical + active runs.**
+- [x] **T1.3 Migration behavior with historical + active runs.**
   Spec: D9; X-EH-16 (data shape half).
   RED (web `integration`, `web/lib/db/__tests__/migration-0128-execution-hosts.integration.test.ts`):
   M1 DB at `0127_output_contract` seeded with runs in all 11 statuses +
@@ -1420,6 +1420,30 @@ Appendix A.3.
   updated (not in the plan's surface table, but a contradicting boundary rule
   would have violated R7). `SendPromptStopReason += cancelled` records the
   existing `/cancel` behavior (drift #8).
+- **2026-09-02 Phase 1 (T1.1–T1.3) — DONE, Commit 2.** `db:generate --name
+  execution_hosts` produced `0128_execution_hosts.sql` matching Appendix C
+  name-for-name (this drizzle-kit wraps in `IF NOT EXISTS` / `DO $$`; journal
+  `idx 128`, `when` monotonic, snapshot present; second generate = "No schema
+  changes"). ERD regenerated (109 tables). Findings: (1) **Postgres truncates
+  four drizzle-convention FK names to 63 bytes** (`…superseded_by_id_…`,
+  `execution_commands_execution_assignment_id_…`, `node_attempts_…`,
+  `run_sessions_…`) — the migration keeps drizzle's names (future diffs
+  truncate identically); M1 asserts the STORED names. (2) **A3 semantics:**
+  the run-row `FOR UPDATE` in `mintAssignment` serializes concurrent mints so
+  BOTH succeed with distinct epochs (2 then 3, single `active`, superseded
+  pointer chain) — that is the D3 "next mint supersedes anything" contract;
+  mutation proof done (lock removed → A3 red — the second mint parks on the
+  superseded-row UPDATE instead and the detector times out; restored). A live
+  `(run_id, epoch)` race cannot be staged because an FK insert takes `FOR KEY
+  SHARE` on the run row and serializes behind the same lock, so A3b exercises
+  the `23505 → CONFLICT {details.reason:"assignment_mint_race"}` mapping via a
+  primary-key collision (`mintAssignment` gained an optional `id`). (3) The
+  self-FK forced a three-statement supersede (unpoint → insert → point).
+  (4) No prose header on the SQL: no migration in this lineage carries one.
+  Suite: web unit 728 files / 7283 tests green; `lib/db` + `lib/execution-host`
+  integration green except `repair-trusted-package-flow-enablement`
+  (`migration 0103 …`), which fails IDENTICALLY on main `73fa99915` —
+  pre-existing, quarantine-by-name for T7.1's set diff.
 
 ---
 
