@@ -117,20 +117,21 @@ export async function POST(
     // no way for the operator to learn the children were killed. Deterministic,
     // not a race. `HumanWorking` is allowed through because the transaction
     // below releases it (→ NeedsInput) before the abandon fires.
-    if (
-      run.runKind === "flow" &&
-      run.status !== "HumanWorking" &&
+    const refusesAbandon = (status: string): boolean =>
+      status !== "HumanWorking" &&
       !ABANDONABLE_STATUSES.includes(
-        run.status as (typeof ABANDONABLE_STATUSES)[number],
-      )
-    ) {
-      return NextResponse.json(
-        {
-          code: "PRECONDITION",
-          message: `run ${runId} is not in an abandonable state`,
-        },
-        { status: 409 },
+        status as (typeof ABANDONABLE_STATUSES)[number],
       );
+    const notAbandonable = NextResponse.json(
+      {
+        code: "PRECONDITION",
+        message: `run ${runId} is not in an abandonable state`,
+      },
+      { status: 409 },
+    );
+
+    if (run.runKind === "flow" && refusesAbandon(run.status)) {
+      return notAbandonable;
     }
 
     if (run.runKind === "flow") {
@@ -140,6 +141,29 @@ export async function POST(
         (await getChildRuns(runId, db)).length > 0;
 
       if (isOrchestrator) {
+        // Re-read immediately before the cascade. The check above ran against the
+        // status selected at the top of the route, and `requireProjectAction`,
+        // `ensureUserActor`, `getChildRuns` and two dynamic imports sit in
+        // between — a multi-await window in which the run can complete or be
+        // terminalized. Re-checking here collapses that to one statement, so a
+        // refusal is overwhelmingly unlikely to have already destroyed the
+        // sub-tree. It does not eliminate the window: nothing short of a fence
+        // does, and a lifecycle claim cannot serialize against the graph runner,
+        // which advances a run with no claim at all.
+        const [fresh] = await db
+          .select({ status: runs.status })
+          .from(runs)
+          .where(eq(runs.id, runId));
+
+        if (!fresh || refusesAbandon(fresh.status)) {
+          log.warn(
+            { runId, from: run.status, to: fresh?.status ?? null },
+            "abandon refused after re-read — sub-tree left untouched",
+          );
+
+          return notAbandonable;
+        }
+
         const { cascadeAbandonRunTreeAndStopSessions } = await import(
           "@/lib/orchestrator/cascade"
         );

@@ -74,6 +74,7 @@ import {
   assertBudgetBreachOptionAvailable,
   budgetBreachClaimRef,
   budgetMeterToPolicyField,
+  coupledRaiseOverride,
   evaluateBudgetBreachClaim,
   parseBudgetBreachResponse,
   type BudgetBreachAvailabilityContext,
@@ -83,6 +84,7 @@ import {
   type BudgetBreachStagedDecision,
 } from "@/lib/runs/budget-breach-fork";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
+import { budgetFromSnapshot } from "@/lib/runs/execution-policy";
 import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
 import { launchRun } from "@/lib/services/runs";
 import { sendTaskToTriageInTransaction } from "@/lib/services/triage";
@@ -4223,16 +4225,31 @@ async function handleBudgetBreachResponse(args: {
     // Re-read budget_state under the lock so a concurrent warn-rung write is not
     // clobbered (the run is locked transitively via the hitl row + status CAS).
     const [current] = await tx
-      .select({ budgetState: runs.budgetState })
+      .select({
+        budgetState: runs.budgetState,
+        executionPolicy: runs.executionPolicy,
+      })
       .from(runs)
       .where(eq(runs.id, runId));
     const prior = (current?.budgetState ?? null) as BudgetState | null;
     const priorOverride: BudgetAxis = prior?.ceilingOverride ?? {};
+    // Fail-open on an absent / malformed snapshot (same helper the watchdog
+    // uses): no snapshot means no tree ceiling to couple against, not a 500.
+    const snapshotBudget: BudgetAxis = budgetFromSnapshot(
+      current?.executionPolicy,
+    );
     const field = budgetMeterToPolicyField(meter);
-    const nextOverride: BudgetAxis = {
-      ...priorOverride,
-      [scope]: { ...(priorOverride[scope] ?? {}), [field]: decision.newLimit },
-    };
+    // Coupled raise: lifting `run` also lifts a `tree` ceiling that was not
+    // already stricter. Otherwise the unraised tree ceiling becomes the stricter
+    // bound and TERMINATES the run one tick later — tree scope has no escalate
+    // rung — undoing the raise the operator just granted.
+    const nextOverride: BudgetAxis = coupledRaiseOverride({
+      snapshotBudget,
+      priorOverride,
+      scope,
+      field,
+      newLimit: decision.newLimit,
+    });
     const nextNotified = { ...(prior?.notified ?? {}) };
 
     delete nextNotified[scope];

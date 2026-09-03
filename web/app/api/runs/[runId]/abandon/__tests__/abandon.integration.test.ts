@@ -53,6 +53,24 @@ vi.mock("@/lib/flows/runner", () => ({
   runFlow: (id: string, opts?: unknown) => runFlowSpy(id, opts),
 }));
 
+// The route dynamically imports getChildRuns immediately BEFORE the cascade, so
+// it is the exact seam for injecting a concurrent transition into the window
+// between the route's single status SELECT and the irreversible cascade.
+const childRunsHook: { before?: () => Promise<void> } = {};
+
+vi.mock("@/lib/queries/run", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, any>>();
+
+  return {
+    ...actual,
+    getChildRuns: async (...args: unknown[]) => {
+      await childRunsHook.before?.();
+
+      return actual.getChildRuns(...args);
+    },
+  };
+});
+
 let abandonPOST: typeof import("../route").POST;
 
 let projectId: string;
@@ -168,6 +186,7 @@ beforeEach(async () => {
   await db.delete(tasks);
   runFlowSpy.mockReset();
   runFlowSpy.mockResolvedValue(undefined);
+  childRunsHook.before = undefined;
   sessionRef.value = { user: { id: ownerId, role: "member" } };
 });
 
@@ -251,6 +270,53 @@ describe("POST /api/runs/{runId}/abandon", () => {
     const [child] = await db.select().from(runs).where(eq(runs.id, childId));
 
     // The refusal must not have touched the sub-tree.
+    expect(child.status).toBe("Running");
+  }, 60_000);
+
+  it("a run that becomes unabandonable AFTER the status read still does not cascade", async () => {
+    // The guard added above reads the status selected once at the top of the
+    // route, and between that read and the cascade sit requireProjectAction,
+    // ensureUserActor, getChildRuns and two dynamic imports — a multi-await
+    // window, not a single statement. A transition landing in it left the old
+    // code cascading the sub-tree and then returning 409, the same destructive
+    // refusal the pre-check was added to stop.
+    const parentId = await seedRun("Running");
+    const [parent] = await db.select().from(runs).where(eq(runs.id, parentId));
+    const childId = randomUUID();
+
+    await db.insert(runs).values({
+      id: childId,
+      taskId: parent.taskId,
+      projectId,
+      flowId,
+      parentRunId: parentId,
+      rootRunId: parentId,
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
+      status: "Running",
+      currentStepId: "implement",
+      flowVersion: "v1.0.0",
+      startedAt: new Date(),
+    });
+
+    // The concurrent transition: the run completes while the request is in
+    // flight, leaving ABANDONABLE_STATUSES after the route already read it.
+    childRunsHook.before = async () => {
+      await db
+        .update(runs)
+        .set({ status: "Done" })
+        .where(eq(runs.id, parentId));
+    };
+
+    const res = await abandonPOST(req(parentId), {
+      params: Promise.resolve({ runId: parentId }),
+    });
+
+    expect(res.status).toBe(409);
+
+    const [child] = await db.select().from(runs).where(eq(runs.id, childId));
+
     expect(child.status).toBe("Running");
   }, 60_000);
 

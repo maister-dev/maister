@@ -6,6 +6,7 @@ import {
   budgetBreachClaimRef,
   budgetMeterToPolicyField,
   budgetBreachProgressFromInput,
+  coupledRaiseOverride,
   evaluateBudgetBreachClaim,
   getBudgetBreachAvailableOptions,
   parseBudgetBreachResponse,
@@ -385,5 +386,79 @@ describe("budget breach shared claim gate", () => {
         incoming: raisePayload,
       }),
     ).toEqual({ kind: "re-claimable" });
+  });
+});
+
+describe("coupledRaiseOverride", () => {
+  // `applyDefaultBudgetForUnattended` seeds run AND tree at one value, but a
+  // raise lifts only the breached scope. Left uncoupled, the unraised tree
+  // ceiling becomes the STRICTER bound and terminates the run the operator just
+  // funded — tree scope has no escalate rung, so that is a kill, not a pause.
+  it("lifts a coupled tree ceiling alongside the raised run ceiling", () => {
+    const next = coupledRaiseOverride({
+      snapshotBudget: { run: { maxTokens: 1000 }, tree: { maxTokens: 1000 } },
+      priorOverride: {},
+      scope: "run",
+      field: "maxTokens",
+      newLimit: 4000,
+    });
+
+    expect(next.run?.maxTokens).toBe(4000);
+    expect(next.tree?.maxTokens).toBe(4000);
+  });
+
+  it("preserves a DELIBERATELY stricter tree ceiling", () => {
+    // tree < run before the raise ⇒ the operator meant the tree to bind.
+    const next = coupledRaiseOverride({
+      snapshotBudget: { run: { maxTokens: 10_000 }, tree: { maxTokens: 1000 } },
+      priorOverride: {},
+      scope: "run",
+      field: "maxTokens",
+      newLimit: 20_000,
+    });
+
+    expect(next.run?.maxTokens).toBe(20_000);
+    // No tree override is written, so the snapshot's stricter 1000 stays the
+    // effective tree ceiling — the operator's tighter bound survives the raise.
+    expect(next.tree?.maxTokens).toBeUndefined();
+  });
+
+  it("does not invent a tree ceiling where none was set", () => {
+    const next = coupledRaiseOverride({
+      snapshotBudget: { run: { maxTokens: 1000 } },
+      priorOverride: {},
+      scope: "run",
+      field: "maxTokens",
+      newLimit: 4000,
+    });
+
+    expect(next.tree).toBeUndefined();
+  });
+
+  it("couples against the EFFECTIVE ceiling, so a second raise still lifts both", () => {
+    // A prior raise already lifted both to 4000; raising run again must carry
+    // the tree with it rather than reading the stale snapshot.
+    const next = coupledRaiseOverride({
+      snapshotBudget: { run: { maxTokens: 1000 }, tree: { maxTokens: 1000 } },
+      priorOverride: { run: { maxTokens: 4000 }, tree: { maxTokens: 4000 } },
+      scope: "run",
+      field: "maxTokens",
+      newLimit: 9000,
+    });
+
+    expect(next.tree?.maxTokens).toBe(9000);
+  });
+
+  it("leaves the tree ceiling alone when the TREE scope is the one raised", () => {
+    const next = coupledRaiseOverride({
+      snapshotBudget: { run: { maxTokens: 1000 }, tree: { maxTokens: 1000 } },
+      priorOverride: {},
+      scope: "tree",
+      field: "maxTokens",
+      newLimit: 5000,
+    });
+
+    expect(next.tree?.maxTokens).toBe(5000);
+    expect(next.run?.maxTokens).toBeUndefined();
   });
 });

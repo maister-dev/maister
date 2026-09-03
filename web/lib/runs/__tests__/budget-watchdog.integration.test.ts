@@ -1477,6 +1477,77 @@ describe("budget watchdog — tree arbitration (D1/D2)", () => {
     expect((await getRun(childA)).status).toBe("Abandoned");
     expect((await getRun(rootId)).status).toBe("Failed");
     expect(await getHitl(rootId)).toHaveLength(0);
+
+    // F2: a terminal transition MUST close the ledger too, not just runs.status
+    // (rules/backend.md — "close every store representing the lifecycle in the
+    // same transaction"). The run-scope terminate arm has always done this via
+    // markNodeFailed; the tree arm did not, leaving the root's active attempt
+    // Running forever under a Failed run.
+    const attempts = await db
+      .select()
+      .from(schema.nodeAttempts)
+      .where(eq(schema.nodeAttempts.runId, rootId));
+
+    expect(attempts[0].status).toBe("Failed");
+    expect(attempts[0].errorCode).toBe("BUDGET_EXCEEDED");
+  }, 60_000);
+
+  it("F2: a SCRATCH tree root goes through the scratch finalizer, not a raw runs update", async () => {
+    // The tree arm's header claimed "the scratch finalizer is never a tree root".
+    // It is not enforced: candidacy is `root_run_id IS NULL` with no run_kind
+    // filter, and `hasTreeDescendants` gates only the redundant tree TOKENS
+    // meter — so a descendant-less scratch run with a tree WALL-CLOCK ceiling
+    // lands here and used to get runs.status='Failed' with scratch_runs still
+    // live (no dialog terminal, no error code, supervisor session id retained).
+    const runId = await seedRun({
+      runKind: "scratch",
+      status: "Running",
+      startedAt: new Date(Date.now() - 120 * 60_000),
+      executionPolicy: policyWithBudget({ tree: { wallClockMinutes: 60 } }),
+      acpSessionId: "acp-tree-scratch",
+    });
+
+    await seedScratch(runId, null);
+    await seedRollup(runId, null, 10);
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(runId, "sup-tree-scratch", "dialog"),
+    ]);
+
+    await runSweepTick({ db });
+
+    expect((await getRun(runId)).status).toBe("Failed");
+
+    const scratch = await getScratch(runId);
+
+    expect(scratch.dialogStatus).toBe("Crashed");
+    expect(scratch.errorCode).toBe("BUDGET_EXCEEDED");
+  }, 60_000);
+
+  it("F2: an AGENT tree root goes through finalizeAgentRun", async () => {
+    // Same reachability as the scratch case. The generic raw update skipped
+    // finalizeAgentRun entirely — and with it agent token revocation, open-HITL
+    // close, materialization restore, context-mount release and the AGENT
+    // scheduler pool. `finalizeAgentRun`'s own CAS accepts only Running|NeedsInput
+    // for a Failed outcome, so this also pins that a Running agent root is
+    // actually accepted rather than silently refused.
+    const runId = await seedRun({
+      runKind: "agent",
+      status: "Running",
+      startedAt: new Date(Date.now() - 120 * 60_000),
+      executionPolicy: policyWithBudget({ tree: { wallClockMinutes: 60 } }),
+      acpSessionId: "acp-tree-agent",
+    });
+
+    await seedRollup(runId, null, 10);
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(runId, "sup-tree-agent", "agent"),
+    ]);
+
+    await runSweepTick({ db });
+
+    expect((await getRun(runId)).status).toBe("Failed");
   }, 60_000);
 
   it("D2: a raised run ceiling is not undone by the unraised tree ceiling on the next tick", async () => {
@@ -1500,7 +1571,14 @@ describe("budget watchdog — tree arbitration (D1/D2)", () => {
         tree: { maxTokens: 1000 },
       }),
       budgetState: {
-        ceilingOverride: { run: { maxTokens: 4000 } },
+        // What a COUPLED raise writes: lifting run also lifts the tree ceiling
+        // that was seeded alongside it. Raising run alone would leave tree at the
+        // old 1000, making it the stricter ceiling and terminating the run the
+        // operator just funded (F4).
+        ceilingOverride: {
+          run: { maxTokens: 4000 },
+          tree: { maxTokens: 4000 },
+        },
         notified: {},
       },
       acpSessionId: "acp-d2-raised",
@@ -1523,6 +1601,67 @@ describe("budget watchdog — tree arbitration (D1/D2)", () => {
     expect(run.status).toBe("Running");
     expect(deleteSessionSpy).not.toHaveBeenCalled();
     expect(await getHitl(runId)).toHaveLength(0);
+  }, 60_000);
+
+  it("F4: a singleton's STRICTER tree ceiling is enforced, not skipped as redundant", async () => {
+    // The skip was conditioned only on "both ceilings exist". Redundancy holds
+    // for the MEASUREMENT (a tree of one spends exactly its own tokens) but NOT
+    // for the LIMITS: two different ceilings over the same measurement are not
+    // redundant, and the stricter one binds. A singleton with run=10000 and
+    // tree=1000 ignored the tree ceiling entirely and ran past 1000.
+    const taskId = await seedTask();
+    const runId = await seedRun({
+      taskId,
+      status: "Running",
+      executionPolicy: policyWithBudget({
+        run: { maxTokens: 10_000 },
+        tree: { maxTokens: 1000 },
+      }),
+      acpSessionId: "acp-f4-strict",
+    });
+
+    await seedAttempt({ runId, attempt: 1, status: "Running" });
+    // Past the tree ceiling, nowhere near the run ceiling.
+    await seedRollup(runId, taskId, 1200);
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(runId, "sup-f4-strict", "implement"),
+    ]);
+
+    await runSweepTick({ db });
+
+    expect((await getRun(runId)).status).toBe("Failed");
+  }, 60_000);
+
+  it("F4: a singleton's LOOSER tree ceiling stays skipped — the run rung still escalates", async () => {
+    // Guard, not a discriminator: when the tree ceiling is looser the run ceiling
+    // binds first either way. It pins that widening the skip's condition did not
+    // start terminating runs that should pause for a human.
+    const taskId = await seedTask();
+    const runId = await seedRun({
+      taskId,
+      status: "Running",
+      executionPolicy: policyWithBudget({
+        run: { maxTokens: 1000 },
+        tree: { maxTokens: 10_000 },
+      }),
+      acpSessionId: "acp-f4-loose",
+    });
+
+    await seedAttempt({ runId, attempt: 1, status: "Running" });
+    await seedWorkspace(runId);
+    await seedRollup(runId, taskId, 1100);
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(runId, "sup-f4-loose", "implement"),
+    ]);
+
+    await runSweepTick({ db });
+
+    const run = await getRun(runId);
+
+    expect(run.status).toBe("NeedsInput");
+    expect(run.budgetState?.notified?.run).toBe("escalate");
   }, 60_000);
 
   it("D2 carve-out: a singleton with ONLY a tree token ceiling is still bounded", async () => {
@@ -1589,14 +1728,20 @@ describe("budget watchdog — tree arbitration (D1/D2)", () => {
     expect((await getRun(rootId)).budgetState?.notified?.tree).toBeUndefined();
   }, 60_000);
 
-  it("D3: a lost root CAS still records notified.tree so the gutted tree is not re-cascaded", async () => {
+  it("F1: a lost root CAS must NOT mark the tree actioned — a surviving root stays enforceable", async () => {
     // The cascade commits descendants BEFORE the root CAS (spec E6 prescribes
-    // that order). If the root advances out of Running/WaitingOnChildren in
-    // between, the CAS returns 0 rows and the terminate "fails" — but the
-    // descendants are already irreversibly Abandoned. `notified.tree` was
-    // computed and then dropped on that path, because it is only written inside
-    // the CAS `.set()`, so `alreadyActioned` could not suppress a repeat and a
-    // re-entry would re-run the whole cascade against an already-gutted tree.
+    // that order), so a root that advances in between survives with its sub-tree
+    // already Abandoned. An earlier fix stamped `notified.tree="terminate"` on
+    // that path to stop a re-entry re-cascading a gutted tree — but
+    // `alreadyActioned` compares `RUNG_ORDER[prior] >= RUNG_ORDER[rung]` and
+    // nothing outranks `terminate`, so the stamp PERMANENTLY disabled tree
+    // enforcement for a root that is non-terminal by definition on this path. If
+    // it later resumes and spawns new children, its tree budget never acts again.
+    //
+    // The harm that stamp prevented is the lesser one: `cascadeAbandonRunTree` is
+    // idempotent (cascade.integration.test.ts asserts a re-cascade emits no
+    // duplicate run.abandoned), so a re-entry is close to a no-op. Unbounded tree
+    // spend is not. The WARN carries the operator signal instead.
     const taskId = await seedTask();
     const rootId = await seedRun({
       taskId,
@@ -1639,8 +1784,37 @@ describe("budget watchdog — tree arbitration (D1/D2)", () => {
     // The concurrent transition kept the root; the cascade is already committed.
     expect(root.status).toBe("Review");
     expect((await getRun(childA)).status).toBe("Abandoned");
-    // The fix: the tree action is recorded even though the flip was lost.
-    expect(root.budgetState?.notified?.tree).toBe("terminate");
+    // The tree was NOT actioned — the flip never landed, so nothing may claim it
+    // was, or `alreadyActioned` will suppress every future tree verdict.
+    expect(root.budgetState?.notified?.tree).toBeUndefined();
+
+    // Prove enforceability survives: the root resumes (rework / reopen / an
+    // orchestrator wake) and spawns a new child that breaches again.
+    deleteSessionSpy.mockReset();
+    deleteSessionSpy.mockResolvedValue(undefined);
+    await db
+      .update(schema.runs)
+      .set({ status: "Running" })
+      .where(eq(schema.runs.id, rootId));
+
+    const childB = await seedRun({
+      rootRunId: rootId,
+      parentRunId: rootId,
+      status: "Running",
+      acpSessionId: "acp-lostcas-b",
+    });
+
+    await seedRollup(childB, null, 500); // tree now 800 + 400 + 500 = 1700
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(rootId, "sup-lostcas-root2", "implement"),
+      liveSessionRecord(childB, "sup-lostcas-b", "implement"),
+    ]);
+
+    await runSweepTick({ db });
+
+    // The second breach acts: the tree budget is still live for this root.
+    expect((await getRun(rootId)).status).toBe("Failed");
+    expect((await getRun(childB)).status).toBe("Abandoned");
   }, 60_000);
 
   it("D2 carve-out: a singleton's tree WALL-CLOCK ceiling still terminates", async () => {

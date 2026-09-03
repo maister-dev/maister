@@ -1,3 +1,5 @@
+import type { BudgetAxis, BudgetScope } from "@/lib/runs/execution-policy";
+
 import { MaisterError } from "@/lib/errors-core";
 
 export type BudgetBreachMeter = "tokens" | "failures" | "wallclock";
@@ -192,6 +194,53 @@ export function budgetMeterToPolicyField(
   meter: BudgetBreachMeter,
 ): BudgetBreachPolicyField {
   return BUDGET_METER_FIELD[meter];
+}
+
+// A raise lifts the breached scope's ceiling. When `run` is raised, a `tree`
+// ceiling that was NOT already stricter must move with it, or it silently
+// becomes the stricter bound and terminates the run the operator just funded —
+// tree scope has no escalate rung, so that is a kill, not another pause. This is
+// the coupled shape `applyDefaultBudgetForUnattended` writes (run + tree seeded
+// at one value for an unattended launch).
+//
+// A DELIBERATELY tighter tree ceiling is preserved: if it was already stricter
+// than run before the raise, the operator meant the tree to bind, and raising
+// `run` does not overrule that.
+export function coupledRaiseOverride(args: {
+  snapshotBudget: BudgetAxis;
+  priorOverride: BudgetAxis;
+  scope: BudgetScope;
+  field: BudgetBreachPolicyField;
+  newLimit: number;
+}): BudgetAxis {
+  const { snapshotBudget, priorOverride, scope, field, newLimit } = args;
+  const next: BudgetAxis = {
+    ...priorOverride,
+    [scope]: { ...(priorOverride[scope] ?? {}), [field]: newLimit },
+  };
+
+  if (scope !== "run") return next;
+
+  // Override wins over snapshot, mirroring `effectiveLimit`; 0 / absent means
+  // unlimited (fail-open), so there is nothing to couple.
+  const effective = (of: BudgetScope): number => {
+    const fromOverride = priorOverride[of]?.[field];
+
+    if (typeof fromOverride === "number") return fromOverride;
+    const fromSnapshot = snapshotBudget[of]?.[field];
+
+    return typeof fromSnapshot === "number" ? fromSnapshot : 0;
+  };
+  const treeBefore = effective("tree");
+  const runBefore = effective("run");
+
+  // No tree bound ⇒ nothing to couple. Already stricter ⇒ deliberate, keep it.
+  if (treeBefore <= 0 || treeBefore < runBefore) return next;
+
+  return {
+    ...next,
+    tree: { ...(next.tree ?? {}), [field]: newLimit },
+  };
 }
 
 export function getBudgetBreachAvailableOptions(

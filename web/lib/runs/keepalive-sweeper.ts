@@ -1211,9 +1211,16 @@ async function evaluateBudgetForCandidate(
     // run-scope tokens are actually set, so a flow configuring only
     // `budget.tree` keeps its bound. Scoped to TOKENS: wall-clock is a
     // tree-scope-only meter and failures are always 0 for a tree of one.
+    // The redundancy is only real when the tree ceiling could never bind FIRST.
+    // "Tree total == run total for a tree of one" is a statement about the
+    // MEASUREMENT; two different ceilings over the same measurement are not
+    // redundant, and a stricter tree ceiling is the operator asking for a tighter
+    // bound. Skipping it silently ignored that ask.
     const skipRedundantTreeTokens =
       treeTokenCeilings !== null &&
       runTokenCeilings !== null &&
+      treeTokenCeilings.escalateLimit >= runTokenCeilings.escalateLimit &&
+      treeTokenCeilings.hardLimit >= runTokenCeilings.hardLimit &&
       !(await hasTreeDescendants(db, candidate.id));
 
     if (treeTokenCeilings && !skipRedundantTreeTokens) {
@@ -1940,6 +1947,57 @@ async function actBudgetTerminateTree(
     { db, executionHosts: hosts, logLabel: "[budget] tree-terminate" },
   );
 
+  // The ROOT's own terminal flip is run-kind dispatched, exactly like the
+  // run-scope arm. A tree root is any candidate with `root_run_id IS NULL` and
+  // `fetchBudgetCandidates` does not filter `run_kind`, so an agent or scratch
+  // singleton carrying a tree wall-clock / failure ceiling lands here. The
+  // previous single raw `runs` update flipped those to Failed while leaving the
+  // kind's own finalizer unrun — scratch_runs still live, and for an agent no
+  // token revocation, HITL close, materialization restore, context-mount release
+  // or AGENT-pool promotion.
+  if (candidate.runKind === "agent") {
+    const { finalizeAgentRun } = await import("@/lib/agents/launch");
+    const result = await finalizeAgentRun(candidate.id, "Failed", {
+      db,
+      reason: "budget_breach",
+      closeOpenHitl: true,
+      closeAssignments: { kind: "system", reason: "budget_breach" },
+    });
+
+    if (!result.finalized) {
+      log.debug(
+        { runId: candidate.id },
+        "[budget] tree-terminate agent finalize mismatch — concurrent transition won",
+      );
+
+      return false;
+    }
+    logBudgetTerminated(candidate, verdict);
+
+    return true;
+  }
+
+  if (candidate.runKind === "scratch") {
+    const { markScratchCrashed } = await import("@/lib/scratch-runs/service");
+
+    await markScratchCrashed({
+      db,
+      runId: candidate.id,
+      err: new MaisterError("BUDGET_EXCEEDED", budgetBreachPrompt(verdict)),
+      clearSupervisorSession: true,
+      terminal: "failed",
+    });
+    await promoteAfterTimeoutKill(db);
+    logBudgetTerminated(candidate, verdict);
+
+    return true;
+  }
+
+  // A parked WaitingOnChildren root has no current node, so there is nothing to
+  // close — same guard the run-scope flow arm uses.
+  const treeRootAttempt = candidate.currentStepId
+    ? await fetchActiveAttempt(db, candidate.id, candidate.currentStepId)
+    : null;
   const notified = mergedBudgetState(
     candidate.budgetState,
     "tree",
@@ -1979,6 +2037,17 @@ async function actBudgetTerminateTree(
     if (rows.length === 0) return [];
 
     await releaseAssignmentForRun(tx, candidate.id, "failed");
+    // Close the ledger in the SAME tx as the status flip (rules/backend.md: a
+    // terminal transition closes every store representing the lifecycle). Without
+    // this the root's active attempt stayed `Running` under a `Failed` run.
+    if (treeRootAttempt) {
+      await markNodeFailed(
+        treeRootAttempt.id,
+        { errorCode: "BUDGET_EXCEEDED" },
+        tx,
+      );
+    }
+
     await systemCloseActiveAssignmentsForRun({
       db: tx,
       runId: candidate.id,
@@ -2016,19 +2085,19 @@ async function actBudgetTerminateTree(
 
   if (upd.length === 0) {
     // The flip lost, but the cascade above already committed: every descendant is
-    // irreversibly Abandoned. Record the tree action anyway — it is only written
-    // inside the CAS `.set()`, so without this a re-entry (the root returning to
-    // Running) would pass `alreadyActioned` and re-run the whole cascade against
-    // an already-gutted tree. Status-independent by design: the row is terminal
-    // or advanced either way, and this stamps provenance only.
-    await db
-      .update(runs)
-      .set({ budgetState: notified })
-      .where(eq(runs.id, candidate.id));
-
+    // irreversibly Abandoned while this root survives non-terminal.
+    //
+    // Do NOT stamp `notified.tree` here. It is written only inside the CAS
+    // `.set()` ON PURPOSE: `alreadyActioned` compares
+    // `RUNG_ORDER[prior] >= RUNG_ORDER[rung]` and nothing outranks `terminate`, so
+    // recording a terminate that never landed would permanently disable tree
+    // enforcement for a root that can still resume and spawn new children. A
+    // re-entry re-running the cascade is the far smaller harm —
+    // `cascadeAbandonRunTree` is idempotent — so the operator signal goes in this
+    // WARN, not into state that suppresses future verdicts.
     log.warn(
       { runId: candidate.id, scope: verdict.scope, meter: verdict.meter },
-      "[budget] tree-root flip claim lost — concurrent transition won; descendants already cascaded",
+      "[budget] tree-root flip claim lost — concurrent transition won; descendants already cascaded, tree left enforceable",
     );
 
     return false;

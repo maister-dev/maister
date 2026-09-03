@@ -751,15 +751,26 @@ makes the coordinator's job **collect only**:
 - **A refused tree-cancel MUST NOT cascade** **(Implemented)** — the cascade
   (`cascadeAbandonRunTreeAndStopSessions`) is irreversible, so every caller that
   can refuse MUST validate the root's status BEFORE calling it, never rely on a
-  status-guarded CAS that runs after. The abandon route did the latter, so
-  abandoning an already-terminal orchestrator destroyed its whole sub-tree and
-  then returned 409 — deterministic, not a race. Where a caller cascades and the
-  root's CAS is then genuinely lost to a concurrent transition (reconcile's
-  `orchestrator-stuck`, workbench `stop`), the descendants stay `Abandoned` with
-  no compensation: that outcome MUST be surfaced (a 409 to the operator, or a
-  WARN naming the already-cascaded sub-tree), never counted as a silent skip.
-  Sessions left live under an `Abandoned` row remain `reapAbandonedRunSessions`'
-  job by design.
+  status-guarded CAS that runs after, and MUST read that status **immediately**
+  before the cascade rather than from a value fetched earlier in the request. The
+  abandon route did neither, so abandoning an already-terminal orchestrator
+  destroyed its whole sub-tree and then returned 409 — deterministic, not a race.
+  The guarantee is best-effort, not absolute: the re-read collapses the window to
+  a single statement but cannot close it, because nothing serializes against the
+  graph runner, which advances a run holding no lifecycle claim. Callers stay
+  **cascade-first**; inverting to flip the root first would trade this window for
+  a strictly worse one — descendants left non-terminal under a terminal root,
+  which the reconcile sweep only recovers for a `Running` child (a `Pending`,
+  `NeedsInput`, `Review` or `HumanWorking` child, or a whole depth-2 sub-tree, has
+  no recovery), while the current partial state has a tested backstop.
+  Where the root's CAS is then genuinely lost to a concurrent transition
+  (reconcile's `orchestrator-stuck`, workbench `stop`), the descendants stay
+  `Abandoned` with no compensation: that outcome MUST be surfaced (a 409 to the
+  operator, or a WARN naming the already-cascaded sub-tree), never counted as a
+  silent skip, and MUST NOT be recorded as a completed action — a budget tree
+  terminate that stamps `notified.tree` on a lost CAS permanently disables that
+  root's tree enforcement. Sessions left live under an `Abandoned` row remain
+  `reapAbandonedRunSessions`' job by design.
 - **Unresolvable/untrusted delegation target** → `MaisterError("PRECONDITION")`;
   no child run created (resolve+trust is physically separate from launch).
 - **Cyclic / over-fanout / over-depth DAG** → `MaisterError("CONFIG")` pre-tx; no

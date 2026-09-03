@@ -8,6 +8,22 @@
 > **Owner decisions (locked):** metered in **tokens** (not USD); enforcement is
 > **opt-in, fail-open** — absent or `0` limit ⇒ "run, don't constrain"; **no
 > launch refusal**.
+>
+> ⚠ **PARTIALLY SUPERSEDED (2026-09-03) — do not read §5 or the HITL action list
+> as current.** Two areas have moved on since this artifact was frozen, and
+> `docs/system-analytics/execution-policy.md` is canonical where they disagree:
+> - **§5 `run_kind` dispatch** — "ESCALATE is flow-only in v1 … a non-flow
+>   run/task escalate-band breach is promoted to terminate" no longer holds. The
+>   breach disposition is resolved from the **`onBudgetBreach` policy axis**
+>   (`escalate | terminate | terminate_restorable`) per ADR-106, so an agent run
+>   can escalate or land in the recoverable `NeedsInputIdle`.
+> - **HITL actions** — this artifact describes only *Raise* and *Abandon*. ADR-125
+>   added a four-option fork (`raise | restart | park | abandon`), computed by
+>   `web/lib/runs/budget-breach-fork.ts`.
+>
+> The rest — the meters, scopes, fail-open stance, the E-series acceptance
+> criteria and the ladder — remains current, and E6/E10/E11 were re-reviewed on
+> 2026-09-03. Amend rather than rewrite: this is a frozen planning artifact.
 
 ## 1. Summary
 
