@@ -50,6 +50,21 @@ function worktreesRoot() {
   );
 }
 
+// ADR-164: the supervisor-private execution-host state store (host identity,
+// fences, adopted-workspace handles, receipts). Defaults under the runtime
+// root's .maister/, which is the supervisor cwd when MAISTER_RUNTIME_ROOT is
+// unset — the repo checkout itself is never deleted, but its .maister/ state is.
+function executionHostStateDir(repoCwd) {
+  if (process.env.MAISTER_EXECUTION_HOST_STATE_DIR) {
+    return absolutePath(process.env.MAISTER_EXECUTION_HOST_STATE_DIR);
+  }
+  const runtimeRoot = process.env.MAISTER_RUNTIME_ROOT
+    ? absolutePath(process.env.MAISTER_RUNTIME_ROOT)
+    : repoCwd;
+
+  return path.join(runtimeRoot, ".maister", "execution-host");
+}
+
 function candidateRoots(repoCwd) {
   const roots = [
     worktreesRoot(),
@@ -62,6 +77,19 @@ function candidateRoots(repoCwd) {
 
   if (process.env.MAISTER_RUNTIME_ROOT) {
     roots.push(absolutePath(process.env.MAISTER_RUNTIME_ROOT));
+  }
+
+  const stateDir = executionHostStateDir(repoCwd);
+
+  try {
+    assertSafeRoot(stateDir, repoCwd);
+    roots.push(stateDir);
+  } catch {
+    // A custom state dir outside every MAIster-owned root is the operator's to
+    // remove; refusing it must not abort the rest of the reset.
+    console.log(
+      `skip ${stateDir} (execution-host state dir outside MAIster-owned roots; remove it manually)`,
+    );
   }
 
   return [...new Set(roots)].filter((root) => root !== repoCwd);

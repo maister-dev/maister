@@ -115,7 +115,7 @@ adapters, so its env is what they inherit).
 services — supervisor and web resolve `.maister/` from it, so a mismatch breaks
 the run event stream.
 
-**Execution-host state (Designed — [ADR-164](decisions.md#adr-164-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces)).**
+**Execution-host state (Implemented — [ADR-164](decisions.md#adr-164-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces)).**
 The supervisor keeps a private `node:sqlite` state store under
 `MAISTER_EXECUTION_HOST_STATE_DIR` (default
 `<MAISTER_RUNTIME_ROOT>/.maister/execution-host/` → `/opt/maister/.maister/execution-host/`;
@@ -281,7 +281,8 @@ the local web/supervisor processes.
 ```bash
 curl -fsS http://127.0.0.1:7777/health        # supervisor: {"status":"ready",..., "host":{"hostKey":"eh_…","bootId":"…","protocolVersion":1}}
 curl -fsS http://127.0.0.1:3000/ >/dev/null    # web responds
-journalctl -u maister-web -n 200 | grep execution-host-registered   # (Designed — ADR-164) the web tier registered the host
+journalctl -u maister-web -n 200 | grep execution-host-registered   # (ADR-164) the web tier registered the host
+journalctl -u maister-supervisor -n 50 | grep execution-host-key-conflict  # MUST be empty — a hit means a MAISTER_EXECUTION_HOST_KEY pin conflicts with the stored identity (unset the pin or wipe the state dir)
 ```
 
 Then open `https://maister.example.com/login` and sign in with the seeded admin.
@@ -299,12 +300,15 @@ sudo systemctl restart maister-supervisor maister-web
 
 Restart `maister-supervisor` during a quiet window: it drops its in-memory ACP
 session registry, so `Running` runs orphan until startup reconciliation lands
-(ADR-033..036). **(Designed — ADR-164)** The first start after the
+(ADR-033..036). **(ADR-164)** The first start after the
 execution-host upgrade mints the host identity into the state dir; the web
 tier registers it and backfills an assignment (epoch 1, `legacy_backfill`)
 for every `Running` / `NeedsInput` run that still has a live session —
 draining before the upgrade is recommended, not required. Runs that finished
-before the upgrade keep `runs.execution_assignment_id = NULL` forever.
+before the upgrade keep `runs.execution_assignment_id = NULL` forever. A
+supervisor that was unreachable when the web tier booted is picked up by the
+periodic system sweep (the backfill retries there), so the two services may
+restart in either order.
 
 ## 12. Backup
 
@@ -596,4 +600,4 @@ token when the inbound bearer is missing. There is no `MAISTER_PROJECT_TOKEN` or
 - [`deploy/`](../deploy) — systemd units, env template, nginx config.
 - [`configuration.md`](configuration.md) — full environment variable reference.
 - [`getting-started.md`](getting-started.md) — local dev setup + seeded credentials.
-- ADR-023 (host-run topology), ADR-025 (repo onboarding), ADR-022 (run-data projection), ADR-049 (PR-mode promotion — host `gh`/`glab` / Gitea-API token prerequisites), ADR-164 (execution-host state dir + workspace roots — Designed).
+- ADR-023 (host-run topology), ADR-025 (repo onboarding), ADR-022 (run-data projection), ADR-049 (PR-mode promotion — host `gh`/`glab` / Gitea-API token prerequisites), ADR-164 (execution-host state dir + workspace roots).

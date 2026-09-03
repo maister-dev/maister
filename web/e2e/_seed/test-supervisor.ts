@@ -39,6 +39,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import path from "node:path";
 
+import { E2E_EXECUTION_HOST_SLUG } from "./fixtures";
 import {
   STUB_BOOT_ID,
   STUB_HOST_KEY,
@@ -122,6 +123,18 @@ type SessionRecord = {
   stub: boolean;
   // The live SSE writer, set while a stream is connected.
   emit: ((event: Record<string, unknown>) => void) | null;
+  // Events emitted before the stream connected — flushed on connect.
+  queued: Array<Record<string, unknown>>;
+  // ADR-164 (T6.2) permission scenario (the execution-host contract project):
+  // the first prompt of every session parks on a permission request and its
+  // HTTP response is HELD until `/input` answers it (end_turn) or a checkpoint
+  // tears the session down (cancelled + session.exited{reason: checkpoint}).
+  permission: boolean;
+  pendingPrompt: {
+    requestId: string;
+    env: ReturnType<typeof stubEnvelope>;
+    respond: (status: number, body: unknown) => void;
+  } | null;
   // ADR-164: the create envelope's fence + handle.
   executionWorkspaceId?: string;
   assignmentId?: string;
@@ -296,6 +309,53 @@ export async function startTestSupervisor(
       monotonicId: nextId(),
       exitCode: rec.exitCode,
     });
+  };
+
+  async function lookupProjectSlug(runId: string): Promise<string | null> {
+    const r = await opts.pool.query(
+      `SELECT p."slug" FROM "runs" r JOIN "projects" p ON p."id" = r."project_id"
+        WHERE r."id" = $1`,
+      [runId],
+    );
+
+    return (r.rows[0]?.slug as string | undefined) ?? null;
+  }
+
+  // Emit onto a connected stream, or queue until one connects.
+  const emitOrQueue = (
+    rec: SessionRecord,
+    event: Record<string, unknown>,
+  ): void => {
+    if (rec.emit) rec.emit(event);
+    else rec.queued.push(event);
+  };
+
+  // Answer the held prompt of the permission scenario (idempotent).
+  const resolvePendingPrompt = (
+    rec: SessionRecord,
+    stopReason: "end_turn" | "cancelled",
+  ): boolean => {
+    const pending = rec.pendingPrompt;
+
+    if (!pending) return false;
+    rec.pendingPrompt = null;
+    const out = { stopReason };
+
+    pending.respond(200, out);
+    if (pending.env) {
+      emitOrQueue(rec, {
+        type: "session.command",
+        sessionId: rec.sessionId,
+        monotonicId: nextId(),
+        commandId: pending.env.command.id,
+        kind: "session.prompt",
+        phase: "completed",
+        status: "succeeded",
+        result: out,
+      });
+    }
+
+    return true;
   };
 
   async function lookupRunKind(
@@ -779,6 +839,9 @@ export async function startTestSupervisor(
         const runId = resolved.runId;
         const mcpServers = (body.mcpServers as AgentMcpServer[]) ?? [];
         const runKind = await lookupRunKind(runId);
+        const permission =
+          runKind === "flow" &&
+          (await lookupProjectSlug(runId)) === E2E_EXECUTION_HOST_SLUG;
 
         // stub-compat path for non-orchestrator sessions (e.g. a platform-agents
         // `agent` run); orchestrator FLOW sessions always auto-drive.
@@ -809,6 +872,9 @@ export async function startTestSupervisor(
           detached: false,
           stub,
           emit: null,
+          queued: [],
+          permission,
+          pendingPrompt: null,
           executionWorkspaceId:
             typeof body.executionWorkspaceId === "string"
               ? body.executionWorkspaceId
@@ -870,6 +936,37 @@ export async function startTestSupervisor(
             kind: "session.prompt",
             phase: "accepted",
           });
+        }
+        // Permission scenario: park on a permission request and HOLD the HTTP
+        // response — `/input` (end_turn) or `/checkpoint` (cancelled) answers it.
+        if (rec?.permission) {
+          const requestId = randomUUID();
+
+          rec.pendingPrompt = {
+            requestId,
+            env,
+            respond: (status, out) => {
+              stubRecord(env, status, out);
+              sendJson(status, out);
+            },
+          };
+          emitOrQueue(rec, {
+            type: "session.permission_request",
+            sessionId: rec.sessionId,
+            monotonicId: nextId(),
+            requestId,
+            options: [
+              { optionId: "allow", kind: "allow_once", name: "Allow" },
+              { optionId: "reject", kind: "reject_once", name: "Reject" },
+            ],
+            toolCall: {
+              toolCallId: "tc-e2e-1",
+              title: "Write CONTRACT.md",
+              kind: "edit",
+            },
+          });
+
+          return;
         }
         // stub-compat: record the prompt; the stream stays held until release
         // (do NOT auto-drive — the spec controls termination).
@@ -969,7 +1066,10 @@ export async function startTestSupervisor(
       };
       // A child run's stream may connect AFTER its prompt already queued the
       // exit (consumeAgentSession starts the stream in a microtask, then awaits
-      // sendPrompt) — flush any pending exit now.
+      // sendPrompt) — flush queued events, then any pending exit.
+      for (const event of rec.queued.splice(0)) {
+        if (rec.emit) rec.emit(event);
+      }
       flushExit(rec);
 
       req.on("close", () => {
@@ -1011,6 +1111,18 @@ export async function startTestSupervisor(
 
         stubRecord(env, 200, out);
         sendJson(200, out);
+        // Permission scenario: the adapter journals the pending request and
+        // exits with reason "checkpoint"; its held prompt answers cancelled.
+        if (rec?.permission) {
+          resolvePendingPrompt(rec, "cancelled");
+          emitOrQueue(rec, {
+            type: "session.exited",
+            sessionId: rec.sessionId,
+            monotonicId: nextId(),
+            exitCode: 0,
+            reason: "checkpoint",
+          });
+        }
       });
 
       return;
@@ -1046,6 +1158,26 @@ export async function startTestSupervisor(
 
         stubRecord(env, 200, out);
         sendJson(200, out);
+        // Permission scenario: the delivered answer completes the held turn and
+        // the session ends cleanly (the flow runner drives the graph on).
+        const payload = stubPayload(body) as {
+          requestId?: string;
+          action?: string;
+        };
+
+        if (
+          rec?.pendingPrompt &&
+          inputMatch[2] === "input" &&
+          payload.requestId === rec.pendingPrompt.requestId
+        ) {
+          resolvePendingPrompt(
+            rec,
+            payload.action === "cancel" ? "cancelled" : "end_turn",
+          );
+          rec.exitPending = true;
+          rec.exitCode = 0;
+          flushExit(rec);
+        }
       });
 
       return;
@@ -1075,6 +1207,7 @@ export async function startTestSupervisor(
           return;
         }
         if (rec) {
+          resolvePendingPrompt(rec, "cancelled");
           if (rec.emit) rec.emit = null;
           sessions.delete(deleteMatch[1]);
         }

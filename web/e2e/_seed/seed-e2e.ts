@@ -30,6 +30,8 @@ import { promisify } from "node:util";
 import bcrypt from "bcryptjs";
 import { Pool } from "pg";
 
+import { E2E_EXECUTION_HOST_SLUG } from "./fixtures";
+
 const execFileAsync = promisify(execFile);
 
 type SeedAdapterId = "claude" | "codex" | "gemini" | "opencode" | "mimo";
@@ -557,6 +559,28 @@ const ORCHESTRATOR_SLUG = "e2e-orchestrator";
 // the two loops cannot interfere with each other's child counts.
 const ORCHESTRATOR_FLOW_SLUG = "e2e-orchestrator-flow";
 const E2E_WORKER_AGENT = "e2e-orc-pkg:e2e-worker";
+
+// --- ADR-164 execution-host contract fixture (T6.2) -------------------------
+// One launchable project with a Backlog task bound to a single-`ai_coding`
+// graph. The execution-host-contract spec launches it from the board; the test
+// supervisor (keyed on E2E_EXECUTION_HOST_SLUG) answers the first prompt with a
+// permission request, is checkpointed by the keep-alive sweeper, and re-issues
+// the request on the resumed session — the launch/checkpoint/resume epochs the
+// spec asserts in the DB.
+const EXECUTION_HOST_MANIFEST = {
+  schemaVersion: 1,
+  name: "E2E Execution Host",
+  nodes: [
+    {
+      id: "implement",
+      type: "ai_coding",
+      action: { prompt: "Apply the execution-host contract change." },
+      transitions: { success: "done" },
+    },
+  ],
+};
+
+type ExecutionHostFixture = ProjectFixture & { taskNumber: number };
 
 const ORCHESTRATOR_MANIFEST = {
   schemaVersion: 1,
@@ -7529,6 +7553,46 @@ async function seedDelegatedFlowForProject(
   );
 }
 
+async function seedExecutionHostFixture(
+  pool: Pool,
+  adminId: string,
+): Promise<ExecutionHostFixture> {
+  const base = await seedLaunchableProjectFixture(pool, {
+    slug: E2E_EXECUTION_HOST_SLUG,
+    projectName: "E2E Execution Host",
+    userId: adminId,
+    repoPath: path.join(RUNTIME_ROOT, "repos", E2E_EXECUTION_HOST_SLUG),
+    task: {
+      title: "Execution host contract",
+      prompt: "Exercise the launch → checkpoint → resume placement epochs.",
+      status: "Backlog",
+      stage: "Backlog",
+    },
+  });
+
+  // Same override as the orchestrator fixture: the graph lives on BOTH the
+  // revision (launch precondition) and the project flow row (loadRun).
+  await pool.query(
+    `UPDATE flow_revisions SET manifest = $1
+     WHERE flow_ref_id = 'acceptance' AND installed_path = $2`,
+    [
+      JSON.stringify(EXECUTION_HOST_MANIFEST),
+      path.join(RUNTIME_ROOT, "flows", `${E2E_EXECUTION_HOST_SLUG}-flow`),
+    ],
+  );
+  await pool.query(`UPDATE flows SET manifest = $1 WHERE id = $2`, [
+    JSON.stringify(EXECUTION_HOST_MANIFEST),
+    base.flowId,
+  ]);
+
+  const taskNumber = Number(
+    (await pool.query(`SELECT number FROM tasks WHERE id = $1`, [base.taskId!]))
+      .rows[0].number,
+  );
+
+  return { ...base, taskNumber };
+}
+
 type M38DecideCase = {
   projectSlug: string;
   taskTitle: string;
@@ -7720,6 +7784,7 @@ async function main(): Promise<void> {
         SCRATCH_SLUG,
         REGISTRATION_SLUG,
         REGISTRATION_DUP_SLUG,
+        E2E_EXECUTION_HOST_SLUG,
         M11C_VISIBLE_SLUG,
         M11C_REFUSE_SLUG,
         M19_SLUG,
@@ -8013,6 +8078,7 @@ You answer when summoned by an @mention.
     // ADR-165: the depth-2 recursive-harness project. Seeded AFTER the
     // orchestrator fixtures because it attaches the same global agent package.
     const rah = await seedRahE2EFixture(pool, admin.id);
+    const executionHost = await seedExecutionHostFixture(pool, admin.id);
     const m38 = await seedM38DecideFixture(pool, admin.id);
     const m40 = await seedM40Fixture(pool, admin.id);
     const capabilityEnforcement = await seedCapabilityEnforcementFixture(
@@ -8080,6 +8146,7 @@ You answer when summoned by an @mention.
         orchestrator,
         orchestratorFlow,
         rah,
+        executionHost,
         m38,
         m40,
         capabilityEnforcement,

@@ -38,6 +38,52 @@ test("blast-maister-local-state dry-run does not remove MAIster roots", async ()
   }
 });
 
+test("blast-maister-local-state covers the execution-host state dir and skips one outside MAIster roots", async () => {
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "maister-blast-test-"));
+  const home = path.join(tmp, ".maister");
+  // A runtime root the reset already owns (under MAISTER_HOME): the default
+  // state dir nests under its .maister/.
+  const runtimeRoot = path.join(home, "runtime-root");
+  const stateDir = path.join(runtimeRoot, ".maister", "execution-host");
+  const foreignStateDir = path.join(tmp, "elsewhere", "execution-host");
+  const cwd = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+
+  await fs.mkdir(stateDir, { recursive: true });
+  await fs.mkdir(foreignStateDir, { recursive: true });
+
+  try {
+    const baseEnv = {
+      ...process.env,
+      MAISTER_HOME: home,
+      MAISTER_REPOS_ROOT: path.join(home, "repos"),
+    };
+    // Default location: under <MAISTER_RUNTIME_ROOT>/.maister/ → listed.
+    const withRuntimeRoot = await execFileAsync(
+      process.execPath,
+      ["scripts/blast-maister-local-state.mjs"],
+      { cwd, env: { ...baseEnv, MAISTER_RUNTIME_ROOT: runtimeRoot } },
+    );
+
+    assert.match(withRuntimeRoot.stdout, /mode=dry-run/);
+    assert.match(
+      withRuntimeRoot.stdout,
+      new RegExp(`would remove ${stateDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+    );
+
+    // A custom dir outside every MAIster-owned root is skipped, not fatal.
+    const foreign = await execFileAsync(
+      process.execPath,
+      ["scripts/blast-maister-local-state.mjs"],
+      { cwd, env: { ...baseEnv, MAISTER_EXECUTION_HOST_STATE_DIR: foreignStateDir } },
+    );
+
+    assert.match(foreign.stdout, /skip .*execution-host state dir outside MAIster-owned roots/);
+    assert.equal((await fs.stat(foreignStateDir)).isDirectory(), true);
+  } finally {
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
+});
+
 test("blast-maister-local-state reset accepts only DB_URL", async () => {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "maister-blast-test-"));
   const env = {

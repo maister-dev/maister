@@ -58,6 +58,13 @@ export type E2ERahFixture = E2EProjectFixture & {
   taskNumber: number;
   researchFlowRef: string;
   resultProfile: string;
+// ADR-164 (T6.2): a launchable single-`ai_coding` flow whose session the test
+// supervisor drives through a permission request (the execution-host contract
+// spec). The slug is what the test supervisor keys the scenario on.
+export const E2E_EXECUTION_HOST_SLUG = "e2e-execution-host";
+
+export type E2EExecutionHostFixture = E2EProjectFixture & {
+  taskNumber: number;
 };
 
 export type E2ERegistrationFixture = {
@@ -253,6 +260,7 @@ export type E2EFixtures = {
     orchestratorFlow: E2EOrchestratorFixture;
     // ADR-165: the depth-2 recursive-harness project.
     rah: E2ERahFixture;
+    executionHost: E2EExecutionHostFixture;
     m38: E2EM38Fixture;
     m40: E2EM40Fixture;
     budgetFork: E2EBudgetForkFixture;
