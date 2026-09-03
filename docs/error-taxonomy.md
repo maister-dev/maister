@@ -513,7 +513,9 @@ identity_changed`) surfaces as **`EXECUTOR_UNAVAILABLE`** with
 > typed `details.reason` token; an unknown-outcome transport failure after
 > the per-kind retry budget is **`EXECUTOR_UNAVAILABLE`**; a prompt whose
 > acceptance receipt cannot be resolved after a transport failure is
-> **`ACP_PROTOCOL`** (`details.reason = "turn_lost" | "receipt_missing"`).
+> **`ACP_PROTOCOL`** (`details.reason = "turn_lost" | "receipt_missing" |
+> "ledger_write_failed"`), or **`EXECUTOR_UNAVAILABLE`**
+> (`receipt_lookup_failed`) when the host stays unreachable for the lookup.
 > The UI still branches on `code`; `details.reason` is the discriminator for
 > internal callers and tests (ADR-093 pattern). A driver receiving
 > `assignment_fenced` MUST yield — no run, attempt, HITL, or scratch write.
@@ -540,9 +542,37 @@ Reason tokens (`SupervisorErrorBody.details.reason`, contract in
 | `turn_lost`           | duplicate prompt id whose receipt is `accepted` with no in-flight turn (host restarted mid-turn)                                                                                                               | ledger `failed{turn_lost}`; run follows reconcile |
 | `unknown_workspace`   | `executionWorkspaceId` not in the host registry                                                                                                                                                                | client re-adopts ONCE, issues a NEW create        |
 | `workspace_released`  | handle already released                                                                                                                                                                                        | `PRECONDITION` passed through                     |
-| `workspace_rejected`  | adopt path failed a kind rule (`details.rule ∈ relative_path, parent_segment, not_found, outside_roots, symlink_escape, gitdir_mismatch, not_a_repo, repo_path_mismatch, inside_state_dir, outside_workspace`) | `PRECONDITION` passed through                     |
-| `legacy_field`        | a legacy path field after the strict flip                                                                                                                                                                      | `PRECONDITION` passed through                     |
+| `workspace_rejected`  | adopt path failed a kind rule (`details.rule ∈ relative_path, parent_segment, not_found, outside_roots, symlink_escape, gitdir_mismatch, not_a_repo, repo_path_mismatch, inside_state_dir, outside_workspace`; `details.mount` names a rejected `contextMounts[]` entry) | `PRECONDITION` passed through                     |
+| `legacy_field`        | a legacy path field after the strict flip (`details.field` names it)                                                                                                                                                                      | `PRECONDITION` passed through                     |
 | `missing_envelope`    | no envelope after the strict flip                                                                                                                                                                              | `PRECONDITION` passed through                     |
+
+### Web-minted `details.reason` tokens (Implemented — ADR-166)
+
+Minted by `web/lib/execution-host/` and never sent by the supervisor (the
+host's own `turn_lost` refusal is in the table above; the web mints its own
+after a receipt lookup). Each rides an existing `MaisterError` code.
+
+| Token                              | Rides                                                                                   | Minted by                                                                                                                          | Caller's expected action                                                                    |
+| ---------------------------------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `host_identity_mismatch`           | `EXECUTOR_UNAVAILABLE`                                                                  | resolver — registration refused (`readiness_reason = identity_changed`), or the assignment's host is retired / differs from the live local host | operator: pin the stored key on the new supervisor or stop the listed runs; callers keep the 503 |
+| `host_missing`                     | `EXECUTOR_UNAVAILABLE`                                                                  | `hostForAssignment` — the assignment references an unknown `execution_hosts` row                                                   | treat as unavailable; a data repair, never a retry loop                                     |
+| `assignment_missing`               | `PRECONDITION`                                                                          | `forAssignment` (id not found) / `ensureAssignment` (a placed run with no active assignment)                                       | the re-entry must mint inside its own claim; never mint ad hoc                              |
+| `assignment_mint_race`             | `CONFLICT`                                                                              | `mintAssignment` — the unique index caught a concurrent placement                                                                  | yield; the other placement owns the run                                                     |
+| `assignment_fenced` (`local:true`) | `CONFLICT`                                                                              | ledger admission — issued under a `superseded` assignment, or a non-teardown kind under `released`; no wire call                   | driver yields exactly as for the host's `FENCED`                                            |
+| `command_not_claimable`            | `CONFLICT`                                                                              | deliverer — the row is no longer `queued` at the expected attempt (another actor moved it)                                         | yield; treat as a late signal                                                               |
+| `delivery_deferred`                | `EXECUTOR_UNAVAILABLE`                                                                  | deliverer — a driverless kind after ONE unknown outcome; the row stays `queued`                                                    | nothing; the recovery pass re-delivers                                                      |
+| `delivery_budget_exhausted`        | `EXECUTOR_UNAVAILABLE`                                                                  | deliverer — unknown-outcome retries of the same id exhausted                                                                       | the caller's own retry issues a NEW command (sweeper tick, user retry)                      |
+| `receipt_lookup_failed`            | `EXECUTOR_UNAVAILABLE`                                                                  | prompt deliverer — the host stayed unreachable for 5 receipt lookups (0.5 s·2ⁿ) after acceptance                                   | the run follows reconcile; the sweep folds the row once the host answers                    |
+| `receipt_missing`                  | `ACP_PROTOCOL` (thrown); ledger `last_error {code:"CRASH"}` (recovery)                  | prompt deliverer — accepted, then a 404 receipt; recovery — an `accepted` row the host has no receipt for                          | never re-send; the run follows reconcile                                                    |
+| `turn_lost`                        | `ACP_PROTOCOL`                                                                          | prompt deliverer / recovery — the receipt is `accepted` with `inflight:false` (host restarted mid-turn)                             | the run follows reconcile                                                                   |
+| `ledger_write_failed`              | `ACP_PROTOCOL`                                                                          | prompt deliverer — the ledger itself failed while settling a turn                                                                  | the driver still gets the turn's outcome; the sweep folds the row from the receipt          |
+| `workspace_missing`                | `PRECONDITION`                                                                          | adoption — the run has no workspace row / local package / project to adopt                                                         | repair the run's durable rows; not retryable                                                |
+| `run_missing`                      | `PRECONDITION`                                                                          | adoption — the run row is gone                                                                                                     | not retryable                                                                               |
+| `ORPHANED`                         | ledger `last_error {code:"CRASH"}` only (never thrown)                                  | recovery — a non-driverless `queued` row found after a Web crash                                                                   | the existing reconcile handles the run                                                      |
+
+Two host-side tokens carry a second detail field: `legacy_field` carries
+`details.field` (the offending legacy path field) and `workspace_rejected`
+carries `details.mount` when a `contextMounts[]` entry is the offender.
 
 ## Construction
 

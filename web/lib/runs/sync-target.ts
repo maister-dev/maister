@@ -45,6 +45,7 @@ import {
 } from "@/lib/scheduler";
 import {
   createExecutionHosts,
+  isFencedError,
   localHost,
   mintPlacement,
   type ExecutionHosts,
@@ -986,6 +987,10 @@ export async function syncRunTarget(
           try {
             await driveSyncResolver(resolverArgs, prepared);
           } catch (err) {
+            // ADR-166 E-EH-11: a fenced resolver already yielded — the attempt,
+            // the claim and the worktree are the newer generation's to settle;
+            // the safety net below would clobber them.
+            if (isFencedError(err)) return;
             // Nothing is listening any more: a backgrounded failure is not an
             // HTTP error but a durable state change (the attempt ledger +
             // `runs.status`) that the UI observes over SSE.
@@ -1259,6 +1264,8 @@ type PreparedSyncResolver = {
   runnerTier: string;
   prompt: string;
   pool: SchedulerPool;
+  // ADR-166: the `sync_resolver` generation the claim tx minted.
+  assignmentId: string;
 };
 
 /**
@@ -1287,6 +1294,7 @@ async function prepareSyncResolver(
   let sessionInput: ResolverSessionInput;
   let runnerTier: string;
   let prompt: string;
+  let assignmentId: string;
 
   try {
     // (1) Fail-fast cap check (decision 15) — refuse CONFLICT at cap, no queue.
@@ -1335,7 +1343,7 @@ async function prepareSyncResolver(
 
     // (3) One locked FOR-UPDATE tx: definitive cap re-check + promotion fence +
     //     Review→Running CAS + run_sessions row + attempt → `agent_running`.
-    await db.transaction(async (tx: Db) => {
+    assignmentId = await db.transaction(async (tx: Db): Promise<string> => {
       await takeSchedulerLock(tx);
 
       if ((await countLiveRuns(tx, pool)) >= capForPool(pool)) {
@@ -1374,7 +1382,7 @@ async function prepareSyncResolver(
         acpSessionId: null,
         resolutionSource: resolution.runnerResolutionTier,
       });
-      await mintPlacement(tx, {
+      const minted = await mintPlacement(tx, {
         runId,
         reason: "sync_resolver",
         host: placementHost,
@@ -1391,6 +1399,8 @@ async function prepareSyncResolver(
           updatedAt: new Date(),
         })
         .where(eq(runSyncAttempts.id, claim.attemptId));
+
+      return minted.id;
     });
 
     sessionInput = {
@@ -1407,7 +1417,7 @@ async function prepareSyncResolver(
     throw err;
   }
 
-  return { sessionInput, runnerTier, prompt, pool };
+  return { sessionInput, runnerTier, prompt, pool, assignmentId };
 }
 
 /**
@@ -1439,7 +1449,7 @@ async function driveSyncResolver(
     behind,
     headShaBefore,
   } = args;
-  const { sessionInput, runnerTier, prompt, pool } = prepared;
+  const { sessionInput, runnerTier, prompt, pool, assignmentId } = prepared;
 
   // --- Session: drive the resolver, then verify + push + finalize ---
   let session: { sessionId: string; stopReason: PromptStopReason };
@@ -1452,8 +1462,15 @@ async function driveSyncResolver(
       prompt,
       runnerTier,
       executionHosts: args.executionHosts,
+      assignmentId,
     });
   } catch (err) {
+    // ADR-166 E-EH-11: a fenced resolver belongs to a superseded generation —
+    // the run, its attempt and the sync claim are that generation's to settle.
+    if (isFencedError(err)) {
+      log.warn({ runId, attemptId: claim.attemptId }, "driver-yielded");
+      throw err;
+    }
     // runResolverSession already tore the session down (or none was created).
     await failResolver({
       db,

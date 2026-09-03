@@ -14,6 +14,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
 import { claimAgentResumeSlot } from "@/lib/services/hitl";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -37,6 +38,8 @@ beforeAll(async () => {
   db = testDatabase.db;
   // Engage the real pg_advisory_xact_lock (only active for a postgres DB_URL).
   process.env.DB_URL = container.getConnectionUri();
+  // ADR-166: the idle wake mints its driver generation on the local host.
+  await fakeExecutionHosts(db);
 }, 180_000);
 
 afterAll(async () => {
@@ -86,18 +89,33 @@ async function seedAgentRun(
   return runId;
 }
 
-async function rowOf(
-  runId: string,
-): Promise<{ status: string; resumeRequestedAt: Date | null }> {
+async function rowOf(runId: string): Promise<{
+  status: string;
+  resumeRequestedAt: Date | null;
+  executionAssignmentId: string | null;
+}> {
   const rows = await db
     .select({
       status: runs.status,
       resumeRequestedAt: runs.resumeRequestedAt,
+      executionAssignmentId: runs.executionAssignmentId,
     })
     .from(runs)
     .where(eq(runs.id, runId));
 
   return rows[0];
+}
+
+async function assignmentsOf(runId: string) {
+  return db
+    .select({
+      id: schema.executionAssignments.id,
+      epoch: schema.executionAssignments.epoch,
+      state: schema.executionAssignments.state,
+      placementReason: schema.executionAssignments.placementReason,
+    })
+    .from(schema.executionAssignments)
+    .where(eq(schema.executionAssignments.runId, runId));
 }
 
 describe("claimAgentResumeSlot — agent idle-resume cap-gate (INV-1)", () => {
@@ -108,13 +126,15 @@ describe("claimAgentResumeSlot — agent idle-resume cap-gate (INV-1)", () => {
     await seedAgentRun(projectId, "Running"); // fills the agent pool (cap 1)
     const idle = await seedAgentRun(projectId, "NeedsInputIdle");
 
-    const outcome = await claimAgentResumeSlot(db, idle);
+    const claim = await claimAgentResumeSlot(db, idle);
 
-    expect(outcome).toBe("queued");
+    expect(claim).toEqual({ outcome: "queued" });
     const row = await rowOf(idle);
 
     expect(row.status).toBe("NeedsInputIdle"); // NOT flipped to Running (cap honored)
     expect(row.resumeRequestedAt).not.toBeNull(); // deferred to the C3 gate, not dropped
+    // A deferred wake mints nothing — the admission gate's claim does.
+    expect(await assignmentsOf(idle)).toHaveLength(0);
   });
 
   it("NeedsInputIdle with a free slot → CLAIMS: flips to Running, clears resume_requested_at", async () => {
@@ -127,13 +147,24 @@ describe("claimAgentResumeSlot — agent idle-resume cap-gate (INV-1)", () => {
       resumeRequestedAt: new Date(),
     });
 
-    const outcome = await claimAgentResumeSlot(db, idle);
+    const claim = await claimAgentResumeSlot(db, idle);
 
-    expect(outcome).toBe("claimed");
+    expect(claim.outcome).toBe("claimed");
     const row = await rowOf(idle);
 
     expect(row.status).toBe("Running");
     expect(row.resumeRequestedAt).toBeNull();
+    // ADR-166 D3: the idle wake minted a `resume` generation INSIDE the claim
+    // and hands its id to the driver, which binds to that row.
+    const [minted] = await assignmentsOf(idle);
+
+    expect(minted).toMatchObject({
+      epoch: 1,
+      state: "active",
+      placementReason: "resume",
+    });
+    expect(row.executionAssignmentId).toBe(minted.id);
+    expect(claim).toEqual({ outcome: "claimed", assignmentId: minted.id });
   });
 
   it("NeedsInput (slot still held) → CLAIMS directly regardless of cap (flip is slot-neutral)", async () => {
@@ -144,10 +175,13 @@ describe("claimAgentResumeSlot — agent idle-resume cap-gate (INV-1)", () => {
     // not reclaim a freed slot, so no cap gate applies even at cap.
     const awaiting = await seedAgentRun(projectId, "NeedsInput");
 
-    const outcome = await claimAgentResumeSlot(db, awaiting);
+    const claim = await claimAgentResumeSlot(db, awaiting);
 
-    expect(outcome).toBe("claimed");
+    // A NeedsInput run kept its generation: no mint, the (absent here) active
+    // pointer is what the driver binds.
+    expect(claim).toEqual({ outcome: "claimed", assignmentId: null });
     expect((await rowOf(awaiting)).status).toBe("Running");
+    expect(await assignmentsOf(awaiting)).toHaveLength(0);
   });
 
   it("already-advanced run → noop (idempotent; a same-payload retry never double-spawns)", async () => {
@@ -155,7 +189,7 @@ describe("claimAgentResumeSlot — agent idle-resume cap-gate (INV-1)", () => {
     const projectId = await seedProject();
     const done = await seedAgentRun(projectId, "Done");
 
-    expect(await claimAgentResumeSlot(db, done)).toBe("noop");
+    expect(await claimAgentResumeSlot(db, done)).toEqual({ outcome: "noop" });
     expect((await rowOf(done)).status).toBe("Done");
   });
 });

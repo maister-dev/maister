@@ -11,7 +11,7 @@ import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { openEventsLog } from "../events-log";
-import { CheckpointBodySchema } from "../http-api";
+import { EmptyPayloadSchema } from "../http-api";
 import {
   createPendingPermissions,
   pendingPermissions,
@@ -71,6 +71,10 @@ async function registerExitedSession(
       startedAt: new Date().toISOString(),
       logPath: join(runtimeRoot, "log"),
       worktreePath: join(runtimeRoot, "wt"),
+      executionWorkspaceId: "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c",
+      assignmentId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d",
+      assignmentEpoch: 1,
+      createdByCommandId: "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f",
       monotonicId: 42,
     },
     makeFakeChild(),
@@ -96,13 +100,13 @@ afterEach(async () => {
   }
 });
 
-describe("CheckpointBodySchema", () => {
+describe("EmptyPayloadSchema (checkpoint payload)", () => {
   it("accepts an empty object", () => {
-    expect(CheckpointBodySchema.safeParse({}).success).toBe(true);
+    expect(EmptyPayloadSchema.safeParse({}).success).toBe(true);
   });
 
   it("rejects unknown keys (D11 identifier-table invariant)", () => {
-    const r = CheckpointBodySchema.safeParse({ sessionId: "smuggled" });
+    const r = EmptyPayloadSchema.safeParse({ sessionId: "smuggled" });
 
     expect(r.success).toBe(false);
   });

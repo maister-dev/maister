@@ -54,6 +54,7 @@ import {
 import {
   createFakeExecutionHost,
   fakeExecutionHosts,
+  fencedError,
   type FakeExecutionHost,
 } from "@/test-support/fake-execution-host";
 import {
@@ -788,7 +789,11 @@ describe("recoverExpiredGateChatTurns — process-restart fence", () => {
       leaseExpiresAt: new Date(Date.now() - 1_000),
     });
 
-    const { fake } = await scriptHost({ runId });
+    const api = await scriptHost({ runId });
+    const { fake } = api;
+
+    // The expired prompt's session is still live on the host.
+    api.setLiveRunId(runId);
     const recovered = await recoverExpiredGateChatTurns({
       db,
       sessions: [
@@ -1092,6 +1097,38 @@ describe("sendGateChatTurn — deferred-release + live-path idempotency (ADR-078
 
     expect(rows).toHaveLength(1);
     expect(rows[0].role).toBe("user");
+  }, 60_000);
+
+  // ADR-166 E-EH-11: a prompt fenced by a newer driver generation is NOT a
+  // failed turn — the turn row and the HITL pause are that generation's.
+  it("a fenced prompt yields: the turn is not failed, the run is untouched", async () => {
+    const { runId, hitlId } = await seedChatPause();
+    const api = await scriptHost({ runId });
+
+    api.setLiveRunId(runId);
+    api.fake.setPromptBehavior(async () => {
+      throw fencedError(runId, 1);
+    });
+
+    await expect(
+      sendGateChatTurn({
+        runId,
+        hitlRequestId: hitlId,
+        message: "why X?",
+        db,
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "assignment_fenced" },
+    });
+
+    expect(api.fake.callsOf("sendPrompt")).toHaveLength(1);
+    const turns = await chatTurnRows(hitlId);
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0].state).not.toBe("failed");
+    expect(turns[0].error_code).toBeNull();
+    expect((await runRow(runId)).status).toBe("NeedsInput");
   }, 60_000);
 
   it("serializes concurrent live turns through one pending coordinator", async () => {

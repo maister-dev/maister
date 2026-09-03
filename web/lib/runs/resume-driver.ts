@@ -14,7 +14,7 @@ import { type SupervisorEvent } from "@/lib/execution-host";
 import {
   createExecutionHosts,
   isFencedError,
-  type BoundClient,
+  type ExecutionBinding,
   type ExecutionHosts,
 } from "@/lib/execution-host";
 import {
@@ -84,6 +84,9 @@ export type RunResumedSessionOptions = {
   stepId: string;
   db?: Db;
   executionHosts?: ExecutionHosts;
+  // ADR-166: the `resume` generation the claim minted. Absent when a boot
+  // re-attach enters without it — the run's active pointer is read at entry.
+  assignmentId?: string | null;
 };
 
 type StoredIntent = {
@@ -91,6 +94,18 @@ type StoredIntent = {
   optionId: string;
   originalRequestId: string | null;
 };
+
+async function activeAssignmentIdOf(
+  db: Db,
+  runId: string,
+): Promise<string | null> {
+  const rows = await db
+    .select({ executionAssignmentId: runs.executionAssignmentId })
+    .from(runs)
+    .where(eq(runs.id, runId));
+
+  return rows[0]?.executionAssignmentId ?? null;
+}
 
 async function findOpenStoredIntent(
   db: Db,
@@ -299,12 +314,16 @@ export async function runResumedSession(
   );
 
   // ADR-166: every host-bound call of this driver rides the client bound to
-  // the run's active assignment (the generation the resume claim minted).
+  // the generation the resume claim minted (structural fence — a newer epoch
+  // minted behind this driver's back is never adopted, only fenced by).
   const hosts = opts.executionHosts ?? createExecutionHosts({ db });
-  let client: BoundClient;
+  let execution: ExecutionBinding;
 
   try {
-    client = await hosts.forRun(runId);
+    execution = await hosts.executionFor(runId, {
+      assignmentId:
+        opts.assignmentId ?? (await activeAssignmentIdOf(db, runId)),
+    });
   } catch (err) {
     if (isFencedError(err)) {
       log.warn({ runId }, "runResumedSession: driver-yielded — fenced");
@@ -319,7 +338,7 @@ export async function runResumedSession(
 
     return;
   }
-  const admin = hosts.local();
+  const { client, admin } = execution;
 
   let stopReason: string | null = null;
   let permissionDelivered = false;

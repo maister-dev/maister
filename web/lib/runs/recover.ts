@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { ExecutionAssignment } from "@/lib/db/schema";
 import type { RunResumedSessionOptions } from "@/lib/runs/resume-driver";
 import type { CreateSessionInput } from "@/lib/execution-host";
 import type { ExecutionHosts } from "@/lib/execution-host";
@@ -86,6 +87,13 @@ export interface ResumeCrashedRunOptions {
   now?: () => Date;
 }
 
+export interface DriveResumeOptions extends ResumeCrashedRunOptions {
+  // ADR-166: the `recover` generation the claim minted. Absent when the
+  // scheduler re-enters a queued recover standalone — the pointer that claim
+  // left on the run is read at entry instead.
+  assignmentId?: string | null;
+}
+
 // §3.2 durable-marker-first + cap re-admission. Phase 1 is a SINGLE
 // transaction: take the scheduler advisory lock, FOR-UPDATE the run, status-
 // guard on Crashed, resolve the recovery plan, and either flip Crashed→Pending
@@ -120,7 +128,9 @@ export async function resumeCrashedRun(
   // Phase-1 commit outcome: either a terminal RecoverResult (no side-effect
   // needed) or the `drive` marker meaning the slot-free Crashed→Running flip
   // committed and Phase 2 must run.
-  type Phase1 = RecoverResult | { state: "drive" };
+  type Phase1 =
+    | RecoverResult
+    | { state: "drive"; assignment: ExecutionAssignment };
 
   const phase1: Phase1 = await db.transaction(async (tx: Db) => {
     await takeSchedulerLock(tx);
@@ -246,13 +256,18 @@ export async function resumeCrashedRun(
 
     if (updated.length === 0) return { state: "conflict" };
 
-    await mintPlacement(tx, { runId, reason: "recover", host: placementHost });
+    const assignment = await mintPlacement(tx, {
+      runId,
+      reason: "recover",
+      host: placementHost,
+    });
+
     log.info(
       { runId, liveCount, cap },
       "resumeCrashedRun: slot free → Running",
     );
 
-    return { state: "drive" };
+    return { state: "drive", assignment };
   });
 
   // Terminal Phase-1 outcomes (no side-effect required).
@@ -261,7 +276,10 @@ export async function resumeCrashedRun(
   }
 
   // Slot-free path: drive the Phase-2 side-effect against the already-Running run.
-  return await driveResume(runId, opts);
+  return await driveResume(runId, {
+    ...opts,
+    assignmentId: phase1.assignment.id,
+  });
 }
 
 // Phase 2 side-effect: the run is already Running (durable marker committed).
@@ -271,7 +289,7 @@ export async function resumeCrashedRun(
 // already-Running run — it is also the scheduler's resume callback.
 export async function driveResume(
   runId: string,
-  opts: ResumeCrashedRunOptions = {},
+  opts: DriveResumeOptions = {},
 ): Promise<{
   state: "resumed" | "redispatched" | "unresumable" | "transient";
 }> {
@@ -289,6 +307,7 @@ export async function driveResume(
       projectId: runs.projectId,
       flowId: runs.flowId,
       flowRevisionId: runs.flowRevisionId,
+      executionAssignmentId: runs.executionAssignmentId,
       worktreePath: workspaces.worktreePath,
       projectSlug: projects.slug,
     })
@@ -362,11 +381,16 @@ export async function driveResume(
     return { state: "unresumable" };
   }
   const stepId = run.currentStepId ?? "resume";
+  // The `recover` generation the claim minted, or — entered standalone by the
+  // scheduler after a queued recover promoted — the pointer that claim left on
+  // the run. NULL = a never-placed legacy run (placed lazily as `recover`).
+  const assignmentId = opts.assignmentId ?? run.executionAssignmentId ?? null;
 
   try {
-    // Bound to the `recover` generation the claim minted (a queued recover
-    // promoted by the scheduler binds the same active assignment).
-    const client = await hosts.forRun(runId, { reason: "recover" });
+    const { client } = await hosts.executionFor(runId, {
+      assignmentId,
+      reason: "recover",
+    });
     const result = await client.createSession({
       stepId,
       executor: launch.executor,
@@ -392,6 +416,7 @@ export async function driveResume(
       stepId,
       db,
       executionHosts: hosts,
+      assignmentId,
     });
 
     log.info(

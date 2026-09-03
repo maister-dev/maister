@@ -339,6 +339,9 @@ vi.mock("@/lib/execution-host", async (importOriginal) => {
       id: `assignment-${input.runId}-2`,
       epoch: 2,
     })),
+    // The terminal writers release the run's generation inside their CAS tx;
+    // the fake db models no execution_* tables.
+    releaseAssignmentForRun: vi.fn(async () => null),
   };
 });
 
@@ -738,8 +741,9 @@ describe("HITL respond route — kind=permission", () => {
   });
 
   // ADR-166 I3: a host replay (the same command id re-sent after an unknown
-  // outcome) records what actually reached the agent next to the stored choice.
-  it("I3: a replayed delivery records _audit.deliveredOptionId", async () => {
+  // outcome) is flagged beside the stored choice, which stays exactly what
+  // the operator claimed.
+  it("I3: a replayed delivery records _audit.deliveryReplayed and keeps the stored choice", async () => {
     const { runId, hitlRequestId } = seedPermissionRow();
 
     deliverPermissionSpy.mockResolvedValueOnce({ ok: true, replayed: true });
@@ -749,7 +753,18 @@ describe("HITL respond route — kind=permission", () => {
     expect(res.status).toBe(200);
     expect(dbState.tables.hitl_requests[0].response).toEqual({
       optionId: "allow",
-      _audit: { deliveredOptionId: "allow" },
+      _audit: { deliveryReplayed: true },
+    });
+  });
+
+  it("I3: a first-attempt delivery records no replay audit", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow();
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(200);
+    expect(dbState.tables.hitl_requests[0].response).toEqual({
+      optionId: "allow",
     });
   });
 
@@ -1640,8 +1655,11 @@ describe("HITL respond route — NeedsInputIdle branch", () => {
     expect(resumeRunSpy).not.toHaveBeenCalled();
     expect(scheduleResumedSessionDriveSpy).not.toHaveBeenCalled();
     await new Promise((resolve) => setTimeout(resolve, 0));
+    // ADR-166 D3: the idle wake minted a `resume` generation inside the claim
+    // and the agent driver is bound to THAT row, never to "the active one".
     expect(startAgentSessionSpy).toHaveBeenCalledWith(runId, {
       db: expect.any(Object),
+      assignmentId: `assignment-${runId}-2`,
     });
     expect(dbState.tables.runs[0].status).toBe("Running");
     expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();

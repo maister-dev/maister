@@ -65,25 +65,40 @@ export async function register(): Promise<void> {
     throw err;
   }
 
+  // ADR-166 D8: register the local execution host FIRST (identity-change
+  // policy under the active row's lock; unreachable → readiness
+  // `unavailable`, never a boot failure), then close the command crash
+  // windows (W1/W2/W4) before any recovery sweep re-drives a run. Grace 0:
+  // no driver of THIS process exists yet, so every open row is stale. Each
+  // step is isolated: a host outage must not skip the run-recovery sweeps
+  // below, which have their own retry-safe semantics.
+  for (const step of [
+    "ensureLocalExecutionHost",
+    "recoverExecutionCommands",
+    "reportLegacyActiveRuns",
+  ] as const) {
+    try {
+      const hosts = await import("@/lib/execution-host");
+
+      if (step === "ensureLocalExecutionHost") {
+        await hosts.ensureLocalExecutionHost();
+      } else if (step === "recoverExecutionCommands") {
+        await hosts.recoverExecutionCommands({ graceMs: 0 });
+      } else {
+        // ADR-166 D9: pre-Stage-A runs still executing without a placement
+        // are reported here; the reconcile sweep classifies the Running ones.
+        await hosts.reportLegacyActiveRuns();
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[instrumentation] execution-host boot step ${step} failed (continuing boot):`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
   try {
-    // ADR-166 D8: register the local execution host FIRST (identity-change
-    // policy under the active row's lock; unreachable → readiness
-    // `unavailable`, never a boot failure), then close the command crash
-    // windows (W1/W2/W4) before any recovery sweep re-drives a run. Grace 0:
-    // no driver of THIS process exists yet, so every open row is stale.
-    const {
-      adoptLegacyActiveRuns,
-      ensureLocalExecutionHost,
-      recoverExecutionCommands,
-    } = await import("@/lib/execution-host");
-
-    await ensureLocalExecutionHost();
-    await recoverExecutionCommands({ graceMs: 0 });
-    // ADR-166 D9: place pre-Stage-A active runs on the local host BEFORE the
-    // recovery sweeps re-drive them (evidence = a live host session; a run
-    // without one stays NULL for the reconcile sweep to classify).
-    await adoptLegacyActiveRuns();
-
     const { runResumeRecoverySweep, runTakeoverReturnRecoverySweep } =
       await import("@/lib/runs/resume-recovery");
 

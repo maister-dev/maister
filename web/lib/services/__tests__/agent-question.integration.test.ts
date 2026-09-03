@@ -17,6 +17,7 @@ import { respondToHitl } from "@/lib/services/hitl";
 import {
   createFakeExecutionHost,
   fakeExecutionHosts,
+  fencedError,
   type FakeExecutionHost,
 } from "@/test-support/fake-execution-host";
 import {
@@ -707,6 +708,34 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
       .where(eq(schema.hitlRequests.runId, seeded.runId));
 
     expect(failed?.activationState).toBe("failed");
+  });
+
+  // ADR-166 E-EH-11: a fenced source teardown belongs to a superseded
+  // generation — the ask stays pending (never `failed`) for the driver that
+  // owns the run.
+  it("keeps the request pending after a fenced source-session teardown", async () => {
+    const seeded = await seed();
+    const hosts = await hostsFor(seeded);
+
+    liveSource("supervisor-session-fenced", seeded);
+    fake.failOnce("deleteSession", fencedError(seeded.runId, 1));
+
+    await expect(
+      createOrActivateAgentQuestion(input(seeded), {
+        db,
+        executionHosts: hosts,
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "assignment_fenced" },
+    });
+
+    const [pending] = await db
+      .select({ activationState: schema.hitlRequests.activationState })
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.runId, seeded.runId));
+
+    expect(pending?.activationState).toBe("pending_termination");
   });
 
   it("refuses a generic agent attempting the triager-only re-trigger mode", async () => {

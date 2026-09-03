@@ -1,3 +1,5 @@
+// The pinned @types/node (20.x) predates `node:sqlite`; these ambient
+// declarations cover the subset the state store uses.
 declare module "node:sqlite" {
   export class StatementSync {
     run(...params: unknown[]): {

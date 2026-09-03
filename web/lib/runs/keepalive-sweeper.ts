@@ -65,6 +65,7 @@ import { promoteNextPending, releaseSlotOnIdle } from "@/lib/scheduler";
 import {
   createExecutionHosts,
   isFencedError,
+  releaseAssignmentForRun,
   type BoundClient,
   type ExecutionHosts,
   type SupervisorSessionRecord,
@@ -372,6 +373,8 @@ export async function runPass2(db: Db): Promise<number> {
 
       if (updated.length === 0) return false;
 
+      await releaseAssignmentForRun(tx, row.id, "abandoned");
+
       // M8 T12: mark any open hitl_requests row for this run with
       // respondedAt=now() so the operator UI shows the request as closed.
       // Audit metadata (abandonedReason) lives in the run-level audit
@@ -647,6 +650,7 @@ async function runTimeLimitPass(
 
       if (upd.length === 0) return false;
 
+      await releaseAssignmentForRun(tx, row.id, "failed");
       await markNodeFailed(attempt.id, { errorCode: "PRECONDITION" }, tx);
       await systemCloseActiveAssignmentsForRun({
         db: tx,
@@ -1502,6 +1506,12 @@ async function actBudgetEscalate(
 
       if (upd.length === 0) return false;
 
+      // The restorable park is an idle checkpoint: this driver generation ends
+      // with it (the raise mints the next one); an escalate keeps its driver.
+      if (mode === "restorable") {
+        await releaseAssignmentForRun(tx, candidate.id, "checkpointed");
+      }
+
       if (attempt) {
         await markNodeNeedsInput(attempt.id, tx);
       }
@@ -1765,6 +1775,8 @@ async function actBudgetTerminateRun(
 
     if (upd.length === 0) return false;
 
+    await releaseAssignmentForRun(tx, candidate.id, "failed");
+
     if (attempt) {
       await markNodeFailed(attempt.id, { errorCode: "BUDGET_EXCEEDED" }, tx);
     }
@@ -1918,6 +1930,7 @@ async function actBudgetTerminateTree(
 
     if (rows.length === 0) return [];
 
+    await releaseAssignmentForRun(tx, candidate.id, "failed");
     await systemCloseActiveAssignmentsForRun({
       db: tx,
       runId: candidate.id,

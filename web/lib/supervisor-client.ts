@@ -9,7 +9,6 @@ import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
 import type { SessionEnforcementProfile } from "@/lib/flows/enforcement-profile";
 import type { HooksConfig } from "@/lib/flows/hooks-config";
 
-import { cache } from "react";
 import pino from "pino";
 import {
   Agent,
@@ -618,8 +617,6 @@ export async function checkSupervisorHealth(
   return { kind: "ready", health: parsed.data };
 }
 
-export const getPlatformStatus = cache(checkSupervisorHealth);
-
 export async function checkSupervisorDiagnostics(
   opts: { timeoutMs?: number } = {},
 ): Promise<SupervisorDiagnosticsStatus> {
@@ -680,50 +677,6 @@ export async function checkSupervisorDiagnostics(
   return { kind: "ready", diagnostics: parsed.data };
 }
 
-export async function deleteSession(sessionId: string): Promise<void> {
-  const res = await requestSessionDeletion(sessionId);
-
-  if (!res.ok) {
-    throw await asMaisterError(res, "ACP_PROTOCOL");
-  }
-}
-
-export type DeleteSessionIfPresentOutcome = "terminated" | "gone";
-
-async function requestSessionDeletion(sessionId: string): Promise<Response> {
-  const url = `${baseUrl()}/sessions/${encodeURIComponent(sessionId)}`;
-
-  logger.debug({ url, sessionId }, "deleteSession");
-
-  try {
-    return await fetch(url, { method: "DELETE" });
-  } catch (err) {
-    throw networkErrorToMaister(err, "deleteSession");
-  }
-}
-
-// Human-ask activation has already bound the session to a durable run before
-// it calls this operation. A 404 therefore means that exact session exited in
-// the list/delete interval, not that the caller may delete an arbitrary ID.
-export async function deleteSessionIfPresent(
-  sessionId: string,
-): Promise<DeleteSessionIfPresentOutcome> {
-  const res = await requestSessionDeletion(sessionId);
-
-  if (res.ok) return "terminated";
-  if (res.status === 404) return "gone";
-  if (res.status >= 500) {
-    const message = await readErrorMessage(
-      res,
-      `supervisor ${res.status} while deleting session`,
-    );
-
-    throw new MaisterError("EXECUTOR_UNAVAILABLE", message);
-  }
-
-  throw await asMaisterError(res, "ACP_PROTOCOL");
-}
-
 export async function listSessions(): Promise<SupervisorSessionRecord[]> {
   const url = `${baseUrl()}/sessions`;
 
@@ -748,44 +701,6 @@ export async function listSessions(): Promise<SupervisorSessionRecord[]> {
   }
 
   return (await res.json()) as SupervisorSessionRecord[];
-}
-
-export async function sendPrompt(
-  sessionId: string,
-  input: SendPromptInput,
-  opts: { signal?: AbortSignal } = {},
-): Promise<PromptResult> {
-  const url = `${baseUrl()}/sessions/${encodeURIComponent(sessionId)}/prompt`;
-
-  logger.debug(
-    { url, sessionId, stepId: input.stepId, len: input.prompt.length },
-    "sendPrompt",
-  );
-
-  let res: Response;
-
-  try {
-    res = await fetchLongLivedSupervisor(
-      url,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(input),
-        // Optional cancel: a caller (e.g. the staged assistant launch) forwards
-        // its request signal so a client disconnect aborts the in-flight turn
-        // and lets the caller's compensation tear the session down.
-        signal: opts.signal,
-      },
-      "sendPrompt",
-    );
-  } catch (err) {
-    throw networkErrorToMaister(err, "sendPrompt");
-  }
-  if (!res.ok) {
-    throw await asMaisterError(res, "ACP_PROTOCOL");
-  }
-
-  return (await res.json()) as PromptResult;
 }
 
 export async function resolveModelSuggestions(
@@ -871,201 +786,21 @@ async function readErrorMessage(
   return fallback;
 }
 
-async function postInput(
-  sessionId: string,
-  body: Record<string, unknown>,
-  ctx: string,
-): Promise<{ ok: true }> {
-  const url = `${baseUrl()}/sessions/${encodeURIComponent(sessionId)}/input`;
-
-  logger.debug({ url, sessionId, action: body.action }, ctx);
-  let res: Response;
-
-  try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  } catch (err) {
-    throw networkErrorToMaister(err, ctx);
-  }
-  if (res.status === 200) {
-    return (await res.json()) as { ok: true };
-  }
-  if (res.status === 410) {
-    // Genuinely expired deferred — terminal. Distinct from the 503
-    // "unknown session" path, which is retryable and means the
-    // supervisor restarted or the session crashed.
-    const message = await readErrorMessage(res, "supervisor 410 on input");
-
-    throw new MaisterError("HITL_TIMEOUT", message);
-  }
-  if (res.status === 404) {
-    // Defensive fallback: pre-M7 supervisors may still emit 404 with
-    // the same payload shape. Treat as terminal HITL_TIMEOUT — the
-    // M7 supervisor returns 410 for this case.
-    const message = await readErrorMessage(res, "supervisor 404 on input");
-
-    throw new MaisterError("HITL_TIMEOUT", message);
-  }
-  if (res.status >= 500 && res.status < 600) {
-    const message = await readErrorMessage(
-      res,
-      `supervisor ${res.status} on input`,
-    );
-
-    throw new MaisterError("EXECUTOR_UNAVAILABLE", message);
-  }
-  if (res.status === 409) {
-    const message = await readErrorMessage(
-      res,
-      "supervisor 409 on input — body shape mismatch",
-    );
-
-    throw new MaisterError("ACP_PROTOCOL", message);
-  }
-
-  const message = await readErrorMessage(
-    res,
-    `supervisor ${res.status} on input`,
-  );
-
-  throw new MaisterError("ACP_PROTOCOL", message);
-}
-
-export async function deliverPermission(
-  sessionId: string,
-  requestId: string,
-  optionId: string,
-): Promise<{ ok: true }> {
-  return postInput(
-    sessionId,
-    {
-      kind: "permission",
-      action: "select",
-      requestId,
-      optionId,
-    },
-    "deliverPermission",
-  );
-}
-
-export async function cancelPermission(
-  sessionId: string,
-  requestId: string,
-  reason: string,
-): Promise<{ ok: true }> {
-  return postInput(
-    sessionId,
-    {
-      kind: "permission",
-      action: "cancel",
-      requestId,
-      reason: reason.slice(0, 256),
-    },
-    "cancelPermission",
-  );
-}
-
-// Interrupt the in-flight prompt turn (session/cancel) without ending the
-// session. Best-effort + idempotent: the supervisor acks cancelled:false when
-// there is no live turn. The blocked sendPrompt call resolves with the
-// `cancelled` stop reason, which the scratch turn path treats as a clean
-// completion (dialog → WaitingForUser).
-export async function cancelPrompt(
-  sessionId: string,
-): Promise<{ cancelled: boolean }> {
-  const url = `${baseUrl()}/sessions/${encodeURIComponent(sessionId)}/cancel`;
-
-  logger.debug({ url, sessionId }, "cancelPrompt");
-  let res: Response;
-
-  try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    });
-  } catch (err) {
-    throw networkErrorToMaister(err, "cancelPrompt");
-  }
-  if (!res.ok) {
-    throw await asMaisterError(res, "ACP_PROTOCOL");
-  }
-
-  const body = (await res.json().catch(() => ({}))) as { cancelled?: boolean };
-
-  return { cancelled: body.cancelled === true };
-}
-
-// M8 T5: typed CheckpointResponse mirrors the supervisor's response
-// shape so callers (the keep-alive sweeper T6, the resume helper T9)
-// can branch on `alreadyCheckpointed` without re-parsing the body.
+// M8 T5: typed CheckpointResponse mirrors the supervisor's response shape so
+// callers (the keep-alive sweeper, the resume helper) can branch on
+// `alreadyCheckpointed` without re-parsing the body.
 //
 // HTTP status translation (D7 + D11):
-//   200  → { ok: true, alreadyCheckpointed, sessionId, monotonicId }
+//   200  → { alreadyCheckpointed, sessionId, monotonicId }
 //   404  → MaisterError("CHECKPOINT") — unknown session; terminal (sweeper marks markCheckpointed directly)
 //   409  → MaisterError("CHECKPOINT") — body validation rejected
-//   500  → MaisterError("EXECUTOR_UNAVAILABLE") — SIGKILL escalation; retryable, sweeper retries on next tick
+//   5xx  → MaisterError("EXECUTOR_UNAVAILABLE") — retryable, sweeper retries on next tick
 //   network/abort → MaisterError("EXECUTOR_UNAVAILABLE") — retryable
 export type CheckpointResponse = {
   alreadyCheckpointed: boolean;
   sessionId: string;
   monotonicId: number;
 };
-
-export async function checkpointSession(
-  sessionId: string,
-): Promise<CheckpointResponse> {
-  const url = `${baseUrl()}/sessions/${encodeURIComponent(sessionId)}/checkpoint`;
-
-  logger.debug({ url, sessionId }, "checkpointSession");
-  let res: Response;
-
-  try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    });
-  } catch (err) {
-    throw networkErrorToMaister(err, "checkpointSession");
-  }
-  if (!res.ok) {
-    // 5xx surface as EXECUTOR_UNAVAILABLE (retryable) regardless of
-    // supervisor's own error code — checkpoint over a 5xx is always
-    // safe to retry from the sweeper's perspective.
-    if (res.status >= 500) {
-      const body = (await res
-        .json()
-        .catch(() => ({ message: `supervisor ${res.status}` }))) as {
-        message?: string;
-      };
-
-      throw new MaisterError(
-        "EXECUTOR_UNAVAILABLE",
-        body.message ?? `supervisor ${res.status}`,
-      );
-    }
-    throw await asMaisterError(res, "CHECKPOINT");
-  }
-
-  const body = (await res.json()) as Partial<CheckpointResponse>;
-
-  if (
-    typeof body.alreadyCheckpointed !== "boolean" ||
-    typeof body.sessionId !== "string" ||
-    typeof body.monotonicId !== "number"
-  ) {
-    throw new MaisterError(
-      "CHECKPOINT",
-      `supervisor returned malformed CheckpointResponse: ${JSON.stringify(body)}`,
-    );
-  }
-
-  return body as CheckpointResponse;
-}
 
 export async function* streamSession(
   sessionId: string,
@@ -1313,9 +1048,15 @@ function sessionPath(sessionId: string, suffix = ""): string {
   return `/sessions/${encodeURIComponent(sessionId)}${suffix}`;
 }
 
+// Admin reads (receipts, handles) carry no command policy; this is their only
+// timeout. Command routes take theirs from the caller (ADR-166 D5 policy table).
+const ADMIN_READ_TIMEOUT_MS = 10_000;
+
+export type CommandWireOptions = { timeoutMs?: number | null };
+
 export async function adoptWorkspace(
   envelope: WireEnvelope<AdoptWorkspaceWirePayload>,
-  opts: { timeoutMs?: number } = {},
+  opts: CommandWireOptions = {},
 ): Promise<AdoptWorkspaceWireResult> {
   const { contextMounts, ...rest } = envelope.payload;
   // ADR-157: the supervisor's ContextMountSchema is strict and wire-shaped;
@@ -1333,7 +1074,7 @@ export async function adoptWorkspace(
     body,
     ctx: "adoptWorkspace",
     fallbackCode: "PRECONDITION",
-    timeoutMs: opts.timeoutMs ?? 10_000,
+    timeoutMs: opts.timeoutMs,
   });
 
   return { ...res.body, replayed: res.body.replayed || res.replayed };
@@ -1348,7 +1089,7 @@ export async function getWorkspace(
       path: `/workspaces/${encodeURIComponent(executionWorkspaceId)}`,
       ctx: "getWorkspace",
       fallbackCode: "PRECONDITION",
-      timeoutMs: 10_000,
+      timeoutMs: ADMIN_READ_TIMEOUT_MS,
     });
 
     return res.body;
@@ -1361,6 +1102,7 @@ export async function getWorkspace(
 export async function releaseWorkspace(
   executionWorkspaceId: string,
   envelope: WireEnvelope,
+  opts: CommandWireOptions = {},
 ): Promise<{ released: boolean }> {
   try {
     const res = await request<{ released: boolean }>({
@@ -1369,7 +1111,7 @@ export async function releaseWorkspace(
       body: envelope,
       ctx: "releaseWorkspace",
       fallbackCode: "PRECONDITION",
-      timeoutMs: 10_000,
+      timeoutMs: opts.timeoutMs,
     });
 
     return { released: res.body.released === true };
@@ -1388,7 +1130,7 @@ export async function getCommandReceipt(
       path: `/commands/${encodeURIComponent(commandId)}`,
       ctx: "getCommandReceipt",
       fallbackCode: "PRECONDITION",
-      timeoutMs: 10_000,
+      timeoutMs: ADMIN_READ_TIMEOUT_MS,
     });
 
     return { ...res.body, inflight: res.body.inflight === true };
@@ -1400,7 +1142,7 @@ export async function getCommandReceipt(
 
 export async function createSessionEnveloped(
   envelope: WireEnvelope,
-  opts: { timeoutMs?: number } = {},
+  opts: CommandWireOptions = {},
 ): Promise<CreateSessionResult> {
   const res = await request<CreateSessionResult>({
     method: "POST",
@@ -1408,7 +1150,7 @@ export async function createSessionEnveloped(
     body: envelope,
     ctx: "createSession",
     fallbackCode: "ACP_PROTOCOL",
-    timeoutMs: opts.timeoutMs ?? 60_000,
+    timeoutMs: opts.timeoutMs,
   });
 
   return res.body;
@@ -1417,7 +1159,7 @@ export async function createSessionEnveloped(
 export async function sendPromptEnveloped(
   sessionId: string,
   envelope: WireEnvelope<SendPromptInput>,
-  opts: { signal?: AbortSignal } = {},
+  opts: CommandWireOptions & { signal?: AbortSignal } = {},
 ): Promise<PromptResult> {
   const res = await request<PromptResult>({
     method: "POST",
@@ -1425,7 +1167,7 @@ export async function sendPromptEnveloped(
     body: envelope,
     ctx: "sendPrompt",
     fallbackCode: "ACP_PROTOCOL",
-    timeoutMs: null,
+    timeoutMs: opts.timeoutMs ?? null,
     longLived: true,
     signal: opts.signal,
   });
@@ -1439,6 +1181,7 @@ export async function sendPromptEnveloped(
 export async function deliverInputEnveloped(
   sessionId: string,
   envelope: WireEnvelope,
+  opts: CommandWireOptions = {},
 ): Promise<{ ok: true; replayed: boolean }> {
   try {
     const res = await request<{ ok: true }>({
@@ -1447,7 +1190,7 @@ export async function deliverInputEnveloped(
       body: envelope,
       ctx: "deliverInput",
       fallbackCode: "ACP_PROTOCOL",
-      timeoutMs: 10_000,
+      timeoutMs: opts.timeoutMs,
     });
 
     return { ok: true, replayed: res.replayed };
@@ -1471,6 +1214,7 @@ export async function deliverInputEnveloped(
 export async function cancelPromptEnveloped(
   sessionId: string,
   envelope: WireEnvelope,
+  opts: CommandWireOptions = {},
 ): Promise<{ cancelled: boolean }> {
   const res = await request<{ cancelled?: boolean }>({
     method: "POST",
@@ -1478,7 +1222,7 @@ export async function cancelPromptEnveloped(
     body: envelope,
     ctx: "cancelPrompt",
     fallbackCode: "ACP_PROTOCOL",
-    timeoutMs: 10_000,
+    timeoutMs: opts.timeoutMs,
   });
 
   return { cancelled: res.body?.cancelled === true };
@@ -1487,6 +1231,7 @@ export async function cancelPromptEnveloped(
 export async function checkpointSessionEnveloped(
   sessionId: string,
   envelope: WireEnvelope,
+  opts: CommandWireOptions = {},
 ): Promise<CheckpointResponse> {
   let body: Partial<CheckpointResponse>;
 
@@ -1498,7 +1243,7 @@ export async function checkpointSessionEnveloped(
         body: envelope,
         ctx: "checkpointSession",
         fallbackCode: "CHECKPOINT",
-        timeoutMs: 30_000,
+        timeoutMs: opts.timeoutMs,
       })
     ).body;
   } catch (err) {
@@ -1524,6 +1269,7 @@ export async function checkpointSessionEnveloped(
 export async function deleteSessionEnveloped(
   sessionId: string,
   envelope: WireEnvelope,
+  opts: CommandWireOptions = {},
 ): Promise<{ outcome: DeleteSessionOutcome }> {
   try {
     await request<unknown>({
@@ -1532,7 +1278,7 @@ export async function deleteSessionEnveloped(
       body: envelope,
       ctx: "deleteSession",
       fallbackCode: "ACP_PROTOCOL",
-      timeoutMs: 30_000,
+      timeoutMs: opts.timeoutMs,
     });
 
     return { outcome: "terminated" };

@@ -86,8 +86,9 @@ export function createLocalDirectTransport(): ExecutionHostTransport {
     },
     async adoptWorkspace(
       envelope: CommandEnvelope<AdoptWorkspaceWire>,
+      opts,
     ): Promise<AdoptWorkspaceResult> {
-      const result = await wire.adoptWorkspace(envelope);
+      const result = await wire.adoptWorkspace(envelope, opts);
 
       return {
         executionWorkspaceId: asExecutionWorkspaceId(
@@ -97,26 +98,26 @@ export function createLocalDirectTransport(): ExecutionHostTransport {
         replayed: result.replayed,
       };
     },
-    releaseWorkspace(executionWorkspaceId, envelope) {
-      return wire.releaseWorkspace(executionWorkspaceId, envelope);
+    releaseWorkspace(executionWorkspaceId, envelope, opts) {
+      return wire.releaseWorkspace(executionWorkspaceId, envelope, opts);
     },
-    createSession(envelope: CommandEnvelope<CreateSessionPayload>) {
-      return wire.createSessionEnveloped(envelope);
+    createSession(envelope: CommandEnvelope<CreateSessionPayload>, opts) {
+      return wire.createSessionEnveloped(envelope, opts);
     },
     sendPrompt(sessionId, envelope, opts) {
       return wire.sendPromptEnveloped(sessionId, envelope, opts);
     },
-    deliverInput(sessionId, envelope: CommandEnvelope<InputPayload>) {
-      return wire.deliverInputEnveloped(sessionId, envelope);
+    deliverInput(sessionId, envelope: CommandEnvelope<InputPayload>, opts) {
+      return wire.deliverInputEnveloped(sessionId, envelope, opts);
     },
-    cancelPrompt(sessionId, envelope) {
-      return wire.cancelPromptEnveloped(sessionId, envelope);
+    cancelPrompt(sessionId, envelope, opts) {
+      return wire.cancelPromptEnveloped(sessionId, envelope, opts);
     },
-    checkpointSession(sessionId, envelope) {
-      return wire.checkpointSessionEnveloped(sessionId, envelope);
+    checkpointSession(sessionId, envelope, opts) {
+      return wire.checkpointSessionEnveloped(sessionId, envelope, opts);
     },
-    deleteSession(sessionId, envelope) {
-      return wire.deleteSessionEnveloped(sessionId, envelope);
+    deleteSession(sessionId, envelope, opts) {
+      return wire.deleteSessionEnveloped(sessionId, envelope, opts);
     },
   };
 }

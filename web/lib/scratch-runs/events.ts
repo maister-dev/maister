@@ -82,9 +82,7 @@ export async function bindScratchExecution(
   db: DbClientLike,
   runId: string,
 ): Promise<ScratchExecution> {
-  const hosts = createExecutionHosts({ db });
-
-  return { client: await hosts.forRun(runId), admin: hosts.local() };
+  return createExecutionHosts({ db }).executionFor(runId);
 }
 
 export type ScratchSupervisorEventProjection = {
@@ -158,6 +156,10 @@ export function projectSupervisorEventToScratch(
     case "session.permission_request":
       return { dialogStatus: "NeedsInput", hitlRequestId: event.requestId };
     case "session.exited":
+      // ADR-166 E-EH-11: an eviction for a newer driver generation is that
+      // generation's to project — this consumer writes nothing.
+      if (event.reason === "fenced") return {};
+
       return {
         dialogStatus:
           event.reason === "intentional" ? "Review" : "WaitingForUser",

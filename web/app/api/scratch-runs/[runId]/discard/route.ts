@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
+
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import pino from "pino";
@@ -12,7 +14,11 @@ import { preserveWorktree } from "@/lib/gc/preserve";
 import { worktreesRoot } from "@/lib/instance-config";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
 import { cleanupLocalPackageAssistantMaterialization } from "@/lib/scratch-runs/local-package-materialization";
-import { createExecutionHosts, isFencedError } from "@/lib/execution-host";
+import {
+  createExecutionHosts,
+  isFencedError,
+  releaseAssignmentForRun,
+} from "@/lib/execution-host";
 import { removeOwnedWorktree } from "@/lib/worktree";
 import { stopThenDrop } from "@/lib/workbench-lifecycle/service";
 
@@ -118,13 +124,11 @@ async function deleteSupervisorSessionIfLive(
 
     return false;
   } catch (err) {
+    // ADR-166 E-EH-11: a newer driver generation owns the session — the run,
+    // its workspace and its assignment are that driver's; the discard is
+    // refused (409), nothing is written or removed.
     if (isFencedError(err)) {
-      log.warn(
-        { runId, sessionId },
-        "scratch discard yielded — a newer driver generation owns the session",
-      );
-
-      return false;
+      log.warn({ runId, sessionId }, "driver-yielded");
     }
 
     throw err;
@@ -288,6 +292,11 @@ export async function POST(
           endedAt: now,
         })
         .where(eq(runs.id, runId));
+      await releaseAssignmentForRun(
+        tx as unknown as ExecutionDb,
+        runId,
+        "abandoned",
+      );
     });
 
     if (run.localPackageId) {

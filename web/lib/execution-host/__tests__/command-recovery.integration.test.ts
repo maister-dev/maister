@@ -1,5 +1,6 @@
-// ADR-166 T3.4 — startup + periodic recovery + retention (V1–V6) against a
-// REAL supervisor child (SIGKILL + restart on the same state dir for W4).
+// ADR-166 T3.4 — startup + periodic recovery + retention (V1–V8) against a
+// REAL supervisor child (SIGKILL + restart on the same state dir for W4); V8
+// pages a fake host keyed like the real one.
 
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionHosts } from "@/lib/execution-host/client";
@@ -27,6 +28,7 @@ import {
   recoverExecutionCommands,
   releaseStaleAssignments,
 } from "@/lib/execution-host/recovery";
+import { OPEN_COMMANDS_PAGE_SIZE } from "@/lib/execution-host/commands";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { runReconcileSweep } from "@/lib/reconcile";
@@ -35,6 +37,7 @@ import {
   seedRun,
   seedWorkspace,
 } from "@/test-support/execution-host-seed";
+import { createFakeExecutionHost } from "@/test-support/fake-execution-host";
 import { addWorktree, initRepo } from "@/test-support/git-fixture";
 import {
   startMainPostgresTestDb,
@@ -87,6 +90,17 @@ async function mint(runId: string, reason: "launch" | "resume" = "launch") {
   return db.transaction((tx) =>
     mintAssignment(tx as unknown as Db, { runId, hostId, reason }),
   );
+}
+
+async function attemptRow(id: string) {
+  const rows = (await db
+    .select()
+    .from(schema.nodeAttempts)
+    .where(eq(schema.nodeAttempts.id, id))) as unknown as Array<{
+    executionAssignmentId: string | null;
+  }>;
+
+  return rows[0] ?? null;
 }
 
 async function runSessionRow(runId: string) {
@@ -167,26 +181,40 @@ afterAll(async () => {
 });
 
 describe("execution-command recovery (real supervisor)", () => {
-  it("V1 (W2): a create whose ack write died is folded from the receipt — no second session", async () => {
+  it("V1 (W2): a create whose ack write died is folded from the receipt — no second session; the fold stamps the attempt's driver generation", async () => {
     const runId = await seedFlowRun("v1");
     const assignment = await mint(runId);
     const faulty = withAckFault(db);
     const faultyHosts = createExecutionHosts({ db: faulty.db });
     const client = await faultyHosts.forAssignment(assignment);
+    // The flow attempt the session serves — stamped in the ack transaction
+    // (the client's or the fold's, never at append time).
+    const nodeAttemptId = randomUUID();
+
+    await db.insert(schema.nodeAttempts).values({
+      id: nodeAttemptId,
+      runId,
+      nodeId: "s1",
+      nodeType: "ai_coding",
+      attempt: 1,
+      status: "Running",
+    });
 
     // Adopt first (clean), then arm the fault for the create's ack tx.
     await client.ensureWorkspace();
     faulty.arm();
-    await expect(client.createSession(CREATE_PAYLOAD)).rejects.toThrow(
-      /injected/,
-    );
+    await expect(
+      client.createSession({ ...CREATE_PAYLOAD, nodeAttemptId }),
+    ).rejects.toThrow(/injected/);
 
     const [createRow] = (await listCommandsForRun(db, runId)).filter(
       (r) => r.kind === "session.create",
     );
 
     expect(createRow.state).toBe("delivering");
+    expect(createRow.payload).toMatchObject({ nodeAttemptId });
     expect(await runSessionRow(runId)).toBeNull();
+    expect((await attemptRow(nodeAttemptId))?.executionAssignmentId).toBeNull();
 
     const summary = await recoverExecutionCommands({ db, graceMs: 0 });
 
@@ -198,6 +226,9 @@ describe("execution-command recovery (real supervisor)", () => {
 
     expect(session?.hostSessionId).toBeTruthy();
     expect(session?.executionAssignmentId).toBe(assignment.id);
+    expect((await attemptRow(nodeAttemptId))?.executionAssignmentId).toBe(
+      assignment.id,
+    );
 
     const live = (await hosts.local().listSessions()).filter(
       (s) => s.runId === runId,
@@ -356,26 +387,33 @@ describe("execution-command recovery (real supervisor)", () => {
     expect((await getCommand(db, row.id))!.state).toBe("delivering");
   });
 
-  it("V5: an active assignment on a Review run is released by the sweep; a Running run's is not", async () => {
-    const reviewRun = await seedRun(testDatabase.db, {
-      projectId: project.id,
-      status: "Review",
-    });
-    const runningRun = await seedRun(testDatabase.db, {
-      projectId: project.id,
-      status: "Running",
-    });
-    const stale = await mint(reviewRun);
-    const live = await mint(runningRun);
+  it("V5: the sweep releases active assignments under non-owned statuses only — Pending and Running keep theirs; NeedsInputIdle, Review and Crashed lose them", async () => {
+    const seedWith = (status: string) =>
+      seedRun(testDatabase.db, { projectId: project.id, status });
+    const owned = {
+      Pending: await mint(await seedWith("Pending")),
+      Running: await mint(await seedWith("Running")),
+    };
+    const stale = {
+      NeedsInputIdle: await mint(await seedWith("NeedsInputIdle")),
+      Review: await mint(await seedWith("Review")),
+      Crashed: await mint(await seedWith("Crashed")),
+    };
 
     const released = await releaseStaleAssignments({ db, graceMs: 0 });
 
-    expect(released).toBeGreaterThanOrEqual(1);
-    expect(await getAssignmentById(db, stale.id)).toMatchObject({
-      state: "released",
-      releasedReason: "sweep",
-    });
-    expect((await getAssignmentById(db, live.id))!.state).toBe("active");
+    expect(released).toBeGreaterThanOrEqual(Object.keys(stale).length);
+    for (const [status, assignment] of Object.entries(stale)) {
+      expect(await getAssignmentById(db, assignment.id), status).toMatchObject({
+        state: "released",
+        releasedReason: "sweep",
+      });
+    }
+    for (const [status, assignment] of Object.entries(owned)) {
+      expect((await getAssignmentById(db, assignment.id))!.state, status).toBe(
+        "active",
+      );
+    }
   });
 
   it("V6: prune deletes terminal rows older than 7 days only", async () => {
@@ -410,4 +448,111 @@ describe("execution-command recovery (real supervisor)", () => {
     expect(await getCommand(db, old)).toBeNull();
     expect(await getCommand(db, recent)).not.toBeNull();
   });
+
+  it("V7 (W2, no receipt): a delivering driverless row is requeued and re-delivered; a delivering non-driverless row is orphaned", async () => {
+    const runId = await seedFlowRun("v7");
+    const assignment = await mint(runId);
+    const insertDelivering = async (
+      kind: "session.delete" | "session.cancel",
+      driverless: boolean,
+    ) => {
+      const row = await insertCommand(db, {
+        id: randomUUID(),
+        runId,
+        assignmentId: assignment.id,
+        hostId,
+        assignmentEpoch: assignment.epoch,
+        kind,
+        targetSessionId: `sess-v7-${randomUUID()}`,
+        payload: {},
+        maxAttempts: 3,
+        driverless,
+      });
+
+      // Sent before the crash, never acknowledged — and the host never saw it.
+      await db
+        .update(schema.executionCommands)
+        .set({
+          state: "delivering",
+          deliveringSince: new Date(Date.now() - 120_000),
+          attempts: 1,
+        })
+        .where(eq(schema.executionCommands.id, row.id));
+
+      return row;
+    };
+    const driverless = await insertDelivering("session.delete", true);
+    const driven = await insertDelivering("session.cancel", false);
+
+    const summary = await recoverExecutionCommands({ db, graceMs: 0 });
+
+    expect(summary.redelivered).toBeGreaterThanOrEqual(1);
+    expect(summary.orphaned).toBeGreaterThanOrEqual(1);
+    // Requeued (attempts kept), claimed again, delivered: the host's 404 for
+    // the unknown session is the `gone` outcome.
+    expect(await getCommand(db, driverless.id)).toMatchObject({
+      state: "succeeded",
+      attempts: 2,
+      result: { outcome: "gone" },
+    });
+    expect(await getCommand(db, driven.id)).toMatchObject({
+      state: "failed",
+      attempts: 1,
+      lastError: { reason: "ORPHANED" },
+    });
+  }, 60_000);
+
+  it("V8: recovery pages past the open-row page size — every queued driverless row of a 501-row backlog is re-delivered", async () => {
+    const runId = await seedRun(testDatabase.db, { projectId: project.id });
+    const assignment = await mint(runId);
+    const [hostRow] = (await db
+      .select({ hostKey: schema.executionHosts.hostKey })
+      .from(schema.executionHosts)
+      .where(eq(schema.executionHosts.id, hostId))) as Array<{
+      hostKey: string;
+    }>;
+    // A fake host wearing the registered key: the recovered envelopes carry
+    // the real row's fence, and the fake answers every delete `gone`.
+    const fake = createFakeExecutionHost({ hostKey: hostRow.hostKey });
+    const total = OPEN_COMMANDS_PAGE_SIZE + 1;
+    const ids = Array.from({ length: total }, () => randomUUID());
+    const now = new Date();
+
+    await db.insert(schema.executionCommands).values(
+      ids.map((id, i) => ({
+        id,
+        runId,
+        executionAssignmentId: assignment.id,
+        executionHostId: hostId,
+        assignmentEpoch: assignment.epoch,
+        kind: "session.delete",
+        targetSessionId: `sess-v8-${i}`,
+        payload: {},
+        state: "queued",
+        attempts: 0,
+        maxAttempts: 3,
+        driverless: true,
+        createdAt: now,
+        updatedAt: now,
+      })),
+    );
+
+    const summary = await recoverExecutionCommands({
+      db,
+      transport: fake.transport,
+      graceMs: 0,
+    });
+
+    expect(summary.scanned).toBeGreaterThanOrEqual(total);
+    expect(summary.redelivered).toBeGreaterThanOrEqual(total);
+    expect(
+      fake
+        .callsOf("deleteSession")
+        .filter((c) => c.envelope?.fence.runId === runId),
+    ).toHaveLength(total);
+    const states = (await listCommandsForRun(db, runId)).map((c) => c.state);
+
+    expect(states).toHaveLength(total);
+    expect(new Set(states)).toEqual(new Set(["succeeded"]));
+  }, 120_000);
 });

@@ -359,9 +359,12 @@ describe("flow launch + graph driver (ADR-166 T4.1)", () => {
 
     await until(async () => fake.callsOf("sendPrompt").length > 0);
     const [attemptBefore] = await attemptsFor(seeded.runId);
+    const firstSessionId = fake.callsOf("sendPrompt")[0].args[0] as string;
 
     // A re-entry (resume/recover/...) mints the next epoch and the host's
-    // fence advances with its first command — evicting the first driver.
+    // fence advances with its first command on the run's live session —
+    // evicting the first driver's session (F6: the higher-epoch checkpoint
+    // finds it already gone).
     const second = await db.transaction((tx) =>
       mintAssignment(tx as never, {
         runId: seeded.runId,
@@ -371,7 +374,10 @@ describe("flow launch + graph driver (ADR-166 T4.1)", () => {
     );
     const successor = await hosts.forAssignment(second);
 
-    await successor.checkpoint("no-such-session");
+    expect(
+      (await successor.checkpoint(firstSessionId)).alreadyCheckpointed,
+    ).toBe(true);
+    expect(fake.sessions.get(firstSessionId)?.fencedByEpoch).toBe(2);
 
     await driving;
 

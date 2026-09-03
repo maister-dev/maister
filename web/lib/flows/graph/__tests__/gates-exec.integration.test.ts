@@ -258,6 +258,48 @@ describe("gate execution", () => {
     expect(gates[0].inputArtifactRefs).toEqual(["impl-diff", "test-report"]);
   });
 
+  // ADR-166 E-EH-11: a judgment gate whose agent turn is fenced by a newer
+  // driver generation records no verdict and leaves node + run untouched.
+  it("a fenced ai_judgment gate yields: no verdict, run still Running, attempt still open", async () => {
+    const seeded = await seedGraphRun(
+      oneNode([
+        {
+          id: "judge",
+          kind: "ai_judgment",
+          mode: "blocking",
+          prompt: "judge the work",
+        },
+      ]),
+    );
+    const { hosts, fake } = await fakeGraphHosts(db, seeded.runId);
+
+    // A re-entry already advanced the host's fence past this driver's epoch.
+    fake.fences.set(seeded.runId, 2);
+
+    await runFlow(seeded.runId, {
+      db,
+      runtimeRoot: seeded.runtimeRoot,
+      executionHosts: hosts,
+    });
+
+    expect((await getRun(seeded.runId)).status).toBe("Running");
+    const gates = await getGates(seeded.runId);
+
+    expect(gates.filter((g) => g.status !== "running")).toHaveLength(0);
+    const attempts = (await db
+      .select()
+      .from(schema.nodeAttempts)
+      .where(eq(schema.nodeAttempts.runId, seeded.runId))) as Array<{
+      status: string;
+      endedAt: Date | null;
+    }>;
+
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].status).not.toMatch(/Failed|Succeeded/);
+    expect(attempts[0].endedAt).toBeNull();
+    expect(fake.callsOf("deleteSession")).toHaveLength(0);
+  });
+
   it("two blocking gates: a failing one fails the run, both verdicts recorded", async () => {
     const seeded = await seedGraphRun(
       oneNode([

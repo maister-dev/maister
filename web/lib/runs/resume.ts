@@ -31,7 +31,10 @@ import {
 } from "@/lib/acp-runners/spawn-intent";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs, workspaces } = schemaModule as unknown as Record<string, any>;
+const { projects, runs, workspaces } = schemaModule as unknown as Record<
+  string,
+  any
+>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -42,7 +45,14 @@ const log = pino({
 });
 
 export type ResumeRunResult =
-  | { ok: true; newSupervisorSessionId: string; acpSessionId: string }
+  | {
+      ok: true;
+      newSupervisorSessionId: string;
+      acpSessionId: string;
+      // ADR-166: the `resume` generation the claim minted — the resumed-session
+      // driver binds to THIS row, so a later re-entry fences it structurally.
+      assignmentId: string | null;
+    }
   // M8 review finding #3: distinct outcome for the lost-claim
   // race so /respond can map it to 202 (concurrent resume in progress)
   // instead of treating it as a terminal 410.
@@ -175,6 +185,26 @@ export async function resumeRun(
     };
   }
 
+  const projRows = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(eq(projects.id, baseRow.projectId));
+
+  if (!projRows[0]) {
+    log.error(
+      { runId, projectId: baseRow.projectId },
+      "resumeRun: project row missing",
+    );
+    await failResumedRun(runId, "project-missing", { db });
+
+    return {
+      ok: false,
+      code: "CHECKPOINT",
+      retryable: false,
+      message: "project row missing",
+    };
+  }
+
   // ADR-166: the resume is a new driver generation on the local host — resolve
   // it BEFORE the claim so an unavailable host is a retryable refusal with no
   // claim taken (the row stays NeedsInputIdle; the response stays stored).
@@ -271,10 +301,13 @@ export async function resumeRun(
     };
   }
 
+  const assignmentId = claim.assignment?.id ?? null;
+
   try {
-    // The client is bound to the assignment the claim just minted; the
-    // workspace handle was copied forward, so the create needs no re-adopt.
-    const client = await hosts.forRun(runId);
+    // Bound to the generation the claim just minted — never "the run's active
+    // assignment", which a racing re-entry could have replaced; the workspace
+    // handle was copied forward, so the create needs no re-adopt.
+    const { client } = await hosts.executionFor(runId, { assignmentId });
     const result = await client.createSession({
       stepId: runRow.currentStepId ?? "resume",
       executor: runnerExecutorInput(runRow.runnerSnapshot),
@@ -312,6 +345,7 @@ export async function resumeRun(
       ok: true,
       newSupervisorSessionId: result.sessionId,
       acpSessionId: result.acpSessionId,
+      assignmentId,
     };
   } catch (err) {
     // ADR-166 yield rule: a newer generation already owns this run — write no

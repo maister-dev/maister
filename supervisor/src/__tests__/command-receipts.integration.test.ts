@@ -1,4 +1,4 @@
-// ADR-166 T2.2/T2.4 — receipts (R1–R6) and session.command events (S1–S3).
+// ADR-166 T2.2/T2.4 — receipts (R1–R8) and session.command events (S1–S4).
 import type { SessionEvent } from "../types";
 
 import { randomUUID } from "node:crypto";
@@ -41,6 +41,27 @@ async function tempRoot(): Promise<string> {
 
 function fenceFor(host: BootedHost, runId: string, epoch = 1) {
   return { hostKey: host.hostState.hostKey, runId, assignmentEpoch: epoch };
+}
+
+// Post-terminal completions reach the durable log asynchronously (after the
+// closed writer drained); poll until the expected line count is there.
+async function durableCommands(
+  host: BootedHost,
+  runId: string,
+  count: number,
+): Promise<Array<Record<string, unknown>>> {
+  let lines: Array<Record<string, unknown>> = [];
+
+  for (let i = 0; i < 200 && lines.length < count; i += 1) {
+    lines = (await readEventsLog(host.runtimeRoot, "demo", runId)).filter(
+      (e) => e.type === "session.command",
+    );
+    if (lines.length < count) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }
+
+  return lines;
 }
 
 describe("command receipts", () => {
@@ -256,6 +277,91 @@ describe("command receipts", () => {
     expect(reopened.getReceipt(fresh)).not.toBeNull();
     reopened.close();
   });
+
+  it("R7: a duplicate prompt id replays its completed receipt after the session exited (replay wins over liveness)", async () => {
+    const host = await bootHost({
+      runtimeRoot: await tempRoot(),
+      fixtureArgs: ["--hang", "--lines", "2"],
+    });
+
+    booted.push(host);
+    const runId = `run-${randomUUID().slice(0, 8)}`;
+    const created = await postJson(
+      `${host.url}/sessions`,
+      await createEnvelope(host, { runId }),
+    );
+    const sessionId = created.body.sessionId as string;
+    const prompt = envelope(
+      "session.prompt",
+      fenceFor(host, runId),
+      { stepId: "step-1", prompt: "hello" },
+      randomUUID(),
+    );
+    const first = await postJson(
+      `${host.url}/sessions/${sessionId}/prompt`,
+      prompt,
+    );
+
+    expect(first.status).toBe(200);
+
+    const deleted = await postJson(
+      `${host.url}/sessions/${sessionId}`,
+      envelope("session.delete", fenceFor(host, runId), {}),
+      "DELETE",
+    );
+
+    expect(deleted.status).toBe(204);
+    await waitFor(
+      () => host.registry.get(sessionId)?.record.status === "exited",
+      5_000,
+    );
+
+    const again = await postJson(
+      `${host.url}/sessions/${sessionId}/prompt`,
+      prompt,
+    );
+
+    expect(again.status).toBe(200);
+    expect(again.body).toEqual(first.body);
+    expect(again.headers.get("x-maister-command-replayed")).toBe("true");
+  });
+
+  it("R8: a duplicate create id replays its 201 receipt after its handle was released (replay wins over the handle check)", async () => {
+    const host = await bootHost({
+      runtimeRoot: await tempRoot(),
+      fixtureArgs: ["--hang"],
+    });
+
+    booted.push(host);
+    const runId = `run-${randomUUID().slice(0, 8)}`;
+    const body = await createEnvelope(host, { runId }, {}, randomUUID());
+    const first = await postJson(`${host.url}/sessions`, body);
+
+    expect(first.status).toBe(201);
+
+    const release = await postJson(
+      `${host.url}/workspaces/${body.payload.executionWorkspaceId as string}`,
+      envelope("workspace.release", fenceFor(host, runId), {}),
+      "DELETE",
+    );
+
+    expect(release.body).toEqual({ released: true });
+
+    const again = await postJson(`${host.url}/sessions`, body);
+
+    expect(again.status).toBe(201);
+    expect(again.body).toEqual(first.body);
+    expect(again.headers.get("x-maister-command-replayed")).toBe("true");
+    expect(host.registry.size()).toBe(1);
+
+    // A NEW create against the released handle is still refused.
+    const fresh = await postJson(
+      `${host.url}/sessions`,
+      await createEnvelope(host, { runId }),
+    );
+
+    expect(fresh.body.details.reason).toBe("workspace_released");
+  });
 });
 
 describe("session.command events", () => {
@@ -297,10 +403,7 @@ describe("session.command events", () => {
     expect(events[1].result).toMatchObject({ stopReason: "end_turn" });
     expect(events[1].monotonicId).toBeGreaterThan(events[0].monotonicId);
 
-    await waitFor(() => true);
-    const durable = (
-      await readEventsLog(host.runtimeRoot, "demo", runId)
-    ).filter((e) => e.type === "session.command");
+    const durable = await durableCommands(host, runId, 2);
 
     expect(durable.map((e) => e.phase)).toEqual(["accepted", "completed"]);
     expect(durable.every((e) => e.sessionName === "default")).toBe(true);
@@ -376,15 +479,65 @@ describe("session.command events", () => {
     expect(byId.get(ids.checkpoint)?.status).toBe("succeeded");
     expect(byId.get(ids.delete)?.status).toBe("succeeded");
 
-    // The post-terminal completions reached the durable log too.
-    await waitFor(() => true);
-    const durable = (
-      await readEventsLog(host.runtimeRoot, "demo", runId)
-    ).filter((e) => e.type === "session.command");
+    // The post-terminal completions reached the durable log too, in order.
+    const durable = await durableCommands(host, runId, 4);
 
-    expect(durable.map((e) => e.commandId).sort()).toEqual(
-      Object.values(ids).sort(),
+    expect(durable.map((e) => e.commandId)).toEqual([
+      ids.cancel,
+      ids.input,
+      ids.checkpoint,
+      ids.delete,
+    ]);
+  });
+
+  it("S4: a post-terminal completion lands behind the drained event log — ids stay strictly increasing across many updates and a delete", async () => {
+    const host = await bootHost({
+      runtimeRoot: await tempRoot(),
+      fixtureArgs: ["--hang", "--lines", "400"],
+    });
+
+    booted.push(host);
+    const runId = `run-${randomUUID().slice(0, 8)}`;
+    const created = await postJson(
+      `${host.url}/sessions`,
+      await createEnvelope(host, { runId }),
     );
+    const sessionId = created.body.sessionId as string;
+    const prompt = await postJson(
+      `${host.url}/sessions/${sessionId}/prompt`,
+      envelope("session.prompt", fenceFor(host, runId), {
+        stepId: "step-1",
+        prompt: "hello",
+      }),
+    );
+
+    expect(prompt.status).toBe(200);
+
+    const deleteId = randomUUID();
+
+    await postJson(
+      `${host.url}/sessions/${sessionId}`,
+      envelope("session.delete", fenceFor(host, runId), {}, deleteId),
+      "DELETE",
+    );
+
+    let durable: Array<Record<string, unknown>> = [];
+
+    for (let i = 0; i < 200; i += 1) {
+      durable = await readEventsLog(host.runtimeRoot, "demo", runId);
+      if (durable.some((e) => e.commandId === deleteId)) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+
+    expect(durable.at(-1)?.commandId).toBe(deleteId);
+    expect(durable.some((e) => e.type === "session.exited")).toBe(true);
+
+    const ids = durable.map((e) => e.monotonicId as number);
+
+    expect(ids.length).toBeGreaterThan(400);
+    for (let i = 1; i < ids.length; i += 1) {
+      expect(ids[i], `line ${i}`).toBeGreaterThan(ids[i - 1]);
+    }
   });
 
   it("S3: a fence eviction lands session.exited{reason:fenced} in the durable log", async () => {

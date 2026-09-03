@@ -3,7 +3,7 @@ import type { CommandId, CommandKind, CommandState } from "./types";
 
 import { randomUUID } from "node:crypto";
 
-import { and, asc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, lt, or } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import { redactPayload } from "./redact";
@@ -56,7 +56,7 @@ export async function insertCommand(
       assignmentEpoch: input.assignmentEpoch,
       kind: input.kind,
       targetSessionId: input.targetSessionId ?? null,
-      payload: redactPayload(input.payload),
+      payload: redactPayload(input.kind, input.payload),
       state: "queued",
       attempts: 0,
       maxAttempts: input.maxAttempts,
@@ -158,6 +158,25 @@ export async function claimDelivering(
       deliveringSince: now,
       nextAttemptAt: null,
     },
+    { ...opts, now },
+  );
+}
+
+// Recovery only: a `delivering` row the host never saw (no receipt) goes back
+// to `queued` with its attempt count intact, so the deliverer can claim it.
+export async function requeueDelivering(
+  db: Db,
+  id: string,
+  opts: TransitionOptions = {},
+): Promise<TransitionResult> {
+  const now = opts.now ?? new Date();
+
+  return casTransition(
+    db,
+    id,
+    ["delivering"],
+    null,
+    { state: "queued", deliveringSince: null, nextAttemptAt: null },
     { ...opts, now },
   );
 }
@@ -276,17 +295,39 @@ export async function failRetryable(
   return { ...result, exhausted: false };
 }
 
-// Mirrors the `execution_commands_open_idx` predicate.
+export type OpenCommandsCursor = { createdAt: Date; id: string };
+
+export const OPEN_COMMANDS_PAGE_SIZE = 500;
+
+// One page of open rows in `(created_at, id)` order; `after` continues from the
+// last row of the previous page so a recovery pass reaches every open row no
+// matter how many stay open.
 export async function loadOpenCommands(
   db: Db,
-  opts: { limit?: number } = {},
+  opts: { limit?: number; after?: OpenCommandsCursor } = {},
 ): Promise<ExecutionCommand[]> {
+  const predicate = [
+    inArray(executionCommands.state, [...OPEN_COMMAND_STATES]),
+  ];
+
+  if (opts.after) {
+    predicate.push(
+      or(
+        gt(executionCommands.createdAt, opts.after.createdAt),
+        and(
+          eq(executionCommands.createdAt, opts.after.createdAt),
+          gt(executionCommands.id, opts.after.id),
+        ),
+      )!,
+    );
+  }
+
   return db
     .select()
     .from(executionCommands)
-    .where(inArray(executionCommands.state, [...OPEN_COMMAND_STATES]))
-    .orderBy(asc(executionCommands.createdAt))
-    .limit(opts.limit ?? 500);
+    .where(and(...predicate))
+    .orderBy(asc(executionCommands.createdAt), asc(executionCommands.id))
+    .limit(opts.limit ?? OPEN_COMMANDS_PAGE_SIZE);
 }
 
 export async function listCommandsForRun(
@@ -316,5 +357,3 @@ export async function pruneTerminalCommands(
 
   return rows.length;
 }
-
-export const openCommandsPredicate = sql`${executionCommands.state} in ('queued', 'delivering', 'accepted')`;

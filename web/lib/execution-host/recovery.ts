@@ -2,9 +2,9 @@ import type { Db } from "./db";
 import type { ExecutionCommand, ExecutionHost } from "@/lib/db/schema";
 import type { CommandReceipt, ExecutionHostTransport } from "./contracts";
 import type { CommandEnvelope, CommandKind } from "./types";
-import type { LegacyBackfillSummary } from "./legacy";
+import type { LegacyRunsSummary } from "./legacy";
 
-import { and, eq, inArray, lt, notInArray } from "drizzle-orm";
+import { and, eq, inArray, lt } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import { setAssignmentWorkspace } from "./assignments";
@@ -13,19 +13,22 @@ import {
   markFailed,
   markFenced,
   markSucceeded,
+  OPEN_COMMANDS_PAGE_SIZE,
   pruneTerminalCommands,
+  requeueDelivering,
+  type OpenCommandsCursor,
 } from "./commands";
+import { applyCreateAck } from "./create-ack";
 import { deliverCommand } from "./deliverer";
-import { getHostById, LIVE_DRIVER_RUN_STATUSES } from "./hosts";
+import { getHostById, STALE_ASSIGNMENT_RUN_STATUSES } from "./hosts";
 import { buildEnvelope } from "./ledger";
 import { defaultTransport } from "./default-transport";
-import { adoptLegacyActiveRuns } from "./legacy";
+import { reportLegacyActiveRuns } from "./legacy";
 import {
   DELIVERING_IN_FLIGHT_GRACE_MS,
   EXECUTION_COMMAND_RETENTION_DAYS,
 } from "./types";
 
-import { persistRunSessionHostBinding } from "@/lib/runs/active-run-session";
 import { executionAssignments, runs } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 
@@ -119,23 +122,34 @@ async function foldReceipt(
 
       await markSucceeded(txDb, row.id, null, receipt.body, { logger, now });
       if (row.kind === "session.create") {
-        const payload = row.payload as { sessionName?: unknown };
+        const payload = row.payload as {
+          sessionName?: unknown;
+          nodeAttemptId?: unknown;
+        };
         const body = receipt.body as {
           sessionId?: unknown;
           acpSessionId?: unknown;
         };
 
         if (typeof body.sessionId === "string") {
-          await persistRunSessionHostBinding(txDb, {
+          await applyCreateAck(txDb, {
             runId: row.runId,
             sessionName:
               typeof payload.sessionName === "string"
                 ? payload.sessionName
                 : "default",
-            hostSessionId: body.sessionId,
-            acpSessionId:
-              typeof body.acpSessionId === "string" ? body.acpSessionId : null,
-            executionAssignmentId: row.executionAssignmentId,
+            assignmentId: row.executionAssignmentId,
+            nodeAttemptId:
+              typeof payload.nodeAttemptId === "string"
+                ? payload.nodeAttemptId
+                : null,
+            result: {
+              sessionId: body.sessionId,
+              acpSessionId:
+                typeof body.acpSessionId === "string"
+                  ? body.acpSessionId
+                  : null,
+            },
           });
         }
       }
@@ -253,68 +267,102 @@ export async function recoverExecutionCommands(
     return hosts.get(id) ?? null;
   };
 
-  for (const row of await loadOpenCommands(db)) {
-    summary.scanned += 1;
+  const recoverRow = async (row: ExecutionCommand): Promise<void> => {
     const at = now();
 
     if (ageMs(row, at) < graceMs) {
       summary.skippedInFlight += 1;
-      continue;
+
+      return;
     }
 
-    try {
-      const host = await hostFor(row.executionHostId);
+    const host = await hostFor(row.executionHostId);
 
-      if (!host) {
-        await orphan(db, row, "ORPHANED", at, logger);
+    if (!host) {
+      await orphan(db, row, "ORPHANED", at, logger);
+      summary.orphaned += 1;
+
+      return;
+    }
+
+    const redeliver = async (queued: ExecutionCommand): Promise<void> => {
+      const send = queued.driverless ? driverlessSend(queued, transport) : null;
+
+      if (!send) {
+        await orphan(db, queued, "ORPHANED", at, logger);
         summary.orphaned += 1;
-        continue;
+
+        return;
       }
+      await deliverCommand({
+        db,
+        command: queued,
+        envelope: envelopeFor(queued, host),
+        send,
+        logger,
+        now,
+      });
+      summary.redelivered += 1;
+    };
 
-      const redeliver = async (): Promise<boolean> => {
-        const send = row.driverless ? driverlessSend(row, transport) : null;
+    if (row.state === "queued") {
+      await redeliver(row);
 
-        if (!send) {
-          await orphan(db, row, "ORPHANED", at, logger);
-          summary.orphaned += 1;
-
-          return false;
-        }
-        await deliverCommand({
-          db,
-          command: row,
-          envelope: envelopeFor(row, host),
-          send,
-          logger,
-          now,
-        });
-        summary.redelivered += 1;
-
-        return true;
-      };
-
-      if (row.state === "queued") {
-        await redeliver();
-        continue;
-      }
-
-      const receipt = await transport.getCommandReceipt(row.id);
-
-      if (!receipt) {
-        // W2 with no receipt: the host never saw it → treat as W1.
-        await redeliver();
-        continue;
-      }
-      summary[await foldReceipt(db, row, receipt, at, logger)] += 1;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-
-      summary.errors.push(`${row.kind} ${row.id}: ${message}`);
-      logger.error(
-        { commandId: row.id, commandKind: row.kind, err: message },
-        "command-recovery-failed",
-      );
+      return;
     }
+
+    const receipt = await transport.getCommandReceipt(row.id);
+
+    if (!receipt) {
+      // W2 with no receipt: the host never saw it. A `delivering` row goes
+      // back to `queued` first (the deliverer claims from `queued` only), then
+      // follows W1; an `accepted` row without a receipt cannot be re-sent.
+      if (row.state === "delivering") {
+        const requeued = await requeueDelivering(db, row.id, {
+          logger,
+          now: at,
+        });
+
+        if (requeued.changed && requeued.row) await redeliver(requeued.row);
+
+        return;
+      }
+      await orphan(db, row, "receipt_missing", at, logger);
+      summary.orphaned += 1;
+
+      return;
+    }
+    summary[await foldReceipt(db, row, receipt, at, logger)] += 1;
+  };
+
+  let cursor: OpenCommandsCursor | undefined;
+
+  for (;;) {
+    const page = await loadOpenCommands(db, {
+      limit: OPEN_COMMANDS_PAGE_SIZE,
+      after: cursor,
+    });
+
+    for (const row of page) {
+      summary.scanned += 1;
+
+      try {
+        await recoverRow(row);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+
+        summary.errors.push(`${row.kind} ${row.id}: ${message}`);
+        logger.error(
+          { commandId: row.id, commandKind: row.kind, err: message },
+          "command-recovery-failed",
+        );
+      }
+    }
+
+    if (page.length < OPEN_COMMANDS_PAGE_SIZE) break;
+    const last = page[page.length - 1];
+
+    cursor = { createdAt: last.createdAt, id: last.id };
   }
 
   logger.info(
@@ -325,9 +373,11 @@ export async function recoverExecutionCommands(
   return summary;
 }
 
-// ADR-166 sweep backstop (V5): an `active` assignment whose run has no live
-// driver (status outside Running/NeedsInput) was left behind by a crashed
-// re-entry — release it so the next placement mints cleanly.
+// ADR-166 sweep backstop (V5): an `active` assignment whose run cannot have a
+// driver waiting for it (parked, under review, terminal, crashed) was left
+// behind by a crashed re-entry — release it so the next placement mints
+// cleanly. Allow-listed by status: a queued `Pending` run keeps the assignment
+// its claim minted for the driver that will pick it up.
 export async function releaseStaleAssignments(
   opts: { db?: Db; now?: () => Date; graceMs?: number; logger?: Logger } = {},
 ): Promise<number> {
@@ -337,7 +387,7 @@ export async function releaseStaleAssignments(
   const staleRuns = db
     .select({ id: runs.id })
     .from(runs)
-    .where(notInArray(runs.status, [...LIVE_DRIVER_RUN_STATUSES]));
+    .where(inArray(runs.status, [...STALE_ASSIGNMENT_RUN_STATUSES]));
   const released = await db
     .update(executionAssignments)
     .set({
@@ -392,9 +442,9 @@ export type ExecutionHostSweepSummary = {
   commands: ExecutionCommandRecoverySummary;
   assignmentsReleased: number;
   commandsPruned: number;
-  // D9: the boot-time backfill retried on every pass (a host that was
-  // unreachable at boot is picked up here).
-  legacy: LegacyBackfillSummary;
+  // D9: pre-ADR-166 runs still executing without a placement, reported on
+  // every pass until they leave the live statuses.
+  legacy: LegacyRunsSummary;
 };
 
 // Joins `runSystemSweep()` — no new scheduler job kind (D8).
@@ -402,10 +452,8 @@ export async function executionCommandReconcilePass(
   opts: RecoveryOptions = {},
 ): Promise<ExecutionHostSweepSummary> {
   const commands = await recoverExecutionCommands(opts);
-  const legacy = await adoptLegacyActiveRuns({
+  const legacy = await reportLegacyActiveRuns({
     db: opts.db,
-    transport: opts.transport,
-    now: opts.now,
     logger: opts.logger,
   });
   const assignmentsReleased = await releaseStaleAssignments({

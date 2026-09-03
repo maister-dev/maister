@@ -86,7 +86,14 @@ export type SpawnSessionOptions = {
   // ADR-166: every run-dir path and the cwd come from the resolved workspace
   // (the adopted handle) — the single path-derivation site.
   workspace: WorkspaceResolution;
-  runtimeRoot: string;
+  // ADR-166: the `session.create` command (and its fence) this session is
+  // spawned by — stamped on the record for the `GET /sessions` projection and
+  // the lower-epoch eviction.
+  createdBy: {
+    commandId: string;
+    assignmentId: string;
+    assignmentEpoch: number;
+  };
   logger: Logger;
   binaryOverride?: string;
   preArgs?: string[];
@@ -202,7 +209,7 @@ export async function spawnSession(
       binaryOverrideEnv: binaryResolution.overrideEnv ?? null,
       model: request.executor.model,
       cwd: workspace.cwd,
-      executionWorkspaceId: workspace.executionWorkspaceId ?? null,
+      executionWorkspaceId: workspace.executionWorkspaceId,
       resume: Boolean(request.resumeSessionId),
       runnerId: opts.request.runner?.runnerId ?? null,
       runnerProvider: opts.request.runner?.provider.kind ?? null,
@@ -279,6 +286,9 @@ export async function spawnSession(
     repoPath: workspace.repoPath,
     confineRoot: workspace.confineRoot,
     executionWorkspaceId: workspace.executionWorkspaceId,
+    assignmentId: opts.createdBy.assignmentId,
+    assignmentEpoch: opts.createdBy.assignmentEpoch,
+    createdByCommandId: opts.createdBy.commandId,
     monotonicId: seedMonotonicId,
     // M34 (ADR-090 L1): session-scoped read-only permission arbitration.
     readOnlySession: request.readOnlySession === true,

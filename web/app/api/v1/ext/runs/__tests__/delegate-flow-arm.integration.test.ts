@@ -60,6 +60,12 @@ vi.mock("@/lib/scheduler", async (importOriginal) => {
     promoteNextPending: vi.fn(async () => null),
   };
 });
+// ADR-166 (strict): the wire client no longer exports a bare `deleteSession`;
+// the fake host's `session.delete` is routed to this spy instead.
+const deleteSessionSpy = vi.hoisted(() =>
+  vi.fn(async (_sessionId: string) => undefined),
+);
+
 vi.mock("@/lib/supervisor-client", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("@/lib/supervisor-client")>();
@@ -68,7 +74,6 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
     ...actual,
     checkSupervisorHealth: vi.fn(async () => ({ kind: "available" as const })),
     listSessions: vi.fn(async () => []),
-    deleteSession: vi.fn(async () => undefined),
   };
 });
 
@@ -96,7 +101,7 @@ beforeAll(async () => {
   Object.assign(fake.transport, {
     listSessions: () => supervisor.listSessions(),
     deleteSession: async (sessionId: string) => {
-      await supervisor.deleteSession(sessionId);
+      await deleteSessionSpy(sessionId);
 
       return { outcome: "terminated" as const };
     },
@@ -433,9 +438,7 @@ describe("run_delegate flow arm — failure and crash windows (ADR-163 REQ-21)",
         ])
       ).rows[0].id;
 
-      expect(vi.mocked(supervisor.deleteSession)).toHaveBeenCalledWith(
-        `sess-${childId}`,
-      );
+      expect(deleteSessionSpy).toHaveBeenCalledWith(`sess-${childId}`);
     } finally {
       spy.mockRestore();
     }

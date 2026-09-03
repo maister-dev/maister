@@ -40,6 +40,7 @@ import { loadObjectiveFactSource } from "@/lib/evaluations/objective/source";
 import { openReview } from "@/lib/evaluations/reviews";
 import {
   createExecutionHosts,
+  isFencedError,
   type ExecutionHosts,
 } from "@/lib/execution-host";
 
@@ -402,6 +403,13 @@ async function stopReapedJudgeRun(
       }
     }
   } catch (err) {
+    // ADR-166 E-EH-11: a fenced teardown belongs to a superseded generation —
+    // the run is that driver's to finalize.
+    if (isFencedError(err)) {
+      log.warn({ runId }, "driver-yielded");
+
+      return;
+    }
     log.warn(
       { runId, err: messageOf(err) },
       "reaped judge attempt — supervisor teardown unavailable; proceeding to finalize (workspace:none, tokens revoked)",

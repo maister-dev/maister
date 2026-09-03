@@ -13,6 +13,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
 
+import { openHostState } from "../host-state";
 import { registerRoutes } from "../http-api";
 import { ModelCatalogCache } from "../model-catalog/cache";
 import { ModelSourceRegistry } from "../model-catalog/registry";
@@ -58,6 +59,8 @@ function boot(sources: ModelSource[]): {
     logger: silentLogger,
     runtimeRoot: "/tmp/model-catalog-route-test",
     modelCatalog: { registry: new ModelSourceRegistry(sources), cache },
+    hostState: openHostState({ inMemory: true }),
+    workspaceRoots: [],
   });
 
   return { app, cache };

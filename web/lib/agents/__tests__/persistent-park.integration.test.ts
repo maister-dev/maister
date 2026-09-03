@@ -209,6 +209,32 @@ describe("persistent park-vs-finalize (M37 Phase 8 T8.1)", () => {
     expect(releaseSlotSpy).not.toHaveBeenCalled();
   });
 
+  // ADR-166 E-EH-11: the host evicted the session for a newer driver
+  // generation — the consumer yields: no park, no finalize, no slot release.
+  it("a fenced session exit finalizes nothing (driver yields)", async () => {
+    await seedProject();
+    const runId = await seedRunningAgent(true);
+
+    await consumeAgentSession({
+      db,
+      execution: fakeApi({
+        type: "session.exited",
+        sessionId: `sup-${runId}`,
+        monotonicId: 1,
+        exitCode: 0,
+        reason: "fenced",
+      }),
+      runId,
+      sessionId: `sup-${runId}`,
+    });
+
+    const run = await getRun(runId);
+
+    expect(run.status).toBe("Running");
+    expect(run.acpSessionId).toBe("acp-keep-me");
+    expect(releaseSlotSpy).not.toHaveBeenCalled();
+  });
+
   // The parkPersistentAgent CAS guard directly: Running → NeedsInputIdle is
   // status-guarded, so a non-Running row loses.
   it("parkPersistentAgent rejects a non-Running row (CAS guard)", async () => {

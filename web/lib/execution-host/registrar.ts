@@ -81,6 +81,10 @@ export type RegistrationResult =
       status: "registered";
       host: ExecutionHost;
       action: Exclude<RegistrationAction, "refuse">;
+      // A new supervisor process behind the same key: its live sessions are
+      // gone. The periodic reconcile sweep (`system_sweep`, ≤ 60 s) classifies
+      // the runs it owned — the registrar itself never runs domain sweeps, so
+      // a resolution can never wait on work that resolves through it.
       restarted: boolean;
     }
   | { status: "refused"; host: ExecutionHost; liveRunIds: string[] }
@@ -94,8 +98,9 @@ export type RegistrationResult =
 export const UNAVAILABLE_MARK_INTERVAL_MS = 30_000;
 
 type RegistrarState = {
+  // Per host id: the last `unavailable` readiness write (both the unreachable
+  // and the refused branch) — at most one write and one log per window.
   unavailableMarkedAt: Map<string, number>;
-  reconciledBootId: string | null;
 };
 
 declare global {
@@ -105,30 +110,21 @@ declare global {
 // HMR-safe process state (mirrors the sweeper handles on globalThis).
 const state: RegistrarState = globalThis.__maisterRegistrarState ?? {
   unavailableMarkedAt: new Map(),
-  reconciledBootId: null,
 };
 
 globalThis.__maisterRegistrarState = state;
 
 export function resetRegistrarStateForTests(): void {
   state.unavailableMarkedAt.clear();
-  state.reconciledBootId = null;
 }
 
 export type EnsureLocalHostOptions = {
   db?: Db;
   transport?: ExecutionHostTransport;
   now?: () => Date;
-  onRestart?: () => Promise<void>;
   logger?: Logger;
   healthTimeoutMs?: number;
 };
-
-async function defaultOnRestart(): Promise<void> {
-  const { runReconcileSweep } = await import("@/lib/reconcile");
-
-  await runReconcileSweep();
-}
 
 function isUniqueViolation(err: unknown): boolean {
   return (
@@ -136,6 +132,14 @@ function isUniqueViolation(err: unknown): boolean {
     err !== null &&
     "code" in err &&
     (err as { code: unknown }).code === "23505"
+  );
+}
+
+function withinMarkWindow(hostId: string, now: Date): boolean {
+  const last = state.unavailableMarkedAt.get(hostId);
+
+  return (
+    last !== undefined && now.getTime() - last < UNAVAILABLE_MARK_INTERVAL_MS
   );
 }
 
@@ -149,14 +153,9 @@ async function markUnavailable(
   const row = await findActiveLocalHost(db);
 
   if (row) {
-    const last = state.unavailableMarkedAt.get(row.id);
-
     // At most one readiness write per 30 s window (D1) — a down supervisor
     // must not turn every launch attempt into an UPDATE.
-    if (
-      last === undefined ||
-      now.getTime() - last >= UNAVAILABLE_MARK_INTERVAL_MS
-    ) {
+    if (!withinMarkWindow(row.id, now)) {
       await markHostReadiness(db, row.id, "unavailable", reason, now);
       state.unavailableMarkedAt.set(row.id, now.getTime());
       logger.warn(
@@ -289,24 +288,30 @@ export async function ensureLocalExecutionHost(
         case "refuse": {
           const liveRunIds = await listLiveRunIdsForHost(txDb, activeRow!.id);
 
-          await markHostReadiness(
-            txDb,
-            activeRow!.id,
-            "unavailable",
-            "identity_changed",
-            at,
-          );
-          logger.error(
-            {
-              storedHostKey: activeRow!.hostKey,
-              observedHostKey: observed.hostKey,
-              liveAssignments,
-              liveRunIds,
-              remediation:
-                "pin the stored key on the new supervisor (MAISTER_EXECUTION_HOST_KEY), or stop/abandon the listed runs before switching hosts",
-            },
-            "execution-host-identity-mismatch",
-          );
+          // Same window as the unreachable branch: while refused, every
+          // resolution observes the mismatch, but only one per window writes
+          // readiness and logs the remediation.
+          if (!withinMarkWindow(activeRow!.id, at)) {
+            await markHostReadiness(
+              txDb,
+              activeRow!.id,
+              "unavailable",
+              "identity_changed",
+              at,
+            );
+            state.unavailableMarkedAt.set(activeRow!.id, at.getTime());
+            logger.error(
+              {
+                storedHostKey: activeRow!.hostKey,
+                observedHostKey: observed.hostKey,
+                liveAssignments,
+                liveRunIds,
+                remediation:
+                  "pin the stored key on the new supervisor (MAISTER_EXECUTION_HOST_KEY), or stop/abandon the listed runs before switching hosts",
+              },
+              "execution-host-identity-mismatch",
+            );
+          }
 
           return { status: "refused", host: activeRow!, liveRunIds };
         }
@@ -326,19 +331,6 @@ export async function ensureLocalExecutionHost(
 
   if (result.status === "registered") {
     state.unavailableMarkedAt.delete(result.host.id);
-
-    if (result.restarted && state.reconciledBootId !== observed.bootId) {
-      state.reconciledBootId = observed.bootId;
-
-      try {
-        await (opts.onRestart ?? defaultOnRestart)();
-      } catch (err) {
-        logger.error(
-          { err: err instanceof Error ? err.message : String(err) },
-          "execution-host-restart-reconcile-failed",
-        );
-      }
-    }
   }
 
   return result;

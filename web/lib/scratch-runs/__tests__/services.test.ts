@@ -232,6 +232,16 @@ describe("scratch event projection", () => {
       }),
     ).toMatchObject({ dialogStatus: "Crashed" });
 
+    // ADR-166 E-EH-11: an eviction for a newer driver generation projects
+    // nothing — that generation owns the dialog.
+    expect(
+      projectSupervisorEventToScratch({
+        type: "session.exited",
+        monotonicId: 6,
+        reason: "fenced",
+      }),
+    ).toEqual({});
+
     // ADR-108 (M40): a scratch hook_trip never escalates to NeedsInput (D2) —
     // the projection emits no dialogStatus (the consumer adds a chat notice).
     expect(

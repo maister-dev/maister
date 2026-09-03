@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { ExecutionHost } from "@/lib/db/schema";
+import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
 import type {
   ExecutionHostTransport,
   PlacementReason,
@@ -37,7 +37,10 @@ const log = pino({
 });
 
 export type StateTransitionResult =
-  | { ok: true }
+  // `assignment` is the driver generation a claim transition minted (ADR-166
+  // D3) — the caller binds its execution to THAT row, never to "the run's
+  // active assignment" resolved later.
+  | { ok: true; assignment?: ExecutionAssignment }
   | { ok: false; reason: "status-guard-mismatch" | "not-found" };
 
 // ADR-141: a run that terminalizes MUST NOT strand a live branch-sync claim.
@@ -138,8 +141,8 @@ async function mintForClaim(
   runId: string,
   reason: PlacementReason,
   opts: StateTransitionOptions,
-): Promise<void> {
-  await mintPlacement(tx, {
+): Promise<ExecutionAssignment> {
+  return mintPlacement(tx, {
     runId,
     reason: opts.placement?.reason ?? reason,
     host: opts.placement?.host,
@@ -264,7 +267,8 @@ export async function markResumed(
       }
 
       // The resume is a new driver generation: mint inside the claim.
-      await mintForClaim(tx, runId, "resume", opts);
+      const assignment = await mintForClaim(tx, runId, "resume", opts);
+
       await opts.recordSuccessAudit?.(tx);
 
       log.info(
@@ -272,9 +276,53 @@ export async function markResumed(
         "run-state transition",
       );
 
-      return { ok: true };
+      return { ok: true, assignment };
     },
   );
+}
+
+// NeedsInputIdle → Running for an AGENT run (hook_trip / budget-raise /
+// permission idle-resume, orchestrator re-message). A checkpointed agent run
+// released its generation with the checkpoint, so the wake mints the next
+// epoch INSIDE the same CAS (ADR-166 D3); the caller binds startAgentSession
+// to it. Runs inside the CALLER's transaction — every wake sits in a
+// scheduler-locked cap gate — and clears the C3 FIFO key so a
+// deferred-then-admitted run reads clean.
+export async function claimAgentIdleResumeInTransaction(
+  tx: Db,
+  runId: string,
+  opts: Pick<StateTransitionOptions, "placement" | "recordSuccessAudit"> = {},
+): Promise<StateTransitionResult> {
+  const rows = await tx
+    .update(runs)
+    .set({
+      status: "Running",
+      resumeRequestedAt: null,
+      keepaliveUntil: null,
+      checkpointAt: null,
+    })
+    .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")))
+    .returning({ id: runs.id });
+
+  if (rows.length === 0) {
+    log.warn(
+      { runId, from: "NeedsInputIdle", to: "Running" },
+      "claimAgentIdleResumeInTransaction: status-guard mismatch",
+    );
+
+    return { ok: false, reason: "status-guard-mismatch" };
+  }
+
+  const assignment = await mintForClaim(tx, runId, "resume", opts);
+
+  await opts.recordSuccessAudit?.(tx);
+
+  log.info(
+    { runId, from: "NeedsInputIdle", to: "Running" },
+    "run-state transition — agent idle resume claimed",
+  );
+
+  return { ok: true, assignment };
 }
 
 // M37 (ADR-098): Running → WaitingOnChildren. The orchestrator node yields
@@ -287,17 +335,28 @@ export async function markWaitingOnChildren(
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
-  const rows = await db
-    .update(runs)
-    .set({
-      status: "WaitingOnChildren",
-      checkpointAt: new Date(),
-      keepaliveUntil: null,
-    })
-    .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
-    .returning({ id: runs.id });
+  // ADR-166 D2: a parked coordinator has no driver — its assignment ends with
+  // the park (the wait-resume re-entry mints the next epoch), in the same tx
+  // as the status CAS so the pair can never half-apply.
+  const parked: boolean = await db.transaction(async (tx: Db) => {
+    const rows = await tx
+      .update(runs)
+      .set({
+        status: "WaitingOnChildren",
+        checkpointAt: new Date(),
+        keepaliveUntil: null,
+      })
+      .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+      .returning({ id: runs.id });
 
-  if (rows.length === 0) {
+    if (rows.length === 0) return false;
+
+    await releaseAssignmentForRun(tx, runId, "waiting_on_children");
+
+    return true;
+  });
+
+  if (!parked) {
     log.warn(
       { runId, from: "Running", to: "WaitingOnChildren" },
       "markWaitingOnChildren: status-guard mismatch",
@@ -305,10 +364,6 @@ export async function markWaitingOnChildren(
 
     return { ok: false, reason: "status-guard-mismatch" };
   }
-
-  // ADR-166 D2: a parked coordinator has no driver — its assignment ends here
-  // and the wait-resume re-entry mints the next epoch.
-  await releaseAssignmentForRun(db, runId, "waiting_on_children");
 
   log.info(
     { runId, from: "Running", to: "WaitingOnChildren" },
@@ -347,7 +402,8 @@ export async function markResumedFromWait(
       }
 
       // The woken coordinator is a new driver generation (ADR-166 D3).
-      await mintForClaim(tx, runId, "wait_resume", opts);
+      const assignment = await mintForClaim(tx, runId, "wait_resume", opts);
+
       await opts.recordSuccessAudit?.(tx);
 
       log.info(
@@ -355,7 +411,7 @@ export async function markResumedFromWait(
         "run-state transition",
       );
 
-      return { ok: true };
+      return { ok: true, assignment };
     },
   );
 }
@@ -486,13 +542,15 @@ export async function markReworkClaimFromReview(
 // `Review` plus the delegated-child `run.review` domain emit in the SAME
 // transaction (ADR-163 — a Review a settled-event consumer waits on that
 // nothing emits is a deadlock). `opts.db` may already be a transaction; the
-// nested call becomes a savepoint.
+// nested call becomes a savepoint. A `releaseReason` ends the run's driver
+// generation (ADR-166 D7) in the same tx as the flip.
 async function casToReviewAndEmit(
   db: Db,
   runId: string,
   set: Record<string, unknown>,
   fromStatus: string,
   cause: RunReviewCause,
+  releaseReason?: string,
 ): Promise<{ id: string }[]> {
   return db.transaction(async (tx: Db) => {
     const rows = await tx
@@ -510,6 +568,9 @@ async function casToReviewAndEmit(
 
     if (rows.length > 0) {
       await emitDelegatedReviewIfChild(tx, { runId, ...rows[0], cause });
+      if (releaseReason) {
+        await releaseAssignmentForRun(tx, runId, releaseReason);
+      }
     }
 
     return rows;
@@ -586,12 +647,14 @@ export async function markSyncReviewFromRunning(
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
+  // ADR-166 D7: the resolver's driver generation ends with the flip.
   const rows = await casToReviewAndEmit(
     db,
     runId,
     { status: "Review", keepaliveUntil: null, checkpointAt: null },
     "Running",
     "sync_returned",
+    "sync_finished",
   );
 
   if (rows.length === 0) {
@@ -603,8 +666,6 @@ export async function markSyncReviewFromRunning(
     return { ok: false, reason: "status-guard-mismatch" };
   }
 
-  // ADR-166 D7: the resolver's driver generation ends with the flip.
-  await releaseAssignmentForRun(db, runId, "sync_finished");
   log.info(
     { runId, from: "Running", to: "Review" },
     "run-state transition — sync AI resolver returned the run to Review",
@@ -625,12 +686,14 @@ export async function markSyncReviewFromNeedsInput(
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
+  // ADR-166 D7: the resolver's driver generation ends with the flip.
   const rows = await casToReviewAndEmit(
     db,
     runId,
     { status: "Review", keepaliveUntil: null, checkpointAt: null },
     fromStatus,
     "sync_returned",
+    "sync_finished",
   );
 
   if (rows.length === 0) {
@@ -642,8 +705,6 @@ export async function markSyncReviewFromNeedsInput(
     return { ok: false, reason: "status-guard-mismatch" };
   }
 
-  // ADR-166 D7: the resolver's driver generation ends with the flip.
-  await releaseAssignmentForRun(db, runId, "sync_finished");
   log.info(
     { runId, from: fromStatus, to: "Review" },
     "run-state transition — orphaned sync resolver abandoned its HITL prompt",
@@ -893,20 +954,20 @@ export async function markReturnedToRunning(
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
-  const returned: boolean = await db.transaction(async (tx: Db) => {
-    const rows = await tx
-      .update(runs)
-      .set({ status: "Running" })
-      .where(and(eq(runs.id, runId), eq(runs.status, "HumanWorking")))
-      .returning({ id: runs.id });
+  const returned: ExecutionAssignment | null = await db.transaction(
+    async (tx: Db) => {
+      const rows = await tx
+        .update(runs)
+        .set({ status: "Running" })
+        .where(and(eq(runs.id, runId), eq(runs.status, "HumanWorking")))
+        .returning({ id: runs.id });
 
-    if (rows.length === 0) return false;
+      if (rows.length === 0) return null;
 
-    // The returned run is re-driven by a new generation (ADR-166 D3).
-    await mintForClaim(tx, runId, "rework_return", opts);
-
-    return true;
-  });
+      // The returned run is re-driven by a new generation (ADR-166 D3).
+      return mintForClaim(tx, runId, "rework_return", opts);
+    },
+  );
 
   if (!returned) {
     log.warn(
@@ -922,7 +983,7 @@ export async function markReturnedToRunning(
     "run-state transition — takeover returned, resuming validation path",
   );
 
-  return { ok: true };
+  return { ok: true, assignment: returned };
 }
 
 // M11b (ADR-030): HumanWorking → NeedsInput on release-without-changes. The

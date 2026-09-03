@@ -206,8 +206,10 @@ resolves a slug, a ref, or a repo path, and never creates or removes a
 worktree. Mount roots live under the run dir
 (`.maister/<slug>/runs/<runId>/context/<siblingSlug>/`), which is already inside
 the prompt content-block confinement allow-set, so mounts imply no confinement
-change. Malformed paths, `..` segments, and an over-length array are rejected
-with `409 PRECONDITION` like every other path field.
+change. Each mount is validated at adoption like the workspace path itself
+(`409 PRECONDITION {reason: "workspace_rejected", rule, mount: <slug>}` — see
+[`POST /workspaces/adopt`](#post-workspacesadopt-implemented--adr-166)); an
+over-length array is a Zod `409 PRECONDITION`.
 
 It is a **first-class request field**, the same shape of thing as
 `capabilityProfilePath` — deliberately **not** an overload of `executor.env`,
@@ -374,11 +376,19 @@ path per kind (absolute, no `..`, realpath exists, no symlink escape, not
 inside the state dir; `git_worktree` under `MAISTER_WORKSPACE_ROOTS` with a
 `.git` FILE whose `gitdir:` resolves under `<repoPath>/.git/worktrees/`;
 `repo_checkout` = a git repo root equal to `repoPath`, any location;
-`directory` under the roots, no `repoPath`), derives and stores `run_dir`
-from its runtime root + `projectSlug` + `runId`, and returns
-`200 { executionWorkspaceId: "ws_<uuid>", kind, replayed }`. Idempotent on
-`(runId, realpath)`. Rejections are `409 PRECONDITION {reason:
-"workspace_rejected", rule}` — never 500. The web tier adopts lazily before
+`directory` under the roots, no `repoPath`), validates every `contextMounts[]`
+entry as a git checkout (absolute, no `..`, realpath is a directory, a `.git`
+directory or a linked worktree's `.git` file, not inside the state dir; stored
+by realpath), derives and stores `run_dir` from its runtime root +
+`projectSlug` + `runId`, and returns
+`200 { executionWorkspaceId: "ws_<uuid>", kind, replayed }`. Idempotent on the
+ACTIVE `(runId, realpath)` — the partial unique index `workspaces_active_uq`
+covers `released_at IS NULL` only, so a released handle is history and
+re-adopting the same path mints a NEW handle (an ADR-141 reopen re-creates the
+worktree at the same path). Rejections are `409 PRECONDITION {reason:
+"workspace_rejected", rule}` (+ `mount: <slug>` for a mount) — never 500; the
+message names only the offending path (the configured roots and `repoPath`
+are logged at debug, never echoed). The web tier adopts lazily before
 the first `session.create` of an assignment and derives every value from
 server state (`workspaces.worktree_path`, `projects.repo_path`,
 `local_packages.working_dir`, the agent launch snapshot,
@@ -398,7 +408,9 @@ paths.
 
 Returns the host's durable receipt for a command id —
 `{ commandId, runId, kind, assignmentEpoch, phase: accepted | completed |
-rejected, httpStatus, body, receivedAt, completedAt? }` — or 404. Read by
+rejected, httpStatus, body, receivedAt, completedAt?, inflight }` — or 404
+(`inflight` is process memory: `accepted` + `inflight: false` is the
+restart-mid-turn signature). Read by
 the web tier exactly once after an unknown-outcome transport failure on an
 accepted prompt and during startup recovery of `delivering` / `accepted`
 ledger rows.
@@ -428,29 +440,40 @@ Every host-bound mutating route (`POST /sessions`, `POST /sessions/:id/
 }
 ```
 
-Handler order (`withCommand`): parse envelope → **fence** → **receipt
-lookup** → execute → write receipt → respond. Fence rules, in order:
-`fence.hostKey` ≠ own key → `409 PRECONDITION host_mismatch`;
-`assignmentEpoch` below the persisted per-run high-water → **`409 FENCED`**
-(`details: {reason: "assignment_fenced", runId, commandEpoch, hostEpoch}`);
-equal epoch with a different `assignmentId` → `409 PRECONDITION
-assignment_mismatch`; a HIGHER epoch → persist it, then **evict** every live
-session of that run under a lower epoch (cancel its deferreds,
+Handler order (`parseCommandBody` + `runCommand`): registry / handle lookup
+(the 404 and the run the fence is checked against) → parse envelope → **fence**
+(persist the high-water) → **receipt lookup / in-flight join** → execute
+(evict lower-epoch sessions first, INSIDE the in-flight execution) → write
+receipt → respond. Fence rules, in order: `fence.hostKey` ≠ own key →
+`409 PRECONDITION host_mismatch`; `fence.runId` ≠ the session's / handle's run
+→ `409 PRECONDITION run_mismatch`; `assignmentEpoch` below the persisted
+per-run high-water → **`409 FENCED`** (`details: {reason: "assignment_fenced",
+runId, commandEpoch, hostEpoch}`); equal epoch with a different
+`assignmentId` → `409 PRECONDITION assignment_mismatch`; a HIGHER epoch →
+persist it, then **evict** every live session of that run under a lower epoch
+(cancel its deferreds with reason `fenced`,
 `markIntentionalShutdown(reason="fenced")`, SIGTERM with kill grace,
 `session.exited {reason: "fenced"}`, its pending prompt request answers
-`409 FENCED`), then execute; session routes also require `fence.runId ===
-record.runId` → `run_mismatch`. The high-water lives in the
-[state store](#execution-host-state-store) (`run_fences`) and is written
-BEFORE execution, so it survives a restart. Receipts: a duplicate `command.id`
-with a `completed` / `rejected` receipt replays the stored response verbatim
-with `X-Maister-Command-Replayed: true`; a duplicate while the original is
-in flight (any kind) **joins** it; an `accepted` receipt with no in-flight
-promise (restart mid-turn) → `409 PRECONDITION turn_lost`; a receipt write
-failure → `500 ACP_PROTOCOL` (the effect may have happened — the web
-reconcile catches an orphan session). Receipts prune at boot and hourly
-(7-day TTL). Prompt completion additionally emits the SSE
-`session.command` event (`phase: accepted`, then `phase: completed` with
-`status` + `result` / `error`), also appended to `run.events.jsonl`.
+`409 FENCED`), then execute. The eviction runs inside the command's in-flight
+execution, so a concurrent duplicate of the same `command.id` joins it instead
+of executing beside a dying session. The high-water lives in the
+[state store](#execution-host-state-store-implemented--adr-166) (`run_fences`)
+and is written BEFORE execution, so it survives a restart. Receipts: a
+duplicate `command.id` with a `completed` / `rejected` receipt replays the
+stored response verbatim with `X-Maister-Command-Replayed: true` — replay wins
+over the liveness and handle guards, which are judged inside the
+receipt-guarded execution (a duplicate prompt id replays after the session
+exited; a duplicate create id replays after its handle was released); a
+duplicate while the original is in flight (any kind) **joins** it; an
+`accepted` receipt with no in-flight promise (restart mid-turn) → `409
+PRECONDITION turn_lost`; a receipt write failure → `500 ACP_PROTOCOL` (the
+effect may have happened — the web reconcile catches an orphan session).
+Receipts prune at boot and hourly (7-day TTL). Prompt completion additionally
+emits the SSE `session.command` event (`phase: accepted`, then `phase:
+completed` with `status` + `result` / `error`), also appended to
+`run.events.jsonl`; a completion that lands after the session's terminal event
+is appended once the closed per-run writer has drained, so the file keeps its
+`monotonicId` order.
 
 ### `DELETE /sessions/:id`
 
@@ -465,6 +488,7 @@ startup recovery may re-deliver it.
 | ------ | ---------------------------------------------------------- | --------------------------------------------------------------------- |
 | `204`  | empty                                                      | Termination initiated; the SSE stream will report the terminal event. |
 | `404`  | `{ "code": "PRECONDITION", "message": "unknown session" }` | No such session in the registry.                                      |
+| `409`  | `{ "code": "PRECONDITION" \| "FENCED", "details": {…} }`   | Missing envelope, fence refusal, or stale epoch (ADR-166).            |
 
 ### `GET /sessions/:id/stream`
 
@@ -504,8 +528,9 @@ structured ACP `session/update` events.
 ### `GET /sessions`
 
 Returns the current `SessionRecord[]` projection — sessionId, adapter, runId,
-projectSlug, stepId, sessionName, status (`live | exited | crashed`), pid,
-startedAt, exitedAt, exitCode, signal, monotonicId, acpSessionId. Used by
+projectSlug, stepId, nodeAttemptId, sessionName, status
+(`live | exited | crashed`), pid, startedAt, exitedAt, exitCode, signal,
+monotonicId, acpSessionId. Used by
 `lib/reconcile.ts` and admin views. **(Implemented — ADR-166)** The projection
 carries `executionWorkspaceId`, `assignmentId`, `assignmentEpoch`, and
 `createdByCommandId`; host-private paths (`logPath`, `worktreePath`,
@@ -522,7 +547,7 @@ plus a supervisor-side `reason` marker that propagates onto the
 `session.exited` event. The supervisor then `markIntentionalShutdown`s
 the session with `reason="checkpoint"`, SIGTERMs the child, and waits
 for graceful exit up to `MAISTER_KILL_GRACE_MS`. If the grace expires
-the supervisor SIGKILLs and returns `500 EXECUTOR_UNAVAILABLE` — the
+the supervisor SIGKILLs and returns `503 EXECUTOR_UNAVAILABLE` — the
 web sweeper treats this as retryable and re-attempts on the next tick.
 
 Status codes:
@@ -532,7 +557,7 @@ Status codes:
   already in `exited`/`crashed`).
 - `404 { code: "PRECONDITION" }` — unknown sessionId.
 - `409 { code: "PRECONDITION" }` — body contained unknown keys.
-- `500 { code: "EXECUTOR_UNAVAILABLE" }` — SIGTERM grace expired,
+- `503 { code: "EXECUTOR_UNAVAILABLE" }` — SIGTERM grace expired,
   SIGKILL was issued; sweeper retries.
 
 #### Checkpoint + Resume lifecycle
@@ -686,9 +711,15 @@ The supervisor keeps a private `node:sqlite` database at
 `<MAISTER_RUNTIME_ROOT>/.maister/execution-host/`; WAL,
 `synchronous=NORMAL`) with four tables: `host_identity` (the minted or
 pinned `hostKey`), `run_fences` (`run_id, assignment_id, epoch`), `workspaces`
-(adopted handles: `id, run_id, project_slug, kind, path, repo_path?, run_dir,
-context_mounts?, adopted_at, released_at?`), and `command_receipts`. It is
-opened in `main.ts` BEFORE routes register. Two fatal boot errors:
+(adopted handles: `id, run_id, project_slug, kind, path, real_path, repo_path?,
+run_dir, context_mounts?, adopted_at, released_at?`, one ACTIVE row per
+`(run_id, real_path)` through the partial unique index `workspaces_active_uq`),
+and `command_receipts`. The file carries a `PRAGMA user_version` (currently 1)
+that gates in-place migrations at open: a version-0 store (inline
+`UNIQUE (run_id, real_path)`, which blocked re-adoption after a release) is
+rebuilt under the partial index with every row kept; a fresh store starts at
+the current version. It is opened in `main.ts` BEFORE routes register — there
+is no in-memory fallback. Two fatal boot errors:
 `execution-host-key-conflict` (a `MAISTER_EXECUTION_HOST_KEY` pin that
 differs from the stored key — remediation: unset the pin, or deliberately
 wipe the state dir) and `execution-host-state-unwritable`. The web tier
@@ -742,7 +773,8 @@ JSON at the HTTP boundary.
 | `FENCED`               | 409                              | **(Implemented — ADR-166)** `fence.assignmentEpoch` is below the host's persisted high-water for the run, or a session evicted by a higher epoch answered its pending prompt. Web maps it to `CONFLICT {details.reason: "assignment_fenced"}`; the driver yields. |
 
 `SupervisorErrorBody` **(Implemented — ADR-166)** carries an optional typed
-`details` object (`reason`, `rule`, `runId`, `commandEpoch`, `hostEpoch`);
+`details` object (`reason`, `rule`, `field`, `mount`, `runId`, `commandEpoch`,
+`hostEpoch`);
 the reason tokens are listed in
 [Error Taxonomy §Execution-host contract](error-taxonomy.md#execution-host-contract-implemented--adr-166).
 

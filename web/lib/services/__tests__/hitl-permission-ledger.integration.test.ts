@@ -3,7 +3,8 @@
 // delivered afterwards; its ledger row and `hitl_requests.responded_at` land
 // together; a definitive 503 leaves the row `failed` and respondedAt NULL, and
 // the user's retry issues a NEW command; a host replay after a lost response
-// records `_audit.deliveredOptionId`; a fenced delivery writes nothing.
+// records `_audit.deliveryReplayed` beside the untouched stored choice; a fenced
+// delivery writes nothing.
 
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -240,7 +241,7 @@ describe("permission response ledger (ADR-166 I1–I3)", () => {
     expect((await hitlRow(hitlRequestId)).respondedAt).toBeInstanceOf(Date);
   });
 
-  it("I3: a lost response is retried under the SAME command id; the host replay records _audit.deliveredOptionId", async () => {
+  it("I3: a lost response is retried under the SAME command id; the host replay records _audit.deliveryReplayed", async () => {
     const { runId, hitlRequestId, hosts, fake } = await seedLiveNeedsInput();
 
     fake.loseResponseOnce("deliverInput");
@@ -264,14 +265,15 @@ describe("permission response ledger (ADR-166 I1–I3)", () => {
     expect(rows[0]).toMatchObject({ state: "succeeded", attempts: 2 });
     expect((await hitlRow(hitlRequestId)).response).toEqual({
       optionId: "allow",
-      _audit: { deliveredOptionId: "allow" },
+      _audit: { deliveryReplayed: true },
     });
   });
 
   it("yield rule: a delivery fenced by a newer driver generation writes no run/HITL state and cancels nothing", async () => {
     const { runId, hitlRequestId, hosts, fake } = await seedLiveNeedsInput();
 
-    // A resume raced the response: epoch 2 exists and the host already saw it.
+    // A resume raced the response: epoch 2 exists and the host already saw it
+    // (its high-water is seeded the way a first epoch-2 command would set it).
     await db.transaction(async (tx) => {
       await mintAssignment(tx as never, {
         runId,
@@ -279,7 +281,7 @@ describe("permission response ledger (ADR-166 I1–I3)", () => {
         reason: "resume",
       });
     });
-    await (await hosts.forRun(runId)).checkpoint("no-such-session");
+    fake.fences.set(runId, 2);
     fake.sessions.get("sup-1")!.status = "live";
 
     // The response binds the run's ACTIVE (epoch 2) assignment, so the wire

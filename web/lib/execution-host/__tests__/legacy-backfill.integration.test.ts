@@ -1,14 +1,14 @@
-// ADR-166 T5.2 (D9, X-EH-18, X-EH-22) — evidence-based backfill of pre-Stage-A
-// active runs against a REAL supervisor:
-//   Y1 Running + live host session + NULL assignment → epoch 1 legacy_backfill
-//      (the host's own assignment id, the adopted handle copied forward, the
-//      run_sessions row linked);
-//   Y2 Running without a session → left NULL; the reconcile sweep marks Crashed;
-//   Y3 NeedsInputIdle → left NULL; the next resume claim mints a normal
+// ADR-166 T5.2 (D9, X-EH-18, X-EH-22) — pre-Stage-A active runs against a
+// REAL supervisor. There is nothing to place them on (every host session since
+// the strict flip belongs to a minted assignment), so the pass only REPORTS:
+//   Y1 Running + NULL assignment → reported ONCE (`legacy-runs-unplaced`) and
+//      never minted, even when the host lists a live session for the run;
+//   Y2 Running without a session → left NULL; the reconcile sweep classifies;
+//   Y3 NeedsInputIdle → not a candidate; the next resume claim mints a normal
 //      `resume` generation (no legacy row ever exists);
 //   Y5 lazy path: the keep-alive sweeper checkpointing a legacy NeedsInput run
 //      mints lazily with WARN legacy-run-assigned-lazily;
-//   Y4 no registered host → skipped, logged ONCE, no throw (retry on the sweep).
+//   Y4 reporting never contacts the host and never throws.
 
 import type { Db } from "@/lib/execution-host/db";
 import type {
@@ -29,7 +29,7 @@ import { createExecutionHosts } from "@/lib/execution-host/client";
 import { setDefaultTransportForTests } from "@/lib/execution-host/default-transport";
 import { buildEnvelope } from "@/lib/execution-host/ledger";
 import {
-  adoptLegacyActiveRuns,
+  reportLegacyActiveRuns,
   resetLegacyBackfillStateForTests,
 } from "@/lib/execution-host/legacy";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
@@ -85,20 +85,20 @@ function captureLogger(): {
   return { logger, lines };
 }
 
+function unplacedReports(lines: Array<Record<string, unknown>>, runId: string) {
+  return lines.filter(
+    (l) =>
+      l.msg === "legacy-runs-unplaced" &&
+      Array.isArray(l.candidates) &&
+      (l.candidates as Array<{ runId: string }>).some((c) => c.runId === runId),
+  );
+}
+
 async function runRow(runId: string) {
   const rows = (await db
     .select()
     .from(schema.runs)
     .where(eq(schema.runs.id, runId))) as Array<Record<string, any>>;
-
-  return rows[0];
-}
-
-async function sessionRow(runId: string) {
-  const rows = (await db
-    .select()
-    .from(schema.runSessions)
-    .where(eq(schema.runSessions.runId, runId))) as Array<Record<string, any>>;
 
   return rows[0];
 }
@@ -206,54 +206,57 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
+  setDefaultTransportForTests(null);
   restoreUrl();
   await sup?.kill();
   await testDatabase?.stop();
 });
 
-describe("legacy backfill (real supervisor)", () => {
-  it("Y1: a Running run with a live host session and NULL assignment is backfilled at epoch 1 under the host's own fence", async () => {
+describe("legacy runs (real supervisor)", () => {
+  it("Y1: a Running run with NULL assignment is reported once and never minted, even when the host lists a live session for it", async () => {
     const seeded = await seedLegacyRun("y1", { status: "Running" });
     const live = await createLegacySession(seeded);
     const { logger, lines } = captureLogger();
 
-    expect((await runRow(seeded.runId)).executionAssignmentId).toBeNull();
-
-    const summary = await adoptLegacyActiveRuns({ db, logger });
-
-    expect(summary).toMatchObject({ minted: 1, skipped: null, errors: [] });
-    const assignments = await assignmentsOf(seeded.runId);
-
     expect(
-      assignments.map((a) => [a.epoch, a.state, a.placementReason]),
-    ).toEqual([[1, "active", "legacy_backfill"]]);
-    expect(assignments[0].id).toBe(live.assignmentId);
-    expect(assignments[0].executionWorkspaceId).toBe(live.executionWorkspaceId);
-    expect((await runRow(seeded.runId)).executionAssignmentId).toBe(
-      assignments[0].id,
-    );
-    expect((await sessionRow(seeded.runId)).executionAssignmentId).toBe(
-      assignments[0].id,
-    );
-    expect(
-      lines.some(
-        (l) => l.msg === "legacy-run-backfilled" && l.runId === seeded.runId,
+      (await createExecutionHosts({ db }).local().listSessions()).some(
+        (s) => s.sessionId === live.sessionId && s.status === "live",
       ),
     ).toBe(true);
+    expect((await runRow(seeded.runId)).executionAssignmentId).toBeNull();
 
-    // Idempotent: the run is no longer a candidate.
-    const again = await adoptLegacyActiveRuns({ db, logger });
+    const first = await reportLegacyActiveRuns({ db, logger });
 
-    expect(again.minted).toBe(0);
-    expect(await assignmentsOf(seeded.runId)).toHaveLength(1);
+    expect(first.candidates).toBeGreaterThanOrEqual(1);
+    expect(first.runIds).toContain(seeded.runId);
+    expect(await assignmentsOf(seeded.runId)).toEqual([]);
+    expect((await runRow(seeded.runId)).executionAssignmentId).toBeNull();
+    expect(unplacedReports(lines, seeded.runId)).toHaveLength(1);
+    expect(
+      (
+        unplacedReports(lines, seeded.runId)[0].candidates as Array<{
+          runId: string;
+          status: string;
+        }>
+      ).find((c) => c.runId === seeded.runId)?.status,
+    ).toBe("Running");
+
+    // Still a candidate, but reported only once per run.
+    const second = await reportLegacyActiveRuns({ db, logger });
+
+    expect(second.runIds).toContain(seeded.runId);
+    expect(unplacedReports(lines, seeded.runId)).toHaveLength(1);
+    expect(await assignmentsOf(seeded.runId)).toEqual([]);
   }, 120_000);
 
   it("Y2: a Running run without a host session is left NULL; the reconcile sweep classifies it (re-drive with a worktree, Crashed without one)", async () => {
     const redrivable = await seedLegacyRun("y2a", { status: "Running" });
     const gone = await seedLegacyRun("y2b", { status: "Running" });
-    const summary = await adoptLegacyActiveRuns({ db });
+    const summary = await reportLegacyActiveRuns({ db });
 
-    expect(summary.leftNull).toBeGreaterThanOrEqual(2);
+    expect(summary.runIds).toEqual(
+      expect.arrayContaining([redrivable.runId, gone.runId]),
+    );
     for (const seeded of [redrivable, gone]) {
       expect(await assignmentsOf(seeded.runId)).toEqual([]);
       expect((await runRow(seeded.runId)).executionAssignmentId).toBeNull();
@@ -261,7 +264,7 @@ describe("legacy backfill (real supervisor)", () => {
 
     // Reconcile owns the classification: a run whose worktree survived is
     // re-driven from its current node; a run whose worktree is gone is Crashed
-    // — neither is placed by the backfill.
+    // — neither is placed by the report.
     const reconcile = await runReconcileSweep({
       db,
       executionHosts: createExecutionHosts({ db }),
@@ -289,10 +292,10 @@ describe("legacy backfill (real supervisor)", () => {
       .set({ acpSessionId: "acp-y3", hostSessionId: "sess-y3" })
       .where(eq(schema.runSessions.runId, seeded.runId));
 
-    const summary = await adoptLegacyActiveRuns({ db });
+    const summary = await reportLegacyActiveRuns({ db });
 
+    expect(summary.runIds).not.toContain(seeded.runId);
     expect(await assignmentsOf(seeded.runId)).toEqual([]);
-    expect(summary.errors).toEqual([]);
 
     // The resume path's claim mints epoch 1 `resume` — placement, not backfill.
     // A retryable spawn failure rolls the claim back so no adapter is left
@@ -352,40 +355,34 @@ describe("legacy backfill (real supervisor)", () => {
     expect((await runRow(seeded.runId)).status).toBe("NeedsInputIdle");
   }, 120_000);
 
-  it("Y4: with no registered host the backfill skips, logs once, and never throws", async () => {
+  it("Y4: reporting never contacts the host and never throws", async () => {
     const seeded = await seedLegacyRun("y4", { status: "Running" });
-    const wire = createLocalDirectTransport();
-    const down: ExecutionHostTransport = {
-      ...wire,
-      health: async () => ({
-        kind: "unavailable",
-        reason: "unreachable",
-        message: "connection refused",
-      }),
-    };
+    const contacted: string[] = [];
+    // Every implicit resolution would land here: any method call is a failure.
+    const unreachable = new Proxy({} as ExecutionHostTransport, {
+      get: (_target, prop) => () => {
+        contacted.push(String(prop));
+        throw new Error(`host contacted through ${String(prop)}`);
+      },
+    });
     const { logger, lines } = captureLogger();
 
+    setDefaultTransportForTests(unreachable);
     resetResolverForTests();
     resetLegacyBackfillStateForTests();
-    const first = await adoptLegacyActiveRuns({ db, transport: down, logger });
-    const second = await adoptLegacyActiveRuns({
-      db,
-      transport: down,
-      logger,
-    });
+    try {
+      const first = await reportLegacyActiveRuns({ db, logger });
+      const second = await reportLegacyActiveRuns({ db, logger });
 
-    expect(first.skipped).toBe("no_host");
-    expect(second.skipped).toBe("no_host");
-    expect(
-      lines.filter((l) => l.msg === "legacy-backfill-skipped-no-host"),
-    ).toHaveLength(1);
+      expect(first.runIds).toContain(seeded.runId);
+      expect(second.runIds).toContain(seeded.runId);
+    } finally {
+      setDefaultTransportForTests(null);
+    }
+
+    expect(contacted).toEqual([]);
+    expect(unplacedReports(lines, seeded.runId)).toHaveLength(1);
     expect(await assignmentsOf(seeded.runId)).toEqual([]);
-
-    // The host coming back clears the once-per-outage latch.
-    resetResolverForTests();
-    resetRegistrarStateForTests();
-    const back = await adoptLegacyActiveRuns({ db, logger });
-
-    expect(back.skipped).toBeNull();
+    expect((await runRow(seeded.runId)).executionAssignmentId).toBeNull();
   }, 120_000);
 });

@@ -68,6 +68,7 @@ import {
   getLatestFlowRun,
 } from "@/lib/runs/launchability";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
+import { claimAgentIdleResumeInTransaction } from "@/lib/runs/state-transitions";
 import { revokeAgentRunTokensForRun } from "@/lib/agents/tokens";
 import {
   assertBudgetBreachOptionAvailable,
@@ -94,6 +95,7 @@ import {
   isFencedError,
   localHost,
   mintPlacement,
+  releaseAssignmentForRun,
   type BoundClient,
   type ExecutionHosts,
   type PreparedInput,
@@ -263,19 +265,35 @@ async function claimGraphResumeSlot(
 // observe the same free slot and both claim (the residual burst race). The CAS is
 // still the serialization point: "noop" means the run already advanced (a prior
 // resume won or it moved terminal), so a same-payload retry never double-spawns.
+export type AgentResumeClaim =
+  | {
+      outcome: "claimed";
+      // ADR-166: the generation startAgentSession binds to — freshly minted by
+      // an idle wake, or the still-active one a NeedsInput run kept.
+      assignmentId: string | null;
+    }
+  | { outcome: "queued" }
+  | { outcome: "noop" };
+
 export async function claimAgentResumeSlot(
   db: any,
   runId: string,
-): Promise<"claimed" | "queued" | "noop"> {
-  return db.transaction(async (tx: any) => {
+): Promise<AgentResumeClaim> {
+  return db.transaction(async (tx: any): Promise<AgentResumeClaim> => {
     await takeSchedulerLock(tx);
 
-    const [cur]: Array<{ status: string }> = await tx
-      .select({ status: runs.status })
+    const [cur]: Array<{
+      status: string;
+      executionAssignmentId: string | null;
+    }> = await tx
+      .select({
+        status: runs.status,
+        executionAssignmentId: runs.executionAssignmentId,
+      })
       .from(runs)
       .where(eq(runs.id, runId));
 
-    if (!cur) return "noop" as const;
+    if (!cur) return { outcome: "noop" };
 
     // NeedsInput holds the slot — flip directly, no cap gate needed.
     if (cur.status === "NeedsInput") {
@@ -285,7 +303,9 @@ export async function claimAgentResumeSlot(
         .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")))
         .returning({ id: runs.id });
 
-      return flipped.length > 0 ? ("claimed" as const) : ("noop" as const);
+      return flipped.length > 0
+        ? { outcome: "claimed", assignmentId: cur.executionAssignmentId }
+        : { outcome: "noop" };
     }
 
     // NeedsInputIdle freed the slot — cap-gate the reclaim (INV-1).
@@ -296,24 +316,19 @@ export async function claimAgentResumeSlot(
           .set({ resumeRequestedAt: new Date() })
           .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")));
 
-        return "queued" as const;
+        return { outcome: "queued" };
       }
 
-      const flipped = await tx
-        .update(runs)
-        .set({
-          status: "Running",
-          resumeRequestedAt: null,
-          keepaliveUntil: null,
-          checkpointAt: null,
-        })
-        .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")))
-        .returning({ id: runs.id });
+      // ADR-166 D3: the idle wake is a new driver generation, minted inside
+      // this claim.
+      const claim = await claimAgentIdleResumeInTransaction(tx, runId);
 
-      return flipped.length > 0 ? ("claimed" as const) : ("noop" as const);
+      return claim.ok
+        ? { outcome: "claimed", assignmentId: claim.assignment?.id ?? null }
+        : { outcome: "noop" };
     }
 
-    return "noop" as const;
+    return { outcome: "noop" };
   });
 }
 
@@ -328,9 +343,9 @@ export async function claimAgentResumeSlot(
 // no live session yet) is recovered by the crash-reconcile sweep, as for any run.
 function claimAndResumeAgentRun(runId: string, db: any): void {
   void (async () => {
-    const outcome = await claimAgentResumeSlot(db, runId);
+    const claim = await claimAgentResumeSlot(db, runId);
 
-    if (outcome === "queued") {
+    if (claim.outcome === "queued") {
       log.info(
         { runId },
         "agent hook_trip resume — agent pool at cap; deferred (resume_requested_at stamped, gate will admit)",
@@ -339,7 +354,7 @@ function claimAndResumeAgentRun(runId: string, db: any): void {
       return;
     }
 
-    if (outcome === "noop") {
+    if (claim.outcome === "noop") {
       log.debug(
         { runId },
         "agent hook_trip resume — run already advanced, no re-claim",
@@ -350,7 +365,7 @@ function claimAndResumeAgentRun(runId: string, db: any): void {
 
     const { startAgentSession } = await import("@/lib/agents/launch");
 
-    await startAgentSession(runId, { db });
+    await startAgentSession(runId, { db, assignmentId: claim.assignmentId });
   })().catch((err: unknown) =>
     log.error(
       { runId, err: err instanceof Error ? err.message : String(err) },
@@ -379,9 +394,9 @@ async function scheduleBudgetBreachResume(args: {
   if (runKind === "agent") {
     // ADR-121 (INV-1): cap-safe reclaim — at cap a checkpointed run defers to the
     // C3 admission gate instead of bypassing the agent pool cap.
-    const outcome = await claimAgentResumeSlot(db, runId);
+    const claim = await claimAgentResumeSlot(db, runId);
 
-    if (outcome === "queued") {
+    if (claim.outcome === "queued") {
       log.info(
         { runId },
         "agent budget-raise resume — agent pool at cap; deferred (resume_requested_at stamped, gate will admit)",
@@ -390,11 +405,14 @@ async function scheduleBudgetBreachResume(args: {
       return;
     }
 
-    if (outcome === "noop") return;
+    if (claim.outcome === "noop") return;
     const { startAgentSession } = await import("@/lib/agents/launch");
 
     queueMicrotask(() => {
-      void startAgentSession(runId, { db }).catch((err: unknown) =>
+      void startAgentSession(runId, {
+        db,
+        assignmentId: claim.assignmentId,
+      }).catch((err: unknown) =>
         log.error(
           { runId, err: err instanceof Error ? err.message : String(err) },
           "agent budget-raise resume failed",
@@ -425,6 +443,7 @@ async function scheduleBudgetBreachResume(args: {
         acpSessionId: r.acpSessionId,
         stepId,
         executionHosts,
+        assignmentId: r.assignmentId,
       });
     }
 
@@ -742,6 +761,19 @@ async function markScratchPermissionTimedOut(
 // `prepared`/`client`: the `session.input` command queued in the Phase-1 tx
 // (ADR-166 D5) for the live NeedsInput case — null when the run is idle (the
 // resume path re-issues the intent) or when nothing is left to deliver.
+// A host replay (the same command id re-sent after an unknown outcome) means an
+// earlier attempt already reached the agent: flag it beside the stored choice,
+// which stays exactly what was claimed.
+function withDeliveryReplayed(
+  stored: unknown,
+  optionId: string,
+): Record<string, unknown> {
+  const prior = (stored ?? {}) as Record<string, unknown>;
+  const audit = (prior._audit ?? {}) as Record<string, unknown>;
+
+  return { ...prior, optionId, _audit: { ...audit, deliveryReplayed: true } };
+}
+
 type PermissionClaim =
   | {
       kind: "claimed";
@@ -972,20 +1004,17 @@ async function handlePermissionResponse(
           return "queued" as const;
         }
 
-        const rows = await tx
-          .update(runs)
-          .set({
-            status: "Running",
-            keepaliveUntil: null,
-            checkpointAt: null,
-          })
-          .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")))
-          .returning({ id: runs.id });
+        // ADR-166 D3: the idle wake is a new driver generation, minted inside
+        // this claim; startAgentSession binds to it.
+        const claim = await claimAgentIdleResumeInTransaction(tx, runId, {
+          recordSuccessAudit: async (t: any) => {
+            await args.recordSuccessAudit?.(t, 202);
+          },
+        });
 
-        if (rows.length === 0) return false;
-        await args.recordSuccessAudit?.(tx, 202);
-
-        return true;
+        return claim.ok
+          ? { assignmentId: claim.assignment?.id ?? null }
+          : (false as const);
       });
 
       if (claimed === "queued") {
@@ -1037,7 +1066,10 @@ async function handlePermissionResponse(
       const { startAgentSession } = await import("@/lib/agents/launch");
 
       queueMicrotask(() => {
-        void startAgentSession(runId, { db }).catch((err: unknown) => {
+        void startAgentSession(runId, {
+          db,
+          assignmentId: claimed.assignmentId,
+        }).catch((err: unknown) => {
           log.error(
             {
               runId,
@@ -1097,6 +1129,7 @@ async function handlePermissionResponse(
         acpSessionId: r.acpSessionId,
         stepId: hitlRow.stepId,
         executionHosts: args.executionHosts,
+        assignmentId: r.assignmentId,
       });
 
       log.info(
@@ -1246,16 +1279,8 @@ async function handlePermissionResponse(
           .update(hitlRequests)
           .set({
             respondedAt: new Date(),
-            // A host replay (same command id re-sent after an unknown outcome)
-            // delivered on an earlier attempt: record what actually reached
-            // the agent alongside the stored choice.
             ...(delivery.replayed
-              ? {
-                  response: {
-                    optionId,
-                    _audit: { deliveredOptionId: prepared.payload.optionId },
-                  },
-                }
+              ? { response: withDeliveryReplayed(hitlRow.response, optionId) }
               : {}),
           })
           .where(
@@ -3149,6 +3174,7 @@ async function handleInfraRecoveryResponse(args: {
         });
 
       if (terminal.length > 0) {
+        await releaseAssignmentForRun(tx, runId, "failed");
         const errorCode =
           (hitlRow.schema as { code?: string } | null)?.code ??
           "EXECUTOR_UNAVAILABLE";
@@ -3362,6 +3388,10 @@ async function terminalizeBudgetRun(args: {
     });
   const row = terminal[0] ?? null;
 
+  if (row) {
+    await releaseAssignmentForRun(args.tx, args.runId, "failed");
+  }
+
   if (row?.projectId) {
     await emitWebhookEvent({
       db: args.tx,
@@ -3440,6 +3470,8 @@ async function markBudgetParkedRun(args: {
         `run ${args.runId} was not park-terminalizable after preservation`,
       );
     }
+
+    await releaseAssignmentForRun(tx, args.runId, "abandoned");
 
     if (row.projectId) {
       await emitWebhookEvent({
@@ -4678,6 +4710,10 @@ async function handleHookTripResponse(args: {
           parentRunId: runs.parentRunId,
         });
 
+      if (terminal.length > 0) {
+        await releaseAssignmentForRun(tx, runId, "failed");
+      }
+
       if (terminal.length > 0 && terminal[0].projectId) {
         await emitWebhookEvent({
           db: tx,
@@ -5471,6 +5507,7 @@ async function handleAgentQuestionResponse(
               inArray(runs.status, AGENT_QUESTION_SOURCE_STATUSES),
             ),
           );
+        await releaseAssignmentForRun(tx, runId, "run_terminal");
         await revokeAgentRunTokensForRun(runId, tx);
       }
 

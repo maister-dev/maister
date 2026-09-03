@@ -1,6 +1,8 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { isUnderRoot } from "./workspace-roots";
+
 // Defense-in-depth (ADR-041 trust boundary): the web tier already confines the
 // resource URIs it assembles, but the supervisor is a SEPARATE process that may
 // run on a different host and accept prompts from any caller. So it re-validates
@@ -25,15 +27,6 @@ export type ConfinementRoots = {
    */
   confineRoot?: string;
 };
-
-function isInside(parent: string, child: string): boolean {
-  const relative = path.relative(parent, child);
-
-  return (
-    relative.length === 0 ||
-    (!relative.startsWith("..") && !path.isAbsolute(relative))
-  );
-}
 
 /** Resolve a `file:` URI to its filesystem path, or null for any other scheme. */
 function fileUriToPath(uri: string): string | null {
@@ -104,7 +97,7 @@ export function contentBlockUriViolation(
 
     const resolved = path.resolve(fsPath);
 
-    if (!allowed.some((root) => isInside(root, resolved))) {
+    if (!allowed.some((root) => isUnderRoot(root, resolved))) {
       return `resource URI escapes the run sandbox: ${uri}`;
     }
   }

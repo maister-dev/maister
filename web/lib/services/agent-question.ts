@@ -20,6 +20,7 @@ import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { promoteNextPending } from "@/lib/scheduler";
 import {
   createExecutionHosts,
+  isFencedError,
   type ExecutionHosts,
 } from "@/lib/execution-host";
 import { revokeAgentRunTokensForRun } from "@/lib/agents/tokens";
@@ -457,6 +458,15 @@ export async function createOrActivateAgentQuestion(
     sessions: () => hosts.local().listSessions(),
     hosts,
   }).catch(async (error: unknown) => {
+    // ADR-166 E-EH-11: a fenced teardown belongs to a superseded generation —
+    // the ask stays pending for the driver that owns the run.
+    if (isFencedError(error)) {
+      log.warn(
+        { hitlRequestId: pending.id, sourceRunId: pending.runId },
+        "driver-yielded",
+      );
+      throw error;
+    }
     if (isMaisterError(error) && error.code === "EXECUTOR_UNAVAILABLE") {
       log.warn(
         {

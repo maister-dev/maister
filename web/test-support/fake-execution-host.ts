@@ -30,8 +30,8 @@ import type { PlatformStatus } from "@/types/platform-status";
 
 import { randomUUID } from "node:crypto";
 
-import { MaisterError } from "@/lib/errors";
-import { isUnknownWorkspaceError } from "@/lib/execution-host/adoption";
+import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
+import { isReadoptableWorkspaceError } from "@/lib/execution-host/adoption";
 import {
   createExecutionHosts,
   type BoundClient,
@@ -49,10 +49,17 @@ import {
 } from "@/lib/execution-host/types";
 
 // ADR-166 T3.1: an in-memory `ExecutionHostTransport` with the host's
-// observable semantics (fence high-water, receipts + replay, handles, sessions)
-// and programmable faults, for ledger/deliverer/driver tests that must not
-// spawn a supervisor. Errors are shaped exactly as the local-direct wire maps
-// them, so callers cannot tell the difference.
+// observable semantics and programmable faults, for ledger/deliverer/driver
+// tests that must not spawn a supervisor. It mirrors the real host rule by
+// rule — the fence order (host_mismatch → run_mismatch → assignment_fenced →
+// assignment_mismatch), lower-epoch eviction on advance, receipts (verbatim
+// replay, in-flight join, `turn_lost` after a restart), the handle store
+// (unknown vs released; a released path re-adopts as a NEW handle), and every
+// route's own refusal (404 unknown session, 503 for an input to an unknown
+// session, 410 for an unknown request id). Errors are shaped exactly as the
+// local-direct wire maps them (`details.httpStatus` + reason tokens), so a
+// caller cannot tell the difference; `host-parity.integration.test.ts` pins
+// that equivalence against a real supervisor child.
 
 export type TransportMethod = keyof ExecutionHostTransport;
 
@@ -72,12 +79,31 @@ export type FakeSession = {
   assignmentEpoch: number;
   createdByCommandId: string;
   status: "live" | "exited";
+  // The rest of the `GET /sessions` projection — optional so a suite can
+  // inject a minimal record with `fake.sessions.set(...)`.
+  assignmentId?: string;
+  projectSlug?: string;
+  nodeAttemptId?: string;
+  sessionName?: string;
+  adapter?: string;
+  startedAt?: string;
+  exitedAt?: string;
+  exitCode?: number | null;
+  // Set when a command with a HIGHER assignment epoch evicted this session:
+  // its pending prompt answers 409 FENCED (X-EH-19).
+  fencedByEpoch?: number;
+  // Permission request ids the host holds a deferred for. A transport-created
+  // session tracks the ids streamed on its stream (an unknown id is 410
+  // HITL_TIMEOUT, like the host); an INJECTED record leaves it undefined —
+  // its pending set is unknown, so any id is accepted while it is live.
+  pending?: Set<string>;
 };
 
 export type PromptContext = {
   sessionId: string;
   envelope: CommandEnvelope<SendPromptInput>;
-  // Move the receipt through its phases from inside a scripted turn.
+  // Move the receipt through its phases from inside a scripted turn. The
+  // `inflight` flag is ORed with the live in-flight map at read time.
   setReceipt(
     phase: CommandReceipt["phase"],
     body: Record<string, unknown>,
@@ -98,10 +124,14 @@ export type FakeExecutionHost = {
   sessions: Map<string, FakeSession>;
   workspaces: Map<string, WorkspaceRecord & { path: string }>;
   receipts: Map<string, CommandReceipt>;
+  // Per-run epoch high-water (the host's `run_fences`). A suite may seed it.
   fences: Map<string, number>;
   failOnce(method: TransportMethod, error: unknown): void;
-  // The host executes the next call of `method` (receipt written) but the
-  // response is lost: the deliverer's same-id retry then meets a replay.
+  // The host executes the next call of `method` (its receipt is written) but
+  // the response is lost: the same-id retry then meets a replay. For
+  // `sendPrompt` the response is lost right after acceptance while the turn
+  // keeps running in flight (the retry JOINS it). Not applicable to
+  // `streamSession`.
   loseResponseOnce(method: TransportMethod): void;
   onCall(
     method: TransportMethod,
@@ -112,6 +142,9 @@ export type FakeExecutionHost = {
   setPromptBehavior(
     behavior: (ctx: PromptContext) => Promise<PromptResult>,
   ): void;
+  // A host restart: new bootId, every live session is gone (the registry is
+  // empty), fences + receipts + handles survive, an in-flight turn is lost
+  // (its receipt stays `accepted` with `inflight:false`).
   restart(): void;
   monotonic(): number;
   // Script the per-session SSE stream a driver consumes.
@@ -124,6 +157,20 @@ export type FakeExecutionHost = {
     opts?: { end?: boolean },
   ): void;
 };
+
+const SAFE_PATH_SEGMENT = /^[A-Za-z0-9._-]+$/;
+const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+function isSafeSegment(value: unknown): boolean {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 128 &&
+    SAFE_PATH_SEGMENT.test(value) &&
+    value !== "." &&
+    value !== ".."
+  );
+}
 
 export function unknownOutcomeError(message = "ECONNREFUSED"): MaisterError {
   return new MaisterError("EXECUTOR_UNAVAILABLE", `fake: ${message}`, {
@@ -139,12 +186,17 @@ export function definitiveUnavailableError(
   });
 }
 
-export function fencedError(runId: string, commandEpoch: number): MaisterError {
+export function fencedError(
+  runId: string,
+  commandEpoch: number,
+  hostEpoch?: number,
+): MaisterError {
   return new MaisterError("CONFLICT", "fake: assignment fenced", {
     details: {
       reason: "assignment_fenced",
       runId,
       commandEpoch,
+      ...(hostEpoch !== undefined ? { hostEpoch } : {}),
       httpStatus: 409,
     },
   });
@@ -154,6 +206,142 @@ export function unknownWorkspaceError(): MaisterError {
   return new MaisterError("PRECONDITION", "fake: unknown execution workspace", {
     details: { reason: "unknown_workspace", httpStatus: 409 },
   });
+}
+
+export function workspaceReleasedError(runId: string): MaisterError {
+  return new MaisterError(
+    "PRECONDITION",
+    "fake: execution workspace has been released",
+    { details: { reason: "workspace_released", runId, httpStatus: 409 } },
+  );
+}
+
+function precondition(
+  message: string,
+  details: Record<string, unknown>,
+): MaisterError {
+  return new MaisterError("PRECONDITION", `fake: ${message}`, {
+    details: { ...details, httpStatus: 409 },
+  });
+}
+
+// `POST /sessions/:id/{prompt,cancel,checkpoint}` on an unknown session.
+function unknownSessionError(sessionId: string): MaisterError {
+  return new MaisterError(
+    "PRECONDITION",
+    `fake: unknown session ${sessionId}`,
+    {
+      details: { httpStatus: 404 },
+    },
+  );
+}
+
+// `POST /sessions/:id/input` on an unknown session: the host classifies it
+// as a restart (retryable, definitive — no unknown-outcome marker).
+function inputUnknownSessionError(sessionId: string): MaisterError {
+  return new MaisterError(
+    "EXECUTOR_UNAVAILABLE",
+    `fake: unknown session ${sessionId} — supervisor may have restarted`,
+    { details: { httpStatus: 503 } },
+  );
+}
+
+function hitlTimeoutError(): MaisterError {
+  return new MaisterError(
+    "HITL_TIMEOUT",
+    "fake: no pending permission with that requestId",
+    { details: { httpStatus: 410 } },
+  );
+}
+
+function httpStatusOf(err: unknown): number | null {
+  const status =
+    err instanceof MaisterError ? err.details?.httpStatus : undefined;
+
+  return typeof status === "number" ? status : null;
+}
+
+// The wire body a refusal is stored under in the receipt (what the real
+// host's `errorBody` writes).
+function errorBodyOf(err: MaisterError): Record<string, unknown> {
+  const details: Record<string, unknown> = { ...(err.details ?? {}) };
+
+  delete details.httpStatus;
+  const code =
+    err.code === "CONFLICT" && details.reason === "assignment_fenced"
+      ? "FENCED"
+      : err.code;
+
+  return {
+    code,
+    message: err.message,
+    ...(Object.keys(details).length > 0 ? { details } : {}),
+  };
+}
+
+const KNOWN_WIRE_CODES: ReadonlySet<string> = new Set([
+  "PRECONDITION",
+  "SPAWN",
+  "NEEDS_INPUT",
+  "EXECUTOR_UNAVAILABLE",
+  "ACP_PROTOCOL",
+  "CHECKPOINT",
+  "CRASH",
+]);
+
+// Mirrors `supervisorErrorToMaister` + the per-endpoint status rules of the
+// local-direct wire for a replayed error receipt.
+function wireError(
+  method: TransportMethod,
+  status: number,
+  body: Record<string, unknown>,
+): MaisterError {
+  const wireCode = typeof body.code === "string" ? body.code : null;
+  const details =
+    body.details && typeof body.details === "object"
+      ? (body.details as Record<string, unknown>)
+      : {};
+  const message =
+    typeof body.message === "string" ? body.message : `supervisor ${status}`;
+
+  if (wireCode === "FENCED") {
+    return new MaisterError("CONFLICT", message, {
+      details: { ...details, reason: "assignment_fenced", httpStatus: status },
+    });
+  }
+  if (method === "deliverInput" && (status === 410 || status === 404)) {
+    return new MaisterError("HITL_TIMEOUT", message, {
+      details: { ...details, httpStatus: status },
+    });
+  }
+  if (status >= 500) {
+    return new MaisterError("EXECUTOR_UNAVAILABLE", message, {
+      details: { ...details, httpStatus: status },
+    });
+  }
+
+  return new MaisterError(
+    (wireCode && KNOWN_WIRE_CODES.has(wireCode)
+      ? wireCode
+      : "ACP_PROTOCOL") as MaisterErrorCode,
+    message,
+    { details: { ...details, httpStatus: status } },
+  );
+}
+
+type Outcome<T> = { status: number; body: T };
+
+// The wire surfaces the replay header only where its result carries a
+// `replayed` flag (adopt, input); every other result is the body verbatim.
+const REPLAY_FLAGGED: ReadonlySet<TransportMethod> = new Set([
+  "adoptWorkspace",
+  "deliverInput",
+]);
+
+function replayed<T>(method: TransportMethod, body: T): T {
+  return REPLAY_FLAGGED.has(method)
+    ? ({ ...(body as Record<string, unknown>), replayed: true } as T)
+    : body;
 }
 
 export function createFakeExecutionHost(
@@ -169,12 +357,17 @@ export function createFakeExecutionHost(
   const workspaces = new Map<string, WorkspaceRecord & { path: string }>();
   const receipts = new Map<string, CommandReceipt>();
   const fences = new Map<string, number>();
+  // The assignment that owns each run's high-water (the host stores both).
+  const fenceOwners = new Map<string, string>();
+  const inflight = new Map<string, Promise<Outcome<unknown>>>();
+  // In-flight prompt turns by session, settle-able from outside the turn
+  // (eviction, checkpoint, delete, restart).
+  const inflightPrompts = new Map<
+    string,
+    Set<{ reject: (err: MaisterError) => void }>
+  >();
   const faults = new Map<TransportMethod, unknown[]>();
   const lostResponses = new Set<TransportMethod>();
-  const loseResponse = (method: TransportMethod) => {
-    if (!lostResponses.delete(method)) return;
-    throw unknownOutcomeError(`fake: response to ${method} lost`);
-  };
   const hooks = new Map<
     TransportMethod,
     Array<(call: FakeCall) => void | Promise<void>>
@@ -203,73 +396,12 @@ export function createFakeExecutionHost(
     if (queue && queue.length > 0) throw queue.shift();
   };
 
-  const fence = (envelope: CommandEnvelope<unknown>) => {
-    const runId = envelope.fence.runId;
-    const high = fences.get(runId) ?? 0;
-
-    if (envelope.fence.assignmentEpoch < high) {
-      throw fencedError(runId, envelope.fence.assignmentEpoch);
-    }
-    if (envelope.fence.assignmentEpoch > high) {
-      fences.set(runId, envelope.fence.assignmentEpoch);
-      for (const session of sessions.values()) {
-        if (
-          session.runId === runId &&
-          session.assignmentEpoch < envelope.fence.assignmentEpoch
-        ) {
-          session.status = "exited";
-          // Like the host: an evicted session's pending turn is rejected
-          // FENCED, and its stream ends with a fenced exit.
-          evictions.get(session.sessionId)?.(
-            fencedError(runId, session.assignmentEpoch),
-          );
-          streamQueueFor(session.sessionId).push({
-            type: "session.exited",
-            sessionId: session.sessionId,
-            monotonicId: ++monotonicId,
-            exitCode: 143,
-            reason: "fenced",
-          } as SupervisorEvent);
-        }
-      }
-    }
-  };
-  // In-flight prompt turns by session, rejectable on eviction.
-  const evictions = new Map<string, (err: MaisterError) => void>();
-
-  const receipt = (
-    envelope: CommandEnvelope<unknown>,
-    phase: CommandReceipt["phase"],
-    httpStatus: number,
-    body: Record<string, unknown>,
-    inflight = false,
-  ) => {
-    const now = new Date().toISOString();
-    const existing = receipts.get(envelope.command.id);
-
-    receipts.set(envelope.command.id, {
-      commandId: envelope.command.id,
-      runId: envelope.fence.runId,
-      kind: envelope.command.kind as CommandKind,
-      assignmentEpoch: envelope.fence.assignmentEpoch,
-      phase,
-      httpStatus,
-      body,
-      receivedAt: existing?.receivedAt ?? now,
-      completedAt: phase === "accepted" ? null : now,
-      inflight,
-    });
+  const settleInflightPrompts = (sessionId: string, err: MaisterError) => {
+    for (const turn of inflightPrompts.get(sessionId) ?? []) turn.reject(err);
+    inflightPrompts.delete(sessionId);
   };
 
-  const replay = <T>(envelope: CommandEnvelope<unknown>): T | null => {
-    const existing = receipts.get(envelope.command.id);
-
-    if (existing && existing.phase !== "accepted") {
-      return { ...existing.body, replayed: true } as T;
-    }
-
-    return null;
-  };
+  // ---- streams ------------------------------------------------------------
 
   class StreamQueue {
     scripted = false;
@@ -312,26 +444,278 @@ export function createFakeExecutionHost(
 
     return queue;
   };
+  // Every event reaches a session's stream through here: a permission request
+  // is a deferred the host now holds for that session.
+  const enqueue = (sessionId: string, event: SupervisorEvent) => {
+    if (event.type === "session.permission_request") {
+      const session = sessions.get(sessionId);
 
-  const liveSession = (sessionId: string) => {
-    const session = sessions.get(sessionId);
+      if (session) (session.pending ??= new Set()).add(event.requestId);
+    }
+    streamQueueFor(sessionId).push(event);
+  };
+  const exitEvent = (
+    sessionId: string,
+    reason: "checkpoint" | "intentional" | "fenced",
+  ): SupervisorEvent =>
+    ({
+      type: "session.exited",
+      sessionId,
+      monotonicId: ++monotonicId,
+      exitCode: 143,
+      reason,
+    }) as SupervisorEvent;
 
-    if (!session || session.status !== "live") {
-      throw new MaisterError(
-        "PRECONDITION",
-        `fake: unknown session ${sessionId}`,
+  // ---- fence (D3): host key → run binding → epoch high-water → identity ---
+
+  const applyFence = (
+    envelope: CommandEnvelope<unknown>,
+    expectedRunId?: string,
+  ): { advanced: boolean } => {
+    const { hostKey, runId, assignmentEpoch, assignmentId } = envelope.fence;
+
+    if (hostKey !== identity.hostKey) {
+      throw precondition("command fence names a different execution host", {
+        reason: "host_mismatch",
+        runId,
+      });
+    }
+    if (expectedRunId !== undefined && runId !== expectedRunId) {
+      throw precondition(
+        "command fence names a different run than the target",
         {
-          details: { httpStatus: 404 },
+          reason: "run_mismatch",
+          runId,
         },
       );
+    }
+    const high = fences.get(runId);
+    const owner = fenceOwners.get(runId);
+
+    if (high !== undefined && assignmentEpoch < high) {
+      throw fencedError(runId, assignmentEpoch, high);
+    }
+    if (
+      high !== undefined &&
+      assignmentEpoch === high &&
+      owner !== undefined &&
+      owner !== assignmentId
+    ) {
+      throw precondition(
+        `command names assignment ${assignmentId} but the host high-water epoch ${high} belongs to ${owner}`,
+        {
+          reason: "assignment_mismatch",
+          runId,
+          commandEpoch: assignmentEpoch,
+          hostEpoch: high,
+        },
+      );
+    }
+    if (high === undefined || assignmentEpoch > high) {
+      fences.set(runId, assignmentEpoch);
+      fenceOwners.set(runId, assignmentId);
+
+      return { advanced: true };
+    }
+    // A seeded high-water (`fake.fences.set`) learns its owner on first use.
+    if (owner === undefined) fenceOwners.set(runId, assignmentId);
+
+    return { advanced: false };
+  };
+
+  // E-EH-04: a higher epoch evicts every live session of the run under a
+  // lower one — its pending prompt answers FENCED, its stream ends `fenced`.
+  const evictLowerEpochSessions = (runId: string, epoch: number) => {
+    for (const session of sessions.values()) {
+      if (session.runId !== runId || session.status !== "live") continue;
+      if (session.assignmentEpoch >= epoch) continue;
+      session.status = "exited";
+      session.exitedAt = new Date().toISOString();
+      session.exitCode = 143;
+      session.fencedByEpoch = epoch;
+      session.pending?.clear();
+      settleInflightPrompts(
+        session.sessionId,
+        fencedError(runId, session.assignmentEpoch, epoch),
+      );
+      enqueue(session.sessionId, exitEvent(session.sessionId, "fenced"));
+    }
+  };
+
+  // ---- receipts (D6) ------------------------------------------------------
+
+  const writeReceipt = (
+    envelope: CommandEnvelope<unknown>,
+    phase: CommandReceipt["phase"],
+    httpStatus: number,
+    body: Record<string, unknown>,
+  ) => {
+    const now = new Date().toISOString();
+    const existing = receipts.get(envelope.command.id);
+
+    receipts.set(envelope.command.id, {
+      commandId: envelope.command.id,
+      runId: envelope.fence.runId,
+      kind: envelope.command.kind as CommandKind,
+      assignmentEpoch: envelope.fence.assignmentEpoch,
+      phase,
+      httpStatus,
+      body,
+      receivedAt: existing?.receivedAt ?? now,
+      completedAt: phase === "accepted" ? null : now,
+      inflight: false,
+    });
+  };
+
+  // ADR-166 D6 handler order for every enveloped route: receipt replay /
+  // in-flight join → the route's own liveness guard → fence (persist the
+  // high-water) → fresh execution (evict lower-epoch sessions, execute, write
+  // the receipt).
+  async function runCommand<T>(spec: {
+    method: TransportMethod;
+    envelope: CommandEnvelope<unknown>;
+    args: unknown[];
+    // Throws the route's own refusal; returns the run the fence must name.
+    guard?: () => string | undefined;
+    execute: () => Promise<Outcome<T>>;
+    // The response can be lost right after acceptance (the long-lived prompt).
+    lostAfterAcceptance?: boolean;
+  }): Promise<T> {
+    const { method, envelope } = spec;
+    const commandId = envelope.command.id;
+
+    await record(method, envelope, spec.args);
+
+    const existing = receipts.get(commandId);
+
+    if (existing && existing.phase !== "accepted") {
+      if (existing.httpStatus >= 400) {
+        throw wireError(method, existing.httpStatus, existing.body);
+      }
+
+      return replayed(method, existing.body as T);
+    }
+    const joined = inflight.get(commandId);
+
+    if (joined) {
+      const outcome = (await joined) as Outcome<T>;
+
+      return replayed(method, outcome.body);
+    }
+    if (existing) {
+      const turnLost = precondition(
+        "the turn for this command id was lost in a host restart",
+        { reason: "turn_lost", runId: envelope.fence.runId },
+      );
+
+      writeReceipt(envelope, "rejected", 409, errorBodyOf(turnLost));
+      throw turnLost;
+    }
+
+    const expectedRunId = spec.guard?.();
+    const { advanced } = applyFence(envelope, expectedRunId);
+    const run = (async (): Promise<Outcome<T>> => {
+      writeReceipt(envelope, "accepted", 202, {});
+      if (advanced) {
+        evictLowerEpochSessions(
+          envelope.fence.runId,
+          envelope.fence.assignmentEpoch,
+        );
+      }
+      let outcome: Outcome<T>;
+
+      try {
+        outcome = await spec.execute();
+      } catch (err) {
+        // A wire-shaped refusal is the host's own answer (rejected receipt); a
+        // bare/unknown-outcome throw is a scripted transport failure — the
+        // receipt stays where the script left it.
+        const status = httpStatusOf(err);
+
+        if (status !== null && err instanceof MaisterError) {
+          if (receipts.get(commandId)?.phase === "accepted") {
+            writeReceipt(envelope, "rejected", status, errorBodyOf(err));
+          }
+        }
+        throw err;
+      }
+      if (receipts.get(commandId)?.phase === "accepted") {
+        writeReceipt(
+          envelope,
+          "completed",
+          outcome.status,
+          (outcome.body ?? {}) as Record<string, unknown>,
+        );
+      }
+
+      return outcome;
+    })();
+
+    inflight.set(commandId, run as Promise<Outcome<unknown>>);
+    void run.then(
+      () => inflight.delete(commandId),
+      () => inflight.delete(commandId),
+    );
+
+    if (spec.lostAfterAcceptance && lostResponses.delete(method)) {
+      throw unknownOutcomeError(`response to ${method} lost after acceptance`);
+    }
+    const outcome = await run;
+
+    if (lostResponses.delete(method)) {
+      throw unknownOutcomeError(`response to ${method} lost`);
+    }
+
+    return outcome.body;
+  }
+
+  // Admin reads: the response can be lost too (no receipt involved).
+  const loseAdminResponse = (method: TransportMethod) => {
+    if (lostResponses.delete(method)) {
+      throw unknownOutcomeError(`response to ${method} lost`);
+    }
+  };
+
+  // ---- route guards -------------------------------------------------------
+
+  const liveSessionForPrompt = (sessionId: string): FakeSession => {
+    const session = sessions.get(sessionId);
+
+    if (!session) throw unknownSessionError(sessionId);
+    if (session.status !== "live") {
+      throw new MaisterError("PRECONDITION", "fake: session not live", {
+        details: { httpStatus: 409 },
+      });
     }
 
     return session;
   };
 
+  const validateMounts = (mounts: unknown) => {
+    if (mounts === undefined) return;
+    if (!Array.isArray(mounts) || mounts.length > 8) {
+      throw precondition("contextMounts: invalid", {});
+    }
+    for (const mount of mounts as Array<Record<string, unknown>>) {
+      const ok =
+        mount &&
+        typeof mount === "object" &&
+        typeof mount.slug === "string" &&
+        KEBAB.test(mount.slug) &&
+        typeof mount.mountPath === "string" &&
+        mount.mountPath.startsWith("/") &&
+        !mount.mountPath.split("/").includes("..") &&
+        typeof mount.committish === "string" &&
+        mount.committish.length >= 7;
+
+      if (!ok) throw precondition("contextMounts: invalid mount", {});
+    }
+  };
+
   const transport: ExecutionHostTransport = {
-    async health() {
-      await record("health", null, []);
+    async health(opts) {
+      await record("health", null, [opts]);
+      loseAdminResponse("health");
 
       return (
         health ?? {
@@ -348,8 +732,9 @@ export function createFakeExecutionHost(
         }
       );
     },
-    async diagnostics() {
-      await record("diagnostics", null, []);
+    async diagnostics(opts) {
+      await record("diagnostics", null, [opts]);
+      loseAdminResponse("diagnostics");
 
       return (
         diagnostics ?? {
@@ -359,8 +744,9 @@ export function createFakeExecutionHost(
         }
       );
     },
-    async platformStatus() {
-      await record("platformStatus", null, []);
+    async platformStatus(opts) {
+      await record("platformStatus", null, [opts]);
+      loseAdminResponse("platformStatus");
       const current = await transport.health();
 
       if (current.kind !== "ready") return current as PlatformStatus;
@@ -378,8 +764,8 @@ export function createFakeExecutionHost(
       } as PlatformStatus;
     },
     // Admin operations a suite scripts by overriding the transport method.
-    async resolveModelSuggestions(draft) {
-      await record("resolveModelSuggestions", null, [draft]);
+    async resolveModelSuggestions(draft, opts) {
+      await record("resolveModelSuggestions", null, [draft, opts]);
       throw new MaisterError(
         "EXECUTOR_UNAVAILABLE",
         "fake: no model catalog scripted",
@@ -389,20 +775,36 @@ export function createFakeExecutionHost(
       await record("probeMcp", null, [req]);
       throw new MaisterError("EXECUTOR_UNAVAILABLE", "fake: no probe scripted");
     },
+    // The `GET /sessions` projection (`SessionListEntry`): no host-private
+    // path ever leaves the host.
     async listSessions(): Promise<SupervisorSessionRecord[]> {
       await record("listSessions", null, []);
+      loseAdminResponse("listSessions");
 
       return [...sessions.values()].map((s) => ({
         sessionId: s.sessionId,
+        adapter: s.adapter ?? "claude",
         runId: s.runId,
-        projectSlug: "fake",
+        projectSlug:
+          s.projectSlug ??
+          workspaces.get(s.executionWorkspaceId)?.projectSlug ??
+          "fake",
         stepId: s.stepId,
+        nodeAttemptId: s.nodeAttemptId,
+        sessionName: s.sessionName ?? "default",
         status: s.status,
         pid: 4242,
-        startedAt: new Date(0).toISOString(),
+        startedAt: s.startedAt ?? new Date(0).toISOString(),
+        exitedAt: s.exitedAt,
+        exitCode: s.exitCode,
+        signal: null,
         monotonicId,
         acpSessionId: s.acpSessionId,
-      })) as unknown as SupervisorSessionRecord[];
+        executionWorkspaceId: s.executionWorkspaceId,
+        assignmentId: s.assignmentId,
+        assignmentEpoch: s.assignmentEpoch,
+        createdByCommandId: s.createdByCommandId,
+      }));
     },
     // Per-session event queue: yields what `pushEvent` scripted (plus the
     // shared `setStreamEvents` script on the first stream of a session), ends
@@ -413,7 +815,7 @@ export function createFakeExecutionHost(
 
       if (scriptedEvents && !queue.scripted) {
         queue.scripted = true;
-        for (const event of scriptedEvents) queue.push(event);
+        for (const event of scriptedEvents) enqueue(sessionId, event);
         if (scriptedEnd) queue.close();
       }
       for (;;) {
@@ -434,203 +836,420 @@ export function createFakeExecutionHost(
     },
     async getCommandReceipt(commandId) {
       await record("getCommandReceipt", null, [commandId]);
+      loseAdminResponse("getCommandReceipt");
+      const stored = receipts.get(commandId);
 
-      return receipts.get(commandId) ?? null;
+      return stored
+        ? { ...stored, inflight: stored.inflight || inflight.has(commandId) }
+        : null;
     },
     async getWorkspace(id) {
       await record("getWorkspace", null, [id]);
+      loseAdminResponse("getWorkspace");
       const ws = workspaces.get(id);
 
-      return ws ? { ...ws } : null;
+      if (!ws) return null;
+      const projection: Partial<typeof ws> = { ...ws };
+
+      delete projection.path;
+
+      return projection as WorkspaceRecord;
     },
-    async adoptWorkspace(envelope) {
-      await record("adoptWorkspace", envelope, []);
-      fence(envelope);
-      const replayed = replay<AdoptWorkspaceResult>(envelope);
-
-      if (replayed) return replayed;
-      const existing = [...workspaces.values()].find(
-        (w) =>
-          w.runId === envelope.payload.runId &&
-          w.path === envelope.payload.path &&
-          !w.releasedAt,
-      );
-      const id =
-        existing?.executionWorkspaceId ??
-        asExecutionWorkspaceId(`ws_${randomUUID().replace(/-/g, "")}`);
-
-      if (!existing) {
-        workspaces.set(id, {
-          executionWorkspaceId: id,
-          runId: envelope.payload.runId,
-          projectSlug: envelope.payload.projectSlug,
-          kind: envelope.payload.kind,
-          adoptedAt: new Date().toISOString(),
-          releasedAt: null,
-          path: envelope.payload.path,
-        });
-      }
-      const body = {
-        executionWorkspaceId: id,
-        kind: envelope.payload.kind,
-        replayed: Boolean(existing),
-      };
-
-      receipt(envelope, "completed", 200, body);
-
-      return body;
-    },
-    async releaseWorkspace(id, envelope) {
-      await record("releaseWorkspace", envelope, [id]);
-      fence(envelope);
-      const ws = workspaces.get(id);
-      const released = Boolean(ws && !ws.releasedAt);
-
-      if (ws) ws.releasedAt = new Date().toISOString();
-      receipt(envelope, "completed", 200, { released });
-
-      return { released };
-    },
-    async createSession(envelope: CommandEnvelope<CreateSessionPayload>) {
-      await record("createSession", envelope, []);
-      fence(envelope);
-      const replayed = replay<CreateSessionResult>(envelope);
-
-      if (replayed) return replayed;
-      const ws = workspaces.get(envelope.payload.executionWorkspaceId);
-
-      if (!ws || ws.releasedAt) {
-        receipt(envelope, "rejected", 409, {
-          code: "PRECONDITION",
-          details: { reason: "unknown_workspace" },
-        });
-        throw unknownWorkspaceError();
-      }
-      const session: FakeSession = {
-        sessionId: `sess-${randomUUID()}`,
-        runId: envelope.fence.runId,
-        stepId: envelope.payload.stepId ?? "fake",
-        // Like the host: a resume restores the SAME ACP conversation.
-        acpSessionId: envelope.payload.resumeSessionId ?? `acp-${randomUUID()}`,
-        executionWorkspaceId: ws.executionWorkspaceId,
-        assignmentEpoch: envelope.fence.assignmentEpoch,
-        createdByCommandId: envelope.command.id,
-        status: "live",
-      };
-
-      sessions.set(session.sessionId, session);
-      const body = {
-        sessionId: session.sessionId,
-        pid: 4242,
-        acpSessionId: session.acpSessionId,
-      };
-
-      receipt(envelope, "completed", 201, body);
-
-      return body;
-    },
-    async sendPrompt(sessionId, envelope) {
-      await record("sendPrompt", envelope, [sessionId]);
-      fence(envelope);
-      const replayed = replay<PromptResult>(envelope);
-
-      if (replayed) return replayed;
-      liveSession(sessionId);
-      receipt(envelope, "accepted", 202, {}, true);
-      const ctx: PromptContext = {
-        sessionId,
+    // D7: the ONLY path-bearing route. Idempotent on `(runId, path)` while the
+    // handle is live; a released handle's path re-adopts as a NEW handle.
+    adoptWorkspace(envelope, opts) {
+      return runCommand<AdoptWorkspaceResult>({
+        method: "adoptWorkspace",
         envelope,
-        setReceipt: (phase, body, inflight = false) =>
-          receipt(
-            envelope,
-            phase,
-            phase === "rejected" ? 409 : 200,
-            body,
-            inflight,
-          ),
-        emit: (phase, extra) => {
-          monotonicId += 1;
-          commandSignals.publish({
-            type: "session.command",
-            sessionId,
-            monotonicId,
-            commandId: envelope.command.id,
-            kind: "session.prompt",
-            phase,
-            ...(phase === "completed"
-              ? {
-                  status: "succeeded" as const,
-                  result: { stopReason: "end_turn" },
-                }
-              : {}),
-            ...extra,
-          } as SupervisorEvent);
+        args: [opts],
+        guard: () => envelope.payload.runId,
+        execute: async () => {
+          const payload = envelope.payload;
+
+          if (!isSafeSegment(payload.runId)) {
+            throw precondition("runId must match /^[A-Za-z0-9._-]+$/", {});
+          }
+          if (
+            typeof payload.projectSlug !== "string" ||
+            !KEBAB.test(payload.projectSlug)
+          ) {
+            throw precondition("projectSlug must be kebab-case", {});
+          }
+          if (payload.kind === "directory" && payload.repoPath !== undefined) {
+            throw precondition(
+              "repoPath is forbidden for a directory workspace",
+              {},
+            );
+          }
+          if (payload.kind !== "directory" && payload.repoPath === undefined) {
+            throw precondition(
+              `repoPath is required for a ${payload.kind} workspace`,
+              {},
+            );
+          }
+          validateMounts(payload.contextMounts);
+          for (const candidate of [payload.path, payload.repoPath]) {
+            if (candidate === undefined) continue;
+            if (!candidate.startsWith("/")) {
+              throw precondition(
+                `workspace path rejected: relative_path (${candidate})`,
+                {
+                  reason: "workspace_rejected",
+                  rule: "relative_path",
+                },
+              );
+            }
+            if (candidate.split("/").includes("..")) {
+              throw precondition(
+                `workspace path rejected: parent_segment (${candidate})`,
+                {
+                  reason: "workspace_rejected",
+                  rule: "parent_segment",
+                },
+              );
+            }
+          }
+          const existing = [...workspaces.values()].find(
+            (w) =>
+              w.runId === payload.runId &&
+              w.path === payload.path &&
+              !w.releasedAt,
+          );
+          const id =
+            existing?.executionWorkspaceId ??
+            asExecutionWorkspaceId(`ws_${randomUUID().replace(/-/g, "")}`);
+
+          if (!existing) {
+            workspaces.set(id, {
+              executionWorkspaceId: id,
+              runId: payload.runId,
+              projectSlug: payload.projectSlug,
+              kind: payload.kind,
+              adoptedAt: new Date().toISOString(),
+              releasedAt: null,
+              path: payload.path,
+            });
+          }
+
+          return {
+            status: 200,
+            body: {
+              executionWorkspaceId: id,
+              kind: payload.kind,
+              replayed: Boolean(existing),
+            },
+          };
         },
-      };
-      const evicted = new Promise<never>((_, reject) => {
-        evictions.set(sessionId, reject);
       });
-      let result: PromptResult;
+    },
+    async releaseWorkspace(id, envelope, opts) {
+      const ws = workspaces.get(id);
 
-      try {
-        result = await Promise.race([promptBehavior(ctx), evicted]);
-      } finally {
-        evictions.delete(sessionId);
+      // Like the wire: an unknown handle's 404 is the `released:false` outcome.
+      if (!ws) {
+        await record("releaseWorkspace", envelope, [id, opts]);
+        loseAdminResponse("releaseWorkspace");
+
+        return { released: false };
       }
-      const current = receipts.get(envelope.command.id);
 
-      if (current?.phase === "accepted") {
-        receipt(envelope, "completed", 200, { ...result });
+      return runCommand<{ released: boolean }>({
+        method: "releaseWorkspace",
+        envelope,
+        args: [id, opts],
+        guard: () => ws.runId,
+        execute: async () => {
+          const released = !ws.releasedAt;
+
+          if (released) ws.releasedAt = new Date().toISOString();
+
+          return { status: 200, body: { released } };
+        },
+      });
+    },
+    createSession(envelope: CommandEnvelope<CreateSessionPayload>, opts) {
+      return runCommand<CreateSessionResult>({
+        method: "createSession",
+        envelope,
+        args: [opts],
+        guard: () => {
+          const ws = workspaces.get(envelope.payload.executionWorkspaceId);
+
+          if (!ws) throw unknownWorkspaceError();
+          if (ws.releasedAt) throw workspaceReleasedError(ws.runId);
+
+          return ws.runId;
+        },
+        execute: async () => {
+          const payload = envelope.payload;
+
+          for (const field of [
+            "stepId",
+            "nodeAttemptId",
+            "sessionName",
+            "resumeSessionId",
+          ] as const) {
+            const value = payload[field];
+
+            if (value !== undefined && !isSafeSegment(value)) {
+              throw precondition(`${field} must match /^[A-Za-z0-9._-]+$/`, {});
+            }
+          }
+          const ws = workspaces.get(payload.executionWorkspaceId)!;
+          const session: FakeSession = {
+            sessionId: `sess-${randomUUID()}`,
+            runId: envelope.fence.runId,
+            projectSlug: ws.projectSlug,
+            stepId: payload.stepId ?? "fake",
+            nodeAttemptId: payload.nodeAttemptId,
+            sessionName: payload.sessionName ?? "default",
+            adapter: payload.runner?.adapter ?? payload.executor.agent,
+            // Like the host: a resume restores the SAME ACP conversation.
+            acpSessionId: payload.resumeSessionId ?? `acp-${randomUUID()}`,
+            executionWorkspaceId: ws.executionWorkspaceId,
+            assignmentId: envelope.fence.assignmentId,
+            assignmentEpoch: envelope.fence.assignmentEpoch,
+            createdByCommandId: envelope.command.id,
+            status: "live",
+            startedAt: new Date().toISOString(),
+            pending: new Set(),
+          };
+
+          sessions.set(session.sessionId, session);
+
+          return {
+            status: 201,
+            body: {
+              sessionId: session.sessionId,
+              pid: 4242,
+              acpSessionId: session.acpSessionId,
+            },
+          };
+        },
+      });
+    },
+    sendPrompt(sessionId, envelope, opts) {
+      return runCommand<PromptResult>({
+        method: "sendPrompt",
+        envelope,
+        args: [sessionId, opts],
+        lostAfterAcceptance: true,
+        guard: () => {
+          if (!isSafeSegment(envelope.payload.stepId)) {
+            throw precondition("stepId must match /^[A-Za-z0-9._-]+$/", {});
+          }
+
+          return liveSessionForPrompt(sessionId).runId;
+        },
+        execute: async () => {
+          const session = sessions.get(sessionId)!;
+
+          session.stepId = envelope.payload.stepId;
+          if (envelope.payload.nodeAttemptId) {
+            session.nodeAttemptId = envelope.payload.nodeAttemptId;
+          }
+          const ctx: PromptContext = {
+            sessionId,
+            envelope,
+            setReceipt: (phase, body, inflightFlag = false) => {
+              writeReceipt(
+                envelope,
+                phase,
+                phase === "rejected" ? 409 : phase === "accepted" ? 202 : 200,
+                body,
+              );
+              if (inflightFlag) {
+                receipts.get(envelope.command.id)!.inflight = true;
+              }
+            },
+            emit: (phase, extra) => {
+              monotonicId += 1;
+              commandSignals.publish({
+                type: "session.command",
+                sessionId,
+                monotonicId,
+                commandId: envelope.command.id,
+                kind: "session.prompt",
+                phase,
+                ...(phase === "completed"
+                  ? {
+                      status: "succeeded" as const,
+                      result: { stopReason: "end_turn" },
+                    }
+                  : {}),
+                ...extra,
+              } as SupervisorEvent);
+            },
+          };
+          const turn = { reject: (_err: MaisterError) => {} };
+          const settled = new Promise<never>((_, reject) => {
+            turn.reject = reject;
+          });
+          let turns = inflightPrompts.get(sessionId);
+
+          if (!turns) {
+            turns = new Set();
+            inflightPrompts.set(sessionId, turns);
+          }
+          turns.add(turn);
+          let result: PromptResult;
+
+          try {
+            result = await Promise.race([promptBehavior(ctx), settled]);
+          } finally {
+            turns.delete(turn);
+            if (turns.size === 0) inflightPrompts.delete(sessionId);
+          }
+          // X-EH-19: a session evicted mid-turn answers FENCED, never a stop
+          // reason — even when the scripted turn completed.
+          if (session.fencedByEpoch !== undefined) {
+            throw fencedError(
+              session.runId,
+              envelope.fence.assignmentEpoch,
+              session.fencedByEpoch,
+            );
+          }
+
+          return { status: 200, body: result };
+        },
+      });
+    },
+    deliverInput(sessionId, envelope, opts) {
+      return runCommand<InputDeliveryResult>({
+        method: "deliverInput",
+        envelope,
+        args: [sessionId, opts],
+        guard: () => {
+          const session = sessions.get(sessionId);
+
+          if (!session) throw inputUnknownSessionError(sessionId);
+
+          return session.runId;
+        },
+        execute: async () => {
+          const session = sessions.get(sessionId)!;
+          const { requestId } = envelope.payload;
+          // A transport-created session knows its deferreds; an injected live
+          // record accepts any id (its pending set is unknown to the fake).
+          const ok =
+            session.status === "live" &&
+            (session.pending === undefined ||
+              session.pending.delete(requestId));
+
+          if (!ok) throw hitlTimeoutError();
+
+          return { status: 200, body: { ok: true, replayed: false } };
+        },
+      });
+    },
+    cancelPrompt(sessionId, envelope, opts) {
+      return runCommand<{ cancelled: boolean }>({
+        method: "cancelPrompt",
+        envelope,
+        args: [sessionId, opts],
+        guard: () => {
+          const session = sessions.get(sessionId);
+
+          if (!session) throw unknownSessionError(sessionId);
+
+          return session.runId;
+        },
+        execute: async () => {
+          const session = sessions.get(sessionId)!;
+
+          if (session.status !== "live") {
+            return { status: 200, body: { cancelled: false } };
+          }
+          session.pending?.clear();
+
+          return { status: 200, body: { cancelled: true } };
+        },
+      });
+    },
+    checkpointSession(sessionId, envelope, opts) {
+      return runCommand<CheckpointResult>({
+        method: "checkpointSession",
+        envelope,
+        args: [sessionId, opts],
+        guard: () => {
+          const session = sessions.get(sessionId);
+
+          if (!session) throw unknownSessionError(sessionId);
+
+          return session.runId;
+        },
+        execute: async () => {
+          const session = sessions.get(sessionId)!;
+
+          if (session.status !== "live") {
+            monotonicId += 1;
+
+            return {
+              status: 200,
+              body: { alreadyCheckpointed: true, sessionId, monotonicId },
+            };
+          }
+          // Cancel every open deferred (the adapter journals them for
+          // resume), SIGTERM the adapter: its in-flight turn answers a closed
+          // connection and its stream ends with reason "checkpoint".
+          session.pending?.clear();
+          session.status = "exited";
+          session.exitedAt = new Date().toISOString();
+          session.exitCode = 143;
+          settleInflightPrompts(
+            sessionId,
+            new MaisterError(
+              "ACP_PROTOCOL",
+              "fake: ACP connection closed by checkpoint",
+              { details: { httpStatus: 500 } },
+            ),
+          );
+          enqueue(sessionId, exitEvent(sessionId, "checkpoint"));
+          monotonicId += 1;
+
+          return {
+            status: 200,
+            body: { alreadyCheckpointed: false, sessionId, monotonicId },
+          };
+        },
+      });
+    },
+    async deleteSession(sessionId, envelope, opts) {
+      const session = sessions.get(sessionId);
+
+      // Like the wire: the 404 of an unknown session is the `gone` outcome.
+      if (!session) {
+        await record("deleteSession", envelope, [sessionId, opts]);
+        loseAdminResponse("deleteSession");
+
+        return { outcome: "gone" };
       }
 
-      return result;
-    },
-    async deliverInput(sessionId, envelope) {
-      await record("deliverInput", envelope, [sessionId]);
-      fence(envelope);
-      const replayed = replay<InputDeliveryResult>(envelope);
+      return runCommand<{ outcome: DeleteSessionOutcome }>({
+        method: "deleteSession",
+        envelope,
+        args: [sessionId, opts],
+        guard: () => session.runId,
+        execute: async () => {
+          if (session.status === "live") {
+            session.pending?.clear();
+            session.status = "exited";
+            session.exitedAt = new Date().toISOString();
+            session.exitCode = 143;
+            settleInflightPrompts(
+              sessionId,
+              new MaisterError(
+                "ACP_PROTOCOL",
+                "fake: ACP connection closed by delete",
+                { details: { httpStatus: 500 } },
+              ),
+            );
+            enqueue(sessionId, exitEvent(sessionId, "intentional"));
+          }
 
-      if (replayed) return replayed;
-      liveSession(sessionId);
-      receipt(envelope, "completed", 200, { ok: true });
-      loseResponse("deliverInput");
-
-      return { ok: true, replayed: false };
-    },
-    async cancelPrompt(sessionId, envelope) {
-      await record("cancelPrompt", envelope, [sessionId]);
-      fence(envelope);
-      receipt(envelope, "completed", 200, { cancelled: false });
-
-      return { cancelled: false };
-    },
-    async checkpointSession(sessionId, envelope): Promise<CheckpointResult> {
-      await record("checkpointSession", envelope, [sessionId]);
-      fence(envelope);
-      const session = sessions.get(sessionId);
-      const alreadyCheckpointed = !session || session.status !== "live";
-
-      if (session) session.status = "exited";
-      monotonicId += 1;
-      const body = { alreadyCheckpointed, sessionId, monotonicId };
-
-      receipt(envelope, "completed", 200, body);
-
-      return body;
-    },
-    async deleteSession(
-      sessionId,
-      envelope,
-    ): Promise<{ outcome: DeleteSessionOutcome }> {
-      await record("deleteSession", envelope, [sessionId]);
-      fence(envelope);
-      const session = sessions.get(sessionId);
-      const outcome: DeleteSessionOutcome = session ? "terminated" : "gone";
-
-      sessions.delete(sessionId);
-      receipt(envelope, "completed", session ? 200 : 404, { outcome });
-
-      return { outcome };
+          return { status: 204, body: { outcome: "terminated" } };
+        },
+      });
     },
   };
 
@@ -647,6 +1266,11 @@ export function createFakeExecutionHost(
       faults.set(method, [...(faults.get(method) ?? []), error]);
     },
     loseResponseOnce(method) {
+      if (method === "streamSession") {
+        throw new Error(
+          "fake execution host: loseResponseOnce does not apply to streamSession",
+        );
+      }
       lostResponses.add(method);
     },
     onCall(method, hook) {
@@ -661,18 +1285,23 @@ export function createFakeExecutionHost(
     setPromptBehavior(behavior) {
       promptBehavior = behavior;
     },
-    // A host restart: new bootId, live sessions gone, in-flight receipts stay
-    // `accepted` with `inflight:false` (the turn_lost signature).
     restart() {
       identity.bootId = randomUUID();
-      for (const session of sessions.values()) session.status = "exited";
-      for (const r of receipts.values()) {
-        if (r.phase === "accepted") r.inflight = false;
+      // Every in-flight turn dies with the process: the caller's request
+      // breaks (unknown outcome), the receipt stays `accepted` and is no
+      // longer in flight — the turn_lost signature.
+      for (const sessionId of [...inflightPrompts.keys()]) {
+        settleInflightPrompts(
+          sessionId,
+          unknownOutcomeError("fake: host restarted mid-turn"),
+        );
       }
+      inflight.clear();
+      sessions.clear();
     },
     monotonic: () => monotonicId,
     pushEvent(sessionId, event) {
-      streamQueueFor(sessionId).push(event);
+      enqueue(sessionId, event);
     },
     endStream(sessionId) {
       streamQueueFor(sessionId).close();
@@ -1015,7 +1644,8 @@ export function memoryBoundClient(args: {
       try {
         return await attempt(await client.ensureWorkspace());
       } catch (err) {
-        if (!isUnknownWorkspaceError(err)) throw err;
+        // X-EH-11/X-EH-12: like the real client, re-adopt ONCE.
+        if (!isReadoptableWorkspaceError(err)) throw err;
 
         return attempt(await client.ensureWorkspace({ force: true }));
       }
@@ -1089,21 +1719,45 @@ export function memoryAdminClient(fake: FakeExecutionHost): HostAdminClient {
 
 // A DB-less `ExecutionHosts` over the fake: every run binds a memory client
 // (synthesized fence, no ledger) — for dep-injected unit suites that never
-// touch Postgres (workbench lifecycle).
+// touch Postgres (workbench lifecycle). One assignment per run, like the
+// run's ACTIVE assignment: a second `forRun` of the same run binds the same
+// generation instead of minting a competing one the fence would refuse.
 export function memoryExecutionHosts(fake: FakeExecutionHost): ExecutionHosts {
   const host = memoryHost(fake);
+  const assignments = new Map<string, ExecutionAssignment>();
+  const admin = memoryAdminClient(fake);
+  const forRun = async (runId: string) => {
+    let assignment = assignments.get(runId);
+
+    if (!assignment) {
+      assignment = memoryAssignment({ runId, hostId: host.id });
+      assignments.set(runId, assignment);
+    }
+
+    return memoryBoundClient({ fake, runId, assignment, host });
+  };
+  const forAssignment = async (
+    assignment: ExecutionAssignment | { id: string },
+  ) =>
+    memoryBoundClient({
+      fake,
+      runId: (assignment as ExecutionAssignment).runId ?? "run-memory",
+      assignment: assignment as ExecutionAssignment,
+      host,
+    });
 
   return {
     transport: fake.transport,
-    forAssignment: async (assignment) =>
-      memoryBoundClient({
-        fake,
-        runId: (assignment as ExecutionAssignment).runId ?? "run-memory",
-        assignment: assignment as ExecutionAssignment,
-        host,
-      }),
-    forRun: async (runId) => memoryBoundClient({ fake, runId, host }),
-    local: () => memoryAdminClient(fake),
+    forAssignment,
+    forRun,
+    async executionFor(runId, opts) {
+      const client = opts?.assignmentId
+        ? await forAssignment({ id: opts.assignmentId })
+        : await forRun(runId);
+
+      return { client, admin };
+    },
+    local: () => admin,
   };
 }
 

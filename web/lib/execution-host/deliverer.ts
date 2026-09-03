@@ -10,7 +10,6 @@ import pino, { type Logger } from "pino";
 import {
   claimDelivering,
   failRetryable,
-  getCommand,
   markAccepted,
   markFailed,
   markFenced,
@@ -397,16 +396,40 @@ export function deliverPrompt(opts: DeliverPromptOptions): PromptHandle {
     rejectCompletion = reject;
   });
 
+  // A ledger write that fails mid-turn must never leave `completion` pending:
+  // the driver still learns the turn's outcome, and the recovery pass folds the
+  // durable row from the host's receipt later.
+  const ledgerWrite = async (
+    what: string,
+    write: () => Promise<unknown>,
+  ): Promise<void> => {
+    try {
+      await write();
+    } catch (err) {
+      logger.error(
+        {
+          commandId,
+          commandKind: "session.prompt",
+          transition: what,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "command-ledger-write-failed",
+      );
+    }
+  };
+
   const settleSuccess = async (result: PromptResult, source: string) => {
     if (settled) return;
     settled = true;
     unsubscribe();
-    await markSucceeded(
-      opts.db,
-      commandId,
-      null,
-      { ...result },
-      { logger, now: now() },
+    await ledgerWrite("succeeded", () =>
+      markSucceeded(
+        opts.db,
+        commandId,
+        null,
+        { ...result },
+        { logger, now: now() },
+      ),
     );
     logger.info(
       {
@@ -425,17 +448,17 @@ export function deliverPrompt(opts: DeliverPromptOptions): PromptHandle {
     if (settled) return;
     settled = true;
     unsubscribe();
-    if (isFencedError(err)) {
-      await markFenced(opts.db, commandId, null, errorRecord(err), {
-        logger,
-        now: now(),
-      });
-    } else {
-      await markFailed(opts.db, commandId, null, errorRecord(err), {
-        logger,
-        now: now(),
-      });
-    }
+    await ledgerWrite(isFencedError(err) ? "fenced" : "failed", () =>
+      isFencedError(err)
+        ? markFenced(opts.db, commandId, null, errorRecord(err), {
+            logger,
+            now: now(),
+          })
+        : markFailed(opts.db, commandId, null, errorRecord(err), {
+            logger,
+            now: now(),
+          }),
+    );
     logger.warn(
       {
         commandId,
@@ -450,39 +473,57 @@ export function deliverPrompt(opts: DeliverPromptOptions): PromptHandle {
     rejectCompletion(err);
   };
 
+  const ledgerFailure = (err: unknown, source: string) =>
+    settleFailure(
+      new MaisterError(
+        "ACP_PROTOCOL",
+        `prompt ${commandId}: ledger error while ${source} — ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+        { cause: err, details: { reason: "ledger_write_failed", commandId } },
+      ),
+      source,
+    );
+
   const onSignal = (event: SessionCommandEvent) => {
     void (async () => {
-      if (event.phase === "accepted") {
-        if (!accepted) {
-          accepted = true;
-          await markAccepted(opts.db, commandId, null, { logger, now: now() });
+      try {
+        if (event.phase === "accepted") {
+          if (!accepted) {
+            accepted = true;
+            await ledgerWrite("accepted", () =>
+              markAccepted(opts.db, commandId, null, { logger, now: now() }),
+            );
+          }
+
+          return;
         }
 
-        return;
-      }
+        if (event.status === "succeeded") {
+          await settleSuccess(event.result as PromptResult, "sse");
+        } else {
+          const body = event.error ?? {
+            code: "ACP_PROTOCOL",
+            message: "prompt failed",
+          };
+          const code =
+            body.code === "FENCED"
+              ? "CONFLICT"
+              : (body.code as MaisterError["code"]);
 
-      if (event.status === "succeeded") {
-        await settleSuccess(event.result as PromptResult, "sse");
-      } else {
-        const body = event.error ?? {
-          code: "ACP_PROTOCOL",
-          message: "prompt failed",
-        };
-        const code =
-          body.code === "FENCED"
-            ? "CONFLICT"
-            : (body.code as MaisterError["code"]);
-
-        await settleFailure(
-          new MaisterError(code, body.message, { details: body.details }),
-          "sse",
-        );
+          await settleFailure(
+            new MaisterError(code, body.message, { details: body.details }),
+            "sse",
+          );
+        }
+      } catch (err) {
+        await ledgerFailure(err, "sse");
       }
     })();
   };
   const unsubscribe = commandSignals.subscribe(commandId, onSignal);
 
-  void (async () => {
+  const drive = async (): Promise<void> => {
     for (;;) {
       const claimed = await claimDelivering(opts.db, commandId, attempts, {
         logger,
@@ -677,11 +718,9 @@ export function deliverPrompt(opts: DeliverPromptOptions): PromptHandle {
         await sleep(backoffMs(policy.backoffBaseMs, attempts));
       }
     }
-  })();
+  };
+
+  void drive().catch((err) => ledgerFailure(err, "delivering"));
 
   return { commandId, completion };
-}
-
-export async function currentCommand(db: Db, id: string) {
-  return getCommand(db, id);
 }

@@ -14,6 +14,7 @@ import { revokeOrchestratorRunTokensForRun } from "@/lib/agents/tokens";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { releaseAssignmentForRun } from "@/lib/execution-host";
 import {
   CASCADE_NON_TERMINAL_RUN_STATUSES,
   getRunSubtreeIds,
@@ -160,6 +161,7 @@ export async function cascadeAbandonRunTree(
           );
 
         for (const row of runRows) {
+          await releaseAssignmentForRun(tx, row.id, "abandoned");
           await emitDomainEvent({
             db: tx,
             kind: "run.abandoned",

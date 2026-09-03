@@ -231,11 +231,13 @@ components:
         `phase: completed` with `status` and either `result` or `error` when
         any session-kind command finishes (`succeeded` / `failed` /
         `fenced`). Immediate kinds emit exactly ONE `completed` event after
-        their effect. Also appended to `run.events.jsonl`, so the web
-        `PromptHandle.completion` resolves from whichever durable signal
-        arrives first (this event, the receipt, or the HTTP response); a late
-        signal for an already-terminal ledger row is ignored. The
-        run-transcript projector ignores this type.
+        their effect. Also appended to `run.events.jsonl` — a completion that
+        lands after the session's terminal event is appended once the closed
+        per-run writer has drained, so the file keeps its `monotonicId`
+        order — and the web `PromptHandle.completion` resolves from whichever
+        durable signal arrives first (this event, the receipt, or the HTTP
+        response); a late signal for an already-terminal ledger row is
+        ignored. The run-transcript projector ignores this type.
       contentType: application/json
       payload: { $ref: "#/components/schemas/SessionCommandEvent" }
       examples:

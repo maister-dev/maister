@@ -29,6 +29,7 @@ import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import {
   createFakeExecutionHost,
   fakeExecutionHosts,
+  fencedError,
   type FakeExecutionHost,
 } from "@/test-support/fake-execution-host";
 import {
@@ -845,6 +846,55 @@ describe("syncRunTarget — agent resolver (ADR-141 Task 10)", () => {
     expect(await headSha(wt)).toBe(before);
     expect(await syncOperationInProgress(wt)).toBe(false);
     expect(supMock.deleteSession).toHaveBeenCalledWith(`sess-${runId}`);
+  });
+
+  // ADR-166 E-EH-11: a resolver turn fenced by a newer driver generation is NOT
+  // a failed resolve — the attempt, the run and the worktree are that
+  // generation's to settle, and no teardown is issued for its session.
+  it("a fenced resolver turn yields: attempt still agent_running, run Running, no teardown", async () => {
+    const { parent, wt } = await seedConflictWorktree("sync/agent-fenced");
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/agent-fenced",
+      parentRepoPath: parent,
+      baseCommit: await headSha(parent, "main"),
+    });
+
+    const stream = eventStream();
+
+    supMock.streamSession.mockImplementation((_sid: string, opts: any) =>
+      stream.iterate(opts?.signal),
+    );
+    supMock.sendPrompt.mockRejectedValue(fencedError(runId, 1));
+
+    const bg = backgrounded();
+
+    expect(
+      (
+        await syncRunTarget({
+          runId,
+          actor: actor(),
+          agent: true,
+          db,
+          schedule: bg.schedule,
+        })
+      ).outcome,
+    ).toBe("agent_launched");
+    // The backgrounded driver yields quietly — no safety-net terminalization.
+    await bg.settled();
+
+    const row = await attemptRow(runId);
+
+    expect(row.phase).toBe("agent_running");
+    expect((await readRun(runId)).status).toBe("Running");
+    expect(supMock.deleteSession).not.toHaveBeenCalled();
+    expect((await assignmentRows(runId))[0]).toMatchObject({
+      state: "active",
+      placementReason: "sync_resolver",
+    });
   });
 
   it("verification failure (rebase left incomplete) → abort restore, failed, Review", async () => {

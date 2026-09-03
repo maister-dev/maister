@@ -20,7 +20,7 @@ import { isUnderRoot } from "./workspace-roots";
 // feeds spawn (cwd + step log), prompt confinement, cost, and the events log.
 
 export type WorkspaceResolution = {
-  executionWorkspaceId?: string;
+  executionWorkspaceId: string;
   runId: string;
   projectSlug: string;
   cwd: string;
@@ -50,14 +50,6 @@ function runPaths(runDir: string, stepId: string) {
   };
 }
 
-function rejected(rule: WorkspaceRule, detail: string): SupervisorError {
-  return new SupervisorError(
-    "PRECONDITION",
-    `workspace path rejected: ${rule} (${detail})`,
-    { details: { reason: "workspace_rejected", rule } },
-  );
-}
-
 async function realpathOrNull(p: string): Promise<string | null> {
   try {
     return await realpath(p);
@@ -66,30 +58,34 @@ async function realpathOrNull(p: string): Promise<string | null> {
   }
 }
 
-async function isGitRepoRoot(p: string): Promise<boolean> {
+async function isDirectory(p: string): Promise<boolean> {
   try {
-    await stat(path.join(p, ".git"));
-
-    return true;
+    return (await stat(p)).isDirectory();
   } catch {
     return false;
   }
 }
 
+// A `.git` FILE is a linked worktree, never a repo root.
+function isGitRepoRoot(p: string): Promise<boolean> {
+  return isDirectory(path.join(p, ".git"));
+}
+
 // A linked worktree's `.git` is a FILE `gitdir: <path>` that resolves under
 // `<repo>/.git/worktrees/`. A directory `.git` is a repo root, not a worktree.
+// Every filesystem failure reads as "not a worktree" so it maps to a rule
+// token, never a 500.
 async function worktreeGitdir(worktree: string): Promise<string | null> {
   const dotGit = path.join(worktree, ".git");
+  let content: string;
 
   try {
-    const st = await lstat(dotGit);
-
-    if (!st.isFile()) return null;
+    if (!(await lstat(dotGit)).isFile()) return null;
+    content = await readFile(dotGit, "utf8");
   } catch {
     return null;
   }
 
-  const content = await readFile(dotGit, "utf8");
   const match = /^gitdir:\s*(.+?)\s*$/m.exec(content);
 
   if (!match) return null;
@@ -97,6 +93,21 @@ async function worktreeGitdir(worktree: string): Promise<string | null> {
   const target = match[1];
 
   return path.isAbsolute(target) ? target : path.resolve(worktree, target);
+}
+
+// A context mount is a git checkout of either shape: a repo root (`.git`
+// directory) or — the production shape, `git worktree add --detach` — a
+// linked worktree (`.git` file whose gitdir exists).
+async function isGitCheckout(p: string): Promise<boolean> {
+  if (await isGitRepoRoot(p)) return true;
+
+  const gitdir = await worktreeGitdir(p);
+
+  return gitdir !== null && (await isDirectory(gitdir));
+}
+
+function hasParentSegment(p: string): boolean {
+  return p.split(path.sep).includes("..");
 }
 
 export type WorkspaceRegistryOptions = {
@@ -124,6 +135,9 @@ export class WorkspaceRegistry {
     payload: AdoptWorkspacePayload,
   ): Promise<{ handle: WorkspaceRow; replayed: boolean }> {
     const realPath = await this.validate(payload);
+    const contextMounts = payload.contextMounts
+      ? await this.validateMounts(payload.contextMounts)
+      : null;
     const existing = this.opts.state.findWorkspaceByRealPath(
       payload.runId,
       realPath,
@@ -156,7 +170,7 @@ export class WorkspaceRegistry {
         payload.projectSlug,
         payload.runId,
       ),
-      contextMounts: payload.contextMounts ?? null,
+      contextMounts,
       adoptedAt: this.now().toISOString(),
       releasedAt: null,
     };
@@ -213,18 +227,14 @@ export class WorkspaceRegistry {
       );
     }
 
-    if (input.capabilityProfilePath) {
-      const relative = path.relative(
+    if (
+      input.capabilityProfilePath &&
+      !isUnderRoot(
         path.resolve(handle.path),
         path.resolve(input.capabilityProfilePath),
-      );
-
-      if (relative.startsWith("..") || path.isAbsolute(relative)) {
-        throw rejected(
-          "outside_workspace",
-          "capabilityProfilePath must resolve inside the workspace",
-        );
-      }
+      )
+    ) {
+      throw this.reject("outside_workspace", input.capabilityProfilePath);
     }
 
     const kind = handle.kind as WorkspaceKind;
@@ -250,6 +260,41 @@ export class WorkspaceRegistry {
     return resolution;
   }
 
+  // The message names only the offending path (operators need it); the
+  // configured roots and the repo path stay in the debug log.
+  private reject(
+    rule: WorkspaceRule,
+    offendingPath: string,
+    context: {
+      repoPath?: string;
+      roots?: readonly string[];
+      mount?: string;
+    } = {},
+  ): SupervisorError {
+    this.log.debug(
+      { rule, path: offendingPath, ...context },
+      "workspace-rejected",
+    );
+
+    return new SupervisorError(
+      "PRECONDITION",
+      `workspace path rejected: ${rule} (${offendingPath})`,
+      {
+        details: {
+          reason: "workspace_rejected",
+          rule,
+          ...(context.mount ? { mount: context.mount } : {}),
+        },
+      },
+    );
+  }
+
+  private insideStateDir(real: string): boolean {
+    const stateDir = this.opts.state.stateDirReal;
+
+    return stateDir !== null && isUnderRoot(stateDir, real);
+  }
+
   // The D7 kind matrix. Returns the realpath the handle is keyed on.
   private async validate(payload: AdoptWorkspacePayload): Promise<string> {
     const { kind } = payload;
@@ -257,21 +302,19 @@ export class WorkspaceRegistry {
     for (const candidate of [payload.path, payload.repoPath]) {
       if (candidate === undefined) continue;
       if (!path.isAbsolute(candidate)) {
-        throw rejected("relative_path", candidate);
+        throw this.reject("relative_path", candidate);
       }
-      if (candidate.split(path.sep).includes("..")) {
-        throw rejected("parent_segment", candidate);
+      if (hasParentSegment(candidate)) {
+        throw this.reject("parent_segment", candidate);
       }
     }
 
     const real = await realpathOrNull(payload.path);
 
-    if (!real) throw rejected("not_found", payload.path);
+    if (!real) throw this.reject("not_found", payload.path);
 
-    const stateDir = this.opts.state.stateDir;
-
-    if (stateDir && isUnderRoot(stateDir, real)) {
-      throw rejected("inside_state_dir", payload.path);
+    if (this.insideStateDir(real)) {
+      throw this.reject("inside_state_dir", payload.path);
     }
 
     if (kind === "git_worktree" || kind === "directory") {
@@ -284,18 +327,20 @@ export class WorkspaceRegistry {
           isUnderRoot(root, path.resolve(payload.path)),
         );
 
-        throw rejected(
+        throw this.reject(
           lexicalUnderRoots ? "symlink_escape" : "outside_roots",
-          `${payload.path} is not under ${this.opts.roots.join(":")}`,
+          payload.path,
+          { roots: this.opts.roots },
         );
       }
     }
 
     if (kind === "git_worktree") {
-      const repoReal = await realpathOrNull(payload.repoPath as string);
+      const repoPath = payload.repoPath as string;
+      const repoReal = await realpathOrNull(repoPath);
 
       if (!repoReal || !(await isGitRepoRoot(repoReal))) {
-        throw rejected("not_a_repo", payload.repoPath as string);
+        throw this.reject("not_a_repo", repoPath);
       }
 
       const gitdir = await worktreeGitdir(real);
@@ -303,28 +348,59 @@ export class WorkspaceRegistry {
       const worktreesDir = path.join(repoReal, ".git", "worktrees");
 
       if (!gitdirReal || !isUnderRoot(worktreesDir, gitdirReal)) {
-        throw rejected(
-          "gitdir_mismatch",
-          `${payload.path} is not a linked worktree of ${payload.repoPath}`,
-        );
+        throw this.reject("gitdir_mismatch", payload.path, { repoPath });
       }
     }
 
     if (kind === "repo_checkout") {
+      const repoPath = payload.repoPath as string;
+
       if (!(await isGitRepoRoot(real))) {
-        throw rejected("not_a_repo", payload.path);
+        throw this.reject("not_a_repo", payload.path);
       }
 
-      const repoReal = await realpathOrNull(payload.repoPath as string);
+      const repoReal = await realpathOrNull(repoPath);
 
       if (!repoReal || repoReal !== real) {
-        throw rejected(
-          "repo_path_mismatch",
-          `${payload.path} is not the repo root ${payload.repoPath}`,
-        );
+        throw this.reject("repo_path_mismatch", payload.path, { repoPath });
       }
     }
 
     return real;
+  }
+
+  // Every mount must be a git checkout the host can actually read; the stored
+  // path is its realpath. Refusals carry the mount's slug.
+  private async validateMounts(
+    mounts: ContextMount[],
+  ): Promise<ContextMount[]> {
+    const resolved: ContextMount[] = [];
+
+    for (const mount of mounts) {
+      const context = { mount: mount.slug };
+
+      if (!path.isAbsolute(mount.path)) {
+        throw this.reject("relative_path", mount.path, context);
+      }
+      if (hasParentSegment(mount.path)) {
+        throw this.reject("parent_segment", mount.path, context);
+      }
+
+      const real = await realpathOrNull(mount.path);
+
+      if (!real || !(await isDirectory(real))) {
+        throw this.reject("not_found", mount.path, context);
+      }
+      if (this.insideStateDir(real)) {
+        throw this.reject("inside_state_dir", mount.path, context);
+      }
+      if (!(await isGitCheckout(real))) {
+        throw this.reject("not_a_repo", mount.path, context);
+      }
+
+      resolved.push({ ...mount, path: real });
+    }
+
+    return resolved;
   }
 }

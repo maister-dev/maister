@@ -40,14 +40,14 @@ function call(spies: ExecutionHostSpies, name: keyof ExecutionHostSpies) {
   };
 }
 
+// The wire's own rule: a 404 on DELETE /sessions/:id is the `gone` outcome.
 function isGoneError(err: unknown): boolean {
   const e = err as Partial<MaisterError> | null;
 
   return (
     !!e &&
     typeof e === "object" &&
-    (e.code === "PRECONDITION" || e.code === "ACP_PROTOCOL") &&
-    /unknown session|not found|404/i.test(String(e.message ?? ""))
+    (e.details as { httpStatus?: unknown } | undefined)?.httpStatus === 404
   );
 }
 

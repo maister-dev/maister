@@ -10,7 +10,7 @@ import { MaisterError } from "@/lib/errors";
 import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
 import {
   createExecutionHosts,
-  type BoundClient,
+  isFencedError,
   type CreateSessionInput,
   type ExecutionHosts,
   type HostAdminClient,
@@ -229,10 +229,14 @@ export async function runResolverSession(args: {
   prompt: string;
   runnerTier: string;
   executionHosts?: ExecutionHosts;
+  // ADR-166: the `sync_resolver` generation the claim minted.
+  assignmentId?: string | null;
 }): Promise<{ sessionId: string; stopReason: PromptStopReason }> {
   const hosts = args.executionHosts ?? createExecutionHosts({ db: args.db });
   // Bound to the `sync_resolver` generation the claim minted.
-  const client: BoundClient = await hosts.forRun(args.runId);
+  const { client, admin } = await hosts.executionFor(args.runId, {
+    assignmentId: args.assignmentId,
+  });
   const created = await client.createSession(args.input);
   const sessionId = created.sessionId;
 
@@ -289,7 +293,7 @@ export async function runResolverSession(args: {
     db: args.db,
     runId: args.runId,
     sessionId,
-    admin: hosts.local(),
+    admin,
   });
 
   let promptResult: PromptResult;
@@ -304,7 +308,11 @@ export async function runResolverSession(args: {
   } catch (err) {
     consumer.abort.abort();
     await consumer.done.catch(() => undefined);
-    await client.deleteSession(sessionId).catch(() => undefined);
+    // A fenced turn belongs to a superseded generation: the host already
+    // evicted the session, and tearing it down is not this driver's to do.
+    if (!isFencedError(err)) {
+      await client.deleteSession(sessionId).catch(() => undefined);
+    }
     throw err;
   }
 

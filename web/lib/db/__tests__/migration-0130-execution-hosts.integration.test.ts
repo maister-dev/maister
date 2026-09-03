@@ -31,8 +31,8 @@ const runIds: string[] = [];
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDbUpTo(
-    { databaseName: "eh_migration_0128_test" },
-    "0127_output_contract",
+    { databaseName: "eh_migration_0130_test" },
+    "0129_run_results",
   );
   const { pool } = testDatabase;
   const projectId = randomUUID();
@@ -43,9 +43,9 @@ beforeAll(async () => {
      values ($1, $2, $3, $4, '/tmp/m.yaml', $5)`,
     [
       projectId,
-      `m128-${short}`,
-      `M128 ${short}`,
-      `/tmp/m128-${short}`,
+      `m130-${short}`,
+      `M130 ${short}`,
+      `/tmp/m130-${short}`,
       `M${short.slice(0, 5).toUpperCase()}`,
     ],
   );

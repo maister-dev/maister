@@ -1,7 +1,12 @@
 import type { Logger } from "pino";
 
 import { randomUUID } from "node:crypto";
-import { accessSync, constants as fsConstants, mkdirSync } from "node:fs";
+import {
+  accessSync,
+  constants as fsConstants,
+  mkdirSync,
+  realpathSync,
+} from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -15,6 +20,8 @@ export const HOST_STATE_FILE = "state.sqlite";
 export const RECEIPT_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 export const RECEIPT_PRUNE_INTERVAL_MS = 60 * 60 * 1_000;
 export const EXECUTION_HOST_PROTOCOL_VERSION = 1;
+// `PRAGMA user_version` of the state file; bumped with every migration below.
+export const HOST_STATE_SCHEMA_VERSION = 1;
 
 export class HostKeyConflictError extends Error {
   readonly storedKeyPrefix: string;
@@ -85,7 +92,9 @@ export type WorkspaceRow = {
 export type HostState = {
   readonly hostKey: string;
   readonly bootId: string;
-  readonly stateDir: string | null;
+  // Realpath of the state dir (null in memory): path checks against it must
+  // compare realpaths, or a symlinked dir (macOS /tmp) slips past them.
+  readonly stateDirReal: string | null;
   getFence(runId: string): RunFence | null;
   setFence(runId: string, assignmentId: string, epoch: number): void;
   getReceipt(commandId: string): CommandReceiptRow | null;
@@ -126,6 +135,25 @@ export function mintHostKey(): string {
   return `eh_${randomUUID().replace(/-/g, "")}`;
 }
 
+const WORKSPACES_COLUMNS = `
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  project_slug TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  path TEXT NOT NULL,
+  real_path TEXT NOT NULL,
+  repo_path TEXT,
+  run_dir TEXT NOT NULL,
+  context_mounts TEXT,
+  adopted_at TEXT NOT NULL,
+  released_at TEXT`;
+
+// One ACTIVE handle per (run, realpath). Released rows stay as history, so the
+// same path can be re-adopted after a release (an ADR-141 reopen re-creates
+// the worktree at the same path).
+const WORKSPACES_ACTIVE_INDEX = `CREATE UNIQUE INDEX IF NOT EXISTS workspaces_active_uq
+  ON workspaces (run_id, real_path) WHERE released_at IS NULL`;
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS host_identity (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -138,20 +166,8 @@ CREATE TABLE IF NOT EXISTS run_fences (
   epoch INTEGER NOT NULL,
   updated_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS workspaces (
-  id TEXT PRIMARY KEY,
-  run_id TEXT NOT NULL,
-  project_slug TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  path TEXT NOT NULL,
-  real_path TEXT NOT NULL,
-  repo_path TEXT,
-  run_dir TEXT NOT NULL,
-  context_mounts TEXT,
-  adopted_at TEXT NOT NULL,
-  released_at TEXT,
-  UNIQUE (run_id, real_path)
-);
+CREATE TABLE IF NOT EXISTS workspaces (${WORKSPACES_COLUMNS});
+${WORKSPACES_ACTIVE_INDEX};
 CREATE TABLE IF NOT EXISTS command_receipts (
   command_id TEXT PRIMARY KEY,
   run_id TEXT NOT NULL,
@@ -166,6 +182,45 @@ CREATE TABLE IF NOT EXISTS command_receipts (
 CREATE INDEX IF NOT EXISTS command_receipts_received_idx ON command_receipts (received_at);
 `;
 
+// user_version 0 stores carry an inline UNIQUE (run_id, real_path) on
+// `workspaces`, which CREATE TABLE IF NOT EXISTS cannot drop: rebuild the
+// table under the partial unique index, keeping every row.
+const MIGRATE_V0_TO_V1 = `
+BEGIN;
+CREATE TABLE workspaces_v1 (${WORKSPACES_COLUMNS});
+INSERT INTO workspaces_v1
+  SELECT id, run_id, project_slug, kind, path, real_path, repo_path, run_dir, context_mounts, adopted_at, released_at
+  FROM workspaces;
+DROP TABLE workspaces;
+ALTER TABLE workspaces_v1 RENAME TO workspaces;
+${WORKSPACES_ACTIVE_INDEX};
+PRAGMA user_version = 1;
+COMMIT;
+`;
+
+function applySchema(db: DatabaseSync): void {
+  const fresh =
+    db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'host_identity'",
+      )
+      .get() === undefined;
+
+  if (fresh) {
+    db.exec(SCHEMA);
+    db.exec(`PRAGMA user_version = ${HOST_STATE_SCHEMA_VERSION}`);
+
+    return;
+  }
+
+  const { user_version } = db.prepare("PRAGMA user_version").get() as {
+    user_version: number;
+  };
+
+  if (Number(user_version) < 1) db.exec(MIGRATE_V0_TO_V1);
+  db.exec(SCHEMA);
+}
+
 export function openHostState(opts: OpenHostStateOptions = {}): HostState {
   const now = opts.now ?? (() => new Date());
   const log = opts.logger?.child({ component: "host-state" });
@@ -176,11 +231,13 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
   }
 
   let db: DatabaseSync;
+  let stateDirReal: string | null = null;
 
   try {
     if (stateDir) {
       mkdirSync(stateDir, { recursive: true });
       accessSync(stateDir, fsConstants.W_OK);
+      stateDirReal = realpathSync(stateDir);
     }
     db = new DatabaseSync(
       stateDir ? path.join(stateDir, HOST_STATE_FILE) : ":memory:",
@@ -189,7 +246,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       db.exec("PRAGMA journal_mode = WAL");
       db.exec("PRAGMA synchronous = NORMAL");
     }
-    db.exec(SCHEMA);
+    applySchema(db);
   } catch (err) {
     throw new HostStateUnwritableError(stateDir ?? ":memory:", err);
   }
@@ -226,7 +283,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
   const state: HostState = {
     hostKey,
     bootId,
-    stateDir,
+    stateDirReal,
     getFence(runId) {
       const row = db
         .prepare(
@@ -325,7 +382,9 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     },
     findWorkspaceByRealPath(runId, realPath) {
       const row = db
-        .prepare("SELECT * FROM workspaces WHERE run_id = ? AND real_path = ?")
+        .prepare(
+          "SELECT * FROM workspaces WHERE run_id = ? AND real_path = ? AND released_at IS NULL",
+        )
         .get(runId, realPath);
 
       return row ? toWorkspaceRow(row) : null;

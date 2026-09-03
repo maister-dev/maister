@@ -43,6 +43,7 @@ import { extractBalancedJsonObjects } from "./json-extract";
 
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { isFencedError } from "@/lib/execution-host";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import {
   checksFromSnapshot,
@@ -71,6 +72,10 @@ export type GateRunResult = {
   // true if no blocking gate failed (the node may proceed to finish).
   ok: boolean;
   blockingFailedGateId?: string;
+  // ADR-166 E-EH-11: a gate's agent turn came back `assignment_fenced` — a
+  // newer driver generation owns the run. No verdict was recorded; the caller
+  // MUST yield without writing node or run state.
+  fenced?: boolean;
   // M38 (ADR-103): the calibrated verdict surfaced by the verdict-producing gate
   // (ai_judgment/skill_check). Present only for a node declaring
   // `decide:{from:verdict}`, where the engine treats that gate as routing-input
@@ -245,6 +250,8 @@ export async function runNodeGates(
       verdictSink,
     );
 
+    if (status === "fenced") return { ok: false, fenced: true };
+
     const isVerdictGate =
       gate.kind === "ai_judgment" || gate.kind === "skill_check";
 
@@ -356,7 +363,7 @@ async function runGateStepGuarded<T>(
   try {
     return await run();
   } catch (err) {
-    if (!isMaisterError(err)) throw err;
+    if (!isMaisterError(err) || isFencedError(err)) throw err;
 
     await markGateFailed(
       gateResultId,
@@ -383,7 +390,7 @@ async function runOneGate(
   // parsed verdict into, so `runNodeGates` can surface it for a `decide` table
   // WITHOUT a gate_results re-read. Undefined for callers that don't route.
   verdictSink?: { verdict?: GateVerdict },
-): Promise<"passed" | "failed" | "skipped" | "pending"> {
+): Promise<"passed" | "failed" | "skipped" | "pending" | "fenced"> {
   const base = {
     runId: loaded.run.id,
     nodeAttemptId,
@@ -528,6 +535,8 @@ async function runOneGate(
       );
 
       if (res === null) return "failed";
+      // The `running` row stays as-is: a superseded driver records no verdict.
+      if (res.fenced) return "fenced";
 
       const verdict = parseVerdict(res.stdout ?? "");
 

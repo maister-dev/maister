@@ -146,6 +146,16 @@ let projectId: string;
 let executorId: string;
 let userId: string;
 
+async function assignmentStates(runId: string) {
+  return db
+    .select({
+      state: schema.executionAssignments.state,
+      releasedReason: schema.executionAssignments.releasedReason,
+    })
+    .from(schema.executionAssignments)
+    .where(eq(schema.executionAssignments.runId, runId));
+}
+
 // Wrap a budget axis into a full execution_policy snapshot (supervised preset +
 // a budget override) — the shape budgetFromSnapshot parses.
 function policyWithBudget(budget: BudgetAxis): ExecutionPolicy {
@@ -727,6 +737,11 @@ describe("budget watchdog — onBudgetBreach disposition (ADR-106 M39 Phase 5)",
     // The freed slot promotes the queued Pending run (runFlow is the mocked spy).
     expect((await getRun(pendingRunId)).status).toBe("Running");
     expect(runFlowSpy).toHaveBeenCalledWith(pendingRunId);
+    // ADR-166 D7: the idle checkpoint ends the driver generation in the pause
+    // tx — the raise mints the next one.
+    expect(await assignmentStates(runId)).toEqual([
+      { state: "released", releasedReason: "checkpointed" },
+    ]);
   }, 60_000);
 
   it("agent terminate_restorable: lands in NeedsInputIdle (recoverable, NOT Failed) — checkpoint, no deleteSession", async () => {
@@ -893,6 +908,10 @@ describe("budget watchdog — TERMINATE ladder (E5, D7 each arm)", () => {
       .where(eq(schema.domainEvents.runId, runId));
 
     expect(events.some((e: any) => e.kind === "run.failed")).toBe(true);
+    // ADR-166 D7: the terminal flip ends the driver generation in the same tx.
+    expect(await assignmentStates(runId)).toEqual([
+      { state: "released", releasedReason: "failed" },
+    ]);
   }, 60_000);
 
   it("agent: hardMaxTokens deleteSession then run Failed", async () => {

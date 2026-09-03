@@ -868,6 +868,9 @@ export async function* launchScratchRunStaged(
   let adapterHomeEnv: Record<string, string> = {};
 
   let initialPromptStarted = false;
+  // ADR-166: the `launch` generation the run-insert tx mints; the session is
+  // created through the client bound to it.
+  let launchAssignmentId: string | null = null;
 
   try {
     // Cancel here (pre-commit) compensates the worktree+branch via this catch.
@@ -912,7 +915,7 @@ export async function* launchScratchRunStaged(
       scope: "launch",
       files: uploadedFiles,
     });
-    await db.transaction(async (tx: Db) => {
+    launchAssignmentId = await db.transaction(async (tx: Db) => {
       await assertScratchCapacityAvailableInTransaction(tx);
 
       await tx.insert(runs).values({
@@ -961,7 +964,12 @@ export async function* launchScratchRunStaged(
         lastUserMessageAt: hasInitialPrompt ? now : null,
         updatedAt: now,
       });
-      await mintPlacement(tx, { runId, reason: "launch", host: placementHost });
+      const placement = await mintPlacement(tx, {
+        runId,
+        reason: "launch",
+        host: placementHost,
+      });
+
       if (initialMessage && messageId) {
         await tx.insert(scratchMessages).values({
           id: messageId,
@@ -1001,6 +1009,8 @@ export async function* launchScratchRunStaged(
         adapterLaunch: materialized.adapterLaunch,
         downgradeNotes: downgradeNotes(profile),
       });
+
+      return placement.id;
     });
   } catch (err) {
     log.warn(
@@ -1059,7 +1069,9 @@ export async function* launchScratchRunStaged(
     // worktree + run row are tracked rows, not an orphan.
     opts.signal?.throwIfAborted();
     yield launchProgress("spawning");
-    const client = await hosts.forRun(runId);
+    const { client, admin } = await hosts.executionFor(runId, {
+      assignmentId: launchAssignmentId,
+    });
     const session = await client.createSession({
       stepId: scratchStepId(),
       executor: runnerExecutorInput(runnerResolution.runnerSnapshot),
@@ -1152,7 +1164,7 @@ export async function* launchScratchRunStaged(
         ...validatedAttachments.map(metadataAttachmentRow),
         ...uploadedAttachments,
       ]),
-      execution: { client, admin: hosts.local() },
+      execution: { client, admin },
     });
     const dialogStatus = await completeScratchPromptTurn({ db, runId });
 
@@ -1191,6 +1203,12 @@ export async function* launchScratchRunStaged(
       planMode: policy.planMode,
     });
   } catch (err) {
+    // ADR-166 E-EH-11: a fenced turn belongs to a superseded generation — the
+    // run and its dialog are that driver's to settle; write nothing.
+    if (isFencedError(err)) {
+      log.warn({ runId }, "driver-yielded");
+      throw err;
+    }
     if (
       initialPromptStarted &&
       isMaisterError(err) &&
@@ -1545,6 +1563,9 @@ export async function* launchLocalPackageAssistantStaged(
 
   let materialized: Awaited<ReturnType<typeof materializeCapabilityProfile>>;
   let authoringSkill: Awaited<ReturnType<typeof materializeFlowAuthoringSkill>>;
+  // ADR-166: the `launch` generation the run-insert tx mints; the session is
+  // created through the client bound to it.
+  let launchAssignmentId: string | null = null;
 
   try {
     materialized = await materializeCapabilityProfile({
@@ -1573,7 +1594,7 @@ export async function* launchLocalPackageAssistantStaged(
     // Single launch insert: project-less runs + scratch_runs rows, snapshotting
     // local_package_id. NO workspace row (no managed worktree). The XOR CHECK on
     // scratch_runs enforces local_package_id-set / project_id-null.
-    await db.transaction(async (tx: Db) => {
+    launchAssignmentId = await db.transaction(async (tx: Db) => {
       await assertAssistantCapacityAvailableInTransaction(tx);
 
       await tx.insert(runs).values({
@@ -1616,8 +1637,12 @@ export async function* launchLocalPackageAssistantStaged(
         lastUserMessageAt: hasInitialPrompt ? now : null,
         updatedAt: now,
       });
-      await mintPlacement(tx, { runId, reason: "launch", host: placementHost });
-      await mintPlacement(tx, { runId, reason: "launch", host: placementHost });
+      const placement = await mintPlacement(tx, {
+        runId,
+        reason: "launch",
+        host: placementHost,
+      });
+
       if (initialMessage && messageId) {
         await tx.insert(scratchMessages).values({
           id: messageId,
@@ -1644,6 +1669,8 @@ export async function* launchLocalPackageAssistantStaged(
         adapterLaunch: materialized.adapterLaunch,
         downgradeNotes: downgradeNotes(profile),
       });
+
+      return placement.id;
     });
   } catch (err) {
     await cleanupLocalPackageAssistantMaterialization({
@@ -1664,7 +1691,9 @@ export async function* launchLocalPackageAssistantStaged(
     opts.signal?.throwIfAborted();
     yield launchProgress("spawning");
 
-    const client = await hosts.forRun(runId);
+    const { client, admin } = await hosts.executionFor(runId, {
+      assignmentId: launchAssignmentId,
+    });
     const session = await client.createSession({
       readOnlySession: true,
       stepId: scratchStepId(),
@@ -1739,7 +1768,7 @@ export async function* launchLocalPackageAssistantStaged(
       sessionId: session.sessionId,
       stepId: scratchStepId(),
       prompt: launchPrompt,
-      execution: { client, admin: hosts.local() },
+      execution: { client, admin },
     });
     const dialogStatus = await completeScratchPromptTurn({ db, runId });
     const actionResult = await postProcessFlowAssistantTurn({
@@ -1775,6 +1804,12 @@ export async function* launchLocalPackageAssistantStaged(
       actionResult,
     });
   } catch (err) {
+    // ADR-166 E-EH-11: a fenced turn belongs to a superseded generation — no
+    // teardown, no terminal write from this driver.
+    if (isFencedError(err)) {
+      log.warn({ runId }, "driver-yielded");
+      throw err;
+    }
     // Release any open permission deferred the turn created: deleting the
     // supervisor session purges all pending deferreds for it (purgeSession).
     if (createdSessionId) {
@@ -2149,6 +2184,12 @@ export async function sendScratchUserMessage(args: {
       stopReason: promptResult.stopReason,
     });
   } catch (err) {
+    // ADR-166 E-EH-11: a fenced turn belongs to a superseded generation — no
+    // teardown, no terminal write from this driver.
+    if (isFencedError(err)) {
+      log.warn({ runId: args.runId }, "driver-yielded");
+      throw err;
+    }
     if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
       await markScratchPromptRetryable({ db, runId: args.runId, err }).catch(
         (markErr) =>
@@ -2282,6 +2323,12 @@ export async function sendLocalPackageAssistantMessage(args: {
       actionResult,
     });
   } catch (err) {
+    // ADR-166 E-EH-11: a fenced turn belongs to a superseded generation — no
+    // teardown, no terminal write from this driver.
+    if (isFencedError(err)) {
+      log.warn({ runId: args.runId }, "driver-yielded");
+      throw err;
+    }
     if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
       await markScratchPromptRetryable({ db, runId: args.runId, err }).catch(
         (markErr) =>
@@ -2360,13 +2407,10 @@ async function deleteScratchSupervisorSessionIfLive(
 
     return true;
   } catch (err) {
+    // ADR-166 E-EH-11: a newer driver generation owns the session — the run,
+    // its dialog and its assignment are that driver's; the stop is refused.
     if (isFencedError(err)) {
-      log.warn(
-        { runId, sessionId },
-        "scratch stop yielded — a newer driver generation owns the session",
-      );
-
-      return false;
+      log.warn({ runId, sessionId }, "driver-yielded");
     }
 
     throw err;
@@ -2378,9 +2422,7 @@ async function scratchExecution(
   runId: string,
   hosts?: ExecutionHosts,
 ): Promise<{ client: BoundClient; admin: HostAdminClient }> {
-  const resolved = hosts ?? createExecutionHosts({ db });
-
-  return { client: await resolved.forRun(runId), admin: resolved.local() };
+  return (hosts ?? createExecutionHosts({ db })).executionFor(runId);
 }
 
 // Stop a live scratch run: kill its supervisor session and land the run in

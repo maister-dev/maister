@@ -24,6 +24,14 @@ vi.mock("@/lib/execution-host", async (importOriginal) => {
         createSession: (input: unknown) => createSessionSpy(input),
       }),
       forAssignment: vi.fn(),
+      // The resume binds the generation its claim minted (or, under the
+      // mocked markResumed, the run's active one).
+      executionFor: async () => ({
+        client: {
+          createSession: (input: unknown) => createSessionSpy(input),
+        },
+        admin: {},
+      }),
       local: vi.fn(),
     }),
   };

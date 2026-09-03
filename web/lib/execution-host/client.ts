@@ -34,16 +34,19 @@ import type {
   PlacementReason,
 } from "./types";
 
-import { eq } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
-import { ensureWorkspaceAdopted, isUnknownWorkspaceError } from "./adoption";
+import {
+  ensureWorkspaceAdopted,
+  isReadoptableWorkspaceError,
+} from "./adoption";
 import {
   getActiveAssignment,
   getAssignmentById,
   getLatestAssignment,
   setAssignmentWorkspace,
 } from "./assignments";
+import { applyCreateAck } from "./create-ack";
 import { COMMAND_POLICY, deliverCommand, deliverPrompt } from "./deliverer";
 import { issueCommand, type IssuedCommand } from "./ledger";
 import { ensureAssignment } from "./placement";
@@ -52,8 +55,6 @@ import { commandSignals } from "./signals";
 import { defaultTransport } from "./default-transport";
 import { asExecutionWorkspaceId, asHostSessionId } from "./types";
 
-import { persistRunSessionHostBinding } from "@/lib/runs/active-run-session";
-import { nodeAttempts } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { getDb } from "@/lib/db/client";
 
@@ -145,18 +146,36 @@ export interface HostAdminClient {
   ): Promise<WorkspaceRecord | null>;
 }
 
+// A driver's execution seam: the client bound to ITS assignment plus the
+// host-scoped admin reads (the per-session event stream).
+export type ExecutionBinding = {
+  client: BoundClient;
+  admin: HostAdminClient;
+};
+
+export type BindRunOptions = {
+  // The assignment the caller's own claim minted (or the run's
+  // `execution_assignment_id` read at driver entry). Binding by id makes the
+  // fence structural: a driver never adopts a NEWER epoch minted behind its
+  // back — the host fences it instead.
+  assignmentId?: string | null;
+  reason?: PlacementReason;
+  // Binds the newest assignment even when it is `released` (X-EH-20: teardown
+  // kinds stay admissible there) instead of minting a new epoch.
+  teardown?: boolean;
+};
+
 export type ExecutionHosts = {
   readonly transport: ExecutionHostTransport;
   forAssignment(
     assignment: ExecutionAssignment | { id: string },
   ): Promise<BoundClient>;
-  // The run's ACTIVE assignment; a pre-Stage-A run is assigned lazily (D9).
-  // `teardown` binds the newest assignment even when it is `released` (X-EH-20:
-  // teardown kinds stay admissible there) instead of minting a new epoch.
-  forRun(
-    runId: string,
-    opts?: { reason?: PlacementReason; teardown?: boolean },
-  ): Promise<BoundClient>;
+  // The run's ACTIVE assignment; a never-placed (pre-ADR-166) run is assigned
+  // lazily (D9), a placed run without an active assignment is refused.
+  forRun(runId: string, opts?: BindRunOptions): Promise<BoundClient>;
+  // `forAssignment` when the caller carries the assignment id, else `forRun`,
+  // paired with the admin client — the ONE composition every driver binds.
+  executionFor(runId: string, opts?: BindRunOptions): Promise<ExecutionBinding>;
   local(): HostAdminClient;
 };
 
@@ -242,6 +261,11 @@ export function createExecutionHosts(
       return deliver(issued, send, opts);
     }
 
+    // ADR-166 D5 transport timeouts come from the ONE per-kind policy table.
+    const timeoutFor = (kind: CommandKind) => ({
+      timeoutMs: COMMAND_POLICY[kind].timeoutMs,
+    });
+
     const client: BoundClient = {
       get assignment() {
         return current;
@@ -251,7 +275,7 @@ export function createExecutionHosts(
         return immediate<AdoptWorkspaceWire, AdoptWorkspaceResult>(
           "workspace.adopt",
           spec,
-          (env) => transport.adoptWorkspace(env),
+          (env) => transport.adoptWorkspace(env, timeoutFor("workspace.adopt")),
           {
             onAck: async (tx, result) => {
               await setAssignmentWorkspace(
@@ -281,7 +305,12 @@ export function createExecutionHosts(
         return immediate<Record<string, never>, { released: boolean }>(
           "workspace.release",
           {},
-          (env) => transport.releaseWorkspace(executionWorkspaceId, env),
+          (env) =>
+            transport.releaseWorkspace(
+              executionWorkspaceId,
+              env,
+              timeoutFor("workspace.release"),
+            ),
           { targetSessionId: executionWorkspaceId },
         );
       },
@@ -292,26 +321,16 @@ export function createExecutionHosts(
           immediate<CreateSessionPayload, CreateSessionResult>(
             "session.create",
             { ...payload, sessionName, executionWorkspaceId },
-            (env) => transport.createSession(env),
+            (env) => transport.createSession(env, timeoutFor("session.create")),
             {
-              onAck: async (tx, result) => {
-                await persistRunSessionHostBinding(tx, {
+              onAck: (tx, result) =>
+                applyCreateAck(tx, {
                   runId: current.runId,
                   sessionName,
-                  hostSessionId: result.sessionId,
-                  acpSessionId: result.acpSessionId,
-                  executionAssignmentId: current.id,
-                });
-                // The flow attempt that owns this session is stamped with the
-                // driver generation here, not at append time: an attempt whose
-                // host binding fails must still exist in the ledger as Failed.
-                if (payload.nodeAttemptId) {
-                  await tx
-                    .update(nodeAttempts)
-                    .set({ executionAssignmentId: current.id })
-                    .where(eq(nodeAttempts.id, payload.nodeAttemptId));
-                }
-              },
+                  assignmentId: current.id,
+                  nodeAttemptId: payload.nodeAttemptId ?? null,
+                  result,
+                }),
               resultSummary: (result) => ({
                 sessionId: result.sessionId,
                 acpSessionId: result.acpSessionId,
@@ -329,15 +348,17 @@ export function createExecutionHosts(
             await attempt(await client.ensureWorkspace()),
           );
         } catch (err) {
-          // X-EH-11: the host lost its handle store — re-adopt ONCE and issue
-          // a NEW create; a second `unknown_workspace` surfaces as-is.
-          if (!isUnknownWorkspaceError(err)) throw err;
+          // X-EH-11/X-EH-12: the host refused the stored handle (store wiped,
+          // or the handle released and the path re-created) — re-adopt ONCE
+          // and issue a NEW create; a second refusal surfaces as-is.
+          if (!isReadoptableWorkspaceError(err)) throw err;
           logger.warn(
             {
               runId: current.runId,
               assignmentId: current.id,
               assignmentEpoch: current.epoch,
               executionWorkspaceId: current.executionWorkspaceId,
+              reason: (err as MaisterError).details?.reason,
             },
             "workspace-readopting",
           );
@@ -368,7 +389,7 @@ export function createExecutionHosts(
             transport.sendPrompt(
               sessionId,
               env as CommandEnvelope<SendPromptInput>,
-              { signal: opts?.signal },
+              { signal: opts?.signal, ...timeoutFor("session.prompt") },
             ),
           lookupReceipt: (id) => transport.getCommandReceipt(id),
           logger,
@@ -380,7 +401,8 @@ export function createExecutionHosts(
         return immediate<InputPayload, InputDeliveryResult>(
           "session.input",
           payload,
-          (env) => transport.deliverInput(sessionId, env),
+          (env) =>
+            transport.deliverInput(sessionId, env, timeoutFor("session.input")),
           { targetSessionId: sessionId },
         );
       },
@@ -393,7 +415,12 @@ export function createExecutionHosts(
           deliver: (opts) =>
             deliver<InputPayload, InputDeliveryResult>(
               issued,
-              (env) => transport.deliverInput(sessionId, env),
+              (env) =>
+                transport.deliverInput(
+                  sessionId,
+                  env,
+                  timeoutFor("session.input"),
+                ),
               { targetSessionId: sessionId, onAck: opts?.onAck },
             ),
         };
@@ -409,7 +436,12 @@ export function createExecutionHosts(
         return immediate<Record<string, never>, { cancelled: boolean }>(
           "session.cancel",
           {},
-          (env) => transport.cancelPrompt(sessionId, env),
+          (env) =>
+            transport.cancelPrompt(
+              sessionId,
+              env,
+              timeoutFor("session.cancel"),
+            ),
           { targetSessionId: sessionId },
         );
       },
@@ -417,7 +449,12 @@ export function createExecutionHosts(
         return immediate<Record<string, never>, CheckpointResult>(
           "session.checkpoint",
           {},
-          (env) => transport.checkpointSession(sessionId, env),
+          (env) =>
+            transport.checkpointSession(
+              sessionId,
+              env,
+              timeoutFor("session.checkpoint"),
+            ),
           { targetSessionId: sessionId },
         );
       },
@@ -428,7 +465,12 @@ export function createExecutionHosts(
         >(
           "session.delete",
           {},
-          (env) => transport.deleteSession(sessionId, env),
+          (env) =>
+            transport.deleteSession(
+              sessionId,
+              env,
+              timeoutFor("session.delete"),
+            ),
           { targetSessionId: sessionId },
         );
       },
@@ -470,47 +512,63 @@ export function createExecutionHosts(
     },
   };
 
+  async function forAssignment(
+    assignmentOrId: ExecutionAssignment | { id: string },
+  ): Promise<BoundClient> {
+    const db = dbOf();
+    const assignment =
+      "runId" in assignmentOrId
+        ? assignmentOrId
+        : await getAssignmentById(db, assignmentOrId.id);
+
+    if (!assignment) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `execution assignment ${assignmentOrId.id} not found`,
+        {
+          details: {
+            reason: "assignment_missing",
+            assignmentId: assignmentOrId.id,
+          },
+        },
+      );
+    }
+
+    return bind(
+      assignment,
+      await hostForAssignment(db, assignment, { logger, transport }),
+    );
+  }
+
+  async function forRun(
+    runId: string,
+    opts?: BindRunOptions,
+  ): Promise<BoundClient> {
+    const db = dbOf();
+    const assignment =
+      (await getActiveAssignment(db, runId)) ??
+      (opts?.teardown ? await getLatestAssignment(db, runId) : null) ??
+      (await ensureAssignment(db, runId, opts?.reason ?? "legacy_backfill", {
+        logger,
+        transport,
+      }));
+
+    return bind(
+      assignment,
+      await hostForAssignment(db, assignment, { logger, transport }),
+    );
+  }
+
   return {
     transport,
-    async forAssignment(assignmentOrId) {
-      const db = dbOf();
-      const assignment =
-        "runId" in assignmentOrId
-          ? assignmentOrId
-          : await getAssignmentById(db, assignmentOrId.id);
+    forAssignment,
+    forRun,
+    async executionFor(runId, opts) {
+      const client = opts?.assignmentId
+        ? await forAssignment({ id: opts.assignmentId })
+        : await forRun(runId, opts);
 
-      if (!assignment) {
-        throw new MaisterError(
-          "PRECONDITION",
-          `execution assignment ${assignmentOrId.id} not found`,
-          {
-            details: {
-              reason: "assignment_missing",
-              assignmentId: assignmentOrId.id,
-            },
-          },
-        );
-      }
-
-      return bind(
-        assignment,
-        await hostForAssignment(db, assignment, { logger, transport }),
-      );
-    },
-    async forRun(runId, opts) {
-      const db = dbOf();
-      const assignment =
-        (await getActiveAssignment(db, runId)) ??
-        (opts?.teardown ? await getLatestAssignment(db, runId) : null) ??
-        (await ensureAssignment(db, runId, opts?.reason ?? "legacy_backfill", {
-          logger,
-          transport,
-        }));
-
-      return bind(
-        assignment,
-        await hostForAssignment(db, assignment, { logger, transport }),
-      );
+      return { client, admin };
     },
     local() {
       return admin;

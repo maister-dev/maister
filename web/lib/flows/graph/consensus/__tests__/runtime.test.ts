@@ -512,6 +512,32 @@ describe("runConsensusNode", () => {
     );
   });
 
+  // ADR-166 E-EH-11: a verifier turn fenced by a newer driver generation is
+  // NOT a fail-closed verdict — nothing is recorded and the typed yield
+  // propagates for the graph runner to honour.
+  it("a fenced verifier turn records no verdict and propagates the yield", async () => {
+    latestConsensusRound.mockResolvedValue(1);
+    loadConsensusDraftEvidence.mockResolvedValue([
+      draft("architect", "A"),
+      draft("qa", "B"),
+    ]);
+    loadConsensusVerdicts.mockResolvedValue([]);
+    runAgentStep.mockResolvedValueOnce({
+      ok: false,
+      fenced: true,
+      stdout: "",
+      vars: {},
+      errorCode: "CONFLICT",
+    });
+
+    await expect(runConsensusNode(input())).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "assignment_fenced" },
+    });
+    expect(recordConsensusVerdict).not.toHaveBeenCalled();
+    expect(releaseCapacity).toHaveBeenCalledTimes(1);
+  });
+
   it("re-fans an iterate round with bounded disagreement critique", async () => {
     const def = {
       ...consensusDef(),

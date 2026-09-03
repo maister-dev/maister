@@ -12,6 +12,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { openHostState } from "../host-state";
 import { registerRoutes } from "../http-api";
 import { ModelCatalogCache } from "../model-catalog/cache";
 import { ModelSourceRegistry } from "../model-catalog/registry";
@@ -48,6 +49,8 @@ function bootWithRealSources(opts: { providerFetch: typeof fetch }): {
     logger: silent,
     runtimeRoot: "/tmp/model-catalog-e2e",
     modelCatalog: { registry, cache: new ModelCatalogCache() },
+    hostState: openHostState({ inMemory: true }),
+    workspaceRoots: [],
   });
 
   return { app };

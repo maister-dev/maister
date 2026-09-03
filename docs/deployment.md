@@ -301,14 +301,16 @@ sudo systemctl restart maister-supervisor maister-web
 Restart `maister-supervisor` during a quiet window: it drops its in-memory ACP
 session registry, so `Running` runs orphan until startup reconciliation lands
 (ADR-033..036). **(ADR-166)** The first start after the
-execution-host upgrade mints the host identity into the state dir; the web
-tier registers it and backfills an assignment (epoch 1, `legacy_backfill`)
-for every `Running` / `NeedsInput` run that still has a live session —
-draining before the upgrade is recommended, not required. Runs that finished
-before the upgrade keep `runs.execution_assignment_id = NULL` forever. A
-supervisor that was unreachable when the web tier booted is picked up by the
-periodic system sweep (the backfill retries there), so the two services may
-restart in either order.
+execution-host upgrade mints the host identity into the state dir and the web
+tier registers it. There is NO backfill: restart the supervisor FIRST (drain
+recommended) — its pre-ADR-166 sessions die with the old process, and every
+in-flight run follows the supervisor-restart semantics above (`Running` runs
+are classified by the reconcile sweep — re-driven or `Crashed`; `NeedsInput`
+runs are assigned lazily when the keep-alive sweeper checkpoints them, WARN
+`legacy-run-assigned-lazily`). Runs that finished before the upgrade keep
+`runs.execution_assignment_id = NULL` forever. A supervisor that was
+unreachable when the web tier booted is picked up by the next command
+resolution or the periodic system sweep.
 
 ## 12. Backup
 

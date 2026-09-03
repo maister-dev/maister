@@ -5,8 +5,8 @@
 export type {
   AdoptWorkspaceResult,
   AdoptWorkspaceWire,
-  BoundAssignment,
   CheckpointResult,
+  CommandCallOptions,
   CommandReceipt,
   CreateSessionPayload,
   DeleteSessionOutcome,
@@ -51,8 +51,10 @@ export {
   REASON_TOKENS,
 } from "./types";
 export type {
+  BindRunOptions,
   BoundClient,
   CreateSessionOptions,
+  ExecutionBinding,
   ExecutionHosts,
   ExecutionHostsDeps,
   HostAdminClient,
@@ -72,9 +74,9 @@ export {
   releaseAssignmentForRun,
 } from "./assignments";
 export { ensureAssignment, mintPlacement } from "./placement";
-export type { LegacyBackfillOptions, LegacyBackfillSummary } from "./legacy";
+export type { LegacyRunsOptions, LegacyRunsSummary } from "./legacy";
 export {
-  adoptLegacyActiveRuns,
+  reportLegacyActiveRuns,
   resetLegacyBackfillStateForTests,
 } from "./legacy";
 export {
@@ -94,6 +96,7 @@ export {
 } from "./default-transport";
 export {
   ensureWorkspaceAdopted,
+  isReadoptableWorkspaceError,
   isUnknownWorkspaceError,
   loadWorkspaceSpecInput,
   workspaceSpecFor,
@@ -110,8 +113,12 @@ export type {
   ExecutionHostSweepSummary,
 } from "./recovery";
 export { commandSignals } from "./signals";
-export { listCommandsForRun } from "./commands";
-export { findActiveLocalHost, LIVE_DRIVER_RUN_STATUSES } from "./hosts";
+export {
+  DRIVER_OWNED_RUN_STATUSES,
+  findActiveLocalHost,
+  LIVE_DRIVER_RUN_STATUSES,
+  STALE_ASSIGNMENT_RUN_STATUSES,
+} from "./hosts";
 
 // Wire DTO types domain code may name (the transport module itself stays
 // fenced to this package).

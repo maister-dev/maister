@@ -4,7 +4,7 @@ import type { SessionEvent } from "./types";
 
 import { createWriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname } from "node:path";
 
 import { SESSION_EVENT_CHANNEL } from "./registry";
 
@@ -44,7 +44,6 @@ export type CostAttributionContext = {
 export type AttachCostOptions = {
   sessionId: string;
   sessionName?: string;
-  runtimeRoot: string;
   projectSlug: string;
   runId: string;
   stepId?: string;
@@ -56,7 +55,7 @@ export type AttachCostOptions = {
   // Stamped onto every appended cost.jsonl record. Default false.
   resumed?: boolean;
   // ADR-166: absolute cost.jsonl path resolved from the adopted workspace.
-  costPath?: string;
+  costPath: string;
 };
 
 export type CostHandle = {
@@ -65,18 +64,7 @@ export type CostHandle = {
 };
 
 export async function attachCost(opts: AttachCostOptions): Promise<CostHandle> {
-  // ADR-166: the resolved workspace owns every run-dir path; the legacy
-  // derivation stays for callers that still pass the raw segments.
-  const costPath =
-    opts.costPath ??
-    resolve(
-      opts.runtimeRoot,
-      ".maister",
-      opts.projectSlug,
-      "runs",
-      opts.runId,
-      "cost.jsonl",
-    );
+  const { costPath } = opts;
 
   await mkdir(dirname(costPath), { recursive: true });
   const stream = createWriteStream(costPath, { flags: "a" });

@@ -14,7 +14,6 @@ import type {
 } from "@/lib/supervisor-client";
 import type { PlatformStatus } from "@/types/platform-status";
 import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
-import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
 import type {
   CommandEnvelope,
   CommandKind,
@@ -103,6 +102,10 @@ export type CheckpointResult = {
 
 export type EmptyPayload = Record<string, never>;
 
+// Per-call transport timeout, chosen by the caller from the per-kind policy
+// table (ADR-166 D5); `null` = no timeout (the long-lived prompt).
+export type CommandCallOptions = { timeoutMs?: number | null };
+
 export interface ExecutionHostTransport {
   health(opts?: { timeoutMs?: number }): Promise<HostHealth>;
   // The host's adapter diagnostics (smoke evidence) — a read-only admin
@@ -128,34 +131,41 @@ export interface ExecutionHostTransport {
   getWorkspace(executionWorkspaceId: string): Promise<WorkspaceRecord | null>;
   adoptWorkspace(
     envelope: CommandEnvelope<AdoptWorkspaceWire>,
+    opts?: CommandCallOptions,
   ): Promise<AdoptWorkspaceResult>;
   releaseWorkspace(
     executionWorkspaceId: string,
     envelope: CommandEnvelope<EmptyPayload>,
+    opts?: CommandCallOptions,
   ): Promise<{ released: boolean }>;
   createSession(
     envelope: CommandEnvelope<CreateSessionPayload>,
+    opts?: CommandCallOptions,
   ): Promise<CreateSessionResult>;
   sendPrompt(
     sessionId: string,
     envelope: CommandEnvelope<SendPromptInput>,
-    opts?: { signal?: AbortSignal },
+    opts?: CommandCallOptions & { signal?: AbortSignal },
   ): Promise<PromptResult>;
   deliverInput(
     sessionId: string,
     envelope: CommandEnvelope<InputPayload>,
+    opts?: CommandCallOptions,
   ): Promise<InputDeliveryResult>;
   cancelPrompt(
     sessionId: string,
     envelope: CommandEnvelope<EmptyPayload>,
+    opts?: CommandCallOptions,
   ): Promise<{ cancelled: boolean }>;
   checkpointSession(
     sessionId: string,
     envelope: CommandEnvelope<EmptyPayload>,
+    opts?: CommandCallOptions,
   ): Promise<CheckpointResult>;
   deleteSession(
     sessionId: string,
     envelope: CommandEnvelope<EmptyPayload>,
+    opts?: CommandCallOptions,
   ): Promise<{ outcome: DeleteSessionOutcome }>;
 }
 
@@ -163,8 +173,3 @@ export interface ExecutionHostTransport {
 // timeout, non-JSON 5xx). The deliverer retries the SAME command id up to the
 // kind's budget; every other failure is definitive.
 export const UNKNOWN_OUTCOME_DETAIL = "unknown_outcome" as const;
-
-export type BoundAssignment = {
-  assignment: ExecutionAssignment;
-  host: ExecutionHost;
-};

@@ -35,6 +35,7 @@ import {
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { runAgentStep } from "@/lib/flows/runner-agent";
 import { MaisterError } from "@/lib/errors";
+import { isFencedError } from "@/lib/execution-host";
 import * as schemaModule from "@/lib/db/schema";
 import { atomicWriteJson } from "@/lib/atomic";
 import { createHitlAssignmentForRun } from "@/lib/assignments/service";
@@ -72,6 +73,17 @@ type ConsensusHumanDecision = {
 
 function isNodeError(err: unknown): err is NodeJS.ErrnoException {
   return err instanceof Error && "code" in err;
+}
+
+// ADR-166 E-EH-11: a verifier/synthesizer turn came back `assignment_fenced`
+// — surface it as the same typed yield the graph runner already recognizes,
+// so no verdict, artifact or node state is written by this generation.
+function fencedYield(runId: string, nodeId: string): MaisterError {
+  return new MaisterError(
+    "CONFLICT",
+    `consensus node ${nodeId} yielded — a newer driver generation owns run ${runId}`,
+    { details: { reason: "assignment_fenced", runId } },
+  );
 }
 
 function runDir(
@@ -426,11 +438,13 @@ async function runVerifier(
         args.execution,
       );
 
+      if (res.fenced) throw fencedYield(args.loaded.run.id, args.node.id);
       rawOutput = res.stdout ?? "";
       parsed = parseConsensusVerdict(rawOutput, args.def.material_axes);
       if (!res.ok) errorCode = res.errorCode ?? "EXECUTOR_UNAVAILABLE";
     }
   } catch (err) {
+    if (isFencedError(err)) throw err;
     parsed = failClosedVerdict(args.def.material_axes);
     errorCode =
       err instanceof MaisterError
@@ -682,6 +696,7 @@ async function synthesizeConsensus(
       args.execution,
     );
 
+    if (res.fenced) throw fencedYield(args.loaded.run.id, args.node.id);
     if (!res.ok) {
       const code = res.errorCode ?? "EXECUTOR_UNAVAILABLE";
 

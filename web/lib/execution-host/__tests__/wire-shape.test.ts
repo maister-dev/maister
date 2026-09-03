@@ -113,7 +113,7 @@ describe("T2 supervisorErrorToMaister", () => {
           reason: "assignment_fenced",
           runId: "run-abc",
           commandEpoch: 1,
-          fenceEpoch: 2,
+          hostEpoch: 2,
         },
       },
       "ACP_PROTOCOL",
@@ -122,7 +122,7 @@ describe("T2 supervisorErrorToMaister", () => {
     expect(err.code).toBe("CONFLICT");
     expect(err.details).toMatchObject({
       reason: "assignment_fenced",
-      fenceEpoch: 2,
+      hostEpoch: 2,
       commandEpoch: 1,
       httpStatus: 409,
     });
@@ -163,7 +163,7 @@ describe("T2 supervisorErrorToMaister", () => {
 });
 
 describe("T3 transport layer has no DB edge", () => {
-  const FORBIDDEN = [/@\/lib\/db\b/, /drizzle-orm/, /from "\.\.?\/db"/];
+  const FORBIDDEN = [/@\/lib\/db\b/, /drizzle-orm/, /^\.\.?\/db$/];
 
   for (const file of [
     "lib/execution-host/transports/local-direct.ts",
@@ -171,13 +171,16 @@ describe("T3 transport layer has no DB edge", () => {
   ]) {
     it(`${file} imports nothing from the database layer`, () => {
       const source = readFileSync(resolve(WEB_DIR, file), "utf8");
-      const imports = source
-        .split("\n")
-        .filter((line) => /^\s*(import|export) .* from "/.test(line));
+      // Every module specifier of an import/export-from statement, whether the
+      // clause sits on one line or spans several (`} from "…"`).
+      const specifiers = [
+        ...source.matchAll(/\b(?:import|export)\b[^;]*?\bfrom\s*"([^"]+)"/g),
+      ].map((m) => m[1]);
 
-      for (const line of imports) {
+      expect(specifiers.length).toBeGreaterThan(0);
+      for (const specifier of specifiers) {
         for (const pattern of FORBIDDEN) {
-          expect(line).not.toMatch(pattern);
+          expect(specifier).not.toMatch(pattern);
         }
       }
     });

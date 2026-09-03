@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type * as acp from "@agentclientprotocol/sdk";
 import type { Logger } from "pino";
+import type { EventsLogWriter } from "./events-log";
 import type { HostState } from "./host-state";
 import type { SessionRegistry, RegistryEntry } from "./registry";
 import type { WorkspaceResolution } from "./workspace-registry";
@@ -33,9 +34,13 @@ import {
 } from "./command-receipts";
 import { takeContextMountPreamble } from "./context-mounts";
 import { attachCost } from "./cost";
-import { applyFence, evictLowerEpochSessions } from "./execution-fence";
+import {
+  applyFence,
+  evictLowerEpochSessions,
+  waitForChildExit,
+} from "./execution-fence";
 import { attachHeartbeat } from "./heartbeat";
-import { EXECUTION_HOST_PROTOCOL_VERSION, openHostState } from "./host-state";
+import { EXECUTION_HOST_PROTOCOL_VERSION } from "./host-state";
 import {
   modelCatalogCache,
   type ModelCatalogCache,
@@ -58,6 +63,7 @@ import {
   isSupervisorError,
   parseGateChatHitlId,
   SendPromptRequestSchema,
+  SESSION_COMMAND_KINDS,
   StartSessionRequestSchema,
   SupervisorError,
   toSessionListEntry,
@@ -73,10 +79,12 @@ import {
   type WorkspaceRecordResponse,
 } from "./types";
 import { WorkspaceRegistry } from "./workspace-registry";
-import { parseWorkspaceRoots } from "./workspace-roots";
 
-// ADR-166: the `payload` of every enveloped teardown-class command is `{}`.
-const EmptyPayloadSchema = z.object({}).strict();
+// ADR-166: the `payload` of every enveloped teardown-class command
+// (checkpoint, cancel, delete, workspace release) is `{}`. Strict, so callers
+// cannot smuggle body-controlled fields onto those surfaces (D11
+// identifier-table rule).
+export const EmptyPayloadSchema = z.object({}).strict();
 
 const InputBodySchema = z
   .object({
@@ -90,11 +98,6 @@ const InputBodySchema = z
     message: "optionId is required when action='select'",
     path: ["optionId"],
   });
-
-// M8 T4 + T5: empty-body Zod schema for POST /sessions/:id/checkpoint.
-// Rejects unknown keys so callers cannot smuggle body-controlled fields
-// onto the checkpoint surface (D11 identifier-table rule).
-export const CheckpointBodySchema = z.object({}).strict();
 
 // ADR-129 (W-F): NAMES-only probe request. Values are resolved supervisor-side.
 const McpProbeRequestSchema = z
@@ -173,10 +176,10 @@ export type RegisterRoutesOptions = {
     cache?: ModelCatalogCache;
   };
   // ADR-166: the execution-host state store (identity, fences, receipts,
-  // handles) and the adoption roots. A route-only boot (tests) gets an
-  // in-memory store with a minted key.
-  hostState?: HostState;
-  workspaceRoots?: string[];
+  // handles) and the realpath'd adoption roots — both derived once, in
+  // main.ts (tests build their own).
+  hostState: HostState;
+  workspaceRoots: string[];
 };
 
 type SessionIdParams = { Params: { id: string } };
@@ -187,13 +190,15 @@ type ParsedCommand<T> = {
   payload: T;
 };
 
-const SESSION_COMMAND_KIND_SET: ReadonlySet<string> = new Set([
-  "session.prompt",
-  "session.input",
-  "session.cancel",
-  "session.checkpoint",
-  "session.delete",
-]);
+type SessionCommandKind = (typeof SESSION_COMMAND_KINDS)[number];
+
+const SESSION_COMMAND_KIND_SET: ReadonlySet<string> = new Set(
+  SESSION_COMMAND_KINDS,
+);
+
+function isSessionCommandKind(kind: CommandKind): kind is SessionCommandKind {
+  return SESSION_COMMAND_KIND_SET.has(kind);
+}
 
 function countSessionsByStatus(
   records: ReadonlyArray<{ status: SessionStatus }>,
@@ -404,17 +409,24 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   const killGraceMs = opts.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
   const mcRegistry = opts.modelCatalog?.registry ?? new ModelSourceRegistry();
   const mcCache = opts.modelCatalog?.cache ?? modelCatalogCache;
-  const hostState = opts.hostState ?? openHostState({ inMemory: true, logger });
+  const { hostState } = opts;
+
+  if (!hostState) {
+    throw new Error("registerRoutes requires an execution-host state store");
+  }
+
   const receipts = new CommandReceipts(hostState, logger);
   const workspaces = new WorkspaceRegistry({
     state: hostState,
-    roots:
-      opts.workspaceRoots ??
-      parseWorkspaceRoots(process.env.MAISTER_WORKSPACE_ROOTS, runtimeRoot),
+    roots: opts.workspaceRoots,
     runtimeRoot,
     logger,
   });
   const fenceLog = logger.child({ component: "execution-fence" });
+  // Post-terminal `session.command` completions append to a CLOSED per-run
+  // log: they wait for the writer to drain and are serialized per writer, so
+  // the file keeps its monotonicId order.
+  const postCloseAppends = new WeakMap<EventsLogWriter, Promise<void>>();
 
   // ADR-166 D4/D10 (strict): every host-bound command is a `CommandEnvelope`
   // whose `payload` is the route's body. A bare body is refused by name
@@ -468,6 +480,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     entry.emitter.emit(SESSION_EVENT_CHANNEL, full);
 
     if (entry.eventsLog?.isClosed()) {
+      const eventsLog = entry.eventsLog;
       const stamped = {
         ...full,
         sessionName: entry.record.sessionName,
@@ -476,19 +489,22 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           : {}),
       };
 
-      void appendFile(
-        entry.eventsLog.path(),
-        `${JSON.stringify(stamped)}\n`,
-      ).catch((err: unknown) => {
-        logger.warn(
-          {
-            sessionId: entry.record.sessionId,
-            commandId: event.commandId,
-            err: err instanceof Error ? err.message : String(err),
-          },
-          "session-command-append-failed",
-        );
-      });
+      const queued = (postCloseAppends.get(eventsLog) ?? eventsLog.closed())
+        .then(() =>
+          appendFile(eventsLog.path(), `${JSON.stringify(stamped)}\n`),
+        )
+        .catch((err: unknown) => {
+          logger.warn(
+            {
+              sessionId: entry.record.sessionId,
+              commandId: event.commandId,
+              err: err instanceof Error ? err.message : String(err),
+            },
+            "session-command-append-failed",
+          );
+        });
+
+      postCloseAppends.set(eventsLog, queued);
     }
   }
 
@@ -503,8 +519,11 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   }
 
   // ADR-166 D6 handler order for every enveloped route: parse → fence (persist
-  // the high-water, evict lower-epoch sessions) → receipt lookup / in-flight
-  // join → execute → write receipt → respond (+ `session.command` events).
+  // the high-water) → receipt lookup / in-flight join → execute → write
+  // receipt → respond (+ `session.command` events). The lower-epoch eviction
+  // a fence advance triggers runs INSIDE the in-flight execution, so a
+  // concurrent duplicate of the same command id joins the eviction instead of
+  // executing beside it (E-EH-04).
   async function runCommand(args: {
     reply: FastifyReply;
     parsed: ParsedCommand<unknown>;
@@ -515,23 +534,13 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   }): Promise<void> {
     const { reply, parsed, kind, entry } = args;
     const envelope = parsed.envelope;
-    const sessionKind = SESSION_COMMAND_KIND_SET.has(kind);
+    const sessionKind = isSessionCommandKind(kind) ? kind : null;
     const fence = applyFence({
       state: hostState,
       fence: envelope.fence,
       expectedRunId: args.expectedRunId,
       logger: fenceLog,
     });
-
-    if (fence.advanced) {
-      await evictLowerEpochSessions({
-        registry,
-        runId: envelope.fence.runId,
-        epoch: envelope.fence.assignmentEpoch,
-        killGraceMs,
-        logger: fenceLog,
-      });
-    }
 
     const outcome = await receipts.execute({
       envelope,
@@ -545,7 +554,19 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
                 phase: "accepted",
               })
           : undefined,
-      run: args.execute,
+      run: async () => {
+        if (fence.advanced) {
+          await evictLowerEpochSessions({
+            registry,
+            runId: envelope.fence.runId,
+            epoch: envelope.fence.assignmentEpoch,
+            killGraceMs,
+            logger: fenceLog,
+          });
+        }
+
+        return args.execute();
+      },
     });
 
     if (entry && sessionKind && !outcome.replayed) {
@@ -554,7 +575,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       emitCommandEvent(entry, {
         type: "session.command",
         commandId: envelope.command.id,
-        kind: kind as "session.prompt",
+        kind: sessionKind,
         phase: "completed",
         status,
         ...(status === "succeeded"
@@ -776,29 +797,39 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       },
     );
     const request = parsed.payload;
-    // ADR-166 D7: cwd, confinement roots, run dir, and mounts all derive from
-    // the adopted handle (server state) — the single path-derivation site.
-    const workspace: WorkspaceResolution = workspaces.resolveForSession(
-      request.executionWorkspaceId,
-      {
-        stepId: request.stepId,
-        capabilityProfilePath: request.capabilityProfilePath,
-      },
-    );
+    // The handle's run binds the fence (`run_mismatch`) before execution; its
+    // validity (`unknown_workspace` / `workspace_released`) is judged inside
+    // the receipt-guarded execution, so a duplicate id replays its stored
+    // outcome even after the handle was released.
+    const handle = workspaces.get(request.executionWorkspaceId);
 
     await runCommand({
       reply,
       parsed,
       kind: "session.create",
-      expectedRunId: workspace.runId,
+      expectedRunId: handle?.runId,
       execute: async () => {
+        // ADR-166 D7: cwd, confinement roots, run dir, and mounts all derive
+        // from the adopted handle (server state) — the single path-derivation
+        // site.
+        const workspace: WorkspaceResolution = workspaces.resolveForSession(
+          request.executionWorkspaceId,
+          {
+            stepId: request.stepId,
+            capabilityProfilePath: request.capabilityProfilePath,
+          },
+        );
         const sessionId = randomUUID();
         const { child, emitter, record, acpStdoutTap, eventsLog } =
           await spawnSession({
             sessionId,
             request,
             workspace,
-            runtimeRoot,
+            createdBy: {
+              commandId: parsed.envelope.command.id,
+              assignmentId: parsed.envelope.fence.assignmentId,
+              assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
+            },
             logger,
             binaryOverride: opts.spawnOverrides?.binary,
             preArgs: opts.spawnOverrides?.preArgs,
@@ -807,15 +838,11 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         // M34 lifecycle: propagate the reap-on-end-turn flag onto the record so
         // the prompt handler can reap a one-shot agent session when its turn ends.
         record.reapOnEndTurn = request.reapOnEndTurn === true;
-        record.assignmentId = parsed.envelope.fence.assignmentId;
-        record.assignmentEpoch = parsed.envelope.fence.assignmentEpoch;
-        record.createdByCommandId = parsed.envelope.command.id;
         registry.register(record, child, emitter, { eventsLog });
         attachHeartbeat({ sessionId, child, registry, logger });
         await attachCost({
           sessionId,
           sessionName: record.sessionName,
-          runtimeRoot,
           costPath: workspace.costPath,
           projectSlug: workspace.projectSlug,
           runId: workspace.runId,
@@ -867,7 +894,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           child.kill("SIGTERM");
 
           if (entry) {
-            const exited = await waitForExit(entry, killGraceMs);
+            const exited = await waitForChildExit(entry, killGraceMs);
 
             if (!exited) {
               logger.warn(
@@ -900,10 +927,10 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           {
             sessionId,
             runId: workspace.runId,
-            executionWorkspaceId: workspace.executionWorkspaceId ?? null,
-            assignmentId: record.assignmentId ?? null,
-            assignmentEpoch: record.assignmentEpoch ?? null,
-            commandId: record.createdByCommandId ?? null,
+            executionWorkspaceId: workspace.executionWorkspaceId,
+            assignmentId: record.assignmentId,
+            assignmentEpoch: record.assignmentEpoch,
+            commandId: record.createdByCommandId,
             pid: record.pid,
             acpSessionId,
             status: 201,
@@ -929,21 +956,6 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
       return;
     }
-    if (entry.record.status !== "live") {
-      reply
-        .status(409)
-        .send({ code: "PRECONDITION", message: "session not live" });
-
-      return;
-    }
-    if (!entry.connection || !entry.acpSessionId) {
-      reply.status(409).send({
-        code: "PRECONDITION",
-        message: "session has no ACP connection",
-      });
-
-      return;
-    }
 
     const parsed = parseCommandBody(
       req.body,
@@ -952,8 +964,6 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       { route: "POST /sessions/:id/prompt" },
     );
     const body = parsed.payload;
-    const connection = entry.connection;
-    const acpSessionId = entry.acpSessionId;
 
     await runCommand({
       reply,
@@ -962,6 +972,22 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       expectedRunId: entry.record.runId,
       entry,
       execute: async () => {
+        // Liveness is judged inside the receipt-guarded execution: a duplicate
+        // id whose original completed replays the stored response even after
+        // the session exited (X-EH-07).
+        if (entry.record.status !== "live") {
+          throw new SupervisorError("PRECONDITION", "session not live");
+        }
+        if (!entry.connection || !entry.acpSessionId) {
+          throw new SupervisorError(
+            "PRECONDITION",
+            "session has no ACP connection",
+          );
+        }
+
+        const connection = entry.connection;
+        const acpSessionId = entry.acpSessionId;
+
         // Defense-in-depth: independently confine every content-block file URI
         // to roots bound to THIS session at creation (worktree ∪ repo ∪ run dir)
         // before forwarding — the web tier confines too, but the supervisor must
@@ -1209,7 +1235,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       execute: async () => {
         registry.markIntentionalShutdown(req.params.id, "intentional");
         entry.child.kill("SIGTERM");
-        const exited = await waitForExit(entry, killGraceMs);
+        const exited = await waitForChildExit(entry, killGraceMs);
 
         if (!exited) {
           logger.warn(
@@ -1310,7 +1336,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   // deferred for the session with reason="checkpoint" (so the agent
   // records "replay on resume" markers in its session journal),
   // then SIGTERMs the child with a configurable grace window. On
-  // SIGKILL escalation we return 500 EXECUTOR_UNAVAILABLE — the web
+  // SIGKILL escalation we return 503 EXECUTOR_UNAVAILABLE — the web
   // sweeper treats this as retryable; the next tick re-attempts.
   // Idempotent on already-exited sessions: returns 200 with
   // `alreadyCheckpointed: true` and the most recent monotonicId.
@@ -1326,7 +1352,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     const parsed = parseCommandBody(
       req.body,
       "session.checkpoint",
-      CheckpointBodySchema,
+      EmptyPayloadSchema,
       { route: "POST /sessions/:id/checkpoint" },
     );
     const entry = registry.get(sessionId);
@@ -1391,7 +1417,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         registry.markIntentionalShutdown(sessionId, "checkpoint");
         entry.child.kill("SIGTERM");
 
-        const exited = await waitForExit(entry, killGraceMs);
+        const exited = await waitForChildExit(entry, killGraceMs);
 
         if (!exited) {
           checkpointLog.warn(
@@ -1583,10 +1609,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 }
 
 // ADR-166 X-EH-19: an evicted session's pending prompt answers 409 FENCED.
-function throwIfFenced(
-  entry: RegistryEntry,
-  envelope: CommandEnvelope | null,
-): void {
+function throwIfFenced(entry: RegistryEntry, envelope: CommandEnvelope): void {
   const hostEpoch = entry.record.fencedByEpoch;
 
   if (hostEpoch === undefined) return;
@@ -1598,29 +1621,9 @@ function throwIfFenced(
       details: {
         reason: "assignment_fenced",
         runId: entry.record.runId,
-        commandEpoch:
-          envelope?.fence.assignmentEpoch ?? entry.record.assignmentEpoch ?? 0,
+        commandEpoch: envelope.fence.assignmentEpoch,
         hostEpoch,
       },
     },
   );
-}
-
-async function waitForExit(
-  entry: RegistryEntry,
-  timeoutMs: number,
-): Promise<boolean> {
-  if (entry.child.exitCode !== null || entry.child.signalCode !== null) {
-    return true;
-  }
-
-  return new Promise<boolean>((resolveP) => {
-    const timer = setTimeout(() => resolveP(false), timeoutMs);
-    const onExit = () => {
-      clearTimeout(timer);
-      resolveP(true);
-    };
-
-    entry.child.once("exit", onExit);
-  });
 }

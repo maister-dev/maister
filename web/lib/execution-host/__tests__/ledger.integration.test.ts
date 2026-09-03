@@ -1,4 +1,4 @@
-// ADR-166 T3.3 — command ledger + deliverer + bound client (L1–L8) over the
+// ADR-166 T3.3 — command ledger + deliverer + bound client (L1–L9) over the
 // in-memory fake transport.
 
 import type { Db } from "@/lib/execution-host/db";
@@ -7,7 +7,15 @@ import type { BoundClient } from "@/lib/execution-host/client";
 import type { FakeExecutionHost } from "@/test-support/fake-execution-host";
 
 import { and, eq } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
@@ -92,6 +100,55 @@ async function runSessionRow(runId: string) {
   }>;
 
   return rows[0] ?? null;
+}
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+
+  return { promise, resolve };
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`did not settle in ${ms} ms`)), ms),
+    ),
+  ]);
+}
+
+// A db whose `update` calls throw once armed — every ledger transition is an
+// UPDATE, so this is "the ledger cannot be written" from the deliverer's view.
+function withUpdateFault(base: Db): {
+  db: Db;
+  arm: () => void;
+  disarm: () => void;
+} {
+  let armed = false;
+  const proxied = new Proxy(base, {
+    get(target, prop, receiver) {
+      if (prop === "update" && armed) {
+        return () => {
+          throw new Error("injected: ledger write failed");
+        };
+      }
+
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+
+  return {
+    db: proxied as Db,
+    arm: () => {
+      armed = true;
+    },
+    disarm: () => {
+      armed = false;
+    },
+  };
 }
 
 async function untilState(id: string, states: string[], timeoutMs = 5_000) {
@@ -245,7 +302,9 @@ describe("ledger + deliverer (fake transport)", () => {
   });
 
   it("L6: admission — released fences create locally but sends checkpoint; superseded fences everything", async () => {
-    const { runId, assignment } = await bound();
+    const { runId, assignment, client: live } = await bound();
+    // The generation ran a session before it ended (a checkpointed run).
+    const created = await live.createSession(CREATE_PAYLOAD);
 
     await db.transaction((tx) =>
       releaseAssignmentForRun(tx as unknown as Db, runId, "test"),
@@ -268,18 +327,21 @@ describe("ledger + deliverer (fake transport)", () => {
         err.details?.local === true,
     );
     expect(fake.callsOf("createSession").length).toBe(createsBefore);
-    // The first command a released assignment issues is the workspace adopt
-    // (create implies it) — recorded and fenced locally, never sent.
+    // The handle was adopted by the live generation, so the create itself is
+    // the command recorded and fenced locally — never sent.
     const fencedRows = (await listCommandsForRun(db, runId)).filter(
       (c) => c.state === "fenced",
     );
 
     expect(fencedRows).toHaveLength(1);
-    expect(fencedRows[0].kind).toBe("workspace.adopt");
+    expect(fencedRows[0].kind).toBe("session.create");
 
-    const checkpoint = await client.checkpoint("sess-none");
+    // Teardown stays admissible under `released`: the checkpoint reaches the
+    // host and tears the generation's own session down.
+    const checkpoint = await client.checkpoint(created.hostSessionId);
 
-    expect(checkpoint.alreadyCheckpointed).toBe(true);
+    expect(checkpoint.alreadyCheckpointed).toBe(false);
+    expect(fake.sessions.get(created.sessionId)?.status).toBe("exited");
     expect((await rowsOfKind(runId, "session.checkpoint"))[0].state).toBe(
       "succeeded",
     );
@@ -317,17 +379,20 @@ describe("ledger + deliverer (fake transport)", () => {
   it("L7: prompt — SSE accepted folds accepted_at; SSE completed BEFORE the HTTP response wins and the late fold is a no-op", async () => {
     const { client } = await bound();
     const created = await client.createSession(CREATE_PAYLOAD);
+    const httpGate = deferred();
     let httpReturned = false;
 
     fake.setPromptBehavior(async (ctx) => {
       ctx.emit("accepted");
-      await sleep(20);
+      // The SSE accepted fold has landed before the completion is signalled.
+      await untilState(ctx.envelope.command.id, ["accepted"]);
       ctx.setReceipt("completed", { stopReason: "end_turn", meta: null });
       ctx.emit("completed", {
         status: "succeeded",
         result: { stopReason: "end_turn", meta: null },
       });
-      await sleep(150);
+      // The HTTP response is held until the test has seen the SSE settle.
+      await httpGate.promise;
       httpReturned = true;
 
       return { stopReason: "end_turn", meta: null };
@@ -347,8 +412,12 @@ describe("ledger + deliverer (fake transport)", () => {
     expect(settled.acceptedAt).not.toBeNull();
     expect(settled.completedAt).not.toBeNull();
 
-    await sleep(250);
-    expect(httpReturned).toBe(true);
+    httpGate.resolve();
+    await vi.waitFor(() => expect(httpReturned).toBe(true));
+    // The deliverer's own HTTP path folds after the response — a no-op on
+    // the settled row.
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
     const after = await getCommand(db, handle.commandId);
 
     expect(after!.state).toBe("succeeded");
@@ -447,17 +516,15 @@ describe("ledger + deliverer (fake transport)", () => {
     );
 
     // (d) receipt accepted AND in flight → ONE re-send joins the live turn.
-    let sends = 0;
+    const turnGate = deferred();
 
-    fake.setPromptBehavior(async (ctx) => {
-      sends += 1;
-      if (sends === 1) {
-        ctx.setReceipt("accepted", {}, true);
-        throw unknownOutcomeError("socket hang up");
-      }
+    fake.setPromptBehavior(async () => {
+      await turnGate.promise;
 
       return { stopReason: "end_turn", meta: null };
     });
+    // The host accepted the turn and keeps running it; the response is lost.
+    fake.loseResponseOnce("sendPrompt");
     r0 = receiptCalls();
     p0 = promptCalls();
     const d = await client.prompt(created.hostSessionId, {
@@ -465,12 +532,55 @@ describe("ledger + deliverer (fake transport)", () => {
       prompt: "d",
     });
 
+    // The re-send joined the in-flight execution; only then does the turn end.
+    await vi.waitFor(() => expect(promptCalls() - p0).toBe(2));
+    turnGate.resolve();
     expect((await d.completion).stopReason).toBe("end_turn");
     expect(receiptCalls() - r0).toBe(1);
     expect(promptCalls() - p0).toBe(2);
     expect((await untilState(d.commandId, ["succeeded"])).state).toBe(
       "succeeded",
     );
+  });
+
+  it("L9: a ledger write failure mid-turn still settles completion — it rejects ledger_write_failed instead of hanging", async () => {
+    const { assignment } = await bound();
+    const faulty = withUpdateFault(db);
+    const { client } = await fakeBoundClient({
+      db: faulty.db,
+      fake,
+      assignment,
+    });
+    const created = await client.createSession(CREATE_PAYLOAD);
+
+    // The host never saw the turn (no receipt): the deliverer's requeue is the
+    // first ledger write after the transport failure — and it cannot land.
+    fake.setPromptBehavior(async (ctx) => {
+      fake.receipts.delete(ctx.envelope.command.id);
+      faulty.arm();
+      throw unknownOutcomeError("socket hang up");
+    });
+    const handle = await client.prompt(created.hostSessionId, {
+      stepId: "s1",
+      prompt: "l9",
+    });
+
+    try {
+      await expect(withTimeout(handle.completion, 5_000)).rejects.toSatisfy(
+        (err: unknown) =>
+          isMaisterError(err) &&
+          err.code === "ACP_PROTOCOL" &&
+          err.details?.reason === "ledger_write_failed",
+      );
+    } finally {
+      faulty.disarm();
+    }
+    // No transition could be written: the row is still the claimed attempt,
+    // which the recovery pass owns from here.
+    expect(await getCommand(db, handle.commandId)).toMatchObject({
+      state: "delivering",
+      attempts: 1,
+    });
   });
 });
 

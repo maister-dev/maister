@@ -2200,7 +2200,9 @@ export const executionCommands = pgTable(
     assignmentEpoch: integer("assignment_epoch").notNull(),
     kind: text("kind", { enum: COMMAND_KINDS }).notNull(),
     targetSessionId: text("target_session_id"),
-    // REDACTED at insert: no prompt text, no secret-looking values (E-EH-12).
+    // A per-kind ALLOW-list projection written at insert (`redactPayload`):
+    // ids, names, adapter/model, counts — never a prompt body, a path, an env
+    // value, or an argv/URL secret (E-EH-12).
     payload: jsonb("payload")
       .$type<Record<string, unknown>>()
       .notNull()

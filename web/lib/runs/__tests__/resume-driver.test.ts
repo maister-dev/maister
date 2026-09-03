@@ -23,38 +23,47 @@ vi.mock("@/lib/supervisor-client", () => ({}));
 // bound to the run's assignment (prompt / input / delete) and the host-scoped
 // admin stream. The fake client routes each call to the existing spies with
 // the legacy argument shapes the cases assert on.
+const fakeBoundClient = () => ({
+  prompt: async (sessionId: string, input: unknown) => ({
+    commandId: "cmd",
+    completion: sendPromptSpy(sessionId, input),
+  }),
+  deliverInput: (
+    sessionId: string,
+    payload: {
+      action: "select" | "cancel";
+      requestId: string;
+      optionId?: string;
+      reason?: string;
+    },
+  ) =>
+    payload.action === "select"
+      ? deliverPermissionSpy(sessionId, payload.requestId, payload.optionId)
+      : cancelPermissionSpy(sessionId, payload.requestId, payload.reason),
+  deleteSession: (sessionId: string) => deleteSessionSpy(sessionId),
+});
+const fakeAdmin = () => ({
+  streamSession: (...args: unknown[]) =>
+    streamSessionSpy(...(args as unknown[])),
+});
+
 vi.mock("@/lib/execution-host", () => ({
   isFencedError: (err: unknown) =>
     (err as { details?: { reason?: string } } | null)?.details?.reason ===
     "assignment_fenced",
   createExecutionHosts: () => ({
     transport: {},
-    forRun: async () => ({
-      prompt: async (sessionId: string, input: unknown) => ({
-        commandId: "cmd",
-        completion: sendPromptSpy(sessionId, input),
-      }),
-      deliverInput: (
-        sessionId: string,
-        payload: {
-          action: "select" | "cancel";
-          requestId: string;
-          optionId?: string;
-          reason?: string;
-        },
-      ) =>
-        payload.action === "select"
-          ? deliverPermissionSpy(sessionId, payload.requestId, payload.optionId)
-          : cancelPermissionSpy(sessionId, payload.requestId, payload.reason),
-      deleteSession: (sessionId: string) => deleteSessionSpy(sessionId),
-    }),
+    forRun: async () => fakeBoundClient(),
     forAssignment: () => {
       throw new Error("not used");
     },
-    local: () => ({
-      streamSession: (...args: unknown[]) =>
-        streamSessionSpy(...(args as unknown[])),
+    // The driver binds the generation its claim minted (or the run's active
+    // pointer read at entry); the fake serves the same client either way.
+    executionFor: async () => ({
+      client: fakeBoundClient(),
+      admin: fakeAdmin(),
     }),
+    local: fakeAdmin,
   }),
 }));
 

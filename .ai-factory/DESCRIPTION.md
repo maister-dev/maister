@@ -85,7 +85,9 @@ For the full vision, product model, architecture, and roadmap see
   startup, GC of `Abandoned/Done` worktrees + checkpointed sessions older
   than 7d.
 - **ACP-driven agent execution**: `supervisor/` daemon (separate Node
-  process, HTTP+SSE IPC, may run on a different host) owns ACP sessions.
+  process, loopback HTTP+SSE IPC on the SAME host — the shared filesystem is
+  REQUIRED (ADR-023) and the daemon is addressed as a registered execution
+  host (ADR-166); remote hosts are a later stage) owns ACP sessions.
   One agent process per session. Spawned on Launch; permission HITL is
   resolved live. Checkpoint/idle resume is implemented.
 - **Hybrid HITL**: ACP `session/request_permission` for binary approve/deny
@@ -137,7 +139,9 @@ CHECKPOINT`). UI branches on `code`, never on string matching.
 |                   | checkpoint+respawn via the ACP `session/resume` call implemented. |
 | Model routing     | Anthropic-compatible providers configured through runner fields   |
 |                   | and supervisor environment references.                            |
-| Web ↔ supervisor | HTTP + SSE (supervisor may run on a different host)               |
+| Web ↔ supervisor | Loopback HTTP + SSE on ONE host; shared filesystem REQUIRED       |
+|                   | (ADR-023); the supervisor is a registered execution host (ADR-166) |
+|                   | — remote hosts are a later stage                                  |
 | Flow plugins      | git repos pinned by tag; installed to                             |
 |                   | `~/.maister/flows/<id>@<tag>/` and symlinked per project          |
 | Git workspaces    | Thin wrapper around `git worktree add/remove/list`                |
@@ -167,7 +171,9 @@ MAIster is split into two Node processes:
 - **`supervisor/`** — separate Node daemon: owns ACP sessions, spawns one
   agent process (`claude`, `codex`) per active session, heartbeat
   watchdog, checkpoint + respawn via the ACP `session/resume` call, token-count →
-  cost-on-disk. HTTP+SSE interface; can run on a different host than `web/`.
+  cost-on-disk. HTTP+SSE interface over loopback; runs on the SAME host as
+  `web/` (shared filesystem REQUIRED, ADR-023) and is addressed as a
+  registered execution host (ADR-166); a remote host is a later stage.
 
 Hard architectural commitments (post-ACP revision — see root `CLAUDE.md`
 §1-8 for the canonical statement):

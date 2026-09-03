@@ -3,10 +3,18 @@ import type { Db } from "./db";
 import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
 import type { PlacementReason } from "./types";
 
+import { eq } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
-import { getActiveAssignment, mintAssignment } from "./assignments";
+import {
+  getActiveAssignment,
+  getLatestAssignment,
+  mintAssignment,
+} from "./assignments";
 import { localHost } from "./resolver";
+
+import { runs } from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 
 const defaultLog = pino({
   name: "execution-host",
@@ -44,10 +52,13 @@ export async function mintPlacement(
   });
 }
 
-// ADR-166 D9 lazy assignment: a command issuer meeting a run with NO active
-// assignment (pre-Stage-A row) mints epoch 1 on the local host. Deterministic
-// because exactly one non-retired local host can exist. MUST be deleted in
-// Stage C (recorded in ADR-166).
+// ADR-166 D9 lazy assignment: a command issuer meeting a run that was NEVER
+// placed (pre-ADR-166 row, no assignment history) mints epoch 1 on the local
+// host. Deterministic because exactly one non-retired local host can exist.
+// A run WITH history and no active assignment is a placement bug, not a legacy
+// row: its re-entry must mint inside its own claim, so the issuer is refused.
+// The re-check runs under the run row's lock — a concurrent issuer that minted
+// first is reused, never superseded. MUST be deleted in Stage C (ADR-166).
 export async function ensureAssignment(
   db: Db,
   runId: string,
@@ -58,17 +69,46 @@ export async function ensureAssignment(
 
   if (active) return active;
 
-  (opts.logger ?? defaultLog).warn(
-    { runId, reason },
-    "legacy-run-assigned-lazily",
-  );
+  return db.transaction(async (raw) => {
+    const tx = raw as unknown as Db;
 
-  return db.transaction((tx) =>
-    mintPlacement(tx as unknown as Db, {
+    await tx
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.id, runId))
+      .for("update");
+
+    const current = await getActiveAssignment(tx, runId);
+
+    if (current) return current;
+
+    const latest = await getLatestAssignment(tx, runId);
+
+    if (latest) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `run ${runId} has no active execution assignment (its latest, ${latest.id}, is ${latest.state}); the re-entry must mint its placement before addressing the host`,
+        {
+          details: {
+            reason: "assignment_missing",
+            runId,
+            assignmentId: latest.id,
+            assignmentState: latest.state,
+          },
+        },
+      );
+    }
+
+    (opts.logger ?? defaultLog).warn(
+      { runId, reason },
+      "legacy-run-assigned-lazily",
+    );
+
+    return mintPlacement(tx, {
       runId,
       reason,
       logger: opts.logger,
       transport: opts.transport,
-    }),
-  );
+    });
+  });
 }

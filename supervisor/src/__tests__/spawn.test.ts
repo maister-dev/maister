@@ -19,6 +19,11 @@ const FIXTURE_PATH = resolve(
   "../../../test/fixtures/fake-acp.mjs",
 );
 const silentLogger = pino({ level: "silent" });
+const CREATED_BY = {
+  commandId: "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f",
+  assignmentId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d",
+  assignmentEpoch: 1,
+};
 
 function makeRequest(
   over: Partial<StartSessionRequest> = {},
@@ -67,7 +72,7 @@ describe("spawnSession", () => {
     const { child, emitter, record, logPath } = await spawnSession({
       sessionId,
       request,
-      runtimeRoot: tempDir,
+      createdBy: CREATED_BY,
       workspace: ws("run-1", "step-1"),
       logger: silentLogger,
       binaryOverride: "node",
@@ -102,7 +107,7 @@ describe("spawnSession", () => {
     const { child, logPath } = await spawnSession({
       sessionId: "session-log",
       request,
-      runtimeRoot: tempDir,
+      createdBy: CREATED_BY,
       workspace: ws("run-log", "stepX"),
       logger: silentLogger,
       binaryOverride: "node",
@@ -129,7 +134,7 @@ describe("spawnSession", () => {
     const { child } = await spawnSession({
       sessionId: "session-r",
       request,
-      runtimeRoot: tempDir,
+      createdBy: CREATED_BY,
       workspace: ws("run-resume", "step-1"),
       logger: silentLogger,
       binaryOverride: "node",
@@ -159,7 +164,7 @@ describe("spawnSession", () => {
     const { child } = await spawnSession({
       sessionId: "session-runner",
       request,
-      runtimeRoot: tempDir,
+      createdBy: CREATED_BY,
       workspace: ws("run-runner", "step-1"),
       logger: silentLogger,
       binaryOverride: "node",
@@ -185,7 +190,7 @@ describe("spawnSession", () => {
     const { child, emitter } = await spawnSession({
       sessionId: "session-cap",
       request,
-      runtimeRoot: tempDir,
+      createdBy: CREATED_BY,
       workspace: ws("run-cap", "step-1"),
       logger: silentLogger,
       binaryOverride: "node",
@@ -225,7 +230,7 @@ describe("spawnSession", () => {
       spawnSession({
         sessionId: "session-bad",
         request,
-        runtimeRoot: tempDir,
+        createdBy: CREATED_BY,
         workspace: ws("run-1", "step-1"),
         logger: silentLogger,
         binaryOverride: "/definitely/not/a/real/binary",
@@ -240,7 +245,7 @@ describe("spawnSession", () => {
       await spawnSession({
         sessionId,
         request,
-        runtimeRoot: tempDir,
+        createdBy: CREATED_BY,
         workspace: ws("run-elog", "elog"),
         logger: silentLogger,
         binaryOverride: "node",
@@ -281,7 +286,7 @@ describe("spawnSession", () => {
     const a = await spawnSession({
       sessionId: sessionA,
       request,
-      runtimeRoot: tempDir,
+      createdBy: CREATED_BY,
       workspace: ws("run-multi", "stepA"),
       logger: silentLogger,
       binaryOverride: "node",
@@ -309,7 +314,7 @@ describe("spawnSession", () => {
     const b = await spawnSession({
       sessionId: sessionB,
       request: { ...request, stepId: "stepB" },
-      runtimeRoot: tempDir,
+      createdBy: CREATED_BY,
       workspace: ws("run-multi", "stepB"),
       logger: silentLogger,
       binaryOverride: "node",
@@ -374,7 +379,7 @@ describe("spawnSession", () => {
       await spawnSession({
         sessionId,
         request,
-        runtimeRoot: tempDir,
+        createdBy: CREATED_BY,
         workspace: ws("run-elog-close", "elog-close"),
         logger: silentLogger,
         binaryOverride: "node",
@@ -411,7 +416,7 @@ describe("spawnSession", () => {
     const { child, emitter, record } = await spawnSession({
       sessionId: "session-giant",
       request,
-      runtimeRoot: tempDir,
+      createdBy: CREATED_BY,
       workspace: ws("run-giant", "giant"),
       logger: silentLogger,
       binaryOverride: "node",

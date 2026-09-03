@@ -32,7 +32,7 @@ import type { ExecutionHosts } from "@/lib/execution-host";
 
 import { randomUUID } from "node:crypto";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
   afterAll,
@@ -343,6 +343,33 @@ describe("resumeCrashedRun — resume-agent happy path (slot free)", () => {
     expect(currentStepIdAtCreate).toBe("implement");
     expect(scheduleResumedSessionDrive).toHaveBeenCalledTimes(1);
     expect(runFlow).not.toHaveBeenCalled();
+
+    // ADR-166 D3: the create rode the `recover` generation the claim minted,
+    // and the resumed-session driver is handed that same row.
+    const [assignment] = await db
+      .select({
+        id: schema.executionAssignments.id,
+        epoch: schema.executionAssignments.epoch,
+        placementReason: schema.executionAssignments.placementReason,
+      })
+      .from(schema.executionAssignments)
+      .where(eq(schema.executionAssignments.runId, runId));
+
+    expect(assignment).toMatchObject({ epoch: 1, placementReason: "recover" });
+    const [create] = await db
+      .select({ assignmentEpoch: schema.executionCommands.assignmentEpoch })
+      .from(schema.executionCommands)
+      .where(
+        and(
+          eq(schema.executionCommands.runId, runId),
+          eq(schema.executionCommands.kind, "session.create"),
+        ),
+      );
+
+    expect(create.assignmentEpoch).toBe(1);
+    expect(scheduleResumedSessionDrive).toHaveBeenCalledWith(
+      expect.objectContaining({ runId, assignmentId: assignment.id }),
+    );
   }, 60_000);
 });
 

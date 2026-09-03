@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { ExecutionAssignment } from "@/lib/db/schema";
+
 import { execFile } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -31,6 +33,7 @@ import {
 } from "@/lib/execution-host";
 import {
   createExecutionHosts,
+  isFencedError,
   type BoundClient,
   type ExecutionHosts,
 } from "@/lib/execution-host";
@@ -1008,6 +1011,15 @@ export async function sendGateChatTurn(args: {
       supervisorSessionId = await chatResume();
     }
   } catch (err) {
+    // ADR-166 E-EH-11: a fenced spawn means a newer generation owns the run —
+    // the turn is that driver's to settle; write nothing.
+    if (isFencedError(err)) {
+      log.warn(
+        { runId: args.runId, hitlRequestId: args.hitlRequestId },
+        "driver-yielded",
+      );
+      throw err;
+    }
     await failGateChatTurn({
       db: d,
       turnId: admitted.turnId,
@@ -1026,6 +1038,7 @@ export async function sendGateChatTurn(args: {
     // loser must not spawn a duplicate supervisor session or prompt a pause
     // it no longer owns.
     const idleClaim = run.status === "NeedsInputIdle";
+    let claimed: ExecutionAssignment | undefined;
 
     if (idleClaim) {
       // The idle resume is a new driver generation minted as `gate_chat`.
@@ -1040,12 +1053,17 @@ export async function sendGateChatTurn(args: {
           "concurrent resume in progress for this run — retry once it settles",
         );
       }
+      claimed = claim.assignment;
     }
 
     let created: { sessionId: string };
 
     try {
-      client = await hosts.forRun(args.runId);
+      // Bound to the generation the idle claim minted; a crash-window respawn
+      // on a still-live pause reuses the run's active assignment (Q5).
+      client = claimed
+        ? await hosts.forAssignment(claimed)
+        : await hosts.forRun(args.runId);
       created = await client.createSession({
         stepId,
         executor: {
@@ -1060,7 +1078,9 @@ export async function sendGateChatTurn(args: {
         resumeSessionId: activeAcpSessionId as string,
       });
     } catch (err) {
-      if (idleClaim) {
+      // A fenced create means a newer generation owns the run — its claim is
+      // not ours to roll back (E-EH-11).
+      if (idleClaim && !isFencedError(err)) {
         try {
           await rollbackResumedRun(args.runId, { db: d });
           log.warn(
@@ -1159,6 +1179,15 @@ export async function sendGateChatTurn(args: {
     // X-DEFER: release the stream consumer on EVERY failure path.
     abort.abort();
     await consumer;
+    // ADR-166 E-EH-11: a fenced prompt means a newer generation owns the run
+    // — the turn is that driver's to settle; write nothing.
+    if (isFencedError(err)) {
+      log.warn(
+        { runId: args.runId, hitlRequestId: args.hitlRequestId },
+        "driver-yielded",
+      );
+      throw err;
+    }
     await failGateChatTurn({
       db: d,
       turnId: admitted.turnId,

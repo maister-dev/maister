@@ -84,18 +84,99 @@ const AGENT_FLOW = {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// A timeout names the run's durable state (run row, attempts, HITL rows,
+// assignments, ledger rows, host sessions) and the supervisor child's log
+// tail, so a flake is diagnosable from the failure alone.
+async function diagnose(runId: string): Promise<string> {
+  const rows = async (label: string, read: () => Promise<unknown>) => {
+    try {
+      return `${label}: ${JSON.stringify(await read())}`;
+    } catch (err) {
+      return `${label}: <unreadable: ${err instanceof Error ? err.message : String(err)}>`;
+    }
+  };
+  const pick = (row: Record<string, any>, keys: string[]) =>
+    Object.fromEntries(keys.map((k) => [k, row?.[k]]));
+
+  return [
+    await rows("run", async () =>
+      pick(await runRow(runId), [
+        "status",
+        "currentStepId",
+        "keepaliveUntil",
+        "checkpointAt",
+        "executionAssignmentId",
+        "agentRunningSince",
+        "endedAt",
+      ]),
+    ),
+    await rows("node_attempts", async () =>
+      (
+        (await db
+          .select()
+          .from(schema.nodeAttempts)
+          .where(eq(schema.nodeAttempts.runId, runId))) as Array<
+          Record<string, any>
+        >
+      ).map((a) =>
+        pick(a, ["nodeId", "attempt", "status", "executionAssignmentId"]),
+      ),
+    ),
+    await rows("hitl_requests", async () =>
+      (await hitlRows(runId)).map((h) =>
+        pick(h, ["id", "kind", "stepId", "respondedAt", "createdAt"]),
+      ),
+    ),
+    await rows("run_sessions", async () =>
+      pick(await sessionRow(runId), [
+        "sessionName",
+        "hostSessionId",
+        "acpSessionId",
+        "executionAssignmentId",
+      ]),
+    ),
+    await rows("execution_assignments", async () =>
+      (await assignmentsOf(runId)).map((a) =>
+        pick(a, ["epoch", "state", "placementReason", "releasedReason"]),
+      ),
+    ),
+    await rows("execution_commands", async () =>
+      (await commandsOf(runId)).map((c) =>
+        pick(c, ["kind", "state", "assignmentEpoch", "attempts", "lastError"]),
+      ),
+    ),
+    await rows("host sessions", async () =>
+      (await hosts.local().listSessions())
+        .filter((s) => s.runId === runId)
+        .map((s) =>
+          pick(s as Record<string, any>, [
+            "sessionId",
+            "status",
+            "stepId",
+            "assignmentEpoch",
+          ]),
+        ),
+    ),
+    `supervisor log tail:\n${await sup.logTail()}`,
+  ].join("\n");
+}
+
 async function waitFor<T>(
   probe: () => Promise<T | null | undefined | false>,
   what: string,
-  timeoutMs = 60_000,
+  opts: { runId?: string; timeoutMs?: number } = {},
 ): Promise<T> {
-  const deadline = Date.now() + timeoutMs;
+  const deadline = Date.now() + (opts.timeoutMs ?? 60_000);
 
   for (;;) {
     const value = await probe();
 
     if (value) return value as T;
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    if (Date.now() > deadline) {
+      const context = opts.runId ? `\n${await diagnose(opts.runId)}` : "";
+
+      throw new Error(`timed out waiting for ${what}${context}`);
+    }
     await sleep(100);
   }
 }
@@ -208,11 +289,17 @@ describe("Stage A lifecycle regression (real supervisor)", () => {
       runtimeRoot: sup.runtimeRoot,
       executionHosts: hosts,
     });
-    const hitl = await waitFor(async () => {
-      const [row] = await hitlRows(runId);
+    const hitl = await waitFor(
+      async () => {
+        const [row] = await hitlRows(runId);
 
-      return row && (await runRow(runId)).status === "NeedsInput" ? row : null;
-    }, "NeedsInput + permission HITL row");
+        return row && (await runRow(runId)).status === "NeedsInput"
+          ? row
+          : null;
+      },
+      "NeedsInput + permission HITL row",
+      { runId },
+    );
     const session1 = await sessionRow(runId);
 
     expect(hitl.kind).toBe("permission");
@@ -234,6 +321,7 @@ describe("Stage A lifecycle regression (real supervisor)", () => {
     await waitFor(
       async () => (await runRow(runId)).status === "NeedsInputIdle",
       "NeedsInputIdle",
+      { runId },
     );
     let assignments = await assignmentsOf(runId);
 
@@ -284,11 +372,15 @@ describe("Stage A lifecycle regression (real supervisor)", () => {
     expect(creates).toHaveLength(2);
     expect(creates[1].assignmentEpoch).toBe(2);
     expect(creates[1].payload.resumeSessionId).toBe(session1.acpSessionId);
-    const session2 = await waitFor(async () => {
-      const row = await sessionRow(runId);
+    const session2 = await waitFor(
+      async () => {
+        const row = await sessionRow(runId);
 
-      return row.hostSessionId !== session1.hostSessionId ? row : null;
-    }, "the resumed host session id");
+        return row.hostSessionId !== session1.hostSessionId ? row : null;
+      },
+      "the resumed host session id",
+      { runId },
+    );
 
     expect(session2.executionAssignmentId).toBe(assignments[1].id);
 
@@ -326,31 +418,43 @@ describe("Stage A lifecycle regression (real supervisor)", () => {
 
     // 5. The resumed driver auto-delivers the stored intent against the
     //    re-issued permission and the graph finishes.
-    const delivered = await waitFor(async () => {
-      const [row] = await hitlRows(runId);
+    const delivered = await waitFor(
+      async () => {
+        const [row] = await hitlRows(runId);
 
-      return row.respondedAt ? row : null;
-    }, "the stored intent auto-delivered");
+        return row.respondedAt ? row : null;
+      },
+      "the stored intent auto-delivered",
+      { runId },
+    );
 
     expect(delivered.response).toMatchObject({
       optionId: "allow",
       _audit: { deliveredViaResume: true },
     });
-    await waitFor(async () => {
-      const status = (await runRow(runId)).status;
+    await waitFor(
+      async () => {
+        const status = (await runRow(runId)).status;
 
-      return status === "Review" || status === "Done" ? status : null;
-    }, "the run to finish after the resume");
+        return status === "Review" || status === "Done" ? status : null;
+      },
+      "the run to finish after the resume",
+      { runId },
+    );
 
     // 6. Teardown + reconcile: no live session for the run on the host, every
     //    generation released, the recovery pass finds nothing to fold.
-    await waitFor(async () => {
-      const live = (await hosts.local().listSessions()).filter(
-        (s) => s.runId === runId && s.status === "live",
-      );
+    await waitFor(
+      async () => {
+        const live = (await hosts.local().listSessions()).filter(
+          (s) => s.runId === runId && s.status === "live",
+        );
 
-      return live.length === 0 ? true : null;
-    }, "no live session for the run");
+        return live.length === 0 ? true : null;
+      },
+      "no live session for the run",
+      { runId },
+    );
     const recovery = await recoverExecutionCommands({ db, graceMs: 0 });
 
     expect(recovery.folded).toBe(0);

@@ -38,6 +38,7 @@ import {
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import {
   fakeGraphHosts,
+  fencedError,
   type FakeExecutionHost,
 } from "@/test-support/fake-execution-host";
 import {
@@ -326,6 +327,37 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
     );
     // The slot was released so the parked coordinator does not hold the cap.
     expect(releaseSlotSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // ADR-166 E-EH-11: a fenced park checkpoint means a newer driver generation
+  // owns the run — this driver yields: no slot release, no default artifacts.
+  it("a fenced park checkpoint yields — no slot release, no default artifacts", async () => {
+    const { runId } = await seedOrchestratorRun();
+
+    await seedChild(runId, "Running");
+    const { hosts, fake } = await bindCoordinatorHost(runId);
+
+    fake.failOnce("checkpointSession", fencedError(runId, 1));
+
+    const { runFlow } = await import("@/lib/flows/runner");
+
+    await runFlow(runId, {
+      db,
+      runtimeRoot: process.cwd(),
+      executionHosts: hosts,
+    });
+
+    // The park flip itself committed before the checkpoint; everything after
+    // the fenced command is the newer generation's.
+    expect((await getRun(runId)).status).toBe("WaitingOnChildren");
+    expect(checkpointedSessionIds(fake)).toEqual([COORDINATOR_HOST_SESSION_ID]);
+    expect(releaseSlotSpy).not.toHaveBeenCalled();
+    const artifacts = await db
+      .select({ id: schema.artifactInstances.id })
+      .from(schema.artifactInstances)
+      .where(eq(schema.artifactInstances.runId, runId));
+
+    expect(artifacts).toHaveLength(0);
   });
 
   it("completes the node (transition downstream, run Review) when NO pending children", async () => {

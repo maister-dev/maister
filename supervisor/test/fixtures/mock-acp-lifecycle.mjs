@@ -11,6 +11,8 @@ let hang = false;
 let hangInitialize = false;
 let hangNewSession = false;
 let hangPrompt = false;
+let hangPermission = false;
+let exitDelayMs = 0;
 let emitUsage = false;
 
 for (let i = 0; i < args.length; i += 1) {
@@ -28,6 +30,10 @@ for (let i = 0; i < args.length; i += 1) {
     hangNewSession = true;
   } else if (arg === "--hang-prompt") {
     hangPrompt = true;
+  } else if (arg === "--hang-permission") {
+    hangPermission = true;
+  } else if (arg === "--exit-delay-ms") {
+    exitDelayMs = Number.parseInt(args[++i], 10);
   } else if (arg === "--emit-usage") {
     emitUsage = true;
   }
@@ -113,6 +119,27 @@ class LifecycleAgent {
       });
     }
 
+    // ADR-166 F10: park the turn on an OPEN permission request so an eviction
+    // lands while the deferred is pending; the outcome is irrelevant (the
+    // eviction SIGTERMs us), so the turn stays open afterwards.
+    if (hangPermission) {
+      await this.connection.requestPermission({
+        sessionId: params.sessionId,
+        toolCall: {
+          toolCallId: "call-1",
+          title: "write file",
+          kind: "edit",
+          status: "pending",
+        },
+        options: [
+          { optionId: "allow", kind: "allow_once", name: "Allow" },
+          { optionId: "deny", kind: "reject_once", name: "Deny" },
+        ],
+      });
+
+      return never();
+    }
+
     // ADR-166 F6: keep the turn open forever so an eviction lands mid-prompt.
     if (hangPrompt) return never();
 
@@ -134,7 +161,9 @@ new acp.AgentSideConnection(
   stream,
 );
 
-process.on("SIGTERM", () => process.exit(143));
+// --exit-delay-ms: hold the process open after SIGTERM so a test can prove an
+// eviction is awaited (nothing spawns beside a dying lower-epoch session).
+process.on("SIGTERM", () => setTimeout(() => process.exit(143), exitDelayMs));
 process.on("SIGINT", () => process.exit(130));
 
 setInterval(() => {}, 1 << 30);

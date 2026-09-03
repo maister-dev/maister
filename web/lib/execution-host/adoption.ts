@@ -244,14 +244,28 @@ export function isUnknownWorkspaceError(err: unknown): boolean {
   );
 }
 
+// The host no longer honours the handle the assignment carries — its store was
+// wiped (`unknown_workspace`) or the handle was released after the worktree
+// was removed and re-created at the same path (`workspace_released`, the
+// ADR-141 reopen). Either way ONE fresh adoption is the remedy.
+export function isReadoptableWorkspaceError(err: unknown): boolean {
+  return (
+    isMaisterError(err) &&
+    err.code === "PRECONDITION" &&
+    (err.details?.reason === "unknown_workspace" ||
+      err.details?.reason === "workspace_released")
+  );
+}
+
 export type AdoptingClient = {
   readonly assignment: ExecutionAssignment;
   adoptWorkspace(spec: AdoptWorkspaceWire): Promise<AdoptWorkspaceResult>;
 };
 
 // ADR-166 E-EH-08: adopt ONCE per assignment — the stored handle short-circuits
-// the wire; `force` re-adopts after the host answered `unknown_workspace`
-// (state dir wiped). The client persists the handle in the ack transaction.
+// the wire; `force` re-adopts after the host refused the stored handle
+// (`isReadoptableWorkspaceError`). The client persists the handle in the ack
+// transaction.
 export async function ensureWorkspaceAdopted(args: {
   db: Db;
   client: AdoptingClient;

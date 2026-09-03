@@ -1,10 +1,12 @@
-// ADR-166 T3.2 — local host registrar + resolver (G1–G6) against a REAL
-// supervisor child (identity minted into its own state store).
+// ADR-166 T3.2 — local host registrar + resolver (G1–G8) against a REAL
+// supervisor child (identity minted into its own state store), plus fake
+// transports where a scenario needs a scripted identity.
 
 import type { Db } from "@/lib/execution-host/db";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 
 import { asc, eq } from "drizzle-orm";
+import pino, { type Logger } from "pino";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
@@ -34,6 +36,8 @@ import {
   useRealSupervisorUrl,
 } from "@/test-support/real-supervisor";
 
+// The registrar no longer runs any domain sweep; the mock stays as the
+// regression guard that it never does again.
 vi.mock("@/lib/reconcile", () => ({
   runReconcileSweep: vi.fn(async () => ({})),
 }));
@@ -77,6 +81,40 @@ async function healthIdentity(
   return body.host;
 }
 
+function captureLogger(): {
+  logger: Logger;
+  lines: Array<Record<string, unknown>>;
+} {
+  const lines: Array<Record<string, unknown>> = [];
+  const logger = pino(
+    { level: "debug" },
+    { write: (s: string) => void lines.push(JSON.parse(s)) },
+  );
+
+  return { logger, lines };
+}
+
+function deferred<T = void>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+
+  return { promise, resolve };
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, what: string) {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`${what} did not settle in ${ms} ms`)),
+        ms,
+      ),
+    ),
+  ]);
+}
+
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
     databaseName: "eh_registrar_test",
@@ -115,7 +153,7 @@ describe("registrar (real supervisor)", () => {
     expect(rows[0].lastBootId).toBe(identity.bootId);
   });
 
-  it("G2: restart on the same state dir → same row, new boot id, one reconcile", async () => {
+  it("G2: restart on the same state dir → same row, new boot id, restarted:true + execution-host-restarted, NO reconcile sweep", async () => {
     const [before] = await hostRows();
 
     sup = await sup.restart();
@@ -124,7 +162,8 @@ describe("registrar (real supervisor)", () => {
     expect(identity.hostKey).toBe(before.hostKey);
     expect(identity.bootId).not.toBe(before.lastBootId);
 
-    const result = await ensureLocalExecutionHost({ db });
+    const { logger, lines } = captureLogger();
+    const result = await ensureLocalExecutionHost({ db, logger });
 
     expect(result.status).toBe("registered");
     if (result.status !== "registered") return;
@@ -136,13 +175,74 @@ describe("registrar (real supervisor)", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].id).toBe(before.id);
     expect(rows[0].lastBootId).toBe(identity.bootId);
-    expect(vi.mocked(runReconcileSweep)).toHaveBeenCalledTimes(1);
+    expect(
+      lines.filter((l) => l.msg === "execution-host-restarted"),
+    ).toMatchObject([
+      {
+        hostId: before.id,
+        previousBootId: before.lastBootId,
+        bootId: identity.bootId,
+      },
+    ]);
+    // The registrar never runs a domain sweep: the periodic reconcile pass
+    // classifies the runs the dead process owned.
+    expect(vi.mocked(runReconcileSweep)).not.toHaveBeenCalled();
 
-    const again = await ensureLocalExecutionHost({ db });
+    const again = await ensureLocalExecutionHost({ db, logger });
 
     expect(again.status === "registered" && again.action).toBe("touch");
-    expect(vi.mocked(runReconcileSweep)).toHaveBeenCalledTimes(1);
+    expect(again.status === "registered" && again.restarted).toBe(false);
+    expect(
+      lines.filter((l) => l.msg === "execution-host-restarted"),
+    ).toHaveLength(1);
+    expect(vi.mocked(runReconcileSweep)).not.toHaveBeenCalled();
   }, 120_000);
+
+  it("G2b: localHost() re-entered while a restart resolution is in flight resolves (no self-wait) — the removed onRestart sweep regression", async () => {
+    const [row] = await hostRows();
+    // The same key with a NEW boot id: the registrar takes the `restart` branch.
+    const fake = createFakeExecutionHost({ hostKey: row.hostKey });
+    const gate = deferred();
+    const { logger, lines } = captureLogger();
+
+    expect(fake.identity.bootId).not.toBe(row.lastBootId);
+    fake.onCall("health", () => gate.promise);
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+
+    const first = localHost({
+      db,
+      transport: fake.transport,
+      force: true,
+      logger,
+    });
+
+    // The health call is parked: a second resolution now joins the in-flight one.
+    await vi.waitFor(() => expect(fake.callsOf("health")).toHaveLength(1));
+    const second = localHost({ db, transport: fake.transport, logger });
+
+    gate.resolve();
+    const [h1, h2] = await withTimeout(
+      Promise.all([first, second]),
+      5_000,
+      "the concurrent host resolutions",
+    );
+
+    expect(h1.id).toBe(row.id);
+    expect(h2.id).toBe(row.id);
+    expect(h1.lastBootId).toBe(fake.identity.bootId);
+    expect(fake.callsOf("health")).toHaveLength(1);
+    expect(
+      lines.filter((l) => l.msg === "execution-host-restarted"),
+    ).toHaveLength(1);
+    expect(vi.mocked(runReconcileSweep)).not.toHaveBeenCalled();
+
+    // Back on the real child's boot id for the cases below.
+    resetResolverForTests();
+    const back = await ensureLocalExecutionHost({ db });
+
+    expect(back.status === "registered" && back.action).toBe("restart");
+  }, 60_000);
 
   it("G3: a different key with zero live assignments retires the old row and inserts the new one", async () => {
     const [old] = await hostRows();
@@ -230,6 +330,99 @@ describe("registrar (real supervisor)", () => {
     ).toBe("ready");
   }, 120_000);
 
+  it("G7: a refused identity writes readiness and logs the remediation at most once per 30 s", async () => {
+    const active = (await hostRows()).find((r) => r.retiredAt === null)!;
+    const runId = await seedRun(testDatabase.db, {
+      projectId,
+      status: "Running",
+    });
+
+    await db.transaction((tx) =>
+      mintAssignment(tx as unknown as Db, {
+        runId,
+        hostId: active.id,
+        reason: "launch",
+      }),
+    );
+    const stranger = createFakeExecutionHost();
+    const { logger, lines } = captureLogger();
+    let t = Date.now();
+    const now = () => new Date(t);
+    const mismatches = () =>
+      lines.filter((l) => l.msg === "execution-host-identity-mismatch");
+
+    resetRegistrarStateForTests();
+    resetResolverForTests();
+    const first = await ensureLocalExecutionHost({
+      db,
+      transport: stranger.transport,
+      now,
+      logger,
+    });
+
+    expect(first.status).toBe("refused");
+    const afterFirst = (await hostRows()).find((r) => r.id === active.id)!;
+
+    expect(afterFirst.readiness).toBe("unavailable");
+    expect(afterFirst.readinessReason).toBe("identity_changed");
+    expect(mismatches()).toHaveLength(1);
+    expect(mismatches()[0]).toMatchObject({
+      storedHostKey: active.hostKey,
+      observedHostKey: stranger.identity.hostKey,
+      liveRunIds: [runId],
+    });
+
+    t += 1_000;
+    const second = await ensureLocalExecutionHost({
+      db,
+      transport: stranger.transport,
+      now,
+      logger,
+    });
+
+    expect(second.status).toBe("refused");
+    expect(second.status === "refused" && second.liveRunIds).toEqual([runId]);
+    const afterSecond = (await hostRows()).find((r) => r.id === active.id)!;
+
+    expect(afterSecond.updatedAt.getTime()).toBe(
+      afterFirst.updatedAt.getTime(),
+    );
+    expect(mismatches()).toHaveLength(1);
+
+    t += 30_001;
+    const third = await ensureLocalExecutionHost({
+      db,
+      transport: stranger.transport,
+      now,
+      logger,
+    });
+
+    expect(third.status).toBe("refused");
+    const afterWindow = (await hostRows()).find((r) => r.id === active.id)!;
+
+    expect(afterWindow.updatedAt.getTime()).toBeGreaterThan(
+      afterFirst.updatedAt.getTime(),
+    );
+    expect(mismatches()).toHaveLength(2);
+
+    // Cleanup: the run finishes; the sup2 identity registers again → ready.
+    await db.transaction((tx) =>
+      releaseAssignmentForRun(tx as unknown as Db, runId, "test"),
+    );
+    await db
+      .update(schema.runs)
+      .set({ status: "Done" })
+      .where(eq(schema.runs.id, runId));
+    resetRegistrarStateForTests();
+    resetResolverForTests();
+    const back = await ensureLocalExecutionHost({ db });
+
+    expect(back.status).toBe("registered");
+    expect((await hostRows()).find((r) => r.id === active.id)?.readiness).toBe(
+      "ready",
+    );
+  }, 60_000);
+
   it("G5: an unreachable child marks readiness unavailable at most once per 30 s and never throws", async () => {
     await sup2!.kill();
     resetRegistrarStateForTests();
@@ -294,4 +487,131 @@ describe("registrar (real supervisor)", () => {
     await localHost(opts);
     expect(fake.callsOf("health")).toHaveLength(2);
   });
+
+  it("G8: two concurrent registrations on an empty table → one row, both registered, the loser lands on touch through the 23505 retry", async () => {
+    // Empty = no active local row (the partial unique index's domain).
+    for (const row of await hostRows()) {
+      if (row.retiredAt === null) {
+        await db
+          .update(schema.executionHosts)
+          .set({ retiredAt: new Date() })
+          .where(eq(schema.executionHosts.id, row.id));
+      }
+    }
+    expect((await hostRows()).filter((r) => r.retiredAt === null)).toHaveLength(
+      0,
+    );
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+
+    const fake = createFakeExecutionHost();
+    // Both racers read "no active row" BEFORE either inserts: the INSERT of
+    // each transaction waits at a barrier the second arrival releases.
+    let arrived = 0;
+    const waiters: Array<() => void> = [];
+    const barrier = () =>
+      new Promise<void>((resolve) => {
+        arrived += 1;
+        if (arrived >= 2) {
+          for (const wake of waiters.splice(0)) wake();
+          resolve();
+
+          return;
+        }
+        waiters.push(resolve);
+      });
+    const gatedInsert = (tx: Db): Db =>
+      new Proxy(tx, {
+        get(target, prop, receiver) {
+          if (prop !== "insert") return Reflect.get(target, prop, receiver);
+
+          return (table: unknown) => {
+            const builder = (
+              target as unknown as { insert: (t: unknown) => any }
+            ).insert(table);
+
+            return {
+              values: (values: unknown) => {
+                const withValues = builder.values(values);
+
+                return {
+                  returning: (...args: unknown[]) => {
+                    const query = withValues.returning(...args);
+
+                    return {
+                      then: (
+                        onFulfilled?: (v: unknown) => unknown,
+                        onRejected?: (e: unknown) => unknown,
+                      ) =>
+                        barrier()
+                          .then(() => query)
+                          .then(onFulfilled, onRejected),
+                    };
+                  },
+                };
+              },
+            };
+          };
+        },
+      });
+    const gatedDb = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop !== "transaction") return Reflect.get(target, prop, receiver);
+
+        return (cb: (tx: Db) => Promise<unknown>) =>
+          (
+            target as unknown as {
+              transaction: (
+                c: (tx: Db) => Promise<unknown>,
+              ) => Promise<unknown>;
+            }
+          ).transaction((tx) => cb(gatedInsert(tx)));
+      },
+    }) as Db;
+    const { logger, lines } = captureLogger();
+
+    const [a, b] = await withTimeout(
+      Promise.all([
+        ensureLocalExecutionHost({
+          db: gatedDb,
+          transport: fake.transport,
+          logger,
+        }),
+        ensureLocalExecutionHost({
+          db: gatedDb,
+          transport: fake.transport,
+          logger,
+        }),
+      ]),
+      15_000,
+      "the racing registrations",
+    );
+
+    expect(a.status).toBe("registered");
+    expect(b.status).toBe("registered");
+    const actions = [a, b]
+      .map((r) => (r.status === "registered" ? r.action : r.status))
+      .sort();
+
+    expect(actions).toEqual(["insert", "touch"]);
+    const active = (await hostRows()).filter((r) => r.retiredAt === null);
+
+    expect(active).toHaveLength(1);
+    expect(active[0].hostKey).toBe(fake.identity.hostKey);
+    expect(a.status === "registered" && a.host.id).toBe(active[0].id);
+    expect(b.status === "registered" && b.host.id).toBe(active[0].id);
+    // One insert (the row writer and the registrar both log it for the same
+    // host id); the loser's retry logged nothing new.
+    const registered = lines.filter(
+      (l) => l.msg === "execution-host-registered",
+    );
+
+    expect(registered.length).toBeGreaterThanOrEqual(1);
+    expect(new Set(registered.map((l) => l.hostId))).toEqual(
+      new Set([active[0].id]),
+    );
+    expect(registered.every((l) => l.hostKey === fake.identity.hostKey)).toBe(
+      true,
+    );
+  }, 60_000);
 });

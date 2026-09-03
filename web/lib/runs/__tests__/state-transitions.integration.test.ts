@@ -16,6 +16,7 @@ import {
 import { getActiveTakeover } from "@/lib/flows/graph/ledger";
 import {
   bumpKeepalive,
+  claimAgentIdleResumeInTransaction,
   crashResumedRun,
   failResumedRun,
   markAbandoned,
@@ -26,6 +27,8 @@ import {
   markResumedFromWait,
   markReturnedToRunning,
   markReworkFromReview,
+  markSyncReviewFromNeedsInput,
+  markSyncReviewFromRunning,
   markWaitingOnChildren,
   releaseHumanWorking,
   rollbackResumeFromWait,
@@ -642,12 +645,14 @@ describe("state-transitions — execution-assignment placement (ADR-166)", () =>
       .orderBy(schema.executionAssignments.epoch);
   }
 
-  it("markResumed mints an active `resume` assignment", async () => {
+  it("markResumed mints an active `resume` assignment and returns it", async () => {
     const runId = await seedRun("NeedsInputIdle", {
       checkpointAt: new Date(Date.now() - 60_000),
     });
 
-    expect((await markResumed(runId, { db })).ok).toBe(true);
+    const claim = await markResumed(runId, { db });
+
+    expect(claim.ok).toBe(true);
     const rows = await assignmentsOf(runId);
 
     expect(rows).toHaveLength(1);
@@ -657,6 +662,108 @@ describe("state-transitions — execution-assignment placement (ADR-166)", () =>
       placementReason: "resume",
     });
     expect((await readRun(runId)).executionAssignmentId).toBe(rows[0].id);
+    // The driver binds to the row the claim minted, never to a later lookup.
+    expect(claim.ok && claim.assignment?.id).toBe(rows[0].id);
+  });
+
+  it("claimAgentIdleResumeInTransaction: NeedsInputIdle → Running mints `resume` inside the caller's tx", async () => {
+    const runId = await seedRun("NeedsInputIdle", {
+      checkpointAt: new Date(),
+      resumeRequestedAt: new Date(),
+    });
+
+    const claim = await db.transaction((tx) =>
+      claimAgentIdleResumeInTransaction(tx, runId),
+    );
+
+    expect(claim.ok).toBe(true);
+    const after = await readRun(runId);
+
+    expect(after.status).toBe("Running");
+    expect(after.resumeRequestedAt).toBeNull();
+    expect(after.checkpointAt).toBeNull();
+    const rows = await assignmentsOf(runId);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      epoch: 1,
+      state: "active",
+      placementReason: "resume",
+    });
+    expect(claim.ok && claim.assignment?.id).toBe(rows[0].id);
+    expect(after.executionAssignmentId).toBe(rows[0].id);
+  });
+
+  it("claimAgentIdleResumeInTransaction: a lost CAS mints nothing", async () => {
+    const runId = await seedRun("Running");
+
+    const claim = await db.transaction((tx) =>
+      claimAgentIdleResumeInTransaction(tx, runId),
+    );
+
+    expect(claim.ok).toBe(false);
+    expect(await assignmentsOf(runId)).toHaveLength(0);
+  });
+
+  it("markWaitingOnChildren releases the driver generation in the SAME tx as the park", async () => {
+    const runId = await seedRun("Running");
+
+    await fakeExecutionHosts(db, { runId });
+    expect((await markWaitingOnChildren(runId, { db })).ok).toBe(true);
+
+    const rows = await assignmentsOf(runId);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      state: "released",
+      releasedReason: "waiting_on_children",
+    });
+    expect((await readRun(runId)).status).toBe("WaitingOnChildren");
+  });
+
+  it("a lost markWaitingOnChildren CAS releases nothing", async () => {
+    const runId = await seedRun("NeedsInput");
+
+    await fakeExecutionHosts(db, { runId });
+    expect((await markWaitingOnChildren(runId, { db })).ok).toBe(false);
+    expect((await assignmentsOf(runId))[0]).toMatchObject({ state: "active" });
+  });
+
+  it("markSyncReviewFromRunning releases `sync_finished` in the flip tx", async () => {
+    const runId = await seedRun("Running");
+
+    await fakeExecutionHosts(db, { runId });
+    expect((await markSyncReviewFromRunning(runId, { db })).ok).toBe(true);
+    expect((await readRun(runId)).status).toBe("Review");
+    expect((await assignmentsOf(runId))[0]).toMatchObject({
+      state: "released",
+      releasedReason: "sync_finished",
+    });
+  });
+
+  it("markSyncReviewFromNeedsInput releases `sync_finished` in the flip tx", async () => {
+    const runId = await seedRun("NeedsInputIdle");
+
+    await fakeExecutionHosts(db, { runId });
+    expect(
+      (await markSyncReviewFromNeedsInput(runId, "NeedsInputIdle", { db })).ok,
+    ).toBe(true);
+    expect((await readRun(runId)).status).toBe("Review");
+    expect((await assignmentsOf(runId))[0]).toMatchObject({
+      state: "released",
+      releasedReason: "sync_finished",
+    });
+  });
+
+  it("a lost markSyncReviewFrom* CAS releases nothing", async () => {
+    const runId = await seedRun("Review");
+
+    await fakeExecutionHosts(db, { runId });
+    expect((await markSyncReviewFromRunning(runId, { db })).ok).toBe(false);
+    expect(
+      (await markSyncReviewFromNeedsInput(runId, "NeedsInput", { db })).ok,
+    ).toBe(false);
+    expect((await assignmentsOf(runId))[0]).toMatchObject({ state: "active" });
   });
 
   it("a lost markResumed claim mints nothing", async () => {
@@ -699,12 +806,15 @@ describe("state-transitions — execution-assignment placement (ADR-166)", () =>
       .set({ status: "HumanWorking" })
       .where(eq(runs.id, runId));
 
-    expect((await markReturnedToRunning(runId, { db })).ok).toBe(true);
+    const returned = await markReturnedToRunning(runId, { db });
+
+    expect(returned.ok).toBe(true);
     const rows = await assignmentsOf(runId);
 
     expect(rows.map((r) => [r.epoch, r.state, r.placementReason])).toEqual([
       [1, "superseded", "resume"],
       [2, "active", "rework_return"],
     ]);
+    expect(returned.ok && returned.assignment?.id).toBe(rows[1].id);
   });
 });

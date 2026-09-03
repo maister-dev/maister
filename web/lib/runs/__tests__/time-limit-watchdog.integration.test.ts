@@ -379,6 +379,19 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
 
     expect(attempt.status).toBe("Failed");
     expect(attempt.errorCode).not.toBeNull();
+    // ADR-166 D7: the terminal flip ends the run's driver generation in the
+    // same tx (the lazily placed legacy generation, here).
+    const assignments = await db
+      .select({
+        state: schema.executionAssignments.state,
+        releasedReason: schema.executionAssignments.releasedReason,
+      })
+      .from(schema.executionAssignments)
+      .where(eq(schema.executionAssignments.runId, runId));
+
+    expect(assignments).toEqual([
+      { state: "released", releasedReason: "failed" },
+    ]);
   }, 60_000);
 
   it("does NOT kill a run under the cap", async () => {

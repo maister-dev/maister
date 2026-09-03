@@ -9,17 +9,21 @@ import {
   scratchRuns as scratchRunsTable,
   workspaces as workspacesTable,
 } from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 import { sendScratchPromptAndProjectEvents } from "@/lib/scratch-runs/events";
 import { checkSupervisorHealth, listSessions } from "@/lib/supervisor-client";
 
 // ADR-166 (strict): the wire client no longer exports a bare `createSession`;
 // the execution-host module mock still routes the fake's create to this spy.
-const { createSession } = vi.hoisted(() => ({
+// `releaseAssignmentForRunSpy` observes the claim rollback after a failed
+// create (the module mock's own release is an inert stub).
+const { createSession, releaseAssignmentForRunSpy } = vi.hoisted(() => ({
   createSession: vi.fn(async () => ({
     sessionId: "sup-new",
     pid: 123,
     acpSessionId: "acp-new",
   })),
+  releaseAssignmentForRunSpy: vi.fn(async () => null),
 }));
 
 type Row = Record<string, unknown>;
@@ -80,12 +84,23 @@ const selectChain = () => ({
   },
 });
 
+// `where` ignores its predicate (every row of the table matches); a status
+// CAS therefore "wins" whenever the table is non-empty, and `returning` hands
+// the touched rows back the way drizzle does.
 const updateChain = (table: unknown) => ({
   set: (vals: Row) => ({
-    where: async () => {
-      for (const row of dbState.tables[tableOf(table)]) {
+    where: () => {
+      const rows = dbState.tables[tableOf(table)];
+
+      for (const row of rows) {
         Object.assign(row, vals);
       }
+      const result: Promise<void> & { returning?: () => Promise<Row[]> } =
+        Promise.resolve();
+
+      result.returning = async () => rows;
+
+      return result;
     },
   }),
 });
@@ -173,8 +188,23 @@ vi.mock("@/lib/execution-host", async () => {
   const { executionHostModuleMock } = await import(
     "@/test-support/execution-host-module-mock"
   );
+  const mock = executionHostModuleMock(sup as never);
+  // The driver binding (`executionFor`) composes the mock's bound client with
+  // its admin surface until the module mock exports it itself.
+  const hosts = {
+    ...mock.executionHosts,
+    executionFor: async (runId: string) => ({
+      client: await mock.executionHosts.forRun(runId),
+      admin: mock.executionHosts.local(),
+    }),
+  };
 
-  return executionHostModuleMock(sup as never);
+  return {
+    ...mock,
+    executionHosts: hosts,
+    createExecutionHosts: () => hosts,
+    releaseAssignmentForRun: releaseAssignmentForRunSpy,
+  };
 });
 
 vi.mock("@/lib/scratch-runs/events", () => ({
@@ -353,6 +383,7 @@ beforeEach(() => {
   vi.mocked(sendScratchPromptAndProjectEvents).mockResolvedValue({
     stopReason: "end_turn",
   });
+  releaseAssignmentForRunSpy.mockClear();
 });
 
 describe("POST /api/scratch-runs/[runId]/recover", () => {
@@ -430,6 +461,54 @@ describe("POST /api/scratch-runs/[runId]/recover", () => {
       dialogStatus: "WaitingForUser",
       supervisorSessionId: "sup-new",
     });
+  });
+
+  // ADR-166: the claim (CAS + `scratch_recover` mint) commits BEFORE the create;
+  // a failed create rolls it back — Running → the observed status, the minted
+  // generation released — and the stored supervisor session id is untouched.
+  it("rolls the claim back when the session create fails", async () => {
+    const runId = seedScratchRun();
+
+    vi.mocked(createSession).mockRejectedValueOnce(
+      new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor 503"),
+    );
+
+    const res = await invokePost(runId, { prompt: "continue from here" });
+
+    expect(res.status).toBe(503);
+    expect(dbState.tables.runs[0]).toMatchObject({
+      status: "Crashed",
+      currentStepId: null,
+    });
+    expect(dbState.tables.scratch_runs[0]).toMatchObject({
+      dialogStatus: "Crashed",
+      supervisorSessionId: "sup-old",
+    });
+    expect(releaseAssignmentForRunSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      runId,
+      "scratch_recover_rollback",
+    );
+    expect(sendScratchPromptAndProjectEvents).not.toHaveBeenCalled();
+  });
+
+  // ADR-166 E-EH-11: a fenced create means a newer generation owns the run —
+  // nothing is rolled back or crashed; the route answers 409.
+  it("yields without a rollback when the session create is fenced", async () => {
+    const runId = seedScratchRun();
+
+    vi.mocked(createSession).mockRejectedValueOnce(
+      new MaisterError("CONFLICT", "fenced", {
+        details: { reason: "assignment_fenced", runId },
+      }),
+    );
+
+    const res = await invokePost(runId, { prompt: "continue from here" });
+
+    expect(res.status).toBe(409);
+    expect(dbState.tables.runs[0].status).toBe("Running");
+    expect(releaseAssignmentForRunSpy).not.toHaveBeenCalled();
+    expect(sendScratchPromptAndProjectEvents).not.toHaveBeenCalled();
   });
 
   it("requires a prompt for recovery", async () => {

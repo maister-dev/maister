@@ -7,7 +7,6 @@ import {
   scratchRuns as scratchRunsTable,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
-import { cancelPrompt } from "@/lib/supervisor-client";
 
 type Row = Record<string, unknown>;
 type Tables = { runs: Row[]; scratch_runs: Row[] };
@@ -44,24 +43,23 @@ vi.mock("@/lib/authz", () => ({
   })),
 }));
 
-vi.mock("@/lib/supervisor-client", () => ({
-  checkSupervisorHealth: vi.fn(),
-  createSession: vi.fn(),
-  deleteSession: vi.fn(async () => undefined),
-  sendPrompt: vi.fn(),
-  cancelPrompt: vi.fn(async () => ({ cancelled: true })),
+// ADR-166 (strict): the wire client no longer exports a bare `cancelPrompt`;
+// the execution-host module mock routes the bound client's `session.cancel` to
+// this spy so the wire-level assertions keep their shape.
+const { cancelPrompt } = vi.hoisted(() => ({
+  cancelPrompt: vi.fn(async (_sessionId: string) => ({ cancelled: true })),
 }));
 
-// ADR-166: the service talks to the host through the execution-host client;
-// route every host-bound call to this suite's supervisor-client mocks so the
-// wire-level assertions stay as they are.
+vi.mock("@/lib/supervisor-client", () => ({
+  checkSupervisorHealth: vi.fn(),
+}));
+
 vi.mock("@/lib/execution-host", async () => {
-  const sup = await import("@/lib/supervisor-client");
   const { executionHostModuleMock } = await import(
     "@/test-support/execution-host-module-mock"
   );
 
-  return executionHostModuleMock(sup as never);
+  return executionHostModuleMock({ cancelPrompt });
 });
 
 vi.mock("@/lib/scheduler", () => ({

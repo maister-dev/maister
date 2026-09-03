@@ -12,7 +12,6 @@ import { preserveWorktree } from "@/lib/gc/preserve";
 import { worktreesRoot } from "@/lib/instance-config";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
 import { cleanupLocalPackageAssistantMaterialization } from "@/lib/scratch-runs/local-package-materialization";
-import { deleteSession } from "@/lib/supervisor-client";
 import { removeOwnedWorktree } from "@/lib/worktree";
 import { stopThenDrop } from "@/lib/workbench-lifecycle/service";
 
@@ -85,20 +84,19 @@ vi.mock("@/lib/instance-config", () => ({
   worktreesRoot: vi.fn(() => "/tmp/maister-worktrees"),
 }));
 
-vi.mock("@/lib/supervisor-client", () => ({
-  deleteSession: vi.fn(async () => undefined),
+// ADR-166 (strict): the wire client no longer exports a bare `deleteSession`;
+// the execution-host module mock routes the bound client's `session.delete` to
+// this spy so the wire-level assertions keep their shape.
+const { deleteSession } = vi.hoisted(() => ({
+  deleteSession: vi.fn(async (_sessionId: string) => undefined),
 }));
 
-// ADR-166: the service talks to the host through the execution-host client;
-// route every host-bound call to this suite's supervisor-client mocks so the
-// wire-level assertions stay as they are.
 vi.mock("@/lib/execution-host", async () => {
-  const sup = await import("@/lib/supervisor-client");
   const { executionHostModuleMock } = await import(
     "@/test-support/execution-host-module-mock"
   );
 
-  return executionHostModuleMock(sup as never);
+  return executionHostModuleMock({ deleteSession });
 });
 
 vi.mock("@/lib/worktree", () => ({
@@ -400,6 +398,44 @@ describe("POST /api/scratch-runs/[runId]/discard", () => {
       workspaceRemoved: false,
     });
     expect(dbState.tables.runs[0].status).toBe("Abandoned");
+  });
+
+  // ADR-166 E-EH-11: a fenced `session.delete` means a newer driver generation
+  // owns the run — the discard yields (409): no status write, no worktree
+  // removal, no materialization cleanup.
+  it("a fenced session delete yields with 409 and removes nothing", async () => {
+    const runId = seedScratchRun({
+      projectId: null,
+      localPackageId: "lp-1",
+      createdByUserId: "user-1",
+      workspace: false,
+      supervisorSessionId: "sup-live",
+    });
+
+    dbState.tables.local_packages.push({
+      id: "lp-1",
+      workingDir: "/local-packages/lp-1",
+    });
+    deleteSession.mockRejectedValueOnce(
+      new MaisterError("CONFLICT", "fenced", {
+        details: { reason: "assignment_fenced", runId },
+      }),
+    );
+
+    const res = await invokePost(runId);
+
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { code: string }).code).toBe("CONFLICT");
+    expect(dbState.tables.runs[0]).toMatchObject({
+      status: "Running",
+      endedAt: null,
+    });
+    expect(dbState.tables.scratch_runs[0]).toMatchObject({
+      dialogStatus: "Running",
+      supervisorSessionId: "sup-live",
+    });
+    expect(removeOwnedWorktree).not.toHaveBeenCalled();
+    expect(cleanupLocalPackageAssistantMaterialization).not.toHaveBeenCalled();
   });
 
   it("rejects a project-less assistant drop by a non-owner before any side-effect", async () => {

@@ -40,14 +40,17 @@ simultaneous hosts, no placement, no host UI (ADR-166 §D12).
 - **Host state store** — the supervisor-private `node:sqlite` file
   `<MAISTER_EXECUTION_HOST_STATE_DIR>/state.sqlite` (default
   `<MAISTER_RUNTIME_ROOT>/.maister/execution-host/`) holding
-  `host_identity`, `run_fences`, `workspaces`, and `command_receipts`. The
+  `host_identity`, `run_fences`, `workspaces`, and `command_receipts`
+  (schema `user_version` 1 — an older store is rebuilt in place at open). The
   web tier never reads it.
 - **Execution assignment** — one row in `execution_assignments` per
   `(run, epoch)`: `state ∈ {active, superseded, released}`,
   `placement_reason` (ten tokens), the optional `execution_workspace_id` +
   `workspace_adopted_at` handle, `superseded_by_id`, `released_reason`,
-  `ended_at`. `runs.execution_assignment_id` points at the active one;
-  `run_sessions.execution_assignment_id` (updated per spawn) and
+  `ended_at`. `runs.execution_assignment_id` points at the LATEST minted
+  assignment — it may be `released`; only `execution_assignments.state` says
+  which one is active. `run_sessions.execution_assignment_id` (updated per
+  spawn) and
   `node_attempts.execution_assignment_id` (stamped at attempt start,
   immutable) attribute sessions and attempts. ERD:
   [`../db/execution-hosts-domain.md`](../db/execution-hosts-domain.md).
@@ -58,10 +61,15 @@ simultaneous hosts, no placement, no host UI (ADR-166 §D12).
 - **Fence** — `{hostKey, assignmentId, assignmentEpoch, runId}` on every
   enveloped command. The host keeps the per-run high-water in
   `run_fences(run_id, assignment_id, epoch)` and rejects `epoch <
-high-water` with 409 `FENCED`.
+high-water` with 409 `FENCED`. Rules in order: `host_mismatch` →
+  `run_mismatch` → `assignment_fenced` → `assignment_mismatch` — the run
+  binding is checked BEFORE the epoch, so a wrong-run fence can never advance
+  or evict another run.
 - **Command** — one row in `execution_commands` (the wire `command.id`):
   `kind` (eight tokens), `assignment_epoch`, `target_session_id?`, a
-  REDACTED `payload`, `state ∈ {queued, delivering, accepted, succeeded,
+  `payload` projected through a per-kind ALLOW-list (ids, names, adapter/
+  model, counts, `has*` flags — nothing else is stored), `state ∈ {queued,
+delivering, accepted, succeeded,
 failed, fenced}`, `attempts` / `max_attempts` / `next_attempt_at`,
   `delivering_since`, `accepted_at`, `completed_at`, `result`, `last_error`,
   `driverless`.
@@ -77,15 +85,29 @@ body_json, received_at, completed_at)`; readable through
   web folds as `turn_lost` without re-sending) and replayed verbatim on a
   duplicate id with `X-Maister-Command-Replayed: true`.
 - **Execution workspace handle** — `executionWorkspaceId = "ws_<uuid>"`,
-  host-scoped, keyed `(runId, realpath)` in the host's `workspaces` table
-  with `kind ∈ {git_worktree, repo_checkout, directory}`, `path`,
-  `repo_path?`, `run_dir`, `context_mounts?`, `adopted_at`, `released_at?`.
-  Minted by `POST /workspaces/adopt` — the ONLY path-bearing route.
+  host-scoped, keyed `(runId, realpath)` among ACTIVE rows of the host's
+  `workspaces` table (partial unique index `workspaces_active_uq WHERE
+released_at IS NULL`; a released row stays as history) with `kind ∈
+{git_worktree, repo_checkout, directory}`, `path`, `repo_path?`, `run_dir`,
+  `context_mounts?`, `adopted_at`, `released_at?`. Minted by
+  `POST /workspaces/adopt` — the ONLY path-bearing route.
 - **Bound client** — the web-side `BoundClient` returned by
-  `executionHosts.forAssignment(assignment)`: every method is a thin wrapper
-  over one `issue()` that writes the ledger row, delivers through the
-  `ExecutionHostTransport`, and acknowledges. `HostAdminClient`
-  (`executionHosts.local()`) serves health/diagnostics/admin surfaces.
+  `executionHosts.forAssignment(assignment)` / `executionFor(runId,
+{assignmentId})`: every method is a thin wrapper over one `issue()` that
+  writes the ledger row, delivers through the `ExecutionHostTransport`, and
+  acknowledges. Drivers bind by assignment: every claim transition returns
+  the assignment it minted and the driver binds THAT row; the graph runner
+  reads `runs.execution_assignment_id` at entry and binds that id lazily at
+  the first agent-kind need. `forRun(runId)` (no id) is for non-driver
+  callers (HITL respond, sweeper, node interrupt): it binds the ACTIVE
+  assignment; with `teardown:true` the newest one even if `released`; for a
+  run that was NEVER placed (no assignment history) it mints lazily
+  (`legacy_backfill`, WARN); for a placed run with no active assignment it
+  REFUSES `PRECONDITION {reason:"assignment_missing"}` — a re-entry must mint
+  inside its own claim. That re-check runs under the run row lock, so two
+  concurrent lazy mints reuse one row instead of superseding.
+  `HostAdminClient` (`executionHosts.local()`) serves health/diagnostics/
+  admin surfaces.
 
 ## State machine — host registration
 
@@ -98,18 +120,30 @@ the log marker they emit.
 stateDiagram-v2
     [*] --> none
     none --> registered : health OK, no active local row — insert (execution-host-registered)
-    registered --> registered : same key — touch last_seen_at, last_boot_id, capabilities, readiness=ready — bootId changed emits execution-host-restarted + one reconcile sweep
-    registered --> retired : different key AND old row owns zero active assignments of non-terminal runs (execution-host-retired-idle)
+    registered --> registered : same key — touch last_seen_at, last_boot_id, capabilities, readiness=ready — a changed bootId logs execution-host-restarted and returns restarted=true, nothing else
+    registered --> retired : different key AND old row owns zero active assignments of driver-owned runs (execution-host-retired-idle)
     retired --> registered : new row inserted for the new key
-    registered --> refused : different key AND old row still owns non-terminal runs — rows unchanged, readiness=unavailable, readiness_reason=identity_changed
-    refused --> registered : the old key is pinned on the new supervisor, or the listed runs are stopped or abandoned
+    registered --> refused : different key AND old row still owns driver-owned runs — rows unchanged, readiness=unavailable, readiness_reason=identity_changed (execution-host-identity-mismatch)
+    refused --> refused : every resolution re-applies the full policy — one readiness write + one ERROR log per 30 s window per host
+    refused --> registered : the old key is pinned on the new supervisor (touch / restart)
+    refused --> retired : the listed runs stopped or abandoned — the old row owns nothing, retire+insert
     registered --> unavailable : health unreachable or malformed — readiness=unavailable at most once per 30 s
-    unavailable --> registered : health OK again with the same key
+    unavailable --> registered : health OK again with the same key (touch / restart)
+    unavailable --> retired : health OK with a different key AND the old row owns nothing — retire+insert
+    unavailable --> refused : health OK with a different key AND the old row still owns driver-owned runs
 ```
 
-While `refused` or `unavailable`, every command issue fails
-`EXECUTOR_UNAVAILABLE` (`details.reason="host_identity_mismatch"` for the
-refused case); launches keep today's 503 behavior.
+The resolver (`localHost()`) is a pure lookup — one health call per 30 s
+window, single-flight under concurrency — and never awaits a domain sweep: a
+`restarted:true` registration is only logged, and the periodic `system_sweep`
+reconcile (≤ 60 s) classifies the runs the old process owned. "Owns" means an
+`active` assignment of a run in a driver-owned status (`Pending | Running |
+NeedsInput`) — the same set the sweep backstop never releases. While
+`refused` or `unavailable`, every command issue fails `EXECUTOR_UNAVAILABLE`
+(`details.reason="host_identity_mismatch"` for the refused case, else the
+readiness reason); launches keep today's 503 behavior. The `refuse` branch is
+throttled exactly like `unavailable`: one readiness write and one
+`execution-host-identity-mismatch` ERROR log per 30 s window per host.
 
 ## State machine — execution assignment
 
@@ -122,9 +156,17 @@ stateDiagram-v2
     released --> [*]
 ```
 
-`released` is advisory for fencing (the next mint supersedes anything); the
-`system_sweep` backstop releases an `active` assignment whose run is parked
-or terminal (`released_reason='sweep'`, WARN once).
+A later mint supersedes only the ACTIVE row; a `released` row stays
+`released`, its `released_reason` (`checkpointed`, `crashed`, `abandoned`,
+`run_terminal`, `sweep`, …) kept as history, so a run's assignment chain
+reads as a sequence of generations. `released` is advisory for fencing: the
+host fences by epoch, not by state. The `system_sweep` backstop releases an
+`active` assignment older than 60 s only when its run is in a status with no
+owned driver — `NeedsInputIdle | HumanWorking | WaitingOnChildren | Review |
+Crashed | Done | Abandoned | Failed` (`released_reason='sweep'`, WARN once);
+`Pending` (a queued launch/recover whose claim already minted the assignment
+for the driver that will pick it up), `Running`, and `NeedsInput` are OWNED
+and never released.
 
 ## State machine — command
 
@@ -137,12 +179,14 @@ stateDiagram-v2
     [*] --> queued : issue() — row committed BEFORE any wire call
     queued --> delivering : claim (attempts+1, delivering_since)
     delivering --> succeeded : 2xx on an immediate kind
-    delivering --> accepted : prompt — SSE session.command accepted OR receipt phase accepted
-    delivering --> queued : unknown-outcome failure while attempts below max (next_attempt_at backoff)
+    delivering --> accepted : prompt — the SSE session.command accepted signal (the only one)
+    delivering --> queued : unknown-outcome failure while attempts below max (next_attempt_at backoff) — a driverless kind stays queued after ONE unknown outcome (delivery_deferred, recovery re-delivers)
+    delivering --> queued : recovery — a delivering row the host has NO receipt for (then the W1 rules)
     delivering --> failed : definitive error OR attempts exhausted
     delivering --> fenced : 409 FENCED
     accepted --> succeeded : HTTP 200 OR SSE session.command completed OR receipt completed
-    accepted --> failed : completion error, receipt turn_lost, or receipt 404
+    accepted --> failed : completion error, receipt turn_lost, or an accepted row with no receipt (receipt_missing)
+    accepted --> fenced : FENCED rejection receipt OR SSE session.command completed with status fenced
     queued --> fenced : assignment not admissible at delivery time (no wire call)
     queued --> failed : startup recovery of a non-driverless kind (ORPHANED)
     succeeded --> [*]
@@ -179,9 +223,9 @@ sequenceDiagram
     WEB->>SUP: GET /health
     SUP-->>WEB: 200 {…, host:{hostKey, bootId, protocolVersion}}
     WEB->>PG: SELECT … FOR UPDATE active local_direct row
-    WEB->>PG: apply registration policy (insert / touch / retire+insert / refuse)
-    WEB->>WEB: recoverExecutionCommands()
-    WEB->>WEB: adoptLegacyActiveRuns()
+    WEB->>PG: apply registration policy (insert / touch / restart / retire+insert / refuse) — never a domain sweep
+    WEB->>WEB: recoverExecutionCommands({graceMs:0})
+    WEB->>WEB: reportLegacyActiveRuns() — legacy-runs-unplaced, once per run
     WEB->>WEB: runResumeRecoverySweep → runTakeoverReturnRecoverySweep → runReconcileSweep
 ```
 
@@ -200,11 +244,11 @@ sequenceDiagram
     participant TR as Local-direct transport
     participant SUP as Supervisor
     participant AD as Adapter
-    DRV->>LED: launch tx: runs + run_sessions + mintAssignment(epoch 1, launch)
+    DRV->>LED: launch tx: runs + run_sessions + mintAssignment(epoch 1, launch) — the claim returns the minted row, the driver binds forAssignment(minted)
     DRV->>LED: issue workspace.adopt (queued)
     LED->>TR: deliver (delivering)
-    TR->>SUP: POST /workspaces/adopt {envelope, payload:{runId, projectSlug, kind, path, repoPath?}}
-    SUP->>SUP: fence check → validate path per kind → upsert (runId, realpath)
+    TR->>SUP: POST /workspaces/adopt {envelope, payload:{runId, projectSlug, kind, path, repoPath?, contextMounts?}}
+    SUP->>SUP: fence check → validate path per kind (+ every contextMounts[] entry as a repo checkout) → reuse the ACTIVE handle for (runId, realpath) or mint a new one
     SUP-->>TR: 200 {executionWorkspaceId, kind, replayed:false}
     TR-->>LED: ack tx: succeeded + assignment.execution_workspace_id
     DRV->>LED: issue session.create (queued)
@@ -244,6 +288,7 @@ sequenceDiagram
     participant TR as Bound client
     participant SUP as Supervisor
     UI->>RT: {optionId}
+    RT->>TR: executionHosts.forRun(runId) — binds the ACTIVE assignment, never mints an epoch
     RT->>PG: Phase 1 tx: SELECT hitl_requests FOR UPDATE, guard status, store response, INSERT execution_commands(session.input, queued)
     RT->>TR: deliver session.input {action:select, requestId, optionId}
     TR->>SUP: POST /sessions/{id}/input {envelope, payload}
@@ -264,8 +309,8 @@ sequenceDiagram
 
 ### Keepalive checkpoint → idle → resume mint → stale checkpoint FENCED → old driver yields
 
-The end-to-end fencing scenario: a driver whose assignment was superseded is
-rejected at the host and writes nothing.
+The end-to-end fencing scenario: a driver whose assignment generation has
+ended is rejected at the host and writes nothing.
 
 ```mermaid
 sequenceDiagram
@@ -277,17 +322,19 @@ sequenceDiagram
     SW->>LED: issue session.checkpoint under assignment A1 (epoch 1)
     LED->>SUP: POST /sessions/{s1}/checkpoint {fence:{A1, epoch 1}}
     SUP-->>LED: 200 {alreadyCheckpointed:false} — SSE session.exited {reason:checkpoint}
-    SW->>LED: markCheckpointed → NeedsInputIdle — releaseAssignmentForRun(A1, 'checkpoint')
-    RS->>LED: respond → resumeRun claim tx: mintAssignment(A2, epoch 2, resume) — handle copied forward
+    SW->>LED: markCheckpointed → NeedsInputIdle — releaseAssignmentForRun(A1, 'checkpointed')
+    RS->>LED: respond → resumeRun claim tx: mintAssignment(A2, epoch 2, resume) — A1 stays released, handle copied forward
     RS->>LED: issue session.create {resumeSessionId} under A2 (adopt skipped — handle present)
     LED->>SUP: POST /sessions {fence:{A2, epoch 2}}
     SUP->>SUP: run_fences[run] = (A2, 2)
     SUP-->>LED: 201
     SW->>LED: a STALE retry: session.checkpoint under A1 (epoch 1)
-    LED->>LED: admission: A1 is superseded → local fenced, no wire call
-    Note over SW,SUP: if the stale command had reached the wire, epoch 1 below high-water 2 → 409 FENCED {reason:assignment_fenced, commandEpoch:1, hostEpoch:2}
-    LED-->>SW: CONFLICT {details.reason:assignment_fenced}
+    LED->>LED: admission: A1 is released and checkpoint is a teardown kind → admitted, goes to the wire
+    LED->>SUP: POST /sessions/{s1}/checkpoint {fence:{A1, epoch 1}}
+    SUP-->>LED: 409 FENCED {reason:assignment_fenced, commandEpoch:1, hostEpoch:2}
+    LED-->>SW: CONFLICT {details.reason:assignment_fenced} — row fenced
     SW->>SW: driver-yielded — no run, attempt, HITL, or scratch write
+    Note over SW,SUP: local admission fencing (no wire call) happens only for a superseded row — a stale command issued under an assignment that was still active when the newer mint landed
 ```
 
 ### Web crash windows W1 / W2 / W4 and their recovery
@@ -301,7 +348,7 @@ sequenceDiagram
     participant REC as recoverExecutionCommands()
     participant LED as Ledger
     participant SUP as Supervisor
-    REC->>LED: loadOpenCommands() (queued | delivering | accepted)
+    REC->>LED: loadOpenCommands() — ALL open rows (queued | delivering | accepted), paged in (created_at, id) order
     loop each queued row (W1: crashed after queued, before send)
         alt driverless (session.delete, workspace.release)
             REC->>SUP: deliver through the deliverer (idempotent kill / release)
@@ -309,27 +356,33 @@ sequenceDiagram
             REC->>LED: failed {code:ORPHANED} — the existing reconcile handles the run
         end
     end
-    loop each delivering row older than 60 s (W2: crashed after send, before ack)
+    loop each delivering row past the grace (W2: crashed after send, before ack)
         REC->>SUP: GET /commands/{id}
-        alt receipt completed
-            REC->>LED: one tx: succeeded + the result-derived domain writes (host_session_id, acp_session_id, handle)
-        else 404
-            REC->>LED: treat as W1
+        alt receipt completed / rejected
+            REC->>LED: one tx: succeeded (or failed / fenced) + the result-derived domain writes (host_session_id, acp_session_id, handle)
+        else 404 — the host never saw it
+            REC->>LED: delivering → queued (requeueDelivering), then the W1 rules
         end
     end
     loop each accepted row (W4: crashed mid-prompt)
         REC->>SUP: GET /commands/{id}
         alt receipt completed
             REC->>LED: succeeded {stopReason}
+        else accepted with inflight:true
+            REC->>REC: skip — the turn is still running on the host
         else accepted with no in-flight turn
             REC->>LED: failed {turn_lost} — the run then follows the existing reconcile
+        else 404
+            REC->>LED: failed {receipt_missing} — an accepted row is never re-sent
         end
     end
 ```
 
-A `delivering` row younger than 60 s is left alone (in-flight protection).
-W3 (after ack, before the domain write) is impossible: the ack and the
-domain writes share one transaction.
+The grace is 60 s (`delivering_since`, in-flight protection) on the periodic
+pass and 0 at startup — no driver of the new process exists yet. There is no
+row cap: the pass pages through every open row. W3 (after ack, before the
+domain write) is impossible: the ack and the domain writes share one
+transaction.
 
 ### Supervisor restart
 
@@ -339,56 +392,58 @@ sequenceDiagram
     participant SUP as Supervisor (new process)
     participant ST as Host state store
     participant WEB as Web registrar
+    participant SWP as system_sweep (≤ 60 s)
     SUP->>ST: reload host_identity, run_fences, workspaces, command_receipts
     SUP->>SUP: new bootId — live sessions are gone (unchanged behavior)
     WEB->>SUP: GET /health (next resolver call, ≤ 30 s memo)
     SUP-->>WEB: same hostKey, new bootId
-    WEB->>WEB: execution-host-restarted → runReconcileSweep() once
+    WEB->>WEB: touch — execution-host-restarted, restarted:true — no sweep runs inside the resolver
+    SWP->>SWP: runReconcileSweep() classifies the runs the old process owned (Crashed or re-driven)
     Note over SUP,WEB: commands for dead sessions → 404 / 503 as today — a duplicate prompt id whose receipt is accepted with no in-flight promise → 409 PRECONDITION turn_lost
 ```
 
-If the state directory itself is lost, the host mints a new key (unless
-pinned) → the registration policy retires the idle old row or refuses;
-fences restart at the first command; handles are re-adopted lazily
-(`unknown_workspace` → one re-adopt).
+The registrar never runs a domain sweep: a resolution that awaited one could
+wait on work that itself resolves the host — the deadlock the restart
+reconcile was removed for. If the state directory itself is lost, the host
+mints a new key (unless pinned) → the registration policy retires the idle
+old row or refuses; fences restart at the first command; handles are
+re-adopted lazily (`unknown_workspace` / `workspace_released` → one
+re-adopt).
 
-### Legacy backfill
+### Legacy runs (pre-ADR-166)
+
+A run with `execution_assignment_id = NULL` was never placed, and nothing
+places it after the fact: every host session created since the strict flip
+belongs to a minted assignment, and the sessions that predate it died with the
+supervisor that owned them. `reportLegacyActiveRuns()` (boot + every
+`system_sweep`) only makes the survivors visible.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant WEB as adoptLegacyActiveRuns()
+    participant WEB as reportLegacyActiveRuns()
     participant PG as Postgres
-    participant SUP as Supervisor
+    participant REC as Reconcile sweep
+    participant KA as Keep-alive sweeper
     WEB->>PG: runs WHERE execution_assignment_id IS NULL AND status IN (Running, NeedsInput)
-    alt no registered local host (registrar refused or unreachable)
-        WEB->>WEB: skip — log once per boot — retry on the next sweep
-    else
-        WEB->>SUP: GET /sessions
-        loop each candidate run
-            alt a live session for the run exists
-                WEB->>PG: mintAssignment(epoch 1, legacy_backfill)
-            else
-                WEB->>WEB: leave NULL — reconcile classifies (Crashed)
-            end
-        end
-    end
-    Note over WEB,PG: parked or queued statuses are untouched — their next placement mints. A command issuer meeting a NULL assignment calls ensureAssignment(runId, legacy_backfill) with WARN legacy-run-assigned-lazily — deleted in Stage C.
+    WEB->>WEB: log legacy-runs-unplaced ONCE per run — no mint, no host call
+    REC->>PG: Running legacy run with no live session → Crashed (or re-driven per the reconcile rules) — its next placement mints epoch 1
+    KA->>PG: NeedsInput legacy run past keepalive_until → checkpoint through forRun(runId)
+    KA->>PG: ensureAssignment(runId, legacy_backfill) — WARN legacy-run-assigned-lazily, epoch 1 (X-EH-18)
+    Note over WEB,KA: parked or queued statuses are untouched — their next placement mints. ensureAssignment mints ONLY for a run with no assignment history — a placed run with no active assignment is refused PRECONDITION assignment_missing. Deleted in Stage C.
 ```
 
-The backfilled row reuses the `assignmentId` the host stamped on the live
-session (the `GET /sessions` projection carries the fence of the create that
-spawned it) and copies its `executionWorkspaceId` forward, so later commands
-for the run pass the host's own fence without a re-adopt; the run's
-`run_sessions` row is linked to the new assignment. The backfill also runs on
-every `executionCommandReconcilePass`, which is how a host that was
-unreachable at boot is picked up later.
+At upgrade, restart the supervisor FIRST (drain recommended): live
+pre-ADR-166 sessions die with the old process (X-EH-23), and in-flight runs
+follow the supervisor-restart semantics above — there is no backfill. Runs
+that finished before the upgrade keep `NULL` forever. `ensureAssignment` stays
+a Stage-C deletion obligation (ADR-166 D9).
 
 ## Command kinds, routes, and completion signals
 
 | Kind                 | Route                            | Effect                                                     | Duration     | Completion signal(s)                                                                                          |
 | -------------------- | -------------------------------- | ---------------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------- |
-| `workspace.adopt`    | `POST /workspaces/adopt`         | register path → handle (idempotent on `(runId, realpath)`) | immediate    | HTTP 200                                                                                                      |
+| `workspace.adopt`    | `POST /workspaces/adopt`         | register path → handle (idempotent on `(runId, realpath)` among ACTIVE handles; a released path mints a NEW one) | immediate    | HTTP 200                                                                                                      |
 | `workspace.release`  | `DELETE /workspaces/{id}`        | unregister handle                                          | immediate    | HTTP 200                                                                                                      |
 | `session.create`     | `POST /sessions`                 | spawn + ACP handshake                                      | ≤ 60 s       | HTTP 201 `{sessionId, pid, acpSessionId}`                                                                     |
 | `session.prompt`     | `POST /sessions/{id}/prompt`     | start a turn                                               | long         | SSE `session.command{accepted}` → HTTP 200 `{stopReason}` and/or SSE `session.command{completed}` and receipt |
@@ -412,7 +467,11 @@ Unknown-outcome retry budgets (same command id): adopt 3 (0.5 s·2ⁿ), create 3
 
 `session.create`, `session.prompt`, `session.input{select}`, and
 `workspace.adopt` require `active`. The orchestrator park checkpoint is the
-reason teardown kinds stay admissible under `released`.
+reason teardown kinds stay admissible under `released` — so a stale teardown
+command issued under a `released` assignment GOES TO THE WIRE and is fenced
+by the host (409 `FENCED`) once a newer epoch has landed; local admission
+fencing happens only for a `superseded` row or a non-teardown kind under
+`released`.
 
 ## Host refusal table (reason tokens)
 
@@ -422,20 +481,25 @@ token, never the message.
 | Rule (in order)                                                          | HTTP / code        | `details.reason`                                                                                                                                                                                | Web sees                                                        |
 | ------------------------------------------------------------------------ | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
 | `fence.hostKey ≠` own key                                                | 409 `PRECONDITION` | `host_mismatch`                                                                                                                                                                                 | `PRECONDITION` (details passed through)                         |
+| `fence.runId ≠` the session's / handle's run                             | 409 `PRECONDITION` | `run_mismatch`                                                                                                                                                                                  | `PRECONDITION`                                                  |
 | `fence.assignmentEpoch <` stored high-water                              | 409 `FENCED`       | `assignment_fenced` (+ `runId`, `commandEpoch`, `hostEpoch`)                                                                                                                                    | `CONFLICT {details.reason:"assignment_fenced"}` → driver yields |
 | epoch equal, `assignmentId` differs                                      | 409 `PRECONDITION` | `assignment_mismatch`                                                                                                                                                                           | `PRECONDITION`                                                  |
-| `fence.runId ≠` the session's / handle's run                             | 409 `PRECONDITION` | `run_mismatch`                                                                                                                                                                                  | `PRECONDITION`                                                  |
 | duplicate id, receipt `accepted`, no in-flight (host restarted mid-turn) | 409 `PRECONDITION` | `turn_lost`                                                                                                                                                                                     | `failed{turn_lost}`                                             |
 | `executionWorkspaceId` unknown                                           | 409 `PRECONDITION` | `unknown_workspace`                                                                                                                                                                             | client re-adopts ONCE, issues a NEW create                      |
-| handle released                                                          | 409 `PRECONDITION` | `workspace_released`                                                                                                                                                                            | `PRECONDITION`                                                  |
-| adopt path violates the kind matrix                                      | 409 `PRECONDITION` | `workspace_rejected` + `rule ∈ {relative_path, parent_segment, not_found, outside_roots, symlink_escape, gitdir_mismatch, not_a_repo, repo_path_mismatch, inside_state_dir, outside_workspace}` | `PRECONDITION`                                                  |
-| legacy path field after the strict flip                                  | 409 `PRECONDITION` | `legacy_field`                                                                                                                                                                                  | `PRECONDITION`                                                  |
+| handle released                                                          | 409 `PRECONDITION` | `workspace_released`                                                                                                                                                                            | client re-adopts ONCE, issues a NEW create                      |
+| adopt path violates the kind matrix                                      | 409 `PRECONDITION` | `workspace_rejected` + `rule ∈ {relative_path, parent_segment, not_found, outside_roots, symlink_escape, gitdir_mismatch, not_a_repo, repo_path_mismatch, inside_state_dir, outside_workspace}` (+ `mount` when a `contextMounts[]` entry is the offender) | `PRECONDITION`                                                  |
+| legacy path field after the strict flip                                  | 409 `PRECONDITION` | `legacy_field` + `field`                                                                                                                                                                        | `PRECONDITION`                                                  |
 | envelope absent after the strict flip                                    | 409 `PRECONDITION` | `missing_envelope`                                                                                                                                                                              | `PRECONDITION`                                                  |
 | receipt write failed after executing                                     | 500 `ACP_PROTOCOL` | —                                                                                                                                                                                               | definitive failure; reconcile catches an orphan session         |
 
-Web-minted: `EXECUTOR_UNAVAILABLE {details.reason:"host_identity_mismatch"}`
-while registration is refused. `FENCED → CONFLICT`; every other supervisor
-code keeps its existing mapping ([`../error-taxonomy.md`](../error-taxonomy.md)).
+The first four rows are the fence, evaluated in that order: the run binding
+is checked BEFORE the epoch, so a wrong-run fence can never advance or evict
+another run's sessions. Rejection messages carry the offending path, never
+the configured roots. `FENCED → CONFLICT`; every other supervisor code keeps
+its existing mapping. The tokens the web mints itself
+(`host_identity_mismatch`, `assignment_missing`, `delivery_deferred`,
+`receipt_lookup_failed`, …) never travel the wire — their table is in
+[`../error-taxonomy.md`](../error-taxonomy.md#execution-host-contract-implemented--adr-166).
 
 ## Web-side classification per attempt
 
@@ -445,8 +509,10 @@ code keeps its existing mapping ([`../error-taxonomy.md`](../error-taxonomy.md))
 | parsed 503 `EXECUTOR_UNAVAILABLE` (definitive)         | `failed`; the caller's own retry issues a NEW command (sweeper tick, user retry)                                                           | `failed`           | `EXECUTOR_UNAVAILABLE`                                  |
 | 409 `FENCED`                                           | terminal                                                                                                                                   | `fenced`           | `CONFLICT {details.reason:"assignment_fenced"}`         |
 | 404 / 410 / 409 `PRECONDITION` (any reason)            | terminal                                                                                                                                   | `failed`           | existing per-endpoint mapping, `details` passed through |
-| 409 `PRECONDITION unknown_workspace` on create         | terminal for this command                                                                                                                  | `failed`           | one re-adopt + a NEW create                             |
-| prompt after `accepted`: transport failure             | ONE receipt lookup: `completed` → `succeeded{stopReason}`; `accepted` w/o in-flight → `failed{turn_lost}`; 404 → `failed{receipt_missing}` | as looked up       | `stopReason` when completed, else `ACP_PROTOCOL`        |
+| 409 `PRECONDITION unknown_workspace` / `workspace_released` on create | terminal for this command                                                                                                     | `failed`           | one re-adopt + a NEW create                             |
+| driverless kind (`session.delete`, `workspace.release`), ONE unknown outcome | the row stays `queued` for the recovery pass — the caller is not held through the retry budget                            | `queued`           | `EXECUTOR_UNAVAILABLE {details.reason:"delivery_deferred"}` |
+| prompt after `accepted`: transport failure             | receipt lookup retried up to 5× (0.5 s·2ⁿ), `failed{receipt_lookup_failed}` after that; `completed` → `succeeded{stopReason}`; `rejected` → `failed` / `fenced`; `accepted` + `inflight:true` → the SAME id is re-sent ONCE to join the turn; `accepted` + `inflight:false` → `failed{turn_lost}`; 404 → `failed{receipt_missing}` | as looked up | `stopReason` when completed; `EXECUTOR_UNAVAILABLE` (`receipt_lookup_failed`) or `ACP_PROTOCOL` (`turn_lost`, `receipt_missing`) otherwise |
+| ledger write fails mid-turn                            | logged `command-ledger-write-failed`; the turn's outcome still reaches the driver; the next recovery pass folds the row from the host receipt | unchanged until folded | the turn's own outcome; `ACP_PROTOCOL {details.reason:"ledger_write_failed"}` only when the ledger error is the first settling signal |
 
 ## Workspace adoption kinds
 
@@ -457,12 +523,25 @@ code keeps its existing mapping ([`../error-taxonomy.md`](../error-taxonomy.md))
 | `directory`     | realpath under `MAISTER_WORKSPACE_ROOTS`; `repoPath` absent                                                                                      | local-package assistant, ephemeral read-only checkouts, agent `none` |
 
 All kinds: absolute, no `..`, realpath exists, no symlink escape, not inside
-the state dir. The web derives every adopt value from server state
+the state dir. `contextMounts[]` entries are validated at adopt as repo
+checkouts — absolute, no `..`, realpath exists, `.git` is a directory, not
+inside the state dir — and a rejected entry answers `workspace_rejected` with
+`details.mount`. Rejection messages carry the offending path, never the
+configured roots. The web derives every adopt value from server state
 (`workspaces.worktree_path`, `projects.repo_path`,
 `local_packages.working_dir`, the agent launch snapshot, `runs.context_mounts`)
 — never from an HTTP request body it received. The host derives `run_dir`
 from `runtimeRoot + projectSlug + runId` at adoption and stores it; later
 routes derive every path from the handle.
+
+Adoption is idempotent on `(runId, realpath)` among ACTIVE handles
+(`workspaces_active_uq WHERE released_at IS NULL`): after `workspace.release`
+the released row stays as history and a new adoption of the same path mints a
+NEW handle. A stored handle the host no longer honours — `unknown_workspace`
+(store wiped) or `workspace_released` (worktree removed and re-created at the
+same path, the ADR-141 reopen of a GC'd run) — is re-adopted ONCE by the
+client, which then issues a NEW `session.create`, so the reopened run spawns
+again; a second refusal surfaces as-is.
 
 ## Requirements (owner brief, 2026-09-02)
 
@@ -489,18 +568,21 @@ routes derive every path from the handle.
   exist. Enforced by: `execution_hosts_local_active_uq` partial unique index;
   the registrar policy under a `SELECT … FOR UPDATE` of the active row.
 - **E-EH-02** — A run MUST have at most one `active` assignment and its
-  epochs MUST be strictly increasing; a mint NEVER reuses an epoch. Enforced
-  by: `execution_assignments_run_active_uq`,
+  epochs MUST be strictly increasing; a mint NEVER reuses an epoch and
+  supersedes only the `active` row (a `released` row stays `released`).
+  Enforced by: `execution_assignments_run_active_uq`,
   `execution_assignments_run_epoch_uq`, and `mintAssignment` inside the
   placement-claim transaction.
 - **E-EH-03** — Every enveloped command MUST carry a fence; the host MUST
   persist the per-run high-water BEFORE executing and MUST reject
-  `epoch < high-water` with 409 `FENCED`. Enforced by: the `withCommand`
-  route wrapper; the `run_fences` sqlite write; tests F1–F2, F7.
+  `epoch < high-water` with 409 `FENCED`, checking the run binding before the
+  epoch. Enforced by: `parseCommandBody` + `runCommand` around every
+  enveloped route; the `run_fences` sqlite write; tests F1–F2, F7.
 - **E-EH-04** — When a higher epoch arrives, every live session of that run
   under a lower epoch MUST be evicted (`session.exited{reason:"fenced"}`)
-  before the command executes. Enforced by: `execution-fence.ts` eviction;
-  test F6.
+  before the command executes, inside the command's in-flight execution so a
+  concurrent duplicate joins it. Enforced by: `execution-fence.ts` eviction
+  under the receipt in-flight map; test F6.
 - **E-EH-05** — A command id MUST execute at most once per host: a duplicate
   returns the stored receipt or joins the in-flight execution. Enforced by:
   `command_receipts` primary key + the in-flight map; tests R1–R3.
@@ -517,18 +599,26 @@ routes derive every path from the handle.
   route accepting a path and MUST validate it per the kind matrix. Enforced
   by: Zod strict schemas; tests W5, Z1–Z3, T1. (Strict since the T5.1 flip;
   the transitional bare-body acceptance is gone.)
-- **E-EH-09** — Adoption MUST be idempotent on `(runId, realpath)` and
-  handles MUST survive a host restart. Enforced by: the sqlite `workspaces`
-  table; tests W1, W9.
+- **E-EH-09** — Adoption MUST be idempotent on `(runId, realpath)` among
+  ACTIVE handles, a release MUST leave the row as history so the same path
+  mints a NEW handle, and handles MUST survive a host restart. Enforced by:
+  the sqlite `workspaces` table + `workspaces_active_uq`; tests W1, W9.
 - **E-EH-10** — After a Web restart, `delivering` / `accepted` rows MUST be
-  reconciled from receipts and non-driverless `queued` rows MUST NEVER be
-  re-sent. Enforced by: `recovery.ts`; tests V1–V3.
-- **E-EH-11** — A driver whose command returns `assignment_fenced` MUST write
-  no run, attempt, HITL, or scratch state. Enforced by: the `fenced:true`
-  result + early returns in every driver; test P3.
+  reconciled from receipts (a `delivering` row with no receipt goes back to
+  `queued` first) and non-driverless `queued` rows MUST NEVER be re-sent.
+  Enforced by: `recovery.ts`; tests V1–V3.
+- **E-EH-11** — A driver MUST bind the assignment its own claim minted
+  (`forAssignment` / `executionFor(runId, {assignmentId})`), and a driver
+  whose command returns `assignment_fenced` MUST write no run, attempt, HITL,
+  or scratch state. Enforced by: every claim transition returns its minted
+  assignment; the `fenced:true` result + early returns in every driver; test
+  P3.
 - **E-EH-12** — No secret value or prompt body MUST be persisted in
   `execution_commands.payload`, receipt bodies, or logs. Enforced by:
-  `redact()` at ledger insert; sentinel tests C1, H7.
+  `redactPayload()` at ledger insert — a per-kind ALLOW-list projection (ids,
+  names, adapter/model, the counts `promptBytes`, `contentBlockCount`,
+  `mcpServerCount`, `contextMountCount`, `has*` flags; nothing else is
+  stored); sentinel tests C1, H7.
 
 ## Edge cases
 
@@ -540,22 +630,23 @@ routes derive every path from the handle.
 | X-EH-04 | Command epoch below the host high-water                                                                                                      | 409 `FENCED` → `MaisterError("CONFLICT")` `{details.reason:"assignment_fenced"}`                                                    | F2, E1      |
 | X-EH-05 | Same epoch, different assignment id                                                                                                          | 409 `PRECONDITION assignment_mismatch`                                                                                              | F3          |
 | X-EH-06 | `fence.runId` differs from the session's run                                                                                                 | 409 `PRECONDITION run_mismatch`                                                                                                     | F5          |
-| X-EH-07 | Duplicate command with a completed/rejected receipt                                                                                          | verbatim replay + `X-Maister-Command-Replayed`                                                                                      | R1          |
+| X-EH-07 | Duplicate command with a completed/rejected receipt                                                                                          | verbatim replay + `X-Maister-Command-Replayed` — replay wins over the session liveness guards, so it holds after the session exited | R1          |
 | X-EH-08 | Duplicate command while the original is executing                                                                                            | join, same result                                                                                                                   | R2          |
 | X-EH-09 | Receipt `accepted`, no in-flight (host restarted mid-turn)                                                                                   | 409 `PRECONDITION turn_lost`                                                                                                        | R3          |
 | X-EH-10 | Adopt path outside roots / relative / `..` / missing / symlink escape / gitdir mismatch / not a repo / repo path mismatch / inside state dir | 409 `PRECONDITION {workspace_rejected, rule}` → `MaisterError("PRECONDITION")`                                                      | W5          |
-| X-EH-11 | Create with an unknown handle                                                                                                                | 409 `unknown_workspace` → client re-adopts once                                                                                     | W6, K5      |
-| X-EH-12 | Create with a released handle                                                                                                                | 409 `workspace_released`                                                                                                            | W6          |
-| X-EH-13 | Legacy path field or missing envelope after the strict flip                                                                                  | 409 `legacy_field` / `missing_envelope`                                                                                             | Z1–Z2       |
-| X-EH-14 | Transport failure with unknown outcome before any receipt                                                                                    | retry the same command id up to budget, then `failed` → `MaisterError("EXECUTOR_UNAVAILABLE")`                                      | L3          |
-| X-EH-15 | Transport failure after prompt acceptance                                                                                                    | one receipt lookup → `succeeded{stopReason}` / `failed{turn_lost}` / `failed{receipt_missing}` (`MaisterError("ACP_PROTOCOL")`)     | L8          |
+| X-EH-11 | Create with an unknown handle (store wiped)                                                                                                  | 409 `unknown_workspace` → client re-adopts once and issues a NEW create                                                             | W6, K5      |
+| X-EH-12 | Create with a released handle (worktree re-created at the same path — the ADR-141 reopen)                                                    | 409 `workspace_released` → client re-adopts once and issues a NEW create; the reopened run spawns again                             | W6          |
+| X-EH-13 | Legacy path field or missing envelope after the strict flip                                                                                  | 409 `legacy_field` (+ `details.field`) / `missing_envelope`                                                                         | Z1–Z2       |
+| X-EH-14 | Transport failure with unknown outcome before any receipt                                                                                    | retry the same command id up to budget, then `failed` → `MaisterError("EXECUTOR_UNAVAILABLE")`; a driverless kind stays `queued` after ONE unknown outcome (`delivery_deferred`) for the recovery pass | L3          |
+| X-EH-15 | Transport failure after prompt acceptance                                                                                                    | receipt lookup retried 5× → `succeeded{stopReason}` / re-send ONCE to join an in-flight turn / `failed{turn_lost}` / `failed{receipt_missing}` (`MaisterError("ACP_PROTOCOL")`); host still unreachable → `failed{receipt_lookup_failed}` (`MaisterError("EXECUTOR_UNAVAILABLE")`) | L8          |
 | X-EH-16 | Web crash W1 / W2 / W4                                                                                                                       | per the recovery flow above                                                                                                         | V1–V3       |
 | X-EH-17 | Supervisor restart during delivery                                                                                                           | same key, new bootId, fences + receipts survive, sessions gone, reconcile classifies                                                | V3, G2      |
-| X-EH-18 | Legacy run (NULL assignment) reaches a command issuer                                                                                        | lazy mint `legacy_backfill` with WARN `legacy-run-assigned-lazily`                                                                  | Y5          |
+| X-EH-18 | Never-placed legacy run (NULL assignment, no assignment history) reaches `forRun`                                                             | lazy mint `legacy_backfill` with WARN `legacy-run-assigned-lazily`; a PLACED run with no active assignment is refused `MaisterError("PRECONDITION")` `{details.reason:"assignment_missing"}` — its re-entry must mint inside its own claim | Y5          |
 | X-EH-19 | Evicted session's pending prompt                                                                                                             | 409 `FENCED` to the old driver → driver yields                                                                                      | F6, P3      |
 | X-EH-20 | Teardown command on a `released` assignment / any command on `superseded`                                                                    | sent / locally `fenced`                                                                                                             | A5, L6      |
 | X-EH-21 | Host receipt write fails after executing                                                                                                     | 500 `ACP_PROTOCOL`; the effect may exist; reconcile catches an orphan session (accepted residual)                                   | R5          |
-| X-EH-22 | Host unreachable at Web boot                                                                                                                 | readiness unavailable, backfill skipped once-logged, sweeps retry (accepted residual)                                               | G5, Y4      |
+| X-EH-22 | Host unreachable at Web boot                                                                                                                 | readiness unavailable; legacy runs still reported (`legacy-runs-unplaced`, once per run); the resolver retries on the next command / sweep (accepted residual)                                               | G5, Y4      |
+| X-EH-23 | Upgrade to ADR-166 with live pre-ADR-166 sessions                                                                                            | the sessions die with the old supervisor — restart the supervisor first (drain recommended); in-flight runs follow the supervisor-restart semantics, no backfill | — (operational; [`../deployment.md`](../deployment.md#11-updates)) |
 
 ## Linked artifacts
 

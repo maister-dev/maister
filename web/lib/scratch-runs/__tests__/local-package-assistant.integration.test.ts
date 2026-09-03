@@ -595,6 +595,17 @@ describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
       .where(eq(runs.id, result.runId));
 
     expect(runRows[0]).toEqual({ projectId: null, localPackageId: pkg.id });
+    // ADR-166: the launch tx mints exactly ONE `launch` generation (epoch 1).
+    expect(
+      await db
+        .select({
+          epoch: schema.executionAssignments.epoch,
+          state: schema.executionAssignments.state,
+          placementReason: schema.executionAssignments.placementReason,
+        })
+        .from(schema.executionAssignments)
+        .where(eq(schema.executionAssignments.runId, result.runId)),
+    ).toEqual([{ epoch: 1, state: "active", placementReason: "launch" }]);
 
     const messages = await db
       .select({

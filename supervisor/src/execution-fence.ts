@@ -97,8 +97,7 @@ export function applyFence(args: {
 }
 
 // ADR-166 D3 / E-EH-04: when a higher epoch arrives, every live session of
-// that run under a LOWER epoch is evicted before the command executes. Legacy
-// sessions (no epoch on the record) are never evicted by fence advancement.
+// that run under a LOWER epoch is evicted before the command executes.
 export async function evictLowerEpochSessions(args: {
   registry: SessionRegistry;
   runId: string;
@@ -113,7 +112,6 @@ export async function evictLowerEpochSessions(args: {
   args.registry.forEach((entry) => {
     if (entry.record.runId !== args.runId) return;
     if (entry.record.status !== "live") return;
-    if (entry.record.assignmentEpoch === undefined) return;
     if (entry.record.assignmentEpoch >= args.epoch) return;
 
     victims.push(entry);
@@ -156,7 +154,7 @@ export async function evictLowerEpochSessions(args: {
   return victims.map((entry) => entry.record.sessionId);
 }
 
-function waitForChildExit(
+export function waitForChildExit(
   entry: RegistryEntry,
   timeoutMs: number,
 ): Promise<boolean> {

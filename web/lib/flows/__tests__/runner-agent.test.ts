@@ -11,6 +11,7 @@ import {
   runs as runsTable,
   webhookEvents as webhookEventsTable,
 } from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 import { runAgentStep, type RunAgentStepCtx } from "@/lib/flows/runner-agent";
 import { fakeAgentExecution } from "@/test-support/fake-execution-host";
 
@@ -339,7 +340,10 @@ describe("runner-agent — session.permission_request handling", () => {
     const statusUpdates = db.updates.map((u) => u.set.status).filter(Boolean);
 
     expect(statusUpdates).toContain("NeedsInput");
-    expect(statusUpdates).toContain("Running");
+    // The update after an UNANSWERED permission (a checkpoint cancel emits one
+    // too) must not flip the run back to Running — that would race the
+    // NeedsInput-guarded checkpoint transitions and strand the run.
+    expect(statusUpdates).not.toContain("Running");
 
     // Entering NeedsInput must ARM the keep-alive window (mirrors the agent
     // path + spec). Without it, keepalive_until stays null, the sweeper — which
@@ -350,6 +354,36 @@ describe("runner-agent — session.permission_request handling", () => {
     );
 
     expect(needsInputUpdate?.set.keepaliveUntil).toBeInstanceOf(Date);
+  });
+
+  it("flips NeedsInput→Running only once the permission row carries a response (auto-delivered stored intent)", async () => {
+    // The stored intent is delivered on the re-emit (resume path), so the row
+    // has a response when the agent's next update arrives → the run resumes.
+    const db = makeFakeDb({
+      priorIntent: {
+        id: "hitl-prior",
+        runId: "run-1",
+        stepId: "plan",
+        kind: "permission",
+        schema: { requestId: "req-old", options: [], supervisorSessionId: "s" },
+        response: { optionId: "allow" },
+        respondedAt: null,
+      },
+    });
+    const api = makeApi({
+      events: [permissionRequest(1, "req-A"), update(2, "ok"), exited(3)],
+    });
+
+    await runAgentStep(
+      { id: "plan", type: "agent", mode: "new-session", prompt: "go" },
+      makeCtx(db),
+      api,
+    );
+
+    const statusUpdates = db.updates.map((u) => u.set.status).filter(Boolean);
+
+    expect(statusUpdates).toContain("Running");
+    expect(statusUpdates).not.toContain("NeedsInput");
   });
 
   it("re-emitted permission_request for the same step reuses the open row (no duplicate)", async () => {
@@ -549,7 +583,7 @@ describe("runner-agent — handle-form session body (ADR-166)", () => {
 
     await runAgentStep(
       { id: "plan", type: "agent", mode: "new-session", prompt: "go" },
-      makeCtx(db, { contextMounts: [] }),
+      makeCtx(db),
       api,
     );
 
@@ -646,6 +680,42 @@ describe("runner-agent — session.exited.reason handling (M8 Codex fix #1)", ()
 
     expect(result.ok).toBe(true);
     expect(result.errorCode).toBeUndefined();
+  });
+});
+
+// The checkpoint grace period exists for the sweeper's own SIGTERM; a stream
+// that already ended on a crash is a definitive "not a checkpoint" and must
+// not hold the failure back for the full grace window.
+describe("runner-agent — checkpoint grace settles with the stream", () => {
+  it("an adapter crash surfaces the prompt failure without waiting out the grace period", async () => {
+    const db = makeFakeDb();
+    const api = fakeAgentExecution({
+      events: [
+        {
+          type: "session.crashed",
+          sessionId: "sup-session-1",
+          monotonicId: 1,
+          exitCode: 1,
+          signal: null,
+        },
+      ],
+      promptBehavior: async () => {
+        throw new MaisterError("ACP_PROTOCOL", "ACP connection closed");
+      },
+    });
+    const startedAt = Date.now();
+
+    await expect(
+      runAgentStep(
+        { id: "plan", type: "agent", mode: "new-session", prompt: "go" },
+        makeCtx(db),
+        api,
+      ),
+    ).rejects.toMatchObject({ code: "ACP_PROTOCOL" });
+
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+    // Still classified as a failure (no checkpoint reason was observed).
+    expect(db.updates.map((u) => u.set.status)).not.toContain("NeedsInputIdle");
   });
 });
 

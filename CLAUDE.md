@@ -346,8 +346,10 @@ inject via `{{ artifacts.<id>.content }}` (ADR-120).
 - **Execution assignments** (ADR-166, Implemented): one `active`
   `execution_assignments` row per run (epoch = driver-ownership generation,
   minted at launch and at every resume/recover/rework/interrupt re-entry);
-  the worktree is adopted ONCE into a host-scoped opaque handle stored on the
-  assignment; `run_sessions.host_session_id` is written by the create ack.
+  the worktree is adopted once per host handle into a host-scoped opaque
+  handle stored on the assignment (the host refuses a wiped or released
+  handle and the client re-adopts once); `run_sessions.host_session_id` is
+  written by the create ack.
   → `docs/system-analytics/execution-hosts.md`.
 - **Manual takeover** (M11b): a reviewer at a `human_review` node claims the
   run (`NeedsInput → HumanWorking`), edits the existing worktree locally on

@@ -8,7 +8,6 @@ import {
   workspaces as workspacesTable,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
-import { deleteSession } from "@/lib/supervisor-client";
 
 type Row = Record<string, unknown>;
 type Tables = {
@@ -72,23 +71,23 @@ vi.mock("@/lib/authz", () => ({
   })),
 }));
 
-vi.mock("@/lib/supervisor-client", () => ({
-  checkSupervisorHealth: vi.fn(),
-  createSession: vi.fn(),
-  deleteSession: vi.fn(async () => undefined),
-  sendPrompt: vi.fn(),
+// ADR-166 (strict): the wire client no longer exports a bare `deleteSession`;
+// the execution-host module mock routes the bound client's `session.delete` to
+// this spy so the wire-level assertions keep their shape.
+const { deleteSession } = vi.hoisted(() => ({
+  deleteSession: vi.fn(async (_sessionId: string) => undefined),
 }));
 
-// ADR-166: the service talks to the host through the execution-host client;
-// route every host-bound call to this suite's supervisor-client mocks so the
-// wire-level assertions stay as they are.
+vi.mock("@/lib/supervisor-client", () => ({
+  checkSupervisorHealth: vi.fn(),
+}));
+
 vi.mock("@/lib/execution-host", async () => {
-  const sup = await import("@/lib/supervisor-client");
   const { executionHostModuleMock } = await import(
     "@/test-support/execution-host-module-mock"
   );
 
-  return executionHostModuleMock(sup as never);
+  return executionHostModuleMock({ deleteSession });
 });
 
 // The route now delegates to stopScratchWorkbench (scratch-runs/service), which
@@ -255,7 +254,9 @@ describe("POST /api/scratch-runs/[runId]/stop", () => {
     const runId = seedScratchRun({ supervisorSessionId: "sup-gone" });
 
     vi.mocked(deleteSession).mockRejectedValueOnce(
-      new MaisterError("PRECONDITION", "unknown session"),
+      new MaisterError("PRECONDITION", "unknown session", {
+        details: { httpStatus: 404 },
+      }),
     );
 
     const res = await invokePost(runId);
@@ -270,6 +271,32 @@ describe("POST /api/scratch-runs/[runId]/stop", () => {
     expect(dbState.tables.runs[0]).toMatchObject({
       status: "Review",
       currentStepId: null,
+    });
+  });
+
+  // ADR-166 E-EH-11: a fenced `session.delete` means a newer driver generation
+  // owns the run — the stop yields (409) and writes no scratch/run state.
+  it("a fenced session delete yields with 409 and writes nothing", async () => {
+    const runId = seedScratchRun();
+
+    deleteSession.mockRejectedValueOnce(
+      new MaisterError("CONFLICT", "fenced", {
+        details: { reason: "assignment_fenced", runId },
+      }),
+    );
+
+    const res = await invokePost(runId);
+
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { code: string }).code).toBe("CONFLICT");
+    expect(dbState.tables.scratch_runs[0]).toMatchObject({
+      dialogStatus: "Running",
+      supervisorSessionId: "sup-1",
+    });
+    expect(dbState.tables.runs[0]).toMatchObject({
+      status: "Running",
+      currentStepId: "scratch-dialog",
+      endedAt: null,
     });
   });
 

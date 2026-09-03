@@ -39,10 +39,10 @@ export function buildRegisterRoutesOptions(deps: {
   logger: Logger;
   runtimeRoot: string;
   killGraceMs: number;
-  // ADR-166: the execution-host state store + adoption roots. Required in
-  // production; tests that boot routes without them get an in-memory store.
-  hostState?: HostState;
-  workspaceRoots?: string[];
+  // ADR-166: the execution-host state store + the realpath'd adoption roots,
+  // both derived once here — registerRoutes has no fallback for either.
+  hostState: HostState;
+  workspaceRoots: string[];
 }): RegisterRoutesOptions {
   return {
     app: deps.app,

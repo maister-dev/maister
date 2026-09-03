@@ -31,7 +31,8 @@ scheduled dispatcher remains outside the Run table: it first reserves identity
 in its own ledger, then the ordinary launch transaction writes this sole link.
 
 **ADR-166 (Implemented, migration `0130`)** adds the execution-host attribution
-columns: `runs.execution_assignment_id` (the active placement),
+columns: `runs.execution_assignment_id` (the latest minted assignment —
+`execution_assignments.state` says which one is active),
 `run_sessions.execution_assignment_id` + `run_sessions.host_session_id`, and
 `node_attempts.execution_assignment_id`. The `execution_hosts` /
 `execution_assignments` / `execution_commands` tables themselves are drawn in
@@ -61,7 +62,7 @@ erDiagram
     WORKSPACES o|--o{ WORKSPACE_RECONCILIATION_FINDINGS : "ADR-148 optional correlation"
     RUNS ||--o{ RUNS : "run-tree delegation (parent_run_id, ADR-098)"
     RUNS ||--|{ RUN_SESSIONS : "per-session runner state (Implemented ADR-114)"
-    EXECUTION_ASSIGNMENTS o|--o| RUNS : "active placement — runs.execution_assignment_id (ADR-166 Implemented, 0130, SET NULL)"
+    EXECUTION_ASSIGNMENTS o|--o| RUNS : "latest minted assignment — runs.execution_assignment_id (ADR-166 Implemented, 0130, SET NULL)"
     EXECUTION_ASSIGNMENTS o|--o{ RUN_SESSIONS : "spawned under (ADR-166 Implemented, 0130, SET NULL)"
     EXECUTION_ASSIGNMENTS o|--o{ NODE_ATTEMPTS : "attributed to (ADR-166 Implemented, 0130, SET NULL)"
     PLATFORM_ACP_RUNNERS ||--o{ RUN_SESSIONS : "session runner (Implemented ADR-114, SET NULL)"
@@ -174,7 +175,7 @@ erDiagram
         text agent_memory_hash "ADR-152 0122: sha256 of the agent memory injected at spawn, nullable — NULL = this run injected none; survives the 7-day run-dir GC"
         integer agent_chain_depth "ADR-156 0123 Designed: NOT NULL DEFAULT 0 — agent-to-agent trigger hops snapshotted at launch; an agent-authored domain event inherits parentDepth+1, every other trigger source seeds 0; capped at MAISTER_MAX_AGENT_CHAIN_DEPTH (default 2) across AND within projects"
         jsonb context_mounts "ADR-157 0124 Designed: launch snapshot of read-only sibling mounts [{projectId,slug,repoPath,mountPath,committish}], nullable — terminal cleanup and crash recovery read THIS, never a manifest/link that can drift after launch; NULL = no mounts"
-        text execution_assignment_id FK "ADR-166 0130 Implemented: execution_assignments(id) SET NULL — the ACTIVE placement (epoch = driver-ownership generation); NULL = pre-Stage-A, never placed"
+        text execution_assignment_id FK "ADR-166 0130 Implemented: execution_assignments(id) SET NULL — the LATEST minted assignment, possibly released (state says which is active; epoch = driver-ownership generation); NULL = pre-Stage-A, never placed"
         timestamp started_at
         timestamp ended_at
     }

@@ -3,14 +3,13 @@ import "server-only";
 import type { CapabilityAgent } from "@/lib/config.schema";
 import type { ScratchAdapterLaunch } from "@/lib/db/schema";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
-import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
 import type { SessionEnforcementProfile } from "./enforcement-profile";
 import type { HooksConfig } from "./hooks-config";
 import type { FlowContext, StepResult } from "./types";
 
 import { randomUUID } from "node:crypto";
 
-import { eq, and, isNull, isNotNull } from "drizzle-orm";
+import { eq, and, isNull, isNotNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { renderStrict } from "./templating";
@@ -113,10 +112,6 @@ export type RunAgentStepCtx = {
   // ADR-130: derived capability-enforcement set (deriveSessionEnforcementProfile in
   // runGraph), threaded onto the session body so the capability_guard interceptor arms.
   enforcementProfile?: SessionEnforcementProfile;
-  // ADR-157: the launch snapshot of this run's read-only sibling-repo mounts —
-  // threaded to the supervisor so it can inject MAISTER_CONTEXT_REPOS, render the
-  // prompt preamble, and arm the L2 write-deny guard on the mount roots.
-  contextMounts?: ContextMountSnapshot[];
   db?: DbClientLike;
 };
 
@@ -133,9 +128,9 @@ export type AgentExecution = {
 export async function bindExecution(
   hosts: ExecutionHosts,
   runId: string,
-  opts: { reason?: PlacementReason } = {},
+  opts: { assignmentId?: string | null; reason?: PlacementReason } = {},
 ): Promise<AgentExecution> {
-  return { client: await hosts.forRun(runId, opts), admin: hosts.local() };
+  return hosts.executionFor(runId, opts);
 }
 
 type PermissionDeliverer = (
@@ -524,20 +519,51 @@ async function handlePermissionRequest(
   }
 }
 
+// The agent produced output after a permission request. That means the
+// permission was ANSWERED only when its HITL row carries a response — a
+// keep-alive/park checkpoint cancels the deferred with a reason instead, and
+// the adapter still emits an update ("permission outcome: cancelled") on the
+// way out. Flipping on that update would race the NeedsInput-guarded
+// checkpoint transitions and strand the run `Running`. The response is stored
+// in the respond route's Phase-1 transaction, BEFORE the wire delivery, so an
+// update that beats the acknowledgement still sees it; a miss is retried on the
+// next update. Returns whether the run was flipped.
 async function transitionBackToRunning(
   db: DbClientLike,
   runId: string,
-): Promise<void> {
+  requestId: string,
+): Promise<boolean> {
   try {
+    const answered = (
+      (await db
+        .select({ id: hitlRequests.id, response: hitlRequests.response })
+        .from(hitlRequests)
+        .where(
+          and(
+            eq(hitlRequests.runId, runId),
+            eq(hitlRequests.kind, "permission"),
+            sql`${hitlRequests.schema}->>'requestId' = ${requestId}`,
+            isNotNull(hitlRequests.response),
+          ),
+        )
+        .limit(1)) as Array<{ id: string; response: unknown }>
+    ).some((row) => row.response !== null && row.response !== undefined);
+
+    if (!answered) return false;
+
     await db
       .update(runs)
       .set({ status: "Running" })
       .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")));
+
+    return true;
   } catch (err) {
     log.warn(
       { runId, err: err instanceof Error ? err.message : String(err) },
       "NeedsInput→Running update failed",
     );
+
+    return false;
   }
 }
 
@@ -587,9 +613,10 @@ function startEventConsumer(
 ): EventConsumer {
   const abort = new AbortController();
   let buf = "";
-  let sawPermissionRequest = false;
+  let pendingPermissionRequestId: string | null = null;
   let persistFailure: { reason: string } | null = null;
   let checkpointObserved = false;
+  let streamEnded = false;
   const checkpointWaiters: Array<() => void> = [];
   let hookEscalated = false;
   let hookEscalateFailed = false;
@@ -657,7 +684,7 @@ function startEventConsumer(
           }
         }
         if (ev.type === "session.permission_request" && permissionCtx) {
-          sawPermissionRequest = true;
+          pendingPermissionRequestId = ev.requestId;
           pendingWork.push(
             handlePermissionRequest(ev, permissionCtx).then((outcome) => {
               if (!outcome.ok && !persistFailure) {
@@ -667,10 +694,19 @@ function startEventConsumer(
           );
         }
         if (ev.type === "session.update") {
-          if (sawPermissionRequest && permissionCtx) {
-            sawPermissionRequest = false;
+          if (pendingPermissionRequestId && permissionCtx) {
+            const requestId = pendingPermissionRequestId;
+
             pendingWork.push(
-              transitionBackToRunning(permissionCtx.db, permissionCtx.runId),
+              transitionBackToRunning(
+                permissionCtx.db,
+                permissionCtx.runId,
+                requestId,
+              ).then((flipped) => {
+                if (flipped && pendingPermissionRequestId === requestId) {
+                  pendingPermissionRequestId = null;
+                }
+              }),
             );
           }
           const update = ev.update as {
@@ -710,6 +746,8 @@ function startEventConsumer(
       );
     } finally {
       await Promise.allSettled(pendingWork);
+      streamEnded = true;
+      for (const wake of checkpointWaiters.splice(0)) wake();
     }
   })();
 
@@ -722,17 +760,21 @@ function startEventConsumer(
     },
     permissionPersistFailure: () => persistFailure,
     checkpointReasonObserved: () => checkpointObserved,
+    // Settles as soon as the checkpoint reason lands OR the stream ends (a
+    // crash / clean exit is a definitive "not a checkpoint") — never sits out
+    // the full grace period behind a consumer that already finished.
     checkpointObserved: (waitMs) =>
-      checkpointObserved
-        ? Promise.resolve(true)
+      checkpointObserved || streamEnded
+        ? Promise.resolve(checkpointObserved)
         : new Promise<boolean>((resolve) => {
-            const timer = setTimeout(() => resolve(checkpointObserved), waitMs);
+            const settle = () => {
+              clearTimeout(timer);
+              resolve(checkpointObserved);
+            };
+            const timer = setTimeout(settle, waitMs);
 
             timer.unref?.();
-            checkpointWaiters.push(() => {
-              clearTimeout(timer);
-              resolve(true);
-            });
+            checkpointWaiters.push(settle);
           }),
     hookTripEscalated: () => hookEscalated,
     hookTripEscalateFailed: () => hookEscalateFailed,

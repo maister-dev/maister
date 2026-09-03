@@ -107,14 +107,25 @@ describe("AdoptWorkspacePayloadSchema contextMounts (ADR-157 acceptor)", () => {
     ).toBe(false);
   });
 
-  it("rejects a relative path and a `..` segment (worktreePathSchema shape)", () => {
+  // The mount path shares the adopt path SHAPE (non-empty, bounded, no NUL);
+  // `relative_path` / `parent_segment` are the registry's rule tokens at
+  // adoption (workspace-adoption W11), not Zod issues.
+  it("shape-checks the mount path only — traversal is the registry's rule token", () => {
+    for (const path of ["", "a".repeat(4097), "/repos/x/ctx\0api"]) {
+      expect(
+        AdoptWorkspacePayloadSchema.safeParse({
+          ...BASE_ADOPT,
+          contextMounts: [{ ...MOUNT, path }],
+        }).success,
+      ).toBe(false);
+    }
     for (const path of ["relative/context/api", "/repos/x/../../etc"]) {
-      const r = AdoptWorkspacePayloadSchema.safeParse({
-        ...BASE_ADOPT,
-        contextMounts: [{ ...MOUNT, path }],
-      });
-
-      expect(r.success).toBe(false);
+      expect(
+        AdoptWorkspacePayloadSchema.safeParse({
+          ...BASE_ADOPT,
+          contextMounts: [{ ...MOUNT, path }],
+        }).success,
+      ).toBe(true);
     }
   });
 

@@ -418,7 +418,7 @@ rather than guessing the option set.
 
 | Option | Effect | Availability |
 | --- | --- | --- |
-| `resume` | `scheduleResume(runId)`; the runner owns `NeedsInput → Running` and the agent continues the **same** attempt via `session/resume`, keeping context | always |
+| `resume` | `scheduleResume(runId)`; the runner owns `NeedsInput → Running` and the agent continues the **same** attempt via `session/resume`, keeping context. The runner flips only once the permission's `hitl_requests` row carries a `response` (stored in the respond route's Phase-1 transaction, before delivery); the update an adapter emits after a checkpoint CANCELLED the deferred never flips, so the NeedsInput-guarded checkpoint transitions cannot be raced into a stranded `Running` run | always |
 | `restart_node` (**default**) | Close the parked attempt `Reworked` with `decision='operator_interrupt'`; `runGraph` appends a **fresh** attempt at the same node | always |
 | `restart_from` | Same, targeting an earlier node, plus `markDownstreamStale` from the target | only when ≥1 other node has a prior attempt in this run |
 | `stop` | Delegates to the existing `stopWorkbenchRun` terminal stop — no new stop semantics | always |

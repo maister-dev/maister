@@ -187,8 +187,22 @@ vi.mock("@/lib/execution-host", async () => {
   const { executionHostModuleMock } = await import(
     "@/test-support/execution-host-module-mock"
   );
+  const mock = executionHostModuleMock(sup as never);
+  // The driver binding (`executionFor`) composes the mock's bound client with
+  // its admin surface until the module mock exports it itself.
+  const hosts = {
+    ...mock.executionHosts,
+    executionFor: async (runId: string) => ({
+      client: await mock.executionHosts.forRun(runId),
+      admin: mock.executionHosts.local(),
+    }),
+  };
 
-  return executionHostModuleMock(sup as never);
+  return {
+    ...mock,
+    executionHosts: hosts,
+    createExecutionHosts: () => hosts,
+  };
 });
 vi.mock("@/lib/capabilities/resolver", () => ({
   loadSelectableCapabilities: mocks.loadSelectableCapabilities,

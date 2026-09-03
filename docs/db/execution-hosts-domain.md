@@ -20,7 +20,7 @@ erDiagram
     RUNS ||--o{ EXECUTION_COMMANDS : "host-bound commands (CASCADE)"
     EXECUTION_ASSIGNMENTS ||--o{ EXECUTION_COMMANDS : "issued under (CASCADE)"
     EXECUTION_ASSIGNMENTS o|--o| EXECUTION_ASSIGNMENTS : "superseded_by_id (SET NULL)"
-    EXECUTION_ASSIGNMENTS o|--o| RUNS : "runs.execution_assignment_id — the active placement (SET NULL)"
+    EXECUTION_ASSIGNMENTS o|--o| RUNS : "runs.execution_assignment_id — the latest minted assignment (SET NULL)"
     EXECUTION_ASSIGNMENTS o|--o{ RUN_SESSIONS : "run_sessions.execution_assignment_id (SET NULL)"
     EXECUTION_ASSIGNMENTS o|--o{ NODE_ATTEMPTS : "node_attempts.execution_assignment_id (SET NULL)"
 
@@ -32,7 +32,7 @@ erDiagram
         jsonb transport "{kind:'local_direct'} — the URL is env, never stored"
         jsonb capabilities "DEFAULT {}; {protocolVersion, supervisorVersion, adapters[]}"
         text readiness "DEFAULT unknown; CHECK: unknown|ready|unavailable"
-        text readiness_reason "nullable; identity_changed | unreachable | malformed_health"
+        text readiness_reason "nullable; no_identity | identity_changed | network | timeout | http | malformed"
         text last_boot_id "nullable; supervisor per-process bootId"
         timestamptz last_seen_at "nullable"
         timestamptz registered_at "DEFAULT now()"
@@ -65,7 +65,7 @@ erDiagram
         integer assignment_epoch "fence epoch snapshotted at issue"
         text kind "CHECK: workspace.adopt|workspace.release|session.create|session.prompt|session.input|session.cancel|session.checkpoint|session.delete"
         text target_session_id "nullable; host session id for session.* kinds"
-        jsonb payload "DEFAULT {}; REDACTED — no prompt text, no secret-looking keys"
+        jsonb payload "DEFAULT {}; per-kind ALLOW-list projection — ids, names, adapter/model, counts, has* flags; nothing else stored"
         text state "DEFAULT queued; CHECK: queued|delivering|accepted|succeeded|failed|fenced"
         integer attempts "DEFAULT 0; CAS predicate on every transition"
         integer max_attempts "per-kind unknown-outcome retry budget"
@@ -82,7 +82,7 @@ erDiagram
 
     RUNS {
         text id PK
-        text execution_assignment_id FK "0130: execution_assignments(id) SET NULL — the ACTIVE placement; NULL = never placed"
+        text execution_assignment_id FK "0130: execution_assignments(id) SET NULL — the LATEST minted assignment (may be released; state says which is active); NULL = never placed"
     }
 
     RUN_SESSIONS {

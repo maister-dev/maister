@@ -51,6 +51,10 @@ function makeRecord(): SessionRecord {
     startedAt: new Date(0).toISOString(),
     logPath: "/tmp/x.log",
     worktreePath: "/tmp/x-wt",
+    executionWorkspaceId: "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c",
+    assignmentId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d",
+    assignmentEpoch: 1,
+    createdByCommandId: "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f",
     monotonicId: 0,
   };
 }

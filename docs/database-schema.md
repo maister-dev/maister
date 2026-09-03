@@ -1646,7 +1646,8 @@ execution_hosts {
   capabilities,                   // jsonb DEFAULT {}: {protocolVersion,
                                   //   supervisorVersion, adapters[]}
   readiness: 'unknown' | 'ready' | 'unavailable',   // DEFAULT 'unknown'
-  readinessReason?,               // identity_changed | unreachable | malformed_health
+  readinessReason?,               // no_identity | identity_changed | network |
+                                  //   timeout | http | malformed
   lastBootId?, lastSeenAt?,       // supervisor per-process bootId + last health
   registeredAt, updatedAt,
   retiredAt?                      // partial UNIQUE (kind) WHERE
@@ -1682,8 +1683,9 @@ execution_commands {
       | 'session.prompt' | 'session.input' | 'session.cancel'
       | 'session.checkpoint' | 'session.delete',
   targetSessionId?,               // host session id for session.* kinds
-  payload,                        // jsonb DEFAULT {}; REDACTED at insert (no
-                                  //   prompt text, no /token|secret|key/i values)
+  payload,                        // jsonb DEFAULT {}; per-kind ALLOW-list projection
+                                  //   at insert (ids, names, adapter/model, counts,
+                                  //   has* flags) — nothing else is stored
   state: 'queued' | 'delivering' | 'accepted'
        | 'succeeded' | 'failed' | 'fenced',   // DEFAULT 'queued';
                                   //   CHECK (state IN terminal) = (completed_at IS NOT NULL)
@@ -1700,7 +1702,9 @@ execution_commands {
 ```
 
 Attribution columns added by the same migration: `runs.execution_assignment_id`
-(the ACTIVE placement, FK SET NULL), `run_sessions.execution_assignment_id`
+(the LATEST minted assignment — it may be `released`; only
+`execution_assignments.state` says which one is active; FK SET NULL),
+`run_sessions.execution_assignment_id`
 (updated per spawn, FK SET NULL), `run_sessions.host_session_id` (the
 supervisor session id, written by the `session.create` ack — present from
 spawn, unlike `acp_session_id`), and `node_attempts.execution_assignment_id`
@@ -4009,7 +4013,7 @@ Created via Drizzle:
 | `execution_commands`        | `execution_commands_open_idx`                    | `(state, nextAttemptAt)` PARTIAL WHERE `state IN ('queued','delivering','accepted')` | **(ADR-166, Implemented)** Recovery pass + deliverer due scan (`loadOpenCommands` mirrors the predicate).                                                                        |
 | `execution_commands`        | `execution_commands_run_created_idx`             | `(runId, createdAt)`                                                                 | **(ADR-166, Implemented)** Per-run command history.                                                                                                                              |
 | `execution_commands`        | `execution_commands_assignment_idx`              | `(executionAssignmentId)`                                                            | **(ADR-166, Implemented)** Commands under one assignment.                                                                                                                        |
-| `runs`                      | `runs_execution_assignment_idx`                  | `(executionAssignmentId)`                                                            | **(ADR-166, Implemented)** Active-placement lookups.                                                                                                                             |
+| `runs`                      | `runs_execution_assignment_idx`                  | `(executionAssignmentId)`                                                            | **(ADR-166, Implemented)** Latest-assignment lookups.                                                                                                                             |
 | `run_sessions`              | `run_sessions_host_session_idx`                  | `(hostSessionId)`                                                                    | **(ADR-166, Implemented)** Reconcile lookup by supervisor session id.                                                                                                            |
 | `run_sessions`              | `run_sessions_assignment_idx`                    | `(executionAssignmentId)`                                                            | **(ADR-166, Implemented)** Sessions spawned under one assignment.                                                                                                                |
 | `node_attempts`             | `node_attempts_assignment_idx`                   | `(executionAssignmentId)`                                                            | **(ADR-166, Implemented)** Attempts attributed to one assignment.                                                                                                                |

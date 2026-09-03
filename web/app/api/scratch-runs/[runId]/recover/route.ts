@@ -4,7 +4,7 @@ import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { RunnerSnapshot } from "@/lib/acp-runners/resolve";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
@@ -37,8 +37,10 @@ import {
 } from "@/lib/scratch-runs/service";
 import {
   createExecutionHosts,
+  isFencedError,
   localHost,
   mintPlacement,
+  releaseAssignmentForRun,
 } from "@/lib/execution-host";
 
 const {
@@ -274,6 +276,33 @@ async function loadScratchLaunchExecutor(
 // created through the client bound to that assignment (an unavailable host
 // refuses the recover before the claim).
 
+// A failed create after the claim: Running → the observed pre-claim row
+// (predicated on Running so a concurrent transition is never clobbered) and
+// the never-driven `scratch_recover` generation released, in ONE tx — mirrors
+// rollbackResumedRun. The claim never touched `scratch_runs`, so the stored
+// supervisor session id is exactly as it was.
+async function rollbackScratchRecover(
+  db: Db,
+  runId: string,
+  observed: { status: string; currentStepId: string | null },
+): Promise<void> {
+  await db.transaction(async (tx: Db) => {
+    const rows = await tx
+      .update(runs)
+      .set({ status: observed.status, currentStepId: observed.currentStepId })
+      .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+      .returning({ id: runs.id });
+
+    if (rows.length === 0) return;
+
+    await releaseAssignmentForRun(
+      tx as unknown as ExecutionDb,
+      runId,
+      "scratch_recover_rollback",
+    );
+  });
+}
+
 export async function POST(
   req: NextRequest,
   { params }: RouteParams,
@@ -362,37 +391,69 @@ export async function POST(
       );
     }
 
-    // Claim first (Running + the `scratch_recover` generation), then create
-    // through the bound client; a failed create lands in the catch below. The
-    // ADR-097 working-dir confinement rides the adopted handle (directory
-    // adoption of the package dir), no longer a wire field.
-    await db.transaction(async (tx: Db) => {
-      await tx
+    // Claim first: CAS the OBSERVED status → Running and mint the
+    // `scratch_recover` generation in the same tx (a concurrent recover loses
+    // the CAS → 409). The create then rides the client bound to that
+    // generation; a create failure rolls the claim back. The ADR-097
+    // working-dir confinement rides the adopted handle (directory adoption of
+    // the package dir), no longer a wire field.
+    const observed = {
+      status: run.status as string,
+      currentStepId: (run.currentStepId ?? null) as string | null,
+    };
+    const claimed = await db.transaction(async (tx: Db) => {
+      const rows = await tx
         .update(runs)
         .set({
           status: "Running",
           currentStepId: scratchStepId(),
         })
-        .where(eq(runs.id, runId));
-      await mintPlacement(tx as unknown as ExecutionDb, {
+        .where(and(eq(runs.id, runId), eq(runs.status, observed.status)))
+        .returning({ id: runs.id });
+
+      if (rows.length === 0) return null;
+
+      return mintPlacement(tx as unknown as ExecutionDb, {
         runId,
         reason: "scratch_recover",
         host: placementHost,
       });
     });
 
-    const client = await hosts.forRun(runId);
-    const session = await client.createSession({
-      stepId: scratchStepId(),
-      executor,
-      runner: runnerSupervisorInput({ snapshot: runnerSnapshot }),
-      resumeSessionId: acpSessionId,
-      capabilityProfilePath: profile?.materializedPath ?? undefined,
-      adapterLaunch: mergeRunnerAdapterLaunch(
-        runnerSnapshot,
-        profile?.adapterLaunch ?? undefined,
-      ),
+    if (!claimed) {
+      throw new MaisterError(
+        "CONFLICT",
+        `scratch run ${runId} left ${observed.status} concurrently — recover refused`,
+      );
+    }
+
+    const execution = await hosts.executionFor(runId, {
+      assignmentId: claimed.id,
     });
+    let session: Awaited<ReturnType<typeof execution.client.createSession>>;
+
+    try {
+      session = await execution.client.createSession({
+        stepId: scratchStepId(),
+        executor,
+        runner: runnerSupervisorInput({ snapshot: runnerSnapshot }),
+        resumeSessionId: acpSessionId,
+        capabilityProfilePath: profile?.materializedPath ?? undefined,
+        adapterLaunch: mergeRunnerAdapterLaunch(
+          runnerSnapshot,
+          profile?.adapterLaunch ?? undefined,
+        ),
+      });
+    } catch (err) {
+      // ADR-166 E-EH-11: a fenced create means a newer generation owns the
+      // run — its claim is not ours to roll back.
+      if (isFencedError(err)) {
+        log.warn({ runId, assignmentId: claimed.id }, "driver-yielded");
+        throw err;
+      }
+      await rollbackScratchRecover(db, runId, observed);
+      throw err;
+    }
     const now = new Date();
 
     await db.transaction(async (tx: Db) => {
@@ -421,7 +482,7 @@ export async function POST(
         sessionId: session.sessionId,
         stepId: scratchStepId(),
         prompt: normalizeScratchPrompt(body.prompt, executor.agent, { runId }),
-        execution: { client, admin: hosts.local() },
+        execution,
       });
 
       const dialogStatus = await completeScratchPromptTurn({ db, runId });
@@ -436,6 +497,12 @@ export async function POST(
         { status: 202 },
       );
     } catch (err) {
+      // A fenced turn belongs to a superseded generation — its run state is
+      // not ours to crash (E-EH-11).
+      if (isFencedError(err)) {
+        log.warn({ runId, assignmentId: claimed.id }, "driver-yielded");
+        throw err;
+      }
       await markScratchCrashed({
         db,
         runId,

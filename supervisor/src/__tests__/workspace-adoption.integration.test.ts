@@ -1,4 +1,4 @@
-// ADR-166 T2.3 — workspace adoption + handle-based create (W1–W9).
+// ADR-166 T2.3 — workspace adoption + handle-based create (W1–W13).
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
@@ -213,6 +213,11 @@ describe("workspace adoption", () => {
         "repo_path_mismatch",
         { kind: "repo_checkout", path: l.repo, repoPath: outsideRepo },
       ],
+      // A linked worktree (`.git` FILE) is never a repo root.
+      [
+        "not_a_repo",
+        { kind: "repo_checkout", path: l.worktree, repoPath: l.worktree },
+      ],
       ["inside_state_dir", { kind: "directory", path: l.host.stateDir }],
     ];
 
@@ -277,10 +282,14 @@ describe("workspace adoption", () => {
 
   it("W7: a handle-form create derives cwd, step log, confinement roots, and the mounts from the handle", async () => {
     const l = await lab();
+    const mountDir = join(l.root, "ctx", "api");
+
+    await mkdir(mountDir, { recursive: true });
+    git(mountDir, "init", "-q", "-b", "main");
     const mounts = [
       {
         slug: "api",
-        path: join(l.worktree, "ctx", "api"),
+        path: mountDir,
         ref: "main",
         commit: "0123456789abcdef",
       },
@@ -400,5 +409,160 @@ describe("workspace adoption", () => {
     expect(text).not.toContain(l.worktree);
     expect(text).not.toContain(l.repo);
     expect(FIXTURES_DIR).toBeTruthy();
+  });
+
+  it("W10: a released handle is history — re-adopting the same path mints a NEW active handle", async () => {
+    const l = await lab();
+    const payload = {
+      runId: l.runId,
+      projectSlug: "demo",
+      kind: "git_worktree",
+      path: l.worktree,
+      repoPath: l.repo,
+    };
+    const first = await adopt(l, payload);
+    const oldId = first.body.executionWorkspaceId as string;
+    const release = await postJson(
+      `${l.host.url}/workspaces/${oldId}`,
+      envelope(
+        "workspace.release",
+        { hostKey: l.host.hostState.hostKey, runId: l.runId },
+        {},
+      ),
+      "DELETE",
+    );
+
+    expect(release.body).toEqual({ released: true });
+
+    const again = await adopt(l, payload);
+
+    expect(again.status).toBe(200);
+    expect(again.body.replayed).toBe(false);
+    expect(again.body.executionWorkspaceId).toMatch(/^ws_[0-9a-f]{32}$/);
+    expect(again.body.executionWorkspaceId).not.toBe(oldId);
+
+    const old = (await (
+      await fetch(`${l.host.url}/workspaces/${oldId}`)
+    ).json()) as { releasedAt: string | null };
+    const fresh = (await (
+      await fetch(`${l.host.url}/workspaces/${again.body.executionWorkspaceId}`)
+    ).json()) as { releasedAt: string | null };
+
+    expect(old.releasedAt).toEqual(expect.any(String));
+    expect(fresh.releasedAt).toBeNull();
+    // The new handle is the one a re-adoption finds from now on.
+    expect((await adopt(l, payload)).body).toEqual({
+      ...again.body,
+      replayed: true,
+    });
+  });
+
+  it("W11: every context mount is validated as a git checkout — the rejection matrix names the rule and the mount", async () => {
+    const l = await lab();
+    const plain = join(l.wtRoot, "plain-mount");
+
+    await mkdir(plain);
+
+    const cases: Array<[string, string]> = [
+      ["relative_path", "relative/mount"],
+      ["parent_segment", `${l.wtRoot}/../mount`],
+      ["not_found", join(l.wtRoot, "missing-mount")],
+      ["inside_state_dir", l.host.stateDir],
+      ["not_a_repo", plain],
+    ];
+
+    for (const [rule, path] of cases) {
+      const res = await adopt(l, {
+        runId: l.runId,
+        projectSlug: "demo",
+        kind: "git_worktree",
+        path: l.worktree,
+        repoPath: l.repo,
+        contextMounts: [
+          { slug: "api", path, ref: "main", commit: "0123456789abcdef" },
+        ],
+      });
+
+      expect(res.status, rule).toBe(409);
+      expect(res.body.code, rule).toBe("PRECONDITION");
+      expect(res.body.details, rule).toEqual({
+        reason: "workspace_rejected",
+        rule,
+        mount: "api",
+      });
+    }
+  });
+
+  it("W12: an accepted mount is stored by realpath, in either checkout shape (a detached linked worktree behind a symlink, or a repo root)", async () => {
+    const l = await lab();
+    const mounts = join(l.root, "mounts");
+    const detached = join(mounts, "api-detached");
+    const link = join(mounts, "api-link");
+
+    await mkdir(mounts, { recursive: true });
+    git(l.repo, "worktree", "add", "-q", "--detach", detached);
+    await symlink(detached, link);
+
+    const res = await adopt(l, {
+      runId: l.runId,
+      projectSlug: "demo",
+      kind: "git_worktree",
+      path: l.worktree,
+      repoPath: l.repo,
+      contextMounts: [
+        { slug: "api", path: link, ref: "main", commit: "0123456789abcdef" },
+        { slug: "lib", path: l.repo, ref: "main", commit: "0123456789abcdef" },
+      ],
+    });
+
+    expect(res.status).toBe(200);
+
+    const stored = l.host.hostState.getWorkspace(
+      res.body.executionWorkspaceId as string,
+    )?.contextMounts as Array<{ slug: string; path: string }>;
+
+    expect(stored.map((m) => [m.slug, m.path])).toEqual([
+      ["api", detached],
+      ["lib", l.repo],
+    ]);
+  });
+
+  it("W13: inside_state_dir compares the REALPATH of the state dir — a symlinked state dir cannot be adopted through its real path", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "eh-adopt-")));
+
+    roots.push(root);
+    const realStateRoot = join(root, "real-state");
+    const linkRoot = join(root, "link-state");
+
+    await mkdir(realStateRoot);
+    await symlink(realStateRoot, linkRoot);
+
+    const host = await bootHost({
+      runtimeRoot: root,
+      stateDir: join(linkRoot, "execution-host"),
+      workspaceRoots: [root],
+      fixtureArgs: ["--hang"],
+    });
+
+    booted.push(host);
+    const res = await postJson(
+      `${host.url}/workspaces/adopt`,
+      envelope(
+        "workspace.adopt",
+        { hostKey: host.hostState.hostKey, runId: "run-x" },
+        {
+          runId: "run-x",
+          projectSlug: "demo",
+          kind: "directory",
+          path: join(realStateRoot, "execution-host"),
+        },
+      ),
+    );
+
+    expect(res.status).toBe(409);
+    expect(res.body.details).toEqual({
+      reason: "workspace_rejected",
+      rule: "inside_state_dir",
+    });
   });
 });

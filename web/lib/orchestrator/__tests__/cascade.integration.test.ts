@@ -28,6 +28,7 @@ import {
 
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -288,6 +289,8 @@ describe("cascadeAbandonRunTree (M37 T7.4)", () => {
 
     // Before: the agent pool is full (Running + NeedsInput count).
     expect(await countLiveRuns(db, "agent")).toBe(2);
+    // ADR-166: the live child holds a driver generation the cascade must end.
+    await fakeExecutionHosts(db, { runId: running });
 
     const result = await cascadeAbandonRunTree(
       orchestratorRunId,
@@ -298,6 +301,15 @@ describe("cascadeAbandonRunTree (M37 T7.4)", () => {
 
     expect(result.cascadedRunCount).toBe(3);
     expect(result.abandonedTaskCount).toBe(1);
+    expect(
+      await db
+        .select({
+          state: schema.executionAssignments.state,
+          releasedReason: schema.executionAssignments.releasedReason,
+        })
+        .from(schema.executionAssignments)
+        .where(eq(schema.executionAssignments.runId, running)),
+    ).toEqual([{ state: "released", releasedReason: "abandoned" }]);
 
     // All three sub-tree runs are Abandoned; the orchestrator itself is NOT.
     expect(await statusOf(running)).toBe("Abandoned");

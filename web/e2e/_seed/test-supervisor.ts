@@ -45,15 +45,20 @@ import {
   STUB_HOST_KEY,
   stubAdopt,
   stubEnvelope,
+  stubExitSession,
   stubFence,
+  stubFencedExitEvent,
   stubHandle,
   stubPayload,
   stubReceipt,
   stubRecord,
+  stubRegisterSession,
   stubRelease,
   MISSING_ENVELOPE_BODY,
   stubReplay,
   stubResolveCreate,
+  stubSessionListEntry,
+  stubSessions,
 } from "./stub-supervisor";
 
 const STUB_RELEASE_BACKSTOP_MS = 15_000;
@@ -140,6 +145,9 @@ type SessionRecord = {
   assignmentId?: string;
   assignmentEpoch?: number;
   createdByCommandId?: string;
+  // ADR-166: set when a command with a HIGHER assignment epoch evicted this
+  // session (its held prompt answered 409 FENCED, its stream ended `fenced`).
+  fencedByEpoch?: number;
 };
 
 export interface TestSupervisorOptions {
@@ -814,23 +822,35 @@ export async function startTestSupervisor(
 
     // ---- GET /sessions — reconcile/keepalive/parkOrchestratorSession view --
     if (method === "GET" && url === "/sessions") {
+      // The real `SessionListEntry` projection over the shared registry; a
+      // checkpointed (detached) or evicted session is no longer listed live.
       const records = [...sessions.values()]
         .filter((s) => !s.detached)
-        .map((s) => ({
-          sessionId: s.sessionId,
-          runId: s.runId,
-          projectSlug: "test",
-          stepId: "coordinate",
-          status: "live" as const,
-          pid: 4242,
-          startedAt: new Date().toISOString(),
-          monotonicId: monotonic,
-          acpSessionId: s.acpSessionId,
-          executionWorkspaceId: s.executionWorkspaceId,
-          assignmentId: s.assignmentId,
-          assignmentEpoch: s.assignmentEpoch,
-          createdByCommandId: s.createdByCommandId,
-        }));
+        .map((s) => {
+          const entry = stubSessions.get(s.sessionId);
+
+          return {
+            ...stubSessionListEntry(
+              entry ?? {
+                sessionId: s.sessionId,
+                adapter: "claude",
+                runId: s.runId,
+                projectSlug: "test",
+                stepId: "coordinate",
+                sessionName: "default",
+                status: "live",
+                pid: 4242,
+                startedAt: new Date().toISOString(),
+                acpSessionId: s.acpSessionId,
+                executionWorkspaceId: s.executionWorkspaceId,
+                assignmentId: s.assignmentId,
+                assignmentEpoch: s.assignmentEpoch,
+                createdByCommandId: s.createdByCommandId,
+              },
+            ),
+            monotonicId: monotonic,
+          };
+        });
 
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(records));
@@ -923,6 +943,53 @@ export async function startTestSupervisor(
         };
 
         sessions.set(sessionId, rec);
+        stubRegisterSession({
+          sessionId,
+          adapter: String(
+            (body.runner as { adapter?: string } | undefined)?.adapter ??
+              (body.executor as { agent?: string } | undefined)?.agent ??
+              "claude",
+          ),
+          runId,
+          projectSlug: (await lookupProjectSlug(runId)) ?? "test",
+          stepId: String(body.stepId ?? "coordinate"),
+          nodeAttemptId:
+            typeof body.nodeAttemptId === "string"
+              ? body.nodeAttemptId
+              : undefined,
+          sessionName: String(body.sessionName ?? "default"),
+          acpSessionId,
+          executionWorkspaceId: rec.executionWorkspaceId,
+          assignmentId: rec.assignmentId,
+          assignmentEpoch: rec.assignmentEpoch,
+          createdByCommandId: rec.createdByCommandId,
+          // E-EH-04 / X-EH-19: a higher-epoch command evicts this session —
+          // its held prompt answers 409 FENCED and its stream ends `fenced`.
+          onEvict: (hostEpoch) => {
+            rec.fencedByEpoch = hostEpoch;
+            const pending = rec.pendingPrompt;
+
+            if (pending) {
+              rec.pendingPrompt = null;
+              pending.respond(409, {
+                code: "FENCED",
+                message: `session ${sessionId} was evicted by assignment epoch ${hostEpoch}`,
+                details: {
+                  reason: "assignment_fenced",
+                  runId,
+                  commandEpoch:
+                    pending.env?.fence.assignmentEpoch ??
+                    rec.assignmentEpoch ??
+                    0,
+                  hostEpoch,
+                },
+              });
+            }
+            rec.exitPending = false;
+            emitOrQueue(rec, stubFencedExitEvent(sessionId, nextId()));
+            rec.detached = true;
+          },
+        });
         created.push({
           runId,
           runKind,
@@ -1140,9 +1207,13 @@ export async function startTestSupervisor(
 
           return;
         }
+        const alreadyCheckpointed =
+          stubSessions.get(checkpointMatch[1])?.status === "exited";
+
         if (rec) rec.detached = true;
+        stubExitSession(checkpointMatch[1]);
         const out = {
-          alreadyCheckpointed: false,
+          alreadyCheckpointed,
           sessionId: checkpointMatch[1],
           monotonicId: nextId(),
         };
@@ -1249,6 +1320,7 @@ export async function startTestSupervisor(
           if (rec.emit) rec.emit = null;
           sessions.delete(deleteMatch[1]);
         }
+        stubExitSession(deleteMatch[1]);
         stubRecord(env, 204, {});
         res.writeHead(204);
         res.end();

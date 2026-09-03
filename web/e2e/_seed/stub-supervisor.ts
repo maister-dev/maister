@@ -79,6 +79,109 @@ type StubEnvelope = {
 };
 
 const fences = new Map<string, { assignmentId: string; epoch: number }>();
+
+// ---- ADR-166 session registry (shared by both e2e supervisors) -------------
+// The `GET /sessions` projection of the real host (`SessionListEntry`) plus
+// the eviction hook a stream handler installs: when a command with a HIGHER
+// epoch arrives for a run, every live lower-epoch session of that run is
+// evicted (`session.exited{reason:"fenced"}`) BEFORE the command executes.
+export type StubSessionEntry = {
+  sessionId: string;
+  adapter: string;
+  runId: string;
+  projectSlug: string;
+  stepId: string;
+  nodeAttemptId?: string;
+  sessionName: string;
+  status: "live" | "exited";
+  pid: number;
+  startedAt: string;
+  exitedAt?: string;
+  exitCode?: number | null;
+  signal?: string | null;
+  acpSessionId: string;
+  executionWorkspaceId?: string;
+  assignmentId?: string;
+  assignmentEpoch?: number;
+  createdByCommandId?: string;
+  onEvict?: (hostEpoch: number) => void;
+};
+
+export const stubSessions = new Map<string, StubSessionEntry>();
+
+export function stubRegisterSession(
+  entry: Omit<StubSessionEntry, "status" | "pid" | "startedAt"> &
+    Partial<Pick<StubSessionEntry, "status" | "pid" | "startedAt">>,
+): StubSessionEntry {
+  const record: StubSessionEntry = {
+    status: "live",
+    pid: 4242,
+    startedAt: new Date().toISOString(),
+    ...entry,
+  };
+
+  stubSessions.set(record.sessionId, record);
+
+  return record;
+}
+
+export function stubExitSession(sessionId: string, exitCode = 0): void {
+  const entry = stubSessions.get(sessionId);
+
+  if (!entry || entry.status !== "live") return;
+  entry.status = "exited";
+  entry.exitedAt = new Date().toISOString();
+  entry.exitCode = exitCode;
+  entry.onEvict = undefined;
+}
+
+// The real `toSessionListEntry`: host-private paths never leave the host.
+export function stubSessionListEntry(entry: StubSessionEntry) {
+  return {
+    sessionId: entry.sessionId,
+    adapter: entry.adapter,
+    runId: entry.runId,
+    projectSlug: entry.projectSlug,
+    stepId: entry.stepId,
+    nodeAttemptId: entry.nodeAttemptId,
+    sessionName: entry.sessionName,
+    status: entry.status,
+    pid: entry.pid,
+    startedAt: entry.startedAt,
+    exitedAt: entry.exitedAt,
+    exitCode: entry.exitCode,
+    signal: entry.signal ?? null,
+    monotonicId: 0,
+    acpSessionId: entry.acpSessionId,
+    executionWorkspaceId: entry.executionWorkspaceId,
+    assignmentId: entry.assignmentId,
+    assignmentEpoch: entry.assignmentEpoch,
+    createdByCommandId: entry.createdByCommandId,
+  };
+}
+
+export function stubFencedExitEvent(sessionId: string, monotonicId: number) {
+  return {
+    type: "session.exited",
+    sessionId,
+    monotonicId,
+    exitCode: 143,
+    reason: "fenced",
+  };
+}
+
+function stubEvictLowerEpochSessions(runId: string, epoch: number): void {
+  for (const entry of stubSessions.values()) {
+    if (entry.runId !== runId || entry.status !== "live") continue;
+    if (entry.assignmentEpoch === undefined || entry.assignmentEpoch >= epoch) {
+      continue;
+    }
+    const evict = entry.onEvict;
+
+    stubExitSession(entry.sessionId, 143);
+    evict?.(epoch);
+  }
+}
 const receipts = new Map<
   string,
   {
@@ -182,6 +285,8 @@ export function stubFence(
       assignmentId: env.fence.assignmentId,
       epoch: env.fence.assignmentEpoch,
     });
+    // E-EH-04: the advance evicts the run's live lower-epoch sessions.
+    stubEvictLowerEpochSessions(env.fence.runId, env.fence.assignmentEpoch);
   }
 
   return null;
@@ -613,6 +718,7 @@ export function startStubSupervisor(): Promise<Server> {
         }
         const sessionId = randomUUID();
         const acpSessionId = randomUUID();
+        const request = resolved.request as Record<string, unknown>;
 
         writeFileSync(
           sessionFile(sessionId),
@@ -622,11 +728,41 @@ export function startStubSupervisor(): Promise<Server> {
             2,
           ),
         );
+        stubRegisterSession({
+          sessionId,
+          adapter: String(
+            (request.runner as { adapter?: string } | undefined)?.adapter ??
+              (request.executor as { agent?: string } | undefined)?.agent ??
+              "claude",
+          ),
+          runId: resolved.runId,
+          projectSlug: String(request.projectSlug ?? "e2e"),
+          stepId: String(request.stepId ?? "step"),
+          nodeAttemptId:
+            typeof request.nodeAttemptId === "string"
+              ? request.nodeAttemptId
+              : undefined,
+          sessionName: String(request.sessionName ?? "default"),
+          acpSessionId,
+          executionWorkspaceId:
+            typeof request.executionWorkspaceId === "string"
+              ? request.executionWorkspaceId
+              : undefined,
+          assignmentId: env.fence.assignmentId,
+          assignmentEpoch: env.fence.assignmentEpoch,
+          createdByCommandId: env.command.id,
+        });
         const out = { sessionId, pid: 4242, acpSessionId };
 
         stubRecord(env, 201, out);
         sendJson(res, 201, out);
       });
+
+      return;
+    }
+
+    if (req.method === "GET" && req.url === "/sessions") {
+      sendJson(res, 200, [...stubSessions.values()].map(stubSessionListEntry));
 
       return;
     }
@@ -696,7 +832,8 @@ export function startStubSupervisor(): Promise<Server> {
         const out =
           kind === "checkpoint"
             ? {
-                alreadyCheckpointed: false,
+                alreadyCheckpointed:
+                  stubSessions.get(teardownMatch[1])?.status === "exited",
                 sessionId: teardownMatch[1],
                 monotonicId: 2,
               }
@@ -704,6 +841,7 @@ export function startStubSupervisor(): Promise<Server> {
               ? { cancelled: true, sessionId: teardownMatch[1] }
               : { ok: true };
 
+        if (kind === "checkpoint") stubExitSession(teardownMatch[1]);
         stubRecord(env, 200, out);
         sendJson(res, 200, out);
       });
@@ -732,6 +870,7 @@ export function startStubSupervisor(): Promise<Server> {
       );
 
       const startedAt = Date.now();
+      const entry = stubSessions.get(sessionId);
       const timer = setInterval(() => {
         const released = existsSync(releasePath);
         const expired = Date.now() - startedAt > RELEASE_BACKSTOP_MS;
@@ -739,6 +878,7 @@ export function startStubSupervisor(): Promise<Server> {
         if (!released && !expired) return;
 
         clearInterval(timer);
+        stubExitSession(sessionId);
         res.write(
           `data: ${JSON.stringify({
             type: "session.exited",
@@ -750,7 +890,22 @@ export function startStubSupervisor(): Promise<Server> {
         res.end();
       }, RELEASE_POLL_MS);
 
-      req.on("close", () => clearInterval(timer));
+      // A higher-epoch command for the run evicts this session: its stream
+      // ends with the fenced exit instead of the release.
+      if (entry) {
+        entry.onEvict = () => {
+          clearInterval(timer);
+          res.write(
+            `data: ${JSON.stringify(stubFencedExitEvent(sessionId, 2))}\n\n`,
+          );
+          res.end();
+        };
+      }
+
+      req.on("close", () => {
+        clearInterval(timer);
+        if (entry?.onEvict) entry.onEvict = undefined;
+      });
 
       return;
     }
@@ -775,6 +930,7 @@ export function startStubSupervisor(): Promise<Server> {
 
           return;
         }
+        stubExitSession(deleteMatch[1]);
         stubRecord(env, 204, {});
         res.writeHead(204);
         res.end();

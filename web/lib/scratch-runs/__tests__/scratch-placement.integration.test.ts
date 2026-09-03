@@ -8,7 +8,11 @@
 //   Q2 an interrupt is a fenced `session.cancel` command against that session;
 //   Q3 the recover route mints `scratch_recover` over the crash-released
 //      launch generation, resumes on the stored ACP handle, and re-uses the
-//      adopted workspace handle (no second adoption).
+//      adopted workspace handle (no second adoption);
+//   Q4 a create failure after the recover claim rolls the claim back (run back
+//      to Crashed, the minted generation released `scratch_recover_rollback`);
+//   Q5 two concurrent recovers serialize on the status CAS: one 202, one 409,
+//      exactly one new generation.
 
 import type { ExecutionHosts } from "@/lib/execution-host";
 import type { ScratchLaunchInput } from "@/lib/scratch-runs/types";
@@ -29,6 +33,7 @@ import * as schema from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import {
   createFakeExecutionHost,
+  definitiveUnavailableError,
   fakeExecutionHosts,
   type FakeExecutionHost,
 } from "@/test-support/fake-execution-host";
@@ -384,5 +389,77 @@ describe("scratch run placement (ADR-166 Q1–Q3)", () => {
     expect(session.hostSessionId).not.toBe(firstHostSessionId);
     expect(scratch.supervisorSessionId).toBe(session.hostSessionId);
     expect(scratch.dialogStatus).toBe("WaitingForUser");
+  }, 60_000);
+
+  async function recover(): Promise<Response> {
+    return recoverRoute(
+      new NextRequest(`http://localhost/api/scratch-runs/${runId}/recover`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt: "continue" }),
+      }),
+      { params: Promise.resolve({ runId }) },
+    );
+  }
+
+  it("Q4: a create failure after the claim rolls it back — run Crashed again, generation released", async () => {
+    const { session: before } = await scratchAndSession(runId);
+
+    fake.sessions.delete(before.hostSessionId as string);
+    await markScratchCrashed({
+      db,
+      runId,
+      err: new Error("supervisor restart"),
+    });
+    fake.failOnce("createSession", definitiveUnavailableError());
+
+    const response = await recover();
+
+    expect(response.status).toBe(503);
+
+    const [run] = await db
+      .select({ status: schema.runs.status })
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId));
+
+    expect(run.status).toBe("Crashed");
+    expect((await assignmentRows(runId)).at(-1)).toMatchObject({
+      epoch: 3,
+      state: "released",
+      placementReason: "scratch_recover",
+      releasedReason: "scratch_recover_rollback",
+    });
+    // The stored supervisor session id is exactly what the crash left.
+    const { scratch } = await scratchAndSession(runId);
+
+    expect(scratch.supervisorSessionId).toBe(before.hostSessionId);
+    expect(scratch.dialogStatus).toBe("Crashed");
+  }, 60_000);
+
+  it("Q5: two concurrent recovers → one 202, one 409, exactly one new generation", async () => {
+    const before = (await assignmentRows(runId)).length;
+    const [a, b] = await Promise.all([recover(), recover()]);
+    const statuses = [a.status, b.status].sort();
+
+    expect(statuses).toEqual([202, 409]);
+    const loser = a.status === 409 ? a : b;
+
+    await expect(loser.json()).resolves.toMatchObject({ code: "CONFLICT" });
+
+    const rows = await assignmentRows(runId);
+
+    expect(rows).toHaveLength(before + 1);
+    expect(rows.at(-1)).toMatchObject({
+      state: "active",
+      placementReason: "scratch_recover",
+    });
+    expect(
+      (
+        await db
+          .select({ status: schema.runs.status })
+          .from(schema.runs)
+          .where(eq(schema.runs.id, runId))
+      )[0].status,
+    ).not.toBe("Crashed");
   }, 60_000);
 });

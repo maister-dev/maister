@@ -1,4 +1,5 @@
-// ADR-166 T1.2 — execution_commands ledger (C1–C5).
+// ADR-166 T1.2 — execution_commands ledger (C1–C5): the E-EH-12 payload
+// projection and the CAS state machine.
 
 import type { Db } from "@/lib/execution-host/db";
 
@@ -76,60 +77,217 @@ async function readCommand(id: string) {
 
 const SENTINEL_TOKEN = "sk-live-SENTINEL-1234567890";
 const SENTINEL_PROMPT = "PROMPT-BODY-SENTINEL do the thing";
+const SENTINEL_PATH = "/secret/worktree/SENTINEL-PATH";
+
+// Keys that carry a path, a body, a secret, or an argv token: none may
+// survive the projection at any depth.
+const FORBIDDEN_KEYS = [
+  "path",
+  "repoPath",
+  "worktreePath",
+  "confineRoot",
+  "capabilityProfilePath",
+  "prompt",
+  "contentBlocks",
+  "env",
+  "args",
+  "command",
+  "apiKey",
+  "mcpServers",
+  "adapterLaunch",
+  "hooksConfig",
+  "enforcementProfile",
+  "contextMounts",
+];
+
+function deepKeys(value: unknown, prefix = ""): string[] {
+  if (!value || typeof value !== "object") return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((item, i) => deepKeys(item, `${prefix}[${i}]`));
+  }
+
+  return Object.entries(value as Record<string, unknown>).flatMap(
+    ([key, child]) => [
+      `${prefix}${key}`,
+      ...deepKeys(child, `${prefix}${key}.`),
+    ],
+  );
+}
+
+function leafNames(value: unknown): string[] {
+  return deepKeys(value).map((k) =>
+    k
+      .split(".")
+      .pop()!
+      .replace(/\[\d+\]$/, ""),
+  );
+}
 
 describe("insertCommand", () => {
-  it("C1: inserts queued with a redacted payload (no secret values, no prompt body)", async () => {
+  it("C1: the per-kind ALLOW-list projection — ids, names and counts survive; no path, body, secret or argv key does", async () => {
     const { runId, assignment } = await seedAssignment();
+    const insert = (
+      kind: Parameters<typeof insertCommand>[1]["kind"],
+      payload: unknown,
+    ) =>
+      insertCommand(db, {
+        runId,
+        assignmentId: assignment.id,
+        hostId,
+        assignmentEpoch: assignment.epoch,
+        kind,
+        maxAttempts: 3,
+        payload,
+      });
 
-    const row = await insertCommand(db, {
-      runId,
-      assignmentId: assignment.id,
-      hostId,
-      assignmentEpoch: assignment.epoch,
-      kind: "session.create",
-      maxAttempts: 3,
-      payload: {
-        executionWorkspaceId: "ws_" + "b".repeat(32),
-        stepId: "plan",
-        prompt: SENTINEL_PROMPT,
-        contentBlocks: [{ type: "text", text: SENTINEL_PROMPT }],
-        executor: {
-          agent: "claude",
-          model: "claude-sonnet-4-6",
-          env: { ANTHROPIC_AUTH_TOKEN: SENTINEL_TOKEN },
-        },
-        runner: {
-          provider: { kind: "anthropic" },
-          apiKey: SENTINEL_TOKEN,
-        },
-        adapterLaunch: { env: { MAISTER_CAPABILITY_PROFILE: "/p" } },
+    const create = await insert("session.create", {
+      executionWorkspaceId: "ws_" + "b".repeat(32),
+      stepId: "plan",
+      nodeAttemptId: "attempt-1",
+      sessionName: "default",
+      resumeSessionId: "acp-prior",
+      readOnlySession: false,
+      autoApprovePermissions: true,
+      reapOnEndTurn: false,
+      executor: {
+        agent: "claude",
+        model: "claude-sonnet-4-6",
+        env: { ANTHROPIC_AUTH_TOKEN: SENTINEL_TOKEN },
       },
+      runner: {
+        adapter: "claude",
+        model: "claude-sonnet-4-6",
+        provider: {
+          kind: "anthropic_compatible",
+          baseUrl: "https://x/" + SENTINEL_TOKEN,
+        },
+        env: { ZAI_API_KEY: SENTINEL_TOKEN },
+        apiKey: SENTINEL_TOKEN,
+      },
+      capabilityProfilePath: SENTINEL_PATH,
+      adapterLaunch: {
+        env: { MAISTER_CAPABILITY_PROFILE: SENTINEL_PATH },
+        preArgs: ["--x"],
+      },
+      mcpServers: [
+        {
+          name: "maister",
+          command: "/bin/" + SENTINEL_PATH,
+          args: [SENTINEL_TOKEN],
+          env: { T: SENTINEL_TOKEN },
+        },
+        {
+          name: "other",
+          transport: "http",
+          url: "https://h/" + SENTINEL_TOKEN,
+        },
+      ],
+      hooksConfig: { repetition: { max: 3 } },
+      // A stray body on the wrong kind never leaks either.
+      prompt: SENTINEL_PROMPT,
     });
+    const prompt = await insert("session.prompt", {
+      stepId: "plan",
+      nodeAttemptId: "attempt-1",
+      prompt: SENTINEL_PROMPT,
+      contentBlocks: [
+        { type: "text", text: SENTINEL_PROMPT },
+        { type: "resource_link", uri: "file://" + SENTINEL_PATH, name: "f" },
+      ],
+      readOnlyTurn: true,
+    });
+    const adopt = await insert("workspace.adopt", {
+      runId,
+      projectSlug: "demo",
+      kind: "git_worktree",
+      path: SENTINEL_PATH,
+      repoPath: SENTINEL_PATH + "/repo",
+      contextMounts: [
+        {
+          slug: "api",
+          mountPath: SENTINEL_PATH + "/ctx",
+          repoPath: SENTINEL_PATH,
+          committish: "0123456789abcdef",
+          ref: "main",
+          projectId: "p",
+        },
+      ],
+    });
+    const input = await insert("session.input", {
+      kind: "permission",
+      action: "select",
+      requestId: "r1",
+      optionId: "allow",
+      reason: "because",
+      extra: SENTINEL_TOKEN,
+    });
+    const teardown = await Promise.all([
+      insert("session.cancel", { anything: SENTINEL_TOKEN }),
+      insert("session.checkpoint", { anything: SENTINEL_TOKEN }),
+      insert("session.delete", { anything: SENTINEL_TOKEN }),
+      insert("workspace.release", { anything: SENTINEL_TOKEN }),
+    ]);
 
-    expect(row.state).toBe("queued");
-    expect(row.attempts).toBe(0);
-    expect(row.completedAt).toBeNull();
+    expect(create.state).toBe("queued");
+    expect(create.attempts).toBe(0);
+    expect(create.completedAt).toBeNull();
 
-    const persisted = await readCommand(row.id);
-    const json = JSON.stringify(persisted.payload);
+    for (const row of [create, prompt, adopt, input, ...teardown]) {
+      const persisted = await readCommand(row.id);
+      const json = JSON.stringify(persisted.payload);
 
-    expect(json).not.toContain(SENTINEL_TOKEN);
-    expect(json).not.toContain(SENTINEL_PROMPT);
-    expect(persisted.payload).not.toHaveProperty("prompt");
-    expect(persisted.payload.promptBytes).toBe(
-      Buffer.byteLength(SENTINEL_PROMPT, "utf8"),
-    );
-    expect(persisted.payload.contentBlockCount).toBe(1);
-    // Ids survive redaction — the ledger row stays explainable.
-    expect(persisted.payload.stepId).toBe("plan");
-    expect(persisted.payload.executionWorkspaceId).toBe("ws_" + "b".repeat(32));
-    expect((persisted.payload.executor as { model: string }).model).toBe(
-      "claude-sonnet-4-6",
-    );
-    // Env keys survive, values do not.
-    expect(
-      (persisted.payload.executor as { env: Record<string, string> }).env,
-    ).toEqual({ ANTHROPIC_AUTH_TOKEN: "[REDACTED]" });
+      expect(json, row.kind).not.toContain(SENTINEL_TOKEN);
+      expect(json, row.kind).not.toContain(SENTINEL_PROMPT);
+      expect(json, row.kind).not.toContain(SENTINEL_PATH);
+      for (const key of leafNames(persisted.payload)) {
+        expect(FORBIDDEN_KEYS, `${row.kind} leaked key ${key}`).not.toContain(
+          key,
+        );
+      }
+    }
+
+    expect((await readCommand(create.id)).payload).toEqual({
+      executionWorkspaceId: "ws_" + "b".repeat(32),
+      stepId: "plan",
+      nodeAttemptId: "attempt-1",
+      sessionName: "default",
+      resumeSessionId: "acp-prior",
+      readOnlySession: false,
+      autoApprovePermissions: true,
+      reapOnEndTurn: false,
+      executor: { agent: "claude", model: "claude-sonnet-4-6" },
+      runner: {
+        adapter: "claude",
+        model: "claude-sonnet-4-6",
+        provider: { kind: "anthropic_compatible" },
+      },
+      mcpServerCount: 2,
+      hasCapabilityProfile: true,
+      hasAdapterLaunch: true,
+      hasHooksConfig: true,
+      hasEnforcementProfile: false,
+    });
+    expect((await readCommand(prompt.id)).payload).toEqual({
+      stepId: "plan",
+      promptBytes: Buffer.byteLength(SENTINEL_PROMPT, "utf8"),
+      contentBlockCount: 2,
+    });
+    expect((await readCommand(adopt.id)).payload).toEqual({
+      runId,
+      projectSlug: "demo",
+      kind: "git_worktree",
+      contextMountCount: 1,
+    });
+    expect((await readCommand(input.id)).payload).toEqual({
+      kind: "permission",
+      action: "select",
+      requestId: "r1",
+      optionId: "allow",
+      reason: "because",
+    });
+    for (const row of teardown) {
+      expect((await readCommand(row.id)).payload, row.kind).toEqual({});
+    }
   });
 });
 

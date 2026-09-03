@@ -528,6 +528,11 @@ mAIster/
   `MAISTER_EXECUTION_HOST_KEY` pin that differs from the copied
   `state.sqlite` refuses boot. Unset the pin or wipe the directory; never
   point two supervisors at one state dir.
+- **Upgrading to the execution-host contract with live runs** (ADR-166) — the
+  supervisor's pre-ADR-166 sessions die with the old process and nothing
+  backfills them: restart the supervisor first (drain recommended); in-flight
+  runs follow the supervisor-restart semantics — see
+  [deployment.md §11](deployment.md#11-updates).
 
 ## See Also
 

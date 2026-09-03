@@ -1,6 +1,12 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
 import { openSync } from "node:fs";
 import { createRequire } from "node:module";
 import net from "node:net";
@@ -13,6 +19,11 @@ import { fileURLToPath } from "node:url";
 // receipts, adoption roots) with the mock ACP adapter fixture wired through
 // the adapter registry's own override env. Tests point the local-direct
 // transport at it via `MAISTER_SUPERVISOR_URL`.
+//
+// The child runs in its OWN process group (`detached`), so `kill()` signals
+// the whole group: a SIGKILL of the supervisor alone would orphan the adapter
+// children it spawned (they would be re-parented to PID 1 and keep running
+// after the suite). `kill()` asserts the group is empty afterwards.
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = path.resolve(HERE, "..");
@@ -23,6 +34,9 @@ const TSX_LOADER = createRequire(import.meta.url).resolve("tsx");
 const FIXTURES_DIR = path.join(SUPERVISOR_DIR, "test", "fixtures");
 
 export const DEFAULT_FIXTURE = "mock-acp-lifecycle.mjs";
+
+const ORPHAN_GRACE_MS = 3_000;
+const LOG_TAIL_BYTES = 16 * 1024;
 
 export type RealSupervisorOptions = {
   runtimeRoot?: string;
@@ -43,11 +57,17 @@ export type RealSupervisor = {
   runtimeRoot: string;
   stateDir: string;
   workspaceRoots: string[];
+  fixturePath: string;
   logFile: string;
   options: RealSupervisorOptions;
   exited: Promise<number | null>;
+  // Signals the child's whole process group, waits for the leader, then
+  // asserts no member of the group survived (throws naming the orphans after
+  // SIGKILLing them).
   kill(signal?: NodeJS.Signals): Promise<void>;
   stop(): Promise<void>;
+  // The tail of the child's stdout+stderr log — for a diagnosable timeout.
+  logTail(maxBytes?: number): Promise<string>;
   // Same runtime root, state dir, port and adapter fixture — the "restart on
   // the same state dir" of D8. `overrides` can swap the fixture args.
   restart(overrides?: Partial<RealSupervisorOptions>): Promise<RealSupervisor>;
@@ -74,16 +94,17 @@ export async function freePort(): Promise<number> {
   });
 }
 
+function resolveFixture(fixture: string): string {
+  return path.isAbsolute(fixture) ? fixture : path.join(FIXTURES_DIR, fixture);
+}
+
 async function writeAdapterWrapper(
   runtimeRoot: string,
-  fixture: string,
+  fixturePath: string,
   fixtureArgs: string[],
 ): Promise<string> {
   const binDir = path.join(runtimeRoot, "bin");
   const wrapper = path.join(binDir, "claude-agent-acp");
-  const fixturePath = path.isAbsolute(fixture)
-    ? fixture
-    : path.join(FIXTURES_DIR, fixture);
   const quoted = fixtureArgs
     .map((a) => `'${a.replace(/'/g, "'\\''")}'`)
     .join(" ");
@@ -96,6 +117,20 @@ async function writeAdapterWrapper(
   );
 
   return wrapper;
+}
+
+// The inherited environment minus every execution-host setting: a developer
+// or CI pin (`MAISTER_EXECUTION_HOST_KEY`) would otherwise give every child
+// the same identity and turn the identity-change cases into no-ops.
+function scrubbedEnv(): NodeJS.ProcessEnv {
+  const env = {} as NodeJS.ProcessEnv;
+
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key.startsWith("MAISTER_EXECUTION_HOST_")) continue;
+    env[key] = value;
+  }
+
+  return env;
 }
 
 async function waitForHealth(
@@ -128,6 +163,51 @@ async function waitForHealth(
   );
 }
 
+// Every live pid in the process group (the group id equals the leader's pid).
+function groupMembers(pgid: number): Promise<number[]> {
+  return new Promise((resolve) => {
+    execFile("pgrep", ["-g", String(pgid)], (err, stdout) => {
+      // pgrep exits 1 when nothing matches.
+      if (err) {
+        resolve([]);
+
+        return;
+      }
+      resolve(
+        stdout
+          .split("\n")
+          .map((line) => Number.parseInt(line.trim(), 10))
+          .filter((pid) => Number.isFinite(pid)),
+      );
+    });
+  });
+}
+
+function signalGroup(pgid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pgid, signal);
+  } catch (err) {
+    // ESRCH: the group is already empty.
+    if ((err as NodeJS.ErrnoException).code !== "ESRCH") throw err;
+  }
+}
+
+async function assertGroupEmpty(pgid: number): Promise<void> {
+  const deadline = Date.now() + ORPHAN_GRACE_MS;
+  let survivors = await groupMembers(pgid);
+
+  while (survivors.length > 0 && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 100));
+    survivors = await groupMembers(pgid);
+  }
+  if (survivors.length === 0) return;
+
+  signalGroup(pgid, "SIGKILL");
+  throw new Error(
+    `real supervisor (pgid ${pgid}) left orphaned processes after kill: ${survivors.join(", ")} — SIGKILLed`,
+  );
+}
+
 export async function startRealSupervisor(
   options: RealSupervisorOptions = {},
 ): Promise<RealSupervisor> {
@@ -142,13 +222,14 @@ export async function startRealSupervisor(
   const logFile =
     options.logFile ??
     path.join(runtimeRoot, `supervisor-${randomUUID().slice(0, 8)}.log`);
+  const fixturePath = resolveFixture(options.fixture ?? DEFAULT_FIXTURE);
   const wrapper = await writeAdapterWrapper(
     runtimeRoot,
-    options.fixture ?? DEFAULT_FIXTURE,
+    fixturePath,
     options.fixtureArgs ?? [],
   );
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...scrubbedEnv(),
     NODE_ENV: "production",
     LOG_LEVEL: "warn",
     MAISTER_SUPERVISOR_PORT: String(port),
@@ -171,7 +252,8 @@ export async function startRealSupervisor(
   const logFd = openSync(logFile, "a");
   // The supervisor MUST be the direct child: pnpm's `.bin/tsx` shim and the
   // tsx CLI both put a proxy process in front (SIGKILL is never relayed), so
-  // node runs `main.ts` itself with tsx registered as an import hook.
+  // node runs `main.ts` itself with tsx registered as an import hook. It
+  // leads its own process group so `kill()` reaches the adapters it spawns.
   const child: ChildProcess = spawn(
     process.execPath,
     ["--import", TSX_LOADER, SUPERVISOR_MAIN],
@@ -179,44 +261,59 @@ export async function startRealSupervisor(
       cwd: SUPERVISOR_DIR,
       env,
       stdio: ["ignore", logFd, logFd],
+      detached: true,
     },
   );
+  const pid = child.pid ?? -1;
   const exited = new Promise<number | null>((resolve) => {
     child.once("exit", (code) => resolve(code));
   });
+  const leaderGone = () => child.exitCode !== null || child.signalCode !== null;
 
   try {
     await waitForHealth(url, options.startTimeoutMs ?? 60_000, exited);
   } catch (err) {
-    child.kill("SIGKILL");
+    if (pid > 0) signalGroup(pid, "SIGKILL");
     throw err;
   }
 
   const kill = async (signal: NodeJS.Signals = "SIGKILL") => {
-    if (child.exitCode !== null || child.signalCode !== null) return;
-    child.kill(signal);
-    await Promise.race([
-      exited,
-      new Promise<void>((r) => setTimeout(r, 10_000)),
-    ]);
-    if (child.exitCode === null && child.signalCode === null) {
-      child.kill("SIGKILL");
-      await exited;
+    if (!leaderGone()) {
+      signalGroup(pid, signal);
+      await Promise.race([
+        exited,
+        new Promise<void>((r) => setTimeout(r, 10_000)),
+      ]);
+      if (!leaderGone()) {
+        signalGroup(pid, "SIGKILL");
+        await exited;
+      }
     }
+    await assertGroupEmpty(pid);
   };
 
   const handle: RealSupervisor = {
     url,
     port,
-    pid: child.pid ?? -1,
+    pid,
     runtimeRoot,
     stateDir,
     workspaceRoots,
+    fixturePath,
     logFile,
     options: { ...options, runtimeRoot, stateDir, workspaceRoots, port },
     exited,
     kill,
     stop: () => kill("SIGTERM"),
+    async logTail(maxBytes = LOG_TAIL_BYTES) {
+      try {
+        const content = await readFile(logFile, "utf8");
+
+        return content.slice(-maxBytes);
+      } catch (err) {
+        return `<log unreadable: ${err instanceof Error ? err.message : String(err)}>`;
+      }
+    },
     restart: async (overrides = {}) => {
       await kill("SIGKILL");
       // The kernel may hold the port briefly after a SIGKILL — retry the bind.

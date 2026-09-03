@@ -1,24 +1,36 @@
-// ADR-166 T1.2 — execution assignments (A1–A5).
+// ADR-166 T1.2 — execution assignments (A1–A6): the mint, its serialization
+// on the run row, release, admission, and the D9 lazy placement.
 
 import type { Db } from "@/lib/execution-host/db";
+
+import { randomUUID } from "node:crypto";
 
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import pino, { type Logger } from "pino";
 
 import * as fullSchema from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import {
+  getActiveAssignment,
   isAdmissible,
   mintAssignment,
   releaseAssignmentForRun,
 } from "@/lib/execution-host/assignments";
+import { ensureAssignment } from "@/lib/execution-host/placement";
+import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
+import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { COMMAND_KINDS } from "@/lib/execution-host/types";
 import {
   seedLocalHost,
   seedProject,
   seedRun,
 } from "@/test-support/execution-host-seed";
+import {
+  createFakeExecutionHost,
+  type FakeExecutionHost,
+} from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -30,6 +42,9 @@ let testDatabase: StartedPostgresTestDb;
 let db: Db;
 let projectId: string;
 let hostId: string;
+// The registered local host as a fake transport (same key + boot id), for
+// the lazy placement that resolves the host itself.
+let fake: FakeExecutionHost;
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
@@ -37,7 +52,11 @@ beforeAll(async () => {
   });
   db = testDatabase.db as unknown as Db;
   projectId = await seedProject(testDatabase.db);
-  hostId = (await seedLocalHost(testDatabase.db)).id;
+  const bootId = randomUUID();
+  const seeded = await seedLocalHost(testDatabase.db, { bootId });
+
+  hostId = seeded.id;
+  fake = createFakeExecutionHost({ hostKey: seeded.hostKey, bootId });
 }, 180_000);
 
 afterAll(async () => {
@@ -114,63 +133,94 @@ describe("mintAssignment", () => {
     expect((await runRow(runId)).executionAssignmentId).toBe(second.id);
   });
 
-  it("A3: two concurrent mints serialize on the run row — both orderings, distinct epochs, one active", async () => {
+  it("A3: two concurrent mints serialize on the run row — the first racer holds the lock, the second waits", async () => {
     // Mutation proof: with the run-row `FOR UPDATE` removed from
     // mintAssignment, both transactions read max(epoch)=1 and both insert
     // epoch 2 → the loser dies 23505 → CONFLICT, and this case goes red.
-    for (const ordering of ["first-holds", "second-holds"] as const) {
-      const runId = await seedRun(testDatabase.db, { projectId });
+    const runId = await seedRun(testDatabase.db, { projectId });
 
-      await db.transaction((tx) =>
-        mintAssignment(tx as unknown as Db, {
-          runId,
-          hostId,
-          reason: "launch",
-        }),
-      );
+    await db.transaction((tx) =>
+      mintAssignment(tx as unknown as Db, { runId, hostId, reason: "launch" }),
+    );
 
-      const clientA = await testDatabase.pool.connect();
-      const clientB = await testDatabase.pool.connect();
-      const [holder, waiter] =
-        ordering === "first-holds" ? [clientA, clientB] : [clientB, clientA];
+    const holder = await testDatabase.pool.connect();
+    const waiter = await testDatabase.pool.connect();
 
-      try {
-        await holder.query("BEGIN");
-        const held = await mintAssignment(drizzle(holder) as unknown as Db, {
+    try {
+      await holder.query("BEGIN");
+      const held = await mintAssignment(drizzle(holder) as unknown as Db, {
+        runId,
+        hostId,
+        reason: "resume",
+      });
+
+      await waiter.query("BEGIN");
+      const waiting = mintAssignment(drizzle(waiter) as unknown as Db, {
+        runId,
+        hostId,
+        reason: "recover",
+      });
+
+      await waitForLockWait('%from "runs"%for update%');
+      await holder.query("COMMIT");
+      const late = await waiting;
+
+      await waiter.query("COMMIT");
+
+      expect(held.epoch).toBe(2);
+      expect(late.epoch).toBe(3);
+      await expectSerialized(runId, late.id);
+    } finally {
+      holder.release();
+      waiter.release();
+    }
+  });
+
+  it("A3 (second ordering): the racer that opened its transaction FIRST is held before its FOR UPDATE, so the SECOND racer commits first and the first mints the next epoch", async () => {
+    const runId = await seedRun(testDatabase.db, { projectId });
+
+    await db.transaction((tx) =>
+      mintAssignment(tx as unknown as Db, { runId, hostId, reason: "launch" }),
+    );
+
+    const first = await testDatabase.pool.connect();
+    const second = await testDatabase.pool.connect();
+
+    try {
+      await first.query("BEGIN");
+      let releaseFirst!: () => void;
+      const barrier = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      // The first racer's transaction is open but it has not taken the run
+      // lock yet: its mint (and the FOR UPDATE inside) starts after the barrier.
+      const firstMint = barrier.then(() =>
+        mintAssignment(drizzle(first) as unknown as Db, {
           runId,
           hostId,
           reason: "resume",
-        });
+        }),
+      );
 
-        await waiter.query("BEGIN");
-        const waiting = mintAssignment(drizzle(waiter) as unknown as Db, {
-          runId,
-          hostId,
-          reason: "recover",
-        });
+      await second.query("BEGIN");
+      const committedFirst = await mintAssignment(
+        drizzle(second) as unknown as Db,
+        { runId, hostId, reason: "recover" },
+      );
 
-        await waitForLockWait('%from "runs"%for update%');
-        await holder.query("COMMIT");
-        const late = await waiting;
+      await second.query("COMMIT");
 
-        await waiter.query("COMMIT");
+      releaseFirst();
+      const late = await firstMint;
 
-        expect(held.epoch).toBe(2);
-        expect(late.epoch).toBe(3);
+      await first.query("COMMIT");
 
-        const rows = await assignmentsFor(runId);
-
-        expect(rows.map((r) => [r.epoch, r.state])).toEqual([
-          [1, "superseded"],
-          [2, "superseded"],
-          [3, "active"],
-        ]);
-        expect(rows[1].supersededById).toBe(late.id);
-        expect((await runRow(runId)).executionAssignmentId).toBe(late.id);
-      } finally {
-        clientA.release();
-        clientB.release();
-      }
+      expect(committedFirst.epoch).toBe(2);
+      expect(late.epoch).toBe(3);
+      await expectSerialized(runId, late.id);
+    } finally {
+      first.release();
+      second.release();
     }
   });
 
@@ -241,6 +291,103 @@ describe("releaseAssignmentForRun", () => {
   });
 });
 
+describe("ensureAssignment (D9 lazy placement)", () => {
+  function captureLogger(): {
+    logger: Logger;
+    lines: Array<Record<string, unknown>>;
+  } {
+    const lines: Array<Record<string, unknown>> = [];
+    const logger = pino(
+      { level: "debug" },
+      { write: (line: string) => void lines.push(JSON.parse(line)) },
+    );
+
+    return { logger, lines };
+  }
+
+  it("A6a: a placed run whose active row was released is REFUSED assignment_missing — a re-entry must mint inside its own claim", async () => {
+    const runId = await seedRun(testDatabase.db, { projectId });
+    const placed = await db.transaction((tx) =>
+      mintAssignment(tx as unknown as Db, { runId, hostId, reason: "launch" }),
+    );
+
+    await db.transaction((tx) =>
+      releaseAssignmentForRun(tx as unknown as Db, runId, "checkpointed"),
+    );
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+
+    await expect(
+      ensureAssignment(db, runId, "legacy_backfill", {
+        transport: fake.transport,
+      }),
+    ).rejects.toSatisfy(
+      (err: unknown) =>
+        isMaisterError(err) &&
+        err.code === "PRECONDITION" &&
+        err.details?.reason === "assignment_missing" &&
+        err.details?.assignmentId === placed.id &&
+        err.details?.assignmentState === "released",
+    );
+    expect(
+      (await assignmentsFor(runId)).map((r) => [r.epoch, r.state]),
+    ).toEqual([[1, "released"]]);
+  });
+
+  it("A6b: a never-placed run mints epoch 1 legacy_backfill lazily with WARN legacy-run-assigned-lazily", async () => {
+    const runId = await seedRun(testDatabase.db, { projectId });
+    const { logger, lines } = captureLogger();
+
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    const minted = await ensureAssignment(db, runId, "legacy_backfill", {
+      transport: fake.transport,
+      logger,
+    });
+
+    expect(minted).toMatchObject({
+      epoch: 1,
+      state: "active",
+      placementReason: "legacy_backfill",
+      executionHostId: hostId,
+    });
+    expect((await runRow(runId)).executionAssignmentId).toBe(minted.id);
+    expect(
+      lines.filter((l) => l.msg === "legacy-run-assigned-lazily"),
+    ).toMatchObject([{ runId, reason: "legacy_backfill" }]);
+
+    // Idempotent: the active row is reused, nothing is minted twice.
+    const again = await ensureAssignment(db, runId, "legacy_backfill", {
+      transport: fake.transport,
+      logger,
+    });
+
+    expect(again.id).toBe(minted.id);
+    expect(await assignmentsFor(runId)).toHaveLength(1);
+  });
+
+  it("A6c: two concurrent lazy mints serialize on the run row — one row, both callers get the same id", async () => {
+    const runId = await seedRun(testDatabase.db, { projectId });
+
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    const [a, b] = await Promise.all([
+      ensureAssignment(db, runId, "legacy_backfill", {
+        transport: fake.transport,
+      }),
+      ensureAssignment(db, runId, "legacy_backfill", {
+        transport: fake.transport,
+      }),
+    ]);
+
+    expect(a.id).toBe(b.id);
+    expect(a.epoch).toBe(1);
+    expect(await assignmentsFor(runId)).toHaveLength(1);
+    expect((await getActiveAssignment(db, runId))?.id).toBe(a.id);
+    expect((await runRow(runId)).executionAssignmentId).toBe(a.id);
+  });
+});
+
 describe("isAdmissible", () => {
   it("A5: active admits every kind; released admits teardown only; superseded admits nothing", () => {
     for (const kind of COMMAND_KINDS) {
@@ -267,6 +414,19 @@ describe("isAdmissible", () => {
     expect(isAdmissible("workspace.adopt", "released")).toBe(false);
   });
 });
+
+// Three generations, one active, the middle one pointing at the winner.
+async function expectSerialized(runId: string, lastId: string): Promise<void> {
+  const rows = await assignmentsFor(runId);
+
+  expect(rows.map((r) => [r.epoch, r.state])).toEqual([
+    [1, "superseded"],
+    [2, "superseded"],
+    [3, "active"],
+  ]);
+  expect(rows[1].supersededById).toBe(lastId);
+  expect((await runRow(runId)).executionAssignmentId).toBe(lastId);
+}
 
 // Poll until a backend is parked on a lock inside the statement matching
 // `queryPattern` (drizzle binds values as parameters, so ids never appear in

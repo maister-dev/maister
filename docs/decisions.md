@@ -1786,3 +1786,11 @@ properties/lastAction` sets `nullable: true` beside an `allOf` with no sibling
   beside an `allOf` ref, which OpenAPI 3.0 ignores without a sibling `type`.
   Pre-dates the forked-package-loop branch (ADR-132, baseline-verified); fix
   when the experiment schemas are next reworked.
+- **Periodic reconcile crashes a `Running` run at a `cli` node with no live
+  session (`cli-not-retry-safe`, pre-existing, `web/lib/reconcile.ts`; filed
+  2026-09-03 during the ADR-166 review).** A `cli` node has no ACP session by
+  design, so "no live session" is not evidence of a dead driver there. Verify
+  the reconcile candidate query excludes runs with a live in-process driver;
+  if it cannot, add a graph-driver registry like `sync-driver-registry` and
+  gate the classification on it. Not fixed here — it is a code fix on an
+  unrelated path (R9).

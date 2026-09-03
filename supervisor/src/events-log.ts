@@ -9,6 +9,9 @@ import { type SessionEvent } from "./types";
 export type EventsLogWriter = {
   append(event: SessionEvent): void;
   close(): Promise<void>;
+  // Resolves once the stream has finished draining after `close()` — a direct
+  // file append issued after it lands behind every buffered event.
+  closed(): Promise<void>;
   bytesWritten(): number;
   path(): string;
   isClosed(): boolean;
@@ -40,6 +43,10 @@ export async function openEventsLog(
   let bytes = 0;
   let closed = false;
   let closing: Promise<void> | null = null;
+  let markFinished: () => void = () => undefined;
+  const finished = new Promise<void>((res) => {
+    markFinished = res;
+  });
 
   stream.on("error", (err) => {
     log?.error({ path, err: err.message }, "events-log stream error");
@@ -79,11 +86,15 @@ export async function openEventsLog(
       closed = true;
       closing = new Promise<void>((res) => {
         stream.end(() => {
+          markFinished();
           res();
         });
       });
 
       return closing;
+    },
+    closed(): Promise<void> {
+      return finished;
     },
     bytesWritten(): number {
       return bytes;

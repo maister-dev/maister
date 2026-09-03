@@ -456,6 +456,9 @@ async function parkCoordinatorSession(
         );
       }
     } catch (err) {
+      // ADR-166 E-EH-11: a fenced checkpoint means a newer generation owns the
+      // run — the park's artifacts and its slot are that driver's to settle.
+      if (isFencedError(err)) throw err;
       // A 5xx / network failure (EXECUTOR_UNAVAILABLE) leaves the park intact:
       // the run is already durably WaitingOnChildren with acp_session_id, so it
       // stays resumable and a stray session is GC'd by the supervisor grace —
@@ -1615,7 +1618,7 @@ async function executeNodeAction(
       // BEFORE the session spawns. A PRECONDITION refusal (unknown/archived
       // sibling, unresolvable ref, missing `readRepoFiles`) propagates to the
       // caller's markNodeFailed handler, so the node fails without an agent.
-      const contextMounts = await prepareContextMounts({
+      await prepareContextMounts({
         db: ctx.db,
         runId: loaded.run.id,
         consumingProjectSlug: loaded.projectSlug,
@@ -1649,9 +1652,6 @@ async function executeNodeAction(
           },
           {
             ...common,
-            // ADR-157: the launch snapshot rides the session so the supervisor
-            // can inject MAISTER_CONTEXT_REPOS + arm the L2 write-deny guard.
-            contextMounts,
             // Thread the caller's db — runner-agent's resolved_prompt persist
             // and event-consumer seams must never fall back to env getDb(),
             // which would query a different connection.
@@ -2193,15 +2193,18 @@ export async function runGraph(
   // instead of racing it. Bound lazily at the first agent-kind need (an
   // ai_coding/judge/orchestrator/consensus node, an agent gate, a coordinator
   // park), so a cli-only flow never touches the host. A prebound seam (tests,
-  // nested callers) wins and is never re-resolved.
+  // nested callers) wins and is never re-resolved. The binding is this
+  // traversal's own — never written back onto the caller's options.
   let execution: AgentExecution | null = opts.execution ?? null;
   const ensureExecution = async (): Promise<AgentExecution> => {
     if (!execution) {
       execution = await bindExecution(
         opts.executionHosts ?? createExecutionHosts({ db }),
         runId,
+        // The generation the placement claim minted, read off the run row this
+        // traversal loaded; NULL = a never-placed legacy run.
+        { assignmentId: loaded.run.executionAssignmentId },
       );
-      opts.execution = execution;
     }
 
     return execution;
@@ -3289,7 +3292,7 @@ export async function runGraph(
             result = await executeNodeAction(node, loaded, context, {
               runtimeRoot,
               worktreePath,
-              execution: opts.execution,
+              execution: execution ?? undefined,
               bindExecution: ensureExecution,
               capabilityProfilePath: materialized?.capabilityProfilePath,
               adapterLaunch: materialized?.adapterLaunch,
@@ -3320,8 +3323,8 @@ export async function runGraph(
               {
                 nodeId: node.id,
                 nodeAttemptId,
-                assignmentId: opts.execution?.client.assignment.id,
-                assignmentEpoch: opts.execution?.client.assignment.epoch,
+                assignmentId: execution?.client.assignment.id,
+                assignmentEpoch: execution?.client.assignment.epoch,
               },
               "driver-yielded",
             );
@@ -3334,8 +3337,8 @@ export async function runGraph(
               {
                 nodeId: node.id,
                 nodeAttemptId,
-                assignmentId: opts.execution?.client.assignment.id,
-                assignmentEpoch: opts.execution?.client.assignment.epoch,
+                assignmentId: execution?.client.assignment.id,
+                assignmentEpoch: execution?.client.assignment.epoch,
               },
               "driver-yielded",
             );
@@ -3445,14 +3448,31 @@ export async function runGraph(
         // does the same) so the resumed coordinator reuses it; run-level GC
         // reclaims it at termination.
         if (isCoordinatorNode) {
-          await parkCoordinatorSession(
-            db,
-            runId,
-            await ensureExecution(),
-            nodeSession?.hostSessionId ?? null,
-            node.nodeType as "orchestrator" | "consensus",
-            log2,
-          );
+          try {
+            await parkCoordinatorSession(
+              db,
+              runId,
+              await ensureExecution(),
+              nodeSession?.hostSessionId ?? null,
+              node.nodeType as "orchestrator" | "consensus",
+              log2,
+            );
+          } catch (err) {
+            if (!isFencedError(err)) throw err;
+            // ADR-166 E-EH-11: a newer generation owns the run — no default
+            // artifacts, no slot release, no further writes from this driver.
+            log2.warn(
+              {
+                nodeId: node.id,
+                nodeAttemptId,
+                assignmentId: execution?.client.assignment.id,
+                assignmentEpoch: execution?.client.assignment.epoch,
+              },
+              "driver-yielded",
+            );
+
+            return;
+          }
         }
         // M12 (T3.3): record defaults at pause so log/guards/diff exist for
         // the paused node even when it hasn't finished yet.
@@ -3748,7 +3768,7 @@ export async function runGraph(
           {
             runtimeRoot,
             worktreePath,
-            execution: opts.execution,
+            execution: execution ?? undefined,
             bindExecution: ensureExecution,
             // M29 (ADR-074): the node's resolved restriction path sets for
             // must_not_touch — undefined for capability-less nodes.
@@ -3756,6 +3776,22 @@ export async function runGraph(
             db,
           },
         );
+
+        // ADR-166 E-EH-11: a gate's agent turn was fenced — a newer generation
+        // owns the run; record no verdict, fail no node, leave the traversal.
+        if (gateOutcome.fenced) {
+          log2.warn(
+            {
+              nodeId: node.id,
+              nodeAttemptId,
+              assignmentId: execution?.client.assignment.id,
+              assignmentEpoch: execution?.client.assignment.epoch,
+            },
+            "driver-yielded",
+          );
+
+          return;
+        }
 
         if (!gateOutcome.ok) {
           await markNodeFailed(

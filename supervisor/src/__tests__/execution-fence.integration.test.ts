@@ -1,4 +1,4 @@
-// ADR-166 T2.2 — fence enforcement (F1–F8). Every assertion checks
+// ADR-166 T2.2 — fence enforcement (F1–F10). Every assertion checks
 // `details.reason` or a state, never a status code alone.
 import type { SessionEvent } from "../types";
 
@@ -7,8 +7,9 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { pendingPermissions } from "../pending-permissions";
 import { SESSION_EVENT_CHANNEL } from "../registry";
 
 import {
@@ -307,5 +308,224 @@ describe("execution fence", () => {
     // Adoption fenced the run at epoch 1; the bare create advanced nothing.
     expect(host.hostState.getFence(runId)?.epoch).toBe(1);
     expect(host.registry.size()).toBe(0);
+  });
+
+  it("F9: a concurrent duplicate of a higher-epoch create joins the eviction — one spawn, after the lower-epoch session exited", async () => {
+    // --exit-delay-ms keeps the evicted child alive for 300 ms after SIGTERM,
+    // so a create that did NOT wait for the eviction would register beside it.
+    const host = await bootHost({
+      runtimeRoot: await tempRoot(),
+      fixtureArgs: [
+        "--hang",
+        "--hang-prompt",
+        "--lines",
+        "1",
+        "--exit-delay-ms",
+        "300",
+      ],
+    });
+
+    booted.push(host);
+    const runId = `run-${randomUUID().slice(0, 8)}`;
+    const a1 = randomUUID();
+    const a2 = randomUUID();
+    const created = await createEnveloped(host, runId, {
+      assignmentId: a1,
+      assignmentEpoch: 1,
+    });
+    const oldSessionId = created.body.sessionId as string;
+    const entry = host.registry.get(oldSessionId)!;
+    const events: SessionEvent[] = [];
+    let sessionsAtExit: string[] | null = null;
+
+    entry.emitter.on(SESSION_EVENT_CHANNEL, (e: SessionEvent) => {
+      events.push(e);
+      if (e.type === "session.exited") {
+        sessionsAtExit = host.registry.list().map((r) => r.sessionId);
+      }
+    });
+
+    const promptPromise = postJson(
+      `${host.url}/sessions/${oldSessionId}/prompt`,
+      envelope(
+        "session.prompt",
+        {
+          hostKey: host.hostState.hostKey,
+          runId,
+          assignmentId: a1,
+          assignmentEpoch: 1,
+        },
+        { stepId: "step-1", prompt: "hello" },
+      ),
+    );
+
+    await waitFor(() => events.some((e) => e.type === "session.update"), 5_000);
+
+    const create = await createEnvelope(
+      host,
+      { runId, assignmentId: a2, assignmentEpoch: 2 },
+      {},
+      randomUUID(),
+    );
+    const [a, b] = await Promise.all([
+      postJson(`${host.url}/sessions`, create),
+      postJson(`${host.url}/sessions`, create),
+    ]);
+
+    expect(a.status).toBe(201);
+    expect(b.status).toBe(201);
+    expect(a.body).toEqual(b.body);
+    expect(
+      [a, b].filter(
+        (r) => r.headers.get("x-maister-command-replayed") === "true",
+      ),
+    ).toHaveLength(1);
+
+    const epoch2 = host.registry
+      .list()
+      .filter((r) => r.runId === runId && r.assignmentEpoch === 2);
+
+    expect(epoch2.map((r) => r.sessionId)).toEqual([a.body.sessionId]);
+
+    const exited = events.find((e) => e.type === "session.exited") as
+      | Extract<SessionEvent, { type: "session.exited" }>
+      | undefined;
+
+    expect(exited?.reason).toBe("fenced");
+    // When the lower-epoch session exited, nothing else had been spawned yet.
+    expect(sessionsAtExit).toEqual([oldSessionId]);
+    expect(host.registry.get(oldSessionId)?.record.fencedByEpoch).toBe(2);
+
+    const prompt = await promptPromise;
+
+    expect(prompt.body.code).toBe("FENCED");
+  });
+
+  it("F10: eviction cancels the evicted session's OPEN permission deferred exactly once (reason fenced); the deferred is gone afterwards", async () => {
+    const host = await bootHost({
+      runtimeRoot: await tempRoot(),
+      fixtureArgs: ["--hang", "--hang-permission", "--lines", "1"],
+    });
+
+    booted.push(host);
+    const runId = `run-${randomUUID().slice(0, 8)}`;
+    const a1 = randomUUID();
+    const a2 = randomUUID();
+    const created = await createEnveloped(host, runId, {
+      assignmentId: a1,
+      assignmentEpoch: 1,
+    });
+    const sessionId = created.body.sessionId as string;
+    const entry = host.registry.get(sessionId)!;
+    const events: SessionEvent[] = [];
+
+    entry.emitter.on(SESSION_EVENT_CHANNEL, (e: SessionEvent) =>
+      events.push(e),
+    );
+    const cancelSpy = vi.spyOn(pendingPermissions, "cancel");
+
+    try {
+      const promptPromise = postJson(
+        `${host.url}/sessions/${sessionId}/prompt`,
+        envelope(
+          "session.prompt",
+          {
+            hostKey: host.hostState.hostKey,
+            runId,
+            assignmentId: a1,
+            assignmentEpoch: 1,
+          },
+          { stepId: "step-1", prompt: "hello" },
+        ),
+      );
+
+      await waitFor(
+        () => events.some((e) => e.type === "session.permission_request"),
+        5_000,
+      );
+
+      const request = events.find(
+        (e) => e.type === "session.permission_request",
+      ) as Extract<SessionEvent, { type: "session.permission_request" }>;
+
+      expect(pendingPermissions.requestIds(sessionId)).toEqual([
+        request.requestId,
+      ]);
+
+      const cancel = await postJson(
+        `${host.url}/sessions/${sessionId}/cancel`,
+        envelope(
+          "session.cancel",
+          {
+            hostKey: host.hostState.hostKey,
+            runId,
+            assignmentId: a2,
+            assignmentEpoch: 2,
+          },
+          {},
+        ),
+      );
+
+      // The session was already evicted when the cancel itself executed.
+      expect(cancel.status).toBe(200);
+      expect(cancel.body).toEqual({ cancelled: false, sessionId });
+      expect(cancelSpy.mock.calls.filter(([sid]) => sid === sessionId)).toEqual(
+        [[sessionId, request.requestId, "fenced"]],
+      );
+      expect(pendingPermissions.requestIds(sessionId)).toEqual([]);
+
+      const exited = events.find((e) => e.type === "session.exited") as
+        | Extract<SessionEvent, { type: "session.exited" }>
+        | undefined;
+
+      expect(exited?.reason).toBe("fenced");
+
+      const prompt = await promptPromise;
+
+      expect(prompt.body.code).toBe("FENCED");
+
+      // The new driver finds no deferred; the old driver is fenced outright.
+      const payload = {
+        kind: "permission",
+        action: "select",
+        requestId: request.requestId,
+        optionId: "allow",
+      };
+      const late = await postJson(
+        `${host.url}/sessions/${sessionId}/input`,
+        envelope(
+          "session.input",
+          {
+            hostKey: host.hostState.hostKey,
+            runId,
+            assignmentId: a2,
+            assignmentEpoch: 2,
+          },
+          payload,
+        ),
+      );
+
+      expect(late.status).toBe(410);
+      expect(late.body.code).toBe("HITL_TIMEOUT");
+
+      const stale = await postJson(
+        `${host.url}/sessions/${sessionId}/input`,
+        envelope(
+          "session.input",
+          {
+            hostKey: host.hostState.hostKey,
+            runId,
+            assignmentId: a1,
+            assignmentEpoch: 1,
+          },
+          payload,
+        ),
+      );
+
+      expect(stale.status).toBe(409);
+      expect(stale.body.details.reason).toBe("assignment_fenced");
+    } finally {
+      cancelSpy.mockRestore();
+    }
   });
 });

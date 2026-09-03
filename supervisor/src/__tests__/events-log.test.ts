@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -161,6 +161,33 @@ describe("openEventsLog", () => {
     const info = await stat(path);
 
     expect(info.size).toBeGreaterThan(0);
+  });
+
+  it("closed() resolves only after the stream drained, so a post-close append lands behind every buffered event", async () => {
+    const path = join(dir, "step-drain.events.jsonl");
+    const w = await openEventsLog(path, { logger: silentLogger });
+    // ~4 MB: far beyond the stream's high-water mark, so the buffered writes
+    // are still draining when close() is called.
+    const filler = "x".repeat(4096);
+
+    for (let i = 1; i <= 1000; i += 1) {
+      w.append(lineEvent(i, filler));
+    }
+
+    void w.close();
+    await w.closed();
+    await appendFile(path, `${JSON.stringify(lineEvent(1001, "tail"))}\n`);
+
+    const ids = (await readFile(path, "utf8"))
+      .split("\n")
+      .filter((l) => l.length > 0)
+      .map((l) => (JSON.parse(l) as { monotonicId: number }).monotonicId);
+
+    expect(ids).toHaveLength(1001);
+    expect(ids[1000]).toBe(1001);
+    for (let i = 1; i < ids.length; i += 1) {
+      expect(ids[i]).toBe(ids[i - 1] + 1);
+    }
   });
 
   it("creates the file even when no events are appended", async () => {

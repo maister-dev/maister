@@ -10,7 +10,13 @@ const EXECUTOR_AGENTS = [
 
 export const ExecutorAgentSchema = z.enum(EXECUTOR_AGENTS);
 
-const SAFE_PATH_SEGMENT = /^[A-Za-z0-9._-]+$/;
+// A bare `.` / `..` is made of allowed characters but names the directory
+// itself or its parent, so it must never reach a path join as an id.
+const SAFE_PATH_SEGMENT = /^(?!\.{1,2}$)[A-Za-z0-9._-]+$/;
+
+function safeSegmentMessage(field: string): string {
+  return `${field} must match /${SAFE_PATH_SEGMENT.source}/`;
+}
 
 export const ExecutorSchema = z
   .object({
@@ -44,6 +50,16 @@ const worktreePathSchema = z
     (p) => p.startsWith("/") && !p.split("/").includes(".."),
     "worktreePath must be an absolute path with no '..' segments",
   );
+
+// Adoption paths (the workspace path, `repoPath`, and every context-mount
+// path) are shape-validated only here: the workspace registry owns the D7
+// rule tokens (`relative_path`, `parent_segment`, …) so a refusal always
+// names its rule.
+const adoptPathSchema = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine((p) => !p.includes("\0"), "path must not contain null byte");
 
 export const RunnerProviderSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("anthropic") }).strict(),
@@ -189,7 +205,7 @@ export const ContextMountSchema = z
       .min(1)
       .max(64)
       .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "mount slug must be kebab-case"),
-    path: worktreePathSchema,
+    path: adoptPathSchema,
     ref: z.string().min(1).max(255),
     // 7..64 per the spec: an abbreviated sha and a sha-256 object id are both
     // in-contract, so this deliberately carries no 40-hex pattern.
@@ -212,7 +228,7 @@ const runIdSchema = z
   .string()
   .min(1)
   .max(128)
-  .regex(SAFE_PATH_SEGMENT, "runId must match /^[A-Za-z0-9._-]+$/");
+  .regex(SAFE_PATH_SEGMENT, safeSegmentMessage("runId"));
 
 const projectSlugSchema = z
   .string()
@@ -252,12 +268,12 @@ export const StartSessionRequestSchema = z
       .string()
       .min(1)
       .max(128)
-      .regex(SAFE_PATH_SEGMENT, "stepId must match /^[A-Za-z0-9._-]+$/"),
+      .regex(SAFE_PATH_SEGMENT, safeSegmentMessage("stepId")),
     nodeAttemptId: z
       .string()
       .min(1)
       .max(128)
-      .regex(SAFE_PATH_SEGMENT, "nodeAttemptId must match /^[A-Za-z0-9._-]+$/")
+      .regex(SAFE_PATH_SEGMENT, safeSegmentMessage("nodeAttemptId"))
       .optional(),
     // M42 (ADR-114): logical Flow session this ACP process serves. Stamped onto
     // cost.jsonl + run.events.jsonl so a multi-session run attributes spend and
@@ -266,7 +282,7 @@ export const StartSessionRequestSchema = z
       .string()
       .min(1)
       .max(128)
-      .regex(SAFE_PATH_SEGMENT, "sessionName must match /^[A-Za-z0-9._-]+$/")
+      .regex(SAFE_PATH_SEGMENT, safeSegmentMessage("sessionName"))
       .optional(),
     executor: ExecutorSchema,
     runner: RunnerLaunchSchema.optional(),
@@ -274,10 +290,7 @@ export const StartSessionRequestSchema = z
       .string()
       .min(1)
       .max(128)
-      .regex(
-        SAFE_PATH_SEGMENT,
-        "resumeSessionId must match /^[A-Za-z0-9._-]+$/",
-      )
+      .regex(SAFE_PATH_SEGMENT, safeSegmentMessage("resumeSessionId"))
       .optional(),
     // The one residual path in the request: it MUST resolve inside the
     // handle's path (WorkspaceRegistry.resolveForSession → `outside_workspace`).
@@ -374,8 +387,8 @@ export const CommandEnvelopeSchema = z
 
 export type CommandEnvelope = z.infer<typeof CommandEnvelopeSchema>;
 
-// A body is enveloped iff it carries a `command` header. Everything else is
-// the transitional legacy form (removed at the strict flip).
+// A body is enveloped iff it carries a `command` header; anything else is
+// refused by name (`missing_envelope`).
 export function isEnvelopedBody(body: unknown): boolean {
   if (!body || typeof body !== "object") return false;
 
@@ -424,6 +437,8 @@ export type SupervisorErrorDetails = {
   rule?: WorkspaceRule;
   // `legacy_field`: the refused pre-ADR-166 path field, by name.
   field?: string;
+  // `workspace_rejected` on a context mount: the offending mount's slug.
+  mount?: string;
   runId?: string;
   commandEpoch?: number;
   hostEpoch?: number;
@@ -437,15 +452,6 @@ export const WORKSPACE_KINDS = [
 
 export const WorkspaceKindSchema = z.enum(WORKSPACE_KINDS);
 export type WorkspaceKind = z.infer<typeof WorkspaceKindSchema>;
-
-// Paths are shape-validated only here: the workspace registry owns the D7
-// rule tokens (`relative_path`, `parent_segment`, …) so a refusal always
-// names its rule.
-const adoptPathSchema = z
-  .string()
-  .min(1)
-  .max(4096)
-  .refine((p) => !p.includes("\0"), "path must not contain null byte");
 
 export const AdoptWorkspacePayloadSchema = z
   .object({
@@ -572,12 +578,12 @@ export const SendPromptRequestSchema = z
       .string()
       .min(1)
       .max(128)
-      .regex(SAFE_PATH_SEGMENT, "stepId must match /^[A-Za-z0-9._-]+$/"),
+      .regex(SAFE_PATH_SEGMENT, safeSegmentMessage("stepId")),
     nodeAttemptId: z
       .string()
       .min(1)
       .max(128)
-      .regex(SAFE_PATH_SEGMENT, "nodeAttemptId must match /^[A-Za-z0-9._-]+$/")
+      .regex(SAFE_PATH_SEGMENT, safeSegmentMessage("nodeAttemptId"))
       .optional(),
     prompt: z.string().max(1_000_000),
     contentBlocks: z.array(PromptContentBlockSchema).max(64).optional(),
@@ -766,12 +772,12 @@ export type SessionRecord = {
   confineRoot?: string;
   monotonicId: number;
   acpSessionId?: string;
-  // ADR-166: the adopted handle this session runs in (handle-form sessions),
-  // and the fence of the `session.create` command that spawned it.
-  executionWorkspaceId?: string;
-  assignmentId?: string;
-  assignmentEpoch?: number;
-  createdByCommandId?: string;
+  // ADR-166: the adopted handle this session runs in, and the fence of the
+  // `session.create` command that spawned it.
+  executionWorkspaceId: string;
+  assignmentId: string;
+  assignmentEpoch: number;
+  createdByCommandId: string;
   // ADR-166: set when a command with a HIGHER assignment epoch evicted this
   // session; its pending prompt answers 409 FENCED instead of a stop reason.
   fencedByEpoch?: number;

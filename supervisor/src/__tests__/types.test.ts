@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AdoptWorkspacePayloadSchema,
   errorBody,
   LEGACY_SESSION_PATH_FIELDS,
   legacySessionPathField,
@@ -68,6 +69,21 @@ describe("StartSessionRequestSchema", () => {
 
     expect(result.success).toBe(true);
   });
+
+  it.each([".", ".."])(
+    "rejects the bare directory reference %j as a stepId",
+    (stepId) => {
+      const result = StartSessionRequestSchema.safeParse({
+        ...validRequest,
+        stepId,
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues[0].path).toEqual(["stepId"]);
+      }
+    },
+  );
 
   it("accepts a safe nodeAttemptId attribution field", () => {
     const result = StartSessionRequestSchema.safeParse({
@@ -354,6 +370,60 @@ describe("StartSessionRequestSchema", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+});
+
+// ADR-166: `runId` / `projectSlug` left the session request for the adopt
+// payload — the only schema that still carries them.
+describe("AdoptWorkspacePayloadSchema", () => {
+  const validPayload = {
+    runId: "run-abc",
+    projectSlug: "myapp",
+    kind: "directory",
+    path: "/srv/local/pkg",
+  } as const;
+
+  it("accepts runId with dots, dashes, underscores", () => {
+    expect(
+      AdoptWorkspacePayloadSchema.safeParse({
+        ...validPayload,
+        runId: "run_abc.1-2",
+      }).success,
+    ).toBe(true);
+  });
+
+  it.each([
+    ["empty", ""],
+    ["a path-traversal segment", "../../../etc"],
+    ["a forward slash", "run/with/slash"],
+    ["over 128 chars", "a".repeat(129)],
+    ["the bare `.`", "."],
+    ["the bare `..`", ".."],
+  ])("rejects runId with %s", (_case, runId) => {
+    const result = AdoptWorkspacePayloadSchema.safeParse({
+      ...validPayload,
+      runId,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0].path).toEqual(["runId"]);
+    }
+  });
+
+  it.each([
+    ["non-kebab", "My_Project"],
+    ["over 64 chars", "a".repeat(65)],
+  ])("rejects a %s projectSlug", (_case, projectSlug) => {
+    const result = AdoptWorkspacePayloadSchema.safeParse({
+      ...validPayload,
+      projectSlug,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0].path).toEqual(["projectSlug"]);
+    }
   });
 });
 

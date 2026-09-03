@@ -1,5 +1,6 @@
 import type { Db } from "./db";
 import type { ExecutionHostReadiness } from "./types";
+import type { RunStatus } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 
@@ -15,10 +16,37 @@ import {
 
 export const LOCAL_DIRECT_KIND = "local_direct" as const;
 
-// Run statuses under which an `active` assignment means a live driver owns the
-// run on its host. Everything else (parked, review, terminal, crashed) has no
-// live driver: the sweep releases such assignments and a new host may register.
+// Run statuses under which a driver is executing right now — the legacy
+// (pre-ADR-166, NULL assignment) candidate set.
 export const LIVE_DRIVER_RUN_STATUSES = ["Running", "NeedsInput"] as const;
+
+// Whether an `active` assignment under this run status is OWNED: a driver is
+// live (Running/NeedsInput) or designated and waiting for a slot (Pending — the
+// launch/recover claim minted it, the promotion binds it). Exhaustive over
+// `runs.status` so a new status is a compile error here, not a silent
+// deny-list miss: the sweep releases only the non-owned side, and the registrar
+// refuses an identity change while the old host still owns one.
+const ASSIGNMENT_OWNED_BY_RUN_STATUS = {
+  Pending: true,
+  Running: true,
+  NeedsInput: true,
+  NeedsInputIdle: false,
+  HumanWorking: false,
+  WaitingOnChildren: false,
+  Review: false,
+  Crashed: false,
+  Done: false,
+  Abandoned: false,
+  Failed: false,
+} as const satisfies Record<RunStatus, boolean>;
+
+const RUN_STATUSES = Object.keys(ASSIGNMENT_OWNED_BY_RUN_STATUS) as RunStatus[];
+
+export const DRIVER_OWNED_RUN_STATUSES: readonly RunStatus[] =
+  RUN_STATUSES.filter((status) => ASSIGNMENT_OWNED_BY_RUN_STATUS[status]);
+
+export const STALE_ASSIGNMENT_RUN_STATUSES: readonly RunStatus[] =
+  RUN_STATUSES.filter((status) => !ASSIGNMENT_OWNED_BY_RUN_STATUS[status]);
 
 const defaultLog = pino({
   name: "execution-host",
@@ -182,8 +210,9 @@ export async function retireHost(
   return row ?? null;
 }
 
-// Does this host still own an `active` assignment of a run with a live driver?
-// The registrar refuses an identity change while the answer is non-zero.
+// Does this host still own an `active` assignment of a run that will need it
+// (live or queued)? The registrar refuses an identity change while the answer
+// is non-zero.
 export async function countLiveAssignmentsForHost(
   db: Db,
   hostId: string,
@@ -196,7 +225,7 @@ export async function countLiveAssignmentsForHost(
       and(
         eq(executionAssignments.executionHostId, hostId),
         eq(executionAssignments.state, "active"),
-        inArray(runs.status, [...LIVE_DRIVER_RUN_STATUSES]),
+        inArray(runs.status, [...DRIVER_OWNED_RUN_STATUSES]),
       ),
     );
 
@@ -216,7 +245,7 @@ export async function listLiveRunIdsForHost(
       and(
         eq(executionAssignments.executionHostId, hostId),
         eq(executionAssignments.state, "active"),
-        inArray(runs.status, [...LIVE_DRIVER_RUN_STATUSES]),
+        inArray(runs.status, [...DRIVER_OWNED_RUN_STATUSES]),
       ),
     )
     .orderBy(sql`${runs.startedAt} asc`)

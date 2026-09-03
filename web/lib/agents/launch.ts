@@ -107,6 +107,7 @@ import {
   resolveSharedTreeWorkspaceForUpdate,
 } from "@/lib/runs/shared-tree";
 import {
+  claimAgentIdleResumeInTransaction,
   markReworkFromReview,
   type StateTransitionResult,
 } from "@/lib/runs/state-transitions";
@@ -2191,6 +2192,7 @@ async function startConsensusRunnerDraftSession(args: {
   project: Record<string, any>;
   payload: ConsensusDraftPayload;
   snapshot: RunnerSnapshot;
+  assignmentId: string | null;
 }): Promise<void> {
   const runId = args.run.id as string;
   const cwd = args.project.repoPath as string;
@@ -2207,7 +2209,11 @@ async function startConsensusRunnerDraftSession(args: {
       );
     });
 
-    const execution = await bindAgentExecution(args.hosts, runId);
+    const execution = await bindAgentExecution(
+      args.hosts,
+      runId,
+      args.assignmentId,
+    );
     const session = await execution.client.createSession({
       stepId: "agent",
       executor: runnerExecutorInput(args.snapshot),
@@ -2973,25 +2979,13 @@ export async function sendAgentMessage(
       db: _db as unknown as ExecutionDb,
       transport: hosts.transport,
     });
-    const claimed: boolean = await _db.transaction(async (tx: Db) => {
-      const updated = await tx
-        .update(runs)
-        .set({ status: "Running", keepaliveUntil: null, checkpointAt: null })
-        .where(and(eq(runs.id, childRunId), eq(runs.status, "NeedsInputIdle")))
-        .returning({ id: runs.id });
+    const claim = await _db.transaction((tx: Db) =>
+      claimAgentIdleResumeInTransaction(tx, childRunId, {
+        placement: { host: placementHost, transport: hosts.transport },
+      }),
+    );
 
-      if (updated.length === 0) return false;
-
-      await mintPlacement(tx as unknown as ExecutionDb, {
-        runId: childRunId,
-        reason: "resume",
-        host: placementHost,
-      });
-
-      return true;
-    });
-
-    if (!claimed) {
+    if (!claim.ok) {
       throw new MaisterError(
         "CONFLICT",
         `child run ${childRunId} is being resumed concurrently`,
@@ -3002,6 +2996,7 @@ export async function sendAgentMessage(
       db: _db,
       executionHosts: hosts,
       overridePrompt: prompt,
+      assignmentId: claim.assignment?.id ?? null,
     });
 
     return { childRunId, status: "Running" };
@@ -3049,15 +3044,15 @@ async function claimReworkGeneration(
 ): Promise<StateTransitionResult> {
   const flip = await markReworkFromReview(childRunId, { db: tx });
 
-  if (flip.ok) {
-    await mintPlacement(tx as unknown as ExecutionDb, {
-      runId: childRunId,
-      reason: "rework_return",
-      host: placementHost,
-    });
-  }
+  if (!flip.ok) return flip;
 
-  return flip;
+  const assignment = await mintPlacement(tx as unknown as ExecutionDb, {
+    runId: childRunId,
+    reason: "rework_return",
+    host: placementHost,
+  });
+
+  return { ok: true, assignment };
 }
 
 export type ReworkChildRunResult = {
@@ -3199,6 +3194,7 @@ export async function reworkChildRun(
     db: _db,
     executionHosts: hosts,
     overridePrompt: prompt,
+    assignmentId: claim.assignment?.id ?? null,
   });
 
   return { childRunId, status: "Running" };
@@ -3239,8 +3235,11 @@ export type AgentExecution = { client: BoundClient; admin: HostAdminClient };
 async function bindAgentExecution(
   hosts: ExecutionHosts,
   runId: string,
+  // The generation the caller's claim minted (or the run's active pointer read
+  // at entry); null = a never-placed legacy run.
+  assignmentId: string | null,
 ): Promise<AgentExecution> {
-  return { client: await hosts.forRun(runId), admin: hosts.local() };
+  return hosts.executionFor(runId, { assignmentId });
 }
 
 // RD7 (ADR-089 rework): resolve the agent's declared capability_profile.mcps
@@ -3357,6 +3356,9 @@ export async function startAgentSession(
     db?: Db;
     executionHosts?: ExecutionHosts;
     overridePrompt?: string;
+    // ADR-166: the generation the caller's claim minted. Absent (the launch
+    // dispatch, a scheduler promotion), the run's active pointer is bound.
+    assignmentId?: string | null;
   } = {},
 ): Promise<void> {
   const _db = opts.db ?? getDb();
@@ -3368,6 +3370,11 @@ export async function startAgentSession(
   if (!baseRun || baseRun.runKind !== "agent") {
     throw new MaisterError("PRECONDITION", `run ${runId} is not an agent run`);
   }
+
+  const assignmentId =
+    opts.assignmentId ??
+    (baseRun.executionAssignmentId as string | null) ??
+    null;
 
   // M42 (ADR-114): runner snapshot + resume handle come from the run's ACTIVE
   // session (run_sessions), not the dropped runs columns. Merge once so every
@@ -3418,6 +3425,7 @@ export async function startAgentSession(
         run,
         project,
         payload: draftPayload,
+        assignmentId,
         snapshot,
       });
 
@@ -3693,7 +3701,7 @@ export async function startAgentSession(
 
     // ADR-166: the create is handle-form — the workspace (and its context
     // mounts, snapshotted on the run above) is adopted by the bound client.
-    const execution = await bindAgentExecution(hosts, runId);
+    const execution = await bindAgentExecution(hosts, runId, assignmentId);
     const session = await execution.client.createSession({
       stepId: "agent",
       executor: runnerExecutorInput(snapshot),
@@ -3844,6 +3852,21 @@ export async function consumeAgentSession(args: {
         break;
       }
       case "session.exited": {
+        // ADR-166 E-EH-11: the host evicted this session for a newer driver
+        // generation — that generation owns the run; finalize nothing.
+        if (event.reason === "fenced") {
+          log.warn(
+            {
+              runId: args.runId,
+              sessionId: args.sessionId,
+              assignmentId: args.execution.client.assignment.id,
+              assignmentEpoch: args.execution.client.assignment.epoch,
+            },
+            "driver-yielded",
+          );
+
+          return;
+        }
         if (event.reason === "checkpoint") {
           // The keep-alive sweeper owns the NeedsInputIdle transition.
           log.info(
