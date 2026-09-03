@@ -147,13 +147,37 @@ export async function loadWorkspaceSpecInput(
       details: { reason: "run_missing", runId },
     });
   }
-  if (!run.projectId) throw missingWorkspace(runId, "project");
+  let localPackage: { slug: string; workingDir: string } | null = null;
 
-  const [project] = await db
-    .select({ slug: projects.slug, repoPath: projects.repoPath })
-    .from(projects)
-    .where(eq(projects.id, run.projectId))
-    .limit(1);
+  if (run.localPackageId) {
+    const [row] = await db
+      .select({
+        slug: localPackages.slug,
+        workingDir: localPackages.workingDir,
+      })
+      .from(localPackages)
+      .where(eq(localPackages.id, run.localPackageId))
+      .limit(1);
+
+    localPackage = row ?? null;
+  }
+
+  // ADR-097: a local-package assistant run has NO project — the package is its
+  // runtime identity (its slug names the runtime subtree, its working dir is
+  // the adopted directory).
+  let project: { slug: string; repoPath: string } | null = null;
+
+  if (run.projectId) {
+    const [row] = await db
+      .select({ slug: projects.slug, repoPath: projects.repoPath })
+      .from(projects)
+      .where(eq(projects.id, run.projectId))
+      .limit(1);
+
+    project = row ?? null;
+  } else if (localPackage) {
+    project = { slug: localPackage.slug, repoPath: localPackage.workingDir };
+  }
 
   if (!project) throw missingWorkspace(runId, "project");
 
@@ -173,18 +197,6 @@ export async function loadWorkspaceSpecInput(
 
   if (!workspace && run.workspaceMode === "shared" && run.rootRunId) {
     workspace = await workspaceFor(run.rootRunId);
-  }
-
-  let localPackage: { workingDir: string } | null = null;
-
-  if (run.localPackageId) {
-    const [row] = await db
-      .select({ workingDir: localPackages.workingDir })
-      .from(localPackages)
-      .where(eq(localPackages.id, run.localPackageId))
-      .limit(1);
-
-    localPackage = row ?? null;
   }
 
   // Dynamic on purpose: `agents/launch` is a large module that will itself

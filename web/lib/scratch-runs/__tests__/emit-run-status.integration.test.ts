@@ -5,6 +5,7 @@ import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { sendScratchPromptAndProjectEvents } from "@/lib/scratch-runs/events";
+import { legacyScratchApiToExecution } from "@/test-support/execution-host-module-mock";
 // FIXME(any): drizzle-orm dual peer-dep variants — runtime works, cast silences
 // the type-only clash (matches emit-run-status.integration.test.ts).
 import * as fullSchema from "@/lib/db/schema";
@@ -177,7 +178,9 @@ describe("live scratch terminal → run.crashed", () => {
       stepId: "scratch",
       prompt: "go",
       db,
-      api: fakeApi({ type: "session.crashed" }) as never,
+      execution: legacyScratchApiToExecution(
+        fakeApi({ type: "session.crashed" }) as never,
+      ),
     });
 
     expect(await statusOf(runId)).toBe("Crashed");
@@ -206,7 +209,9 @@ describe("live scratch terminal → run.review", () => {
       stepId: "scratch",
       prompt: "go",
       db,
-      api: fakeApi({ type: "session.exited", reason: "intentional" }) as never,
+      execution: legacyScratchApiToExecution(
+        fakeApi({ type: "session.exited", reason: "intentional" }) as never,
+      ),
     });
 
     expect(await statusOf(runId)).toBe("Review");

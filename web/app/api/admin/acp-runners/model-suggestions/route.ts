@@ -8,10 +8,10 @@ import { requireGlobalRole } from "@/lib/authz";
 import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
-  resolveModelSuggestions,
+  executionHosts,
   type SupervisorModelCatalog,
   type SupervisorModelCatalogDraft,
-} from "@/lib/supervisor-client";
+} from "@/lib/execution-host";
 
 const log = pino({
   name: "api-admin-acp-runner-model-suggestions",
@@ -235,9 +235,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       provider: toSupervisorProvider(parsed.data.provider),
     };
 
-    const computed = await resolveModelSuggestions(draft, {
-      force: parsed.data.force ?? false,
-    });
+    const computed = await executionHosts
+      .local()
+      .resolveModelSuggestions(draft, {
+        force: parsed.data.force ?? false,
+      });
 
     return NextResponse.json(toGroupedResponse(computed));
   } catch (err) {

@@ -73,7 +73,7 @@ import { listProjectMembers } from "@/lib/project-members";
 import { listProjectSchedules } from "@/lib/run-schedules/queries";
 import { listProjectAutomations } from "@/lib/scheduled-launches/queries";
 import { listTaskDTOs } from "@/lib/services/tasks";
-import { getPlatformStatus } from "@/lib/supervisor-client";
+import { getPlatformStatus } from "@/lib/execution-host";
 import { listTokenAudit, TOKEN_AUDIT_PAGE_SIZE } from "@/lib/tokens/audit-list";
 import { listTokens } from "@/lib/tokens/list";
 import { listBranches } from "@/lib/worktree";

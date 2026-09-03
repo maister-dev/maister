@@ -5,7 +5,7 @@ import type {
   SupervisorAdapterLaunchInput,
   SupervisorExecutorInput,
   SupervisorRunnerInput,
-} from "@/lib/supervisor-client";
+} from "@/lib/execution-host";
 import type {
   PlatformRunnerProvider,
   RunnerSnapshot,

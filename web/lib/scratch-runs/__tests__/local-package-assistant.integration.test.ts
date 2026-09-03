@@ -13,7 +13,6 @@
 //     project-scoped on a terminal transition (markScratchCrashed no-ops the
 //     domain/webhook outbox for a null project).
 
-import type { SupervisorSessionRecord } from "@/lib/supervisor-client";
 import type { WorktreeInfo } from "@/lib/worktree";
 
 import { randomUUID } from "node:crypto";
@@ -45,6 +44,11 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import {
+  createFakeExecutionHost,
+  fakeExecutionHosts,
+  type FakeExecutionHost,
+} from "@/test-support/fake-execution-host";
 
 // markScratchCrashed lives in scratch-runs/service, which transitively imports
 // @/lib/authz → next-auth. Mock authz + the db client (same pattern as
@@ -76,7 +80,12 @@ const supervisorMock = vi.hoisted(() => ({
   listSessions: vi.fn(),
 }));
 
-vi.mock("@/lib/supervisor-client", () => supervisorMock);
+// Partial: the execution-host transport binds the whole client surface at
+// module load; only the members this suite scripts are replaced.
+vi.mock("@/lib/supervisor-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/supervisor-client")>()),
+  ...supervisorMock,
+}));
 
 let markScratchCrashed: typeof import("@/lib/scratch-runs/service").markScratchCrashed;
 let launchLocalPackageAssistant: typeof import("@/lib/scratch-runs/service").launchLocalPackageAssistant;
@@ -108,6 +117,7 @@ let homeDir: string;
 let userId: string;
 let runnerId: string;
 let localPackageId: string;
+let fake: FakeExecutionHost;
 
 const RECON_GRACE_SECONDS = 90;
 
@@ -117,6 +127,41 @@ beforeAll(async () => {
   });
   container = testDatabase.container;
   db = testDatabase.db;
+  // ADR-164: the assistant launch/turn/stop ride the execution-host client; a
+  // fake host registered as THE local host routes every wire call to this
+  // suite's mutable supervisor spies (handle-form payloads on the wire).
+  fake = createFakeExecutionHost();
+
+  Object.assign(fake.transport, {
+    createSession: async (envelope: { payload: unknown }) =>
+      supervisorMock.createSession(envelope.payload),
+    sendPrompt: async (
+      sessionId: string,
+      envelope: { payload: unknown },
+      opts?: unknown,
+    ) => supervisorMock.sendPrompt(sessionId, envelope.payload, opts),
+    streamSession: (sessionId: string, opts?: unknown) =>
+      supervisorMock.streamSession(sessionId, opts),
+    listSessions: () => supervisorMock.listSessions(),
+    deleteSession: async (sessionId: string) => {
+      await supervisorMock.deleteSession(sessionId);
+
+      return { outcome: "terminated" as const };
+    },
+    deliverInput: async (
+      sessionId: string,
+      envelope: { payload: { requestId: string; reason?: string } },
+    ) => {
+      await supervisorMock.cancelPermission(
+        sessionId,
+        envelope.payload.requestId,
+        envelope.payload.reason,
+      );
+
+      return { ok: true as const, replayed: false };
+    },
+  });
+  await fakeExecutionHosts(db, { fake });
 
   ({
     markScratchCrashed,
@@ -389,12 +434,10 @@ describe("reconcile does NOT crash a project-less run (ADR-097)", () => {
 
     // No project ⇒ loadCandidates iterates projects and never selects this run
     // (it has project_id NULL); listWorktrees/listSessions are empty.
-    const listSessions = async (): Promise<SupervisorSessionRecord[]> => [];
     const listWorktrees = async (): Promise<WorktreeInfo[]> => [];
 
     const summary = await runReconcileSweep({
       db,
-      listSessions,
       listWorktrees,
       runFlow: () => {
         throw new Error("runFlow must not be called for a project-less run");
@@ -527,10 +570,19 @@ describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
       >
     )[0][0];
 
-    expect(createArg).toMatchObject({
-      confineRoot: pkg.workingDir,
-      readOnlySession: true,
-      worktreePath: pkg.workingDir,
+    // ADR-164 (Q4): the confinement rides the adopted handle — the package
+    // working dir is adopted as a `directory` workspace; the create carries
+    // only the read-only flag, never a path.
+    expect(createArg).toMatchObject({ readOnlySession: true });
+    expect(createArg).not.toHaveProperty("worktreePath");
+    expect(createArg).not.toHaveProperty("confineRoot");
+    const adopts = fake
+      .callsOf("adoptWorkspace")
+      .map((call) => call.envelope?.payload as { kind: string; path: string });
+
+    expect(adopts.at(-1)).toMatchObject({
+      kind: "directory",
+      path: pkg.workingDir,
     });
 
     // The run is project-less and snapshots the local package id.
@@ -681,6 +733,10 @@ describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
       pkg.id,
       "assistant-insert-failure",
     );
+
+    // Warm the local-host memo first so the one-shot tx fault below lands on
+    // the run-insert transaction, not on a cold host registration.
+    await fakeExecutionHosts(db, { fake });
     const transaction = vi
       .spyOn(db, "transaction")
       .mockRejectedValueOnce(new Error("run insert failed"));

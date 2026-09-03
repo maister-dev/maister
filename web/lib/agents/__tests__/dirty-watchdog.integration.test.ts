@@ -37,6 +37,7 @@ import {
 import { isMaisterError } from "@/lib/errors";
 import { runEphemeralAgentGcSweep } from "@/lib/gc/ephemeral-agent-gc";
 import { worktreesRoot } from "@/lib/instance-config";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -55,6 +56,8 @@ beforeAll(async () => {
   });
   pool = testDatabase.pool;
   db = testDatabase.db;
+  // ADR-164: every launch places the run on the local execution host.
+  await fakeExecutionHosts(db);
 }, 180_000);
 
 afterAll(async () => {

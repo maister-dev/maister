@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -131,6 +132,8 @@ Judge the bound evidence snapshot.
     databaseName: "judge_launch_glue_test",
   });
   db = testDatabase.db;
+  // ADR-164: every launch places the run on the local execution host.
+  await fakeExecutionHosts(db);
 
   ({ launchJudgePanel, provisionJudgeAttempts, defaultJudgeSpawn } =
     await import("@/lib/evaluations/judges/launch"));

@@ -2,7 +2,7 @@ import type { PlatformRunnerProvider } from "@/lib/db/schema";
 import type {
   SupervisorDiagnostics,
   SupervisorDiagnosticsStatus,
-} from "@/lib/supervisor-client";
+} from "@/lib/execution-host";
 
 import { describe, expect, it } from "vitest";
 

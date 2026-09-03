@@ -37,6 +37,7 @@ import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { registerPackageAgents, resyncAgents } from "@/lib/agents/registry";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -84,6 +85,8 @@ beforeAll(async () => {
 
   pool = testDatabase.pool;
   db = testDatabase.db;
+  // ADR-164: every launch places the run on the local execution host.
+  await fakeExecutionHosts(db);
 
   ({ launchAgentRun, buildAgentPrompt } = await import("@/lib/agents/launch"));
   ({ resolveEffectiveAgentDefinition } = await import(

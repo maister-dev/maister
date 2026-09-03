@@ -59,6 +59,7 @@ export type {
   PreparedInput,
 } from "./client";
 export { createExecutionHosts, executionHosts } from "./client";
+export { getPlatformDiagnostics, getPlatformStatus } from "./platform-status";
 export type { PromptHandle } from "./deliverer";
 export { COMMAND_POLICY, isFencedError, isUnknownOutcome } from "./deliverer";
 export { buildEnvelope, fencedLocallyError } from "./ledger";
@@ -117,6 +118,9 @@ export type {
   PromptResult,
   PromptStopReason,
   SendPromptInput,
+  SidecarInstanceConfig,
+  SidecarState,
+  SidecarStateResponse,
   SupervisorAdapterLaunchInput,
   SupervisorDiagnostics,
   SupervisorDiagnosticsStatus,
@@ -130,3 +134,4 @@ export type {
   SupervisorRunnerInput,
   SupervisorSessionRecord,
 } from "@/lib/supervisor-client";
+export type { PlatformStatus } from "@/types/platform-status";

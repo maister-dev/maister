@@ -15,12 +15,18 @@ import {
 } from "@/lib/services/agent-question";
 import { respondToHitl } from "@/lib/services/hitl";
 import {
+  createFakeExecutionHost,
+  fakeExecutionHosts,
+  type FakeExecutionHost,
+} from "@/test-support/fake-execution-host";
+import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase<typeof schema>;
+let fake: FakeExecutionHost;
 
 type Seed = {
   projectId: string;
@@ -43,6 +49,9 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await testDatabase.pool.query('TRUNCATE TABLE "projects" CASCADE');
+  // ADR-164: a fresh fake local host per case — the source session is torn
+  // down through the client bound to the source run's assignment.
+  fake = createFakeExecutionHost();
 });
 
 async function seed(options: { agentId?: string } = {}): Promise<Seed> {
@@ -123,10 +132,40 @@ function input(seed: Seed) {
   };
 }
 
+// The fake registered as THE local host, with the run's `launch` assignment
+// minted so the teardown binds the way a driven run's would.
+async function hostsFor(seed: Pick<Seed, "runId">) {
+  const { hosts } = await fakeExecutionHosts(db, { fake, runId: seed.runId });
+
+  return hosts;
+}
+
+// A live supervisor session for the seeded source run, as its driver left it.
+function liveSource(
+  sessionId: string,
+  seed: Seed,
+  acpSessionId: string = seed.acpSessionId,
+): void {
+  fake.sessions.set(sessionId, {
+    sessionId,
+    runId: seed.runId,
+    stepId: "agent",
+    acpSessionId,
+    executionWorkspaceId: "ws-source",
+    assignmentEpoch: 1,
+    createdByCommandId: "seed",
+    status: "live",
+  });
+}
+
+function deletedSessions(): string[] {
+  return fake.callsOf("deleteSession").map((call) => call.args[0] as string);
+}
+
 async function activateQuestion(seed: Seed, question = input(seed).question) {
   return await createOrActivateAgentQuestion(
     { ...input(seed), question },
-    { db, listSessions: async () => [] },
+    { db, executionHosts: await hostsFor(seed) },
   );
 }
 
@@ -168,32 +207,24 @@ async function seedHumanUser(userId: string): Promise<void> {
 describe("agent-question lifecycle (ADR-136, integration)", () => {
   it("persists intent, terminates the source, then atomically activates one assignment", async () => {
     const seeded = await seed();
-    const deleted: string[] = [];
+    const hosts = await hostsFor(seeded);
+
+    liveSource("supervisor-session-1", seeded);
 
     const result = await createOrActivateAgentQuestion(input(seeded), {
       db,
-      listSessions: async () => [
-        {
-          sessionId: "supervisor-session-1",
-          runId: seeded.runId,
-          projectSlug: "human-ask",
-          stepId: "agent",
-          status: "live",
-          pid: 1,
-          startedAt: new Date().toISOString(),
-          logPath: "/tmp/supervisor.log",
-          monotonicId: 1,
-          acpSessionId: seeded.acpSessionId,
-        },
-      ],
-      deleteSession: async (sessionId) => {
-        deleted.push(sessionId);
-      },
+      executionHosts: hosts,
     });
 
     expect(result.activationState).toBe("active");
     expect(result.created).toBe(true);
-    expect(deleted).toEqual(["supervisor-session-1"]);
+    expect(deletedSessions()).toEqual(["supervisor-session-1"]);
+    // ADR-164: the teardown is a fenced `session.delete` under the source
+    // run's assignment.
+    expect(fake.callsOf("deleteSession")[0]?.envelope).toMatchObject({
+      command: { kind: "session.delete" },
+      fence: { runId: seeded.runId, assignmentEpoch: 1 },
+    });
 
     const [source] = await db
       .select({ status: schema.runs.status })
@@ -238,13 +269,16 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
 
   it("retries a durable pending ask after a retryable supervisor error without a duplicate row", async () => {
     const seeded = await seed();
+    const hosts = await hostsFor(seeded);
 
+    fake.failOnce(
+      "listSessions",
+      new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor offline"),
+    );
     await expect(
       createOrActivateAgentQuestion(input(seeded), {
         db,
-        listSessions: async () => {
-          throw new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor offline");
-        },
+        executionHosts: hosts,
       }),
     ).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
 
@@ -258,23 +292,10 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
 
     expect(pending?.activationState).toBe("pending_termination");
 
+    liveSource("supervisor-session-2", seeded);
     const replay = await createOrActivateAgentQuestion(input(seeded), {
       db,
-      listSessions: async () => [
-        {
-          sessionId: "supervisor-session-2",
-          runId: seeded.runId,
-          projectSlug: "human-ask",
-          stepId: "agent",
-          status: "live",
-          pid: 1,
-          startedAt: new Date().toISOString(),
-          logPath: "/tmp/supervisor.log",
-          monotonicId: 1,
-          acpSessionId: seeded.acpSessionId,
-        },
-      ],
-      deleteSession: async () => undefined,
+      executionHosts: hosts,
     });
 
     expect(replay).toMatchObject({
@@ -282,6 +303,7 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
       activationState: "active",
       created: false,
     });
+    expect(deletedSessions()).toEqual(["supervisor-session-2"]);
     const rows = await db
       .select({ id: schema.hitlRequests.id })
       .from(schema.hitlRequests)
@@ -291,31 +313,25 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
     await expect(
       createOrActivateAgentQuestion(
         { ...input(seeded), question: "Use staging or production?" },
-        { db, listSessions: async () => [] },
+        { db, executionHosts: hosts },
       ),
     ).rejects.toMatchObject({ code: "CONFLICT" });
   });
 
   it("activates when the listed source session exits before its delete request", async () => {
     const seeded = await seed();
+    const hosts = await hostsFor(seeded);
+
+    liveSource("supervisor-session-gone", seeded);
+    // The session exits between the list and the delete: the host answers
+    // `gone` and the ask still activates.
+    fake.onCall("deleteSession", () => {
+      fake.sessions.delete("supervisor-session-gone");
+    });
 
     const result = await createOrActivateAgentQuestion(input(seeded), {
       db,
-      listSessions: async () => [
-        {
-          sessionId: "supervisor-session-gone",
-          runId: seeded.runId,
-          projectSlug: "human-ask",
-          stepId: "agent",
-          status: "live",
-          pid: 1,
-          startedAt: new Date().toISOString(),
-          logPath: "/tmp/supervisor.log",
-          monotonicId: 1,
-          acpSessionId: seeded.acpSessionId,
-        },
-      ],
-      deleteSession: async () => "gone" as const,
+      executionHosts: hosts,
     });
 
     expect(result.activationState).toBe("active");
@@ -329,27 +345,18 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
 
   it("keeps the intent pending when source deletion is temporarily unavailable", async () => {
     const seeded = await seed();
+    const hosts = await hostsFor(seeded);
+
+    liveSource("supervisor-session-retry", seeded);
+    fake.failOnce(
+      "deleteSession",
+      new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor restart"),
+    );
 
     await expect(
       createOrActivateAgentQuestion(input(seeded), {
         db,
-        listSessions: async () => [
-          {
-            sessionId: "supervisor-session-retry",
-            runId: seeded.runId,
-            projectSlug: "human-ask",
-            stepId: "agent",
-            status: "live",
-            pid: 1,
-            startedAt: new Date().toISOString(),
-            logPath: "/tmp/supervisor.log",
-            monotonicId: 1,
-            acpSessionId: seeded.acpSessionId,
-          },
-        ],
-        deleteSession: async () => {
-          throw new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor restart");
-        },
+        executionHosts: hosts,
       }),
     ).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
 
@@ -363,26 +370,17 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
 
   it("fails a source-session identity mismatch without exposing an Inbox assignment", async () => {
     const seeded = await seed();
+    const hosts = await hostsFor(seeded);
+
+    liveSource("supervisor-session-mismatch", seeded, randomUUID());
 
     await expect(
       createOrActivateAgentQuestion(input(seeded), {
         db,
-        listSessions: async () => [
-          {
-            sessionId: "supervisor-session-mismatch",
-            runId: seeded.runId,
-            projectSlug: "human-ask",
-            stepId: "agent",
-            status: "live",
-            pid: 1,
-            startedAt: new Date().toISOString(),
-            logPath: "/tmp/supervisor.log",
-            monotonicId: 1,
-            acpSessionId: randomUUID(),
-          },
-        ],
+        executionHosts: hosts,
       }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(deletedSessions()).toEqual([]);
 
     const [request] = await db
       .select({ activationState: schema.hitlRequests.activationState })
@@ -399,13 +397,16 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
 
   it("normalizes a source crash after durable intent into the human-ask Done outcome", async () => {
     const seeded = await seed();
+    const hosts = await hostsFor(seeded);
 
+    fake.failOnce(
+      "listSessions",
+      new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor offline"),
+    );
     await expect(
       createOrActivateAgentQuestion(input(seeded), {
         db,
-        listSessions: async () => {
-          throw new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor offline");
-        },
+        executionHosts: hosts,
       }),
     ).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
     await db
@@ -415,7 +416,7 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
 
     const result = await createOrActivateAgentQuestion(input(seeded), {
       db,
-      listSessions: async () => [],
+      executionHosts: hosts,
     });
 
     const [source] = await db
@@ -429,13 +430,16 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
 
   it("defers generic terminal finalization until the pending human ask owns Done", async () => {
     const seeded = await seed();
+    const hosts = await hostsFor(seeded);
 
+    fake.failOnce(
+      "listSessions",
+      new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor offline"),
+    );
     await expect(
       createOrActivateAgentQuestion(input(seeded), {
         db,
-        listSessions: async () => {
-          throw new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor offline");
-        },
+        executionHosts: hosts,
       }),
     ).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
 
@@ -455,7 +459,7 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
 
     const activated = await createOrActivateAgentQuestion(input(seeded), {
       db,
-      listSessions: async () => [],
+      executionHosts: hosts,
     });
     const [source] = await db
       .select({ status: schema.runs.status })
@@ -468,9 +472,10 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
 
   it("supersedes every still-open sibling and its assignment only after a successor run exists", async () => {
     const seeded = await seed();
+    const hosts = await hostsFor(seeded);
     const created = await createOrActivateAgentQuestion(input(seeded), {
       db,
-      listSessions: async () => [],
+      executionHosts: hosts,
     });
     const successorRunId = randomUUID();
 
@@ -598,13 +603,16 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
 
   it("recovers a pending ask after the source naturally exits without another MCP call", async () => {
     const seeded = await seed();
+    const hosts = await hostsFor(seeded);
 
+    fake.failOnce(
+      "listSessions",
+      new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor offline"),
+    );
     await expect(
       createOrActivateAgentQuestion(input(seeded), {
         db,
-        listSessions: async () => {
-          throw new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor offline");
-        },
+        executionHosts: hosts,
       }),
     ).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
     await db
@@ -616,7 +624,13 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
       .set({ acpSessionId: null })
       .where(eq(schema.runSessions.runId, seeded.runId));
 
-    expect(await recoverPendingAgentQuestions({ db, sessions: [] })).toBe(1);
+    expect(
+      await recoverPendingAgentQuestions({
+        db,
+        sessions: [],
+        executionHosts: hosts,
+      }),
+    ).toBe(1);
 
     const [request] = await db
       .select({ activationState: schema.hitlRequests.activationState })
@@ -628,28 +642,14 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
 
   it("recovers after source termination succeeded but the activation transaction rolled back", async () => {
     const seeded = await seed();
-    const deleted: string[] = [];
+    const hosts = await hostsFor(seeded);
+
+    liveSource("supervisor-session-rollback", seeded);
 
     await expect(
       createOrActivateAgentQuestion(input(seeded), {
         db,
-        listSessions: async () => [
-          {
-            sessionId: "supervisor-session-rollback",
-            runId: seeded.runId,
-            projectSlug: "human-ask",
-            stepId: "agent",
-            status: "live",
-            pid: 1,
-            startedAt: new Date().toISOString(),
-            logPath: "/tmp/supervisor.log",
-            monotonicId: 1,
-            acpSessionId: seeded.acpSessionId,
-          },
-        ],
-        deleteSession: async (sessionId) => {
-          deleted.push(sessionId);
-        },
+        executionHosts: hosts,
         recordSuccessAudit: async () => {
           throw new Error("forced activation transaction rollback");
         },
@@ -665,10 +665,16 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
       .from(schema.runs)
       .where(eq(schema.runs.id, seeded.runId));
 
-    expect(deleted).toEqual(["supervisor-session-rollback"]);
+    expect(deletedSessions()).toEqual(["supervisor-session-rollback"]);
     expect(pending?.activationState).toBe("pending_termination");
     expect(runningSource?.status).toBe("Running");
-    expect(await recoverPendingAgentQuestions({ db, sessions: [] })).toBe(1);
+    expect(
+      await recoverPendingAgentQuestions({
+        db,
+        sessions: [],
+        executionHosts: hosts,
+      }),
+    ).toBe(1);
 
     const [recovered] = await db
       .select({ activationState: schema.hitlRequests.activationState })
@@ -680,30 +686,18 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
 
   it("marks the request terminally failed after a non-retryable supervisor refusal", async () => {
     const seeded = await seed();
+    const hosts = await hostsFor(seeded);
+
+    liveSource("supervisor-session-refused", seeded);
+    fake.failOnce(
+      "deleteSession",
+      new MaisterError("ACP_PROTOCOL", "supervisor rejected deletion"),
+    );
 
     await expect(
       createOrActivateAgentQuestion(input(seeded), {
         db,
-        listSessions: async () => [
-          {
-            sessionId: "supervisor-session-refused",
-            runId: seeded.runId,
-            projectSlug: "human-ask",
-            stepId: "agent",
-            status: "live",
-            pid: 1,
-            startedAt: new Date().toISOString(),
-            logPath: "/tmp/supervisor.log",
-            monotonicId: 1,
-            acpSessionId: seeded.acpSessionId,
-          },
-        ],
-        deleteSession: async () => {
-          throw new MaisterError(
-            "ACP_PROTOCOL",
-            "supervisor rejected deletion",
-          );
-        },
+        executionHosts: hosts,
       }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
 
@@ -717,11 +711,12 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
 
   it("refuses a generic agent attempting the triager-only re-trigger mode", async () => {
     const seeded = await seed();
+    const hosts = await hostsFor(seeded);
 
     await expect(
       createOrActivateAgentQuestion(
         { ...input(seeded), reTriggerMode: "triage" },
-        { db, listSessions: async () => [] },
+        { db, executionHosts: hosts },
       ),
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   });
@@ -939,7 +934,7 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
     const seeded = await seed({ agentId: "core:triager" });
     const question = await createOrActivateAgentQuestion(
       { ...input(seeded), reTriggerMode: "triage" },
-      { db, listSessions: async () => [] },
+      { db, executionHosts: await hostsFor(seeded) },
     );
 
     await seedHumanUser("triage-responder");

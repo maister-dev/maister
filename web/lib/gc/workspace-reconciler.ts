@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type { WorkbenchRunStatus } from "@/lib/workbench-lifecycle/policy";
 import type { MaisterProvenance } from "@/lib/worktree-provenance-core";
 
@@ -29,7 +30,12 @@ import {
   type ReconciliationObservation,
 } from "@/lib/gc/workspace-reconciliation-findings";
 import { gcAgeDays, worktreesRoot } from "@/lib/instance-config";
-import { listSessions } from "@/lib/supervisor-client";
+import {
+  createExecutionHosts,
+  getLatestAssignment,
+  type ExecutionHosts,
+  type SupervisorSessionRecord,
+} from "@/lib/execution-host";
 import {
   createBranchAtHead,
   headCommit,
@@ -113,6 +119,7 @@ export type RunWorkspaceReconciliationSweepOptions = {
   now?: () => Date;
   removeOwnedWorktree?: OwnedWorktreeRemover;
   afterOwnedWorktreeRemoval?: () => Promise<void>;
+  executionHosts?: ExecutionHosts;
 };
 
 function isMissingPathError(error: unknown): boolean {
@@ -443,9 +450,39 @@ type FinalOrphanRemovalCheck =
   | "ownership_reappeared"
   | "live_session";
 
+// ADR-164 D7: after the worktree is gone, release the run's adopted handle on
+// the host — a driverless `workspace.release` under the run's newest
+// assignment (released included). Best-effort: a stopped host leaves the
+// command queued for recovery to re-deliver; a run that never adopted (or
+// whose rows are gone) has nothing to release.
+async function releaseAdoptedWorkspace(
+  hosts: ExecutionHosts,
+  database: Database,
+  runId: string,
+): Promise<void> {
+  try {
+    const latest = await getLatestAssignment(
+      database as unknown as ExecutionDb,
+      runId,
+    );
+
+    if (!latest?.executionWorkspaceId) return;
+
+    const client = await hosts.forAssignment(latest);
+
+    await client.releaseWorkspace(latest.executionWorkspaceId);
+  } catch (error) {
+    log.warn(
+      { runId, err: error instanceof Error ? error.message : String(error) },
+      "adopted workspace release deferred",
+    );
+  }
+}
+
 async function checkFinalOrphanRemovalPreconditions(args: {
   database: Database;
   candidate: ReconciliationCandidate;
+  liveSessions: readonly SupervisorSessionRecord[];
 }): Promise<FinalOrphanRemovalCheck> {
   const provenance = args.candidate.provenance;
 
@@ -455,7 +492,8 @@ async function checkFinalOrphanRemovalPreconditions(args: {
 
   if (project === null) return "trust_lost";
 
-  const [workspaceRows, runRows, liveSessions] = await Promise.all([
+  const liveSessions = args.liveSessions;
+  const [workspaceRows, runRows] = await Promise.all([
     args.database
       .select({ id: workspaces.id })
       .from(workspaces)
@@ -464,7 +502,6 @@ async function checkFinalOrphanRemovalPreconditions(args: {
       .select({ id: runs.id })
       .from(runs)
       .where(eq(runs.id, provenance.runId)),
-    listSessions(),
   ]);
 
   if (workspaceRows.length > 0 || runRows.length > 0) {
@@ -492,6 +529,8 @@ async function processTrustedCandidate(args: {
   summary: WorkspaceReconciliationSummary;
   remove: OwnedWorktreeRemover;
   afterOwnedWorktreeRemoval?: () => Promise<void>;
+  liveSessions: readonly SupervisorSessionRecord[];
+  hosts: ExecutionHosts;
 }): Promise<void> {
   const provenance = args.candidate.provenance;
   const worktreePath = args.candidate.worktreePath;
@@ -581,6 +620,7 @@ async function processTrustedCandidate(args: {
       force: true,
     });
     await args.afterOwnedWorktreeRemoval?.();
+    await releaseAdoptedWorkspace(args.hosts, args.database, provenance.runId);
     await resolveReconciliationFinding({
       database: args.database,
       claim: renewedClaim,
@@ -633,7 +673,7 @@ async function processTrustedCandidate(args: {
     return;
   }
 
-  const liveSessions = await listSessions();
+  const liveSessions = args.liveSessions;
 
   if (
     liveSessions.some(
@@ -712,6 +752,7 @@ async function processTrustedCandidate(args: {
   const finalRemovalCheck = await checkFinalOrphanRemovalPreconditions({
     database: args.database,
     candidate: args.candidate,
+    liveSessions: args.liveSessions,
   });
 
   if (finalRemovalCheck === "trust_lost") {
@@ -764,6 +805,7 @@ async function processTrustedCandidate(args: {
     force: true,
   });
   await args.afterOwnedWorktreeRemoval?.();
+  await releaseAdoptedWorkspace(args.hosts, args.database, provenance.runId);
   await resolveReconciliationFinding({
     database: args.database,
     claim: renewedClaim,
@@ -781,6 +823,7 @@ async function processMissingWorkspaceCandidate(args: {
   claim: ReconciliationFindingClaim;
   now: Clock;
   summary: WorkspaceReconciliationSummary;
+  liveSessions: readonly SupervisorSessionRecord[];
 }): Promise<void> {
   const workspace = args.candidate.workspace;
 
@@ -803,7 +846,7 @@ async function processMissingWorkspaceCandidate(args: {
     return;
   }
 
-  const liveSessions = await listSessions();
+  const liveSessions = args.liveSessions;
 
   if (
     liveSessions.some(
@@ -1027,6 +1070,26 @@ export async function runWorkspaceReconciliationSweep(
     limit: RECONCILIATION_BATCH_SIZE,
   });
 
+  // ADR-164: ONE session listing per sweep (was one per candidate action) —
+  // and never act on a transient host outage: a failed listing skips the tick.
+  const hosts =
+    options.executionHosts ??
+    createExecutionHosts({ db: database as unknown as ExecutionDb });
+  let liveSessions: SupervisorSessionRecord[] = [];
+
+  if (dueFindings.length > 0) {
+    try {
+      liveSessions = await hosts.local().listSessions();
+    } catch (error) {
+      log.warn(
+        { err: error instanceof Error ? error.message : String(error) },
+        "workspace reconciliation sweep: session listing failed — skipping tick",
+      );
+
+      return summary;
+    }
+  }
+
   log.info(
     {
       filesystemCandidates: filesystemCandidates.length,
@@ -1072,6 +1135,7 @@ export async function runWorkspaceReconciliationSweep(
           claim,
           now: clock,
           summary,
+          liveSessions,
         });
         continue;
       }
@@ -1097,6 +1161,8 @@ export async function runWorkspaceReconciliationSweep(
         summary,
         remove: options.removeOwnedWorktree ?? removeOwnedWorktree,
         afterOwnedWorktreeRemoval: options.afterOwnedWorktreeRemoval,
+        liveSessions,
+        hosts,
       });
     } catch (error) {
       if (isMaisterError(error) && error.code === "CONFLICT") {

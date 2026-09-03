@@ -32,6 +32,7 @@ import {
 } from "vitest";
 
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -66,6 +67,8 @@ beforeAll(async () => {
 
   pool = testDatabase.pool;
   db = testDatabase.db;
+  // ADR-164: every launch places the run on the local execution host.
+  await fakeExecutionHosts(db);
 
   ({ launchAgentRun } = await import("@/lib/agents/launch"));
   ({ updateAgentLink, getProjectAgentsView } = await import(

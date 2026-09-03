@@ -17,12 +17,15 @@ import { issueAgentRunToken } from "@/lib/agents/tokens";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
+  createFakeExecutionHost,
+  fakeExecutionHosts,
+} from "@/test-support/fake-execution-host";
+import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
 const supervisor = vi.hoisted(() => ({
-  deleteSession: vi.fn(),
   deleteSessionIfPresent: vi.fn(),
   listSessions: vi.fn(),
   promoteNextPending: vi.fn(),
@@ -35,12 +38,6 @@ vi.mock("@/lib/db/client", () => ({ getDb: () => database }));
 vi.mock("@/lib/scheduler", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/scheduler")>()),
   promoteNextPending: supervisor.promoteNextPending,
-}));
-vi.mock("@/lib/supervisor-client", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/supervisor-client")>()),
-  deleteSession: supervisor.deleteSession,
-  deleteSessionIfPresent: supervisor.deleteSessionIfPresent,
-  listSessions: supervisor.listSessions,
 }));
 
 let POST: typeof import("../route").POST;
@@ -170,6 +167,20 @@ beforeAll(async () => {
     databaseName: "agent_human_ask_route_test",
   });
   database = testDatabase.db;
+  // ADR-164: the route binds the source run through the local execution
+  // host — a fake host whose session list and teardown ride the spies.
+  const fake = createFakeExecutionHost();
+
+  Object.assign(fake.transport, {
+    listSessions: () => supervisor.listSessions(),
+    deleteSession: async (sessionId: string) => ({
+      outcome:
+        (await supervisor.deleteSessionIfPresent(sessionId)) === "gone"
+          ? "gone"
+          : "terminated",
+    }),
+  });
+  await fakeExecutionHosts(database, { fake });
   POST = (await import("../route")).POST;
 }, 180_000);
 
@@ -179,7 +190,6 @@ afterAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  supervisor.deleteSession.mockResolvedValue(undefined);
   supervisor.deleteSessionIfPresent.mockResolvedValue("terminated");
   supervisor.promoteNextPending.mockResolvedValue(undefined);
   await testDatabase.pool.query('TRUNCATE TABLE "projects" CASCADE');

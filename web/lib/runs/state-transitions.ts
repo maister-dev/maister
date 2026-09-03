@@ -1,7 +1,10 @@
 import "server-only";
 
 import type { ExecutionHost } from "@/lib/db/schema";
-import type { ExecutionHostTransport } from "@/lib/execution-host";
+import type {
+  ExecutionHostTransport,
+  PlacementReason,
+} from "@/lib/execution-host";
 
 import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import pino from "pino";
@@ -121,18 +124,24 @@ export type StateTransitionOptions = {
   // ADR-164 D3: a claim transition that starts a new driver generation mints
   // its epoch inside the CAS tx. A caller that already resolved the local host
   // (launch-style) passes it; otherwise the memoized local host resolves here.
-  placement?: { host?: ExecutionHost; transport?: ExecutionHostTransport };
+  placement?: {
+    host?: ExecutionHost;
+    transport?: ExecutionHostTransport;
+    // A claim site that is not the plain re-entry names its own reason (the
+    // gate-chat idle resume mints `gate_chat`).
+    reason?: PlacementReason;
+  };
 };
 
 async function mintForClaim(
   tx: Db,
   runId: string,
-  reason: "resume" | "wait_resume" | "rework_return",
+  reason: PlacementReason,
   opts: StateTransitionOptions,
 ): Promise<void> {
   await mintPlacement(tx, {
     runId,
-    reason,
+    reason: opts.placement?.reason ?? reason,
     host: opts.placement?.host,
     transport: opts.placement?.transport,
   });
@@ -594,6 +603,8 @@ export async function markSyncReviewFromRunning(
     return { ok: false, reason: "status-guard-mismatch" };
   }
 
+  // ADR-164 D7: the resolver's driver generation ends with the flip.
+  await releaseAssignmentForRun(db, runId, "sync_finished");
   log.info(
     { runId, from: "Running", to: "Review" },
     "run-state transition — sync AI resolver returned the run to Review",
@@ -631,6 +642,8 @@ export async function markSyncReviewFromNeedsInput(
     return { ok: false, reason: "status-guard-mismatch" };
   }
 
+  // ADR-164 D7: the resolver's driver generation ends with the flip.
+  await releaseAssignmentForRun(db, runId, "sync_finished");
   log.info(
     { runId, from: fromStatus, to: "Review" },
     "run-state transition — orphaned sync resolver abandoned its HITL prompt",

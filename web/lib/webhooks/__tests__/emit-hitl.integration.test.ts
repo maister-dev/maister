@@ -11,6 +11,12 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 // the type-only clash (matches emit-run-status.integration.test.ts).
 import * as fullSchema from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import { legacyScratchApiToExecution } from "@/test-support/execution-host-module-mock";
+import {
+  createFakeExecutionHost,
+  fakeExecutionHosts,
+  type FakeExecutionHost,
+} from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -57,27 +63,10 @@ vi.mock("@/lib/db/client", () => ({
 }));
 
 // Service deps that would reach out of process / require a session. Permission
-// delivery is faked to succeed so the respond path stamps respondedAt; the
-// resume wake + idle resume are stubbed; authz is allowed.
-// scratch-runs/events.ts imports sendPrompt + streamSession at module load for
-// its defaultSupervisorApi (unused — the scratch test threads an explicit api),
-// so the mock must still export them.
-// listSessions/cancelPrompt/createSession are here for gate-chat's `defaultApi`,
-// which lib/services/hitl.ts pulls in and which binds them at MODULE LOAD — a
-// missing name fails the whole file to load, not one assertion.
-vi.mock("@/lib/supervisor-client", () => ({
-  deliverPermission: vi.fn(async () => ({ ok: true })),
-  cancelPermission: vi.fn(async () => undefined),
-  sendPrompt: vi.fn(async () => ({ stopReason: "end_turn" })),
-  streamSession: vi.fn(async function* () {}),
-  listSessions: vi.fn(async () => []),
-  cancelPrompt: vi.fn(async () => ({ cancelled: true })),
-  createSession: vi.fn(async () => ({
-    sessionId: "sup-1",
-    pid: 1,
-    acpSessionId: "acp-1",
-  })),
-}));
+// delivery lands on a fake local execution host (ADR-164) holding the live
+// session so the respond path stamps respondedAt; the resume wake + idle
+// resume are stubbed; authz is allowed.
+let fake: FakeExecutionHost;
 
 vi.mock("@/lib/flows/runner", () => ({
   runFlow: vi.fn(async () => undefined),
@@ -104,6 +93,8 @@ beforeAll(async () => {
   });
 
   db = testDatabase.db;
+  fake = createFakeExecutionHost();
+  await fakeExecutionHosts(db, { fake });
 
   runtimeRoot = await mkdtemp(join(tmpdir(), "maister-emit-hitl-"));
   process.env.MAISTER_RUNTIME_ROOT = runtimeRoot;
@@ -245,6 +236,18 @@ describe("respondToHitl (permission) → hitl.responded", () => {
   it("winner: a delivered permission response captures exactly one hitl.responded (via=user)", async () => {
     const { projectId, runId, hitlRequestId } = await seedFlowRunWithHitl({
       kind: "permission",
+    });
+
+    // The pause's live session on the host — the response is delivered to it.
+    fake.sessions.set("sup-1", {
+      sessionId: "sup-1",
+      runId,
+      stepId: "run",
+      acpSessionId: "acp-1",
+      executionWorkspaceId: "ws-1",
+      assignmentEpoch: 1,
+      createdByCommandId: "seed",
+      status: "live",
     });
 
     const res = await respondToHitl(
@@ -392,7 +395,7 @@ describe("scratch permission flow → run.needs_input + hitl.requested co-emit",
       stepId: "scratch",
       prompt: "go",
       db,
-      api: fakePermissionApi() as never,
+      execution: legacyScratchApiToExecution(fakePermissionApi() as never),
     });
 
     expect(await statusOf(runId)).toBe("NeedsInput");

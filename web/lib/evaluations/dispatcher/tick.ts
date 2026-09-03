@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { Db } from "@/lib/evaluations/db";
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type { ObjectiveCheckProvider } from "@/lib/evaluations/method-schema";
 
 import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
@@ -37,7 +38,10 @@ import {
 } from "@/lib/evaluations/objective/execute";
 import { loadObjectiveFactSource } from "@/lib/evaluations/objective/source";
 import { openReview } from "@/lib/evaluations/reviews";
-import { deleteSession, listSessions } from "@/lib/supervisor-client";
+import {
+  createExecutionHosts,
+  type ExecutionHosts,
+} from "@/lib/execution-host";
 
 const log = pino({
   name: "evaluations-dispatch-tick",
@@ -75,6 +79,8 @@ export interface EvaluationDispatchDeps {
   launchPanel(executionId: string): Promise<void>;
   advancePanel(executionId: string): Promise<boolean>;
   now(): Date;
+  // ADR-164: the host the reaper tears live judge sessions down through.
+  executionHosts?: ExecutionHosts;
 }
 
 export function defaultDispatchDeps(db?: Db): EvaluationDispatchDeps {
@@ -373,17 +379,27 @@ function messageOf(err: unknown): string {
 // flips the run terminal, bulk-revokes its `agent-run:<runId>` tokens, and
 // frees the agent pool slot. Dynamic import mirrors defaultJudgeSpawn (judges/
 // launch.ts) and keeps @/lib/agents/launch out of this module's static graph.
-async function stopReapedJudgeRun(runId: string, d: Db): Promise<void> {
+async function stopReapedJudgeRun(
+  runId: string,
+  d: Db,
+  hosts: ExecutionHosts,
+): Promise<void> {
   try {
-    const sessions = await listSessions();
+    const live = (await hosts.local().listSessions()).filter(
+      (session) => session.status === "live" && session.runId === runId,
+    );
 
-    for (const session of sessions) {
-      if (session.status !== "live" || session.runId !== runId) continue;
-      await deleteSession(session.sessionId);
-      log.info(
-        { runId, supervisorSessionId: session.sessionId },
-        "reaped judge attempt — live supervisor session killed",
-      );
+    if (live.length > 0) {
+      // ADR-164: a fenced `session.delete` under the run's newest assignment.
+      const client = await hosts.forRun(runId, { teardown: true });
+
+      for (const session of live) {
+        await client.deleteSession(session.sessionId);
+        log.info(
+          { runId, supervisorSessionId: session.sessionId },
+          "reaped judge attempt — live supervisor session killed",
+        );
+      }
     }
   } catch (err) {
     log.warn(
@@ -411,7 +427,11 @@ async function stopReapedJudgeRun(runId: string, d: Db): Promise<void> {
   }
 }
 
-async function reapTimedOutAttempts(now: Date, d: Db): Promise<number> {
+async function reapTimedOutAttempts(
+  now: Date,
+  d: Db,
+  hosts: ExecutionHosts,
+): Promise<number> {
   const judging = await d
     .select({
       id: evaluationExecutions.id,
@@ -489,7 +509,7 @@ async function reapTimedOutAttempts(now: Date, d: Db): Promise<number> {
         await revokeAgentRunToken(candidate.tokenId, d);
       }
       if (candidate.agentRunId) {
-        await stopReapedJudgeRun(candidate.agentRunId, d);
+        await stopReapedJudgeRun(candidate.agentRunId, d, hosts);
       }
     }
   }
@@ -676,6 +696,9 @@ export async function runEvaluationDispatchTick(
   const d = db ?? getDb();
   const dep = deps ?? defaultDispatchDeps(d);
   const now = dep.now();
+  const hosts =
+    dep.executionHosts ??
+    createExecutionHosts({ db: d as unknown as ExecutionDb });
 
   const summary: EvaluationDispatchSummary = {
     drivenToJudging: 0,
@@ -686,7 +709,7 @@ export async function runEvaluationDispatchTick(
     wedgedFailed: 0,
   };
 
-  summary.timedOutAttempts = await reapTimedOutAttempts(now, d);
+  summary.timedOutAttempts = await reapTimedOutAttempts(now, d, hosts);
   summary.recovered = await recoverStaleExecutions(now, d);
 
   const queued: Array<{ id: string }> = await d

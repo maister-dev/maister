@@ -21,6 +21,7 @@ import {
   parseScratchMessageContent,
   summarizeToolInput,
 } from "@/lib/scratch-runs/transcript";
+import { legacyScratchApiToExecution } from "@/test-support/execution-host-module-mock";
 
 type Row = {
   id: string;
@@ -120,7 +121,7 @@ async function project(updates: unknown[]): Promise<Row[]> {
     stepId: "dialog",
     prompt: "go",
     db: makeFakeDb(rows),
-    api: makeApi(updates),
+    execution: legacyScratchApiToExecution(makeApi(updates) as never),
   });
 
   return rows;
@@ -337,17 +338,19 @@ describe("scratch hook_trip notice (ADR-108 T3.3)", () => {
       stepId: "dialog",
       prompt: "go",
       db: makeFakeDb(rows) as never,
-      api: makeRawApi([
-        {
-          type: "session.hook_trip",
-          sessionId: "sup-1",
-          monotonicId: 1,
-          rule: "path_guard",
-          lifecycle: "pre_tool_call",
-          disposition: "deny",
-          toolCall: { title: "Edit /etc/passwd" },
-        },
-      ]) as never,
+      execution: legacyScratchApiToExecution(
+        makeRawApi([
+          {
+            type: "session.hook_trip",
+            sessionId: "sup-1",
+            monotonicId: 1,
+            rule: "path_guard",
+            lifecycle: "pre_tool_call",
+            disposition: "deny",
+            toolCall: { title: "Edit /etc/passwd" },
+          },
+        ]) as never,
+      ),
     });
 
     const system = rows.filter((row) => row.role === "system");
@@ -393,16 +396,18 @@ describe("transcript coalescing", () => {
       stepId: "dialog",
       prompt: "first",
       db: makeFakeDb(rows),
-      api: makeApi([
-        {
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: "Previous " },
-        },
-        {
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: "answer" },
-        },
-      ]),
+      execution: legacyScratchApiToExecution(
+        makeApi([
+          {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Previous " },
+          },
+          {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "answer" },
+          },
+        ]) as never,
+      ),
     });
 
     const followUpApi = makeApi([
@@ -426,7 +431,7 @@ describe("transcript coalescing", () => {
       stepId: "dialog",
       prompt: "follow-up",
       db: makeFakeDb(rows),
-      api: followUpApi,
+      execution: legacyScratchApiToExecution(followUpApi as never),
     });
 
     const assistant = rows.filter((row) => row.role === "assistant");

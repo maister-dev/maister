@@ -19,6 +19,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -270,6 +271,8 @@ beforeAll(async () => {
 
   pool = testDatabase.pool;
   db = testDatabase.db;
+  // ADR-164: every launch places the run on the local execution host.
+  await fakeExecutionHosts(db);
 
   fx.home = await seedProject(SLUG_HOME, "XRH");
   fx.target = await seedProject(SLUG_TARGET, "XRT");

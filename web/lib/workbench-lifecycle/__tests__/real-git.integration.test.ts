@@ -8,6 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { preserveWorktree } from "@/lib/gc/preserve";
 import {
+  createFakeExecutionHost,
+  memoryExecutionHosts,
+} from "@/test-support/fake-execution-host";
+import {
   createBranchAtHead,
   headCommit,
   listRemotes,
@@ -141,8 +145,7 @@ function realGitDeps(
     requireActiveSession: vi.fn(async () => undefined),
     loadContext: vi.fn(async () => ctx),
     authorize: vi.fn(async () => undefined),
-    listSessions: vi.fn(async () => []),
-    deleteSession: vi.fn(async () => undefined),
+    executionHosts: memoryExecutionHosts(createFakeExecutionHost()),
     markStoppedAndCloseAssignments: vi.fn(async () => undefined),
     promoteNextPending: vi.fn(async () => undefined),
     finalizeAgentRun: vi.fn(async () => ({ finalized: true })),
@@ -431,6 +434,7 @@ describe("workbench lifecycle real git integration", () => {
     const workbench = await createGitWorkbench("run-discard");
     const store = records();
     const crashedContext = lifecycleContext(workbench);
+
     crashedContext.run.status = "Crashed";
     const deps = realGitDeps(crashedContext, workbench.worktreesRoot, store);
 

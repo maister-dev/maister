@@ -4,11 +4,8 @@
 // record-only. Real escalateHookTrip against a testcontainer DB; the supervisor
 // stream is a fake async iterator (mirrors persistent-park.integration.test.ts).
 
-import type {
-  AgentSupervisorApi,
-  consumeAgentSession as ConsumeFn,
-} from "@/lib/agents/launch";
-import type { SupervisorEvent } from "@/lib/supervisor-client";
+import type { consumeAgentSession as ConsumeFn } from "@/lib/agents/launch";
+import type { SupervisorEvent } from "@/lib/execution-host";
 
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -29,7 +26,11 @@ import {
 
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
-import { MaisterError } from "@/lib/errors";
+import {
+  definitiveUnavailableError,
+  fakeAgentExecution,
+  type FakeAgentExecution,
+} from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -131,26 +132,19 @@ async function seedRunningAgent(): Promise<string> {
   return runId;
 }
 
-function fakeApi(events: SupervisorEvent[]): AgentSupervisorApi & {
-  checkpointSpy: ReturnType<typeof vi.fn>;
-} {
-  const checkpointSpy = vi.fn(async () => ({
-    alreadyCheckpointed: false,
-    sessionId: "s",
-    monotonicId: 0,
-  }));
+// ADR-164: the consumer's execution seam is a DB-less fake host whose stream
+// yields `events`; checkpoints land on the fake's recorded calls.
+function fakeApi(
+  events: SupervisorEvent[],
+): FakeAgentExecution & { checkpointCalls: () => string[] } {
+  const execution = fakeAgentExecution({ events });
 
   return {
-    createSession: vi.fn(),
-    deliverPermission: vi.fn(),
-    sendPrompt: vi.fn(),
-    checkpointSession: checkpointSpy,
-    streamSession: async function* () {
-      for (const ev of events) yield ev;
-    },
-    checkpointSpy,
-  } as unknown as AgentSupervisorApi & {
-    checkpointSpy: ReturnType<typeof vi.fn>;
+    ...execution,
+    checkpointCalls: () =>
+      execution.fake
+        .callsOf("checkpointSession")
+        .map((call) => call.args[0] as string),
   };
 }
 
@@ -201,9 +195,14 @@ describe("consumeAgentSession — session.hook_trip", () => {
     const runId = await seedRunningAgent();
     const api = fakeApi([hookTrip("halt", "repetition"), exitedCheckpoint()]);
 
-    await consumeAgentSession({ db, api, runId, sessionId: "sup-1" });
+    await consumeAgentSession({
+      db,
+      execution: api,
+      runId,
+      sessionId: "sup-1",
+    });
 
-    expect(api.checkpointSpy).toHaveBeenCalledWith("sup-1");
+    expect(api.checkpointCalls()).toEqual(["sup-1"]);
     const run = await getRun(runId);
 
     expect(run.status).toBe("NeedsInput");
@@ -221,13 +220,19 @@ describe("consumeAgentSession — session.hook_trip", () => {
     const runId = await seedRunningAgent();
     const api = fakeApi([hookTrip("halt", "repetition")]);
 
-    api.checkpointSpy.mockRejectedValueOnce(
-      new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor 503"),
+    api.fake.failOnce(
+      "checkpointSession",
+      definitiveUnavailableError("supervisor 503"),
     );
 
-    await consumeAgentSession({ db, api, runId, sessionId: "sup-1" });
+    await consumeAgentSession({
+      db,
+      execution: api,
+      runId,
+      sessionId: "sup-1",
+    });
 
-    expect(api.checkpointSpy).toHaveBeenCalledWith("sup-1");
+    expect(api.checkpointCalls()).toEqual(["sup-1"]);
     const run = await getRun(runId);
 
     // Recoverable Crashed (surfaced for a human), NEVER a silent Done.
@@ -240,9 +245,14 @@ describe("consumeAgentSession — session.hook_trip", () => {
     const runId = await seedRunningAgent();
     const api = fakeApi([hookTrip("deny", "path_guard")]);
 
-    await consumeAgentSession({ db, api, runId, sessionId: "sup-1" });
+    await consumeAgentSession({
+      db,
+      execution: api,
+      runId,
+      sessionId: "sup-1",
+    });
 
-    expect(api.checkpointSpy).not.toHaveBeenCalled();
+    expect(api.checkpointCalls()).toEqual([]);
     const run = await getRun(runId);
 
     expect(run.status).toBe("Running");

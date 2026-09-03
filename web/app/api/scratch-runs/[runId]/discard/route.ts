@@ -12,7 +12,7 @@ import { preserveWorktree } from "@/lib/gc/preserve";
 import { worktreesRoot } from "@/lib/instance-config";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
 import { cleanupLocalPackageAssistantMaterialization } from "@/lib/scratch-runs/local-package-materialization";
-import { deleteSession } from "@/lib/supervisor-client";
+import { createExecutionHosts, isFencedError } from "@/lib/execution-host";
 import { removeOwnedWorktree } from "@/lib/worktree";
 import { stopThenDrop } from "@/lib/workbench-lifecycle/service";
 
@@ -101,19 +101,27 @@ async function deleteSupervisorSessionIfLive(
   sessionId: string,
   runId: string,
 ): Promise<boolean> {
-  try {
-    await deleteSession(sessionId);
+  // ADR-164: a `session.delete` is a teardown kind — it binds the run's newest
+  // assignment even when that incarnation is already released.
+  const client = await createExecutionHosts().forRun(runId, {
+    teardown: true,
+  });
 
-    return true;
+  try {
+    const { outcome } = await client.deleteSession(sessionId);
+
+    if (outcome === "terminated") return true;
+    log.info(
+      { runId, sessionId },
+      "scratch discard treated missing supervisor session as already stopped",
+    );
+
+    return false;
   } catch (err) {
-    if (
-      isMaisterError(err) &&
-      (err.code === "PRECONDITION" || err.code === "ACP_PROTOCOL") &&
-      /unknown session|not found|404/i.test(err.message)
-    ) {
-      log.info(
+    if (isFencedError(err)) {
+      log.warn(
         { runId, sessionId },
-        "scratch discard treated missing supervisor session as already stopped",
+        "scratch discard yielded — a newer driver generation owns the session",
       );
 
       return false;

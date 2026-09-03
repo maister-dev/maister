@@ -9,7 +9,10 @@ import * as schemaModule from "@/lib/db/schema";
 import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
 import { isBranchPublished } from "@/lib/runs/branch-published";
 import { hasSyncDriver } from "@/lib/runs/sync-driver-registry";
-import { SYNC_STEP_ID } from "@/lib/runs/sync-resolver";
+import {
+  SYNC_STEP_ID,
+  teardownResolverSession,
+} from "@/lib/runs/sync-resolver";
 import {
   markSyncReviewFromNeedsInput,
   markSyncReviewFromRunning,
@@ -17,10 +20,10 @@ import {
 import { pushWithLease, verifySyncGate } from "@/lib/runs/sync-target";
 import { poolForRunKind, promoteNextPending } from "@/lib/scheduler";
 import {
-  deleteSession as realDeleteSession,
-  listSessions as realListSessions,
+  createExecutionHosts,
+  type ExecutionHosts,
   type SupervisorSessionRecord,
-} from "@/lib/supervisor-client";
+} from "@/lib/execution-host";
 import {
   abortSyncOperation,
   headCommit,
@@ -47,8 +50,6 @@ const log = pino({
 // resume by `markSyncResolverPermissionDelivered` in `lib/services/hitl.ts`); a
 // `NeedsInput` human-pause never counts.
 export const SYNC_ATTEMPT_MAX_MINUTES = 30;
-
-type DeleteSessionFn = (sessionId: string) => Promise<void>;
 
 type AttemptRow = {
   id: string;
@@ -322,12 +323,12 @@ export async function recoverSyncAttemptOnReconcile(args: {
   runId: string;
   liveSessionId: string | null;
   db?: Db;
-  deleteSession?: DeleteSessionFn;
+  executionHosts?: ExecutionHosts;
   now?: () => Date;
 }): Promise<ReconcileSyncOutcome> {
   const db = (args.db ?? getDb()) as Db;
   const now = args.now ?? (() => new Date());
-  const del = args.deleteSession ?? realDeleteSession;
+  const hosts = args.executionHosts ?? createExecutionHosts({ db });
   const { runId } = args;
 
   const attempt = await loadActiveAttempt(db, runId);
@@ -359,7 +360,7 @@ export async function recoverSyncAttemptOnReconcile(args: {
 
   // --- W2: an orphaned LIVE resolver session with no in-proc driver -----------
   if (args.liveSessionId) {
-    await del(args.liveSessionId).catch(() => undefined);
+    await teardownResolverSession(hosts, runId, args.liveSessionId);
     await failAgentAttemptToReview(db, {
       attempt,
       ctx,
@@ -493,8 +494,7 @@ export async function recoverSyncAttemptOnReconcile(args: {
 export interface SyncRecoverySweepOptions {
   db?: Db;
   now?: () => Date;
-  listSessions?: () => Promise<SupervisorSessionRecord[]>;
-  deleteSession?: DeleteSessionFn;
+  executionHosts?: ExecutionHosts;
 }
 
 export interface SyncRecoverySweepSummary {
@@ -593,8 +593,7 @@ export async function runSyncRecoverySweep(
 ): Promise<SyncRecoverySweepSummary> {
   const db = (opts.db ?? getDb()) as Db;
   const now = opts.now ?? (() => new Date());
-  const del = opts.deleteSession ?? realDeleteSession;
-  const listSessions = opts.listSessions ?? realListSessions;
+  const hosts = opts.executionHosts ?? createExecutionHosts({ db });
 
   const candidates = await loadSweepCandidates(db);
 
@@ -608,7 +607,7 @@ export async function runSyncRecoverySweep(
   let records: SupervisorSessionRecord[];
 
   try {
-    records = await listSessions();
+    records = await hosts.local().listSessions();
   } catch (err) {
     log.warn(
       { err: err instanceof Error ? err.message : String(err) },
@@ -662,7 +661,9 @@ export async function runSyncRecoverySweep(
 
       const live = liveSyncSessionFor(records, attempt.runId);
 
-      if (live) await del(live.sessionId).catch(() => undefined);
+      if (live) {
+        await teardownResolverSession(hosts, attempt.runId, live.sessionId);
+      }
       await restoreWorktree(cand.worktree, attempt.headShaBefore);
       await releaseClaim(db, attempt.workspaceId, attempt.lifecycleAttemptId);
       await markSyncReviewFromRunning(attempt.runId, { db });
@@ -710,7 +711,9 @@ export async function runSyncRecoverySweep(
 
       const live = liveSyncSessionFor(records, attempt.runId);
 
-      if (live) await del(live.sessionId).catch(() => undefined);
+      if (live) {
+        await teardownResolverSession(hosts, attempt.runId, live.sessionId);
+      }
       await restoreWorktree(cand.worktree, attempt.headShaBefore);
       await releaseClaim(db, attempt.workspaceId, attempt.lifecycleAttemptId);
       await markSyncReviewFromNeedsInput(attempt.runId, cand.runStatus, { db });

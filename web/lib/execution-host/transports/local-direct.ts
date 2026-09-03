@@ -56,6 +56,24 @@ export function createLocalDirectTransport(): ExecutionHostTransport {
     async health(opts) {
       return toHostHealth(await wire.checkSupervisorHealth(opts));
     },
+    diagnostics(opts) {
+      return wire.checkSupervisorDiagnostics(opts);
+    },
+    platformStatus(opts) {
+      return wire.checkSupervisorHealth(opts);
+    },
+    startSidecar(sidecarId, instanceConfig) {
+      return wire.startSidecar(sidecarId, instanceConfig);
+    },
+    stopSidecar(sidecarId) {
+      return wire.stopSidecar(sidecarId);
+    },
+    resolveModelSuggestions(draft, opts) {
+      return wire.resolveModelSuggestions(draft, opts);
+    },
+    probeMcp(req) {
+      return wire.probeMcpViaSupervisor(req);
+    },
     listSessions() {
       return wire.listSessions();
     },

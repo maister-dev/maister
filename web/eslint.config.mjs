@@ -21,6 +21,12 @@ const compat = new FlatCompat({
   allConfig: js.configs.all,
 });
 
+const cronerRestriction = {
+  name: "croner",
+  message:
+    "Import cron helpers from @/lib/run-schedules/cron — croner is wrapped (ADR-071).",
+};
+
 export default defineConfig([
   globalIgnores([
     ".now/*",
@@ -174,14 +180,30 @@ export default defineConfig([
         "error",
         {
           paths: [
+            cronerRestriction,
             {
-              name: "croner",
+              name: "@/lib/supervisor-client",
               message:
-                "Import cron helpers from @/lib/run-schedules/cron — croner is wrapped (ADR-071).",
+                "ADR-164: domain code addresses execution through @/lib/execution-host (BoundClient / HostAdminClient); the supervisor wire is fenced to lib/execution-host/**.",
             },
           ],
         },
       ],
+    },
+  },
+  {
+    // ADR-164 D10: the local-direct transport, the test doubles and the test
+    // suites (module mocks by path) are the only places the wire may be named.
+    files: [
+      "lib/execution-host/**",
+      "lib/supervisor-client.ts",
+      "test-support/**",
+      "e2e/**",
+      "**/__tests__/**",
+    ],
+
+    rules: {
+      "no-restricted-imports": ["error", { paths: [cronerRestriction] }],
     },
   },
   {

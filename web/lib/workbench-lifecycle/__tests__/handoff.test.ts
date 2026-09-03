@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
 import {
+  createFakeExecutionHost,
+  memoryExecutionHosts,
+} from "@/test-support/fake-execution-host";
+import {
   createWorkbenchHandoffBranch,
   getWorkbenchHandoffMetadata,
   snapshotWorkbenchCommit,
@@ -73,8 +77,7 @@ function deps(ctx: LifecycleContext = context()): HandoffDeps {
     requireActiveSession: vi.fn(async () => undefined),
     loadContext: vi.fn(async () => ctx),
     authorize: vi.fn(async () => undefined),
-    listSessions: vi.fn(async () => []),
-    deleteSession: vi.fn(async () => undefined),
+    executionHosts: memoryExecutionHosts(createFakeExecutionHost()),
     markStoppedAndCloseAssignments: vi.fn(async () => undefined),
     promoteNextPending: vi.fn(async () => undefined),
     finalizeAgentRun: vi.fn(async () => ({ finalized: true })),

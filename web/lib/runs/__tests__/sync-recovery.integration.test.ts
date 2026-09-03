@@ -3,8 +3,6 @@
 // in-process driver registry (the skip-vs-abort discriminant). The supervisor
 // boundary is injected via opts (deleteSession/listSessions); no live agent.
 
-import type { SupervisorSessionRecord } from "@/lib/supervisor-client";
-
 import { randomUUID } from "node:crypto";
 
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
@@ -19,6 +17,11 @@ import {
   vi,
 } from "vitest";
 
+import {
+  createFakeExecutionHost,
+  fakeExecutionHosts,
+  type FakeExecutionHost,
+} from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -270,7 +273,7 @@ async function readClaim(
   };
 }
 
-const noSessions = async (): Promise<SupervisorSessionRecord[]> => [];
+let fake: FakeExecutionHost;
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
@@ -285,6 +288,10 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  // ADR-164: a fresh fake local host per case — the sweep lists sessions and
+  // tears resolver sessions down through it.
+  fake = createFakeExecutionHost();
+  await fakeExecutionHosts(db, { fake });
   for (const id of [...hasSyncDriverIds()]) unregisterSyncDriver(id);
   // `runSyncRecoverySweep` scans EVERY non-terminal attempt in the database, so
   // a row seeded by a previous test is a candidate for the next test's sweep —
@@ -336,12 +343,9 @@ describe("runSyncRecoverySweep — W5 active-time duration cap", () => {
       phase: "agent_running",
       agentRunningSince: past,
     });
-    const deleteSession = vi.fn(async () => undefined);
 
     const summary = await runSyncRecoverySweep({
       db,
-      deleteSession,
-      listSessions: noSessions,
     });
 
     expect(summary.durationCapKilled).toBe(1);
@@ -360,7 +364,6 @@ describe("runSyncRecoverySweep — W5 active-time duration cap", () => {
 
     const summary = await runSyncRecoverySweep({
       db,
-      listSessions: noSessions,
     });
 
     expect(summary.durationCapKilled).toBe(0);
@@ -387,7 +390,6 @@ describe("runSyncRecoverySweep — W5 active-time duration cap", () => {
     try {
       const summary = await runSyncRecoverySweep({
         db,
-        listSessions: noSessions,
       });
 
       expect(summary.durationCapKilled).toBe(0);
@@ -421,7 +423,6 @@ describe("runSyncRecoverySweep — W5 active-time duration cap", () => {
 
     const summary = await runSyncRecoverySweep({
       db,
-      listSessions: noSessions,
     });
 
     expect(summary.orphanOperationsAborted).toBe(1);
@@ -446,7 +447,6 @@ describe("runSyncRecoverySweep — W5 active-time duration cap", () => {
 
       const summary = await runSyncRecoverySweep({
         db,
-        listSessions: noSessions,
       });
 
       expect(summary.orphanOperationsAborted).toBeGreaterThan(0);
@@ -474,27 +474,23 @@ describe("runSyncRecoverySweep — W5 active-time duration cap", () => {
       agentRunningSince: past,
       headShaBefore: "d".repeat(40),
     });
-    const deleteSession = vi.fn(async () => undefined);
 
-    const summary = await runSyncRecoverySweep({
-      db,
-      deleteSession,
-      listSessions: async () => {
-        await pool.query(
-          `update run_sync_attempts set phase = 'pushing' where id = $1`,
-          [attemptId],
-        );
-
-        return [];
-      },
+    // The attempt advances to `pushing` while the host lists sessions.
+    fake.onCall("listSessions", async () => {
+      await pool.query(
+        `update run_sync_attempts set phase = 'pushing' where id = $1`,
+        [attemptId],
+      );
     });
+
+    const summary = await runSyncRecoverySweep({ db });
 
     expect(summary.durationCapKilled).toBe(0);
     // The CAS predicates on the EXACT observed phase, so it matches no row and
     // NO side effect may run: tearing the session down mid-push, or restoring
     // after the push LANDED, is precisely the divergence this guards.
     expect(await readAttemptPhase(attemptId)).toBe("pushing");
-    expect(deleteSession).not.toHaveBeenCalled();
+    expect(fake.callsOf("deleteSession")).toEqual([]);
     expect(restoreWorktreeToCommit).not.toHaveBeenCalled();
     expect(await readRunStatus(runId)).toBe("Running");
     expect(await readClaim(workspaceId)).toEqual({
@@ -514,7 +510,6 @@ describe("runSyncRecoverySweep — W1/W4 orphan + skip-vs-abort discriminant", (
 
     const summary = await runSyncRecoverySweep({
       db,
-      listSessions: noSessions,
     });
 
     expect(summary.orphanOperationsAborted).toBe(1);
@@ -532,7 +527,6 @@ describe("runSyncRecoverySweep — W1/W4 orphan + skip-vs-abort discriminant", (
 
     const summary = await runSyncRecoverySweep({
       db,
-      listSessions: noSessions,
     });
 
     expect(summary.orphanOperationsAborted).toBe(0);
@@ -557,7 +551,6 @@ describe("runSyncRecoverySweep — W1/W4 orphan + skip-vs-abort discriminant", (
 
     const summary = await runSyncRecoverySweep({
       db,
-      listSessions: noSessions,
     });
 
     expect(summary.orphanOperationsAborted).toBe(1);
@@ -584,7 +577,6 @@ describe("runSyncRecoverySweep — W1/W4 orphan + skip-vs-abort discriminant", (
     // not proof the push missed, so the local rebase must be KEPT.
     const summary = await runSyncRecoverySweep({
       db,
-      listSessions: noSessions,
     });
 
     expect(summary.orphanOperationsAborted).toBe(1);
@@ -610,7 +602,6 @@ describe("runSyncRecoverySweep — W1/W4 orphan + skip-vs-abort discriminant", (
 
     const summary = await runSyncRecoverySweep({
       db,
-      listSessions: noSessions,
     });
 
     expect(summary.orphanOperationsAborted).toBe(1);
@@ -798,17 +789,17 @@ describe("recoverSyncAttemptOnReconcile — W2 orphaned live session", () => {
       phase: "agent_running",
       agentRunningSince: new Date(),
     });
-    const deleteSession = vi.fn(async () => undefined);
 
     const result = await recoverSyncAttemptOnReconcile({
       runId,
       liveSessionId: "sess-orphan",
       db,
-      deleteSession,
     });
 
     expect(result.window).toBe("w2");
-    expect(deleteSession).toHaveBeenCalledWith("sess-orphan");
+    expect(fake.callsOf("deleteSession").map((call) => call.args[0])).toEqual([
+      "sess-orphan",
+    ]);
     expect(await readRunStatus(runId)).toBe("Review");
     expect(await readAttemptPhase(attemptId)).toBe("failed");
   });

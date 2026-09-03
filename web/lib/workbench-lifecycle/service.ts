@@ -3,6 +3,7 @@ import "server-only";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { ZodType } from "zod";
 import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type { ProjectAction } from "@/lib/authz";
 import type {
   WorkspacePreservationOutcome,
@@ -37,10 +38,10 @@ import {
 } from "@/lib/instance-config";
 import { promoteNextPending } from "@/lib/scheduler";
 import {
-  deleteSession,
-  listSessions,
-  type SupervisorSessionRecord,
-} from "@/lib/supervisor-client";
+  createExecutionHosts,
+  releaseAssignmentForRun,
+  type ExecutionHosts,
+} from "@/lib/execution-host";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
@@ -178,8 +179,9 @@ export type WorkbenchLifecycleDeps = {
   requireActiveSession: () => Promise<{ id: string } | void>;
   loadContext: (runId: string) => Promise<LifecycleContext>;
   authorize: (projectId: string, action: LifecycleAction) => Promise<void>;
-  listSessions: () => Promise<SupervisorSessionRecord[]>;
-  deleteSession: (sessionId: string) => Promise<void>;
+  // ADR-164: the host the stop tears live sessions down through (a fenced
+  // `session.delete` under the run's newest assignment).
+  executionHosts: ExecutionHosts;
   markStoppedAndCloseAssignments: (args: {
     runId: string;
     endedAt: Date;
@@ -1620,13 +1622,16 @@ async function stopLiveSupervisorSession(
   // watchdog uses (keepalive-sweeper.ts). A run may hold N logical sessions
   // (sequential, but stop EVERY live one); never narrow by stepId, which would
   // spare a live session of a different node.
-  const sessions = await deps.listSessions();
+  const client = await deps.executionHosts.forRun(ctx.run.id, {
+    teardown: true,
+  });
+  const sessions = await client.sessionsForRun();
   let stoppedAny = false;
 
   for (const session of sessions) {
-    if (session.status !== "live" || session.runId !== ctx.run.id) continue;
+    if (session.status !== "live") continue;
 
-    await deps.deleteSession(session.sessionId);
+    await client.deleteSession(session.sessionId);
     stoppedAny = true;
 
     log.info(
@@ -1955,8 +1960,9 @@ function defaultWorkbenchLifecycleDeps(): WorkbenchLifecycleDeps {
 
       await requireProjectAction(projectId, action);
     },
-    listSessions,
-    deleteSession,
+    executionHosts: createExecutionHosts({
+      db: db() as unknown as ExecutionDb,
+    }),
     markStoppedAndCloseAssignments: markRunStoppedAndCloseAssignments,
     promoteNextPending: async () => {
       await promoteNextPending();
@@ -2307,6 +2313,13 @@ async function markRunStoppedAndCloseAssignments(args: {
         `run ${args.runId} was not in a stoppable state`,
       );
     }
+
+    // ADR-164 D7: the stop ends the run's driver generation.
+    await releaseAssignmentForRun(
+      tx as unknown as ExecutionDb,
+      args.runId,
+      "stopped",
+    );
 
     await systemCloseActiveAssignmentsForRun({
       db: tx,

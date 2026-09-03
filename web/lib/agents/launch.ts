@@ -3,6 +3,7 @@ import "server-only";
 import type { ContextRepoDecl } from "@/lib/context-mounts/types";
 import type { ResultStatus } from "@/lib/run-results/types";
 import type { RunResultContract } from "@/lib/run-results/types";
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 
 import { randomUUID } from "node:crypto";
 import { mkdir, stat } from "node:fs/promises";
@@ -68,6 +69,7 @@ import { getTaskClarificationProjection } from "@/lib/queries/task-clarification
 import {
   type AgentExecutionPolicyRecommendation,
   type DelegationSnapshot,
+  type ExecutionHost,
 } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { appendCapped } from "@/lib/flows/capped-text";
@@ -114,15 +116,17 @@ import {
   tryStartRun,
 } from "@/lib/scheduler";
 import {
-  checkpointSession,
-  checkSupervisorDiagnostics,
-  createSession,
-  deliverPermission,
-  listSessions,
-  sendPrompt,
-  streamSession,
+  createExecutionHosts,
+  executionHosts,
+  isFencedError,
+  localHost,
+  mintPlacement,
+  releaseAssignmentForRun,
+  type BoundClient,
+  type ExecutionHosts,
+  type HostAdminClient,
   type SupervisorEvent,
-} from "@/lib/supervisor-client";
+} from "@/lib/execution-host";
 import { escalateHookTrip } from "@/lib/runs/hook-trip";
 import { haltRuleFromEvent } from "@/lib/runs/hook-trip-rule";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
@@ -504,7 +508,7 @@ async function assertReadOnlySessionEvidence(args: {
     "evaluating agent runner read-only-session evidence",
   );
 
-  const diagnostics = await checkSupervisorDiagnostics();
+  const diagnostics = await executionHosts.local().diagnostics();
 
   if (diagnostics.kind !== "ready") {
     log.warn(
@@ -1100,6 +1104,11 @@ export async function launchAgentRun(
     );
   }
 
+  // ADR-164 D1: the registered local execution host is the readiness gate —
+  // unreachable/refused surfaces as EXECUTOR_UNAVAILABLE before any worktree
+  // or row exists. The host row is what the launch tx places the run on.
+  const placementHost = await localHost({ db: _db as unknown as ExecutionDb });
+
   let worktreePath: string | null = null;
   let branch: string | null = null;
   let baseCommit: string | null = null;
@@ -1428,6 +1437,13 @@ export async function launchAgentRun(
       await tx.insert(runSessions).values({
         id: randomUUID(),
         ...defaultRunSessionValues(runId, resolution),
+      });
+      // ADR-164 D3: every new run is placed on the local host at launch (epoch
+      // 1, `launch`); the driver binds to this assignment when it spawns.
+      await mintPlacement(tx as unknown as ExecutionDb, {
+        runId,
+        reason: "launch",
+        host: placementHost,
       });
 
       // A reused shared tree already has a workspaces row owned by its allocator
@@ -2170,7 +2186,7 @@ async function recordConsensusDraftArtifact(args: {
 
 async function startConsensusRunnerDraftSession(args: {
   db: Db;
-  api: AgentSupervisorApi;
+  hosts: ExecutionHosts;
   run: Record<string, any>;
   project: Record<string, any>;
   payload: ConsensusDraftPayload;
@@ -2191,10 +2207,8 @@ async function startConsensusRunnerDraftSession(args: {
       );
     });
 
-    const session = await args.api.createSession({
-      runId,
-      projectSlug: args.project.slug,
-      worktreePath: cwd,
+    const execution = await bindAgentExecution(args.hosts, runId);
+    const session = await execution.client.createSession({
       stepId: "agent",
       executor: runnerExecutorInput(args.snapshot),
       runner: runnerSupervisorInput({ snapshot: args.snapshot }),
@@ -2215,7 +2229,7 @@ async function startConsensusRunnerDraftSession(args: {
     queueMicrotask(() => {
       void consumeAgentSession({
         db: args.db,
-        api: args.api,
+        execution,
         runId,
         sessionId: session.sessionId,
       }).catch((err: unknown) => {
@@ -2226,10 +2240,12 @@ async function startConsensusRunnerDraftSession(args: {
       });
     });
 
-    await args.api.sendPrompt(session.sessionId, {
-      stepId: "agent",
-      prompt: consensusDraftPromptBlock(args.payload),
-    });
+    await (
+      await execution.client.prompt(session.sessionId, {
+        stepId: "agent",
+        prompt: consensusDraftPromptBlock(args.payload),
+      })
+    ).completion;
 
     log.info(
       {
@@ -2243,6 +2259,12 @@ async function startConsensusRunnerDraftSession(args: {
       "consensus runner draft session started",
     );
   } catch (err) {
+    if (isFencedError(err)) {
+      // ADR-164: a newer driver generation owns the run — yield untouched.
+      log.warn({ runId }, "consensus runner draft session fenced — yielding");
+
+      return;
+    }
     log.error(
       { runId, err: err instanceof Error ? err.message : String(err) },
       "consensus runner draft session spawn/prompt failed",
@@ -2470,6 +2492,14 @@ export async function finalizeAgentRun(
     const row = rows[0];
 
     if (!row) return false;
+
+    // ADR-164 D7: the terminal status ends the run's driver generation (a
+    // Review child re-enters through a NEW generation on rework/re-message).
+    await releaseAssignmentForRun(
+      tx as unknown as ExecutionDb,
+      runId,
+      "run_terminal",
+    );
 
     // ADR-165 (D9/W3): the result row commits in THIS transaction — the same one
     // that flips the status and emits the wake — so a woken parent's
@@ -2839,6 +2869,16 @@ export async function parkPersistentAgent(
       )
       .returning({ id: runs.id });
 
+    if (rows.length > 0) {
+      // ADR-164 D7: a parked agent's driver generation ended with the turn;
+      // the next re-message mints a fresh `resume` generation.
+      await releaseAssignmentForRun(
+        tx as unknown as ExecutionDb,
+        runId,
+        "parked",
+      );
+    }
+
     // M42 (ADR-114): the resume handle lives on `run_sessions`, not a dropped
     // runs column — refresh the active session's handle if a newer turn produced
     // one.
@@ -2894,12 +2934,11 @@ export async function sendAgentMessage(
   prompt: string,
   opts: {
     db?: Db;
-    api?: AgentSupervisorApi;
-    listSessions?: typeof listSessions;
+    executionHosts?: ExecutionHosts;
   } = {},
 ): Promise<SendAgentMessageResult> {
   const _db = opts.db ?? getDb();
-  const listSessionsFn = opts.listSessions ?? listSessions;
+  const hosts = opts.executionHosts ?? createExecutionHosts({ db: _db });
 
   const rows = await _db
     .select({
@@ -2928,6 +2967,12 @@ export async function sendAgentMessage(
   // any non-Running status), then respawn + resume + deliver the new prompt.
   // Mirrors the agent-idle HITL resume CAS in lib/services/hitl.ts.
   if (run.status === "NeedsInputIdle") {
+    // ADR-164 D3: the re-message is a new driver generation (`resume`) minted
+    // inside the same CAS claim; the local host resolves BEFORE the claim.
+    const placementHost = await localHost({
+      db: _db as unknown as ExecutionDb,
+      transport: hosts.transport,
+    });
     const claimed: boolean = await _db.transaction(async (tx: Db) => {
       const updated = await tx
         .update(runs)
@@ -2935,7 +2980,15 @@ export async function sendAgentMessage(
         .where(and(eq(runs.id, childRunId), eq(runs.status, "NeedsInputIdle")))
         .returning({ id: runs.id });
 
-      return updated.length > 0;
+      if (updated.length === 0) return false;
+
+      await mintPlacement(tx as unknown as ExecutionDb, {
+        runId: childRunId,
+        reason: "resume",
+        host: placementHost,
+      });
+
+      return true;
     });
 
     if (!claimed) {
@@ -2947,7 +3000,7 @@ export async function sendAgentMessage(
 
     await startAgentSession(childRunId, {
       db: _db,
-      ...(opts.api ? { api: opts.api } : {}),
+      executionHosts: hosts,
       overridePrompt: prompt,
     });
 
@@ -2963,7 +3016,8 @@ export async function sendAgentMessage(
       );
     }
 
-    const live = (await listSessionsFn()).find(
+    const client = await hosts.forRun(childRunId);
+    const live = (await client.sessionsForRun()).find(
       (s) => s.status === "live" && s.acpSessionId === run.acpSessionId,
     );
 
@@ -2974,9 +3028,9 @@ export async function sendAgentMessage(
       );
     }
 
-    const api = opts.api ?? defaultSupervisorApi;
-
-    await api.sendPrompt(live.sessionId, { stepId: "agent", prompt });
+    await (
+      await client.prompt(live.sessionId, { stepId: "agent", prompt })
+    ).completion;
 
     return { childRunId, status: "Running" };
   }
@@ -2985,6 +3039,25 @@ export async function sendAgentMessage(
     "PRECONDITION",
     `child run ${childRunId} is not re-messageable (status=${run.status})`,
   );
+}
+
+// The rework claim + its driver generation, in the caller's transaction.
+async function claimReworkGeneration(
+  tx: Db,
+  childRunId: string,
+  placementHost: ExecutionHost,
+): Promise<StateTransitionResult> {
+  const flip = await markReworkFromReview(childRunId, { db: tx });
+
+  if (flip.ok) {
+    await mintPlacement(tx as unknown as ExecutionDb, {
+      runId: childRunId,
+      reason: "rework_return",
+      host: placementHost,
+    });
+  }
+
+  return flip;
 }
 
 export type ReworkChildRunResult = {
@@ -3020,9 +3093,10 @@ async function loadOwnWorkspacePromotionStateForUpdate(
 export async function reworkChildRun(
   childRunId: string,
   prompt: string,
-  opts: { db?: Db; api?: AgentSupervisorApi } = {},
+  opts: { db?: Db; executionHosts?: ExecutionHosts } = {},
 ): Promise<ReworkChildRunResult> {
   const _db = opts.db ?? getDb();
+  const hosts = opts.executionHosts ?? createExecutionHosts({ db: _db });
 
   const rows = await _db
     .select({
@@ -3063,6 +3137,12 @@ export async function reworkChildRun(
   // (shared: tree allocator row; own: this run's row) → no deadlock. A workspace-less
   // child (workspace 'none'/'repo_read', no row) can't be promoted → unfenced CAS.
   // F1 shipped the shared half; this adds the own half (sibling-sweep miss).
+  // ADR-164 D3: a rework re-entry is a new driver generation (`rework_return`)
+  // minted inside the claim transaction; the local host resolves first.
+  const placementHost = await localHost({
+    db: _db as unknown as ExecutionDb,
+    transport: hosts.transport,
+  });
   let claim: StateTransitionResult;
 
   if (run.workspaceMode === "shared" && run.agentWorkspace === "worktree") {
@@ -3084,7 +3164,7 @@ export async function reworkChildRun(
         );
       }
 
-      return markReworkFromReview(childRunId, { db: tx });
+      return claimReworkGeneration(tx, childRunId, placementHost);
     });
   } else {
     claim = await _db.transaction(async (tx: Db) => {
@@ -3104,7 +3184,7 @@ export async function reworkChildRun(
         );
       }
 
-      return markReworkFromReview(childRunId, { db: tx });
+      return claimReworkGeneration(tx, childRunId, placementHost);
     });
   }
 
@@ -3117,7 +3197,7 @@ export async function reworkChildRun(
 
   await startAgentSession(childRunId, {
     db: _db,
-    ...(opts.api ? { api: opts.api } : {}),
+    executionHosts: hosts,
     overridePrompt: prompt,
   });
 
@@ -3150,15 +3230,18 @@ async function recordAgentPermissionRequest(args: {
   });
 }
 
-export type AgentSupervisorApi = {
-  createSession: typeof createSession;
-  deliverPermission: typeof deliverPermission;
-  sendPrompt: typeof sendPrompt;
-  streamSession: typeof streamSession;
-  // ADR-108 (M40): a halting guardrail trip checkpoints the live session before
-  // the NeedsInput escalate (escalateHookTrip).
-  checkpointSession: typeof checkpointSession;
-};
+// ADR-164: the agent driver's execution seam — a client BOUND to the run's
+// active assignment (spawn/prompt/input/checkpoint carry its epoch, so a
+// superseded driver is fenced by the host, never silently re-bound) plus the
+// host's admin surface (the session event stream).
+export type AgentExecution = { client: BoundClient; admin: HostAdminClient };
+
+async function bindAgentExecution(
+  hosts: ExecutionHosts,
+  runId: string,
+): Promise<AgentExecution> {
+  return { client: await hosts.forRun(runId), admin: hosts.local() };
+}
 
 // RD7 (ADR-089 rework): resolve the agent's declared capability_profile.mcps
 // through the platform/project catalog — same precedence resolver and the
@@ -3263,14 +3346,6 @@ export function agentFacadeMcpServer(
   };
 }
 
-const defaultSupervisorApi: AgentSupervisorApi = {
-  createSession,
-  deliverPermission,
-  sendPrompt,
-  streamSession,
-  checkpointSession,
-};
-
 // Drives one standalone agent session end-to-end: spawn (resume-aware),
 // prompt, then consume supervisor events until a terminal transition.
 export async function startAgentSession(
@@ -3280,12 +3355,12 @@ export async function startAgentSession(
   // session resumes via run.acpSessionId and re-parks on the next end_turn.
   opts: {
     db?: Db;
-    api?: AgentSupervisorApi;
+    executionHosts?: ExecutionHosts;
     overridePrompt?: string;
   } = {},
 ): Promise<void> {
   const _db = opts.db ?? getDb();
-  const api = opts.api ?? defaultSupervisorApi;
+  const hosts = opts.executionHosts ?? createExecutionHosts({ db: _db });
 
   const runRows = await _db.select().from(runs).where(eq(runs.id, runId));
   const baseRun = runRows[0];
@@ -3339,7 +3414,7 @@ export async function startAgentSession(
     if (draftPayload?.participantKind === "runner" && delegation && snapshot) {
       await startConsensusRunnerDraftSession({
         db: _db,
-        api,
+        hosts,
         run,
         project,
         payload: draftPayload,
@@ -3607,7 +3682,8 @@ export async function startAgentSession(
           eq(agentProjectLinks.projectId, project.id),
         ),
       );
-    const contextMounts = await prepareContextMounts({
+
+    await prepareContextMounts({
       db: _db,
       runId,
       consumingProjectSlug: project.slug as string,
@@ -3615,12 +3691,11 @@ export async function startAgentSession(
       consent: { kind: "attach-time" },
     });
 
-    const session = await api.createSession({
-      runId,
-      projectSlug: project.slug,
-      worktreePath: cwd,
+    // ADR-164: the create is handle-form — the workspace (and its context
+    // mounts, snapshotted on the run above) is adopted by the bound client.
+    const execution = await bindAgentExecution(hosts, runId);
+    const session = await execution.client.createSession({
       stepId: "agent",
-      contextMounts,
       executor: runnerExecutorInput(snapshot),
       runner: runnerSupervisorInput({ snapshot }),
       adapterLaunch: mergeRunnerAdapterLaunch(
@@ -3660,7 +3735,7 @@ export async function startAgentSession(
     queueMicrotask(() => {
       void consumeAgentSession({
         db: _db,
-        api,
+        execution,
         runId,
         sessionId: session.sessionId,
       }).catch((err: unknown) => {
@@ -3671,8 +3746,20 @@ export async function startAgentSession(
       });
     });
 
-    await api.sendPrompt(session.sessionId, { stepId: "agent", prompt });
+    await (
+      await execution.client.prompt(session.sessionId, {
+        stepId: "agent",
+        prompt,
+      })
+    ).completion;
   } catch (err) {
+    if (isFencedError(err)) {
+      // ADR-164: a newer driver generation owns the run — yield without
+      // touching run state.
+      log.warn({ runId }, "agent session spawn/prompt fenced — yielding");
+
+      return;
+    }
     log.error(
       { runId, err: err instanceof Error ? err.message : String(err) },
       "agent session spawn/prompt failed",
@@ -3686,7 +3773,7 @@ export async function startAgentSession(
 
 export async function consumeAgentSession(args: {
   db: Db;
-  api: AgentSupervisorApi;
+  execution: AgentExecution;
   runId: string;
   sessionId: string;
 }): Promise<void> {
@@ -3699,7 +3786,9 @@ export async function consumeAgentSession(args: {
   // answer — the contract is "the block that ends the completing turn".
   let finalText = "";
 
-  for await (const event of args.api.streamSession(args.sessionId)) {
+  for await (const event of args.execution.admin.streamSession(
+    args.sessionId,
+  )) {
     switch (event.type) {
       case "session.update": {
         if (draftPayload) {
@@ -3736,7 +3825,7 @@ export async function consumeAgentSession(args: {
       case "session.permission_request": {
         const autoDelivered = await tryAutoDeliverAgentPermission({
           db: args.db,
-          api: args.api,
+          execution: args.execution,
           runId: args.runId,
           sessionId: args.sessionId,
           event,
@@ -3866,9 +3955,16 @@ export async function consumeAgentSession(args: {
               rule: haltRule,
               toolCall: event.toolCall,
               runKind: "agent",
-              checkpointSession: args.api.checkpointSession,
+              checkpointSession: (sessionId: string) =>
+                args.execution.client.checkpoint(sessionId),
             });
           } catch (err) {
+            if (isFencedError(err)) {
+              // ADR-164: a newer driver generation owns the run — detach.
+              log.warn({ runId: args.runId }, "hook_trip checkpoint fenced");
+
+              return;
+            }
             // The halt is live (the supervisor cancelled the agent and will not
             // re-emit) but the escalate could not be durably recorded. Do NOT let
             // the run finalize as success on a later session.exited: surface a
@@ -3948,7 +4044,7 @@ async function findStoredAgentPermissionIntent(
 
 async function tryAutoDeliverAgentPermission(args: {
   db: Db;
-  api: AgentSupervisorApi;
+  execution: AgentExecution;
   runId: string;
   sessionId: string;
   event: Extract<SupervisorEvent, { type: "session.permission_request" }>;
@@ -3957,11 +4053,12 @@ async function tryAutoDeliverAgentPermission(args: {
 
   if (!intent) return false;
 
-  await args.api.deliverPermission(
-    args.sessionId,
-    args.event.requestId,
-    intent.optionId,
-  );
+  await args.execution.client.deliverInput(args.sessionId, {
+    kind: "permission",
+    action: "select",
+    requestId: args.event.requestId,
+    optionId: intent.optionId,
+  });
 
   await args.db.transaction(async (tx: Db) => {
     const stamped = await tx

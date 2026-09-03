@@ -29,6 +29,7 @@ import {
   dialogStatusAfterSupervisorStop,
   runStatusForDialogStatus,
 } from "@/lib/scratch-runs/state";
+import { legacyScratchApiToExecution } from "@/test-support/execution-host-module-mock";
 
 describe("scratch launch helpers", () => {
   it("derives stable names, branches, and plan-mode prompts", () => {
@@ -279,7 +280,7 @@ describe("scratch event projection", () => {
         stepId: "dialog",
         prompt: "go",
         db,
-        api,
+        execution: legacyScratchApiToExecution(api as never),
       }),
     ).rejects.toThrow(/insert failed/);
     expect(cancelled).toEqual([{ sessionId: "sup-1", requestId: "req-1" }]);
@@ -374,7 +375,7 @@ describe("scratch event projection", () => {
       stepId: "dialog",
       prompt: "go",
       db,
-      api,
+      execution: legacyScratchApiToExecution(api as never),
     });
 
     expect(rows.map((row) => row.sequence)).toEqual([1, 2, 3, 4, 5, 6]);

@@ -6,11 +6,10 @@
 // async iterator; the DB is a real testcontainer.
 
 import type {
-  AgentSupervisorApi,
   consumeAgentSession as ConsumeFn,
   parkPersistentAgent as ParkFn,
 } from "@/lib/agents/launch";
-import type { SupervisorEvent } from "@/lib/supervisor-client";
+import type { SupervisorEvent } from "@/lib/execution-host";
 
 import { randomUUID } from "node:crypto";
 
@@ -30,6 +29,7 @@ import {
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
+import { fakeAgentExecution } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -142,16 +142,10 @@ async function seedRunningAgent(persistent: boolean): Promise<string> {
 }
 
 // A fake supervisor API that streams exactly one event then ends.
-function fakeApi(event: SupervisorEvent): AgentSupervisorApi {
-  return {
-    createSession: vi.fn(),
-    deliverPermission: vi.fn(),
-    sendPrompt: vi.fn(),
-
-    streamSession: async function* () {
-      yield event;
-    },
-  } as unknown as AgentSupervisorApi;
+// ADR-164: the consumer's execution seam is a DB-less fake host whose stream
+// yields `event` once.
+function fakeApi(event: SupervisorEvent) {
+  return fakeAgentExecution({ events: [event] });
 }
 
 function cleanExit(sessionId: string): SupervisorEvent {
@@ -183,7 +177,7 @@ describe("persistent park-vs-finalize (M37 Phase 8 T8.1)", () => {
 
     await consumeAgentSession({
       db,
-      api: fakeApi(cleanExit(`sup-${runId}`)),
+      execution: fakeApi(cleanExit(`sup-${runId}`)),
       runId,
       sessionId: `sup-${runId}`,
     });
@@ -202,7 +196,7 @@ describe("persistent park-vs-finalize (M37 Phase 8 T8.1)", () => {
 
     await consumeAgentSession({
       db,
-      api: fakeApi(cleanExit(`sup-${runId}`)),
+      execution: fakeApi(cleanExit(`sup-${runId}`)),
       runId,
       sessionId: `sup-${runId}`,
     });

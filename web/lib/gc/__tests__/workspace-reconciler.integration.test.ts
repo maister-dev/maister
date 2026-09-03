@@ -27,6 +27,10 @@ import {
 import { runWorkspaceReconciliationSweep } from "@/lib/gc/workspace-reconciler";
 import { addWorktree } from "@/lib/worktree";
 import {
+  fakeExecutionHosts,
+  unknownOutcomeError,
+} from "@/test-support/fake-execution-host";
+import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
@@ -434,3 +438,111 @@ describe("runWorkspaceReconciliationSweep", () => {
     );
   });
 });
+
+describe("workspace release after removal (ADR-164 N5)", () => {
+  // A trusted on-disk worktree whose workspace row is already removed and whose
+  // run holds an adopted handle: the sweep removes the tree, then releases the
+  // handle on the host as a driverless `workspace.release`.
+  async function seedRemovedWorkspaceWithHandle(): Promise<{
+    runId: string;
+    handle: string;
+  }> {
+    const runId = randomUUID();
+    const worktreePath = path.join(worktreesRoot, projectSlug, runId);
+    const branch = `maister/${runId}`;
+
+    await seedRun(runId);
+    await addWorktree({
+      projectRepoPath: repoPath,
+      branch,
+      worktreePath,
+      startPoint: "main",
+      provenance: {
+        version: 2,
+        runId,
+        parentRepoPath: repoPath,
+        projectId,
+        branch,
+        workspaceKind: "flow",
+        createdAt: "2026-06-01T12:00:00.000Z",
+      },
+    });
+    await db.insert(schema.workspaces).values({
+      id: randomUUID(),
+      runId,
+      projectId,
+      branch,
+      worktreePath: await realpath(worktreePath),
+      parentRepoPath: repoPath,
+      removedAt: new Date("2026-07-16T11:00:00.000Z"),
+      removalKind: "reconciliation",
+      preservationOutcome: "not_needed",
+    });
+
+    return { runId, handle: `ws_${randomUUID().replace(/-/g, "")}` };
+  }
+
+  it("issues workspace.release for the run's adopted handle after removing the tree", async () => {
+    const { runId, handle } = await seedRemovedWorkspaceWithHandle();
+    const { hosts, fake, assignment } = await fakeExecutionHosts(db, {
+      runId,
+    });
+
+    await db
+      .update(schema.executionAssignments)
+      .set({ executionWorkspaceId: handle, workspaceAdoptedAt: new Date() })
+      .where(eq(schema.executionAssignments.id, assignment!.id));
+
+    const summary = await runWorkspaceReconciliationSweep({
+      database: db,
+      root: worktreesRoot,
+      now: () => new Date("2026-07-16T12:00:00.000Z"),
+      executionHosts: hosts,
+    });
+
+    expect(summary).toMatchObject({ removed: 1, resolved: 1, quarantined: 0 });
+    expect(
+      fake.callsOf("releaseWorkspace").map((call) => call.args[0]),
+    ).toEqual([handle]);
+    expect(await releaseCommandRows(runId)).toEqual([
+      { kind: "workspace.release", state: "succeeded", driverless: true },
+    ]);
+  });
+
+  it("leaves the release queued for recovery when the host is unreachable (driverless)", async () => {
+    const { runId, handle } = await seedRemovedWorkspaceWithHandle();
+    const { hosts, fake, assignment } = await fakeExecutionHosts(db, {
+      runId,
+    });
+
+    await db
+      .update(schema.executionAssignments)
+      .set({ executionWorkspaceId: handle, workspaceAdoptedAt: new Date() })
+      .where(eq(schema.executionAssignments.id, assignment!.id));
+    fake.failOnce("releaseWorkspace", unknownOutcomeError("host stopped"));
+
+    const summary = await runWorkspaceReconciliationSweep({
+      database: db,
+      root: worktreesRoot,
+      now: () => new Date("2026-07-16T12:00:00.000Z"),
+      executionHosts: hosts,
+    });
+
+    // The removal itself is durable; the release rides recovery.
+    expect(summary).toMatchObject({ removed: 1, resolved: 1 });
+    expect(await releaseCommandRows(runId)).toEqual([
+      { kind: "workspace.release", state: "queued", driverless: true },
+    ]);
+  });
+});
+
+async function releaseCommandRows(runId: string) {
+  return await db
+    .select({
+      kind: schema.executionCommands.kind,
+      state: schema.executionCommands.state,
+      driverless: schema.executionCommands.driverless,
+    })
+    .from(schema.executionCommands)
+    .where(eq(schema.executionCommands.runId, runId));
+}

@@ -30,6 +30,10 @@ import {
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 import {
+  fakeExecutionHosts,
+  type FakeExecutionHost,
+} from "@/test-support/fake-execution-host";
+import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
@@ -39,6 +43,7 @@ const schema = schemaModule as unknown as Record<string, any>;
 let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let db: NodePgDatabase;
+let fake: FakeExecutionHost;
 let agentsRoot: string;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
@@ -125,6 +130,8 @@ beforeAll(async () => {
 
   pool = testDatabase.pool;
   db = testDatabase.db;
+  // ADR-164: every launch places the run on the local execution host.
+  ({ fake } = await fakeExecutionHosts(db));
 
   ({ issueOrchestratorRunToken } = await import("@/lib/agents/tokens"));
   ({ POST: promotePost } = await import("@/app/api/v1/ext/runs/promote/route"));
@@ -141,6 +148,7 @@ let executorId: string;
 
 beforeEach(async () => {
   createSessionSpy.mockClear();
+  fake.calls.length = 0;
   promoteLocalMergeSpy.mockClear();
 
   await pool.query(`DELETE FROM "domain_events"`);
@@ -714,11 +722,15 @@ describe("POST /api/v1/ext/runs/rework", () => {
 
     // The respawn resumed the child's retained acp session (context preserved),
     // not a fresh session.
-    expect(createSessionSpy).toHaveBeenCalledTimes(1);
-    expect(createSessionSpy.mock.calls[0][0]).toMatchObject({
-      runId: childRunId,
+    // ADR-164: a handle-form create fenced by the child's `rework_return`
+    // generation, resuming the retained ACP session.
+    const creates = fake.callsOf("createSession");
+
+    expect(creates).toHaveLength(1);
+    expect(creates[0].envelope?.payload).toMatchObject({
       resumeSessionId: "acp-child-keep",
     });
+    expect(creates[0].envelope?.fence).toMatchObject({ runId: childRunId });
 
     // The acp handle survives the rework (still present after the resume).
     const row = await pool.query(
@@ -748,7 +760,7 @@ describe("POST /api/v1/ext/runs/rework", () => {
 
     expect(res.status).toBe(409);
     expect(((await res.json()) as { code: string }).code).toBe("PRECONDITION");
-    expect(createSessionSpy).not.toHaveBeenCalled();
+    expect(fake.callsOf("createSession")).toEqual([]);
   });
 });
 

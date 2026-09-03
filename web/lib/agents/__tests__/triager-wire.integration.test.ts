@@ -39,6 +39,7 @@ import {
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { registerPackageAgents } from "@/lib/agents/registry";
 import { actorForUserId } from "@/lib/social/activity";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -83,6 +84,8 @@ beforeAll(async () => {
 
   pool = testDatabase.pool;
   db = testDatabase.db;
+  // ADR-164: every launch places the run on the local execution host.
+  await fakeExecutionHosts(db);
 
   triggers = await import("@/lib/agents/triggers");
   ({ applyTriageVerdict } = await import("@/lib/services/triage"));

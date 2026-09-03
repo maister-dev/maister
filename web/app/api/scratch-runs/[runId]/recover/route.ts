@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { RunnerSnapshot } from "@/lib/acp-runners/resolve";
 
@@ -35,10 +36,10 @@ import {
   markScratchCrashed,
 } from "@/lib/scratch-runs/service";
 import {
-  checkSupervisorHealth,
-  createSession,
-  listSessions,
-} from "@/lib/supervisor-client";
+  createExecutionHosts,
+  localHost,
+  mintPlacement,
+} from "@/lib/execution-host";
 
 const {
   localPackages,
@@ -268,16 +269,10 @@ async function loadScratchLaunchExecutor(
   );
 }
 
-async function assertSupervisorReady(): Promise<void> {
-  const platformStatus = await checkSupervisorHealth();
-
-  if (platformStatus.kind === "unavailable") {
-    throw new MaisterError(
-      "EXECUTOR_UNAVAILABLE",
-      `supervisor unavailable (${platformStatus.reason}): ${platformStatus.message}`,
-    );
-  }
-}
+// ADR-164: the recover re-enters the run under a new driver generation
+// (`scratch_recover`) minted inside the Running flip; the resumed session is
+// created through the client bound to that assignment (an unavailable host
+// refuses the recover before the claim).
 
 export async function POST(
   req: NextRequest,
@@ -305,10 +300,7 @@ export async function POST(
     const {
       run,
       scratch,
-      worktreePath,
       workspaceRemoved,
-      projectSlug,
-      confineRoot,
       executor,
       runnerSnapshot,
       acpSessionId,
@@ -326,10 +318,14 @@ export async function POST(
       });
     }
 
-    await assertSupervisorReady();
+    const hosts = createExecutionHosts({ db: db as unknown as ExecutionDb });
+    const placementHost = await localHost({
+      db: db as unknown as ExecutionDb,
+      transport: hosts.transport,
+    });
 
     const liveSessionIds = liveScratchSupervisorSessionIds(
-      await listSessions(),
+      await hosts.local().listSessions(),
     );
     const action = classifyScratchRecovery({
       runStatus: run.status,
@@ -366,13 +362,27 @@ export async function POST(
       );
     }
 
-    const session = await createSession({
-      runId,
-      projectSlug,
-      worktreePath,
-      // ADR-097: re-assert the assistant's working-dir confinement on resume
-      // (undefined for project runs, preserving their prior behavior).
-      confineRoot,
+    // Claim first (Running + the `scratch_recover` generation), then create
+    // through the bound client; a failed create lands in the catch below. The
+    // ADR-097 working-dir confinement rides the adopted handle (directory
+    // adoption of the package dir), no longer a wire field.
+    await db.transaction(async (tx: Db) => {
+      await tx
+        .update(runs)
+        .set({
+          status: "Running",
+          currentStepId: scratchStepId(),
+        })
+        .where(eq(runs.id, runId));
+      await mintPlacement(tx as unknown as ExecutionDb, {
+        runId,
+        reason: "scratch_recover",
+        host: placementHost,
+      });
+    });
+
+    const client = await hosts.forRun(runId);
+    const session = await client.createSession({
       stepId: scratchStepId(),
       executor,
       runner: runnerSupervisorInput({ snapshot: runnerSnapshot }),
@@ -386,13 +396,6 @@ export async function POST(
     const now = new Date();
 
     await db.transaction(async (tx: Db) => {
-      await tx
-        .update(runs)
-        .set({
-          status: "Running",
-          currentStepId: scratchStepId(),
-        })
-        .where(eq(runs.id, runId));
       await persistRunSessionAcpSessionId(
         tx,
         runId,
@@ -418,6 +421,7 @@ export async function POST(
         sessionId: session.sessionId,
         stepId: scratchStepId(),
         prompt: normalizeScratchPrompt(body.prompt, executor.agent, { runId }),
+        execution: { client, admin: hosts.local() },
       });
 
       const dialogStatus = await completeScratchPromptTurn({ db, runId });

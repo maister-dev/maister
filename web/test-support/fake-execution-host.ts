@@ -21,10 +21,12 @@ import type {
   CreateSessionResult,
   PromptResult,
   SendPromptInput,
+  SupervisorDiagnosticsStatus,
   SupervisorEvent,
   SupervisorSessionRecord,
 } from "@/lib/supervisor-client";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { PlatformStatus } from "@/types/platform-status";
 
 import { randomUUID } from "node:crypto";
 
@@ -106,6 +108,7 @@ export type FakeExecutionHost = {
     hook: (call: FakeCall) => void | Promise<void>,
   ): void;
   setHealth(health: HostHealth | null): void;
+  setDiagnostics(status: SupervisorDiagnosticsStatus | null): void;
   setPromptBehavior(
     behavior: (ctx: PromptContext) => Promise<PromptResult>,
   ): void;
@@ -114,8 +117,12 @@ export type FakeExecutionHost = {
   // Script the per-session SSE stream a driver consumes.
   pushEvent(sessionId: string, event: SupervisorEvent): void;
   endStream(sessionId: string): void;
-  // Events every session's FIRST stream yields (before pushed ones).
-  setStreamEvents(events: SupervisorEvent[] | null): void;
+  // Events every session's FIRST stream yields (before pushed ones); `end`
+  // closes the stream after them (a DB-less driver double that must return).
+  setStreamEvents(
+    events: SupervisorEvent[] | null,
+    opts?: { end?: boolean },
+  ): void;
 };
 
 export function unknownOutcomeError(message = "ECONNREFUSED"): MaisterError {
@@ -173,6 +180,7 @@ export function createFakeExecutionHost(
     Array<(call: FakeCall) => void | Promise<void>>
   >();
   let health: HostHealth | null = null;
+  let diagnostics: SupervisorDiagnosticsStatus | null = null;
   let monotonicId = 0;
   let promptBehavior: (
     ctx: PromptContext,
@@ -293,6 +301,7 @@ export function createFakeExecutionHost(
   }
   const streams = new Map<string, StreamQueue>();
   let scriptedEvents: SupervisorEvent[] | null = null;
+  let scriptedEnd = false;
   const streamQueueFor = (sessionId: string) => {
     let queue = streams.get(sessionId);
 
@@ -339,6 +348,57 @@ export function createFakeExecutionHost(
         }
       );
     },
+    async diagnostics() {
+      await record("diagnostics", null, []);
+
+      return (
+        diagnostics ?? {
+          kind: "unavailable",
+          reason: "network",
+          message: "fake: no diagnostics scripted",
+        }
+      );
+    },
+    async platformStatus() {
+      await record("platformStatus", null, []);
+      const current = await transport.health();
+
+      if (current.kind !== "ready") return current as PlatformStatus;
+
+      return {
+        kind: "ready",
+        health: {
+          status: "ready",
+          host: identity,
+          version: current.version,
+          uptimeMs: 1,
+          checkedAt: new Date().toISOString(),
+          sessions: current.sessions,
+        },
+      } as PlatformStatus;
+    },
+    // Admin operations a suite scripts by overriding the transport method.
+    async startSidecar(sidecarId) {
+      await record("startSidecar", null, [sidecarId]);
+
+      return { ok: true as const, state: "ready" as const };
+    },
+    async stopSidecar(sidecarId) {
+      await record("stopSidecar", null, [sidecarId]);
+
+      return { ok: true as const, state: "idle" as const };
+    },
+    async resolveModelSuggestions(draft) {
+      await record("resolveModelSuggestions", null, [draft]);
+      throw new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        "fake: no model catalog scripted",
+      );
+    },
+    async probeMcp(req) {
+      await record("probeMcp", null, [req]);
+      throw new MaisterError("EXECUTOR_UNAVAILABLE", "fake: no probe scripted");
+    },
     async listSessions(): Promise<SupervisorSessionRecord[]> {
       await record("listSessions", null, []);
 
@@ -365,6 +425,7 @@ export function createFakeExecutionHost(
       if (scriptedEvents && !queue.scripted) {
         queue.scripted = true;
         for (const event of scriptedEvents) queue.push(event);
+        if (scriptedEnd) queue.close();
       }
       for (;;) {
         const event = await queue.next(opts?.signal);
@@ -460,7 +521,8 @@ export function createFakeExecutionHost(
         sessionId: `sess-${randomUUID()}`,
         runId: envelope.fence.runId,
         stepId: envelope.payload.stepId ?? "fake",
-        acpSessionId: `acp-${randomUUID()}`,
+        // Like the host: a resume restores the SAME ACP conversation.
+        acpSessionId: envelope.payload.resumeSessionId ?? `acp-${randomUUID()}`,
         executionWorkspaceId: ws.executionWorkspaceId,
         assignmentEpoch: envelope.fence.assignmentEpoch,
         createdByCommandId: envelope.command.id,
@@ -604,6 +666,9 @@ export function createFakeExecutionHost(
     setHealth(next) {
       health = next;
     },
+    setDiagnostics(next) {
+      diagnostics = next;
+    },
     setPromptBehavior(behavior) {
       promptBehavior = behavior;
     },
@@ -623,8 +688,9 @@ export function createFakeExecutionHost(
     endStream(sessionId) {
       streamQueueFor(sessionId).close();
     },
-    setStreamEvents(events) {
+    setStreamEvents(events, opts) {
       scriptedEvents = events;
+      scriptedEnd = opts?.end ?? false;
     },
   };
 }
@@ -711,8 +777,12 @@ export async function fakeExecutionHosts(
 
   // Every implicit resolution in this process (a claim transition minting
   // through `localHost({db: tx})`, a route's `createExecutionHosts({db})`)
-  // now reaches the fake instead of the real wire.
+  // now reaches the fake instead of the real wire — and the resolver memo is
+  // warm, so a suite's one-shot db fault never lands on a host registration.
   setDefaultTransportForTests(fake.transport);
+  const { localHost } = await import("@/lib/execution-host/resolver");
+
+  await localHost({ db, transport: fake.transport, force: true });
   const [host] = await db
     .select()
     .from(executionHosts)
@@ -1015,11 +1085,38 @@ export function memoryBoundClient(args: {
 export function memoryAdminClient(fake: FakeExecutionHost): HostAdminClient {
   return {
     health: (opts) => fake.transport.health(opts),
+    diagnostics: (opts) => fake.transport.diagnostics(opts),
+    platformStatus: (opts) => fake.transport.platformStatus(opts),
+    startSidecar: (id, config) => fake.transport.startSidecar(id, config),
+    stopSidecar: (id) => fake.transport.stopSidecar(id),
+    resolveModelSuggestions: (draft, opts) =>
+      fake.transport.resolveModelSuggestions(draft, opts),
+    probeMcp: (req) => fake.transport.probeMcp(req),
     listSessions: () => fake.transport.listSessions(),
     streamSession: (sessionId, opts) =>
       fake.transport.streamSession(sessionId, opts),
     getCommandReceipt: (id) => fake.transport.getCommandReceipt(id),
     getWorkspace: (id) => fake.transport.getWorkspace(id),
+  };
+}
+
+// A DB-less `ExecutionHosts` over the fake: every run binds a memory client
+// (synthesized fence, no ledger) — for dep-injected unit suites that never
+// touch Postgres (workbench lifecycle).
+export function memoryExecutionHosts(fake: FakeExecutionHost): ExecutionHosts {
+  const host = memoryHost(fake);
+
+  return {
+    transport: fake.transport,
+    forAssignment: async (assignment) =>
+      memoryBoundClient({
+        fake,
+        runId: (assignment as ExecutionAssignment).runId ?? "run-memory",
+        assignment: assignment as ExecutionAssignment,
+        host,
+      }),
+    forRun: async (runId) => memoryBoundClient({ fake, runId, host }),
+    local: () => memoryAdminClient(fake),
   };
 }
 
@@ -1042,7 +1139,7 @@ export function fakeAgentExecution(
 ): FakeAgentExecution {
   const fake = args.fake ?? createFakeExecutionHost();
 
-  if (args.events) fake.setStreamEvents(args.events);
+  if (args.events) fake.setStreamEvents(args.events, { end: true });
   if (args.promptBehavior) {
     fake.setPromptBehavior(args.promptBehavior);
   } else if (args.promptStopReason) {

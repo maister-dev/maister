@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { SupervisorDiagnostics } from "@/lib/supervisor-client";
+import type { SupervisorDiagnostics } from "@/lib/execution-host";
 import type { Logger } from "pino";
 
 import { eq } from "drizzle-orm";

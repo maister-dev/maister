@@ -178,6 +178,18 @@ vi.mock("@/lib/supervisor-client", () => ({
   createSession: mocks.createSession,
   sendPrompt: mocks.sendPrompt,
 }));
+
+// ADR-164: the service talks to the host through the execution-host client;
+// route every host-bound call to this suite's supervisor-client mocks so the
+// wire-level assertions stay as they are.
+vi.mock("@/lib/execution-host", async () => {
+  const sup = await import("@/lib/supervisor-client");
+  const { executionHostModuleMock } = await import(
+    "@/test-support/execution-host-module-mock"
+  );
+
+  return executionHostModuleMock(sup as never);
+});
 vi.mock("@/lib/capabilities/resolver", () => ({
   loadSelectableCapabilities: mocks.loadSelectableCapabilities,
   resolveCapabilityProfile: mocks.resolveCapabilityProfile,
@@ -388,26 +400,30 @@ describe("POST /api/scratch-runs", () => {
         startPoint: "main",
       }),
     );
+    // ADR-164: the create is the handle form — no run/path fields on the wire.
     expect(mocks.createSession).toHaveBeenCalledWith(
       expect.objectContaining({
-        runId: body.runId,
-        projectSlug: "demo",
         stepId: "dialog",
         capabilityProfilePath:
           "/tmp/maister-worktrees/demo/run/.maister/capabilities/run/profile.json",
       }),
+    );
+    expect(mocks.createSession.mock.calls[0]?.[0]).not.toHaveProperty(
+      "worktreePath",
     );
     const createArg = mocks.createSession.mock.calls[0]?.[0] as
       | { readOnlySession?: boolean }
       | undefined;
 
     expect(createArg?.readOnlySession).not.toBe(true);
-    expect(mocks.sendScratchPromptAndProjectEvents).toHaveBeenCalledWith({
-      runId: body.runId,
-      sessionId: "supervisor-session-1",
-      stepId: "dialog",
-      prompt: "Investigate the thing",
-    });
+    expect(mocks.sendScratchPromptAndProjectEvents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: body.runId,
+        sessionId: "supervisor-session-1",
+        stepId: "dialog",
+        prompt: "Investigate the thing",
+      }),
+    );
     expect(state.inserts.length).toBeGreaterThanOrEqual(4);
     // M42 (ADR-114): the runner identity lands on the run's `default`
     // run_sessions row (via defaultRunSessionValues), not the runs insert.
@@ -451,10 +467,7 @@ describe("POST /api/scratch-runs", () => {
     expect(body.runId).toBeTruthy();
     expect(body.status?.dialogStatus).toBe("WaitingForUser");
     expect(mocks.createSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        runId: body.runId,
-        projectSlug: "demo",
-      }),
+      expect.objectContaining({ stepId: "dialog" }),
     );
     expect(mocks.sendScratchPromptAndProjectEvents).not.toHaveBeenCalled();
     expect(scratchRunRow).toMatchObject({

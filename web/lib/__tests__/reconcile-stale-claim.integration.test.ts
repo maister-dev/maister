@@ -12,6 +12,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
 import { runReconcileSweep } from "@/lib/reconcile";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -32,6 +33,8 @@ beforeAll(async () => {
 
   pool = testDatabase.pool;
   db = testDatabase.db;
+  // ADR-164: the sweep lists sessions through the local execution host.
+  await fakeExecutionHosts(db);
 }, 180_000);
 
 afterAll(async () => {
@@ -87,7 +90,6 @@ async function claimOf(taskId: string): Promise<Date | null> {
   return rows[0].c;
 }
 
-const noSessions = async () => [];
 const noWorktrees = async () => [];
 
 describe("reconcile stale C2 claim sweep (ADR-121 T15)", () => {
@@ -105,7 +107,6 @@ describe("reconcile stale C2 claim sweep (ADR-121 T15)", () => {
 
     const summary = await runReconcileSweep({
       db,
-      listSessions: noSessions,
       listWorktrees: noWorktrees,
       now: () => now,
     });
@@ -123,7 +124,6 @@ describe("reconcile stale C2 claim sweep (ADR-121 T15)", () => {
 
     const summary = await runReconcileSweep({
       db,
-      listSessions: noSessions,
       listWorktrees: noWorktrees,
       now: () => now,
     });

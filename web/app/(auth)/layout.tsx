@@ -7,7 +7,7 @@ import { LangSwitch } from "@/components/chrome/lang-switch";
 import { StatusBar } from "@/components/chrome/status-bar";
 import { ThemeSwitch } from "@/components/chrome/theme-switch";
 import { Logo } from "@/components/logo";
-import { getPlatformStatus } from "@/lib/supervisor-client";
+import { getPlatformStatus } from "@/lib/execution-host";
 
 export default async function AuthLayout({
   children,

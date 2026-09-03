@@ -5,7 +5,7 @@ import { getTranslations } from "next-intl/server";
 
 import { AuthCard } from "@/components/auth/auth-card";
 import { SidePanel } from "@/components/auth/side-panel";
-import { getPlatformStatus } from "@/lib/supervisor-client";
+import { getPlatformStatus } from "@/lib/execution-host";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations("auth");

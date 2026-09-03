@@ -252,6 +252,30 @@ export async function deliverCommand<TResult>(
           { logger, now: now() },
         );
 
+        if (!failed.exhausted && policy.driverless) {
+          // A driverless kind (`session.delete`, `workspace.release`) needs no
+          // waiting driver: after one unknown outcome the row stays `queued`
+          // for the recovery pass to re-deliver (ADR-164 D5 W1) instead of
+          // holding the caller through the retry budget.
+          logger.warn(
+            {
+              commandId: opts.command.id,
+              commandKind: kind,
+              attempt: attempts,
+              latencyMs,
+              outcome: "deferred",
+            },
+            "command-deferred-to-recovery",
+          );
+          throw new MaisterError(
+            "EXECUTOR_UNAVAILABLE",
+            `command ${kind} ${opts.command.id} deferred to recovery: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+            { cause: err, details: { reason: "delivery_deferred" } },
+          );
+        }
+
         if (!failed.exhausted) {
           logger.warn(
             {

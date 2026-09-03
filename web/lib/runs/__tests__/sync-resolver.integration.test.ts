@@ -27,10 +27,14 @@ import {
 import * as fullSchema from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import {
+  createFakeExecutionHost,
+  fakeExecutionHosts,
+  type FakeExecutionHost,
+} from "@/test-support/fake-execution-host";
+import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
-import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 
 const execFileAsync = promisify(execFile);
 
@@ -91,6 +95,7 @@ const { runs, workspaces, tasks, runSyncAttempts, runSessions, hitlRequests } =
 
 let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
+let fake: FakeExecutionHost;
 let root: string;
 
 beforeAll(async () => {
@@ -99,6 +104,41 @@ beforeAll(async () => {
   });
   pool = testDatabase.pool;
   db = testDatabase.db;
+  // ADR-164: the resolver is placed on and driven through the local execution
+  // host — a fake host whose wire is routed to the supervisor spies above, so
+  // every assertion on those spies keeps its shape (handle-form payloads).
+  fake = createFakeExecutionHost();
+  Object.assign(fake.transport, {
+    createSession: async (env: {
+      payload: Record<string, unknown>;
+      fence: { runId: string };
+    }) => supMock.createSession({ ...env.payload, runId: env.fence.runId }),
+    sendPrompt: async (
+      sessionId: string,
+      env: { payload: unknown },
+      opts?: unknown,
+    ) => supMock.sendPrompt(sessionId, env.payload, opts),
+    streamSession: (sessionId: string, opts?: unknown) =>
+      supMock.streamSession(sessionId, opts),
+    deleteSession: async (sessionId: string) => {
+      await supMock.deleteSession(sessionId);
+
+      return { outcome: "terminated" as const };
+    },
+    deliverInput: async (
+      sessionId: string,
+      env: { payload: { requestId: string; optionId?: string } },
+    ) => {
+      await supMock.deliverPermission(
+        sessionId,
+        env.payload.requestId,
+        env.payload.optionId,
+      );
+
+      return { ok: true as const, replayed: false };
+    },
+  });
+  await fakeExecutionHosts(db, { fake });
 }, 180_000);
 
 afterAll(async () => {
@@ -359,6 +399,35 @@ async function attemptRow(runId: string): Promise<any> {
   return row;
 }
 
+async function assignmentRows(runId: string) {
+  return await db
+    .select({
+      epoch: fullSchema.executionAssignments.epoch,
+      state: fullSchema.executionAssignments.state,
+      placementReason: fullSchema.executionAssignments.placementReason,
+      releasedReason: fullSchema.executionAssignments.releasedReason,
+    })
+    .from(fullSchema.executionAssignments)
+    .where(eq(fullSchema.executionAssignments.runId, runId))
+    .orderBy(fullSchema.executionAssignments.epoch);
+}
+
+async function deleteCommandRows(runId: string) {
+  return await db
+    .select({
+      kind: fullSchema.executionCommands.kind,
+      state: fullSchema.executionCommands.state,
+      assignmentEpoch: fullSchema.executionCommands.assignmentEpoch,
+    })
+    .from(fullSchema.executionCommands)
+    .where(
+      and(
+        eq(fullSchema.executionCommands.runId, runId),
+        eq(fullSchema.executionCommands.kind, "session.delete"),
+      ),
+    );
+}
+
 async function readRun(runId: string): Promise<any> {
   const [row] = await db.select().from(runs).where(eq(runs.id, runId));
 
@@ -532,7 +601,15 @@ describe("syncRunTarget — agent resolver (ADR-141 Task 10)", () => {
     expect(supMock.createSession).toHaveBeenCalledTimes(1);
     const createArg = supMock.createSession.mock.calls[0][0];
 
-    expect(createArg.worktreePath).toBe(wt);
+    // Handle-form wire: the worktree rides the adoption, not the create.
+    expect(createArg).not.toHaveProperty("worktreePath");
+    expect(
+      (
+        fake.callsOf("adoptWorkspace")[0]?.envelope?.payload as {
+          path?: string;
+        }
+      )?.path,
+    ).toBe(wt);
     expect(createArg.sessionName).toBe("sync-1");
 
     // The prompt carries target ref, strategy, the conflicted file, and the task.
@@ -579,6 +656,20 @@ describe("syncRunTarget — agent resolver (ADR-141 Task 10)", () => {
     ).toBe(0);
     expect(supMock.deleteSession).toHaveBeenCalledWith(`sess-${runId}`);
     expect(schedulerSpy.promoteNextPending).toHaveBeenCalled();
+    // ADR-164 (N3): the resolver ran as its own `sync_resolver` generation,
+    // released when the run returned to Review, and its teardown was a fenced
+    // `session.delete` command under that generation.
+    expect(await assignmentRows(runId)).toEqual([
+      {
+        epoch: 1,
+        state: "released",
+        placementReason: "sync_resolver",
+        releasedReason: "sync_finished",
+      },
+    ]);
+    expect(await deleteCommandRows(runId)).toEqual([
+      { kind: "session.delete", state: "succeeded", assignmentEpoch: 1 },
+    ]);
   });
 
   // THE trap of backgrounding the resolver. `return await` was the only thing
@@ -864,7 +955,7 @@ describe("syncRunTarget — agent resolver (ADR-141 Task 10)", () => {
     // The respond path owns NeedsInput → Running AND the agent_running_since re-stamp.
     // ADR-164: the response is a `session.input` command through the client
     // bound to the run's assignment on the (fake) execution host.
-    const { hosts, fake } = await fakeExecutionHosts(db, { runId });
+    const { hosts } = await fakeExecutionHosts(db, { fake, runId });
 
     fake.sessions.set(`sess-${runId}`, {
       sessionId: `sess-${runId}`,
@@ -892,7 +983,7 @@ describe("syncRunTarget — agent resolver (ADR-141 Task 10)", () => {
     await bg.settled();
 
     expect((await readRun(runId)).status).toBe("Review");
-    expect(fake.callsOf("deliverInput")).toHaveLength(1);
+    expect(supMock.deliverPermission).toHaveBeenCalledTimes(1);
   });
 
   it("deferred-release: a post-createSession persistence failure still deleteSessions", async () => {
@@ -941,6 +1032,10 @@ describe("syncRunTarget — agent resolver (ADR-141 Task 10)", () => {
     await bg.settled();
 
     expect(supMock.deleteSession).toHaveBeenCalledWith(`sess-${runId}`);
+    // ADR-164 (N3): the fail-closed teardown is a fenced `session.delete` row.
+    expect(await deleteCommandRows(runId)).toEqual([
+      { kind: "session.delete", state: "succeeded", assignmentEpoch: 1 },
+    ]);
     const row = await attemptRow(runId);
 
     expect(row.phase).toBe("failed");

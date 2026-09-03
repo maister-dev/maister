@@ -1,4 +1,4 @@
-import type { SupervisorDiagnostics } from "@/lib/supervisor-client";
+import type { SupervisorDiagnostics } from "@/lib/execution-host";
 
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";

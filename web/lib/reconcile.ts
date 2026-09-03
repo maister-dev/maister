@@ -2,7 +2,11 @@ import "server-only";
 
 import type { RunResumedSessionOptions } from "@/lib/runs/resume-driver";
 import type { CrashReason } from "@/lib/runs/state-transitions";
-import type { SupervisorSessionRecord } from "@/lib/supervisor-client";
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
+import type {
+  ExecutionHosts,
+  SupervisorSessionRecord,
+} from "@/lib/execution-host";
 import type { WorktreeInfo } from "@/lib/worktree";
 
 import { randomUUID } from "node:crypto";
@@ -41,12 +45,13 @@ import { findSharedTreeWorkspace } from "@/lib/runs/shared-tree";
 import { crashRunningRun } from "@/lib/runs/state-transitions";
 import { hasSyncDriver } from "@/lib/runs/sync-driver-registry";
 import { promoteNextPending } from "@/lib/scheduler";
-import { deleteSession, listSessions } from "@/lib/supervisor-client";
+import { createExecutionHosts } from "@/lib/execution-host";
 import { listWorktrees } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
   assignments,
+  executionAssignments,
   hitlRequests,
   nodeAttempts,
   projects,
@@ -348,8 +353,7 @@ function mostRecentMs(a: Date | null, b: Date | null): number | null {
 
 export interface RunReconcileSweepOptions {
   db?: Db;
-  listSessions?: () => Promise<SupervisorSessionRecord[]>;
-  deleteSession?: (sessionId: string) => Promise<void>;
+  executionHosts?: ExecutionHosts;
   listWorktrees?: (repoPath: string) => Promise<WorktreeInfo[]>;
   runFlow?: (runId: string) => Promise<void> | void;
   scheduleResumedSessionDrive?: (opts: RunResumedSessionOptions) => string;
@@ -377,6 +381,9 @@ export interface ReconcileSweepSummary {
   // `Abandoned` run row and stopped this tick — the recovery path for a
   // cascade whose best-effort session teardown did not complete.
   orphanSessionsReaped: number;
+  // ADR-164 D7/D8: ACTIVE assignments whose adopted workspace handle the host
+  // no longer knows (WARN `workspace-handle-lost`; the next create re-adopts).
+  handlesLost: number;
 }
 
 const ZERO_SUMMARY: ReconcileSweepSummary = {
@@ -389,6 +396,7 @@ const ZERO_SUMMARY: ReconcileSweepSummary = {
   staleClaimsCleared: 0,
   syncRecovered: 0,
   orphanSessionsReaped: 0,
+  handlesLost: 0,
 };
 
 // ADR-121 (T15): a C2 admission claim (tasks.queue_claimed_at) is held only across
@@ -469,10 +477,68 @@ async function runWithConcurrency<T>(
   await Promise.all(workers);
 }
 
+// ADR-164 D7/D8: a read-only handle check for ACTIVE assignments — a host
+// that forgot a handle it adopted (state dir wiped) → WARN
+// `workspace-handle-lost`; the next create self-heals by re-adopting. Never
+// throws: a host outage or a refused lookup is logged once and the tick goes
+// on.
+async function checkWorkspaceHandles(args: {
+  db: Db;
+  hosts: ExecutionHosts;
+}): Promise<number> {
+  let lost = 0;
+
+  try {
+    const rows = (await args.db
+      .select({
+        id: executionAssignments.id,
+        runId: executionAssignments.runId,
+        executionWorkspaceId: executionAssignments.executionWorkspaceId,
+      })
+      .from(executionAssignments)
+      .where(
+        and(
+          eq(executionAssignments.state, "active"),
+          isNotNull(executionAssignments.executionWorkspaceId),
+        ),
+      )
+      .limit(500)) as Array<{
+      id: string;
+      runId: string;
+      executionWorkspaceId: string;
+    }>;
+
+    for (const row of rows) {
+      const record = await args.hosts
+        .local()
+        .getWorkspace(row.executionWorkspaceId);
+
+      if (record === null) {
+        lost += 1;
+        log.warn(
+          {
+            runId: row.runId,
+            assignmentId: row.id,
+            executionWorkspaceId: row.executionWorkspaceId,
+          },
+          "workspace-handle-lost",
+        );
+      }
+    }
+  } catch (err) {
+    log.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      "reconcile sweep: workspace handle check skipped",
+    );
+  }
+
+  return lost;
+}
+
 async function stopGraphOnlyCutoverSessions(args: {
   db: Db;
   records: readonly SupervisorSessionRecord[];
-  stopSession: (sessionId: string) => Promise<void>;
+  hosts: ExecutionHosts;
 }): Promise<number> {
   let cutoverRunIds: Set<string>;
 
@@ -494,7 +560,9 @@ async function stopGraphOnlyCutoverSessions(args: {
 
   await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (record) => {
     try {
-      await args.stopSession(record.sessionId);
+      await (
+        await args.hosts.forRun(record.runId, { teardown: true })
+      ).deleteSession(record.sessionId);
       stopped += 1;
       log.warn(
         { runId: record.runId, sessionId: record.sessionId },
@@ -1010,8 +1078,9 @@ export async function runReconcileSweep(
   opts: RunReconcileSweepOptions = {},
 ): Promise<ReconcileSweepSummary> {
   const db = opts.db ?? getDb();
-  const sessions = opts.listSessions ?? listSessions;
-  const stopSession = opts.deleteSession ?? deleteSession;
+  const hosts =
+    opts.executionHosts ??
+    createExecutionHosts({ db: db as unknown as ExecutionDb });
   const worktreesFor = opts.listWorktrees ?? listWorktrees;
   const runFlow =
     opts.runFlow ??
@@ -1069,9 +1138,10 @@ export async function runReconcileSweep(
   let liveByRunStep: Map<string, SupervisorSessionRecord>;
   let cutoverSessionsStopped = 0;
   let orphanSessionsReaped = 0;
+  let handlesLost = 0;
 
   try {
-    const records = await sessions();
+    const records = await hosts.local().listSessions();
 
     const { recoverPendingAgentQuestions } = await import(
       "@/lib/services/agent-question"
@@ -1080,7 +1150,7 @@ export async function runReconcileSweep(
     await recoverPendingAgentQuestions({
       db,
       sessions: records,
-      deleteSession: stopSession,
+      executionHosts: hosts,
     });
 
     try {
@@ -1090,6 +1160,7 @@ export async function runReconcileSweep(
       const recovered = await recoverExpiredGateChatTurns({
         db,
         sessions: records,
+        executionHosts: hosts,
       });
 
       if (recovered > 0) {
@@ -1108,13 +1179,14 @@ export async function runReconcileSweep(
     cutoverSessionsStopped = await stopGraphOnlyCutoverSessions({
       db,
       records,
-      stopSession,
+      hosts,
     });
     orphanSessionsReaped = await reapAbandonedRunSessions({
       db,
       records,
       stopSession,
     });
+    handlesLost = await checkWorkspaceHandles({ db, hosts });
 
     liveMap = new Map();
     liveByRunStep = new Map();
@@ -1137,6 +1209,7 @@ export async function runReconcileSweep(
       staleClaimsCleared,
       cutoverSessionsStopped,
       orphanSessionsReaped,
+      handlesLost,
     };
   }
 
@@ -1150,6 +1223,7 @@ export async function runReconcileSweep(
       staleClaimsCleared,
       cutoverSessionsStopped,
       orphanSessionsReaped,
+      handlesLost,
     };
   }
 
@@ -1424,7 +1498,7 @@ export async function runReconcileSweep(
           db,
           runId: cand.runId,
           liveSessionId: live?.sessionId ?? null,
-          deleteSession: stopSession,
+          executionHosts: hosts,
           now,
         });
 
@@ -1464,6 +1538,7 @@ export async function runReconcileSweep(
     staleClaimsCleared,
     syncRecovered,
     orphanSessionsReaped,
+    handlesLost,
   };
 
   log.info(summary, "reconcile sweep complete");

@@ -32,6 +32,8 @@ import {
   buildResolverPrompt,
   runResolverSession,
   SYNC_STEP_ID,
+  teardownResolverSession,
+  type ResolverSessionInput,
 } from "@/lib/runs/sync-resolver";
 import {
   capForPool,
@@ -42,10 +44,12 @@ import {
   type SchedulerPool,
 } from "@/lib/scheduler";
 import {
-  deleteSession,
-  type CreateSessionInput,
+  createExecutionHosts,
+  localHost,
+  mintPlacement,
+  type ExecutionHosts,
   type PromptStopReason,
-} from "@/lib/supervisor-client";
+} from "@/lib/execution-host";
 import {
   aheadBehindCounts,
   currentBranchName,
@@ -123,6 +127,9 @@ export type SyncRunInput = {
   // rejects, so a scheduler may safely drop the promise; injecting one that
   // KEEPS it is how a caller awaits the resolve that the HTTP path does not.
   schedule?: (task: () => Promise<void>) => void;
+  // ADR-164: the execution host the resolver session is placed on and driven
+  // through (injectable for tests; defaults to the process-wide client).
+  executionHosts?: ExecutionHosts;
 };
 
 export type SyncEligibilityRun = {
@@ -948,6 +955,7 @@ export async function syncRunTarget(
           runnerId: input.runnerId,
           autoFinalize: input.autoFinalize ?? false,
           actor: input.actor,
+          executionHosts: input.executionHosts ?? createExecutionHosts({ db }),
         };
         // Everything that can still be refused — the cap gate, runner
         // resolution, the promotion fence, the Review→Running CAS — runs HERE, on
@@ -1242,11 +1250,12 @@ type SyncResolverArgs = {
   runnerId?: string;
   autoFinalize?: boolean;
   actor: SyncActor;
+  executionHosts: ExecutionHosts;
 };
 
 // What the pre-session phase hands the (backgrounded) session phase.
 type PreparedSyncResolver = {
-  sessionInput: CreateSessionInput;
+  sessionInput: ResolverSessionInput;
   runnerTier: string;
   prompt: string;
   pool: SchedulerPool;
@@ -1270,13 +1279,12 @@ async function prepareSyncResolver(
     claim,
     runId,
     worktree,
-    repo,
     targetBranch,
     strategy,
     conflictedFiles,
   } = args;
   const pool = poolForRunKind(args.runKind);
-  let sessionInput: CreateSessionInput;
+  let sessionInput: ResolverSessionInput;
   let runnerTier: string;
   let prompt: string;
 
@@ -1306,6 +1314,13 @@ async function prepareSyncResolver(
     runnerTier = resolution.runnerResolutionTier;
     const sessionName = `sync-${claim.attempt}`;
     const snapshot = resolution.runnerSnapshot;
+    // ADR-164 D3: the resolver is a new driver generation (`sync_resolver`)
+    // minted inside the claim tx; the local host resolves BEFORE the CAS so an
+    // unavailable host is a typed pre-session refusal.
+    const placementHost = await localHost({
+      db,
+      transport: args.executionHosts.transport,
+    });
 
     // Build the resolver prompt BEFORE the CAS (the only remaining DB read is the
     // task load) so a read failure aborts cleanly instead of stranding Running.
@@ -1359,6 +1374,11 @@ async function prepareSyncResolver(
         acpSessionId: null,
         resolutionSource: resolution.runnerResolutionTier,
       });
+      await mintPlacement(tx, {
+        runId,
+        reason: "sync_resolver",
+        host: placementHost,
+      });
 
       await tx
         .update(runSyncAttempts)
@@ -1374,10 +1394,6 @@ async function prepareSyncResolver(
     });
 
     sessionInput = {
-      runId,
-      projectSlug: args.project.slug,
-      worktreePath: worktree,
-      repoPath: repo,
       stepId: SYNC_STEP_ID,
       sessionName,
       executor: runnerExecutorInput(snapshot),
@@ -1435,6 +1451,7 @@ async function driveSyncResolver(
       input: sessionInput,
       prompt,
       runnerTier,
+      executionHosts: args.executionHosts,
     });
   } catch (err) {
     // runResolverSession already tore the session down (or none was created).
@@ -1454,7 +1471,7 @@ async function driveSyncResolver(
   const { sessionId, stopReason } = session;
 
   if (stopReason !== "end_turn") {
-    await deleteSession(sessionId).catch(() => undefined);
+    await teardownResolverSession(args.executionHosts, runId, sessionId);
     await failResolver({
       db,
       claim,
@@ -1515,7 +1532,7 @@ async function driveSyncResolver(
     );
 
     if (!gate.ok) {
-      await deleteSession(sessionId).catch(() => undefined);
+      await teardownResolverSession(args.executionHosts, runId, sessionId);
       await failResolver({
         db,
         claim,
@@ -1541,7 +1558,7 @@ async function driveSyncResolver(
 
     if (shouldPush) {
       if (args.remoteShaIndeterminate) {
-        await deleteSession(sessionId).catch(() => undefined);
+        await teardownResolverSession(args.executionHosts, runId, sessionId);
         await failResolver({
           db,
           claim,
@@ -1564,7 +1581,7 @@ async function driveSyncResolver(
       const push = await pushWithLease(worktree, branch, args.remoteShaBefore);
 
       if (!push.pushed) {
-        await deleteSession(sessionId).catch(() => undefined);
+        await teardownResolverSession(args.executionHosts, runId, sessionId);
         await failResolver({
           db,
           claim,
@@ -1599,7 +1616,7 @@ async function driveSyncResolver(
     //
     // `deleteSession` stays outside (it cannot throw) and `promoteNextPending` stays
     // outside because it is a scheduler side effect, not part of the terminal fact.
-    await deleteSession(sessionId).catch(() => undefined);
+    await teardownResolverSession(args.executionHosts, runId, sessionId);
     await settleAttempt(db, claim, {
       runId,
       // The resolver only reaches here having resolved and committed, so HEAD moved
@@ -1618,7 +1635,7 @@ async function driveSyncResolver(
     );
   } catch (err) {
     // The session is torn down on every failing path (idempotent).
-    await deleteSession(sessionId).catch(() => undefined);
+    await teardownResolverSession(args.executionHosts, runId, sessionId);
 
     // `settled` — a handled path above already terminalized this attempt.
     // `pushCommitted` — the force-push LANDED. Aborting now would restore the

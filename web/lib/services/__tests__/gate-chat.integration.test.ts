@@ -1,5 +1,5 @@
 // M30 (ADR-078): gate-chat turns against a real DB + real git worktree with
-// an injected fake supervisor API. Pins:
+// a fake local execution host (ADR-164) scripting the agent session. Pins:
 //   - live turn: user+agent rows (seq), L1 preamble + readOnlyTurn on the
 //     prompt, gate-chat-<hitlId> stepId, keepalive bump, HITL stays open,
 //     status stays NeedsInput;
@@ -37,6 +37,11 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import { MaisterError } from "@/lib/errors";
+import {
+  releaseAssignmentForRun,
+  type SupervisorEvent,
+} from "@/lib/execution-host";
+import { type Db as ExecutionDb } from "@/lib/execution-host/db";
 import { captureCheckpoint } from "@/lib/flows/graph/workspace-checkpoint";
 import { resolveDirtyWorktree } from "@/lib/runs/dirty-resolution";
 import {
@@ -47,10 +52,14 @@ import {
   sendGateChatTurn,
 } from "@/lib/services/gate-chat";
 import {
+  createFakeExecutionHost,
+  fakeExecutionHosts,
+  type FakeExecutionHost,
+} from "@/test-support/fake-execution-host";
+import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
-import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
@@ -122,74 +131,95 @@ type FakeApiOpts = {
   // Invoked DURING the prompt turn (simulates the agent touching files).
   mutateDuringTurn?: () => Promise<void>;
   replyText?: string;
+  // Mints the run's `launch` assignment (a driven run's shape); `checkpointed`
+  // releases it the way the keep-alive checkpoint leaves an idle run.
+  runId?: string;
+  checkpointed?: boolean;
+  // Re-script a host from an earlier turn of the same run (the assignment is
+  // bound to that host's identity).
+  fake?: FakeExecutionHost;
 };
 
-function makeFakeApi(opts: FakeApiOpts = {}) {
-  const sendPromptCalls: Array<{
-    sessionId: string;
-    stepId: string;
-    prompt: string;
-    readOnlyTurn?: boolean;
-  }> = [];
-  const createSessionCalls: Array<Record<string, unknown>> = [];
-  let liveRunId = "";
+type SentPrompt = {
+  sessionId: string;
+  stepId: string;
+  prompt: string;
+  readOnlyTurn?: boolean;
+  assignmentEpoch: number;
+};
 
-  const api = {
-    listSessions: vi.fn(async () => [
-      {
-        sessionId: "sup-live",
-        runId: liveRunId,
-        projectSlug: "x",
-        stepId: "implement",
-        status: "live" as const,
-        pid: 1,
-        startedAt: new Date().toISOString(),
-        logPath: "/tmp/x.log",
-        monotonicId: 1,
-        acpSessionId: "acp-1",
+// A fake local host per case, registered as THE local host so every implicit
+// `createExecutionHosts({ db })` and claim mint reaches it. The agent replies
+// with `replyText` on the session stream during the prompt turn.
+async function scriptHost(opts: FakeApiOpts = {}) {
+  const fake = opts.fake ?? createFakeExecutionHost();
+  const sendPromptCalls: SentPrompt[] = [];
+
+  await fakeExecutionHosts(db, { fake, runId: opts.runId });
+  if (opts.checkpointed && opts.runId) {
+    await releaseAssignmentForRun(
+      db as unknown as ExecutionDb,
+      opts.runId,
+      "checkpointed",
+    );
+  }
+  fake.setPromptBehavior(async (ctx) => {
+    const { stepId, prompt, readOnlyTurn } = ctx.envelope.payload;
+
+    sendPromptCalls.push({
+      sessionId: ctx.sessionId,
+      stepId,
+      prompt,
+      readOnlyTurn,
+      assignmentEpoch: ctx.envelope.fence.assignmentEpoch,
+    });
+    fake.pushEvent(ctx.sessionId, {
+      type: "session.update",
+      sessionId: ctx.sessionId,
+      monotonicId: 10,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: opts.replyText ?? "the answer" },
       },
-    ]),
-    cancelPrompt: vi.fn(async () => ({ cancelled: true })),
-    sendPrompt: vi.fn(
-      async (
-        sessionId: string,
-        input: { stepId: string; prompt: string; readOnlyTurn?: boolean },
-      ) => {
-        sendPromptCalls.push({ sessionId, ...input });
-        await opts.mutateDuringTurn?.();
+    } as SupervisorEvent);
+    await opts.mutateDuringTurn?.();
 
-        return { stopReason: "end_turn" as const };
-      },
-    ),
-    createSession: vi.fn(async (input: Record<string, unknown>) => {
-      createSessionCalls.push(input);
+    return { stopReason: "end_turn", meta: null };
+  });
 
-      return {
-        sessionId: "sup-resumed",
-        pid: 2,
-        acpSessionId: (input.resumeSessionId as string) ?? "acp-new",
-      };
-    }),
-
-    streamSession: async function* (_sessionId: string) {
-      yield {
-        type: "session.update" as const,
-        sessionId: "sup-live",
-        monotonicId: 10,
-        update: {
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: opts.replyText ?? "the answer" },
-        },
-      };
-    },
-    setLiveRunId: (id: string) => {
-      liveRunId = id;
-    },
+  return {
+    fake,
     sendPromptCalls,
-    createSessionCalls,
+    get createSessionCalls() {
+      return fake
+        .callsOf("createSession")
+        .map((call) => call.envelope?.payload as Record<string, unknown>);
+    },
+    createdSessionIds() {
+      return fake
+        .callsOf("createSession")
+        .map(
+          (call) =>
+            fake.receipts.get(call.envelope!.command.id)?.body
+              .sessionId as string,
+        );
+    },
+    // The driver's live session for the run — none when `runId` is empty.
+    setLiveRunId(runId: string) {
+      fake.sessions.clear();
+      if (!runId) return;
+      fake.sessions.set("sup-live", {
+        sessionId: "sup-live",
+        runId,
+        stepId: "implement",
+        acpSessionId: "acp-1",
+        executionWorkspaceId: "ws-live",
+        assignmentEpoch: 1,
+        createdByCommandId: "seed",
+        status: "live",
+      });
+    },
   };
-
-  return api;
 }
 
 async function seedChatPause(
@@ -347,10 +377,40 @@ async function runRow(runId: string) {
   return r.rows[0] as { status: string; keepalive_until: Date | null };
 }
 
+async function assignmentRows(runId: string) {
+  const result = await pool.query(
+    `SELECT epoch, state, placement_reason, released_reason
+       FROM execution_assignments WHERE run_id = $1 ORDER BY epoch`,
+    [runId],
+  );
+
+  return (
+    result.rows as Array<{
+      epoch: number;
+      state: string;
+      placement_reason: string;
+      released_reason: string | null;
+    }>
+  ).map((row) => ({
+    epoch: row.epoch,
+    state: row.state,
+    placementReason: row.placement_reason,
+    releasedReason: row.released_reason,
+  }));
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (predicate()) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error("waitFor: condition not met");
+}
+
 describe("sendGateChatTurn — live (DD3)", () => {
   it("persists both turns, tags the prompt, never resolves the HITL, bumps keepalive", async () => {
     const { runId, hitlId } = await seedChatPause();
-    const api = makeFakeApi({ replyText: "because X mirrors Y" });
+    const api = await scriptHost({ replyText: "because X mirrors Y", runId });
 
     api.setLiveRunId(runId);
 
@@ -360,7 +420,6 @@ describe("sendGateChatTurn — live (DD3)", () => {
       message: "why did you choose X?",
       actorLabel: "Reviewer",
       db,
-      api: api as never,
     });
 
     expect(out.resumed).toBe(false);
@@ -385,6 +444,17 @@ describe("sendGateChatTurn — live (DD3)", () => {
     ).toBe(true);
     expect(api.sendPromptCalls[0].prompt).toContain("why did you choose X?");
     expect(api.sendPromptCalls[0].readOnlyTurn).toBe(true);
+    // Q5 (ADR-164): a live turn rides the run's ACTIVE assignment — no new
+    // generation is minted and the prompt carries its epoch.
+    expect(api.sendPromptCalls[0].assignmentEpoch).toBe(1);
+    expect(await assignmentRows(runId)).toEqual([
+      {
+        epoch: 1,
+        state: "active",
+        placementReason: "launch",
+        releasedReason: null,
+      },
+    ]);
 
     const run = await runRow(runId);
 
@@ -411,7 +481,7 @@ describe("sendGateChatTurn — live (DD3)", () => {
 
   it("chat input is sent verbatim (never Mustache-evaluated)", async () => {
     const { runId, hitlId } = await seedChatPause();
-    const api = makeFakeApi();
+    const api = await scriptHost({ runId });
 
     api.setLiveRunId(runId);
 
@@ -422,7 +492,6 @@ describe("sendGateChatTurn — live (DD3)", () => {
       hitlRequestId: hitlId,
       message: msg,
       db,
-      api: api as never,
     });
 
     expect(api.sendPromptCalls[0].prompt).toContain(msg);
@@ -434,7 +503,7 @@ describe("sendGateChatTurn — idle chat-resume (DD3)", () => {
     const { runId, hitlId } = await seedChatPause({
       runStatus: "NeedsInputIdle",
     });
-    const api = makeFakeApi();
+    const api = await scriptHost({ runId, checkpointed: true });
 
     api.setLiveRunId(""); // no live session — idle path
 
@@ -443,13 +512,33 @@ describe("sendGateChatTurn — idle chat-resume (DD3)", () => {
       hitlRequestId: hitlId,
       message: "still there?",
       db,
-      api: api as never,
     });
 
     expect(out.resumed).toBe(true);
     expect(api.createSessionCalls).toHaveLength(1);
     expect(api.createSessionCalls[0].resumeSessionId).toBe("acp-1");
-    expect(api.sendPromptCalls[0].sessionId).toBe("sup-resumed");
+    expect(api.sendPromptCalls[0].sessionId).toBe(api.createdSessionIds()[0]);
+    // Q5 (ADR-164): the chat-resume is a NEW driver generation minted as
+    // `gate_chat` over the checkpoint-released launch generation; the spawn
+    // and the prompt carry its epoch and the adopted workspace handle.
+    expect(await assignmentRows(runId)).toEqual([
+      {
+        epoch: 1,
+        state: "released",
+        placementReason: "launch",
+        releasedReason: "checkpointed",
+      },
+      {
+        epoch: 2,
+        state: "active",
+        placementReason: "gate_chat",
+        releasedReason: null,
+      },
+    ]);
+    expect(typeof api.createSessionCalls[0].executionWorkspaceId).toBe(
+      "string",
+    );
+    expect(api.sendPromptCalls[0].assignmentEpoch).toBe(2);
 
     const run = await runRow(runId);
 
@@ -468,7 +557,6 @@ describe("sendGateChatTurn — DD2 refusals", () => {
         hitlRequestId: hitlId,
         message: "hi",
         db,
-        api: makeFakeApi() as never,
       }),
     ).rejects.toMatchObject({ code: "PRECONDITION" });
   });
@@ -483,7 +571,6 @@ describe("sendGateChatTurn — DD2 refusals", () => {
           hitlRequestId: hitlId,
           message: "hi",
           db,
-          api: makeFakeApi() as never,
         }),
       ).rejects.toMatchObject({ code: "PRECONDITION" });
     }
@@ -498,7 +585,6 @@ describe("sendGateChatTurn — DD2 refusals", () => {
         hitlRequestId: hitlId,
         message: "hi",
         db,
-        api: makeFakeApi() as never,
       }),
     ).rejects.toMatchObject({ code: "PRECONDITION" });
   });
@@ -510,7 +596,7 @@ describe("sendGateChatTurn — L3 mutation sensor (DD11)", () => {
     const { runId, hitlId, worktree, repo } = seeded;
 
     // Turn 1: clean — anchors the baseline.
-    const api1 = makeFakeApi();
+    const api1 = await scriptHost({ runId });
 
     api1.setLiveRunId(runId);
     await sendGateChatTurn({
@@ -518,7 +604,6 @@ describe("sendGateChatTurn — L3 mutation sensor (DD11)", () => {
       hitlRequestId: hitlId,
       message: "q1",
       db,
-      api: api1 as never,
     });
 
     const refList = await git(
@@ -535,7 +620,9 @@ describe("sendGateChatTurn — L3 mutation sensor (DD11)", () => {
     const baselineSha = refList.trim().split(" ")[1];
 
     // Turn 2: the agent mutates the worktree during the turn.
-    const api2 = makeFakeApi({
+    const api2 = await scriptHost({
+      fake: api1.fake,
+      runId,
       mutateDuringTurn: async () => {
         await writeFile(join(worktree, "rogue.txt"), "should not survive\n");
         await writeFile(join(worktree, "base.txt"), "tampered\n");
@@ -549,7 +636,6 @@ describe("sendGateChatTurn — L3 mutation sensor (DD11)", () => {
       hitlRequestId: hitlId,
       message: "q2",
       db,
-      api: api2 as never,
     });
 
     expect(out.agentMessage.mutationReverted).toBe(true);
@@ -587,7 +673,7 @@ describe("sendGateChatTurn — L3 mutation sensor (DD11)", () => {
 
     await rm(worktree, { recursive: true, force: true });
 
-    const api = makeFakeApi();
+    const api = await scriptHost({ runId });
 
     api.setLiveRunId(runId);
 
@@ -597,7 +683,6 @@ describe("sendGateChatTurn — L3 mutation sensor (DD11)", () => {
         hitlRequestId: hitlId,
         message: "hi",
         db,
-        api: api as never,
       }),
     ).rejects.toMatchObject({ code: "CHECKPOINT" });
 
@@ -607,7 +692,7 @@ describe("sendGateChatTurn — L3 mutation sensor (DD11)", () => {
 
   it("a dirty-resolution between turns re-anchors the baseline (no false un-discard)", async () => {
     const { runId, hitlId, worktree, repo } = await seedChatPause();
-    const api = makeFakeApi();
+    const api = await scriptHost({ runId });
 
     api.setLiveRunId(runId);
 
@@ -618,7 +703,6 @@ describe("sendGateChatTurn — L3 mutation sensor (DD11)", () => {
       hitlRequestId: hitlId,
       message: "q1",
       db,
-      api: api as never,
     });
 
     const sha1 = (
@@ -646,7 +730,6 @@ describe("sendGateChatTurn — L3 mutation sensor (DD11)", () => {
       hitlRequestId: hitlId,
       message: "q2",
       db,
-      api: api as never,
     });
 
     const sha2 = (
@@ -705,10 +788,9 @@ describe("recoverExpiredGateChatTurns — process-restart fence", () => {
       leaseExpiresAt: new Date(Date.now() - 1_000),
     });
 
-    const cancelPrompt = vi.fn(async () => ({ cancelled: true }));
+    const { fake } = await scriptHost({ runId });
     const recovered = await recoverExpiredGateChatTurns({
       db,
-      api: { cancelPrompt },
       sessions: [
         {
           sessionId: "sup-live",
@@ -726,7 +808,9 @@ describe("recoverExpiredGateChatTurns — process-restart fence", () => {
     });
 
     expect(recovered).toBe(1);
-    expect(cancelPrompt).toHaveBeenCalledWith("sup-live");
+    expect(fake.callsOf("cancelPrompt").map((call) => call.args[0])).toEqual([
+      "sup-live",
+    ]);
     await expect(
       readFile(join(worktree, "rogue-after-crash.txt")),
     ).rejects.toThrow();
@@ -787,7 +871,7 @@ describe("sendGateChatTurn — idle claim-before-spawn (X-2PC)", () => {
     const { runId, hitlId } = await seedChatPause({
       runStatus: "NeedsInputIdle",
     });
-    const fake = makeFakeApi();
+    const api = await scriptHost({ runId, checkpointed: true });
 
     // A rival /respond resume lands inside the load→claim window: the real
     // claim runs twice — the rival's first call wins, this turn's own claim
@@ -808,12 +892,11 @@ describe("sendGateChatTurn — idle claim-before-spawn (X-2PC)", () => {
         runId,
         hitlRequestId: hitlId,
         message: "did you cover the retry path?",
-        api: fake as never,
       }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
 
-    expect(fake.createSessionCalls).toHaveLength(0);
-    expect(fake.sendPromptCalls).toHaveLength(0);
+    expect(api.createSessionCalls).toHaveLength(0);
+    expect(api.sendPromptCalls).toHaveLength(0);
     // The rival owns the resume — the run stays where the rival put it.
     expect((await runRow(runId)).status).toBe("NeedsInput");
 
@@ -837,9 +920,10 @@ describe("sendGateChatTurn — idle claim-before-spawn (X-2PC)", () => {
     const { runId, hitlId } = await seedChatPause({
       runStatus: "NeedsInputIdle",
     });
-    const fake = makeFakeApi();
+    const api = await scriptHost({ runId, checkpointed: true });
 
-    fake.createSession.mockRejectedValueOnce(
+    api.fake.failOnce(
+      "createSession",
       new MaisterError("ACP_PROTOCOL", "supervisor down"),
     );
 
@@ -848,88 +932,84 @@ describe("sendGateChatTurn — idle claim-before-spawn (X-2PC)", () => {
         runId,
         hitlRequestId: hitlId,
         message: "still there?",
-        api: fake as never,
       }),
     ).rejects.toMatchObject({ code: "ACP_PROTOCOL" });
 
     expect(stateSpies.rollbackResumedRun).toHaveBeenCalledTimes(1);
     expect((await runRow(runId)).status).toBe("NeedsInputIdle");
-    expect(fake.sendPromptCalls).toHaveLength(0);
+    expect(api.sendPromptCalls).toHaveLength(0);
+    // ADR-164: the rollback releases the `gate_chat` generation it minted.
+    expect(await assignmentRows(runId)).toEqual([
+      {
+        epoch: 1,
+        state: "released",
+        placementReason: "launch",
+        releasedReason: "checkpointed",
+      },
+      {
+        epoch: 2,
+        state: "released",
+        placementReason: "gate_chat",
+        releasedReason: "resume_rollback",
+      },
+    ]);
   }, 60_000);
 
   it("the happy idle path claims BEFORE spawning (order pinned)", async () => {
     const { runId, hitlId } = await seedChatPause({
       runStatus: "NeedsInputIdle",
     });
-    const fake = makeFakeApi();
+    const api = await scriptHost({ runId, checkpointed: true });
+    let claimsBeforeSpawn = -1;
+
+    api.fake.onCall("createSession", () => {
+      claimsBeforeSpawn = stateSpies.markResumed.mock.calls.length;
+    });
 
     const out = await sendGateChatTurn({
       runId,
       hitlRequestId: hitlId,
       message: "why this approach?",
-      api: fake as never,
     });
 
     expect(out.resumed).toBe(true);
-
-    const claimOrder = stateSpies.markResumed.mock.invocationCallOrder.at(-1);
-    const spawnOrder = fake.createSession.mock.invocationCallOrder.at(-1);
-
-    expect(claimOrder).toBeDefined();
-    expect(spawnOrder).toBeDefined();
-    expect(claimOrder!).toBeLessThan(spawnOrder!);
+    expect(api.createSessionCalls).toHaveLength(1);
+    expect(claimsBeforeSpawn).toBe(1);
   }, 60_000);
 });
 
 describe("sendGateChatTurn — deferred-release + live-path idempotency (ADR-078)", () => {
   it("keeps the rework fence until a lease-expired prompt is cancelled and L3 has restored", async () => {
     const { runId, hitlId, worktree } = await seedChatPause();
-    const cancelPrompt = vi.fn(async () => ({ cancelled: true }));
+    const api = await scriptHost({ runId });
     const realNow = Date.now;
     const nowSpy = vi.spyOn(Date, "now");
     let expiredFenceError: unknown;
-    const api = {
-      listSessions: vi.fn(async () => {
-        nowSpy.mockReturnValue(realNow() + GATE_CHAT_TURN_LEASE_MS + 1);
-        await pool.query(
-          `UPDATE gate_chat_turns
-             SET lease_expires_at = to_timestamp(0)
-           WHERE hitl_request_id = $1 AND state = 'pending'`,
-          [hitlId],
-        );
-        try {
-          await db.transaction(async (tx) => {
-            await requireNoLiveGateChatTurn(tx, hitlId);
-          });
-        } catch (err) {
-          expiredFenceError = err;
-        }
 
-        return [
-          {
-            sessionId: "sup-live",
-            runId,
-            projectSlug: "x",
-            stepId: "review",
-            status: "live" as const,
-            pid: 1,
-            startedAt: new Date().toISOString(),
-            logPath: "/tmp/x.log",
-            monotonicId: 1,
-            acpSessionId: "acp-1",
-          },
-        ];
-      }),
-      cancelPrompt,
-      sendPrompt: vi.fn(async () => {
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        await writeFile(join(worktree, "rogue-after-expiry.txt"), "rogue\n");
+    api.setLiveRunId(runId);
+    // The lease expires while the host lists the run's sessions.
+    api.fake.onCall("listSessions", async () => {
+      nowSpy.mockReturnValue(realNow() + GATE_CHAT_TURN_LEASE_MS + 1);
+      await pool.query(
+        `UPDATE gate_chat_turns
+           SET lease_expires_at = to_timestamp(0)
+         WHERE hitl_request_id = $1 AND state = 'pending'`,
+        [hitlId],
+      );
+      try {
+        await db.transaction(async (tx) => {
+          await requireNoLiveGateChatTurn(tx, hitlId);
+        });
+      } catch (err) {
+        expiredFenceError = err;
+      }
+    });
+    api.fake.setPromptBehavior(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      await writeFile(join(worktree, "rogue-after-expiry.txt"), "rogue\n");
 
-        return { stopReason: "cancelled" as const };
-      }),
-      createSession: vi.fn(),
-      streamSession: async function* () {},
-    };
+      return { stopReason: "cancelled", meta: null };
+    });
 
     try {
       await expect(
@@ -938,11 +1018,13 @@ describe("sendGateChatTurn — deferred-release + live-path idempotency (ADR-078
           hitlRequestId: hitlId,
           message: "why this branch?",
           db,
-          api: api as never,
         }),
       ).rejects.toMatchObject({ code: "PRECONDITION" });
 
-      expect(cancelPrompt).toHaveBeenCalledWith("sup-live");
+      await waitFor(() => api.fake.callsOf("cancelPrompt").length > 0);
+      expect(
+        api.fake.callsOf("cancelPrompt").map((call) => call.args[0]),
+      ).toEqual(["sup-live"]);
       expect(expiredFenceError).toMatchObject({ code: "PRECONDITION" });
       await expect(
         readFile(join(worktree, "rogue-after-expiry.txt")),
@@ -963,50 +1045,35 @@ describe("sendGateChatTurn — deferred-release + live-path idempotency (ADR-078
 
   it("releases the stream consumer when the prompt fails and persists no agent row (X-DEFER)", async () => {
     const { runId, hitlId } = await seedChatPause();
+    const api = await scriptHost({ runId });
 
     let consumerReleased = false;
-    const sendPrompt = vi.fn(async () => {
+
+    api.setLiveRunId(runId);
+    api.fake.setPromptBehavior(async () => {
       throw new MaisterError("ACP_PROTOCOL", "supervisor refused the prompt");
     });
-    const api = {
-      listSessions: vi.fn(async () => [
-        {
-          sessionId: "sup-live",
-          runId,
-          projectSlug: "x",
-          stepId: "review",
-          status: "live" as const,
-          pid: 1,
-          startedAt: new Date().toISOString(),
-          logPath: "/tmp/x.log",
-          monotonicId: 1,
-          acpSessionId: "acp-1",
-        },
-      ]),
-      sendPrompt,
-      createSession: vi.fn(),
-      // Ends ONLY when the service aborts the deferred. If the prompt-failure
-      // path forgot to release it, `await consumer` would hang and time out.
-      streamSession: async function* (
-        _sid: string,
-        opts?: { signal?: AbortSignal },
-      ) {
-        const signal = opts?.signal;
+    // Ends ONLY when the service aborts the deferred. If the prompt-failure
+    // path forgot to release it, `await consumer` would hang and time out.
+    api.fake.transport.streamSession = async function* (
+      _sid: string,
+      opts?: { signal?: AbortSignal },
+    ) {
+      const signal = opts?.signal;
 
-        try {
-          await new Promise<void>((resolve) => {
-            if (signal?.aborted) {
-              resolve();
+      try {
+        await new Promise<void>((resolve) => {
+          if (signal?.aborted) {
+            resolve();
 
-              return;
-            }
+            return;
+          }
 
-            signal?.addEventListener("abort", () => resolve(), { once: true });
-          });
-        } finally {
-          consumerReleased = true;
-        }
-      },
+          signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+      } finally {
+        consumerReleased = true;
+      }
     };
 
     await expect(
@@ -1015,11 +1082,10 @@ describe("sendGateChatTurn — deferred-release + live-path idempotency (ADR-078
         hitlRequestId: hitlId,
         message: "why X?",
         db,
-        api: api as never,
       }),
     ).rejects.toMatchObject({ code: "ACP_PROTOCOL" });
 
-    expect(sendPrompt).toHaveBeenCalledTimes(1);
+    expect(api.fake.callsOf("sendPrompt")).toHaveLength(1);
     expect(consumerReleased).toBe(true);
 
     // The user turn persisted before the side-effect; no agent row after.
@@ -1031,7 +1097,7 @@ describe("sendGateChatTurn — deferred-release + live-path idempotency (ADR-078
 
   it("serializes concurrent live turns through one pending coordinator", async () => {
     const { runId, hitlId } = await seedChatPause();
-    const api = makeFakeApi();
+    const api = await scriptHost({ runId });
 
     api.setLiveRunId(runId);
 
@@ -1043,7 +1109,6 @@ describe("sendGateChatTurn — deferred-release + live-path idempotency (ADR-078
       hitlRequestId: hitlId,
       message: "baseline",
       db,
-      api: api as never,
     });
 
     const racers = Array.from({ length: 8 }, (_, i) =>
@@ -1052,7 +1117,6 @@ describe("sendGateChatTurn — deferred-release + live-path idempotency (ADR-078
         hitlRequestId: hitlId,
         message: `concurrent ${i}`,
         db,
-        api: api as never,
       }),
     );
     const results = await Promise.allSettled(racers);

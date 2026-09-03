@@ -23,7 +23,7 @@
 //   8. listSessions THROWS → whole tick skipped, zeroed summary, NO run
 //      crashed.
 
-import type { SupervisorSessionRecord } from "@/lib/supervisor-client";
+import type { SupervisorSessionRecord } from "@/lib/execution-host";
 import type { WorktreeInfo } from "@/lib/worktree";
 
 import { randomUUID } from "node:crypto";
@@ -47,6 +47,10 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import { runReconcileSweep } from "@/lib/reconcile";
+import {
+  createFakeExecutionHost,
+  fakeExecutionHosts,
+} from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -297,10 +301,14 @@ async function readRun(runId: string): Promise<any> {
 // Inject a healthy supervisor that reports the given live records, an empty
 // worktree set by default (overridden per test), and spies for runFlow +
 // scheduleResumedSessionDrive.
-function makeOpts(over: {
+// ADR-164: the sweep addresses the host through `ExecutionHosts` — a fresh
+// fake local host per call whose session list (and, when given, teardown)
+// ride the injected functions.
+async function makeOpts(over: {
   liveSessions?: SupervisorSessionRecord[];
   worktreePaths?: string[];
   listSessions?: () => Promise<SupervisorSessionRecord[]>;
+  deleteSession?: (sessionId: string) => Promise<void>;
   now?: () => Date;
 }) {
   const runFlow = vi.fn(async () => {});
@@ -321,11 +329,26 @@ function makeOpts(over: {
   const listSessions =
     over.listSessions ??
     (async (): Promise<SupervisorSessionRecord[]> => over.liveSessions ?? []);
+  const fake = createFakeExecutionHost();
+
+  Object.assign(fake.transport, {
+    listSessions,
+    ...(over.deleteSession
+      ? {
+          deleteSession: async (sessionId: string) => {
+            await over.deleteSession!(sessionId);
+
+            return { outcome: "terminated" as const };
+          },
+        }
+      : {}),
+  });
+  const { hosts } = await fakeExecutionHosts(db, { fake });
 
   return {
     opts: {
       db,
-      listSessions,
+      executionHosts: hosts,
       listWorktrees,
       runFlow,
       scheduleResumedSessionDrive,
@@ -334,6 +357,8 @@ function makeOpts(over: {
     runFlow,
     scheduleResumedSessionDrive,
     listWorktrees,
+    hosts,
+    fake,
   };
 }
 
@@ -410,7 +435,8 @@ describe("runReconcileSweep (integration)", () => {
       reTriggerMode: "agent",
     });
 
-    const { opts } = makeOpts({ liveSessions: [] });
+    const { opts } = await makeOpts({ liveSessions: [] });
+
     await runReconcileSweep(opts);
     await runReconcileSweep(opts);
 
@@ -419,12 +445,18 @@ describe("runReconcileSweep (integration)", () => {
       .from(schema.hitlRequests)
       .where(eq(schema.hitlRequests.id, hitlRequestId));
     const [assignment] = await db
-      .select({ status: schema.assignments.status, actionKind: schema.assignments.actionKind })
+      .select({
+        status: schema.assignments.status,
+        actionKind: schema.assignments.actionKind,
+      })
       .from(schema.assignments)
       .where(eq(schema.assignments.hitlRequestId, hitlRequestId));
 
     expect(request?.activationState).toBe("active");
-    expect(assignment).toEqual({ status: "open", actionKind: "agent_question" });
+    expect(assignment).toEqual({
+      status: "open",
+      actionKind: "agent_question",
+    });
   }, 60_000);
 
   it("stops a live supervisor session that belongs to a D2-terminalized run", async () => {
@@ -446,14 +478,12 @@ describe("runReconcileSweep (integration)", () => {
       },
     });
     const stopSession = vi.fn(async () => undefined);
-    const { opts } = makeOpts({
+    const { opts } = await makeOpts({
       liveSessions: [liveRecord(cutoverRunId, "acp-cutover")],
-    });
-
-    const summary = await runReconcileSweep({
-      ...opts,
       deleteSession: stopSession,
     });
+
+    const summary = await runReconcileSweep(opts);
 
     expect(stopSession).toHaveBeenCalledWith(`sup-${cutoverRunId}`);
     expect(summary.cutoverSessionsStopped).toBe(1);
@@ -523,7 +553,7 @@ describe("runReconcileSweep (integration)", () => {
 
     // live1/live2 carry live sessions so they reattach (not crash); the
     // orphan's worktree is absent from listWorktrees.
-    const { opts } = makeOpts({
+    const { opts } = await makeOpts({
       worktreePaths: ["/worktrees/live1", "/worktrees/live2"],
       liveSessions: [
         liveRecord(live1, "acp-default"),
@@ -552,7 +582,7 @@ describe("runReconcileSweep (integration)", () => {
     });
 
     // worktree present, NO live session → agent past grace → crash.
-    const { opts } = makeOpts({
+    const { opts } = await makeOpts({
       worktreePaths: ["/worktrees/stale"],
       liveSessions: [],
     });
@@ -583,7 +613,7 @@ describe("runReconcileSweep (integration)", () => {
 
     // Live session for (runId, "implement") whose acpSessionId does NOT match
     // the run row (which is null).
-    const { opts, scheduleResumedSessionDrive, runFlow } = makeOpts({
+    const { opts, scheduleResumedSessionDrive, runFlow } = await makeOpts({
       worktreePaths: ["/worktrees/inflight"],
       liveSessions: [
         liveRecord(inflight, "acp-inflight-unmatched", "implement"),
@@ -607,7 +637,7 @@ describe("runReconcileSweep (integration)", () => {
 
     await seedWorkspace(attached, "/worktrees/attached");
 
-    const { opts, scheduleResumedSessionDrive, runFlow } = makeOpts({
+    const { opts, scheduleResumedSessionDrive, runFlow } = await makeOpts({
       worktreePaths: ["/worktrees/attached"],
       liveSessions: [liveRecord(attached, "acp-live")],
     });
@@ -642,7 +672,7 @@ describe("runReconcileSweep (integration)", () => {
 
     await seedWorkspace(scratch, "/worktrees/scratch");
 
-    const { opts, scheduleResumedSessionDrive, runFlow } = makeOpts({
+    const { opts, scheduleResumedSessionDrive, runFlow } = await makeOpts({
       worktreePaths: ["/worktrees/scratch"],
       liveSessions: [liveRecord(scratch, "acp-scratch-live")],
     });
@@ -668,7 +698,7 @@ describe("runReconcileSweep (integration)", () => {
     await seedWorkspace(recovering, "/worktrees/recovering");
 
     // worktree present, NO live session, but fresh resumeStartedAt → grace.
-    const { opts } = makeOpts({
+    const { opts } = await makeOpts({
       worktreePaths: ["/worktrees/recovering"],
       liveSessions: [],
     });
@@ -688,7 +718,7 @@ describe("runReconcileSweep (integration)", () => {
 
     await seedWorkspace(cliRun, "/worktrees/cli");
 
-    const { opts, runFlow } = makeOpts({
+    const { opts, runFlow } = await makeOpts({
       worktreePaths: ["/worktrees/cli"],
       liveSessions: [],
     });
@@ -709,7 +739,7 @@ describe("runReconcileSweep (integration)", () => {
 
     await seedWorkspace(checkRun, "/worktrees/check");
 
-    const { opts, runFlow } = makeOpts({
+    const { opts, runFlow } = await makeOpts({
       worktreePaths: ["/worktrees/check"],
       liveSessions: [],
     });
@@ -742,7 +772,7 @@ describe("runReconcileSweep (integration)", () => {
       endedAt: new Date(),
     });
 
-    const { opts, runFlow, scheduleResumedSessionDrive } = makeOpts({
+    const { opts, runFlow, scheduleResumedSessionDrive } = await makeOpts({
       worktreePaths: [], // takeover's worktree absent — would crash if a candidate
       liveSessions: [],
     });
@@ -799,7 +829,7 @@ describe("runReconcileSweep (integration)", () => {
       acpSessionId: "acp-agent-noworktree",
     });
 
-    const { opts } = makeOpts({ worktreePaths: [], liveSessions: [] });
+    const { opts } = await makeOpts({ worktreePaths: [], liveSessions: [] });
 
     const summary = await runReconcileSweep(opts);
 
@@ -845,7 +875,7 @@ describe("runReconcileSweep (integration)", () => {
     });
 
     // Dead: the supervisor reports NO live session.
-    const { opts } = makeOpts({ worktreePaths: [], liveSessions: [] });
+    const { opts } = await makeOpts({ worktreePaths: [], liveSessions: [] });
 
     const summary = await runReconcileSweep(opts);
 
@@ -885,7 +915,7 @@ describe("runReconcileSweep (integration)", () => {
       acpSessionId: "acp-assistant-live",
     });
 
-    const { opts, scheduleResumedSessionDrive } = makeOpts({
+    const { opts, scheduleResumedSessionDrive } = await makeOpts({
       worktreePaths: [],
       liveSessions: [liveRecord(runId, "acp-assistant-live", "scratch-dialog")],
     });
@@ -908,7 +938,7 @@ describe("runReconcileSweep (integration)", () => {
 
     await seedWorkspace(orphan, "/worktrees/orphan-throw");
 
-    const { opts } = makeOpts({
+    const { opts } = await makeOpts({
       worktreePaths: [], // worktree gone — would crash on a healthy tick
       listSessions: async () => {
         throw new Error("supervisor unavailable");
@@ -929,6 +959,7 @@ describe("runReconcileSweep (integration)", () => {
       syncRecovered: 0,
       // Codex review F2: and reaps live sessions under Abandoned rows.
       orphanSessionsReaped: 0,
+      handlesLost: 0,
     });
     expect((await readRun(orphan)).status).toBe("Running");
   }, 60_000);
@@ -965,7 +996,7 @@ describe("runReconcileSweep (integration)", () => {
     await seedChildRun(orchestrator, "Done");
     await seedChildRun(orchestrator, "Abandoned");
 
-    const { opts } = makeOpts({
+    const { opts } = await makeOpts({
       worktreePaths: ["/worktrees/orch"],
       liveSessions: [],
     });
@@ -1002,7 +1033,7 @@ describe("runReconcileSweep (integration)", () => {
     const childA = await seedChildRun(orchestrator, "Abandoned");
     const childB = await seedChildRun(orchestrator, "Abandoned");
 
-    const { opts } = makeOpts({
+    const { opts } = await makeOpts({
       worktreePaths: ["/worktrees/orch-crashwin"],
       liveSessions: [],
     });
@@ -1051,7 +1082,7 @@ describe("runReconcileSweep (integration)", () => {
     await seedChildRun(orchestrator, "Running");
     await seedChildRun(orchestrator, "Done");
 
-    const { opts } = makeOpts({
+    const { opts } = await makeOpts({
       worktreePaths: ["/worktrees/orch-wait"],
       liveSessions: [],
     });
@@ -1075,7 +1106,7 @@ describe("runReconcileSweep (integration)", () => {
     // fires BEFORE the grace check, so the child still crashes.
     await seedNodeAttempt(orphan, { startedAt: new Date() });
 
-    const { opts } = makeOpts({
+    const { opts } = await makeOpts({
       worktreePaths: ["/worktrees/orphan-child"],
       liveSessions: [],
     });
@@ -1104,7 +1135,7 @@ describe("runReconcileSweep (integration)", () => {
     // (An orphaned child would crash here regardless of grace.)
     await seedNodeAttempt(child, { startedAt: new Date() });
 
-    const { opts } = makeOpts({
+    const { opts } = await makeOpts({
       worktreePaths: ["/worktrees/live-parent", "/worktrees/healthy-child"],
       liveSessions: [],
     });
@@ -1116,5 +1147,30 @@ describe("runReconcileSweep (integration)", () => {
     // survives — neither is crashed.
     expect((await readRun(liveParent)).status).toBe("WaitingOnChildren");
     expect(summary.crashed).toBe(0);
+  }, 60_000);
+});
+
+describe("runReconcileSweep — workspace handle check (ADR-164 N6)", () => {
+  it("warns workspace-handle-lost for an active assignment the host no longer knows and keeps sweeping", async () => {
+    const runId = await seedRun({ acpSessionId: "acp-lost" });
+
+    await seedWorkspace(runId, "/worktrees/lost");
+    const { opts, hosts } = await makeOpts({
+      worktreePaths: ["/worktrees/lost"],
+      liveSessions: [liveRecord(runId, "acp-lost")],
+    });
+    // The run's assignment carries a handle the (fresh) fake host never adopted
+    // — the shape a wiped host state dir leaves behind.
+    const client = await hosts.forRun(runId);
+
+    await db
+      .update(schema.executionAssignments)
+      .set({ executionWorkspaceId: `ws_${"0".repeat(32)}` })
+      .where(eq(schema.executionAssignments.id, client.assignment.id));
+
+    const summary = await runReconcileSweep(opts);
+
+    expect(summary).toMatchObject({ handlesLost: 1, crashed: 0 });
+    expect((await readRun(runId)).status).toBe("Running");
   }, 60_000);
 });

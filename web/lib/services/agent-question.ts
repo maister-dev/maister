@@ -1,10 +1,7 @@
 import "server-only";
 
 import type { FormSchema } from "@/lib/config.schema";
-import type {
-  DeleteSessionIfPresentOutcome,
-  SupervisorSessionRecord,
-} from "@/lib/supervisor-client";
+import type { SupervisorSessionRecord } from "@/lib/execution-host";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { randomUUID } from "node:crypto";
@@ -21,7 +18,10 @@ import * as schema from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { promoteNextPending } from "@/lib/scheduler";
-import { deleteSessionIfPresent, listSessions } from "@/lib/supervisor-client";
+import {
+  createExecutionHosts,
+  type ExecutionHosts,
+} from "@/lib/execution-host";
 import { revokeAgentRunTokensForRun } from "@/lib/agents/tokens";
 
 const { hitlRequests, runs, taskClarifications, tasks } = schema;
@@ -76,11 +76,15 @@ export type AgentQuestionResult = {
 
 type ActivationDeps = {
   db?: Db;
-  listSessions?: () => Promise<SupervisorSessionRecord[]>;
-  deleteSession?: (
-    sessionId: string,
-  ) => Promise<DeleteSessionIfPresentOutcome | void>;
+  // ADR-164: the source session is torn down through the client bound to
+  // the source run's assignment (a teardown kind — released incarnations bind).
+  executionHosts?: ExecutionHosts;
   recordSuccessAudit?: (tx: Tx, statusCode: number) => Promise<void>;
+};
+
+type SourceSessionTeardown = {
+  sessions: () => Promise<readonly SupervisorSessionRecord[]>;
+  hosts: ExecutionHosts;
 };
 
 type PendingQuestion = {
@@ -279,13 +283,13 @@ async function persistPendingQuestion(
 async function terminateSourceSession(
   sourceRunId: string,
   db: Db,
-  deps: Required<Pick<ActivationDeps, "listSessions" | "deleteSession">>,
+  deps: SourceSessionTeardown,
 ): Promise<"terminated" | "gone" | "pending"> {
   const activeSession = await loadActiveRunSession(db, sourceRunId);
 
   if (!activeSession?.acpSessionId) return "pending";
 
-  const sessions = await deps.listSessions();
+  const sessions = await deps.sessions();
   const liveSessionsForRun = sessions.filter(
     (session) => session.runId === sourceRunId && session.status === "live",
   );
@@ -304,9 +308,10 @@ async function terminateSourceSession(
     return "gone";
   }
 
-  const outcome = await deps.deleteSession(live.sessionId);
+  const client = await deps.hosts.forRun(sourceRunId, { teardown: true });
+  const { outcome } = await client.deleteSession(live.sessionId);
 
-  return outcome ?? "terminated";
+  return outcome;
 }
 
 async function markActivationFailed(
@@ -447,9 +452,10 @@ export async function createOrActivateAgentQuestion(
     };
   }
 
+  const hosts = deps.executionHosts ?? createExecutionHosts({ db });
   const terminate = await terminateSourceSession(pending.runId, db, {
-    listSessions: deps.listSessions ?? listSessions,
-    deleteSession: deps.deleteSession ?? deleteSessionIfPresent,
+    sessions: () => hosts.local().listSessions(),
+    hosts,
   }).catch(async (error: unknown) => {
     if (isMaisterError(error) && error.code === "EXECUTOR_UNAVAILABLE") {
       log.warn(
@@ -601,11 +607,10 @@ export async function cancelOpenAgentQuestionsForTaskInTransaction(
 export async function recoverPendingAgentQuestions(args: {
   db?: Db;
   sessions: readonly SupervisorSessionRecord[];
-  deleteSession?: (
-    sessionId: string,
-  ) => Promise<DeleteSessionIfPresentOutcome | void>;
+  executionHosts?: ExecutionHosts;
 }): Promise<number> {
   const db = resolveDb(args.db);
+  const hosts = args.executionHosts ?? createExecutionHosts({ db });
   const rows = await db
     .select({
       id: hitlRequests.id,
@@ -644,8 +649,8 @@ export async function recoverPendingAgentQuestions(args: {
 
       if (!TERMINAL_SOURCE_STATUSES.has(source.status)) {
         const termination = await terminateSourceSession(row.runId, db, {
-          listSessions: async () => [...args.sessions],
-          deleteSession: args.deleteSession ?? deleteSessionIfPresent,
+          sessions: async () => args.sessions,
+          hosts,
         });
 
         if (termination === "pending") continue;

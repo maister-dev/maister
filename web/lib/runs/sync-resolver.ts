@@ -9,15 +9,15 @@ import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
 import {
-  createSession,
-  deleteSession,
-  sendPrompt,
-  streamSession,
+  createExecutionHosts,
+  type BoundClient,
   type CreateSessionInput,
+  type ExecutionHosts,
+  type HostAdminClient,
   type PromptResult,
   type PromptStopReason,
   type SupervisorEvent,
-} from "@/lib/supervisor-client";
+} from "@/lib/execution-host";
 
 // FIXME(any): dual drizzle-orm peer-dep variants — mirror sync-target.ts.
 const { hitlRequests, runs, runSessions } = schemaModule as unknown as Record<
@@ -37,21 +37,37 @@ const log = pino({
 // The step id the resolver session (and its HITL rows) are stamped with.
 export const SYNC_STEP_ID = "sync";
 
-// The supervisor boundary the resolver drives — injectable for tests (no live
-// agent). Every other supervisor export stays real.
-export type SyncResolverSupervisorApi = {
-  createSession: typeof createSession;
-  deleteSession: typeof deleteSession;
-  sendPrompt: typeof sendPrompt;
-  streamSession: typeof streamSession;
-};
+// ADR-164: the resolver's session create payload is handle-form — the run's
+// worktree is the adopted workspace of its `sync_resolver` assignment; no path
+// rides the wire.
+export type ResolverSessionInput = Pick<
+  CreateSessionInput,
+  "stepId" | "sessionName" | "executor" | "runner"
+>;
 
-const defaultSyncResolverApi: SyncResolverSupervisorApi = {
-  createSession,
-  deleteSession,
-  sendPrompt,
-  streamSession,
-};
+// The resolver's session teardown: a fenced `session.delete` under the run's
+// newest assignment (released included — teardown kinds stay admissible).
+// Best-effort: a host outage leaves the command queued for recovery.
+export async function teardownResolverSession(
+  hosts: ExecutionHosts,
+  runId: string,
+  sessionId: string,
+): Promise<void> {
+  try {
+    const client = await hosts.forRun(runId, { teardown: true });
+
+    await client.deleteSession(sessionId);
+  } catch (err) {
+    log.warn(
+      {
+        runId,
+        sessionId,
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "sync resolver session teardown deferred",
+    );
+  }
+}
 
 // The fixed English resolver instruction (decision 5). Carries the target ref,
 // strategy, the `git diff --name-only --diff-filter=U` conflicted-file list, and
@@ -145,14 +161,14 @@ function startResolverConsumer(args: {
   db: Db;
   runId: string;
   sessionId: string;
-  api: SyncResolverSupervisorApi;
+  admin: HostAdminClient;
 }): ResolverConsumer {
   const abort = new AbortController();
   let permissionPersistFailure: { reason: string } | null = null;
 
   const done = (async () => {
     try {
-      for await (const event of args.api.streamSession(args.sessionId, {
+      for await (const event of args.admin.streamSession(args.sessionId, {
         signal: abort.signal,
       })) {
         if (event.type === "session.permission_request") {
@@ -209,14 +225,15 @@ function startResolverConsumer(args: {
 export async function runResolverSession(args: {
   db: Db;
   runId: string;
-  input: CreateSessionInput;
+  input: ResolverSessionInput;
   prompt: string;
   runnerTier: string;
-  api?: SyncResolverSupervisorApi;
+  executionHosts?: ExecutionHosts;
 }): Promise<{ sessionId: string; stopReason: PromptStopReason }> {
-  const api = args.api ?? defaultSyncResolverApi;
-
-  const created = await api.createSession(args.input);
+  const hosts = args.executionHosts ?? createExecutionHosts({ db: args.db });
+  // Bound to the `sync_resolver` generation the claim minted.
+  const client: BoundClient = await hosts.forRun(args.runId);
+  const created = await client.createSession(args.input);
   const sessionId = created.sessionId;
 
   // Persist the ACP handle onto the resolver's `run_sessions` row. The row is
@@ -242,7 +259,7 @@ export async function runResolverSession(args: {
         ),
       );
   } catch (err) {
-    await api.deleteSession(sessionId).catch(() => undefined);
+    await client.deleteSession(sessionId).catch(() => undefined);
     throw new MaisterError(
       "CRASH",
       `sync resolver could not persist its acp session handle: ${
@@ -272,20 +289,22 @@ export async function runResolverSession(args: {
     db: args.db,
     runId: args.runId,
     sessionId,
-    api,
+    admin: hosts.local(),
   });
 
   let promptResult: PromptResult;
 
   try {
-    promptResult = await api.sendPrompt(sessionId, {
-      stepId: SYNC_STEP_ID,
-      prompt: args.prompt,
-    });
+    promptResult = await (
+      await client.prompt(sessionId, {
+        stepId: SYNC_STEP_ID,
+        prompt: args.prompt,
+      })
+    ).completion;
   } catch (err) {
     consumer.abort.abort();
     await consumer.done.catch(() => undefined);
-    await api.deleteSession(sessionId).catch(() => undefined);
+    await client.deleteSession(sessionId).catch(() => undefined);
     throw err;
   }
 
@@ -295,7 +314,7 @@ export async function runResolverSession(args: {
   const persistFailure = consumer.permissionPersistFailure();
 
   if (persistFailure) {
-    await api.deleteSession(sessionId).catch(() => undefined);
+    await client.deleteSession(sessionId).catch(() => undefined);
     throw new MaisterError(
       "CRASH",
       `sync resolver HITL persistence failed: ${persistFailure.reason}`,

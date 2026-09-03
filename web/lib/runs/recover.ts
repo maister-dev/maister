@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { RunResumedSessionOptions } from "@/lib/runs/resume-driver";
-import type { CreateSessionInput } from "@/lib/supervisor-client";
+import type { CreateSessionInput } from "@/lib/execution-host";
 import type { ExecutionHosts } from "@/lib/execution-host";
 
 import { and, count, eq, inArray, isNull } from "drizzle-orm";

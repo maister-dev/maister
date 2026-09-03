@@ -25,23 +25,19 @@ import {
   rollbackResumedRun,
 } from "@/lib/runs/state-transitions";
 import {
-  cancelPrompt as defaultCancelPrompt,
-  createSession as defaultCreateSession,
-  listSessions as defaultListSessions,
-  sendPrompt as defaultSendPrompt,
-  streamSession as defaultStreamSession,
+  type PromptResult,
   type SupervisorEvent,
-} from "@/lib/supervisor-client";
+  type SupervisorSessionRecord,
+} from "@/lib/execution-host";
+import {
+  createExecutionHosts,
+  type BoundClient,
+  type ExecutionHosts,
+} from "@/lib/execution-host";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const {
-  gateChatMessages,
-  gateChatTurns,
-  hitlRequests,
-  projects,
-  runs,
-  workspaces,
-} = schemaModule as unknown as Record<string, any>;
+const { gateChatMessages, gateChatTurns, hitlRequests, runs, workspaces } =
+  schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -158,7 +154,7 @@ function recoveryLeaseExpiresAt(now: Date): Date {
 }
 
 function armGateChatTurnDeadline(args: {
-  api: GateChatSupervisorApi;
+  client: BoundClient;
   hitlRequestId: string;
   runId: string;
   sessionId: string;
@@ -168,7 +164,7 @@ function armGateChatTurnDeadline(args: {
   let leaseExpired = false;
   const timer = setTimeout(() => {
     leaseExpired = true;
-    void args.api
+    void args.client
       .cancelPrompt(args.sessionId)
       .then(({ cancelled }) => {
         log.warn(
@@ -302,21 +298,10 @@ async function failGateChatTurn(args: {
   });
 }
 
-export type GateChatSupervisorApi = {
-  listSessions: typeof defaultListSessions;
-  cancelPrompt: typeof defaultCancelPrompt;
-  sendPrompt: typeof defaultSendPrompt;
-  createSession: typeof defaultCreateSession;
-  streamSession: typeof defaultStreamSession;
-};
-
-const defaultApi: GateChatSupervisorApi = {
-  listSessions: defaultListSessions,
-  cancelPrompt: defaultCancelPrompt,
-  sendPrompt: defaultSendPrompt,
-  createSession: defaultCreateSession,
-  streamSession: defaultStreamSession,
-};
+// ADR-164: the chat turn rides the client bound to the run's assignment — the
+// live driver's epoch on a NeedsInput run, a fresh `gate_chat` generation on
+// an idle one (D2). Host-scoped reads (session list, stream) go through the
+// admin client.
 
 type ExpiredGateChatCandidate = {
   id: string;
@@ -464,12 +449,12 @@ async function completeExpiredGateChatRecovery(args: {
 // restore intentionally leaves the turn pending for the next recovery lease.
 export async function recoverExpiredGateChatTurns(args: {
   db?: Db;
-  sessions: Awaited<ReturnType<GateChatSupervisorApi["listSessions"]>>;
-  api?: Pick<GateChatSupervisorApi, "cancelPrompt">;
+  sessions: SupervisorSessionRecord[];
+  executionHosts?: ExecutionHosts;
   now?: () => Date;
 }): Promise<number> {
   const d = args.db ?? getDb();
-  const api = args.api ?? defaultApi;
+  const hosts = args.executionHosts ?? createExecutionHosts({ db: d });
   const now = args.now ?? (() => new Date());
   const observedAt = now();
   const candidates = (await d
@@ -521,7 +506,9 @@ export async function recoverExpiredGateChatTurns(args: {
 
     try {
       const cancellation = liveSession
-        ? await api.cancelPrompt(liveSession.sessionId)
+        ? await (
+            await hosts.forRun(claim.runId, { teardown: true })
+          ).cancelPrompt(liveSession.sessionId)
         : null;
       const sensed = await senseAndRestore({
         worktreePath: claim.worktreePath,
@@ -758,10 +745,10 @@ export async function sendGateChatTurn(args: {
   actorUserId?: string | null;
   actorLabel?: string;
   db?: Db;
-  api?: GateChatSupervisorApi;
+  executionHosts?: ExecutionHosts;
 }): Promise<SendGateChatTurnResult> {
   const d = args.db ?? getDb();
-  const api = args.api ?? defaultApi;
+  const hosts = args.executionHosts ?? createExecutionHosts({ db: d });
 
   if (typeof args.message !== "string" || args.message.trim() === "") {
     throw new MaisterError("CONFIG", "chat message must be a non-empty string");
@@ -822,12 +809,6 @@ export async function sendGateChatTurn(args: {
       `workspace missing/removed for run ${args.runId}`,
     );
   }
-
-  const projectRows = await d
-    .select({ slug: projects.slug })
-    .from(projects)
-    .where(eq(projects.id, run.projectId));
-  const projectSlug: string = projectRows[0]?.slug ?? "unknown";
 
   // (2) L3 baseline — ONE per pause, anchored to the FIRST turn, reused on
   // every later turn. Fail-closed: capture/verify failure refuses the turn.
@@ -1005,13 +986,16 @@ export async function sendGateChatTurn(args: {
   const stepId = gateChatStepId(args.hitlRequestId);
   let supervisorSessionId: string;
   let resumed = false;
+  // Assigned on every non-throwing branch below (live lookup or chat resume).
+  let client!: BoundClient;
 
   try {
     if (run.status === "NeedsInput") {
-      const sessions = await api.listSessions();
-      const live = sessions.find(
-        (s) => s.runId === args.runId && s.status === "live",
-      );
+      // The live driver's epoch: the chat turn reuses the run's ACTIVE
+      // assignment (Q5) and its live session.
+      client = await hosts.forRun(args.runId);
+      const sessions = await client.sessionsForRun();
+      const live = sessions.find((s) => s.status === "live");
 
       if (live) {
         supervisorSessionId = live.sessionId;
@@ -1044,7 +1028,11 @@ export async function sendGateChatTurn(args: {
     const idleClaim = run.status === "NeedsInputIdle";
 
     if (idleClaim) {
-      const claim = await markResumed(args.runId, { db: d });
+      // The idle resume is a new driver generation minted as `gate_chat`.
+      const claim = await markResumed(args.runId, {
+        db: d,
+        placement: { reason: "gate_chat", transport: hosts.transport },
+      });
 
       if (!claim.ok) {
         throw new MaisterError(
@@ -1057,10 +1045,8 @@ export async function sendGateChatTurn(args: {
     let created: { sessionId: string };
 
     try {
-      created = await api.createSession({
-        runId: args.runId,
-        projectSlug,
-        worktreePath: workspace.worktreePath,
+      client = await hosts.forRun(args.runId);
+      created = await client.createSession({
         stepId,
         executor: {
           agent: (run.runnerSnapshot?.capabilityAgent ?? "claude") as
@@ -1114,7 +1100,7 @@ export async function sendGateChatTurn(args: {
   const abort = new AbortController();
   const consumer = (async () => {
     try {
-      for await (const ev of api.streamSession(supervisorSessionId, {
+      for await (const ev of hosts.local().streamSession(supervisorSessionId, {
         signal: abort.signal,
       }) as AsyncGenerator<SupervisorEvent>) {
         if (
@@ -1153,20 +1139,22 @@ export async function sendGateChatTurn(args: {
   })();
 
   const deadline = armGateChatTurnDeadline({
-    api,
+    client,
     hitlRequestId: args.hitlRequestId,
     runId: args.runId,
     sessionId: supervisorSessionId,
     leaseExpiresAt: admitted.leaseExpiresAt,
   });
-  let promptResult: Awaited<ReturnType<GateChatSupervisorApi["sendPrompt"]>>;
+  let promptResult: PromptResult;
 
   try {
-    promptResult = await api.sendPrompt(supervisorSessionId, {
+    const handle = await client.prompt(supervisorSessionId, {
       stepId,
       prompt: GATE_CHAT_READONLY_PREAMBLE + args.message,
       readOnlyTurn: true,
     });
+
+    promptResult = await handle.completion;
   } catch (err) {
     // X-DEFER: release the stream consumer on EVERY failure path.
     abort.abort();

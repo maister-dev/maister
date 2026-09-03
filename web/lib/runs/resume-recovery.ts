@@ -10,7 +10,7 @@ import { rollbackResumedRun } from "./state-transitions";
 import { getDb } from "@/lib/db/client";
 import { loadActiveRunSessionsByRunId } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
-import { type SupervisorSessionRecord } from "@/lib/supervisor-client";
+import { type SupervisorSessionRecord } from "@/lib/execution-host";
 import {
   createExecutionHosts,
   type ExecutionHosts,

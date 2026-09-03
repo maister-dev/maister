@@ -12,7 +12,7 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import { buildCreateBody, validateMcpServerDraft } from "@/lib/mcp/mcp-form";
 import { evaluateMcpReadiness } from "@/lib/mcp/readiness";
 import { ensureSerenaPlatformMcpSeed } from "@/lib/mcp/serena-seed";
-import { checkSupervisorDiagnostics } from "@/lib/supervisor-client";
+import { executionHosts } from "@/lib/execution-host";
 
 const { platformMcpServers } = schemaModule as unknown as Record<string, any>;
 
@@ -138,7 +138,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
 
     const values = buildCreateBody(parsed.data);
-    const diagnostics = await checkSupervisorDiagnostics();
+    const diagnostics = await executionHosts.local().diagnostics();
     const readiness = evaluateMcpReadiness(values, diagnostics);
     const db = getDb() as any;
 

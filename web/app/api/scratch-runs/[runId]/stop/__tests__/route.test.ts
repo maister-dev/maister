@@ -79,6 +79,18 @@ vi.mock("@/lib/supervisor-client", () => ({
   sendPrompt: vi.fn(),
 }));
 
+// ADR-164: the service talks to the host through the execution-host client;
+// route every host-bound call to this suite's supervisor-client mocks so the
+// wire-level assertions stay as they are.
+vi.mock("@/lib/execution-host", async () => {
+  const sup = await import("@/lib/supervisor-client");
+  const { executionHostModuleMock } = await import(
+    "@/test-support/execution-host-module-mock"
+  );
+
+  return executionHostModuleMock(sup as never);
+});
+
 // The route now delegates to stopScratchWorkbench (scratch-runs/service), which
 // statically pulls a wide module graph; stub the modules it imports at eval so
 // the unit env can load the real primitive under test (mirrors the scratch

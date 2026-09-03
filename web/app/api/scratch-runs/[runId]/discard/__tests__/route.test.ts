@@ -89,6 +89,18 @@ vi.mock("@/lib/supervisor-client", () => ({
   deleteSession: vi.fn(async () => undefined),
 }));
 
+// ADR-164: the service talks to the host through the execution-host client;
+// route every host-bound call to this suite's supervisor-client mocks so the
+// wire-level assertions stay as they are.
+vi.mock("@/lib/execution-host", async () => {
+  const sup = await import("@/lib/supervisor-client");
+  const { executionHostModuleMock } = await import(
+    "@/test-support/execution-host-module-mock"
+  );
+
+  return executionHostModuleMock(sup as never);
+});
+
 vi.mock("@/lib/worktree", () => ({
   removeOwnedWorktree: vi.fn(async () => undefined),
 }));

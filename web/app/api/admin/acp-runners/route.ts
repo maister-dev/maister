@@ -22,9 +22,9 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
-  checkSupervisorDiagnostics,
+  executionHosts,
   type SupervisorDiagnostics,
-} from "@/lib/supervisor-client";
+} from "@/lib/execution-host";
 
 const { platformAcpRunners, platformRuntimeSettings } =
   schemaModule as unknown as Record<string, any>;
@@ -256,7 +256,7 @@ async function assertReadyRunner(db: any, runnerId: string): Promise<void> {
 async function loadDiagnosticsForReadiness(): Promise<{
   diagnostics: SupervisorDiagnostics | null;
 }> {
-  const status = await checkSupervisorDiagnostics();
+  const status = await executionHosts.local().diagnostics();
 
   return {
     diagnostics: status.kind === "ready" ? status.diagnostics : null,

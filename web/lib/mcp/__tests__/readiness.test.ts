@@ -1,5 +1,5 @@
 import type { McpDiagnosticsInput } from "@/lib/mcp/readiness";
-import type { SupervisorDiagnosticsStatus } from "@/lib/supervisor-client";
+import type { SupervisorDiagnosticsStatus } from "@/lib/execution-host";
 
 import { describe, expect, it } from "vitest";
 

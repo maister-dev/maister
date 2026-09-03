@@ -13,9 +13,9 @@ import { getSessionUser } from "@/lib/authz";
 import { getNeedsYouCount } from "@/lib/queries/needs-you";
 import { getRailWorkspaceGroups } from "@/lib/queries/portfolio";
 import {
-  checkSupervisorDiagnostics,
+  getPlatformDiagnostics,
   getPlatformStatus,
-} from "@/lib/supervisor-client";
+} from "@/lib/execution-host";
 
 function initialsOf(name: string | null, email: string | null): string {
   const source = (name ?? email ?? "?").trim();
@@ -52,7 +52,7 @@ export default async function AppLayout({
   ] = await Promise.all([
     sessionUser ? getRailWorkspaceGroups(sessionUser.id, sessionUser.role) : [],
     getPlatformStatus(),
-    checkSupervisorDiagnostics(),
+    getPlatformDiagnostics(),
     loadRunnerReadinessRows(),
     sessionUser ? getNeedsYouCount(sessionUser.id, sessionUser.role) : 0,
   ]);

@@ -4,9 +4,17 @@ import type {
   ExecutionHostIdentity,
   PromptResult,
   SendPromptInput,
+  SidecarInstanceConfig,
+  SidecarStateResponse,
+  SupervisorDiagnosticsStatus,
   SupervisorEvent,
+  SupervisorMcpProbeRequest,
+  SupervisorMcpProbeResult,
+  SupervisorModelCatalog,
+  SupervisorModelCatalogDraft,
   SupervisorSessionRecord,
 } from "@/lib/supervisor-client";
+import type { PlatformStatus } from "@/types/platform-status";
 import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
 import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
 import type {
@@ -105,6 +113,25 @@ export type EmptyPayload = Record<string, never>;
 
 export interface ExecutionHostTransport {
   health(opts?: { timeoutMs?: number }): Promise<HostHealth>;
+  // The host's adapter diagnostics (smoke evidence) — a read-only admin
+  // surface like `health`, never fenced.
+  diagnostics(opts?: {
+    timeoutMs?: number;
+  }): Promise<SupervisorDiagnosticsStatus>;
+  // The chrome's platform status (the `/health` body in its UI shape).
+  platformStatus(opts?: { timeoutMs?: number }): Promise<PlatformStatus>;
+  // Host-scoped admin operations (ADR-164 T4.6): router sidecars, the model
+  // catalog, MCP probes — read/act on the host, never fenced.
+  startSidecar(
+    sidecarId: string,
+    instanceConfig: SidecarInstanceConfig,
+  ): Promise<SidecarStateResponse>;
+  stopSidecar(sidecarId: string): Promise<SidecarStateResponse>;
+  resolveModelSuggestions(
+    draft: SupervisorModelCatalogDraft,
+    opts?: { force?: boolean },
+  ): Promise<SupervisorModelCatalog>;
+  probeMcp(req: SupervisorMcpProbeRequest): Promise<SupervisorMcpProbeResult>;
   listSessions(): Promise<SupervisorSessionRecord[]>;
   streamSession(
     sessionId: string,

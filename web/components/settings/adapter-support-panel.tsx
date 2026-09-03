@@ -1,6 +1,6 @@
 import type { AdapterSupport } from "@/lib/acp-runners/schema";
 import type { ReactElement } from "react";
-import type { SupervisorDiagnosticsStatus } from "@/lib/supervisor-client";
+import type { SupervisorDiagnosticsStatus } from "@/lib/execution-host";
 
 import { getTranslations } from "next-intl/server";
 

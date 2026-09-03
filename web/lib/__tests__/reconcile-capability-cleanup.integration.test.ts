@@ -21,7 +21,7 @@
 // nodeAttemptId).
 
 import type { MaterializationPlan } from "@/lib/db/schema";
-import type { SupervisorSessionRecord } from "@/lib/supervisor-client";
+import type { SupervisorSessionRecord } from "@/lib/execution-host";
 import type { WorktreeInfo } from "@/lib/worktree";
 
 import { randomUUID } from "node:crypto";
@@ -48,6 +48,10 @@ import {
 } from "@/lib/__tests__/runner-fixtures";
 import { capabilityMaterializationRootPath } from "@/lib/capabilities/materialize";
 import { runReconcileSweep } from "@/lib/reconcile";
+import {
+  createFakeExecutionHost,
+  fakeExecutionHosts,
+} from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -271,7 +275,7 @@ async function seedCrashEligibleRun(): Promise<{
 
 // Inject a healthy supervisor reporting NO live sessions and a worktree set that
 // EXCLUDES the run's worktree → classify worktree-gone → crash.
-function makeOpts(over: {
+async function makeOpts(over: {
   worktreePaths?: string[];
   liveSessions?: SupervisorSessionRecord[];
 }) {
@@ -290,12 +294,18 @@ function makeOpts(over: {
       })),
   );
 
-  const listSessions = async (): Promise<SupervisorSessionRecord[]> =>
-    over.liveSessions ?? [];
+  // ADR-164: the sweep lists sessions through a fake local host.
+  const fake = createFakeExecutionHost();
+
+  Object.assign(fake.transport, {
+    listSessions: async (): Promise<SupervisorSessionRecord[]> =>
+      over.liveSessions ?? [],
+  });
+  const { hosts } = await fakeExecutionHosts(db, { fake });
 
   return {
     db,
-    listSessions,
+    executionHosts: hosts,
     listWorktrees,
     runFlow,
     scheduleResumedSessionDrive,
@@ -344,7 +354,7 @@ describe("runReconcileSweep — capability-dir cleanup on crash (C2)", () => {
 
     // worktree ABSENT from listWorktrees + no live session → classify
     // worktree-gone → crash dispatch.
-    const opts = makeOpts({ worktreePaths: [], liveSessions: [] });
+    const opts = await makeOpts({ worktreePaths: [], liveSessions: [] });
 
     const summary = await runReconcileSweep(opts);
 

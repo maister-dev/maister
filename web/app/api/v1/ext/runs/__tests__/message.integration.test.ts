@@ -26,6 +26,11 @@ import {
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 import {
+  createFakeExecutionHost,
+  fakeExecutionHosts,
+  type FakeExecutionHost,
+} from "@/test-support/fake-execution-host";
+import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
@@ -79,7 +84,10 @@ let messagePost: typeof import("@/app/api/v1/ext/runs/message/route").POST;
 let delegatePost: typeof import("@/app/api/v1/ext/runs/delegate/route").POST;
 let sendAgentMessage: typeof import("@/lib/agents/launch").sendAgentMessage;
 
-type AgentSupervisorApi = import("@/lib/agents/launch").AgentSupervisorApi;
+// ADR-164: the fake local host every launch/re-message rides; its wire is
+// spy-backed so the existing createSession assertions keep their shape.
+let fake: FakeExecutionHost;
+let hosts: import("@/lib/execution-host").ExecutionHosts;
 
 beforeAll(async () => {
   agentsRoot = await mkdtemp(path.join(os.tmpdir(), "maister-msg-"));
@@ -90,6 +98,14 @@ beforeAll(async () => {
 
   pool = testDatabase.pool;
   db = testDatabase.db;
+  fake = createFakeExecutionHost();
+  // The agent consumer detaches immediately (no session events scripted).
+  Object.assign(fake.transport, {
+    streamSession: async function* () {
+      return;
+    },
+  });
+  ({ hosts } = await fakeExecutionHosts(db, { fake }));
 
   ({ issueOrchestratorRunToken } = await import("@/lib/agents/tokens"));
   ({ POST: messagePost } = await import("@/app/api/v1/ext/runs/message/route"));
@@ -108,6 +124,8 @@ let executorId: string;
 
 beforeEach(async () => {
   createSessionSpy.mockClear();
+  fake.calls.length = 0;
+  fake.sessions.clear();
 
   await pool.query(`DELETE FROM "runs"`);
   await pool.query(`DELETE FROM "task_relations"`);
@@ -326,22 +344,24 @@ async function seedRunningChild(args: {
   return childRunId;
 }
 
-// A fake supervisor API whose sendPrompt is a spy (the live branch only delivers).
-function fakeSupervisorApi(): {
-  api: AgentSupervisorApi;
-  sendPrompt: ReturnType<typeof vi.fn>;
-} {
-  const sendPrompt = vi.fn(async () => ({ stopReason: "end_turn" as const }));
+// The prompts the fake host received: `[sessionId, payload]` per turn.
+function promptsSent(): Array<[string, unknown]> {
+  return fake
+    .callsOf("sendPrompt")
+    .map((call) => [call.args[0] as string, call.envelope?.payload]);
+}
 
-  return {
-    api: {
-      createSession: vi.fn(),
-      deliverPermission: vi.fn(),
-      sendPrompt,
-      streamSession: async function* () {},
-    } as unknown as AgentSupervisorApi,
-    sendPrompt,
-  };
+function seedLive(sessionId: string, runId: string, acpSessionId: string) {
+  fake.sessions.set(sessionId, {
+    sessionId,
+    runId,
+    stepId: "agent",
+    acpSessionId,
+    executionWorkspaceId: "ws-live",
+    assignmentEpoch: 1,
+    createdByCommandId: "seed",
+    status: "live",
+  });
 }
 
 function jsonReq(
@@ -399,12 +419,29 @@ describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
 
     expect(row.rows[0].status).toBe("Running");
 
-    // Respawn fired with the retained acp handle as resumeSessionId.
-    expect(createSessionSpy).toHaveBeenCalledTimes(1);
-    expect(createSessionSpy.mock.calls[0][0]).toMatchObject({
-      runId: childRunId,
+    // Respawn fired with the retained acp handle as resumeSessionId — a
+    // handle-form create fenced by the child's assignment.
+    const creates = fake.callsOf("createSession");
+
+    expect(creates).toHaveLength(1);
+    expect(creates[0].envelope?.payload).toMatchObject({
       resumeSessionId: "acp-reviewer-1",
     });
+    expect(creates[0].envelope?.fence).toMatchObject({
+      runId: childRunId,
+      assignmentEpoch: 1,
+    });
+    // ADR-164 (N2): the idle re-message is a NEW driver generation minted as
+    // `resume` inside the claim.
+    const assignments = await pool.query(
+      `SELECT "epoch", "state", "placement_reason" FROM "execution_assignments"
+        WHERE "run_id" = $1 ORDER BY "epoch"`,
+      [childRunId],
+    );
+
+    expect(assignments.rows).toEqual([
+      { epoch: 1, state: "active", placement_reason: "resume" },
+    ]);
   });
 
   it("(2b) a key in ANOTHER tree → PRECONDITION, no delivery", async () => {
@@ -434,7 +471,7 @@ describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
 
     expect(res.status).toBe(409);
     expect(((await res.json()) as { code: string }).code).toBe("PRECONDITION");
-    expect(createSessionSpy).not.toHaveBeenCalled();
+    expect(fake.callsOf("createSession")).toEqual([]);
   });
 
   it("(3) two persistent delegations with the same key in one tree → 2nd is CONFLICT", async () => {
@@ -548,25 +585,17 @@ describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
       acpSessionId: "acp-live-child",
     });
 
-    const { api, sendPrompt } = fakeSupervisorApi();
-    const listLive: typeof import("@/lib/supervisor-client").listSessions =
-      async () =>
-        [
-          {
-            sessionId: "sup-live",
-            status: "live",
-            acpSessionId: "acp-live-child",
-          },
-        ] as never;
+    seedLive("sup-live", childRunId, "acp-live-child");
 
     const result = await sendAgentMessage(childRunId, "keep going", {
       db,
-      api,
-      listSessions: listLive,
+      executionHosts: hosts,
     });
 
     expect(result).toEqual({ childRunId, status: "Running" });
-    expect(sendPrompt).toHaveBeenCalledWith("sup-live", {
+    expect(promptsSent()).toHaveLength(1);
+    expect(promptsSent()[0][0]).toBe("sup-live");
+    expect(promptsSent()[0][1]).toEqual({
       stepId: "agent",
       prompt: "keep going",
     });
@@ -584,16 +613,10 @@ describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
       acpSessionId: null,
     });
 
-    const { api, sendPrompt } = fakeSupervisorApi();
-
     await expect(
-      sendAgentMessage(childRunId, "x", {
-        db,
-        api,
-        listSessions: async () => [] as never,
-      }),
+      sendAgentMessage(childRunId, "x", { db, executionHosts: hosts }),
     ).rejects.toMatchObject({ code: "PRECONDITION" });
-    expect(sendPrompt).not.toHaveBeenCalled();
+    expect(promptsSent()).toEqual([]);
   });
 
   it("a Running child whose session is no longer live → PRECONDITION (no delivery)", async () => {
@@ -608,16 +631,10 @@ describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
       acpSessionId: "acp-gone",
     });
 
-    const { api, sendPrompt } = fakeSupervisorApi();
-
+    // No session matches acp-gone → no live supervisor session.
     await expect(
-      sendAgentMessage(childRunId, "x", {
-        db,
-        api,
-        // No session matches acp-gone → no live supervisor session.
-        listSessions: async () => [] as never,
-      }),
+      sendAgentMessage(childRunId, "x", { db, executionHosts: hosts }),
     ).rejects.toMatchObject({ code: "PRECONDITION" });
-    expect(sendPrompt).not.toHaveBeenCalled();
+    expect(promptsSent()).toEqual([]);
   });
 });

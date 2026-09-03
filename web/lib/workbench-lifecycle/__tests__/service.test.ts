@@ -2,6 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
 import {
+  createFakeExecutionHost,
+  memoryExecutionHosts,
+  type FakeExecutionHost,
+} from "@/test-support/fake-execution-host";
+import {
   archiveWorkbench,
   discardWorkbench,
   dropWorkbench,
@@ -45,13 +50,36 @@ function context(over: Partial<LifecycleContext> = {}): LifecycleContext {
   };
 }
 
+// ADR-164: the deps address a DB-less fake local host; `fake` is the one the
+// most recent `deps()` built (sessions seeded per case, teardowns asserted on
+// its recorded calls).
+let fake: FakeExecutionHost;
+
+function seedLive(sessionId: string, runId: string, acpSessionId?: string) {
+  fake.sessions.set(sessionId, {
+    sessionId,
+    runId,
+    stepId: "implement",
+    acpSessionId: acpSessionId ?? `acp-${sessionId}`,
+    executionWorkspaceId: "ws-1",
+    assignmentEpoch: 1,
+    createdByCommandId: "seed",
+    status: "live",
+  });
+}
+
+function deleted(): string[] {
+  return fake.callsOf("deleteSession").map((call) => call.args[0] as string);
+}
+
 function deps(ctx: LifecycleContext): WorkbenchLifecycleDeps {
+  fake = createFakeExecutionHost();
+
   return {
     requireActiveSession: vi.fn(async () => undefined),
     loadContext: vi.fn(async () => ctx),
     authorize: vi.fn(async () => undefined),
-    listSessions: vi.fn(async () => []),
-    deleteSession: vi.fn(async () => undefined),
+    executionHosts: memoryExecutionHosts(fake),
     markStoppedAndCloseAssignments: vi.fn(async () => undefined),
     promoteNextPending: vi.fn(async () => undefined),
     finalizeAgentRun: vi.fn(async () => ({ finalized: true })),
@@ -529,24 +557,11 @@ describe("workbench lifecycle service", () => {
   it("stop resolves the live supervisor session by runId and parks the run in Review", async () => {
     const d = deps(context({ run: { ...context().run, status: "Running" } }));
 
-    vi.mocked(d.listSessions).mockResolvedValueOnce([
-      {
-        sessionId: "supervisor-1",
-        runId: "run-1",
-        projectSlug: "demo",
-        stepId: "implement",
-        status: "live",
-        pid: 123,
-        startedAt: "2026-06-09T08:00:00.000Z",
-        logPath: "/tmp/log",
-        monotonicId: 1,
-        acpSessionId: "acp-1",
-      },
-    ]);
+    seedLive("supervisor-1", "run-1", "acp-1");
 
     const result = await stopFlowWorkbench("run-1", { deps: d });
 
-    expect(d.deleteSession).toHaveBeenCalledWith("supervisor-1");
+    expect(deleted()).toEqual(["supervisor-1"]);
     expect(d.markStoppedAndCloseAssignments).toHaveBeenCalledWith({
       runId: "run-1",
       endedAt: expect.any(Date),
@@ -564,53 +579,16 @@ describe("workbench lifecycle service", () => {
 
     // The run holds two logical sessions; an unrelated run's live session
     // (run-9) must NOT be closed — the boundary is runId, not acp id.
-    vi.mocked(d.listSessions).mockResolvedValueOnce([
-      {
-        sessionId: "supervisor-1",
-        runId: "run-1",
-        projectSlug: "demo",
-        stepId: "plan",
-        status: "live",
-        pid: 1,
-        startedAt: "2026-06-09T08:00:00.000Z",
-        logPath: "/tmp/log-1",
-        monotonicId: 1,
-        acpSessionId: "acp-1",
-      },
-      {
-        sessionId: "supervisor-2",
-        runId: "run-1",
-        projectSlug: "demo",
-        stepId: "review",
-        status: "live",
-        pid: 2,
-        startedAt: "2026-06-09T08:01:00.000Z",
-        logPath: "/tmp/log-2",
-        monotonicId: 2,
-        acpSessionId: "acp-2",
-      },
-      {
-        sessionId: "supervisor-other",
-        runId: "run-9",
-        projectSlug: "demo",
-        stepId: "x",
-        status: "live",
-        pid: 9,
-        startedAt: "2026-06-09T08:02:00.000Z",
-        logPath: "/tmp/log-9",
-        monotonicId: 3,
-        acpSessionId: "acp-other",
-      },
-    ]);
+    seedLive("supervisor-1", "run-1", "acp-1");
+    seedLive("supervisor-2", "run-1", "acp-2");
+    seedLive("supervisor-other", "run-9", "acp-other");
 
     const result = await stopFlowWorkbench("run-1", { deps: d });
 
     // Both of THIS run's live sessions are closed...
-    expect(d.deleteSession).toHaveBeenCalledWith("supervisor-1");
-    expect(d.deleteSession).toHaveBeenCalledWith("supervisor-2");
-    expect(d.deleteSession).toHaveBeenCalledTimes(2);
+    expect(deleted()).toEqual(["supervisor-1", "supervisor-2"]);
     // ...and the unrelated run's session is left alone.
-    expect(d.deleteSession).not.toHaveBeenCalledWith("supervisor-other");
+    expect(deleted()).not.toContain("supervisor-other");
     expect(result).toMatchObject({ ok: true, supervisorStopped: true });
   });
 
@@ -623,32 +601,21 @@ describe("workbench lifecycle service", () => {
     // here carries the run's id (always server-owned) but no acpSessionId.
     const d = deps(context({ run: { ...context().run, status: "Running" } }));
 
-    vi.mocked(d.listSessions).mockResolvedValueOnce([
-      {
-        sessionId: "supervisor-midprompt",
-        runId: "run-1",
-        projectSlug: "demo",
-        stepId: "implement",
-        status: "live",
-        pid: 77,
-        startedAt: "2026-06-09T08:00:00.000Z",
-        logPath: "/tmp/log",
-        monotonicId: 1,
-        // acpSessionId intentionally absent — run_sessions.acp_session_id is
-        // still NULL during the in-flight dispatch.
-      },
-    ]);
+    seedLive("supervisor-midprompt", "run-1");
+
+    let parkedBeforeKill = false;
+
+    fake.onCall("deleteSession", () => {
+      parkedBeforeKill =
+        vi.mocked(d.markStoppedAndCloseAssignments).mock.calls.length > 0;
+    });
 
     const result = await stopFlowWorkbench("run-1", { deps: d });
 
-    expect(d.deleteSession).toHaveBeenCalledWith("supervisor-midprompt");
+    expect(deleted()).toEqual(["supervisor-midprompt"]);
     expect(result).toMatchObject({ supervisorStopped: true });
     // The live agent is torn down BEFORE the run is parked — no split-brain.
-    const killOrder = vi.mocked(d.deleteSession).mock.invocationCallOrder[0];
-    const parkOrder = vi.mocked(d.markStoppedAndCloseAssignments).mock
-      .invocationCallOrder[0];
-
-    expect(killOrder).toBeLessThan(parkOrder);
+    expect(parkedBeforeKill).toBe(false);
   });
 
   it("stop still succeeds when queue promotion fails after the run is parked", async () => {

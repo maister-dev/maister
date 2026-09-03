@@ -4,8 +4,16 @@ import type {
   CreateSessionResult,
   SendPromptInput,
   SupervisorEvent,
+  SidecarInstanceConfig,
+  SidecarStateResponse,
+  SupervisorDiagnosticsStatus,
+  SupervisorMcpProbeRequest,
+  SupervisorMcpProbeResult,
+  SupervisorModelCatalog,
+  SupervisorModelCatalogDraft,
   SupervisorSessionRecord,
 } from "@/lib/supervisor-client";
+import type { PlatformStatus } from "@/types/platform-status";
 import type {
   AdoptWorkspaceResult,
   AdoptWorkspaceWire,
@@ -119,6 +127,20 @@ export interface BoundClient {
 // per-session event stream (which feeds `commandSignals`), receipts, handles.
 export interface HostAdminClient {
   health(opts?: { timeoutMs?: number }): Promise<HostHealth>;
+  diagnostics(opts?: {
+    timeoutMs?: number;
+  }): Promise<SupervisorDiagnosticsStatus>;
+  platformStatus(opts?: { timeoutMs?: number }): Promise<PlatformStatus>;
+  startSidecar(
+    sidecarId: string,
+    instanceConfig: SidecarInstanceConfig,
+  ): Promise<SidecarStateResponse>;
+  stopSidecar(sidecarId: string): Promise<SidecarStateResponse>;
+  resolveModelSuggestions(
+    draft: SupervisorModelCatalogDraft,
+    opts?: { force?: boolean },
+  ): Promise<SupervisorModelCatalog>;
+  probeMcp(req: SupervisorMcpProbeRequest): Promise<SupervisorMcpProbeResult>;
   listSessions(): Promise<SupervisorSessionRecord[]>;
   streamSession(
     sessionId: HostSessionId | string,
@@ -425,6 +447,24 @@ export function createExecutionHosts(
   const admin: HostAdminClient = {
     health(opts) {
       return transport.health(opts);
+    },
+    diagnostics(opts) {
+      return transport.diagnostics(opts);
+    },
+    platformStatus(opts) {
+      return transport.platformStatus(opts);
+    },
+    startSidecar(sidecarId, instanceConfig) {
+      return transport.startSidecar(sidecarId, instanceConfig);
+    },
+    stopSidecar(sidecarId) {
+      return transport.stopSidecar(sidecarId);
+    },
+    resolveModelSuggestions(draft, opts) {
+      return transport.resolveModelSuggestions(draft, opts);
+    },
+    probeMcp(req) {
+      return transport.probeMcp(req);
     },
     listSessions() {
       return transport.listSessions();

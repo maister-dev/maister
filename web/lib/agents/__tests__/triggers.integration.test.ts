@@ -15,6 +15,7 @@ import {
   GRAPH_ONLY_CUTOVER_REASON,
   GRAPH_ONLY_CUTOVER_SOURCE,
 } from "@/lib/domain-events/cutover";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -41,6 +42,8 @@ beforeAll(async () => {
   });
   pool = testDatabase.pool;
   db = testDatabase.db;
+  // ADR-164: every launch places the run on the local execution host.
+  await fakeExecutionHosts(db);
 
   triggers = await import("@/lib/agents/triggers");
   launchModule = await import("@/lib/agents/launch");

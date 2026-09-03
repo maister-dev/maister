@@ -27,6 +27,7 @@ import {
 
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -61,6 +62,8 @@ beforeAll(async () => {
 
   pool = testDatabase.pool;
   db = testDatabase.db;
+  // ADR-164: every launch places the run on the local execution host.
+  await fakeExecutionHosts(db);
 
   ({ buildAutoLaunchRunPlanConsumer } = await import(
     "@/lib/domain-events/auto-launch"
@@ -479,7 +482,11 @@ describe("auto_launch_run_plan consumer", () => {
     await pool.query(
       `INSERT INTO "tasks" ("id", "project_id", "number", "title", "prompt", "status", "stage", "attempt_number", "launch_mode", "delegation_spec")
        VALUES ($1, $2, 1, 'cross-project as-plan', 'p', 'Backlog', 'Backlog', 1, 'auto', $3::jsonb)`,
-      [siblingTaskId, siblingProjectId, JSON.stringify({ agentId: workerAgentId })],
+      [
+        siblingTaskId,
+        siblingProjectId,
+        JSON.stringify({ agentId: workerAgentId }),
+      ],
     );
     // The relation row stays owned by the FROM-task's project (ADR-155 D3).
     await pool.query(

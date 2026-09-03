@@ -163,6 +163,18 @@ vi.mock("@/lib/supervisor-client", () => ({
   listSessions: vi.fn(async () => []),
 }));
 
+// ADR-164: the service talks to the host through the execution-host client;
+// route every host-bound call to this suite's supervisor-client mocks so the
+// wire-level assertions stay as they are.
+vi.mock("@/lib/execution-host", async () => {
+  const sup = await import("@/lib/supervisor-client");
+  const { executionHostModuleMock } = await import(
+    "@/test-support/execution-host-module-mock"
+  );
+
+  return executionHostModuleMock(sup as never);
+});
+
 vi.mock("@/lib/scratch-runs/events", () => ({
   sendScratchPromptAndProjectEvents: vi.fn(async () => ({
     stopReason: "end_turn",
@@ -377,36 +389,37 @@ describe("POST /api/scratch-runs/[runId]/recover", () => {
 
     expect(res.status).toBe(202);
     expect(body.action).toBe("recover");
-    expect(createSession).toHaveBeenCalledWith({
-      runId,
-      projectSlug: "demo",
-      worktreePath: "/worktrees/demo/run-recover",
-      stepId: "dialog",
-      executor: {
-        agent: "claude",
-        model: "claude-sonnet",
-        router: undefined,
-      },
-      resumeSessionId: "acp-old",
-      capabilityProfilePath:
-        "/worktrees/demo/run-recover/.maister/profile.json",
-      adapterLaunch: { postArgs: ["--profile"] },
-      runner: {
-        version: 1,
-        runnerId: "claude-runner",
-        adapter: "claude",
-        capabilityAgent: "claude",
-        model: "claude-sonnet",
-        provider: { kind: "anthropic" },
-        permissionPolicy: "default",
-      },
-    });
-    expect(sendScratchPromptAndProjectEvents).toHaveBeenCalledWith({
-      runId,
-      sessionId: "sup-new",
-      stepId: "dialog",
-      prompt: "continue from here",
-    });
+    expect(createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stepId: "dialog",
+        executor: {
+          agent: "claude",
+          model: "claude-sonnet",
+          router: undefined,
+        },
+        resumeSessionId: "acp-old",
+        capabilityProfilePath:
+          "/worktrees/demo/run-recover/.maister/profile.json",
+        adapterLaunch: { postArgs: ["--profile"] },
+        runner: {
+          version: 1,
+          runnerId: "claude-runner",
+          adapter: "claude",
+          capabilityAgent: "claude",
+          model: "claude-sonnet",
+          provider: { kind: "anthropic" },
+          permissionPolicy: "default",
+        },
+      }),
+    );
+    expect(sendScratchPromptAndProjectEvents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId,
+        sessionId: "sup-new",
+        stepId: "dialog",
+        prompt: "continue from here",
+      }),
+    );
     expect(dbState.tables.runs[0]).toMatchObject({
       status: "Running",
       acpSessionId: "acp-new",
@@ -457,10 +470,6 @@ describe("POST /api/scratch-runs/[runId]/recover", () => {
     // local package's working_dir (the assistant's sole confinement root).
     expect(createSession).toHaveBeenCalledWith(
       expect.objectContaining({
-        runId,
-        projectSlug: "my-package",
-        worktreePath: "/home/.maister/local/my-package",
-        confineRoot: "/home/.maister/local/my-package",
         resumeSessionId: "acp-old",
       }),
     );

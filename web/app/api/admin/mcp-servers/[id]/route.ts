@@ -17,7 +17,7 @@ import {
 } from "@/lib/mcp/mcp-form";
 import { evaluateMcpReadiness } from "@/lib/mcp/readiness";
 import { loadMcpUsageReferences } from "@/lib/mcp/usage";
-import { checkSupervisorDiagnostics } from "@/lib/supervisor-client";
+import { executionHosts } from "@/lib/execution-host";
 
 const { platformMcpServers } = schemaModule as unknown as Record<string, any>;
 
@@ -181,7 +181,7 @@ export async function PATCH(
     }
 
     const fields = buildMcpServerFields(nextDraft);
-    const diagnostics = await checkSupervisorDiagnostics();
+    const diagnostics = await executionHosts.local().diagnostics();
     const readiness = evaluateMcpReadiness(fields, diagnostics);
 
     await db

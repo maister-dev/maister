@@ -21,6 +21,11 @@ import {
 
 import { domainEvents } from "@/lib/db/schema";
 import {
+  createFakeExecutionHost,
+  fakeExecutionHosts,
+  memoryExecutionHosts,
+} from "@/test-support/fake-execution-host";
+import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
@@ -33,16 +38,6 @@ let stopThenArchive: typeof import("@/lib/workbench-lifecycle/service").stopThen
 let stopScratchWorkbench: typeof import("@/lib/scratch-runs/service").stopScratchWorkbench;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
-vi.mock("@/lib/supervisor-client", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/lib/supervisor-client")>();
-
-  return {
-    ...actual,
-    listSessions: vi.fn(async () => []),
-    deleteSession: vi.fn(async () => undefined),
-  };
-});
 // authz is dynamically imported by the default workbench deps; no-op it so the
 // integration test exercises the DB-real stop path without a live session.
 vi.mock("@/lib/authz", () => ({
@@ -53,15 +48,6 @@ vi.mock("@/lib/authz", () => ({
   })),
   requireProjectAction: vi.fn(async () => undefined),
 }));
-vi.mock("@/lib/supervisor-client", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/lib/supervisor-client")>();
-
-  return {
-    ...actual,
-    listSessions: vi.fn(async () => []),
-  };
-});
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
@@ -70,6 +56,9 @@ beforeAll(async () => {
 
   pool = testDatabase.pool;
   db = testDatabase.db;
+  // ADR-164: the default deps address the local execution host — a fake host
+  // (no sessions) backs the DB-real stop path.
+  await fakeExecutionHosts(db);
 
   ({ stopWorkbenchRun, stopThenArchive } = await import(
     "@/lib/workbench-lifecycle/service"
@@ -91,6 +80,16 @@ beforeEach(async () => {
   await pool.query(`DELETE FROM "users"`);
   await pool.query(`DELETE FROM "projects"`);
 });
+
+async function assignmentRows(runId: string) {
+  const { rows } = await pool.query(
+    `SELECT "epoch", "state", "released_reason" FROM "execution_assignments"
+      WHERE "run_id" = $1 ORDER BY "epoch"`,
+    [runId],
+  );
+
+  return rows;
+}
 
 async function seedProject(): Promise<string> {
   const projectId = randomUUID();
@@ -137,6 +136,9 @@ describe("workbench stop — agent runs", () => {
       [runId, taskId, projectId],
     );
 
+    // ADR-164: the run was placed at launch; the stop ends that generation.
+    await fakeExecutionHosts(db, { runId });
+
     const result = await stopWorkbenchRun(runId);
 
     expect(result).toMatchObject({
@@ -151,6 +153,10 @@ describe("workbench stop — agent runs", () => {
     );
 
     expect(rows[0].status).toBe("Abandoned");
+    // ADR-164 (N4): the terminal flip released the run's driver generation.
+    expect(await assignmentRows(runId)).toEqual([
+      { epoch: 1, state: "released", released_reason: "run_terminal" },
+    ]);
   });
 
   it("refuses to stop an already-terminal agent run", async () => {
@@ -323,8 +329,7 @@ describe("workbench stop — scratch runs", () => {
       requireActiveSession: vi.fn(async () => undefined),
       loadContext,
       authorize: vi.fn(async () => undefined),
-      listSessions: vi.fn(async () => []),
-      deleteSession: vi.fn(async () => undefined),
+      executionHosts: memoryExecutionHosts(createFakeExecutionHost()),
       markStoppedAndCloseAssignments: vi.fn(async () => undefined),
       promoteNextPending: vi.fn(async () => undefined),
       finalizeAgentRun: vi.fn(async () => ({ finalized: true })),
@@ -468,6 +473,9 @@ describe("workbench stop — orchestrator cascade (M37 T7.4)", () => {
       status: "NeedsInput",
     });
 
+    // ADR-164: the orchestrator was placed at launch.
+    await fakeExecutionHosts(db, { runId: orchestratorRunId });
+
     const result = await stopWorkbenchRun(orchestratorRunId);
 
     expect(result).toMatchObject({ ok: true, runStatus: "Review" });
@@ -481,6 +489,10 @@ describe("workbench stop — orchestrator cascade (M37 T7.4)", () => {
     expect(byId.get(orchestratorRunId)).toBe("Review");
     expect(byId.get(runningChild)).toBe("Abandoned");
     expect(byId.get(needsInputChild)).toBe("Abandoned");
+    // ADR-164 (N4): the stop released the orchestrator's driver generation.
+    expect(await assignmentRows(orchestratorRunId)).toEqual([
+      { epoch: 1, state: "released", released_reason: "stopped" },
+    ]);
   });
 });
 

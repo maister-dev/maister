@@ -6,8 +6,7 @@
 // the catalog row), so each agent ships its own .md. The background
 // startAgentSession has no live supervisor and fails harmlessly — only the
 // at-insert snapshot is asserted.
-import type { AgentSupervisorApi } from "@/lib/agents/launch";
-import type { SupervisorEvent } from "@/lib/supervisor-client";
+import type { ExecutionHosts, SupervisorEvent } from "@/lib/execution-host";
 
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -28,6 +27,11 @@ import {
   vi,
 } from "vitest";
 
+import {
+  createFakeExecutionHost,
+  fakeExecutionHosts,
+  type FakeExecutionHost,
+} from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -76,6 +80,8 @@ beforeAll(async () => {
   pool = testDatabase.pool;
   db = testDatabase.db;
   process.env.DB_URL = container.getConnectionUri();
+  // ADR-164: every launch places the run on the local execution host.
+  await fakeExecutionHosts(db);
 
   ({ launchAgentRun, startAgentSession } = await import("@/lib/agents/launch"));
 }, 180_000);
@@ -344,34 +350,46 @@ describe("launchAgentRun — execution-policy snapshot (M39 T5.1, ADR-106)", () 
   });
 });
 
-// A fake supervisor API recording the createSession input; its session stream
-// yields a single `checkpoint` exit so consumeAgentSession detaches with no DB
-// work (the keep-alive sweeper owns the idle transition — never reached here).
-function recordingApi(): {
-  api: AgentSupervisorApi;
-  createSessionCalls: Array<Record<string, unknown>>;
-} {
-  const createSessionCalls: Array<Record<string, unknown>> = [];
-  const api = {
-    createSession: async (input: Record<string, unknown>) => {
-      createSessionCalls.push(input);
+// ADR-164: a fake local host recording the (handle-form) createSession
+// payload and the adopted workspace; its session stream yields a single
+// `checkpoint` exit so consumeAgentSession detaches with no DB work (the
+// keep-alive sweeper owns the idle transition — never reached here). Built
+// BEFORE the launch so the run's `launch` assignment lands on this host.
+async function recordingHost(): Promise<{
+  hosts: ExecutionHosts;
+  fake: FakeExecutionHost;
+  createSessionCalls: () => Array<Record<string, unknown>>;
+  adoptedPath: () => string;
+}> {
+  const fake = createFakeExecutionHost();
 
-      return { sessionId: "sup-aa", acpSessionId: "acp-aa" };
-    },
-    deliverPermission: async () => ({}),
-    sendPrompt: async () => ({}),
-    streamSession: async function* (): AsyncGenerator<SupervisorEvent> {
-      yield {
-        type: "session.exited",
-        sessionId: "sup-aa",
-        monotonicId: 1,
-        exitCode: 0,
-        reason: "checkpoint",
-      };
-    },
-  } as unknown as AgentSupervisorApi;
+  fake.setStreamEvents([
+    {
+      type: "session.exited",
+      sessionId: "sup-aa",
+      monotonicId: 1,
+      exitCode: 0,
+      reason: "checkpoint",
+    } as SupervisorEvent,
+  ]);
+  const { hosts } = await fakeExecutionHosts(db, { fake });
 
-  return { api, createSessionCalls };
+  return {
+    hosts,
+    fake,
+    createSessionCalls: () =>
+      fake
+        .callsOf("createSession")
+        .map((call) => call.envelope?.payload as Record<string, unknown>),
+    adoptedPath: () =>
+      String(
+        (
+          fake.callsOf("adoptWorkspace")[0]?.envelope?.payload as {
+            path?: string;
+          }
+        )?.path,
+      ),
+  };
 }
 
 async function launchRunningAgent(agentId: string): Promise<string> {
@@ -396,40 +414,42 @@ describe("startAgentSession — autoApply → supervisor auto-approve (M39 T5.2,
       stem: "approver",
       recommendedYaml: "  executionPolicy:\n    autoApply: permissions",
     });
+    const host = await recordingHost();
     const runId = await launchRunningAgent(id);
-    const { api, createSessionCalls } = recordingApi();
 
-    await startAgentSession(runId, { db, api });
+    await startAgentSession(runId, { db, executionHosts: host.hosts });
 
-    expect(createSessionCalls).toHaveLength(1);
-    expect(createSessionCalls[0].autoApprovePermissions).toBe(true);
+    expect(host.createSessionCalls()).toHaveLength(1);
+    expect(host.createSessionCalls()[0].autoApprovePermissions).toBe(true);
   });
 
   it("threads autoApprovePermissions=false for an agent with no autoApply (normal HITL)", async () => {
     const id = await seedAgent({ stem: "asker" });
+    const host = await recordingHost();
     const runId = await launchRunningAgent(id);
-    const { api, createSessionCalls } = recordingApi();
 
-    await startAgentSession(runId, { db, api });
+    await startAgentSession(runId, { db, executionHosts: host.hosts });
 
-    expect(createSessionCalls).toHaveLength(1);
-    expect(createSessionCalls[0].autoApprovePermissions).toBe(false);
+    expect(host.createSessionCalls()).toHaveLength(1);
+    expect(host.createSessionCalls()[0].autoApprovePermissions).toBe(false);
   });
 
   it("materializes skills and Claude subagents from the pinned providing package", async () => {
     await seedPackageCapabilitySkills();
     const id = await seedAgent({ stem: "skilled" });
+    const host = await recordingHost();
     const runId = await launchRunningAgent(id);
-    const { api, createSessionCalls } = recordingApi();
 
-    await startAgentSession(runId, { db, api });
+    await startAgentSession(runId, { db, executionHosts: host.hosts });
 
-    expect(createSessionCalls).toHaveLength(1);
-    expect(createSessionCalls[0].worktreePath).toBe(
+    expect(host.createSessionCalls()).toHaveLength(1);
+    // Handle-form wire: the worktree rides the adoption, not the create.
+    expect(host.createSessionCalls()[0]).not.toHaveProperty("worktreePath");
+    expect(host.adoptedPath()).toBe(
       path.join(worktreesTmp, projectSlug, runId),
     );
 
-    const cwd = String(createSessionCalls[0].worktreePath);
+    const cwd = host.adoptedPath();
 
     expect(
       await readFile(

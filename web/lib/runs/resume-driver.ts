@@ -10,7 +10,7 @@ import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { markNodeSucceeded } from "@/lib/flows/graph/ledger";
-import { type SupervisorEvent } from "@/lib/supervisor-client";
+import { type SupervisorEvent } from "@/lib/execution-host";
 import {
   createExecutionHosts,
   isFencedError,

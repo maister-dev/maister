@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
 import {
+  createFakeExecutionHost,
+  memoryExecutionHosts,
+} from "@/test-support/fake-execution-host";
+import {
   archiveWorkbench,
   createWorkbenchHandoffBranch,
   dropWorkbench,
@@ -75,8 +79,7 @@ function deps(
     requireActiveSession: vi.fn(async () => undefined),
     loadContext: vi.fn(async () => context()),
     authorize: vi.fn(async () => undefined),
-    listSessions: vi.fn(async () => []),
-    deleteSession: vi.fn(async () => undefined),
+    executionHosts: memoryExecutionHosts(createFakeExecutionHost()),
     markStoppedAndCloseAssignments: vi.fn(async () => undefined),
     promoteNextPending: vi.fn(async () => undefined),
     finalizeAgentRun: vi.fn(async () => ({ finalized: true })),

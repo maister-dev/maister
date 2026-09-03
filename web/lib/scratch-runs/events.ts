@@ -21,13 +21,15 @@ import {
   type ScratchToolStatus,
 } from "@/lib/scratch-runs/transcript";
 import {
-  cancelPermission,
-  sendPrompt,
-  streamSession,
   type PromptContentBlock,
   type PromptResult,
   type SupervisorEvent,
-} from "@/lib/supervisor-client";
+} from "@/lib/execution-host";
+import {
+  createExecutionHosts,
+  type BoundClient,
+  type HostAdminClient,
+} from "@/lib/execution-host";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { type AdapterId } from "@/lib/acp-runners/adapter-support";
@@ -67,17 +69,23 @@ export function normalizeScratchPrompt(
 
 type DbClientLike = any;
 
-export type ScratchSupervisorApi = {
-  cancelPermission: typeof cancelPermission;
-  sendPrompt: typeof sendPrompt;
-  streamSession: typeof streamSession;
+// ADR-164: a scratch turn talks to the host through the client bound to the
+// run's execution assignment (prompt, permission input) and the host-scoped
+// admin stream. Callers that already hold a binding pass it; the default binds
+// the run's active assignment on the local host.
+export type ScratchExecution = {
+  client: BoundClient;
+  admin: HostAdminClient;
 };
 
-const defaultSupervisorApi: ScratchSupervisorApi = {
-  cancelPermission,
-  sendPrompt,
-  streamSession,
-};
+export async function bindScratchExecution(
+  db: DbClientLike,
+  runId: string,
+): Promise<ScratchExecution> {
+  const hosts = createExecutionHosts({ db });
+
+  return { client: await hosts.forRun(runId), admin: hosts.local() };
+}
 
 export type ScratchSupervisorEventProjection = {
   dialogStatus?: ScratchDialogStatus;
@@ -248,7 +256,7 @@ async function persistPermissionRequest(args: {
   stepId: string;
   sessionId: string;
   event: Extract<SupervisorEvent, { type: "session.permission_request" }>;
-  api: ScratchSupervisorApi;
+  execution: ScratchExecution;
 }): Promise<void> {
   const hitlRequestId = randomUUID();
   const prompt = permissionPrompt(args.event);
@@ -315,11 +323,12 @@ async function persistPermissionRequest(args: {
       },
       "scratch permission persistence failed — cancelling supervisor deferred",
     );
-    await args.api.cancelPermission(
-      args.sessionId,
-      args.event.requestId,
-      `DB_PERSIST_FAILED:${message.slice(0, 128)}`,
-    );
+    await args.execution.client.deliverInput(args.sessionId, {
+      kind: "permission",
+      action: "cancel",
+      requestId: args.event.requestId,
+      reason: `DB_PERSIST_FAILED:${message.slice(0, 128)}`,
+    });
     throw err;
   }
 }
@@ -549,7 +558,7 @@ function startScratchEventConsumer(args: {
   runId: string;
   stepId: string;
   sessionId: string;
-  api: ScratchSupervisorApi;
+  execution: ScratchExecution;
 }) {
   const abort = new AbortController();
   let permissionPersistFailure: { reason: string } | null = null;
@@ -569,10 +578,10 @@ function startScratchEventConsumer(args: {
       // does not re-stream (and re-persist) the whole session history.
       const lastEventId = await lastProjectedEventId(args.db, args.runId);
 
-      for await (const event of args.api.streamSession(args.sessionId, {
-        lastEventId,
-        signal: abort.signal,
-      })) {
+      for await (const event of args.execution.admin.streamSession(
+        args.sessionId,
+        { lastEventId, signal: abort.signal },
+      )) {
         if (event.type === "session.permission_request") {
           try {
             await persistPermissionRequest({
@@ -581,7 +590,7 @@ function startScratchEventConsumer(args: {
               stepId: args.stepId,
               sessionId: args.sessionId,
               event,
-              api: args.api,
+              execution: args.execution,
             });
             projector.resetOpenText();
           } catch (err) {
@@ -718,25 +727,26 @@ export async function sendScratchPromptAndProjectEvents(args: {
   prompt: string;
   contentBlocks?: PromptContentBlock[];
   db?: DbClientLike;
-  api?: ScratchSupervisorApi;
+  execution?: ScratchExecution;
   // Optional cancel forwarded to the supervisor prompt fetch (staged assistant
   // launch passes its request signal); a disconnect aborts the in-flight turn.
   signal?: AbortSignal;
 }): Promise<PromptResult> {
   const db = args.db ?? getDb();
-  const api = args.api ?? defaultSupervisorApi;
+  const execution =
+    args.execution ?? (await bindScratchExecution(db, args.runId));
   const consumer = startScratchEventConsumer({
     db,
     runId: args.runId,
     stepId: args.stepId,
     sessionId: args.sessionId,
-    api,
+    execution,
   });
 
   let promptResult: PromptResult;
 
   try {
-    promptResult = await api.sendPrompt(
+    const handle = await execution.client.prompt(
       args.sessionId,
       {
         stepId: args.stepId,
@@ -745,6 +755,8 @@ export async function sendScratchPromptAndProjectEvents(args: {
       },
       { signal: args.signal },
     );
+
+    promptResult = await handle.completion;
   } finally {
     consumer.abort.abort();
     await consumer.done;

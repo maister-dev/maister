@@ -1,4 +1,4 @@
-import type { SupervisorDiagnosticsStatus } from "@/lib/supervisor-client";
+import type { SupervisorDiagnosticsStatus } from "@/lib/execution-host";
 import type { PlatformRunnerProvider } from "@/lib/db/schema";
 
 import {

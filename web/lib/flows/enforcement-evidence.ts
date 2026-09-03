@@ -5,7 +5,7 @@ import type {
   CapabilityAgent,
   JudgeSettings,
 } from "@/lib/config.schema";
-import type { SupervisorDiagnosticsStatus } from "@/lib/supervisor-client";
+import type { SupervisorDiagnosticsStatus } from "@/lib/execution-host";
 
 import {
   ENFORCEABILITY_BY_AGENT,
@@ -14,7 +14,7 @@ import {
 } from "./enforcement";
 
 import { MaisterError } from "@/lib/errors";
-import { checkSupervisorDiagnostics } from "@/lib/supervisor-client";
+import { executionHosts } from "@/lib/execution-host";
 
 // ADR-130 (DES-6): the async launch evidence gate for strict tools/mcps. Mirrors
 // `assertReadOnlySessionEvidence`. It admits a strict-enforced launch only when the
@@ -52,7 +52,8 @@ export async function assertEnforcementEvidence(args: {
     );
   }
 
-  const check = args.checkDiagnostics ?? checkSupervisorDiagnostics;
+  const check =
+    args.checkDiagnostics ?? (() => executionHosts.local().diagnostics());
   const diagnostics = await check();
 
   if (diagnostics.kind !== "ready") {

@@ -5,7 +5,7 @@ import type {
   ScratchUploadedFileInput,
   StoredScratchAttachment,
 } from "@/lib/scratch-runs/types";
-import type { PromptContentBlock } from "@/lib/supervisor-client";
+import type { PromptContentBlock } from "@/lib/execution-host";
 
 import { createHash } from "node:crypto";
 import path from "node:path";

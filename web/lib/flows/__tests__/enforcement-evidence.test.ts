@@ -1,5 +1,5 @@
 import type { AiCodingSettings } from "@/lib/config.schema";
-import type { SupervisorDiagnosticsStatus } from "@/lib/supervisor-client";
+import type { SupervisorDiagnosticsStatus } from "@/lib/execution-host";
 
 import { describe, expect, it, vi } from "vitest";
 

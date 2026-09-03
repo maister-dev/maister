@@ -45,7 +45,7 @@ import {
   classifyManualTaskLaunchability,
 } from "@/lib/runs/launchability";
 import { resolveTaskLaunchConfig } from "@/lib/runs/task-launch-config";
-import { getPlatformStatus } from "@/lib/supervisor-client";
+import { getPlatformStatus } from "@/lib/execution-host";
 import { formatTokenCount } from "@/lib/runs/cost-summary-facts";
 
 const DELIVERY_STRATEGY_LABEL: Record<string, string> = {

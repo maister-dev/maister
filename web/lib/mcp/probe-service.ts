@@ -3,7 +3,7 @@ import "server-only";
 import type {
   SupervisorMcpProbeRequest,
   SupervisorMcpProbeResult,
-} from "@/lib/supervisor-client";
+} from "@/lib/execution-host";
 import type { BindingTargetKind } from "@/lib/mcp/binding-service";
 
 import { sql, type SQL } from "drizzle-orm";
@@ -11,7 +11,7 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
-import { probeMcpViaSupervisor } from "@/lib/supervisor-client";
+import { executionHosts } from "@/lib/execution-host";
 
 // ADR-129 (W-F): resolve a probe target's NAMES-only config + enforce the D4
 // web-side PLATFORM trust gate (an untrusted-source platform stdio probe is
@@ -234,7 +234,8 @@ export async function probeAndCache(
   injected?: ProbeDb,
   supervisorProbe: (
     req: SupervisorMcpProbeRequest,
-  ) => Promise<SupervisorMcpProbeResult> = probeMcpViaSupervisor,
+  ) => Promise<SupervisorMcpProbeResult> = (req) =>
+    executionHosts.local().probeMcp(req),
 ): Promise<SupervisorMcpProbeResult> {
   const database = db(injected);
   const { request, cache } = await resolveProbeTarget(
