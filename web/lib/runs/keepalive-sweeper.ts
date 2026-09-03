@@ -982,21 +982,6 @@ function promoteTreeVerdict(
   return { ...verdict, rung: "terminate" };
 }
 
-// Does this root actually have descendants? A root with none is a "tree of one",
-// whose tree token total IS its run token total by construction — see the D2
-// note at the tree-tokens meter. Existence probe only (LIMIT 1) on the
-// `runs_root_run_id_idx` index; deliberately NOT `getRunSubtreeIds`, which walks
-// the whole subtree one query per level.
-async function hasTreeDescendants(db: Db, rootRunId: string): Promise<boolean> {
-  const rows = await db
-    .select({ id: runs.id })
-    .from(runs)
-    .where(eq(runs.rootRunId, rootRunId))
-    .limit(1);
-
-  return rows.length > 0;
-}
-
 // Evaluate every active scope/meter for one candidate and return the single
 // highest-rung verdict (or null = within budget). The tree scope is gated to the
 // tree ROOT only (this run has no root_run_id of its own) — a non-root member
@@ -1125,20 +1110,20 @@ async function evaluateBudgetForCandidate(
     }
   }
 
-  // --- tree scope (only at a tree root that HAS a tree) ----------------------
+  // --- tree scope (only at the tree root) ------------------------------------
   //
   // Rootness is PARENTAGE. It is not `rootRunId === id`: the launchers write
   // `parent.rootRunId ?? parent.id`, so a descendant carries the root's id and
   // the ROOT ITSELF carries NULL — nothing self-stamps a root, so that predicate
   // is never true in production and the whole tree ladder was unreachable.
   //
-  // `hasDescendants` keeps the scope honest in the other direction: an ordinary
-  // childless run is not a tree, and metering it here would apply the tree
-  // ceiling to a single run on top of its own run-scope ceiling.
-  const isTreeRoot =
-    candidate.parentRunId === null && (await hasDescendants(db, candidate.id));
-
-  if (isTreeRoot) {
+  // A root with NO descendants is still metered here. Wall-clock and failures
+  // are tree-scope-only meters with no other enforcement point, and a tree
+  // token ceiling STRICTER than the run's is an operator asking for a tighter
+  // bound — "a tree of one spends only its own tokens" is true of the
+  // measurement, not of two different ceilings over it. Only the genuinely
+  // redundant tokens meter is skipped, at the meter (see `skipRedundantTreeTokens`).
+  if (candidate.parentRunId === null) {
     // ADR-165 (D8): min-merge the ROOT orchestrator node's declared budget into
     // the policy's tree ceilings. The tighter of the two binds — a manifest can
     // lower an instance policy, never raise it. Spend / time / failure budgets
@@ -1221,7 +1206,7 @@ async function evaluateBudgetForCandidate(
       runTokenCeilings !== null &&
       treeTokenCeilings.escalateLimit >= runTokenCeilings.escalateLimit &&
       treeTokenCeilings.hardLimit >= runTokenCeilings.hardLimit &&
-      !(await hasTreeDescendants(db, candidate.id));
+      !(await hasDescendants(db, candidate.id));
 
     if (treeTokenCeilings && !skipRedundantTreeTokens) {
       const current = await queryRunTreeTokens(candidate.id, { client: db });

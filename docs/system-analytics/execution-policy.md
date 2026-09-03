@@ -150,11 +150,13 @@ a cascade-terminate. That promotion is applied when the tree verdict is
 classified, BEFORE the highest-rung arbitration across scopes (Implemented) —
 applied after, a same-tick run/task `escalate` won the equal-rung tie and
 swallowed the tree breach. A **`Running`** root whose tree breaches therefore
-cascade-terminates rather than pausing. A root with **no descendants** does not
-evaluate the tree token meter while run-scope tokens are set: its tree total is
-its run total, and the redundant meter otherwise killed a run whose run ceiling
-had just been raised. `wallClockMinutes` is enforced at tree scope alone and is
-never skipped.
+cascade-terminates rather than pausing. A root with **no descendants** is still
+a tree root for this ladder; it skips only the tree **token** meter, and only
+while run-scope tokens are set and the tree ceilings are not stricter than the
+run's: its tree total is its run total, and the redundant meter otherwise killed
+a run whose run ceiling had just been raised, while a stricter tree ceiling is an
+operator's bound and keeps binding. `wallClockMinutes` is enforced at tree scope
+alone and is never skipped.
 
 ```mermaid
 stateDiagram-v2

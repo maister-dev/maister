@@ -1208,7 +1208,6 @@ describe("budget watchdog — TREE scope (E6)", () => {
       runKind: "flow",
       projectId,
       rootRunId: rootId,
-      parentRunId: rootId,
       status: "WaitingOnChildren",
       currentStepId: null,
       flowVersion: "v1.0.0",
@@ -1673,9 +1672,7 @@ describe("budget watchdog — tree arbitration (D1/D2)", () => {
     expect(attempts.find((a) => a.nodeId === "implement")?.status).toBe(
       "Succeeded",
     );
-    expect(attempts.find((a) => a.nodeId === "review")?.status).toBe(
-      "Running",
-    );
+    expect(attempts.find((a) => a.nodeId === "review")?.status).toBe("Running");
     expect((await getRun(rootId)).status).toBe("Running");
   }, 60_000);
 
