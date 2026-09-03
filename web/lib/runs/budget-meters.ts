@@ -2,7 +2,7 @@ import "server-only";
 
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, or } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -68,6 +68,11 @@ export async function consecutiveFailedAttempts(
 // Trailing streak of `Failed|Crashed|Abandoned` runs scoped by task_id OR
 // root_run_id (task-scope / tree-scope failure meter), ordered by started_at
 // DESC. Exactly one of taskId / rootRunId must be provided.
+//
+// The TREE scope is `id = root OR root_run_id = root`, not `root_run_id` alone:
+// the launchers write `parent.rootRunId ?? parent.id`, so a DESCENDANT carries
+// the root's id while the ROOT ITSELF carries NULL. The root's own failure is a
+// member of its tree's streak, and a root_run_id-only predicate dropped it.
 export async function consecutiveFailedRuns(
   key: { taskId?: string; rootRunId?: string },
   opts: { client?: DbClient; excludeRunId?: string } = {},
@@ -83,7 +88,10 @@ export async function consecutiveFailedRuns(
   const scope =
     key.taskId != null
       ? eq(runs.taskId, key.taskId)
-      : eq(runs.rootRunId, key.rootRunId as string);
+      : or(
+          eq(runs.id, key.rootRunId as string),
+          eq(runs.rootRunId, key.rootRunId as string),
+        );
   const rows = await client
     .select({ id: runs.id, status: runs.status })
     .from(runs)
@@ -94,8 +102,10 @@ export async function consecutiveFailedRuns(
   // Running run is its NEWEST by started_at and is not a failure, so leaving it
   // in breaks the streak at 0 — task-scope consecutiveFailures would never trip
   // (spec E7). Counting failures strictly BEFORE the live run gives the intended
-  // "N prior attempts failed" signal. (A tree root is the OLDEST member, so
-  // excluding it is a no-op there — kept for uniformity.)
+  // "N prior attempts failed" signal. At tree scope the root is now IN the
+  // result set (see the scope note above) and is its OLDEST member, so excluding
+  // it drops the streak's last element — which is what the sweeper wants, since
+  // there the excluded root IS the live candidate.
   const statuses = (
     opts.excludeRunId
       ? rows.filter((row) => row.id !== opts.excludeRunId)

@@ -567,6 +567,49 @@ describe("budget watchdog — ESCALATE (flow-only, E4) + non-flow promotion to t
     expect(ws[0].removedAt).toBeNull();
   }, 60_000);
 
+  it("standalone run with run+tree ceilings at the SAME value stays on ESCALATE (run scope wins the equal-rung tie)", async () => {
+    // The `MAISTER_DEFAULT_UNATTENDED_BUDGET_TOKENS` shape: the seeder writes
+    // run.maxTokens AND tree.maxTokens at one value. A standalone run carries
+    // root_run_id NULL, so it IS a tree root and evaluates tree scope too — and
+    // its "tree" total is just its own spend. Tree scope has NO escalate rung, so
+    // if the tree verdict won the tie this run would be hard-terminated instead
+    // of pausing for a human. `pickHigher` keeps the FIRST verdict at an equal
+    // rung and run scope is evaluated first, so the escalate survives.
+    const taskId = await seedTask();
+    const sup = `sup-${randomUUID().slice(0, 8)}`;
+    const runId = await seedRun({
+      taskId,
+      executionPolicy: policyWithBudget({
+        run: { maxTokens: 1000 },
+        tree: { maxTokens: 1000 },
+      }),
+      acpSessionId: "acp-esc-tie",
+    });
+
+    await seedAttempt({ runId, attempt: 1, status: "Running" });
+    await seedRollup(runId, taskId, 1000); // at 100% of BOTH ceilings
+    await seedWorkspace(runId);
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(runId, sup, "implement"),
+    ]);
+
+    await runSweepTick({ db, executionHosts: hosts });
+
+    const run = await getRun(runId);
+
+    // Paused for a human, NOT cascade-terminated.
+    expect(run.status).toBe("NeedsInput");
+    expect(run.budgetState?.notified?.run).toBe("escalate");
+    expect(deleteSessionSpy).not.toHaveBeenCalled();
+
+    const hitl = await getHitl(runId);
+
+    expect(hitl).toHaveLength(1);
+    expect(hitl[0].kind).toBe("budget_breach");
+    expect(hitl[0].schema.scope).toBe("run");
+  }, 60_000);
+
   it("agent: escalate-band breach is promoted to TERMINATE (escalate is flow-only) — deleteSession, run Failed, no HITL pause", async () => {
     const sup = `sup-${randomUUID().slice(0, 8)}`;
     const runId = await seedRun({
@@ -1102,6 +1145,7 @@ describe("budget watchdog — TREE scope (E6)", () => {
       runKind: "flow",
       projectId,
       rootRunId: null,
+      parentRunId: null,
       status: "WaitingOnChildren",
       currentStepId: null,
       flowVersion: "v1.0.0",
@@ -1163,6 +1207,7 @@ describe("budget watchdog — TREE scope (E6)", () => {
       runKind: "flow",
       projectId,
       rootRunId: rootId,
+      parentRunId: rootId,
       status: "WaitingOnChildren",
       currentStepId: null,
       flowVersion: "v1.0.0",
@@ -1326,7 +1371,8 @@ describe("budget watchdog — TREE scope (E6)", () => {
       id: rootId,
       runKind: "flow",
       projectId,
-      rootRunId: rootId,
+      rootRunId: null,
+      parentRunId: null,
       status: "Running",
       currentStepId: "plan",
       acpSessionId: "acp-root",
@@ -1516,12 +1562,14 @@ describe("budget watchdog — TASK scope (E7)", () => {
     });
 
     // A real tree root so the parked/sibling root_run_id FKs resolve. The root
-    // carries NO budget, so it never trips anything itself.
+    // carries NO budget, so it never trips anything itself. Its own root_run_id
+    // is NULL — the production shape the launchers write.
     await db.insert(schema.runs).values({
       id: rootId,
       runKind: "flow",
       projectId,
-      rootRunId: rootId,
+      rootRunId: null,
+      parentRunId: null,
       status: "Done",
       currentStepId: null,
       runnerId: executorId,

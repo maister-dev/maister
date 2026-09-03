@@ -9,10 +9,13 @@ import {
 // `unattended` run is launched with NO budget set at any scope AND the operator
 // configured a default token ceiling, seed BOTH `run.maxTokens` and
 // `tree.maxTokens` from the env var so a hands-off run is never unbounded by
-// accident. The run seed is load-bearing: a standalone run has root_run_id=NULL,
-// so the watchdog's tree scope (gated on rootRunId===id) never evaluates for it —
-// run scope is the only one always evaluated for a Running candidate. The tree
-// seed still bounds an orchestrator swarm's TOTAL spend (summed at the root).
+// accident. BOTH seeds are load-bearing: run scope bounds the single run, and
+// tree scope bounds an orchestrator swarm's TOTAL spend (summed at the root).
+// Seeding the two at the SAME value keeps a standalone run on the ESCALATE rung
+// rather than a hard kill: run scope is evaluated first and wins the equal-rung
+// tie in `pickHigher`, so the tree rung's force-promotion to terminate — which
+// tests the winning verdict's scope — does not apply to it. Only a real swarm,
+// whose tree total exceeds the root's own spend, trips tree scope alone.
 // Lives in a server module so the env read stays server-side and
 // execution-policy.ts stays client-safe. Never throws — a missing / invalid /
 // non-positive env value leaves the policy untouched (fail-OPEN, consistent with

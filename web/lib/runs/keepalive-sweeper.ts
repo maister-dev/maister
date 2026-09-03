@@ -967,9 +967,9 @@ function pickHigher(
 }
 
 // Evaluate every active scope/meter for one candidate and return the single
-// highest-rung verdict (or null = within budget). `evaluateTree` gates the tree
-// scope to the tree ROOT only (this run is its own root_run_id) — a non-root
-// member evaluates run/task. Tree scope is force-terminate (no escalate rung):
+// highest-rung verdict (or null = within budget). The tree scope is gated to the
+// tree ROOT only (this run has no root_run_id of its own) — a non-root member
+// evaluates run/task. Tree scope is force-terminate (no escalate rung):
 // a tree verdict at the escalate rung is promoted to terminate here.
 async function evaluateBudgetForCandidate(
   db: Db,

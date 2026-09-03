@@ -217,14 +217,18 @@ describe("budget aggregation — token sums", () => {
     expect(await queryTaskTokens(taskId, opts())).toBe(0);
   });
 
-  it("queryRunTreeTokens sums rollups across child runs sharing root_run_id", async () => {
+  it("queryRunTreeTokens sums the root's OWN rollup plus every descendant's", async () => {
     const rootRunId = randomUUID();
 
-    // The root run itself is part of its own tree (root_run_id === own id).
+    // PRODUCTION SHAPE. The launchers write `parent.rootRunId ?? parent.id`, so
+    // a DESCENDANT carries the root's id while the ROOT ITSELF carries NULL —
+    // nothing self-stamps a root. Seeding `root_run_id = <own id>` here would
+    // build a shape production never creates and would mask a `root_run_id`-only
+    // predicate, which silently drops the root's own spend from its own tree.
     await db.insert(schema.runs).values({
       id: rootRunId,
       projectId,
-      rootRunId,
+      rootRunId: null,
       status: "WaitingOnChildren",
       runKind: "flow",
       flowVersion: "v1.0.0",
@@ -232,13 +236,13 @@ describe("budget aggregation — token sums", () => {
     });
     const childA = await seedRun({ rootRunId });
     const childB = await seedRun({ rootRunId });
-    // A run under a different tree must not leak in.
+    // A different tree's root (also NULL-stamped) must not leak in.
     const otherRoot = randomUUID();
 
     await db.insert(schema.runs).values({
       id: otherRoot,
       projectId,
-      rootRunId: otherRoot,
+      rootRunId: null,
       status: "Running",
       runKind: "flow",
       flowVersion: "v1.0.0",
@@ -359,10 +363,13 @@ describe("budget aggregation — failure streaks", () => {
     const rootRunId = randomUUID();
     const base = Date.now();
 
+    // Production shape: the root's own root_run_id is NULL. Its OWN failure is
+    // part of its tree's streak, so the scope must be `id = root OR
+    // root_run_id = root` — a root_run_id-only predicate would drop it.
     await db.insert(schema.runs).values({
       id: rootRunId,
       projectId,
-      rootRunId,
+      rootRunId: null,
       status: "Failed",
       runKind: "flow",
       flowVersion: "v1.0.0",
@@ -390,17 +397,17 @@ describe("budget aggregation — failure streaks", () => {
     await db.insert(schema.runs).values({
       id: rootRunId,
       projectId,
-      rootRunId,
+      rootRunId: null,
       status: "Failed",
       runKind: "flow",
       flowVersion: "v1.0.0",
       startedAt: new Date(base - 1000),
     });
-    // A newer failed run in a DIFFERENT tree must not be counted.
+    // A newer failed run in a DIFFERENT tree (also NULL-stamped) must not count.
     await db.insert(schema.runs).values({
       id: otherRoot,
       projectId,
-      rootRunId: otherRoot,
+      rootRunId: null,
       status: "Failed",
       runKind: "flow",
       flowVersion: "v1.0.0",
@@ -415,10 +422,13 @@ describe("budget aggregation — tree wall-clock", () => {
   it("treeWallClockMinutes returns whole minutes since the root run started_at", async () => {
     const rootRunId = randomUUID();
 
+    // Production shape: a root's own root_run_id is NULL. (This meter reads the
+    // root row by `id`, so the seed shape does not change its result — seeded
+    // faithfully anyway so no fixture in this file teaches the wrong convention.)
     await db.insert(schema.runs).values({
       id: rootRunId,
       projectId,
-      rootRunId,
+      rootRunId: null,
       status: "WaitingOnChildren",
       runKind: "flow",
       flowVersion: "v1.0.0",
