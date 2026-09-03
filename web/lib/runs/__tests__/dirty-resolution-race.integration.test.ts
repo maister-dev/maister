@@ -174,13 +174,25 @@ describe("resolveDirtyWorktree — claim-first race protocol (X-2PC)", () => {
     const gitGate = new Promise<void>((resolve) => {
       releaseGit = resolve;
     });
+    // Resolves when the WINNER enters its git side-effect. The winner's path
+    // from the claim to that call is asynchronous (the commit snapshot probes
+    // worktree provenance first), so the loser can settle before the winner
+    // gets there. The contract under test is ORDER relative to the claim — the
+    // loser never touches git — not which promise the event loop runs first,
+    // so the assertions wait for both events instead of racing them.
+    let markGitReached!: () => void;
+    const gitReached = new Promise<void>((resolve) => {
+      markGitReached = resolve;
+    });
 
     snapshotSpy.mockImplementation(async () => {
+      markGitReached();
       await gitGate;
 
       return true;
     });
     discardSpy.mockImplementation(async () => {
+      markGitReached();
       await gitGate;
     });
 
@@ -215,30 +227,37 @@ describe("resolveDirtyWorktree — claim-first race protocol (X-2PC)", () => {
       },
     );
 
-    // The loser settles first — the winner is still parked inside its git
-    // side-effect behind the gate. The loser must already hold CONFLICT and
-    // must not have invoked ANY git helper.
-    await Promise.race([pa, pb]);
+    try {
+      // The loser settles while the winner is parked inside its git
+      // side-effect behind the gate. The loser must hold CONFLICT and must not
+      // have invoked ANY git helper — exactly one call, the winner's.
+      await Promise.all([Promise.race([pa, pb]), gitReached]);
 
-    const settled = Object.values(outcomes).filter((o) => o !== "pending");
+      const settled = Object.values(outcomes).filter((o) => o !== "pending");
 
-    expect(settled).toEqual(["CONFLICT"]);
-    expect(snapshotSpy.mock.calls.length + discardSpy.mock.calls.length).toBe(
-      1,
-    );
+      expect(settled).toEqual(["CONFLICT"]);
+      expect(snapshotSpy.mock.calls.length + discardSpy.mock.calls.length).toBe(
+        1,
+      );
 
-    releaseGit();
-    await Promise.all([pa, pb]);
+      releaseGit();
+      await Promise.all([pa, pb]);
 
-    const winnerChoice = outcomes.commit === "won" ? "commit" : "discard";
-    const loserOutcome =
-      winnerChoice === "commit" ? outcomes.discard : outcomes.commit;
+      const winnerChoice = outcomes.commit === "won" ? "commit" : "discard";
+      const loserOutcome =
+        winnerChoice === "commit" ? outcomes.discard : outcomes.commit;
 
-    expect(loserOutcome).toBe("CONFLICT");
-    expect(await dirtyResolutionOf(hitlId)).toBe(winnerChoice);
-    expect(snapshotSpy.mock.calls.length + discardSpy.mock.calls.length).toBe(
-      1,
-    );
+      expect(loserOutcome).toBe("CONFLICT");
+      expect(await dirtyResolutionOf(hitlId)).toBe(winnerChoice);
+      expect(snapshotSpy.mock.calls.length + discardSpy.mock.calls.length).toBe(
+        1,
+      );
+    } finally {
+      // A failed assertion must not leak a parked winner into the next test:
+      // it would finish there against that test's freshly reset mocks.
+      releaseGit();
+      await Promise.allSettled([pa, pb]);
+    }
   });
 
   it("rolls the claim back when the git side-effect fails — a retry can claim again", async () => {
