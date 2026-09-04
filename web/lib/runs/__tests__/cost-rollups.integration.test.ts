@@ -71,6 +71,7 @@ beforeEach(async () => {
 async function seedRun(opts: {
   taskId?: string | null;
   runKind?: string;
+  executionDataPlaneMode?: "legacy_file_v1" | "canonical_events_v1";
 }): Promise<string> {
   const runId = randomUUID();
 
@@ -80,6 +81,7 @@ async function seedRun(opts: {
     projectId,
     status: "Done",
     runKind: opts.runKind ?? "flow",
+    executionDataPlaneMode: opts.executionDataPlaneMode ?? "legacy_file_v1",
     flowVersion: "v1.0.0",
     startedAt: new Date(),
     endedAt: new Date(),
@@ -146,6 +148,58 @@ async function readByRunner(
 }
 
 describe("reconcileRunCostRollups — by_runner", () => {
+  it("uses canonical usage events without reading cost.jsonl", async () => {
+    const runId = await seedRun({ executionDataPlaneMode: "canonical_events_v1" });
+    await seedSession({
+      runId,
+      sessionName: "default",
+      adapter: "claude",
+      model: "canonical-model",
+    });
+    await db.insert(schema.executionEvents).values({
+      id: randomUUID(),
+      source: "manager",
+      sourceKey: "canonical-usage:0",
+      runId,
+      eventType: "usage.recorded",
+      payloadSchema: "maister.usage.recorded.v1",
+      payload: {
+        sessionName: "default",
+        model: "canonical-model",
+        inputTokens: 13,
+        outputTokens: 5,
+        cacheReadInputTokens: 2,
+        cacheCreationInputTokens: 3,
+        resumed: false,
+      },
+      occurredAt: new Date(),
+      receivedAt: new Date(),
+      runSequence: BigInt(0),
+      ingestDisposition: "accepted",
+    });
+
+    await reconcileRunCostRollups(runId, {
+      client: client(),
+      runtimeRoot: path.join(runtimeRoot, "unmounted-host-runtime"),
+    });
+    const [row] = await db
+      .select({
+        inputTokens: schema.runCostRollups.inputTokens,
+        outputTokens: schema.runCostRollups.outputTokens,
+        cacheReadTokens: schema.runCostRollups.cacheReadTokens,
+        cacheCreationTokens: schema.runCostRollups.cacheCreationTokens,
+      })
+      .from(schema.runCostRollups)
+      .where(eq(schema.runCostRollups.runId, runId));
+
+    expect(row).toEqual({
+      inputTokens: 13,
+      outputTokens: 5,
+      cacheReadTokens: 2,
+      cacheCreationTokens: 3,
+    });
+  });
+
   it("buckets a single-session run under its snapshot's adapter/model", async () => {
     const runId = await seedRun({});
 

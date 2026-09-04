@@ -10,9 +10,15 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import {
+  canonicalProjectorArtifactId,
   projectorArtifactId,
   recordArtifact,
 } from "@/lib/flows/graph/artifact-store";
+import {
+  ExecutionEventProjectionError,
+  projectExecutionEvents,
+} from "@/lib/execution-host/events/projector";
+import type { ExecutionEvent } from "@/lib/db/schema";
 import { runtimeRoot } from "@/lib/instance-config";
 import * as schemaModule from "@/lib/db/schema";
 
@@ -22,6 +28,8 @@ const { runs, projects, nodeAttempts, artifactProjectionCursors } =
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
+
+const CANONICAL_ARTIFACT_CONSUMER = "canonical-artifact-projector-v1";
 
 const log = pino({
   name: "artifact-projector",
@@ -156,6 +164,137 @@ function deriveFromLine(line: Record<string, unknown>): Derivation | null {
   throw new Error(`unknown sessionUpdate shape: ${String(sessionUpdate)}`);
 }
 
+function permanentCanonicalProjectionError(
+  message: string,
+): ExecutionEventProjectionError {
+  return new ExecutionEventProjectionError(message, true);
+}
+
+function canonicalEventLine(event: ExecutionEvent): Record<string, unknown> {
+  const payload = event.payload ?? {};
+
+  if (event.eventType === "session.update") {
+    if (!payload.update || typeof payload.update !== "object") {
+      throw permanentCanonicalProjectionError(
+        "canonical session.update event is missing its update payload",
+      );
+    }
+  }
+  if (event.eventType === "session.permission_request") {
+    if (!payload.toolCall || typeof payload.toolCall !== "object") {
+      throw permanentCanonicalProjectionError(
+        "canonical permission event is missing its tool-call payload",
+      );
+    }
+  }
+
+  return {
+    type: event.eventType,
+    update: payload.update,
+    toolCall: payload.toolCall,
+  };
+}
+
+async function canonicalAttribution(
+  tx: Db,
+  event: ExecutionEvent,
+): Promise<Attribution | undefined> {
+  const nodeAttemptId = event.payload?.nodeAttemptId;
+
+  if (nodeAttemptId === undefined || nodeAttemptId === null) return undefined;
+  if (typeof nodeAttemptId !== "string" || nodeAttemptId.length === 0) {
+    throw permanentCanonicalProjectionError(
+      "canonical artifact event has an invalid node-attempt binding",
+    );
+  }
+  const attempts = await tx
+    .select({
+      id: nodeAttempts.id,
+      nodeId: nodeAttempts.nodeId,
+      attempt: nodeAttempts.attempt,
+    })
+    .from(nodeAttempts)
+    .where(and(eq(nodeAttempts.id, nodeAttemptId), eq(nodeAttempts.runId, event.runId)))
+    .limit(1);
+  const attempt = attempts[0] as
+    | { id: string; nodeId: string; attempt: number }
+    | undefined;
+
+  if (!attempt) {
+    throw permanentCanonicalProjectionError(
+      "canonical artifact event names a node attempt outside its run",
+    );
+  }
+
+  return {
+    nodeAttemptId: attempt.id,
+    nodeId: attempt.nodeId,
+    attempt: attempt.attempt,
+  };
+}
+
+async function projectCanonicalArtifactEvent(
+  tx: Db,
+  event: ExecutionEvent,
+): Promise<void> {
+  if (event.source !== "host") return;
+  let derivation: Derivation | null;
+
+  try {
+    derivation = deriveFromLine(canonicalEventLine(event));
+  } catch (error) {
+    if (error instanceof ExecutionEventProjectionError) throw error;
+    throw permanentCanonicalProjectionError(
+      error instanceof Error
+        ? `canonical artifact event has an invalid shape: ${error.message}`
+        : "canonical artifact event has an invalid shape",
+    );
+  }
+  if (!derivation) return;
+
+  const attribution = await canonicalAttribution(tx, event);
+  await recordArtifact(
+    {
+      id: canonicalProjectorArtifactId({ runId: event.runId, eventId: event.id }),
+      runId: event.runId,
+      nodeAttemptId: attribution?.nodeAttemptId ?? null,
+      nodeId: attribution?.nodeId ?? null,
+      attempt: attribution?.attempt ?? null,
+      artifactDefId: null,
+      kind: derivation.kind,
+      producer: "projector",
+      locator: derivation.locator,
+      uri: derivation.uri,
+      // Canonical run order is an unbounded BIGINT. The legacy field is an
+      // integer and must not silently truncate it; the event-id locator above
+      // is the idempotency identity for canonical replay.
+      monotonicId: null,
+      validity: "current",
+      visibility: "internal",
+      retention: "run",
+    },
+    tx,
+  );
+}
+
+async function projectCanonicalRunEvents(
+  d: Db,
+  runId: string,
+): Promise<{ projected: number; lastMonotonicId: number }> {
+  const result = await projectExecutionEvents({
+    db: d,
+    runId,
+    projector: {
+      consumerName: CANONICAL_ARTIFACT_CONSUMER,
+      project: projectCanonicalArtifactEvent,
+    },
+  });
+
+  // The public result predates canonical BIGINT run ordering. Keep its legacy
+  // field stable for callers while the durable consumer cursor owns replay.
+  return { projected: result.projected, lastMonotonicId: 0 };
+}
+
 async function loadOrCreateCursor(
   d: Db,
   runId: string,
@@ -215,6 +354,22 @@ export async function projectRunEvents(
   opts?: { db?: Db },
 ): Promise<{ projected: number; lastMonotonicId: number }> {
   const d: Db = opts?.db ?? getDb();
+
+  const runRows = await d
+    .select({ executionDataPlaneMode: runs.executionDataPlaneMode })
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .limit(1);
+  const run = runRows[0] as
+    | { executionDataPlaneMode: "legacy_file_v1" | "canonical_events_v1" }
+    | undefined;
+
+  if (!run) {
+    throw new Error(`projectRunEvents: run does not exist: ${runId}`);
+  }
+  if (run.executionDataPlaneMode === "canonical_events_v1") {
+    return projectCanonicalRunEvents(d, runId);
+  }
 
   // 1. Resolve the events-log path via project slug join.
   const slugRows = await d

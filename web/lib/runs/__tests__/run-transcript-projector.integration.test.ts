@@ -91,7 +91,9 @@ function usageLine(nodeAttemptId: string, monotonicId: number, used: number) {
   });
 }
 
-async function seed(): Promise<{
+async function seed(
+  executionDataPlaneMode: "legacy_file_v1" | "canonical_events_v1" = "legacy_file_v1",
+): Promise<{
   runId: string;
   slug: string;
   planAttemptId: string;
@@ -114,6 +116,7 @@ async function seed(): Promise<{
     projectId,
     runKind: "flow",
     status: "Running",
+    executionDataPlaneMode,
     flowVersion: "v1",
     flowRevision: "manual",
   });
@@ -179,6 +182,63 @@ async function writeEvents(slug: string, runId: string, lines: string[]) {
 }
 
 describe("projectRunTranscript", () => {
+  it("projects a canonical transcript from Postgres without reading the host runtime directory", async () => {
+    const { runId, implAttemptId } = await seed("canonical_events_v1");
+    await db.insert(schema.executionEvents).values([
+      {
+        id: randomUUID(),
+        source: "manager",
+        sourceKey: "canonical-transcript:0",
+        runId,
+        eventType: "session.update",
+        payloadSchema: "maister.session.update.v1",
+        payload: {
+          nodeAttemptId: implAttemptId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "canonical " },
+          },
+        },
+        occurredAt: new Date(),
+        receivedAt: new Date(),
+        runSequence: BigInt(0),
+        ingestDisposition: "accepted",
+      },
+      {
+        id: randomUUID(),
+        source: "manager",
+        sourceKey: "canonical-transcript:1",
+        runId,
+        eventType: "session.update",
+        payloadSchema: "maister.session.update.v1",
+        payload: {
+          nodeAttemptId: implAttemptId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "event" },
+          },
+        },
+        occurredAt: new Date(),
+        receivedAt: new Date(),
+        runSequence: BigInt(1),
+        ingestDisposition: "accepted",
+      },
+    ]);
+
+    const result = await projectRunTranscript(runId, {
+      client: db,
+      runtimeRoot: join(runtimeRoot, "unmounted-host-runtime"),
+    });
+    const transcript = await getRunNodeTranscript(runId, "implement", {
+      client: db,
+    });
+
+    expect(result).toMatchObject({ status: "projected", nodeAttempts: 1 });
+    expect(transcript?.messages).toEqual([
+      expect.objectContaining({ role: "assistant", content: "canonical event" }),
+    ]);
+  });
+
   it("attributes coalesced messages to the right node attempt and is idempotent", async () => {
     const { runId, slug, planAttemptId, implAttemptId } = await seed();
 

@@ -87,6 +87,22 @@ const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
   "session.cancel": () => ({}),
   "session.checkpoint": () => ({}),
   "session.delete": () => ({}),
+  "runtime_object.reserve": (p) => ({
+    ...pickScalars(p, [
+      "objectId",
+      "kind",
+      "logicalName",
+      "mimeType",
+      "sizeBytes",
+      "sha256",
+      "generation",
+      "retentionClass",
+      "expiresAt",
+    ]),
+  }),
+  "runtime_object.upload": (p) =>
+    pickScalars(p, ["objectId", "generation", "sizeBytes", "sha256", "mimeType"]),
+  "runtime_object.delete": (p) => pickScalars(p, ["objectId", "generation"]),
 };
 
 export function redactPayload(kind: CommandKind, payload: unknown): Payload {

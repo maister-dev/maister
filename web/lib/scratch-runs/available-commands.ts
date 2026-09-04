@@ -3,14 +3,14 @@ import "server-only";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { eq } from "drizzle-orm";
+import { and, asc, eq, isNotNull } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { runtimeRoot } from "@/lib/instance-config";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs, projects } = schemaModule as unknown as Record<string, any>;
+const { runs, projects, executionEvents } = schemaModule as unknown as Record<string, any>;
 
 // FR-A2/A3: a live availableCommands entry, names AS-EMITTED by the adapter
 // (codex bakes `$`; claude bare / `mcp:`). The composer maps to canonical refs.
@@ -113,13 +113,37 @@ export async function readScratchAvailableCommands(
   runId: string,
   db: any = getDb(),
 ): Promise<AvailableCommandDto[]> {
-  const slugRows = await db
-    .select({ slug: projects.slug })
+  const runRows = await db
+    .select({ slug: projects.slug, executionDataPlaneMode: runs.executionDataPlaneMode })
     .from(runs)
     .innerJoin(projects, eq(projects.id, runs.projectId))
     .where(eq(runs.id, runId))
     .limit(1);
-  const slug = (slugRows[0] as { slug: string } | undefined)?.slug;
+  const run = runRows[0] as
+    | { slug: string; executionDataPlaneMode: "legacy_file_v1" | "canonical_events_v1" }
+    | undefined;
+
+  if (run?.executionDataPlaneMode === "canonical_events_v1") {
+    const events = await db
+      .select({ eventType: executionEvents.eventType, payload: executionEvents.payload })
+      .from(executionEvents)
+      .where(
+        and(
+          eq(executionEvents.runId, runId),
+          eq(executionEvents.ingestDisposition, "accepted"),
+          isNotNull(executionEvents.runSequence),
+        ),
+      )
+      .orderBy(asc(executionEvents.runSequence));
+    return extractLatestAvailableCommands(
+      events
+        .map((event: { eventType: string; payload: Record<string, unknown> | null }) =>
+          JSON.stringify({ type: event.eventType, ...(event.payload ?? {}) }),
+        )
+        .join("\n"),
+    );
+  }
+  const slug = run?.slug;
 
   if (!slug) return [];
 

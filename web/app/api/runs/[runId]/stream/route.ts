@@ -22,6 +22,7 @@ import {
 } from "@/lib/runs/stream-options";
 import { runtimeRoot } from "@/lib/runtime-root";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
+import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { localPackages, projects, runs, executionEvents } = schemaModule as unknown as Record<
@@ -38,6 +39,7 @@ const TERMINAL_RUN_STATUS = new Set(["Done", "Abandoned", "Failed", "Crashed"]);
 
 const POLL_INTERVAL_MS = 100;
 const STATUS_REFRESH_MS = 500;
+const CANONICAL_WAKE_TIMEOUT_MS = 1_000;
 const CHUNK_SIZE = 64 * 1024;
 
 type RouteParams = { params: Promise<{ runId: string }> };
@@ -221,7 +223,6 @@ function canonicalBrowserEvent(event: Record<string, unknown>): Record<string, u
         ? event.occurredAt.toISOString()
         : String(event.occurredAt),
     hostSessionId: event.hostSessionId ?? null,
-    payload: event.payload ?? {},
   };
 }
 
@@ -292,7 +293,10 @@ function canonicalRunEventStream(input: {
             );
             break;
           }
-          await delay(POLL_INTERVAL_MS);
+          // A local wake only reduces latency. The next iteration always
+          // replays from the durable sequence, including after a missed wake
+          // from another web process or a manager restart.
+          await runEventWakeBus.wait(input.run.id, CANONICAL_WAKE_TIMEOUT_MS);
         }
       } catch (error) {
         log.warn(

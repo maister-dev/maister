@@ -94,7 +94,10 @@ type Seeded = {
 
 // Seed a project + run + two node_attempts (each with a distinct acp_session_id
 // for attribution), set MAISTER_RUNTIME_ROOT to a temp dir, and return handles.
-async function seedRun(): Promise<Seeded> {
+async function seedRun(
+  executionDataPlaneMode: "legacy_file_v1" | "canonical_events_v1" =
+    "legacy_file_v1",
+): Promise<Seeded> {
   const projectId = randomUUID();
   const slug = `proj-${projectId.slice(0, 8)}`;
   const executorId = randomUUID();
@@ -144,6 +147,7 @@ async function seedRun(): Promise<Seeded> {
     runnerSnapshot: testRunnerSnapshot(executorId),
     flowVersion: "v1.0.0",
     status: "Running",
+    executionDataPlaneMode,
   });
 
   const attemptAId = randomUUID();
@@ -349,6 +353,83 @@ async function getRunStatus(runId: string): Promise<string> {
 }
 
 describe("T5.1: artifact projector core (projectRunEvents)", () => {
+  it("projects a canonical host tool event without opening the legacy event file", async () => {
+    const s = await seedRun("canonical_events_v1");
+    const hostId = randomUUID();
+    const assignmentId = randomUUID();
+    const streamId = randomUUID();
+    const hostKey = `eh_${randomUUID().replace(/-/g, "")}`;
+
+    await db.insert(schema.executionHosts).values({
+      id: hostId,
+      hostKey,
+      kind: "local_direct",
+      displayName: "canonical artifact projector host",
+      transport: { kind: "local_direct" },
+    });
+    await db.insert(schema.executionAssignments).values({
+      id: assignmentId,
+      runId: s.runId,
+      executionHostId: hostId,
+      epoch: 1,
+      state: "active",
+      placementReason: "launch",
+    });
+    await db.insert(schema.executionEventStreams).values({
+      id: streamId,
+      executionHostId: hostId,
+      streamId: randomUUID(),
+      state: "active",
+      lastContiguousSequence: 0n,
+      lastReceivedSequence: 0n,
+    });
+    const eventId = randomUUID();
+    await db.insert(schema.executionEvents).values({
+      id: eventId,
+      source: "host",
+      runId: s.runId,
+      executionHostId: hostId,
+      eventStreamId: streamId,
+      hostSequence: 0n,
+      executionAssignmentId: assignmentId,
+      assignmentEpoch: 1,
+      hostBootId: randomUUID(),
+      hostSessionId: randomUUID(),
+      envelopeVersion: 1,
+      eventType: "session.update",
+      payloadSchema: "maister.session.update.v1",
+      payload: {
+        sessionName: "default",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "canonical-tool-call",
+          title: "Run canonical check",
+          status: "completed",
+        },
+      },
+      payloadSha256: "a".repeat(64),
+      payloadBytes: 128,
+      occurredAt: new Date("2026-09-04T00:00:00.000Z"),
+      runSequence: 0n,
+      ingestDisposition: "accepted",
+    });
+
+    const result = await projectRunEvents(s.runId, { db });
+    const artifacts = await getArtifacts(s.runId);
+
+    expect(result).toMatchObject({ projected: 1, lastMonotonicId: 0 });
+    expect(artifacts).toEqual([
+      expect.objectContaining({
+        id: `proj:${s.runId}:event:${eventId}`,
+        kind: "log",
+        producer: "projector",
+        nodeAttemptId: null,
+        locator: { kind: "inline", text: "Run canonical check · canonical-tool-call · completed" },
+        monotonicId: null,
+      }),
+    ]);
+  });
+
   // Behaviors 1 + 2 + 3: reads run-scoped log, derives log+preview artifacts
   // with deterministic PKs, plain chunk derives nothing, monotonic_id stored.
   it("derives a log artifact for tool calls, a preview artifact for preview URLs, and nothing for agent_message_chunk", async () => {

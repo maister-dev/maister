@@ -20,7 +20,7 @@ import {
   type CoalesceEntry,
 } from "@/lib/run-transcript/coalesce";
 
-const { localPackages, projects, runMessages, runs } = schema;
+const { executionEvents, localPackages, projects, runMessages, runs } = schema;
 
 type DbClient = NodePgDatabase<typeof schema>;
 
@@ -98,6 +98,102 @@ export type ProjectRunTranscriptResult = {
   rowsUpserted: number;
 };
 
+// Canonical runs derive the same coalesced transcript from manager-owned
+// execution_events. This intentionally replays durable database history; it
+// never reaches into an execution host's event file.
+async function projectCanonicalRunTranscript(
+  runId: string,
+  client: DbClient,
+): Promise<ProjectRunTranscriptResult> {
+  const rows = await client
+    .select({
+      id: executionEvents.id,
+      eventType: executionEvents.eventType,
+      payload: executionEvents.payload,
+      runSequence: executionEvents.runSequence,
+    })
+    .from(executionEvents)
+    .where(
+      and(
+        eq(executionEvents.runId, runId),
+        eq(executionEvents.ingestDisposition, "accepted"),
+      ),
+    )
+    .orderBy(asc(executionEvents.runSequence));
+  const byAttempt = new Map<string | null, CoalesceEntry[]>();
+
+  for (const row of rows) {
+    if (row.runSequence === null || !row.payload) continue;
+    const nodeAttemptId =
+      typeof row.payload.nodeAttemptId === "string"
+        ? row.payload.nodeAttemptId
+        : null;
+    const entries = byAttempt.get(nodeAttemptId) ?? [];
+    if (row.eventType === "session.update") {
+      entries.push({
+        kind: "update",
+        update: row.payload.update,
+        supervisorEventId: row.runSequence.toString(),
+      });
+    } else if (RESET_EVENT_TYPES.has(row.eventType)) {
+      entries.push({ kind: "reset" });
+    }
+    byAttempt.set(nodeAttemptId, entries);
+  }
+
+  const ownedAttempts = await client
+    .select({ id: schema.nodeAttempts.id })
+    .from(schema.nodeAttempts)
+    .where(eq(schema.nodeAttempts.runId, runId));
+  const ownedAttemptIds = new Set(ownedAttempts.map((attempt) => attempt.id));
+  let rowsUpserted = 0;
+  let nodeAttempts = 0;
+
+  await client.transaction(async (tx) => {
+    for (const [nodeAttemptId, entries] of byAttempt) {
+      if (nodeAttemptId && !ownedAttemptIds.has(nodeAttemptId)) {
+        throw new MaisterError(
+          "CONFLICT",
+          `canonical transcript event names node attempt outside run ${runId}`,
+          { details: { reason: "transcript_node_attempt_mismatch" } },
+        );
+      }
+      if (nodeAttemptId) nodeAttempts += 1;
+      for (const message of coalesceSessionUpdates(entries)) {
+        await tx
+          .insert(runMessages)
+          .values({
+            id: randomUUID(),
+            runId,
+            nodeAttemptId,
+            sequence: message.sequence,
+            role: message.role,
+            content: message.content,
+            supervisorEventId: message.supervisorEventId,
+          })
+          .onConflictDoUpdate({
+            target: [
+              runMessages.runId,
+              runMessages.nodeAttemptId,
+              runMessages.sequence,
+            ],
+            set: {
+              content: message.content,
+              supervisorEventId: message.supervisorEventId,
+            },
+          });
+        rowsUpserted += 1;
+      }
+    }
+  });
+
+  return {
+    status: rowsUpserted > 0 ? "projected" : "unchanged",
+    nodeAttempts,
+    rowsUpserted,
+  };
+}
+
 // Reconcile-on-read projector: tail the durable per-run events log, group its
 // `session.update` lines by the T-B0-stamped `nodeAttemptId`, coalesce each
 // group through the SHARED coalescer, and upsert `run_messages` rows keyed by
@@ -112,6 +208,7 @@ export async function projectRunTranscript(
   const [run] = await client
     .select({
       id: runs.id,
+      executionDataPlaneMode: runs.executionDataPlaneMode,
       projectSlug: projects.slug,
       localPackageSlug: localPackages.slug,
     })
@@ -121,6 +218,10 @@ export async function projectRunTranscript(
     .where(eq(runs.id, runId));
 
   if (!run) return { status: "missing-run", nodeAttempts: 0, rowsUpserted: 0 };
+
+  if (run.executionDataPlaneMode === "canonical_events_v1") {
+    return projectCanonicalRunTranscript(runId, client);
+  }
 
   const slug = run.projectSlug ?? run.localPackageSlug;
 
@@ -404,6 +505,7 @@ export async function getWholeRunTranscriptMessages(
   const [run] = await client
     .select({
       id: runs.id,
+      executionDataPlaneMode: runs.executionDataPlaneMode,
       projectSlug: projects.slug,
       localPackageSlug: localPackages.slug,
     })
@@ -411,6 +513,30 @@ export async function getWholeRunTranscriptMessages(
     .leftJoin(projects, eq(projects.id, runs.projectId))
     .leftJoin(localPackages, eq(localPackages.id, runs.localPackageId))
     .where(eq(runs.id, runId));
+
+  if (run?.executionDataPlaneMode === "canonical_events_v1") {
+    await projectCanonicalRunTranscript(runId, client);
+    const messages = await client
+      .select({
+        id: runMessages.id,
+        role: runMessages.role,
+        content: runMessages.content,
+        supervisorEventId: runMessages.supervisorEventId,
+        createdAt: runMessages.createdAt,
+      })
+      .from(runMessages)
+      .where(eq(runMessages.runId, runId))
+      .orderBy(asc(runMessages.createdAt), asc(runMessages.sequence));
+    return {
+      messages: messages.map((message) => ({
+        id: message.id,
+        role: message.role,
+        content: message.content,
+        supervisorEventId: message.supervisorEventId ?? message.id,
+      })),
+      lastEventAt: messages.at(-1)?.createdAt ?? null,
+    };
+  }
 
   const slug = run?.projectSlug ?? run?.localPackageSlug;
 

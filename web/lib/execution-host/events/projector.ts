@@ -27,6 +27,10 @@ export class ExecutionEventProjectionError extends Error {
 export type ExecutionEventProjector = {
   consumerName: string;
   project: (tx: Db, event: ExecutionEvent) => Promise<void>;
+  // A process-local wake is allowed only after both the event projection and
+  // durable cursor advance commit. It is an optimization: readers still query
+  // Postgres after a missed wake.
+  afterCommit?: (events: readonly ExecutionEvent[]) => void;
 };
 
 export type ExecutionEventProjectorSummary = {
@@ -72,7 +76,7 @@ export async function projectExecutionEvents(input: {
   let failedEventId: string | null = null;
   let failure: unknown = null;
 
-  const result = await input.db.transaction(async (tx) => {
+  const transactionResult = await input.db.transaction(async (tx) => {
     await ensureConsumer(tx, input.projector.consumerName, input.runId);
     const consumers = await tx
       .select()
@@ -89,18 +93,24 @@ export async function projectExecutionEvents(input: {
     if (!consumer) throw new Error("execution event consumer row disappeared");
     if (consumer.state === "poisoned") {
       return {
-        projected: 0,
-        deferred: false,
-        poisoned: true,
-        lastRunSequence: consumer.lastRunSequence?.toString() ?? null,
+        summary: {
+          projected: 0,
+          deferred: false,
+          poisoned: true,
+          lastRunSequence: consumer.lastRunSequence?.toString() ?? null,
+        },
+        projectedEvents: [] as ExecutionEvent[],
       };
     }
     if (consumer.nextRetryAt && consumer.nextRetryAt > now) {
       return {
-        projected: 0,
-        deferred: true,
-        poisoned: false,
-        lastRunSequence: consumer.lastRunSequence?.toString() ?? null,
+        summary: {
+          projected: 0,
+          deferred: true,
+          poisoned: false,
+          lastRunSequence: consumer.lastRunSequence?.toString() ?? null,
+        },
+        projectedEvents: [] as ExecutionEvent[],
       };
     }
     const claimed = await tx
@@ -119,10 +129,13 @@ export async function projectExecutionEvents(input: {
       .returning({ consumerName: executionEventConsumers.consumerName });
     if (!claimed[0]) {
       return {
-        projected: 0,
-        deferred: true,
-        poisoned: false,
-        lastRunSequence: consumer.lastRunSequence?.toString() ?? null,
+        summary: {
+          projected: 0,
+          deferred: true,
+          poisoned: false,
+          lastRunSequence: consumer.lastRunSequence?.toString() ?? null,
+        },
+        projectedEvents: [] as ExecutionEvent[],
       };
     }
 
@@ -140,6 +153,7 @@ export async function projectExecutionEvents(input: {
       .limit(batchSize);
     let last = consumer.lastRunSequence;
     let projected = 0;
+    const projectedEvents: ExecutionEvent[] = [];
     for (const event of events) {
       if (event.runSequence === null) {
         throw new Error("accepted execution event has no run sequence");
@@ -153,6 +167,7 @@ export async function projectExecutionEvents(input: {
       }
       last = event.runSequence;
       projected += 1;
+      projectedEvents.push(event);
     }
     await tx
       .update(executionEventConsumers)
@@ -175,14 +190,17 @@ export async function projectExecutionEvents(input: {
         ),
       );
     return {
-      projected,
-      deferred: false,
-      poisoned: false,
-      lastRunSequence: last?.toString() ?? null,
+      summary: {
+        projected,
+        deferred: false,
+        poisoned: false,
+        lastRunSequence: last?.toString() ?? null,
+      },
+      projectedEvents,
     };
   }).catch(async (error) => {
     if (!failedEventId) throw error;
-    return recordProjectionFailure({
+    const summary = await recordProjectionFailure({
       db: input.db,
       runId: input.runId,
       consumerName: input.projector.consumerName,
@@ -190,8 +208,12 @@ export async function projectExecutionEvents(input: {
       error: failure ?? error,
       now,
     });
+    return { summary, projectedEvents: [] as ExecutionEvent[] };
   });
-  return result;
+  if (transactionResult.projectedEvents.length > 0) {
+    input.projector.afterCommit?.(transactionResult.projectedEvents);
+  }
+  return transactionResult.summary;
 }
 
 async function recordProjectionFailure(input: {

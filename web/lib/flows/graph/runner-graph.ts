@@ -186,7 +186,7 @@ import {
   releaseAssignmentForRun,
 } from "@/lib/execution-host";
 import { deliverRunIfAutoReady } from "@/lib/runs/auto-delivery";
-import { appendRunStreamEvent } from "@/lib/runs/run-stream-event";
+import { appendManagerRunStreamEvent } from "@/lib/runs/run-stream-event";
 import { SETTLED_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import {
   checksFromSnapshot,
@@ -278,6 +278,7 @@ function runDir(
 // tail fires after the commit. Best-effort: a failed append never blocks the
 // run (the next user reload still renders the gate from the DB).
 async function emitNeedsInputStreamEvent(
+  db: Db,
   runtimeRoot: string,
   projectSlug: string,
   runId: string,
@@ -285,10 +286,15 @@ async function emitNeedsInputStreamEvent(
   reason: string,
 ): Promise<void> {
   try {
-    await appendRunStreamEvent(
-      path.join(runDir(runtimeRoot, projectSlug, runId), "run.events.jsonl"),
-      { type: "run.needs_input", data: { nodeId, reason } },
-    );
+    await appendManagerRunStreamEvent(db, {
+      runId,
+      sourceKey: `run-needs-input:${nodeId}:${reason}`,
+      event: { type: "run.needs_input", data: { nodeId, reason } },
+      legacyEventsLogPath: path.join(
+        runDir(runtimeRoot, projectSlug, runId),
+        "run.events.jsonl",
+      ),
+    });
   } catch (err) {
     log.warn(
       { runId, nodeId, err: (err as Error).message },
@@ -637,6 +643,7 @@ async function escalateAutoRetryExhaustion(args: {
   }
 
   await emitNeedsInputStreamEvent(
+    db,
     runtimeRoot,
     loaded.projectSlug,
     runId,
@@ -3431,6 +3438,7 @@ export async function runGraph(
         });
         if (!isCoordinatorNode) {
           await emitNeedsInputStreamEvent(
+            db,
             runtimeRoot,
             loaded.projectSlug,
             runId,
@@ -4505,6 +4513,7 @@ export async function runGraph(
             }
           });
           await emitNeedsInputStreamEvent(
+            db,
             runtimeRoot,
             loaded.projectSlug,
             runId,
