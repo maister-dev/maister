@@ -305,6 +305,7 @@ export function executionHostModuleMock(spies: ExecutionHostSpies) {
       state: "active",
     }),
     releaseAssignmentForRun: async () => null,
+    executionDataPlaneModeForHost: () => "legacy_file_v1" as const,
     isFencedError: (err: unknown) =>
       (err as { details?: { reason?: string } } | null)?.details?.reason ===
       "assignment_fenced",

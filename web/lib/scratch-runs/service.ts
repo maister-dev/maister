@@ -122,6 +122,7 @@ import {
   type ExecutionHosts,
   type HostAdminClient,
 } from "@/lib/execution-host";
+import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
@@ -821,6 +822,7 @@ export async function* launchScratchRunStaged(
   // unavailable host refuses the launch before any row or worktree exists.
   const hosts = opts.executionHosts ?? createExecutionHosts({ db });
   const placementHost = await localHost({ db, transport: hosts.transport });
+  const executionDataPlaneMode = executionDataPlaneModeForHost(placementHost);
 
   await assertScratchCapacityAvailable({ db });
 
@@ -943,6 +945,7 @@ export async function* launchScratchRunStaged(
       await tx.insert(runs).values({
         id: runId,
         runKind: "scratch",
+        executionDataPlaneMode,
         taskId: null,
         projectId: project.id,
         flowId: null,
@@ -1538,6 +1541,7 @@ export async function* launchLocalPackageAssistantStaged(
 
   const hosts = opts.executionHosts ?? createExecutionHosts({ db });
   const placementHost = await localHost({ db, transport: hosts.transport });
+  const executionDataPlaneMode = executionDataPlaneModeForHost(placementHost);
 
   await assertAssistantCapacityAvailable({ db });
 
@@ -1624,6 +1628,7 @@ export async function* launchLocalPackageAssistantStaged(
       await tx.insert(runs).values({
         id: runId,
         runKind: "scratch",
+        executionDataPlaneMode,
         taskId: null,
         projectId: null,
         localPackageId: pkg.id,

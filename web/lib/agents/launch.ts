@@ -128,6 +128,7 @@ import {
   type HostAdminClient,
   type SupervisorEvent,
 } from "@/lib/execution-host";
+import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
 import { escalateHookTrip } from "@/lib/runs/hook-trip";
 import { haltRuleFromEvent } from "@/lib/runs/hook-trip-rule";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
@@ -1109,6 +1110,7 @@ export async function launchAgentRun(
   // unreachable/refused surfaces as EXECUTOR_UNAVAILABLE before any worktree
   // or row exists. The host row is what the launch tx places the run on.
   const placementHost = await localHost({ db: _db as unknown as ExecutionDb });
+  const executionDataPlaneMode = executionDataPlaneModeForHost(placementHost);
 
   let worktreePath: string | null = null;
   let branch: string | null = null;
@@ -1352,6 +1354,7 @@ export async function launchAgentRun(
   const runRow = {
     id: runId,
     runKind: "agent" as const,
+    executionDataPlaneMode,
     agentChainDepth: chain.depth,
     agentId: input.agentId,
     executionPolicy,

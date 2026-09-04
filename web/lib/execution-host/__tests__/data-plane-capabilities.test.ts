@@ -1,22 +1,48 @@
 import { describe, expect, it } from "vitest";
 
-import { selectExecutionDataPlaneMode } from "../data-plane-capabilities";
+import {
+  executionDataPlaneModeForHost,
+  selectExecutionDataPlaneMode,
+} from "../data-plane-capabilities";
 
 describe("Stage B data-plane capability negotiation", () => {
-  it("keeps canonical admission off until all control-plane callers are migrated", () => {
+  it("admits canonical runs only on a complete advertised v1 capability set", () => {
     expect(
       selectExecutionDataPlaneMode({
         dataPlaneVersion: "execution-host-data-plane.v1",
         eventStream: true,
         asyncPrompt: true,
         runtimeObjects: true,
-        limits: {
-          maxEventBytes: 1_048_576,
-          maxObjectBytes: 536_870_912,
-          maxReplayBatch: 500,
-        },
+      }),
+    ).toBe("canonical_events_v1");
+    expect(selectExecutionDataPlaneMode(null)).toBe("legacy_file_v1");
+    expect(
+      selectExecutionDataPlaneMode({
+        dataPlaneVersion: "execution-host-data-plane.v1",
+        eventStream: true,
+        asyncPrompt: true,
+        runtimeObjects: false,
       }),
     ).toBe("legacy_file_v1");
-    expect(selectExecutionDataPlaneMode(null)).toBe("legacy_file_v1");
+  });
+
+  it("re-parses the durable host capability JSON before admission", () => {
+    expect(
+      executionDataPlaneModeForHost({
+        capabilities: {
+          dataPlane: {
+            version: "execution-host-data-plane.v1",
+            eventStream: true,
+            asyncPrompt: true,
+            runtimeObjects: true,
+          },
+        },
+      } as never),
+    ).toBe("canonical_events_v1");
+    expect(
+      executionDataPlaneModeForHost({
+        capabilities: { dataPlane: { version: "execution-host-data-plane.v1" } },
+      } as never),
+    ).toBe("legacy_file_v1");
   });
 });

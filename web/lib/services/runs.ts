@@ -95,7 +95,11 @@ import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { tryStartRun } from "@/lib/scheduler";
-import { localHost, mintPlacement } from "@/lib/execution-host";
+import {
+  localHost,
+  mintPlacement,
+} from "@/lib/execution-host";
+import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
 import { fetchProjectRemote, listProjectRemotes } from "@/lib/git-remotes";
 import {
   addWorktree,
@@ -771,6 +775,7 @@ export async function* launchRunStaged(
   const placementHost = await localHost({
     db: _db as unknown as ExecutionDb,
   });
+  const executionDataPlaneMode = executionDataPlaneModeForHost(placementHost);
 
   // ADR-132 §a: validate the ephemeral per-run package pin as a cheap
   // deterministic precondition, hoisted BEFORE applyPackageVersionChoices so a
@@ -1594,6 +1599,7 @@ export async function* launchRunStaged(
           .insert(runs)
           .values({
             id: runId,
+            executionDataPlaneMode,
             taskId: task.id,
             projectId: project.id,
             flowId: flow.id,

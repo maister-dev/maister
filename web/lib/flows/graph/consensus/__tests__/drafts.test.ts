@@ -37,14 +37,20 @@ function baseInput(db: unknown): ConsensusDraftLaunchInput {
 function fakeDb(args: {
   existingRows?: unknown[][];
   runnerRows?: unknown[];
+  parentMode?: "legacy_file_v1" | "canonical_events_v1";
   inserts?: unknown[];
 }): unknown {
   let selectCall = 0;
 
   return {
-    select: () => ({
+    select: (shape?: Record<string, unknown>) => ({
       from: () => ({
         where: () => {
+          if (shape && "executionDataPlaneMode" in shape) {
+            return Promise.resolve(
+              args.parentMode ? [{ executionDataPlaneMode: args.parentMode }] : [],
+            );
+          }
           const existing = args.existingRows?.[selectCall];
 
           selectCall += 1;
@@ -80,6 +86,7 @@ describe("launchConsensusDraftRuns", () => {
           enabled: true,
         },
       ],
+      parentMode: "canonical_events_v1",
       inserts,
     });
 
@@ -154,6 +161,7 @@ describe("launchConsensusDraftRuns", () => {
     });
     expect(inserts[0]).toMatchObject({
       runKind: "agent",
+      executionDataPlaneMode: "canonical_events_v1",
       agentId: null,
       status: "Pending",
       parentRunId: "parent-run",

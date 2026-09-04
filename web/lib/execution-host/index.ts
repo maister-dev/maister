@@ -74,6 +74,11 @@ export {
   releaseAssignmentForRun,
 } from "./assignments";
 export { ensureAssignment, mintPlacement } from "./placement";
+export {
+  executionDataPlaneModeForHost,
+  selectExecutionDataPlaneMode,
+} from "./data-plane-capabilities";
+export type { ExecutionDataPlaneMode } from "./data-plane-capabilities";
 export type { LegacyRunsOptions, LegacyRunsSummary } from "./legacy";
 export {
   reportLegacyActiveRuns,
