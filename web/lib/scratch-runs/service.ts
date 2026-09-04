@@ -20,7 +20,7 @@ import type {
   FlowAssistantIntent,
 } from "@/lib/studio/flow-assistant/protocol";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 
@@ -66,20 +66,24 @@ import {
 } from "@/lib/studio/flow-assistant/context";
 import { normalizeFlowAssistantIntent } from "@/lib/studio/flow-assistant/protocol";
 import { postProcessFlowAssistantTurn } from "@/lib/studio/flow-assistant/turn";
-import { runtimeRoot, worktreesRoot } from "@/lib/instance-config";
+import { worktreesRoot } from "@/lib/instance-config";
 import {
   assertAssistantCapacityAvailable,
   assertAssistantCapacityAvailableInTransaction,
   assertScratchCapacityAvailable,
   assertScratchCapacityAvailableInTransaction,
 } from "@/lib/scheduler";
-import { atomicWriteBuffer } from "@/lib/atomic";
 import {
   metadataAttachmentRow,
+  safeUploadFileName,
   scratchPromptContentBlocks,
   uploadedFileMetadata,
   validateScratchAttachments,
 } from "@/lib/scratch-runs/attachments";
+import {
+  deterministicRuntimeObjectId,
+  publishRuntimeObject,
+} from "@/lib/execution-host/runtime-objects";
 import {
   normalizeScratchPrompt,
   sendScratchPromptAndProjectEvents,
@@ -424,50 +428,55 @@ function storedAttachmentValues(args: {
 }
 
 async function storeUploadedFiles(args: {
+  client: BoundClient;
   runId: string;
   messageId: string | null;
-  projectSlug: string;
   scope: string;
   files: readonly ScratchUploadedFileInput[];
 }): Promise<ReturnType<typeof uploadedFileMetadata>[]> {
   if (args.files.length === 0) return [];
 
-  const root = runtimeRoot();
   const safeNames = new Set<string>();
-  const attachments = args.files.map((file) =>
-    uploadedFileMetadata({
-      file,
-      projectSlug: args.projectSlug,
-      runId: args.runId,
-      scope: args.scope,
-      runtimeRoot: root,
-    }),
-  );
-
-  for (const attachment of attachments) {
-    if (!attachment.fileName) continue;
-    if (safeNames.has(attachment.fileName)) {
+  for (const file of args.files) {
+    const fileName = safeUploadFileName(file.fileName);
+    if (safeNames.has(fileName)) {
       throw new MaisterError(
         "PRECONDITION",
-        `duplicate upload filename: ${attachment.fileName}`,
+        `duplicate upload filename: ${fileName}`,
       );
     }
-    safeNames.add(attachment.fileName);
+    if (file.byteSize !== file.bytes.byteLength) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `uploaded file byte size does not match content: ${fileName}`,
+      );
+    }
+    safeNames.add(fileName);
   }
 
-  for (const [index, attachment] of attachments.entries()) {
-    if (!attachment.storagePath) continue;
-    const source = args.files[index];
-
-    if (!source) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `stored upload metadata missing source file: ${attachment.label}`,
-      );
-    }
-
+  const attachments: ReturnType<typeof uploadedFileMetadata>[] = [];
+  for (const source of args.files) {
+    const fileName = safeUploadFileName(source.fileName);
+    const sha256 = createHash("sha256").update(source.bytes).digest("hex");
     try {
-      await atomicWriteBuffer(attachment.storagePath, source.bytes);
+      const published = await publishRuntimeObject({
+        client: args.client,
+        objectId: deterministicRuntimeObjectId({
+          runId: args.runId,
+          sourceKey: `scratch-upload:${args.scope}:${fileName}`,
+          sha256,
+        }),
+        kind: "attachment",
+        logicalName: `scratch-upload:${args.scope}:${fileName}`,
+        mimeType: source.mimeType || "application/octet-stream",
+        retentionClass: "run",
+        bytes: source.bytes,
+      });
+      const attachment = uploadedFileMetadata({
+        file: source,
+        objectId: published.objectId,
+      });
+      attachments.push(attachment);
       log.info(
         {
           runId: args.runId,
@@ -475,22 +484,47 @@ async function storeUploadedFiles(args: {
           fileName: attachment.fileName,
           byteSize: attachment.byteSize,
           sha256: attachment.sha256,
+          objectId: published.objectId,
         },
-        "scratch upload stored",
+        "scratch upload published",
       );
     } catch (err) {
+      await Promise.all(
+        attachments.map(async (attachment) => {
+          try {
+            await args.client.deleteRuntimeObject({
+              objectId: attachment.value,
+              generation: 1,
+            });
+          } catch (cleanupError) {
+            log.warn(
+              {
+                runId: args.runId,
+                messageId: args.messageId,
+                objectId: attachment.value,
+                err:
+                  cleanupError instanceof Error
+                    ? cleanupError.message
+                    : String(cleanupError),
+              },
+              "scratch upload compensation failed",
+            );
+          }
+        }),
+      );
       log.error(
         {
           runId: args.runId,
           messageId: args.messageId,
-          path: attachment.storagePath,
+          fileName,
           err: err instanceof Error ? err.message : String(err),
         },
-        "scratch upload write failed",
+        "scratch upload publish failed",
       );
+      if (isMaisterError(err)) throw err;
       throw new MaisterError(
         "EXECUTOR_UNAVAILABLE",
-        `failed to store uploaded file ${attachment.fileName}`,
+        `failed to publish uploaded file ${fileName}`,
       );
     }
   }
@@ -903,13 +937,6 @@ export async function* launchScratchRunStaged(
     });
 
     adapterHomeEnv = adapterHome.env;
-    uploadedAttachments = await storeUploadedFiles({
-      runId,
-      messageId,
-      projectSlug: project.slug,
-      scope: "launch",
-      files: uploadedFiles,
-    });
     launchAssignmentId = await db.transaction(async (tx: Db) => {
       await assertScratchCapacityAvailableInTransaction(tx);
 
@@ -1042,20 +1069,6 @@ export async function* launchScratchRunStaged(
         ),
       );
     }
-    if (uploadedAttachments.length > 0) {
-      const uploadDir = path.dirname(uploadedAttachments[0].storagePath ?? "");
-
-      await rm(uploadDir, { recursive: true, force: true }).catch((rmErr) =>
-        log.warn(
-          {
-            runId,
-            uploadDir,
-            rmErr: rmErr instanceof Error ? rmErr.message : String(rmErr),
-          },
-          "scratch compensating upload cleanup failed",
-        ),
-      );
-    }
     throw err;
   }
 
@@ -1067,6 +1080,23 @@ export async function* launchScratchRunStaged(
     const { client, admin } = await hosts.executionFor(runId, {
       assignmentId: launchAssignmentId,
     });
+    uploadedAttachments = await storeUploadedFiles({
+      client,
+      runId,
+      messageId,
+      scope: "launch",
+      files: uploadedFiles,
+    });
+    if (uploadedAttachments.length > 0) {
+      await db.insert(scratchAttachments).values(
+        storedAttachmentValues({
+          metadataAttachments: [],
+          uploadedAttachments,
+          runId,
+          messageId,
+        }),
+      );
+    }
     const session = await client.createSession({
       stepId: scratchStepId(),
       executor: runnerExecutorInput(runnerResolution.runnerSnapshot),
@@ -1980,6 +2010,7 @@ async function appendScratchUserMessage(args: {
   runId: string;
   body: ScratchMessageInput;
   uploadedFiles: readonly ScratchUploadedFileInput[];
+  executionHosts?: ExecutionHosts;
 }) {
   const runRows = await args.db
     .select()
@@ -2011,7 +2042,22 @@ async function appendScratchUserMessage(args: {
     );
   }
 
-  return args.db.transaction(async (tx: Db) => {
+  const execution = await scratchExecution(
+    args.db,
+    args.runId,
+    args.executionHosts,
+  );
+  const messageId = randomUUID();
+  const uploadedAttachments = await storeUploadedFiles({
+    client: execution.client,
+    runId: args.runId,
+    messageId,
+    scope: messageId,
+    files: args.uploadedFiles,
+  });
+
+  try {
+    return await args.db.transaction(async (tx: Db) => {
     await lockRunRows(tx, args.runId);
 
     const {
@@ -2042,49 +2088,11 @@ async function appendScratchUserMessage(args: {
       sequence,
       content: args.body.content,
     });
-    const messageId = randomUUID();
     const now = new Date();
     const attachments = validateScratchAttachments(args.body.attachments, {
       projectRepoPath: workspace.parentRepoPath,
       worktreePath: workspace.worktreePath,
     });
-    const uploadedAttachments =
-      args.uploadedFiles.length > 0
-        ? await (async () => {
-            // ADR-097: a project-less local-package assistant run has no
-            // project — the runtime/cost subtree is keyed by the local package
-            // slug instead (mirrors the launch's createSession projectSlug).
-            const slug = lockedRun.projectId
-              ? (
-                  await tx
-                    .select()
-                    .from(projects)
-                    .where(eq(projects.id, lockedRun.projectId))
-                )[0]?.slug
-              : (
-                  await tx
-                    .select()
-                    .from(localPackages)
-                    .where(eq(localPackages.id, lockedRun.localPackageId))
-                )[0]?.slug;
-
-            if (!slug) {
-              throw new MaisterError(
-                "PRECONDITION",
-                `owner slug not found for scratch run: ${args.runId}`,
-              );
-            }
-
-            return storeUploadedFiles({
-              runId: args.runId,
-              messageId,
-              projectSlug: slug,
-              scope: messageId,
-              files: args.uploadedFiles,
-            });
-          })()
-        : [];
-
     await tx.insert(scratchMessages).values({
       id: messageId,
       runId: args.runId,
@@ -2131,8 +2139,35 @@ async function appendScratchUserMessage(args: {
       isLocalPackageAssistant: !run.projectId,
       uploadedAttachments,
       metadataAttachments,
+      execution,
     };
-  });
+    });
+  } catch (error) {
+    await Promise.all(
+      uploadedAttachments.map(async (attachment) => {
+        try {
+          await execution.client.deleteRuntimeObject({
+            objectId: attachment.value,
+            generation: 1,
+          });
+        } catch (cleanupError) {
+          log.warn(
+            {
+              runId: args.runId,
+              messageId,
+              objectId: attachment.value,
+              err:
+                cleanupError instanceof Error
+                  ? cleanupError.message
+                  : String(cleanupError),
+            },
+            "scratch message upload compensation failed",
+          );
+        }
+      }),
+    );
+    throw error;
+  }
 }
 
 export async function sendScratchUserMessage(args: {
@@ -2147,6 +2182,7 @@ export async function sendScratchUserMessage(args: {
     runId: args.runId,
     body: args.body,
     uploadedFiles: args.uploadedFiles ?? [],
+    executionHosts: args.executionHosts,
   });
 
   try {
@@ -2164,7 +2200,7 @@ export async function sendScratchUserMessage(args: {
         ...appended.metadataAttachments,
         ...appended.uploadedAttachments,
       ]),
-      execution: await scratchExecution(db, args.runId, args.executionHosts),
+      execution: appended.execution,
     });
     const dialogStatus = await completeScratchPromptTurn({
       db,

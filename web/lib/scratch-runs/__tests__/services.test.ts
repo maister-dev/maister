@@ -123,7 +123,7 @@ describe("scratch attachment helpers", () => {
     ]);
   });
 
-  it("builds uploaded-file artifact metadata outside the git worktree", () => {
+  it("builds uploaded-file metadata with an opaque execution-object ID", () => {
     const metadata = uploadedFileMetadata({
       file: {
         fileName: "notes.txt",
@@ -131,10 +131,7 @@ describe("scratch attachment helpers", () => {
         byteSize: 5,
         bytes: new TextEncoder().encode("hello"),
       },
-      projectSlug: "demo",
-      runId: "run-1",
-      scope: "launch",
-      runtimeRoot: "/runtime",
+      objectId: "b7e5e032-6049-48b2-806f-e5db714a93cb",
     });
 
     expect(metadata).toMatchObject({
@@ -142,8 +139,8 @@ describe("scratch attachment helpers", () => {
       fileName: "notes.txt",
       mimeType: "text/plain",
       byteSize: 5,
-      value: ".maister/demo/runs/run-1/uploads/launch/notes.txt",
-      storagePath: "/runtime/.maister/demo/runs/run-1/uploads/launch/notes.txt",
+      value: "b7e5e032-6049-48b2-806f-e5db714a93cb",
+      storagePath: null,
     });
     expect(metadata.sha256).toHaveLength(64);
     expect(() => safeUploadFileName("../secret.txt")).toThrow(/invalid/);

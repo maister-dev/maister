@@ -27,6 +27,11 @@ import { MaisterError } from "@/lib/errors";
 
 export const MAX_RUNTIME_OBJECT_BYTES = 536_870_912;
 
+const RUNTIME_OBJECT_UUID_NAMESPACE = Buffer.from(
+  "6ba7b8119dad11d180b400c04fd430c8",
+  "hex",
+);
+
 export type RuntimeObjectWithRun = {
   object: ExecutionRuntimeObject;
   projectId: string | null;
@@ -36,6 +41,34 @@ export type RuntimeObjectWithRun = {
 export type RuntimeObjectTransportResolver = (
   host: ExecutionHost,
 ) => Promise<ExecutionHostTransport>;
+
+// A retried manager operation must address the same host object. The ID binds
+// that operation to the exact bytes without leaking a manager-selected path.
+export function deterministicRuntimeObjectId(input: {
+  runId: string;
+  sourceKey: string;
+  sha256: string;
+}): string {
+  const name = [
+    "urn:maister:runtime-object",
+    `run:${encodeURIComponent(input.runId)}`,
+    `source:${encodeURIComponent(input.sourceKey)}`,
+    `sha256:${input.sha256}`,
+  ].join(":");
+  const bytes = Buffer.from(
+    createHash("sha1")
+      .update(RUNTIME_OBJECT_UUID_NAMESPACE.toString("hex"), "hex")
+      .update(name, "utf8")
+      .digest()
+      .subarray(0, 16),
+  );
+
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 // The manager never chooses a host path. It reserves an opaque object ID through
 // the run-bound command ledger, transfers a bounded byte buffer, and lets the

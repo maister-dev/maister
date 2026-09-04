@@ -91,68 +91,23 @@ export function safeUploadFileName(fileName: string): string {
   return safeName;
 }
 
-export function uploadArtifactRef(args: {
-  projectSlug: string;
-  runId: string;
-  scope: string;
-  safeFileName: string;
-}): string {
-  return path.posix.join(
-    ".maister",
-    args.projectSlug,
-    "runs",
-    args.runId,
-    "uploads",
-    args.scope,
-    args.safeFileName,
-  );
-}
-
-export function uploadStoragePath(args: {
-  runtimeRoot: string;
-  artifactRef: string;
-}): string {
-  const storagePath = path.resolve(args.runtimeRoot, args.artifactRef);
-  const rootPath = path.resolve(args.runtimeRoot);
-
-  if (!isInside(rootPath, storagePath)) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `upload storage path is outside runtime root: ${args.artifactRef}`,
-    );
-  }
-
-  return storagePath;
-}
-
 export function uploadedFileMetadata(args: {
   file: ScratchUploadedFileInput;
-  projectSlug: string;
-  runId: string;
-  scope: string;
-  runtimeRoot: string;
+  objectId: string;
 }): StoredScratchAttachment {
   const safeFileName = safeUploadFileName(args.file.fileName);
-  const artifactRef = uploadArtifactRef({
-    projectSlug: args.projectSlug,
-    runId: args.runId,
-    scope: args.scope,
-    safeFileName,
-  });
-  const storagePath = uploadStoragePath({
-    runtimeRoot: args.runtimeRoot,
-    artifactRef,
-  });
 
   return {
     kind: "uploaded_file",
     label: args.file.fileName,
-    value: artifactRef,
+    // The database records the manager-visible opaque ID. Only the supervisor
+    // resolves it to a private ACP file URI at prompt execution time.
+    value: args.objectId,
     fileName: safeFileName,
     mimeType: args.file.mimeType || "application/octet-stream",
     byteSize: args.file.byteSize,
     sha256: createHash("sha256").update(args.file.bytes).digest("hex"),
-    storagePath,
+    storagePath: null,
   };
 }
 
@@ -171,14 +126,10 @@ export function metadataAttachmentRow(
   };
 }
 
-// T5.4 (B): turn a scratch message's file attachments into ACP `resource_link`
-// content blocks (a leading `text` block carries the user prompt). Uploaded
-// files reference their server-generated `storagePath` (confined to the runtime
-// root); `file_path` attachments reference their already-worktree/repo-confined
-// absolute `value`. Both paths are absolute, so `pathToFileURL` yields a valid
-// `file://` URI. Non-file kinds (`issue_url`, `text_note`) are transcript-only
-// and never become resource blocks. Returns `undefined` when there is no file
-// attachment, so the caller keeps the plain-string send path.
+// Turn scratch attachments into prompt blocks. Uploaded files are opaque
+// execution-object references; their host paths are deliberately unavailable to
+// the manager. Repository file-path attachments remain a Stage C workspace
+// concern and retain their existing confined file URI contract.
 export function scratchPromptContentBlocks(
   text: string,
   attachments: readonly StoredScratchAttachment[],
@@ -186,10 +137,10 @@ export function scratchPromptContentBlocks(
   const links: PromptContentBlock[] = [];
 
   for (const attachment of attachments) {
-    if (attachment.kind === "uploaded_file" && attachment.storagePath) {
+    if (attachment.kind === "uploaded_file") {
       links.push({
-        type: "resource_link",
-        uri: pathToFileURL(attachment.storagePath).href,
+        type: "runtime_object",
+        objectId: attachment.value,
         name: attachment.fileName ?? attachment.label ?? "file",
         ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
       });

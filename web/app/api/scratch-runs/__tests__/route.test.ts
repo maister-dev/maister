@@ -550,11 +550,9 @@ describe("POST /api/scratch-runs", () => {
       byteSize: 5,
     });
     expect(uploaded?.value).toMatch(
-      /^\.maister\/demo\/runs\/.+\/uploads\/launch\/notes\.txt$/,
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );
-    expect(uploaded?.storagePath).toEqual(
-      expect.stringContaining(state.runtimeRoot ?? ""),
-    );
+    expect(uploaded?.storagePath).toBeNull();
   });
 
   it("rejects multipart upload count limits before worktree side effects", async () => {

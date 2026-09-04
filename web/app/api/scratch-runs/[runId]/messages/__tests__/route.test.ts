@@ -147,6 +147,7 @@ vi.mock("@/lib/runs/active-run-session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/runs/active-run-session")>()),
   loadActiveRunSession: vi.fn(async () => ({
     sessionName: "default",
+    hostSessionId: "supervisor-session-1",
     acpSessionId: null,
     runnerSnapshot: null,
     capabilityAgent: "claude",
@@ -321,15 +322,19 @@ describe("POST /api/scratch-runs/[runId]/messages", () => {
       mimeType: "text/plain",
       byteSize: 5,
     });
-    // T5.4 B: uploaded files now ride as ACP resource_link content blocks
-    // (a leading text block carries the prompt), not inline prompt text lines.
+    // Stage B: an upload crosses the manager/host boundary only as an opaque
+    // runtime-object reference. The supervisor resolves it inside its local
+    // runtime root just before handing it to ACP.
     expect(mocks.sendScratchPromptAndProjectEvents).toHaveBeenCalledWith(
       expect.objectContaining({
         prompt: "Continue with file",
         contentBlocks: expect.arrayContaining([
           { type: "text", text: "Continue with file" },
           expect.objectContaining({
-            type: "resource_link",
+            type: "runtime_object",
+            objectId: expect.stringMatching(
+              /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+            ),
             name: "notes.txt",
             mimeType: "text/plain",
           }),
