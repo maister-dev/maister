@@ -18,6 +18,7 @@ import { listCommandsForRun } from "@/lib/execution-host/commands";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { publishRuntimeObject } from "@/lib/execution-host/runtime-objects";
+import { scratchUploadLogicalName } from "@/lib/scratch-runs/attachments";
 import {
   seedProjectRow,
   seedRun,
@@ -233,7 +234,10 @@ describe("bound client over the real wire", () => {
       client,
       objectId,
       kind: "generated_artifact",
-      logicalName: "result.txt",
+      logicalName: scratchUploadLogicalName({
+        scope: `message:${randomUUID()}`,
+        fileName: "result with spaces.txt",
+      }),
       mimeType: "text/plain",
       retentionClass: "run",
       bytes,
@@ -263,5 +267,22 @@ describe("bound client over the real wire", () => {
         .filter((row) => row.kind.startsWith("runtime_object."))
         .every((row) => row.executionAssignmentId === client.assignment.id),
     ).toBe(true);
+    const catalog = await testDatabase.pool.query(
+      `select state, size_bytes, sha256
+       from execution_runtime_objects
+       where id = $1 and run_id = $2`,
+      [objectId, runId],
+    );
+    const reserveCommand = commands.find(
+      (row) => row.kind === "runtime_object.reserve",
+    );
+    expect(catalog.rows).toEqual([
+      { state: "pending", size_bytes: null, sha256: null },
+    ]);
+    expect(reserveCommand?.payload).toMatchObject({
+      objectId,
+      sizeBytes: bytes.byteLength,
+      sha256: published.metadata.sha256,
+    });
   }, 120_000);
 });

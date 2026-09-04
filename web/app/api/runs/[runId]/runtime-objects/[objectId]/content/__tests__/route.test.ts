@@ -28,6 +28,8 @@ vi.mock("@/lib/execution-host/runtime-objects", () => ({
 function loadedObject() {
   return {
     projectId: "project-1",
+    localPackageId: null,
+    createdByUserId: "user-1",
     object: {
       id: OBJECT_ID,
       mimeType: "text/plain",
@@ -107,6 +109,35 @@ describe("GET /api/runs/[runId]/runtime-objects/[objectId]/content", () => {
 
     expect(response.status).toBe(404);
     expect(requireProjectAction).not.toHaveBeenCalled();
+    expect(openRuntimeObjectContent).not.toHaveBeenCalled();
+  });
+
+  it("allows the owner of a projectless local-package assistant runtime object", async () => {
+    vi.mocked(getRuntimeObjectForRun).mockResolvedValueOnce({
+      ...loadedObject(),
+      projectId: null,
+      localPackageId: "package-1",
+    } as never);
+
+    const response = await invoke();
+
+    expect(response.status).toBe(206);
+    expect(await response.text()).toBe("owned");
+    expect(requireProjectAction).not.toHaveBeenCalled();
+    expect(openRuntimeObjectContent).toHaveBeenCalledOnce();
+  });
+
+  it("hides a projectless local-package assistant object from another user", async () => {
+    vi.mocked(requireActiveSession).mockResolvedValueOnce({ id: "user-2" } as never);
+    vi.mocked(getRuntimeObjectForRun).mockResolvedValueOnce({
+      ...loadedObject(),
+      projectId: null,
+      localPackageId: "package-1",
+    } as never);
+
+    const response = await invoke();
+
+    expect(response.status).toBe(404);
     expect(openRuntimeObjectContent).not.toHaveBeenCalled();
   });
 

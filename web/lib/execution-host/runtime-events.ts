@@ -37,10 +37,22 @@ const SEQUENCE = /^(0|[1-9][0-9]{0,18})$/;
 // Match the supervisor's durable host-state contract: the default is an
 // `eh_` UUID, while a validated operator-pinned key remains supported.
 const HOST_KEY = /^[A-Za-z0-9_-]{8,64}$/;
-const SECRET_KEY = /authorization|cookie|token|secret|password|api[_-]?key|headers|environment|^env$/i;
+const SECRET_KEY = /authorization|cookie|(^|[_-])(access|refresh|auth)?token(s)?$|secret|password|api[_-]?key|headers|environment|^env$/i;
 const ABSOLUTE_PATH = /(?:^|\s)\/(?:[^\s]*)/;
 const FILE_URI = /^file:\/\//i;
 const MAX_RUNTIME_EVENT_BYTES = 1_048_576;
+const MAX_RUNTIME_EVENT_DEPTH = 16;
+const MAX_RUNTIME_EVENT_KEYS = 256;
+const MAX_RUNTIME_EVENT_ARRAY = 1_024;
+const MAX_RUNTIME_EVENT_STRING_BYTES = 65_536;
+
+type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [key: string]: JsonValue };
 
 const EVENT_SCHEMA_PAIRS = new Map(
   RUNTIME_EVENT_TYPES.map((eventType, index) => [
@@ -67,6 +79,90 @@ export function assertRuntimeEventPayloadSafe(value: Record<string, unknown>): v
   };
 
   visit(value);
+}
+
+function encodedByteLength(value: unknown): number {
+  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+}
+
+function normalizeJsonValue(value: unknown): JsonValue {
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) {
+    throw new Error("runtime event payload is not JSON serializable");
+  }
+
+  return JSON.parse(serialized) as JsonValue;
+}
+
+function assertJsonValue(value: unknown, depth: number): asserts value is JsonValue {
+  if (depth > MAX_RUNTIME_EVENT_DEPTH) {
+    throw new Error("runtime event payload exceeds maximum depth");
+  }
+  if (value === null || typeof value === "boolean") return;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new Error("runtime event payload contains a non-finite number");
+    }
+    return;
+  }
+  if (typeof value === "string") {
+    if (encodedByteLength(value) > MAX_RUNTIME_EVENT_STRING_BYTES) {
+      throw new Error("runtime event payload string exceeds maximum bytes");
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    if (value.length > MAX_RUNTIME_EVENT_ARRAY) {
+      throw new Error("runtime event payload array exceeds maximum items");
+    }
+    value.forEach((entry) => assertJsonValue(entry, depth + 1));
+    return;
+  }
+  if (!value || typeof value !== "object" || Object.getPrototypeOf(value) !== Object.prototype) {
+    throw new Error("runtime event payload must contain plain JSON values");
+  }
+  const entries = Object.entries(value);
+  if (entries.length > MAX_RUNTIME_EVENT_KEYS) {
+    throw new Error("runtime event payload object exceeds maximum keys");
+  }
+  entries.forEach(([, entry]) => assertJsonValue(entry, depth + 1));
+}
+
+function redactJsonValue(value: JsonValue): JsonValue {
+  if (typeof value === "string") {
+    return FILE_URI.test(value) || ABSOLUTE_PATH.test(value)
+      ? "[REDACTED_HOST_PATH]"
+      : value;
+  }
+  if (Array.isArray(value)) return value.map(redactJsonValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => !SECRET_KEY.test(key))
+        .map(([key, entry]) => [key, redactJsonValue(entry)]),
+    );
+  }
+  return value;
+}
+
+// Legacy import receives pre-Stage-B payloads that were never scrubbed at the
+// host boundary. Normalize, bound, and redact them before hashing or writing
+// any manager-owned row; callers then apply the stricter safety assertion.
+export function redactRuntimeEventPayload(
+  value: unknown,
+): Record<string, JsonValue> {
+  const normalized = normalizeJsonValue(value);
+  assertJsonValue(normalized, 0);
+  if (!normalized || Array.isArray(normalized) || typeof normalized !== "object") {
+    throw new Error("runtime event payload must be an object");
+  }
+  const redacted = redactJsonValue(normalized) as Record<string, JsonValue>;
+  if (encodedByteLength(redacted) > MAX_RUNTIME_EVENT_BYTES) {
+    throw new Error("runtime event payload exceeds maximum encoded bytes");
+  }
+  assertRuntimeEventPayloadSafe(redacted);
+
+  return redacted;
 }
 
 export const RuntimeEventEnvelopeSchema = z

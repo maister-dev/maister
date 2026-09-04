@@ -31,8 +31,8 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { ensureLocalPackageGitExclude } from "@/lib/local-packages/git";
 import {
   assertHoldsLock,
-  assertUserHoldsLock,
 } from "@/lib/local-packages/lock";
+import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/authorization";
 import {
   defaultRunSessionValues,
   resolveRunner,
@@ -76,6 +76,7 @@ import {
 import {
   metadataAttachmentRow,
   safeUploadFileName,
+  scratchUploadLogicalName,
   scratchPromptContentBlocks,
   uploadedFileMetadata,
   validateScratchAttachments,
@@ -468,7 +469,10 @@ async function storeUploadedFiles(args: {
           sha256,
         }),
         kind: "attachment",
-        logicalName: `scratch-upload:${args.scope}:${fileName}`,
+        logicalName: scratchUploadLogicalName({
+          scope: args.scope,
+          fileName,
+        }),
         mimeType: source.mimeType || "application/octet-stream",
         retentionClass: "run",
         bytes: source.bytes,
@@ -1306,27 +1310,7 @@ export async function launchScratchRun(
 // READ it, and only that user WHILE holding a live working-dir lock may DRIVE it
 // (send a message / recover). This closes the cross-user vector where any active
 // user with a run id injects prompts into another editor's locked working dir.
-export async function assertLocalPackageAssistantActor(
-  run: { createdByUserId: string | null; localPackageId: string | null },
-  userId: string,
-  opts: { requireLock: boolean },
-  db?: Db,
-): Promise<void> {
-  if (run.createdByUserId !== userId) {
-    throw new MaisterError(
-      "UNAUTHORIZED",
-      "this assistant run belongs to another user",
-    );
-  }
-  if (!opts.requireLock) return;
-  if (!run.localPackageId) {
-    throw new MaisterError(
-      "PRECONDITION",
-      "assistant run has no local package to lock",
-    );
-  }
-  await assertUserHoldsLock(run.localPackageId, userId, db);
-}
+export { assertLocalPackageAssistantActor };
 
 export type LocalPackageAssistantLaunchInput = {
   localPackageId: string;

@@ -12,7 +12,7 @@ const SEQUENCE = /^(0|[1-9][0-9]{0,18})$/;
 // The default identity is `eh_<uuid-without-dashes>`, but a pinned local
 // identity is deliberately allowed by the execution-host contract too.
 const HOST_KEY = /^[A-Za-z0-9_-]{8,64}$/;
-const SECRET_KEY = /authorization|cookie|token|secret|password|api[_-]?key|headers|environment|^env$/i;
+const SECRET_KEY = /authorization|cookie|(^|[_-])(access|refresh|auth)?token(s)?$|secret|password|api[_-]?key|headers|environment|^env$/i;
 const ABSOLUTE_PATH = /(?:^|\s)\/(?:[^\s]*)/;
 const FILE_URI = /^file:\/\//i;
 

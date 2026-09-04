@@ -58,6 +58,7 @@ type IngestedEventRow = {
   payloadBytes: number | null;
   occurredAt: Date;
   ingestDisposition: "pending_gap" | "accepted" | "stale_epoch" | "quarantined";
+  ingestError: Record<string, unknown> | null;
 };
 
 type LockedStream = {
@@ -285,6 +286,7 @@ async function promoteContiguousPrefix(
       payloadBytes: executionEvents.payloadBytes,
       occurredAt: executionEvents.occurredAt,
       ingestDisposition: executionEvents.ingestDisposition,
+      ingestError: executionEvents.ingestError,
     })
     .from(executionEvents)
     .where(
@@ -315,7 +317,10 @@ async function promoteContiguousPrefix(
         .update(executionEvents)
         .set({
           ingestDisposition: "stale_epoch",
-          ingestError: { reason: "stale_assignment_epoch" },
+          ingestError: {
+            ...event.ingestError,
+            reason: "stale_assignment_epoch",
+          },
         })
         .where(eq(executionEvents.id, event.id));
       staleEpochCount += 1;
@@ -372,18 +377,41 @@ async function existingDuplicate(
       hostSequence: executionEvents.hostSequence,
       runId: executionEvents.runId,
       executionHostId: executionEvents.executionHostId,
+      executionAssignmentId: executionEvents.executionAssignmentId,
+      assignmentEpoch: executionEvents.assignmentEpoch,
+      hostBootId: executionEvents.hostBootId,
+      hostSessionId: executionEvents.hostSessionId,
+      envelopeVersion: executionEvents.envelopeVersion,
+      eventType: executionEvents.eventType,
+      payloadSchema: executionEvents.payloadSchema,
       payloadSha256: executionEvents.payloadSha256,
+      occurredAt: executionEvents.occurredAt,
+      ingestError: executionEvents.ingestError,
     })
     .from(executionEvents)
     .where(eq(executionEvents.id, input.envelope.eventId))
     .limit(1);
   const existing = eventRows[0];
   if (existing) {
+    const sourceAssignmentId =
+      existing.executionAssignmentId ??
+      (typeof existing.ingestError?.sourceAssignmentId === "string"
+        ? existing.ingestError.sourceAssignmentId
+        : null);
     const exact =
       existing.eventStreamId === input.stream.id &&
       existing.hostSequence === decimalSequence(input.envelope.sequence) &&
       existing.runId === input.envelope.runId &&
       existing.executionHostId === input.executionHostId &&
+      sourceAssignmentId === input.envelope.assignmentId &&
+      existing.assignmentEpoch === input.envelope.assignmentEpoch &&
+      existing.hostBootId === input.envelope.hostBootId &&
+      existing.hostSessionId === input.envelope.hostSessionId &&
+      existing.envelopeVersion === input.envelope.envelopeVersion &&
+      existing.eventType === input.envelope.eventType &&
+      existing.payloadSchema === input.envelope.payloadSchema &&
+      existing.occurredAt.getTime() ===
+        new Date(input.envelope.occurredAt).getTime() &&
       existing.payloadSha256 === payloadHash(input.envelope.payload);
     if (!exact) {
       throw invariantError("runtime event id was reused with a different immutable envelope", {
@@ -499,6 +527,12 @@ export async function ingestRuntimeEvent(input: {
       occurredAt: new Date(envelope.occurredAt),
       receivedAt: now,
       ingestDisposition: "pending_gap",
+      ingestError: assignment.id
+        ? null
+        : {
+            reason: "stale_assignment_epoch",
+            sourceAssignmentId: envelope.assignmentId,
+          },
     });
 
     const lastReceived = stream.lastReceivedSequence ?? -1n;

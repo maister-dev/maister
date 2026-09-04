@@ -6,7 +6,7 @@ import { z } from "zod";
 export const EXECUTION_HOST_DATA_PLANE_VERSION = "execution-host-data-plane.v1";
 export const EXECUTION_HOST_CAPABILITY_LIMITS = {
   maxEventBytes: 1_048_576,
-  maxObjectBytes: 536_870_912,
+  maxObjectBytes: 26_214_400,
   maxReplayBatch: 500,
 } as const;
 

@@ -239,7 +239,7 @@ export const ExecutionHostDataPlaneCapabilitiesSchema = z
     limits: z
       .object({
         maxEventBytes: z.literal(1_048_576),
-        maxObjectBytes: z.literal(536_870_912),
+        maxObjectBytes: z.literal(26_214_400),
         maxReplayBatch: z.literal(500),
       })
       .strict(),
@@ -1410,6 +1410,7 @@ export async function uploadRuntimeObject(input: {
       "content-length": String(input.bytes.byteLength),
       "content-digest": digest,
       "x-maister-command-id": input.envelope.command.id,
+      "x-maister-command-issued-at": input.envelope.command.issuedAt,
       "x-maister-assignment-id": input.envelope.fence.assignmentId,
       "x-maister-assignment-epoch": String(input.envelope.fence.assignmentEpoch),
       "x-maister-object-generation": String(input.envelope.payload.generation),

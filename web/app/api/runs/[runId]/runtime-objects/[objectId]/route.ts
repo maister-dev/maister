@@ -3,15 +3,19 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { httpStatusForAuthz, requireActiveSession, requireProjectAction } from "@/lib/authz";
+import { httpStatusForAuthz, requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
 import { getRuntimeObjectForRun } from "@/lib/execution-host/runtime-objects";
+import { authorizeRuntimeObjectActor } from "@/lib/execution-host/runtime-object-access";
 
 type RouteParams = { params: Promise<{ runId: string; objectId: string }> };
 
 function errorResponse(error: unknown): NextResponse {
   if (isMaisterError(error)) {
+    if (error.details?.reason === "runtime_object_not_found") {
+      return NextResponse.json({ message: "not found" }, { status: 404 });
+    }
     return NextResponse.json(
       { code: error.code, message: error.message },
       { status: httpStatusForAuthz(error.code) ?? 409 },
@@ -28,7 +32,7 @@ export async function GET(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   try {
-    await requireActiveSession();
+    const sessionUser = await requireActiveSession();
     const { runId, objectId } = await params;
     if (!z.string().uuid().safeParse(objectId).success) {
       return NextResponse.json({ message: "not found" }, { status: 404 });
@@ -38,10 +42,10 @@ export async function GET(
       runId,
       objectId,
     });
-    if (!loaded || !loaded.projectId) {
+    if (!loaded) {
       return NextResponse.json({ message: "not found" }, { status: 404 });
     }
-    await requireProjectAction(loaded.projectId, "readBoard");
+    await authorizeRuntimeObjectActor(loaded, sessionUser.id);
     const { object } = loaded;
     return NextResponse.json({
       objectId: object.id,

@@ -24,7 +24,7 @@ describe("Stage B capability discovery", () => {
       runtimeObjects: true,
       limits: {
         maxEventBytes: 1_048_576,
-        maxObjectBytes: 536_870_912,
+        maxObjectBytes: 26_214_400,
         maxReplayBatch: 500,
       },
     });

@@ -64,12 +64,14 @@ describe("Stage B runtime event envelope", () => {
       token: "never-store",
       nested: { authorization: "Bearer secret", path: "/private/host/file" },
       uri: "file:///private/host/file",
+      inputTokens: 12,
       safe: "retained",
     });
 
     expect(payload).toEqual({
       nested: { path: "[REDACTED_HOST_PATH]" },
       uri: "[REDACTED_HOST_PATH]",
+      inputTokens: 12,
       safe: "retained",
     });
     expect(Buffer.byteLength(JSON.stringify(envelope))).toBeLessThan(MAX_RUNTIME_EVENT_BYTES);

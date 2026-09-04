@@ -26,7 +26,7 @@ import {
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
-export const MAX_RUNTIME_OBJECT_BYTES = 536_870_912;
+export const MAX_RUNTIME_OBJECT_BYTES = 26_214_400;
 
 const RUNTIME_OBJECT_UUID_NAMESPACE = Buffer.from(
   "6ba7b8119dad11d180b400c04fd430c8",
@@ -36,6 +36,8 @@ const RUNTIME_OBJECT_UUID_NAMESPACE = Buffer.from(
 export type RuntimeObjectWithRun = {
   object: ExecutionRuntimeObject;
   projectId: string | null;
+  localPackageId: string | null;
+  createdByUserId: string | null;
   executionHost: ExecutionHost;
 };
 
@@ -100,6 +102,8 @@ export async function publishRuntimeObject(input: {
     kind: input.kind,
     logicalName: input.logicalName,
     mimeType: input.mimeType,
+    sizeBytes: input.bytes.byteLength,
+    sha256,
     generation,
     retentionClass: input.retentionClass,
     expiresAt: input.expiresAt,
@@ -141,6 +145,8 @@ export async function getRuntimeObjectForRun(input: {
     .select({
       object: executionRuntimeObjects,
       projectId: runs.projectId,
+      localPackageId: runs.localPackageId,
+      createdByUserId: runs.createdByUserId,
       executionHost: executionHosts,
     })
     .from(executionRuntimeObjects)

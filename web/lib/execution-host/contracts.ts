@@ -46,7 +46,7 @@ export type ExecutionHostDataPlaneCapabilities = {
   runtimeObjects: boolean;
   limits: {
     maxEventBytes: 1_048_576;
-    maxObjectBytes: 536_870_912;
+    maxObjectBytes: 26_214_400;
     maxReplayBatch: 500;
   };
 };
@@ -145,6 +145,8 @@ export type ReserveRuntimeObjectPayload = {
   kind: RuntimeObjectKind;
   logicalName: string;
   mimeType: string;
+  sizeBytes: number;
+  sha256: string;
   generation: number;
   retentionClass: RuntimeObjectRetentionClass;
   expiresAt?: string | null;

@@ -1,10 +1,11 @@
 import "server-only";
 
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 
 import type { Db } from "@/lib/execution-host/db";
 import {
   executionAssignments,
+  executionCommands,
   executionRuntimeObjects,
   runs,
   type ExecutionEvent,
@@ -119,48 +120,105 @@ async function projectAvailable(tx: Db, event: ExecutionEvent): Promise<void> {
   if ((retentionClass === "ephemeral") !== Boolean(expiresAt)) {
     throw permanent("runtime object retention and expiry disagree");
   }
-  await tx
-    .insert(executionRuntimeObjects)
-    .values({
-      id: objectId,
-      runId: event.runId,
-      executionHostId: event.executionHostId,
-      executionAssignmentId: event.executionAssignmentId,
-      assignmentEpoch: event.assignmentEpoch,
-      kind: kind as (typeof RUNTIME_OBJECT_KINDS)[number],
-      logicalName,
-      mimeType,
-      sizeBytes: BigInt(sizeBytes),
-      sha256: checksum,
-      generation,
-      retentionClass: retentionClass as (typeof RUNTIME_OBJECT_RETENTION_CLASSES)[number],
-      state: "available",
-      sourceEventId: event.id,
-      createdAt: event.occurredAt,
-      sealedAt: event.occurredAt,
-      expiresAt,
-    })
-    .onConflictDoUpdate({
-      target: executionRuntimeObjects.id,
-      set: {
-        executionHostId: event.executionHostId,
-        executionAssignmentId: event.executionAssignmentId,
-        assignmentEpoch: event.assignmentEpoch,
-        kind: kind as (typeof RUNTIME_OBJECT_KINDS)[number],
-        logicalName,
-        mimeType,
+  const rows = await tx
+    .select()
+    .from(executionRuntimeObjects)
+    .where(eq(executionRuntimeObjects.id, objectId))
+    .for("update")
+    .limit(1);
+  const existing = rows[0];
+  if (existing) {
+    const sameBinding =
+      existing.runId === event.runId &&
+      existing.executionHostId === event.executionHostId &&
+      existing.executionAssignmentId === event.executionAssignmentId &&
+      existing.assignmentEpoch === event.assignmentEpoch &&
+      existing.kind === kind &&
+      existing.logicalName === logicalName &&
+      existing.mimeType === mimeType &&
+      existing.sizeBytes === BigInt(sizeBytes) &&
+      existing.sha256 === checksum &&
+      existing.generation === generation &&
+      existing.retentionClass === retentionClass &&
+      existing.expiresAt?.getTime() === expiresAt?.getTime();
+    const exactReplay =
+      sameBinding &&
+      existing.state === "available" &&
+      existing.sizeBytes === BigInt(sizeBytes) &&
+      existing.sha256 === checksum &&
+      existing.sourceEventId === event.id &&
+      existing.sealedAt?.getTime() === event.occurredAt.getTime() &&
+      existing.deletedAt === null &&
+      existing.lastError === null;
+    if (exactReplay) return;
+
+    const reserveRows = await tx
+      .select({ payload: executionCommands.payload })
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, event.runId),
+          eq(executionCommands.executionHostId, event.executionHostId),
+          eq(
+            executionCommands.executionAssignmentId,
+            event.executionAssignmentId,
+          ),
+          eq(executionCommands.assignmentEpoch, event.assignmentEpoch),
+          eq(executionCommands.kind, "runtime_object.reserve"),
+          eq(executionCommands.targetSessionId, objectId),
+        ),
+      )
+      .orderBy(desc(executionCommands.createdAt))
+      .limit(1);
+    const reservePayload = reserveRows[0]?.payload;
+    const matchesPendingIntent =
+      sameBinding &&
+      existing.state === "pending" &&
+      existing.sizeBytes === null &&
+      existing.sha256 === null &&
+      existing.sealedAt === null &&
+      reservePayload?.sizeBytes === sizeBytes &&
+      reservePayload?.sha256 === checksum;
+    if (!matchesPendingIntent) {
+      throw permanent(
+        "runtime object available event conflicts with immutable metadata",
+      );
+    }
+
+    await tx
+      .update(executionRuntimeObjects)
+      .set({
         sizeBytes: BigInt(sizeBytes),
         sha256: checksum,
-        generation,
-        retentionClass: retentionClass as (typeof RUNTIME_OBJECT_RETENTION_CLASSES)[number],
         state: "available",
         sourceEventId: event.id,
         sealedAt: event.occurredAt,
-        expiresAt,
         deletedAt: null,
         lastError: null,
-      },
-    });
+      })
+      .where(eq(executionRuntimeObjects.id, objectId));
+
+    return;
+  }
+  await tx.insert(executionRuntimeObjects).values({
+    id: objectId,
+    runId: event.runId,
+    executionHostId: event.executionHostId,
+    executionAssignmentId: event.executionAssignmentId,
+    assignmentEpoch: event.assignmentEpoch,
+    kind: kind as (typeof RUNTIME_OBJECT_KINDS)[number],
+    logicalName,
+    mimeType,
+    sizeBytes: BigInt(sizeBytes),
+    sha256: checksum,
+    generation,
+    retentionClass: retentionClass as (typeof RUNTIME_OBJECT_RETENTION_CLASSES)[number],
+    state: "available",
+    sourceEventId: event.id,
+    createdAt: event.occurredAt,
+    sealedAt: event.occurredAt,
+    expiresAt,
+  });
 }
 
 async function projectState(tx: Db, event: ExecutionEvent): Promise<void> {

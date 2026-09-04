@@ -58,6 +58,7 @@ import { resolvePromptRuntimeObjects } from "./prompt-runtime-objects";
 import { SESSION_EVENT_CHANNEL } from "./registry";
 import { RuntimeEventPublisher } from "./runtime-event-publisher";
 import {
+  MAX_RUNTIME_OBJECT_BYTES,
   RuntimeObjectRegistry,
   type RuntimeObjectPublicMetadata,
 } from "./runtime-objects";
@@ -488,7 +489,6 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
   app.addContentTypeParser(
     "application/octet-stream",
-    { parseAs: "buffer", bodyLimit: 536_870_912 },
     (_request, body, done) => done(null, body),
   );
 
@@ -709,6 +709,52 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     reply.status(outcome.status).send(outcome.body);
   }
 
+  async function runRestartableUploadCommand(args: {
+    reply: FastifyReply;
+    parsed: ParsedCommand<unknown>;
+    expectedRunId: string;
+    runtimeEvent: (transition: {
+      phase: "accepted" | "completed" | "rejected";
+      outcome: CommandOutcome;
+    }) => AppendRuntimeEventInput | null;
+    execute: () => Promise<CommandOutcome>;
+  }): Promise<void> {
+    const fence = applyFence({
+      state: hostState,
+      fence: args.parsed.envelope.fence,
+      expectedRunId: args.expectedRunId,
+      logger: fenceLog,
+    });
+    const outcome = await receipts.executeRestartableUpload({
+      envelope: args.parsed.envelope,
+      hostSessionId: args.parsed.envelope.payload &&
+        typeof args.parsed.envelope.payload === "object" &&
+        "objectId" in args.parsed.envelope.payload
+        ? String(args.parsed.envelope.payload.objectId)
+        : undefined,
+      persistReceipt: (transition) => {
+        const event = args.runtimeEvent(transition);
+        if (event) hostState.putReceiptWithRuntimeEvent(transition.row, event);
+        else hostState.putReceipt(transition.row);
+      },
+      run: async () => {
+        if (fence.advanced) {
+          await evictLowerEpochSessions({
+            registry,
+            runId: args.parsed.envelope.fence.runId,
+            epoch: args.parsed.envelope.fence.assignmentEpoch,
+            killGraceMs,
+            logger: fenceLog,
+          });
+        }
+
+        return args.execute();
+      },
+    });
+    if (outcome.replayed) args.reply.header(REPLAYED_HEADER, "true");
+    args.reply.status(outcome.status).send(outcome.body);
+  }
+
   async function runAsyncPromptCommand(args: {
     reply: FastifyReply;
     parsed: ParsedCommand<unknown>;
@@ -900,6 +946,8 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       const status =
         err.details?.reason === "runtime_object_range_invalid"
           ? 416
+          : err.details?.reason === "runtime_object_too_large"
+            ? 413
           : httpStatusForCode(err.code);
 
       reply.status(status).send(errorBody(err));
@@ -1030,8 +1078,22 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         details: { reason: "runtime_object_missing" },
       });
     }
+    const rawContentLength = req.headers["content-length"];
+    const contentLength =
+      typeof rawContentLength === "string" ? Number(rawContentLength) : NaN;
+    if (
+      Number.isSafeInteger(contentLength) &&
+      contentLength > MAX_RUNTIME_OBJECT_BYTES
+    ) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        `runtime object upload exceeds ${MAX_RUNTIME_OBJECT_BYTES} bytes`,
+        { details: { reason: "runtime_object_too_large" } },
+      );
+    }
     const headers = RuntimeObjectUploadHeadersSchema.safeParse({
       commandId: req.headers["x-maister-command-id"],
+      commandIssuedAt: req.headers["x-maister-command-issued-at"],
       assignmentId: req.headers["x-maister-assignment-id"],
       assignmentEpoch: req.headers["x-maister-assignment-epoch"],
       generation: req.headers["x-maister-object-generation"],
@@ -1056,8 +1118,12 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         details: { reason: "runtime_object_integrity_mismatch" },
       });
     }
-    const uploadBytes = req.body;
-    if (!(uploadBytes instanceof Buffer)) {
+    const uploadStream = req.body;
+    if (
+      !uploadStream ||
+      typeof uploadStream !== "object" ||
+      !(Symbol.asyncIterator in uploadStream)
+    ) {
       throw new SupervisorError("PRECONDITION", "runtime object upload must be binary", {
         details: { reason: "runtime_object_integrity_mismatch" },
       });
@@ -1066,7 +1132,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       command: {
         id: headers.data.commandId,
         kind: "runtime_object.upload",
-        issuedAt: new Date().toISOString(),
+        issuedAt: headers.data.commandIssuedAt,
       },
       fence: {
         hostKey: hostState.hostKey,
@@ -1081,10 +1147,9 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         sha256: headers.data.sha256,
       },
     };
-    await runCommand({
+    await runRestartableUploadCommand({
       reply,
       parsed: { envelope, payload: envelope.payload },
-      kind: "runtime_object.upload",
       expectedRunId: object.runId,
       runtimeEvent: (transition) =>
         transition.phase === "accepted"
@@ -1099,7 +1164,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           generation: headers.data.generation,
           sizeBytes: headers.data.sizeBytes,
           sha256: headers.data.sha256,
-          bytes: uploadBytes,
+          chunks: uploadStream as AsyncIterable<Uint8Array>,
         }),
       }),
     });

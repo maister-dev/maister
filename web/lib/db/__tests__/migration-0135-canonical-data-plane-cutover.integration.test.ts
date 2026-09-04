@@ -51,7 +51,7 @@ describe("0135_lush_jetstream and 0136_shiny_the_executioner", () => {
   it("fails closed before dropping legacy projection cursors", async () => {
     await expect(
       applyMainMigration(testDatabase.db, "0135_lush_jetstream"),
-    ).rejects.toThrow(/five complete preservation records/);
+    ).rejects.toThrow(/five complete preservation proof records/);
 
     const table = await testDatabase.pool.query(
       `select 1 from information_schema.tables
@@ -60,7 +60,7 @@ describe("0135_lush_jetstream and 0136_shiny_the_executioner", () => {
     expect(table.rows).toHaveLength(1);
   });
 
-  it("removes the cursor only after preservation and rejects future legacy modes", async () => {
+  it("rejects nominal completion rows that lack durable proof", async () => {
     await testDatabase.pool.query(
       `insert into execution_data_plane_imports
         (run_id, source_kind, state, completed_at)
@@ -68,6 +68,26 @@ describe("0135_lush_jetstream and 0136_shiny_the_executioner", () => {
        from (values ('events'), ('transcript'), ('cost'), ('runtime_objects'), ('scratch_session')) as kinds(source_kind)
        on conflict (run_id, source_kind) do update
        set state = 'complete', completed_at = now()`,
+      [runId],
+    );
+
+    await expect(
+      applyMainMigration(testDatabase.db, "0135_lush_jetstream"),
+    ).rejects.toThrow(/complete preservation proof/);
+  });
+
+  it("removes the cursor only after preservation and rejects future legacy modes", async () => {
+    await testDatabase.pool.query(
+      `update execution_data_plane_imports
+       set state = 'complete',
+           source_fingerprint = 'verified-fixture',
+           last_source_position = 'complete',
+           imported_count = 0,
+           last_error = null,
+           started_at = now(),
+           completed_at = now(),
+           attempts = 1
+       where run_id = $1`,
       [runId],
     );
 

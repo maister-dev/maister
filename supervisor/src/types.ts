@@ -426,17 +426,20 @@ export const ReserveRuntimeObjectPayloadSchema = z
     kind: RuntimeObjectKindSchema,
     logicalName: runtimeObjectLogicalNameSchema,
     mimeType: z.string().min(1).max(255),
+    sizeBytes: z.number().int().min(0).max(26_214_400),
+    sha256: sha256Schema,
     generation: z.number().int().min(1),
     retentionClass: RuntimeObjectRetentionClassSchema,
     expiresAt: z.string().datetime({ offset: true }).nullable().optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
-    if (value.retentionClass === "ephemeral" && !value.expiresAt) {
+    if ((value.retentionClass === "ephemeral") !== Boolean(value.expiresAt)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["expiresAt"],
-        message: "expiresAt is required for ephemeral runtime objects",
+        message:
+          "expiresAt must be present exactly for ephemeral runtime objects",
       });
     }
   });
@@ -448,10 +451,11 @@ export type ReserveRuntimeObjectPayload = z.infer<
 export const RuntimeObjectUploadHeadersSchema = z
   .object({
     commandId: z.string().uuid(),
+    commandIssuedAt: z.string().datetime({ offset: true }),
     assignmentId: z.string().uuid(),
     assignmentEpoch: z.coerce.number().int().min(1),
     generation: z.coerce.number().int().min(1),
-    sizeBytes: z.coerce.number().int().min(0).max(536_870_912),
+    sizeBytes: z.coerce.number().int().min(0).max(26_214_400),
     sha256: sha256Schema,
     contentDigest: z.string().regex(/^sha-256=:[A-Za-z0-9+/]+={0,2}:$/),
   })
@@ -497,9 +501,11 @@ export const REASON_TOKENS = [
   "event_payload_oversize",
   "event_outbox_backpressure",
   "command_invariant_conflict",
+  "command_in_progress",
   "runtime_object_missing",
   "runtime_object_range_invalid",
   "runtime_object_integrity_mismatch",
+  "runtime_object_too_large",
 ] as const;
 
 export type ReasonToken = (typeof REASON_TOKENS)[number];

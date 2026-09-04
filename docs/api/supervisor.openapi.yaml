@@ -233,6 +233,10 @@ paths:
           in: header
           required: true
           schema: { type: string, format: uuid }
+        - name: X-Maister-Command-Issued-At
+          in: header
+          required: true
+          schema: { type: string, format: date-time }
         - name: X-Maister-Assignment-Id
           in: header
           required: true
@@ -2189,7 +2193,7 @@ components:
           required: [maxEventBytes, maxObjectBytes, maxReplayBatch]
           properties:
             maxEventBytes: { type: integer, enum: [1048576] }
-            maxObjectBytes: { type: integer, enum: [536870912] }
+            maxObjectBytes: { type: integer, enum: [26214400] }
             maxReplayBatch: { type: integer, enum: [500] }
     RuntimeObjectReserveCommand:
       type: object
@@ -2201,12 +2205,14 @@ components:
         payload:
           type: object
           additionalProperties: false
-          required: [objectId, kind, logicalName, mimeType, generation, retentionClass]
+          required: [objectId, kind, logicalName, mimeType, sizeBytes, sha256, generation, retentionClass]
           properties:
             objectId: { type: string, format: uuid }
             kind: { type: string, enum: [session_log, raw_transcript, cost_diagnostic, checkpoint, attachment, capability_profile, agent_memory_snapshot, node_result, evidence, generated_artifact, plan_review, diagnostic] }
             logicalName: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$", maxLength: 255 }
             mimeType: { type: string, maxLength: 255 }
+            sizeBytes: { type: integer, minimum: 0, maximum: 26214400 }
+            sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
             generation: { type: integer, minimum: 1 }
             retentionClass: { type: string, enum: [run, delivery, ephemeral] }
             expiresAt: { type: string, format: date-time, nullable: true }

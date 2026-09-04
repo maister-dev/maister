@@ -29,6 +29,16 @@ export type ReceiptTransition = {
   outcome: CommandOutcome;
 };
 
+type ExecuteCommandArgs = {
+  envelope: CommandEnvelope;
+  hostSessionId?: string;
+  onAccepted?: () => void;
+  persistReceipt?: (transition: ReceiptTransition) => void;
+  afterReceipt?: (transition: ReceiptTransition) => void;
+  admissionExempt?: boolean;
+  run: () => Promise<CommandOutcome>;
+};
+
 export const REPLAYED_HEADER = "x-maister-command-replayed";
 
 export class CommandReceipts {
@@ -65,19 +75,7 @@ export class CommandReceipts {
     return recovered;
   }
 
-  async execute(args: {
-    envelope: CommandEnvelope;
-    hostSessionId?: string;
-    // Called once the `accepted` receipt is durable and BEFORE the effect runs.
-    onAccepted?: () => void;
-    // Session commands supply this to atomically persist the receipt and its
-    // canonical event in the host-state transaction. Other Stage A commands
-    // retain their receipt-only contract until they acquire a session event.
-    persistReceipt?: (transition: ReceiptTransition) => void;
-    afterReceipt?: (transition: ReceiptTransition) => void;
-    admissionExempt?: boolean;
-    run: () => Promise<CommandOutcome>;
-  }): Promise<ExecutedCommand> {
+  async execute(args: ExecuteCommandArgs): Promise<ExecutedCommand> {
     const { envelope } = args;
     const commandId = envelope.command.id;
     const existing = this.state.getReceipt(commandId);
@@ -139,6 +137,50 @@ export class CommandReceipts {
 
     this.inflight.set(commandId, promise);
 
+    try {
+      return { ...(await promise), replayed: false };
+    } finally {
+      this.inflight.delete(commandId);
+    }
+  }
+
+  // Upload bodies are replayable from byte zero. An accepted receipt with no
+  // live request therefore represents a durable upload intent, not a lost ACP
+  // turn. A concurrent duplicate is rejected immediately so its request body
+  // is never mistaken for the original stream.
+  async executeRestartableUpload(
+    args: ExecuteCommandArgs,
+  ): Promise<ExecutedCommand> {
+    const { envelope } = args;
+    const commandId = envelope.command.id;
+    const existing = this.state.getReceipt(commandId);
+    if (existing) assertReceiptInvariant(existing, envelope);
+    if (existing && existing.phase !== "accepted") {
+      return {
+        status: existing.httpStatus,
+        body: existing.body,
+        replayed: true,
+      };
+    }
+    if (this.inflight.has(commandId)) {
+      const conflict = new SupervisorError(
+        "PRECONDITION",
+        "runtime object upload with this command id is already in progress",
+        { details: { reason: "command_in_progress" } },
+      );
+
+      return {
+        status: httpStatusForCode(conflict.code),
+        body: errorBody(conflict),
+        replayed: true,
+      };
+    }
+    if (!existing && !args.admissionExempt) {
+      this.state.assertCanAcceptMutatingCommand();
+    }
+    const receivedAt = existing?.receivedAt ?? this.now().toISOString();
+    const promise = this.runFresh(args, receivedAt);
+    this.inflight.set(commandId, promise);
     try {
       return { ...(await promise), replayed: false };
     } finally {
@@ -249,15 +291,7 @@ export class CommandReceipts {
   }
 
   private async runFresh(
-    args: {
-      envelope: CommandEnvelope;
-      hostSessionId?: string;
-      onAccepted?: () => void;
-      persistReceipt?: (transition: ReceiptTransition) => void;
-      afterReceipt?: (transition: ReceiptTransition) => void;
-      admissionExempt?: boolean;
-      run: () => Promise<CommandOutcome>;
-    },
+    args: ExecuteCommandArgs,
     receivedAt: string,
   ): Promise<CommandOutcome> {
     const { envelope } = args;

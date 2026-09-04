@@ -2,12 +2,12 @@ import type { HostRuntimeObjectRow, HostState } from "./host-state";
 import type { ReserveRuntimeObjectPayload } from "./types";
 
 import { createHash } from "node:crypto";
-import { lstat, mkdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, realpath, rename, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { SupervisorError } from "./types";
 
-export const MAX_RUNTIME_OBJECT_BYTES = 536_870_912;
+export const MAX_RUNTIME_OBJECT_BYTES = 26_214_400;
 
 export type RuntimeObjectPublicMetadata = {
   objectId: string;
@@ -88,7 +88,12 @@ export class RuntimeObjectRegistry {
         existing.assignmentEpoch !== input.assignmentEpoch ||
         existing.kind !== input.payload.kind ||
         existing.logicalName !== input.payload.logicalName ||
-        existing.generation !== input.payload.generation
+        existing.mimeType !== input.payload.mimeType ||
+        existing.sizeBytes !== input.payload.sizeBytes ||
+        existing.sha256 !== input.payload.sha256 ||
+        existing.generation !== input.payload.generation ||
+        existing.retentionClass !== input.payload.retentionClass ||
+        existing.expiresAt !== (input.payload.expiresAt ?? null)
       ) {
         throw new SupervisorError(
           "PRECONDITION",
@@ -109,8 +114,8 @@ export class RuntimeObjectRegistry {
       kind: input.payload.kind,
       logicalName: input.payload.logicalName,
       mimeType: input.payload.mimeType,
-      sizeBytes: null,
-      sha256: null,
+      sizeBytes: input.payload.sizeBytes,
+      sha256: input.payload.sha256,
       generation: input.payload.generation,
       retentionClass: input.payload.retentionClass,
       state: "pending",
@@ -135,13 +140,15 @@ export class RuntimeObjectRegistry {
     generation: number;
     sizeBytes: number;
     sha256: string;
-    bytes: Uint8Array;
+    chunks: AsyncIterable<Uint8Array>;
   }): Promise<RuntimeObjectPublicMetadata> {
     const object = requireObject(this.state, input.objectId);
     if (
       object.assignmentId !== input.assignmentId ||
       object.assignmentEpoch !== input.assignmentEpoch ||
-      object.generation !== input.generation
+      object.generation !== input.generation ||
+      object.sizeBytes !== input.sizeBytes ||
+      object.sha256 !== input.sha256
     ) {
       throw new SupervisorError("FENCED", "runtime object upload fence is stale", {
         details: { reason: "assignment_fenced" },
@@ -162,21 +169,53 @@ export class RuntimeObjectRegistry {
         details: { reason: "runtime_object_missing" },
       });
     }
-    if (input.sizeBytes !== input.bytes.byteLength || input.sizeBytes > MAX_RUNTIME_OBJECT_BYTES) {
+    if (input.sizeBytes > MAX_RUNTIME_OBJECT_BYTES) {
       throw new SupervisorError("PRECONDITION", "runtime object content size is invalid", {
-        details: { reason: "runtime_object_integrity_mismatch" },
-      });
-    }
-    const digest = createHash("sha256").update(input.bytes).digest("hex");
-    if (digest !== input.sha256) {
-      throw new SupervisorError("PRECONDITION", "runtime object checksum does not match content", {
         details: { reason: "runtime_object_integrity_mismatch" },
       });
     }
     await mkdir(this.root, { recursive: true });
     const temporary = `${object.privatePath}.${input.generation}.partial`;
-    await writeFile(temporary, input.bytes, { flag: "w", mode: 0o600 });
+    const digest = createHash("sha256");
+    let receivedBytes = 0;
     try {
+      const handle = await open(temporary, "w", 0o600);
+      try {
+        for await (const chunk of input.chunks) {
+          const bytes = Buffer.from(chunk);
+          receivedBytes += bytes.byteLength;
+          if (
+            receivedBytes > input.sizeBytes ||
+            receivedBytes > MAX_RUNTIME_OBJECT_BYTES
+          ) {
+            throw new SupervisorError(
+              "PRECONDITION",
+              "runtime object content exceeds its declared size",
+              { details: { reason: "runtime_object_integrity_mismatch" } },
+            );
+          }
+          digest.update(bytes);
+          let offset = 0;
+          while (offset < bytes.byteLength) {
+            const written = await handle.write(
+              bytes,
+              offset,
+              bytes.byteLength - offset,
+            );
+            offset += written.bytesWritten;
+          }
+        }
+      } finally {
+        await handle.close();
+      }
+      const actualDigest = digest.digest("hex");
+      if (receivedBytes !== input.sizeBytes || actualDigest !== input.sha256) {
+        throw new SupervisorError(
+          "PRECONDITION",
+          "runtime object content does not match its declared size and checksum",
+          { details: { reason: "runtime_object_integrity_mismatch" } },
+        );
+      }
       await rename(temporary, object.privatePath);
       const written = await stat(object.privatePath);
       if (written.size !== input.sizeBytes) {
@@ -184,14 +223,6 @@ export class RuntimeObjectRegistry {
       }
     } catch (error) {
       await rm(temporary, { force: true });
-      this.state.updateRuntimeObject(object.id, {
-        state: "corrupt",
-        sizeBytes: null,
-        sha256: null,
-        sealedAt: null,
-        deletedAt: null,
-        lastError: { message: error instanceof Error ? error.message : String(error) },
-      });
       throw error;
     }
     const sealed = this.state.updateRuntimeObject(object.id, {

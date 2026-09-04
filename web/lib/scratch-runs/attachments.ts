@@ -91,6 +91,18 @@ export function safeUploadFileName(fileName: string): string {
   return safeName;
 }
 
+export function scratchUploadLogicalName(input: {
+  scope: string;
+  fileName: string;
+}): string {
+  const scopeDigest = createHash("sha256")
+    .update(input.scope, "utf8")
+    .digest("hex")
+    .slice(0, 16);
+
+  return `scratch-upload-${scopeDigest}-${safeUploadFileName(input.fileName)}`;
+}
+
 export function uploadedFileMetadata(args: {
   file: ScratchUploadedFileInput;
   objectId: string;

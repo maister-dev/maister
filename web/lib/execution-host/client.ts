@@ -37,7 +37,7 @@ import type {
   PlacementReason,
 } from "./types";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import {
@@ -67,7 +67,7 @@ import { asExecutionWorkspaceId, asHostSessionId } from "./types";
 
 import { MaisterError } from "@/lib/errors";
 import { getDb } from "@/lib/db/client";
-import { runs } from "@/lib/db/schema";
+import { executionRuntimeObjects, runs } from "@/lib/db/schema";
 
 const defaultLog = pino({
   name: "execution-host",
@@ -505,10 +505,74 @@ export function createExecutionHosts(
           { targetSessionId: sessionId },
         );
       },
-      reserveRuntimeObject(payload) {
-        return immediate<ReserveRuntimeObjectPayload, RuntimeObjectMetadata>(
-          "runtime_object.reserve",
-          payload,
+      async reserveRuntimeObject(payload) {
+        const expiresAt = payload.expiresAt
+          ? new Date(payload.expiresAt)
+          : null;
+        const issued = await db.transaction(async (tx) => {
+          const rows = await tx
+            .select()
+            .from(executionRuntimeObjects)
+            .where(
+              and(
+                eq(executionRuntimeObjects.id, payload.objectId),
+                eq(executionRuntimeObjects.runId, current.runId),
+              ),
+            )
+            .for("update")
+            .limit(1);
+          const existing = rows[0];
+          if (existing) {
+            const sameIntent =
+              existing.executionHostId === host.id &&
+              existing.executionAssignmentId === current.id &&
+              existing.assignmentEpoch === current.epoch &&
+              existing.kind === payload.kind &&
+              existing.logicalName === payload.logicalName &&
+              existing.mimeType === payload.mimeType &&
+              existing.generation === payload.generation &&
+              existing.retentionClass === payload.retentionClass &&
+              existing.expiresAt?.getTime() === expiresAt?.getTime() &&
+              (existing.state === "pending" ||
+                (existing.state === "available" &&
+                  existing.sizeBytes === BigInt(payload.sizeBytes) &&
+                  existing.sha256 === payload.sha256));
+            if (!sameIntent) {
+              throw new MaisterError(
+                "CONFLICT",
+                "runtime object ID is already bound to different metadata",
+                { details: { reason: "command_invariant_conflict" } },
+              );
+            }
+          } else {
+            await tx.insert(executionRuntimeObjects).values({
+              id: payload.objectId,
+              runId: current.runId,
+              executionHostId: host.id,
+              executionAssignmentId: current.id,
+              assignmentEpoch: current.epoch,
+              kind: payload.kind,
+              logicalName: payload.logicalName,
+              mimeType: payload.mimeType,
+              sizeBytes: null,
+              sha256: null,
+              generation: payload.generation,
+              retentionClass: payload.retentionClass,
+              state: "pending",
+              expiresAt,
+            });
+          }
+
+          return issue(
+            tx,
+            "runtime_object.reserve",
+            payload,
+            payload.objectId,
+          );
+        });
+
+        return deliver(
+          issued,
           (env) =>
             transport.reserveRuntimeObject(
               env as CommandEnvelope<ReserveRuntimeObjectPayload>,

@@ -761,7 +761,7 @@ export function createFakeExecutionHost(
         runtimeObjects: false,
         limits: {
           maxEventBytes: 1_048_576,
-          maxObjectBytes: 536_870_912,
+          maxObjectBytes: 26_214_400,
           maxReplayBatch: 500,
         },
       };

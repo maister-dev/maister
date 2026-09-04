@@ -439,7 +439,9 @@ describe("runtime event ingestion", () => {
     });
     const cursors = await testDatabase.pool.query(
       `select consumer_name, state, last_run_sequence::text, poison_event_id
-       from execution_event_consumers where run_id = $1 order by consumer_name`,
+       from execution_event_consumers
+       where run_id = $1 and consumer_name like 'test-%'
+       order by consumer_name`,
       [runId],
     );
 
@@ -673,6 +675,115 @@ describe("runtime event ingestion", () => {
         state: "available",
       },
     ]);
+
+    await ingestRuntimeEvent({
+      db: testDatabase.db,
+      executionHostId: hostId,
+      envelope: event("10", {
+        runId: objectRunId,
+        assignmentId: objectAssignmentId,
+        hostSessionId: null,
+        eventType: "runtime_object.available",
+        payloadSchema: "maister.runtime-object.available.v1",
+        payload: {
+          objectId,
+          kind: "evidence",
+          logicalName: "verification.json",
+          mimeType: "application/json",
+          sizeBytes: 12,
+          sha256: "b".repeat(64),
+          generation: 1,
+          retentionClass: "run",
+          state: "available",
+          expiresAt: null,
+        },
+      }),
+    });
+    const conflicting = await projectCanonicalRuntimeObjects({
+      db: testDatabase.db,
+      runId: objectRunId,
+    });
+    expect(conflicting).toMatchObject({ projected: 0, poisoned: true });
+    const poison = await testDatabase.pool.query(
+      `select state, last_error->>'message' as message
+       from execution_event_consumers
+       where consumer_name = 'canonical-runtime-object-v1' and run_id = $1`,
+      [objectRunId],
+    );
+    expect(poison.rows).toEqual([
+      {
+        state: "poisoned",
+        message:
+          "runtime object available event conflicts with immutable metadata",
+      },
+    ]);
+    const preserved = await testDatabase.pool.query(
+      `select size_bytes::text, sha256 from execution_runtime_objects where id = $1`,
+      [objectId],
+    );
+    expect(preserved.rows).toEqual([
+      { size_bytes: "11", sha256: "a".repeat(64) },
+    ]);
+  });
+
+  it("rejects duplicate event IDs whose immutable envelope spine changed", async () => {
+    const baseline = event("11");
+    await ingestRuntimeEvent({
+      db: testDatabase.db,
+      executionHostId: hostId,
+      envelope: baseline,
+    });
+    const mutations: ReadonlyArray<{
+      label: string;
+      values: Record<string, unknown>;
+    }> = [
+      { label: "host boot", values: { hostBootId: randomUUID() } },
+      {
+        label: "assignment",
+        values: { assignmentId: staleAssignmentId, assignmentEpoch: 2 },
+      },
+      { label: "assignment epoch", values: { assignmentEpoch: 2 } },
+      { label: "host session", values: { hostSessionId: randomUUID() } },
+      {
+        label: "event type and payload schema",
+        values: {
+          eventType: "session.line",
+          payloadSchema: "maister.session.line.v1",
+        },
+      },
+      {
+        label: "occurrence time",
+        values: { occurredAt: "2026-09-04T00:00:01.000Z" },
+      },
+    ];
+
+    for (const mutation of mutations) {
+      await expect(
+        ingestRuntimeEvent({
+          db: testDatabase.db,
+          executionHostId: hostId,
+          envelope: { ...baseline, ...mutation.values },
+        }),
+        mutation.label,
+      ).rejects.toMatchObject({
+        code: "CONFLICT",
+        details: { reason: "event_identity_conflict" },
+      });
+    }
+
+    const stored = await testDatabase.pool.query(
+      `select count(*)::int as count
+       from execution_events where id = $1`,
+      [baseline.eventId],
+    );
+    const watermark = await testDatabase.pool.query(
+      `select last_contiguous_sequence::text as sequence
+       from execution_event_streams
+       where execution_host_id = $1 and stream_id = $2`,
+      [hostId, streamId],
+    );
+    expect(stored.rows).toEqual([{ count: 1 }]);
+    expect(watermark.rows).toEqual([{ sequence: "11" }]);
   });
 
   it("degrades a host rather than silently accepting a replacement stream", async () => {

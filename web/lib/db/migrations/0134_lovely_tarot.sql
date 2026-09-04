@@ -177,6 +177,49 @@ BEGIN
       'cannot drop scratch supervisor session mirror: preservation could not be proven for run %',
       unresolved_run_id;
   END IF;
+
+  -- Only this migration can truthfully certify the scratch-session lane: it
+  -- still has the legacy mirror and has just proved or materialized every
+  -- association above. The file importer must never fabricate this proof.
+  INSERT INTO execution_data_plane_imports (
+    run_id,
+    source_kind,
+    state,
+    source_fingerprint,
+    last_source_position,
+    imported_count,
+    last_error,
+    started_at,
+    completed_at,
+    attempts
+  )
+  SELECT
+    r.id,
+    'scratch_session',
+    'complete',
+    CASE
+      WHEN r.run_kind <> 'scratch' THEN 'not-a-scratch-run'
+      WHEN sr.supervisor_session_id IS NULL THEN 'no-legacy-mirror'
+      ELSE 'preserved-supervisor-session:' || md5(sr.supervisor_session_id)
+    END,
+    'association-verified',
+    CASE WHEN sr.supervisor_session_id IS NULL THEN 0 ELSE 1 END,
+    NULL,
+    now(),
+    now(),
+    1
+  FROM runs r
+  LEFT JOIN scratch_runs sr ON sr.run_id = r.id
+  WHERE r.execution_data_plane_mode = 'legacy_file_v1'
+  ON CONFLICT (run_id, source_kind) DO UPDATE SET
+    state = EXCLUDED.state,
+    source_fingerprint = EXCLUDED.source_fingerprint,
+    last_source_position = EXCLUDED.last_source_position,
+    imported_count = EXCLUDED.imported_count,
+    last_error = NULL,
+    started_at = EXCLUDED.started_at,
+    completed_at = EXCLUDED.completed_at,
+    attempts = execution_data_plane_imports.attempts + 1;
 END $$;
 --> statement-breakpoint
 ALTER TABLE "scratch_runs" DROP COLUMN IF EXISTS "supervisor_session_id";
