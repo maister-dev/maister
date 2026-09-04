@@ -115,13 +115,13 @@ the repository map matches the tree.
 
 ### T6. Rewrite metadata and run the publication audit
 
-- [ ] Commit the public-readiness content with the owner's GitHub noreply
+- [x] Commit the public-readiness content with the owner's GitHub noreply
       identity, fast-forward sanitized `main`, then remove the temporary worktree.
-- [ ] Run `git filter-repo` across every retained ref to replace author,
+- [x] Run `git filter-repo` across every retained ref to replace author,
       committer, and trailer emails.
-- [ ] Scan every reachable commit, tree, blob, tag, and message for all prior
+- [x] Scan every reachable commit, tree, blob, tag, and message for all prior
       private emails plus the sensitive text/path patterns from the first cleanup.
-- [ ] Run `git fsck --full --strict`, documentation validation, site-docs
+- [x] Run `git fsck --full --strict`, documentation validation, site-docs
       validation, TypeScript checks, and targeted tests.
 
 Acceptance: zero forbidden matches, zero private human emails, clean fsck, and
@@ -157,6 +157,7 @@ old private refs back into public history.
 
 - **Commit 1 (T2-T4):** `docs: prepare repository for public contributions`
 - **Commit 2 (T5 and plan progress):** `docs(site): connect public community surfaces`
+- **Commit 3 (T6):** `docs: record public-readiness verification`
 - **History rewrite (T6):** no synthetic content commit; `git filter-repo`
   rewrites both commits and all ancestors in place.
 
@@ -164,5 +165,17 @@ old private refs back into public history.
 
 - Sanitized source: isolated bare mirror outside the source checkout.
 - Pre-email-rewrite sanitized `main`: `0ce7b0ce227804ab712714346f9b05dbf8551384`
+- Post-rewrite content tip before this verification record:
+  `b82f9632e09bd4a1c4fa35578282a559053e51b9`.
+- Full-object privacy audit: 49,328 reachable objects and 24,029 non-tree
+  objects scanned; zero legacy-name, company-name, personal-path, or original
+  private-email violations.
+- Git integrity: `git fsck --full --strict` passed.
+- Documentation: 423/423 Mermaid blocks, 831 ADR links, 3,069 relative links,
+  121 indexed files, current 109-table ERD, Mintlify build, and Mintlify broken
+  links/anchors all passed.
+- Code and metadata: web, supervisor, MCP, and site TypeScript checks passed;
+  site ESLint and production build passed; issue-form YAML parsed; all newly
+  authored Markdown/YAML files passed Prettier check.
 - Remote cutover is gated on working GitHub authentication and final
   action-time confirmation for repository visibility.
