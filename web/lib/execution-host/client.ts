@@ -63,6 +63,7 @@ import { ensureAssignment } from "./placement";
 import { hostForAssignment } from "./resolver";
 import { commandSignals } from "./signals";
 import { defaultTransport } from "./default-transport";
+import { streamCanonicalSessionEvents } from "./events/session-stream";
 import { asExecutionWorkspaceId, asHostSessionId } from "./types";
 
 import { MaisterError } from "@/lib/errors";
@@ -606,38 +607,59 @@ export function createExecutionHosts(
     return client;
   }
 
-  const admin: HostAdminClient = {
-    health(opts) {
-      return transport.health(opts);
-    },
-    diagnostics(opts) {
-      return transport.diagnostics(opts);
-    },
-    platformStatus(opts) {
-      return transport.platformStatus(opts);
-    },
-    resolveModelSuggestions(draft, opts) {
-      return transport.resolveModelSuggestions(draft, opts);
-    },
-    probeMcp(req) {
-      return transport.probeMcp(req);
-    },
-    listSessions() {
-      return transport.listSessions();
-    },
-    async *streamSession(sessionId, opts) {
-      for await (const event of transport.streamSession(sessionId, opts)) {
-        commandSignals.publishLegacy(event);
-        yield event;
-      }
-    },
-    getCommandReceipt(commandId) {
-      return transport.getCommandReceipt(commandId);
-    },
-    getWorkspace(executionWorkspaceId) {
-      return transport.getWorkspace(executionWorkspaceId);
-    },
-  };
+  function adminForRun(runId?: string): HostAdminClient {
+    return {
+      health(opts) {
+        return transport.health(opts);
+      },
+      diagnostics(opts) {
+        return transport.diagnostics(opts);
+      },
+      platformStatus(opts) {
+        return transport.platformStatus(opts);
+      },
+      resolveModelSuggestions(draft, opts) {
+        return transport.resolveModelSuggestions(draft, opts);
+      },
+      probeMcp(req) {
+        return transport.probeMcp(req);
+      },
+      listSessions() {
+        return transport.listSessions();
+      },
+      async *streamSession(sessionId, opts) {
+        if (runId) {
+          const modeRows = await dbOf()
+            .select({ executionDataPlaneMode: runs.executionDataPlaneMode })
+            .from(runs)
+            .where(eq(runs.id, runId))
+            .limit(1);
+          if (modeRows[0]?.executionDataPlaneMode === "canonical_events_v1") {
+            yield* streamCanonicalSessionEvents({
+              db: dbOf(),
+              runId,
+              hostSessionId: sessionId,
+              lastEventId: opts?.lastEventId,
+              signal: opts?.signal,
+            });
+            return;
+          }
+        }
+        for await (const event of transport.streamSession(sessionId, opts)) {
+          commandSignals.publishLegacy(event);
+          yield event;
+        }
+      },
+      getCommandReceipt(commandId) {
+        return transport.getCommandReceipt(commandId);
+      },
+      getWorkspace(executionWorkspaceId) {
+        return transport.getWorkspace(executionWorkspaceId);
+      },
+    };
+  }
+
+  const admin = adminForRun();
 
   async function forAssignment(
     assignmentOrId: ExecutionAssignment | { id: string },
@@ -695,7 +717,7 @@ export function createExecutionHosts(
         ? await forAssignment({ id: opts.assignmentId })
         : await forRun(runId, opts);
 
-      return { client, admin };
+      return { client, admin: adminForRun(runId) };
     },
     local() {
       return admin;

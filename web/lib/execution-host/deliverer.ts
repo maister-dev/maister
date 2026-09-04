@@ -891,7 +891,10 @@ function promptResultFromCommand(row: ExecutionCommand): PromptResult {
 
 function promptFailureFromCommand(row: ExecutionCommand): MaisterError {
   const error = row.lastError ?? {};
-  const code = error.code === "FENCED" ? "CONFLICT" : "ACP_PROTOCOL";
+  const fenced =
+    error.code === "FENCED" ||
+    (error.code === "CONFLICT" && error.reason === "assignment_fenced");
+  const code = fenced ? "CONFLICT" : "ACP_PROTOCOL";
   const message =
     typeof error.message === "string"
       ? error.message

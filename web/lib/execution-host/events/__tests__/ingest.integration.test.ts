@@ -11,6 +11,7 @@ import {
 import { projectCanonicalPromptCommands } from "@/lib/execution-host/events/prompt-projector";
 import { projectCanonicalSessionLifecycle } from "@/lib/execution-host/events/lifecycle-projector";
 import { projectCanonicalRuntimeObjects } from "@/lib/execution-host/events/runtime-object-projector";
+import { streamCanonicalSessionEvents } from "@/lib/execution-host/events/session-stream";
 import { appendManagerRunStreamEvent } from "@/lib/runs/run-stream-event";
 import type { ExecutionHostTransport } from "@/lib/execution-host/contracts";
 import {
@@ -93,6 +94,99 @@ function event(sequence: string, overrides: Record<string, unknown> = {}): Recor
 }
 
 describe("runtime event ingestion", () => {
+  it("replays a canonical session exclusively from manager-owned event rows", async () => {
+    const canonicalRunId = randomUUID();
+    const canonicalHostId = randomUUID();
+    const canonicalAssignmentId = randomUUID();
+    const canonicalHostKey = `eh_${randomUUID().replace(/-/g, "")}`;
+    const canonicalStreamId = randomUUID();
+    const hostSessionId = randomUUID();
+    await testDatabase.pool.query(
+      `insert into runs
+        (id, project_id, run_kind, status, flow_version, flow_revision, execution_data_plane_mode)
+       values ($1, $2, 'scratch', 'Pending', 'scratch', 'canonical-stream', 'canonical_events_v1')`,
+      [canonicalRunId, projectId],
+    );
+    await testDatabase.pool.query(
+      `insert into execution_hosts (id, host_key, kind, display_name, transport, retired_at)
+       values ($1, $2, 'local_direct', 'canonical stream host', '{"kind":"local_direct"}', now())`,
+      [canonicalHostId, canonicalHostKey],
+    );
+    await testDatabase.pool.query(
+      `insert into execution_assignments
+        (id, run_id, execution_host_id, epoch, state, placement_reason)
+       values ($1, $2, $3, 1, 'active', 'launch')`,
+      [canonicalAssignmentId, canonicalRunId, canonicalHostId],
+    );
+    const envelopes = [
+      {
+        envelopeVersion: 1 as const,
+        eventId: randomUUID(),
+        hostKey: canonicalHostKey,
+        hostBootId: randomUUID(),
+        streamId: canonicalStreamId,
+        sequence: "0",
+        runId: canonicalRunId,
+        assignmentId: canonicalAssignmentId,
+        assignmentEpoch: 1,
+        hostSessionId,
+        eventType: "session.update" as const,
+        occurredAt: "2026-09-04T00:00:00.000Z",
+        payloadSchema: "maister.session.update.v1" as const,
+        payload: {
+          sourceMonotonicId: 12,
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "durable" } },
+        },
+      },
+      {
+        envelopeVersion: 1 as const,
+        eventId: randomUUID(),
+        hostKey: canonicalHostKey,
+        hostBootId: randomUUID(),
+        streamId: canonicalStreamId,
+        sequence: "1",
+        runId: canonicalRunId,
+        assignmentId: canonicalAssignmentId,
+        assignmentEpoch: 1,
+        hostSessionId,
+        eventType: "session.exited" as const,
+        occurredAt: "2026-09-04T00:00:01.000Z",
+        payloadSchema: "maister.session.exited.v1" as const,
+        payload: { sourceMonotonicId: 13, exitCode: 0, reason: "intentional" },
+      },
+    ];
+    for (const envelope of envelopes) {
+      await ingestRuntimeEvent({
+        db: testDatabase.db,
+        executionHostId: canonicalHostId,
+        envelope,
+      });
+    }
+
+    const replayed = [];
+    for await (const event of streamCanonicalSessionEvents({
+      db: testDatabase.db,
+      runId: canonicalRunId,
+      hostSessionId,
+    })) {
+      replayed.push(event);
+    }
+
+    expect(replayed).toEqual([
+      expect.objectContaining({
+        type: "session.update",
+        sessionId: hostSessionId,
+        monotonicId: 0,
+      }),
+      expect.objectContaining({
+        type: "session.exited",
+        sessionId: hostSessionId,
+        monotonicId: 1,
+        reason: "intentional",
+      }),
+    ]);
+  });
+
   it("allocates one canonical sequence across concurrent host and manager events without a runtime file", async () => {
     const canonicalRunId = randomUUID();
     const canonicalHostId = randomUUID();

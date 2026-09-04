@@ -36,6 +36,7 @@ import {
   isFencedError,
   type BoundClient,
   type ExecutionHosts,
+  type HostAdminClient,
 } from "@/lib/execution-host";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -991,6 +992,7 @@ export async function sendGateChatTurn(args: {
   let resumed = false;
   // Assigned on every non-throwing branch below (live lookup or chat resume).
   let client!: BoundClient;
+  let admin!: HostAdminClient;
 
   try {
     if (run.status === "NeedsInput") {
@@ -1112,6 +1114,14 @@ export async function sendGateChatTurn(args: {
     return created.sessionId;
   }
 
+  // A run-bound reader reconstructs canonical sessions from Postgres. The
+  // host-global admin client remains reserved for host operational reads.
+  admin = (
+    await hosts.executionFor(args.runId, {
+      assignmentId: client.assignment.id,
+    })
+  ).admin;
+
   // (4b) prompt — L1 preamble + verbatim reviewer text (NEVER templated),
   // L2 readOnlyTurn flag, DD4 stepId marker. Reply text accumulates from the
   // session stream (chat_turn event preferred, chunks as fallback).
@@ -1120,7 +1130,7 @@ export async function sendGateChatTurn(args: {
   const abort = new AbortController();
   const consumer = (async () => {
     try {
-      for await (const ev of hosts.local().streamSession(supervisorSessionId, {
+      for await (const ev of admin.streamSession(supervisorSessionId, {
         signal: abort.signal,
       }) as AsyncGenerator<SupervisorEvent>) {
         if (
