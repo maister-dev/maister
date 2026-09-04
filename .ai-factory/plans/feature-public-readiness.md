@@ -130,15 +130,18 @@ present, with this plan added as the new publication record.
 
 ### T7. Perform the GitHub cutover
 
-- [ ] Authenticate `gh` and Git transport as `kanischev`.
-- [ ] Capture the private remote's branch/tag/PR-ref inventory before mutation.
-- [ ] Force-update public `main` from the audited mirror and remove every other
+- [x] Authenticate `gh` and Git transport as `kanischev`.
+- [x] Capture the private remote's branch/tag/PR-ref inventory before mutation.
+- [x] Force-update remote `main` from the audited mirror and remove every other
       public branch/tag unless explicitly retained and proven sanitized.
-- [ ] Configure description, homepage (`https://imaister.dev`), topics, Issues,
-      Discussions, private vulnerability reporting, secret scanning/push
-      protection, and a protected-main ruleset.
-- [ ] Verify the public clone independently, then change repository visibility
-      to public.
+- [x] Configure description, homepage (`https://imaister.dev`), topics, Issues,
+      Discussions, and automatic deletion of merged branches.
+- [x] Verify a fresh clone independently while the repository remains private.
+- [ ] Ask GitHub Support to remove the seven affected pull-request refs and
+      cached views, and to run server-side garbage collection.
+- [ ] After GitHub confirms the purge, change visibility to public, enable
+      private vulnerability reporting and secret-scanning push protection,
+      apply protected-main rules, and verify an unauthenticated clone.
 
 Acceptance: a fresh unauthenticated clone contains only the intended public
 refs, passes the same privacy scan, and GitHub exposes the expected community
@@ -177,5 +180,15 @@ old private refs back into public history.
 - Code and metadata: web, supervisor, MCP, and site TypeScript checks passed;
   site ESLint and production build passed; issue-form YAML parsed; all newly
   authored Markdown/YAML files passed Prettier check.
-- Remote cutover is gated on working GitHub authentication and final
-  action-time confirmation for repository visibility.
+- GitHub inventory before mutation: eight branches including `main`, one tag,
+  seven merged pull requests, no releases, and no forks.
+- Remote `main` was force-updated to the audited history; the other seven
+  branches and the tag were deleted. A fresh GitHub clone exposed only `main`
+  and scanned 43,577 reachable objects with zero forbidden matches.
+- Repository description, homepage, topics, Issues, Discussions, and merged
+  branch cleanup are configured. Visibility remains private because GitHub's
+  read-only pull-request refs still retain the pre-rewrite objects.
+- Final publication is gated on GitHub Support removing the seven affected
+  pull-request refs and cached views and running server-side garbage collection.
+  The support request data is retained outside the repository so the public
+  history does not publish identifiers for the removed objects.
