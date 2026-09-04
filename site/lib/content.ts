@@ -205,8 +205,11 @@ type LandingContent = {
     project: {
       title: string;
       source: string;
+      contributing: string;
       issues: string;
       discussions: string;
+      security: string;
+      conduct: string;
       license: string;
     };
     contacts: {
@@ -735,8 +738,11 @@ const CONTENT = {
       project: {
         title: "Project",
         source: "GitHub",
+        contributing: "Contributing",
         issues: "Issues",
         discussions: "Discussions",
+        security: "Security",
+        conduct: "Code of Conduct",
         license: "License (MIT)",
       },
       contacts: {
@@ -1263,8 +1269,11 @@ const CONTENT = {
       project: {
         title: "Проект",
         source: "GitHub",
+        contributing: "Как внести вклад",
         issues: "Задачи",
         discussions: "Обсуждения",
+        security: "Безопасность",
+        conduct: "Кодекс поведения",
         license: "Лицензия MIT",
       },
       contacts: {

@@ -47,6 +47,9 @@ mAIster/
 │       ├── frontend.md         # Web-tier rules (HeroUI, RSC, lint)
 │       ├── backend.md          # Server-tier rules (subprocess, SSE, errors)
 │       └── database.md         # Drizzle / Postgres rules
+├── .github/                    # Public issue forms and pull-request template
+│   ├── ISSUE_TEMPLATE/
+│   └── PULL_REQUEST_TEMPLATE.md
 ├── .agents/                    # Codex agent bundles (do not hand-edit)
 ├── .claude/                    # Claude skills + agents (managed via /aif)
 ├── .codex/                     # Codex skills + config.toml
@@ -118,6 +121,9 @@ mAIster/
 ├── CLAUDE.md                   # Root project instructions for AI agents
 ├── AGENTS.md                   # This file
 ├── README.md                   # Landing page: quick start, docs index
+├── CONTRIBUTING.md             # Development and contribution workflow
+├── SECURITY.md                 # Private vulnerability-reporting policy
+├── CODE_OF_CONDUCT.md          # Contributor Covenant 2.1
 ├── .env.example                # Server env vars (web + supervisor)
 ├── .dockerignore
 ├── LICENSE                     # MIT
@@ -158,6 +164,9 @@ on a different host than the web tier.
 | Document | Path | Description |
 | -------- | ---- | ----------- |
 | README | `README.md` | Landing page: quick start, key features, docs table |
+| Contributing | `CONTRIBUTING.md` | Setup, validation, PR, privacy, and AI-assistance expectations |
+| Security Policy | `SECURITY.md` | Supported versions and private vulnerability-reporting path |
+| Code of Conduct | `CODE_OF_CONDUCT.md` | Community behavior and enforcement policy |
 | Getting Started | `docs/getting-started.md` | Install, dev workflow, first run |
 | Russian Guide | `docs/ru/README.md` | Purpose, workflow, operator guide |
 | Supervisor | `docs/supervisor.md` | ACP daemon: HTTP+SSE API, lifecycle, env vars, cost.jsonl |
