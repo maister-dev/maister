@@ -157,6 +157,16 @@ export type RuntimeObjectContent = {
   contentDigest: string | null;
 };
 
+// Content remains host-owned while the manager proxies a bounded response. A
+// browser payload route must forward this stream instead of materializing an
+// arbitrary runtime object in web-process memory.
+export type RuntimeObjectContentStream = {
+  body: ReadableStream<Uint8Array>;
+  contentLength: number | null;
+  contentRange: string | null;
+  contentDigest: string | null;
+};
+
 // Per-call transport timeout, chosen by the caller from the per-kind policy
 // table (ADR-166 D5); `null` = no timeout (the long-lived prompt).
 export type CommandCallOptions = { timeoutMs?: number | null };
@@ -201,6 +211,10 @@ export interface ExecutionHostTransport {
     objectId: string,
     opts?: { range?: { start: number; end?: number } },
   ): Promise<RuntimeObjectContent>;
+  openRuntimeObjectContent(
+    objectId: string,
+    opts?: { range?: { start: number; end?: number } },
+  ): Promise<RuntimeObjectContentStream>;
   reserveRuntimeObject(
     envelope: CommandEnvelope<ReserveRuntimeObjectPayload>,
     opts?: CommandCallOptions,

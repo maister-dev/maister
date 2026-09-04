@@ -8,7 +8,7 @@ import { getDb } from "@/lib/db/client";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
   getRuntimeObjectForRun,
-  readRuntimeObjectContent,
+  openRuntimeObjectContent,
 } from "@/lib/execution-host/runtime-objects";
 
 type RouteParams = { params: Promise<{ runId: string; objectId: string }> };
@@ -90,7 +90,7 @@ export async function GET(
     }
     await requireProjectAction(loaded.projectId, "readBoard");
     const range = parseRange(request.headers.get("range"));
-    const { object, content } = await readRuntimeObjectContent({
+    const { object, content } = await openRuntimeObjectContent({
       db,
       runId,
       objectId,
@@ -98,13 +98,15 @@ export async function GET(
     });
     const headers = new Headers({
       "content-type": object.mimeType,
-      "content-length": String(content.bytes.byteLength),
       "accept-ranges": "bytes",
       etag: `\"${object.sha256}\"`,
     });
+    if (content.contentLength !== null) {
+      headers.set("content-length", String(content.contentLength));
+    }
     if (content.contentDigest) headers.set("content-digest", content.contentDigest);
     if (content.contentRange) headers.set("content-range", content.contentRange);
-    return new Response(content.bytes, {
+    return new Response(content.body, {
       status: content.contentRange ? 206 : 200,
       headers,
     });

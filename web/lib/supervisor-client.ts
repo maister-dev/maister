@@ -1427,6 +1427,24 @@ export async function getRuntimeObjectContent(
   objectId: string,
   opts: { range?: { start: number; end?: number } } = {},
 ): Promise<{ bytes: Uint8Array; contentRange: string | null; contentDigest: string | null }> {
+  const opened = await openRuntimeObjectContent(objectId, opts);
+
+  return {
+    bytes: new Uint8Array(await new Response(opened.body).arrayBuffer()),
+    contentRange: opened.contentRange,
+    contentDigest: opened.contentDigest,
+  };
+}
+
+export async function openRuntimeObjectContent(
+  objectId: string,
+  opts: { range?: { start: number; end?: number } } = {},
+): Promise<{
+  body: ReadableStream<Uint8Array>;
+  contentLength: number | null;
+  contentRange: string | null;
+  contentDigest: string | null;
+}> {
   const range = opts.range
     ? `bytes=${opts.range.start}-${opts.range.end ?? ""}`
     : undefined;
@@ -1438,8 +1456,28 @@ export async function getRuntimeObjectContent(
     ctx: "getRuntimeObjectContent",
   });
   if (!response.ok) return throwRuntimeObjectWireError(response, "getRuntimeObjectContent");
+  if (!response.body) {
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "runtime object content response is missing its body stream",
+      { details: { reason: "runtime_object_missing" } },
+    );
+  }
+  const contentLength = response.headers.get("content-length");
+  const parsedContentLength = contentLength === null ? null : Number(contentLength);
+  if (
+    parsedContentLength !== null &&
+    (!Number.isSafeInteger(parsedContentLength) || parsedContentLength < 0)
+  ) {
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "runtime object content response has an invalid content length",
+      { details: { reason: "runtime_object_integrity_mismatch" } },
+    );
+  }
   return {
-    bytes: new Uint8Array(await response.arrayBuffer()),
+    body: response.body,
+    contentLength: parsedContentLength,
     contentRange: response.headers.get("content-range"),
     contentDigest: response.headers.get("content-digest"),
   };

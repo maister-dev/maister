@@ -11,7 +11,7 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { readRuntimeObjectContent } from "@/lib/execution-host/runtime-objects";
+import { openRuntimeObjectContent } from "@/lib/execution-host/runtime-objects";
 import { resolveArtifactContent } from "@/lib/flows/graph/artifact-content";
 import { runtimeRoot } from "@/lib/instance-config";
 import { getRunDetail } from "@/lib/queries/run";
@@ -177,7 +177,7 @@ export async function GET(
     const locator = artifact.locator as ArtifactLocator;
 
     if (locator.kind === "execution-object") {
-      const { object, content } = await readRuntimeObjectContent({
+      const { object, content } = await openRuntimeObjectContent({
         db: db as unknown as ExecutionHostDb,
         runId,
         objectId: locator.objectId,
@@ -185,10 +185,12 @@ export async function GET(
       });
       const headers = new Headers({
         "content-type": object.mimeType,
-        "content-length": String(content.bytes.byteLength),
         "accept-ranges": "bytes",
         etag: `\"${object.sha256}\"`,
       });
+      if (content.contentLength !== null) {
+        headers.set("content-length", String(content.contentLength));
+      }
 
       if (content.contentDigest) {
         headers.set("content-digest", content.contentDigest);
@@ -197,7 +199,7 @@ export async function GET(
         headers.set("content-range", content.contentRange);
       }
 
-      return new Response(content.bytes, {
+      return new Response(content.body, {
         status: content.contentRange ? 206 : 200,
         headers,
       });

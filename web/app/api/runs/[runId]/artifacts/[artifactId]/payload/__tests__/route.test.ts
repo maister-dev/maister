@@ -39,7 +39,7 @@ import {
   hitlRequests as hitlRequestsTable,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
-import { readRuntimeObjectContent } from "@/lib/execution-host/runtime-objects";
+import { openRuntimeObjectContent } from "@/lib/execution-host/runtime-objects";
 import { getRunDetail } from "@/lib/queries/run";
 import { diffRange, logRange } from "@/lib/worktree";
 
@@ -129,7 +129,7 @@ vi.mock("@/lib/worktree", () => ({
 }));
 
 vi.mock("@/lib/execution-host/runtime-objects", () => ({
-  readRuntimeObjectContent: vi.fn(),
+  openRuntimeObjectContent: vi.fn(),
 }));
 
 let runtimeRoot: string;
@@ -226,7 +226,7 @@ beforeEach(() => {
   });
   vi.mocked(logRange).mockClear();
   vi.mocked(logRange).mockResolvedValue("abc1234 commit one\n");
-  vi.mocked(readRuntimeObjectContent).mockReset();
+  vi.mocked(openRuntimeObjectContent).mockReset();
 });
 
 afterEach(() => {
@@ -337,14 +337,20 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
   it("execution-object locator → 200 uses the manager-authorized opaque content contract", async () => {
     const objectId = "d0b23d15-a3de-49e8-a73f-5e9e96c847cb";
     const body = new TextEncoder().encode("host-owned artifact");
-    vi.mocked(readRuntimeObjectContent).mockResolvedValue({
+    vi.mocked(openRuntimeObjectContent).mockResolvedValue({
       object: {
         id: objectId,
         mimeType: "text/plain",
         sha256: "abc",
       },
       content: {
-        bytes: body,
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(body);
+            controller.close();
+          },
+        }),
+        contentLength: body.byteLength,
         contentRange: `bytes 0-${body.byteLength - 1}/${body.byteLength}`,
         contentDigest: "sha-256=:abc=:",
       },
@@ -363,7 +369,7 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
     );
     expect(res.headers.get("etag")).toBe('"abc"');
     expect(await res.text()).toBe("host-owned artifact");
-    expect(readRuntimeObjectContent).toHaveBeenCalledWith({
+    expect(openRuntimeObjectContent).toHaveBeenCalledWith({
       db: fakeDb,
       runId: RUN_ID,
       objectId,
@@ -387,16 +393,22 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
       code: "PRECONDITION",
       message: "artifact payload Range must be one bounded byte range",
     });
-    expect(readRuntimeObjectContent).not.toHaveBeenCalled();
+    expect(openRuntimeObjectContent).not.toHaveBeenCalled();
   });
 
   it("execution-object locator forwards a single valid range to the manager contract", async () => {
     const objectId = "d0b23d15-a3de-49e8-a73f-5e9e96c847cb";
     const body = new TextEncoder().encode("owned");
-    vi.mocked(readRuntimeObjectContent).mockResolvedValue({
+    vi.mocked(openRuntimeObjectContent).mockResolvedValue({
       object: { id: objectId, mimeType: "text/plain" },
       content: {
-        bytes: body,
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(body);
+            controller.close();
+          },
+        }),
+        contentLength: body.byteLength,
         contentRange: "bytes 4-8/10",
         contentDigest: "sha-256=:abc=:",
       },
@@ -412,7 +424,7 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
 
     expect(res.status).toBe(206);
     expect(await res.text()).toBe("owned");
-    expect(readRuntimeObjectContent).toHaveBeenCalledWith({
+    expect(openRuntimeObjectContent).toHaveBeenCalledWith({
       db: fakeDb,
       runId: RUN_ID,
       objectId,

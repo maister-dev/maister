@@ -140,6 +140,9 @@ export function createLocalDirectTransport(): ExecutionHostTransport {
     async getRuntimeObjectContent(objectId, opts): Promise<RuntimeObjectContent> {
       return wire.getRuntimeObjectContent(objectId, opts);
     },
+    async openRuntimeObjectContent(objectId, opts) {
+      return wire.openRuntimeObjectContent(objectId, opts);
+    },
     async reserveRuntimeObject(envelope, opts) {
       return toRuntimeObjectMetadata(
         await wire.reserveRuntimeObject(envelope, opts),

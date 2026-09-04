@@ -60,7 +60,7 @@ sequenceDiagram
 - **OBJ-03:** Reserve, upload, and delete reuse Stage A commands, receipts, retry state, and fences without a second ledger.
 - **OBJ-04:** A sealed object has immutable binding, generation, MIME, size, and SHA-256, and differing retries conflict.
 - **OBJ-05:** Upload bytes use private temporary files, verify declared integrity, and atomically rename before available evidence.
-- **OBJ-06:** Reads return bounded content with one byte range and a SHA-256 Content-Digest, while invalid ranges return typed errors.
+- **OBJ-06:** Reads return a manager-authorized streaming response with one byte range and a SHA-256 Content-Digest; the web tier forwards host bytes without buffering the full object, while invalid ranges return typed errors.
 - **OBJ-07:** Unknown/cross-boundary, tombstoned/expired, corrupt, and oversized objects have distinct typed outcomes.
 - **OBJ-08:** Object content, host paths, prompts, and secrets are prohibited from logs and event payloads.
 - **OBJ-09:** Events/messages/cost/catalog metadata remain manager-owned while raw diagnostics and large host content remain host-owned.

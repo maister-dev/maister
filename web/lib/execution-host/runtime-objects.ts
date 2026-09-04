@@ -8,6 +8,7 @@ import type { Db } from "./db";
 import type {
   ExecutionHostTransport,
   RuntimeObjectContent,
+  RuntimeObjectContentStream,
   RuntimeObjectMetadata,
 } from "./contracts";
 import type { BoundClient } from "./client";
@@ -165,6 +166,25 @@ export async function readRuntimeObjectContent(input: {
   range?: { start: number; end?: number };
   transportForHost?: RuntimeObjectTransportResolver;
 }): Promise<{ object: ExecutionRuntimeObject; content: RuntimeObjectContent }> {
+  const opened = await openRuntimeObjectContent(input);
+
+  return {
+    object: opened.object,
+    content: {
+      bytes: new Uint8Array(await new Response(opened.content.body).arrayBuffer()),
+      contentRange: opened.content.contentRange,
+      contentDigest: opened.content.contentDigest,
+    },
+  };
+}
+
+export async function openRuntimeObjectContent(input: {
+  db: Db;
+  runId: string;
+  objectId: string;
+  range?: { start: number; end?: number };
+  transportForHost?: RuntimeObjectTransportResolver;
+}): Promise<{ object: ExecutionRuntimeObject; content: RuntimeObjectContentStream }> {
   const loaded = await getRuntimeObjectForRun(input);
   if (!loaded) {
     throw new MaisterError("PRECONDITION", "runtime object was not found for this run", {
@@ -179,7 +199,7 @@ export async function readRuntimeObjectContent(input: {
   const transport = input.transportForHost
     ? await input.transportForHost(loaded.executionHost)
     : defaultRuntimeObjectTransport(loaded.executionHost);
-  const content = await transport.getRuntimeObjectContent(
+  const content = await transport.openRuntimeObjectContent(
     input.objectId,
     { range: input.range },
   );

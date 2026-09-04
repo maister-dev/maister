@@ -918,6 +918,21 @@ export function createFakeExecutionHost(
           : null,
       };
     },
+    async openRuntimeObjectContent(objectId, opts) {
+      const content = await this.getRuntimeObjectContent(objectId, opts);
+
+      return {
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(content.bytes);
+            controller.close();
+          },
+        }),
+        contentLength: content.bytes.byteLength,
+        contentRange: content.contentRange,
+        contentDigest: content.contentDigest,
+      };
+    },
     reserveRuntimeObject(envelope, opts) {
       return runCommand<RuntimeObjectMetadata>({
         method: "reserveRuntimeObject",

@@ -5,7 +5,7 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { MaisterError } from "@/lib/errors";
 import {
   getRuntimeObjectForRun,
-  readRuntimeObjectContent,
+  openRuntimeObjectContent,
 } from "@/lib/execution-host/runtime-objects";
 
 const RUN_ID = "run-runtime-object";
@@ -22,7 +22,7 @@ vi.mock("@/lib/authz", () => ({
 
 vi.mock("@/lib/execution-host/runtime-objects", () => ({
   getRuntimeObjectForRun: vi.fn(),
-  readRuntimeObjectContent: vi.fn(),
+  openRuntimeObjectContent: vi.fn(),
 }));
 
 function loadedObject() {
@@ -54,11 +54,17 @@ beforeEach(() => {
   vi.mocked(requireProjectAction).mockResolvedValue({ role: "viewer" } as never);
   vi.mocked(getRuntimeObjectForRun).mockReset();
   vi.mocked(getRuntimeObjectForRun).mockResolvedValue(loadedObject() as never);
-  vi.mocked(readRuntimeObjectContent).mockReset();
-  vi.mocked(readRuntimeObjectContent).mockResolvedValue({
+  vi.mocked(openRuntimeObjectContent).mockReset();
+  vi.mocked(openRuntimeObjectContent).mockResolvedValue({
     object: loadedObject().object,
     content: {
-      bytes: new TextEncoder().encode("owned"),
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("owned"));
+          controller.close();
+        },
+      }),
+      contentLength: 5,
       contentRange: "bytes 1-5/8",
       contentDigest: "sha-256=:abc=:",
     },
@@ -75,7 +81,7 @@ describe("GET /api/runs/[runId]/runtime-objects/[objectId]/content", () => {
     expect(response.headers.get("etag")).toBe('"abc"');
     expect(await response.text()).toBe("owned");
     expect(requireProjectAction).toHaveBeenCalledWith("project-1", "readBoard");
-    expect(readRuntimeObjectContent).toHaveBeenCalledWith({
+    expect(openRuntimeObjectContent).toHaveBeenCalledWith({
       db: {},
       runId: RUN_ID,
       objectId: OBJECT_ID,
@@ -91,7 +97,7 @@ describe("GET /api/runs/[runId]/runtime-objects/[objectId]/content", () => {
       code: "PRECONDITION",
       message: "runtime object Range must use a single byte range",
     });
-    expect(readRuntimeObjectContent).not.toHaveBeenCalled();
+    expect(openRuntimeObjectContent).not.toHaveBeenCalled();
   });
 
   it("does not disclose an object selected outside the manager catalogued run", async () => {
@@ -101,11 +107,11 @@ describe("GET /api/runs/[runId]/runtime-objects/[objectId]/content", () => {
 
     expect(response.status).toBe(404);
     expect(requireProjectAction).not.toHaveBeenCalled();
-    expect(readRuntimeObjectContent).not.toHaveBeenCalled();
+    expect(openRuntimeObjectContent).not.toHaveBeenCalled();
   });
 
   it("returns gone when catalogued bytes disappeared from the host", async () => {
-    vi.mocked(readRuntimeObjectContent).mockRejectedValueOnce(
+    vi.mocked(openRuntimeObjectContent).mockRejectedValueOnce(
       new MaisterError("PRECONDITION", "runtime object is unavailable", {
         details: { reason: "runtime_object_missing" },
       }),
