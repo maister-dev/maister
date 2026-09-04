@@ -1,0 +1,15 @@
+{
+  "name": "@maister/site-docs",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "mint dev --port 3002 --no-open",
+    "validate": "mint validate",
+    "links": "mint broken-links --check-anchors"
+  },
+  "devDependencies": {
+    "mint": "4.2.866",
+    "pagefind": "1.5.2"
+  }
+}

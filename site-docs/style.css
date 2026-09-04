@@ -1,0 +1,207 @@
+:root {
+  --maister-accent: #588157;
+  --maister-accent-strong: #466645;
+  --maister-body: #344c34;
+  --maister-ink: #0c120d;
+  --maister-line: #dad7cd;
+  --maister-line-soft: #f0efeb;
+  --maister-muted: #64724c;
+  --maister-paper: #ffffff;
+  --maister-paper-soft: #f8f7f5;
+  --maister-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --maister-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+html.dark {
+  --maister-accent: #96b795;
+  --maister-accent-strong: #b9cfb9;
+  --maister-body: #b6c1a2;
+  --maister-ink: #edefe8;
+  --maister-line: #1f2e26;
+  --maister-line-soft: #141f1a;
+  --maister-muted: #859865;
+  --maister-paper: #0a0f0d;
+  --maister-paper-soft: #0c120d;
+}
+
+html,
+body,
+#background-color {
+  color: var(--maister-ink) !important;
+  background-color: var(--maister-paper) !important;
+}
+
+body {
+  min-width: 320px;
+  font-family: var(--maister-sans) !important;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  color: var(--maister-paper);
+  background: var(--maister-accent-strong);
+}
+
+#navbar {
+  border-bottom: 1px solid var(--maister-line-soft);
+  background: color-mix(in oklab, var(--maister-paper) 82%, transparent);
+  backdrop-filter: blur(12px) saturate(140%);
+}
+
+#navbar > div:first-child {
+  border-color: transparent !important;
+}
+
+#navbar > div:nth-child(2) {
+  background: transparent !important;
+}
+
+#navbar > div:last-child {
+  max-width: 1320px;
+}
+
+img.nav-logo {
+  width: auto !important;
+  height: 28px !important;
+}
+
+#localization-select-trigger,
+#theme-preference-menu-trigger,
+#search-bar-entry,
+#topbar-cta-button {
+  min-height: 36px;
+  color: var(--maister-ink) !important;
+  border: 1px solid var(--maister-line) !important;
+  border-radius: 6px !important;
+  background: color-mix(in oklab, var(--maister-paper) 88%, transparent) !important;
+  box-shadow: none !important;
+}
+
+#localization-select-trigger {
+  padding-inline: 12px !important;
+  font-family: var(--maister-mono);
+  font-size: 11px !important;
+  font-weight: 650 !important;
+  letter-spacing: 0.08em;
+}
+
+#search-bar-entry {
+  color: var(--maister-muted) !important;
+}
+
+#topbar-cta-button {
+  color: var(--maister-ink) !important;
+  font-family: var(--maister-mono);
+  font-size: 12px !important;
+  letter-spacing: 0.03em;
+}
+
+#localization-select-trigger:hover,
+#theme-preference-menu-trigger:hover,
+#search-bar-entry:hover,
+#topbar-cta-button:hover {
+  color: var(--maister-accent-strong) !important;
+  border-color: var(--maister-accent) !important;
+  background: var(--maister-paper-soft) !important;
+}
+
+#localization-select-trigger:focus-visible,
+#theme-preference-menu-trigger:focus-visible,
+#search-bar-entry:focus-visible,
+#topbar-cta-button:focus-visible {
+  outline: 2px solid var(--maister-accent) !important;
+  outline-offset: 3px;
+}
+
+#sidebar-content {
+  scrollbar-color: var(--maister-line) transparent;
+}
+
+sidebar-group-header,
+eyebrow {
+  color: var(--maister-muted) !important;
+  font-family: var(--maister-mono);
+  font-size: 11px !important;
+  font-weight: 650 !important;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#sidebar-content li[data-active] > a {
+  color: var(--maister-ink) !important;
+  border-radius: 6px !important;
+  background: color-mix(in oklab, var(--maister-accent) 14%, transparent) !important;
+}
+
+#header {
+  padding-bottom: 28px;
+  border-bottom: 1px solid var(--maister-line-soft);
+}
+
+#page-title {
+  color: var(--maister-ink) !important;
+  font-size: clamp(2.1rem, 4vw, 3.15rem) !important;
+  font-weight: 650 !important;
+  letter-spacing: -0.045em !important;
+  line-height: 1.04 !important;
+}
+
+mdx-content {
+  color: var(--maister-body);
+}
+
+mdx-content h2,
+mdx-content h3,
+mdx-content strong {
+  color: var(--maister-ink) !important;
+}
+
+mdx-content a,
+toc-item[data-active],
+toc-item[data-active-deepest] {
+  color: var(--maister-accent-strong) !important;
+}
+
+#pagination a {
+  border-color: var(--maister-line) !important;
+  border-radius: 8px !important;
+  background: var(--maister-paper-soft) !important;
+}
+
+pagefind-modal[data-pf-theme] {
+  --pf-text: var(--maister-ink);
+  --pf-text-secondary: var(--maister-body);
+  --pf-text-muted: var(--maister-muted);
+  --pf-background: var(--maister-paper);
+  --pf-border: var(--maister-line);
+  --pf-border-focus: var(--maister-accent);
+  --pf-skeleton: var(--maister-line-soft);
+  --pf-skeleton-shine: var(--maister-paper-soft);
+  --pf-hover: var(--maister-paper-soft);
+  --pf-mark: var(--maister-accent-strong);
+  --pf-outline-focus: var(--maister-accent);
+  --pf-border-radius: 8px;
+  --pf-font: var(--maister-sans);
+  --pf-modal-backdrop: color-mix(in oklab, var(--maister-paper) 28%, rgb(0 0 0 / 72%));
+}
+
+@media (max-width: 1023px) {
+  #navbar {
+    min-height: 60px;
+  }
+
+  #page-title {
+    font-size: clamp(2rem, 10vw, 2.75rem) !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

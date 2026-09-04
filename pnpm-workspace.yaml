@@ -2,6 +2,8 @@ packages:
   - web
   - supervisor
   - mcp
+  - site
+  - site-docs
 
 dangerouslyAllowAllBuilds: true
 

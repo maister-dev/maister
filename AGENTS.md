@@ -54,7 +54,7 @@ mAIster/
 │                               #              chromeDevtools, playwright
 ├── .ai-factory.json            # AI Factory installed-skills registry
 ├── .pre-commit-config.yaml     # Pre-commit hooks: lint/typecheck/prettier (web + supervisor)
-├── pnpm-workspace.yaml         # Monorepo workspace: web + supervisor
+├── pnpm-workspace.yaml         # Monorepo: web + supervisor + site + site-docs
 ├── pnpm-lock.yaml              # Frozen lockfile (root)
 ├── Dockerfile                  # Single image; web/supervisor selected via command:
 ├── compose.yml                 # Base: app + supervisor + postgres
@@ -72,6 +72,18 @@ mAIster/
 │   ├── api/
 │   ├── db/
 │   └── system-analytics/
+├── site/                       # Public EN/RU product landing (Next.js)
+│   ├── app/                    # Localized routes + GitHub repository proxy
+│   ├── components/             # Landing UI; reuses the web login SpineGraph
+│   ├── lib/                    # Localized copy, locale and GitHub contracts
+│   └── public/                 # Landing-only generated/static artwork
+├── site-docs/                  # Public EN/RU user docs (Mintlify + Markdown)
+│   ├── concepts/               # Public product concepts
+│   ├── guides/                 # Public task-oriented guides
+│   ├── operations/             # Public operator guides
+│   ├── reference/              # Public manifest and runtime reference
+│   ├── ru/                     # Russian public-doc parity tree
+│   └── docs.json               # Navigation, theme, AI-context integrations
 ├── supervisor/                 # ── ACP SUPERVISOR DAEMON ──
 │   ├── src/
 │   │   ├── main.ts             # Fastify boot + graceful shutdown
@@ -130,11 +142,15 @@ on a different host than the web tier.
 | `web/lib/errors.ts` | `MaisterError` discriminated union (11 codes) |
 | `web/lib/db/schema.ts` | Drizzle schema; `node_attempts` is the sole Flow execution ledger |
 | `web/lib/config.ts` | `maister.yaml` v2 loader (zod-validated) |
+| `site/app/[locale]/page.tsx` | Public localized landing page |
+| `site/app/api/github/route.ts` | Validated live GitHub repository widget endpoint |
+| `site-docs/docs.json` | Public Markdown docs navigation, theme, and AI context |
+| `site-docs/AGENTS.md` | Public-doc authoring boundary; excludes internal `docs/` |
 | `supervisor/src/main.ts` | Supervisor daemon entrypoint (Fastify on `:7777`) |
 | `supervisor/src/http-api.ts` | Six HTTP routes + SSE bridge |
 | `supervisor/src/spawn.ts` | `child_process.spawn` dispatcher (claude-agent-acp / codex-acp) |
 | `supervisor/package.json` | `@maister/supervisor`; scripts: `dev`, `start`, `test:unit`, `test:integration` |
-| `pnpm-workspace.yaml` | Monorepo: `web` + `supervisor` |
+| `pnpm-workspace.yaml` | Monorepo: `web` + `supervisor` + `site` + `site-docs` |
 | `.mcp.json` | MCP server configuration |
 
 ## Documentation
@@ -156,6 +172,7 @@ on a different host than the web tier.
 | Screens Reference | `docs/screens/README.md` | User-facing screens and shared chrome |
 | API Contracts | `docs/api/` | Web/supervisor OpenAPI and SSE AsyncAPI contracts |
 | README (web) | `web/README.md` | HeroUI template README — replace when something to say |
+| Public documentation | `site-docs/` | Published EN/RU product docs authored as Markdown; separate from internal `docs/` |
 
 ## AI Context Files
 

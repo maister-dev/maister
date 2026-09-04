@@ -1,0 +1,153 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "aspen",
+  "name": "MAIster",
+  "description": "Public documentation for governed AI software delivery",
+  "colors": {
+    "primary": "#588157",
+    "light": "#96b795",
+    "dark": "#466645"
+  },
+  "appearance": {
+    "default": "system",
+    "strict": false
+  },
+  "background": {
+    "decoration": "grid",
+    "color": {
+      "light": "#ffffff",
+      "dark": "#0a0f0d"
+    }
+  },
+  "fonts": {
+    "family": "Inter",
+    "heading": {
+      "family": "Inter",
+      "weight": 650
+    }
+  },
+  "icons": {
+    "library": "lucide"
+  },
+  "favicon": "/assets/favicon.svg",
+  "logo": {
+    "light": "/assets/logo-light.svg",
+    "dark": "/assets/logo-dark.svg",
+    "href": "/"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/kanischev/mAIster"
+    }
+  },
+  "contextual": {
+    "options": ["copy", "view", "chatgpt", "claude", "mcp", "cursor", "vscode"]
+  },
+  "seo": {
+    "indexing": "all"
+  },
+  "navigation": {
+    "languages": [
+      {
+        "language": "en",
+        "groups": [
+          {
+            "group": "Start here",
+            "pages": ["index", "quickstart"]
+          },
+          {
+            "group": "Core concepts",
+            "pages": [
+              "concepts/delivery-spine",
+              "concepts/path-to-agentization",
+              "concepts/flows-and-runs",
+              "concepts/tasks-runs-and-evaluations",
+              "concepts/recursive-agent-harness",
+              "concepts/evidence-and-review",
+              "concepts/project-brain-and-agents"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/register-a-project",
+              "guides/human-in-the-loop",
+              "guides/review-and-promote",
+              "guides/studio-and-evaluation"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/project-manifest",
+              "reference/flow-manifest",
+              "reference/agent-runtimes"
+            ]
+          },
+          {
+            "group": "Operate",
+            "pages": [
+              "operations/deployment",
+              "operations/execution-hosts",
+              "operations/costs-and-budgets",
+              "operations/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "language": "ru",
+        "groups": [
+          {
+            "group": "Начало работы",
+            "pages": ["ru/index", "ru/quickstart"]
+          },
+          {
+            "group": "Основные понятия",
+            "pages": [
+              "ru/concepts/delivery-spine",
+              "ru/concepts/path-to-agentization",
+              "ru/concepts/flows-and-runs",
+              "ru/concepts/tasks-runs-and-evaluations",
+              "ru/concepts/recursive-agent-harness",
+              "ru/concepts/evidence-and-review",
+              "ru/concepts/project-brain-and-agents"
+            ]
+          },
+          {
+            "group": "Руководства",
+            "pages": [
+              "ru/guides/register-a-project",
+              "ru/guides/human-in-the-loop",
+              "ru/guides/review-and-promote",
+              "ru/guides/studio-and-evaluation"
+            ]
+          },
+          {
+            "group": "Справочник",
+            "pages": [
+              "ru/reference/project-manifest",
+              "ru/reference/flow-manifest",
+              "ru/reference/agent-runtimes"
+            ]
+          },
+          {
+            "group": "Эксплуатация",
+            "pages": [
+              "ru/operations/deployment",
+              "ru/operations/execution-hosts",
+              "ru/operations/costs-and-budgets",
+              "ru/operations/troubleshooting"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/kanischev/mAIster"
+    }
+  }
+}

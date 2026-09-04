@@ -17,6 +17,7 @@ AGENTS.md
 # Build outputs and dependencies (rebuilt in the image)
 **/node_modules
 **/.next
+**/.mintlify
 **/.turbo
 **/dist
 **/build

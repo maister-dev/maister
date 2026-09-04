@@ -14,7 +14,11 @@
     "validate:docs:adr:all": "node scripts/validate-docs-adr-anchors.mjs --all",
     "validate:docs:links": "node scripts/validate-docs-links.mjs",
     "validate:docs:links:all": "node scripts/validate-docs-links.mjs --all",
-    "verify:m38": "node scripts/verify-m38-surface.mjs"
+    "verify:m38": "node scripts/verify-m38-surface.mjs",
+    "site:dev": "pnpm --filter @maister/site dev",
+    "site:build": "pnpm --filter @maister/site build",
+    "site-docs:dev": "pnpm --filter @maister/site-docs dev",
+    "site-docs:validate": "pnpm --filter @maister/site-docs validate"
   },
   "devDependencies": {
     "jsdom": "^25.0.1",

@@ -1,0 +1,81 @@
+name: ${MAISTER_PUBLIC_COMPOSE_PROJECT_NAME:-maister-public}
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-security: &default-security
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+services:
+  site:
+    image: ${MAISTER_SITE_IMAGE:-maister/site:local}
+    build:
+      context: .
+      dockerfile: site/Dockerfile
+      target: production
+      args:
+        NEXT_PUBLIC_DOCS_URL: ${NEXT_PUBLIC_DOCS_URL:-https://docs.imaister.dev}
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3001}
+    <<: *default-security
+    user: "1001:1001"
+    init: true
+    environment:
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    ports:
+      - "127.0.0.1:${MAISTER_SITE_PORT:-3001}:3001"
+    tmpfs:
+      - /tmp:noexec,nosuid,size=64m
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3001/en').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512m
+          pids: 128
+    logging: *default-logging
+    restart: unless-stopped
+
+  docs:
+    image: ${MAISTER_DOCS_IMAGE:-maister/docs:local}
+    build:
+      context: .
+      dockerfile: site-docs/Dockerfile
+      target: production
+      args:
+        DOCS_BASE_URL: ${NEXT_PUBLIC_DOCS_URL:-https://docs.imaister.dev}
+    <<: *default-security
+    user: "101:101"
+    ports:
+      - "127.0.0.1:${MAISTER_DOCS_PORT:-3002}:8080"
+    tmpfs:
+      - /tmp:noexec,nosuid,size=32m
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
+          pids: 64
+    logging: *default-logging
+    restart: unless-stopped

@@ -586,18 +586,20 @@ export function SpineGraph(): ReactElement {
           />
         </g>
 
+        <g id="g-particles" />
+        <g id="g-pings" />
+
         <g>
           <rect
             fill="var(--paper)"
-            height="18"
-            rx="9"
+            height="20"
+            rx="10"
             stroke="var(--mute)"
             strokeWidth="1.2"
-            width="80"
-            x="190"
-            y="187"
+            width="96"
+            x="186"
+            y="186"
           />
-          <circle cx="202" cy="196" fill="var(--mute)" r="2.2" />
           <text
             fill="var(--ink-2)"
             fontFamily="var(--mono)"
@@ -631,9 +633,6 @@ export function SpineGraph(): ReactElement {
             · new intents
           </text>
         </g>
-
-        <g id="g-particles" />
-        <g id="g-pings" />
       </svg>
 
       <div className="h-[104px] overflow-hidden border-t border-line bg-[color-mix(in_oklab,var(--ink)_96%,transparent)] px-4 pb-3 pt-2.5 font-mono text-[11.5px] leading-[1.55] dark:bg-[color-mix(in_oklab,var(--ink)_12%,var(--paper))]">
