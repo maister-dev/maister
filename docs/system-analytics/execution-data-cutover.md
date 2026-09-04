@@ -1,8 +1,8 @@
 # Execution data-plane cutover
 
-**Status:** Designed — Stage B uses a bounded immutable per-run compatibility
-mode; it does not retain permanent dual event/file authority or introduce
-multi-host placement.
+**Status:** Implemented — B4 completed the bounded import-and-proof cutover.
+Every admitted run now uses `canonical_events_v1`; no manager reader has a
+runtime-file fallback and Stage B does not introduce multi-host placement.
 
 ## Purpose
 
@@ -12,55 +12,55 @@ release remains operable in the default one-host compose installation.
 
 ## Domain entities
 
-- `runs.execution_data_plane_mode` is immutable `legacy_file_v1` or
-  `canonical_events_v1` selected at admission.
-- `execution_data_plane_imports` records per-run source fingerprint, position,
-  attempts, terminal import state, and bounded error.
+- `runs.execution_data_plane_mode` is immutable `canonical_events_v1` after
+  migration `0136`; a pre-cutover database is not eligible for a partial B4
+  migration.
+- `execution_data_plane_imports` records five preservation lanes per historic
+  run, including deterministic source fingerprint, position, terminal state,
+  and bounded error.
 - `run_session_incarnations` is the canonical historical association replacing
   `scratch_runs.supervisor_session_id` after proof.
-- `artifact_projection_cursors` and legacy file locators are compatibility
-  state that B4 removes only after import/drain verification.
-- Execution host capability negotiation determines whether a new canonical run
-  may be admitted during a rolling upgrade.
+- `artifact_projection_cursors` and legacy file locators were removed by
+  migration `0135` only after import proof.
+- A host that does not advertise the complete canonical data plane is rejected
+  for new admission; there is no legacy selection path.
 
 ## State machine
 
 ```mermaid
 stateDiagram-v2
-  [*] --> legacy_file_v1: pre-cutover run admission
-  [*] --> canonical_events_v1: complete-capability admission
-  legacy_file_v1 --> draining: new legacy admission disabled
-  draining --> imported: fingerprinted import complete
-  draining --> import_failed: malformed/conflicting proof
-  imported --> retired: B4 reader/writer removal
-  canonical_events_v1 --> retained: canonical history
-  import_failed --> blocked: destructive migration refused
+  [*] --> legacy_history: database before B4
+  legacy_history --> import_proven: five preservation lanes complete
+  legacy_history --> blocked: missing or changed source/proof
+  import_proven --> canonical_events_v1: migration 0135 atomically flips modes
+  canonical_events_v1 --> retained: manager-owned history
+  blocked --> [*]
 ```
 
 ## Process flows
 
 ```mermaid
 sequenceDiagram
+  participant I as Import command
   participant W as Web deploy
   participant H as Supervisor deploy
   participant D as Postgres
-  W->>D: additive schema, legacy default remains
-  H->>D: advertise event/object/prompt capabilities
-  W->>D: admit canonical run only when capability intersection is complete
-  W->>D: import/drain legacy records by durable fingerprint
-  W->>D: prove association and zero active legacy runs
-  W->>D: remove legacy readers/writers and mirrors
+  H->>D: canonical host events, receipts, object metadata
+  W->>D: canonical projections and browser SSE
+  I->>D: import deterministic historic event/cost facts and proof lanes
+  W->>D: 0135 preflight proves every legacy run, flips modes, drops cursor
+  W->>D: 0136 restricts the only legal mode to canonical_events_v1
 ```
 
 ## Expectations
 
-- **CUT-01:** Each run is admitted once in immutable legacy or canonical data-plane mode with no per-call fallback.
-- **CUT-02:** Supervisor-first and web-first upgrades preserve legacy active runs while canonical admission requires complete advertised capability.
-- **CUT-03:** Historical legacy runs are imported idempotently or retain explicit missing/failed import status and remain viewable.
-- **CUT-04:** B4 starts only after new legacy admission is disabled and every active legacy run has drained.
-- **CUT-05:** Scratch mirrors and file locators are removed only after a unique canonical association is proven, otherwise migration aborts.
+- **CUT-01:** Each current run is admitted only in immutable canonical data-plane mode with no per-call fallback.
+- **CUT-02:** The bounded deployment order is supervisor capability → web canonical projection → historic import → `0135`/`0136`; a mixed version never silently selects legacy behavior.
+- **CUT-03:** Historical legacy runs are imported idempotently with deterministic fingerprints or retain explicit failed proof and block the destructive migration.
+- **CUT-04:** `0135` starts only when its preflight proves every legacy run has all five completed preservation lanes.
+- **CUT-05:** Scratch mirrors and artifact cursors are removed only after canonical association/preservation proof, otherwise migration aborts.
 - **CUT-06:** Compatibility reader/writer authority is removed in a bounded release and canonical runs never consult legacy files.
-- **CUT-07:** Import, projection, and object migration record durable resume state after any partial failure.
+- **CUT-07:** Import, projection, and object migration record durable resume state after any partial failure; a completed import verifies the same fingerprints on re-entry.
 - **CUT-08:** Reconciliation is idempotent after database/transport/host/manager failure and never infers terminal success from absence.
 - **CUT-09:** Final web startup and history, SSE, prompt completion, cost, and artifact access require no host runtime-data mount.
 - **CUT-10:** Default compose needs no enrollment, relay, object store, or additional operator setup.
@@ -71,8 +71,8 @@ sequenceDiagram
 
 - **EDGE-CUT-01:** A malformed legacy line or conflicting association sets failed import state with source position/fingerprint and blocks B4 (`IT-CUT-07-MALFORMED`).
 - **EDGE-CUT-02:** A uniquely provable legacy scratch mirror creates a canonical legacy incarnation with provenance, but ambiguity aborts (`IT-CUT-05-SCRATCH`).
-- A web-first rollout retains legacy behavior until host capability is complete, and a supervisor-first rollout only records additive event/outbox state until web ingest is available.
-- Assignment expiry, epoch supersession, host restart, or manager restart resumes durable reconciliation rather than switching a run's frozen mode.
+- A supervisor-first rollout emits canonical host outbox data; a web-first rollout only admits a host whose complete canonical capability is advertised. The final migration is intentionally blocked until historical import proof is present.
+- Assignment expiry, epoch supersession, host restart, or manager restart resumes durable reconciliation without a mode switch.
 
 ## Linked artifacts
 
@@ -82,11 +82,13 @@ sequenceDiagram
 - [Database schema](../database-schema.md) and [execution-host domain](../db/execution-hosts-domain.md) document additive/import/destructive records.
 - Primary B4 proofs are `IT-CUT-01` through `IT-CUT-08`, with B0 migration guards `IT-CUT-01` through `IT-CUT-03`.
 
-### Stage B traceability
+### Historical Stage B planning traceability
 
-Each row has one primary RED→GREEN proof; broader regression suites are
-supporting evidence only. Status remains `Designed` until the named test is
-green in the implementing increment.
+The tables below are retained as the approved pre-implementation requirement
+map. Their `Designed` cells are historical planning labels, not current
+runtime status. B4 verification is recorded by the real Postgres cutover and
+legacy-import integration suites, the canonical projection suites, and the
+supervisor receipt/fence suites named in the implementation plan.
 
 | Requirement | Contract/schema | Enforcement/task | Primary test | Status |
 | --- | --- | --- | --- | --- |

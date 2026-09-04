@@ -17,7 +17,7 @@ import { isUnderRoot } from "./workspace-roots";
 // ADR-166 D7: opaque adopted-workspace handles. `POST /workspaces/adopt` is the
 // ONLY path-bearing route; every later route derives its paths from the handle
 // through `resolveForSession` — the single path-derivation function that
-// feeds spawn (cwd + step log), prompt confinement, cost, and the events log.
+// feeds spawn (cwd + step log) and prompt confinement.
 
 export type WorkspaceResolution = {
   executionWorkspaceId: string;
@@ -28,8 +28,6 @@ export type WorkspaceResolution = {
   confineRoot?: string;
   runDir: string;
   logPath: string;
-  eventsLogPath: string;
-  costPath: string;
   contextMounts?: ContextMount[];
 };
 
@@ -45,8 +43,6 @@ function runDirFor(runtimeRoot: string, projectSlug: string, runId: string) {
 function runPaths(runDir: string, stepId: string) {
   return {
     logPath: path.join(runDir, `${stepId}.log`),
-    eventsLogPath: path.join(runDir, "run.events.jsonl"),
-    costPath: path.join(runDir, "cost.jsonl"),
   };
 }
 

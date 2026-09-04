@@ -1,8 +1,8 @@
 # Execution prompt lifecycle
 
-**Status:** Designed — Stage B replaces lifecycle authority from a long-lived
-`session.prompt` HTTP response with the existing Stage A command, receipt,
-assignment, and fence identities.
+**Status:** Implemented — `POST /sessions/{id}/prompts` is short-lived command
+admission. Stage A command, receipt, assignment, and fence identities remain
+the only prompt lifecycle authority; the singular long-lived route is absent.
 
 ## Purpose
 

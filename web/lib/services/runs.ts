@@ -144,11 +144,6 @@ async function appendRunnerResolutionWarningEvents(args: {
 }): Promise<void> {
   if (args.warnings.length === 0) return;
 
-  const eventsLogPath = path.join(
-    runDirPath(runtimeRoot(), args.projectSlug, args.runId),
-    "run.events.jsonl",
-  );
-
   for (const { sessionName, warning } of args.warnings) {
     try {
       await appendManagerRunStreamEvent(args.db, {
@@ -158,7 +153,6 @@ async function appendRunnerResolutionWarningEvents(args: {
           type: "run.runner_resolution_warning",
           data: { sessionName, warning },
         },
-        legacyEventsLogPath: eventsLogPath,
       });
     } catch (err) {
       log.error(

@@ -173,6 +173,45 @@ export async function postJson(
   };
 }
 
+// Tests that need a terminal prompt outcome intentionally perform two distinct
+// protocol phases: a short admission request followed by receipt observation.
+// This keeps legacy tests from accidentally restoring a long-lived HTTP API.
+export async function completePrompt(
+  host: BootedHost,
+  sessionId: string,
+  body: CommandEnvelope,
+): Promise<{ status: number; body: Record<string, unknown>; headers: Headers }> {
+  const admitted = await postJson(
+    `${host.url}/sessions/${sessionId}/prompts`,
+    body,
+  );
+  if (admitted.status !== 202) {
+    return admitted;
+  }
+
+  await waitFor(() => {
+    const receipt = host.hostState.getReceipt(body.command.id);
+    return receipt?.phase === "completed" || receipt?.phase === "rejected";
+  });
+  const receipt = host.hostState.getReceipt(body.command.id);
+  if (!receipt) {
+    throw new Error(`prompt ${body.command.id} completed without a receipt`);
+  }
+  if (
+    !receipt.body ||
+    typeof receipt.body !== "object" ||
+    Array.isArray(receipt.body)
+  ) {
+    throw new Error(`prompt ${body.command.id} completed with a malformed receipt body`);
+  }
+
+  return {
+    status: receipt.httpStatus,
+    body: receipt.body as Record<string, unknown>,
+    headers: admitted.headers,
+  };
+}
+
 export type HostTarget = {
   url: string;
   runtimeRoot: string;
@@ -287,30 +326,6 @@ export async function createSession(
   }
 
   return res.body as { sessionId: string; pid: number; acpSessionId: string };
-}
-
-export async function readEventsLog(
-  runtimeRoot: string,
-  projectSlug: string,
-  runId: string,
-): Promise<Array<Record<string, unknown>>> {
-  const { readFile } = await import("node:fs/promises");
-  const raw = await readFile(
-    join(
-      runtimeRoot,
-      ".maister",
-      projectSlug,
-      "runs",
-      runId,
-      "run.events.jsonl",
-    ),
-    "utf8",
-  );
-
-  return raw
-    .split("\n")
-    .filter((line) => line.trim().length > 0)
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
 export function waitFor(

@@ -132,16 +132,19 @@ the allow-list a run worktree / local-package dir must live under to be
 adopted: **if you move `MAISTER_WORKTREES_ROOT` or
 `MAISTER_LOCAL_PACKAGES_ROOT` in the web env, mirror the new path here** or
 every launch fails at adoption with `PRECONDITION workspace_rejected /
-outside_roots`. Both processes still share the filesystem — this is a
-single-host topology.
+outside_roots`. Repository/worktree compatibility files remain on this one
+host, but the web tier does not mount or read supervisor runtime data. Browser
+replay, events, costs, prompt completion, and runtime-object metadata are
+Postgres-owned.
 
-**Stage B data-plane preparation (Designed — ADR-167).** No compose service,
+**Stage B data plane (Implemented — ADR-167).** No compose service,
 volume, relay, object store, enrollment secret, or environment variable is
-required. `GET /capabilities` remains an additive local supervisor endpoint;
-feature flags are fixed protocol capabilities, not operator toggles. During
-the bounded cutover a run persists its selected compatibility mode, so rolling
-web/supervisor upgrades cannot silently switch an active run between files and
-canonical events.
+required. `GET /capabilities` is a local supervisor endpoint; protocol
+capabilities are fixed rather than operator toggles. Upgrade a supervisor and
+web to canonical support, run `pnpm --filter maister-web
+execution-data-plane:import-legacy` with the explicit legacy root, then apply
+migrations `0135` and `0136`. The migration fails before destructive changes
+unless every legacy run has all preservation lanes proven.
 
 Apply migrations and seed the first admin:
 

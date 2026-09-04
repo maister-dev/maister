@@ -1311,37 +1311,23 @@ acp_runners:
 
 ## Cost tracking on resume
 
-Every line appended to `.maister/<projectSlug>/runs/<runId>/cost.jsonl`
-by a supervisor session that was resumed (spawned with a `resumeSessionId`,
-restored via the ACP `session/resume` call) carries
-`"resumed": true`. The marker is added in `supervisor/src/cost.ts`'s
-`attachCost(opts)` from `opts.resumed = Boolean(parsed.resumeSessionId)`
-at session creation time. The original ACP spike measured ~$0.28 of
-`cache_creation_input_tokens` per cross-process resume — keep-alive
-saves this cost when the operator is paying attention. Ops can monitor
-the tax via:
+The supervisor emits a canonical `usage.recorded` event for a resumed ACP
+session. Postgres rollups retain the attribution; no cost JSONL file is read by
+the control plane. Resume cost remains observability only and does not alter a
+control-plane decision.
 
-```sql
--- across runs, the cache-creation tokens paid as the cost of resuming
-select sum((j->>'cache_creation_input_tokens')::int) as cache_tokens_paid_on_resume
-from cost_lines  -- ingestion view derived from cost.jsonl
-where (j->>'resumed')::boolean = true;
-```
-
-There is no control-plane decision branch on `resumed=true` — it is
-observability only.
-
-## Stage B execution-host data plane (Designed — ADR-167)
+## Stage B execution-host data plane (Implemented — ADR-167)
 
 Stage B deliberately introduces **no operator setting**. The fixed negotiated
 limits (`1 MiB` event envelope, `500` replay batch, `512 MiB` runtime object)
 are published by the supervisor's read-only `/capabilities` document and
 validated by the web tier. The default one-host launch needs neither relay,
-object store, host enrollment, nor a shared runtime-data mount to enable the
-future canonical mode. `MAISTER_EXECUTION_HOST_STATE_DIR` remains
+object store, host enrollment, nor a web runtime-data mount. Canonical mode is
+mandatory for admission. `MAISTER_EXECUTION_HOST_STATE_DIR` remains
 supervisor-private; it contains durable identity, fences, receipts, and the
-host event outbox, never a web-readable data-plane API. Future remote-host
-settings are intentionally deferred rather than accepted-and-ignored.
+host event outbox, never a web-readable data-plane API. There is intentionally
+no new operator setting: fixed protocol limits are advertised by capabilities.
+Future remote-host settings are deferred rather than accepted-and-ignored.
 
 ## See Also
 

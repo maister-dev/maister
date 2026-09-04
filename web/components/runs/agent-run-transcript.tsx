@@ -32,7 +32,7 @@ function buildTranscriptLabels(
 
 // Run-scoped transcript for a standalone agent run. The flow timeline is empty
 // for agents (no node attempts), so this renders the coalesced ACP conversation
-// (thinking + tool calls + messages) read whole-run from `run.events.jsonl` via
+// (thinking + tool calls + messages) read whole-run from canonical Postgres events via
 // the shared TranscriptView. A run-scoped clone of NodeTranscriptPanel — fetches
 // the transcript route WITHOUT `?node`.
 export function AgentRunTranscript({

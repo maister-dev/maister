@@ -174,9 +174,6 @@ export function createLocalDirectTransport(): ExecutionHostTransport {
     createSession(envelope: CommandEnvelope<CreateSessionPayload>, opts) {
       return wire.createSessionEnveloped(envelope, opts);
     },
-    sendPrompt(sessionId, envelope, opts) {
-      return wire.sendPromptEnveloped(sessionId, envelope, opts);
-    },
     startPrompt(sessionId, envelope, opts) {
       return wire.startPromptEnveloped(sessionId, envelope, opts);
     },

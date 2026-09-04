@@ -29,6 +29,7 @@ import {
   envelope,
   fenceFor,
   postJson,
+  waitFor,
   type BootedHost,
 } from "./_fixtures/boot-host";
 
@@ -167,11 +168,17 @@ describe("M8 T1 spike — cancel→checkpoint→resume→re-issue round-trip", (
 
     expect(entry1).toBeDefined();
 
-    // Drive the first prompt in the background; it parks on requestPermission.
-    const prompt1 = postJson(
-      `${url}/sessions/${first.sessionId}/prompt`,
-      command(host, "session.prompt", { stepId: "step-1", prompt: "do thing" }),
+    // Admit the first prompt; its canonical command remains in flight while it
+    // parks on requestPermission.
+    const prompt1 = command(host, "session.prompt", {
+      stepId: "step-1",
+      prompt: "do thing",
+    });
+    const admitted1 = await postJson(
+      `${url}/sessions/${first.sessionId}/prompts`,
+      prompt1,
     );
+    expect(admitted1.status).toBe(202);
 
     const permEvent = await listenForEvent(
       registry,
@@ -200,9 +207,10 @@ describe("M8 T1 spike — cancel→checkpoint→resume→re-issue round-trip", (
 
     // The mock's prompt() observes outcome:"cancelled", emits an
     // "agent_message_chunk", and resolves.
-    const r1 = await prompt1;
-
-    expect(r1.status).toBe(200);
+    await waitFor(
+      () => host.hostState.getReceipt(prompt1.command.id)?.phase === "completed",
+    );
+    expect(host.hostState.getReceipt(prompt1.command.id)?.httpStatus).toBe(200);
 
     // Now SIMULATED CHECKPOINT step 2: SIGTERM the worker.
     const delRes = await postJson(
@@ -234,10 +242,15 @@ describe("M8 T1 spike — cancel→checkpoint→resume→re-issue round-trip", (
     expect(second.acpSessionId).toBe(first.acpSessionId);
     expect(second.sessionId).not.toBe(first.sessionId);
 
-    const prompt2 = postJson(
-      `${url}/sessions/${second.sessionId}/prompt`,
-      command(host, "session.prompt", { stepId: "step-1", prompt: "resumed" }),
+    const prompt2 = command(host, "session.prompt", {
+      stepId: "step-1",
+      prompt: "resumed",
+    });
+    const admitted2 = await postJson(
+      `${url}/sessions/${second.sessionId}/prompts`,
+      prompt2,
     );
+    expect(admitted2.status).toBe(202);
 
     // The re-issued permission MUST carry the original toolCall.
     const reissued = await listenForEvent(
@@ -255,7 +268,7 @@ describe("M8 T1 spike — cancel→checkpoint→resume→re-issue round-trip", (
     );
     expect(reissued.requestId).not.toBe(requestId);
 
-    // Resolve the re-issued permission so prompt2 returns.
+    // Resolve the re-issued permission so prompt2 terminalizes.
     const inputRes = await postJson(
       `${url}/sessions/${second.sessionId}/input`,
       command(host, "session.input", {
@@ -268,9 +281,10 @@ describe("M8 T1 spike — cancel→checkpoint→resume→re-issue round-trip", (
 
     expect(inputRes.status).toBe(200);
 
-    const r2 = await prompt2;
-
-    expect(r2.status).toBe(200);
+    await waitFor(
+      () => host.hostState.getReceipt(prompt2.command.id)?.phase === "completed",
+    );
+    expect(host.hostState.getReceipt(prompt2.command.id)?.httpStatus).toBe(200);
 
     // Journal cleared (pendingPermission gone) after successful replay.
     const journalAfter = JSON.parse(await readFile(journalPath, "utf8"));

@@ -100,7 +100,6 @@ async function hasCurrentCanonicalFence(
     .limit(1);
   const run = runRows[0];
   if (!run) throw projectionError("session.command event references a missing run");
-  if (run.executionDataPlaneMode !== "canonical_events_v1") return false;
 
   const assignments = await tx
     .select({ id: executionAssignments.id })
@@ -233,8 +232,7 @@ export async function projectPendingCanonicalPromptCommands(input: {
 }): Promise<number> {
   const runRows = await input.db
     .select({ id: runs.id })
-    .from(runs)
-    .where(eq(runs.executionDataPlaneMode, "canonical_events_v1"));
+    .from(runs);
   let projected = 0;
   for (const run of runRows) {
     const summary = await projectCanonicalPromptCommands({

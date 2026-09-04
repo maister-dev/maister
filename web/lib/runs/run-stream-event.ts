@@ -1,8 +1,6 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import { mkdir, open, readFile } from "node:fs/promises";
-import path from "node:path";
 
 import { and, eq } from "drizzle-orm";
 
@@ -12,63 +10,6 @@ import { executionEvents, runs } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
 import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
-
-// A non-agent gate (human / form / review / infra_recovery) transitions a run to
-// NeedsInput with NO supervisor session running, so nothing appends to
-// `run.events.jsonl` and an open run-detail tab never gets an SSE tick to pull
-// the freshly-rendered review panel — the run looks hung until a manual reload.
-//
-// This appends one durable transition event to the per-run events log so the SSE
-// tail (`/api/runs/[id]/stream`) emits a tick AFTER the NeedsInput commit. The
-// `monotonicId` is sourced from the current file max + 1, matching the
-// supervisor's own `tailMaxMonotonicId` seeding (supervisor/src/spawn.ts) — the
-// next spawned session re-seeds above this value, so there is no id collision.
-// Safe to call only when no supervisor session is concurrently writing this file
-// (true for non-agent gates, whose prior agent session has already exited).
-export async function appendRunStreamEvent(
-  eventsLogPath: string,
-  event: { type: string; data?: Record<string, unknown> },
-): Promise<number> {
-  let max = 0;
-
-  try {
-    const raw = await readFile(eventsLogPath, "utf8");
-
-    for (const line of raw.split("\n")) {
-      if (line.trim().length === 0) continue;
-
-      try {
-        const id = (JSON.parse(line) as { monotonicId?: unknown }).monotonicId;
-
-        if (typeof id === "number" && id > max) max = id;
-      } catch {
-        /* skip malformed line — mirrors the SSE tail's tolerance */
-      }
-    }
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-  }
-
-  const monotonicId = max + 1;
-  const line = `${JSON.stringify({
-    type: event.type,
-    monotonicId,
-    sessionName: "default",
-    ...event.data,
-  })}\n`;
-
-  await mkdir(path.dirname(eventsLogPath), { recursive: true });
-
-  const handle = await open(eventsLogPath, "a");
-
-  try {
-    await handle.write(line);
-  } finally {
-    await handle.close();
-  }
-
-  return monotonicId;
-}
 
 export type ManagerRunStreamEvent = {
   readonly type: string;
@@ -83,14 +24,11 @@ export type ManagerRunStreamAppend = {
   readonly sourceKey: string;
   readonly event: ManagerRunStreamEvent;
   readonly occurredAt?: Date;
-  // Only an immutable legacy run may use this compatibility writer. Canonical
-  // callers never need, receive, or derive a runtime filesystem path.
-  readonly legacyEventsLogPath?: string;
 };
 
 export type ManagerRunStreamAppendResult = {
-  readonly mode: "legacy_file_v1" | "canonical_events_v1";
-  readonly eventId: string | null;
+  readonly mode: "canonical_events_v1";
+  readonly eventId: string;
   readonly runSequence: string;
 };
 
@@ -163,23 +101,6 @@ export async function appendManagerRunStreamEvent(
   const payloadSha256 = createHash("sha256").update(payloadJson).digest("hex");
   const payloadBytes = new TextEncoder().encode(payloadJson).byteLength;
 
-  const modeRows = await db
-    .select({ executionDataPlaneMode: runs.executionDataPlaneMode })
-    .from(runs)
-    .where(eq(runs.id, input.runId))
-    .limit(1);
-  const mode = modeRows[0]?.executionDataPlaneMode;
-  if (!mode) {
-    throw new MaisterError("PRECONDITION", `run ${input.runId} is missing for manager event append`);
-  }
-  if (mode === "legacy_file_v1") {
-    if (!input.legacyEventsLogPath) {
-      throw new MaisterError("PRECONDITION", "legacy manager event append requires its bounded compatibility log path");
-    }
-    const monotonicId = await appendRunStreamEvent(input.legacyEventsLogPath, input.event);
-    return { mode, eventId: null, runSequence: String(monotonicId) };
-  }
-
   const result = await db.transaction(async (tx) => {
     const lockedRuns = await tx
       .select({ id: runs.id, nextSequence: runs.nextExecutionEventSequence })
@@ -243,5 +164,9 @@ export async function appendManagerRunStreamEvent(
     return { eventId, runSequence };
   });
   runEventWakeBus.wake(input.runId);
-  return { mode, eventId: result.eventId, runSequence: result.runSequence.toString() };
+  return {
+    mode: "canonical_events_v1",
+    eventId: result.eventId,
+    runSequence: result.runSequence.toString(),
+  };
 }

@@ -1,7 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
@@ -24,19 +21,16 @@ type Db = NodePgDatabase<typeof fullSchema>;
 
 let testDatabase: StartedPostgresTestDb;
 let db: Db;
-let runtimeRoot: string;
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
     databaseName: "maister_transcript_projector_test",
   });
   db = testDatabase.db as unknown as Db;
-  runtimeRoot = await mkdtemp(join(tmpdir(), "transcript-projector-"));
 }, 180_000);
 
 afterAll(async () => {
   await testDatabase?.stop();
-  if (runtimeRoot) await rm(runtimeRoot, { recursive: true, force: true });
 });
 
 function textLine(nodeAttemptId: string, monotonicId: number, text: string) {
@@ -92,7 +86,7 @@ function usageLine(nodeAttemptId: string, monotonicId: number, used: number) {
 }
 
 async function seed(
-  executionDataPlaneMode: "legacy_file_v1" | "canonical_events_v1" = "legacy_file_v1",
+  executionDataPlaneMode: "canonical_events_v1" = "canonical_events_v1",
 ): Promise<{
   runId: string;
   slug: string;
@@ -174,11 +168,34 @@ async function seedStandaloneAgentRun(): Promise<{
   return { runId, slug };
 }
 
-async function writeEvents(slug: string, runId: string, lines: string[]) {
-  const dir = join(runtimeRoot, ".maister", slug, "runs", runId);
-
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, "run.events.jsonl"), lines.join("\n") + "\n");
+async function writeEvents(_slug: string, runId: string, lines: string[]) {
+  for (const line of lines) {
+    const parsed = JSON.parse(line) as Record<string, unknown>;
+    const monotonicId = parsed.monotonicId;
+    if (typeof monotonicId !== "number") {
+      throw new Error("canonical transcript fixture requires a monotonic id");
+    }
+    const { type, monotonicId: _id, sessionName: _sessionName, ...payload } = parsed;
+    if (typeof type !== "string") {
+      throw new Error("canonical transcript fixture requires an event type");
+    }
+    await db
+      .insert(schema.executionEvents)
+      .values({
+        id: randomUUID(),
+        source: "manager",
+        sourceKey: `canonical-transcript:${runId}:${monotonicId}`,
+        runId,
+        eventType: type,
+        payloadSchema: `maister.${type}.v1`,
+        payload,
+        occurredAt: new Date(),
+        receivedAt: new Date(),
+        runSequence: BigInt(monotonicId),
+        ingestDisposition: "accepted",
+      })
+      .onConflictDoNothing();
+  }
 }
 
 describe("projectRunTranscript", () => {
@@ -227,7 +244,6 @@ describe("projectRunTranscript", () => {
 
     const result = await projectRunTranscript(runId, {
       client: db,
-      runtimeRoot: join(runtimeRoot, "unmounted-host-runtime"),
     });
     const transcript = await getRunNodeTranscript(runId, "implement", {
       client: db,
@@ -252,7 +268,6 @@ describe("projectRunTranscript", () => {
 
     const first = await projectRunTranscript(runId, {
       client: db,
-      runtimeRoot,
     });
 
     expect(first.status).toBe("projected");
@@ -280,7 +295,6 @@ describe("projectRunTranscript", () => {
     // Idempotent: re-projection with no new events is a no-op; row count holds.
     const again = await projectRunTranscript(runId, {
       client: db,
-      runtimeRoot,
     });
 
     expect(again.status).toBe("unchanged");
@@ -294,7 +308,7 @@ describe("projectRunTranscript", () => {
     const { runId, slug, planAttemptId } = await seed();
 
     await writeEvents(slug, runId, [textLine(planAttemptId, 1, "plan output")]);
-    await projectRunTranscript(runId, { client: db, runtimeRoot });
+    await projectRunTranscript(runId, { client: db });
 
     // A run-level marker (e.g. `run.needs_input`) advances the file's max
     // monotonicId but carries no nodeAttemptId, so it must not re-trigger
@@ -306,7 +320,6 @@ describe("projectRunTranscript", () => {
 
     const again = await projectRunTranscript(runId, {
       client: db,
-      runtimeRoot,
     });
 
     expect(again.status).toBe("unchanged");
@@ -319,7 +332,7 @@ describe("projectRunTranscript", () => {
     const { runId, slug, planAttemptId } = await seed();
 
     await writeEvents(slug, runId, [textLine(planAttemptId, 1, "plan output")]);
-    await projectRunTranscript(runId, { client: db, runtimeRoot });
+    await projectRunTranscript(runId, { client: db });
 
     await writeEvents(slug, runId, [
       textLine(planAttemptId, 1, "plan output"),
@@ -339,7 +352,6 @@ describe("projectRunTranscript", () => {
 
     const again = await projectRunTranscript(runId, {
       client: db,
-      runtimeRoot,
     });
 
     expect(again.status).toBe("projected");
@@ -385,7 +397,7 @@ describe("projectRunTranscript", () => {
       textLine(attempt2, 2, "second attempt output"),
     ]);
 
-    await projectRunTranscript(runId, { client: db, runtimeRoot });
+    await projectRunTranscript(runId, { client: db });
 
     const transcript = await getRunNodeTranscript(runId, nodeId, {
       client: db,
@@ -398,7 +410,6 @@ describe("projectRunTranscript", () => {
   it("returns missing-run for an unknown run and empty for a node with no attempt", async () => {
     const missing = await projectRunTranscript(randomUUID(), {
       client: db,
-      runtimeRoot,
     });
 
     expect(missing.status).toBe("missing-run");
@@ -411,8 +422,10 @@ describe("projectRunTranscript", () => {
     expect(empty?.messages).toEqual([]);
   });
 
-  // Codex adversarial finding #2: cross-run attribution must not leak.
-  it("never attributes transcript rows to a node attempt owned by a different run", async () => {
+  // Codex adversarial finding #2: cross-run attribution must not leak. A
+  // canonical event carrying an impossible association is poison, not a line
+  // that the projector may silently skip.
+  it("fails loudly and atomically for a node attempt owned by a different run", async () => {
     const a = await seed();
     const b = await seed();
 
@@ -422,13 +435,18 @@ describe("projectRunTranscript", () => {
       textLine(b.planAttemptId, 2, "would leak into A's transcript"),
     ]);
 
-    await projectRunTranscript(a.runId, { client: db, runtimeRoot });
+    await expect(projectRunTranscript(a.runId, { client: db })).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
 
-    // A's own attempt projected correctly.
-    const aPlan = await getRunNodeTranscript(a.runId, "plan", { client: db });
+    // The transaction is atomic: even the preceding valid event did not
+    // become a partial transcript and the durable cursor did not advance.
+    const aRows = await db
+      .select()
+      .from(schema.runMessages)
+      .where(eq(schema.runMessages.runId, a.runId));
 
-    expect(aPlan?.messages).toHaveLength(1);
-    expect(aPlan?.messages[0].content).toBe("legit A output");
+    expect(aRows).toHaveLength(0);
 
     // The mis-attributed line created NO row for run B's attempt (insert-side
     // ownership guard), and run B's transcript stays empty.
@@ -454,16 +472,12 @@ describe("projectRunTranscript", () => {
       content: "cross-run row",
     });
 
-    const aPlanAfter = await getRunNodeTranscript(a.runId, "plan", {
-      client: db,
-    });
+    const aPlanAfter = await getRunNodeTranscript(a.runId, "plan", { client: db });
 
-    expect(aPlanAfter?.messages.map((m) => m.content)).toEqual([
-      "legit A output",
-    ]);
+    expect(aPlanAfter?.messages).toEqual([]);
   });
 
-  it("replays standalone whole-run transcripts with a stable monotonic horizon and no DB rows", async () => {
+  it("replays standalone whole-run transcripts from canonical DB rows", async () => {
     const { runId, slug } = await seedStandaloneAgentRun();
 
     await writeEvents(slug, runId, [
@@ -474,12 +488,10 @@ describe("projectRunTranscript", () => {
 
     const feed = await getWholeRunTranscriptMessages(runId, {
       client: db,
-      runtimeRoot,
     });
 
     expect(feed.messages).toHaveLength(1);
     expect(feed.messages[0]).toMatchObject({
-      id: `${runId}:0`,
       role: "assistant",
       content: "Plan ready!",
       supervisorEventId: "3",
@@ -491,7 +503,8 @@ describe("projectRunTranscript", () => {
       .from(schema.runMessages)
       .where(eq(schema.runMessages.runId, runId));
 
-    expect(rows).toEqual([]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ role: "assistant", content: "Plan ready!" });
   });
 
   // Codex adversarial finding #1: a partial/failed projection must not advance
@@ -509,7 +522,6 @@ describe("projectRunTranscript", () => {
     await expect(
       projectRunTranscript(runId, {
         client: clientFailingOnNthInsert(db, 2),
-        runtimeRoot,
       }),
     ).rejects.toThrow();
 
@@ -525,7 +537,6 @@ describe("projectRunTranscript", () => {
     // A clean re-projection derives and commits the FULL transcript.
     const repaired = await projectRunTranscript(runId, {
       client: db,
-      runtimeRoot,
     });
 
     expect(repaired.status).toBe("projected");

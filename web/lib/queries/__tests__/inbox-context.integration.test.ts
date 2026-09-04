@@ -1,7 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -22,8 +19,6 @@ const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
-let runtimeRootDir: string;
-let originalRuntimeRoot: string | undefined;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
@@ -56,21 +51,10 @@ beforeAll(async () => {
 
   db = testDatabase.db;
 
-  // loadLastAgentMessage reads run.events.jsonl under runtimeRoot(); point it at
-  // a throwaway dir so the events-tail path is exercised against real files.
-  runtimeRootDir = await mkdtemp(path.join(tmpdir(), "inbox-ctx-"));
-  originalRuntimeRoot = process.env.MAISTER_RUNTIME_ROOT;
-  process.env.MAISTER_RUNTIME_ROOT = runtimeRootDir;
-
   ({ getInboxCardContext } = await import("@/lib/queries/inbox-context"));
 }, 180_000);
 
 afterAll(async () => {
-  if (originalRuntimeRoot === undefined)
-    delete process.env.MAISTER_RUNTIME_ROOT;
-  else process.env.MAISTER_RUNTIME_ROOT = originalRuntimeRoot;
-  if (runtimeRootDir)
-    await rm(runtimeRootDir, { recursive: true, force: true });
   await testDatabase?.stop();
 });
 
@@ -147,15 +131,31 @@ async function seedRun(
   return { projectId, runId, slug, flowId };
 }
 
-async function writeEventsLog(
-  slug: string,
+async function recordCanonicalEvents(
   runId: string,
   lines: string[],
 ): Promise<void> {
-  const dir = path.join(runtimeRootDir, ".maister", slug, "runs", runId);
-
-  await mkdir(dir, { recursive: true });
-  await writeFile(path.join(dir, "run.events.jsonl"), lines.join("\n"), "utf8");
+  await db.insert(schema.executionEvents).values(
+    lines.map((line, index) => {
+      const parsed = JSON.parse(line) as {
+        type: string;
+        update: Record<string, unknown>;
+      };
+      return {
+        id: randomUUID(),
+        source: "manager",
+        sourceKey: `inbox-context:${runId}:${index}`,
+        runId,
+        eventType: parsed.type,
+        payloadSchema: `maister.${parsed.type}.v1`,
+        payload: { update: parsed.update },
+        occurredAt: new Date(),
+        receivedAt: new Date(),
+        runSequence: BigInt(index),
+        ingestDisposition: "accepted",
+      };
+    }),
+  );
 }
 
 function agentMessageEvent(text: string): string {
@@ -241,10 +241,10 @@ describe("getInboxCardContext (integration)", () => {
     expect(degraded.progress).toBeNull();
   });
 
-  it("returns the trailing agent message from run.events.jsonl", async () => {
+  it("returns the trailing agent message from canonical events", async () => {
     const seed = await seedRun({ currentStepId: null });
 
-    await writeEventsLog(seed.slug, seed.runId, [
+    await recordCanonicalEvents(seed.runId, [
       agentMessageEvent("Should I "),
       agentMessageEvent("proceed?"),
     ]);
@@ -255,7 +255,7 @@ describe("getInboxCardContext (integration)", () => {
     expect(typeof ctx.lastAgentMessage?.at).toBe("string");
   });
 
-  it("degrades lastAgentMessage to null when the events file is missing (never throws)", async () => {
+  it("degrades lastAgentMessage to null when no canonical event exists", async () => {
     const seed = await seedRun({ currentStepId: null });
 
     const ctx = await loadContext({ ...seed, currentStepId: null });

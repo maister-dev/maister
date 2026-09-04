@@ -1,8 +1,9 @@
 # Execution runtime objects
 
-**Status:** Incremental — B3.4 implements the host registry, fenced
-reserve/upload/delete API, manager catalog projection, and authorized web
-read route. Producer migration from legacy runtime files remains B3.5.
+**Status:** Implemented — B3/B4 provide the fenced host registry,
+reserve/upload/delete API, manager catalog projection, and authorized web read
+route. Runtime object bytes remain host-owned; manager metadata and artifact
+locators are path-free.
 
 ## Purpose
 

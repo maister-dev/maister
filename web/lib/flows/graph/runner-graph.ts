@@ -272,8 +272,8 @@ function runDir(
 }
 
 // A non-agent gate (human / form / review / infra_recovery) parks the run at
-// NeedsInput with no live supervisor session, so nothing appends to
-// `run.events.jsonl` and open run-detail tabs get no SSE tick to surface the
+// NeedsInput with no live supervisor session, so no host event is emitted and
+// open run-detail tabs need a manager-owned SSE tick to surface the
 // freshly-rendered review panel. Append one durable transition event so the SSE
 // tail fires after the commit. Best-effort: a failed append never blocks the
 // run (the next user reload still renders the gate from the DB).
@@ -290,10 +290,6 @@ async function emitNeedsInputStreamEvent(
       runId,
       sourceKey: `run-needs-input:${nodeId}:${reason}`,
       event: { type: "run.needs_input", data: { nodeId, reason } },
-      legacyEventsLogPath: path.join(
-        runDir(runtimeRoot, projectSlug, runId),
-        "run.events.jsonl",
-      ),
     });
   } catch (err) {
     log.warn(

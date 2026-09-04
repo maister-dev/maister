@@ -154,14 +154,14 @@ async function existingDraftRun(
 // mode, rather than re-negotiating against a potentially changed host record.
 async function executionDataPlaneModeForParent(
   input: ConsensusDraftLaunchInput,
-): Promise<"legacy_file_v1" | "canonical_events_v1"> {
+): Promise<"canonical_events_v1"> {
   const rows = await input.db
     .select({ executionDataPlaneMode: runs.executionDataPlaneMode })
     .from(runs)
     .where(eq(runs.id, input.parentRunId));
   const mode = rows[0]?.executionDataPlaneMode;
 
-  if (mode === "legacy_file_v1" || mode === "canonical_events_v1") {
+  if (mode === "canonical_events_v1") {
     return mode;
   }
 

@@ -1158,21 +1158,21 @@ after the named mutation do not satisfy the task.
 - [x] T1.2 Expose host-global replay/ACK and implement local-direct transport.
 - [x] T1.3 Implement manager ingestion, contiguous promotion, and ACK recovery.
 - [x] T1.4 Add durable projector cursors, poison policy, and event reconciliation.
-- [ ] T2.1 Make canonical session incarnations the lifecycle authority.
-- [ ] T2.2 Switch browser run SSE and manager-originated events to Postgres.
-- [ ] T2.3 Move transcript, inbox, scratch-command, and artifact projections to canonical events.
-- [ ] T2.4 Make canonical usage events/cost facts authoritative.
-- [ ] T2.5 Prove canonical lifecycle and read-model cutover as one increment.
-- [ ] T3.1 Make supervisor prompt admission asynchronous and restart-safe.
-- [ ] T3.2 Make PromptHandle serializable and terminal application durable.
-- [ ] T3.3 Migrate every prompt driver to durable continuation semantics.
-- [ ] T3.4 Add runtime-object schema, host registry, and typed transfer APIs.
-- [ ] T3.5 Migrate runtime-file producers and consumers to object handles.
-- [ ] T3.6 Prove restart-safe prompt and no-shared-runtime behavior end to end.
-- [ ] T4.1 Drain legacy active runs and import historical runtime data.
-- [ ] T4.2 Delete legacy event/prompt readers and writers.
-- [ ] T4.3 Preserve and remove the scratch session mirror and path cursor.
-- [ ] T4.4 Finalize deployment, docs, retention, and full regression.
+- [x] T2.1 Make canonical session incarnations the lifecycle authority.
+- [x] T2.2 Switch browser run SSE and manager-originated events to Postgres.
+- [x] T2.3 Move transcript, inbox, scratch-command, and artifact projections to canonical events.
+- [x] T2.4 Make canonical usage events/cost facts authoritative.
+- [x] T2.5 Prove canonical lifecycle and read-model cutover as one increment.
+- [x] T3.1 Make supervisor prompt admission asynchronous and restart-safe.
+- [x] T3.2 Make PromptHandle serializable and terminal application durable.
+- [x] T3.3 Migrate every prompt driver to durable continuation semantics.
+- [x] T3.4 Add runtime-object schema, host registry, and typed transfer APIs.
+- [x] T3.5 Migrate runtime-file producers and consumers to object handles.
+- [x] T3.6 Prove restart-safe prompt and no-shared-runtime behavior end to end.
+- [x] T4.1 Drain legacy active runs and import historical runtime data.
+- [x] T4.2 Delete legacy event/prompt readers and writers.
+- [x] T4.3 Preserve and remove the scratch session mirror and path cursor.
+- [x] T4.4 Finalize deployment, docs, retention, and full regression.
 
 ### B0 — Filesystem-cut inventory, contracts, schema, ADR, additive deployment
 

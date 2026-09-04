@@ -1,14 +1,10 @@
 // ADR-117 Phase 2: reconcileTerminalCostRollups is the system_sweep backstop —
 // the completeness guarantee for run_cost_rollups. It keys on runs.ended_at (NOT
 // a status allow-list, NOT a domain event), so it catches scratch-success runs
-// that emit no terminal event, plus historical backfill and late cost-flush
-// races. SETTLE_GRACE forces one extra re-reconcile of a just-ended run so the
-// supervisor's async final cost.jsonl flush is captured; a long-settled rollup
-// is skipped (no disk thrash).
+// that emit no terminal event, plus historical backfill and late usage-event
+// arrival. SETTLE_GRACE forces one extra re-reconcile of a just-ended run so a
+// late durable usage event is captured; a long-settled rollup is skipped.
 
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
@@ -30,7 +26,6 @@ const PROJECT_SLUG = "sweep-cost-app";
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 let projectId: string;
-let runtimeRoot: string;
 
 const dbAny = (): NodePgDatabase<any> => db as NodePgDatabase<any>;
 
@@ -51,7 +46,6 @@ beforeAll(async () => {
     maisterYamlPath: "/repos/sweep-cost-app/maister.yaml",
   });
 
-  runtimeRoot = await mkdtemp(path.join(tmpdir(), "cost-sweep-"));
 }, 180_000);
 
 afterAll(async () => {
@@ -135,19 +129,24 @@ async function seedRollup(
   });
 }
 
-async function writeCostJsonl(runId: string, input: number): Promise<void> {
-  const dir = path.join(runtimeRoot, ".maister", PROJECT_SLUG, "runs", runId);
-
-  await mkdir(dir, { recursive: true });
-  await writeFile(
-    path.join(dir, "cost.jsonl"),
-    JSON.stringify({
+async function recordCanonicalUsage(runId: string, input: number): Promise<void> {
+  await db.insert(schema.executionEvents).values({
+    id: randomUUID(),
+    source: "manager",
+    sourceKey: `cost-sweep:${runId}:0`,
+    runId,
+    eventType: "usage.recorded",
+    payloadSchema: "maister.usage.recorded.v1",
+    payload: {
       sessionName: "default",
       model: "claude-sonnet-4-6",
-      input_tokens: input,
-    }),
-    "utf8",
-  );
+      inputTokens: input,
+    },
+    occurredAt: new Date(),
+    receivedAt: new Date(),
+    runSequence: BigInt(0),
+    ingestDisposition: "accepted",
+  });
 }
 
 async function inputTokensOf(runId: string): Promise<number | undefined> {
@@ -168,11 +167,10 @@ describe("reconcileTerminalCostRollups — backstop sweep", () => {
     });
 
     await seedSession(runId);
-    await writeCostJsonl(runId, 77);
+    await recordCanonicalUsage(runId, 77);
 
     const summary = await reconcileTerminalCostRollups({
       client: dbAny(),
-      runtimeRoot,
       now,
     });
 
@@ -188,13 +186,12 @@ describe("reconcileTerminalCostRollups — backstop sweep", () => {
     const runId = await seedRun({ endedAt, costReconciledAt: endedAt });
 
     await seedSession(runId);
-    // The on-disk cost.jsonl now has MORE than the stale rollup captured.
-    await writeCostJsonl(runId, 200);
+    // The canonical event history now has MORE than the stale rollup captured.
+    await recordCanonicalUsage(runId, 200);
     await seedRollup(runId, 5, endedAt);
 
     await reconcileTerminalCostRollups({
       client: dbAny(),
-      runtimeRoot,
       now,
       settleGraceMs: 120_000,
     });
@@ -218,7 +215,6 @@ describe("reconcileTerminalCostRollups — backstop sweep", () => {
     const calls: string[] = [];
     const summary = await reconcileTerminalCostRollups({
       client: dbAny(),
-      runtimeRoot,
       now,
       settleGraceMs: 120_000,
       reconcile: (
@@ -245,14 +241,13 @@ describe("reconcileTerminalCostRollups — backstop sweep", () => {
 
     await reconcileTerminalCostRollups({
       client: dbAny(),
-      runtimeRoot,
       now,
       limit: 2,
       reconcile: (runId: string) => {
         calls.push(runId);
 
         return Promise.resolve({
-          status: "missing-cost-file" as const,
+          status: "reconciled" as const,
           sourceEventCount: 0,
         });
       },
@@ -270,13 +265,12 @@ describe("reconcileTerminalCostRollups — backstop sweep", () => {
     const calls: string[] = [];
     const summary = await reconcileTerminalCostRollups({
       client: dbAny(),
-      runtimeRoot,
       now,
       reconcile: (runId: string) => {
         calls.push(runId);
 
         return Promise.resolve({
-          status: "missing-cost-file" as const,
+          status: "reconciled" as const,
           sourceEventCount: 0,
         });
       },
@@ -296,10 +290,10 @@ describe("reconcileTerminalCostRollups — backstop sweep", () => {
     const runId = await seedRun({ endedAt, costReconciledAt: null });
 
     await seedSession(runId);
-    await writeCostJsonl(runId, 50);
+    await recordCanonicalUsage(runId, 50);
     await seedRollup(runId, 50, new Date(endedAt.getTime() + 60 * 60_000));
 
-    await reconcileTerminalCostRollups({ client: dbAny(), runtimeRoot, now });
+    await reconcileTerminalCostRollups({ client: dbAny(), now });
 
     // The NULL marker makes it a candidate → reconcile recomputes by_runner.
     expect(Object.keys(await byRunnerOf(runId))).toEqual([
@@ -308,9 +302,9 @@ describe("reconcileTerminalCostRollups — backstop sweep", () => {
     expect(await costReconciledAtOf(runId)).not.toBeNull();
   });
 
-  it("does not let unreconcilable old runs (missing cost.jsonl) starve a newer healthy run", async () => {
+  it("does not let old runs without usage events starve a newer healthy run", async () => {
     const now = new Date();
-    // Two OLD runs with NO cost.jsonl → permanent missing-cost. Under the old
+    // Two old runs have no usage events. Under the old
     // rollup-state predicate these stayed candidates every tick and, oldest-first
     // under the per-tick cap, blocked the newer run forever.
     const old1 = await seedRun({
@@ -319,19 +313,18 @@ describe("reconcileTerminalCostRollups — backstop sweep", () => {
     const old2 = await seedRun({
       endedAt: new Date(now.getTime() - 2 * 60 * 60_000),
     });
-    // A NEWER healthy scratch run WITH cost.jsonl.
+    // A newer healthy scratch run has usage events.
     const healthy = await seedRun({
       endedAt: new Date(now.getTime() - 60_000),
     });
 
     await seedSession(healthy);
-    await writeCostJsonl(healthy, 88);
+    await recordCanonicalUsage(healthy, 88);
 
-    // Tick 1: oldest-first + limit 2 selects the two old missing-cost runs; the
+    // Tick 1: oldest-first + limit 2 selects the two old zero-usage runs; the
     // healthy run is beyond the cap. Each old run is stamped → settled.
     await reconcileTerminalCostRollups({
       client: dbAny(),
-      runtimeRoot,
       now,
       limit: 2,
     });
@@ -344,7 +337,6 @@ describe("reconcileTerminalCostRollups — backstop sweep", () => {
     // run is now selected and reconciled — no permanent starvation.
     await reconcileTerminalCostRollups({
       client: dbAny(),
-      runtimeRoot,
       now: new Date(now.getTime() + 60_000),
       limit: 2,
     });

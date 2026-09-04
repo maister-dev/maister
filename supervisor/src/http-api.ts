@@ -1,7 +1,6 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type * as acp from "@agentclientprotocol/sdk";
 import type { Logger } from "pino";
-import type { EventsLogWriter } from "./events-log";
 import type { AppendRuntimeEventInput, HostState } from "./host-state";
 import type { SessionRegistry, RegistryEntry } from "./registry";
 import type { WorkspaceResolution } from "./workspace-registry";
@@ -9,7 +8,7 @@ import type { WorkspaceResolution } from "./workspace-registry";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants, createReadStream } from "node:fs";
-import { access, appendFile } from "node:fs/promises";
+import { access } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
 
 import { z, ZodError, type ZodType, type ZodTypeDef } from "zod";
@@ -513,11 +512,6 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     logger,
   });
   const fenceLog = logger.child({ component: "execution-fence" });
-  // Post-terminal `session.command` completions append to a CLOSED per-run
-  // log: they wait for the writer to drain and are serialized per writer, so
-  // the file keeps its monotonicId order.
-  const postCloseAppends = new WeakMap<EventsLogWriter, Promise<void>>();
-
   // ADR-166 D4/D10 (strict): every host-bound command is a `CommandEnvelope`
   // whose `payload` is the route's body. A bare body is refused by name
   // (`missing_envelope`) before anything else is read; `guard` lets a route
@@ -551,8 +545,8 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   }
 
   // ADR-166 D5: the durable completion signal that is NOT the long-lived HTTP
-  // response. After a terminal `session.exited` the registry has closed the
-  // per-run events log, so a post-terminal completion is appended directly.
+  // response. The host outbox records post-terminal completion independently
+  // of the ACP session's lifecycle.
   type SessionCommandEvent = Extract<
     SessionEvent,
     { type: "session.command" }
@@ -584,33 +578,6 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       entry.emitter.emit(SESSION_EVENT_CHANNEL, event);
     }
 
-    if (entry.eventsLog?.isClosed()) {
-      const eventsLog = entry.eventsLog;
-      const stamped = {
-        ...event,
-        sessionName: entry.record.sessionName,
-        ...(entry.record.nodeAttemptId
-          ? { nodeAttemptId: entry.record.nodeAttemptId }
-          : {}),
-      };
-
-      const queued = (postCloseAppends.get(eventsLog) ?? eventsLog.closed())
-        .then(() =>
-          appendFile(eventsLog.path(), `${JSON.stringify(stamped)}\n`),
-        )
-        .catch((err: unknown) => {
-          logger.warn(
-            {
-              sessionId: entry.record.sessionId,
-              commandId: event.commandId,
-              err: err instanceof Error ? err.message : String(err),
-            },
-            "session-command-append-failed",
-          );
-        });
-
-      postCloseAppends.set(eventsLog, queued);
-    }
   }
 
   function commandStatus(
@@ -1560,7 +1527,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           },
         );
         const sessionId = randomUUID();
-        const { child, emitter, record, acpStdoutTap, eventsLog } =
+        const { child, emitter, record, acpStdoutTap } =
           await spawnSession({
             sessionId,
             request,
@@ -1579,14 +1546,12 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         // the prompt handler can reap a one-shot agent session when its turn ends.
         record.reapOnEndTurn = request.reapOnEndTurn === true;
         registry.register(record, child, emitter, {
-          eventsLog,
           runtimeEventPublisher: runtimeEvents,
         });
         attachHeartbeat({ sessionId, child, registry, logger });
         await attachCost({
           sessionId,
           sessionName: record.sessionName,
-          costPath: workspace.costPath,
           projectSlug: workspace.projectSlug,
           runId: workspace.runId,
           stepId: request.stepId,
@@ -1659,18 +1624,6 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           }
 
           registry.remove(sessionId, "acp-handshake-failed");
-          await eventsLog.close().catch((closeErr: unknown) => {
-            logger.warn(
-              {
-                sessionId,
-                err:
-                  closeErr instanceof Error
-                    ? closeErr.message
-                    : String(closeErr),
-              },
-              "events-log close failed after acp handshake failure",
-            );
-          });
           throw err;
         }
 
@@ -1700,209 +1653,8 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     });
   });
 
-  app.post<SessionIdParams>("/sessions/:id/prompt", async (req, reply) => {
-    const entry = registry.get(req.params.id);
-
-    if (!entry) {
-      reply
-        .status(404)
-        .send({ code: "PRECONDITION", message: "unknown session" });
-
-      return;
-    }
-
-    const parsed = parseCommandBody(
-      req.body,
-      "session.prompt",
-      SendPromptRequestSchema,
-      { route: "POST /sessions/:id/prompt" },
-    );
-    const body = parsed.payload;
-
-    await runCommand({
-      reply,
-      parsed,
-      kind: "session.prompt",
-      expectedRunId: entry.record.runId,
-      entry,
-      execute: async () => {
-        // Liveness is judged inside the receipt-guarded execution: a duplicate
-        // id whose original completed replays the stored response even after
-        // the session exited (X-EH-07).
-        if (entry.record.status !== "live") {
-          throw new SupervisorError("PRECONDITION", "session not live");
-        }
-        if (!entry.connection || !entry.acpSessionId) {
-          throw new SupervisorError(
-            "PRECONDITION",
-            "session has no ACP connection",
-          );
-        }
-
-        const connection = entry.connection;
-        const acpSessionId = entry.acpSessionId;
-
-        // Defense-in-depth: independently confine every content-block file URI
-        // to roots bound to THIS session at creation (worktree ∪ repo ∪ run dir)
-        // before forwarding — the web tier confines too, but the supervisor must
-        // not trust a direct caller. Remote schemes + sandbox escapes are
-        // rejected, not forwarded.
-        const uriViolation = contentBlockUriViolation(body.contentBlocks, {
-          worktreePath: entry.record.worktreePath,
-          repoPath: entry.record.repoPath,
-          runDir: dirname(entry.record.logPath),
-          confineRoot: entry.record.confineRoot,
-        });
-
-        if (uriViolation) {
-          logger.warn(
-            { sessionId: req.params.id, status: 409, message: uriViolation },
-            "prompt route: content-block URI confinement violation",
-          );
-          throw new SupervisorError("PRECONDITION", uriViolation);
-        }
-        const contentBlocks = await resolvePromptRuntimeObjects({
-          blocks: body.contentBlocks,
-          resolver: runtimeObjects,
-          runId: entry.record.runId,
-          assignmentId: parsed.envelope.fence.assignmentId,
-          assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
-        });
-
-        entry.record.stepId = body.stepId;
-        if (body.nodeAttemptId) {
-          entry.record.nodeAttemptId = body.nodeAttemptId;
-        } else {
-          delete entry.record.nodeAttemptId;
-        }
-
-        // M30 (ADR-078 DD4): a gate-chat prompt accumulates the agent's reply
-        // text from this turn's session.update chunks and emits ONE
-        // session.chat_turn at completion — the chat surface renders it without
-        // polluting the flow timeline.
-        const chatHitlId = parseGateChatHitlId(body.stepId);
-        let chatBuf = "";
-        const chatListener = (event: SessionEvent): void => {
-          if (event.type !== "session.update") return;
-          const update = event.update as {
-            sessionUpdate?: string;
-            content?: { type?: string; text?: string };
-          } | null;
-
-          if (
-            update?.sessionUpdate === "agent_message_chunk" &&
-            update.content?.type === "text" &&
-            typeof update.content.text === "string"
-          ) {
-            chatBuf += update.content.text;
-          }
-        };
-
-        if (chatHitlId) {
-          entry.emitter.on(SESSION_EVENT_CHANNEL, chatListener);
-        }
-        // M30 (ADR-078 L2): arm the read-only auto-reject for the duration of
-        // this prompt only.
-        entry.record.readOnlyTurn = body.readOnlyTurn === true;
-
-        // ADR-157: ground the agent in its read-only sibling-repo mounts on the
-        // FIRST prompt of the session — MAISTER_CONTEXT_REPOS serves scripts,
-        // this preamble is how the agent learns the mounts exist. A respawn
-        // (resume) rebuilds the record, so a resumed session re-grounds once.
-        const mountPreamble = takeContextMountPreamble(entry.record);
-
-        if (mountPreamble) {
-          logger.info(
-            {
-              sessionId: req.params.id,
-              mounts: entry.record.contextMounts?.map((m) => m.slug),
-            },
-            "context-mount preamble prepended",
-          );
-        }
-
-        let resp: Awaited<ReturnType<typeof sendPromptOnConnection>>;
-
-        try {
-          resp = await sendPromptOnConnection(
-            connection,
-            {
-              adapter: entry.record.adapter,
-              acpSessionId,
-              stepId: body.stepId,
-              prompt: body.prompt,
-              contentBlocks,
-              preamble: mountPreamble ?? undefined,
-              isUserCancel: () => entry.record.cancelRequested === true,
-            },
-            logger,
-          );
-        } catch (err) {
-          // ADR-166 E-EH-04 / X-EH-19: a session evicted by a higher epoch
-          // answers its pending prompt with FENCED, never a protocol error.
-          throwIfFenced(entry, parsed.envelope);
-          throw err;
-        } finally {
-          entry.record.readOnlyTurn = false;
-          entry.record.cancelRequested = false;
-          if (chatHitlId) {
-            entry.emitter.off(SESSION_EVENT_CHANNEL, chatListener);
-          }
-        }
-
-        throwIfFenced(entry, parsed.envelope);
-
-        if (chatHitlId) {
-          entry.record.monotonicId += 1;
-          const chatEvent: SessionEvent = {
-            type: "session.chat_turn",
-            sessionId: req.params.id,
-            monotonicId: entry.record.monotonicId,
-            hitlRequestId: chatHitlId,
-            role: "agent",
-            body: chatBuf,
-          };
-
-          entry.emitter.emit(SESSION_EVENT_CHANNEL, chatEvent);
-        }
-
-        logger.info(
-          {
-            sessionId: req.params.id,
-            stepId: body.stepId,
-            stopReason: resp.stopReason,
-            status: 200,
-            readOnlyTurn: body.readOnlyTurn === true,
-            commandId: parsed.envelope.command.id,
-          },
-          "http POST /sessions/:id/prompt",
-        );
-
-        // M34 lifecycle: a one-shot standalone agent session (reapOnEndTurn)
-        // has no external driver that acts on a clean `end_turn` (a flow
-        // session is driven by the flow runner; a persistent agent parks +
-        // re-messages). Reap the now-idle adapter so the heartbeat emits a bare
-        // `session.exited{exitCode:0}` and the web consumer finalizes the run —
-        // otherwise it lingers `Running` and leaks a concurrency slot.
-        // `intentionalShutdown` with NO reason selects the natural-completion
-        // path (a "checkpoint"/"intentional" reason would detach or
-        // operator-cancel instead).
-        if (entry.record.reapOnEndTurn && resp.stopReason === "end_turn") {
-          entry.intentionalShutdown = true;
-          entry.child.kill("SIGTERM");
-        }
-
-        return {
-          status: 200,
-          body: { stopReason: resp.stopReason, meta: resp._meta },
-        };
-      },
-    });
-  });
-
-  // Stage B durable prompt admission. This route is intentionally separate
-  // from the legacy long-lived `/prompt` response until every existing driver
-  // is migrated to PromptHandle completion in B3/B4.
+  // Prompt admission is short-lived. Its durable receipt is the authoritative
+  // completion seam; the asynchronous turn itself publishes canonical events.
   app.post<SessionIdParams>("/sessions/:id/prompts", async (req, reply) => {
     const entry = registry.get(req.params.id);
     if (!entry) {
@@ -1928,8 +1680,8 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
   // Interrupt the in-flight prompt turn WITHOUT tearing the session down: a
   // protocol-level `session/cancel` notification (adapter-agnostic — claude,
-  // codex, gemini, opencode all honour it). The blocked /sessions/:id/prompt
-  // request resolves with the `cancelled` stop reason; the cancelRequested flag
+  // codex, gemini, opencode all honour it). The asynchronous prompt command
+  // terminalizes with the `cancelled` stop reason; the cancelRequested flag
   // makes sendPromptOnConnection treat that as a clean turn end (session stays
   // live, dialog returns to WaitingForUser) rather than a crash. Idempotent: a
   // non-live or connectionless session acks with cancelled:false.

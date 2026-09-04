@@ -1,7 +1,7 @@
 // FR-F1/F2: staged launch progress for the streaming-POST launch (Option 2,
 // sub-plan 2026-06-17). These frames travel on the launch request's OWN
 // `text/event-stream` response — NOT the run SSE — so they carry no `id:`
-// line (they are not durable run.events.jsonl entries), mirroring the
+// line (they are not durable canonical execution-event entries), mirroring the
 // run-stream's synthetic timeout event.
 
 export type LaunchStage =

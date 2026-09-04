@@ -17,8 +17,7 @@ info:
     - `session.command` (Implemented — ADR-166) — command acceptance and
       completion for the enveloped session routes (`session.prompt`,
       `session.cancel`, `session.checkpoint`, `session.input`,
-      `session.delete`): the durable completion signal that is NOT the
-      long-lived HTTP response. `session.exited.reason` gains `fenced` for
+      `session.delete`): the durable completion signal. `session.exited.reason` gains `fenced` for
       a session evicted by a higher assignment epoch.
 
     Permission deferreds age out after `MAISTER_KEEPALIVE_MINUTES`; a
@@ -27,16 +26,10 @@ info:
     Terminal events (`session.exited` / `session.crashed`) close the
     connection. Clients reconnect with `Last-Event-ID: <monotonicId>`
     to replay any events with a higher id from the per-session
-    in-memory ring buffer (1000 entries). The supervisor also writes
-    every event to a run-scoped `.maister/<projectSlug>/runs/<runId>/run.events.jsonl`
-    durable log so the web SSE bridge can tail a single file across
-    consecutive sessions of the same run.
-
-    Consumer (M12): the web-side artifact projector tails the per-run
-    `run.events.jsonl` and consumes `session.update` /
-    `session.permission_request` messages to derive event-stream evidence
-    (tool-call activity `log` + `preview` URLs). It is a pull-based,
-    read-only consumer; it never drives run state.
+    in-memory ring buffer (1000 entries). This endpoint is a local diagnostic
+    stream only. Every observable event is also committed to the host-private
+    durable outbox; the manager consumes `/runtime-events` and projects
+    Postgres canonical state for browser replay and evidence.
   contact:
     name: MAIster maintainers
     url: https://github.com/your-org/mAIster
@@ -231,13 +224,10 @@ components:
         `phase: completed` with `status` and either `result` or `error` when
         any session-kind command finishes (`succeeded` / `failed` /
         `fenced`). Immediate kinds emit exactly ONE `completed` event after
-        their effect. Also appended to `run.events.jsonl` — a completion that
-        lands after the session's terminal event is appended once the closed
-        per-run writer has drained, so the file keeps its `monotonicId`
-        order — and the web `PromptHandle.completion` resolves from whichever
-        durable signal arrives first (this event, the receipt, or the HTTP
-        response); a late signal for an already-terminal ledger row is
-        ignored. The run-transcript projector ignores this type.
+        their effect. It is committed to the host outbox before publication;
+        the manager assigns its canonical per-run sequence. A prompt handle
+        resolves from canonical event/receipt reconciliation, never an HTTP
+        completion response. The run-transcript projector ignores this type.
       contentType: application/json
       payload: { $ref: "#/components/schemas/SessionCommandEvent" }
       examples:
@@ -325,7 +315,7 @@ components:
           type: string
           description: |
             (Run-detail transparency — T-B0) The node attempt this session
-            executes, stamped on every `run.events.jsonl` line of a flow node
+            executes, stamped on every canonical host event of a flow node
             session next to `sessionName`. The flow transcript projector reads it
             to attribute each `session.update` to a node (`sessionName` is not
             1:1 per node). Absent for scratch / single-session runs.
@@ -464,7 +454,7 @@ components:
         the opaque `session.update.update` field, so the closed `SessionEvent`
         union and both AsyncAPI `EventBase` enums are unchanged. Informational
         only: the supervisor NEVER changes `runs.status` on this signal, and
-        `cost.jsonl` remains the billed-model ground truth.
+        `usage.recorded` remains the billed-model ground truth.
       required: [sessionUpdate, configuredModel, observedModelId, channel]
       properties:
         sessionUpdate:

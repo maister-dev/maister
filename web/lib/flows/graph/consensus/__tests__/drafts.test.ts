@@ -37,7 +37,7 @@ function baseInput(db: unknown): ConsensusDraftLaunchInput {
 function fakeDb(args: {
   existingRows?: unknown[][];
   runnerRows?: unknown[];
-  parentMode?: "legacy_file_v1" | "canonical_events_v1";
+  parentMode?: "canonical_events_v1";
   inserts?: unknown[];
 }): unknown {
   let selectCall = 0;

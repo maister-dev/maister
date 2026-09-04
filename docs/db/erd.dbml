@@ -153,20 +153,6 @@ table artifact_instances {
   }
 }
 
-table artifact_projection_cursors {
-  id text [pk, not null]
-  run_id text [not null]
-  scope text [not null]
-  events_log_path text [not null]
-  last_monotonic_id integer [not null, default: 0]
-  status text [not null, default: 'idle']
-  updated_at "timestamp with time zone" [not null, default: `now()`]
-
-  indexes {
-    (run_id, scope) [name: 'artifact_projection_cursors_run_scope_uq', unique]
-  }
-}
-
 table assignment_events {
   id text [pk, not null]
   assignment_id text [not null]
@@ -1875,7 +1861,7 @@ table runs {
   brain_context boolean
   flow_id text
   status text [not null, default: 'Pending']
-  execution_data_plane_mode text [not null, default: 'legacy_file_v1']
+  execution_data_plane_mode text [not null, default: 'canonical_events_v1']
   next_execution_event_sequence bigint [not null, default: `0`]
   current_step_id text
   flow_version text [not null]
@@ -2676,8 +2662,6 @@ ref artifact_instances_run_id_runs_id_fk: artifact_instances.run_id > runs.id [d
 ref artifact_instances_node_attempt_id_node_attempts_id_fk: artifact_instances.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
 
 ref artifact_instances_superseded_by_id_artifact_instances_id_fk: artifact_instances.superseded_by_id > artifact_instances.id [delete: set null, update: no action]
-
-ref artifact_projection_cursors_run_id_runs_id_fk: artifact_projection_cursors.run_id > runs.id [delete: cascade, update: no action]
 
 ref assignment_events_assignment_id_assignments_id_fk: assignment_events.assignment_id > assignments.id [delete: cascade, update: no action]
 

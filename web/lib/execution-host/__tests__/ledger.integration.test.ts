@@ -62,7 +62,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function bound(
   status = "Running",
-  dataPlaneMode: "legacy_file_v1" | "canonical_events_v1" = "legacy_file_v1",
+  dataPlaneMode: "canonical_events_v1" = "canonical_events_v1",
 ) {
   const runId = await seedRun(testDatabase.db, {
     projectId,

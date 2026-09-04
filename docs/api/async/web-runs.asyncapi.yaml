@@ -7,18 +7,12 @@ info:
     `GET /api/runs/{runId}/stream` endpoint (described in
     `../web.openapi.yaml`).
 
-    Each run has an immutable data-plane mode. Canonical-event runs replay
-    manager-owned PostgreSQL `execution_events` by the run sequence; a local
-    in-process wake is only a latency hint. Drained legacy-file runs retain
-    their bounded `run.events.jsonl` reader until B4. The web tier never reads
-    an execution-host runtime path for a canonical run.
+    Each run replays manager-owned PostgreSQL `execution_events` by the run
+    sequence; a local in-process wake is only a latency hint. The web tier
+    never reads an execution-host runtime path for browser replay.
 
-    Legacy event data matches the supervisor's SSE union
-    (`session.line`, `session.update`, `session.permission_request`,
-    `session.exited`, `session.crashed`, and — Implemented, ADR-166 —
-    `session.command`, forwarded as an OPAQUE pass-through the browser
-    ignores; it exists on this stream only because the durable log carries
-    it) plus web-only synthetic/advisory events. `run.runner_resolution_warning` is appended by the web tier after
+    Canonical events are projected into user-safe browser messages plus
+    web-only synthetic/advisory events. `run.runner_resolution_warning` is appended by the web tier after
     launch commit when a Flow runner slot launches on a same-capability runner
     with a soft model/provider mismatch; the persisted `run_sessions` warning is
     the source of truth and the event is the timeline mirror. A `session.update`
@@ -29,9 +23,8 @@ info:
 
     Differences from `supervisor-sse.asyncapi.yaml`:
 
-    - Canonical replay is exclusive `runSequence` ordering from the manager
-      database and is restart-safe; the old file replay behavior remains only
-      for an immutable legacy-mode run.
+    - Replay is exclusive `runSequence` ordering from the manager database and
+      is restart-safe.
     - Terminal close is driven by the `runs.status` row in Postgres
       (`Done | Abandoned | Failed | Crashed`), not by the supervisor's
       session-terminal signal. The bridge drains any trailing events
@@ -195,7 +188,7 @@ components:
       name: session.command
       title: Command accepted / completed (Implemented — ADR-166, opaque pass-through)
       summary: |
-        (Implemented — ADR-166) Forwarded unchanged from `run.events.jsonl`. The
+      Forwarded from a canonical `session.command` event. The
         browser transcript / timeline consumers ignore it (unknown-type
         tolerance); its consumer is the web-side command ledger. Full payload
         in `supervisor-sse.asyncapi.yaml#SessionCommandEvent`.
@@ -205,7 +198,7 @@ components:
       name: run.needs_input
       title: Durable NeedsInput transition tick (run-detail transparency — Implemented)
       summary: |
-        (Implemented) Appended to `run.events.jsonl` by the web tier at a
+        (Implemented) Persisted as a manager-originated canonical event at a
         non-agent gate (human / form / review / infra_recovery), where the run
         transitions to `NeedsInput` with NO supervisor session running — so no
         `session.update` would otherwise tick the SSE tail and an open run-detail

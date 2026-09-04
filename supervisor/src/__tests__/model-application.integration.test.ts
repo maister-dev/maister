@@ -3,16 +3,15 @@
 // currentModelId "glm-5.1" on session/new. A claude runner whose configured
 // model differs is verified via the settings channel here, so the supervisor
 // emits a model_advisory session.update (informational, never fails the run);
-// a matching model emits none. Asserted against the durable run.events.jsonl.
+// a matching model emits none. Asserted against the host's durable outbox,
+// which is the only execution-event replay source in Stage B.
 import type { RunnerLaunch } from "../types";
-
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { modelCatalogCache } from "../model-catalog/cache";
 import { draftFromRunner } from "../model-catalog/harvest";
+import type { RuntimeEventEnvelope } from "../runtime-events";
 
 import {
   bootHost,
@@ -49,20 +48,21 @@ async function createSession(host: BootedHost, model: string) {
 }
 
 async function readEvents(
-  eventsPath: string,
+  host: BootedHost,
+  runId: string,
   maxMs = 5_000,
 ): Promise<Record<string, unknown>[]> {
   const deadline = Date.now() + maxMs;
 
   for (;;) {
-    try {
-      const text = await readFile(eventsPath, "utf8");
-      const lines = text.split("\n").filter((l) => l.length > 0);
+    const streamId = host.hostState.getRuntimeEventStreamId();
+    const events = host.hostState
+      .runtimeEventsAfter(streamId, null, 500)
+      .map((row) => row.envelope as RuntimeEventEnvelope)
+      .filter((event) => event.runId === runId)
+      .map((event) => ({ ...event.payload, type: event.eventType }));
 
-      if (lines.length > 0) return lines.map((l) => JSON.parse(l));
-    } catch {
-      /* not written yet */
-    }
+    if (events.length > 0) return events;
     if (Date.now() > deadline) return [];
     await new Promise<void>((r) => setTimeout(r, 25));
   }
@@ -99,17 +99,14 @@ afterEach(async () => {
 describe("T5.3 — configured model application + advisory", () => {
   it("emits a model_advisory session.update when the configured model differs (mismatch is non-fatal)", async () => {
     if (!booted) throw new Error("not booted");
-    const eventsPath = join(
-      booted.runtimeRoot,
-      ".maister/demo/runs/run-adv/run.events.jsonl",
-    );
 
     // mock advertises currentModelId "glm-5.1"; configure a different model.
     const res = await createSession(booted, "glm-5-turbo");
 
     expect(res.status).toBe(201);
 
-    const advisory = advisoryOf(await readEvents(eventsPath));
+    const events = await readEvents(booted, "run-adv");
+    const advisory = advisoryOf(events);
 
     expect(advisory).toBeDefined();
     expect(advisory?.update).toMatchObject({
@@ -120,7 +117,7 @@ describe("T5.3 — configured model application + advisory", () => {
     });
     // The run was NOT failed — the session spawned successfully (201) and the
     // event is a session.update, not session.crashed.
-    const terminal = (await readEvents(eventsPath)).find(
+    const terminal = events.find(
       (e) => e.type === "session.crashed",
     );
 
@@ -129,10 +126,6 @@ describe("T5.3 — configured model application + advisory", () => {
 
   it("emits NO advisory when the configured model matches the adapter", async () => {
     if (!booted) throw new Error("not booted");
-    const eventsPath = join(
-      booted.runtimeRoot,
-      ".maister/demo/runs/run-adv/run.events.jsonl",
-    );
 
     const res = await createSession(booted, "glm-5.1");
 
@@ -140,7 +133,7 @@ describe("T5.3 — configured model application + advisory", () => {
     // Give the handshake a beat, then confirm no advisory was written.
     await new Promise<void>((r) => setTimeout(r, 300));
 
-    expect(advisoryOf(await readEvents(eventsPath))).toBeUndefined();
+    expect(advisoryOf(await readEvents(booted, "run-adv"))).toBeUndefined();
   });
 });
 
@@ -166,10 +159,6 @@ describe("T3.2 — resumed-session model application + harvest (codex)", () => {
 
   it("applies the configured model and harvests models on session/resume (advisory is non-fatal)", async () => {
     if (!booted) throw new Error("not booted");
-    const eventsPath = join(
-      booted.runtimeRoot,
-      ".maister/demo/runs/run-resume/run.events.jsonl",
-    );
 
     const res = await postJson(
       `${booted.url}/sessions`,
@@ -186,7 +175,8 @@ describe("T3.2 — resumed-session model application + harvest (codex)", () => {
 
     expect(res.status).toBe(201);
 
-    const advisory = advisoryOf(await readEvents(eventsPath));
+    const events = await readEvents(booted, "run-resume");
+    const advisory = advisoryOf(events);
 
     expect(advisory).toBeDefined();
     expect(advisory?.update).toMatchObject({
@@ -196,7 +186,7 @@ describe("T3.2 — resumed-session model application + harvest (codex)", () => {
       channel: "set_session_model",
     });
     expect(
-      (await readEvents(eventsPath)).find((e) => e.type === "session.crashed"),
+      events.find((e) => e.type === "session.crashed"),
     ).toBeUndefined();
 
     // Passive harvest of ResumeSessionResponse.models into the shared cache.

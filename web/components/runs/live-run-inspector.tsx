@@ -23,7 +23,7 @@ import {
 } from "@/lib/runs/live-inspector";
 
 // Live token-cost poll config: the cost facts (token totals) carried in `facts`
-// are replaced by label as cost.jsonl grows during the run.
+// are replaced by label as canonical usage events arrive during the run.
 export interface LiveCostConfig {
   initial: RunCostSummary;
   labels: CostSummaryFactLabels;
@@ -50,7 +50,7 @@ export interface LiveRunInspectorProps extends RunInspectorProps {
 // false) and re-fetches the change summary, debounced. A failed re-fetch shows
 // the stale badge over the last good snapshot. Terminal runs never subscribe.
 // It also keeps the token-cost facts and the wall-clock fact live: cost is
-// re-fetched on each SSE tick (cost.jsonl grows mid-turn), and elapsed time
+// re-fetched on each SSE tick (canonical usage grows mid-turn), and elapsed time
 // ticks on a 1s client interval — both spliced into `facts` by label so the
 // fact order rendered by RunInspector is unchanged.
 export function LiveRunInspector({
@@ -102,8 +102,8 @@ export function LiveRunInspector({
     };
   }, [eventCount, live, changeScope, rest.runId]);
 
-  // Re-poll cost on the same SSE tick (separate debounce timer): cost.jsonl is
-  // appended per usage event during the turn. A failed poll keeps the last good
+  // Re-poll cost on the same SSE tick (separate debounce timer): canonical usage
+  // is appended per event during the turn. A failed poll keeps the last good
   // snapshot (no stale badge — cost is advisory).
   const costTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 

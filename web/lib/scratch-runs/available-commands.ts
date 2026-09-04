@@ -1,16 +1,12 @@
 import "server-only";
 
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-
 import { and, asc, eq, isNotNull } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { runtimeRoot } from "@/lib/instance-config";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs, projects, executionEvents } = schemaModule as unknown as Record<string, any>;
+const { executionEvents, runs } = schemaModule as unknown as Record<string, any>;
 
 // FR-A2/A3: a live availableCommands entry, names AS-EMITTED by the adapter
 // (codex bakes `$`; claude bare / `mcp:`). The composer maps to canonical refs.
@@ -65,9 +61,9 @@ function sessionUpdateFromEvent(parsed: any): any {
 
 /**
  * Extract the LATEST `available_commands_update` snapshot from a run's
- * `run.events.jsonl` content (FR-A1 last-write-wins). Pure — no fs. The supervisor
- * appends every `session.update` to the log, so the snapshot is recoverable
- * without separate persistence. A cheap substring check fast-paths the parse.
+ * canonical `session.update` events (FR-A1 last-write-wins). Pure — the host
+ * publishes each update durably, so the snapshot is recoverable without a
+ * runtime-file dependency. A cheap substring check fast-paths the parse.
  */
 export function extractLatestAvailableCommands(
   rawJsonl: string,
@@ -105,64 +101,37 @@ export function extractLatestAvailableCommands(
 }
 
 /**
- * Read the latest availableCommands snapshot for a scratch run from its durable
- * event log. Returns `[]` when the run/slug or log file is absent (a session
- * that has not emitted the event yet).
+ * Read the latest availableCommands snapshot for a scratch run from canonical
+ * manager-owned events. Returns `[]` when the run does not exist or a session
+ * has not emitted the snapshot yet.
  */
 export async function readScratchAvailableCommands(
   runId: string,
   db: any = getDb(),
 ): Promise<AvailableCommandDto[]> {
   const runRows = await db
-    .select({ slug: projects.slug, executionDataPlaneMode: runs.executionDataPlaneMode })
+    .select({ id: runs.id })
     .from(runs)
-    .innerJoin(projects, eq(projects.id, runs.projectId))
     .where(eq(runs.id, runId))
     .limit(1);
-  const run = runRows[0] as
-    | { slug: string; executionDataPlaneMode: "legacy_file_v1" | "canonical_events_v1" }
-    | undefined;
+  if (!runRows[0]) return [];
 
-  if (run?.executionDataPlaneMode === "canonical_events_v1") {
-    const events = await db
-      .select({ eventType: executionEvents.eventType, payload: executionEvents.payload })
-      .from(executionEvents)
-      .where(
-        and(
-          eq(executionEvents.runId, runId),
-          eq(executionEvents.ingestDisposition, "accepted"),
-          isNotNull(executionEvents.runSequence),
-        ),
+  const events = await db
+    .select({ eventType: executionEvents.eventType, payload: executionEvents.payload })
+    .from(executionEvents)
+    .where(
+      and(
+        eq(executionEvents.runId, runId),
+        eq(executionEvents.ingestDisposition, "accepted"),
+        isNotNull(executionEvents.runSequence),
+      ),
+    )
+    .orderBy(asc(executionEvents.runSequence));
+  return extractLatestAvailableCommands(
+    events
+      .map((event: { eventType: string; payload: Record<string, unknown> | null }) =>
+        JSON.stringify({ type: event.eventType, ...(event.payload ?? {}) }),
       )
-      .orderBy(asc(executionEvents.runSequence));
-    return extractLatestAvailableCommands(
-      events
-        .map((event: { eventType: string; payload: Record<string, unknown> | null }) =>
-          JSON.stringify({ type: event.eventType, ...(event.payload ?? {}) }),
-        )
-        .join("\n"),
-    );
-  }
-  const slug = run?.slug;
-
-  if (!slug) return [];
-
-  const eventsLogPath = path.join(
-    runtimeRoot(),
-    ".maister",
-    slug,
-    "runs",
-    runId,
-    "run.events.jsonl",
+      .join("\n"),
   );
-
-  let raw: string;
-
-  try {
-    raw = await readFile(eventsLogPath, "utf8");
-  } catch {
-    return [];
-  }
-
-  return extractLatestAvailableCommands(raw);
 }

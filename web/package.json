@@ -24,6 +24,7 @@
     "db:seed": "tsx --import ./scripts/_register-shim.mjs lib/db/seed.ts",
     "db:studio": "drizzle-kit studio",
     "db:erd": "tsx --import ./scripts/_register-shim.mjs scripts/generate-erd-dbml.ts",
+    "execution-data-plane:import-legacy": "tsx scripts/import-legacy-execution-data-plane.ts",
     "install-flow": "tsx --import ./scripts/_register-shim.mjs scripts/install-flow.ts",
     "install-package": "tsx --import ./scripts/_register-shim.mjs scripts/install-package.ts",
     "run-flow": "tsx --import ./scripts/_register-shim.mjs scripts/run-flow.ts",

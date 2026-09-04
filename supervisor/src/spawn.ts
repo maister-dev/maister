@@ -4,11 +4,10 @@ import type { WorkspaceResolution } from "./workspace-registry";
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { createWriteStream, type WriteStream } from "node:fs";
-import { mkdir, open as openFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { PassThrough } from "node:stream";
 
-import { openEventsLog, type EventsLogWriter } from "./events-log";
 import { SESSION_EVENT_CHANNEL } from "./registry";
 import {
   type ContextMount,
@@ -21,65 +20,6 @@ import { getAdapterRuntime, resolveAdapterBinary } from "./adapter-registry";
 import { effectiveStartSessionRequest } from "./runner-provisioner";
 
 const MAX_LINE_BYTES = 1024 * 1024;
-const TAIL_SCAN_BYTES = 64 * 1024;
-
-// Scan the tail of an events.jsonl file to find the highest monotonicId
-// previously emitted for this run. Used to seed `record.monotonicId`
-// on each spawn so multi-session runs (slash-in-existing, or several
-// new-session-per-step spawns) keep a strictly-increasing per-run
-// event sequence. The SSE bridge filters by `monotonicId > lastSeen`;
-// resetting to 0 on every spawn would silently drop every event from
-// the second and later sessions.
-async function tailMaxMonotonicId(path: string): Promise<number> {
-  let handle: Awaited<ReturnType<typeof openFile>> | null = null;
-
-  try {
-    handle = await openFile(path, "r");
-    const stat = await handle.stat();
-    const size = stat.size;
-
-    if (size === 0) return 0;
-    const readBytes = Math.min(size, TAIL_SCAN_BYTES);
-    const buf = new Uint8Array(readBytes);
-
-    await handle.read(buf, 0, readBytes, size - readBytes);
-    const text = new TextDecoder().decode(buf);
-    const lines = text.split("\n").filter((l) => l.length > 0);
-    let highest = 0;
-
-    // Walk lines back-to-front. The first line may be partial because
-    // the read window did not start on a record boundary, so skip it
-    // unless we read the whole file. Subsequent lines are always
-    // complete records.
-    const startIndex = readBytes < size && lines.length > 1 ? 1 : 0;
-
-    for (let i = startIndex; i < lines.length; i += 1) {
-      try {
-        const ev = JSON.parse(lines[i]) as { monotonicId?: unknown };
-
-        if (typeof ev.monotonicId === "number" && ev.monotonicId > highest) {
-          highest = ev.monotonicId;
-        }
-      } catch {
-        /* skip malformed line — won't affect correctness, just lower bound */
-      }
-    }
-
-    return highest;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return 0;
-    throw err;
-  } finally {
-    if (handle) {
-      try {
-        await handle.close();
-      } catch {
-        /* ignore close error */
-      }
-    }
-  }
-}
-
 export type SpawnSessionOptions = {
   sessionId: string;
   request: StartSessionRequest;
@@ -106,8 +46,6 @@ export type SpawnSessionResult = {
   logPath: string;
   logStream: WriteStream;
   acpStdoutTap: PassThrough;
-  eventsLog: EventsLogWriter;
-  eventsLogPath: string;
 };
 
 // The request fields the child environment is layered from. The model-catalog
@@ -158,24 +96,15 @@ export async function spawnSession(
   });
   const binary = binaryResolution.binary;
 
-  // ADR-166: the step log and the per-RUN events log (shared by every session
-  // of the run so the web SSE bridge tails one file) both come from the
-  // resolved workspace — the single path-derivation site.
-  const { logPath, eventsLogPath } = workspace;
+  // The host owns its step log; canonical session events are persisted to the
+  // host outbox instead of a shared per-run file.
+  const { logPath } = workspace;
 
   await mkdir(dirname(logPath), { recursive: true });
   const logStream = createWriteStream(logPath, { flags: "a" });
-  // Seed monotonicId from the tail of the durable per-run log so the
-  // event sequence stays strictly increasing across consecutive
-  // sessions of the same run.
-  const seedMonotonicId = await tailMaxMonotonicId(eventsLogPath);
+  const seedMonotonicId = 0;
   // M42 (ADR-114): a single-session run omits sessionName → "default".
   const sessionName = request.sessionName ?? "default";
-  const eventsLog = await openEventsLog(eventsLogPath, {
-    logger,
-    sessionName,
-    nodeAttemptId: request.nodeAttemptId,
-  });
 
   const args: string[] = [
     ...adapterRuntime.defaultArgs,
@@ -223,7 +152,6 @@ export async function spawnSession(
       ),
       adapterEnvKeys: Object.keys(request.adapterLaunch?.env ?? {}).sort(),
       hasCapabilityProfile: Boolean(request.capabilityProfilePath),
-      eventsLogPath,
     },
     "spawn",
   );
@@ -238,7 +166,6 @@ export async function spawnSession(
     const onError = (err: Error) => {
       child.off("spawn", onSpawn);
       logStream.end();
-      void eventsLog.close();
       logger.warn(
         {
           sessionId,
@@ -266,7 +193,6 @@ export async function spawnSession(
 
   if (pid === undefined) {
     logStream.end();
-    await eventsLog.close();
     throw new SupervisorError("SPAWN", "child has no pid after spawn");
   }
 
@@ -385,7 +311,5 @@ export async function spawnSession(
     logPath,
     logStream,
     acpStdoutTap,
-    eventsLog,
-    eventsLogPath,
   };
 }

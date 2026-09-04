@@ -13,8 +13,8 @@ import {
 // into one message; a `tool_call` + its `tool_call_update`s merge by
 // toolCallId; usage collapses to one row). The difference is shape, not logic:
 // the live consumer writes/updates DB rows incrementally over a never-resuming
-// stream, whereas a flow run is reconciled-on-read from the durable
-// `run.events.jsonl`, so this function re-derives the FULL ordered message list
+// stream, whereas a flow run is reconciled-on-read from durable canonical
+// execution events, so this function re-derives the FULL ordered message list
 // deterministically. `sequence` is the message's position, which makes the
 // projector's upsert idempotent under the `(run_id, node_attempt_id, sequence)`
 // unique index.

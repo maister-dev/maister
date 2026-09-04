@@ -183,7 +183,7 @@ async function isCanonicalRun(db: Db, runId: string): Promise<boolean> {
     .from(runs)
     .where(eq(runs.id, runId))
     .limit(1);
-  return rows[0]?.executionDataPlaneMode === "canonical_events_v1";
+  return Boolean(rows[0]);
 }
 
 export async function consumeRuntimeEventStreamOnce(input: {

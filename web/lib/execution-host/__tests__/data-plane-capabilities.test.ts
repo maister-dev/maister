@@ -15,15 +15,20 @@ describe("Stage B data-plane capability negotiation", () => {
         runtimeObjects: true,
       }),
     ).toBe("canonical_events_v1");
-    expect(selectExecutionDataPlaneMode(null)).toBe("legacy_file_v1");
-    expect(
+    expect(() => selectExecutionDataPlaneMode(null)).toThrow(
+      expect.objectContaining({
+        code: "EXECUTOR_UNAVAILABLE",
+        details: { reason: "data_plane_unsupported" },
+      }),
+    );
+    expect(() =>
       selectExecutionDataPlaneMode({
         dataPlaneVersion: "execution-host-data-plane.v1",
         eventStream: true,
         asyncPrompt: true,
         runtimeObjects: false,
       }),
-    ).toBe("legacy_file_v1");
+    ).toThrow("required canonical data plane");
   });
 
   it("re-parses the durable host capability JSON before admission", () => {
@@ -39,10 +44,10 @@ describe("Stage B data-plane capability negotiation", () => {
         },
       } as never),
     ).toBe("canonical_events_v1");
-    expect(
+    expect(() =>
       executionDataPlaneModeForHost({
         capabilities: { dataPlane: { version: "execution-host-data-plane.v1" } },
       } as never),
-    ).toBe("legacy_file_v1");
+    ).toThrow("required canonical data plane");
   });
 });

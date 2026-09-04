@@ -2,7 +2,6 @@ import type {
   CreateSessionInput,
   CreateSessionResult,
   ExecutionHostIdentity,
-  PromptResult,
   PromptAccepted,
   SendPromptInput,
   SupervisorDiagnosticsStatus,
@@ -246,11 +245,6 @@ export interface ExecutionHostTransport {
     envelope: CommandEnvelope<CreateSessionPayload>,
     opts?: CommandCallOptions,
   ): Promise<CreateSessionResult>;
-  sendPrompt(
-    sessionId: string,
-    envelope: CommandEnvelope<SendPromptInput>,
-    opts?: CommandCallOptions & { signal?: AbortSignal },
-  ): Promise<PromptResult>;
   startPrompt(
     sessionId: string,
     envelope: CommandEnvelope<SendPromptInput>,

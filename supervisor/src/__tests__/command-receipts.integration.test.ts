@@ -10,15 +10,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { openHostState } from "../host-state";
 import { SESSION_EVENT_CHANNEL } from "../registry";
+import type { RuntimeEventEnvelope } from "../runtime-events";
 
 import {
   adoptDirectory,
   bootHost,
   cleanupRuntimeRoot,
+  completePrompt,
   createEnvelope,
   envelope,
   postJson,
-  readEventsLog,
   waitFor,
   type BootedHost,
 } from "./_fixtures/boot-host";
@@ -43,8 +44,34 @@ function fenceFor(host: BootedHost, runId: string, epoch = 1) {
   return { hostKey: host.hostState.hostKey, runId, assignmentEpoch: epoch };
 }
 
-// Post-terminal completions reach the durable log asynchronously (after the
-// closed writer drained); poll until the expected line count is there.
+function canonicalRuntimeEvents(
+  host: BootedHost,
+  runId: string,
+): Array<Record<string, unknown>> {
+  const streamId = host.hostState.getRuntimeEventStreamId();
+  const events: RuntimeEventEnvelope[] = [];
+  let after: string | null = null;
+
+  for (;;) {
+    const page = host.hostState.runtimeEventsAfter(streamId, after, 500);
+
+    if (page.length === 0) break;
+    events.push(...page.map((row) => row.envelope as RuntimeEventEnvelope));
+    after = page.at(-1)?.sequence ?? null;
+    if (page.length < 500) break;
+  }
+
+  return events
+    .filter((event) => event.runId === runId)
+    .map((event) => ({
+      ...event.payload,
+      type: event.eventType,
+      sequence: event.sequence,
+    }));
+}
+
+// Post-terminal completions are appended to the host's durable outbox after
+// the route receipt has been persisted; poll the outbox until they arrive.
 async function durableCommands(
   host: BootedHost,
   runId: string,
@@ -54,7 +81,7 @@ async function durableCommands(
   let lines: Array<Record<string, unknown>> = [];
 
   for (let i = 0; i < 200 && lines.length < count; i += 1) {
-    lines = (await readEventsLog(host.runtimeRoot, "demo", runId)).filter(
+    lines = canonicalRuntimeEvents(host, runId).filter(
       (e) =>
         e.type === "session.command" &&
         (!completedOnly || e.phase === "completed"),
@@ -110,8 +137,8 @@ describe("command receipts", () => {
       commandId,
     );
     const [a, b] = await Promise.all([
-      postJson(`${host.url}/sessions/${sessionId}/prompt`, prompt),
-      postJson(`${host.url}/sessions/${sessionId}/prompt`, prompt),
+      completePrompt(host, sessionId, prompt),
+      completePrompt(host, sessionId, prompt),
     ]);
 
     expect(a.status).toBe(200);
@@ -139,8 +166,9 @@ describe("command receipts", () => {
     );
     const sessionId = created.body.sessionId as string;
     const commandId = randomUUID();
-    const first = await postJson(
-      `${host.url}/sessions/${sessionId}/prompt`,
+    const first = await completePrompt(
+      host,
+      sessionId,
       envelope(
         "session.prompt",
         fenceFor(host, runId),
@@ -150,7 +178,7 @@ describe("command receipts", () => {
     );
     const receipt = host.hostState.getReceipt(commandId);
     const mismatched = await postJson(
-      `${host.url}/sessions/${sessionId}/prompt`,
+      `${host.url}/sessions/${sessionId}/prompts`,
       envelope(
         "session.prompt",
         fenceFor(host, runId),
@@ -241,7 +269,7 @@ describe("command receipts", () => {
       await createEnvelope(second, { runId }),
     );
     const res = await postJson(
-      `${second.url}/sessions/${created.body.sessionId}/prompt`,
+      `${second.url}/sessions/${created.body.sessionId}/prompts`,
       envelope(
         "session.prompt",
         fenceFor(second, runId),
@@ -452,8 +480,9 @@ describe("command receipts", () => {
       { stepId: "step-1", prompt: "hello" },
       randomUUID(),
     );
-    const first = await postJson(
-      `${host.url}/sessions/${sessionId}/prompt`,
+    const first = await completePrompt(
+      host,
+      sessionId,
       prompt,
     );
 
@@ -471,8 +500,9 @@ describe("command receipts", () => {
       5_000,
     );
 
-    const again = await postJson(
-      `${host.url}/sessions/${sessionId}/prompt`,
+    const again = await completePrompt(
+      host,
+      sessionId,
       prompt,
     );
 
@@ -534,8 +564,9 @@ describe("session.command events", () => {
     );
     const sessionId = created.body.sessionId as string;
     const commandId = randomUUID();
-    const res = await postJson(
-      `${host.url}/sessions/${sessionId}/prompt`,
+    const res = await completePrompt(
+      host,
+      sessionId,
       envelope(
         "session.prompt",
         fenceFor(host, runId),
@@ -645,7 +676,7 @@ describe("session.command events", () => {
     ]);
   });
 
-  it("S4: a post-terminal completion lands behind the drained event log — ids stay strictly increasing across many updates and a delete", async () => {
+  it("S4: a post-terminal completion is ordered after ACP updates and a delete", async () => {
     const host = await bootHost({
       runtimeRoot: await tempRoot(),
       fixtureArgs: ["--hang", "--lines", "400"],
@@ -658,8 +689,9 @@ describe("session.command events", () => {
       await createEnvelope(host, { runId }),
     );
     const sessionId = created.body.sessionId as string;
-    const prompt = await postJson(
-      `${host.url}/sessions/${sessionId}/prompt`,
+    const prompt = await completePrompt(
+      host,
+      sessionId,
       envelope("session.prompt", fenceFor(host, runId), {
         stepId: "step-1",
         prompt: "hello",
@@ -679,19 +711,31 @@ describe("session.command events", () => {
     let durable: Array<Record<string, unknown>> = [];
 
     for (let i = 0; i < 200; i += 1) {
-      durable = await readEventsLog(host.runtimeRoot, "demo", runId);
-      if (durable.some((e) => e.commandId === deleteId)) break;
+      durable = canonicalRuntimeEvents(host, runId);
+      if (
+        durable.some(
+          (event) =>
+            event.commandId === deleteId && event.phase === "completed",
+        )
+      ) {
+        break;
+      }
       await new Promise((r) => setTimeout(r, 25));
     }
 
-    expect(durable.at(-1)?.commandId).toBe(deleteId);
+    const deleteEvent = durable.find(
+      (event) => event.commandId === deleteId && event.phase === "completed",
+    );
+
+    expect(deleteEvent?.type).toBe("session.command");
+    expect(deleteEvent?.phase).toBe("completed");
     expect(durable.some((e) => e.type === "session.exited")).toBe(true);
 
-    const ids = durable.map((e) => e.monotonicId as number);
+    const ids = durable.map((e) => BigInt(e.sequence as string));
 
     expect(ids.length).toBeGreaterThan(400);
     for (let i = 1; i < ids.length; i += 1) {
-      expect(ids[i], `line ${i}`).toBeGreaterThan(ids[i - 1]);
+      expect(ids[i], `event ${i}`).toBeGreaterThan(ids[i - 1]);
     }
   });
 
@@ -727,7 +771,7 @@ describe("session.command events", () => {
       5_000,
     );
 
-    const durable = await readEventsLog(host.runtimeRoot, "demo", runId);
+    const durable = canonicalRuntimeEvents(host, runId);
     const exited = durable.find((e) => e.type === "session.exited");
 
     expect(exited?.reason).toBe("fenced");

@@ -81,14 +81,13 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `scratch_attachments`                  | Text note, file path, or issue URL attachments attached to a scratch run or message.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `scratch_runs.run_id`, optional `run_messages.id`                                                                                                 |
 | `scratch_capability_profiles`          | Launch-time MCP/skill/rule/settings/restriction snapshot and materialized profile path.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | `scratch_runs.run_id`                                                                                                                             |
 | `node_attempts`                        | Append-only per-node-attempt ledger for the graph runner. **(ADR-030, migration `0011`)** adds takeover columns (`owner_user_id`, `base_ref`, `returned_commits`, `returned_diff`). **(ADR-032, migration `0013`)** adds the nullable, append-only `enforcement_snapshot` verdict audit. **(migration `0053`)** adds the nullable per-attempt `resolved_prompt` capture. **(ADR-109, migration `0070`)** adds node type `consensus`. **(ADR-118 — Implemented, migration `0086`)** adds the nullable `rework_baseline integer` (attempt number at which the node's current rework epoch began; `NULL ⇒ 0`; effective attempts = `attempt − (rework_baseline ?? 0)`).                                                                                                                | `runs.id`, `users.id` (takeover owner)                                                                                                            |
-| `run_cost_rollups`                     | **(ADR-087 — Implemented, migration `0047`; `by_runner` ADR-117, migration `0083`; canonical source ADR-167)** Derived token rollup per run. `canonical_events_v1` runs fold manager-owned `usage.recorded` facts transactionally; `.maister/<project>/runs/<runId>/cost.jsonl` remains only the explicit legacy/diagnostic input until B4. Stores token totals by kind, resume-tax totals, per-model breakdown (`by_model`), per-runner breakdown (`by_runner`, keyed `"<adapter>/<model>"`), and source cursor; no duration columns. | `runs.id`, `projects.id`, optional `flows.id`, optional `tasks.id`                                                                                |
+| `run_cost_rollups`                     | **(ADR-087 — Implemented, migration `0047`; `by_runner` ADR-117, migration `0083`; canonical source ADR-167)** Derived token rollup per run. It folds manager-owned canonical `usage.recorded` facts transactionally; there is no runtime-file source. Stores token totals by kind, resume-tax totals, per-model breakdown (`by_model`), per-runner breakdown (`by_runner`, keyed `"<adapter>/<model>"`), and source cursor; no duration columns. | `runs.id`, `projects.id`, optional `flows.id`, optional `tasks.id`                                                                                |
 | `node_attempt_cost_rollups`            | **(ADR-085 — Designed, migration `0047`)** Derived token rollup per graph node attempt/model, reconciled from enriched supervisor cost records stamped with `nodeAttemptId`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | `runs.id`, `projects.id`, `node_attempts.id`                                                                                                      |
 | `repo_delivery_rollups`                | **(ADR-134 — Implemented, migration `0098`)** Cached, path-cleaned daily target-branch delivery denominator, written only by the scheduled repository scanner and read by project Observatory.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `projects.id`                                                                                                                                     |
 | `gate_results`                         | **(Designed, migration `0010`)** Gate execution verdicts (`command_check`/`ai_judgment`/`human_review`/…).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `runs.id`, `node_attempts.id`                                                                                                                     |
 | `consensus_round_verdicts`             | **(Implemented, migration `0070`)** Per-round cross-verification verdict ledger for `consensus` nodes. Unique by node attempt, round, verifier, and target; malformed verifier output is persisted as failed-closed disagree evidence.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | `runs.id`, `node_attempts.id`                                                                                                                     |
 | `run_results`                 | **(Implemented — ADR-165, migration `0129`)** Public run-result ledger — one row per result REVISION (including `invalid` rows) for any run kind. Engine-owned identity (schema, producer, attempt, revision), validity FSM (`valid`/`stale`/`superseded`/`invalid`), supersession chain, publish-time artifact manifest, first-collected marker. At most one `valid` row per run. | `runs.id`, `node_attempts.id`, self-ref `superseded_by_id` |
 | `artifact_instances`                   | **(Implemented, migration `0015`)** Typed evidence index (diff/log/report/judgment/note/commit_set/checkpoint/preview/plan; + `mutation_report`, ADR-074 — text column, no migration). Deterministic upsert PK.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | `runs.id`, `node_attempts.id`, self-ref `superseded_by_id`                                                                                        |
-| `artifact_projection_cursors`          | **(Implemented, migration `0015`)** One projector cursor per run over `run.events.jsonl`. UNIQUE `(run_id, scope)`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `runs.id`                                                                                                                                         |
 | `hitl_requests`                        | HITL prompts emitted during a run (the graph engine adds review-decision columns).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `runs.id`                                                                                                                                         |
 | `review_comments`                      | **(ADR-072 — Implemented, migration `0039`)** Line-anchored, 1-level-threaded review comments drafted at an open review gate. Root rows carry the anchor (`file_path`/`side`/`line`/`line_content`) + `open\|resolved` status; replies carry none (DB CHECK).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `runs.id`, `hitl_requests.id`, self-ref `parent_id`; `users.id` SET NULL (author/resolver)                                                        |
 | `gate_chat_messages`                   | **(Implemented, migration `0041`)** Answer-only gate-chat turns at a `human`/`form` HITL pause (`role` user/agent, `seq` per pause, `mutation_reverted` L3 flag). Never resolves the HITL, never drives `→Running`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `runs.id`, `hitl_requests.id` (cascade); `users.id` SET NULL (author)                                                                             |
@@ -1929,11 +1928,11 @@ retry_ordinal)` coexist — silently destroying the dedup this constraint
   migrated Studies stay queryable after the drop and that `legacy_snapshot`
   survives intact.
 
-## Cost rollup tables (Designed — ADR-085, migration `0047`)
+## Cost rollup tables (Implemented — ADR-085/ADR-167)
 
-`.maister/<project>/runs/<runId>/cost.jsonl` remains the source of truth. The
+Canonical `usage.recorded` execution events are the source of truth. The
 tables below are derived projections for UI and Observatory reads, so they are
-reconcilable from JSONL and safe to rebuild. They store token counts only;
+reconcilable from manager-owned events and safe to rebuild. They store token counts only;
 active and wall-clock durations are derived from `runs.started_at` /
 `runs.ended_at` and `node_attempts.started_at` / `ended_at`.
 
@@ -2708,6 +2707,10 @@ validity FSM.
 }
 ```
 
+`file{path}` remains only for manager-owned Flow/repository evidence. Stage B
+does not permit it for execution-host runtime content: host-owned bytes use
+`execution-object{objectId}` locators backed by `execution_runtime_objects`.
+
 **Deterministic id contract.** Every row's `id` is derived so re-execution and
 projector replay **upsert** idempotently (`onConflictDoUpdate`):
 
@@ -2719,8 +2722,8 @@ projector replay **upsert** idempotently (`onConflictDoUpdate`):
 | Projector-derived                                  | `proj:<runId>:<monotonicId>`                 | `proj:run_xyz789:42`                   |
 | Gate mutation report, undeclared output            | `run:<nodeAttemptId>:mutation:<gateId>`      | `run:na_abc123:mutation:impl-mutation` |
 
-`monotonicId` is **run-global** across the single per-run `run.events.jsonl`
-log, so each projector `id` is unique across the entire run's event stream.
+The canonical `runSequence` is run-global, so each projector id is unique
+across the entire retained event stream.
 
 Indexed on `(runId)`, `(nodeAttemptId)`, `(runId, kind)`, and
 `(runId, validity)`. Cascade: `ON DELETE CASCADE` from both `runs.id` and
@@ -2728,32 +2731,14 @@ Indexed on `(runId)`, `(nodeAttemptId)`, `(runId, kind)`, and
 NULL` — deleting a superseding row never blocks deletion and leaves the
 superseded row's pointer null.
 
-## `artifact_projection_cursors`
+## Canonical event consumer cursors
 
-**(Implemented, migration `0015`.)** One projector cursor **per run**
-([ADR-038](decisions.md) per-run-scope correction). Tracks how far the artifact
-projector has consumed the run's `run.events.jsonl`.
-
-```ts
-{
-  id,                                       // PK = runId (one cursor per run)
-  runId,                                    // NOT NULL, FK -> runs.id, ON DELETE CASCADE
-  scope: 'run',                             // run-scoped; UNIQUE (runId, scope)
-  eventsLogPath,                            // .maister/<slug>/runs/<runId>/run.events.jsonl
-  lastMonotonicId,                          // DEFAULT 0; run-global high-water mark
-  status: 'idle' | 'running'
-        | 'caught_up' | 'failed',           // DEFAULT 'idle'
-  updatedAt                                 // DEFAULT now()
-}
-```
-
-The cursor PK is the bare `<runId>` and `scope = "run"` — **not** the per-step
-`<runId>::<stepId>` the original plan assumed. The supervisor writes one
-`run.events.jsonl` per run with a run-global `monotonicId`, so a single
-run-scoped cursor advances past every event regardless of which session or step
-emitted it. The `UNIQUE (run_id, scope)` constraint leaves room for a future
-secondary scope without a schema change. Cascade: `ON DELETE CASCADE` from
-`runs.id`.
+`execution_event_consumers` replaces the removed
+`artifact_projection_cursors` table (migration `0135`). Its primary key is
+`(consumer_name, run_id)` and records canonical event sequence, claim lease,
+retry, and poison-event state. The artifact and transcript projectors consume
+only manager-owned `execution_events`; a host path is not persisted in either
+cursor or locator.
 
 ## `project_tokens`
 
@@ -3807,7 +3792,7 @@ explicitly chooses that as a temporary bridge.
 | `flow_package_revisions`                                                                  | Immutable Flow package revisions: source, version label, resolved SHA, manifest digest, compatibility, trust, setup, package contract summary.                                                                         | project or system cache          |
 | `project_flow_enablements`                                                                | Project pointer to the package revision new runs should use; enables upgrade/rollback without mutating old runs.                                                                                                       | `projects.id`, package revision  |
 | ~~`node_attempts`~~ → **Implemented**                                                     | Graph-node attempts, lifecycle status, decision/rework/staleness state. See [`node_attempts`](#node_attempts) above.                                                                                                   | `runs.id`                        |
-| ~~`artifacts`~~ → **Implemented as `artifact_instances` + `artifact_projection_cursors`** | Typed evidence index for diffs, logs, reports, AI judgments, human notes, commit sets, checkpoints, previews; plus the per-run projector cursor. See [`artifact_instances`](#artifact_instances) above.                | `runs.id`, `node_attempts.id`    |
+| ~~`artifacts`~~ → **Implemented as `artifact_instances` + `execution_event_consumers`** | Typed evidence index for diffs, logs, reports, AI judgments, human notes, commit sets, checkpoints, previews; plus canonical per-consumer cursor state. See [`artifact_instances`](#artifact_instances) above.                | `runs.id`, `node_attempts.id`    |
 | `artifact_edges`                                                                          | Dependency graph between task inputs, node attempts, artifacts, gates, and stale/current evidence.                                                                                                                     | `artifacts.id`                   |
 | ~~`gate_results`~~ → **Implemented**                                                      | Gate execution verdicts + status lifecycle. See [`gate_results`](#gate_results) above. The readiness policy (ADR-048) consumes them.                                                                                   | `runs.id`, `node_attempts.id`    |
 | ~~`assignments`~~ → **Implemented**                                                       | Claimable work persistence, runtime assignment creation, assignment actions, and run-detail ledger history landed as `assignments` + `assignment_events` in migration `0018`. See [`assignments`](#assignments) above. | `runs.id`, optional task         |
@@ -3818,7 +3803,7 @@ explicitly chooses that as a temporary bridge.
 | `flow_package_revisions`                                                                  | Immutable Flow package revisions: source, version label, resolved SHA, manifest digest, compatibility, trust, setup, package contract summary.                                                                         | project or system cache          |
 | `project_flow_enablements`                                                                | Project pointer to the package revision new runs should use; enables upgrade/rollback without mutating old runs.                                                                                                       | `projects.id`, package revision  |
 | ~~`node_attempts`~~ → **Implemented**                                                     | Graph-node attempts, lifecycle status, decision/rework/staleness state. See [`node_attempts`](#node_attempts) above.                                                                                                   | `runs.id`                        |
-| ~~`artifacts`~~ → **Implemented as `artifact_instances` + `artifact_projection_cursors`** | Typed evidence index for diffs, logs, reports, AI judgments, human notes, commit sets, checkpoints, previews; plus the per-run projector cursor. See [`artifact_instances`](#artifact_instances) above.                | `runs.id`, `node_attempts.id`    |
+| ~~`artifacts`~~ → **Implemented as `artifact_instances` + `execution_event_consumers`** | Typed evidence index for diffs, logs, reports, AI judgments, human notes, commit sets, checkpoints, previews; plus canonical per-consumer cursor state. See [`artifact_instances`](#artifact_instances) above.                | `runs.id`, `node_attempts.id`    |
 | `artifact_edges`                                                                          | Dependency graph between task inputs, node attempts, artifacts, gates, and stale/current evidence.                                                                                                                     | `artifacts.id`                   |
 | ~~`gate_results`~~ → **Implemented**                                                      | Gate execution verdicts + status lifecycle. See [`gate_results`](#gate_results) above. The readiness policy (ADR-048) consumes them.                                                                                   | `runs.id`, `node_attempts.id`    |
 | `assignments`                                                                             | Claimable human work: permission, form, review, manual takeover, conflict resolution, external waits.                                                                                                                  | `runs.id`, optional task         |
@@ -3880,7 +3865,7 @@ projects
   │           ├── consensus_round_verdicts (FK runId, cascade) ← (also direct)
   │           ├── artifact_instances (FK runId,     cascade)   ← (also direct)
   │           │     └── artifact_instances.superseded_by_id (self-ref, SET NULL)
-  │           ├── artifact_projection_cursors (FK runId, cascade)        ←
+  │           ├── execution_event_consumers (FK runId, cascade)          ← ADR-167
   │           ├── hitl_requests   (FK runId,        cascade)
   │           │     ├── assignments (FK hitlRequestId, cascade)          ←
   │           │     └── review_comments (FK hitlRequestId, cascade)      ← ADR-072
@@ -4034,7 +4019,7 @@ capability_ref_id)`, `project_flow_roles(project_id, role_ref)`,
 `actor_identities(project_id, user_id)`, `(id, attempt_number)`,
 `(run_id, step_id, attempt)`, `run_messages(run_id, node_attempt_id, sequence)` (NULLS NOT DISTINCT),
 `scratch_capability_profiles.run_id`,
-`artifact_projection_cursors(run_id, scope)`, and
+`execution_event_consumers(consumer_name, run_id)`, and
 `assignments.hitl_request_id`) implicitly create their own indexes in Postgres.
 
 ## Workflow

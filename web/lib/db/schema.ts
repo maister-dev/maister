@@ -1829,13 +1829,13 @@ export const runs = pgTable(
     })
       .notNull()
       .default("Pending"),
-    // ADR-167: immutable at admission; legacy runs retain their frozen reader
-    // contract during the bounded filesystem cutover.
+    // ADR-167: immutable at admission. B4 rejects unimported legacy rows
+    // before migrations make the canonical contract the only legal mode.
     executionDataPlaneMode: text("execution_data_plane_mode", {
-      enum: ["legacy_file_v1", "canonical_events_v1"],
+      enum: ["canonical_events_v1"],
     })
       .notNull()
-      .default("legacy_file_v1"),
+      .default("canonical_events_v1"),
     // Allocated under the run-row lock when a contiguous canonical event is
     // accepted. Stored as bigint, never serialized through JavaScript number.
     nextExecutionEventSequence: bigint("next_execution_event_sequence", {
@@ -1964,7 +1964,7 @@ export const runs = pgTable(
     // backstop — the last time it ATTEMPTED a cost reconcile for this run
     // (stamped on EVERY outcome: reconciled / missing-cost / error). Decouples
     // the sweep candidate set from rollup row state so (a) a run with no
-    // cost.jsonl is attempted once and settled instead of monopolizing the
+    // durable usage events is attempted once and settled instead of monopolizing the
     // bounded oldest-first scan forever, and (b) a pre-0083 rollup with empty
     // by_runner (NULL marker) is re-reconciled once to backfill it. NULL = never
     // attempted by the sweep.
@@ -5190,36 +5190,6 @@ export const consensusRoundVerdicts = pgTable(
   }),
 );
 
-// M12 (ADR-022/ADR-038): per-run projector resume cursor. The projector
-// advances this in the same transaction as its upserts (crash-safe replay).
-export const artifactProjectionCursors = pgTable(
-  "artifact_projection_cursors",
-  {
-    id: text("id").primaryKey(),
-    runId: text("run_id")
-      .notNull()
-      .references(() => runs.id, { onDelete: "cascade" }),
-    // Events-log scope (per Phase-0 freeze correction: "run" scope, cursor PK = runId)
-    scope: text("scope").notNull(),
-    eventsLogPath: text("events_log_path").notNull(),
-    lastMonotonicId: integer("last_monotonic_id").notNull().default(0),
-    status: text("status", {
-      enum: ["idle", "running", "caught_up", "failed"],
-    })
-      .notNull()
-      .default("idle"),
-    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
-      .notNull()
-      .defaultNow(),
-  },
-  (t) => ({
-    uniqRunScope: unique("artifact_projection_cursors_run_scope_uq").on(
-      t.runId,
-      t.scope,
-    ),
-  }),
-);
-
 export const assignments = pgTable(
   "assignments",
   {
@@ -6202,10 +6172,6 @@ export type ArtifactProducer = ArtifactInstance["producer"];
 export type ConsensusRoundVerdict = typeof consensusRoundVerdicts.$inferSelect;
 export type ConsensusRoundVerdictInsert =
   typeof consensusRoundVerdicts.$inferInsert;
-export type ArtifactProjectionCursor =
-  typeof artifactProjectionCursors.$inferSelect;
-export type ArtifactProjectionCursorInsert =
-  typeof artifactProjectionCursors.$inferInsert;
 export type Assignment = typeof assignments.$inferSelect;
 export type AssignmentStatus = Assignment["status"];
 export type AssignmentEvent = typeof assignmentEvents.$inferSelect;

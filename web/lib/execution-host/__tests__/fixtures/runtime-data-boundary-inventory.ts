@@ -34,28 +34,18 @@ function entries(
   }));
 }
 
-const HOST_RUNTIME_DIRECT = [
-  "app/api/runs/[runId]/stream/route.ts",
-  "lib/agents/launch.ts",
-  "lib/agents/memory-store.ts",
+const HOST_RUNTIME_DIRECT = [] as const;
+
+const MANAGER_FLOW_DIRECT = [
   "lib/flows/graph/default-artifacts.ts",
   "lib/flows/graph/node-output.ts",
   "lib/flows/graph/plan-review-artifact.ts",
   "lib/flows/graph/runner-graph.ts",
-  "lib/projector/artifact-projector.ts",
-  "lib/queries/inbox-context.ts",
-  "lib/runs/cost-rollups.ts",
   "lib/runs/hook-trip.ts",
   "lib/runs/keepalive-sweeper.ts",
   "lib/runs/node-interrupt.ts",
-  "lib/runs/run-stream-event.ts",
-  "lib/runs/run-transcript-projector.ts",
-  "lib/scratch-runs/available-commands.ts",
   "lib/scratch-runs/service.ts",
   "lib/services/runs.ts",
-] as const;
-
-const MANAGER_FLOW_DIRECT = [
   "lib/atomic.ts",
   "lib/config.ts",
   "lib/context-mounts/terminal.ts",
@@ -71,6 +61,8 @@ const MANAGER_FLOW_DIRECT = [
 ] as const;
 
 const MANAGER_REPOSITORY_DIRECT = [
+  "lib/agents/launch.ts",
+  "lib/agents/memory-store.ts",
   "app/api/admin/agents/[agentId]/route.ts",
   "app/api/projects/route.ts",
   "lib/agents/dirty-watchdog.ts",
@@ -132,9 +124,7 @@ const UNRELATED_DIRECT = [
   "lib/db/migrate.ts",
 ] as const;
 
-const HOST_RUNTIME_CONSTRUCTORS = [
-  "app/api/runs/[runId]/artifacts/[artifactId]/payload/route.ts",
-  "app/api/runs/[runId]/cost-summary/route.ts",
+const MANAGER_FLOW_CONSTRUCTORS = [
   "lib/execution-host/signals.ts",
   "lib/flows/child-env.ts",
   "lib/flows/flow-dsl-grammar.ts",
@@ -142,10 +132,6 @@ const HOST_RUNTIME_CONSTRUCTORS = [
   "lib/runs/cost-reconcile-sweep.ts",
   "lib/runs/exec-policy-audit.ts",
   "lib/runs/launch-progress.ts",
-  "lib/supervisor-client.ts",
-] as const;
-
-const MANAGER_FLOW_CONSTRUCTORS = [
   "lib/flows/graph/gates-exec.ts",
   "lib/instance-config.ts",
   "lib/runtime-root.ts",
@@ -154,19 +140,11 @@ const MANAGER_FLOW_CONSTRUCTORS = [
 ] as const;
 
 const MANAGER_REPOSITORY_CONSTRUCTORS = [
+  "app/api/runs/[runId]/artifacts/[artifactId]/payload/route.ts",
   "lib/context-mounts/service.ts",
 ] as const;
 
-const HOST_RUNTIME_SCHEMA_CONSTRUCTORS = ["lib/db/schema.ts"] as const;
-
 export const runtimeDataBoundaryInventory = [
-  ...entries(
-    HOST_RUNTIME_DIRECT,
-    "direct-filesystem-access",
-    "host-runtime-legacy",
-    "stage-b-remove",
-    "T3.5",
-  ),
   ...entries(
     MANAGER_FLOW_DIRECT,
     "direct-filesystem-access",
@@ -196,13 +174,6 @@ export const runtimeDataBoundaryInventory = [
     "Retain migration tooling",
   ),
   ...entries(
-    HOST_RUNTIME_CONSTRUCTORS,
-    "runtime-path-constructor",
-    "host-runtime-legacy",
-    "stage-b-remove",
-    "T3.5",
-  ),
-  ...entries(
     MANAGER_FLOW_CONSTRUCTORS,
     "runtime-path-constructor",
     "manager-flow-config",
@@ -216,17 +187,6 @@ export const runtimeDataBoundaryInventory = [
     "stage-c-defer",
     "Stage C repository/workspace cut",
   ),
-  ...entries(
-    HOST_RUNTIME_SCHEMA_CONSTRUCTORS,
-    "runtime-path-constructor",
-    "host-runtime-legacy",
-    "stage-b-remove",
-    "T4.3",
-  ),
 ] as const satisfies readonly RuntimeDataBoundaryEntry[];
 
-export const requiredLegacyRuntimeSources = [
-  ...HOST_RUNTIME_DIRECT,
-  ...HOST_RUNTIME_CONSTRUCTORS,
-  ...HOST_RUNTIME_SCHEMA_CONSTRUCTORS,
-] as const;
+export const requiredLegacyRuntimeSources = [] as const;

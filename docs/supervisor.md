@@ -7,9 +7,9 @@ processes. Implemented adapters are `claude-agent-acp` and `codex-acp`;
 ADR-084/ADR-085 add `gemini --acp`, `opencode acp`, and `mimo acp` as
 readiness-gated code-owned ACP adapter families. It speaks **HTTP + SSE** to
 the web tier and **ACP JSON-RPC over stdio** to its spawned adapter children.
-The current contract includes spawn, prompt delivery, structured ACP event
-parsing, permission HITL, checkpoint, resume, heartbeat promotion, and cost
-accounting.
+The current contract includes spawn, asynchronous prompt admission, structured
+ACP event parsing, permission HITL, checkpoint, resume, heartbeat promotion,
+and canonical cost facts.
 
 **ADR-136 non-expansion:** task-bound `agent_question` clarification is a web
 and Postgres handoff. V1 adds no ACP method, notification, input delivery, or
@@ -35,8 +35,8 @@ resume behavior to this supervisor contract.
                                                 └──────────────────────────────────────┘
                                                                            │ stdout JSONL
                                                                            ▼
-                              .maister/<slug>/runs/<id>/<step>.log  (append-only)
-                              .maister/<slug>/runs/<id>/cost.jsonl  (append-only)
+                              private <step>.log (host diagnostics)
+                              state.sqlite outbox (durable host events)
 ```
 
 ## Why a separate process
@@ -44,12 +44,11 @@ resume behavior to this supervisor contract.
 Agent processes can run for tens of minutes. Holding them inside Next.js
 makes every HMR reload (dev) and every Next.js restart (prod) kill live
 runs. The supervisor isolates that failure mode. The two processes share
-the HTTP+SSE wire AND, today, the host filesystem (`MAISTER_RUNTIME_ROOT`,
-the worktrees root, the flows cache — ADR-023): the browser run stream tails
-`run.events.jsonl` locally and worktree/diff/promotion are web-side git
-operations, so a different host for the supervisor is NOT supported in the
-current target. The execution-host contract below (Implemented — ADR-166) is
-the seam later stages build on; it changes nothing about that topology.
+the HTTP+SSE wire. Stage B removes the runtime-data filesystem dependency:
+browser replay, transcripts, costs, artifacts, and prompt completion read
+manager-owned Postgres state. Repository/worktree/Git operations remain
+web-side under ADR-023, so a different supervisor host is still a Stage C/D
+boundary. The execution-host contract below is the seam later stages build on.
 
 The architectural decision and its trade-offs live in
 [`ARCHITECTURE.md`](../.ai-factory/ARCHITECTURE.md). The ACP spike findings
@@ -147,7 +146,7 @@ Request payload (`envelope.payload`):
 }
 ```
 
-(Note: prompts are sent separately via `POST /sessions/:id/prompt`
+(Note: prompts are admitted separately via `POST /sessions/:id/prompts`
 — the body field is gone. Context mounts — ADR-157, max 8 — travel on the
 `workspace.adopt` payload and are derived from the handle.)
 
@@ -613,7 +612,7 @@ against the new requestId; the original `hitl_requests` row's
 
 Each respawn costs ~$0.28 of `cache_creation_input_tokens` per the ACP
 spike findings — keep-alive is the cost lever, not just UX. Resumed sessions'
-`cost.jsonl` entries carry `resumed: true` for ops attribution.
+canonical `usage.recorded` events carry resume attribution for ops.
 
 ### `POST /sessions/:id/input`
 
@@ -688,25 +687,14 @@ never extends its TTL window). The web tier proxies this route through the admin
 [`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml);
 domain: [`system-analytics/model-catalog.md`](system-analytics/model-catalog.md).
 
-### Legacy run-scoped event compatibility: `<runId>/run.events.jsonl`
+### Durable event outbox (Implemented — ADR-167)
 
-Until the B4 drain, a `legacy_file_v1` run retains the historical
-`run.events.jsonl` writer and reader. It contains `SessionEvent` values
-(`session.line`, `session.update`,
-`session.permission_request`, `session.exited`, `session.crashed`, and —
-Implemented, ADR-166 — `session.command`)
-is appended to a single per-run JSONL file at
-`.maister/<projectSlug>/runs/<runId>/run.events.jsonl` alongside the
-existing per-step raw `<stepId>.log` and the in-memory ring buffer
-that backs `GET /sessions/:id/stream`. Multiple spawns for the same
-run append to the same file (slash-in-existing reuses one session
-across steps; new-session-per-step spawns are sequential). On spawn,
-`record.monotonicId` is seeded from the tail of the existing log so
-the per-run event sequence stays strictly increasing across sessions. It is a
-bounded compatibility artifact, not lifecycle authority for a canonical-event
-run. Canonical host events are written first to the host-global SQLite outbox
-and delivered to manager-owned PostgreSQL; the web SSE bridge reads that
-manager state for a canonical run.
+The supervisor writes externally observable events to its private SQLite
+outbox before live publication. `GET /runtime-events` replays host-global
+events after an exclusive decimal cursor and `POST /runtime-events/ack`
+advances a stream-bound contiguous watermark. The in-memory per-session SSE
+ring remains a local diagnostic surface only; it is neither browser replay nor
+run-state authority. The supervisor no longer writes `run.events.jsonl`.
 
 ### Execution-host state store _(Implemented — ADR-166)_
 
@@ -750,7 +738,7 @@ supervisor/
 │   ├── http-api.ts                # 6 routes + error handler (zod → 409, SupervisorError → status)
 │   ├── spawn.ts                   # child_process.spawn dispatch; line-buffered stdout
 │   ├── heartbeat.ts               # exit/error → session.exited/crashed + orphan watcher
-│   ├── cost.ts                    # lenient JSON-parse → cost.jsonl
+│   ├── cost.ts                    # lenient JSON-parse → usage.recorded event
 │   ├── registry.ts                # in-memory Map + per-session event ring buffer
 │   ├── host-state.ts              # (Implemented — ADR-166) node:sqlite state store: identity, fences, handles, receipts
 │   ├── execution-fence.ts         # (Implemented — ADR-166) envelope fence rules + lower-epoch eviction
@@ -790,13 +778,13 @@ behind `web/lib/execution-host/`) parses `{ code, message, details }`
 from the body and re-throws as `MaisterError({ code, details })`. The
 taxonomy of `MaisterError` lives in [Error Taxonomy](error-taxonomy.md).
 
-## Cost accounting (`cost.jsonl` legacy diagnostics)
+## Cost accounting (canonical `usage.recorded`)
 
 `cost.ts` observes the same stdout-line stream the SSE bridge uses,
 JSON-parses each line **leniently** (silently skips non-JSON), and looks
 for a `usage` object anywhere in the structure (top-level or nested,
-bounded depth 8). When found, it appends a record to
-`.maister/<projectSlug>/runs/<runId>/cost.jsonl`:
+bounded depth 8). When found, it publishes a redacted `usage.recorded` fact
+to the durable host outbox:
 
 ```jsonc
 {
@@ -810,10 +798,8 @@ bounded depth 8). When found, it appends a record to
 }
 ```
 
-For a canonical-event run, `usage.recorded` in the durable host outbox is the
-manager projection source for UI and cost totals. The JSONL file remains a
-host-owned diagnostic compatibility artifact until B4; the web tier does not
-read it for canonical-mode cost projection.
+`usage.recorded` in the durable host outbox is the manager projection source
+for UI and cost totals. The supervisor does not write a cost JSONL file.
 
 `cache_creation_input_tokens` is the load-bearing field for ops:
 the ACP spike findings (summary in root `CLAUDE.md` §ACP Spike Findings) measured
@@ -853,7 +839,7 @@ docker compose; production overrides go in `.env`.
 Secrets MUST NEVER appear in:
 
 - SSE events visible to the browser
-- `cost.jsonl` (verified in the integration test with a sentinel token)
+- canonical event payloads (verified in the integration test with a sentinel token)
 - the step `.log` file (sentinel-test enforced)
 - the supervisor's own logs (env values are summarized as `hasEnv: true|false`, never echoed)
 
@@ -932,7 +918,7 @@ unit spawn test.
 The supervisor speaks JSON-RPC via
 `@agentclientprotocol/sdk@0.22.1`'s `ClientSideConnection` for every
 session. `POST /sessions` creates the adapter process and ACP session;
-`POST /sessions/:id/prompt` sends user or flow prompts; structured ACP
+`POST /sessions/:id/prompts` admits user or flow prompts; structured ACP
 notifications are bridged over SSE; permission requests are held open
 until the web tier calls `POST /sessions/:id/input`.
 
@@ -969,7 +955,7 @@ The response includes the negotiated ACP session id:
 { "sessionId": "...", "pid": 1234, "acpSessionId": "..." }
 ```
 
-**Prompt endpoint:** `POST /sessions/:id/prompt`
+**Prompt admission endpoint:** `POST /sessions/:id/prompts`
 
 ```json
 { "stepId": "plan", "prompt": "..." }
@@ -1016,14 +1002,11 @@ The legacy `session.line` event type stays — `cost.ts` and any other
 raw-line consumer keep working unchanged. The supervisor tees stdout
 through a `PassThrough` so both consumers see every chunk.
 
-## Stage B durable data plane (Incremental — ADR-167)
+## Stage B durable data plane (Implemented — ADR-167)
 
 `GET /capabilities` is additive and keeps `/health` protocol v1 unchanged.
-It advertises `eventStream`, `asyncPrompt`, and `runtimeObjects` independently;
-`eventStream` and `asyncPrompt` are implemented, while `runtimeObjects` remains
-false until its owning increment. A web-first or supervisor-first rolling
-upgrade continues to select `legacy_file_v1` unless both tiers negotiate the
-canonical mode. `GET /runtime-events` replays host-global SQLite outbox events strictly after
+It advertises `eventStream`, `asyncPrompt`, and `runtimeObjects`; admission
+requires the complete canonical set. `GET /runtime-events` replays host-global SQLite outbox events strictly after
 the decimal `Last-Event-ID`, and `POST /runtime-events/ack` confirms an
 absolute contiguous stream watermark. A socket is never lifecycle authority:
 the host writes its outbox before publishing and the manager ACKs only after a
@@ -1032,8 +1015,7 @@ Postgres transaction commits.
 `POST /sessions/{id}/prompts` is the durable asynchronous prompt-admission
 route: its `202` confirms only the receipt and accepted event. The authoritative
 terminal outcome is the canonical event stream plus `GET /commands/{id}`. The
-older singular `/prompt` route remains a bounded long-lived compatibility path
-until B4 and is not lifecycle authority for canonical-mode runs.
+singular long-lived prompt route was removed in B4.
 
 Runtime objects use opaque `ro_<id>` values through reserve/upload/metadata/
 single-range/read/delete contracts. Metadata may become canonical in Postgres;
@@ -1045,18 +1027,14 @@ and the ADR-167 analytics documents.
 
 ## Limitations on POC
 
-- **Single host, shared filesystem, unauthenticated loopback (Stage A —
-  ADR-166).** Exactly one non-retired local execution host; the web tier and
-  the supervisor MUST share `MAISTER_RUNTIME_ROOT`, the worktrees root, and
-  the flows cache (the run stream tails `run.events.jsonl` locally;
-  worktree/diff/promotion are web-side git). The HTTP wire carries no host
+- **Single host, unauthenticated loopback.** Exactly one non-retired local
+  execution host; the web tier no longer mounts or reads host runtime data.
+  Worktree/diff/promotion are still web-side Git and remain Stage C. The HTTP wire carries no host
   auth (`0.0.0.0:7777` — keep it loopback-only); remote transport, relay,
   enrollment, multiple simultaneous hosts, placement, and cross-host ACP
   resume are later stages.
-- **`lastEventId` replay is bounded to the in-memory ring buffer** (1000
-  entries per session). Older terminal events after the 30 s post-exit
-  grace period are gone. The web tier's eventual log-file tail bridge
-  fills that gap.
+- **Per-session diagnostic SSE replay is bounded** (1000 entries). Canonical
+  browser/run replay instead comes from retained manager Postgres events.
 - **No Cursor / Aider executors** — the supervisor supports the code-owned ACP
   adapter families `claude`, `codex`, `gemini`, `opencode`, and `mimo`.
   Gemini, OpenCode, and MiMo remain gated by binary diagnostics and

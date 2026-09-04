@@ -87,7 +87,7 @@ export type CreateSessionInput = {
   stepId: string;
   nodeAttemptId?: string;
   // M42 (ADR-114): the logical Flow session this ACP process serves — stamped
-  // onto cost.jsonl + run.events.jsonl. Absent → supervisor defaults to "default".
+  // into canonical usage and session events. Absent → supervisor defaults to "default".
   sessionName?: string;
   executor: SupervisorExecutorInput;
   runner?: SupervisorRunnerInput;
@@ -1561,25 +1561,6 @@ export async function createSessionEnveloped(
     ctx: "createSession",
     fallbackCode: "ACP_PROTOCOL",
     timeoutMs: opts.timeoutMs,
-  });
-
-  return res.body;
-}
-
-export async function sendPromptEnveloped(
-  sessionId: string,
-  envelope: WireEnvelope<SendPromptInput>,
-  opts: CommandWireOptions & { signal?: AbortSignal } = {},
-): Promise<PromptResult> {
-  const res = await request<PromptResult>({
-    method: "POST",
-    path: sessionPath(sessionId, "/prompt"),
-    body: envelope,
-    ctx: "sendPrompt",
-    fallbackCode: "ACP_PROTOCOL",
-    timeoutMs: opts.timeoutMs ?? null,
-    longLived: true,
-    signal: opts.signal,
   });
 
   return res.body;

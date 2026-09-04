@@ -28,13 +28,13 @@ const log = pino({
 // cursor when a consumer's handle throws, so a single permanently-failing run
 // would stall the whole cursor and block every later event (poison message).
 // Therefore each per-run reconcile is wrapped in try/catch that logs WARN and
-// continues — handle NEVER throws. A transient disk error is retried by the next
-// sweep; a permanent one (CONFIG no-slug) is simply skipped.
+// continues — handle NEVER throws. A transient database error is retried by the
+// next sweep.
 //
 // Idempotent via reconcileRunCostRollups (delete-then-insert + onConflictDoUpdate
 // + sourceCursor), so at-least-once redelivery converges to one rollup.
 export function buildCostRollupReconcileConsumer(
-  opts: { db?: Db; runtimeRoot?: string; reconcile?: ReconcileFn } = {},
+  opts: { db?: Db; reconcile?: ReconcileFn } = {},
 ): DomainEventConsumer {
   return {
     id: "cost-rollup-reconcile",
@@ -52,7 +52,7 @@ export function buildCostRollupReconcileConsumer(
 
       for (const runId of runIds) {
         try {
-          await reconcile(runId, { client, runtimeRoot: opts.runtimeRoot });
+          await reconcile(runId, { client });
         } catch (err) {
           log.warn(
             {

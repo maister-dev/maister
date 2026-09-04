@@ -4,13 +4,10 @@
 // run_sessions.runner_snapshot, bucketed under the stable label
 // "<adapter>/<model>" ("unknown" when no run_sessions row matches).
 //
-// Harness mirrors budget-aggregation.integration.test.ts (testcontainers
-// shared main-schema test database, plus an on-disk cost.jsonl fixture
-// under a temp runtimeRoot — reconcile reads the file, not a seeded rollup.
+// Harness mirrors budget-aggregation.integration.test.ts against the shared
+// main-schema Postgres database. Usage is supplied only through canonical
+// execution_events; the web process has no runtime directory fixture.
 
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
@@ -31,7 +28,6 @@ const PROJECT_SLUG = "cost-app";
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 let projectId: string;
-let runtimeRoot: string;
 
 const client = (): NodePgDatabase<any> => db as NodePgDatabase<any>;
 
@@ -52,7 +48,6 @@ beforeAll(async () => {
     maisterYamlPath: "/repos/cost-app/maister.yaml",
   });
 
-  runtimeRoot = await mkdtemp(path.join(tmpdir(), "cost-rollups-"));
 }, 180_000);
 
 afterAll(async () => {
@@ -81,7 +76,7 @@ async function seedRun(opts: {
     projectId,
     status: "Done",
     runKind: opts.runKind ?? "flow",
-    executionDataPlaneMode: opts.executionDataPlaneMode ?? "legacy_file_v1",
+    executionDataPlaneMode: opts.executionDataPlaneMode ?? "canonical_events_v1",
     flowVersion: "v1.0.0",
     startedAt: new Date(),
     endedAt: new Date(),
@@ -125,14 +120,29 @@ type CostLine = {
   cache_creation_input_tokens?: number;
 };
 
-async function writeCostJsonl(runId: string, lines: CostLine[]): Promise<void> {
-  const dir = path.join(runtimeRoot, ".maister", PROJECT_SLUG, "runs", runId);
-
-  await mkdir(dir, { recursive: true });
-  await writeFile(
-    path.join(dir, "cost.jsonl"),
-    lines.map((l) => JSON.stringify(l)).join("\n"),
-    "utf8",
+async function recordCanonicalUsage(runId: string, lines: CostLine[]): Promise<void> {
+  await db.insert(schema.executionEvents).values(
+    lines.map((line, index) => ({
+      id: randomUUID(),
+      source: "manager",
+      sourceKey: `cost-fixture:${runId}:${index}`,
+      runId,
+      eventType: "usage.recorded",
+      payloadSchema: "maister.usage.recorded.v1",
+      payload: {
+        sessionName: line.sessionName,
+        model: line.model,
+        nodeAttemptId: line.nodeAttemptId,
+        inputTokens: line.input_tokens,
+        outputTokens: line.output_tokens,
+        cacheReadInputTokens: line.cache_read_input_tokens,
+        cacheCreationInputTokens: line.cache_creation_input_tokens,
+      },
+      occurredAt: new Date(),
+      receivedAt: new Date(),
+      runSequence: BigInt(index),
+      ingestDisposition: "accepted",
+    })),
   );
 }
 
@@ -180,7 +190,6 @@ describe("reconcileRunCostRollups — by_runner", () => {
 
     await reconcileRunCostRollups(runId, {
       client: client(),
-      runtimeRoot: path.join(runtimeRoot, "unmounted-host-runtime"),
     });
     const [row] = await db
       .select({
@@ -209,7 +218,7 @@ describe("reconcileRunCostRollups — by_runner", () => {
       adapter: "claude",
       model: "claude-sonnet-4-6",
     });
-    await writeCostJsonl(runId, [
+    await recordCanonicalUsage(runId, [
       { sessionName: "default", model: "claude-sonnet-4-6", input_tokens: 10 },
       {
         sessionName: "default",
@@ -219,7 +228,7 @@ describe("reconcileRunCostRollups — by_runner", () => {
       },
     ]);
 
-    await reconcileRunCostRollups(runId, { client: client(), runtimeRoot });
+    await reconcileRunCostRollups(runId, { client: client() });
 
     expect(await readByRunner(runId)).toEqual({
       "claude/claude-sonnet-4-6": {
@@ -246,7 +255,7 @@ describe("reconcileRunCostRollups — by_runner", () => {
       adapter: "codex",
       model: "gpt-5",
     });
-    await writeCostJsonl(runId, [
+    await recordCanonicalUsage(runId, [
       { sessionName: "plan", model: "claude-sonnet-4-6", input_tokens: 100 },
       {
         sessionName: "review",
@@ -256,7 +265,7 @@ describe("reconcileRunCostRollups — by_runner", () => {
       },
     ]);
 
-    await reconcileRunCostRollups(runId, { client: client(), runtimeRoot });
+    await reconcileRunCostRollups(runId, { client: client() });
 
     expect(await readByRunner(runId)).toEqual({
       "claude/claude-sonnet-4-6": {
@@ -294,7 +303,7 @@ describe("reconcileRunCostRollups — by_runner", () => {
       model: "claude-sonnet-4-6",
     });
     // Two different nodes, both on the single "default" session.
-    await writeCostJsonl(runId, [
+    await recordCanonicalUsage(runId, [
       {
         sessionName: "default",
         model: "claude-sonnet-4-6",
@@ -309,7 +318,7 @@ describe("reconcileRunCostRollups — by_runner", () => {
       },
     ]);
 
-    await reconcileRunCostRollups(runId, { client: client(), runtimeRoot });
+    await reconcileRunCostRollups(runId, { client: client() });
 
     const byRunner = await readByRunner(runId);
 
@@ -326,13 +335,13 @@ describe("reconcileRunCostRollups — by_runner", () => {
       adapter: "claude",
       model: "claude-sonnet-4-6",
     });
-    await writeCostJsonl(runId, [
+    await recordCanonicalUsage(runId, [
       { sessionName: "default", model: "claude-sonnet-4-6", input_tokens: 10 },
       // No run_sessions row for "ghost" → "unknown" bucket.
       { sessionName: "ghost", model: "claude-sonnet-4-6", input_tokens: 4 },
     ]);
 
-    await reconcileRunCostRollups(runId, { client: client(), runtimeRoot });
+    await reconcileRunCostRollups(runId, { client: client() });
 
     const byRunner = await readByRunner(runId);
 
@@ -349,11 +358,11 @@ describe("reconcileRunCostRollups — by_runner", () => {
       adapter: "claude",
       model: "claude-sonnet-4-6",
     });
-    await writeCostJsonl(runId, [
+    await recordCanonicalUsage(runId, [
       { sessionName: "default", model: "claude-sonnet-4-6", input_tokens: 10 },
     ]);
 
-    await reconcileRunCostRollups(runId, { client: client(), runtimeRoot });
+    await reconcileRunCostRollups(runId, { client: client() });
     expect(Object.keys(await readByRunner(runId))).toEqual([
       "claude/claude-sonnet-4-6",
     ]);
@@ -365,7 +374,7 @@ describe("reconcileRunCostRollups — by_runner", () => {
       .set({ runnerSnapshot: snapshot("codex", "gpt-5") })
       .where(eq(schema.runSessions.runId, runId));
 
-    await reconcileRunCostRollups(runId, { client: client(), runtimeRoot });
+    await reconcileRunCostRollups(runId, { client: client() });
 
     expect(Object.keys(await readByRunner(runId))).toEqual(["codex/gpt-5"]);
   });
@@ -379,7 +388,7 @@ describe("reconcileRunCostRollups — by_runner", () => {
       adapter: "claude",
       model: "claude-sonnet-4-6",
     });
-    await writeCostJsonl(runId, [
+    await recordCanonicalUsage(runId, [
       {
         sessionName: "default",
         model: "claude-sonnet-4-6",
@@ -388,7 +397,7 @@ describe("reconcileRunCostRollups — by_runner", () => {
       },
     ]);
 
-    await reconcileRunCostRollups(runId, { client: client(), runtimeRoot });
+    await reconcileRunCostRollups(runId, { client: client() });
 
     const [row] = await db
       .select({

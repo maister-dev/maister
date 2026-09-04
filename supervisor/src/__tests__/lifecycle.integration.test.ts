@@ -10,6 +10,7 @@ import { SupervisorDiagnosticsResponseSchema } from "../types";
 import {
   bootHost,
   cleanupRuntimeRoot,
+  completePrompt,
   createEnvelope,
   envelope,
   fenceFor,
@@ -54,8 +55,9 @@ async function createSession(
 }
 
 async function sendPrompt(host: BootedHost, sessionId: string): Promise<void> {
-  const res = await postJson(
-    `${host.url}/sessions/${sessionId}/prompt`,
+  const res = await completePrompt(
+    host,
+    sessionId,
     envelope("session.prompt", fenceFor(host, RUN_ID), {
       stepId: "step-1",
       prompt: "hello",
@@ -64,7 +66,7 @@ async function sendPrompt(host: BootedHost, sessionId: string): Promise<void> {
 
   if (res.status !== 200) {
     throw new Error(
-      `POST /sessions/${sessionId}/prompt failed: ${res.status} ${JSON.stringify(res.body)}`,
+      `asynchronous prompt ${sessionId} failed: ${res.status} ${JSON.stringify(res.body)}`,
     );
   }
 }

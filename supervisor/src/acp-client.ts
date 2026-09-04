@@ -1092,8 +1092,9 @@ type ApplyModelArgs = {
 // only verify it. codex is pinned via the ACP `unstable_setSessionModel` call.
 // A residual mismatch is emitted as an ADVISORY `session.update` (a synthetic
 // payload variant, NOT a new event kind) and NEVER fails the run — env-router
-// slot-mapping legitimately reports a remapped name, and `cost.jsonl` stays the
-// billed-model ground truth. Runs on both new and resumed sessions.
+// slot-mapping legitimately reports a remapped name, and canonical
+// `usage.recorded` events stay the billed-model ground truth. Runs on both new
+// and resumed sessions.
 export async function applyAndVerifyModel(args: ApplyModelArgs): Promise<void> {
   const {
     connection,

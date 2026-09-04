@@ -1,13 +1,11 @@
 import type { ExecutionHostDataPlaneCapabilities } from "./contracts";
 import type { ExecutionHost } from "@/lib/db/schema";
 
-export type ExecutionDataPlaneMode = "legacy_file_v1" | "canonical_events_v1";
+import { MaisterError } from "@/lib/errors";
 
-// A web-first rollout keeps admitting immutable legacy runs against an older
-// host. A supervisor advertising the complete v1 capability set is admitted
-// directly into the canonical data plane; no filesystem availability is part
-// of this decision.
-export const CONTROL_PLANE_DATA_PLANE_VERSION: 1 | null = 1;
+export type ExecutionDataPlaneMode = "canonical_events_v1";
+
+export const CONTROL_PLANE_DATA_PLANE_VERSION = 1;
 
 type DataPlaneSelectionCapabilities = Pick<
   ExecutionHostDataPlaneCapabilities,
@@ -27,7 +25,11 @@ export function selectExecutionDataPlaneMode(
     return "canonical_events_v1";
   }
 
-  return "legacy_file_v1";
+  throw new MaisterError(
+    "EXECUTOR_UNAVAILABLE",
+    "execution host does not support the required canonical data plane",
+    { details: { reason: "data_plane_unsupported" } },
+  );
 }
 
 function record(value: unknown): Record<string, unknown> | null {

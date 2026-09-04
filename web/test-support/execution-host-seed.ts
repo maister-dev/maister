@@ -53,7 +53,7 @@ export async function seedRun(
     contextMounts?: ContextMountSnapshot[];
     rootRunId?: string;
     workspaceMode?: "own" | "shared";
-    executionDataPlaneMode?: "legacy_file_v1" | "canonical_events_v1";
+    executionDataPlaneMode?: "canonical_events_v1";
   } = { projectId: "" },
 ): Promise<string> {
   const runId = input.id ?? randomUUID();
@@ -70,7 +70,7 @@ export async function seedRun(
     contextMounts: input.contextMounts ?? null,
     rootRunId: input.rootRunId ?? null,
     workspaceMode: input.workspaceMode ?? null,
-    executionDataPlaneMode: input.executionDataPlaneMode ?? "legacy_file_v1",
+    executionDataPlaneMode: input.executionDataPlaneMode ?? "canonical_events_v1",
   });
 
   return runId;

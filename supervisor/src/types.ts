@@ -276,8 +276,9 @@ export const StartSessionRequestSchema = z
       .regex(SAFE_PATH_SEGMENT, safeSegmentMessage("nodeAttemptId"))
       .optional(),
     // M42 (ADR-114): logical Flow session this ACP process serves. Stamped onto
-    // cost.jsonl + run.events.jsonl so a multi-session run attributes spend and
-    // events per session. Absent → "default" (a single-session run).
+    // canonical usage and session-event envelopes so a multi-session run
+    // attributes spend and events per session. Absent → "default" (a
+    // single-session run).
     sessionName: z
       .string()
       .min(1)

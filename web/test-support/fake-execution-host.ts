@@ -4,6 +4,7 @@ import type {
   AdoptWorkspaceResult,
   AdoptWorkspaceWire,
   CheckpointResult,
+  CommandCallOptions,
   CommandReceipt,
   CreateSessionPayload,
   DeleteSessionOutcome,
@@ -63,7 +64,18 @@ import {
 // caller cannot tell the difference; `host-parity.integration.test.ts` pins
 // that equivalence against a real supervisor child.
 
-export type TransportMethod = keyof ExecutionHostTransport;
+// The production transport has no synchronous prompt operation after B4. This
+// fake-only helper remains so older scripted-turn tests can model a terminal
+// ACP turn without exposing that wire capability to domain code.
+export type FakeTransport = ExecutionHostTransport & {
+  sendPrompt(
+    sessionId: string,
+    envelope: CommandEnvelope<SendPromptInput>,
+    opts?: CommandCallOptions & { signal?: AbortSignal },
+  ): Promise<PromptResult>;
+};
+
+export type TransportMethod = keyof FakeTransport;
 
 export type FakeCall = {
   method: TransportMethod;
@@ -119,7 +131,7 @@ export type PromptContext = {
 };
 
 export type FakeExecutionHost = {
-  transport: ExecutionHostTransport;
+  transport: FakeTransport;
   identity: { hostKey: string; bootId: string; protocolVersion: 1 };
   calls: FakeCall[];
   callsOf(method: TransportMethod): FakeCall[];
@@ -719,7 +731,7 @@ export function createFakeExecutionHost(
     }
   };
 
-  const transport: ExecutionHostTransport = {
+  const transport: FakeTransport = {
     async health(opts) {
       await record("health", null, [opts]);
       loseAdminResponse("health");

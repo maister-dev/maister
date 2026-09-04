@@ -70,7 +70,7 @@ describe("strict envelope contract", () => {
     const { sessionId } = await createSession(h, { runId });
     const base = `${h.url}/sessions/${sessionId}`;
     const attempts: Array<[string, unknown, "POST" | "DELETE"]> = [
-      [`${base}/prompt`, { stepId: "step-1", prompt: "hello" }, "POST"],
+      [`${base}/prompts`, { stepId: "step-1", prompt: "hello" }, "POST"],
       [`${base}/cancel`, {}, "POST"],
       [`${base}/checkpoint`, {}, "POST"],
       [

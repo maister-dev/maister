@@ -12,8 +12,8 @@ info:
 
     **Implemented contract.** The lifecycle
     (`POST` / `DELETE` `/sessions`, `GET /sessions`,
-    `GET /sessions/:id/stream`), ACP prompt boundary
-    (`POST /sessions/:id/prompt`), permission-only HITL input
+    `GET /sessions/:id/stream`), asynchronous ACP prompt admission
+    (`POST /sessions/{id}/prompts`), permission-only HITL input
     (`POST /sessions/:id/input`), and checkpoint endpoint
     (`POST /sessions/:id/checkpoint`) are implemented end-to-end.
 
@@ -42,15 +42,13 @@ info:
     Stage A is single-host, loopback, shared-filesystem, and unauthenticated —
     see [`../system-analytics/execution-hosts.md`](../system-analytics/execution-hosts.md).
 
-    **Stage B data plane (Incremental — ADR-167, 0.9.0).** `GET /capabilities`
+    **Stage B data plane (Implemented — ADR-167, 0.9.0).** `GET /capabilities`
     is additive and read-only. `GET /runtime-events` and
     `POST /runtime-events/ack` implement the host-global, durable local SSE/ACK
     adapter. `POST /sessions/{id}/prompts` accepts a durable prompt command and
     returns before its ACP turn finishes; completion is available through the
-    canonical event stream and `GET /commands/{id}`. The older singular route
-    remains a bounded compatibility path during the per-run cutover. Runtime
-    objects remain opaque ids, never host paths, when their later increment
-    enables them.
+    canonical event stream and `GET /commands/{id}`. There is no synchronous
+    prompt-completion route. Runtime objects use opaque ids, never host paths.
 
     See [`../architecture.md`](../architecture.md), [`../supervisor.md`](../supervisor.md),
     and [`../decisions.md#adr-002-supervisor-runs-as-a-separate-node-daemon`](../decisions.md).
@@ -701,141 +699,6 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
-  /sessions/{id}/prompt:
-    post:
-      tags: [prompt]
-      summary: Send an ACP prompt to a live session
-      description: |
-        Drives the M5 Flow DSL `agent` step. The supervisor forwards the
-        prompt onto the per-session `ClientSideConnection` (built on
-        `@agentclientprotocol/sdk@0.22.1`) and blocks until the adapter
-        returns a `stopReason`. Concurrent `agent` steps in
-        `slash-in-existing` mode reuse one session across multiple prompt
-        calls; `new-session` steps create a fresh session per prompt.
-
-        Permission requests raised by the adapter mid-turn surface as
-        `session.permission_request` SSE events (M7+). The supervisor
-        parks the ACP deferred until the web tier resolves it via
-        `POST /sessions/{id}/input`; the prompt promise stays in flight
-        for the duration of the HITL turn.
-
-        ADR-085 requires `nodeAttemptId` on graph-runner prompt sends,
-        including `slash-in-existing` reused sessions, so active cost
-        attribution changes at prompt time instead of relying on timestamp
-        inference. Concurrent prompts in one reused session are refused by the
-        web tier before they become ambiguous.
-
-        (Implemented — ADR-166) Enveloped as a `PromptCommand`
-        (`command.kind = session.prompt`). Completion rides THREE durable
-        signals: the SSE `session.command {phase: accepted}` when the turn
-        starts, the SSE `session.command {phase: completed, status, result}`
-        plus the receipt (`GET /commands/{id}`) when it ends, and this HTTP
-        response. A duplicate id while the turn is in flight JOINS the
-        running turn; a duplicate after the host restarted mid-turn (receipt
-        `accepted`, no in-flight promise) → `409 PRECONDITION turn_lost`. A
-        session evicted by a higher epoch answers its pending prompt with
-        `409 FENCED`. Liveness is judged inside the receipt-guarded execution,
-        so a duplicate id whose original completed replays the stored `200`
-        even after the session exited.
-      operationId: sendSessionPrompt
-      parameters:
-        - $ref: "#/components/parameters/SessionId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/PromptCommand" }
-            examples:
-              enveloped:
-                value:
-                  command:
-                    id: "3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a"
-                    kind: "session.prompt"
-                    issuedAt: "2026-09-02T10:00:02.000Z"
-                  fence:
-                    hostKey: "eh_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
-                    assignmentId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"
-                    assignmentEpoch: 1
-                    runId: "run-abc"
-                  payload:
-                    stepId: "plan"
-                    nodeAttemptId: "na-1"
-                    prompt: "/aif-plan Add a healthz route"
-      responses:
-        "200":
-          description: |
-            Prompt completed. The adapter's `stopReason` indicates whether
-            the turn ended cleanly, hit a token cap, exceeded max turn
-            requests, or was refused.
-          headers:
-            X-Maister-Command-Replayed:
-              $ref: "#/components/headers/CommandReplayed"
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SendPromptResponse" }
-        "404":
-          description: No session with that id.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
-              examples:
-                unknown:
-                  value: { code: "PRECONDITION", message: "unknown session" }
-        "409":
-          description: |
-            Session exists but cannot accept the prompt — either it is no
-            longer `live` (already `exited`/`crashed`), no ACP connection
-            has been attached (initialization race), or a `contentBlocks`
-            resource URI failed the session-bound confinement check (a remote
-            scheme, or a `file:` path outside repo ∪ worktree ∪ run dir). The
-            content blocks are NOT forwarded on a confinement violation.
-            (Implemented — ADR-166) Also a missing envelope
-            (`missing_envelope`), a fence refusal (`host_mismatch`,
-            `run_mismatch`, `assignment_mismatch`), a stale epoch (`FENCED`),
-            or a restart-lost turn (`turn_lost`). A duplicate id with a
-            stored receipt never reaches these checks — it replays.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
-              examples:
-                notLive:
-                  value: { code: "PRECONDITION", message: "session not live" }
-                noConnection:
-                  value:
-                    code: "PRECONDITION"
-                    message: "session has no ACP connection"
-                uriEscape:
-                  value:
-                    code: "PRECONDITION"
-                    message: "resource URI escapes the run sandbox: file:///etc/passwd"
-                zodReject:
-                  value:
-                    code: "PRECONDITION"
-                    message: "stepId: Required"
-                turnLost:
-                  value:
-                    code: "PRECONDITION"
-                    message: "the turn for this command id was lost in a host restart"
-                    details: { reason: "turn_lost" }
-                fenced:
-                  value:
-                    code: "FENCED"
-                    message: "session evicted by assignment epoch 2"
-                    details:
-                      reason: "assignment_fenced"
-                      runId: "run-abc"
-                      commandEpoch: 1
-                      hostEpoch: 2
-        "500":
-          description: |
-            Adapter returned a malformed or non-conforming ACP frame, or
-            the ACP transport itself faulted mid-turn.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
-              examples:
-                acpProtocol:
-                  value: { code: "ACP_PROTOCOL", message: "prompt failed: ..." }
   /sessions/{id}/prompts:
     post:
       tags: [prompt]
@@ -843,7 +706,7 @@ paths:
       description: |
         The Stage B prompt-admission endpoint. It performs the same strict
         envelope, assignment fence, session liveness, and content confinement
-        validation as `POST /sessions/{id}/prompt`, but it durably records the
+        validation as the canonical prompt command, and durably records the
         accepted receipt and canonical `session.command` event before returning
         `202`. The ACP turn settles later as a terminal `session.command` event
         and receipt. A lost acknowledgement is recovered by the original
@@ -1067,8 +930,8 @@ paths:
         Sends a protocol-level ACP `session/cancel` notification to the agent
         without tearing the session down — the adapter-agnostic interrupt used
         by the composer Stop control (claude, codex, gemini, opencode all honor
-        it). Sets a per-session `cancelRequested` flag so the blocked
-        `POST /sessions/{id}/prompt` resolves with the `cancelled` stop reason
+        it). Sets a per-session `cancelRequested` flag so the canonical prompt
+        command terminalizes with the `cancelled` stop reason
         as a clean turn end (the session stays live) rather than an
         `ACP_PROTOCOL` abort. Also resolves every open `pendingPermissions`
         deferred for the session with `{outcome: "cancelled"}` so a turn blocked
@@ -1428,7 +1291,7 @@ components:
         resume handle (used in `resumeSessionId` on `POST /sessions`
         and in `StartSessionResponse.acpSessionId` /
         `SessionRecord.acpSessionId`). Calling
-        `POST /sessions/{acpSessionId}/prompt` with that handle will
+        `POST /sessions/{acpSessionId}/prompts` with that handle will
         return 404 even when the underlying ACP session is live.
       schema:
         type: string
@@ -1883,7 +1746,7 @@ components:
           description: |
             (M42 — Implemented, ADR-114) Logical Flow session this ACP process
             serves (`default` | solo node id | named session). Stamped onto
-            `cost.jsonl` and `run.events.jsonl` so spend and events are
+            canonical host events so spend and events are
             attributable per logical session, not only per supervisor
             `sessionId`. Absent → treated as `default` (single-session run).
         nodeAttemptId:
@@ -2732,7 +2595,7 @@ components:
       type: object
       required: [command, fence, payload]
       additionalProperties: false
-      description: (Implemented — ADR-166) Enveloped `POST /sessions/{id}/prompt` body.
+      description: (Implemented — ADR-167) Enveloped asynchronous prompt command body.
       properties:
         command:
           type: object

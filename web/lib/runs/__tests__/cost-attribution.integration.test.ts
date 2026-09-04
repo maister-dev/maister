@@ -1,7 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
@@ -20,23 +17,20 @@ type Db = NodePgDatabase<typeof fullSchema>;
 
 let testDatabase: StartedPostgresTestDb;
 let db: Db;
-let runtimeRoot: string;
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
     databaseName: "maister_cost_attribution_test",
   });
   db = testDatabase.db as unknown as Db;
-  runtimeRoot = await mkdtemp(join(tmpdir(), "cost-attribution-"));
 }, 180_000);
 
 afterAll(async () => {
   await testDatabase?.stop();
-  if (runtimeRoot) await rm(runtimeRoot, { recursive: true, force: true });
 });
 
 describe("per-node cost attribution chain (T-D3)", () => {
-  it("attributes cost.jsonl to each node attempt and run-total = sum of nodes", async () => {
+  it("attributes canonical usage events to each node attempt and run-total = sum of nodes", async () => {
     const projectId = randomUUID();
     const runId = randomUUID();
     const slug = `proj-${projectId.slice(0, 8)}`;
@@ -78,33 +72,48 @@ describe("per-node cost attribution chain (T-D3)", () => {
       },
     ]);
 
-    // cost.jsonl in the canonical (snake_case) shape the fixed extractCost now
-    // writes for EVERY node session — one record per node, attributed by
-    // nodeAttemptId (the second node previously wrote nothing).
-    const dir = join(runtimeRoot, ".maister", slug, "runs", runId);
-
-    await mkdir(dir, { recursive: true });
-    await writeFile(
-      join(dir, "cost.jsonl"),
-      [
-        JSON.stringify({
+    await db.insert(schema.executionEvents).values([
+      {
+        id: randomUUID(),
+        source: "manager",
+        sourceKey: `cost-attribution:${runId}:0`,
+        runId,
+        eventType: "usage.recorded",
+        payloadSchema: "maister.usage.recorded.v1",
+        payload: {
           model: "claude-sonnet-4-6",
           nodeAttemptId: implAttempt,
-          input_tokens: 1000,
-          output_tokens: 200,
-          cache_read_input_tokens: 50,
-          cache_creation_input_tokens: 30,
-        }),
-        JSON.stringify({
+          inputTokens: 1000,
+          outputTokens: 200,
+          cacheReadInputTokens: 50,
+          cacheCreationInputTokens: 30,
+        },
+        occurredAt: new Date(),
+        receivedAt: new Date(),
+        runSequence: BigInt(0),
+        ingestDisposition: "accepted",
+      },
+      {
+        id: randomUUID(),
+        source: "manager",
+        sourceKey: `cost-attribution:${runId}:1`,
+        runId,
+        eventType: "usage.recorded",
+        payloadSchema: "maister.usage.recorded.v1",
+        payload: {
           model: "claude-sonnet-4-6",
           nodeAttemptId: reviewAttempt,
-          input_tokens: 400,
-          output_tokens: 80,
-        }),
-      ].join("\n") + "\n",
-    );
+          inputTokens: 400,
+          outputTokens: 80,
+        },
+        occurredAt: new Date(),
+        receivedAt: new Date(),
+        runSequence: BigInt(1),
+        ingestDisposition: "accepted",
+      },
+    ]);
 
-    await reconcileRunCostRollups(runId, { client: db, runtimeRoot });
+    await reconcileRunCostRollups(runId, { client: db });
 
     const nodeRollups = await db
       .select()

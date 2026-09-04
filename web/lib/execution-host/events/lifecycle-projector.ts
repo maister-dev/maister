@@ -44,7 +44,6 @@ async function currentCanonicalAssignment(
     .where(eq(runs.id, event.runId))
     .limit(1);
   if (!runRows[0]) throw permanent("canonical lifecycle event references a missing run");
-  if (runRows[0].executionDataPlaneMode !== "canonical_events_v1") return false;
   const assignment = await tx
     .select({ id: executionAssignments.id })
     .from(executionAssignments)
@@ -237,8 +236,7 @@ export async function projectPendingCanonicalSessionLifecycle(input: {
 }): Promise<number> {
   const runRows = await input.db
     .select({ id: runs.id })
-    .from(runs)
-    .where(eq(runs.executionDataPlaneMode, "canonical_events_v1"));
+    .from(runs);
   let projected = 0;
   for (const run of runRows) {
     const summary = await projectCanonicalSessionLifecycle({

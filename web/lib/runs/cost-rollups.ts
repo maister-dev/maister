@@ -3,22 +3,15 @@ import "server-only";
 import type { RunnerSnapshot } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-
 import { and, eq, or, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
-import { MaisterError } from "@/lib/errors";
-import { runtimeRoot as configuredRuntimeRoot } from "@/lib/instance-config";
 
 const {
-  localPackages,
   nodeAttemptCostRollups,
   nodeAttempts,
-  projects,
   runCostRollups,
   runSessions,
   runs,
@@ -49,12 +42,6 @@ type ParsedCostRecord = {
   resumed: boolean;
 };
 
-type CostSourceRun = {
-  id: string;
-  projectSlug: string | null;
-  localPackageSlug: string | null;
-};
-
 export type CostRollupNodeTotal = TokenTotals & {
   nodeAttemptId: string;
   nodeId: string;
@@ -74,7 +61,7 @@ export type CostRollupAggregation = {
 };
 
 export type ReconcileRunCostRollupsResult = {
-  status: "missing-run" | "missing-cost-file" | "reconciled";
+  status: "missing-run" | "reconciled";
   sourceEventCount: number;
 };
 
@@ -163,19 +150,6 @@ function parseCostRecord(line: string): ParsedCostRecord | null {
     cacheCreationTokens,
     resumed: parsed.resumed === true,
   };
-}
-
-export function resolveRunCostSourceSlug(run: CostSourceRun): string {
-  const slug = run.projectSlug ?? run.localPackageSlug;
-
-  if (!slug) {
-    throw new MaisterError(
-      "CONFIG",
-      `cost rollup owner slug missing for run: ${run.id}`,
-    );
-  }
-
-  return slug;
 }
 
 // Folds a record's four BASE token kinds into a string-keyed bucket map (used
@@ -315,7 +289,7 @@ export function aggregateCostJsonlLines(
 
 export async function reconcileRunCostRollups(
   runId: string,
-  opts: { client?: DbClient; runtimeRoot?: string } = {},
+  opts: { client?: DbClient } = {},
 ): Promise<ReconcileRunCostRollupsResult> {
   const client = opts.client ?? db();
   const [run] = await client
@@ -324,74 +298,42 @@ export async function reconcileRunCostRollups(
       projectId: runs.projectId,
       taskId: runs.taskId,
       flowId: runs.flowId,
-      executionDataPlaneMode: runs.executionDataPlaneMode,
-      projectSlug: projects.slug,
-      localPackageSlug: localPackages.slug,
     })
     .from(runs)
-    .leftJoin(projects, eq(projects.id, runs.projectId))
-    .leftJoin(localPackages, eq(localPackages.id, runs.localPackageId))
     .where(eq(runs.id, runId));
 
   if (!run) {
     return { status: "missing-run", sourceEventCount: 0 };
   }
 
-  let sourceLines: string[];
-  let sourceCursor: string;
-  if (run.executionDataPlaneMode === "canonical_events_v1") {
-    const events = await client
-      .select({
-        payload: executionEvents.payload,
-        runSequence: executionEvents.runSequence,
-      })
-      .from(executionEvents)
-      .where(
-        and(
-          eq(executionEvents.runId, run.id),
-          eq(executionEvents.eventType, "usage.recorded"),
-          eq(executionEvents.ingestDisposition, "accepted"),
-        ),
-      )
-      .orderBy(executionEvents.runSequence);
-    sourceLines = events.map((event) => {
-      const payload = event.payload ?? {};
-      return JSON.stringify({
-        input_tokens: payload.inputTokens,
-        output_tokens: payload.outputTokens,
-        cache_read_input_tokens: payload.cacheReadInputTokens,
-        cache_creation_input_tokens: payload.cacheCreationInputTokens,
-        model: payload.model,
-        sessionName: payload.sessionName,
-        nodeAttemptId: payload.nodeAttemptId,
-        resumed: payload.resumed,
-      });
+  const events = await client
+    .select({
+      payload: executionEvents.payload,
+      runSequence: executionEvents.runSequence,
+    })
+    .from(executionEvents)
+    .where(
+      and(
+        eq(executionEvents.runId, run.id),
+        eq(executionEvents.eventType, "usage.recorded"),
+        eq(executionEvents.ingestDisposition, "accepted"),
+      ),
+    )
+    .orderBy(executionEvents.runSequence);
+  const sourceLines = events.map((event) => {
+    const payload = event.payload ?? {};
+    return JSON.stringify({
+      input_tokens: payload.inputTokens,
+      output_tokens: payload.outputTokens,
+      cache_read_input_tokens: payload.cacheReadInputTokens,
+      cache_creation_input_tokens: payload.cacheCreationInputTokens,
+      model: payload.model,
+      sessionName: payload.sessionName,
+      nodeAttemptId: payload.nodeAttemptId,
+      resumed: payload.resumed,
     });
-    sourceCursor = `canonical:${events.at(-1)?.runSequence?.toString() ?? "none"}:events:${events.length}`;
-  } else {
-    const ownerSlug = resolveRunCostSourceSlug(run);
-    const costPath = path.join(
-      opts.runtimeRoot ?? configuredRuntimeRoot(),
-      ".maister",
-      ownerSlug,
-      "runs",
-      run.id,
-      "cost.jsonl",
-    );
-    let raw: string;
-
-    try {
-      raw = await readFile(costPath, "utf8");
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        return { status: "missing-cost-file", sourceEventCount: 0 };
-      }
-
-      throw err;
-    }
-    sourceLines = raw.split("\n");
-    sourceCursor = `bytes:${Buffer.byteLength(raw, "utf8")}:events:pending`;
-  }
+  });
+  const sourceCursor = `canonical:${events.at(-1)?.runSequence?.toString() ?? "none"}:events:${events.length}`;
 
   const attemptRows = await client
     .select({
@@ -425,9 +367,6 @@ export async function reconcileRunCostRollups(
     aggregation.run.bySession,
     runnerKeyBySession,
   );
-  if (run.executionDataPlaneMode === "legacy_file_v1") {
-    sourceCursor = `bytes:${Buffer.byteLength(sourceLines.join("\n"), "utf8")}:events:${aggregation.run.sourceEventCount}`;
-  }
   const now = new Date();
 
   await client
@@ -518,7 +457,7 @@ export async function reconcileRunCostRollups(
 
 export async function reconcileManyRunCostRollups(
   runIds: readonly string[],
-  opts: { client?: DbClient; runtimeRoot?: string } = {},
+  opts: { client?: DbClient } = {},
 ): Promise<void> {
   const uniqueRunIds = [...new Set(runIds)];
 

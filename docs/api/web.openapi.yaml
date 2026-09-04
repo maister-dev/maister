@@ -5147,7 +5147,8 @@ paths:
       description: |
         Requires project membership at `member` or above. The route appends the
         next user message under a row lock, rejects concurrent prompts, then
-        calls supervisor `POST /sessions/{sessionId}/prompt`. The body carries
+        submits supervisor `POST /sessions/{sessionId}/prompts` and persists a
+        `PromptHandle`; terminal state is reconciled asynchronously. The body carries
         message content and attachment refs only. It MUST NOT include session
         ids, project slug, worktree path, step id, or message sequence.
         Accepts JSON for text/metadata-only messages and multipart form data
@@ -5723,8 +5724,7 @@ paths:
         Returns the token totals used by the live run inspector. For an
         immutable `canonical_events_v1` run, the manager folds bounded
         `usage.recorded` events into Postgres and this route never reads a host
-        runtime file. `cost.jsonl` reconciliation remains only for an explicit
-        `legacy_file_v1` compatibility run until B4. The live inspector polls
+        runtime file. Cost reconciliation reads only canonical events. The live inspector polls
         on SSE ticks so token and wall-clock facts grow instead of being frozen
         at the server-rendered snapshot. Flow/agent runs require `readBoard`;
         scratch runs require `readScratchRun`. A project-less local-package
@@ -14989,7 +14989,7 @@ components:
           properties:
             text: { type: string }
             at: { type: string, format: date-time }
-          description: Trailing coalesced `agent_message_chunk` from `run.events.jsonl`.
+          description: Trailing coalesced `agent_message_chunk` from canonical execution events.
         gates:
           type: array
           items:

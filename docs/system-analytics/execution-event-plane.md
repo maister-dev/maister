@@ -1,8 +1,8 @@
 # Execution event plane
 
-**Status:** Designed — Stage B implements this plane; current file-based
-runtime-event authority remains as-built only for `legacy_file_v1` runs until
-the bounded B4 cutover.
+**Status:** Implemented — B4 makes this the only manager event authority.
+Execution hosts retain private outbox/runtime files, but neither browser nor
+manager projection reads a host runtime path.
 
 ## Purpose
 

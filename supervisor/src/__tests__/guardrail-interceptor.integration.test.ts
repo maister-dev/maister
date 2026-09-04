@@ -17,6 +17,7 @@ import {
   adoptDirectory,
   bootHost,
   cleanupRuntimeRoot,
+  completePrompt,
   createBody,
   envelope,
   fenceFor,
@@ -83,8 +84,9 @@ async function createSession(
 }
 
 async function sendPrompt(host: BootedHost, sessionId: string): Promise<void> {
-  const res = await postJson(
-    `${host.url}/sessions/${sessionId}/prompt`,
+  const res = await completePrompt(
+    host,
+    sessionId,
     envelope("session.prompt", fenceFor(host, RUN_ID), {
       stepId: "step-1",
       prompt: "go",

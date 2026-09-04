@@ -2,9 +2,6 @@ import "server-only";
 
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { readFile, stat } from "node:fs/promises";
-import path from "node:path";
-
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
@@ -13,7 +10,7 @@ import * as schema from "@/lib/db/schema";
 import { prepareDiffSummary } from "@/lib/diff/prepare";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { resolveManifest } from "@/lib/flows/graph/current-node-kind";
-import { runtimeRoot } from "@/lib/instance-config";
+import { projectRunTranscript } from "@/lib/runs/run-transcript-projector";
 import { interpretScratchUpdate } from "@/lib/scratch-runs/transcript";
 import { diffRunWorkspace, resolveBaseRef } from "@/lib/worktree";
 import {
@@ -101,9 +98,9 @@ export interface InboxContextRun {
 
 const MAX_MESSAGE_CHARS = 1000;
 
-// Coalesce the trailing contiguous run of `agent_message_chunk` text from a run's
-// `run.events.jsonl` — i.e. the last thing the agent said. A tool call resets the
-// buffer (the agent moved on); thought/usage chunks are ignored.
+// Coalesce the trailing contiguous run of `agent_message_chunk` text from an
+// event serialization. This pure compatibility helper supports fixture parsing;
+// production reads the canonical transcript projection below.
 export function extractLastAgentMessage(rawJsonl: string): string | null {
   let buffer = "";
 
@@ -147,53 +144,23 @@ async function loadLastAgentMessage(
   run: InboxContextRun,
 ): Promise<InboxCardContext["lastAgentMessage"]> {
   try {
-    const modeRows = await client
-      .select({ executionDataPlaneMode: runs.executionDataPlaneMode })
-      .from(runs)
-      .where(eq(runs.id, run.id))
+    await projectRunTranscript(run.id, { client });
+    const messages = await client
+      .select({ content: runMessages.content, createdAt: runMessages.createdAt })
+      .from(runMessages)
+      .where(and(eq(runMessages.runId, run.id), eq(runMessages.role, "assistant")))
+      .orderBy(desc(runMessages.createdAt), desc(runMessages.sequence))
       .limit(1);
-    if (modeRows[0]?.executionDataPlaneMode === "canonical_events_v1") {
-      const messages = await client
-        .select({ content: runMessages.content, createdAt: runMessages.createdAt })
-        .from(runMessages)
-        .where(and(eq(runMessages.runId, run.id), eq(runMessages.role, "assistant")))
-        .orderBy(desc(runMessages.createdAt), desc(runMessages.sequence))
-        .limit(1);
-      const message = messages[0];
-      if (!message || message.content.trim().length === 0) return null;
-      const text = message.content.trim();
-      return {
-        text:
-          text.length > MAX_MESSAGE_CHARS
-            ? `${text.slice(0, MAX_MESSAGE_CHARS)}…`
-            : text,
-        at: message.createdAt.toISOString(),
-      };
-    }
-    const slugRows = await client
-      .select({ slug: projects.slug })
-      .from(projects)
-      .where(eq(projects.id, run.projectId));
-    const slug = slugRows[0]?.slug;
-
-    if (!slug) return null;
-
-    const eventsLogPath = path.join(
-      runtimeRoot(),
-      ".maister",
-      slug,
-      "runs",
-      run.id,
-      "run.events.jsonl",
-    );
-    const raw = await readFile(eventsLogPath, "utf8");
-    const text = extractLastAgentMessage(raw);
-
-    if (!text) return null;
-
-    const st = await stat(eventsLogPath);
-
-    return { text, at: st.mtime.toISOString() };
+    const message = messages[0];
+    if (!message || message.content.trim().length === 0) return null;
+    const text = message.content.trim();
+    return {
+      text:
+        text.length > MAX_MESSAGE_CHARS
+          ? `${text.slice(0, MAX_MESSAGE_CHARS)}…`
+          : text,
+      at: message.createdAt.toISOString(),
+    };
   } catch (err) {
     log.warn(
       { runId: run.id, err },

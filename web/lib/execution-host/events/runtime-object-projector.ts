@@ -68,7 +68,6 @@ async function hasCurrentFence(tx: Db, event: ExecutionEvent): Promise<boolean> 
     .where(eq(runs.id, event.runId))
     .limit(1);
   if (!run[0]) throw permanent("runtime object event references a missing run");
-  if (run[0].executionDataPlaneMode !== "canonical_events_v1") return false;
   const assignment = await tx
     .select({ id: executionAssignments.id })
     .from(executionAssignments)
@@ -227,8 +226,7 @@ export async function projectPendingCanonicalRuntimeObjects(input: {
 }): Promise<number> {
   const canonicalRuns = await input.db
     .select({ id: runs.id })
-    .from(runs)
-    .where(eq(runs.executionDataPlaneMode, "canonical_events_v1"));
+    .from(runs);
   let projected = 0;
   for (const run of canonicalRuns) {
     const summary = await projectCanonicalRuntimeObjects({

@@ -54,7 +54,6 @@ import { applyCreateAck } from "./create-ack";
 import {
   COMMAND_POLICY,
   deliverCommand,
-  deliverPrompt,
   startAsyncPrompt,
   waitForPromptCompletion,
 } from "./deliverer";
@@ -229,26 +228,6 @@ export function createExecutionHosts(
   ): BoundClient {
     let current = assignment;
     const db = dbOf();
-
-    async function dataPlaneModeForCurrentRun(): Promise<
-      "legacy_file_v1" | "canonical_events_v1"
-    > {
-      const rows = await db
-        .select({ executionDataPlaneMode: runs.executionDataPlaneMode })
-        .from(runs)
-        .where(eq(runs.id, current.runId))
-        .limit(1);
-      const run = rows[0];
-      if (!run) {
-        throw new MaisterError(
-          "PRECONDITION",
-          `run ${current.runId} is missing while issuing an execution command`,
-          { details: { reason: "run_missing", runId: current.runId } },
-        );
-      }
-
-      return run.executionDataPlaneMode;
-    }
 
     type ImmediateOptions<TResult> = {
       targetSessionId?: string;
@@ -430,33 +409,15 @@ export function createExecutionHosts(
           logger,
         });
 
-        if ((await dataPlaneModeForCurrentRun()) === "canonical_events_v1") {
-          return startAsyncPrompt({
-            db,
-            command: row,
-            envelope,
-            start: (env) =>
-              transport.startPrompt(
-                sessionId,
-                env as CommandEnvelope<SendPromptInput>,
-                timeoutFor("session.prompt"),
-              ),
-            lookupReceipt: (id) => transport.getCommandReceipt(id),
-            logger,
-            sleep: deps.sleep,
-            now: deps.now,
-          });
-        }
-
-        return deliverPrompt({
+        return startAsyncPrompt({
           db,
           command: row,
           envelope,
-          send: (env) =>
-            transport.sendPrompt(
+          start: (env) =>
+            transport.startPrompt(
               sessionId,
               env as CommandEnvelope<SendPromptInput>,
-              { signal: opts?.signal, ...timeoutFor("session.prompt") },
+              timeoutFor("session.prompt"),
             ),
           lookupReceipt: (id) => transport.getCommandReceipt(id),
           logger,
@@ -634,16 +595,21 @@ export function createExecutionHosts(
             .from(runs)
             .where(eq(runs.id, runId))
             .limit(1);
-          if (modeRows[0]?.executionDataPlaneMode === "canonical_events_v1") {
-            yield* streamCanonicalSessionEvents({
-              db: dbOf(),
-              runId,
-              hostSessionId: sessionId,
-              lastEventId: opts?.lastEventId,
-              signal: opts?.signal,
-            });
-            return;
+          if (!modeRows[0]) {
+            throw new MaisterError(
+              "PRECONDITION",
+              `run ${runId} is missing while streaming an execution session`,
+              { details: { reason: "run_missing", runId } },
+            );
           }
+          yield* streamCanonicalSessionEvents({
+            db: dbOf(),
+            runId,
+            hostSessionId: sessionId,
+            lastEventId: opts?.lastEventId,
+            signal: opts?.signal,
+          });
+          return;
         }
         for await (const event of transport.streamSession(sessionId, opts)) {
           commandSignals.publishLegacy(event);
