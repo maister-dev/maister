@@ -516,7 +516,6 @@ export async function markScratchCrashed(args: {
   db?: Db;
   runId: string;
   err: unknown;
-  clearSupervisorSession?: boolean;
   // Cost-budget governance: a budget-kill is a DELIBERATE terminal, not a crash,
   // so it must be NON-recoverable (Recover gates on runs.status='Crashed'). With
   // `terminal:"failed"` the run goes terminal `Failed` (+ emits `run.failed`),
@@ -537,10 +536,6 @@ export async function markScratchCrashed(args: {
     errorMessage,
     updatedAt: endedAt,
   };
-
-  if (args.clearSupervisorSession) {
-    scratchUpdate.supervisorSessionId = null;
-  }
 
   await db.transaction(async (tx: Db) => {
     // CAS-before-write: only flip a still-live scratch run to Crashed. The
@@ -1103,7 +1098,6 @@ export async function* launchScratchRunStaged(
       await tx
         .update(scratchRuns)
         .set({
-          supervisorSessionId: session.sessionId,
           dialogStatus,
           updatedAt: new Date(),
         })
@@ -1728,7 +1722,6 @@ export async function* launchLocalPackageAssistantStaged(
       await tx
         .update(scratchRuns)
         .set({
-          supervisorSessionId: session.sessionId,
           dialogStatus,
           updatedAt: new Date(),
         })
@@ -1828,7 +1821,6 @@ export async function* launchLocalPackageAssistantStaged(
       db,
       runId,
       err,
-      clearSupervisorSession: true,
     }).catch((markErr) =>
       log.error(
         {
@@ -2027,12 +2019,16 @@ async function appendScratchUserMessage(args: {
       scratch,
       workspace,
     } = await loadScratchRows(tx, args.runId);
+    const activeSession = await loadActiveRunSession(tx, args.runId);
 
     assertScratchCanAcceptUserMessage({
       runId: args.runId,
       runStatus: lockedRun.status,
       dialogStatus: scratch.dialogStatus,
-      supervisorSessionId: scratch.supervisorSessionId,
+      // Stage B: the logical-session pointer is the sole live delivery
+      // authority. The deprecated scratch mirror must not select an ACP
+      // session, including during the destructive-migration preflight.
+      hostSessionId: activeSession?.hostSessionId ?? null,
     });
 
     const sequenceRows: Array<{ sequence: number }> = await tx
@@ -2125,12 +2121,10 @@ async function appendScratchUserMessage(args: {
       .set({ status: "Running", currentStepId: scratchStepId() })
       .where(eq(runs.id, args.runId));
 
-    const activeSession = await loadActiveRunSession(tx, args.runId);
-
     return {
       messageId,
       sequence,
-      supervisorSessionId: scratch.supervisorSessionId as string,
+      hostSessionId: activeSession?.hostSessionId as string,
       capabilityAgent: activeSession?.capabilityAgent ?? null,
       // ADR-097: project-less ⇒ a local-package assistant run; its turn-failure
       // path explicitly releases the supervisor deferred (see caller).
@@ -2163,7 +2157,7 @@ export async function sendScratchUserMessage(args: {
     );
     const promptResult = await sendScratchPromptAndProjectEvents({
       runId: args.runId,
-      sessionId: appended.supervisorSessionId,
+      sessionId: appended.hostSessionId,
       stepId: scratchStepId(),
       prompt: messagePrompt,
       contentBlocks: scratchPromptContentBlocks(messagePrompt, [
@@ -2212,7 +2206,7 @@ export async function sendScratchUserMessage(args: {
     // prior behavior (supervisor purge on the natural session exit).
     if (appended.isLocalPackageAssistant) {
       await deleteScratchSupervisorSessionIfLive(
-        appended.supervisorSessionId,
+        appended.hostSessionId,
         args.runId,
       ).catch((delErr) =>
         log.error(
@@ -2228,7 +2222,6 @@ export async function sendScratchUserMessage(args: {
       db,
       runId: args.runId,
       err,
-      clearSupervisorSession: appended.isLocalPackageAssistant,
     }).catch((markErr) =>
       log.error(
         {
@@ -2287,7 +2280,7 @@ export async function sendLocalPackageAssistantMessage(args: {
     );
     const promptResult = await sendScratchPromptAndProjectEvents({
       runId: args.runId,
-      sessionId: appended.supervisorSessionId,
+      sessionId: appended.hostSessionId,
       stepId: scratchStepId(),
       prompt: messagePrompt,
       execution: await scratchExecution(db, args.runId, args.executionHosts),
@@ -2345,7 +2338,7 @@ export async function sendLocalPackageAssistantMessage(args: {
     }
 
     await deleteScratchSupervisorSessionIfLive(
-      appended.supervisorSessionId,
+      appended.hostSessionId,
       args.runId,
     ).catch((delErr) =>
       log.error(
@@ -2360,7 +2353,6 @@ export async function sendLocalPackageAssistantMessage(args: {
       db,
       runId: args.runId,
       err,
-      clearSupervisorSession: true,
     }).catch((markErr) =>
       log.error(
         {
@@ -2472,17 +2464,17 @@ export async function interruptScratchRun(
     );
   }
 
-  if (
-    isTerminalScratchDialogStatus(scratch.dialogStatus) ||
-    !scratch.supervisorSessionId
-  ) {
+  const activeSession = await loadActiveRunSession(db, runId);
+  const hostSessionId = activeSession?.hostSessionId ?? null;
+
+  if (isTerminalScratchDialogStatus(scratch.dialogStatus) || !hostSessionId) {
     return { runId, cancelled: false, dialogStatus: scratch.dialogStatus };
   }
 
   const client = await (
     opts.executionHosts ?? createExecutionHosts({ db })
   ).forRun(runId);
-  const { cancelled } = await client.cancelPrompt(scratch.supervisorSessionId);
+  const { cancelled } = await client.cancelPrompt(hostSessionId);
 
   log.info({ runId, cancelled }, "scratch run interrupt requested");
 
@@ -2542,9 +2534,10 @@ export async function stopScratchWorkbench(
   const now = new Date();
   let supervisorStopped = false;
 
-  if (scratch.supervisorSessionId) {
+  const activeSession = await loadActiveRunSession(db, runId);
+  if (activeSession?.hostSessionId) {
     supervisorStopped = await deleteScratchSupervisorSessionIfLive(
-      scratch.supervisorSessionId,
+      activeSession.hostSessionId,
       runId,
       opts.executionHosts,
     );
@@ -2555,7 +2548,6 @@ export async function stopScratchWorkbench(
       .update(scratchRuns)
       .set({
         dialogStatus: nextDialogStatus,
-        supervisorSessionId: null,
         updatedAt: now,
       })
       .where(eq(scratchRuns.runId, runId));

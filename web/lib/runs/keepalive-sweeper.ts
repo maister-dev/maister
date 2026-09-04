@@ -1769,7 +1769,6 @@ async function actBudgetTerminateRun(
       db,
       runId: candidate.id,
       err: new MaisterError("BUDGET_EXCEEDED", budgetBreachPrompt(verdict)),
-      clearSupervisorSession: true,
       terminal: "failed",
     });
     await promoteAfterTimeoutKill(db);
@@ -1969,7 +1968,6 @@ async function actBudgetTerminateTree(
       db,
       runId: candidate.id,
       err: new MaisterError("BUDGET_EXCEEDED", budgetBreachPrompt(verdict)),
-      clearSupervisorSession: true,
       terminal: "failed",
     });
     await promoteAfterTimeoutKill(db);

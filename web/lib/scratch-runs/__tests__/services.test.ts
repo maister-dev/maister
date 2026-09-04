@@ -176,7 +176,7 @@ describe("scratch message and state helpers", () => {
         runId: "run-1",
         runStatus: "Running",
         dialogStatus: "WaitingForUser",
-        supervisorSessionId: "sup-1",
+        hostSessionId: "sup-1",
       }),
     ).not.toThrow();
 
@@ -185,7 +185,7 @@ describe("scratch message and state helpers", () => {
         runId: "run-1",
         runStatus: "Running",
         dialogStatus: "Running",
-        supervisorSessionId: "sup-1",
+        hostSessionId: "sup-1",
       }),
     ).toThrow(/not accepted/);
 

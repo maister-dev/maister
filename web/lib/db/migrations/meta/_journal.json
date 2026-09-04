@@ -911,6 +911,13 @@
       "when": 1788519136557,
       "tag": "0133_rich_blob",
       "breakpoints": true
+    },
+    {
+      "idx": 134,
+      "version": "7",
+      "when": 1788524199147,
+      "tag": "0134_lovely_tarot",
+      "breakpoints": true
     }
   ]
 }

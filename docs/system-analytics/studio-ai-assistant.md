@@ -43,8 +43,9 @@ for reload-stable UI cards.
   `local_package_id` set, no `workspaces` row. This remains the ADR-097
   project-less scratch-at-local-package substrate.
 - **Scratch metadata** - `scratch_runs` row with `project_id = NULL`,
-  `local_package_id` set, the existing dialog state, runner snapshot, and
-  supervisor session handles.
+  `local_package_id` set, and the existing dialog state. The runner snapshot
+  and canonical host-session handle live in `run_sessions`; lifecycle history
+  is kept in `run_session_incarnations`.
 - **Read-only supervisor session** - ACP session created with `cwd =
 working_dir`, `confineRoot = working_dir`, and `readOnlySession = true`.
 - **Assistant materialization** - the capability profile and flow-authoring

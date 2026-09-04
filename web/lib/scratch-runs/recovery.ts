@@ -13,12 +13,12 @@ export type ScratchRecoveryInput = {
   runStatus: string;
   dialogStatus: ScratchDialogStatus;
   acpSessionId: string | null;
-  supervisorSessionId: string | null;
+  hostSessionId: string | null;
   workspaceRemoved: boolean;
-  liveSupervisorSessionIds: ReadonlySet<string>;
+  liveHostSessionIds: ReadonlySet<string>;
 };
 
-export function liveScratchSupervisorSessionIds(
+export function liveScratchHostSessionIds(
   sessions: readonly SupervisorSessionRecord[],
 ): Set<string> {
   return new Set(
@@ -38,8 +38,8 @@ export function classifyScratchRecovery(
   if (input.dialogStatus === "Review") return "open";
 
   if (
-    input.supervisorSessionId &&
-    input.liveSupervisorSessionIds.has(input.supervisorSessionId)
+    input.hostSessionId &&
+    input.liveHostSessionIds.has(input.hostSessionId)
   ) {
     return "open";
   }

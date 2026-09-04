@@ -176,7 +176,6 @@ async function assignmentRows(runId: string) {
 async function scratchAndSession(runId: string) {
   const [scratch] = await db
     .select({
-      supervisorSessionId: schema.scratchRuns.supervisorSessionId,
       dialogStatus: schema.scratchRuns.dialogStatus,
     })
     .from(schema.scratchRuns)
@@ -267,7 +266,7 @@ describe("scratch run placement (ADR-166 Q1–Q3)", () => {
     firstHostSessionId = session.hostSessionId as string;
     acpSessionId = session.acpSessionId as string;
     expect(typeof firstHostSessionId).toBe("string");
-    expect(scratch.supervisorSessionId).toBe(firstHostSessionId);
+    expect(session.hostSessionId).toBe(firstHostSessionId);
     expect(fake.sessions.get(firstHostSessionId)?.acpSessionId).toBe(
       acpSessionId,
     );
@@ -387,7 +386,7 @@ describe("scratch run placement (ADR-166 Q1–Q3)", () => {
     const { scratch, session } = await scratchAndSession(runId);
 
     expect(session.hostSessionId).not.toBe(firstHostSessionId);
-    expect(scratch.supervisorSessionId).toBe(session.hostSessionId);
+    expect(session.hostSessionId).toBeTruthy();
     expect(scratch.dialogStatus).toBe("WaitingForUser");
   }, 60_000);
 
@@ -429,10 +428,10 @@ describe("scratch run placement (ADR-166 Q1–Q3)", () => {
       placementReason: "scratch_recover",
       releasedReason: "scratch_recover_rollback",
     });
-    // The stored supervisor session id is exactly what the crash left.
-    const { scratch } = await scratchAndSession(runId);
+    // The logical session pointer is exactly what the crash left.
+    const { scratch, session } = await scratchAndSession(runId);
 
-    expect(scratch.supervisorSessionId).toBe(before.hostSessionId);
+    expect(session.hostSessionId).toBe(before.hostSessionId);
     expect(scratch.dialogStatus).toBe("Crashed");
   }, 60_000);
 

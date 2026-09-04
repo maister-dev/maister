@@ -2109,7 +2109,6 @@ table scratch_runs {
   base_commit text [not null]
   target_branch text
   dialog_status text [not null, default: 'Starting']
-  supervisor_session_id text
   created_by_user_id text [not null]
   error_code text
   error_message text

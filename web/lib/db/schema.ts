@@ -4493,7 +4493,6 @@ export const scratchRuns = pgTable(
     })
       .notNull()
       .default("Starting"),
-    supervisorSessionId: text("supervisor_session_id"),
     createdByUserId: text("created_by_user_id")
       .notNull()
       .references(() => users.id),

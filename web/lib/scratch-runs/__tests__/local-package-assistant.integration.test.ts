@@ -989,18 +989,17 @@ describe("deferred-release on a failure path (ADR-097 T5.6)", () => {
 
     expect(supervisorMock.deleteSession).toHaveBeenCalledWith("sup-1");
 
-    // The run lands Crashed with its supervisor session cleared.
+    // The run lands Crashed. The host session stays in run_sessions as immutable
+    // audit/recovery state; scratch metadata no longer mirrors it.
     const rows = await db
       .select({
         status: runs.status,
-        supervisorSessionId: scratchRuns.supervisorSessionId,
       })
       .from(runs)
       .innerJoin(scratchRuns, eq(scratchRuns.runId, runs.id))
       .where(eq(runs.localPackageId, pkg.id));
 
     expect(rows[0].status).toBe("Crashed");
-    expect(rows[0].supervisorSessionId).toBeNull();
   });
 
   it("a follow-up turn failure also releases the supervisor session", async () => {

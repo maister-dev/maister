@@ -30,6 +30,8 @@ type InsertDb = Pick<NodePgDatabase<typeof schema>, "insert">;
 // mirror, `run_sessions` is the SOLE source of truth — every reader that used
 // to read those run-level columns reads a session here instead.
 export interface ActiveRunSession {
+  id: string;
+  executionAssignmentId: string | null;
   sessionName: string;
   acpSessionId: string | null;
   // ADR-166: the supervisor's own session id (URL key of every host-bound
@@ -43,6 +45,8 @@ export interface ActiveRunSession {
 
 function toActiveRunSession(row: Record<string, unknown>): ActiveRunSession {
   return {
+    id: row.id as string,
+    executionAssignmentId: (row.executionAssignmentId ?? null) as string | null,
     sessionName: row.sessionName as string,
     acpSessionId: (row.acpSessionId ?? null) as string | null,
     hostSessionId: (row.hostSessionId ?? null) as string | null,

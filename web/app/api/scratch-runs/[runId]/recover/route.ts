@@ -19,7 +19,7 @@ import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
   classifyScratchRecovery,
-  liveScratchSupervisorSessionIds,
+  liveScratchHostSessionIds,
 } from "@/lib/scratch-runs/recovery";
 import {
   normalizeScratchPrompt,
@@ -210,6 +210,7 @@ async function loadScratchRecoveryRows(db: Db, runId: string) {
     projectSlug,
     confineRoot,
     acpSessionId: activeSession?.acpSessionId ?? null,
+    hostSessionId: activeSession?.hostSessionId ?? null,
     executor: recoveredRunner.executor,
     runnerSnapshot: recoveredRunner.snapshot,
     profile: profileRows[0] ?? null,
@@ -333,6 +334,7 @@ export async function POST(
       executor,
       runnerSnapshot,
       acpSessionId,
+      hostSessionId,
       profile,
     } = await loadScratchRecoveryRows(db, runId);
 
@@ -353,16 +355,37 @@ export async function POST(
       transport: hosts.transport,
     });
 
-    const liveSessionIds = liveScratchSupervisorSessionIds(
-      await hosts.local().listSessions(),
-    );
+    // The logical run session is the association authority. A targeted host
+    // listing only diagnoses whether that already-associated host session is
+    // still live; it must never discover a session for this run by scanning.
+    let liveSessionIds = new Set<string>();
+    if (hostSessionId) {
+      try {
+        const activeExecution = await hosts.executionFor(runId);
+        liveSessionIds = liveScratchHostSessionIds(
+          await activeExecution.admin.listSessions(),
+        );
+      } catch (err) {
+        // The preceding crash/release can legitimately leave no active
+        // assignment. Canonical state already selected the host session; a
+        // diagnostic probe must not block same-host checkpoint recovery.
+        log.info(
+          {
+            runId,
+            hostSessionId,
+            reason: isMaisterError(err) ? err.code : "diagnostic_unavailable",
+          },
+          "scratch-recover-host-diagnostic-unavailable",
+        );
+      }
+    }
     const action = classifyScratchRecovery({
       runStatus: run.status,
       dialogStatus: scratch.dialogStatus,
       acpSessionId,
-      supervisorSessionId: scratch.supervisorSessionId,
+      hostSessionId,
       workspaceRemoved,
-      liveSupervisorSessionIds: liveSessionIds,
+      liveHostSessionIds: liveSessionIds,
     });
 
     if (action === "open") {
@@ -467,7 +490,6 @@ export async function POST(
         .update(scratchRuns)
         .set({
           dialogStatus: "Running",
-          supervisorSessionId: session.sessionId,
           errorCode: null,
           errorMessage: null,
           errorMetadata: null,
@@ -507,7 +529,6 @@ export async function POST(
         db,
         runId,
         err,
-        clearSupervisorSession: true,
       }).catch((markErr) =>
         log.error(
           {

@@ -71,8 +71,12 @@ but no Recover, Files/Diff, branch export, or other worktree-backed action.
 - **Scratch metadata** - Implemented. `scratch_runs` is keyed by `run_id` and
   stores name, initial prompt, legacy `plan_mode`, `work_mode`,
   `reasoning_effort`, optional links, base/target branch metadata,
-  `dialog_status`, supervisor session id, legacy creator fallback, error fields,
+  `dialog_status`, creator fallback, error fields,
   and last message timestamps.
+- **Host-session authority** - Implemented (ADR-167, migration `0134`). The
+  live scratch target is `run_sessions.host_session_id`; immutable
+  `run_session_incarnations` records each host lifecycle. The removed
+  `scratch_runs.supervisor_session_id` mirror is neither read nor written.
 - **Run message** - Implemented. `run_messages` (generalized from
   `scratch_messages`, migration `0085`; shared with flow node transcripts — see
   [`runs.md`](runs.md) "Run transparency") is an append-only dialog
@@ -142,7 +146,7 @@ status remains on `runs.status`.
 ```mermaid
 stateDiagram-v2
     [*] --> Starting: launch accepted
-    Starting --> Running: supervisor session stored
+    Starting --> Running: canonical run session bound
     Starting --> Crashed: setup or spawn failure
 
     Running --> WaitingForUser: prompt completed

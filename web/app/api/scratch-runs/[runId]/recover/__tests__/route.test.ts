@@ -128,7 +128,10 @@ vi.mock("@/lib/runs/active-run-session", async (importOriginal) => ({
     return run
       ? {
           sessionName: "default",
+          id: `logical:${runId}`,
+          executionAssignmentId: null,
           acpSessionId: (run.acpSessionId ?? null) as string | null,
+          hostSessionId: (run.hostSessionId ?? null) as string | null,
           runnerSnapshot: (run.runnerSnapshot ?? null) as never,
           capabilityAgent: (run.capabilityAgent ?? null) as string | null,
           runnerId: (run.runnerId ?? null) as string | null,
@@ -255,6 +258,9 @@ function seedScratchRun(
     acpSessionId: Object.hasOwn(overrides, "acpSessionId")
       ? overrides.acpSessionId
       : "acp-old",
+    hostSessionId: Object.hasOwn(overrides, "supervisorSessionId")
+      ? overrides.supervisorSessionId
+      : "sup-old",
     currentStepId: null,
   });
   if ((overrides.runKind ?? "scratch") === "scratch") {
@@ -318,6 +324,7 @@ function seedAssistantRun(
     },
     status: "Crashed",
     acpSessionId: "acp-old",
+    hostSessionId: "sup-old",
     currentStepId: null,
   });
   dbState.tables.scratch_runs.push({
@@ -459,7 +466,7 @@ describe("POST /api/scratch-runs/[runId]/recover", () => {
     });
     expect(dbState.tables.scratch_runs[0]).toMatchObject({
       dialogStatus: "WaitingForUser",
-      supervisorSessionId: "sup-new",
+      supervisorSessionId: "sup-old",
     });
   });
 
