@@ -1,0 +1,89 @@
+name: Bug report
+description: Report a reproducible problem in MAIster
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve MAIster. Search existing issues first.
+
+        Do not include secrets, private source code, personal data, machine-specific paths, or unredacted logs. Report security vulnerabilities through [GitHub private vulnerability reporting](https://github.com/kanischev/mAIster/security/advisories/new), not this form.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Provide a release tag or full commit SHA.
+      placeholder: 0123456789abcdef0123456789abcdef01234567
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Web control plane
+        - Supervisor or ACP adapter
+        - Flow engine or package lifecycle
+        - MCP facade
+        - Public website or documentation
+        - Deployment or operations
+        - Other or unknown
+    validations:
+      required: true
+  - type: textarea
+    id: current-behavior
+    attributes:
+      label: Current behavior
+      description: What happened, including the exact visible error or failed state?
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: What should have happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide the smallest deterministic sequence that reproduces the problem.
+      placeholder: |
+        1. Start ...
+        2. Configure ...
+        3. Run ...
+        4. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, Node, pnpm, Postgres, browser, adapter, and deployment shape when relevant.
+      placeholder: |
+        OS:
+        Node:
+        pnpm:
+        Postgres:
+        Browser:
+        ACP adapter:
+        Deployment:
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted evidence
+      description: Add relevant logs, screenshots, or traces after removing secrets, private paths, prompts, and source code.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues and discussions.
+          required: true
+        - label: I removed secrets, private code, personal data, and machine-specific paths.
+          required: true
+        - label: I agree to follow the project's Code of Conduct.
+          required: true

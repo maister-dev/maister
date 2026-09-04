@@ -1,0 +1,63 @@
+name: Feature request
+description: Propose a concrete MAIster capability or improvement
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the user problem before the implementation. Open-ended product and architecture exploration is usually better suited to [Discussions](https://github.com/kanischev/mAIster/discussions).
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or job to be done
+      description: Who has the problem, what are they trying to accomplish, and what blocks them today?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe observable success without prescribing an implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+      description: Optional implementation or interaction ideas, including affected boundaries.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Existing workflows, workarounds, or smaller changes that could solve the problem.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Primary area
+      options:
+        - Web control plane
+        - Supervisor or ACP adapters
+        - Flow engine or packages
+        - Evidence, review, or governance
+        - MCP or external API
+        - Deployment or operations
+        - Public website or documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Supporting evidence
+      description: Add public examples, measurements, or links. Do not include private code, prompts, paths, or credentials.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues and discussions.
+          required: true
+        - label: This request contains no secrets, private code, personal data, or machine-specific paths.
+          required: true
+        - label: I agree to follow the project's Code of Conduct.
+          required: true

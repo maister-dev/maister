@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Product and architecture discussions
+    url: https://github.com/kanischev/mAIster/discussions
+    about: Explore ideas and ask questions before turning them into scoped work.
+  - name: Documentation
+    url: https://docs.imaister.dev
+    about: Read the public setup, concepts, operations, and reference guides.
+  - name: Report a security vulnerability
+    url: https://github.com/kanischev/mAIster/security/advisories/new
+    about: Privately disclose a vulnerability. Do not open a public issue.
