@@ -1,0 +1,178 @@
+import "server-only";
+
+import { randomUUID, createHash } from "node:crypto";
+
+import { and, eq } from "drizzle-orm";
+
+import type { Db } from "./db";
+import type {
+  ExecutionHostTransport,
+  RuntimeObjectContent,
+  RuntimeObjectMetadata,
+} from "./contracts";
+import type { BoundClient } from "./client";
+import type {
+  RuntimeObjectKind,
+  RuntimeObjectRetentionClass,
+} from "./types";
+import type { ExecutionHost, ExecutionRuntimeObject } from "@/lib/db/schema";
+
+import { defaultTransport } from "./default-transport";
+import {
+  executionHosts,
+  executionRuntimeObjects,
+  runs,
+} from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
+
+export const MAX_RUNTIME_OBJECT_BYTES = 536_870_912;
+
+export type RuntimeObjectWithRun = {
+  object: ExecutionRuntimeObject;
+  projectId: string | null;
+  executionHost: ExecutionHost;
+};
+
+export type RuntimeObjectTransportResolver = (
+  host: ExecutionHost,
+) => Promise<ExecutionHostTransport>;
+
+// The manager never chooses a host path. It reserves an opaque object ID through
+// the run-bound command ledger, transfers a bounded byte buffer, and lets the
+// host's durable runtime event make the manager catalogue authoritative.
+export async function publishRuntimeObject(input: {
+  client: BoundClient;
+  objectId?: string;
+  kind: RuntimeObjectKind;
+  logicalName: string;
+  mimeType: string;
+  generation?: number;
+  retentionClass: RuntimeObjectRetentionClass;
+  expiresAt?: string | null;
+  bytes: Uint8Array;
+}): Promise<{ objectId: string; metadata: RuntimeObjectMetadata }> {
+  if (input.bytes.byteLength > MAX_RUNTIME_OBJECT_BYTES) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `runtime object exceeds the ${MAX_RUNTIME_OBJECT_BYTES}-byte limit`,
+      { details: { reason: "runtime_object_integrity_mismatch" } },
+    );
+  }
+  const objectId = input.objectId ?? randomUUID();
+  const generation = input.generation ?? 1;
+  const sha256 = createHash("sha256").update(input.bytes).digest("hex");
+  const reserved = await input.client.reserveRuntimeObject({
+    objectId,
+    kind: input.kind,
+    logicalName: input.logicalName,
+    mimeType: input.mimeType,
+    generation,
+    retentionClass: input.retentionClass,
+    expiresAt: input.expiresAt,
+  });
+
+  if (reserved.state === "available") {
+    if (
+      reserved.generation === generation &&
+      reserved.sizeBytes === input.bytes.byteLength &&
+      reserved.sha256 === sha256
+    ) {
+      return { objectId, metadata: reserved };
+    }
+    throw new MaisterError(
+      "CONFLICT",
+      "runtime object ID is already sealed with different content",
+      { details: { reason: "runtime_object_integrity_mismatch" } },
+    );
+  }
+
+  const metadata = await input.client.uploadRuntimeObject({
+    objectId,
+    generation,
+    bytes: input.bytes,
+    sha256,
+  });
+  return { objectId, metadata };
+}
+
+// Object and project identity are loaded together from manager-owned state.
+// A URL can select only the opaque IDs; it cannot select a host, assignment,
+// or any filesystem location.
+export async function getRuntimeObjectForRun(input: {
+  db: Db;
+  runId: string;
+  objectId: string;
+}): Promise<RuntimeObjectWithRun | null> {
+  const rows = await input.db
+    .select({
+      object: executionRuntimeObjects,
+      projectId: runs.projectId,
+      executionHost: executionHosts,
+    })
+    .from(executionRuntimeObjects)
+    .innerJoin(runs, eq(runs.id, executionRuntimeObjects.runId))
+    .innerJoin(
+      executionHosts,
+      eq(executionHosts.id, executionRuntimeObjects.executionHostId),
+    )
+    .where(
+      and(
+        eq(executionRuntimeObjects.id, input.objectId),
+        eq(executionRuntimeObjects.runId, input.runId),
+      ),
+    )
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export async function readRuntimeObjectContent(input: {
+  db: Db;
+  runId: string;
+  objectId: string;
+  range?: { start: number; end?: number };
+  transportForHost?: RuntimeObjectTransportResolver;
+}): Promise<{ object: ExecutionRuntimeObject; content: RuntimeObjectContent }> {
+  const loaded = await getRuntimeObjectForRun(input);
+  if (!loaded) {
+    throw new MaisterError("PRECONDITION", "runtime object was not found for this run", {
+      details: { reason: "runtime_object_missing", runId: input.runId },
+    });
+  }
+  if (loaded.object.state !== "available" || !loaded.object.sha256) {
+    throw new MaisterError("PRECONDITION", "runtime object content is not available", {
+      details: { reason: "runtime_object_missing", runId: input.runId },
+    });
+  }
+  const transport = input.transportForHost
+    ? await input.transportForHost(loaded.executionHost)
+    : defaultRuntimeObjectTransport(loaded.executionHost);
+  const content = await transport.getRuntimeObjectContent(
+    input.objectId,
+    { range: input.range },
+  );
+  const expectedDigest = `sha-256=:${Buffer.from(loaded.object.sha256, "hex").toString("base64")}:`;
+  if (content.contentDigest !== expectedDigest) {
+    throw new MaisterError("CONFLICT", "runtime object content digest differs from its manager catalogue", {
+      details: { reason: "runtime_object_integrity_mismatch", runId: input.runId },
+    });
+  }
+  return { object: loaded.object, content };
+}
+
+function defaultRuntimeObjectTransport(
+  host: ExecutionHost,
+): ExecutionHostTransport {
+  if (host.kind !== "local_direct") {
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "runtime object host transport is not installed",
+      {
+        details: {
+          reason: "runtime_object_transport_unsupported",
+          executionHostId: host.id,
+        },
+      },
+    );
+  }
+  return defaultTransport();
+}

@@ -1,8 +1,7 @@
 import type { Db } from "./db";
 import type { ExecutionCommand } from "@/lib/db/schema";
-import type { PromptResult } from "@/lib/supervisor-client";
+import type { PromptAccepted, PromptResult } from "@/lib/supervisor-client";
 import type { CommandReceipt } from "./contracts";
-import type { SessionCommandEvent } from "./signals";
 import type { CommandEnvelope, CommandKind } from "./types";
 
 import pino, { type Logger } from "pino";
@@ -10,6 +9,7 @@ import pino, { type Logger } from "pino";
 import {
   claimDelivering,
   failRetryable,
+  getCommand,
   markAccepted,
   markFailed,
   markFenced,
@@ -81,6 +81,24 @@ export const COMMAND_POLICY: Readonly<Record<CommandKind, KindPolicy>> = {
   "session.delete": {
     maxAttempts: 3,
     backoffBaseMs: 1_000,
+    driverless: true,
+    timeoutMs: 30_000,
+  },
+  "runtime_object.reserve": {
+    maxAttempts: 3,
+    backoffBaseMs: 500,
+    driverless: false,
+    timeoutMs: 10_000,
+  },
+  "runtime_object.upload": {
+    maxAttempts: 3,
+    backoffBaseMs: 1_000,
+    driverless: false,
+    timeoutMs: 60_000,
+  },
+  "runtime_object.delete": {
+    maxAttempts: 3,
+    backoffBaseMs: 500,
     driverless: true,
     timeoutMs: 30_000,
   },
@@ -360,7 +378,6 @@ export async function deliverCommand<TResult>(
 
 export type PromptHandle = {
   commandId: string;
-  completion: Promise<PromptResult>;
 };
 
 export type DeliverPromptOptions = {
@@ -377,9 +394,185 @@ export type DeliverPromptOptions = {
   now?: () => Date;
 };
 
-// ADR-166 D5 for `session.prompt`: the long-lived HTTP response, the SSE
-// `session.command` event, and the receipt are all durable completion
-// signals; the first one to arrive wins and later folds are no-ops.
+export type StartAsyncPromptOptions = {
+  db: Db;
+  command: ExecutionCommand;
+  envelope: CommandEnvelope<unknown>;
+  start: (envelope: CommandEnvelope<unknown>) => Promise<PromptAccepted>;
+  lookupReceipt: (commandId: string) => Promise<CommandReceipt | null>;
+  logger?: Logger;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => Date;
+};
+
+function receiptError(receipt: CommandReceipt): MaisterError {
+  const body = receipt.body;
+  const code = body.code === "FENCED" ? "CONFLICT" : "ACP_PROTOCOL";
+  const message =
+    typeof body.message === "string" ? body.message : "prompt rejected";
+
+  return new MaisterError(code, message, {
+    details: {
+      ...(typeof body.reason === "string" ? { reason: body.reason } : {}),
+      commandId: receipt.commandId,
+    },
+  });
+}
+
+// Canonical mode never waits for an ACP response. The accepted command/receipt
+// is the admission result; terminal state arrives through a committed canonical
+// event, or is recovered from the same host receipt after an acknowledgement
+// loss. The command id remains unchanged across every retry.
+export async function startAsyncPrompt(
+  opts: StartAsyncPromptOptions,
+): Promise<PromptHandle> {
+  const logger = opts.logger ?? defaultLog;
+  const sleep = opts.sleep ?? defaultSleep;
+  const now = opts.now ?? (() => new Date());
+  const commandId = opts.command.id;
+  const policy = COMMAND_POLICY["session.prompt"];
+  let attempts = opts.command.attempts;
+
+  for (;;) {
+    const claimed = await claimDelivering(opts.db, commandId, attempts, {
+      logger,
+      now: now(),
+    });
+    if (!claimed.changed) {
+      return { commandId };
+    }
+    attempts = claimed.row?.attempts ?? attempts + 1;
+
+    try {
+      const accepted = await opts.start(opts.envelope);
+      if (accepted.commandId !== commandId || accepted.state !== "accepted") {
+        throw new MaisterError(
+          "ACP_PROTOCOL",
+          "execution host returned a mismatched prompt admission",
+          { details: { reason: "prompt_admission_mismatch", commandId } },
+        );
+      }
+      await markAccepted(opts.db, commandId, attempts, { logger, now: now() });
+      commandSignals.wake(commandId);
+      logger.info(
+        { commandId, commandKind: "session.prompt", attempt: attempts },
+        "prompt-command-accepted",
+      );
+      return { commandId };
+    } catch (error) {
+      if (!isUnknownOutcome(error)) {
+        const domainError = isMaisterError(error)
+          ? error
+          : new MaisterError("ACP_PROTOCOL", String(error));
+        await (isFencedError(domainError) ? markFenced : markFailed)(
+          opts.db,
+          commandId,
+          attempts,
+          errorRecord(domainError),
+          { logger, now: now() },
+        );
+        commandSignals.wake(commandId);
+        throw domainError;
+      }
+
+      let receipt: CommandReceipt | null;
+      try {
+        receipt = await lookupReceiptUntilReachable(
+          opts.lookupReceipt,
+          commandId,
+          sleep,
+        );
+      } catch (lookupError) {
+        if (attempts >= policy.maxAttempts) {
+          const unavailable = new MaisterError(
+            "EXECUTOR_UNAVAILABLE",
+            `prompt ${commandId} stayed unreachable while reconciling admission`,
+            {
+              cause: lookupError,
+              details: { reason: "receipt_lookup_failed", commandId },
+            },
+          );
+          await markFailed(opts.db, commandId, attempts, errorRecord(unavailable), {
+            logger,
+            now: now(),
+          });
+          commandSignals.wake(commandId);
+          throw unavailable;
+        }
+        await failRetryable(
+          opts.db,
+          commandId,
+          attempts,
+          errorRecord(lookupError),
+          {
+            nextAttemptAt: new Date(
+              now().getTime() + backoffMs(policy.backoffBaseMs, attempts),
+            ),
+          },
+          { logger, now: now() },
+        );
+        await sleep(backoffMs(policy.backoffBaseMs, attempts));
+        continue;
+      }
+      if (receipt?.phase === "accepted") {
+        await markAccepted(opts.db, commandId, attempts, { logger, now: now() });
+        commandSignals.wake(commandId);
+        return { commandId };
+      }
+      if (receipt?.phase === "completed") {
+        await markSucceeded(opts.db, commandId, attempts, receipt.body, {
+          logger,
+          now: now(),
+        });
+        commandSignals.wake(commandId);
+        return { commandId };
+      }
+      if (receipt?.phase === "rejected") {
+        const errorFromReceipt = receiptError(receipt);
+        await (isFencedError(errorFromReceipt) ? markFenced : markFailed)(
+          opts.db,
+          commandId,
+          attempts,
+          errorRecord(errorFromReceipt),
+          { logger, now: now() },
+        );
+        commandSignals.wake(commandId);
+        throw errorFromReceipt;
+      }
+      if (attempts >= policy.maxAttempts) {
+        const exhausted = new MaisterError(
+          "EXECUTOR_UNAVAILABLE",
+          `prompt ${commandId} exhausted its delivery budget`,
+          { details: { reason: "delivery_budget_exhausted", commandId } },
+        );
+        await markFailed(opts.db, commandId, attempts, errorRecord(exhausted), {
+          logger,
+          now: now(),
+        });
+        commandSignals.wake(commandId);
+        throw exhausted;
+      }
+      await failRetryable(
+        opts.db,
+        commandId,
+        attempts,
+        errorRecord(error),
+        {
+          nextAttemptAt: new Date(
+            now().getTime() + backoffMs(policy.backoffBaseMs, attempts),
+          ),
+        },
+        { logger, now: now() },
+      );
+      await sleep(backoffMs(policy.backoffBaseMs, attempts));
+    }
+  }
+}
+
+// Legacy-mode prompt delivery retains the synchronous host wire only as a
+// compatibility adapter. Its outcome is durably folded into the command ledger;
+// callers use `waitForPromptCompletion` rather than retaining this process's
+// promise. Canonical runs use the asynchronous admission path in the client.
 export function deliverPrompt(opts: DeliverPromptOptions): PromptHandle {
   const logger = opts.logger ?? defaultLog;
   const sleep = opts.sleep ?? defaultSleep;
@@ -387,18 +580,11 @@ export function deliverPrompt(opts: DeliverPromptOptions): PromptHandle {
   const policy = COMMAND_POLICY["session.prompt"];
   const commandId = opts.command.id;
   let attempts = opts.command.attempts;
-  let accepted = false;
   let settled = false;
-  let resolveCompletion!: (r: PromptResult) => void;
-  let rejectCompletion!: (e: unknown) => void;
-  const completion = new Promise<PromptResult>((resolve, reject) => {
-    resolveCompletion = resolve;
-    rejectCompletion = reject;
-  });
 
-  // A ledger write that fails mid-turn must never leave `completion` pending:
-  // the driver still learns the turn's outcome, and the recovery pass folds the
-  // durable row from the host's receipt later.
+  // A ledger write failure is retained as a typed error and a recovery sweep
+  // folds the receipt. It never leaves a serializable handle with an invented
+  // in-memory result.
   const ledgerWrite = async (
     what: string,
     write: () => Promise<unknown>,
@@ -421,7 +607,7 @@ export function deliverPrompt(opts: DeliverPromptOptions): PromptHandle {
   const settleSuccess = async (result: PromptResult, source: string) => {
     if (settled) return;
     settled = true;
-    unsubscribe();
+    unsubscribeLegacy();
     await ledgerWrite("succeeded", () =>
       markSucceeded(
         opts.db,
@@ -441,13 +627,13 @@ export function deliverPrompt(opts: DeliverPromptOptions): PromptHandle {
       },
       "command-succeeded",
     );
-    resolveCompletion(result);
+    commandSignals.wake(commandId);
   };
 
   const settleFailure = async (err: MaisterError, source: string) => {
     if (settled) return;
     settled = true;
-    unsubscribe();
+    unsubscribeLegacy();
     await ledgerWrite(isFencedError(err) ? "fenced" : "failed", () =>
       isFencedError(err)
         ? markFenced(opts.db, commandId, null, errorRecord(err), {
@@ -470,7 +656,7 @@ export function deliverPrompt(opts: DeliverPromptOptions): PromptHandle {
       },
       "command-failed",
     );
-    rejectCompletion(err);
+    commandSignals.wake(commandId);
   };
 
   const ledgerFailure = (err: unknown, source: string) =>
@@ -485,43 +671,25 @@ export function deliverPrompt(opts: DeliverPromptOptions): PromptHandle {
       source,
     );
 
-  const onSignal = (event: SessionCommandEvent) => {
-    void (async () => {
-      try {
-        if (event.phase === "accepted") {
-          if (!accepted) {
-            accepted = true;
-            await ledgerWrite("accepted", () =>
-              markAccepted(opts.db, commandId, null, { logger, now: now() }),
-            );
-          }
-
-          return;
-        }
-
-        if (event.status === "succeeded") {
-          await settleSuccess(event.result as PromptResult, "sse");
-        } else {
-          const body = event.error ?? {
-            code: "ACP_PROTOCOL",
-            message: "prompt failed",
-          };
-          const code =
-            body.code === "FENCED"
-              ? "CONFLICT"
-              : (body.code as MaisterError["code"]);
-
-          await settleFailure(
-            new MaisterError(code, body.message, { details: body.details }),
-            "sse",
+  const unsubscribeLegacy = commandSignals.subscribeLegacy(
+    commandId,
+    (event) => {
+      if (event.phase !== "accepted") return;
+      void markAccepted(opts.db, commandId, null, { logger, now: now() })
+        .then(() => commandSignals.wake(commandId))
+        .catch((error: unknown) => {
+          logger.error(
+            {
+              commandId,
+              commandKind: "session.prompt",
+              transition: "legacy-accepted",
+              err: error instanceof Error ? error.message : String(error),
+            },
+            "command-ledger-write-failed",
           );
-        }
-      } catch (err) {
-        await ledgerFailure(err, "sse");
-      }
-    })();
-  };
-  const unsubscribe = commandSignals.subscribe(commandId, onSignal);
+        });
+    },
+  );
 
   const drive = async (): Promise<void> => {
     for (;;) {
@@ -670,23 +838,6 @@ export function deliverPrompt(opts: DeliverPromptOptions): PromptHandle {
 
           return;
         }
-        if (accepted) {
-          // SSE said accepted but the host has no receipt: the turn cannot be
-          // recovered by re-sending (a fresh execution would double-run it).
-          await settleFailure(
-            new MaisterError(
-              "ACP_PROTOCOL",
-              `prompt ${commandId} accepted but its receipt is missing`,
-              {
-                cause: err,
-                details: { reason: "receipt_missing", commandId },
-              },
-            ),
-            "receipt",
-          );
-
-          return;
-        }
         if (attempts >= policy.maxAttempts) {
           await settleFailure(
             new MaisterError(
@@ -722,5 +873,87 @@ export function deliverPrompt(opts: DeliverPromptOptions): PromptHandle {
 
   void drive().catch((err) => ledgerFailure(err, "delivering"));
 
-  return { commandId, completion };
+  return { commandId };
+}
+
+function promptResultFromCommand(row: ExecutionCommand): PromptResult {
+  const result = row.result;
+  if (!result || typeof result.stopReason !== "string") {
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      `prompt ${row.id} succeeded without a valid terminal result`,
+      { details: { reason: "prompt_result_invalid", commandId: row.id } },
+    );
+  }
+
+  return result as PromptResult;
+}
+
+function promptFailureFromCommand(row: ExecutionCommand): MaisterError {
+  const error = row.lastError ?? {};
+  const code = error.code === "FENCED" ? "CONFLICT" : "ACP_PROTOCOL";
+  const message =
+    typeof error.message === "string"
+      ? error.message
+      : `prompt ${row.id} ${row.state}`;
+
+  return new MaisterError(code, message, {
+    details: {
+      ...(typeof error.reason === "string" ? { reason: error.reason } : {}),
+      commandId: row.id,
+    },
+  });
+}
+
+async function waitForCommandWake(
+  commandId: string,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  if (signal?.aborted) {
+    throw new MaisterError("PRECONDITION", "prompt completion wait aborted", {
+      details: { reason: "prompt_wait_aborted", commandId },
+    });
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const finish = (): void => {
+      clearTimeout(timeout);
+      unsubscribe();
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    };
+    const abort = (): void => {
+      clearTimeout(timeout);
+      unsubscribe();
+      signal?.removeEventListener("abort", abort);
+      reject(
+        new MaisterError("PRECONDITION", "prompt completion wait aborted", {
+          details: { reason: "prompt_wait_aborted", commandId },
+        }),
+      );
+    };
+    const unsubscribe = commandSignals.subscribe(commandId, finish);
+    const timeout = setTimeout(finish, 250);
+    signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
+export async function waitForPromptCompletion(input: {
+  db: Db;
+  handle: PromptHandle;
+  signal?: AbortSignal;
+}): Promise<PromptResult> {
+  for (;;) {
+    const row = await getCommand(input.db, input.handle.commandId);
+    if (!row || row.kind !== "session.prompt") {
+      throw new MaisterError("PRECONDITION", "prompt command is not available", {
+        details: { reason: "prompt_command_missing", commandId: input.handle.commandId },
+      });
+    }
+    if (row.state === "succeeded") return promptResultFromCommand(row);
+    if (row.state === "failed" || row.state === "fenced") {
+      throw promptFailureFromCommand(row);
+    }
+    await waitForCommandWake(row.id, input.signal);
+  }
 }

@@ -27,7 +27,7 @@ export const RECEIPT_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 export const RECEIPT_PRUNE_INTERVAL_MS = 60 * 60 * 1_000;
 export const EXECUTION_HOST_PROTOCOL_VERSION = 1;
 // `PRAGMA user_version` of the state file; bumped with every migration below.
-export const HOST_STATE_SCHEMA_VERSION = 4;
+export const HOST_STATE_SCHEMA_VERSION = 6;
 const MAX_HOST_EVENT_SEQUENCE = (1n << 63n) - 1n;
 const HOST_EVENT_SEQUENCE_SORT_WIDTH = 20;
 export const MAX_RUNTIME_EVENT_OUTBOX_BYTES = 64 * 1024 * 1024;
@@ -103,7 +103,9 @@ export type CommandReceiptRow = {
   commandId: string;
   runId: string;
   kind: string;
+  assignmentId: string | null;
   epoch: number;
+  hostSessionId: string | null;
   requestDigest: string | null;
   eventId: string | null;
   phase: ReceiptPhase;
@@ -125,6 +127,30 @@ export type WorkspaceRow = {
   contextMounts: unknown[] | null;
   adoptedAt: string;
   releasedAt: string | null;
+};
+
+// This row is deliberately supervisor-private. `privatePath` is never put in
+// an event, response, or manager-owned record; callers use only `id`.
+export type HostRuntimeObjectRow = {
+  id: string;
+  runId: string;
+  assignmentId: string;
+  assignmentEpoch: number;
+  hostSessionId: string | null;
+  kind: string;
+  logicalName: string;
+  mimeType: string;
+  sizeBytes: number | null;
+  sha256: string | null;
+  generation: number;
+  retentionClass: string;
+  state: "pending" | "available" | "deleting" | "missing" | "deleted" | "expired" | "corrupt";
+  privatePath: string;
+  createdAt: string;
+  sealedAt: string | null;
+  expiresAt: string | null;
+  deletedAt: string | null;
+  lastError: Record<string, unknown> | null;
 };
 
 export type HostRuntimeEventRow = {
@@ -163,11 +189,21 @@ export type HostState = {
   setFence(runId: string, assignmentId: string, epoch: number): void;
   getReceipt(commandId: string): CommandReceiptRow | null;
   putReceipt(row: CommandReceiptRow): void;
+  // A fresh supervisor process has no ACP process to join. Canonical async
+  // prompt receipts retain their fence/session binding, so startup can make
+  // the loss explicit through one durable terminal receipt/event pair.
+  recoverAcceptedPromptReceipts(): number;
   pruneReceipts(olderThan: Date): number;
   findWorkspaceByRealPath(runId: string, realPath: string): WorkspaceRow | null;
   getWorkspace(id: string): WorkspaceRow | null;
   insertWorkspace(row: WorkspaceRow): void;
   releaseWorkspace(id: string, releasedAt: string): boolean;
+  getRuntimeObject(id: string): HostRuntimeObjectRow | null;
+  insertRuntimeObject(row: HostRuntimeObjectRow): void;
+  updateRuntimeObject(
+    id: string,
+    patch: Pick<HostRuntimeObjectRow, "state" | "sizeBytes" | "sha256" | "sealedAt" | "deletedAt" | "lastError">,
+  ): HostRuntimeObjectRow;
   appendRuntimeEvent(input: AppendRuntimeEventInput): HostRuntimeEventRow;
   putReceiptWithRuntimeEvent(
     receipt: CommandReceiptRow,
@@ -253,7 +289,9 @@ CREATE TABLE IF NOT EXISTS command_receipts (
   command_id TEXT PRIMARY KEY,
   run_id TEXT NOT NULL,
   kind TEXT NOT NULL,
+  assignment_id TEXT,
   epoch INTEGER NOT NULL,
+  host_session_id TEXT,
   request_digest TEXT,
   event_id TEXT,
   phase TEXT NOT NULL,
@@ -263,6 +301,29 @@ CREATE TABLE IF NOT EXISTS command_receipts (
   completed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS command_receipts_received_idx ON command_receipts (received_at);
+CREATE TABLE IF NOT EXISTS runtime_objects (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  assignment_id TEXT NOT NULL,
+  assignment_epoch INTEGER NOT NULL,
+  host_session_id TEXT,
+  kind TEXT NOT NULL,
+  logical_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  size_bytes INTEGER,
+  sha256 TEXT,
+  generation INTEGER NOT NULL CHECK (generation >= 1),
+  retention_class TEXT NOT NULL,
+  state TEXT NOT NULL,
+  private_path TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  sealed_at TEXT,
+  expires_at TEXT,
+  deleted_at TEXT,
+  last_error_json TEXT
+);
+CREATE INDEX IF NOT EXISTS runtime_objects_run_state_idx ON runtime_objects (run_id, state, created_at);
+CREATE INDEX IF NOT EXISTS runtime_objects_expiry_idx ON runtime_objects (expires_at) WHERE expires_at IS NOT NULL;
 CREATE TABLE IF NOT EXISTS runtime_event_streams (
   stream_id TEXT PRIMARY KEY,
   next_sequence TEXT NOT NULL,
@@ -362,6 +423,46 @@ PRAGMA user_version = 4;
 COMMIT;
 `;
 
+// The Stage B async prompt recovery boundary needs the assignment fence and
+// host session that accepted the turn. Earlier Stage A rows remain readable
+// with NULL provenance and continue through the bounded legacy path.
+const MIGRATE_V4_TO_V5 = `
+BEGIN;
+ALTER TABLE command_receipts ADD COLUMN assignment_id TEXT;
+ALTER TABLE command_receipts ADD COLUMN host_session_id TEXT;
+PRAGMA user_version = 5;
+COMMIT;
+`;
+
+const MIGRATE_V5_TO_V6 = `
+BEGIN;
+CREATE TABLE runtime_objects (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  assignment_id TEXT NOT NULL,
+  assignment_epoch INTEGER NOT NULL,
+  host_session_id TEXT,
+  kind TEXT NOT NULL,
+  logical_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  size_bytes INTEGER,
+  sha256 TEXT,
+  generation INTEGER NOT NULL CHECK (generation >= 1),
+  retention_class TEXT NOT NULL,
+  state TEXT NOT NULL,
+  private_path TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  sealed_at TEXT,
+  expires_at TEXT,
+  deleted_at TEXT,
+  last_error_json TEXT
+);
+CREATE INDEX runtime_objects_run_state_idx ON runtime_objects (run_id, state, created_at);
+CREATE INDEX runtime_objects_expiry_idx ON runtime_objects (expires_at) WHERE expires_at IS NOT NULL;
+PRAGMA user_version = 6;
+COMMIT;
+`;
+
 function applySchema(db: DatabaseSync): void {
   const fresh =
     db
@@ -385,6 +486,8 @@ function applySchema(db: DatabaseSync): void {
   if (Number(user_version) < 2) db.exec(MIGRATE_V1_TO_V2);
   if (Number(user_version) < 3) db.exec(MIGRATE_V2_TO_V3);
   if (Number(user_version) < 4) db.exec(MIGRATE_V3_TO_V4);
+  if (Number(user_version) < 5) db.exec(MIGRATE_V4_TO_V5);
+  if (Number(user_version) < 6) db.exec(MIGRATE_V5_TO_V6);
   db.exec(SCHEMA);
 }
 
@@ -519,7 +622,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     getReceipt(commandId) {
       const row = db
         .prepare(
-          `SELECT command_id, run_id, kind, epoch, request_digest, event_id, phase, http_status, body_json, received_at, completed_at
+          `SELECT command_id, run_id, kind, assignment_id, epoch, host_session_id, request_digest, event_id, phase, http_status, body_json, received_at, completed_at
            FROM command_receipts WHERE command_id = ?`,
         )
         .get(commandId) as
@@ -527,7 +630,9 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
             command_id: string;
             run_id: string;
             kind: string;
+            assignment_id: string | null;
             epoch: number;
+            host_session_id: string | null;
             request_digest: string | null;
             event_id: string | null;
             phase: ReceiptPhase;
@@ -544,7 +649,9 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         commandId: row.command_id,
         runId: row.run_id,
         kind: row.kind,
+        assignmentId: row.assignment_id,
         epoch: Number(row.epoch),
+        hostSessionId: row.host_session_id,
         requestDigest: row.request_digest,
         eventId: row.event_id,
         phase: row.phase,
@@ -556,6 +663,91 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     },
     putReceipt(row) {
       writeReceiptRow(db, row);
+    },
+    recoverAcceptedPromptReceipts() {
+      const rows = db
+        .prepare(
+          `SELECT command_id, run_id, kind, assignment_id, epoch, host_session_id, request_digest, event_id, phase, http_status, body_json, received_at, completed_at
+           FROM command_receipts
+           WHERE kind = 'session.prompt'
+             AND phase = 'accepted'
+             AND assignment_id IS NOT NULL
+             AND host_session_id IS NOT NULL
+           ORDER BY received_at ASC, command_id ASC`,
+        )
+        .all() as Array<{
+        command_id: string;
+        run_id: string;
+        kind: string;
+        assignment_id: string;
+        epoch: number;
+        host_session_id: string;
+        request_digest: string | null;
+        event_id: string | null;
+        phase: ReceiptPhase;
+        http_status: number;
+        body_json: string;
+        received_at: string;
+        completed_at: string | null;
+      }>;
+      if (rows.length === 0) return 0;
+
+      const recovered: HostRuntimeEventRow[] = [];
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        for (const row of rows) {
+          const body = {
+            code: "PRECONDITION",
+            message: "the turn for this command id was lost in a host restart",
+            details: { reason: "turn_lost", runId: row.run_id },
+          };
+          const event = appendRuntimeEventInTransaction(db, {
+            hostKey,
+            bootId,
+            now,
+            input: {
+              terminal: true,
+              draft: {
+                runId: row.run_id,
+                assignmentId: row.assignment_id,
+                assignmentEpoch: Number(row.epoch),
+                hostSessionId: row.host_session_id,
+                eventType: "session.command",
+                occurredAt: now().toISOString(),
+                payload: {
+                  commandId: row.command_id,
+                  kind: "session.prompt",
+                  phase: "completed",
+                  status: "failed",
+                  error: body,
+                },
+              },
+            },
+          });
+          writeReceiptRow(db, {
+            commandId: row.command_id,
+            runId: row.run_id,
+            kind: row.kind,
+            assignmentId: row.assignment_id,
+            epoch: Number(row.epoch),
+            hostSessionId: row.host_session_id,
+            requestDigest: row.request_digest,
+            eventId: event.eventId,
+            phase: "rejected",
+            httpStatus: 409,
+            body,
+            receivedAt: row.received_at,
+            completedAt: now().toISOString(),
+          });
+          recovered.push(event);
+        }
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+      recovered.forEach(notifyRuntimeEventListeners);
+      return recovered.length;
     },
     pruneReceipts(olderThan) {
       const result = db
@@ -605,6 +797,62 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         .run(releasedAt, id);
 
       return Number(result.changes) > 0;
+    },
+    getRuntimeObject(id) {
+      const row = db.prepare("SELECT * FROM runtime_objects WHERE id = ?").get(id);
+
+      return row ? toHostRuntimeObjectRow(row) : null;
+    },
+    insertRuntimeObject(row) {
+      db.prepare(
+        `INSERT INTO runtime_objects
+           (id, run_id, assignment_id, assignment_epoch, host_session_id, kind,
+            logical_name, mime_type, size_bytes, sha256, generation,
+            retention_class, state, private_path, created_at, sealed_at,
+            expires_at, deleted_at, last_error_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        row.id,
+        row.runId,
+        row.assignmentId,
+        row.assignmentEpoch,
+        row.hostSessionId,
+        row.kind,
+        row.logicalName,
+        row.mimeType,
+        row.sizeBytes,
+        row.sha256,
+        row.generation,
+        row.retentionClass,
+        row.state,
+        row.privatePath,
+        row.createdAt,
+        row.sealedAt,
+        row.expiresAt,
+        row.deletedAt,
+        row.lastError ? JSON.stringify(row.lastError) : null,
+      );
+    },
+    updateRuntimeObject(id, patch) {
+      const existing = db.prepare("SELECT * FROM runtime_objects WHERE id = ?").get(id);
+      if (!existing) throw new Error(`runtime object ${id} is missing`);
+      db.prepare(
+        `UPDATE runtime_objects
+         SET state = ?, size_bytes = ?, sha256 = ?, sealed_at = ?,
+             deleted_at = ?, last_error_json = ?
+         WHERE id = ?`,
+      ).run(
+        patch.state,
+        patch.sizeBytes,
+        patch.sha256,
+        patch.sealedAt,
+        patch.deletedAt,
+        patch.lastError ? JSON.stringify(patch.lastError) : null,
+        id,
+      );
+      const updated = db.prepare("SELECT * FROM runtime_objects WHERE id = ?").get(id);
+      if (!updated) throw new Error(`runtime object ${id} vanished during update`);
+      return toHostRuntimeObjectRow(updated);
     },
     appendRuntimeEvent(input) {
       db.exec("BEGIN IMMEDIATE");
@@ -1029,9 +1277,11 @@ function appendRuntimeEventInTransaction(
 function writeReceiptRow(db: DatabaseSync, row: CommandReceiptRow): void {
   db.prepare(
     `INSERT INTO command_receipts
-       (command_id, run_id, kind, epoch, request_digest, event_id, phase, http_status, body_json, received_at, completed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (command_id, run_id, kind, assignment_id, epoch, host_session_id, request_digest, event_id, phase, http_status, body_json, received_at, completed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (command_id) DO UPDATE SET
+       assignment_id = COALESCE(command_receipts.assignment_id, excluded.assignment_id),
+       host_session_id = COALESCE(command_receipts.host_session_id, excluded.host_session_id),
        request_digest = COALESCE(command_receipts.request_digest, excluded.request_digest),
        event_id = excluded.event_id,
        phase = excluded.phase,
@@ -1042,7 +1292,9 @@ function writeReceiptRow(db: DatabaseSync, row: CommandReceiptRow): void {
     row.commandId,
     row.runId,
     row.kind,
+    row.assignmentId,
     row.epoch,
+    row.hostSessionId,
     row.requestDigest,
     row.eventId,
     row.phase,
@@ -1207,6 +1459,41 @@ function toWorkspaceRow(row: Record<string, unknown>): WorkspaceRow {
         : (JSON.parse(String(row.context_mounts)) as unknown[]),
     adoptedAt: String(row.adopted_at),
     releasedAt: row.released_at === null ? null : String(row.released_at),
+  };
+}
+
+function toHostRuntimeObjectRow(
+  row: Record<string, unknown>,
+): HostRuntimeObjectRow {
+  return {
+    id: String(row.id),
+    runId: String(row.run_id),
+    assignmentId: String(row.assignment_id),
+    assignmentEpoch: Number(row.assignment_epoch),
+    hostSessionId:
+      row.host_session_id === null || row.host_session_id === undefined
+        ? null
+        : String(row.host_session_id),
+    kind: String(row.kind),
+    logicalName: String(row.logical_name),
+    mimeType: String(row.mime_type),
+    sizeBytes:
+      row.size_bytes === null || row.size_bytes === undefined
+        ? null
+        : Number(row.size_bytes),
+    sha256: row.sha256 === null || row.sha256 === undefined ? null : String(row.sha256),
+    generation: Number(row.generation),
+    retentionClass: String(row.retention_class),
+    state: String(row.state) as HostRuntimeObjectRow["state"],
+    privatePath: String(row.private_path),
+    createdAt: String(row.created_at),
+    sealedAt: row.sealed_at === null ? null : String(row.sealed_at),
+    expiresAt: row.expires_at === null ? null : String(row.expires_at),
+    deletedAt: row.deleted_at === null ? null : String(row.deleted_at),
+    lastError:
+      row.last_error_json === null || row.last_error_json === undefined
+        ? null
+        : (JSON.parse(String(row.last_error_json)) as Record<string, unknown>),
   };
 }
 

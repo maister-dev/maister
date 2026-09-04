@@ -330,7 +330,7 @@ describe("execution-command recovery (real supervisor)", () => {
     );
 
     // The live driver observes the loss through its own receipt lookup.
-    await expect(handle.completion).rejects.toSatisfy(
+    await expect(client.waitForPrompt(handle)).rejects.toSatisfy(
       (err: unknown) =>
         isMaisterError(err) && err.details?.reason === "turn_lost",
     );

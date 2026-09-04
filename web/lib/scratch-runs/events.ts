@@ -758,7 +758,9 @@ export async function sendScratchPromptAndProjectEvents(args: {
       { signal: args.signal },
     );
 
-    promptResult = await handle.completion;
+    promptResult = await execution.client.waitForPrompt(handle, {
+      signal: args.signal,
+    });
   } finally {
     consumer.abort.abort();
     await consumer.done;

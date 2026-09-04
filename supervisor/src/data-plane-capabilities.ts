@@ -34,8 +34,8 @@ export function executionHostCapabilities(): ExecutionHostCapabilities {
   return {
     dataPlaneVersion: EXECUTION_HOST_DATA_PLANE_VERSION,
     eventStream: true,
-  asyncPrompt: true,
-    runtimeObjects: false,
+    asyncPrompt: true,
+    runtimeObjects: true,
     limits: EXECUTION_HOST_CAPABILITY_LIMITS,
   };
 }

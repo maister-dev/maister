@@ -2246,12 +2246,11 @@ async function startConsensusRunnerDraftSession(args: {
       });
     });
 
-    await (
-      await execution.client.prompt(session.sessionId, {
-        stepId: "agent",
-        prompt: consensusDraftPromptBlock(args.payload),
-      })
-    ).completion;
+    const promptHandle = await execution.client.prompt(session.sessionId, {
+      stepId: "agent",
+      prompt: consensusDraftPromptBlock(args.payload),
+    });
+    await execution.client.waitForPrompt(promptHandle);
 
     log.info(
       {
@@ -3029,9 +3028,11 @@ export async function sendAgentMessage(
       );
     }
 
-    await (
-      await client.prompt(live.sessionId, { stepId: "agent", prompt })
-    ).completion;
+    const promptHandle = await client.prompt(live.sessionId, {
+      stepId: "agent",
+      prompt,
+    });
+    await client.waitForPrompt(promptHandle);
 
     return { childRunId, status: "Running" };
   }
@@ -3760,12 +3761,11 @@ export async function startAgentSession(
       });
     });
 
-    await (
-      await execution.client.prompt(session.sessionId, {
-        stepId: "agent",
-        prompt,
-      })
-    ).completion;
+    const promptHandle = await execution.client.prompt(session.sessionId, {
+      stepId: "agent",
+      prompt,
+    });
+    await execution.client.waitForPrompt(promptHandle);
   } catch (err) {
     if (isFencedError(err)) {
       // ADR-166: a newer driver generation owns the run — yield without

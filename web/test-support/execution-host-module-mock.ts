@@ -52,6 +52,7 @@ function isGoneError(err: unknown): boolean {
 }
 
 export function executionHostModuleMock(spies: ExecutionHostSpies) {
+  const promptResults = new Map<string, Promise<unknown>>();
   const boundClient = (runId: string) => ({
     assignment: { id: `assignment-${runId}`, runId, epoch: 1, state: "active" },
     host: { id: "host-1", hostKey: "eh_test" },
@@ -66,12 +67,19 @@ export function executionHostModuleMock(spies: ExecutionHostSpies) {
       return { ...result, hostSessionId: result.sessionId };
     },
     async prompt(sessionId: string, input: unknown, opts?: unknown) {
+      const commandId = `cmd-${runId}`;
+      promptResults.set(
+        commandId,
+        Promise.resolve(call(spies, "sendPrompt")(sessionId, input, opts)),
+      );
       return {
-        commandId: `cmd-${runId}`,
-        completion: Promise.resolve(
-          call(spies, "sendPrompt")(sessionId, input, opts),
-        ),
+        commandId,
       };
+    },
+    async waitForPrompt(handle: { commandId: string }) {
+      const result = promptResults.get(handle.commandId);
+      if (!result) throw new Error(`execution-host mock: unknown prompt ${handle.commandId}`);
+      return result;
     },
     async deliverInput(
       sessionId: string,
@@ -243,13 +251,20 @@ export function legacyScratchApiToExecution(api: {
   ) => Promise<unknown>;
   streamSession: (sessionId: string, opts?: unknown) => AsyncIterable<unknown>;
 }): ScratchExecution {
+  const promptResults = new Map<string, Promise<unknown>>();
   return {
     client: {
       async prompt(sessionId: string, input: unknown, opts?: unknown) {
+        const commandId = "cmd-legacy";
+        promptResults.set(commandId, api.sendPrompt(sessionId, input, opts));
         return {
-          commandId: "cmd-legacy",
-          completion: api.sendPrompt(sessionId, input, opts),
+          commandId,
         };
+      },
+      async waitForPrompt(handle: { commandId: string }) {
+        const result = promptResults.get(handle.commandId);
+        if (!result) throw new Error(`legacy scratch mock: unknown prompt ${handle.commandId}`);
+        return result;
       },
       async deliverInput(
         sessionId: string,

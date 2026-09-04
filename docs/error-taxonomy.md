@@ -574,7 +574,7 @@ Two host-side tokens carry a second detail field: `legacy_field` carries
 `details.field` (the offending legacy path field) and `workspace_rejected`
 carries `details.mount` when a `contextMounts[]` entry is the offender.
 
-### Stage B data-plane tokens (Designed — ADR-167)
+### Stage B data-plane tokens (Implemented — ADR-167)
 
 Stage B remains within the closed `MaisterError` union. Supervisor protocol
 refusals use `PRECONDITION` (invalid input), `CONFLICT` (foreign/stale stream
@@ -588,6 +588,14 @@ or epoch), `ACP_PROTOCOL` (integrity disagreement), or
 `runtime_object_integrity_mismatch`. Error details contain only safe IDs,
 sequence, byte count, limit, and remediation token — never event payload,
 prompt, object bytes, filesystem path, credentials, or environment values.
+
+Browser-facing runtime-object reads map these typed reasons without exposing a
+host identifier: unknown or cross-run objects are existence-hidden as `404`, a
+catalogued tombstone is `410`, an invalid or unsatisfiable single range is
+`416`, a checksum disagreement is `409`, and an unavailable execution-host
+transport is `503`. The response body stays the normal safe `MaisterError`
+shape; host paths, payload bytes, and transport diagnostics remain server logs
+only.
 
 ## Construction
 

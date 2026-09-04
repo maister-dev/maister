@@ -1,16 +1,19 @@
 asyncapi: 2.6.0
 info:
   title: MAIster Web — per-run SSE bridge
-  version: "0.8.0"
+  version: "0.9.0"
   description: |
     Server-Sent Events delivered by the Next.js web tier's
     `GET /api/runs/{runId}/stream` endpoint (described in
     `../web.openapi.yaml`).
 
-    The web SSE bridge tails a single durable per-run log at
-    `.maister/<projectSlug>/runs/<runId>/run.events.jsonl` that the
-    supervisor appends to in lockstep with its own SSE side-channel.
-    The durable event union matches the supervisor's SSE union
+    Each run has an immutable data-plane mode. Canonical-event runs replay
+    manager-owned PostgreSQL `execution_events` by the run sequence; a local
+    in-process wake is only a latency hint. Drained legacy-file runs retain
+    their bounded `run.events.jsonl` reader until B4. The web tier never reads
+    an execution-host runtime path for a canonical run.
+
+    Legacy event data matches the supervisor's SSE union
     (`session.line`, `session.update`, `session.permission_request`,
     `session.exited`, `session.crashed`, and — Implemented, ADR-166 —
     `session.command`, forwarded as an OPAQUE pass-through the browser
@@ -26,11 +29,9 @@ info:
 
     Differences from `supervisor-sse.asyncapi.yaml`:
 
-    - The bridge replays from a durable file, not an in-memory ring
-      buffer. The web tier never loses events across consecutive
-      sessions of the same run (slash-in-existing reuses one session
-      across many steps; new-session-per-step opens fresh sessions
-      that all append to the same `run.events.jsonl`).
+    - Canonical replay is exclusive `runSequence` ordering from the manager
+      database and is restart-safe; the old file replay behavior remains only
+      for an immutable legacy-mode run.
     - Terminal close is driven by the `runs.status` row in Postgres
       (`Done | Abandoned | Failed | Crashed`), not by the supervisor's
       session-terminal signal. The bridge drains any trailing events
@@ -44,9 +45,10 @@ info:
     - Reconnect via `Last-Event-ID` (or `?lastEventId=` fallback) works
       across step boundaries and across web-tier restarts.
 
-    Consumers SHOULD treat this stream as authoritative for run-level
-    observability and use the supervisor SSE only when they need
-    session-level liveness signals that the durable log does not carry.
+    Consumers SHOULD treat canonical event metadata as authoritative for
+    canonical runs. The browser envelope intentionally excludes raw host event
+    payloads, paths, prompts, content, credentials, and environment values.
+    Use manager read models for transcript, cost, and artifact content.
 
     Scratch runs reuse this same browser route as an invalidation/replay
     signal. The stream still emits only durable session events and the
@@ -99,14 +101,15 @@ channels:
       operationId: subscribeRunEvents
       summary: Stream of run-scoped session events
       description: |
-        Client connects via `GET /api/runs/{runId}/stream`. Web tier
-        tails `run.events.jsonl` and emits durable events as SSE with
-        `id: <monotonicId>\ndata: <json>\n\n`. The web bridge does not
-        emit an `event:` field. Synthetic timeout events use only
-        `data: <json>\n\n` because they are not persisted in
-        `run.events.jsonl`.
+        Client connects via `GET /api/runs/{runId}/stream`. The immutable run
+        mode selects canonical manager replay or the bounded legacy reader.
+        Every durable SSE frame uses `id: <runSequence-or-monotonicId>` and no
+        custom `event:` field. Canonical data is `BrowserCanonicalRunEvent`;
+        legacy data uses the historical session union. Synthetic timeout events
+        have no `id` because they are not replay cursors.
       message:
         oneOf:
+          - $ref: "#/components/messages/CanonicalRunEvent"
           - $ref: "#/components/messages/SessionLine"
           - $ref: "#/components/messages/SessionUpdate"
           - $ref: "#/components/messages/SessionPermissionRequest"
@@ -120,6 +123,11 @@ channels:
           - $ref: "#/components/messages/SessionCommand"
 components:
   messages:
+    CanonicalRunEvent:
+      name: canonical.run.event
+      title: Manager-owned canonical run event metadata
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/BrowserCanonicalRunEvent" }
     SessionLine:
       name: session.line
       title: Child stdout line
@@ -222,6 +230,19 @@ components:
       contentType: application/json
       payload: { $ref: "#/components/schemas/RunRunnerResolutionWarningEvent" }
   schemas:
+    BrowserCanonicalRunEvent:
+      type: object
+      additionalProperties: false
+      required: [type, eventId, runSequence, occurredAt, hostSessionId]
+      properties:
+        type: { type: string, maxLength: 128 }
+        eventId: { type: string, format: uuid }
+        runSequence:
+          type: string
+          pattern: "^(0|[1-9][0-9]{0,18})$"
+        occurredAt: { type: string, format: date-time }
+        hostSessionId: { type: string, nullable: true }
+
     EventBase:
       type: object
       required: [type, sessionId, monotonicId]

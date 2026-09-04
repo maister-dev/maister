@@ -8,9 +8,12 @@ import pino, { type Logger } from "pino";
 import type { ExecutionHostTransport } from "@/lib/execution-host/contracts";
 import type { Db } from "@/lib/execution-host/db";
 import { MaisterError } from "@/lib/errors";
-import { executionEventStreams } from "@/lib/db/schema";
+import { executionEventStreams, runs } from "@/lib/db/schema";
 
 import { ingestRuntimeEvent } from "./ingest";
+import { projectCanonicalSessionLifecycle } from "./lifecycle-projector";
+import { projectCanonicalPromptCommands } from "./prompt-projector";
+import { projectCanonicalRuntimeObjects } from "./runtime-object-projector";
 
 const CLAIM_LEASE_MS = 30_000;
 const RECONNECT_MIN_MS = 250;
@@ -174,6 +177,15 @@ async function recordConsumerFailure(input: {
     .where(where);
 }
 
+async function isCanonicalRun(db: Db, runId: string): Promise<boolean> {
+  const rows = await db
+    .select({ executionDataPlaneMode: runs.executionDataPlaneMode })
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .limit(1);
+  return rows[0]?.executionDataPlaneMode === "canonical_events_v1";
+}
+
 export async function consumeRuntimeEventStreamOnce(input: {
   db: Db;
   executionHostId: string;
@@ -284,6 +296,39 @@ export async function consumeRuntimeEventStreamOnce(input: {
           break;
         }
         summary.acknowledged += 1;
+      }
+      // ACK is deliberately independent from every read-model reducer. The
+      // durable ingest row is sufficient for replay; a projection failure is
+      // retried through its own cursor and cannot trap the host outbox.
+      if (
+        result.acceptedCount > 0 &&
+        (await isCanonicalRun(input.db, envelope.runId))
+      ) {
+        void Promise.all([
+          projectCanonicalPromptCommands({
+            db: input.db,
+            runId: envelope.runId,
+          }),
+          projectCanonicalSessionLifecycle({
+            db: input.db,
+            runId: envelope.runId,
+          }),
+          projectCanonicalRuntimeObjects({
+            db: input.db,
+            runId: envelope.runId,
+          }),
+        ]).catch((error: unknown) => {
+          logger.error(
+            {
+              hostId: input.executionHostId,
+              runId: envelope.runId,
+              reason:
+                error instanceof MaisterError ? error.code : "projection_failure",
+              err: error instanceof Error ? error.message : String(error),
+            },
+            "canonical-prompt-command-projection-failed",
+          );
+        });
       }
       if (summary.received >= maxEvents) break;
     }

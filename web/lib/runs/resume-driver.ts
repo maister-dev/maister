@@ -524,7 +524,7 @@ export async function runResumedSession(
       prompt: RESUME_CONTINUATION_PROMPT,
     });
 
-    promptResult = await handle.completion;
+    promptResult = await client.waitForPrompt(handle);
     stopReason = promptResult.stopReason;
     log.info(
       {

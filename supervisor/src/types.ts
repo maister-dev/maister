@@ -353,6 +353,9 @@ export const COMMAND_KINDS = [
   "session.cancel",
   "session.checkpoint",
   "session.delete",
+  "runtime_object.reserve",
+  "runtime_object.upload",
+  "runtime_object.delete",
 ] as const;
 
 export const CommandKindSchema = z.enum(COMMAND_KINDS);
@@ -386,6 +389,76 @@ export const CommandEnvelopeSchema = z
   .strict();
 
 export type CommandEnvelope = z.infer<typeof CommandEnvelopeSchema>;
+
+export const RUNTIME_OBJECT_KINDS = [
+  "session_log",
+  "raw_transcript",
+  "cost_diagnostic",
+  "checkpoint",
+  "attachment",
+  "capability_profile",
+  "agent_memory_snapshot",
+  "node_result",
+  "evidence",
+  "generated_artifact",
+  "plan_review",
+  "diagnostic",
+] as const;
+
+export const RuntimeObjectKindSchema = z.enum(RUNTIME_OBJECT_KINDS);
+export const RuntimeObjectRetentionClassSchema = z.enum([
+  "run",
+  "delivery",
+  "ephemeral",
+]);
+const runtimeObjectIdSchema = z.string().uuid();
+const runtimeObjectLogicalNameSchema = z
+  .string()
+  .min(1)
+  .max(255)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, "logicalName must be a basename");
+const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/, "sha256 must be lowercase hex");
+
+export const ReserveRuntimeObjectPayloadSchema = z
+  .object({
+    objectId: runtimeObjectIdSchema,
+    kind: RuntimeObjectKindSchema,
+    logicalName: runtimeObjectLogicalNameSchema,
+    mimeType: z.string().min(1).max(255),
+    generation: z.number().int().min(1),
+    retentionClass: RuntimeObjectRetentionClassSchema,
+    expiresAt: z.string().datetime({ offset: true }).nullable().optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.retentionClass === "ephemeral" && !value.expiresAt) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["expiresAt"],
+        message: "expiresAt is required for ephemeral runtime objects",
+      });
+    }
+  });
+
+export type ReserveRuntimeObjectPayload = z.infer<
+  typeof ReserveRuntimeObjectPayloadSchema
+>;
+
+export const RuntimeObjectUploadHeadersSchema = z
+  .object({
+    commandId: z.string().uuid(),
+    assignmentId: z.string().uuid(),
+    assignmentEpoch: z.coerce.number().int().min(1),
+    generation: z.coerce.number().int().min(1),
+    sizeBytes: z.coerce.number().int().min(0).max(536_870_912),
+    sha256: sha256Schema,
+    contentDigest: z.string().regex(/^sha-256=:[A-Za-z0-9+/]+={0,2}:$/),
+  })
+  .strict();
+
+export const DeleteRuntimeObjectPayloadSchema = z
+  .object({ generation: z.number().int().min(1) })
+  .strict();
 
 // A body is enveloped iff it carries a `command` header; anything else is
 // refused by name (`missing_envelope`).

@@ -167,14 +167,15 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
-  /runtime-objects/reserve:
+  /runtime-objects:
     post:
       tags: [execution-host]
-      summary: Reserve an opaque runtime object upload (Designed — ADR-167)
+      summary: Reserve an opaque runtime object upload (Implemented — ADR-167)
       description: |
-        Fenced host command. `runId` and assignment fields are server-derived
-        from the command fence; object content, local path, and credentials are
-        forbidden. The returned id is host-scoped and opaque.
+        Fenced host command. The command fence is request-body supplied and
+        verified against the host's durable fence ledger; object content, local
+        paths, and credentials are forbidden. The caller supplies an opaque
+        UUID and the host persists its binding before returning metadata.
       operationId: reserveRuntimeObject
       requestBody:
         required: true
@@ -195,7 +196,7 @@ paths:
   /runtime-objects/{objectId}:
     get:
       tags: [execution-host]
-      summary: Read path-free runtime-object metadata (Designed — ADR-167)
+      summary: Read path-free runtime-object metadata (Implemented — ADR-167)
       operationId: getRuntimeObjectMetadata
       parameters:
         - $ref: "#/components/parameters/RuntimeObjectId"
@@ -205,22 +206,51 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RuntimeObjectMetadata" }
-        "404": { description: "Object is absent, expired, or unauthorized." }
+        "409": { description: "Object is absent, expired, or cannot be read in its current state." }
     delete:
       tags: [execution-host]
-      summary: Apply a fenced runtime-object retention deletion (Designed — ADR-167)
+      summary: Apply a fenced runtime-object retention deletion (Implemented — ADR-167)
       operationId: deleteRuntimeObject
       parameters:
         - $ref: "#/components/parameters/RuntimeObjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RuntimeObjectDeleteCommand" }
       responses:
         "204": { description: Object is deleted or already absent under the recorded retention policy. }
   /runtime-objects/{objectId}/content:
     put:
       tags: [execution-host]
-      summary: Upload a reserved runtime object once (Designed — ADR-167)
+      summary: Upload a reserved runtime object once (Implemented — ADR-167)
       operationId: uploadRuntimeObject
       parameters:
         - $ref: "#/components/parameters/RuntimeObjectId"
+        - name: Content-Digest
+          in: header
+          required: true
+          schema: { type: string, pattern: "^sha-256=:[A-Za-z0-9+/]+={0,2}:$" }
+        - name: X-Maister-Command-Id
+          in: header
+          required: true
+          schema: { type: string, format: uuid }
+        - name: X-Maister-Assignment-Id
+          in: header
+          required: true
+          schema: { type: string, format: uuid }
+        - name: X-Maister-Assignment-Epoch
+          in: header
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: X-Maister-Object-Generation
+          in: header
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: X-Maister-Sha256
+          in: header
+          required: true
+          schema: { type: string, pattern: "^[a-f0-9]{64}$" }
       requestBody:
         required: true
         content:
@@ -235,7 +265,7 @@ paths:
         "413": { description: Upload exceeds the reserved or negotiated fixed size limit. }
     get:
       tags: [execution-host]
-      summary: Read a single byte range of an opaque runtime object (Designed — ADR-167)
+      summary: Read a single byte range of an opaque runtime object (Implemented — ADR-167)
       operationId: readRuntimeObjectContent
       parameters:
         - $ref: "#/components/parameters/RuntimeObjectId"
@@ -245,7 +275,7 @@ paths:
           schema: { type: string, pattern: "^bytes=[0-9]+-[0-9]*$" }
           description: At most one inclusive byte range; multi-range is rejected.
       responses:
-        "200": { description: Full object bytes. }
+        "200": { description: Full bytes only for an object no larger than 8 MiB. }
         "206": { description: One byte range with `Content-Range`. }
         "416": { description: "Invalid, unsatisfiable, or multi-range request." }
   /health:
@@ -1376,7 +1406,7 @@ components:
       description: Opaque host-scoped runtime-object id; never a filesystem path.
       schema:
         type: string
-        pattern: "^ro_[0-9a-f]{32}$"
+        format: uuid
     ExecutionWorkspaceId:
       name: id
       in: path
@@ -2308,25 +2338,46 @@ components:
         payload:
           type: object
           additionalProperties: false
-          required: [kind, mimeType, sizeBytes, sha256]
+          required: [objectId, kind, logicalName, mimeType, generation, retentionClass]
           properties:
-            kind: { type: string, enum: [log, transcript, cost_record, checkpoint, evidence, generated_artifact] }
+            objectId: { type: string, format: uuid }
+            kind: { type: string, enum: [session_log, raw_transcript, cost_diagnostic, checkpoint, attachment, capability_profile, agent_memory_snapshot, node_result, evidence, generated_artifact, plan_review, diagnostic] }
+            logicalName: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$", maxLength: 255 }
             mimeType: { type: string, maxLength: 255 }
-            sizeBytes: { type: integer, minimum: 0, maximum: 536870912 }
-            sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+            generation: { type: integer, minimum: 1 }
+            retentionClass: { type: string, enum: [run, delivery, ephemeral] }
+            expiresAt: { type: string, format: date-time, nullable: true }
+    RuntimeObjectDeleteCommand:
+      type: object
+      additionalProperties: false
+      required: [command, fence, payload]
+      properties:
+        command: { $ref: "#/components/schemas/CommandEnvelope/properties/command" }
+        fence: { $ref: "#/components/schemas/CommandFence" }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [generation]
+          properties:
+            generation: { type: integer, minimum: 1 }
     RuntimeObjectMetadata:
       type: object
       additionalProperties: false
-      required: [objectId, runId, kind, mimeType, sizeBytes, sha256, state, retainedUntil]
+      required: [objectId, kind, logicalName, mimeType, sizeBytes, sha256, generation, retentionClass, state, createdAt, sealedAt, expiresAt, deletedAt]
       properties:
-        objectId: { type: string, pattern: "^ro_[0-9a-f]{32}$" }
-        runId: { type: string, description: Server-derived run identity. }
-        kind: { type: string, enum: [log, transcript, cost_record, checkpoint, evidence, generated_artifact] }
+        objectId: { type: string, format: uuid }
+        kind: { type: string, enum: [session_log, raw_transcript, cost_diagnostic, checkpoint, attachment, capability_profile, agent_memory_snapshot, node_result, evidence, generated_artifact, plan_review, diagnostic] }
+        logicalName: { type: string }
         mimeType: { type: string }
-        sizeBytes: { type: integer, minimum: 0 }
-        sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
-        state: { type: string, enum: [reserved, available, deleted, missing] }
-        retainedUntil: { type: string, format: date-time, nullable: true }
+        sizeBytes: { type: integer, minimum: 0, nullable: true }
+        sha256: { type: string, pattern: "^[a-f0-9]{64}$", nullable: true }
+        generation: { type: integer, minimum: 1 }
+        retentionClass: { type: string, enum: [run, delivery, ephemeral] }
+        state: { type: string, enum: [pending, available, deleting, deleted, corrupt] }
+        createdAt: { type: string, format: date-time }
+        sealedAt: { type: string, format: date-time, nullable: true }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        deletedAt: { type: string, format: date-time, nullable: true }
     SupervisorErrorCode:
       type: string
       enum:

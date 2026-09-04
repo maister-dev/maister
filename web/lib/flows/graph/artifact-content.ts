@@ -10,6 +10,7 @@ import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
+import { readRuntimeObjectContent } from "@/lib/execution-host/runtime-objects";
 import { MaisterError } from "@/lib/errors";
 import { artifactInlineMaxBytes } from "@/lib/instance-config";
 import {
@@ -245,6 +246,29 @@ export async function resolveArtifactContent(
         ctx.runtimeRoot,
         ctx.maxBytes,
       );
+
+    case "execution-object": {
+      try {
+        const content = await readRuntimeObjectContent({
+          db: ctx.db,
+          runId: ctx.runId,
+          objectId: locator.objectId,
+          ...(ctx.maxBytes === undefined
+            ? {}
+            : { range: { start: 0, end: Math.max(0, ctx.maxBytes - 1) } }),
+        });
+
+        return {
+          kind: "text",
+          text: new TextDecoder().decode(content.content.bytes),
+        };
+      } catch (error) {
+        if (error instanceof MaisterError && error.code === "PRECONDITION") {
+          return { kind: "gone" };
+        }
+        throw error;
+      }
+    }
 
     default:
       return { kind: "notfound" };

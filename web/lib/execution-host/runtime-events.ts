@@ -49,7 +49,7 @@ const EVENT_SCHEMA_PAIRS = new Map(
   ]),
 );
 
-function assertSafePayload(value: Record<string, unknown>): void {
+export function assertRuntimeEventPayloadSafe(value: Record<string, unknown>): void {
   const visit = (current: unknown, key?: string): void => {
     if (key && SECRET_KEY.test(key)) {
       throw new Error(`runtime event payload contains a secret-bearing key: ${key}`);
@@ -100,7 +100,7 @@ export const RuntimeEventEnvelopeSchema = z
       });
     }
     try {
-      assertSafePayload(value.payload);
+      assertRuntimeEventPayloadSafe(value.payload);
     } catch (error) {
       context.addIssue({
         code: z.ZodIssueCode.custom,

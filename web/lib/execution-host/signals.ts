@@ -2,37 +2,48 @@ import type { SupervisorEvent } from "@/lib/supervisor-client";
 
 import { EventEmitter } from "node:events";
 
-// ADR-166 D5: the `session.command` events observed on any SSE consumer are
-// published here so a prompt's `PromptHandle.completion` resolves from
-// whichever durable signal arrives first (SSE, receipt, or the HTTP response).
-// Process-local by design — the durable copies live in the ledger and in
-// `run.events.jsonl`.
-
-export type SessionCommandEvent = Extract<
-  SupervisorEvent,
-  { type: "session.command" }
->;
-
+// A signal is only a post-commit wake hint. Prompt state and result are always
+// re-read from `execution_commands`, so a missed process-local wake cannot
+// lose or fabricate a turn outcome after a web restart.
 class CommandSignalBus {
   private readonly emitter = new EventEmitter();
+  private readonly legacyEmitter = new EventEmitter();
 
   constructor() {
     this.emitter.setMaxListeners(0);
   }
 
-  publish(event: SupervisorEvent): void {
+  wake(commandId: string): void {
+    this.emitter.emit(commandId);
+  }
+
+  // B3 compatibility only: the singular long-lived prompt route needs the
+  // accepted transition while it waits for its HTTP result. Terminal payloads
+  // are never consumed here; canonical runs use `wake` after a DB commit.
+  publishLegacy(event: SupervisorEvent): void {
     if (event.type !== "session.command") return;
-    this.emitter.emit(event.commandId, event);
+    this.legacyEmitter.emit(event.commandId, event);
   }
 
   subscribe(
     commandId: string,
-    listener: (event: SessionCommandEvent) => void,
+    listener: () => void,
   ): () => void {
     this.emitter.on(commandId, listener);
 
     return () => {
       this.emitter.off(commandId, listener);
+    };
+  }
+
+  subscribeLegacy(
+    commandId: string,
+    listener: (event: Extract<SupervisorEvent, { type: "session.command" }>) => void,
+  ): () => void {
+    this.legacyEmitter.on(commandId, listener);
+
+    return () => {
+      this.legacyEmitter.off(commandId, listener);
     };
   }
 }

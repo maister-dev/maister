@@ -39,6 +39,7 @@ import {
   hitlRequests as hitlRequestsTable,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { readRuntimeObjectContent } from "@/lib/execution-host/runtime-objects";
 import { getRunDetail } from "@/lib/queries/run";
 import { diffRange, logRange } from "@/lib/worktree";
 
@@ -127,6 +128,10 @@ vi.mock("@/lib/worktree", () => ({
   logRange: vi.fn(async () => "abc1234 commit one\n"),
 }));
 
+vi.mock("@/lib/execution-host/runtime-objects", () => ({
+  readRuntimeObjectContent: vi.fn(),
+}));
+
 let runtimeRoot: string;
 const ORIGINAL_RUNTIME_ROOT = process.env.MAISTER_RUNTIME_ROOT;
 
@@ -167,12 +172,16 @@ function seedArtifact(
   return id;
 }
 
-async function invokeGet(artifactId: string, runId: string = RUN_ID) {
+async function invokeGet(
+  artifactId: string,
+  runId: string = RUN_ID,
+  headers?: HeadersInit,
+) {
   const { GET } = await import("../route");
   const req = new NextRequest(
     new Request(
       `http://localhost/api/runs/${runId}/artifacts/${artifactId}/payload`,
-      { method: "GET" },
+      { method: "GET", headers },
     ),
   );
 
@@ -217,6 +226,7 @@ beforeEach(() => {
   });
   vi.mocked(logRange).mockClear();
   vi.mocked(logRange).mockResolvedValue("abc1234 commit one\n");
+  vi.mocked(readRuntimeObjectContent).mockReset();
 });
 
 afterEach(() => {
@@ -322,6 +332,92 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("application/json");
     expect(await res.json()).toEqual(response);
+  });
+
+  it("execution-object locator → 200 uses the manager-authorized opaque content contract", async () => {
+    const objectId = "d0b23d15-a3de-49e8-a73f-5e9e96c847cb";
+    const body = new TextEncoder().encode("host-owned artifact");
+    vi.mocked(readRuntimeObjectContent).mockResolvedValue({
+      object: {
+        id: objectId,
+        mimeType: "text/plain",
+        sha256: "abc",
+      },
+      content: {
+        bytes: body,
+        contentRange: `bytes 0-${body.byteLength - 1}/${body.byteLength}`,
+        contentDigest: "sha-256=:abc=:",
+      },
+    } as never);
+    seedArtifact({
+      id: "art-object",
+      locator: { kind: "execution-object", objectId },
+    });
+
+    const res = await invokeGet("art-object");
+
+    expect(res.status).toBe(206);
+    expect(res.headers.get("content-type")).toContain("text/plain");
+    expect(res.headers.get("content-range")).toBe(
+      `bytes 0-${body.byteLength - 1}/${body.byteLength}`,
+    );
+    expect(res.headers.get("etag")).toBe('"abc"');
+    expect(await res.text()).toBe("host-owned artifact");
+    expect(readRuntimeObjectContent).toHaveBeenCalledWith({
+      db: fakeDb,
+      runId: RUN_ID,
+      objectId,
+      range: undefined,
+    });
+  });
+
+  it("execution-object locator rejects an invalid range without exposing host details", async () => {
+    const objectId = "d0b23d15-a3de-49e8-a73f-5e9e96c847cb";
+    seedArtifact({
+      id: "art-object-invalid-range",
+      locator: { kind: "execution-object", objectId },
+    });
+
+    const res = await invokeGet("art-object-invalid-range", RUN_ID, {
+      range: "bytes=-64",
+    });
+
+    expect(res.status).toBe(416);
+    expect(await res.json()).toEqual({
+      code: "PRECONDITION",
+      message: "artifact payload Range must be one bounded byte range",
+    });
+    expect(readRuntimeObjectContent).not.toHaveBeenCalled();
+  });
+
+  it("execution-object locator forwards a single valid range to the manager contract", async () => {
+    const objectId = "d0b23d15-a3de-49e8-a73f-5e9e96c847cb";
+    const body = new TextEncoder().encode("owned");
+    vi.mocked(readRuntimeObjectContent).mockResolvedValue({
+      object: { id: objectId, mimeType: "text/plain" },
+      content: {
+        bytes: body,
+        contentRange: "bytes 4-8/10",
+        contentDigest: "sha-256=:abc=:",
+      },
+    } as never);
+    seedArtifact({
+      id: "art-object-range",
+      locator: { kind: "execution-object", objectId },
+    });
+
+    const res = await invokeGet("art-object-range", RUN_ID, {
+      range: "bytes=4-8",
+    });
+
+    expect(res.status).toBe(206);
+    expect(await res.text()).toBe("owned");
+    expect(readRuntimeObjectContent).toHaveBeenCalledWith({
+      db: fakeDb,
+      runId: RUN_ID,
+      objectId,
+      range: { start: 4, end: 8 },
+    });
   });
 
   it("git-range locator → 200 text/plain == diffRange output, called with the stored headRef SHA", async () => {

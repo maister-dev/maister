@@ -8,6 +8,10 @@ import {
   ExecutionEventProjectionError,
   projectExecutionEvents,
 } from "@/lib/execution-host/events/projector";
+import { projectCanonicalPromptCommands } from "@/lib/execution-host/events/prompt-projector";
+import { projectCanonicalSessionLifecycle } from "@/lib/execution-host/events/lifecycle-projector";
+import { projectCanonicalRuntimeObjects } from "@/lib/execution-host/events/runtime-object-projector";
+import { appendManagerRunStreamEvent } from "@/lib/runs/run-stream-event";
 import type { ExecutionHostTransport } from "@/lib/execution-host/contracts";
 import {
   startMainPostgresTestDb,
@@ -15,6 +19,7 @@ import {
 } from "@/test-support/pg-container";
 
 let testDatabase: StartedPostgresTestDb;
+let projectId: string;
 let runId: string;
 let hostId: string;
 let assignmentId: string;
@@ -26,7 +31,7 @@ beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
     databaseName: "execution_event_ingest_test",
   });
-  const projectId = randomUUID();
+  projectId = randomUUID();
   runId = randomUUID();
   hostId = randomUUID();
   assignmentId = randomUUID();
@@ -88,6 +93,112 @@ function event(sequence: string, overrides: Record<string, unknown> = {}): Recor
 }
 
 describe("runtime event ingestion", () => {
+  it("allocates one canonical sequence across concurrent host and manager events without a runtime file", async () => {
+    const canonicalRunId = randomUUID();
+    const canonicalHostId = randomUUID();
+    const canonicalAssignmentId = randomUUID();
+    const canonicalHostKey = `eh_${randomUUID().replace(/-/g, "")}`;
+    const canonicalStreamId = randomUUID();
+    await testDatabase.pool.query(
+      `insert into runs
+        (id, project_id, run_kind, status, flow_version, flow_revision, execution_data_plane_mode)
+       values ($1, $2, 'scratch', 'Pending', 'scratch', 'canonical', 'canonical_events_v1')`,
+      [canonicalRunId, projectId],
+    );
+    await testDatabase.pool.query(
+      `insert into execution_hosts
+        (id, host_key, kind, display_name, transport, retired_at)
+       values ($1, $2, 'local_direct', 'retired canonical fixture host', '{"kind":"local_direct"}', now())`,
+      [canonicalHostId, canonicalHostKey],
+    );
+    await testDatabase.pool.query(
+      `insert into execution_assignments
+        (id, run_id, execution_host_id, epoch, state, placement_reason)
+       values ($1, $2, $3, 1, 'active', 'launch')`,
+      [canonicalAssignmentId, canonicalRunId, canonicalHostId],
+    );
+
+    const [manager, host] = await Promise.all([
+      appendManagerRunStreamEvent(testDatabase.db, {
+        runId: canonicalRunId,
+        sourceKey: "needs-input:review:human",
+        event: {
+          type: "run.needs_input",
+          data: { nodeId: "review", reason: "human" },
+        },
+      }),
+      ingestRuntimeEvent({
+        db: testDatabase.db,
+        executionHostId: canonicalHostId,
+        envelope: {
+          envelopeVersion: 1,
+          eventId: randomUUID(),
+          hostKey: canonicalHostKey,
+          hostBootId: randomUUID(),
+          streamId: canonicalStreamId,
+          sequence: "0",
+          runId: canonicalRunId,
+          assignmentId: canonicalAssignmentId,
+          assignmentEpoch: 1,
+          hostSessionId: randomUUID(),
+          eventType: "session.update",
+          occurredAt: "2026-09-04T00:00:00.000Z",
+          payloadSchema: "maister.session.update.v1",
+          payload: { update: { state: "working" } },
+        },
+      }),
+    ]);
+    const replay = await appendManagerRunStreamEvent(testDatabase.db, {
+      runId: canonicalRunId,
+      sourceKey: "needs-input:review:human",
+      event: {
+        type: "run.needs_input",
+        data: { nodeId: "review", reason: "human" },
+      },
+    });
+    const rows = await testDatabase.pool.query(
+      `select source, source_key, run_sequence::text, event_type, payload
+       from execution_events where run_id = $1 order by run_sequence`,
+      [canonicalRunId],
+    );
+
+    expect(manager).toMatchObject({ mode: "canonical_events_v1" });
+    expect(host).toMatchObject({ disposition: "accepted" });
+    expect(replay).toEqual(manager);
+    expect(rows.rows).toHaveLength(2);
+    expect(rows.rows.map((row) => row.run_sequence)).toEqual(["0", "1"]);
+    expect(rows.rows.filter((row) => row.source === "manager")).toEqual([
+      expect.objectContaining({
+        source_key: "needs-input:review:human",
+        event_type: "run.needs_input",
+        payload: { nodeId: "review", reason: "human" },
+      }),
+    ]);
+  });
+
+  it("rejects unsafe manager event payloads before allocating canonical history", async () => {
+    const canonicalRunId = randomUUID();
+    await testDatabase.pool.query(
+      `insert into runs
+        (id, project_id, run_kind, status, flow_version, flow_revision, execution_data_plane_mode)
+       values ($1, $2, 'scratch', 'Pending', 'scratch', 'canonical', 'canonical_events_v1')`,
+      [canonicalRunId, projectId],
+    );
+
+    await expect(
+      appendManagerRunStreamEvent(testDatabase.db, {
+        runId: canonicalRunId,
+        sourceKey: "unsafe",
+        event: { type: "run.needs_input", data: { token: "not-safe" } },
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+    const rows = await testDatabase.pool.query(
+      "select count(*)::int as count from execution_events where run_id = $1",
+      [canonicalRunId],
+    );
+    expect(rows.rows[0]?.count).toBe(0);
+  });
+
   it("persists at-least-once delivery exactly once and promotes a held gap in host order", async () => {
     const later = event("1");
     const first = event("0");
@@ -253,6 +364,219 @@ describe("runtime event ingestion", () => {
         state: "poisoned",
         last_run_sequence: "2",
         poison_event_id: poisonEvent.eventId,
+      },
+    ]);
+  });
+
+  it("projects a canonical prompt terminal event exactly once and rejects a stale epoch from mutating it", async () => {
+    const promptRunId = randomUUID();
+    const promptAssignmentId = randomUUID();
+    const commandId = randomUUID();
+    await testDatabase.pool.query(
+      `insert into runs
+         (id, project_id, run_kind, status, execution_data_plane_mode, flow_version, flow_revision)
+       values ($1, $2, 'scratch', 'Pending', 'canonical_events_v1', 'scratch', 'manual')`,
+      [promptRunId, projectId],
+    );
+    await testDatabase.pool.query(
+      `insert into execution_assignments
+         (id, run_id, execution_host_id, epoch, state, placement_reason)
+       values ($1, $2, $3, 1, 'active', 'launch')`,
+      [promptAssignmentId, promptRunId, hostId],
+    );
+    await testDatabase.pool.query(
+      `insert into execution_commands
+         (id, run_id, execution_assignment_id, execution_host_id, assignment_epoch, kind, payload, state, max_attempts)
+       values ($1, $2, $3, $4, 1, 'session.prompt', '{}', 'delivering', 3)`,
+      [commandId, promptRunId, promptAssignmentId, hostId],
+    );
+    const terminal = event("5", {
+      eventType: "session.command",
+      runId: promptRunId,
+      assignmentId: promptAssignmentId,
+      payloadSchema: "maister.session.command.v1",
+      payload: {
+        commandId,
+        kind: "session.prompt",
+        phase: "completed",
+        status: "succeeded",
+        result: { stopReason: "end_turn", meta: null },
+      },
+    });
+    await ingestRuntimeEvent({
+      db: testDatabase.db,
+      executionHostId: hostId,
+      envelope: terminal,
+    });
+    const projected = await projectCanonicalPromptCommands({
+      db: testDatabase.db,
+      runId: promptRunId,
+    });
+    const replayed = await projectCanonicalPromptCommands({
+      db: testDatabase.db,
+      runId: promptRunId,
+    });
+    const row = await testDatabase.pool.query(
+      "select state, result from execution_commands where id = $1",
+      [commandId],
+    );
+
+    expect(projected).toMatchObject({ projected: 1 });
+    expect(replayed).toMatchObject({ projected: 0 });
+    expect(row.rows[0]).toEqual({
+      state: "succeeded",
+      result: { stopReason: "end_turn", meta: null },
+    });
+
+    const stale = event("6", {
+      assignmentId: staleAssignmentId,
+      assignmentEpoch: 2,
+      runId: promptRunId,
+      eventType: "session.command",
+      payloadSchema: "maister.session.command.v1",
+      payload: {
+        commandId,
+        kind: "session.prompt",
+        phase: "completed",
+        status: "failed",
+        error: { code: "PRECONDITION", message: "stale" },
+      },
+    });
+    await ingestRuntimeEvent({
+      db: testDatabase.db,
+      executionHostId: hostId,
+      envelope: stale,
+    });
+    await projectCanonicalPromptCommands({
+      db: testDatabase.db,
+      runId: promptRunId,
+    });
+    const afterStale = await testDatabase.pool.query(
+      "select state, result from execution_commands where id = $1",
+      [commandId],
+    );
+    expect(afterStale.rows[0]).toEqual(row.rows[0]);
+
+    const hostSessionId = randomUUID();
+    await ingestRuntimeEvent({
+      db: testDatabase.db,
+      executionHostId: hostId,
+      envelope: event("7", {
+        runId: promptRunId,
+        assignmentId: promptAssignmentId,
+        hostSessionId,
+        eventType: "session.created",
+        payloadSchema: "maister.session.created.v1",
+        payload: {
+          sessionName: "default",
+          adapter: "claude",
+          acpSessionId: "acp-canonical",
+        },
+      }),
+    });
+    await projectCanonicalSessionLifecycle({
+      db: testDatabase.db,
+      runId: promptRunId,
+    });
+    const activeIncarnation = await testDatabase.pool.query(
+      `select state, host_session_id, acp_session_id
+       from run_session_incarnations where run_id = $1`,
+      [promptRunId],
+    );
+    expect(activeIncarnation.rows).toEqual([
+      {
+        state: "active",
+        host_session_id: hostSessionId,
+        acp_session_id: "acp-canonical",
+      },
+    ]);
+
+    await ingestRuntimeEvent({
+      db: testDatabase.db,
+      executionHostId: hostId,
+      envelope: event("8", {
+        runId: promptRunId,
+        assignmentId: promptAssignmentId,
+        hostSessionId,
+        eventType: "session.exited",
+        payloadSchema: "maister.session.exited.v1",
+        payload: { exitCode: 0, reason: "intentional" },
+      }),
+    });
+    await projectCanonicalSessionLifecycle({
+      db: testDatabase.db,
+      runId: promptRunId,
+    });
+    const exitedIncarnation = await testDatabase.pool.query(
+      "select state, ended_at is not null as ended from run_session_incarnations where run_id = $1",
+      [promptRunId],
+    );
+    expect(exitedIncarnation.rows).toEqual([{ state: "exited", ended: true }]);
+  });
+
+  it("projects host-owned runtime object metadata once without reading a runtime path", async () => {
+    const objectRunId = randomUUID();
+    const objectAssignmentId = randomUUID();
+    const objectId = randomUUID();
+    await testDatabase.pool.query(
+      `insert into runs
+         (id, project_id, run_kind, status, execution_data_plane_mode, flow_version, flow_revision)
+       values ($1, $2, 'scratch', 'Pending', 'canonical_events_v1', 'scratch', 'manual')`,
+      [objectRunId, projectId],
+    );
+    await testDatabase.pool.query(
+      `insert into execution_assignments
+         (id, run_id, execution_host_id, epoch, state, placement_reason)
+       values ($1, $2, $3, 1, 'active', 'launch')`,
+      [objectAssignmentId, objectRunId, hostId],
+    );
+    await ingestRuntimeEvent({
+      db: testDatabase.db,
+      executionHostId: hostId,
+      envelope: event("9", {
+        runId: objectRunId,
+        assignmentId: objectAssignmentId,
+        hostSessionId: null,
+        eventType: "runtime_object.available",
+        payloadSchema: "maister.runtime-object.available.v1",
+        payload: {
+          objectId,
+          kind: "evidence",
+          logicalName: "verification.json",
+          mimeType: "application/json",
+          sizeBytes: 11,
+          sha256: "a".repeat(64),
+          generation: 1,
+          retentionClass: "run",
+          state: "available",
+          expiresAt: null,
+        },
+      }),
+    });
+    const first = await projectCanonicalRuntimeObjects({
+      db: testDatabase.db,
+      runId: objectRunId,
+    });
+    const replay = await projectCanonicalRuntimeObjects({
+      db: testDatabase.db,
+      runId: objectRunId,
+    });
+    const rows = await testDatabase.pool.query(
+      `select id, logical_name, mime_type, size_bytes::text, sha256, state
+       from execution_runtime_objects where id = $1`,
+      [objectId],
+    );
+
+    expect(first).toMatchObject({ projected: 1 });
+    expect(replay).toMatchObject({ projected: 0 });
+    expect(rows.rows).toEqual([
+      {
+        id: objectId,
+        logical_name: "verification.json",
+        mime_type: "application/json",
+        size_bytes: "11",
+        sha256: "a".repeat(64),
+        state: "available",
       },
     ]);
   });

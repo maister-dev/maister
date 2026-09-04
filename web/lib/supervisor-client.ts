@@ -1061,7 +1061,7 @@ export type PromptAccepted = {
 export const COMMAND_REPLAYED_HEADER = "x-maister-command-replayed";
 
 type WireRequest = {
-  method: "GET" | "POST" | "DELETE";
+  method: "GET" | "POST" | "DELETE" | "PUT";
   path: string;
   body?: unknown;
   ctx: string;
@@ -1173,6 +1173,48 @@ const ADMIN_READ_TIMEOUT_MS = 10_000;
 
 export type CommandWireOptions = { timeoutMs?: number | null };
 
+export type RuntimeObjectWireMetadata = {
+  objectId: string;
+  kind: string;
+  logicalName: string;
+  mimeType: string;
+  sizeBytes: number | null;
+  sha256: string | null;
+  generation: number;
+  retentionClass: string;
+  state: string;
+  createdAt: string;
+  sealedAt: string | null;
+  expiresAt: string | null;
+  deletedAt: string | null;
+};
+
+const RuntimeObjectWireMetadataSchema = z
+  .object({
+    objectId: z.string().uuid(),
+    kind: z.string().min(1),
+    logicalName: z.string().min(1),
+    mimeType: z.string().min(1),
+    sizeBytes: z.number().int().nonnegative().nullable(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+    generation: z.number().int().min(1),
+    retentionClass: z.string().min(1),
+    state: z.string().min(1),
+    createdAt: z.string().datetime({ offset: true }),
+    sealedAt: z.string().datetime({ offset: true }).nullable(),
+    expiresAt: z.string().datetime({ offset: true }).nullable(),
+    deletedAt: z.string().datetime({ offset: true }).nullable(),
+  })
+  .strict();
+
+function parseRuntimeObjectWireMetadata(value: unknown): RuntimeObjectWireMetadata {
+  const parsed = RuntimeObjectWireMetadataSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new MaisterError("ACP_PROTOCOL", "supervisor returned invalid runtime object metadata");
+  }
+  return parsed.data;
+}
+
 export async function adoptWorkspace(
   envelope: WireEnvelope<AdoptWorkspaceWirePayload>,
   opts: CommandWireOptions = {},
@@ -1257,6 +1299,155 @@ export async function getCommandReceipt(
     if (httpStatusOf(err) === 404) return null;
     throw err;
   }
+}
+
+export async function getRuntimeObject(
+  objectId: string,
+): Promise<RuntimeObjectWireMetadata | null> {
+  try {
+    const response = await request<unknown>({
+      method: "GET",
+      path: `/runtime-objects/${encodeURIComponent(objectId)}`,
+      ctx: "getRuntimeObject",
+      fallbackCode: "PRECONDITION",
+      timeoutMs: ADMIN_READ_TIMEOUT_MS,
+    });
+    return parseRuntimeObjectWireMetadata(response.body);
+  } catch (error) {
+    if (httpStatusOf(error) === 404) return null;
+    throw error;
+  }
+}
+
+export async function reserveRuntimeObject(
+  envelope: WireEnvelope,
+  opts: CommandWireOptions = {},
+): Promise<RuntimeObjectWireMetadata> {
+  const response = await request<unknown>({
+    method: "POST",
+    path: "/runtime-objects",
+    body: envelope,
+    ctx: "reserveRuntimeObject",
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: opts.timeoutMs,
+  });
+  return parseRuntimeObjectWireMetadata(response.body);
+}
+
+async function runtimeObjectBinaryResponse(input: {
+  path: string;
+  method: "GET" | "PUT";
+  headers?: Record<string, string>;
+  bytes?: Uint8Array;
+  timeoutMs?: number | null;
+  ctx: string;
+}): Promise<Response> {
+  const controller = input.timeoutMs ? new AbortController() : null;
+  const timer = controller
+    ? setTimeout(() => controller.abort(), input.timeoutMs ?? undefined)
+    : null;
+  try {
+    return await fetch(`${baseUrl()}${input.path}`, {
+      method: input.method,
+      headers: input.headers,
+      body: input.bytes,
+      cache: "no-store",
+      signal: controller?.signal,
+    });
+  } catch (error) {
+    throw networkErrorToMaister(error, input.ctx);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function throwRuntimeObjectWireError(
+  response: Response,
+  ctx: string,
+): Promise<never> {
+  let body: unknown = null;
+  try {
+    body = await response.json();
+  } catch {
+    // A non-JSON 5xx cannot prove whether host state advanced.
+    if (response.status >= 500) {
+      throw unknownOutcomeError(
+        new Error(`supervisor ${response.status} (non-JSON body)`),
+        ctx,
+        "non_json_5xx",
+      );
+    }
+  }
+  throw supervisorErrorToMaister(response.status, body, "ACP_PROTOCOL");
+}
+
+export async function uploadRuntimeObject(input: {
+  objectId: string;
+  envelope: WireEnvelope<{
+    generation: number;
+    sizeBytes: number;
+    sha256: string;
+  }>;
+  bytes: Uint8Array;
+  timeoutMs?: number | null;
+}): Promise<RuntimeObjectWireMetadata> {
+  const digest = `sha-256=:${Buffer.from(input.envelope.payload.sha256, "hex").toString("base64")}:`;
+  const response = await runtimeObjectBinaryResponse({
+    path: `/runtime-objects/${encodeURIComponent(input.objectId)}/content`,
+    method: "PUT",
+    headers: {
+      "content-type": "application/octet-stream",
+      "content-length": String(input.bytes.byteLength),
+      "content-digest": digest,
+      "x-maister-command-id": input.envelope.command.id,
+      "x-maister-assignment-id": input.envelope.fence.assignmentId,
+      "x-maister-assignment-epoch": String(input.envelope.fence.assignmentEpoch),
+      "x-maister-object-generation": String(input.envelope.payload.generation),
+      "x-maister-sha256": input.envelope.payload.sha256,
+    },
+    bytes: input.bytes,
+    timeoutMs: input.timeoutMs,
+    ctx: "uploadRuntimeObject",
+  });
+  if (!response.ok) return throwRuntimeObjectWireError(response, "uploadRuntimeObject");
+  return parseRuntimeObjectWireMetadata(await response.json());
+}
+
+export async function getRuntimeObjectContent(
+  objectId: string,
+  opts: { range?: { start: number; end?: number } } = {},
+): Promise<{ bytes: Uint8Array; contentRange: string | null; contentDigest: string | null }> {
+  const range = opts.range
+    ? `bytes=${opts.range.start}-${opts.range.end ?? ""}`
+    : undefined;
+  const response = await runtimeObjectBinaryResponse({
+    path: `/runtime-objects/${encodeURIComponent(objectId)}/content`,
+    method: "GET",
+    headers: range ? { range } : undefined,
+    timeoutMs: ADMIN_READ_TIMEOUT_MS,
+    ctx: "getRuntimeObjectContent",
+  });
+  if (!response.ok) return throwRuntimeObjectWireError(response, "getRuntimeObjectContent");
+  return {
+    bytes: new Uint8Array(await response.arrayBuffer()),
+    contentRange: response.headers.get("content-range"),
+    contentDigest: response.headers.get("content-digest"),
+  };
+}
+
+export async function deleteRuntimeObject(
+  objectId: string,
+  envelope: WireEnvelope<{ generation: number }>,
+  opts: CommandWireOptions = {},
+): Promise<void> {
+  await request<null>({
+    method: "DELETE",
+    path: `/runtime-objects/${encodeURIComponent(objectId)}`,
+    body: envelope,
+    ctx: "deleteRuntimeObject",
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: opts.timeoutMs,
+  });
 }
 
 export async function getExecutionHostCapabilities(): Promise<ExecutionHostDataPlaneCapabilities | null> {

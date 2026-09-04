@@ -299,12 +299,11 @@ export async function runResolverSession(args: {
   let promptResult: PromptResult;
 
   try {
-    promptResult = await (
-      await client.prompt(sessionId, {
-        stepId: SYNC_STEP_ID,
-        prompt: args.prompt,
-      })
-    ).completion;
+    const promptHandle = await client.prompt(sessionId, {
+      stepId: SYNC_STEP_ID,
+      prompt: args.prompt,
+    });
+    promptResult = await client.waitForPrompt(promptHandle);
   } catch (err) {
     consumer.abort.abort();
     await consumer.done.catch(() => undefined);

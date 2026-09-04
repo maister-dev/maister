@@ -75,6 +75,7 @@ export async function register(): Promise<void> {
   for (const step of [
     "ensureLocalExecutionHost",
     "recoverExecutionCommands",
+    "projectCanonicalPromptCommands",
     "reportLegacyActiveRuns",
   ] as const) {
     try {
@@ -96,6 +97,14 @@ export async function register(): Promise<void> {
         }
       } else if (step === "recoverExecutionCommands") {
         await hosts.recoverExecutionCommands({ graceMs: 0 });
+      } else if (step === "projectCanonicalPromptCommands") {
+        const { getDb } = await import("@/lib/db/client");
+
+        await Promise.all([
+          hosts.projectPendingCanonicalPromptCommands({ db: getDb() }),
+          hosts.projectPendingCanonicalSessionLifecycle({ db: getDb() }),
+          hosts.projectPendingCanonicalRuntimeObjects({ db: getDb() }),
+        ]);
       } else {
         // ADR-166 D9: pre-Stage-A runs still executing without a placement
         // are reported here; the reconcile sweep classifies the Running ones.

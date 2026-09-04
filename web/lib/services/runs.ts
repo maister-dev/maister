@@ -89,7 +89,7 @@ import {
 } from "@/lib/runs/execution-policy";
 import { activeSessionRunnerId } from "@/lib/runs/active-run-session";
 import { applyDefaultBudgetForUnattended } from "@/lib/runs/budget-default";
-import { appendRunStreamEvent } from "@/lib/runs/run-stream-event";
+import { appendManagerRunStreamEvent } from "@/lib/runs/run-stream-event";
 import { resolveAgentExecutionPolicy } from "@/lib/agents/execution-policy";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
@@ -132,6 +132,7 @@ type RunnerResolutionWarningRecord = {
 };
 
 async function appendRunnerResolutionWarningEvents(args: {
+  readonly db: ExecutionDb;
   readonly runId: string;
   readonly projectSlug: string;
   readonly taskId: string;
@@ -146,9 +147,14 @@ async function appendRunnerResolutionWarningEvents(args: {
 
   for (const { sessionName, warning } of args.warnings) {
     try {
-      await appendRunStreamEvent(eventsLogPath, {
-        type: "run.runner_resolution_warning",
-        data: { sessionName, warning },
+      await appendManagerRunStreamEvent(args.db, {
+        runId: args.runId,
+        sourceKey: `runner-resolution-warning:${sessionName}:${warning.slotKey}`,
+        event: {
+          type: "run.runner_resolution_warning",
+          data: { sessionName, warning },
+        },
+        legacyEventsLogPath: eventsLogPath,
       });
     } catch (err) {
       log.error(
@@ -1893,6 +1899,7 @@ export async function* launchRunStaged(
   }
 
   await appendRunnerResolutionWarningEvents({
+    db: _db as ExecutionDb,
     runId,
     projectSlug: project.slug,
     taskId: task.id,

@@ -2,6 +2,7 @@ import type { Logger } from "pino";
 
 import type { CostRecord } from "./cost";
 import type { AppendRuntimeEventInput, HostState } from "./host-state";
+import type { RuntimeObjectPublicMetadata } from "./runtime-objects";
 import type { SessionEvent, SessionRecord } from "./types";
 
 import { type RuntimeEventType } from "./runtime-events";
@@ -11,7 +12,10 @@ const TERMINAL_EVENT_TYPES = new Set<RuntimeEventType>([
   "session.crashed",
 ]);
 
-function sessionEventPayload(event: SessionEvent): Record<string, unknown> {
+function sessionEventPayload(
+  record: SessionRecord,
+  event: SessionEvent,
+): Record<string, unknown> {
   const {
     type: _type,
     sessionId: _sessionId,
@@ -19,10 +23,12 @@ function sessionEventPayload(event: SessionEvent): Record<string, unknown> {
     ...payload
   } = event;
 
-  return { sourceMonotonicId: monotonicId, ...payload } as Record<
-    string,
-    unknown
-  >;
+  return {
+    sourceMonotonicId: monotonicId,
+    sessionName: record.sessionName,
+    ...(record.nodeAttemptId ? { nodeAttemptId: record.nodeAttemptId } : {}),
+    ...payload,
+  } as Record<string, unknown>;
 }
 
 function isTerminalSessionEvent(event: SessionEvent): boolean {
@@ -73,9 +79,49 @@ export class RuntimeEventPublisher {
         hostSessionId: record.sessionId,
         eventType: event.type,
         occurredAt: this.now().toISOString(),
-        payload: sessionEventPayload(event),
+        payload: sessionEventPayload(record, event),
       },
       terminal: isTerminalSessionEvent(event),
+    };
+  }
+
+  runtimeObjectInput(input: {
+    runId: string;
+    assignmentId: string;
+    assignmentEpoch: number;
+    metadata: RuntimeObjectPublicMetadata;
+  }): AppendRuntimeEventInput {
+    const metadata = input.metadata;
+    const available = metadata.state === "available";
+
+    return {
+      terminal: metadata.state === "deleted" || metadata.state === "corrupt",
+      draft: {
+        runId: input.runId,
+        assignmentId: input.assignmentId,
+        assignmentEpoch: input.assignmentEpoch,
+        hostSessionId: null,
+        eventType: available ? "runtime_object.available" : "runtime_object.state",
+        occurredAt: this.now().toISOString(),
+        payload: available
+          ? {
+              objectId: metadata.objectId,
+              kind: metadata.kind,
+              logicalName: metadata.logicalName,
+              mimeType: metadata.mimeType,
+              sizeBytes: metadata.sizeBytes,
+              sha256: metadata.sha256,
+              generation: metadata.generation,
+              retentionClass: metadata.retentionClass,
+              state: metadata.state,
+              expiresAt: metadata.expiresAt,
+            }
+          : {
+              objectId: metadata.objectId,
+              generation: metadata.generation,
+              state: metadata.state,
+            },
+      },
     };
   }
 
@@ -138,6 +184,7 @@ export class RuntimeEventPublisher {
         eventType: "usage.recorded",
         occurredAt: cost.ts,
         payload: {
+          sessionName: record.sessionName,
           inputTokens: cost.input_tokens ?? null,
           outputTokens: cost.output_tokens ?? null,
           cacheCreationInputTokens: cost.cache_creation_input_tokens ?? null,

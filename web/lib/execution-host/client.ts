@@ -2,6 +2,7 @@ import type { Db } from "./db";
 import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
 import type {
   CreateSessionResult,
+  PromptResult,
   SendPromptInput,
   SupervisorEvent,
   SupervisorDiagnosticsStatus,
@@ -22,6 +23,8 @@ import type {
   ExecutionHostTransport,
   HostHealth,
   InputDeliveryResult,
+  ReserveRuntimeObjectPayload,
+  RuntimeObjectMetadata,
   InputPayload,
   WorkspaceRecord,
 } from "./contracts";
@@ -34,6 +37,7 @@ import type {
   PlacementReason,
 } from "./types";
 
+import { eq } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import {
@@ -47,7 +51,13 @@ import {
   setAssignmentWorkspace,
 } from "./assignments";
 import { applyCreateAck } from "./create-ack";
-import { COMMAND_POLICY, deliverCommand, deliverPrompt } from "./deliverer";
+import {
+  COMMAND_POLICY,
+  deliverCommand,
+  deliverPrompt,
+  startAsyncPrompt,
+  waitForPromptCompletion,
+} from "./deliverer";
 import { issueCommand, type IssuedCommand } from "./ledger";
 import { ensureAssignment } from "./placement";
 import { hostForAssignment } from "./resolver";
@@ -57,6 +67,7 @@ import { asExecutionWorkspaceId, asHostSessionId } from "./types";
 
 import { MaisterError } from "@/lib/errors";
 import { getDb } from "@/lib/db/client";
+import { runs } from "@/lib/db/schema";
 
 const defaultLog = pino({
   name: "execution-host",
@@ -101,6 +112,10 @@ export interface BoundClient {
     input: SendPromptInput,
     opts?: { signal?: AbortSignal },
   ): Promise<PromptHandle>;
+  waitForPrompt(
+    handle: PromptHandle,
+    opts?: { signal?: AbortSignal },
+  ): Promise<PromptResult>;
   deliverInput(
     sessionId: HostSessionId | string,
     payload: InputPayload,
@@ -120,6 +135,19 @@ export interface BoundClient {
   deleteSession(
     sessionId: HostSessionId | string,
   ): Promise<{ outcome: DeleteSessionOutcome }>;
+  reserveRuntimeObject(
+    payload: ReserveRuntimeObjectPayload,
+  ): Promise<RuntimeObjectMetadata>;
+  uploadRuntimeObject(input: {
+    objectId: string;
+    generation: number;
+    bytes: Uint8Array;
+    sha256: string;
+  }): Promise<RuntimeObjectMetadata>;
+  deleteRuntimeObject(input: {
+    objectId: string;
+    generation: number;
+  }): Promise<void>;
 }
 
 // Host-scoped reads that carry no fence: health, the live session list, the
@@ -200,6 +228,26 @@ export function createExecutionHosts(
   ): BoundClient {
     let current = assignment;
     const db = dbOf();
+
+    async function dataPlaneModeForCurrentRun(): Promise<
+      "legacy_file_v1" | "canonical_events_v1"
+    > {
+      const rows = await db
+        .select({ executionDataPlaneMode: runs.executionDataPlaneMode })
+        .from(runs)
+        .where(eq(runs.id, current.runId))
+        .limit(1);
+      const run = rows[0];
+      if (!run) {
+        throw new MaisterError(
+          "PRECONDITION",
+          `run ${current.runId} is missing while issuing an execution command`,
+          { details: { reason: "run_missing", runId: current.runId } },
+        );
+      }
+
+      return run.executionDataPlaneMode;
+    }
 
     type ImmediateOptions<TResult> = {
       targetSessionId?: string;
@@ -381,6 +429,24 @@ export function createExecutionHosts(
           logger,
         });
 
+        if ((await dataPlaneModeForCurrentRun()) === "canonical_events_v1") {
+          return startAsyncPrompt({
+            db,
+            command: row,
+            envelope,
+            start: (env) =>
+              transport.startPrompt(
+                sessionId,
+                env as CommandEnvelope<SendPromptInput>,
+                timeoutFor("session.prompt"),
+              ),
+            lookupReceipt: (id) => transport.getCommandReceipt(id),
+            logger,
+            sleep: deps.sleep,
+            now: deps.now,
+          });
+        }
+
         return deliverPrompt({
           db,
           command: row,
@@ -396,6 +462,9 @@ export function createExecutionHosts(
           sleep: deps.sleep,
           now: deps.now,
         });
+      },
+      waitForPrompt(handle, opts) {
+        return waitForPromptCompletion({ db, handle, signal: opts?.signal });
       },
       deliverInput(sessionId, payload) {
         return immediate<InputPayload, InputDeliveryResult>(
@@ -474,6 +543,64 @@ export function createExecutionHosts(
           { targetSessionId: sessionId },
         );
       },
+      reserveRuntimeObject(payload) {
+        return immediate<ReserveRuntimeObjectPayload, RuntimeObjectMetadata>(
+          "runtime_object.reserve",
+          payload,
+          (env) =>
+            transport.reserveRuntimeObject(
+              env as CommandEnvelope<ReserveRuntimeObjectPayload>,
+              timeoutFor("runtime_object.reserve"),
+            ),
+          { targetSessionId: payload.objectId },
+        );
+      },
+      async uploadRuntimeObject(input) {
+        const payload = {
+          objectId: input.objectId,
+          generation: input.generation,
+          sizeBytes: input.bytes.byteLength,
+          sha256: input.sha256,
+        };
+        const issued = await issue(
+          db,
+          "runtime_object.upload",
+          payload,
+          input.objectId,
+        );
+
+        return deliver(
+          issued,
+          (env) =>
+            transport.uploadRuntimeObject({
+              objectId: input.objectId,
+              envelope: {
+                command: env.command,
+                fence: env.fence,
+                payload: {
+                  generation: input.generation,
+                  sizeBytes: input.bytes.byteLength,
+                  sha256: input.sha256,
+                },
+              },
+              bytes: input.bytes,
+            }),
+          { targetSessionId: input.objectId },
+        );
+      },
+      async deleteRuntimeObject(input) {
+        return immediate<{ generation: number }, void>(
+          "runtime_object.delete",
+          { generation: input.generation },
+          (env) =>
+            transport.deleteRuntimeObject(
+              input.objectId,
+              env as CommandEnvelope<{ generation: number }>,
+              timeoutFor("runtime_object.delete"),
+            ),
+          { targetSessionId: input.objectId },
+        );
+      },
     };
 
     return client;
@@ -500,7 +627,7 @@ export function createExecutionHosts(
     },
     async *streamSession(sessionId, opts) {
       for await (const event of transport.streamSession(sessionId, opts)) {
-        commandSignals.publish(event);
+        commandSignals.publishLegacy(event);
         yield event;
       }
     },

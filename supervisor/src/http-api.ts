@@ -2,13 +2,13 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import type * as acp from "@agentclientprotocol/sdk";
 import type { Logger } from "pino";
 import type { EventsLogWriter } from "./events-log";
-import type { HostState } from "./host-state";
+import type { AppendRuntimeEventInput, HostState } from "./host-state";
 import type { SessionRegistry, RegistryEntry } from "./registry";
 import type { WorkspaceResolution } from "./workspace-registry";
 
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, createReadStream } from "node:fs";
 import { access, appendFile } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
 
@@ -58,6 +58,10 @@ import { contentBlockUriViolation } from "./prompt-confinement";
 import { SESSION_EVENT_CHANNEL } from "./registry";
 import { RuntimeEventPublisher } from "./runtime-event-publisher";
 import {
+  RuntimeObjectRegistry,
+  type RuntimeObjectPublicMetadata,
+} from "./runtime-objects";
+import {
   RuntimeEventAckSchema,
   RuntimeEventSequenceSchema,
 } from "./runtime-events";
@@ -65,6 +69,7 @@ import { spawnSession } from "./spawn";
 import {
   AdoptWorkspacePayloadSchema,
   CommandEnvelopeSchema,
+  DeleteRuntimeObjectPayloadSchema,
   errorBody,
   httpStatusForCode,
   isEnvelopedBody,
@@ -72,6 +77,8 @@ import {
   isSupervisorError,
   parseGateChatHitlId,
   SendPromptRequestSchema,
+  ReserveRuntimeObjectPayloadSchema,
+  RuntimeObjectUploadHeadersSchema,
   SESSION_COMMAND_KINDS,
   StartSessionRequestSchema,
   SupervisorError,
@@ -79,6 +86,7 @@ import {
   type AdoptWorkspaceResponse,
   type CommandEnvelope,
   type CommandKind,
+  type ReserveRuntimeObjectPayload,
   type SessionEvent,
   type SessionStatus,
   type SupervisorDiagnosticsResponse,
@@ -478,8 +486,25 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     throw new Error("registerRoutes requires an execution-host state store");
   }
 
+  app.addContentTypeParser(
+    "application/octet-stream",
+    { parseAs: "buffer", bodyLimit: 536_870_912 },
+    (_request, body, done) => done(null, body),
+  );
+
   const receipts = new CommandReceipts(hostState, logger);
+  const recoveredPromptReceipts = receipts.recoverAcceptedPrompts();
+  if (recoveredPromptReceipts > 0) {
+    logger.warn(
+      { recoveredPromptReceipts },
+      "supervisor-startup-recovered-accepted-prompts",
+    );
+  }
   const runtimeEvents = new RuntimeEventPublisher(hostState, logger);
+  const runtimeObjects = new RuntimeObjectRegistry(
+    hostState,
+    join(hostState.stateDirReal ?? runtimeRoot, "runtime-objects"),
+  );
   const workspaces = new WorkspaceRegistry({
     state: hostState,
     roots: opts.workspaceRoots,
@@ -609,6 +634,10 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     kind: CommandKind;
     expectedRunId?: string;
     entry?: RegistryEntry;
+    runtimeEvent?: (transition: {
+      phase: "accepted" | "completed" | "rejected";
+      outcome: CommandOutcome;
+    }) => AppendRuntimeEventInput | null;
     execute: () => Promise<CommandOutcome>;
   }): Promise<void> {
     const { reply, parsed, kind, entry } = args;
@@ -632,9 +661,16 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
     const outcome = await receipts.execute({
       envelope,
+      hostSessionId: entry?.record.sessionId,
       persistReceipt:
-        entry && sessionKind
+        args.runtimeEvent
           ? (transition) => {
+              const event = args.runtimeEvent?.(transition);
+              if (event) hostState.putReceiptWithRuntimeEvent(transition.row, event);
+              else hostState.putReceipt(transition.row);
+            }
+          : entry && sessionKind
+            ? (transition) => {
               const status = commandStatus(transition.outcome);
               const event = createCommandEvent(entry, {
                 type: "session.command",
@@ -663,8 +699,8 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
                 runtimeEvents.sessionEventInput(entry.record, event),
               );
               commandEvents.set(transition.phase, event);
-            }
-          : undefined,
+              }
+            : undefined,
       afterReceipt:
         entry && sessionKind
           ? (transition) => {
@@ -725,6 +761,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     });
     const outcome = await receipts.executeAsync({
       envelope,
+      hostSessionId: entry.record.sessionId,
       persistReceipt: (transition) => {
         const status = commandStatus(transition.outcome);
         const event = createCommandEvent(entry, {
@@ -885,7 +922,10 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
   app.setErrorHandler((err, _req, reply) => {
     if (isSupervisorError(err)) {
-      const status = httpStatusForCode(err.code);
+      const status =
+        err.details?.reason === "runtime_object_range_invalid"
+          ? 416
+          : httpStatusForCode(err.code);
 
       reply.status(status).send(errorBody(err));
 
@@ -937,6 +977,266 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       "execution-host-capabilities-read",
     );
     reply.status(200).send(capabilities);
+  });
+
+  function runtimeObjectEvent(
+    fence: CommandEnvelope["fence"],
+    outcome: CommandOutcome,
+  ): AppendRuntimeEventInput | null {
+    if (outcome.status >= 400) return null;
+    const body = outcome.body as Partial<RuntimeObjectPublicMetadata> | null;
+    if (
+      !body ||
+      typeof body.objectId !== "string" ||
+      typeof body.kind !== "string" ||
+      typeof body.logicalName !== "string" ||
+      typeof body.mimeType !== "string" ||
+      typeof body.generation !== "number" ||
+      typeof body.retentionClass !== "string" ||
+      typeof body.state !== "string" ||
+      typeof body.createdAt !== "string"
+    ) {
+      throw new Error("runtime object command completed without typed metadata");
+    }
+    return runtimeEvents.runtimeObjectInput({
+      runId: fence.runId,
+      assignmentId: fence.assignmentId,
+      assignmentEpoch: fence.assignmentEpoch,
+      metadata: body as RuntimeObjectPublicMetadata,
+    });
+  }
+
+  app.post("/runtime-objects", async (req, reply) => {
+    const parsed = parseCommandBody(
+      req.body,
+      "runtime_object.reserve",
+      ReserveRuntimeObjectPayloadSchema,
+      { route: "POST /runtime-objects" },
+    );
+    await runCommand({
+      reply,
+      parsed,
+      kind: "runtime_object.reserve",
+      expectedRunId: parsed.envelope.fence.runId,
+      runtimeEvent: (transition) =>
+        transition.phase === "accepted"
+          ? null
+          : runtimeObjectEvent(parsed.envelope.fence, transition.outcome),
+      execute: async () => ({
+        status: 201,
+        body: await runtimeObjects.reserve({
+          runId: parsed.envelope.fence.runId,
+          assignmentId: parsed.envelope.fence.assignmentId,
+          assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
+          payload: parsed.payload,
+        }),
+      }),
+    });
+  });
+
+  app.get("/runtime-objects/:id", async (req, reply) => {
+    const parsed = z.string().uuid().safeParse((req.params as { id?: unknown }).id);
+    if (!parsed.success) {
+      throw new SupervisorError("PRECONDITION", "runtime object id is invalid", {
+        details: { reason: "runtime_object_missing" },
+      });
+    }
+    const metadata = runtimeObjects.metadata(parsed.data);
+    if (metadata.sha256) {
+      reply.header("ETag", `\"${metadata.sha256}\"`);
+    }
+    reply.status(200).send(metadata);
+  });
+
+  app.put("/runtime-objects/:id/content", async (req, reply) => {
+    const objectId = z.string().uuid().safeParse((req.params as { id?: unknown }).id);
+    if (!objectId.success) {
+      throw new SupervisorError("PRECONDITION", "runtime object id is invalid", {
+        details: { reason: "runtime_object_missing" },
+      });
+    }
+    const headers = RuntimeObjectUploadHeadersSchema.safeParse({
+      commandId: req.headers["x-maister-command-id"],
+      assignmentId: req.headers["x-maister-assignment-id"],
+      assignmentEpoch: req.headers["x-maister-assignment-epoch"],
+      generation: req.headers["x-maister-object-generation"],
+      sizeBytes: req.headers["content-length"],
+      sha256: req.headers["x-maister-sha256"],
+      contentDigest: req.headers["content-digest"],
+    });
+    if (!headers.success) {
+      throw new SupervisorError("PRECONDITION", "runtime object upload headers are invalid", {
+        details: { reason: "runtime_object_integrity_mismatch" },
+      });
+    }
+    const object = hostState.getRuntimeObject(objectId.data);
+    if (!object) {
+      throw new SupervisorError("PRECONDITION", "runtime object is missing", {
+        details: { reason: "runtime_object_missing" },
+      });
+    }
+    const expectedDigest = `sha-256=:${Buffer.from(headers.data.sha256, "hex").toString("base64")}:`;
+    if (headers.data.contentDigest !== expectedDigest) {
+      throw new SupervisorError("PRECONDITION", "Content-Digest does not match x-maister-sha256", {
+        details: { reason: "runtime_object_integrity_mismatch" },
+      });
+    }
+    const uploadBytes = req.body;
+    if (!(uploadBytes instanceof Buffer)) {
+      throw new SupervisorError("PRECONDITION", "runtime object upload must be binary", {
+        details: { reason: "runtime_object_integrity_mismatch" },
+      });
+    }
+    const envelope: CommandEnvelope = {
+      command: {
+        id: headers.data.commandId,
+        kind: "runtime_object.upload",
+        issuedAt: new Date().toISOString(),
+      },
+      fence: {
+        hostKey: hostState.hostKey,
+        assignmentId: headers.data.assignmentId,
+        assignmentEpoch: headers.data.assignmentEpoch,
+        runId: object.runId,
+      },
+      payload: {
+        objectId: objectId.data,
+        generation: headers.data.generation,
+        sizeBytes: headers.data.sizeBytes,
+        sha256: headers.data.sha256,
+      },
+    };
+    await runCommand({
+      reply,
+      parsed: { envelope, payload: envelope.payload },
+      kind: "runtime_object.upload",
+      expectedRunId: object.runId,
+      runtimeEvent: (transition) =>
+        transition.phase === "accepted"
+          ? null
+          : runtimeObjectEvent(envelope.fence, transition.outcome),
+      execute: async () => ({
+        status: 200,
+        body: await runtimeObjects.upload({
+          objectId: objectId.data,
+          assignmentId: headers.data.assignmentId,
+          assignmentEpoch: headers.data.assignmentEpoch,
+          generation: headers.data.generation,
+          sizeBytes: headers.data.sizeBytes,
+          sha256: headers.data.sha256,
+          bytes: uploadBytes,
+        }),
+      }),
+    });
+  });
+
+  app.get("/runtime-objects/:id/content", async (req, reply) => {
+    const objectId = z.string().uuid().safeParse((req.params as { id?: unknown }).id);
+    if (!objectId.success) {
+      throw new SupervisorError("PRECONDITION", "runtime object id is invalid", {
+        details: { reason: "runtime_object_missing" },
+      });
+    }
+    const content = await runtimeObjects.read(objectId.data);
+    const total = content.metadata.sizeBytes;
+    if (total === null) throw new Error("available runtime object has no size");
+    const maxRangeBytes = 8 * 1024 * 1024;
+    const range = req.headers.range;
+    if (range && Array.isArray(range)) {
+      throw new SupervisorError("PRECONDITION", "runtime object range is invalid", {
+        details: { reason: "runtime_object_range_invalid" },
+      });
+    }
+    const match = range?.match(/^bytes=(\d+)-(\d*)$/);
+    if (range && !match) {
+      throw new SupervisorError("PRECONDITION", "runtime object range is invalid", {
+        details: { reason: "runtime_object_range_invalid" },
+      });
+    }
+    if (!match) {
+      if (total > maxRangeBytes) {
+        throw new SupervisorError(
+          "PRECONDITION",
+          "a runtime object larger than 8 MiB requires an explicit byte range",
+          { details: { reason: "runtime_object_range_invalid" } },
+        );
+      }
+      reply
+        .header("Accept-Ranges", "bytes")
+        .header("Content-Type", content.metadata.mimeType)
+        .header("Content-Length", String(total))
+        .header("ETag", `\"${content.metadata.sha256}\"`)
+        .header(
+          "Content-Digest",
+          `sha-256=:${Buffer.from(content.metadata.sha256 ?? "", "hex").toString("base64")}:`,
+        );
+      return reply.status(200).send(createReadStream(content.path));
+    }
+    const start = Number(match[1]);
+    const requestedEnd = match[2] ? Number(match[2]) : total - 1;
+    const requestedLength = requestedEnd - start + 1;
+    if (
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(requestedEnd) ||
+      start >= total ||
+      requestedEnd < start ||
+      requestedEnd >= total ||
+      requestedLength > maxRangeBytes
+    ) {
+      throw new SupervisorError("PRECONDITION", "runtime object range is invalid", {
+        details: { reason: "runtime_object_range_invalid" },
+      });
+    }
+    reply
+      .header("Accept-Ranges", "bytes")
+      .header("Content-Type", content.metadata.mimeType)
+      .header("Content-Length", String(requestedLength))
+      .header("ETag", `\"${content.metadata.sha256}\"`)
+      .header("Content-Digest", `sha-256=:${Buffer.from(content.metadata.sha256 ?? "", "hex").toString("base64")}:`);
+    return reply
+      .header("Content-Range", `bytes ${start}-${requestedEnd}/${total}`)
+      .status(206)
+      .send(createReadStream(content.path, { start, end: requestedEnd }));
+  });
+
+  app.delete("/runtime-objects/:id", async (req, reply) => {
+    const objectId = z.string().uuid().safeParse((req.params as { id?: unknown }).id);
+    if (!objectId.success) {
+      throw new SupervisorError("PRECONDITION", "runtime object id is invalid", {
+        details: { reason: "runtime_object_missing" },
+      });
+    }
+    const object = hostState.getRuntimeObject(objectId.data);
+    if (!object) {
+      throw new SupervisorError("PRECONDITION", "runtime object is missing", {
+        details: { reason: "runtime_object_missing" },
+      });
+    }
+    const parsed = parseCommandBody(
+      req.body,
+      "runtime_object.delete",
+      DeleteRuntimeObjectPayloadSchema,
+      { route: "DELETE /runtime-objects/:id" },
+    );
+    await runCommand({
+      reply,
+      parsed,
+      kind: "runtime_object.delete",
+      expectedRunId: object.runId,
+      runtimeEvent: (transition) =>
+        transition.phase === "accepted"
+          ? null
+          : runtimeObjectEvent(parsed.envelope.fence, transition.outcome),
+      execute: async () => ({
+        status: 204,
+        body: await runtimeObjects.remove({
+          objectId: objectId.data,
+          assignmentId: parsed.envelope.fence.assignmentId,
+          assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
+          generation: parsed.payload.generation,
+        }),
+      }),
+    });
   });
 
   // Stage B host-global outbox transport. `Last-Event-ID` is an exclusive

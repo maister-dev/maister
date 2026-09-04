@@ -19,6 +19,9 @@ import type {
   CommandEnvelope,
   CommandKind,
   ExecutionWorkspaceId,
+  RuntimeObjectKind,
+  RuntimeObjectRetentionClass,
+  RuntimeObjectState,
   WorkspaceKind,
 } from "./types";
 import type { RuntimeEventEnvelope } from "./runtime-events";
@@ -122,6 +125,38 @@ export type RuntimeEventAckResult = {
 
 export type EmptyPayload = Record<string, never>;
 
+export type RuntimeObjectMetadata = {
+  objectId: string;
+  kind: RuntimeObjectKind;
+  logicalName: string;
+  mimeType: string;
+  sizeBytes: number | null;
+  sha256: string | null;
+  generation: number;
+  retentionClass: RuntimeObjectRetentionClass;
+  state: RuntimeObjectState;
+  createdAt: string;
+  sealedAt: string | null;
+  expiresAt: string | null;
+  deletedAt: string | null;
+};
+
+export type ReserveRuntimeObjectPayload = {
+  objectId: string;
+  kind: RuntimeObjectKind;
+  logicalName: string;
+  mimeType: string;
+  generation: number;
+  retentionClass: RuntimeObjectRetentionClass;
+  expiresAt?: string | null;
+};
+
+export type RuntimeObjectContent = {
+  bytes: Uint8Array;
+  contentRange: string | null;
+  contentDigest: string | null;
+};
+
 // Per-call transport timeout, chosen by the caller from the per-kind policy
 // table (ADR-166 D5); `null` = no timeout (the long-lived prompt).
 export type CommandCallOptions = { timeoutMs?: number | null };
@@ -161,6 +196,29 @@ export interface ExecutionHostTransport {
   }): Promise<RuntimeEventAckResult>;
   getCommandReceipt(commandId: string): Promise<CommandReceipt | null>;
   getWorkspace(executionWorkspaceId: string): Promise<WorkspaceRecord | null>;
+  getRuntimeObject(objectId: string): Promise<RuntimeObjectMetadata | null>;
+  getRuntimeObjectContent(
+    objectId: string,
+    opts?: { range?: { start: number; end?: number } },
+  ): Promise<RuntimeObjectContent>;
+  reserveRuntimeObject(
+    envelope: CommandEnvelope<ReserveRuntimeObjectPayload>,
+    opts?: CommandCallOptions,
+  ): Promise<RuntimeObjectMetadata>;
+  uploadRuntimeObject(input: {
+    objectId: string;
+    envelope: CommandEnvelope<{
+      generation: number;
+      sizeBytes: number;
+      sha256: string;
+    }>;
+    bytes: Uint8Array;
+  }): Promise<RuntimeObjectMetadata>;
+  deleteRuntimeObject(
+    objectId: string,
+    envelope: CommandEnvelope<{ generation: number }>,
+    opts?: CommandCallOptions,
+  ): Promise<void>;
   adoptWorkspace(
     envelope: CommandEnvelope<AdoptWorkspaceWire>,
     opts?: CommandCallOptions,

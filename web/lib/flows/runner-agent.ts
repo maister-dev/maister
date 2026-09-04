@@ -1002,7 +1002,7 @@ async function runNewSession(
       });
 
       try {
-        promptResult = await handle.completion;
+        promptResult = await client.waitForPrompt(handle);
       } catch (err) {
         // A checkpoint (keep-alive sweep, budget park, node interrupt) tears
         // the adapter down mid-turn; the host then answers the in-flight turn

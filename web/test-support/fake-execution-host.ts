@@ -10,6 +10,8 @@ import type {
   ExecutionHostTransport,
   HostHealth,
   InputDeliveryResult,
+  RuntimeObjectContent,
+  RuntimeObjectMetadata,
   WorkspaceRecord,
 } from "@/lib/execution-host/contracts";
 import type {
@@ -28,7 +30,7 @@ import type {
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { PlatformStatus } from "@/types/platform-status";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 import { isReadoptableWorkspaceError } from "@/lib/execution-host/adoption";
@@ -356,6 +358,10 @@ export function createFakeExecutionHost(
   const sessions = new Map<string, FakeSession>();
   const workspaces = new Map<string, WorkspaceRecord & { path: string }>();
   const receipts = new Map<string, CommandReceipt>();
+  const runtimeObjects = new Map<
+    string,
+    { metadata: RuntimeObjectMetadata; bytes: Uint8Array | null; runId: string }
+  >();
   const fences = new Map<string, number>();
   // The assignment that owns each run's high-water (the host stores both).
   const fenceOwners = new Map<string, string>();
@@ -838,7 +844,7 @@ export function createFakeExecutionHost(
         const event = await queue.next(opts?.signal);
 
         if (event === null) return;
-        commandSignals.publish(event);
+        commandSignals.publishLegacy(event);
         yield event;
         if (
           event.type === "session.exited" ||
@@ -881,6 +887,127 @@ export function createFakeExecutionHost(
       delete projection.path;
 
       return projection as WorkspaceRecord;
+    },
+    async getRuntimeObject(objectId) {
+      await record("getRuntimeObject", null, [objectId]);
+      loseAdminResponse("getRuntimeObject");
+      return runtimeObjects.get(objectId)?.metadata ?? null;
+    },
+    async getRuntimeObjectContent(objectId, opts): Promise<RuntimeObjectContent> {
+      await record("getRuntimeObjectContent", null, [objectId, opts]);
+      const object = runtimeObjects.get(objectId);
+      if (!object?.bytes || object.metadata.state !== "available") {
+        throw precondition("fake: runtime object is missing", {
+          reason: "runtime_object_missing",
+        });
+      }
+      const start = opts?.range?.start ?? 0;
+      const end = Math.min(opts?.range?.end ?? object.bytes.byteLength - 1, object.bytes.byteLength - 1);
+      if (start < 0 || end < start) {
+        throw precondition("fake: runtime object range is invalid", {
+          reason: "runtime_object_range_invalid",
+        });
+      }
+      return {
+        bytes: object.bytes.slice(start, end + 1),
+        contentRange: opts?.range
+          ? `bytes ${start}-${end}/${object.bytes.byteLength}`
+          : null,
+        contentDigest: object.metadata.sha256
+          ? `sha-256=:${Buffer.from(object.metadata.sha256, "hex").toString("base64")}:`
+          : null,
+      };
+    },
+    reserveRuntimeObject(envelope, opts) {
+      return runCommand<RuntimeObjectMetadata>({
+        method: "reserveRuntimeObject",
+        envelope,
+        args: [opts],
+        guard: () => envelope.fence.runId,
+        execute: async () => {
+          const current = runtimeObjects.get(envelope.payload.objectId);
+          if (current) return { status: 201, body: current.metadata };
+          const metadata: RuntimeObjectMetadata = {
+            objectId: envelope.payload.objectId,
+            kind: envelope.payload.kind,
+            logicalName: envelope.payload.logicalName,
+            mimeType: envelope.payload.mimeType,
+            sizeBytes: null,
+            sha256: null,
+            generation: envelope.payload.generation,
+            retentionClass: envelope.payload.retentionClass,
+            state: "pending",
+            createdAt: new Date().toISOString(),
+            sealedAt: null,
+            expiresAt: envelope.payload.expiresAt ?? null,
+            deletedAt: null,
+          };
+          runtimeObjects.set(metadata.objectId, {
+            metadata,
+            bytes: null,
+            runId: envelope.fence.runId,
+          });
+          return { status: 201, body: metadata };
+        },
+      });
+    },
+    uploadRuntimeObject(input) {
+      return runCommand<RuntimeObjectMetadata>({
+        method: "uploadRuntimeObject",
+        envelope: input.envelope,
+        args: [input.objectId, input.bytes],
+        guard: () => runtimeObjects.get(input.objectId)?.runId,
+        execute: async () => {
+          const object = runtimeObjects.get(input.objectId);
+          if (!object) {
+            throw precondition("fake: runtime object is missing", {
+              reason: "runtime_object_missing",
+            });
+          }
+          const digest = createHash("sha256").update(input.bytes).digest("hex");
+          if (
+            digest !== input.envelope.payload.sha256 ||
+            input.bytes.byteLength !== input.envelope.payload.sizeBytes ||
+            input.envelope.payload.generation !== object.metadata.generation
+          ) {
+            throw precondition("fake: runtime object checksum is invalid", {
+              reason: "runtime_object_integrity_mismatch",
+            });
+          }
+          const metadata: RuntimeObjectMetadata = {
+            ...object.metadata,
+            sizeBytes: input.bytes.byteLength,
+            sha256: digest,
+            state: "available",
+            sealedAt: new Date().toISOString(),
+          };
+          runtimeObjects.set(input.objectId, { ...object, metadata, bytes: input.bytes });
+          return { status: 200, body: metadata };
+        },
+      });
+    },
+    async deleteRuntimeObject(objectId, envelope, opts) {
+      await runCommand<RuntimeObjectMetadata>({
+        method: "deleteRuntimeObject",
+        envelope,
+        args: [objectId, opts],
+        guard: () => runtimeObjects.get(objectId)?.runId,
+        execute: async () => {
+          const object = runtimeObjects.get(objectId);
+          if (!object || object.metadata.generation !== envelope.payload.generation) {
+            throw precondition("fake: runtime object is missing", {
+              reason: "runtime_object_missing",
+            });
+          }
+          const metadata: RuntimeObjectMetadata = {
+            ...object.metadata,
+            state: "deleted",
+            deletedAt: new Date().toISOString(),
+          };
+          runtimeObjects.set(objectId, { ...object, metadata, bytes: null });
+          return { status: 204, body: metadata };
+        },
+      });
     },
     // D7: the ONLY path-bearing route. Idempotent on `(runId, path)` while the
     // handle is live; a released handle's path re-adopts as a NEW handle.
@@ -1091,7 +1218,7 @@ export function createFakeExecutionHost(
             },
             emit: (phase, extra) => {
               monotonicId += 1;
-              commandSignals.publish({
+              commandSignals.publishLegacy({
                 type: "session.command",
                 sessionId,
                 monotonicId,
@@ -1628,6 +1755,7 @@ export function memoryBoundClient(args: {
       runId: current.runId,
       payload,
     });
+  const promptCompletions = new Map<string, Promise<PromptResult>>();
   const adopt = async () => {
     const result = await fake.transport.adoptWorkspace(
       envelope("workspace.adopt", {
@@ -1687,13 +1815,25 @@ export function memoryBoundClient(args: {
     },
     async prompt(sessionId, input, opts) {
       const env = envelope("session.prompt", input);
+      const completion = fake.transport.sendPrompt(sessionId, env, {
+        signal: opts?.signal,
+      });
+
+      promptCompletions.set(env.command.id, completion);
 
       return {
         commandId: env.command.id,
-        completion: fake.transport.sendPrompt(sessionId, env, {
-          signal: opts?.signal,
-        }),
       };
+    },
+    async waitForPrompt(handle) {
+      const completion = promptCompletions.get(handle.commandId);
+      if (!completion) {
+        throw new MaisterError("PRECONDITION", "prompt command is not available", {
+          details: { reason: "prompt_command_missing", commandId: handle.commandId },
+        });
+      }
+
+      return completion;
     },
     deliverInput: (sessionId, payload) =>
       fake.transport.deliverInput(
@@ -1731,6 +1871,25 @@ export function memoryBoundClient(args: {
       ),
     deleteSession: (sessionId) =>
       fake.transport.deleteSession(sessionId, envelope("session.delete", {})),
+    reserveRuntimeObject: (payload) =>
+      fake.transport.reserveRuntimeObject(
+        envelope("runtime_object.reserve", payload),
+      ),
+    uploadRuntimeObject: (input) =>
+      fake.transport.uploadRuntimeObject({
+        objectId: input.objectId,
+        envelope: envelope("runtime_object.upload", {
+          generation: input.generation,
+          sizeBytes: input.bytes.byteLength,
+          sha256: input.sha256,
+        }),
+        bytes: input.bytes,
+      }),
+    deleteRuntimeObject: (input) =>
+      fake.transport.deleteRuntimeObject(
+        input.objectId,
+        envelope("runtime_object.delete", { generation: input.generation }),
+      ),
   };
 
   return client;

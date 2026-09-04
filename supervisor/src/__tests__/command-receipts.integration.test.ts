@@ -216,7 +216,9 @@ describe("command receipts", () => {
       commandId,
       runId,
       kind: "session.prompt",
+      assignmentId: null,
       epoch: 1,
+      hostSessionId: null,
       requestDigest: null,
       eventId: null,
       phase: "accepted",
@@ -251,6 +253,71 @@ describe("command receipts", () => {
     expect(res.body.code).toBe("PRECONDITION");
     expect(res.body.details.reason).toBe("turn_lost");
     expect(second.hostState.getReceipt(commandId)?.phase).toBe("rejected");
+  });
+
+  it("R3b: supervisor startup terminalizes a proven async prompt receipt and appends turn_lost", async () => {
+    const root = await tempRoot();
+    const stateDir = join(root, ".maister", "execution-host");
+    const first = await bootHost({
+      runtimeRoot: root,
+      stateDir,
+      fixtureArgs: ["--hang"],
+    });
+    const runId = `run-${randomUUID().slice(0, 8)}`;
+    const created = await postJson(
+      `${first.url}/sessions`,
+      await createEnvelope(first, { runId }),
+    );
+    const commandId = randomUUID();
+    const assignmentId = randomUUID();
+    first.hostState.putReceipt({
+      commandId,
+      runId,
+      kind: "session.prompt",
+      assignmentId,
+      epoch: 1,
+      hostSessionId: created.body.sessionId as string,
+      requestDigest: null,
+      eventId: null,
+      phase: "accepted",
+      httpStatus: 202,
+      body: { commandId, state: "accepted" },
+      receivedAt: new Date().toISOString(),
+      completedAt: null,
+    });
+    await first.stop();
+
+    const second = await bootHost({
+      runtimeRoot: root,
+      stateDir,
+      fixtureArgs: ["--hang"],
+    });
+    booted.push(second);
+    const receipt = second.hostState.getReceipt(commandId);
+    const events = second.hostState.runtimeEventsAfter(
+      second.hostState.getRuntimeEventStreamId(),
+      null,
+    );
+    const event = events.find((candidate) => candidate.eventId === receipt?.eventId);
+
+    expect(receipt).toMatchObject({
+      phase: "rejected",
+      httpStatus: 409,
+      body: { details: { reason: "turn_lost", runId } },
+    });
+    expect(event?.envelope).toMatchObject({
+      runId,
+      assignmentId,
+      hostSessionId: created.body.sessionId,
+      eventType: "session.command",
+      payload: {
+        commandId,
+        kind: "session.prompt",
+        phase: "completed",
+        status: "failed",
+        error: { details: { reason: "turn_lost", runId } },
+      },
+    });
   });
 
   it("R4: GET /commands/:id returns the receipt fields; unknown is 404", async () => {
@@ -331,7 +398,9 @@ describe("command receipts", () => {
       commandId: old,
       runId: "r",
       kind: "session.cancel",
+      assignmentId: null,
       epoch: 1,
+      hostSessionId: null,
       requestDigest: null,
       eventId: null,
       phase: "completed",
@@ -344,7 +413,9 @@ describe("command receipts", () => {
       commandId: fresh,
       runId: "r",
       kind: "session.cancel",
+      assignmentId: null,
       epoch: 1,
+      hostSessionId: null,
       requestDigest: null,
       eventId: null,
       phase: "completed",

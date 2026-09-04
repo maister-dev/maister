@@ -39,8 +39,51 @@ export const COMMAND_KINDS = [
   "session.cancel",
   "session.checkpoint",
   "session.delete",
+  "runtime_object.reserve",
+  "runtime_object.upload",
+  "runtime_object.delete",
 ] as const;
 export type CommandKind = (typeof COMMAND_KINDS)[number];
+
+export const RUNTIME_OBJECT_KINDS = [
+  "session_log",
+  "raw_transcript",
+  "cost_diagnostic",
+  "checkpoint",
+  "attachment",
+  "capability_profile",
+  "agent_memory_snapshot",
+  "node_result",
+  "evidence",
+  "generated_artifact",
+  "plan_review",
+  "diagnostic",
+] as const;
+export type RuntimeObjectKind = (typeof RUNTIME_OBJECT_KINDS)[number];
+
+export const RUNTIME_OBJECT_RETENTION_CLASSES = [
+  "run",
+  "delivery",
+  "ephemeral",
+] as const;
+export type RuntimeObjectRetentionClass =
+  (typeof RUNTIME_OBJECT_RETENTION_CLASSES)[number];
+
+export const RUNTIME_OBJECT_STATES = [
+  "pending",
+  "available",
+  "deleting",
+  "missing",
+  "deleted",
+  "expired",
+  "corrupt",
+] as const;
+export type RuntimeObjectState = (typeof RUNTIME_OBJECT_STATES)[number];
+
+export type RuntimeObjectLocator = {
+  kind: "execution-object";
+  objectId: string;
+};
 
 export const COMMAND_STATES = [
   "queued",

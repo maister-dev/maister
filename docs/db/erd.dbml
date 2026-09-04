@@ -1082,6 +1082,40 @@ table execution_hosts {
   }
 }
 
+table execution_runtime_objects {
+  id text [pk, not null]
+  run_id text [not null]
+  execution_host_id text [not null]
+  execution_assignment_id text
+  assignment_epoch integer
+  run_session_incarnation_id text
+  kind text [not null]
+  logical_name text [not null]
+  mime_type text [not null]
+  size_bytes bigint
+  sha256 text
+  generation integer [not null]
+  retention_class text [not null]
+  state text [not null]
+  source_event_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  sealed_at "timestamp with time zone"
+  expires_at "timestamp with time zone"
+  deleted_at "timestamp with time zone"
+  last_error jsonb
+
+  indexes {
+    source_event_id [name: 'execution_runtime_objects_source_event_uq', unique]
+    (run_id, state) [name: 'execution_runtime_objects_run_state_idx']
+    expires_at [name: 'execution_runtime_objects_expiry_idx']
+
+
+
+
+
+  }
+}
+
 table flow_revisions {
   id text [pk, not null]
   flow_ref_id text [not null]
@@ -2855,6 +2889,16 @@ ref execution_events_event_stream_id_execution_event_streams_id_fk: execution_ev
 ref execution_events_execution_assignment_id_execution_assignments_id_fk: execution_events.execution_assignment_id > execution_assignments.id [delete: set null, update: no action]
 
 ref execution_events_run_session_incarnation_id_run_session_incarnations_id_fk: execution_events.run_session_incarnation_id > run_session_incarnations.id [delete: set null, update: no action]
+
+ref execution_runtime_objects_run_id_runs_id_fk: execution_runtime_objects.run_id > runs.id [delete: cascade, update: no action]
+
+ref execution_runtime_objects_execution_host_id_execution_hosts_id_fk: execution_runtime_objects.execution_host_id > execution_hosts.id [delete: restrict, update: no action]
+
+ref execution_runtime_objects_execution_assignment_id_execution_assignments_id_fk: execution_runtime_objects.execution_assignment_id > execution_assignments.id [delete: set null, update: no action]
+
+ref execution_runtime_objects_run_session_incarnation_id_run_session_incarnations_id_fk: execution_runtime_objects.run_session_incarnation_id > run_session_incarnations.id [delete: set null, update: no action]
+
+ref execution_runtime_objects_source_event_id_execution_events_id_fk: execution_runtime_objects.source_event_id > execution_events.id [delete: set null, update: no action]
 
 ref flow_revisions_default_runner_id_platform_acp_runners_id_fk: flow_revisions.default_runner_id > platform_acp_runners.id [delete: set null, update: no action]
 

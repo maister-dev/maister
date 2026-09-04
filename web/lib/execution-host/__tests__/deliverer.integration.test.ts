@@ -17,6 +17,7 @@ import { createExecutionHosts } from "@/lib/execution-host/client";
 import { listCommandsForRun } from "@/lib/execution-host/commands";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
+import { publishRuntimeObject } from "@/lib/execution-host/runtime-objects";
 import {
   seedProjectRow,
   seedRun,
@@ -120,7 +121,7 @@ describe("bound client over the real wire", () => {
       prompt: "hello",
     });
 
-    expect((await handle.completion).stopReason).toBe("end_turn");
+    expect((await client.waitForPrompt(handle)).stopReason).toBe("end_turn");
 
     // Input: the lifecycle fixture never asks for a permission, so the only
     // input a live session can take is the cancel of an unknown request —
@@ -221,5 +222,46 @@ describe("bound client over the real wire", () => {
     expect(fenced).toHaveLength(1);
     expect(fenced[0].state).toBe("fenced");
     expect(fenced[0].assignmentEpoch).toBe(first.epoch);
+  }, 120_000);
+
+  it("D3: runtime-object reserve, upload, and delete use the assignment-bound command ledger", async () => {
+    const runId = await seedFlowRun("runtime-object");
+    const client = await hosts.forRun(runId, { reason: "launch" });
+    const objectId = randomUUID();
+    const bytes = new TextEncoder().encode("host-owned object");
+    const published = await publishRuntimeObject({
+      client,
+      objectId,
+      kind: "generated_artifact",
+      logicalName: "result.txt",
+      mimeType: "text/plain",
+      retentionClass: "run",
+      bytes,
+    });
+
+    expect(published.metadata).toMatchObject({
+      objectId,
+      state: "available",
+      sizeBytes: bytes.byteLength,
+      sha256: "ffd0fa81553b1c5d3b8c49b553605b64ed2be239e167f442ea8cdc77769a8a7a",
+    });
+
+    await client.deleteRuntimeObject({ objectId, generation: 1 });
+
+    const commands = await listCommandsForRun(db, runId);
+    expect(
+      commands
+        .filter((row) => row.kind.startsWith("runtime_object."))
+        .map((row) => [row.kind, row.state]),
+    ).toEqual([
+      ["runtime_object.reserve", "succeeded"],
+      ["runtime_object.upload", "succeeded"],
+      ["runtime_object.delete", "succeeded"],
+    ]);
+    expect(
+      commands
+        .filter((row) => row.kind.startsWith("runtime_object."))
+        .every((row) => row.executionAssignmentId === client.assignment.id),
+    ).toBe(true);
   }, 120_000);
 });

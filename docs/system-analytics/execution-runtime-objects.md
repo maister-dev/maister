@@ -1,8 +1,8 @@
 # Execution runtime objects
 
-**Status:** Designed — Stage B introduces path-free contracts for host-owned
-runtime bytes while retaining manager-owned evidence, inline artifacts, Flow
-state, and repository/Git content at their existing owners.
+**Status:** Incremental — B3.4 implements the host registry, fenced
+reserve/upload/delete API, manager catalog projection, and authorized web
+read route. Producer migration from legacy runtime files remains B3.5.
 
 ## Purpose
 
@@ -29,8 +29,7 @@ artifact association.
 ```mermaid
 stateDiagram-v2
   [*] --> pending: reserve command
-  pending --> uploading: accepted upload intent
-  uploading --> available: hash/size verify then atomic rename
+  pending --> available: hash/size verify then atomic rename
   available --> deleting: fenced delete command
   deleting --> deleted: durable host tombstone then unlink
   available --> missing: verified absent
@@ -46,13 +45,12 @@ sequenceDiagram
   participant M as Manager catalog
   participant H as Host registry
   participant A as ACP process
-  M->>M: persist pending catalog plus reserve command
   M->>H: reserve opaque object ID and metadata
   M->>H: fenced streaming upload with same command ledger
   H->>H: temp write, verify digest/size, atomic rename
-  H->>M: available event and receipt
-  A->>H: write declared private output object
-  H->>M: sealed available metadata event
+  H->>M: durable available event and receipt
+  M->>M: project canonical available metadata into catalogue
+  Note over A,H: Host-owned producer registration is B3.5
 ```
 
 ## Expectations
@@ -62,7 +60,7 @@ sequenceDiagram
 - **OBJ-03:** Reserve, upload, and delete reuse Stage A commands, receipts, retry state, and fences without a second ledger.
 - **OBJ-04:** A sealed object has immutable binding, generation, MIME, size, and SHA-256, and differing retries conflict.
 - **OBJ-05:** Upload bytes use private temporary files, verify declared integrity, and atomically rename before available evidence.
-- **OBJ-06:** Reads stream bounded content with one byte range and strong ETag, while invalid ranges return typed errors.
+- **OBJ-06:** Reads return bounded content with one byte range and a SHA-256 Content-Digest, while invalid ranges return typed errors.
 - **OBJ-07:** Unknown/cross-boundary, tombstoned/expired, corrupt, and oversized objects have distinct typed outcomes.
 - **OBJ-08:** Object content, host paths, prompts, and secrets are prohibited from logs and event payloads.
 - **OBJ-09:** Events/messages/cost/catalog metadata remain manager-owned while raw diagnostics and large host content remain host-owned.
@@ -72,9 +70,9 @@ sequenceDiagram
 
 ## Edge cases
 
-- **EDGE-OBJ-01:** Traversal, symlink escape, or a client-selected foreign binding returns `runtime_object_not_found` or `runtime_object_invalid` without existence disclosure (`IT-OBJ-02-PATH`).
-- **EDGE-OBJ-02:** Multi-range, malformed, or out-of-content range returns `runtime_object_range_unsatisfiable` with no full-body fallback (`IT-OBJ-06`).
-- **EDGE-OBJ-03:** A retry with different size, hash, MIME, or generation preserves the original and returns `runtime_object_identity_conflict` (`IT-OBJ-04-CONFLICT`).
+- **EDGE-OBJ-01:** A client-selected foreign binding is not found before project authorization, while host-private path traversal is impossible because no path is accepted (`IT-OBJ-02-PATH`).
+- **EDGE-OBJ-02:** Multi-range, malformed, or out-of-content range returns `PRECONDITION {reason: runtime_object_range_invalid}` with no full-body fallback (`IT-OBJ-06`).
+- **EDGE-OBJ-03:** A retry with different size, hash, MIME, or generation preserves the original and returns `PRECONDITION {reason: command_invariant_conflict}` (`IT-OBJ-04-CONFLICT`).
 - An interrupted upload discards private temporary bytes and retries from zero with its original command ID; a sealed registry row can synthesize the missing receipt/event after restart.
 
 ## Linked artifacts

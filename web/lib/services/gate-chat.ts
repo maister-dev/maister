@@ -1174,7 +1174,7 @@ export async function sendGateChatTurn(args: {
       readOnlyTurn: true,
     });
 
-    promptResult = await handle.completion;
+    promptResult = await client.waitForPrompt(handle);
   } catch (err) {
     // X-DEFER: release the stream consumer on EVERY failure path.
     abort.abort();

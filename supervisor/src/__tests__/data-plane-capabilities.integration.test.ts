@@ -21,7 +21,7 @@ describe("Stage B capability discovery", () => {
       dataPlaneVersion: "execution-host-data-plane.v1",
       eventStream: true,
       asyncPrompt: true,
-      runtimeObjects: false,
+      runtimeObjects: true,
       limits: {
         maxEventBytes: 1_048_576,
         maxObjectBytes: 536_870_912,

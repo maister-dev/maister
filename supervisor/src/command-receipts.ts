@@ -51,8 +51,23 @@ export class CommandReceipts {
     return this.inflight.has(commandId);
   }
 
+  // ACP processes are intentionally not recovered across a supervisor restart.
+  // Canonical prompt receipts with durable provenance therefore become an
+  // explicit terminal `turn_lost` pair before the host accepts new traffic.
+  recoverAcceptedPrompts(): number {
+    const recovered = this.state.recoverAcceptedPromptReceipts();
+    if (recovered > 0) {
+      this.logger.warn(
+        { recovered },
+        "accepted-prompt-receipts-terminalized-after-restart",
+      );
+    }
+    return recovered;
+  }
+
   async execute(args: {
     envelope: CommandEnvelope;
+    hostSessionId?: string;
     // Called once the `accepted` receipt is durable and BEFORE the effect runs.
     onAccepted?: () => void;
     // Session commands supply this to atomically persist the receipt and its
@@ -137,6 +152,7 @@ export class CommandReceipts {
   // therefore reconciled from GET /commands or the canonical event stream.
   async executeAsync(args: {
     envelope: CommandEnvelope;
+    hostSessionId?: string;
     persistReceipt?: (transition: ReceiptTransition) => void;
     afterReceipt?: (transition: ReceiptTransition) => void;
     admissionExempt?: boolean;
@@ -202,6 +218,7 @@ export class CommandReceipts {
   private async completeAsync(
     args: {
       envelope: CommandEnvelope;
+      hostSessionId?: string;
       persistReceipt?: (transition: ReceiptTransition) => void;
       afterReceipt?: (transition: ReceiptTransition) => void;
       admissionExempt?: boolean;
@@ -234,6 +251,7 @@ export class CommandReceipts {
   private async runFresh(
     args: {
       envelope: CommandEnvelope;
+      hostSessionId?: string;
       onAccepted?: () => void;
       persistReceipt?: (transition: ReceiptTransition) => void;
       afterReceipt?: (transition: ReceiptTransition) => void;
@@ -278,6 +296,7 @@ export class CommandReceipts {
     receivedAt: string,
     callbacks: {
       envelope: CommandEnvelope;
+      hostSessionId?: string;
       onAccepted?: () => void;
       persistReceipt?: (transition: ReceiptTransition) => void;
       afterReceipt?: (transition: ReceiptTransition) => void;
@@ -288,7 +307,9 @@ export class CommandReceipts {
       commandId: envelope.command.id,
       runId: envelope.fence.runId,
       kind: envelope.command.kind,
+      assignmentId: envelope.fence.assignmentId,
       epoch: envelope.fence.assignmentEpoch,
+      hostSessionId: callbacks.hostSessionId ?? null,
       requestDigest: commandRequestDigest(envelope),
       eventId: null,
       phase,

@@ -62,6 +62,9 @@ import {
   EXECUTION_HOST_READINESS,
   OPEN_COMMAND_STATES,
   PLACEMENT_REASONS,
+  RUNTIME_OBJECT_KINDS,
+  RUNTIME_OBJECT_RETENTION_CLASSES,
+  RUNTIME_OBJECT_STATES,
   TERMINAL_COMMAND_STATES,
 } from "@/lib/execution-host/types";
 
@@ -3740,6 +3743,64 @@ export const executionEvents = pgTable(
   }),
 );
 
+// ADR-167 D8: manager-owned metadata for host-owned runtime bytes. The private
+// host path exists only in supervisor SQLite; the web tier addresses content by
+// this opaque ID and derives the host/run binding from this catalog.
+export const executionRuntimeObjects = pgTable(
+  "execution_runtime_objects",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id").notNull().references(() => runs.id, { onDelete: "cascade" }),
+    executionHostId: text("execution_host_id").notNull().references(() => executionHosts.id, { onDelete: "restrict" }),
+    executionAssignmentId: text("execution_assignment_id").references(() => executionAssignments.id, { onDelete: "set null" }),
+    assignmentEpoch: integer("assignment_epoch"),
+    runSessionIncarnationId: text("run_session_incarnation_id").references(() => runSessionIncarnations.id, { onDelete: "set null" }),
+    kind: text("kind", { enum: RUNTIME_OBJECT_KINDS }).notNull(),
+    logicalName: text("logical_name").notNull(),
+    mimeType: text("mime_type").notNull(),
+    sizeBytes: bigint("size_bytes", { mode: "bigint" }),
+    sha256: text("sha256"),
+    generation: integer("generation").notNull(),
+    retentionClass: text("retention_class", { enum: RUNTIME_OBJECT_RETENTION_CLASSES }).notNull(),
+    state: text("state", { enum: RUNTIME_OBJECT_STATES }).notNull(),
+    sourceEventId: text("source_event_id").references(() => executionEvents.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+    sealedAt: timestamp("sealed_at", { withTimezone: true, mode: "date" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "date" }),
+    lastError: jsonb("last_error").$type<Record<string, unknown>>(),
+  },
+  (t) => ({
+    uniqSourceEvent: uniqueIndex("execution_runtime_objects_source_event_uq")
+      .on(t.sourceEventId)
+      .where(sql`${t.sourceEventId} IS NOT NULL`),
+    idxRunState: index("execution_runtime_objects_run_state_idx").on(t.runId, t.state),
+    idxExpiry: index("execution_runtime_objects_expiry_idx")
+      .on(t.expiresAt)
+      .where(sql`${t.expiresAt} IS NOT NULL`),
+    sizeCheck: check(
+      "execution_runtime_objects_size_check",
+      sql`${t.sizeBytes} IS NULL OR ${t.sizeBytes} >= 0`,
+    ),
+    generationCheck: check(
+      "execution_runtime_objects_generation_check",
+      sql`${t.generation} >= 1`,
+    ),
+    logicalNameCheck: check(
+      "execution_runtime_objects_logical_name_check",
+      sql`char_length(${t.logicalName}) BETWEEN 1 AND 255 AND ${t.logicalName} NOT IN ('.', '..') AND ${t.logicalName} !~ '[\\\\/]'`,
+    ),
+    metadataStateCheck: check(
+      "execution_runtime_objects_metadata_state_check",
+      sql`(${t.state} IN ('available', 'deleting', 'missing', 'deleted', 'expired', 'corrupt')) = (${t.sizeBytes} IS NOT NULL AND ${t.sha256} ~ '^[a-f0-9]{64}$' AND ${t.sealedAt} IS NOT NULL)`,
+    ),
+    ephemeralExpiryCheck: check(
+      "execution_runtime_objects_ephemeral_expiry_check",
+      sql`(${t.retentionClass} = 'ephemeral') = (${t.expiresAt} IS NOT NULL)`,
+    ),
+  }),
+);
+
 export const executionEventConsumers = pgTable(
   "execution_event_consumers",
   {
@@ -3799,6 +3860,7 @@ export const executionEventIngestFailures = pgTable(
 export type ExecutionEvent = typeof executionEvents.$inferSelect;
 export type ExecutionEventStream = typeof executionEventStreams.$inferSelect;
 export type RunSessionIncarnation = typeof runSessionIncarnations.$inferSelect;
+export type ExecutionRuntimeObject = typeof executionRuntimeObjects.$inferSelect;
 
 export const runCostRollups = pgTable(
   "run_cost_rollups",
@@ -4875,6 +4937,7 @@ export type ArtifactLocator =
   | { kind: "git-range"; baseCommit: string; headRef: string }
   | { kind: "git-log"; baseRef: string; headRef: string }
   | { kind: "file"; path: string }
+  | { kind: "execution-object"; objectId: string }
   | { kind: "gate-verdict"; gateResultId: string }
   | { kind: "hitl-response"; hitlRequestId: string }
   | {

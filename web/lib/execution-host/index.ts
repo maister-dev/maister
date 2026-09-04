@@ -138,6 +138,18 @@ export type {
   ExecutionEventProjectorSummary,
 } from "./events/projector";
 export {
+  projectCanonicalPromptCommands,
+  projectPendingCanonicalPromptCommands,
+} from "./events/prompt-projector";
+export {
+  projectCanonicalSessionLifecycle,
+  projectPendingCanonicalSessionLifecycle,
+} from "./events/lifecycle-projector";
+export {
+  projectCanonicalRuntimeObjects,
+  projectPendingCanonicalRuntimeObjects,
+} from "./events/runtime-object-projector";
+export {
   DRIVER_OWNED_RUN_STATUSES,
   findActiveLocalHost,
   LIVE_DRIVER_RUN_STATUSES,

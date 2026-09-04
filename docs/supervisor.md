@@ -688,9 +688,11 @@ never extends its TTL window). The web tier proxies this route through the admin
 [`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml);
 domain: [`system-analytics/model-catalog.md`](system-analytics/model-catalog.md).
 
-### Run-scoped durable event log: `<runId>/run.events.jsonl`
+### Legacy run-scoped event compatibility: `<runId>/run.events.jsonl`
 
-Every `SessionEvent` (`session.line`, `session.update`,
+Until the B4 drain, a `legacy_file_v1` run retains the historical
+`run.events.jsonl` writer and reader. It contains `SessionEvent` values
+(`session.line`, `session.update`,
 `session.permission_request`, `session.exited`, `session.crashed`, and —
 Implemented, ADR-166 — `session.command`)
 is appended to a single per-run JSONL file at
@@ -700,21 +702,26 @@ that backs `GET /sessions/:id/stream`. Multiple spawns for the same
 run append to the same file (slash-in-existing reuses one session
 across steps; new-session-per-step spawns are sequential). On spawn,
 `record.monotonicId` is seeded from the tail of the existing log so
-the per-run event sequence stays strictly increasing across sessions
-— this is what the web SSE bridge at `GET /api/runs/[runId]/stream`
-relies on for cross-session `Last-Event-ID` resume.
+the per-run event sequence stays strictly increasing across sessions. It is a
+bounded compatibility artifact, not lifecycle authority for a canonical-event
+run. Canonical host events are written first to the host-global SQLite outbox
+and delivered to manager-owned PostgreSQL; the web SSE bridge reads that
+manager state for a canonical run.
 
 ### Execution-host state store _(Implemented — ADR-166)_
 
 The supervisor keeps a private `node:sqlite` database at
 `<MAISTER_EXECUTION_HOST_STATE_DIR>/state.sqlite` (default
 `<MAISTER_RUNTIME_ROOT>/.maister/execution-host/`; WAL,
-`synchronous=NORMAL`) with four tables: `host_identity` (the minted or
+`synchronous=FULL`) with durable tables including `host_identity` (the minted or
 pinned `hostKey`), `run_fences` (`run_id, assignment_id, epoch`), `workspaces`
 (adopted handles: `id, run_id, project_slug, kind, path, real_path, repo_path?,
 run_dir, context_mounts?, adopted_at, released_at?`, one ACTIVE row per
 `(run_id, real_path)` through the partial unique index `workspaces_active_uq`),
-and `command_receipts`. The file carries a `PRAGMA user_version` (currently 1)
+`command_receipts`, the durable host-global `runtime_event_streams` /
+`runtime_event_outbox`, and a private `runtime_objects` registry. Runtime
+object bytes live beside this store under `runtime-objects/`; only opaque IDs
+and checksummed metadata cross its API. The file carries a `PRAGMA user_version` (currently 6)
 that gates in-place migrations at open: a version-0 store (inline
 `UNIQUE (run_id, real_path)`, which blocked re-adoption after a release) is
 rebuilt under the partial index with every row kept; a fresh store starts at
@@ -724,7 +731,7 @@ is no in-memory fallback. Two fatal boot errors:
 differs from the stored key — remediation: unset the pin, or deliberately
 wipe the state dir) and `execution-host-state-unwritable`. The web tier
 never reads this directory. What survives a restart: the key, fences,
-receipts, handles. What does not: live sessions (unchanged). If the directory
+receipts, event replay/ACK watermark, object metadata, and handles. What does not: live sessions (unchanged). If the directory
 is lost, the host mints a new key (unless pinned) — the web registrar then
 retires the idle old row or refuses registration while the old row still owns
 non-terminal runs; fences restart at the first command; handles are
@@ -783,7 +790,7 @@ behind `web/lib/execution-host/`) parses `{ code, message, details }`
 from the body and re-throws as `MaisterError({ code, details })`. The
 taxonomy of `MaisterError` lives in [Error Taxonomy](error-taxonomy.md).
 
-## Cost accounting (`cost.jsonl`)
+## Cost accounting (`cost.jsonl` legacy diagnostics)
 
 `cost.ts` observes the same stdout-line stream the SSE bridge uses,
 JSON-parses each line **leniently** (silently skips non-JSON), and looks
@@ -802,6 +809,11 @@ bounded depth 8). When found, it appends a record to
   "cache_read_input_tokens": 0,
 }
 ```
+
+For a canonical-event run, `usage.recorded` in the durable host outbox is the
+manager projection source for UI and cost totals. The JSONL file remains a
+host-owned diagnostic compatibility artifact until B4; the web tier does not
+read it for canonical-mode cost projection.
 
 `cache_creation_input_tokens` is the load-bearing field for ops:
 the ACP spike findings (summary in root `CLAUDE.md` §ACP Spike Findings) measured

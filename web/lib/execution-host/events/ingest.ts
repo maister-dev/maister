@@ -21,6 +21,8 @@ import {
   runs,
 } from "@/lib/db/schema";
 
+import { runEventWakeBus } from "./run-wake";
+
 export type RuntimeEventIngestDisposition =
   | "duplicate"
   | "pending_gap"
@@ -569,6 +571,11 @@ export async function ingestRuntimeEvent(input: {
     },
     "runtime-event-ingested",
   );
+  if (result.acceptedCount > 0) {
+    // The durable insert/promotion already committed. This is only a local
+    // latency optimization for browser and projector readers.
+    runEventWakeBus.wake(envelope.runId);
+  }
   return result;
 }
 

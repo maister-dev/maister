@@ -6,6 +6,8 @@ import type {
   ExecutionHostTransport,
   HostHealth,
   InputPayload,
+  RuntimeObjectContent,
+  RuntimeObjectMetadata,
   WorkspaceRecord,
 } from "../contracts";
 import type { CommandEnvelope, CommandKind, WorkspaceKind } from "../types";
@@ -50,6 +52,17 @@ function toWorkspaceRecord(record: wire.WorkspaceRecordWire): WorkspaceRecord {
     ...record,
     executionWorkspaceId: asExecutionWorkspaceId(record.executionWorkspaceId),
     kind: record.kind as WorkspaceKind,
+  };
+}
+
+function toRuntimeObjectMetadata(
+  metadata: wire.RuntimeObjectWireMetadata,
+): RuntimeObjectMetadata {
+  return {
+    ...metadata,
+    kind: metadata.kind as RuntimeObjectMetadata["kind"],
+    retentionClass: metadata.retentionClass as RuntimeObjectMetadata["retentionClass"],
+    state: metadata.state as RuntimeObjectMetadata["state"],
   };
 }
 
@@ -119,6 +132,24 @@ export function createLocalDirectTransport(): ExecutionHostTransport {
       const record = await wire.getWorkspace(executionWorkspaceId);
 
       return record ? toWorkspaceRecord(record) : null;
+    },
+    async getRuntimeObject(objectId) {
+      const metadata = await wire.getRuntimeObject(objectId);
+      return metadata ? toRuntimeObjectMetadata(metadata) : null;
+    },
+    async getRuntimeObjectContent(objectId, opts): Promise<RuntimeObjectContent> {
+      return wire.getRuntimeObjectContent(objectId, opts);
+    },
+    async reserveRuntimeObject(envelope, opts) {
+      return toRuntimeObjectMetadata(
+        await wire.reserveRuntimeObject(envelope, opts),
+      );
+    },
+    async uploadRuntimeObject(input) {
+      return toRuntimeObjectMetadata(await wire.uploadRuntimeObject(input));
+    },
+    deleteRuntimeObject(objectId, envelope, opts) {
+      return wire.deleteRuntimeObject(objectId, envelope, opts);
     },
     async adoptWorkspace(
       envelope: CommandEnvelope<AdoptWorkspaceWire>,

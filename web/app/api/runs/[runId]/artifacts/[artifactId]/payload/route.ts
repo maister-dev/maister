@@ -1,6 +1,7 @@
 import "server-only";
 
-import type { ArtifactInstance } from "@/lib/db/schema";
+import type { ArtifactInstance, ArtifactLocator } from "@/lib/db/schema";
+import type { Db as ExecutionHostDb } from "@/lib/execution-host/db";
 
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
@@ -9,7 +10,8 @@ import pino from "pino";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { isMaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
+import { readRuntimeObjectContent } from "@/lib/execution-host/runtime-objects";
 import { resolveArtifactContent } from "@/lib/flows/graph/artifact-content";
 import { runtimeRoot } from "@/lib/instance-config";
 import { getRunDetail } from "@/lib/queries/run";
@@ -28,6 +30,7 @@ const log = pino({
 type RouteParams = { params: Promise<{ runId: string; artifactId: string }> };
 
 const TEXT_HEADERS = { "content-type": "text/plain; charset=utf-8" };
+const SINGLE_BYTE_RANGE = /^bytes=(\d+)-(\d*)$/;
 
 function notFound(): NextResponse {
   return NextResponse.json(
@@ -44,6 +47,35 @@ function gone(): NextResponse {
     },
     { status: 410 },
   );
+}
+
+function parseSingleRange(
+  value: string | null,
+): { start: number; end?: number } | undefined {
+  if (!value) return undefined;
+  const match = SINGLE_BYTE_RANGE.exec(value);
+
+  if (!match) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "artifact payload Range must be one bounded byte range",
+      { details: { reason: "runtime_object_range_invalid" } },
+    );
+  }
+  const start = Number(match[1]);
+  const end = match[2] === "" ? undefined : Number(match[2]);
+
+  if (
+    !Number.isSafeInteger(start) ||
+    start < 0 ||
+    (end !== undefined && (!Number.isSafeInteger(end) || end < start))
+  ) {
+    throw new MaisterError("PRECONDITION", "artifact payload Range is invalid", {
+      details: { reason: "runtime_object_range_invalid" },
+    });
+  }
+
+  return end === undefined ? { start } : { start, end };
 }
 
 // Inlined authz → HTTP mapping (the route's own copy; the test mocks
@@ -72,6 +104,26 @@ function errorResponse(err: unknown, runId: string): NextResponse {
         { status },
       );
     }
+
+    const reason = err.details?.reason;
+    if (reason === "runtime_object_range_invalid") {
+      return NextResponse.json(
+        { code: err.code, message: err.message },
+        { status: 416 },
+      );
+    }
+    if (reason === "runtime_object_missing") {
+      return gone();
+    }
+    if (reason === "runtime_object_integrity_mismatch") {
+      return NextResponse.json(
+        {
+          code: "CONFLICT",
+          message: "Artifact payload failed its integrity check.",
+        },
+        { status: 409 },
+      );
+    }
   }
   const message = err instanceof Error ? err.message : String(err);
 
@@ -87,9 +139,9 @@ function errorResponse(err: unknown, runId: string): NextResponse {
 }
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: RouteParams,
-): Promise<NextResponse> {
+): Promise<Response> {
   const { runId, artifactId } = await params;
 
   try {
@@ -120,6 +172,35 @@ export async function GET(
 
     if (!artifact) {
       return notFound();
+    }
+
+    const locator = artifact.locator as ArtifactLocator;
+
+    if (locator.kind === "execution-object") {
+      const { object, content } = await readRuntimeObjectContent({
+        db: db as unknown as ExecutionHostDb,
+        runId,
+        objectId: locator.objectId,
+        range: parseSingleRange(req.headers.get("range")),
+      });
+      const headers = new Headers({
+        "content-type": object.mimeType,
+        "content-length": String(content.bytes.byteLength),
+        "accept-ranges": "bytes",
+        etag: `\"${object.sha256}\"`,
+      });
+
+      if (content.contentDigest) {
+        headers.set("content-digest", content.contentDigest);
+      }
+      if (content.contentRange) {
+        headers.set("content-range", content.contentRange);
+      }
+
+      return new Response(content.bytes, {
+        status: content.contentRange ? 206 : 200,
+        headers,
+      });
     }
 
     // ADR-120 (P2, D7): delegate to the SHARED resolver — the SAME locator
