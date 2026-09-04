@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: MAIster Supervisor HTTP API
-  version: "0.8.0"
+  version: "0.9.0"
   description: |
     HTTP + SSE surface exposed by `supervisor/` (the Node daemon that owns ACP
     sessions and spawns adapter binaries. Implemented adapters are
@@ -42,6 +42,14 @@ info:
     Stage A is single-host, loopback, shared-filesystem, and unauthenticated —
     see [`../system-analytics/execution-hosts.md`](../system-analytics/execution-hosts.md).
 
+    **Stage B data plane (Designed — ADR-167, 0.9.0).** `GET /capabilities`
+    is additive and read-only. `GET /runtime-events` and
+    `POST /runtime-events/ack` define a host-global, durable local SSE/ACK
+    adapter; `POST /sessions/{id}/prompt` gains an accepted-command response;
+    runtime objects are opaque ids, never host paths. These routes remain
+    unavailable until their owning increments land and must fail explicitly,
+    never fall back to files.
+
     See [`../architecture.md`](../architecture.md), [`../supervisor.md`](../supervisor.md),
     and [`../decisions.md#adr-002-supervisor-runs-as-a-separate-node-daemon`](../decisions.md).
   contact:
@@ -79,6 +87,165 @@ tags:
       (Implemented — ADR-166) Execution-host contract: opaque workspace adoption
       and command receipts.
 paths:
+  /capabilities:
+    get:
+      tags: [execution-host]
+      summary: Read additive Stage B execution-host capabilities (Designed — ADR-167)
+      description: |
+        Read-only, host-derived capability document. The web registrar obtains
+        `hostKey` and `bootId` from `/health`, not this body; a 404 is the only
+        bounded legacy signal. Malformed or partial documents fail closed and
+        cannot select canonical runs. No request-body identifier is accepted.
+      operationId: getExecutionHostCapabilities
+      responses:
+        "200":
+          description: Versioned features and fixed negotiated limits.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExecutionHostCapabilities" }
+        "404":
+          description: Legacy supervisor without the additive capability surface.
+  /runtime-events:
+    get:
+      tags: [execution-host]
+      summary: Replay host-global durable runtime events after an exclusive cursor (Designed — ADR-167)
+      description: |
+        `Last-Event-ID` is an optional canonical decimal sequence on the
+        supervisor-selected stream, not a URL-selected run id. It is exclusive:
+        replay starts strictly after it. Omission starts at the replay floor;
+        a cursor before that floor or on another stream fails explicitly.
+        Each event is redacted, ≤1 MiB, and uses SSE `id = sequence`.
+      operationId: streamExecutionHostRuntimeEvents
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema: { $ref: "#/components/schemas/RuntimeEventSequence" }
+          description: Exclusive decimal replay cursor; JSON numbers and leading zeroes are invalid.
+      responses:
+        "200":
+          description: "text/event-stream durable replay then live tail."
+          content:
+            text/event-stream:
+              schema: { $ref: "#/components/schemas/RuntimeEventEnvelope" }
+        "409":
+          description: Invalid cursor, replay-floor loss, or stream identity conflict.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /runtime-events/ack:
+    post:
+      tags: [execution-host]
+      summary: Confirm a durable contiguous runtime-event watermark (Designed — ADR-167)
+      description: |
+        The manager supplies `streamId` and an absolute `throughSequence`.
+        The host verifies it against its current stream and emitted contiguous
+        prefix. Acknowledgement is idempotent; regression returns the current
+        watermark and an ACK never destroys a replay record before its grace.
+      operationId: acknowledgeExecutionHostRuntimeEvents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RuntimeEventAck" }
+      responses:
+        "200":
+          description: Confirmed absolute watermark.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [streamId, acknowledgedThrough]
+                properties:
+                  streamId: { type: string, format: uuid }
+                  acknowledgedThrough: { $ref: "#/components/schemas/RuntimeEventSequence" }
+        "409":
+          description: Missing, stale, foreign, non-contiguous, or beyond-emitted ACK.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /runtime-objects/reserve:
+    post:
+      tags: [execution-host]
+      summary: Reserve an opaque runtime object upload (Designed — ADR-167)
+      description: |
+        Fenced host command. `runId` and assignment fields are server-derived
+        from the command fence; object content, local path, and credentials are
+        forbidden. The returned id is host-scoped and opaque.
+      operationId: reserveRuntimeObject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RuntimeObjectReserveCommand" }
+      responses:
+        "201":
+          description: Opaque object id and one-shot upload limit.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RuntimeObjectMetadata" }
+        "409":
+          description: Fence, idempotency, or immutable object-state conflict.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /runtime-objects/{objectId}:
+    get:
+      tags: [execution-host]
+      summary: Read path-free runtime-object metadata (Designed — ADR-167)
+      operationId: getRuntimeObjectMetadata
+      parameters:
+        - $ref: "#/components/parameters/RuntimeObjectId"
+      responses:
+        "200":
+          description: Object catalog record without content or filesystem path.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RuntimeObjectMetadata" }
+        "404": { description: "Object is absent, expired, or unauthorized." }
+    delete:
+      tags: [execution-host]
+      summary: Apply a fenced runtime-object retention deletion (Designed — ADR-167)
+      operationId: deleteRuntimeObject
+      parameters:
+        - $ref: "#/components/parameters/RuntimeObjectId"
+      responses:
+        "204": { description: Object is deleted or already absent under the recorded retention policy. }
+  /runtime-objects/{objectId}/content:
+    put:
+      tags: [execution-host]
+      summary: Upload a reserved runtime object once (Designed — ADR-167)
+      operationId: uploadRuntimeObject
+      parameters:
+        - $ref: "#/components/parameters/RuntimeObjectId"
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: Content checksum and immutable available metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RuntimeObjectMetadata" }
+        "413": { description: Upload exceeds the reserved or negotiated fixed size limit. }
+    get:
+      tags: [execution-host]
+      summary: Read a single byte range of an opaque runtime object (Designed — ADR-167)
+      operationId: readRuntimeObjectContent
+      parameters:
+        - $ref: "#/components/parameters/RuntimeObjectId"
+        - name: Range
+          in: header
+          required: false
+          schema: { type: string, pattern: "^bytes=[0-9]+-[0-9]*$" }
+          description: At most one inclusive byte range; multi-range is rejected.
+      responses:
+        "200": { description: Full object bytes. }
+        "206": { description: One byte range with `Content-Range`. }
+        "416": { description: "Invalid, unsatisfiable, or multi-range request." }
   /health:
     get:
       tags: [health]
@@ -1155,6 +1322,14 @@ paths:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
 components:
   parameters:
+    RuntimeObjectId:
+      name: objectId
+      in: path
+      required: true
+      description: Opaque host-scoped runtime-object id; never a filesystem path.
+      schema:
+        type: string
+        pattern: "^ro_[0-9a-f]{32}$"
     ExecutionWorkspaceId:
       name: id
       in: path
@@ -2011,6 +2186,92 @@ components:
             (M42 — Implemented, ADR-114) Logical Flow session name this record
             serves (`default` for a single-session run), echoed from
             `StartSessionRequest.sessionName`.
+    RuntimeEventSequence:
+      type: string
+      pattern: "^(0|[1-9][0-9]{0,18})$"
+      maxLength: 19
+      description: Canonical non-negative signed-BIGINT decimal. It is a JSON string, never a number; maximum `9223372036854775807`.
+    RuntimeEventEnvelope:
+      type: object
+      additionalProperties: false
+      required: [envelopeVersion, eventId, hostKey, hostBootId, streamId, sequence, runId, assignmentId, assignmentEpoch, hostSessionId, eventType, occurredAt, payloadSchema, payload]
+      description: |
+        Designed ADR-167 deterministic event spine. `eventId` is UUIDv5 of the
+        host-derived `(hostKey, streamId, sequence)`. The payload is open JSON
+        only after the declared known schema/redactor accepts it; it never
+        contains a host path, prompt, content bytes, secret, or environment value.
+      properties:
+        envelopeVersion: { type: integer, enum: [1] }
+        eventId: { type: string, format: uuid }
+        hostKey: { type: string, pattern: "^eh_[a-z0-9]{32}$" }
+        hostBootId: { type: string, format: uuid }
+        streamId: { type: string, format: uuid }
+        sequence: { $ref: "#/components/schemas/RuntimeEventSequence" }
+        runId: { type: string, minLength: 1, maxLength: 128, description: Server-derived assignment run identity. }
+        assignmentId: { type: string, format: uuid, description: Server-derived assignment identity. }
+        assignmentEpoch: { type: integer, minimum: 1, maximum: 2147483647, description: Server-derived fence epoch. }
+        hostSessionId: { type: string, format: uuid, nullable: true, description: Host-derived ACP session identity when one exists. }
+        eventType:
+          type: string
+          enum: [session.created, session.line, session.update, session.permission_request, session.hook_trip, session.command, session.chat_turn, session.exited, session.crashed, usage.recorded, runtime_object.available, runtime_object.state]
+        occurredAt: { type: string, format: date-time, description: "Host occurrence metadata, never an ordering authority." }
+        payloadSchema:
+          type: string
+          enum: [maister.session.created.v1, maister.session.line.v1, maister.session.update.v1, maister.session.permission-request.v1, maister.session.hook-trip.v1, maister.session.command.v1, maister.session.chat-turn.v1, maister.session.exited.v1, maister.session.crashed.v1, maister.usage.recorded.v1, maister.runtime-object.available.v1, maister.runtime-object.state.v1]
+        payload: { type: object, additionalProperties: true }
+    RuntimeEventAck:
+      type: object
+      additionalProperties: false
+      required: [streamId, throughSequence]
+      properties:
+        streamId: { type: string, format: uuid, description: "Request-body supplied, verified against the selected host stream." }
+        throughSequence: { $ref: "#/components/schemas/RuntimeEventSequence" }
+    ExecutionHostCapabilities:
+      type: object
+      additionalProperties: false
+      required: [dataPlaneVersion, eventStream, asyncPrompt, runtimeObjects, limits]
+      properties:
+        dataPlaneVersion: { type: string, enum: ["execution-host-data-plane.v1"] }
+        eventStream: { type: boolean }
+        asyncPrompt: { type: boolean }
+        runtimeObjects: { type: boolean }
+        limits:
+          type: object
+          additionalProperties: false
+          required: [maxEventBytes, maxObjectBytes, maxReplayBatch]
+          properties:
+            maxEventBytes: { type: integer, enum: [1048576] }
+            maxObjectBytes: { type: integer, enum: [536870912] }
+            maxReplayBatch: { type: integer, enum: [500] }
+    RuntimeObjectReserveCommand:
+      type: object
+      additionalProperties: false
+      required: [command, fence, payload]
+      properties:
+        command: { $ref: "#/components/schemas/CommandEnvelope/properties/command" }
+        fence: { $ref: "#/components/schemas/CommandFence" }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [kind, mimeType, sizeBytes, sha256]
+          properties:
+            kind: { type: string, enum: [log, transcript, cost_record, checkpoint, evidence, generated_artifact] }
+            mimeType: { type: string, maxLength: 255 }
+            sizeBytes: { type: integer, minimum: 0, maximum: 536870912 }
+            sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+    RuntimeObjectMetadata:
+      type: object
+      additionalProperties: false
+      required: [objectId, runId, kind, mimeType, sizeBytes, sha256, state, retainedUntil]
+      properties:
+        objectId: { type: string, pattern: "^ro_[0-9a-f]{32}$" }
+        runId: { type: string, description: Server-derived run identity. }
+        kind: { type: string, enum: [log, transcript, cost_record, checkpoint, evidence, generated_artifact] }
+        mimeType: { type: string }
+        sizeBytes: { type: integer, minimum: 0 }
+        sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+        state: { type: string, enum: [reserved, available, deleted, missing] }
+        retainedUntil: { type: string, format: date-time, nullable: true }
     SupervisorErrorCode:
       type: string
       enum:
@@ -2052,6 +2313,18 @@ components:
         - workspace_rejected
         - legacy_field
         - missing_envelope
+        - invalid_event_sequence
+        - replay_floor_lost
+        - stream_identity_conflict
+        - ack_not_contiguous
+        - ack_beyond_emitted
+        - unsupported_event_schema
+        - event_redaction_failed
+        - event_payload_oversize
+        - event_outbox_backpressure
+        - runtime_object_missing
+        - runtime_object_range_invalid
+        - runtime_object_integrity_mismatch
       description: |
         (Implemented — ADR-166) Machine-readable refusal discriminator carried in
         `SupervisorErrorBody.details.reason`. Tests assert the token, never

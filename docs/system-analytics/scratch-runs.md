@@ -8,6 +8,12 @@ MAIster-managed worktree, while keeping branch state, uploaded context,
 capability choices, HITL, diff review, and active workspace visibility under
 the same web, database, supervisor, and worktree contracts as Flow runs.
 
+**Stage B transition (Designed):** scratch prompt and attachment traffic use
+the shared [execution-prompt-lifecycle.md](execution-prompt-lifecycle.md) and
+[execution-runtime-objects.md](execution-runtime-objects.md) seams. The
+`scratch_runs.supervisor_session_id` mirror remains only until the proven
+canonical-incarnation migration in [execution-data-cutover.md](execution-data-cutover.md).
+
 ## ADR-148 workspace removal (Implemented)
 
 Scratch Discard joins the shared fenced preserve-first protocol and returns the

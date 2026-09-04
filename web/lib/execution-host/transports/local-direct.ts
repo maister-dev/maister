@@ -56,6 +56,9 @@ export function createLocalDirectTransport(): ExecutionHostTransport {
     async health(opts) {
       return toHostHealth(await wire.checkSupervisorHealth(opts));
     },
+    capabilities() {
+      return wire.getExecutionHostCapabilities();
+    },
     diagnostics(opts) {
       return wire.checkSupervisorDiagnostics(opts);
     },

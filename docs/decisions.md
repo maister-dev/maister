@@ -208,6 +208,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-164](#adr-164-remove-managed-claude-code-router-support)                                                                                                | Remove managed Claude Code Router support                                                                                                      | Implemented                                                          | 2026-09-02 |
 | [ADR-165](#adr-165-governed-recursive-agent-harness--public-run-results-result-profiles-effective-recursion-bounds-result-only-completion)                   | Governed recursive agent harness — public run results, result profiles, effective recursion bounds, result-only completion                     | Implemented                                                          | 2026-09-02 |
 | [ADR-166](#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces) | Local execution-host contract — durable host identity, epoch-fenced assignments, command ledger, opaque adopted workspaces | Implemented | 2026-09-02 |
+| [ADR-167](#adr-167-durable-execution-host-event-and-runtime-data-plane) | Durable execution-host event and runtime-data plane | Designed | 2026-09-04 |
 
 ---
 
@@ -1689,6 +1690,15 @@ Full record: [`decisions/adr-165.md`](decisions/adr-165.md)
 **Date:** 2026-09-02
 
 Full record: [`decisions/adr-166.md`](decisions/adr-166.md)
+
+---
+
+### ADR-167: Durable execution-host event and runtime-data plane
+
+**Status:** Designed
+**Date:** 2026-09-04
+
+Full record: [`decisions/adr-167.md`](decisions/adr-167.md)
 
 ---
 

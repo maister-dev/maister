@@ -135,6 +135,14 @@ every launch fails at adoption with `PRECONDITION workspace_rejected /
 outside_roots`. Both processes still share the filesystem — this is a
 single-host topology.
 
+**Stage B data-plane preparation (Designed — ADR-167).** No compose service,
+volume, relay, object store, enrollment secret, or environment variable is
+required. `GET /capabilities` remains an additive local supervisor endpoint;
+feature flags are fixed protocol capabilities, not operator toggles. During
+the bounded cutover a run persists its selected compatibility mode, so rolling
+web/supervisor upgrades cannot silently switch an active run between files and
+canonical events.
+
 Apply migrations and seed the first admin:
 
 ```bash

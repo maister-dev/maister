@@ -212,7 +212,7 @@ components:
               status: NeedsInput
             data:
               hitlRequestId: "44444444-4444-4444-8444-444444444444"
-              kind: human_review
+              kind: human
               nodeId: review
         - name: gate-decided
           summary: A blocking command_check gate failed.

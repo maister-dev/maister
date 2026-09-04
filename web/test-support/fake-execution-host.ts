@@ -732,6 +732,21 @@ export function createFakeExecutionHost(
         }
       );
     },
+    async capabilities(opts) {
+      await record("capabilities", null, [opts]);
+      loseAdminResponse("capabilities");
+      return {
+        dataPlaneVersion: "execution-host-data-plane.v1",
+        eventStream: false,
+        asyncPrompt: false,
+        runtimeObjects: false,
+        limits: {
+          maxEventBytes: 1_048_576,
+          maxObjectBytes: 536_870_912,
+          maxReplayBatch: 500,
+        },
+      };
+    },
     async diagnostics(opts) {
       await record("diagnostics", null, [opts]);
       loseAdminResponse("diagnostics");

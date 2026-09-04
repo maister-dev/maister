@@ -2,7 +2,10 @@
 
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
+import { pathToFileURL } from "node:url";
 
+import SwaggerParser from "@apidevtools/swagger-parser";
+import { DiagnosticSeverity, Parser } from "@asyncapi/parser";
 import { parse } from "yaml";
 
 const OPENAPI_FILES = [
@@ -14,6 +17,7 @@ const OPENAPI_FILES = [
 const ASYNCAPI_FILES = [
   "docs/api/async/outbound-webhooks.asyncapi.yaml",
   "docs/api/async/supervisor-sse.asyncapi.yaml",
+  "docs/api/async/execution-host-events.asyncapi.yaml",
   "docs/api/async/web-evaluations.asyncapi.yaml",
   "docs/api/async/web-runs.asyncapi.yaml",
 ];
@@ -285,7 +289,69 @@ function validateM43WebContract(doc, file) {
   );
 }
 
-function validateOpenApi(file) {
+function validateExecutionHostEventContract(doc, file) {
+  if (file !== "docs/api/async/execution-host-events.asyncapi.yaml") return;
+
+  const envelope = schemaFor(doc, "RuntimeEventEnvelope", file);
+  const expectedSpine = [
+    "envelopeVersion",
+    "eventId",
+    "hostKey",
+    "hostBootId",
+    "streamId",
+    "sequence",
+    "runId",
+    "assignmentId",
+    "assignmentEpoch",
+    "hostSessionId",
+    "eventType",
+    "occurredAt",
+    "payloadSchema",
+    "payload",
+  ];
+  for (const key of expectedSpine) {
+    assertRequired(envelope, key, `${file}: RuntimeEventEnvelope`);
+  }
+  if (envelope.additionalProperties !== false) {
+    throw new Error(`${file}: RuntimeEventEnvelope must close its spine`);
+  }
+  const sequence = schemaFor(doc, "Sequence", file);
+  if (sequence.type !== "string" || !sequence.pattern?.startsWith("^(0|")) {
+    throw new Error(`${file}: Sequence must be canonical decimal string`);
+  }
+  if (envelope.properties?.payload?.additionalProperties !== true) {
+    throw new Error(`${file}: RuntimeEventEnvelope.payload must remain open JSON`);
+  }
+  const ack = schemaFor(doc, "RuntimeEventAck", file);
+  assertRequired(ack, "streamId", `${file}: RuntimeEventAck`);
+  assertRequired(ack, "throughSequence", `${file}: RuntimeEventAck`);
+}
+
+async function validateOpenApiMetaSchema(file) {
+  try {
+    await SwaggerParser.validate(file);
+  } catch (error) {
+    throw new Error(
+      `${file}: OpenAPI meta-schema validation failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+async function validateAsyncApiMetaSchema(file) {
+  const result = await new Parser().parse(readFileSync(file, "utf8"));
+  const errors = result.diagnostics.filter(
+    (diagnostic) => diagnostic.severity === DiagnosticSeverity.Error,
+  );
+
+  if (errors.length > 0) {
+    throw new Error(
+      `${file}: AsyncAPI meta-schema validation failed: ${errors.map((diagnostic) => diagnostic.message).join("; ")}`,
+    );
+  }
+}
+
+export async function validateOpenApi(file, { log = true } = {}) {
+  await validateOpenApiMetaSchema(file);
   const doc = readYaml(file);
 
   if (typeof doc.openapi !== "string" || !doc.openapi.startsWith("3.")) {
@@ -297,10 +363,11 @@ function validateOpenApi(file) {
   assertObject(doc, "components", file);
   visitRefs(doc, doc);
   validateM43WebContract(doc, file);
-  console.log(`validate-contracts: ${basename(file)} ok`);
+  if (log) console.log(`validate-contracts: ${basename(file)} ok`);
 }
 
-function validateAsyncApi(file) {
+export async function validateAsyncApi(file, { log = true } = {}) {
+  await validateAsyncApiMetaSchema(file);
   const doc = readYaml(file);
 
   if (typeof doc.asyncapi !== "string") {
@@ -310,13 +377,20 @@ function validateAsyncApi(file) {
   assertObject(doc, "info", file);
   assertObject(doc, "channels", file);
   visitRefs(doc, doc);
-  console.log(`validate-contracts: ${basename(file)} ok`);
+  validateExecutionHostEventContract(doc, file);
+  if (log) console.log(`validate-contracts: ${basename(file)} ok`);
 }
 
-try {
-  OPENAPI_FILES.forEach(validateOpenApi);
-  ASYNCAPI_FILES.forEach(validateAsyncApi);
-} catch (err) {
-  console.error(err instanceof Error ? err.message : String(err));
-  process.exit(1);
+export async function validateContracts({ log = true } = {}) {
+  for (const file of OPENAPI_FILES) await validateOpenApi(file, { log });
+  for (const file of ASYNCAPI_FILES) await validateAsyncApi(file, { log });
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  try {
+    await validateContracts();
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exitCode = 1;
+  }
 }

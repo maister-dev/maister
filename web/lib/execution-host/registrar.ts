@@ -195,6 +195,23 @@ export async function ensureLocalExecutionHost(
     );
   }
 
+  let dataPlane: Awaited<ReturnType<ExecutionHostTransport["capabilities"]>>;
+  try {
+    dataPlane = await transport.capabilities({
+      timeoutMs: opts.healthTimeoutMs,
+    });
+  } catch (error) {
+    return markUnavailable(
+      db,
+      "capabilities_invalid",
+      error instanceof Error
+        ? `supervisor capability discovery failed: ${error.message}`
+        : "supervisor capability discovery failed",
+      now(),
+      logger,
+    );
+  }
+
   const observed: ObservedHost = {
     hostKey: health.identity.hostKey,
     bootId: health.identity.bootId,
@@ -202,6 +219,15 @@ export async function ensureLocalExecutionHost(
       protocolVersion: health.identity.protocolVersion,
       supervisorVersion: health.version,
       adapters: [],
+      dataPlane: dataPlane
+        ? {
+            version: dataPlane.dataPlaneVersion,
+            eventStream: dataPlane.eventStream,
+            asyncPrompt: dataPlane.asyncPrompt,
+            runtimeObjects: dataPlane.runtimeObjects,
+            limits: dataPlane.limits,
+          }
+        : null,
     },
   };
 

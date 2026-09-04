@@ -413,6 +413,18 @@ export const REASON_TOKENS = [
   "workspace_rejected",
   "legacy_field",
   "missing_envelope",
+  "invalid_event_sequence",
+  "replay_floor_lost",
+  "stream_identity_conflict",
+  "ack_not_contiguous",
+  "ack_beyond_emitted",
+  "unsupported_event_schema",
+  "event_redaction_failed",
+  "event_payload_oversize",
+  "event_outbox_backpressure",
+  "runtime_object_missing",
+  "runtime_object_range_invalid",
+  "runtime_object_integrity_mismatch",
 ] as const;
 
 export type ReasonToken = (typeof REASON_TOKENS)[number];

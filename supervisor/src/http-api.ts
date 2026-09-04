@@ -40,6 +40,7 @@ import {
   waitForChildExit,
 } from "./execution-fence";
 import { attachHeartbeat } from "./heartbeat";
+import { executionHostCapabilities } from "./data-plane-capabilities";
 import { EXECUTION_HOST_PROTOCOL_VERSION } from "./host-state";
 import {
   modelCatalogCache,
@@ -635,6 +636,20 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     };
 
     reply.status(200).send(body);
+  });
+
+  app.get("/capabilities", async (_req, reply) => {
+    const capabilities = executionHostCapabilities();
+
+    logger.info(
+      {
+        eventStream: capabilities.eventStream,
+        asyncPrompt: capabilities.asyncPrompt,
+        runtimeObjects: capabilities.runtimeObjects,
+      },
+      "execution-host-capabilities-read",
+    );
+    reply.status(200).send(capabilities);
   });
 
   app.get("/diagnostics", async (_req, reply) => {

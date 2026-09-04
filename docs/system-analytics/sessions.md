@@ -19,6 +19,12 @@ machine ([runs.md](runs.md)), generic graph traversal
 ([consensus.md](consensus.md)), or crash reconciliation
 ([reconciliation-gc.md](reconciliation-gc.md)).
 
+**Stage B transition (Designed):** `run_sessions` stays the logical-session
+authority while host session identity becomes an immutable canonical
+incarnation and prompt completion moves to [execution-prompt-lifecycle.md](execution-prompt-lifecycle.md).
+`run.events.jsonl` and `cost.jsonl` references below describe legacy-mode
+as-built behavior, not the canonical-mode data plane.
+
 ## Domain entities
 
 - **Unified runner config** — `flowRunnerConfigSchema`: `runner_type`,

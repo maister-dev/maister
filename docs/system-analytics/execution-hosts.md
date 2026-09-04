@@ -26,6 +26,14 @@ runner/session model ([sessions.md](sessions.md)). Stage A keeps one host,
 loopback HTTP, and the shared filesystem: no remote transport, no multiple
 simultaneous hosts, no placement, no host UI (ADR-166 §D12).
 
+**Stage B transition (Designed):** the assignment, command, receipt, and
+opaque workspace contracts remain this domain's authority, but runtime event
+and file metadata move to the manager-owned [execution event plane](execution-event-plane.md),
+[prompt lifecycle](execution-prompt-lifecycle.md), and [runtime-object plane](execution-runtime-objects.md).
+The shared filesystem remains an as-built legacy-mode limitation only through
+the bounded [data-plane cutover](execution-data-cutover.md), never a remote-host
+claim.
+
 ## Domain entities
 
 - **Execution host** — one row in `execution_hosts` per registered host.

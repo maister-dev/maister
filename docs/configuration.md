@@ -1331,6 +1331,18 @@ where (j->>'resumed')::boolean = true;
 There is no control-plane decision branch on `resumed=true` — it is
 observability only.
 
+## Stage B execution-host data plane (Designed — ADR-167)
+
+Stage B deliberately introduces **no operator setting**. The fixed negotiated
+limits (`1 MiB` event envelope, `500` replay batch, `512 MiB` runtime object)
+are published by the supervisor's read-only `/capabilities` document and
+validated by the web tier. The default one-host launch needs neither relay,
+object store, host enrollment, nor a shared runtime-data mount to enable the
+future canonical mode. `MAISTER_EXECUTION_HOST_STATE_DIR` remains
+supervisor-private; it contains durable identity, fences, receipts, and the
+host event outbox, never a web-readable data-plane API. Future remote-host
+settings are intentionally deferred rather than accepted-and-ignored.
+
 ## See Also
 
 - [Supervisor](supervisor.md) — the ACP daemon that consumes normalized runner

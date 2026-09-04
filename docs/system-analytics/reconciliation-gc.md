@@ -14,6 +14,14 @@ via `session.crashed`/`session.exited`) is owned by the runner and is NOT
 re-implemented here; reconciliation is the out-of-band recovery sweep, and
 GC is the deferred removal that never destroys un-committed work.
 
+**Stage B transition (Designed):** event replay, prompt terminal recovery,
+runtime-object state, and legacy import resume from durable records defined by
+[execution-event-plane.md](execution-event-plane.md),
+[execution-prompt-lifecycle.md](execution-prompt-lifecycle.md), and
+[execution-data-cutover.md](execution-data-cutover.md). Filesystem scans below
+remain restricted to manager-owned worktree/repository GC or frozen legacy-mode
+imports; they are not canonical execution-runtime state transitions.
+
 ## ADR-148 workspace cleanup contract (Implemented)
 
 The behavior below is the shipped baseline. ADR-148 changes only the
@@ -585,4 +593,3 @@ For each run at reconcile time, gather: `run.status`, `run.runKind`,
   (`CONTEXT_MOUNT_LIVE_RUN_STATUSES`, the live allow-list SSOT the sweep imports);
   modeled on `web/lib/gc/ephemeral-agent-gc.ts`; scan-scope boundary asserted
   against `web/lib/gc/workspace-reconciler.ts`.
-

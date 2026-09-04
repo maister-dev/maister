@@ -220,6 +220,26 @@ export const ExecutionHostIdentitySchema = z
 
 export type ExecutionHostIdentity = z.infer<typeof ExecutionHostIdentitySchema>;
 
+export const ExecutionHostDataPlaneCapabilitiesSchema = z
+  .object({
+    dataPlaneVersion: z.literal("execution-host-data-plane.v1"),
+    eventStream: z.boolean(),
+    asyncPrompt: z.boolean(),
+    runtimeObjects: z.boolean(),
+    limits: z
+      .object({
+        maxEventBytes: z.literal(1_048_576),
+        maxObjectBytes: z.literal(536_870_912),
+        maxReplayBatch: z.literal(500),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type ExecutionHostDataPlaneCapabilities = z.infer<
+  typeof ExecutionHostDataPlaneCapabilitiesSchema
+>;
+
 const SupervisorHealthSchema = z
   .object({
     status: z.literal("ready"),
@@ -1134,6 +1154,23 @@ export async function getCommandReceipt(
     });
 
     return { ...res.body, inflight: res.body.inflight === true };
+  } catch (err) {
+    if (httpStatusOf(err) === 404) return null;
+    throw err;
+  }
+}
+
+export async function getExecutionHostCapabilities(): Promise<ExecutionHostDataPlaneCapabilities | null> {
+  try {
+    const res = await request<unknown>({
+      method: "GET",
+      path: "/capabilities",
+      ctx: "getExecutionHostCapabilities",
+      fallbackCode: "ACP_PROTOCOL",
+      timeoutMs: ADMIN_READ_TIMEOUT_MS,
+    });
+
+    return ExecutionHostDataPlaneCapabilitiesSchema.parse(res.body);
   } catch (err) {
     if (httpStatusOf(err) === 404) return null;
     throw err;

@@ -1,0 +1,168 @@
+asyncapi: 2.6.0
+info:
+  title: MAIster execution-host canonical event stream
+  version: "1.0.0"
+  description: |
+    Designed Stage B local-direct host-global event delivery. The execution host
+    owns private files and its durable SQLite outbox; the manager owns canonical
+    redacted event metadata after at-least-once delivery. This contract is
+    transport-neutral: local SSE/ACK is the first adapter and a future trusted
+    relay or WebSocket must preserve the same envelope, replay, and ACK rules.
+
+    Identifier provenance: `hostKey` is host-derived and verified by transport
+    health; `runId`, `assignmentId`, and epoch are server-derived from the
+    assignment; `hostSessionId` is host-derived; `streamId`/`sequence`/`eventId`
+    are host-derived durable outbox fields. The manager never accepts a client
+    filesystem path, prompt, attachment bytes, environment value, or secret in
+    this stream. Payloads are redacted before publication and capped at 1 MiB.
+  contact:
+    name: MAIster maintainers
+  license:
+    name: MIT
+servers:
+  local:
+    url: http://localhost:7777
+    protocol: http
+    description: Default single-host loopback supervisor; no remote enrollment or relay is required.
+defaultContentType: application/json
+channels:
+  /runtime-events:
+    bindings:
+      http:
+        type: response
+        method: GET
+        headers:
+          Content-Type: { type: string, const: text/event-stream }
+          Last-Event-ID:
+            $ref: "#/components/schemas/Sequence"
+    subscribe:
+      operationId: subscribeExecutionHostRuntimeEvents
+      summary: Replay canonical host events after an exclusive stream cursor
+      description: |
+        The manager supplies only `Last-Event-ID`; it is an exclusive decimal
+        sequence for the selected stream. Omission begins at the replay floor.
+        SSE `id` is the same decimal sequence. Invalid, leading-zero, negative,
+        JSON-number, or overflow cursor values fail with
+        `invalid_event_sequence`; a replay-floor miss fails explicitly rather
+        than skipping a gap.
+      message:
+        $ref: "#/components/messages/RuntimeEvent"
+  /runtime-events/ack:
+    publish:
+      operationId: acknowledgeExecutionHostRuntimeEvents
+      summary: Acknowledge a contiguous absolute watermark for one stream
+      message:
+        $ref: "#/components/messages/RuntimeEventAck"
+components:
+  messages:
+    RuntimeEvent:
+      name: runtime.event
+      title: Redacted durable execution-host event envelope
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/RuntimeEventEnvelope"
+    RuntimeEventAck:
+      name: runtime.event.ack
+      title: Manager acknowledgement of contiguous persisted host events
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/RuntimeEventAck"
+  schemas:
+    Sequence:
+      type: string
+      pattern: "^(0|[1-9][0-9]{0,18})$"
+      maxLength: 19
+      description: Canonical non-negative signed-BIGINT decimal, never a JSON number; maximum 9223372036854775807.
+    EventId:
+      type: string
+      format: uuid
+      description: UUIDv5 URL-namespace derivation of percent-encoded hostKey, streamId, and sequence.
+    RuntimeEventEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+        - envelopeVersion
+        - eventId
+        - hostKey
+        - hostBootId
+        - streamId
+        - sequence
+        - runId
+        - assignmentId
+        - assignmentEpoch
+        - hostSessionId
+        - eventType
+        - occurredAt
+        - payloadSchema
+        - payload
+      properties:
+        envelopeVersion: { type: integer, const: 1 }
+        eventId: { $ref: "#/components/schemas/EventId" }
+        hostKey: { type: string, pattern: "^eh_[a-z0-9]{32}$", maxLength: 35 }
+        hostBootId: { type: string, format: uuid }
+        streamId: { type: string, format: uuid }
+        sequence: { $ref: "#/components/schemas/Sequence" }
+        runId: { type: string, minLength: 1, maxLength: 128 }
+        assignmentId: { type: string, format: uuid }
+        assignmentEpoch: { type: integer, minimum: 1, maximum: 2147483647 }
+        hostSessionId: { type: string, format: uuid, nullable: true }
+        eventType:
+          type: string
+          enum:
+            - session.created
+            - session.line
+            - session.update
+            - session.permission_request
+            - session.hook_trip
+            - session.command
+            - session.chat_turn
+            - session.exited
+            - session.crashed
+            - usage.recorded
+            - runtime_object.available
+            - runtime_object.state
+        occurredAt: { type: string, format: date-time }
+        payloadSchema:
+          type: string
+          enum:
+            - maister.session.created.v1
+            - maister.session.line.v1
+            - maister.session.update.v1
+            - maister.session.permission-request.v1
+            - maister.session.hook-trip.v1
+            - maister.session.command.v1
+            - maister.session.chat-turn.v1
+            - maister.session.exited.v1
+            - maister.session.crashed.v1
+            - maister.usage.recorded.v1
+            - maister.runtime-object.available.v1
+            - maister.runtime-object.state.v1
+        payload:
+          type: object
+          additionalProperties: true
+          description: Open JSON only after a known eventType/payloadSchema validator and deterministic redactor accepts it.
+      example:
+        envelopeVersion: 1
+        eventId: "6f63db3b-1843-5475-b293-b4b995a38a5d"
+        hostKey: "eh_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+        hostBootId: "e2f7c57a-bb0d-4e78-99f9-70f34f3928ab"
+        streamId: "76103277-0889-49d7-87f1-f0fd2f5f5922"
+        sequence: "42"
+        runId: "run-abc"
+        assignmentId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"
+        assignmentEpoch: 3
+        hostSessionId: "5f3a8a2b-7e34-4f6d-9d2c-1d4e5f6a7b8c"
+        eventType: "session.command"
+        occurredAt: "2026-09-04T12:00:00.000Z"
+        payloadSchema: "maister.session.command.v1"
+        payload: { commandId: "3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a", phase: "accepted" }
+    RuntimeEventAck:
+      type: object
+      additionalProperties: false
+      required: [streamId, throughSequence]
+      properties:
+        streamId: { type: string, format: uuid, description: Request-body supplied but verified against the selected host current stream. }
+        throughSequence: { $ref: "#/components/schemas/Sequence" }
+      example:
+        streamId: "76103277-0889-49d7-87f1-f0fd2f5f5922"
+        throughSequence: "42"

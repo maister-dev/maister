@@ -7,10 +7,20 @@ Behavior lives in
 the narrative column reference is
 [`../database-schema.md#execution-host-tables`](../database-schema.md#execution-host-tables-implemented--adr-166-migration-0130).
 
-> **Status: Implemented.** Migration `0130_execution_hosts` (single, additive,
+> **Status: Implemented (Stage A); Designed (Stage B).** Migration `0130_execution_hosts` (single, additive,
 > never data-dependent) adds the three tables, the four attribution columns,
 > and the indexes below. Historical rows keep `execution_assignment_id = NULL`
 > forever — the documented meaning is "pre-Stage-A, never placed".
+
+Stage B migrations `0131_foamy_venom` and `0132_soft_loa` add the canonical
+manager-owned protocol facts without changing a historical run's frozen
+`legacy_file_v1` mode: `execution_event_streams`, `execution_events`,
+`execution_event_consumers`, `run_session_incarnations`,
+`execution_data_plane_imports`, and `execution_event_ingest_failures`. The
+canonical event payload is redacted metadata, never local content or a path;
+the host keeps runtime bytes and SQLite outbox files private. See
+[`execution-event-plane.md`](../system-analytics/execution-event-plane.md) and
+[`execution-data-cutover.md`](../system-analytics/execution-data-cutover.md).
 
 ```mermaid
 erDiagram

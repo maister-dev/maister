@@ -911,6 +911,12 @@ table execution_commands {
   kind text [not null]
   target_session_id text
   payload jsonb [not null, default: `{}`]
+  owner_kind text
+  owner_ref jsonb
+  logical_operation_key text
+  request_schema text
+  request_sha256 text
+  completion_applied_at "timestamp with time zone"
   state text [not null, default: 'queued']
   attempts integer [not null, default: 0]
   max_attempts integer [not null]
@@ -928,9 +934,123 @@ table execution_commands {
     (state, next_attempt_at) [name: 'execution_commands_open_idx']
     (run_id, created_at) [name: 'execution_commands_run_created_idx']
     execution_assignment_id [name: 'execution_commands_assignment_idx']
-    
-    
-    
+    (run_id, logical_operation_key) [name: 'execution_commands_prompt_logical_operation_uq', unique]
+  }
+}
+
+table execution_data_plane_imports {
+  run_id text [not null]
+  source_kind text [not null]
+  state text [not null, default: 'pending']
+  source_fingerprint text
+  last_source_position text
+  imported_count integer [not null, default: 0]
+  last_error jsonb
+  started_at "timestamp with time zone"
+  completed_at "timestamp with time zone"
+  attempts integer [not null, default: 0]
+
+  indexes {
+    (run_id, source_kind) [pk]
+  }
+}
+
+table execution_event_consumers {
+  consumer_name text [not null]
+  run_id text [not null]
+  last_run_sequence bigint
+  state text [not null, default: 'ready']
+  attempts integer [not null, default: 0]
+  next_retry_at "timestamp with time zone"
+  poison_event_id text
+  last_error jsonb
+  claim_owner text
+  claim_expires_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (consumer_name, run_id) [pk]
+    (next_retry_at, claim_expires_at) [name: 'execution_event_consumers_retry_idx']
+  }
+}
+
+table execution_event_ingest_failures {
+  id text [pk, not null]
+  execution_host_id text [not null]
+  stream_id text
+  event_id_text text
+  sequence_text text
+  reason text [not null]
+  details jsonb
+  encoded_bytes integer [not null, default: 0]
+  occurrences integer [not null, default: 1]
+  first_seen_at "timestamp with time zone" [not null, default: `now()`]
+  last_seen_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (execution_host_id, stream_id, event_id_text, sequence_text, reason) [name: 'execution_event_ingest_failures_identity_uq', unique]
+  }
+}
+
+table execution_event_streams {
+  id text [pk, not null]
+  execution_host_id text [not null]
+  stream_id text [not null]
+  state text [not null, default: 'observed']
+  last_received_sequence bigint
+  last_contiguous_sequence bigint
+  last_ack_confirmed_sequence bigint
+  replay_floor_sequence bigint
+  last_boot_id text
+  last_seen_at "timestamp with time zone"
+  first_gap_sequence bigint
+  gap_detected_at "timestamp with time zone"
+  gap_status text
+  last_error jsonb
+  next_retry_at "timestamp with time zone"
+  claim_owner text
+  claim_expires_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  closed_at "timestamp with time zone"
+
+  indexes {
+    (execution_host_id, stream_id) [name: 'execution_event_streams_host_stream_uq', unique]
+    execution_host_id [name: 'execution_event_streams_active_host_uq', unique]
+    (next_retry_at, claim_expires_at) [name: 'execution_event_streams_retry_idx']
+  }
+}
+
+table execution_events {
+  id text [pk, not null]
+  source text [not null]
+  source_key text
+  run_id text [not null]
+  execution_host_id text
+  event_stream_id text
+  host_sequence bigint
+  execution_assignment_id text
+  assignment_epoch integer
+  run_session_incarnation_id text
+  host_boot_id text
+  host_session_id text
+  envelope_version integer
+  event_type text [not null]
+  payload_schema text [not null]
+  payload jsonb
+  payload_sha256 text
+  payload_bytes integer
+  occurred_at "timestamp with time zone" [not null]
+  received_at "timestamp with time zone" [not null, default: `now()`]
+  run_sequence bigint
+  ingest_disposition text [not null]
+  ingest_error jsonb
+
+  indexes {
+    (event_stream_id, host_sequence) [name: 'execution_events_host_position_uq', unique]
+    (source, run_id, source_key) [name: 'execution_events_source_run_key_uq', unique]
+    (run_id, run_sequence) [name: 'execution_events_run_sequence_uq', unique]
+    (run_id, run_sequence) [name: 'execution_events_run_sequence_idx']
   }
 }
 
@@ -1619,6 +1739,29 @@ table run_schedules {
   }
 }
 
+table run_session_incarnations {
+  id text [pk, not null]
+  run_session_id text [not null]
+  run_id text [not null]
+  execution_assignment_id text
+  assignment_epoch integer
+  execution_host_id text [not null]
+  host_session_id text [not null]
+  host_boot_id text
+  acp_session_id text
+  state text [not null]
+  origin text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  activated_at "timestamp with time zone"
+  ended_at "timestamp with time zone"
+  terminal_reason jsonb
+
+  indexes {
+    (execution_host_id, host_session_id) [name: 'run_session_incarnations_host_session_uq', unique]
+    run_session_id [name: 'run_session_incarnations_active_run_session_uq', unique]
+  }
+}
+
 table run_sessions {
   id text [pk, not null]
   run_id text [not null]
@@ -1692,6 +1835,8 @@ table runs {
   brain_context boolean
   flow_id text
   status text [not null, default: 'Pending']
+  execution_data_plane_mode text [not null, default: 'legacy_file_v1']
+  next_execution_event_sequence bigint [not null, default: `0`]
   current_step_id text
   flow_version text [not null]
   flow_revision text [not null, default: 'unknown']
@@ -2685,6 +2830,26 @@ ref execution_commands_execution_assignment_id_execution_assignments_id_fk: exec
 
 ref execution_commands_execution_host_id_execution_hosts_id_fk: execution_commands.execution_host_id > execution_hosts.id [delete: restrict, update: no action]
 
+ref execution_data_plane_imports_run_id_runs_id_fk: execution_data_plane_imports.run_id > runs.id [delete: cascade, update: no action]
+
+ref execution_event_consumers_run_id_runs_id_fk: execution_event_consumers.run_id > runs.id [delete: cascade, update: no action]
+
+ref execution_event_consumers_poison_event_id_execution_events_id_fk: execution_event_consumers.poison_event_id > execution_events.id [delete: set null, update: no action]
+
+ref execution_event_ingest_failures_execution_host_id_execution_hosts_id_fk: execution_event_ingest_failures.execution_host_id > execution_hosts.id [delete: restrict, update: no action]
+
+ref execution_event_streams_execution_host_id_execution_hosts_id_fk: execution_event_streams.execution_host_id > execution_hosts.id [delete: restrict, update: no action]
+
+ref execution_events_run_id_runs_id_fk: execution_events.run_id > runs.id [delete: cascade, update: no action]
+
+ref execution_events_execution_host_id_execution_hosts_id_fk: execution_events.execution_host_id > execution_hosts.id [delete: restrict, update: no action]
+
+ref execution_events_event_stream_id_execution_event_streams_id_fk: execution_events.event_stream_id > execution_event_streams.id [delete: restrict, update: no action]
+
+ref execution_events_execution_assignment_id_execution_assignments_id_fk: execution_events.execution_assignment_id > execution_assignments.id [delete: set null, update: no action]
+
+ref execution_events_run_session_incarnation_id_run_session_incarnations_id_fk: execution_events.run_session_incarnation_id > run_session_incarnations.id [delete: set null, update: no action]
+
 ref flow_revisions_default_runner_id_platform_acp_runners_id_fk: flow_revisions.default_runner_id > platform_acp_runners.id [delete: set null, update: no action]
 
 ref flow_runner_remaps_project_id_projects_id_fk: flow_runner_remaps.project_id > projects.id [delete: cascade, update: no action]
@@ -2822,6 +2987,14 @@ ref run_schedules_runner_id_platform_acp_runners_id_fk: run_schedules.runner_id 
 ref run_schedules_last_run_id_runs_id_fk: run_schedules.last_run_id > runs.id [delete: set null, update: no action]
 
 ref run_schedules_created_by_user_id_users_id_fk: run_schedules.created_by_user_id > users.id [delete: set null, update: no action]
+
+ref run_session_incarnations_run_session_id_run_sessions_id_fk: run_session_incarnations.run_session_id > run_sessions.id [delete: cascade, update: no action]
+
+ref run_session_incarnations_run_id_runs_id_fk: run_session_incarnations.run_id > runs.id [delete: cascade, update: no action]
+
+ref run_session_incarnations_execution_assignment_id_execution_assignments_id_fk: run_session_incarnations.execution_assignment_id > execution_assignments.id [delete: set null, update: no action]
+
+ref run_session_incarnations_execution_host_id_execution_hosts_id_fk: run_session_incarnations.execution_host_id > execution_hosts.id [delete: restrict, update: no action]
 
 ref run_sessions_run_id_runs_id_fk: run_sessions.run_id > runs.id [delete: cascade, update: no action]
 

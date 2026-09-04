@@ -1003,6 +1003,26 @@ The legacy `session.line` event type stays — `cost.ts` and any other
 raw-line consumer keep working unchanged. The supervisor tees stdout
 through a `PassThrough` so both consumers see every chunk.
 
+## Stage B durable data plane (Designed — ADR-167)
+
+`GET /capabilities` is additive and keeps `/health` protocol v1 unchanged.
+It advertises `eventStream`, `asyncPrompt`, and `runtimeObjects` independently;
+all are initially false, so a web-first or supervisor-first rolling upgrade
+continues to select `legacy_file_v1`. When enabled by their owning increments,
+`GET /runtime-events` replays host-global SQLite outbox events strictly after
+the decimal `Last-Event-ID`, and `POST /runtime-events/ack` confirms an
+absolute contiguous stream watermark. A socket is never lifecycle authority:
+the host writes its outbox before publishing and the manager ACKs only after a
+Postgres transaction commits.
+
+Runtime objects use opaque `ro_<id>` values through reserve/upload/metadata/
+single-range/read/delete contracts. Metadata may become canonical in Postgres;
+host-local content never crosses the boundary as a filesystem path. A future
+remote adapter preserves this contract but remote enrollment and a relay remain
+out of scope. See [`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml),
+[`api/async/execution-host-events.asyncapi.yaml`](api/async/execution-host-events.asyncapi.yaml),
+and the ADR-167 analytics documents.
+
 ## Limitations on POC
 
 - **Single host, shared filesystem, unauthenticated loopback (Stage A —

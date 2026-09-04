@@ -35,6 +35,18 @@ export type HostHealth =
     }
   | { kind: "unavailable"; reason: string; message: string };
 
+export type ExecutionHostDataPlaneCapabilities = {
+  dataPlaneVersion: "execution-host-data-plane.v1";
+  eventStream: boolean;
+  asyncPrompt: boolean;
+  runtimeObjects: boolean;
+  limits: {
+    maxEventBytes: 1_048_576;
+    maxObjectBytes: 536_870_912;
+    maxReplayBatch: 500;
+  };
+};
+
 export type AdoptWorkspaceWire = {
   runId: string;
   projectSlug: string;
@@ -108,6 +120,11 @@ export type CommandCallOptions = { timeoutMs?: number | null };
 
 export interface ExecutionHostTransport {
   health(opts?: { timeoutMs?: number }): Promise<HostHealth>;
+  // Null means an older supervisor returned the sole bounded compatibility
+  // signal (404); malformed documents are a typed wire failure, never legacy.
+  capabilities(
+    opts?: { timeoutMs?: number },
+  ): Promise<ExecutionHostDataPlaneCapabilities | null>;
   // The host's adapter diagnostics (smoke evidence) — a read-only admin
   // surface like `health`, never fenced.
   diagnostics(opts?: {

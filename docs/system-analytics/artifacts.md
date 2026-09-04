@@ -26,6 +26,13 @@ output* (Implemented) — the flow-merge / PR promotion *control flow* lives in
 external ingestion beyond the external operations API, capability enforcement
 (`visibility`/`retention` — Designed).
 
+**Stage B transition (Designed):** a host-produced payload may use the opaque
+`execution-object` locator described by [execution-runtime-objects.md](execution-runtime-objects.md);
+its bytes remain host-owned and path-free at the manager boundary. Git-range,
+worktree, inline, gate-verdict, HITL, and manager-owned evaluation evidence
+keep their current ownership and are not silently converted into runtime
+objects.
+
 **Evidence vs result (ADR-162).** `output.produces[]` is **evidence** and lives
 here; a node's `output.result` is its **result** — a small typed object in
 `node_attempts.vars` that downstream nodes template and route on, never an
@@ -504,4 +511,3 @@ decision child.
   (`artifactContents` → `ctx.artifacts[id].content`), `web/lib/flows/graph/runner-graph.ts`
   (collect + inject wiring), `web/lib/config.ts` + `web/lib/config.schema.ts`
   (engine 2.2.0 floor + `inline` grammar + D12 node-type restriction).
-

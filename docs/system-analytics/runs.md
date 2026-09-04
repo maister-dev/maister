@@ -7,6 +7,14 @@ the ACP session, the worktree, and the per-run artifacts on disk. The
 runs domain is the heart of MAIster's state machine; every other
 domain projects state onto it.
 
+**Stage B transition (Designed):** `runs` remains the lifecycle authority, but
+canonical event sequence, browser SSE, transcript, cost, and runtime-object
+metadata are owned by [execution-event-plane.md](execution-event-plane.md) and
+[execution-runtime-objects.md](execution-runtime-objects.md). Existing JSONL
+and file-path statements below are legacy-mode as-built behavior scheduled for
+the bounded [execution-data-cutover.md](execution-data-cutover.md), not a
+cross-host filesystem contract.
+
 ## ADR-148 workspace-presence guard (Implemented)
 
 `runs.status` remains the execution-history source of truth. If the associated
@@ -1326,4 +1334,3 @@ resume or depend on supervisor availability.
   [`workbench-lifecycle.md`](workbench-lifecycle.md).
 - Source: `web/lib/db/schema.ts` (runs table),
   `supervisor/src/heartbeat.ts`, `supervisor/src/spawn.ts`.
-

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: MAIster Web HTTP API
-  version: "0.10.0"
+  version: "0.11.0"
   description: |
     HTTP surface exposed by the Next.js web tier under `app/api/`. Consumed
     by the MAIster UI and (in M7+) by any process that wants to drive HITL
@@ -70,13 +70,13 @@ info:
       human-review flows write `input-<stepId>.json` after a DB claim, and
       the runner's resume-from-existing-input branch picks it up. Requires
       project membership at `member` or above (`answerHitl`).
-    - `GET /api/runs/{runId}/stream` (M7) — Server-Sent Events bridge.
-      Tails the per-run durable replay log at
-      `.maister/<projectSlug>/runs/<runId>/run.events.jsonl` (produced by
-      the supervisor — see `supervisor.openapi.yaml`). Reconnect via
-      `Last-Event-ID`. Event shape mirrors the supervisor SSE doc
-      (`async/web-runs.asyncapi.yaml`). Requires project membership at
-      `viewer` or above (`readBoard`).
+    - `GET /api/runs/{runId}/stream` (M7; Stage B cutover designed in ADR-167)
+      — Server-Sent Events bridge. Its current legacy implementation tails the
+      per-run replay log; after B2 it reads only manager-owned canonical event
+      projections, preserving exclusive replay semantics without a web runtime
+      filesystem mount. Reconnect uses `Last-Event-ID`; the browser never sees
+      host paths, prompt content, secrets, or raw object bytes. Requires
+      project membership at `viewer` or above (`readBoard`).
 
     **Authentication.** All routes require a valid session (Auth.js v5
     credentials). Unauthenticated requests return `401 UNAUTHENTICATED`.
