@@ -55,6 +55,7 @@ import { resolveModelCatalog } from "./model-catalog/resolve";
 import { ModelCatalogDraftSchema } from "./model-catalog/types";
 import { pendingPermissions } from "./pending-permissions";
 import { contentBlockUriViolation } from "./prompt-confinement";
+import { resolvePromptRuntimeObjects } from "./prompt-runtime-objects";
 import { SESSION_EVENT_CHANNEL } from "./registry";
 import { RuntimeEventPublisher } from "./runtime-event-publisher";
 import {
@@ -838,6 +839,13 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       );
       throw new SupervisorError("PRECONDITION", uriViolation);
     }
+    const contentBlocks = await resolvePromptRuntimeObjects({
+      blocks: body.contentBlocks,
+      resolver: runtimeObjects,
+      runId: entry.record.runId,
+      assignmentId: parsed.envelope.fence.assignmentId,
+      assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
+    });
     entry.record.stepId = body.stepId;
     if (body.nodeAttemptId) entry.record.nodeAttemptId = body.nodeAttemptId;
     else delete entry.record.nodeAttemptId;
@@ -877,7 +885,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           acpSessionId: entry.acpSessionId,
           stepId: body.stepId,
           prompt: body.prompt,
-          contentBlocks: body.contentBlocks as acp.ContentBlock[] | undefined,
+          contentBlocks,
           preamble: mountPreamble ?? undefined,
           isUserCancel: () => entry.record.cancelRequested === true,
         },
@@ -1753,6 +1761,13 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           );
           throw new SupervisorError("PRECONDITION", uriViolation);
         }
+        const contentBlocks = await resolvePromptRuntimeObjects({
+          blocks: body.contentBlocks,
+          resolver: runtimeObjects,
+          runId: entry.record.runId,
+          assignmentId: parsed.envelope.fence.assignmentId,
+          assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
+        });
 
         entry.record.stepId = body.stepId;
         if (body.nodeAttemptId) {
@@ -1816,11 +1831,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
               acpSessionId,
               stepId: body.stepId,
               prompt: body.prompt,
-              // Validated by SendPromptRequestSchema; cast to the SDK block
-              // type at this trust boundary for verbatim forward (T5.4).
-              contentBlocks: body.contentBlocks as
-                | acp.ContentBlock[]
-                | undefined,
+              contentBlocks,
               preamble: mountPreamble ?? undefined,
               isUserCancel: () => entry.record.cancelRequested === true,
             },

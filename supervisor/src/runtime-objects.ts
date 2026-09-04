@@ -2,7 +2,7 @@ import type { HostRuntimeObjectRow, HostState } from "./host-state";
 import type { ReserveRuntimeObjectPayload } from "./types";
 
 import { createHash } from "node:crypto";
-import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { SupervisorError } from "./types";
@@ -213,6 +213,56 @@ export class RuntimeObjectRegistry {
       });
     }
     return { metadata: publicMetadata(object), path: object.privatePath };
+  }
+
+  // Prompt references never disclose this path to a caller. The execution host
+  // resolves the opaque object only after proving that it belongs to the live
+  // run and the exact assignment epoch that owns the session.
+  async resolvePromptReference(input: {
+    objectId: string;
+    runId: string;
+    assignmentId: string;
+    assignmentEpoch: number;
+  }): Promise<{ metadata: RuntimeObjectPublicMetadata; path: string }> {
+    const object = requireObject(this.state, input.objectId);
+    if (
+      object.runId !== input.runId ||
+      object.assignmentId !== input.assignmentId ||
+      object.assignmentEpoch !== input.assignmentEpoch
+    ) {
+      throw new SupervisorError(
+        "FENCED",
+        "runtime object does not belong to the prompt assignment",
+        { details: { reason: "assignment_fenced" } },
+      );
+    }
+    if (object.state !== "available") {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object content is unavailable for the prompt",
+        { details: { reason: "runtime_object_missing" } },
+      );
+    }
+    const [resolvedRoot, resolvedObject, metadata] = await Promise.all([
+      realpath(this.root),
+      realpath(object.privatePath),
+      Promise.resolve(publicMetadata(object)),
+    ]);
+    if (!resolvedObject.startsWith(`${resolvedRoot}/`)) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object path escapes the host object root",
+        { details: { reason: "runtime_object_missing" } },
+      );
+    }
+    if (!(await lstat(resolvedObject)).isFile()) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object content is not a regular file",
+        { details: { reason: "runtime_object_missing" } },
+      );
+    }
+    return { metadata, path: resolvedObject };
   }
 
   async remove(input: {

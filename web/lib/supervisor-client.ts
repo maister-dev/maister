@@ -149,6 +149,16 @@ export type PromptContentBlock =
       name: string;
       mimeType?: string;
       description?: string;
+    }
+  // A manager-owned opaque object reference. The supervisor resolves it to a
+  // confined file URI only after checking the run and assignment fence; this
+  // variant is never forwarded to ACP verbatim.
+  | {
+      type: "runtime_object";
+      objectId: string;
+      name: string;
+      mimeType?: string;
+      description?: string;
     };
 
 export type SendPromptInput = {

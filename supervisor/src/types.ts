@@ -657,6 +657,18 @@ const PromptContentBlockSchema = z.union([
       resource: z.object({ uri: z.string().min(1) }).passthrough(),
     })
     .passthrough(),
+  // This is a supervisor-private indirection, not an ACP content block. It
+  // lets the manager supply an opaque object ID while the host derives the
+  // actual confined file URI from its own object registry.
+  z
+    .object({
+      type: z.literal("runtime_object"),
+      objectId: z.string().uuid(),
+      name: z.string().min(1).max(255),
+      mimeType: z.string().min(1).max(255).optional(),
+      description: z.string().max(4_000).optional(),
+    })
+    .strict(),
 ]);
 
 export const SendPromptRequestSchema = z
