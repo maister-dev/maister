@@ -9,7 +9,9 @@ export const MAX_RUNTIME_EVENT_ARRAY = 1_024;
 export const MAX_RUNTIME_EVENT_STRING_BYTES = 65_536;
 
 const SEQUENCE = /^(0|[1-9][0-9]{0,18})$/;
-const HOST_KEY = /^eh_[a-z0-9]{32}$/;
+// The default identity is `eh_<uuid-without-dashes>`, but a pinned local
+// identity is deliberately allowed by the execution-host contract too.
+const HOST_KEY = /^[A-Za-z0-9_-]{8,64}$/;
 const SECRET_KEY = /authorization|cookie|token|secret|password|api[_-]?key|headers|environment|^env$/i;
 const ABSOLUTE_PATH = /(?:^|\s)\/(?:[^\s]*)/;
 const FILE_URI = /^file:\/\//i;
@@ -55,7 +57,8 @@ export const RuntimeEventSequenceSchema = z
   .string()
   .regex(SEQUENCE)
   .refine(
-    (value) => BigInt(value) <= 9_223_372_036_854_775_807n,
+    (value) =>
+      SEQUENCE.test(value) && BigInt(value) <= 9_223_372_036_854_775_807n,
     "sequence exceeds signed BIGINT",
   );
 
@@ -97,6 +100,19 @@ export const RuntimeEventEnvelopeSchema = z
   });
 
 export type RuntimeEventEnvelope = z.infer<typeof RuntimeEventEnvelopeSchema>;
+export type RuntimeEventType = (typeof RUNTIME_EVENT_TYPES)[number];
+export type RuntimeEventPayloadSchema =
+  (typeof RUNTIME_EVENT_PAYLOAD_SCHEMAS)[number];
+
+export type RuntimeEventDraft = {
+  runId: string;
+  assignmentId: string;
+  assignmentEpoch: number;
+  hostSessionId: string | null;
+  eventType: RuntimeEventType;
+  occurredAt: string;
+  payload: Record<string, unknown>;
+};
 
 type JsonValue =
   | null
@@ -108,6 +124,25 @@ type JsonValue =
 
 function encodedByteLength(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+
+function normalizeJsonValue(value: unknown): JsonValue {
+  let serialized: string | undefined;
+
+  try {
+    serialized = JSON.stringify(value);
+  } catch (error) {
+    throw new Error(
+      `runtime event payload is not JSON serializable: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  if (serialized === undefined) {
+    throw new Error("runtime event payload is not JSON serializable");
+  }
+
+  return JSON.parse(serialized) as JsonValue;
 }
 
 function assertJsonValue(value: unknown, depth: number): asserts value is JsonValue {
@@ -185,15 +220,65 @@ export function assertRuntimeEventPayloadSafe(value: unknown): asserts value is 
 }
 
 export function redactRuntimeEventPayload(value: unknown): Record<string, JsonValue> {
-  assertJsonValue(value, 0);
-  if (!value || Array.isArray(value) || typeof value !== "object") {
+  const normalized = normalizeJsonValue(value);
+  assertJsonValue(normalized, 0);
+  if (!normalized || Array.isArray(normalized) || typeof normalized !== "object") {
     throw new Error("runtime event payload must be an object");
   }
-  const redacted = redactValue(value) as Record<string, JsonValue>;
+  const redacted = redactValue(normalized) as Record<string, JsonValue>;
   if (encodedByteLength(redacted) > MAX_RUNTIME_EVENT_BYTES) {
     throw new Error("runtime event payload exceeds maximum encoded bytes");
   }
   return redacted;
+}
+
+export function payloadSchemaForRuntimeEvent(
+  eventType: RuntimeEventType,
+): RuntimeEventPayloadSchema {
+  const payloadSchema = EVENT_SCHEMA_PAIRS.get(eventType);
+
+  if (!payloadSchema) {
+    throw new Error(`no payload schema is registered for ${eventType}`);
+  }
+
+  return payloadSchema as RuntimeEventPayloadSchema;
+}
+
+export function buildRuntimeEventEnvelope(input: {
+  hostKey: string;
+  hostBootId: string;
+  streamId: string;
+  sequence: string;
+  draft: RuntimeEventDraft;
+}): RuntimeEventEnvelope {
+  const payload = redactRuntimeEventPayload(input.draft.payload);
+  const envelope = {
+    envelopeVersion: 1 as const,
+    eventId: deterministicRuntimeEventId({
+      hostKey: input.hostKey,
+      streamId: input.streamId,
+      sequence: input.sequence,
+    }),
+    hostKey: input.hostKey,
+    hostBootId: input.hostBootId,
+    streamId: input.streamId,
+    sequence: input.sequence,
+    runId: input.draft.runId,
+    assignmentId: input.draft.assignmentId,
+    assignmentEpoch: input.draft.assignmentEpoch,
+    hostSessionId: input.draft.hostSessionId,
+    eventType: input.draft.eventType,
+    occurredAt: input.draft.occurredAt,
+    payloadSchema: payloadSchemaForRuntimeEvent(input.draft.eventType),
+    payload,
+  };
+  const parsed = RuntimeEventEnvelopeSchema.parse(envelope);
+
+  if (encodedByteLength(parsed) > MAX_RUNTIME_EVENT_BYTES) {
+    throw new Error("runtime event envelope exceeds maximum encoded bytes");
+  }
+
+  return parsed;
 }
 
 export const RuntimeEventAckSchema = z

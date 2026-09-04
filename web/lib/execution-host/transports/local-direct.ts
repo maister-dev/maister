@@ -11,8 +11,10 @@ import type {
 import type { CommandEnvelope, CommandKind, WorkspaceKind } from "../types";
 
 import { asExecutionWorkspaceId } from "../types";
+import { RuntimeEventEnvelopeSchema } from "../runtime-events";
 
 import * as wire from "@/lib/supervisor-client";
+import { MaisterError } from "@/lib/errors";
 
 // ADR-166 D10: the local-direct transport — the only importer of the
 // enveloped `supervisor-client` wire. Pure adaptation: no DB, no ledger, no
@@ -77,6 +79,37 @@ export function createLocalDirectTransport(): ExecutionHostTransport {
     streamSession(sessionId, opts) {
       return wire.streamSession(sessionId, opts);
     },
+    async *streamRuntimeEvents(opts) {
+      const health = toHostHealth(await wire.checkSupervisorHealth());
+
+      if (health.kind !== "ready" || !health.identity) {
+        throw new MaisterError(
+          "EXECUTOR_UNAVAILABLE",
+          "execution host identity is unavailable for runtime event streaming",
+        );
+      }
+      for await (const raw of wire.streamRuntimeEvents(opts)) {
+        const parsed = RuntimeEventEnvelopeSchema.safeParse(raw);
+
+        if (!parsed.success) {
+          throw new MaisterError(
+            "ACP_PROTOCOL",
+            "execution host emitted an invalid runtime event envelope",
+          );
+        }
+        if (parsed.data.hostKey !== health.identity.hostKey) {
+          throw new MaisterError(
+            "CONFLICT",
+            "execution host event identity differs from its health identity",
+            { details: { reason: "host_identity_mismatch" } },
+          );
+        }
+        yield parsed.data;
+      }
+    },
+    acknowledgeRuntimeEvents(input) {
+      return wire.acknowledgeRuntimeEvents(input);
+    },
     async getCommandReceipt(commandId) {
       const receipt = await wire.getCommandReceipt(commandId);
 
@@ -109,6 +142,9 @@ export function createLocalDirectTransport(): ExecutionHostTransport {
     },
     sendPrompt(sessionId, envelope, opts) {
       return wire.sendPromptEnveloped(sessionId, envelope, opts);
+    },
+    startPrompt(sessionId, envelope, opts) {
+      return wire.startPromptEnveloped(sessionId, envelope, opts);
     },
     deliverInput(sessionId, envelope: CommandEnvelope<InputPayload>, opts) {
       return wire.deliverInputEnveloped(sessionId, envelope, opts);

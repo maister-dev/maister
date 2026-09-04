@@ -42,13 +42,15 @@ info:
     Stage A is single-host, loopback, shared-filesystem, and unauthenticated —
     see [`../system-analytics/execution-hosts.md`](../system-analytics/execution-hosts.md).
 
-    **Stage B data plane (Designed — ADR-167, 0.9.0).** `GET /capabilities`
+    **Stage B data plane (Incremental — ADR-167, 0.9.0).** `GET /capabilities`
     is additive and read-only. `GET /runtime-events` and
-    `POST /runtime-events/ack` define a host-global, durable local SSE/ACK
-    adapter; `POST /sessions/{id}/prompt` gains an accepted-command response;
-    runtime objects are opaque ids, never host paths. These routes remain
-    unavailable until their owning increments land and must fail explicitly,
-    never fall back to files.
+    `POST /runtime-events/ack` implement the host-global, durable local SSE/ACK
+    adapter. `POST /sessions/{id}/prompts` accepts a durable prompt command and
+    returns before its ACP turn finishes; completion is available through the
+    canonical event stream and `GET /commands/{id}`. The older singular route
+    remains a bounded compatibility path during the per-run cutover. Runtime
+    objects remain opaque ids, never host paths, when their later increment
+    enables them.
 
     See [`../architecture.md`](../architecture.md), [`../supervisor.md`](../supervisor.md),
     and [`../decisions.md#adr-002-supervisor-runs-as-a-separate-node-daemon`](../decisions.md).
@@ -90,7 +92,7 @@ paths:
   /capabilities:
     get:
       tags: [execution-host]
-      summary: Read additive Stage B execution-host capabilities (Designed — ADR-167)
+      summary: Read additive Stage B execution-host capabilities (Implemented — ADR-167)
       description: |
         Read-only, host-derived capability document. The web registrar obtains
         `hostKey` and `bootId` from `/health`, not this body; a 404 is the only
@@ -108,7 +110,7 @@ paths:
   /runtime-events:
     get:
       tags: [execution-host]
-      summary: Replay host-global durable runtime events after an exclusive cursor (Designed — ADR-167)
+      summary: Replay host-global durable runtime events after an exclusive cursor (Implemented — ADR-167)
       description: |
         `Last-Event-ID` is an optional canonical decimal sequence on the
         supervisor-selected stream, not a URL-selected run id. It is exclusive:
@@ -136,7 +138,7 @@ paths:
   /runtime-events/ack:
     post:
       tags: [execution-host]
-      summary: Confirm a durable contiguous runtime-event watermark (Designed — ADR-167)
+      summary: Confirm a durable contiguous runtime-event watermark (Implemented — ADR-167)
       description: |
         The manager supplies `streamId` and an absolute `throughSequence`.
         The host verifies it against its current stream and emitted contiguous
@@ -511,6 +513,7 @@ paths:
                     body: { stopReason: "end_turn", meta: null }
                     receivedAt: "2026-09-02T10:00:02.050Z"
                     completedAt: "2026-09-02T10:04:41.900Z"
+                    eventId: "7a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"
         "404":
           description: No receipt for that id (never received, or pruned).
           content:
@@ -803,6 +806,50 @@ paths:
               examples:
                 acpProtocol:
                   value: { code: "ACP_PROTOCOL", message: "prompt failed: ..." }
+  /sessions/{id}/prompts:
+    post:
+      tags: [prompt]
+      summary: Accept a durable asynchronous ACP prompt command (Implemented — ADR-167)
+      description: |
+        The Stage B prompt-admission endpoint. It performs the same strict
+        envelope, assignment fence, session liveness, and content confinement
+        validation as `POST /sessions/{id}/prompt`, but it durably records the
+        accepted receipt and canonical `session.command` event before returning
+        `202`. The ACP turn settles later as a terminal `session.command` event
+        and receipt. A lost acknowledgement is recovered by the original
+        command id; duplicate delivery never starts a second ACP turn.
+      operationId: acceptSessionPrompt
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PromptCommand" }
+      responses:
+        "202":
+          description: Durable prompt admission; not ACP completion.
+          headers:
+            X-Maister-Command-Replayed:
+              $ref: "#/components/headers/CommandReplayed"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PromptAccepted" }
+        "404":
+          description: No session with that id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+        "409":
+          description: Invalid envelope, fenced/stale assignment, unavailable session, or restart-lost accepted turn.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+        "500":
+          description: The host could not durably record admission or terminal evidence.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
   /sessions/{id}:
     delete:
       tags: [sessions]
@@ -2106,6 +2153,14 @@ components:
             ACP `_meta` passthrough (opaque object provided by the
             adapter; shape is provider-specific). May be `null` or
             omitted when the adapter sent no `_meta`.
+    PromptAccepted:
+      type: object
+      required: [commandId, state]
+      additionalProperties: false
+      description: Stable durable admission response; terminal result is deliberately absent.
+      properties:
+        commandId: { type: string, format: uuid }
+        state: { type: string, enum: [accepted] }
     SessionStatus:
       type: string
       enum: [live, exited, crashed]
@@ -2203,7 +2258,7 @@ components:
       properties:
         envelopeVersion: { type: integer, enum: [1] }
         eventId: { type: string, format: uuid }
-        hostKey: { type: string, pattern: "^eh_[a-z0-9]{32}$" }
+        hostKey: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$" }
         hostBootId: { type: string, format: uuid }
         streamId: { type: string, format: uuid }
         sequence: { $ref: "#/components/schemas/RuntimeEventSequence" }
@@ -2720,6 +2775,7 @@ components:
           httpStatus,
           body,
           receivedAt,
+          eventId,
           inflight,
         ]
       additionalProperties: false
@@ -2739,6 +2795,7 @@ components:
         body: { stopReason: "end_turn", meta: null }
         receivedAt: "2026-09-02T10:00:02.050Z"
         completedAt: "2026-09-02T10:04:41.900Z"
+        eventId: "7a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"
         inflight: false
       properties:
         inflight:
@@ -2758,6 +2815,11 @@ components:
           description: The stored response (success body or `SupervisorErrorBody`); empty while `accepted`.
         receivedAt: { type: string, format: date-time }
         completedAt: { type: string, format: date-time, nullable: true }
+        eventId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Canonical host outbox event written atomically with this receipt for a session command; null for legacy non-session commands.
     CheckpointResponse:
       type: object
       description: |

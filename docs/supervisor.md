@@ -1003,17 +1003,24 @@ The legacy `session.line` event type stays — `cost.ts` and any other
 raw-line consumer keep working unchanged. The supervisor tees stdout
 through a `PassThrough` so both consumers see every chunk.
 
-## Stage B durable data plane (Designed — ADR-167)
+## Stage B durable data plane (Incremental — ADR-167)
 
 `GET /capabilities` is additive and keeps `/health` protocol v1 unchanged.
 It advertises `eventStream`, `asyncPrompt`, and `runtimeObjects` independently;
-all are initially false, so a web-first or supervisor-first rolling upgrade
-continues to select `legacy_file_v1`. When enabled by their owning increments,
-`GET /runtime-events` replays host-global SQLite outbox events strictly after
+`eventStream` and `asyncPrompt` are implemented, while `runtimeObjects` remains
+false until its owning increment. A web-first or supervisor-first rolling
+upgrade continues to select `legacy_file_v1` unless both tiers negotiate the
+canonical mode. `GET /runtime-events` replays host-global SQLite outbox events strictly after
 the decimal `Last-Event-ID`, and `POST /runtime-events/ack` confirms an
 absolute contiguous stream watermark. A socket is never lifecycle authority:
 the host writes its outbox before publishing and the manager ACKs only after a
 Postgres transaction commits.
+
+`POST /sessions/{id}/prompts` is the durable asynchronous prompt-admission
+route: its `202` confirms only the receipt and accepted event. The authoritative
+terminal outcome is the canonical event stream plus `GET /commands/{id}`. The
+older singular `/prompt` route remains a bounded long-lived compatibility path
+until B4 and is not lifecycle authority for canonical-mode runs.
 
 Runtime objects use opaque `ro_<id>` values through reserve/upload/metadata/
 single-range/read/delete contracts. Metadata may become canonical in Postgres;

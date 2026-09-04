@@ -894,6 +894,99 @@ export async function* streamSession(
   }
 }
 
+export async function* streamRuntimeEvents(
+  opts: { afterSequence?: string; signal?: AbortSignal } = {},
+): AsyncGenerator<Record<string, unknown>, void, void> {
+  const url = `${baseUrl()}/runtime-events`;
+  const headers: Record<string, string> = {};
+
+  if (opts.afterSequence !== undefined) {
+    headers["Last-Event-ID"] = opts.afterSequence;
+  }
+  logger.debug(
+    { url, afterSequence: opts.afterSequence },
+    "streamRuntimeEvents",
+  );
+
+  let res: Response;
+  try {
+    res = await fetchLongLivedSupervisor(
+      url,
+      { headers, signal: opts.signal },
+      "streamRuntimeEvents",
+    );
+  } catch (error) {
+    throw networkErrorToMaister(error, "streamRuntimeEvents");
+  }
+  if (!res.ok || !res.body) {
+    throw await asMaisterError(res, "ACP_PROTOCOL");
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let frameId: string | null = null;
+  let currentData = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline = buffer.indexOf("\n");
+
+      while (newline !== -1) {
+        const rawLine = buffer.slice(0, newline);
+        buffer = buffer.slice(newline + 1);
+        const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+
+        if (line === "") {
+          if (!currentData || frameId === null) {
+            throw new MaisterError(
+              "ACP_PROTOCOL",
+              "runtime event SSE frame is missing an id or data",
+            );
+          }
+          let data: unknown;
+          try {
+            data = JSON.parse(currentData);
+          } catch (error) {
+            throw new MaisterError(
+              "ACP_PROTOCOL",
+              `runtime event SSE payload is not JSON: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          }
+          if (!data || typeof data !== "object") {
+            throw new MaisterError(
+              "ACP_PROTOCOL",
+              "runtime event SSE payload must be an object",
+            );
+          }
+          if ((data as { sequence?: unknown }).sequence !== frameId) {
+            throw new MaisterError(
+              "ACP_PROTOCOL",
+              "runtime event SSE id does not match envelope sequence",
+            );
+          }
+          yield data as Record<string, unknown>;
+          frameId = null;
+          currentData = "";
+        } else if (line.startsWith("id:")) {
+          frameId = line.slice(3).trim();
+        } else if (line.startsWith("data:")) {
+          const chunk = line.slice(5).trimStart();
+          currentData = currentData ? `${currentData}\n${chunk}` : chunk;
+        }
+        newline = buffer.indexOf("\n");
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 // ============================================================================
 // ADR-166 (Implemented) — enveloped wire. Importable ONLY from
 // `web/lib/execution-host/**` (the local-direct transport); domain code goes
@@ -953,11 +1046,17 @@ export type CommandReceiptWire = {
   body: Record<string, unknown>;
   receivedAt: string;
   completedAt: string | null;
+  eventId: string | null;
   // `accepted` + `inflight:false` = the host restarted mid-turn (turn_lost).
   inflight: boolean;
 };
 
 export type DeleteSessionOutcome = "terminated" | "gone";
+
+export type PromptAccepted = {
+  commandId: string;
+  state: "accepted";
+};
 
 export const COMMAND_REPLAYED_HEADER = "x-maister-command-replayed";
 
@@ -1177,6 +1276,41 @@ export async function getExecutionHostCapabilities(): Promise<ExecutionHostDataP
   }
 }
 
+export type RuntimeEventAckWire = {
+  streamId: string;
+  acknowledgedThrough: string;
+};
+
+export async function acknowledgeRuntimeEvents(input: {
+  streamId: string;
+  throughSequence: string;
+}): Promise<RuntimeEventAckWire> {
+  const res = await request<unknown>({
+    method: "POST",
+    path: "/runtime-events/ack",
+    body: input,
+    ctx: "acknowledgeRuntimeEvents",
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: ADMIN_READ_TIMEOUT_MS,
+  });
+  const parsed = z
+    .object({
+      streamId: z.string().uuid(),
+      acknowledgedThrough: z.string().regex(/^(0|[1-9][0-9]{0,18})$/),
+    })
+    .strict()
+    .safeParse(res.body);
+
+  if (!parsed.success) {
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "supervisor returned a malformed runtime event acknowledgement",
+    );
+  }
+
+  return parsed.data;
+}
+
 export async function createSessionEnveloped(
   envelope: WireEnvelope,
   opts: CommandWireOptions = {},
@@ -1210,6 +1344,30 @@ export async function sendPromptEnveloped(
   });
 
   return res.body;
+}
+
+export async function startPromptEnveloped(
+  sessionId: string,
+  envelope: WireEnvelope<SendPromptInput>,
+  opts: CommandWireOptions = {},
+): Promise<PromptAccepted> {
+  const response = await request<PromptAccepted>({
+    method: "POST",
+    path: sessionPath(sessionId, "/prompts"),
+    body: envelope,
+    ctx: "startPrompt",
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: opts.timeoutMs ?? 10_000,
+  });
+  const body = response.body;
+  if (
+    response.status !== 202 ||
+    body?.commandId !== envelope.command.id ||
+    body?.state !== "accepted"
+  ) {
+    throw new MaisterError("ACP_PROTOCOL", "supervisor returned an invalid asynchronous prompt acceptance");
+  }
+  return body;
 }
 
 // Input keeps its status-specific rules: 410 (and the pre-M7 404) is a

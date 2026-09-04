@@ -49,12 +49,15 @@ async function durableCommands(
   host: BootedHost,
   runId: string,
   count: number,
+  completedOnly = false,
 ): Promise<Array<Record<string, unknown>>> {
   let lines: Array<Record<string, unknown>> = [];
 
   for (let i = 0; i < 200 && lines.length < count; i += 1) {
     lines = (await readEventsLog(host.runtimeRoot, "demo", runId)).filter(
-      (e) => e.type === "session.command",
+      (e) =>
+        e.type === "session.command" &&
+        (!completedOnly || e.phase === "completed"),
     );
     if (lines.length < count) {
       await new Promise((r) => setTimeout(r, 25));
@@ -122,6 +125,81 @@ describe("command receipts", () => {
     ).toHaveLength(1);
   });
 
+  it("R2a: a replayed command id rejects a mismatched request and links its receipt to the durable event", async () => {
+    const host = await bootHost({
+      runtimeRoot: await tempRoot(),
+      fixtureArgs: ["--hang"],
+    });
+
+    booted.push(host);
+    const runId = `run-${randomUUID().slice(0, 8)}`;
+    const created = await postJson(
+      `${host.url}/sessions`,
+      await createEnvelope(host, { runId }),
+    );
+    const sessionId = created.body.sessionId as string;
+    const commandId = randomUUID();
+    const first = await postJson(
+      `${host.url}/sessions/${sessionId}/prompt`,
+      envelope(
+        "session.prompt",
+        fenceFor(host, runId),
+        { stepId: "step-1", prompt: "first request" },
+        commandId,
+      ),
+    );
+    const receipt = host.hostState.getReceipt(commandId);
+    const mismatched = await postJson(
+      `${host.url}/sessions/${sessionId}/prompt`,
+      envelope(
+        "session.prompt",
+        fenceFor(host, runId),
+        { stepId: "step-1", prompt: "different request" },
+        commandId,
+      ),
+    );
+
+    expect(first.status).toBe(200);
+    expect(receipt?.requestDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(receipt?.eventId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(mismatched.status).toBe(409);
+    expect(mismatched.body.details?.reason).toBe("command_invariant_conflict");
+  });
+
+  it("R2b: asynchronous prompt admission returns only after the accepted receipt/event and terminalizes later", async () => {
+    const host = await bootHost({ runtimeRoot: await tempRoot() });
+
+    booted.push(host);
+    const runId = `run-${randomUUID().slice(0, 8)}`;
+    const created = await postJson(
+      `${host.url}/sessions`,
+      await createEnvelope(host, { runId }),
+    );
+    const sessionId = created.body.sessionId as string;
+    const commandId = randomUUID();
+    const admitted = await postJson(
+      `${host.url}/sessions/${sessionId}/prompts`,
+      envelope(
+        "session.prompt",
+        fenceFor(host, runId),
+        { stepId: "step-async", prompt: "asynchronous command" },
+        commandId,
+      ),
+    );
+    await waitFor(
+      () => {
+        const receipt = host.hostState.getReceipt(commandId);
+        return receipt?.phase === "completed";
+      },
+    );
+    const terminal = host.hostState.getReceipt(commandId);
+
+    expect(admitted.status).toBe(202);
+    expect(admitted.body).toEqual({ commandId, state: "accepted" });
+    expect(terminal?.eventId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(terminal?.body).toMatchObject({ stopReason: "end_turn" });
+  });
+
   it("R3: after a restart between accepted and completion a duplicate prompt id is turn_lost", async () => {
     const root = await tempRoot();
     const stateDir = join(root, ".maister", "execution-host");
@@ -139,6 +217,8 @@ describe("command receipts", () => {
       runId,
       kind: "session.prompt",
       epoch: 1,
+      requestDigest: null,
+      eventId: null,
       phase: "accepted",
       httpStatus: 202,
       body: {},
@@ -252,6 +332,8 @@ describe("command receipts", () => {
       runId: "r",
       kind: "session.cancel",
       epoch: 1,
+      requestDigest: null,
+      eventId: null,
       phase: "completed",
       httpStatus: 200,
       body: {},
@@ -263,6 +345,8 @@ describe("command receipts", () => {
       runId: "r",
       kind: "session.cancel",
       epoch: 1,
+      requestDigest: null,
+      eventId: null,
       phase: "completed",
       httpStatus: 200,
       body: {},
@@ -480,7 +564,7 @@ describe("session.command events", () => {
     expect(byId.get(ids.delete)?.status).toBe("succeeded");
 
     // The post-terminal completions reached the durable log too, in order.
-    const durable = await durableCommands(host, runId, 4);
+    const durable = await durableCommands(host, runId, 4, true);
 
     expect(durable.map((e) => e.commandId)).toEqual([
       ids.cancel,

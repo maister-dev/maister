@@ -100,6 +100,13 @@ function dedupeIndexColumns(dbml: string): string {
     .join("\n");
 }
 
+function stripTrailingWhitespace(dbml: string): string {
+  return dbml
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+$/u, ""))
+    .join("\n");
+}
+
 function generate(): string {
   const overlap = Object.keys(mainSchema).filter(
     (key) => key in (brainSchema as Record<string, unknown>),
@@ -111,11 +118,13 @@ function generate(): string {
     );
   }
 
-  const dbml = dedupeIndexColumns(
-    dedupeRefs(
-      pgGenerate({
-        schema: dedupeByIdentity({ ...mainSchema, ...brainSchema }),
-      }),
+  const dbml = stripTrailingWhitespace(
+    dedupeIndexColumns(
+      dedupeRefs(
+        pgGenerate({
+          schema: dedupeByIdentity({ ...mainSchema, ...brainSchema }),
+        }),
+      ),
     ),
   );
 

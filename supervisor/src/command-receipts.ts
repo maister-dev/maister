@@ -1,6 +1,8 @@
 import type { Logger } from "pino";
-import type { CommandReceiptRow, HostState } from "./host-state";
+import type { CommandReceiptRow, HostState, ReceiptPhase } from "./host-state";
 import type { CommandEnvelope, SupervisorErrorBody } from "./types";
+
+import { createHash } from "node:crypto";
 
 import {
   errorBody,
@@ -20,6 +22,12 @@ export type CommandOutcome = {
 };
 
 export type ExecutedCommand = CommandOutcome & { replayed: boolean };
+
+export type ReceiptTransition = {
+  row: CommandReceiptRow;
+  phase: ReceiptPhase;
+  outcome: CommandOutcome;
+};
 
 export const REPLAYED_HEADER = "x-maister-command-replayed";
 
@@ -47,11 +55,21 @@ export class CommandReceipts {
     envelope: CommandEnvelope;
     // Called once the `accepted` receipt is durable and BEFORE the effect runs.
     onAccepted?: () => void;
+    // Session commands supply this to atomically persist the receipt and its
+    // canonical event in the host-state transaction. Other Stage A commands
+    // retain their receipt-only contract until they acquire a session event.
+    persistReceipt?: (transition: ReceiptTransition) => void;
+    afterReceipt?: (transition: ReceiptTransition) => void;
+    admissionExempt?: boolean;
     run: () => Promise<CommandOutcome>;
   }): Promise<ExecutedCommand> {
     const { envelope } = args;
     const commandId = envelope.command.id;
     const existing = this.state.getReceipt(commandId);
+
+    if (existing) {
+      assertReceiptInvariant(existing, envelope);
+    }
 
     if (existing && existing.phase !== "accepted") {
       this.logger.info(
@@ -88,13 +106,17 @@ export class CommandReceipts {
         body: errorBody(turnLost),
       };
 
-      this.writeReceipt(envelope, "rejected", rejected, existing.receivedAt);
+      this.writeReceipt(envelope, "rejected", rejected, existing.receivedAt, args);
       this.logger.warn(
         { commandId, kind: envelope.command.kind },
         "command-turn-lost",
       );
 
       return { ...rejected, replayed: false };
+    }
+
+    if (!args.admissionExempt) {
+      this.state.assertCanAcceptMutatingCommand();
     }
 
     const receivedAt = this.now().toISOString();
@@ -109,10 +131,113 @@ export class CommandReceipts {
     }
   }
 
+  // The asynchronous prompt lifecycle commits acceptance before the ACP turn
+  // starts, returns a stable 202 receipt, and settles the same receipt/event
+  // pair when the background turn finishes. A lost HTTP acknowledgement is
+  // therefore reconciled from GET /commands or the canonical event stream.
+  async executeAsync(args: {
+    envelope: CommandEnvelope;
+    persistReceipt?: (transition: ReceiptTransition) => void;
+    afterReceipt?: (transition: ReceiptTransition) => void;
+    admissionExempt?: boolean;
+    run: () => Promise<CommandOutcome>;
+  }): Promise<ExecutedCommand> {
+    const { envelope } = args;
+    const commandId = envelope.command.id;
+    const existing = this.state.getReceipt(commandId);
+    if (existing) assertReceiptInvariant(existing, envelope);
+
+    if (existing && existing.phase !== "accepted") {
+      return {
+        status: 202,
+        body: { commandId, state: "accepted" },
+        replayed: true,
+      };
+    }
+    if (this.inflight.has(commandId)) {
+      return {
+        status: 202,
+        body: { commandId, state: "accepted" },
+        replayed: true,
+      };
+    }
+    if (existing) {
+      const turnLost = new SupervisorError(
+        "PRECONDITION",
+        "the turn for this command id was lost in a host restart",
+        { details: { reason: "turn_lost", runId: envelope.fence.runId } },
+      );
+      const rejected = {
+        status: httpStatusForCode(turnLost.code),
+        body: errorBody(turnLost),
+      } satisfies CommandOutcome;
+      this.writeReceipt(envelope, "rejected", rejected, existing.receivedAt, args);
+      return { ...rejected, replayed: false };
+    }
+    if (!args.admissionExempt) this.state.assertCanAcceptMutatingCommand();
+
+    const receivedAt = this.now().toISOString();
+    const accepted = {
+      status: 202,
+      body: { commandId, state: "accepted" },
+    } satisfies CommandOutcome;
+    this.writeReceipt(envelope, "accepted", accepted, receivedAt, args);
+    const completion = this.completeAsync(args, receivedAt);
+    this.inflight.set(commandId, completion);
+    void completion
+      .catch((error) => {
+        this.logger.error(
+          {
+            commandId,
+            kind: envelope.command.kind,
+            err: error instanceof Error ? error.message : String(error),
+          },
+          "async-command-completion-persist-failed",
+        );
+      })
+      .finally(() => this.inflight.delete(commandId));
+    return { ...accepted, replayed: false };
+  }
+
+  private async completeAsync(
+    args: {
+      envelope: CommandEnvelope;
+      persistReceipt?: (transition: ReceiptTransition) => void;
+      afterReceipt?: (transition: ReceiptTransition) => void;
+      admissionExempt?: boolean;
+      run: () => Promise<CommandOutcome>;
+    },
+    receivedAt: string,
+  ): Promise<CommandOutcome> {
+    let outcome: CommandOutcome;
+    let phase: "completed" | "rejected" = "completed";
+    try {
+      outcome = await args.run();
+    } catch (error) {
+      const supervisorError = isSupervisorError(error)
+        ? error
+        : new SupervisorError(
+            "ACP_PROTOCOL",
+            error instanceof Error ? error.message : "asynchronous prompt failed",
+            { cause: error },
+          );
+      outcome = {
+        status: httpStatusForCode(supervisorError.code),
+        body: errorBody(supervisorError),
+      };
+      phase = "rejected";
+    }
+    this.writeReceipt(args.envelope, phase, outcome, receivedAt, args);
+    return outcome;
+  }
+
   private async runFresh(
     args: {
       envelope: CommandEnvelope;
       onAccepted?: () => void;
+      persistReceipt?: (transition: ReceiptTransition) => void;
+      afterReceipt?: (transition: ReceiptTransition) => void;
+      admissionExempt?: boolean;
       run: () => Promise<CommandOutcome>;
     },
     receivedAt: string,
@@ -124,6 +249,7 @@ export class CommandReceipts {
       "accepted",
       { status: 202, body: {} },
       receivedAt,
+      args,
     );
     args.onAccepted?.();
 
@@ -135,12 +261,12 @@ export class CommandReceipts {
       if (!isSupervisorError(err)) throw err;
 
       outcome = { status: httpStatusForCode(err.code), body: errorBody(err) };
-      this.writeReceipt(envelope, "rejected", outcome, receivedAt);
+      this.writeReceipt(envelope, "rejected", outcome, receivedAt, args);
 
       return outcome;
     }
 
-    this.writeReceipt(envelope, "completed", outcome, receivedAt);
+    this.writeReceipt(envelope, "completed", outcome, receivedAt, args);
 
     return outcome;
   }
@@ -150,19 +276,36 @@ export class CommandReceipts {
     phase: "accepted" | "completed" | "rejected",
     outcome: CommandOutcome,
     receivedAt: string,
+    callbacks: {
+      envelope: CommandEnvelope;
+      onAccepted?: () => void;
+      persistReceipt?: (transition: ReceiptTransition) => void;
+      afterReceipt?: (transition: ReceiptTransition) => void;
+      run: () => Promise<CommandOutcome>;
+    },
   ): void {
+    const row: CommandReceiptRow = {
+      commandId: envelope.command.id,
+      runId: envelope.fence.runId,
+      kind: envelope.command.kind,
+      epoch: envelope.fence.assignmentEpoch,
+      requestDigest: commandRequestDigest(envelope),
+      eventId: null,
+      phase,
+      httpStatus: outcome.status,
+      body: outcome.body ?? {},
+      receivedAt,
+      completedAt: phase === "accepted" ? null : this.now().toISOString(),
+    };
+
     try {
-      this.state.putReceipt({
-        commandId: envelope.command.id,
-        runId: envelope.fence.runId,
-        kind: envelope.command.kind,
-        epoch: envelope.fence.assignmentEpoch,
-        phase,
-        httpStatus: outcome.status,
-        body: outcome.body ?? {},
-        receivedAt,
-        completedAt: phase === "accepted" ? null : this.now().toISOString(),
-      });
+      const transition = { row, phase, outcome } satisfies ReceiptTransition;
+      if (callbacks.persistReceipt) {
+        callbacks.persistReceipt(transition);
+      } else {
+        this.state.putReceipt(row);
+      }
+      callbacks.afterReceipt?.(transition);
     } catch (err) {
       this.logger.error(
         {
@@ -174,7 +317,9 @@ export class CommandReceipts {
       );
       throw new SupervisorError(
         "ACP_PROTOCOL",
-        `command receipt write failed for ${envelope.command.id}`,
+        `command receipt write failed for ${envelope.command.id}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
         { cause: err },
       );
     }
@@ -205,6 +350,7 @@ export function receiptToResponse(
   phase: CommandReceiptRow["phase"];
   httpStatus: number;
   body: Record<string, unknown>;
+  eventId: string | null;
   receivedAt: string;
   completedAt: string | null;
   inflight: boolean;
@@ -220,10 +366,58 @@ export function receiptToResponse(
       row.body && typeof row.body === "object"
         ? (row.body as Record<string, unknown>)
         : {},
+    eventId: row.eventId,
     receivedAt: row.receivedAt,
     completedAt: row.completedAt,
     inflight,
   };
+}
+
+// Command IDs are idempotency keys, not permission to substitute a different
+// request. The digest is over a stable, unredacted representation and never
+// leaves the host except through the manager command ledger's existing digest.
+export function commandRequestDigest(envelope: CommandEnvelope): string {
+  return createHash("sha256")
+    .update(canonicalJson({ command: envelope.command, fence: envelope.fence, payload: envelope.payload }))
+    .digest("hex");
+}
+
+function assertReceiptInvariant(
+  existing: CommandReceiptRow,
+  envelope: CommandEnvelope,
+): void {
+  const digest = commandRequestDigest(envelope);
+  const mismatch =
+    existing.runId !== envelope.fence.runId ||
+    existing.kind !== envelope.command.kind ||
+    existing.epoch !== envelope.fence.assignmentEpoch ||
+    (existing.requestDigest !== null && existing.requestDigest !== digest);
+
+  if (mismatch) {
+    throw new SupervisorError(
+      "PRECONDITION",
+      `command id ${envelope.command.id} was already used for a different request`,
+      { details: { reason: "command_invariant_conflict" } },
+    );
+  }
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const object = value as Record<string, unknown>;
+    return `{${Object.keys(object)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`)
+      .join(",")}}`;
+  }
+
+  throw new SupervisorError("PRECONDITION", "command request contains a non-JSON value");
 }
 
 export function isErrorBody(body: unknown): body is SupervisorErrorBody {

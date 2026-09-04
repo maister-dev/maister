@@ -3,7 +3,7 @@ import "server-only";
 import { open, type FileHandle } from "node:fs/promises";
 import path from "node:path";
 
-import { eq } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNotNull } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
@@ -24,7 +24,7 @@ import { runtimeRoot } from "@/lib/runtime-root";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { localPackages, projects, runs } = schemaModule as unknown as Record<
+const { localPackages, projects, runs, executionEvents } = schemaModule as unknown as Record<
   string,
   any
 >;
@@ -50,6 +50,7 @@ type RunLite = {
   projectSlug: string;
   createdByUserId: string | null;
   localPackageId: string | null;
+  executionDataPlaneMode: "legacy_file_v1" | "canonical_events_v1";
 };
 
 async function loadRunLite(runId: string): Promise<RunLite | null> {
@@ -64,6 +65,7 @@ async function loadRunLite(runId: string): Promise<RunLite | null> {
       localPackageSlug: localPackages.slug,
       createdByUserId: runs.createdByUserId,
       localPackageId: runs.localPackageId,
+      executionDataPlaneMode: runs.executionDataPlaneMode,
     })
     .from(runs)
     .leftJoin(projects, eq(projects.id, runs.projectId))
@@ -85,6 +87,7 @@ async function loadRunLite(runId: string): Promise<RunLite | null> {
     projectSlug,
     createdByUserId: row.createdByUserId,
     localPackageId: row.localPackageId,
+    executionDataPlaneMode: row.executionDataPlaneMode,
   };
 }
 
@@ -148,7 +151,7 @@ async function readAvailable(
 // `onmessage` handler. Keeping every event on the default `message`
 // dispatch lets consumers discriminate on the `type` field carried
 // inside `data` without having to register a listener per variant.
-function formatSseEvent(monotonicId: number, data: string): string {
+function formatSseEvent(monotonicId: string | number, data: string): string {
   return `id: ${monotonicId}\ndata: ${data}\n\n`;
 }
 
@@ -158,6 +161,169 @@ function formatSseEvent(monotonicId: number, data: string): string {
 // real durable event with the same monotonicId after reconnect.
 function formatSyntheticSseEvent(data: string): string {
   return `data: ${data}\n\n`;
+}
+
+function parseCanonicalLastEventId(req: NextRequest): bigint {
+  const header = req.headers.get("last-event-id");
+  const query = new URL(req.url).searchParams.get("lastEventId");
+  const raw = header ?? query;
+  if (!raw) return -1n;
+  if (!/^(0|[1-9][0-9]{0,18})$/.test(raw)) {
+    throw new Error("canonical run stream cursor must be a decimal sequence");
+  }
+  return BigInt(raw);
+}
+
+async function latestCanonicalRunSequence(runId: string): Promise<bigint> {
+  const db = getDb() as any;
+  const rows = await db
+    .select({ runSequence: executionEvents.runSequence })
+    .from(executionEvents)
+    .where(and(eq(executionEvents.runId, runId), isNotNull(executionEvents.runSequence)))
+    .orderBy(desc(executionEvents.runSequence))
+    .limit(1);
+  return rows[0]?.runSequence ?? -1n;
+}
+
+async function readCanonicalRunEvents(
+  runId: string,
+  afterSequence: bigint,
+): Promise<Array<Record<string, unknown>>> {
+  const db = getDb() as any;
+  return db
+    .select({
+      id: executionEvents.id,
+      runSequence: executionEvents.runSequence,
+      eventType: executionEvents.eventType,
+      payload: executionEvents.payload,
+      occurredAt: executionEvents.occurredAt,
+      hostSessionId: executionEvents.hostSessionId,
+    })
+    .from(executionEvents)
+    .where(
+      and(
+        eq(executionEvents.runId, runId),
+        isNotNull(executionEvents.runSequence),
+        gt(executionEvents.runSequence, afterSequence),
+      ),
+    )
+    .orderBy(asc(executionEvents.runSequence))
+    .limit(500);
+}
+
+function canonicalBrowserEvent(event: Record<string, unknown>): Record<string, unknown> {
+  return {
+    type: event.eventType,
+    eventId: event.id,
+    runSequence: String(event.runSequence),
+    occurredAt:
+      event.occurredAt instanceof Date
+        ? event.occurredAt.toISOString()
+        : String(event.occurredAt),
+    hostSessionId: event.hostSessionId ?? null,
+    payload: event.payload ?? {},
+  };
+}
+
+function canonicalRunEventStream(input: {
+  req: NextRequest;
+  run: RunLite;
+  replayEvents: boolean;
+  replayCursor: bigint | null;
+  startedAt: number;
+}): Response {
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const encoder = new TextEncoder();
+      let cursor = input.replayEvents
+        ? (input.replayCursor ?? -1n)
+        : await latestCanonicalRunSequence(input.run.id);
+      let eventsSent = 0;
+      let lastStatusCheck = Date.now();
+      const maxQuietMs = keepaliveMs();
+      let lastEventAt = Date.now();
+      const close = (): void => {
+        try {
+          controller.close();
+        } catch {
+          // The client may have aborted while a database read completed.
+        }
+      };
+
+      if (!input.replayEvents) {
+        controller.enqueue(
+          encoder.encode(formatSyntheticSseEvent(JSON.stringify(streamReadyEvent()))),
+        );
+      }
+
+      try {
+        while (!input.req.signal.aborted) {
+          const events = await readCanonicalRunEvents(input.run.id, cursor);
+          for (const event of events) {
+            const sequence = event.runSequence;
+            if (typeof sequence !== "bigint") {
+              throw new Error("canonical run event is missing a bigint run sequence");
+            }
+            cursor = sequence;
+            controller.enqueue(
+              encoder.encode(
+                formatSseEvent(sequence.toString(), JSON.stringify(canonicalBrowserEvent(event))),
+              ),
+            );
+            eventsSent += 1;
+            lastEventAt = Date.now();
+          }
+
+          if (Date.now() - lastStatusCheck >= STATUS_REFRESH_MS) {
+            lastStatusCheck = Date.now();
+            const status = await refreshRunStatus(input.run.id);
+            if (!status || TERMINAL_RUN_STATUS.has(status.status)) break;
+          }
+          if (Date.now() - lastEventAt > maxQuietMs) {
+            controller.enqueue(
+              encoder.encode(
+                formatSyntheticSseEvent(
+                  JSON.stringify({
+                    type: "session.stream_timeout",
+                    reason: "no canonical events within keepalive window",
+                  }),
+                ),
+              ),
+            );
+            break;
+          }
+          await delay(POLL_INTERVAL_MS);
+        }
+      } catch (error) {
+        log.warn(
+          {
+            runId: input.run.id,
+            reason: error instanceof Error ? error.message : "canonical_stream_failure",
+          },
+          "canonical-run-stream-error",
+        );
+      } finally {
+        close();
+        log.info(
+          {
+            runId: input.run.id,
+            eventsSent,
+            durationMs: Date.now() - input.startedAt,
+            source: "canonical_events",
+          },
+          "stream disconnect",
+        );
+      }
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
 }
 
 export async function GET(
@@ -234,6 +400,30 @@ export async function GET(
     },
     "stream connect",
   );
+
+  if (run.executionDataPlaneMode === "canonical_events_v1") {
+    let replayCursor: bigint | null = null;
+    if (replayEvents) {
+      try {
+        replayCursor = parseCanonicalLastEventId(req);
+      } catch (error) {
+        return NextResponse.json(
+          {
+            code: "PRECONDITION",
+            message: error instanceof Error ? error.message : "invalid canonical run stream cursor",
+          },
+          { status: 400 },
+        );
+      }
+    }
+    return canonicalRunEventStream({
+      req,
+      run,
+      replayEvents,
+      replayCursor,
+      startedAt,
+    });
+  }
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {

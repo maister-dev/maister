@@ -46,11 +46,11 @@ sequenceDiagram
   participant H as Execution host
   participant M as Manager/Postgres
   participant B as Browser projector
-  H->>H: validate, redact, sequence, commit outbox
+  H->>M: validate, redact, sequence, commit outbox
   H->>M: replay SSE event
-  M->>M: validate/fence/insert/promote contiguous prefix
+  M->>B: validate/fence/insert/promote contiguous prefix
   M->>H: ACK streamId plus absolute watermark
-  M->>B: wake hint; replay canonical runSequence rows
+  M->>B: wake hint, replay canonical runSequence rows
 ```
 
 The local-direct SSE adapter uses `Last-Event-ID` as an exclusive decimal host

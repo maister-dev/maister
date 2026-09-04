@@ -3,6 +3,7 @@ import type {
   CreateSessionResult,
   ExecutionHostIdentity,
   PromptResult,
+  PromptAccepted,
   SendPromptInput,
   SupervisorDiagnosticsStatus,
   SupervisorEvent,
@@ -20,6 +21,7 @@ import type {
   ExecutionWorkspaceId,
   WorkspaceKind,
 } from "./types";
+import type { RuntimeEventEnvelope } from "./runtime-events";
 
 // ADR-166 D10: the typed boundary domain code addresses execution through.
 // `ExecutionHostTransport` is the replaceable wire (local-direct today); the
@@ -81,6 +83,7 @@ export type CommandReceipt = {
   body: Record<string, unknown>;
   receivedAt: string;
   completedAt: string | null;
+  eventId: string | null;
   // `accepted` + `inflight:false` = the host restarted mid-turn (turn_lost).
   inflight: boolean;
 };
@@ -110,6 +113,11 @@ export type CheckpointResult = {
   alreadyCheckpointed: boolean;
   sessionId: string;
   monotonicId: number;
+};
+
+export type RuntimeEventAckResult = {
+  streamId: string;
+  acknowledgedThrough: string;
 };
 
 export type EmptyPayload = Record<string, never>;
@@ -144,6 +152,13 @@ export interface ExecutionHostTransport {
     sessionId: string,
     opts?: { lastEventId?: number; signal?: AbortSignal },
   ): AsyncGenerator<SupervisorEvent, void, void>;
+  streamRuntimeEvents(
+    opts?: { afterSequence?: string; signal?: AbortSignal },
+  ): AsyncGenerator<RuntimeEventEnvelope, void, void>;
+  acknowledgeRuntimeEvents(input: {
+    streamId: string;
+    throughSequence: string;
+  }): Promise<RuntimeEventAckResult>;
   getCommandReceipt(commandId: string): Promise<CommandReceipt | null>;
   getWorkspace(executionWorkspaceId: string): Promise<WorkspaceRecord | null>;
   adoptWorkspace(
@@ -164,6 +179,11 @@ export interface ExecutionHostTransport {
     envelope: CommandEnvelope<SendPromptInput>,
     opts?: CommandCallOptions & { signal?: AbortSignal },
   ): Promise<PromptResult>;
+  startPrompt(
+    sessionId: string,
+    envelope: CommandEnvelope<SendPromptInput>,
+    opts?: CommandCallOptions,
+  ): Promise<PromptAccepted>;
   deliverInput(
     sessionId: string,
     envelope: CommandEnvelope<InputPayload>,

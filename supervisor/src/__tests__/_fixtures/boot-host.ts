@@ -102,6 +102,7 @@ export async function bootHost(
     workspaceRoots,
     stop: async () => {
       stopHeartbeat();
+      const exits: Promise<void>[] = [];
       for (const entry of registry.list()) {
         const live = registry.get(entry.sessionId);
 
@@ -110,9 +111,15 @@ export async function bootHost(
           live?.record.status === "live" &&
           typeof live.child.kill === "function"
         ) {
+          exits.push(
+            new Promise<void>((resolve) => {
+              live.child.once("exit", () => resolve());
+            }),
+          );
           live.child.kill("SIGKILL");
         }
       }
+      await Promise.all(exits);
       await app.close();
       if (ownsHostState) hostState.close();
     },

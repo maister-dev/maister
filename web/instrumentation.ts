@@ -81,7 +81,19 @@ export async function register(): Promise<void> {
       const hosts = await import("@/lib/execution-host");
 
       if (step === "ensureLocalExecutionHost") {
-        await hosts.ensureLocalExecutionHost();
+        const registration = await hosts.ensureLocalExecutionHost();
+        if (registration.status === "registered") {
+          const { getDb } = await import("@/lib/db/client");
+
+          // B1: launch the durable event consumer before recovery work. It
+          // owns no domain transition itself; all replay/ACK state is first
+          // committed to Postgres, so a web restart merely reconnects.
+          hosts.startRuntimeEventConsumer({
+            db: getDb(),
+            executionHostId: registration.host.id,
+            transport: hosts.defaultTransport(),
+          });
+        }
       } else if (step === "recoverExecutionCommands") {
         await hosts.recoverExecutionCommands({ graceMs: 0 });
       } else {

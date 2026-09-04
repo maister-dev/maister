@@ -44,8 +44,8 @@ sequenceDiagram
   participant W as Web deploy
   participant H as Supervisor deploy
   participant D as Postgres
-  W->>D: additive schema; legacy default remains
-  H->>H: advertise event/object/prompt capabilities
+  W->>D: additive schema, legacy default remains
+  H->>D: advertise event/object/prompt capabilities
   W->>D: admit canonical run only when capability intersection is complete
   W->>D: import/drain legacy records by durable fingerprint
   W->>D: prove association and zero active legacy runs

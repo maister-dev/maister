@@ -3,7 +3,7 @@ info:
   title: MAIster execution-host canonical event stream
   version: "1.0.0"
   description: |
-    Designed Stage B local-direct host-global event delivery. The execution host
+    Implemented Stage B local-direct host-global event delivery. The execution host
     owns private files and its durable SQLite outbox; the manager owns canonical
     redacted event metadata after at-least-once delivery. This contract is
     transport-neutral: local SSE/ACK is the first adapter and a future trusted
@@ -98,7 +98,7 @@ components:
       properties:
         envelopeVersion: { type: integer, const: 1 }
         eventId: { $ref: "#/components/schemas/EventId" }
-        hostKey: { type: string, pattern: "^eh_[a-z0-9]{32}$", maxLength: 35 }
+        hostKey: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$", maxLength: 64 }
         hostBootId: { type: string, format: uuid }
         streamId: { type: string, format: uuid }
         sequence: { $ref: "#/components/schemas/Sequence" }

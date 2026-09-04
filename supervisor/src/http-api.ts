@@ -41,7 +41,10 @@ import {
 } from "./execution-fence";
 import { attachHeartbeat } from "./heartbeat";
 import { executionHostCapabilities } from "./data-plane-capabilities";
-import { EXECUTION_HOST_PROTOCOL_VERSION } from "./host-state";
+import {
+  EXECUTION_HOST_PROTOCOL_VERSION,
+  HostRuntimeEventError,
+} from "./host-state";
 import {
   modelCatalogCache,
   type ModelCatalogCache,
@@ -53,6 +56,11 @@ import { ModelCatalogDraftSchema } from "./model-catalog/types";
 import { pendingPermissions } from "./pending-permissions";
 import { contentBlockUriViolation } from "./prompt-confinement";
 import { SESSION_EVENT_CHANNEL } from "./registry";
+import { RuntimeEventPublisher } from "./runtime-event-publisher";
+import {
+  RuntimeEventAckSchema,
+  RuntimeEventSequenceSchema,
+} from "./runtime-events";
 import { spawnSession } from "./spawn";
 import {
   AdoptWorkspacePayloadSchema,
@@ -76,6 +84,7 @@ import {
   type SupervisorDiagnosticsResponse,
   type SupervisorErrorBody,
   type SupervisorHealthResponse,
+  type SendPromptRequest,
   type WorkspaceKind,
   type WorkspaceRecordResponse,
 } from "./types";
@@ -137,6 +146,7 @@ export type CheckpointResponse = {
 export type InputBody = z.infer<typeof InputBodySchema>;
 
 const DEFAULT_KILL_GRACE_MS = 5_000;
+const MAX_RUNTIME_EVENT_SSE_PENDING = 500;
 const SUPERVISOR_STARTED_AT_MS = Date.now();
 const SUPERVISOR_VERSION = process.env.npm_package_version ?? "0.0.1";
 const DIAGNOSTIC_ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -217,6 +227,58 @@ function countSessionsByStatus(
   }
 
   return counts;
+}
+
+function runtimeEventSupervisorError(error: unknown): SupervisorError {
+  if (error instanceof HostRuntimeEventError) {
+    const reason =
+      error.reason === "replay_floor_exceeded"
+        ? "replay_floor_lost"
+        : error.reason === "event_outbox_soft_limit" ||
+            error.reason === "event_outbox_hard_limit" ||
+            error.reason === "event_outbox_terminal_reserve_exhausted"
+          ? "event_outbox_backpressure"
+          : error.reason;
+
+    if (
+      reason === "stream_identity_conflict" ||
+      reason === "replay_floor_lost" ||
+      reason === "ack_not_contiguous" ||
+      reason === "ack_beyond_emitted" ||
+      reason === "event_outbox_backpressure"
+    ) {
+      return new SupervisorError("PRECONDITION", error.message, {
+        details: { reason },
+      });
+    }
+  }
+
+  return new SupervisorError(
+    "ACP_PROTOCOL",
+    error instanceof Error ? error.message : String(error),
+  );
+}
+
+function parseRuntimeEventCursor(header: string | string[] | undefined): string | null {
+  if (header === undefined) return null;
+  if (Array.isArray(header)) {
+    throw new SupervisorError(
+      "PRECONDITION",
+      "Last-Event-ID must be one canonical decimal cursor",
+      { details: { reason: "invalid_event_sequence" } },
+    );
+  }
+  const parsed = RuntimeEventSequenceSchema.safeParse(header);
+
+  if (!parsed.success) {
+    throw new SupervisorError(
+      "PRECONDITION",
+      "Last-Event-ID must be a canonical signed-BIGINT decimal cursor",
+      { details: { reason: "invalid_event_sequence" } },
+    );
+  }
+
+  return parsed.data;
 }
 
 async function findExecutablePath(binary: string): Promise<string | null> {
@@ -417,6 +479,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   }
 
   const receipts = new CommandReceipts(hostState, logger);
+  const runtimeEvents = new RuntimeEventPublisher(hostState, logger);
   const workspaces = new WorkspaceRegistry({
     state: hostState,
     roots: opts.workspaceRoots,
@@ -464,26 +527,41 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   // ADR-166 D5: the durable completion signal that is NOT the long-lived HTTP
   // response. After a terminal `session.exited` the registry has closed the
   // per-run events log, so a post-terminal completion is appended directly.
-  function emitCommandEvent(
+  type SessionCommandEvent = Extract<
+    SessionEvent,
+    { type: "session.command" }
+  >;
+
+  function createCommandEvent(
     entry: RegistryEntry,
     event: Omit<
-      Extract<SessionEvent, { type: "session.command" }>,
+      SessionCommandEvent,
       "sessionId" | "monotonicId"
     >,
-  ): void {
+  ): SessionCommandEvent {
     entry.record.monotonicId += 1;
-    const full: SessionEvent = {
+    return {
       ...event,
       sessionId: entry.record.sessionId,
       monotonicId: entry.record.monotonicId,
     };
+  }
 
-    entry.emitter.emit(SESSION_EVENT_CHANNEL, full);
+  function emitCommandEvent(
+    entry: RegistryEntry,
+    event: SessionCommandEvent,
+    canonicallyPersisted: boolean,
+  ): void {
+    if (canonicallyPersisted) {
+      registry.emitCanonicallyPersisted(entry.record.sessionId, event);
+    } else {
+      entry.emitter.emit(SESSION_EVENT_CHANNEL, event);
+    }
 
     if (entry.eventsLog?.isClosed()) {
       const eventsLog = entry.eventsLog;
       const stamped = {
-        ...full,
+        ...event,
         sessionName: entry.record.sessionName,
         ...(entry.record.nodeAttemptId
           ? { nodeAttemptId: entry.record.nodeAttemptId }
@@ -536,6 +614,15 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     const { reply, parsed, kind, entry } = args;
     const envelope = parsed.envelope;
     const sessionKind = isSessionCommandKind(kind) ? kind : null;
+    const admissionExempt =
+      kind === "session.cancel" ||
+      kind === "session.checkpoint" ||
+      kind === "session.delete" ||
+      kind === "workspace.release";
+    const commandEvents = new Map<
+      "accepted" | "completed" | "rejected",
+      SessionCommandEvent
+    >();
     const fence = applyFence({
       state: hostState,
       fence: envelope.fence,
@@ -545,16 +632,53 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
     const outcome = await receipts.execute({
       envelope,
-      onAccepted:
-        entry && kind === "session.prompt"
-          ? () =>
-              emitCommandEvent(entry, {
+      persistReceipt:
+        entry && sessionKind
+          ? (transition) => {
+              const status = commandStatus(transition.outcome);
+              const event = createCommandEvent(entry, {
                 type: "session.command",
                 commandId: envelope.command.id,
-                kind,
-                phase: "accepted",
-              })
+                kind: sessionKind,
+                phase:
+                  transition.phase === "accepted" ? "accepted" : "completed",
+                ...(transition.phase === "accepted"
+                  ? {}
+                  : status === "succeeded"
+                    ? {
+                        status,
+                        result: (transition.outcome.body ?? {}) as Record<
+                          string,
+                          unknown
+                        >,
+                      }
+                    : {
+                        status,
+                        error: transition.outcome.body as SupervisorErrorBody,
+                      }),
+              });
+
+              hostState.putReceiptWithRuntimeEvent(
+                transition.row,
+                runtimeEvents.sessionEventInput(entry.record, event),
+              );
+              commandEvents.set(transition.phase, event);
+            }
           : undefined,
+      afterReceipt:
+        entry && sessionKind
+          ? (transition) => {
+              const event = commandEvents.get(transition.phase);
+
+              if (!event) {
+                throw new Error(
+                  `canonical command event was not persisted for ${envelope.command.id}`,
+                );
+              }
+              emitCommandEvent(entry, event, true);
+            }
+          : undefined,
+      admissionExempt,
       run: async () => {
         if (fence.advanced) {
           await evictLowerEpochSessions({
@@ -570,21 +694,6 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       },
     });
 
-    if (entry && sessionKind && !outcome.replayed) {
-      const status = commandStatus(outcome);
-
-      emitCommandEvent(entry, {
-        type: "session.command",
-        commandId: envelope.command.id,
-        kind: sessionKind,
-        phase: "completed",
-        status,
-        ...(status === "succeeded"
-          ? { result: (outcome.body ?? {}) as Record<string, unknown> }
-          : { error: outcome.body as SupervisorErrorBody }),
-      });
-    }
-
     if (outcome.replayed) reply.header(REPLAYED_HEADER, "true");
 
     if (outcome.status === 204) {
@@ -594,6 +703,184 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     }
 
     reply.status(outcome.status).send(outcome.body);
+  }
+
+  async function runAsyncPromptCommand(args: {
+    reply: FastifyReply;
+    parsed: ParsedCommand<unknown>;
+    entry: RegistryEntry;
+    execute: () => Promise<CommandOutcome>;
+  }): Promise<void> {
+    const { reply, parsed, entry } = args;
+    const envelope = parsed.envelope;
+    const commandEvents = new Map<
+      "accepted" | "completed" | "rejected",
+      SessionCommandEvent
+    >();
+    const fence = applyFence({
+      state: hostState,
+      fence: envelope.fence,
+      expectedRunId: entry.record.runId,
+      logger: fenceLog,
+    });
+    const outcome = await receipts.executeAsync({
+      envelope,
+      persistReceipt: (transition) => {
+        const status = commandStatus(transition.outcome);
+        const event = createCommandEvent(entry, {
+          type: "session.command",
+          commandId: envelope.command.id,
+          kind: "session.prompt",
+          phase: transition.phase === "accepted" ? "accepted" : "completed",
+          ...(transition.phase === "accepted"
+            ? {}
+            : status === "succeeded"
+              ? {
+                  status,
+                  result: (transition.outcome.body ?? {}) as Record<string, unknown>,
+                }
+              : {
+                  status,
+                  error: transition.outcome.body as SupervisorErrorBody,
+                }),
+        });
+        hostState.putReceiptWithRuntimeEvent(
+          transition.row,
+          runtimeEvents.sessionEventInput(entry.record, event),
+        );
+        commandEvents.set(transition.phase, event);
+      },
+      afterReceipt: (transition) => {
+        const event = commandEvents.get(transition.phase);
+        if (!event) {
+          throw new Error(`canonical command event was not persisted for ${envelope.command.id}`);
+        }
+        emitCommandEvent(entry, event, true);
+      },
+      run: async () => {
+        if (fence.advanced) {
+          await evictLowerEpochSessions({
+            registry,
+            runId: envelope.fence.runId,
+            epoch: envelope.fence.assignmentEpoch,
+            killGraceMs,
+            logger: fenceLog,
+          });
+        }
+
+        return args.execute();
+      },
+    });
+    if (outcome.replayed) reply.header(REPLAYED_HEADER, "true");
+    reply.status(outcome.status).send(outcome.body);
+  }
+
+  async function executePromptTurn(input: {
+    entry: RegistryEntry;
+    sessionId: string;
+    parsed: ParsedCommand<SendPromptRequest>;
+  }): Promise<CommandOutcome> {
+    const { entry, sessionId, parsed } = input;
+    const body = parsed.payload;
+    if (entry.record.status !== "live") {
+      throw new SupervisorError("PRECONDITION", "session not live");
+    }
+    if (!entry.connection || !entry.acpSessionId) {
+      throw new SupervisorError("PRECONDITION", "session has no ACP connection");
+    }
+    const uriViolation = contentBlockUriViolation(body.contentBlocks, {
+      worktreePath: entry.record.worktreePath,
+      repoPath: entry.record.repoPath,
+      runDir: dirname(entry.record.logPath),
+      confineRoot: entry.record.confineRoot,
+    });
+    if (uriViolation) {
+      logger.warn(
+        { sessionId, status: 409, message: uriViolation },
+        "prompt route: content-block URI confinement violation",
+      );
+      throw new SupervisorError("PRECONDITION", uriViolation);
+    }
+    entry.record.stepId = body.stepId;
+    if (body.nodeAttemptId) entry.record.nodeAttemptId = body.nodeAttemptId;
+    else delete entry.record.nodeAttemptId;
+
+    const chatHitlId = parseGateChatHitlId(body.stepId);
+    let chatBuf = "";
+    const chatListener = (event: SessionEvent): void => {
+      if (event.type !== "session.update") return;
+      const update = event.update as {
+        sessionUpdate?: string;
+        content?: { type?: string; text?: string };
+      } | null;
+      if (
+        update?.sessionUpdate === "agent_message_chunk" &&
+        update.content?.type === "text" &&
+        typeof update.content.text === "string"
+      ) {
+        chatBuf += update.content.text;
+      }
+    };
+    if (chatHitlId) entry.emitter.on(SESSION_EVENT_CHANNEL, chatListener);
+    entry.record.readOnlyTurn = body.readOnlyTurn === true;
+    const mountPreamble = takeContextMountPreamble(entry.record);
+    if (mountPreamble) {
+      logger.info(
+        { sessionId, mounts: entry.record.contextMounts?.map((mount) => mount.slug) },
+        "context-mount preamble prepended",
+      );
+    }
+
+    let response: Awaited<ReturnType<typeof sendPromptOnConnection>>;
+    try {
+      response = await sendPromptOnConnection(
+        entry.connection,
+        {
+          adapter: entry.record.adapter,
+          acpSessionId: entry.acpSessionId,
+          stepId: body.stepId,
+          prompt: body.prompt,
+          contentBlocks: body.contentBlocks as acp.ContentBlock[] | undefined,
+          preamble: mountPreamble ?? undefined,
+          isUserCancel: () => entry.record.cancelRequested === true,
+        },
+        logger,
+      );
+    } catch (error) {
+      throwIfFenced(entry, parsed.envelope);
+      throw error;
+    } finally {
+      entry.record.readOnlyTurn = false;
+      entry.record.cancelRequested = false;
+      if (chatHitlId) entry.emitter.off(SESSION_EVENT_CHANNEL, chatListener);
+    }
+    throwIfFenced(entry, parsed.envelope);
+    if (chatHitlId) {
+      entry.record.monotonicId += 1;
+      entry.emitter.emit(SESSION_EVENT_CHANNEL, {
+        type: "session.chat_turn",
+        sessionId,
+        monotonicId: entry.record.monotonicId,
+        hitlRequestId: chatHitlId,
+        role: "agent",
+        body: chatBuf,
+      } satisfies SessionEvent);
+    }
+    if (entry.record.reapOnEndTurn && response.stopReason === "end_turn") {
+      entry.intentionalShutdown = true;
+      entry.child.kill("SIGTERM");
+    }
+    logger.info(
+      {
+        sessionId,
+        stepId: body.stepId,
+        stopReason: response.stopReason,
+        readOnlyTurn: body.readOnlyTurn === true,
+        commandId: parsed.envelope.command.id,
+      },
+      "prompt-turn-completed",
+    );
+    return { status: 200, body: { stopReason: response.stopReason, meta: response._meta } };
   }
 
   app.setErrorHandler((err, _req, reply) => {
@@ -650,6 +937,136 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       "execution-host-capabilities-read",
     );
     reply.status(200).send(capabilities);
+  });
+
+  // Stage B host-global outbox transport. `Last-Event-ID` is an exclusive
+  // decimal sequence cursor; reconnect first replays durable SQLite rows, then
+  // receives only committed appends. A slow socket is closed rather than
+  // buffering payloads: reconnect resumes from the same durable cursor.
+  app.get("/runtime-events", (req, reply) => {
+    const afterSequence = parseRuntimeEventCursor(req.headers["last-event-id"]);
+    const streamId = hostState.getRuntimeEventStreamId();
+    let replay: ReturnType<typeof hostState.runtimeEventsAfter>;
+
+    try {
+      replay = hostState.runtimeEventsAfter(streamId, afterSequence, 500);
+    } catch (error) {
+      throw runtimeEventSupervisorError(error);
+    }
+
+    reply.raw.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    reply.raw.flushHeaders();
+
+    let closed = false;
+    let replaying = true;
+    let highestSequence = afterSequence;
+    const pending: ReturnType<typeof hostState.runtimeEventsAfter> = [];
+    const send = (event: ReturnType<typeof hostState.runtimeEventsAfter>[number]): void => {
+      if (closed) return;
+      if (
+        highestSequence !== null &&
+        BigInt(event.sequence) <= BigInt(highestSequence)
+      ) {
+        return;
+      }
+
+      const frame = `id: ${event.sequence}\nevent: ${String(event.envelope.eventType)}\ndata: ${JSON.stringify(event.envelope)}\n\n`;
+      highestSequence = event.sequence;
+      if (!reply.raw.write(frame)) {
+        close("slow_client");
+      }
+    };
+    const close = (reason: "disconnect" | "slow_client"): void => {
+      if (closed) return;
+      closed = true;
+      unsubscribe();
+      logger.info(
+        {
+          streamId,
+          afterSequence,
+          highestSequence,
+          reason,
+          pending: pending.length,
+        },
+        "runtime-event-stream-closed",
+      );
+      if (!reply.raw.writableEnded) reply.raw.end();
+    };
+    const unsubscribe = hostState.subscribeRuntimeEvents((event) => {
+      if (event.streamId !== streamId || closed) return;
+
+      if (replaying) {
+        if (pending.length >= MAX_RUNTIME_EVENT_SSE_PENDING) {
+          close("slow_client");
+          return;
+        }
+        pending.push(event);
+        return;
+      }
+      send(event);
+    });
+
+    req.raw.once("close", () => close("disconnect"));
+    logger.info(
+      { streamId, afterSequence, replayCount: replay.length },
+      "runtime-event-stream-opened",
+    );
+
+    for (const event of replay) send(event);
+    replaying = false;
+    pending
+      .sort((left, right) =>
+        BigInt(left.sequence) < BigInt(right.sequence) ? -1 : 1,
+      )
+      .forEach(send);
+  });
+
+  app.post("/runtime-events/ack", async (req, reply) => {
+    const parsed = RuntimeEventAckSchema.safeParse(req.body);
+
+    if (!parsed.success) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime event acknowledgement has an invalid stream or sequence",
+        { details: { reason: "invalid_event_sequence" } },
+      );
+    }
+    const currentStreamId = hostState.getRuntimeEventStreamId();
+    if (parsed.data.streamId !== currentStreamId) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime event acknowledgement names a different host stream",
+        { details: { reason: "stream_identity_conflict" } },
+      );
+    }
+
+    try {
+      const acknowledgedThrough = hostState.ackRuntimeEvents(
+        parsed.data.streamId,
+        parsed.data.throughSequence,
+      );
+
+      logger.info(
+        {
+          streamId: parsed.data.streamId,
+          throughSequence: parsed.data.throughSequence,
+          acknowledgedThrough,
+          queueDepth: hostState.runtimeEventOutboxStats().unacknowledgedCount,
+        },
+        "runtime-event-acknowledged",
+      );
+      reply.status(200).send({
+        streamId: parsed.data.streamId,
+        acknowledgedThrough,
+      });
+    } catch (error) {
+      throw runtimeEventSupervisorError(error);
+    }
   });
 
   app.get("/diagnostics", async (_req, reply) => {
@@ -853,7 +1270,10 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         // M34 lifecycle: propagate the reap-on-end-turn flag onto the record so
         // the prompt handler can reap a one-shot agent session when its turn ends.
         record.reapOnEndTurn = request.reapOnEndTurn === true;
-        registry.register(record, child, emitter, { eventsLog });
+        registry.register(record, child, emitter, {
+          eventsLog,
+          runtimeEventPublisher: runtimeEvents,
+        });
         attachHeartbeat({ sessionId, child, registry, logger });
         await attachCost({
           sessionId,
@@ -874,6 +1294,16 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           emitter,
           logger,
           resumed: Boolean(request.resumeSessionId),
+          onRecorded: (cost) => {
+            const latest = registry.get(sessionId)?.record;
+
+            if (!latest) {
+              throw new Error(
+                `cannot publish canonical usage for removed session ${sessionId}`,
+              );
+            }
+            runtimeEvents.publishUsage(latest, cost);
+          },
         });
 
         if (!child.stdin) {
@@ -937,6 +1367,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         }
 
         registry.attachAcp(sessionId, connection, acpSessionId);
+        runtimeEvents.publishSessionCreated(record);
 
         logger.info(
           {
@@ -1155,6 +1586,32 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           body: { stopReason: resp.stopReason, meta: resp._meta },
         };
       },
+    });
+  });
+
+  // Stage B durable prompt admission. This route is intentionally separate
+  // from the legacy long-lived `/prompt` response until every existing driver
+  // is migrated to PromptHandle completion in B3/B4.
+  app.post<SessionIdParams>("/sessions/:id/prompts", async (req, reply) => {
+    const entry = registry.get(req.params.id);
+    if (!entry) {
+      reply
+        .status(404)
+        .send({ code: "PRECONDITION", message: "unknown session" });
+      return;
+    }
+    const parsed = parseCommandBody(
+      req.body,
+      "session.prompt",
+      SendPromptRequestSchema,
+      { route: "POST /sessions/:id/prompts" },
+    );
+    await runAsyncPromptCommand({
+      reply,
+      parsed,
+      entry,
+      execute: () =>
+        executePromptTurn({ entry, sessionId: req.params.id, parsed }),
     });
   });
 

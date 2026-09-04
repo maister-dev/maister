@@ -56,6 +56,9 @@ export type AttachCostOptions = {
   resumed?: boolean;
   // ADR-166: absolute cost.jsonl path resolved from the adopted workspace.
   costPath: string;
+  // Stage B canonical usage event hook. It runs only after the same record was
+  // accepted by the local recorder; its caller owns durable event persistence.
+  onRecorded?: (record: CostRecord) => void;
 };
 
 export type CostHandle = {
@@ -74,6 +77,7 @@ export async function attachCost(opts: AttachCostOptions): Promise<CostHandle> {
     if (resumed) record.resumed = true;
 
     stream.write(`${JSON.stringify(record)}\n`);
+    opts.onRecorded?.(record);
     opts.logger.debug(
       {
         sessionId: opts.sessionId,

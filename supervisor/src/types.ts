@@ -422,6 +422,7 @@ export const REASON_TOKENS = [
   "event_redaction_failed",
   "event_payload_oversize",
   "event_outbox_backpressure",
+  "command_invariant_conflict",
   "runtime_object_missing",
   "runtime_object_range_invalid",
   "runtime_object_integrity_mismatch",
@@ -530,6 +531,7 @@ export const CommandReceiptSchema = z
     body: z.record(z.string(), z.unknown()),
     receivedAt: z.string().datetime({ offset: true }),
     completedAt: z.string().datetime({ offset: true }).nullable().optional(),
+    eventId: z.string().uuid().nullable(),
     // `accepted` + `inflight:false` = the host restarted mid-turn (turn_lost).
     inflight: z.boolean(),
   })

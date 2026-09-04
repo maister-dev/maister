@@ -89,8 +89,8 @@ table agent_schedules {
   indexes {
     (project_id, agent_id) [name: 'agent_schedules_project_agent_idx']
     (trigger_type, enabled, next_fire_at) [name: 'agent_schedules_due_cron_idx']
-    
-    
+
+
   }
 }
 
@@ -362,8 +362,8 @@ table domain_events {
   tx_id xid8 [not null, default: `pg_current_xact_id()`]
 
   indexes {
-    
-    
+
+
     (run_id, occurred_at) [name: 'domain_events_m43_cutover_run_occurred_idx']
     (task_id, occurred_at) [name: 'domain_events_m43_cutover_task_occurred_idx']
   }
@@ -408,8 +408,8 @@ table evaluation_criterion_results {
   indexes {
     (attempt_id, criterion_id, participant_id) [name: 'evaluation_criterion_results_attempt_criterion_uq', unique]
     attempt_id [name: 'evaluation_criterion_results_attempt_idx']
-    
-    
+
+
   }
 }
 
@@ -471,7 +471,7 @@ table evaluation_evidence_snapshots {
   indexes {
     study_id [name: 'evaluation_evidence_snapshots_study_idx']
     evidence_protocol_digest [name: 'evaluation_evidence_snapshots_protocol_digest_idx']
-    
+
   }
 }
 
@@ -501,7 +501,7 @@ table evaluation_executions {
   indexes {
     (study_id, status) [name: 'evaluation_executions_study_status_idx']
     (study_id, idempotency_key) [name: 'evaluation_executions_study_idem_uq', unique]
-    
+
   }
 }
 
@@ -520,8 +520,8 @@ table evaluation_human_verdicts {
 
   indexes {
     study_id [name: 'evaluation_human_verdicts_study_idx']
-    
-    
+
+
   }
 }
 
@@ -558,7 +558,7 @@ table evaluation_judge_attempts {
   indexes {
     (execution_id, role, ordinal, retry_ordinal, match_a, match_b) [name: 'evaluation_judge_attempts_unique', unique]
     execution_id [name: 'evaluation_judge_attempts_execution_idx']
-    
+
   }
 }
 
@@ -597,8 +597,8 @@ table evaluation_launch_batch_items {
     batch_id [name: 'evaluation_launch_batch_items_batch_idx']
     status [name: 'evaluation_launch_batch_items_status_idx']
     (batch_id, recipe_id, replicate_ordinal) [name: 'evaluation_launch_batch_items_item_uq', unique]
-    
-    
+
+
   }
 }
 
@@ -617,7 +617,7 @@ table evaluation_launch_batches {
   indexes {
     study_id [name: 'evaluation_launch_batches_study_idx']
     (study_id, idempotency_key) [name: 'evaluation_launch_batches_study_idem_uq', unique]
-    
+
   }
 }
 
@@ -642,7 +642,7 @@ table evaluation_method_revisions {
   indexes {
     (package_install_id, method_id) [name: 'evaluation_method_revisions_install_method_uq', unique]
     qualified_id [name: 'evaluation_method_revisions_qualified_idx']
-    
+
   }
 }
 
@@ -661,7 +661,7 @@ table evaluation_metric_results {
 
   indexes {
     execution_id [name: 'evaluation_metric_results_execution_idx']
-    
+
   }
 }
 
@@ -685,7 +685,7 @@ table evaluation_objective_check_runs {
   indexes {
     (execution_id, participant_id, check_id, attempt) [name: 'evaluation_objective_check_runs_unique', unique]
     execution_id [name: 'evaluation_objective_check_runs_execution_idx']
-    
+
   }
 }
 
@@ -711,9 +711,9 @@ table evaluation_participants {
     run_id [name: 'evaluation_participants_run_idx']
     (study_id, run_id) [name: 'evaluation_participants_live_run_uq', unique]
     batch_item_id [name: 'evaluation_participants_batch_item_uq', unique]
-    
-    
-    
+
+
+
   }
 }
 
@@ -788,8 +788,8 @@ table evaluation_reviews {
 
   indexes {
     execution_id [name: 'evaluation_reviews_execution_idx']
-    
-    
+
+
   }
 }
 
@@ -811,7 +811,7 @@ table evaluation_standardized_recipes {
   indexes {
     (project_id, slot) [name: 'evaluation_standardized_recipes_project_slot_idx']
     (project_id, slot, revision) [name: 'evaluation_standardized_recipes_revision_uq', unique]
-    
+
   }
 }
 
@@ -836,7 +836,7 @@ table evaluation_studies {
     (project_id, status) [name: 'evaluation_studies_project_status_idx']
     task_id [name: 'evaluation_studies_task_idx']
     legacy_experiment_id [name: 'evaluation_studies_legacy_experiment_uq', unique]
-    
+
   }
 }
 
@@ -871,7 +871,7 @@ table evaluation_suites {
 
   indexes {
     project_id [name: 'evaluation_suites_project_idx']
-    
+
   }
 }
 
@@ -895,10 +895,10 @@ table execution_assignments {
     (run_id, epoch) [name: 'execution_assignments_run_epoch_uq', unique]
     run_id [name: 'execution_assignments_run_active_uq', unique]
     (execution_host_id, state) [name: 'execution_assignments_host_state_idx']
-    
-    
-    
-    
+
+
+
+
   }
 }
 
@@ -935,6 +935,10 @@ table execution_commands {
     (run_id, created_at) [name: 'execution_commands_run_created_idx']
     execution_assignment_id [name: 'execution_commands_assignment_idx']
     (run_id, logical_operation_key) [name: 'execution_commands_prompt_logical_operation_uq', unique]
+
+
+
+
   }
 }
 
@@ -1051,6 +1055,8 @@ table execution_events {
     (source, run_id, source_key) [name: 'execution_events_source_run_key_uq', unique]
     (run_id, run_sequence) [name: 'execution_events_run_sequence_uq', unique]
     (run_id, run_sequence) [name: 'execution_events_run_sequence_idx']
+
+
   }
 }
 
@@ -1071,8 +1077,8 @@ table execution_hosts {
 
   indexes {
     kind [name: 'execution_hosts_local_active_uq', unique]
-    
-    
+
+
   }
 }
 
@@ -1158,7 +1164,7 @@ table gate_chat_messages {
   indexes {
     run_id [name: 'gate_chat_messages_run_idx']
     hitl_request_id [name: 'gate_chat_messages_hitl_request_idx']
-    
+
     (hitl_request_id, seq) [name: 'gate_chat_messages_hitl_seq_unique', unique]
   }
 }
@@ -1178,9 +1184,9 @@ table gate_chat_turns {
   indexes {
     (hitl_request_id, state) [name: 'gate_chat_turns_hitl_state_idx']
     hitl_request_id [name: 'gate_chat_turns_pending_hitl_uq', unique]
-    
-    
-    
+
+
+
   }
 }
 
@@ -1237,12 +1243,12 @@ table hitl_requests {
     run_id [name: 'hitl_requests_run_idx']
     (run_id, source_artifact_id, decision_id) [name: 'hitl_requests_decision_request_uq', unique]
     (parent_hitl_request_id, responded_at, created_at) [name: 'hitl_requests_pending_decision_idx']
-    
+
     (task_id, created_at) [name: 'hitl_requests_agent_question_active_idx']
-    
-    
-    
-    
+
+
+
+
   }
 }
 
@@ -1259,8 +1265,8 @@ table inbox_items {
 
   indexes {
     (recipient_type, recipient_id, read_at, created_at) [name: 'inbox_items_recipient_idx']
-    
-    
+
+
   }
 }
 
@@ -1496,7 +1502,7 @@ table project_mcp_bindings {
   indexes {
     (project_id, ref_id) [name: 'project_mcp_bindings_project_ref_uq', unique]
     project_id [name: 'project_mcp_bindings_project_idx']
-    
+
   }
 }
 
@@ -1550,10 +1556,10 @@ table project_tokens {
     owner_user_id [name: 'project_tokens_owner_idx']
     agent_id [name: 'project_tokens_agent_idx']
     (owner_user_id, created_at) [name: 'project_tokens_owner_created_idx']
-    
-    
-    
-    
+
+
+
+
   }
 }
 
@@ -1603,8 +1609,8 @@ table repo_delivery_rollups {
     (project_id, branch, bucket_start, bucket_end) [name: 'repo_delivery_rollups_project_branch_bucket_uq', unique]
     (project_id, branch, bucket_start) [name: 'repo_delivery_rollups_project_branch_bucket_idx']
     (project_id, fetched_at) [name: 'repo_delivery_rollups_project_fetched_idx']
-    
-    
+
+
   }
 }
 
@@ -1633,9 +1639,9 @@ table review_comments {
     (run_id, status) [name: 'review_comments_run_status_idx']
     hitl_request_id [name: 'review_comments_hitl_request_idx']
     parent_id [name: 'review_comments_parent_idx']
-    
-    
-    
+
+
+
   }
 }
 
@@ -1703,10 +1709,10 @@ table run_results {
     (run_id, revision) [name: 'run_results_run_revision_uq', unique]
     run_id [name: 'run_results_one_valid_per_run_uq', unique]
     run_id [name: 'run_results_run_idx']
-    
-    
-    
-    
+
+
+
+
   }
 }
 
@@ -1913,7 +1919,7 @@ table scheduled_task_launch_attempts {
     run_id [name: 'scheduled_task_launch_attempts_run_id_uq', unique]
     scheduled_launch_id [name: 'scheduled_task_launch_attempts_launch_live_uq', unique]
     (scheduled_launch_id, created_at) [name: 'scheduled_task_launch_attempts_launch_idx']
-    
+
   }
 }
 
@@ -1971,9 +1977,9 @@ table scheduled_task_launches {
     (project_id, created_by_user_id, idempotency_key) [name: 'scheduled_task_launches_project_creator_idempotency_uq', unique]
     (project_id, updated_at) [name: 'scheduled_task_launches_project_idx']
     (next_attempt_at, id) [name: 'scheduled_task_launches_due_idx']
-    
-    
-    
+
+
+
   }
 }
 
@@ -2082,7 +2088,7 @@ table scratch_runs {
   indexes {
     (project_id, dialog_status) [name: 'scratch_runs_project_status_idx']
     (local_package_id, dialog_status) [name: 'scratch_runs_local_package_idx']
-    
+
   }
 }
 
@@ -2105,10 +2111,10 @@ table task_activity {
   indexes {
     (task_id, created_at) [name: 'task_activity_task_created_idx']
     (project_id, created_at) [name: 'task_activity_project_created_idx']
-    
+
     (task_id, payload) [name: 'task_activity_agent_summon_uq', unique]
-    
-    
+
+
   }
 }
 
@@ -2134,10 +2140,10 @@ table task_clarifications {
     (task_id, seq) [name: 'task_clarifications_task_seq_uq', unique]
     source_hitl_request_id [name: 'task_clarifications_source_hitl_request_uq', unique]
     (task_id, seq, id) [name: 'task_clarifications_answered_context_idx']
-    
-    
-    
-    
+
+
+
+
   }
 }
 
@@ -2152,8 +2158,8 @@ table task_comments {
 
   indexes {
     (task_id, created_at) [name: 'task_comments_task_created_idx']
-    
-    
+
+
   }
 }
 
@@ -2170,10 +2176,10 @@ table task_relations {
   indexes {
     (from_task_id, kind, to_task_id) [name: 'task_relations_from_kind_to_uq', unique]
     to_task_id [name: 'task_relations_to_task_idx']
-    
-    
-    
-    
+
+
+
+
   }
 }
 
@@ -2187,8 +2193,8 @@ table task_subscribers {
 
   indexes {
     (task_id, subscriber_type, subscriber_id) [name: 'task_subscribers_task_pair_uq', unique]
-    
-    
+
+
   }
 }
 
@@ -2226,8 +2232,8 @@ table tasks {
     (project_id, number) [name: 'tasks_project_number_uq', unique]
     (project_id, status) [name: 'tasks_project_status_idx']
     (agent_id, trigger_event_id) [name: 'tasks_agent_trigger_event_uq', unique]
-    
-    
+
+
   }
 }
 
@@ -2388,12 +2394,12 @@ table workspace_reconciliation_findings {
     (state, next_retry_at, first_seen_at) [name: 'workspace_reconciliation_findings_due_idx']
     provenance_run_id [name: 'workspace_reconciliation_findings_provenance_run_idx']
     (project_id, run_id, workspace_id) [name: 'workspace_reconciliation_findings_correlation_idx']
-    
-    
-    
-    
-    
-    
+
+
+
+
+
+
   }
 }
 
@@ -2437,11 +2443,11 @@ table workspaces {
 
   indexes {
     (lifecycle_operation_state, lifecycle_operation_lease_expires_at) [name: 'workspaces_lifecycle_claim_idx']
-    
-    
-    
-    
-    
+
+
+
+
+
     project_id [name: 'workspaces_pr_state_scan_idx']
   }
 }

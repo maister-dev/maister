@@ -1154,10 +1154,10 @@ after the named mutation do not satisfy the task.
 - [x] T0.3 Publish exact OpenAPI, AsyncAPI, errors, and conformance fixtures.
 - [x] T0.4 Add canonical event, stream, session-incarnation, and cutover schema.
 - [x] T0.5 Add compatible capability negotiation and symmetric deployment wiring.
-- [ ] T1.1 Implement the supervisor durable event stream/outbox.
-- [ ] T1.2 Expose host-global replay/ACK and implement local-direct transport.
-- [ ] T1.3 Implement manager ingestion, contiguous promotion, and ACK recovery.
-- [ ] T1.4 Add durable projector cursors, poison policy, and event reconciliation.
+- [x] T1.1 Implement the supervisor durable event stream/outbox.
+- [x] T1.2 Expose host-global replay/ACK and implement local-direct transport.
+- [x] T1.3 Implement manager ingestion, contiguous promotion, and ACK recovery.
+- [x] T1.4 Add durable projector cursors, poison policy, and event reconciliation.
 - [ ] T2.1 Make canonical session incarnations the lifecycle authority.
 - [ ] T2.2 Switch browser run SSE and manager-originated events to Postgres.
 - [ ] T2.3 Move transcript, inbox, scratch-command, and artifact projections to canonical events.

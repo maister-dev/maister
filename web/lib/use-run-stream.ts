@@ -12,7 +12,8 @@ import {
 
 export type RunStreamEvent = {
   type: string;
-  monotonicId: number;
+  monotonicId?: number;
+  runSequence?: string;
   [key: string]: unknown;
 };
 
@@ -23,7 +24,7 @@ export type UseRunStreamResult = {
   eventCount: number;
   status: RunStreamStatus;
   liveness: RunStreamLifecycleKind;
-  lastEventId: number | null;
+  lastEventId: string | null;
   error: string | null;
   reconnect: () => void;
 };
@@ -49,10 +50,10 @@ export function useRunStream(
   const [status, setStatus] = useState<RunStreamStatus>("connecting");
   const [liveness, setLiveness] =
     useState<RunStreamLifecycleKind>("connecting");
-  const [lastEventId, setLastEventId] = useState<number | null>(null);
+  const [lastEventId, setLastEventId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const sourceRef = useRef<EventSource | null>(null);
-  const lastEventIdRef = useRef<number | null>(null);
+  const lastEventIdRef = useRef<string | null>(null);
   const lifecycleRef = useRef(initialRunStreamLifecycle);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [reconnectKey, setReconnectKey] = useState(0);
@@ -115,9 +116,9 @@ export function useRunStream(
 
         setEventCount((c) => c + 1);
         if (retain) setEvents((cur) => [...cur, parsed]);
-        if (typeof parsed.monotonicId === "number") {
-          lastEventIdRef.current = parsed.monotonicId;
-          setLastEventId(parsed.monotonicId);
+        if (/^(0|[1-9][0-9]*)$/.test(msg.lastEventId)) {
+          lastEventIdRef.current = msg.lastEventId;
+          setLastEventId(msg.lastEventId);
         }
       } catch {
         /* skip malformed */

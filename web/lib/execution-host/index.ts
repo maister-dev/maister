@@ -114,6 +114,30 @@ export type {
 } from "./recovery";
 export { commandSignals } from "./signals";
 export {
+  claimRuntimeEventStream,
+  consumeRuntimeEventStreamOnce,
+  recordConfirmedRuntimeEventAck,
+  resetRuntimeEventConsumersForTests,
+  startRuntimeEventConsumer,
+} from "./events/consumer";
+export type {
+  RuntimeEventConsumerSummary,
+  RuntimeEventStreamClaim,
+} from "./events/consumer";
+export { ingestRuntimeEvent } from "./events/ingest";
+export type {
+  RuntimeEventIngestDisposition,
+  RuntimeEventIngestResult,
+} from "./events/ingest";
+export {
+  ExecutionEventProjectionError,
+  projectExecutionEvents,
+} from "./events/projector";
+export type {
+  ExecutionEventProjector,
+  ExecutionEventProjectorSummary,
+} from "./events/projector";
+export {
   DRIVER_OWNED_RUN_STATUSES,
   findActiveLocalHost,
   LIVE_DRIVER_RUN_STATUSES,
@@ -128,6 +152,7 @@ export type {
   ExecutionHostIdentity,
   PromptContentBlock,
   PromptResult,
+  PromptAccepted,
   PromptStopReason,
   SendPromptInput,
   SupervisorAdapterLaunchInput,

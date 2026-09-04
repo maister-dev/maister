@@ -563,6 +563,7 @@ export function createFakeExecutionHost(
       body,
       receivedAt: existing?.receivedAt ?? now,
       completedAt: phase === "accepted" ? null : now,
+      eventId: null,
       inflight: false,
     });
   };
@@ -849,6 +850,17 @@ export function createFakeExecutionHost(
         await new Promise((r) => setImmediate(r));
       }
     },
+    async *streamRuntimeEvents(opts) {
+      await record("streamRuntimeEvents", null, [opts?.afterSequence]);
+      if (opts?.signal?.aborted) return;
+    },
+    async acknowledgeRuntimeEvents(input) {
+      await record("acknowledgeRuntimeEvents", null, [input]);
+      return {
+        streamId: input.streamId,
+        acknowledgedThrough: input.throughSequence,
+      };
+    },
     async getCommandReceipt(commandId) {
       await record("getCommandReceipt", null, [commandId]);
       loseAdminResponse("getCommandReceipt");
@@ -1128,6 +1140,14 @@ export function createFakeExecutionHost(
           return { status: 200, body: result };
         },
       });
+    },
+    async startPrompt(sessionId, envelope, opts) {
+      await record("startPrompt", envelope, [sessionId, opts]);
+      // The fake's scripted turns are exercised through `sendPrompt`; this
+      // method exists to model the accepted-command wire seam without making
+      // test fixtures invent a second prompt engine.
+      liveSessionForPrompt(sessionId);
+      return { commandId: envelope.command.id, state: "accepted" as const };
     },
     deliverInput(sessionId, envelope, opts) {
       return runCommand<InputDeliveryResult>({

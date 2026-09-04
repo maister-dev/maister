@@ -6,6 +6,7 @@ import { EventEmitter } from "node:events";
 
 import { type EventsLogWriter } from "./events-log";
 import { pendingPermissions } from "./pending-permissions";
+import { type RuntimeEventPublisher } from "./runtime-event-publisher";
 import {
   SupervisorError,
   type SessionEvent,
@@ -39,6 +40,7 @@ export type RegisterOptions = {
   connection?: acp.ClientSideConnection;
   acpSessionId?: string;
   eventsLog?: EventsLogWriter;
+  runtimeEventPublisher?: RuntimeEventPublisher;
 };
 
 const MAX_EVENT_BUFFER = 1000;
@@ -46,6 +48,7 @@ const MAX_EVENT_BUFFER = 1000;
 export class SessionRegistry {
   private readonly entries = new Map<string, RegistryEntry>();
   private readonly logger: Logger;
+  private readonly canonicallyPersistedEvents = new WeakSet<object>();
 
   constructor(logger: Logger) {
     this.logger = logger.child({ component: "registry" });
@@ -77,6 +80,9 @@ export class SessionRegistry {
 
     this.entries.set(record.sessionId, entry);
     emitter.on(SESSION_EVENT_CHANNEL, (event: SessionEvent) => {
+      if (!this.canonicallyPersistedEvents.delete(event)) {
+        options.runtimeEventPublisher?.publishSessionEvent(record, event);
+      }
       entry.eventBuffer.push(event);
       if (entry.eventBuffer.length > MAX_EVENT_BUFFER) {
         entry.eventBuffer.shift();
@@ -174,6 +180,17 @@ export class SessionRegistry {
 
     if (!entry) return false;
 
+    entry.emitter.emit(SESSION_EVENT_CHANNEL, event);
+
+    return true;
+  }
+
+  emitCanonicallyPersisted(sessionId: string, event: SessionEvent): boolean {
+    const entry = this.entries.get(sessionId);
+
+    if (!entry) return false;
+
+    this.canonicallyPersistedEvents.add(event);
     entry.emitter.emit(SESSION_EVENT_CHANNEL, event);
 
     return true;

@@ -33,8 +33,8 @@ export type ExecutionHostCapabilities = z.infer<
 export function executionHostCapabilities(): ExecutionHostCapabilities {
   return {
     dataPlaneVersion: EXECUTION_HOST_DATA_PLANE_VERSION,
-    eventStream: false,
-    asyncPrompt: false,
+    eventStream: true,
+  asyncPrompt: true,
     runtimeObjects: false,
     limits: EXECUTION_HOST_CAPABILITY_LIMITS,
   };

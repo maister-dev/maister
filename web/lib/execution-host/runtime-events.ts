@@ -34,10 +34,13 @@ export const RUNTIME_EVENT_PAYLOAD_SCHEMAS = [
 ] as const;
 
 const SEQUENCE = /^(0|[1-9][0-9]{0,18})$/;
-const HOST_KEY = /^eh_[a-z0-9]{32}$/;
+// Match the supervisor's durable host-state contract: the default is an
+// `eh_` UUID, while a validated operator-pinned key remains supported.
+const HOST_KEY = /^[A-Za-z0-9_-]{8,64}$/;
 const SECRET_KEY = /authorization|cookie|token|secret|password|api[_-]?key|headers|environment|^env$/i;
 const ABSOLUTE_PATH = /(?:^|\s)\/(?:[^\s]*)/;
 const FILE_URI = /^file:\/\//i;
+const MAX_RUNTIME_EVENT_BYTES = 1_048_576;
 
 const EVENT_SCHEMA_PAIRS = new Map(
   RUNTIME_EVENT_TYPES.map((eventType, index) => [
@@ -74,7 +77,8 @@ export const RuntimeEventEnvelopeSchema = z
     hostBootId: z.string().uuid(),
     streamId: z.string().uuid(),
     sequence: z.string().regex(SEQUENCE).refine(
-      (value) => BigInt(value) <= 9_223_372_036_854_775_807n,
+      (value) =>
+        SEQUENCE.test(value) && BigInt(value) <= 9_223_372_036_854_775_807n,
       "sequence exceeds signed BIGINT",
     ),
     runId: z.string().min(1).max(128),
@@ -104,6 +108,16 @@ export const RuntimeEventEnvelopeSchema = z
         message: error instanceof Error ? error.message : "unsafe runtime event payload",
       });
     }
+    if (
+      new TextEncoder().encode(JSON.stringify(value)).byteLength >
+      MAX_RUNTIME_EVENT_BYTES
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [],
+        message: "runtime event envelope exceeds maximum encoded bytes",
+      });
+    }
   });
 
 export type RuntimeEventEnvelope = z.infer<typeof RuntimeEventEnvelopeSchema>;
@@ -112,7 +126,8 @@ export const RuntimeEventAckSchema = z
   .object({
     streamId: z.string().uuid(),
     throughSequence: z.string().regex(SEQUENCE).refine(
-      (value) => BigInt(value) <= 9_223_372_036_854_775_807n,
+      (value) =>
+        SEQUENCE.test(value) && BigInt(value) <= 9_223_372_036_854_775_807n,
       "throughSequence exceeds signed BIGINT",
     ),
   })

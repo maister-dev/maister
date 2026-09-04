@@ -11,6 +11,7 @@ import {
   hostStateDirFromEnv,
   openHostState,
   startReceiptPruner,
+  startRuntimeEventPruner,
 } from "./host-state";
 import { registerRoutes } from "./http-api";
 import { createDefaultModelSourceRegistry } from "./model-catalog/sources";
@@ -132,6 +133,7 @@ export async function start(): Promise<void> {
     logger,
   });
   const stopReceiptPruner = startReceiptPruner(hostState, logger);
+  const stopRuntimeEventPruner = startRuntimeEventPruner(hostState, logger);
 
   registerRoutes(
     buildRegisterRoutesOptions({
@@ -165,6 +167,7 @@ export async function start(): Promise<void> {
     );
     stopHeartbeat();
     stopReceiptPruner();
+    stopRuntimeEventPruner();
 
     registry.forEach((entry) => {
       if (entry.record.status !== "live") return;
@@ -194,6 +197,8 @@ export async function start(): Promise<void> {
       }
     });
 
+    await waitForNoLiveSessions(registry, killGraceMs);
+
     await app.close();
 
     hostState.close();
@@ -212,6 +217,20 @@ export async function start(): Promise<void> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+async function waitForNoLiveSessions(
+  registry: SessionRegistry,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const hasLive = registry.list().some((session) => session.status === "live");
+
+    if (!hasLive) return;
+    await sleep(25);
+  }
 }
 
 // Guard the auto-start so tests can import buildRegisterRoutesOptions without
