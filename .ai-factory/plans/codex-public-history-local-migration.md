@@ -50,12 +50,12 @@ Rationale: This is repository hygiene and local Git-state migration, not a produ
 
 ### Phase 2: Sanitize and relocate the companion repository
 
-- [ ] Task 3: Audit the full reachable companion-repository history and GitHub state.
+- [x] Task 3: Audit the full reachable companion-repository history and GitHub state.
   - Inspect branches, tags, annotated tag metadata, commit identities, commit and tag messages, paths, text blobs, secret-like values, pull requests, releases, and forks.
   - Classify fixtures and placeholders separately from real sensitive data.
   - Acceptance: every rewrite trigger is explicitly identified before refs are changed.
 
-- [ ] Task 4: Rewrite sensitive companion-repository metadata and publish the cleaned refs.
+- [x] Task 4: Rewrite sensitive companion-repository metadata and publish the cleaned refs.
   - Use `git-filter-repo` in a fresh mirror and replace contributor and tagger email metadata with the verified GitHub noreply identity.
   - Preserve commit messages, trees, dates, names, branch topology, tag names, and tag messages.
   - Verify old-tip to new-tip tree equivalence, scan the rewritten mirror, then force-update only the audited branch and tag refs.
@@ -64,13 +64,13 @@ Rationale: This is repository hygiene and local Git-state migration, not a produ
 
 ### Phase 3: Rebase active work onto the trusted history
 
-- [ ] Task 5: Transplant the three dirty worksets into isolated clean worktrees.
+- [x] Task 5: Transplant the three dirty worksets into isolated clean worktrees.
   - Documentation workset: transfer tracked edits and intentional untracked public documentation/assets.
   - Task lifecycle workset: transfer only the task-deletion and manual-completion plan/API/UI files; omit generated bundles.
   - Board concurrency workset: transfer tracked board, documentation, translation, and test edits plus its intentional plan file; omit generated bundles.
   - Acceptance: each destination branch is based directly on clean `master`, preserves the source diff intent, has no legacy objects, and passes a privacy scan.
 
-- [ ] Task 6: Transplant the two unique committed worksets as patch series.
+- [x] Task 6: Transplant the two unique committed worksets as patch series.
   - Durable execution-host workset: replay its unique commit sequence in order.
   - Package compatibility workset: replay its single unique commit.
   - Recreate commit author and committer emails with verified GitHub noreply identities while preserving author names, dates, messages, and logical commit boundaries.
@@ -80,7 +80,7 @@ Rationale: This is repository hygiene and local Git-state migration, not a produ
 
 ### Phase 4: Verify and hand off
 
-- [ ] Task 7: Run final integrity, privacy, and migration verification.
+- [x] Task 7: Run final integrity, privacy, and migration verification.
   - Run strict fsck and ref inventories for both canonical repositories.
   - Rescan all reachable destination branches and tags for prohibited identifiers, personal absolute paths, private contributor emails, and real secrets.
   - Compare every transplanted workset against its source using repository-relative name-status and patch checks.
