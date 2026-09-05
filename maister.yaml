@@ -7,7 +7,7 @@ schemaVersion: 2
 # existing-mode), never from this file.
 project:
   name: maister
-  main_branch: main
+  main_branch: master
   branch_prefix: maister/
   default_runner: claude-code
 packages:

@@ -8,7 +8,7 @@ problem safely.
 ## Supported versions
 
 MAIster is under active development and does not yet publish stable release
-lines. Security fixes target the current `main` branch. Older commits and local
+lines. Security fixes target the current `master` branch. Older commits and local
 deployments may not receive backports.
 
 ## Report a vulnerability

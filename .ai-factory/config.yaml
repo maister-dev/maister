@@ -185,7 +185,7 @@ git:
   # Default branch for diff/review/merge targets
   # Examples: main, master, develop, trunk, 2.x
   # Default: auto-detected from git metadata, fallback main
-  base_branch: main
+  base_branch: master
 
   # Automatically create feature branches for plans
   # Applies only when git.enabled = true
