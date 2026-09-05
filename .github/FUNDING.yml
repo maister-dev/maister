@@ -1,0 +1,6 @@
+# Configures the "Sponsor" button on the repository page.
+# Nothing is enabled yet: GitHub Sponsors only pays out to maintainers in its
+# supported regions (https://docs.github.com/sponsors). Uncomment one option
+# to show the button. `custom` accepts up to four URLs.
+# github: kanischev
+# custom: ["https://imaister.dev"]
