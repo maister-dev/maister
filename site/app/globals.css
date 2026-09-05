@@ -385,7 +385,7 @@ button:focus-visible {
   grid-template-columns: 1fr;
   min-height: 0;
   align-items: start;
-  padding-block: clamp(72px, 8vw, 104px);
+  padding-block: clamp(72px, 8vw, 104px) 0;
   gap: 0;
 }
 
@@ -585,7 +585,7 @@ h2 em {
 .split-heading {
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
-  align-items: end;
+  align-items: start;
   gap: clamp(50px, 9vw, 140px);
 }
 
@@ -1631,6 +1631,10 @@ h2 em {
 }
 
 /* ---------- Why: tighter change cards ---------- */
+.hero + .section-block {
+  padding-top: clamp(56px, 6vw, 80px);
+}
+
 .change-card {
   min-height: 0;
   padding: clamp(24px, 3vw, 36px);
@@ -2098,7 +2102,6 @@ h2 em {
 }
 
 .faq-list {
-  max-width: 900px;
   border-top: 1px solid var(--line);
 }
 
@@ -2110,9 +2113,9 @@ h2 em {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 20px 4px;
+  padding: 26px 4px;
   cursor: pointer;
-  font-size: 17px;
+  font-size: clamp(18px, 1.6vw, 22px);
   font-weight: 600;
   letter-spacing: -0.01em;
   list-style: none;
@@ -2128,7 +2131,7 @@ h2 em {
   color: var(--forest);
   content: "+";
   font-family: var(--mono);
-  font-size: 18px;
+  font-size: 22px;
   transition: transform 160ms ease;
 }
 
@@ -2137,11 +2140,11 @@ h2 em {
 }
 
 .faq-item p {
-  max-width: 70ch;
+  max-width: 92ch;
   margin: 0;
-  padding: 0 4px 22px;
+  padding: 0 4px 28px;
   color: var(--body);
-  font-size: 15px;
+  font-size: clamp(16px, 1.25vw, 18px);
   line-height: 1.65;
 }
 
@@ -2404,7 +2407,8 @@ h2 em {
   }
 
   .faq-item summary {
-    font-size: 15px;
+    padding-block: 18px;
+    font-size: 16px;
   }
 
   .repository-layout {
