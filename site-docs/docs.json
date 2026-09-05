@@ -57,6 +57,16 @@
             "pages": ["index", "quickstart"]
           },
           {
+            "group": "Product tour",
+            "pages": [
+              "product-tour/application-map",
+              "product-tour/project-workspace",
+              "product-tour/project-repository-and-packages",
+              "product-tour/tasks-and-runs",
+              "product-tour/run-history-and-workbench"
+            ]
+          },
+          {
             "group": "Core concepts",
             "pages": [
               "concepts/delivery-spine",
@@ -69,11 +79,36 @@
             ]
           },
           {
+            "group": "Administration",
+            "pages": [
+              "administration/runners-and-models",
+              "administration/users-tokens-and-access",
+              "administration/mcp-and-secrets",
+              "administration/scheduler-and-platform-agents",
+              "administration/project-platform-agents",
+              "administration/scheduler-and-automations"
+            ]
+          },
+          {
+            "group": "Flow Studio",
+            "pages": [
+              "studio/flow-studio-and-packages",
+              "studio/ai-assistant",
+              "studio/node-types",
+              "studio/structured-results-and-context"
+            ]
+          },
+          {
+            "group": "Evaluation",
+            "pages": ["evaluation/run-comparison"]
+          },
+          {
             "group": "Guides",
             "pages": [
               "guides/register-a-project",
               "guides/human-in-the-loop",
               "guides/review-and-promote",
+              "guides/review-rework-and-takeover",
               "guides/studio-and-evaluation"
             ]
           },
@@ -104,6 +139,16 @@
             "pages": ["ru/index", "ru/quickstart"]
           },
           {
+            "group": "Знакомство с приложением",
+            "pages": [
+              "ru/product-tour/application-map",
+              "ru/product-tour/project-workspace",
+              "ru/product-tour/project-repository-and-packages",
+              "ru/product-tour/tasks-and-runs",
+              "ru/product-tour/run-history-and-workbench"
+            ]
+          },
+          {
             "group": "Основные понятия",
             "pages": [
               "ru/concepts/delivery-spine",
@@ -116,11 +161,36 @@
             ]
           },
           {
+            "group": "Администрирование",
+            "pages": [
+              "ru/administration/runners-and-models",
+              "ru/administration/users-tokens-and-access",
+              "ru/administration/mcp-and-secrets",
+              "ru/administration/scheduler-and-platform-agents",
+              "ru/administration/project-platform-agents",
+              "ru/administration/scheduler-and-automations"
+            ]
+          },
+          {
+            "group": "Flow Studio",
+            "pages": [
+              "ru/studio/flow-studio-and-packages",
+              "ru/studio/ai-assistant",
+              "ru/studio/node-types",
+              "ru/studio/structured-results-and-context"
+            ]
+          },
+          {
+            "group": "Сравнение результатов",
+            "pages": ["ru/evaluation/run-comparison"]
+          },
+          {
             "group": "Руководства",
             "pages": [
               "ru/guides/register-a-project",
               "ru/guides/human-in-the-loop",
               "ru/guides/review-and-promote",
+              "ru/guides/review-rework-and-takeover",
               "ru/guides/studio-and-evaluation"
             ]
           },

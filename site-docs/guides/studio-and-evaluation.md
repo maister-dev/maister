@@ -1,36 +1,25 @@
 ---
-title: "Author and compare in Studio"
-description: "Design Flow packages, inspect upstream divergence, and compare competing implementations in Evaluation Studies."
+title: "Choose a Studio or evaluation workflow"
+description: "Find the right workflow for editing a Flow, comparing package lineage, or evaluating execution results."
 ---
 
-MAIster provides two complementary comparison surfaces: Flow Studio for the
-process definition and Evaluation Lab for the results of execution.
+MAIster has two distinct comparison surfaces. Flow Studio answers what changed
+in a process definition. Evaluation Lab answers which execution produced the
+better result.
 
-## Flow Studio
+## Change a process
 
-Use Studio to edit a Flow as a graph and as package content. Validate nodes,
-transitions, gates, agent sources, and composition before installing a trusted
-revision.
+Use [Flow Studio and package forks](/studio/flow-studio-and-packages) to edit a
+graph, fork installed package content, inspect upstream divergence, and apply a
+bounded AI-assisted change. Read the [node catalog](/studio/node-types) and
+[structured-result contract](/studio/structured-results-and-context) before
+connecting data-dependent steps.
 
-For a local package derived from an upstream source, open **Compare with
-upstream** on the package or an individual element. Review the selected lineage
-cut before syncing or publishing; MAIster does not treat a newer upstream
-revision as an automatic overwrite.
+## Compare implementations
 
-## Evaluation Studies
+Use [Evaluation Lab](/evaluation/run-comparison) for several Runs of one task.
+It can observe existing Runs or launch controlled variants across Flow
+revisions, agents, models, and capabilities. Objective checks and blinded AI
+judges contribute evidence; a person records the conclusive verdict.
 
-Create a Study for one project and task when you need to answer which
-implementation performed better. Add existing Runs as observed participants or
-launch controlled participants from a pinned recipe.
-
-The Study compares immutable evidence snapshots. Objective checks and
-package-sourced judge methods can produce rankings, while the final human
-verdict remains append-only and explicit. A Study never auto-approves or
-auto-promotes a participant.
-
-## Choose the right comparison
-
-- Compare package lineage in Studio when the question is **what changed in the
-  process definition?**
-- Compare participant Runs in Evaluation Lab when the question is **which
-  implementation and evidence are better?**
+An evaluation never approves, promotes, or merges a participant automatically.

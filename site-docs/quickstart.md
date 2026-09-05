@@ -14,7 +14,8 @@ adapters and operate on local git repositories.
 - git with worktree support
 - Docker with Compose
 - A local git repository to manage
-- Credentials for at least one configured agent runtime
+- At least one coding agent to run on the supervisor host: Codex, Claude Code,
+  OpenCode, Gemini CLI, or MiMo
 
 ## 1. Install
 
@@ -28,7 +29,23 @@ cp .env.example .env
 Set a strong `AUTH_SECRET` in `.env`. Keep provider tokens and agent credentials
 on the host; never add them to a project manifest.
 
-## 2. Start Postgres and prepare the database
+## 2. Prepare a coding agent
+
+MAIster cannot execute a Flow until the supervisor host has an authenticated
+coding agent. `pnpm install` provides the Claude and Codex ACP adapters. For
+example, authenticate Codex with:
+
+```bash
+pnpm --filter @maister/supervisor exec codex-acp login
+```
+
+For Claude Code, OpenCode, Gemini CLI, or MiMo, complete the agent's native
+sign-in under the same operating-system account that runs the supervisor. The
+Gemini, OpenCode, and MiMo executables must also be available on that account's
+`PATH`. Provider secrets may instead be exposed to the supervisor through
+environment references; never store them in a project manifest.
+
+## 3. Start Postgres and prepare the database
 
 ```bash
 docker compose up -d postgres
@@ -40,7 +57,7 @@ pnpm --filter maister-web db:seed
 The Brain migration requires the pgvector-enabled Postgres image from the
 repository's Compose file.
 
-## 3. Start MAIster
+## 4. Start MAIster
 
 Run these commands in separate terminals:
 
@@ -55,13 +72,22 @@ pnpm --filter maister-web dev
 Open `http://localhost:3000/login`. Sign in with the seeded administrator
 credentials from `.env`.
 
-## 4. Register a repository
+## 5. Register the coding agent
+
+Open **Settings → ACP runners**, create a profile for the authenticated agent,
+and keep it disabled until diagnostics report **Ready**. Enable the profile and,
+if appropriate, make it the installation default. Do not launch the first task
+until at least one runner is enabled and Ready. See [Configure ACP runners and
+models](/administration/runners-and-models) for provider routes, environment
+references, and readiness rules.
+
+## 6. Register a repository
 
 Open **Projects → Add project**, choose an existing repository directory, and
 submit it. If the repository has no `maister.yaml`, MAIster creates a minimal
 manifest. A present but invalid manifest is rejected and never overwritten.
 
-## 5. Launch a task
+## 7. Launch a task
 
 1. Open the project board.
 2. Create a task with an outcome and a Flow.
@@ -74,6 +100,8 @@ an observable outcome. Promotion remains a separate, explicit action.
 
 ## Next steps
 
-- [Understand Flows and Runs](concepts/flows-and-runs.md).
-- [Respond to human-in-the-loop requests](guides/human-in-the-loop.md).
-- [Review and promote accepted work](guides/review-and-promote.md).
+- Follow the [application map](/product-tour/application-map).
+- [Configure runners and models](/administration/runners-and-models).
+- [Build or fork a Flow](/studio/flow-studio-and-packages).
+- [Respond to human-in-the-loop requests](/guides/human-in-the-loop).
+- [Review, rework, or take over work locally](/guides/review-rework-and-takeover).

@@ -1,6 +1,6 @@
 ---
-title: "Execution hosts"
-description: "Текущая граница одного supervisor-хоста и безопасный путь к нескольким execution hosts."
+title: "Узлы исполнения"
+description: "Текущая граница одного узла супервизора и безопасный путь к нескольким узлам исполнения."
 ---
 
 Execution host — supervisor-граница, которая владеет ACP-сессиями, процессами

@@ -55,6 +55,9 @@ agent runtimes.
 Prerequisites: Node 24, pnpm, Git, Docker, and at least one supported ACP
 adapter. The commands below start PostgreSQL plus the two host processes.
 
+Authenticate the coding agent on the supervisor host and register a Ready ACP
+runner before launching a Run. See [Getting Started](docs/getting-started.md).
+
 ```bash
 git clone https://github.com/kanischev/mAIster.git
 cd mAIster

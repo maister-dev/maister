@@ -26,6 +26,10 @@ two long-running Node processes:
 - **Docker** (only for `compose up postgres` and the `testcontainers`
   integration test suite)
 - **uv** + **Python 3.12** only when a Flow plugin needs Python tooling.
+- **At least one coding agent authenticated on every supervisor host.** Choose
+  Claude Code, Codex, Gemini CLI, OpenCode, or MiMo. The supervisor must run
+  under the operating-system account that owns the native agent login, unless
+  the runner receives provider credentials through environment references.
 - **`gh` (GitHub CLI) — optional** (Designed, [ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)). When present and authed (`gh auth login`), the Add-project flow auto-uses its token (`gh auth token`) for `github.com` HTTPS clones. Absent or unauthed degrades gracefully to SSH / the one-off HTTPS-token field — `gh` is never required for onboarding.
 - **PR-mode promotion (Implemented) — only needed for `pull_request` promotion;
   `local_merge` needs none.** Per the run's provider: `gh` CLI on `PATH` (github),
@@ -62,6 +66,29 @@ for both `web/` and `supervisor/`. CI uses the frozen lockfile.
 `maister-web` now includes `@xyflow/react` (v12) + `@dagrejs/dagre` for the
 evidence-graph explorer (React 19 compatible, already in the lockfile, no
 extra setup). See [ADR-039](decisions.md#adr-039-xyflowreact--dagrejsdagre-as-the-evidence-graph-renderer).
+
+## Prepare a coding agent
+
+`pnpm install` installs the `claude-agent-acp` and `codex-acp` adapter binaries.
+Authenticate the underlying agent before launching a Flow. For example, Codex
+supports the following login command from the repository root:
+
+```bash
+pnpm --filter @maister/supervisor exec codex-acp login
+```
+
+For Claude Code, Gemini CLI, OpenCode, or MiMo, complete the application's native
+login under the supervisor's operating-system account. Gemini, OpenCode, and
+MiMo also require their executable on that account's `PATH`. Provider credentials
+can instead be supplied to the supervisor through the runner's `env:NAME`
+references.
+
+After the services are running, sign in as an administrator and open
+**Settings → ACP runners**. Create a profile for the prepared agent, wait for
+diagnostics to report **Ready**, and only then enable it. A Flow cannot start
+until at least one enabled, Ready profile satisfies its runner requirements.
+See [Supervisor](supervisor.md) for adapter diagnostics and
+[Configuration](configuration.md) for environment handling.
 
 ## Run the dev servers
 
