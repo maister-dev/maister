@@ -114,7 +114,12 @@ the same repository-content permission as the corresponding object download.
 
 Logical admission and append accounting use the same transactional row/byte
 counters. ACKed rows continue to count until replay grace expires and pruning
-removes them. Low/soft/hard hysteresis prevents repeated admission at the soft
+removes them. SQLite v8 records ACK timestamps in compact contiguous ranges
+without updating payload rows; duplicate ACKs preserve the original grace
+start. Existing v7 row timestamps remain readable. Pruning removes only an
+eligible contiguous prefix, bounded to 100 rows and 1 MiB per transaction,
+then yields before the next page. A backward clock cannot skip a protected
+range and advance the replay floor over retained evidence. Low/soft/hard hysteresis prevents repeated admission at the soft
 boundary. Regular storage is separate from control and the emergency floor;
 the exact validated defaults are owned by [configuration](../configuration.md).
 

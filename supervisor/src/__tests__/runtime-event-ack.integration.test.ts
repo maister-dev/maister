@@ -129,7 +129,9 @@ describe("Stage B host runtime-event acknowledgement", () => {
   });
 
   it("replays strictly after the decimal cursor and fails explicitly below the replay floor", async () => {
-    host = await bootHost();
+    let clock = Date.now();
+
+    host = await bootHost({ now: () => new Date(clock) });
     const streamId = host.hostState.getRuntimeEventStreamId();
 
     appendEvent("session.created");
@@ -150,9 +152,10 @@ describe("Stage B host runtime-event acknowledgement", () => {
     ]);
 
     host.hostState.ackRuntimeEvents(streamId, "0");
+    clock += host.hostState.limits.eventAckGraceMs + 1;
     expect(
       host.hostState.pruneAcknowledgedRuntimeEvents(
-        new Date("2027-09-04T12:00:00.000Z"),
+        new Date(clock - host.hostState.limits.eventAckGraceMs),
       ),
     ).toBe(1);
 

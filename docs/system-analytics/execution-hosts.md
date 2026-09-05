@@ -51,7 +51,7 @@ manager-side [execution event plane](execution-event-plane.md),
   `<MAISTER_RUNTIME_ROOT>/.maister/execution-host/`) holding
   `host_identity`, `run_fences`, `workspaces`, `command_receipts`, durable
   runtime-event streams/outbox, and the private runtime-object registry
-  (schema `user_version` 6 with guarded in-place upgrades). The web tier never
+  (schema `user_version` 8 with guarded in-place upgrades). The web tier never
   reads it.
 - **Execution assignment** — one row in `execution_assignments` per
   `(run, epoch)`: `state ∈ {active, superseded, released}`,

@@ -736,7 +736,12 @@ parser reservations expire with their owning process. Startup repairs accepted
 producer commands and records lost sessions using their original reserved
 credits. Accepted receipts cannot expire before that repair. Full command and
 receipt retention eligibility remains S2.
-The file carries a `PRAGMA user_version` (currently 7)
+Version 8 stores new ACK timestamps as compact contiguous ranges; the stream
+watermark and partition counters commit with each range. Legacy per-row ACK
+timestamps remain readable without rewriting retained event bodies. Pruning
+deletes only the oldest eligible prefix, at most 100 rows and 1 MiB per
+transaction, and never bypasses replay grace.
+The file carries a `PRAGMA user_version` (currently 8)
 that gates in-place migrations at open: a version-0 store (inline
 `UNIQUE (run_id, real_path)`, which blocked re-adoption after a release) is
 rebuilt under the partial index with every row kept; a fresh store starts at

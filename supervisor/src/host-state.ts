@@ -34,6 +34,11 @@ import {
 } from "./outbox-budget";
 import { HostRuntimeEventError } from "./host-runtime-errors";
 import {
+  OUTBOX_ACK_SCHEMA,
+  recordRuntimeEventAck,
+  RUNTIME_EVENT_ACK_TIMESTAMP_SQL,
+} from "./outbox-ack";
+import {
   buildRuntimeEventEnvelope,
   MAX_RUNTIME_EVENT_BYTES,
   RuntimeEventEnvelopeSchema,
@@ -51,7 +56,7 @@ export const RECEIPT_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 export const RECEIPT_PRUNE_INTERVAL_MS = 60 * 60 * 1_000;
 export const EXECUTION_HOST_PROTOCOL_VERSION = 1;
 // `PRAGMA user_version` of the state file; bumped with every migration below.
-export const HOST_STATE_SCHEMA_VERSION = 7;
+export const HOST_STATE_SCHEMA_VERSION = 8;
 const MAX_HOST_EVENT_SEQUENCE = (1n << 63n) - 1n;
 const HOST_EVENT_SEQUENCE_SORT_WIDTH = 20;
 
@@ -393,6 +398,7 @@ CREATE INDEX IF NOT EXISTS runtime_event_outbox_stream_replay_idx
 CREATE INDEX IF NOT EXISTS runtime_event_outbox_stream_pending_idx
   ON runtime_event_outbox (stream_id, acknowledged_at, sequence_sort_key);
 ${OUTBOX_BUDGET_SCHEMA}
+${OUTBOX_ACK_SCHEMA}
 `;
 
 // user_version 0 stores carry an inline UNIQUE (run_id, real_path) on
@@ -520,6 +526,13 @@ PRAGMA user_version = 7;
 COMMIT;
 `;
 
+const MIGRATE_V7_TO_V8 = `
+BEGIN IMMEDIATE;
+${OUTBOX_ACK_SCHEMA}
+PRAGMA user_version = 8;
+COMMIT;
+`;
+
 function applySchema(db: DatabaseSync): void {
   const fresh =
     db
@@ -539,6 +552,12 @@ function applySchema(db: DatabaseSync): void {
     user_version: number;
   };
 
+  if (Number(user_version) > HOST_STATE_SCHEMA_VERSION) {
+    throw new HostRuntimeEventError(
+      "stream_corrupt",
+      "host state schema is newer than this supervisor",
+    );
+  }
   if (Number(user_version) < 1) db.exec(MIGRATE_V0_TO_V1);
   if (Number(user_version) < 2) db.exec(MIGRATE_V1_TO_V2);
   if (Number(user_version) < 3) db.exec(MIGRATE_V2_TO_V3);
@@ -546,7 +565,7 @@ function applySchema(db: DatabaseSync): void {
   if (Number(user_version) < 5) db.exec(MIGRATE_V4_TO_V5);
   if (Number(user_version) < 6) db.exec(MIGRATE_V5_TO_V6);
   if (Number(user_version) < 7) db.exec(MIGRATE_V6_TO_V7);
-  db.exec(SCHEMA);
+  if (Number(user_version) < 8) db.exec(MIGRATE_V7_TO_V8);
 }
 
 export function openHostState(opts: OpenHostStateOptions = {}): HostState {
@@ -1185,7 +1204,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
           ? parseHostEventSequence(stream.acknowledged_through)
           : -1n;
 
-        if (through < acknowledged) {
+        if (through <= acknowledged) {
           db.exec("COMMIT");
 
           return acknowledged.toString();
@@ -1237,11 +1256,12 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
            SET acknowledged_through = ?, acknowledged_sort_key = ?, updated_at = ?
            WHERE stream_id = ?`,
         ).run(throughText, throughSortKey, nowIso, streamId);
-        db.prepare(
-          `UPDATE runtime_event_outbox
-           SET acknowledged_at = ?
-           WHERE stream_id = ? AND sequence_sort_key <= ? AND acknowledged_at IS NULL`,
-        ).run(nowIso, streamId, throughSortKey);
+        recordRuntimeEventAck(db, {
+          streamId,
+          firstSortKey: hostEventSequenceSortKey(acknowledged + 1n),
+          throughSortKey,
+          acknowledgedAt: nowIso,
+        });
         db.exec("COMMIT");
 
         notifyCapacity();
@@ -1262,35 +1282,48 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       assertOutboxAdmission(db, limits);
     },
     pruneAcknowledgedRuntimeEvents(olderThan) {
-      db.exec("BEGIN IMMEDIATE");
+      const cutoff = new Date(
+        Math.min(olderThan.getTime(), now().getTime() - limits.eventAckGraceMs),
+      ).toISOString();
 
+      db.exec("BEGIN IMMEDIATE");
       try {
         const stream = ensureRuntimeEventStream(db, now);
-        const rows = db
+        const candidates = db
           .prepare(
-            `SELECT sequence, sequence_sort_key FROM runtime_event_outbox
-             WHERE stream_id = ? AND acknowledged_at IS NOT NULL AND acknowledged_at < ?
-             ORDER BY sequence_sort_key ASC`,
+            `SELECT e.sequence, e.sequence_sort_key, e.encoded_bytes,
+            ${RUNTIME_EVENT_ACK_TIMESTAMP_SQL} AS acknowledged_at
+          FROM runtime_event_outbox e WHERE e.stream_id = ? ORDER BY e.sequence_sort_key ASC LIMIT 100`,
           )
-          .all(stream.stream_id, olderThan.toISOString()) as Array<{
+          .all(stream.stream_id) as Array<{
           sequence: string;
           sequence_sort_key: string;
+          encoded_bytes: number;
+          acknowledged_at: string | null;
         }>;
+        let bytes = 0;
+        let count = 0;
+        let last: { sequence: string; sequence_sort_key: string } | undefined;
 
-        if (rows.length === 0) {
+        for (const row of candidates) {
+          if (
+            row.acknowledged_at === null ||
+            row.acknowledged_at >= cutoff ||
+            bytes + row.encoded_bytes > MAX_RUNTIME_EVENT_BYTES
+          )
+            break;
+          bytes += row.encoded_bytes;
+          count += 1;
+          last = row;
+        }
+        if (!last) {
           db.exec("COMMIT");
 
           return 0;
         }
-
-        const last = rows.at(-1);
-
-        if (!last)
-          throw new Error("acknowledged runtime-event rows disappeared");
         db.prepare(
-          `UPDATE runtime_event_streams
-           SET replay_floor_sequence = ?, replay_floor_sort_key = ?, updated_at = ?
-           WHERE stream_id = ?`,
+          `UPDATE runtime_event_streams SET replay_floor_sequence = ?, replay_floor_sort_key = ?, updated_at = ?
+          WHERE stream_id = ?`,
         ).run(
           last.sequence,
           last.sequence_sort_key,
@@ -1299,16 +1332,22 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         );
         const result = db
           .prepare(
-            `DELETE FROM runtime_event_outbox
-             WHERE stream_id = ? AND acknowledged_at IS NOT NULL AND acknowledged_at < ?`,
+            "DELETE FROM runtime_event_outbox WHERE stream_id = ? AND sequence_sort_key <= ?",
           )
-          .run(stream.stream_id, olderThan.toISOString());
+          .run(stream.stream_id, last.sequence_sort_key);
 
+        if (Number(result.changes) !== count)
+          throw new HostRuntimeEventError(
+            "stream_corrupt",
+            "pruned runtime event prefix did not match its bounded page",
+          );
+        db.prepare(
+          "DELETE FROM runtime_event_ack_ranges WHERE stream_id = ? AND through_sort_key <= ?",
+        ).run(stream.stream_id, last.sequence_sort_key);
         db.exec("COMMIT");
-
         notifyCapacity();
 
-        return Number(result.changes);
+        return count;
       } catch (error) {
         if (db.isTransaction) db.exec("ROLLBACK");
         throw error;
@@ -1558,9 +1597,9 @@ function auditRuntimeEventState(db: DatabaseSync): void {
     const actual = db
       .prepare(
         `SELECT COUNT(*) AS count, COALESCE(SUM(encoded_bytes), 0) AS bytes,
-      COALESCE(SUM(acknowledged_at IS NULL), 0) AS pending_count,
-      COALESCE(SUM(CASE WHEN acknowledged_at IS NULL THEN encoded_bytes ELSE 0 END), 0) AS pending_bytes
-      FROM runtime_event_outbox WHERE budget_partition = ?`,
+      COALESCE(SUM(e.sequence_sort_key > COALESCE(s.acknowledged_sort_key, '')), 0) AS pending_count,
+      COALESCE(SUM(CASE WHEN e.sequence_sort_key > COALESCE(s.acknowledged_sort_key, '') THEN encoded_bytes ELSE 0 END), 0) AS pending_bytes
+      FROM runtime_event_outbox e JOIN runtime_event_streams s ON s.stream_id = e.stream_id WHERE budget_partition = ?`,
       )
       .get(partition) as {
       count: number;
@@ -1630,8 +1669,8 @@ function auditRuntimeEventState(db: DatabaseSync): void {
   const rows = db
     .prepare(
       `SELECT stream_id, sequence, event_id, envelope_json, encoded_bytes, occurred_at,
-              acknowledged_at, created_at
-       FROM runtime_event_outbox WHERE stream_id = ? ORDER BY sequence_sort_key ASC`,
+              ${RUNTIME_EVENT_ACK_TIMESTAMP_SQL} AS acknowledged_at, created_at
+       FROM runtime_event_outbox e WHERE stream_id = ? ORDER BY sequence_sort_key ASC`,
     )
     .iterate(stream.stream_id) as IterableIterator<RuntimeEventOutboxDbRow>;
   let expected = replayFloor + 1n;
@@ -1763,7 +1802,7 @@ function runtimeEventPage(
   const rows = db
     .prepare(
       `SELECT stream_id, sequence, event_id, envelope_json, encoded_bytes, occurred_at,
-      acknowledged_at, created_at FROM runtime_event_outbox
+      ${RUNTIME_EVENT_ACK_TIMESTAMP_SQL} AS acknowledged_at, created_at FROM runtime_event_outbox e
     WHERE stream_id = ? AND sequence_sort_key > ? AND sequence_sort_key <= ? ORDER BY sequence_sort_key ASC`,
     )
     .all(streamId, afterSortKey ?? "", through) as RuntimeEventOutboxDbRow[];
@@ -1867,20 +1906,32 @@ export function startRuntimeEventPruner(
   logger: Logger,
   now: () => Date = () => new Date(),
 ): () => void {
+  let immediate: NodeJS.Immediate | undefined;
+  let stopped = false;
+  const schedule = (): void => {
+    if (!stopped && !immediate) immediate = setImmediate(prune);
+  };
   const prune = (): void => {
+    immediate = undefined;
+    if (stopped) return;
     const pruned = state.pruneAcknowledgedRuntimeEvents(
       new Date(now().getTime() - state.limits.eventAckGraceMs),
     );
 
     if (pruned > 0) {
       logger.info({ pruned }, "runtime-event-outbox-pruned");
+      schedule();
     }
   };
 
   prune();
-  const handle = setInterval(prune, RUNTIME_EVENT_PRUNE_INTERVAL_MS);
+  const handle = setInterval(schedule, RUNTIME_EVENT_PRUNE_INTERVAL_MS);
 
   handle.unref();
 
-  return () => clearInterval(handle);
+  return () => {
+    stopped = true;
+    clearInterval(handle);
+    if (immediate) clearImmediate(immediate);
+  };
 }

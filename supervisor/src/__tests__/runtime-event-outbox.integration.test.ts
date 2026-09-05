@@ -405,7 +405,12 @@ describe("Stage B durable host event outbox", () => {
 
   it("resumes below the low watermark only after ACKed replay is pruned, including across restart", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "maister-outbox-pressure-"));
-    let state = openHostState({ stateDir, limits: SMALL_LIMITS });
+    let clock = Date.now();
+    let state = openHostState({
+      stateDir,
+      limits: SMALL_LIMITS,
+      now: () => new Date(clock),
+    });
     const snapshots: boolean[] = [];
 
     try {
@@ -416,7 +421,11 @@ describe("Stage B durable host event outbox", () => {
         state.appendRuntimeEvent(eventDraft());
       state.ackRuntimeEvents(state.getRuntimeEventStreamId(), "1");
       state.close();
-      state = openHostState({ stateDir, limits: SMALL_LIMITS });
+      state = openHostState({
+        stateDir,
+        limits: SMALL_LIMITS,
+        now: () => new Date(clock),
+      });
       const unsubscribe = state.subscribeRuntimeCapacity((snapshot) =>
         snapshots.push(snapshot.pressured),
       );
@@ -425,12 +434,18 @@ describe("Stage B durable host event outbox", () => {
         pressured: true,
         reservedControlRows: 18,
       });
-      state.pruneAcknowledgedRuntimeEvents(new Date("2030-01-01T00:00:00Z"));
+      clock += SMALL_LIMITS.eventAckGraceMs + 1;
+      state.pruneAcknowledgedRuntimeEvents(
+        new Date(clock - SMALL_LIMITS.eventAckGraceMs),
+      );
       expect(() => state.assertCanAcceptMutatingCommand()).toThrow(
         /low watermark/,
       );
       state.ackRuntimeEvents(state.getRuntimeEventStreamId(), "2");
-      state.pruneAcknowledgedRuntimeEvents(new Date("2030-01-01T00:00:00Z"));
+      clock += SMALL_LIMITS.eventAckGraceMs + 1;
+      state.pruneAcknowledgedRuntimeEvents(
+        new Date(clock - SMALL_LIMITS.eventAckGraceMs),
+      );
       expect(() => state.assertCanAcceptMutatingCommand()).not.toThrow();
       expect(snapshots).toEqual([true, true, false]);
       unsubscribe();
@@ -452,8 +467,11 @@ describe("Stage B durable host event outbox", () => {
       // Reconstruct the exact pre-budget schema with real persisted event bytes.
       const db = new DatabaseSync(join(stateDir, "state.sqlite"));
 
-      db.exec(`DROP TRIGGER runtime_event_budget_insert; DROP TRIGGER runtime_event_budget_ack;
-        DROP TRIGGER runtime_event_budget_delete; DROP TABLE runtime_event_budget;
+      db.exec(`UPDATE runtime_event_outbox SET acknowledged_at = (
+          SELECT a.acknowledged_at FROM runtime_event_ack_ranges a WHERE a.stream_id = runtime_event_outbox.stream_id
+            AND a.first_sort_key <= runtime_event_outbox.sequence_sort_key AND a.through_sort_key >= runtime_event_outbox.sequence_sort_key);
+        DROP TRIGGER runtime_event_budget_insert; DROP TRIGGER runtime_event_budget_delete_v8;
+        DROP TABLE runtime_event_ack_ranges; DROP TABLE runtime_event_budget;
         DROP TABLE runtime_event_frames; DROP TABLE runtime_event_teardowns;
         DROP TABLE runtime_event_wallets; DROP TABLE runtime_event_pressure;
         DROP INDEX command_receipts_pending_session;
