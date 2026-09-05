@@ -14,6 +14,15 @@ class RunEventWakeBus {
 
   wake(runId: string): void {
     this.emitter.emit(runId);
+    this.wakeProjection();
+  }
+
+  wakeProjection(): void {
+    this.emitter.emit("projection-work");
+  }
+
+  waitForProjection(timeoutMs: number, signal: AbortSignal): Promise<void> {
+    return this.wait("projection-work", timeoutMs, signal);
   }
 
   wait(runId: string, timeoutMs: number, signal?: AbortSignal): Promise<void> {

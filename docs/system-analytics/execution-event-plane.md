@@ -57,9 +57,43 @@ cursor and binds every ACK to `streamId`. A future trusted relay may implement
 the same event-source and ACK contracts; it may not change event ownership or
 ordering semantics.
 
-## Durable bounded projection and reconciliation workers (Designed)
+## Durable bounded projection and reconciliation workers
+
+Canonical projection scheduling is implemented: the complete six-consumer
+registry starts from web instrumentation, drains durable backlog with two
+slots, and resumes expired claims. Fifty integration cases pass on Node
+24.15 with real PostgreSQL, including a killed production worker process,
+actual lease expiry, a terminal event after position 200, first-batch failure,
+stale failure recording, cumulative/blocked-query deadlines, connection loss,
+gap promotion across runs, paged backfill and cursor-bound rearm. Deployment
+shutdown wiring and the full S1 release qualification remain open; durable
+prompt-owner reconciliation below belongs to S2.
 
 Use `execution_event_consumers` and existing claim fields; add an indexed `last_served_at`/claim generation only where missing. Register prompt, lifecycle, runtime-object, transcript, artifact and cost projection responsibilities explicitly: wire every current canonical consumer into its owning worker or document and test its equivalent autonomous existing job. Do not assume fixing the three one-shot wrappers proves all read models.
+
+The transcript v2 consumer replays existing canonical history into the same
+message sequence keys while persisting only fixed-size coalescing pointers per
+run/attempt in `run_transcript_states`. A tool-key index resolves one prior tool
+message. Text/result concatenation occurs in PostgreSQL, so applying a chunk
+does not download an ever-growing message into the worker. Scratch dialogs
+retain their existing transcript owner, which also owns user-message ordering;
+the canonical transcript worker must not overwrite scratch message positions.
+
+The cost consumer applies each accepted usage event with its cursor in the
+same transaction. Existing rollups are rebuilt per touched aggregate key using
+the `canonical-worker:v1:` source-cursor version, so replay starts each old
+aggregate from zero exactly once. SQL updates merge one model/runner bucket;
+the worker does not download the full event history or existing bucket maps.
+The terminal-cost sweep remains an advisory bounded-quantum caller; canonical
+backlog has no terminal-status, lookback or reader-presence requirement.
+
+After repairing a poisoned event or its projection code, an operator may run
+`pnpm --dir web execution:projection:rearm --consumer <name> --run <run-id>
+--event <event-id> --cursor <decimal-or-null> --error-generation <uuid>`.
+Use the consumer's current `last_run_sequence`, `last_error.eventId` and
+`last_error.errorGeneration`. The command refuses a newer failure, a changed
+cursor or a live claim. A successful rearm wakes durable work and logs those
+identifiers; it does not skip the event or advance the cursor.
 
 1. Ingest commits canonical rows and contiguous promotion in Postgres. In the same transaction, seed/wake consumer rows for **every distinct run promoted**, including runs released by filling another run's stream gap. ACK follows this commit, regardless of projector success. Duplicate ingest may hint; hints carry no authority.
 2. Boot/restart performs bounded keyset backfill of missing registered consumer/run rows from canonical events. Persist the scan cursor. Cursor initialization commits separately from first application; no unbounded all-runs boot transaction.

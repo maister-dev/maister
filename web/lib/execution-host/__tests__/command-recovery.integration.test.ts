@@ -31,7 +31,10 @@ import {
 import { OPEN_COMMANDS_PAGE_SIZE } from "@/lib/execution-host/commands";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
-import { publishRuntimeObject } from "@/lib/execution-host/runtime-objects";
+import {
+  publishRuntimeObject,
+  readRuntimeObjectContent,
+} from "@/lib/execution-host/runtime-objects";
 import { runReconcileSweep } from "@/lib/reconcile";
 import {
   seedProjectRow,
@@ -508,6 +511,7 @@ describe("execution-command recovery (real supervisor)", () => {
     const assignment = await mint(runId);
     const client = await hosts.forAssignment(assignment);
     const objectId = randomUUID();
+    const bytes = new TextEncoder().encode("recover deletion\u0000é");
 
     await publishRuntimeObject({
       client,
@@ -516,8 +520,18 @@ describe("execution-command recovery (real supervisor)", () => {
       logicalName: "recovery.txt",
       mimeType: "text/plain",
       retentionClass: "run",
-      bytes: new TextEncoder().encode("recover deletion"),
+      bytes,
     });
+    const full = await readRuntimeObjectContent({ db, runId, objectId });
+    const partial = await readRuntimeObjectContent({
+      db,
+      runId,
+      objectId,
+      range: { start: 3, end: 9 },
+    });
+
+    expect(full.content.bytes).toEqual(bytes);
+    expect(partial.content.bytes).toEqual(bytes.slice(3, 10));
     const command = await insertCommand(db, {
       runId,
       assignmentId: assignment.id,

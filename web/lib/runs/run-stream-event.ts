@@ -10,6 +10,7 @@ import { assertRuntimeEventPayloadSafe } from "@/lib/execution-host/runtime-even
 import { executionEvents, runs } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
+import { seedCanonicalProjectionConsumers } from "@/lib/execution-host/events/projection-consumers";
 
 export type ManagerRunStreamEvent = {
   readonly type: string;
@@ -199,6 +200,8 @@ export async function appendManagerRunStreamEvent(
       .update(runs)
       .set({ nextExecutionEventSequence: runSequence + 1n })
       .where(eq(runs.id, input.runId));
+
+    await seedCanonicalProjectionConsumers(tx, input.runId);
 
     return { eventId, runSequence };
   });

@@ -3935,6 +3935,10 @@ export const executionEventConsumers = pgTable(
       withTimezone: true,
       mode: "date",
     }),
+    lastServedAt: timestamp("last_served_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -3948,7 +3952,25 @@ export const executionEventConsumers = pgTable(
       t.nextRetryAt,
       t.claimExpiresAt,
     ),
+    idxService: index("execution_event_consumers_service_idx")
+      .on(t.lastServedAt.asc().nullsFirst(), t.runId, t.consumerName)
+      .where(sql`${t.state} <> 'poisoned'`),
   }),
+);
+
+export const executionProjectionBackfills = pgTable(
+  "execution_projection_backfills",
+  {
+    consumerName: text("consumer_name").primaryKey(),
+    afterRunId: text("after_run_id"),
+    completedAt: timestamp("completed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
 );
 
 export const executionDataPlaneImports = pgTable(
@@ -4052,6 +4074,10 @@ export const runCostRollups = pgTable(
       .notNull()
       .default(0),
     byModel: jsonb("by_model")
+      .$type<Record<string, Record<string, number>>>()
+      .notNull()
+      .default({}),
+    bySession: jsonb("by_session")
       .$type<Record<string, Record<string, number>>>()
       .notNull()
       .default({}),
@@ -4718,15 +4744,41 @@ export const runMessages = pgTable(
     }).notNull(),
     content: text("content").notNull(),
     supervisorEventId: text("supervisor_event_id"),
+    projectionToolKey: text("projection_tool_key"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
   },
   (t) => ({
+    idxProjectionTool: index("run_messages_projection_tool_idx")
+      .on(t.runId, t.nodeAttemptId, t.projectionToolKey, t.sequence.desc())
+      .where(sql`${t.projectionToolKey} IS NOT NULL`),
     uniqRunNodeAttemptSequence: unique(
       "run_messages_run_node_attempt_sequence_uq",
     )
       .on(t.runId, t.nodeAttemptId, t.sequence)
+      .nullsNotDistinct(),
+  }),
+);
+
+export const runTranscriptStates = pgTable(
+  "run_transcript_states",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    nodeAttemptId: text("node_attempt_id").references(() => nodeAttempts.id, {
+      onDelete: "cascade",
+    }),
+    nextSequence: integer("next_sequence").notNull().default(0),
+    openTextSequence: integer("open_text_sequence"),
+    openThoughtSequence: integer("open_thought_sequence"),
+    usageSequence: integer("usage_sequence"),
+  },
+  (t) => ({
+    uniqScope: unique("run_transcript_states_run_attempt_uq")
+      .on(t.runId, t.nodeAttemptId)
       .nullsNotDistinct(),
   }),
 );

@@ -9,12 +9,10 @@ import { and, eq, isNull, lt, or } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import { ingestRuntimeEvent } from "./ingest";
-import { projectCanonicalSessionLifecycle } from "./lifecycle-projector";
-import { projectCanonicalPromptCommands } from "./prompt-projector";
-import { projectCanonicalRuntimeObjects } from "./runtime-object-projector";
+import { runEventWakeBus } from "./run-wake";
 
 import { MaisterError } from "@/lib/errors";
-import { executionEventStreams, runs } from "@/lib/db/schema";
+import { executionEventStreams } from "@/lib/db/schema";
 
 const CLAIM_LEASE_MS = 30_000;
 const RECONNECT_MIN_MS = 250;
@@ -193,16 +191,6 @@ async function recordConsumerFailure(input: {
     .where(where);
 }
 
-async function isCanonicalRun(db: Db, runId: string): Promise<boolean> {
-  const rows = await db
-    .select({ executionDataPlaneMode: runs.executionDataPlaneMode })
-    .from(runs)
-    .where(eq(runs.id, runId))
-    .limit(1);
-
-  return Boolean(rows[0]);
-}
-
 export async function consumeRuntimeEventStreamOnce(input: {
   db: Db;
   executionHostId: string;
@@ -330,38 +318,7 @@ export async function consumeRuntimeEventStreamOnce(input: {
       // ACK is deliberately independent from every read-model reducer. The
       // durable ingest row is sufficient for replay; a projection failure is
       // retried through its own cursor and cannot trap the host outbox.
-      if (
-        result.acceptedCount > 0 &&
-        (await isCanonicalRun(input.db, envelope.runId))
-      ) {
-        void Promise.all([
-          projectCanonicalPromptCommands({
-            db: input.db,
-            runId: envelope.runId,
-          }),
-          projectCanonicalSessionLifecycle({
-            db: input.db,
-            runId: envelope.runId,
-          }),
-          projectCanonicalRuntimeObjects({
-            db: input.db,
-            runId: envelope.runId,
-          }),
-        ]).catch((error: unknown) => {
-          logger.error(
-            {
-              hostId: input.executionHostId,
-              runId: envelope.runId,
-              reason:
-                error instanceof MaisterError
-                  ? error.code
-                  : "projection_failure",
-              err: error instanceof Error ? error.message : String(error),
-            },
-            "canonical-prompt-command-projection-failed",
-          );
-        });
-      }
+      if (result.acceptedCount > 0) runEventWakeBus.wakeProjection();
       if (summary.received >= maxEvents) break;
     }
   } catch (error) {

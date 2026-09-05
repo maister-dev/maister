@@ -610,6 +610,11 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
   per node attempt.
 - Attachment indexes on `(run_id)` and `(message_id)` — run and
   message attachment lookups.
+- `run_transcript_states_run_attempt_uq` on `(run_id, node_attempt_id)`
+  UNIQUE `NULLS NOT DISTINCT` and `run_messages_projection_tool_idx`
+  (migration `0138`) support bounded canonical transcript coalescing. The
+  state holds only message-sequence pointers; tool lookup and content
+  concatenation do not load the full transcript into the worker.
 - `scratch_capability_profiles.run_id` UNIQUE — run-scoped capability snapshot
   lookup.
 - `workspaces.worktree_path` UNIQUE — globally unique across the host.

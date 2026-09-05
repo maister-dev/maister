@@ -9,11 +9,15 @@ import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
 import type { SessionEnforcementProfile } from "@/lib/flows/enforcement-profile";
 import type { HooksConfig } from "@/lib/flows/hooks-config";
 
+import { createHash } from "node:crypto";
+
 import pino from "pino";
 import {
   Agent,
+  Request as UndiciRequest,
   fetch as undiciFetch,
   type RequestInit as UndiciRequestInit,
+  type Response as UndiciResponse,
 } from "undici";
 import { z } from "zod";
 
@@ -31,6 +35,10 @@ const DEFAULT_HEALTH_TIMEOUT_MS = 1_000;
 const longLivedDispatcher = new Agent({
   headersTimeout: 0,
   bodyTimeout: 0,
+});
+const binaryDispatcher = new Agent({
+  headersTimeout: 10_000,
+  bodyTimeout: 10_000,
 });
 
 export type SupervisorExecutorInput = {
@@ -1390,6 +1398,19 @@ export async function reserveRuntimeObject(
   return parseRuntimeObjectWireMetadata(response.body);
 }
 
+function invalidBinaryRequest(ctx: string): MaisterError {
+  logger.warn(
+    { ctx, transport: "not_sent", reason: "transport_request_invalid" },
+    "runtime-object-request-refused",
+  );
+
+  return new MaisterError("ACP_PROTOCOL", `${ctx}: invalid binary request`, {
+    details: { transport: "not_sent", reason: "transport_request_invalid" },
+  });
+}
+
+type BinaryReply = { response: UndiciResponse; finish: () => void };
+
 async function runtimeObjectBinaryResponse(input: {
   path: string;
   method: "GET" | "PUT";
@@ -1397,29 +1418,63 @@ async function runtimeObjectBinaryResponse(input: {
   bytes?: Uint8Array;
   timeoutMs?: number | null;
   ctx: string;
-}): Promise<Response> {
-  const controller = input.timeoutMs ? new AbortController() : null;
-  const timer = controller
-    ? setTimeout(() => controller.abort(), input.timeoutMs ?? undefined)
-    : null;
+}): Promise<BinaryReply> {
+  if (
+    input.timeoutMs !== undefined &&
+    input.timeoutMs !== null &&
+    (!Number.isSafeInteger(input.timeoutMs) || input.timeoutMs <= 0)
+  ) {
+    throw invalidBinaryRequest(input.ctx);
+  }
+  const timeoutMs = input.timeoutMs ?? ADMIN_READ_TIMEOUT_MS;
+  const controller = new AbortController();
+  let request: UndiciRequest;
 
+  // Construction is synchronous and cannot have reached the peer. Do not
+  // classify malformed local headers/URLs as uncertain remote execution.
   try {
-    return await fetch(`${baseUrl()}${input.path}`, {
+    request = new UndiciRequest(`${baseUrl()}${input.path}`, {
       method: input.method,
       headers: input.headers,
       body: input.bytes,
       cache: "no-store",
-      signal: controller?.signal,
+      signal: controller.signal,
     });
-  } catch (error) {
-    throw networkErrorToMaister(error, input.ctx);
-  } finally {
+  } catch {
+    throw invalidBinaryRequest(input.ctx);
+  }
+  const timer = controller
+    ? setTimeout(() => controller.abort(), timeoutMs)
+    : null;
+  const finish = () => {
     if (timer) clearTimeout(timer);
+  };
+
+  try {
+    const response = await undiciFetch(request, {
+      dispatcher: binaryDispatcher,
+    });
+
+    logger.debug(
+      {
+        ctx: input.ctx,
+        method: input.method,
+        bytes: input.bytes?.byteLength,
+        status: response.status,
+      },
+      "runtime-object-response",
+    );
+
+    // The deadline covers body consumption, not only response headers.
+    return { response, finish };
+  } catch (error) {
+    finish();
+    throw networkErrorToMaister(error, input.ctx);
   }
 }
 
 async function throwRuntimeObjectWireError(
-  response: Response,
+  response: UndiciResponse,
   ctx: string,
 ): Promise<never> {
   let body: unknown = null;
@@ -1449,8 +1504,33 @@ export async function uploadRuntimeObject(input: {
   bytes: Uint8Array;
   timeoutMs?: number | null;
 }): Promise<RuntimeObjectWireMetadata> {
+  const uploadSchema = z.object({
+    objectId: z.string().uuid(),
+    commandId: z.string().uuid(),
+    assignmentId: z.string().uuid(),
+    assignmentEpoch: z.number().int().positive(),
+    generation: z.number().int().positive(),
+    sizeBytes: z.number().int().min(0).max(26_214_400),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  });
+  const parsed = uploadSchema.safeParse({
+    objectId: input.objectId,
+    commandId: input.envelope.command.id,
+    assignmentId: input.envelope.fence.assignmentId,
+    assignmentEpoch: input.envelope.fence.assignmentEpoch,
+    ...input.envelope.payload,
+  });
+
+  if (
+    !parsed.success ||
+    input.envelope.payload.sizeBytes !== input.bytes.byteLength ||
+    createHash("sha256").update(input.bytes).digest("hex") !==
+      input.envelope.payload.sha256
+  ) {
+    throw invalidBinaryRequest("uploadRuntimeObject");
+  }
   const digest = `sha-256=:${Buffer.from(input.envelope.payload.sha256, "hex").toString("base64")}:`;
-  const response = await runtimeObjectBinaryResponse({
+  const { response, finish } = await runtimeObjectBinaryResponse({
     path: `/runtime-objects/${encodeURIComponent(input.objectId)}/content`,
     method: "PUT",
     headers: {
@@ -1471,10 +1551,17 @@ export async function uploadRuntimeObject(input: {
     ctx: "uploadRuntimeObject",
   });
 
-  if (!response.ok)
-    return throwRuntimeObjectWireError(response, "uploadRuntimeObject");
+  try {
+    if (!response.ok)
+      return await throwRuntimeObjectWireError(response, "uploadRuntimeObject");
 
-  return parseRuntimeObjectWireMetadata(await response.json());
+    return parseRuntimeObjectWireMetadata(await response.json());
+  } catch (error) {
+    if (error instanceof MaisterError) throw error;
+    throw networkErrorToMaister(error, "uploadRuntimeObject");
+  } finally {
+    finish();
+  }
 }
 
 export async function getRuntimeObjectContent(
@@ -1506,7 +1593,7 @@ export async function openRuntimeObjectContent(
   const range = opts.range
     ? `bytes=${opts.range.start}-${opts.range.end ?? ""}`
     : undefined;
-  const response = await runtimeObjectBinaryResponse({
+  const { response, finish } = await runtimeObjectBinaryResponse({
     path: `/runtime-objects/${encodeURIComponent(objectId)}/content`,
     method: "GET",
     headers: range ? { range } : undefined,
@@ -1514,9 +1601,18 @@ export async function openRuntimeObjectContent(
     ctx: "getRuntimeObjectContent",
   });
 
-  if (!response.ok)
-    return throwRuntimeObjectWireError(response, "getRuntimeObjectContent");
+  if (!response.ok) {
+    try {
+      return await throwRuntimeObjectWireError(
+        response,
+        "getRuntimeObjectContent",
+      );
+    } finally {
+      finish();
+    }
+  }
   if (!response.body) {
+    finish();
     throw new MaisterError(
       "ACP_PROTOCOL",
       "runtime object content response is missing its body stream",
@@ -1531,6 +1627,8 @@ export async function openRuntimeObjectContent(
     parsedContentLength !== null &&
     (!Number.isSafeInteger(parsedContentLength) || parsedContentLength < 0)
   ) {
+    await response.body.cancel();
+    finish();
     throw new MaisterError(
       "ACP_PROTOCOL",
       "runtime object content response has an invalid content length",
@@ -1538,8 +1636,45 @@ export async function openRuntimeObjectContent(
     );
   }
 
+  const reader = response.body.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(stream) {
+      try {
+        const chunk = await reader.read();
+
+        if (chunk.done) {
+          finish();
+          reader.releaseLock();
+          stream.close();
+        } else if (chunk.value instanceof Uint8Array) {
+          stream.enqueue(chunk.value);
+        } else {
+          throw new MaisterError(
+            "ACP_PROTOCOL",
+            "runtime object body is not binary",
+          );
+        }
+      } catch (error) {
+        finish();
+        stream.error(
+          error instanceof MaisterError
+            ? error
+            : networkErrorToMaister(error, "getRuntimeObjectContent"),
+        );
+      }
+    },
+    async cancel(reason: unknown) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        finish();
+        reader.releaseLock();
+      }
+    },
+  });
+
   return {
-    body: response.body,
+    body,
     contentLength: parsedContentLength,
     contentRange: response.headers.get("content-range"),
     contentDigest: response.headers.get("content-digest"),

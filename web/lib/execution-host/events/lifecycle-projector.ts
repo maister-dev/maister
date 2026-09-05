@@ -6,10 +6,12 @@ import { randomUUID } from "node:crypto";
 
 import { and, eq } from "drizzle-orm";
 
+import { CANONICAL_PROJECTION_CONSUMERS } from "./projection-consumers";
 import {
   ExecutionEventProjectionError,
   projectExecutionEvents,
   type ExecutionEventProjectorSummary,
+  type ExecutionEventProjector,
 } from "./projector";
 
 import {
@@ -21,7 +23,10 @@ import {
   type ExecutionEvent,
 } from "@/lib/db/schema";
 
-const LIFECYCLE_CONSUMER_NAME = "canonical-session-lifecycle-v1";
+export const canonicalLifecycleProjector: ExecutionEventProjector = {
+  consumerName: CANONICAL_PROJECTION_CONSUMERS.lifecycle,
+  project: projectLifecycle,
+};
 
 function permanent(message: string): ExecutionEventProjectionError {
   return new ExecutionEventProjectionError(message, true);
@@ -253,10 +258,7 @@ export async function projectCanonicalSessionLifecycle(input: {
     runId: input.runId,
     now: input.now,
     batchSize: input.batchSize,
-    projector: {
-      consumerName: LIFECYCLE_CONSUMER_NAME,
-      project: projectLifecycle,
-    },
+    projector: canonicalLifecycleProjector,
   });
 }
 

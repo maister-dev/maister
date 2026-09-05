@@ -21,6 +21,7 @@
     "db:migrate": "tsx --import ./scripts/_register-shim.mjs lib/db/migrate.ts",
     "db:migrate:brain": "tsx lib/db/migrate-brain.ts",
     "db:check": "tsx --import ./scripts/_register-shim.mjs lib/db/check.ts",
+    "execution:projection:rearm": "tsx --import ./scripts/_register-shim.mjs scripts/rearm-execution-projection.ts",
     "db:seed": "tsx --import ./scripts/_register-shim.mjs lib/db/seed.ts",
     "db:studio": "drizzle-kit studio",
     "db:erd": "tsx --import ./scripts/_register-shim.mjs scripts/generate-erd-dbml.ts",
@@ -90,7 +91,7 @@
     "server-only": "^0.0.1",
     "shiki": "4.2.0",
     "tar": "^7.5.16",
-    "undici": "^8.4.1",
+    "undici": "8.4.1",
     "yaml": "^2.9.0",
     "zod": "^3.25.76"
   },

@@ -4,10 +4,12 @@ import type { Db } from "@/lib/execution-host/db";
 
 import { and, desc, eq } from "drizzle-orm";
 
+import { CANONICAL_PROJECTION_CONSUMERS } from "./projection-consumers";
 import {
   ExecutionEventProjectionError,
   projectExecutionEvents,
   type ExecutionEventProjectorSummary,
+  type ExecutionEventProjector,
 } from "./projector";
 
 import {
@@ -23,7 +25,10 @@ import {
   RUNTIME_OBJECT_STATES,
 } from "@/lib/execution-host/types";
 
-const RUNTIME_OBJECT_CONSUMER = "canonical-runtime-object-v1";
+export const canonicalRuntimeObjectProjector: ExecutionEventProjector = {
+  consumerName: CANONICAL_PROJECTION_CONSUMERS.runtimeObject,
+  project: projectRuntimeObject,
+};
 const kinds = new Set<string>(RUNTIME_OBJECT_KINDS);
 const retentionClasses = new Set<string>(RUNTIME_OBJECT_RETENTION_CLASSES);
 const states = new Set<string>(RUNTIME_OBJECT_STATES);
@@ -364,10 +369,7 @@ export async function projectCanonicalRuntimeObjects(input: {
     runId: input.runId,
     now: input.now,
     batchSize: input.batchSize,
-    projector: {
-      consumerName: RUNTIME_OBJECT_CONSUMER,
-      project: projectRuntimeObject,
-    },
+    projector: canonicalRuntimeObjectProjector,
   });
 }
 

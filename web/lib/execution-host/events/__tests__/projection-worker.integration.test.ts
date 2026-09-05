@@ -1,0 +1,555 @@
+import type { ExecutionEventProjector } from "../projector";
+
+import { randomUUID } from "node:crypto";
+import { fork, type ChildProcess } from "node:child_process";
+import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+
+import { sql } from "drizzle-orm";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import {
+  backfillProjectionConsumers,
+  startProjectionWorker,
+} from "../projection-worker";
+import { CANONICAL_PROJECTION_CONSUMERS } from "../projection-consumers";
+import { ingestRuntimeEvent } from "../ingest";
+import {
+  ExecutionEventProjectionError,
+  projectExecutionEvents,
+  rearmExecutionProjection,
+} from "../projector";
+
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
+
+let database: StartedPostgresTestDb;
+const projectId = randomUUID();
+
+beforeAll(async () => {
+  database = await startMainPostgresTestDb({
+    databaseName: "projection_worker_test",
+  });
+  await database.pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path, task_key)
+     VALUES ($1, 'projection-worker', 'Projection worker', '/tmp/projection-worker', '/tmp/projection-worker/maister.yaml', 'PROJ-WORKER')`,
+    [projectId],
+  );
+  await database.pool.query(`CREATE TABLE projection_worker_effects (
+    ordinal bigserial PRIMARY KEY, consumer_name text NOT NULL, event_id text NOT NULL,
+    run_id text NOT NULL, UNIQUE (consumer_name, event_id))`);
+}, 240_000);
+
+afterAll(async () => {
+  await database?.stop();
+});
+
+async function seedRun(count: number): Promise<string> {
+  const runId = randomUUID();
+
+  await database.pool.query(
+    `INSERT INTO runs (id, project_id, run_kind, status, flow_version, flow_revision)
+     VALUES ($1, $2, 'scratch', 'Pending', 'scratch', 'projection-worker')`,
+    [runId, projectId],
+  );
+  await database.pool.query(
+    `INSERT INTO execution_events
+     (id, source, source_key, run_id, event_type, payload_schema, payload, payload_bytes, occurred_at, run_sequence, ingest_disposition)
+     SELECT $1 || ':' || n, 'manager', n::text, $1, 'test.projection', 'test.projection.v1',
+       jsonb_build_object('index', n), 20, now(), n, 'accepted'
+     FROM generate_series(0, $2::int - 1) n`,
+    [runId, count],
+  );
+
+  return runId;
+}
+
+function effectProjector(consumerName: string): ExecutionEventProjector {
+  return {
+    consumerName,
+    project: async (tx, event) => {
+      await tx.execute(sql`INSERT INTO projection_worker_effects (consumer_name, event_id, run_id)
+        VALUES (${consumerName}, ${event.id}, ${event.runId})`);
+    },
+  };
+}
+
+async function waitForCursor(
+  consumerName: string,
+  runId: string,
+  expected: string,
+  timeoutMs = 15_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const result = await database.pool.query<{ cursor: string | null }>(
+      "SELECT last_run_sequence::text AS cursor FROM execution_event_consumers WHERE consumer_name = $1 AND run_id = $2",
+      [consumerName, runId],
+    );
+
+    if (result.rows[0]?.cursor === expected) return;
+    await delay(25);
+  }
+  throw new Error(
+    `projection cursor ${consumerName}/${runId} did not reach ${expected}`,
+  );
+}
+
+async function startProductionWorker(): Promise<{
+  child: ChildProcess;
+  exited: Promise<number | null>;
+}> {
+  const child = fork(
+    path.resolve("test-support/projection-worker-process.ts"),
+    [],
+    {
+      execArgv: [
+        "--import",
+        "tsx",
+        "--import",
+        path.resolve("scripts/_register-shim.mjs"),
+      ],
+      env: { ...process.env, DB_URL: database.databaseUrl },
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
+    },
+  );
+  let tail = "";
+  const record = (chunk: Buffer): void => {
+    tail = (tail + chunk.toString("utf8")).slice(-16_384);
+  };
+
+  child.stdout?.on("data", record);
+  child.stderr?.on("data", record);
+  const exited = new Promise<number | null>((resolve, reject) => {
+    child.once("exit", resolve);
+    child.once("error", reject);
+  });
+
+  try {
+    await Promise.race([
+      new Promise<void>((resolve) => {
+        child.once("message", () => resolve());
+      }),
+      exited.then(() => {
+        throw new Error(`projection process exited before readiness: ${tail}`);
+      }),
+      delay(10_000).then(() => {
+        throw new Error(`projection process readiness timed out: ${tail}`);
+      }),
+    ]);
+  } catch (error) {
+    child.kill("SIGKILL");
+    await exited;
+    throw error;
+  }
+
+  return { child, exited };
+}
+
+describe("autonomous canonical projection worker", () => {
+  it("AT-03: seeds every run released by another run's stream gap", async () => {
+    const firstRun = await seedRun(0);
+    const secondRun = await seedRun(0);
+    const hostId = randomUUID();
+    const hostKey = `eh_${randomUUID().replaceAll("-", "")}`;
+    const streamId = randomUUID();
+    const firstAssignment = randomUUID();
+    const secondAssignment = randomUUID();
+
+    await database.pool.query(
+      `INSERT INTO execution_hosts (id, host_key, kind, display_name, transport)
+      VALUES ($1, $2, 'local_direct', 'gap host', '{"kind":"local_direct"}')`,
+      [hostId, hostKey],
+    );
+    await database.pool.query(
+      `INSERT INTO execution_assignments (id, run_id, execution_host_id, epoch, state, placement_reason)
+      VALUES ($1, $2, $3, 1, 'active', 'launch'), ($4, $5, $3, 1, 'active', 'launch')`,
+      [firstAssignment, firstRun, hostId, secondAssignment, secondRun],
+    );
+    const envelope = (
+      runId: string,
+      assignmentId: string,
+      sequence: string,
+    ): Record<string, unknown> => ({
+      envelopeVersion: 1,
+      eventId: randomUUID(),
+      hostKey,
+      hostBootId: randomUUID(),
+      streamId,
+      sequence,
+      runId,
+      assignmentId,
+      assignmentEpoch: 1,
+      hostSessionId: null,
+      occurredAt: new Date().toISOString(),
+      eventType: "usage.recorded",
+      payloadSchema: "maister.usage.recorded.v1",
+      payload: { inputTokens: 1, model: "test", sessionName: "default" },
+    });
+
+    await ingestRuntimeEvent({
+      db: database.db,
+      executionHostId: hostId,
+      envelope: envelope(firstRun, firstAssignment, "0"),
+    });
+    await ingestRuntimeEvent({
+      db: database.db,
+      executionHostId: hostId,
+      envelope: envelope(secondRun, secondAssignment, "2"),
+    });
+    const before = await database.pool.query<{ count: number }>(
+      "SELECT count(*)::int AS count FROM execution_event_consumers WHERE run_id = $1",
+      [secondRun],
+    );
+
+    expect(before.rows).toEqual([{ count: 0 }]);
+    const filled = await ingestRuntimeEvent({
+      db: database.db,
+      executionHostId: hostId,
+      envelope: envelope(firstRun, firstAssignment, "1"),
+    });
+    const after = await database.pool.query<{ consumer_name: string }>(
+      "SELECT consumer_name FROM execution_event_consumers WHERE run_id = $1",
+      [secondRun],
+    );
+
+    expect(filled.acceptedCount).toBe(2);
+    expect(after.rows.map((row) => row.consumer_name).sort()).toEqual(
+      Object.values(CANONICAL_PROJECTION_CONSUMERS).sort(),
+    );
+    await database.pool.query(
+      "UPDATE execution_assignments SET state = 'released', ended_at = now(), released_reason = 'test_complete' WHERE execution_host_id = $1",
+      [hostId],
+    );
+    await database.pool.query(
+      "UPDATE execution_hosts SET retired_at = now() WHERE id = $1",
+      [hostId],
+    );
+  });
+
+  it("AT-03: bounds payload bytes before loading event bodies", async () => {
+    const runId = await seedRun(25);
+
+    await database.pool.query(
+      `UPDATE execution_events SET payload = jsonb_build_object('text', repeat('x', 60000)), payload_bytes = 60011 WHERE run_id = $1`,
+      [runId],
+    );
+    const result = await projectExecutionEvents({
+      db: database.db,
+      runId,
+      projector: {
+        consumerName: `bytes:${randomUUID()}`,
+        project: async () => {},
+      },
+    });
+
+    expect(result).toMatchObject({ projected: 17, lastRunSequence: "16" });
+  });
+
+  it("AT-03: backfills at most 100 runs and resumes after its cursor run is deleted", async () => {
+    const prefix = `zz-backfill:${randomUUID()}:`;
+    const consumerName = `backfill:${randomUUID()}`;
+
+    await database.pool.query(
+      `INSERT INTO runs (id, project_id, run_kind, status, flow_version, flow_revision)
+      SELECT $1 || lpad(n::text, 3, '0'), $2, 'scratch', 'Pending', 'scratch', 'backfill'
+      FROM generate_series(0, 100) n`,
+      [prefix, projectId],
+    );
+    await database.pool.query(
+      `INSERT INTO execution_events (id, source, source_key, run_id, event_type, payload_schema, payload, occurred_at, run_sequence, ingest_disposition)
+      SELECT id || ':event', 'manager', '0', id, 'test.projection', 'test.v1', '{}', now(), 0, 'accepted'
+      FROM runs WHERE starts_with(id, $1)`,
+      [prefix],
+    );
+    const first = await backfillProjectionConsumers(database.db, consumerName);
+
+    expect(first).toEqual({ complete: false, seeded: 100 });
+    const cursor = await database.pool.query<{ after_run_id: string }>(
+      "SELECT after_run_id FROM execution_projection_backfills WHERE consumer_name = $1",
+      [consumerName],
+    );
+
+    expect(cursor.rows[0].after_run_id.startsWith(prefix)).toBe(true);
+    await database.pool.query("DELETE FROM runs WHERE id = $1", [
+      cursor.rows[0].after_run_id,
+    ]);
+    const second = await backfillProjectionConsumers(database.db, consumerName);
+    const missing = await database.pool.query<{ count: number }>(
+      `SELECT count(*)::int AS count FROM runs r
+      WHERE EXISTS (SELECT 1 FROM execution_events e WHERE e.run_id = r.id AND e.ingest_disposition = 'accepted')
+      AND NOT EXISTS (SELECT 1 FROM execution_event_consumers c WHERE c.run_id = r.id AND c.consumer_name = $1)`,
+      [consumerName],
+    );
+
+    expect(second.complete).toBe(true);
+    expect(second.seeded).toBeGreaterThan(0);
+    expect(second.seeded).toBeLessThanOrEqual(100);
+    expect(missing.rows).toEqual([{ count: 0 }]);
+  });
+
+  it("AT-04: rearms only the observed failure generation and cursor", async () => {
+    const runId = await seedRun(1);
+    const consumerName = `repair:${randomUUID()}`;
+    const failure = await projectExecutionEvents({
+      db: database.db,
+      runId,
+      projector: {
+        consumerName,
+        project: async () => {
+          throw new ExecutionEventProjectionError("repair required", true);
+        },
+      },
+    });
+    const state = await database.pool.query<{
+      error_generation: string;
+      event_id: string;
+    }>(
+      "SELECT last_error->>'errorGeneration' AS error_generation, last_error->>'eventId' AS event_id FROM execution_event_consumers WHERE consumer_name = $1 AND run_id = $2",
+      [consumerName, runId],
+    );
+    const input = {
+      db: database.db,
+      runId,
+      consumerName,
+      eventId: state.rows[0].event_id,
+      expectedCursor: null,
+      errorGeneration: state.rows[0].error_generation,
+    };
+
+    expect(failure.poisoned).toBe(true);
+    await expect(
+      rearmExecutionProjection({ ...input, errorGeneration: randomUUID() }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(
+      rearmExecutionProjection({ ...input, expectedCursor: 0n }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    await rearmExecutionProjection(input);
+    const completed = await projectExecutionEvents({
+      db: database.db,
+      runId,
+      projector: effectProjector(consumerName),
+    });
+
+    expect(completed).toMatchObject({ projected: 1, lastRunSequence: "0" });
+    await expect(rearmExecutionProjection(input)).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+  });
+
+  it("AT-03: production registry recovers a killed claim and a terminal event after sequence 200", async () => {
+    const runId = await seedRun(260);
+    const hostId = randomUUID();
+    const assignmentId = randomUUID();
+    const commandId = randomUUID();
+    const hostKey = `eh_${randomUUID().replaceAll("-", "")}`;
+
+    await database.pool.query(
+      "UPDATE runs SET run_kind = 'agent', next_execution_event_sequence = 260 WHERE id = $1",
+      [runId],
+    );
+    await database.pool.query(
+      `UPDATE execution_events SET
+      event_type = CASE WHEN run_sequence % 10 = 0 THEN 'usage.recorded' ELSE 'session.update' END,
+      payload = CASE WHEN run_sequence % 10 = 0 THEN '{"inputTokens":1,"model":"test","sessionName":"default"}'::jsonb
+        ELSE '{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"x"}}}'::jsonb END
+      WHERE run_id = $1`,
+      [runId],
+    );
+    await database.pool.query(
+      `INSERT INTO execution_hosts (id, host_key, kind, display_name, transport)
+      VALUES ($1, $2, 'local_direct', 'projection host', '{"kind":"local_direct"}')`,
+      [hostId, hostKey],
+    );
+    await database.pool.query(
+      `INSERT INTO execution_assignments (id, run_id, execution_host_id, epoch, state, placement_reason)
+      VALUES ($1, $2, $3, 1, 'active', 'launch')`,
+      [assignmentId, runId, hostId],
+    );
+    await database.pool.query(
+      `INSERT INTO execution_commands (id, run_id, execution_assignment_id, execution_host_id, assignment_epoch, kind, payload, state, max_attempts)
+      VALUES ($1, $2, $3, $4, 1, 'session.prompt', '{}', 'delivering', 3)`,
+      [commandId, runId, assignmentId, hostId],
+    );
+    await ingestRuntimeEvent({
+      db: database.db,
+      executionHostId: hostId,
+      envelope: {
+        envelopeVersion: 1,
+        eventId: randomUUID(),
+        hostKey,
+        hostBootId: randomUUID(),
+        streamId: randomUUID(),
+        sequence: "0",
+        runId,
+        assignmentId,
+        assignmentEpoch: 1,
+        hostSessionId: null,
+        occurredAt: new Date().toISOString(),
+        eventType: "session.command",
+        payloadSchema: "maister.session.command.v1",
+        payload: {
+          commandId,
+          kind: "session.prompt",
+          phase: "completed",
+          status: "succeeded",
+          result: { stopReason: "end_turn", meta: null },
+        },
+      },
+    });
+    await database.pool
+      .query(`CREATE FUNCTION slow_projection_state() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN PERFORM pg_sleep(10); RETURN NEW; END $$`);
+    await database.pool
+      .query(`CREATE TRIGGER slow_projection_state BEFORE INSERT ON run_transcript_states
+      FOR EACH ROW EXECUTE FUNCTION slow_projection_state()`);
+    const first = await startProductionWorker();
+
+    try {
+      const deadline = Date.now() + 10_000;
+      let claimed = false;
+
+      while (Date.now() < deadline) {
+        const state = await database.pool.query<{ claimed: boolean }>(
+          "SELECT claim_owner IS NOT NULL AS claimed FROM execution_event_consumers WHERE run_id = $1 AND consumer_name = $2",
+          [runId, CANONICAL_PROJECTION_CONSUMERS.transcript],
+        );
+
+        if (state.rows[0]?.claimed) {
+          claimed = true;
+          break;
+        }
+        await delay(20);
+      }
+      expect(claimed).toBe(true);
+    } finally {
+      first.child.kill("SIGKILL");
+      await first.exited;
+      await database.pool.query(
+        "DROP TRIGGER slow_projection_state ON run_transcript_states",
+      );
+      await database.pool.query("DROP FUNCTION slow_projection_state()");
+    }
+    const second = await startProductionWorker();
+
+    try {
+      // No ingest or manual lease edit: the production DB-clock lease expires.
+      await Promise.all(
+        Object.values(CANONICAL_PROJECTION_CONSUMERS).map((name) =>
+          waitForCursor(name, runId, "260", 40_000),
+        ),
+      );
+      const command = await database.pool.query<{ state: string }>(
+        "SELECT state FROM execution_commands WHERE id = $1",
+        [commandId],
+      );
+      const transcript = await database.pool.query<{ content: string }>(
+        "SELECT content FROM run_messages WHERE run_id = $1",
+        [runId],
+      );
+      const cost = await database.pool.query<{
+        input_tokens: number;
+        source_event_count: number;
+      }>(
+        "SELECT input_tokens, source_event_count FROM run_cost_rollups WHERE run_id = $1",
+        [runId],
+      );
+
+      expect(command.rows).toEqual([{ state: "succeeded" }]);
+      expect(transcript.rows).toEqual([{ content: "x".repeat(234) }]);
+      expect(cost.rows).toEqual([{ input_tokens: 26, source_event_count: 26 }]);
+    } finally {
+      second.child.kill("SIGTERM");
+      await second.exited;
+    }
+  }, 60_000);
+
+  it("AT-03: drains more than two batches fairly after restart without new ingest", async () => {
+    const longRun = await seedRun(260);
+    const shortRun = await seedRun(1);
+    const consumerName = `drain:${randomUUID()}`;
+    const projector = effectProjector(consumerName);
+
+    // Persist the boot scan before replacing the worker process state. The
+    // second activation must rediscover backlog from durable consumer cursors.
+    await backfillProjectionConsumers(database.db, consumerName);
+    const first = startProjectionWorker({
+      db: database.db,
+      projectors: [projector],
+    });
+
+    await first.stop();
+    const second = startProjectionWorker({
+      db: database.db,
+      projectors: [projector],
+    });
+    const competitor = startProjectionWorker({
+      db: database.db,
+      projectors: [projector],
+    });
+
+    try {
+      await Promise.all([
+        waitForCursor(consumerName, longRun, "259"),
+        waitForCursor(consumerName, shortRun, "0"),
+      ]);
+      const effects = await database.pool.query<{ run_id: string }>(
+        "SELECT run_id FROM projection_worker_effects WHERE consumer_name = $1 AND run_id = ANY($2::text[]) ORDER BY ordinal",
+        [consumerName, [longRun, shortRun]],
+      );
+
+      expect(effects.rows).toHaveLength(261);
+      expect(
+        effects.rows.findIndex((row) => row.run_id === shortRun),
+      ).toBeLessThan(260);
+      expect(await second.health()).toEqual({ state: "running", reason: null });
+      expect(await competitor.health()).toEqual({
+        state: "running",
+        reason: null,
+      });
+    } finally {
+      await Promise.all([second.stop(), competitor.stop()]);
+    }
+  }, 25_000);
+
+  it("AT-03: services a last-event transient retry after its deadline without a new event", async () => {
+    const runId = await seedRun(1);
+    const consumerName = `retry:${randomUUID()}`;
+    const ordinary = effectProjector(consumerName);
+    let shouldFail = true;
+    const worker = startProjectionWorker({
+      db: database.db,
+      projectors: [
+        {
+          consumerName,
+          project: async (tx, event) => {
+            if (event.runId === runId && shouldFail) {
+              shouldFail = false;
+              throw new Error("injected temporary projection failure");
+            }
+            await ordinary.project(tx, event);
+          },
+        },
+      ],
+    });
+
+    try {
+      await waitForCursor(consumerName, runId, "0");
+      const rows = await database.pool.query<{
+        attempts: number;
+        state: string;
+      }>(
+        "SELECT attempts, state FROM execution_event_consumers WHERE consumer_name = $1 AND run_id = $2",
+        [consumerName, runId],
+      );
+
+      expect(shouldFail).toBe(false);
+      expect(rows.rows).toEqual([{ attempts: 0, state: "ready" }]);
+    } finally {
+      await worker.stop();
+    }
+  }, 25_000);
+});

@@ -3,19 +3,16 @@ import "server-only";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { TranscriptMessage } from "@/components/run-transcript/transcript-view";
 
-import { randomUUID } from "node:crypto";
-
 import { and, asc, desc, eq } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
-import {
-  coalesceSessionUpdates,
-  type CoalesceEntry,
-} from "@/lib/run-transcript/coalesce";
+import { projectExecutionEvents } from "@/lib/execution-host/events/projector";
+import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
+import { projectTranscriptEvent } from "@/lib/execution-host/events/transcript-projector";
 
-const { executionEventConsumers, executionEvents, runMessages, runs } = schema;
+const { runMessages, runs } = schema;
 
 type DbClient = NodePgDatabase<typeof schema>;
 
@@ -23,200 +20,55 @@ function db(): DbClient {
   return getDb();
 }
 
-const TRANSCRIPT_CONSUMER_NAME = "canonical-run-transcript-v1";
-
-const RESET_EVENT_TYPES = new Set([
-  "session.permission_request",
-  "session.hook_trip",
-  "session.exited",
-  "session.crashed",
-]);
-
 export type ProjectRunTranscriptResult = {
   status: "projected" | "missing-run" | "missing-events" | "unchanged";
   nodeAttempts: number;
   rowsUpserted: number;
 };
 
-// Canonical runs derive the same coalesced transcript from manager-owned
-// execution_events. This intentionally replays durable database history; it
-// never reaches into an execution host's event file. A consumer cursor makes
-// the reconcile-on-read path a no-op after the durable event frontier has been
-// projected, including when a non-transcript lifecycle event is appended.
+// Reads may help with one bounded quantum. The autonomous worker owns eventual
+// catch-up, including when no reader or new event arrives after a restart.
 async function projectCanonicalRunTranscript(
   runId: string,
   client: DbClient,
 ): Promise<ProjectRunTranscriptResult> {
-  const rows = await client
-    .select({
-      id: executionEvents.id,
-      eventType: executionEvents.eventType,
-      payload: executionEvents.payload,
-      runSequence: executionEvents.runSequence,
-    })
-    .from(executionEvents)
-    .where(
-      and(
-        eq(executionEvents.runId, runId),
-        eq(executionEvents.ingestDisposition, "accepted"),
-      ),
-    )
-    .orderBy(asc(executionEvents.runSequence));
-  const byAttempt = new Map<string | null, CoalesceEntry[]>();
+  const attempts = new Set<string>();
+  let changed = 0;
+  const summary = await projectExecutionEvents({
+    db: client,
+    runId,
+    projector: {
+      consumerName: CANONICAL_PROJECTION_CONSUMERS.transcript,
+      project: async (tx, event) => {
+        if (await projectTranscriptEvent(tx, event)) {
+          changed += 1;
+          const attemptId = event.payload?.nodeAttemptId;
 
-  for (const row of rows) {
-    if (row.runSequence === null || !row.payload) continue;
-    const nodeAttemptId =
-      typeof row.payload.nodeAttemptId === "string"
-        ? row.payload.nodeAttemptId
-        : null;
-    const entries = byAttempt.get(nodeAttemptId) ?? [];
-
-    if (row.eventType === "session.update") {
-      entries.push({
-        kind: "update",
-        update: row.payload.update,
-        supervisorEventId: row.runSequence.toString(),
-      });
-    } else if (RESET_EVENT_TYPES.has(row.eventType)) {
-      entries.push({ kind: "reset" });
-    }
-    byAttempt.set(nodeAttemptId, entries);
-  }
-
-  const ownedAttempts = await client
-    .select({ id: schema.nodeAttempts.id })
-    .from(schema.nodeAttempts)
-    .where(eq(schema.nodeAttempts.runId, runId));
-  const ownedAttemptIds = new Set(ownedAttempts.map((attempt) => attempt.id));
-  let rowsUpserted = 0;
-  let nodeAttempts = 0;
-  const latestRunSequence = rows.at(-1)?.runSequence ?? null;
-
-  if (latestRunSequence === null) {
-    return { status: "missing-events", nodeAttempts, rowsUpserted };
-  }
-
-  await client.transaction(async (tx) => {
-    await tx
-      .insert(executionEventConsumers)
-      .values({ consumerName: TRANSCRIPT_CONSUMER_NAME, runId })
-      .onConflictDoNothing();
-    const [consumer] = await tx
-      .select({ lastRunSequence: executionEventConsumers.lastRunSequence })
-      .from(executionEventConsumers)
-      .where(
-        and(
-          eq(executionEventConsumers.consumerName, TRANSCRIPT_CONSUMER_NAME),
-          eq(executionEventConsumers.runId, runId),
-        ),
-      )
-      .for("update")
-      .limit(1);
-
-    if (!consumer) {
-      throw new Error("canonical transcript consumer row disappeared");
-    }
-    if (
-      consumer.lastRunSequence !== null &&
-      consumer.lastRunSequence >= latestRunSequence
-    ) {
-      return;
-    }
-
-    const hasNewTranscriptEvent = rows.some(
-      (row) =>
-        row.runSequence !== null &&
-        (consumer.lastRunSequence === null ||
-          row.runSequence > consumer.lastRunSequence) &&
-        (row.eventType === "session.update" ||
-          RESET_EVENT_TYPES.has(row.eventType)),
-    );
-
-    if (!hasNewTranscriptEvent) {
-      await tx
-        .update(executionEventConsumers)
-        .set({
-          lastRunSequence: latestRunSequence,
-          state: "ready",
-          attempts: 0,
-          nextRetryAt: null,
-          poisonEventId: null,
-          lastError: null,
-          claimOwner: null,
-          claimExpiresAt: null,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(executionEventConsumers.consumerName, TRANSCRIPT_CONSUMER_NAME),
-            eq(executionEventConsumers.runId, runId),
-          ),
-        );
-
-      return;
-    }
-
-    for (const [nodeAttemptId, entries] of byAttempt) {
-      if (nodeAttemptId && !ownedAttemptIds.has(nodeAttemptId)) {
-        throw new MaisterError(
-          "CONFLICT",
-          `canonical transcript event names node attempt outside run ${runId}`,
-          { details: { reason: "transcript_node_attempt_mismatch" } },
-        );
-      }
-      if (nodeAttemptId) nodeAttempts += 1;
-      for (const message of coalesceSessionUpdates(entries)) {
-        await tx
-          .insert(runMessages)
-          .values({
-            id: randomUUID(),
-            runId,
-            nodeAttemptId,
-            sequence: message.sequence,
-            role: message.role,
-            content: message.content,
-            supervisorEventId: message.supervisorEventId,
-          })
-          .onConflictDoUpdate({
-            target: [
-              runMessages.runId,
-              runMessages.nodeAttemptId,
-              runMessages.sequence,
-            ],
-            set: {
-              content: message.content,
-              supervisorEventId: message.supervisorEventId,
-            },
-          });
-        rowsUpserted += 1;
-      }
-    }
-
-    await tx
-      .update(executionEventConsumers)
-      .set({
-        lastRunSequence: latestRunSequence,
-        state: "ready",
-        attempts: 0,
-        nextRetryAt: null,
-        poisonEventId: null,
-        lastError: null,
-        claimOwner: null,
-        claimExpiresAt: null,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(executionEventConsumers.consumerName, TRANSCRIPT_CONSUMER_NAME),
-          eq(executionEventConsumers.runId, runId),
-        ),
-      );
+          if (typeof attemptId === "string") attempts.add(attemptId);
+        }
+      },
+    },
   });
 
+  if (summary.poisoned) {
+    throw new MaisterError(
+      "CONFLICT",
+      "canonical transcript projection requires repair",
+      {
+        details: { reason: "transcript_projection_poisoned", runId },
+      },
+    );
+  }
+  const rowsUpserted = summary.projected > 0 ? changed : 0;
+
   return {
-    status: rowsUpserted > 0 ? "projected" : "unchanged",
-    nodeAttempts,
+    status:
+      rowsUpserted > 0
+        ? "projected"
+        : summary.lastRunSequence === null
+          ? "missing-events"
+          : "unchanged",
+    nodeAttempts: rowsUpserted > 0 ? attempts.size : 0,
     rowsUpserted,
   };
 }

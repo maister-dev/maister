@@ -2,6 +2,7 @@ import type { ExecutionHostTransport } from "@/lib/execution-host/contracts";
 
 import { randomUUID } from "node:crypto";
 
+import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { ingestRuntimeEvent } from "@/lib/execution-host/events/ingest";
@@ -986,4 +987,282 @@ describe("runtime event ingestion", () => {
       readiness_reason: "event_stream_identity_conflict",
     });
   });
+
+  async function seedProjectionFailure(): Promise<{
+    runId: string;
+    eventId: string;
+  }> {
+    const failureRunId = randomUUID();
+
+    await testDatabase.pool.query(
+      `insert into runs (id, project_id, run_kind, status, flow_version, flow_revision)
+       values ($1, $2, 'scratch', 'Pending', 'scratch', 'projection-failure')`,
+      [failureRunId, projectId],
+    );
+    const appended = await appendManagerRunStreamEvent(testDatabase.db, {
+      runId: failureRunId,
+      sourceKey: "first-event",
+      event: { type: "run.needs_input", data: { reason: "human" } },
+    });
+
+    return { runId: failureRunId, eventId: appended.eventId };
+  }
+
+  it.each([true, false])(
+    "AT-04: preserves an absent consumer's first failure (permanent=%s)",
+    async (permanent) => {
+      const seeded = await seedProjectionFailure();
+      const now = new Date();
+      const consumerName = `first-failure-${permanent}`;
+      const summary = await projectExecutionEvents({
+        db: testDatabase.db,
+        runId: seeded.runId,
+        now,
+        projector: {
+          consumerName,
+          project: async () => {
+            throw new ExecutionEventProjectionError(
+              "original projection failure",
+              permanent,
+            );
+          },
+        },
+      });
+      const stored = await testDatabase.pool.query<{
+        state: string;
+        attempts: number;
+        last_run_sequence: string | null;
+        next_retry_at: Date | null;
+        poison_event_id: string | null;
+        last_error: { message: string; eventId: string };
+      }>(
+        `select state, attempts, last_run_sequence::text, next_retry_at, poison_event_id, last_error
+       from execution_event_consumers where run_id = $1 and consumer_name = $2`,
+        [seeded.runId, consumerName],
+      );
+
+      expect(summary).toMatchObject({
+        projected: 0,
+        poisoned: permanent,
+        deferred: !permanent,
+      });
+      expect(stored.rows[0]).toMatchObject({
+        state: permanent ? "poisoned" : "retrying",
+        attempts: 1,
+        last_run_sequence: null,
+        poison_event_id: permanent ? seeded.eventId : null,
+        last_error: {
+          message: "original projection failure",
+          eventId: seeded.eventId,
+        },
+      });
+      expect(stored.rows[0].next_retry_at).toEqual(
+        permanent ? null : new Date(now.getTime() + 1_000),
+      );
+    },
+  );
+
+  it("AT-04: a delayed failure recorder cannot poison a successor's cursor", async () => {
+    const seeded = await seedProjectionFailure();
+    const rolledBack = Promise.withResolvers<void>();
+    const releaseFailure = Promise.withResolvers<void>();
+    let acquisitions = 0;
+    const delayedPool = new Proxy(testDatabase.pool, {
+      get(target, key, receiver): unknown {
+        if (key !== "connect") return Reflect.get(target, key, receiver);
+
+        return async () => {
+          acquisitions += 1;
+          // Claim and apply use the first two connections. Delay the failure
+          // recorder before acquiring its third connection, after rollback.
+          if (acquisitions === 3) {
+            rolledBack.resolve();
+            await releaseFailure.promise;
+          }
+
+          return target.connect();
+        };
+      },
+    });
+    const delayedDb = new Proxy(testDatabase.db, {
+      get(target, key, receiver): unknown {
+        return key === "$client"
+          ? delayedPool
+          : Reflect.get(target, key, receiver);
+      },
+    });
+    const consumerName = "delayed-failure";
+    const pending = projectExecutionEvents({
+      db: delayedDb,
+      runId: seeded.runId,
+      owner: "same-worker-label",
+      projector: {
+        consumerName,
+        project: async () => {
+          throw new ExecutionEventProjectionError("old failure", true);
+        },
+      },
+    });
+
+    try {
+      await rolledBack.promise;
+      await testDatabase.pool.query(
+        `update execution_event_consumers set claim_expires_at = now() - interval '1 second'
+         where run_id = $1 and consumer_name = $2`,
+        [seeded.runId, consumerName],
+      );
+      const next = await projectExecutionEvents({
+        db: testDatabase.db,
+        runId: seeded.runId,
+        owner: "same-worker-label",
+        projector: { consumerName, project: async () => {} },
+      });
+
+      expect(next).toMatchObject({ projected: 1, lastRunSequence: "0" });
+    } finally {
+      releaseFailure.resolve();
+    }
+    expect(await pending).toMatchObject({
+      projected: 0,
+      poisoned: false,
+      lastRunSequence: "0",
+    });
+    const state = await testDatabase.pool.query<{
+      state: string;
+      last_error: unknown;
+    }>(
+      "select state, last_error from execution_event_consumers where run_id = $1 and consumer_name = $2",
+      [seeded.runId, consumerName],
+    );
+
+    expect(state.rows[0]).toEqual({ state: "ready", last_error: null });
+  });
+
+  it("AT-03: enforces a cumulative transaction deadline across multiple statements", async () => {
+    const seeded = await seedProjectionFailure();
+    const summary = await projectExecutionEvents({
+      db: testDatabase.db,
+      runId: seeded.runId,
+      projector: {
+        consumerName: "transaction-deadline",
+        project: async (tx) => {
+          await tx.execute(sql`SELECT pg_sleep(3)`);
+          await tx.execute(sql`SELECT pg_sleep(3)`);
+        },
+      },
+    });
+
+    expect(summary).toMatchObject({
+      projected: 0,
+      deferred: true,
+      lastRunSequence: null,
+    });
+  }, 10_000);
+
+  it("AT-03: treats a lost projection connection as a service failure and retains its claim", async () => {
+    const seeded = await seedProjectionFailure();
+    const consumerName = "lost-projection-connection";
+
+    await expect(
+      projectExecutionEvents({
+        db: testDatabase.db,
+        runId: seeded.runId,
+        projector: {
+          consumerName,
+          project: async (tx) => {
+            const backend = await tx.execute<{ pid: number }>(
+              sql`SELECT pg_backend_pid() AS pid`,
+            );
+
+            await testDatabase.pool.query("SELECT pg_terminate_backend($1)", [
+              backend.rows[0].pid,
+            ]);
+            await tx.execute(sql`SELECT 1`);
+          },
+        },
+      }),
+    ).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
+    const state = await testDatabase.pool.query<{
+      attempts: number;
+      state: string;
+      claimed: boolean;
+    }>(
+      "SELECT attempts, state, claim_owner IS NOT NULL AS claimed FROM execution_event_consumers WHERE run_id = $1 AND consumer_name = $2",
+      [seeded.runId, consumerName],
+    );
+
+    expect(state.rows).toEqual([
+      { attempts: 0, state: "ready", claimed: true },
+    ]);
+    const healthy = await projectExecutionEvents({
+      db: testDatabase.db,
+      runId: seeded.runId,
+      projector: {
+        consumerName: "after-lost-connection",
+        project: async () => {},
+      },
+    });
+
+    expect(healthy.projected).toBe(1);
+  });
+
+  it("AT-03: cancels a blocked statement and rolls back its domain writes", async () => {
+    const seeded = await seedProjectionFailure();
+    const blocker = await testDatabase.pool.connect();
+
+    await blocker.query("BEGIN");
+    // A non-key writer blocks the domain UPDATE while allowing the consumer's
+    // run foreign-key check during the separately committed claim.
+    await blocker.query("SELECT id FROM runs WHERE id = $1 FOR NO KEY UPDATE", [
+      seeded.runId,
+    ]);
+    let releaseTimer: ReturnType<typeof setTimeout> | undefined;
+    const released = new Promise<void>((resolve, reject) => {
+      releaseTimer = setTimeout(() => {
+        void blocker.query("ROLLBACK").then(() => resolve(), reject);
+      }, 6_000);
+    });
+
+    try {
+      const summary = await projectExecutionEvents({
+        db: testDatabase.db,
+        runId: seeded.runId,
+        projector: {
+          consumerName: "blocked-statement",
+          project: async (tx) => {
+            await tx.execute(
+              sql`UPDATE runs SET status = 'Running' WHERE id = ${seeded.runId}`,
+            );
+          },
+        },
+      });
+
+      expect(summary).toMatchObject({
+        projected: 0,
+        deferred: true,
+        lastRunSequence: null,
+      });
+      await released;
+      const row = await testDatabase.pool.query<{ status: string }>(
+        "SELECT status FROM runs WHERE id = $1",
+        [seeded.runId],
+      );
+
+      expect(row.rows[0].status).toBe("Pending");
+      const healthy = await projectExecutionEvents({
+        db: testDatabase.db,
+        runId: seeded.runId,
+        projector: {
+          consumerName: "after-blocked-statement",
+          project: async () => {},
+        },
+      });
+
+      expect(healthy).toMatchObject({ projected: 1, lastRunSequence: "0" });
+    } finally {
+      if (releaseTimer) clearTimeout(releaseTimer);
+      await blocker.query("ROLLBACK");
+      blocker.release();
+    }
+  }, 10_000);
 });

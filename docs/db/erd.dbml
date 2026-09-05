@@ -956,12 +956,14 @@ table execution_event_consumers {
   last_error jsonb
   claim_owner text
   claim_expires_at "timestamp with time zone"
+  last_served_at "timestamp with time zone"
   created_at "timestamp with time zone" [not null, default: `now()`]
   updated_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
     (consumer_name, run_id) [pk]
     (next_retry_at, claim_expires_at) [name: 'execution_event_consumers_retry_idx']
+    (last_served_at, run_id, consumer_name) [name: 'execution_event_consumers_service_idx']
   }
 }
 
@@ -1066,6 +1068,13 @@ table execution_hosts {
 
 
   }
+}
+
+table execution_projection_backfills {
+  consumer_name text [pk, not null]
+  after_run_id text
+  completed_at "timestamp with time zone"
+  updated_at "timestamp with time zone" [not null, default: `now()`]
 }
 
 table execution_runtime_objects {
@@ -1679,6 +1688,7 @@ table run_cost_rollups {
   resume_cache_read_tokens integer [not null, default: 0]
   resume_cache_creation_tokens integer [not null, default: 0]
   by_model jsonb [not null, default: `{}`]
+  by_session jsonb [not null, default: `{}`]
   by_runner jsonb [not null, default: `{}`]
   source_event_count integer [not null, default: 0]
   source_cursor text
@@ -1697,9 +1707,11 @@ table run_messages {
   role text [not null]
   content text [not null]
   supervisor_event_id text
+  projection_tool_key text
   created_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
+    (run_id, node_attempt_id, projection_tool_key, sequence) [name: 'run_messages_projection_tool_idx']
     (run_id, node_attempt_id, sequence) [name: 'run_messages_run_node_attempt_sequence_uq', unique]
   }
 }
@@ -1841,6 +1853,20 @@ table run_sync_attempts {
   indexes {
     (run_id, attempt) [name: 'run_sync_attempts_run_attempt_uq', unique]
     run_id [name: 'run_sync_attempts_run_idx']
+  }
+}
+
+table run_transcript_states {
+  id text [pk, not null]
+  run_id text [not null]
+  node_attempt_id text
+  next_sequence integer [not null, default: 0]
+  open_text_sequence integer
+  open_thought_sequence integer
+  usage_sequence integer
+
+  indexes {
+    (run_id, node_attempt_id) [name: 'run_transcript_states_run_attempt_uq', unique]
   }
 }
 
@@ -3038,6 +3064,10 @@ ref run_sessions_execution_assignment_id_execution_assignments_id_fk: run_sessio
 ref run_sync_attempts_run_id_runs_id_fk: run_sync_attempts.run_id > runs.id [delete: cascade, update: no action]
 
 ref run_sync_attempts_workspace_id_workspaces_id_fk: run_sync_attempts.workspace_id > workspaces.id [delete: cascade, update: no action]
+
+ref run_transcript_states_run_id_runs_id_fk: run_transcript_states.run_id > runs.id [delete: cascade, update: no action]
+
+ref run_transcript_states_node_attempt_id_node_attempts_id_fk: run_transcript_states.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
 
 ref runs_agent_id_agents_id_fk: runs.agent_id > agents.id [delete: set null, update: no action]
 

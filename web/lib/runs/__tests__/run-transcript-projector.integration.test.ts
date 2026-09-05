@@ -5,6 +5,7 @@ import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
+import { coalesceSessionUpdates } from "@/lib/run-transcript/coalesce";
 import {
   getWholeRunTranscriptMessages,
   getRunNodeTranscript,
@@ -206,6 +207,63 @@ async function writeEvents(_slug: string, runId: string, lines: string[]) {
 }
 
 describe("projectRunTranscript", () => {
+  it("keeps text and tool coalescing stable across bounded projection quanta", async () => {
+    const { runId, slug, implAttemptId } = await seed();
+    const lines = Array.from({ length: 220 }, (_, index) => {
+      if (index === 0) return toolLine(implAttemptId, index + 1);
+      if (index === 100 || index === 200)
+        return JSON.stringify({
+          type: "session.update",
+          monotonicId: index + 1,
+          nodeAttemptId: implAttemptId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "call-1",
+            status: "completed",
+            content: [
+              {
+                type: "content",
+                content: { type: "text", text: `result-${index}` },
+              },
+            ],
+          },
+        });
+
+      return textLine(implAttemptId, index + 1, "x");
+    });
+
+    await writeEvents(slug, runId, lines);
+    await projectRunTranscript(runId, { client: db });
+    await projectRunTranscript(runId, { client: db });
+    await projectRunTranscript(runId, { client: db });
+    const actual = await getRunNodeTranscript(runId, "implement", {
+      client: db,
+    });
+    const expected = coalesceSessionUpdates(
+      lines.map((line, index) => ({
+        kind: "update",
+        update: (JSON.parse(line) as { update: unknown }).update,
+        supervisorEventId: String(index + 1),
+      })),
+    );
+    const content = (message: { role: string; content: string }): unknown =>
+      message.role === "assistant"
+        ? message.content
+        : JSON.parse(message.content);
+
+    expect(
+      actual?.messages.map((message) => ({
+        role: message.role,
+        content: content(message),
+      })),
+    ).toEqual(
+      expected.map((message) => ({
+        role: message.role,
+        content: content(message),
+      })),
+    );
+  });
+
   it("projects a canonical transcript from Postgres without reading the host runtime directory", async () => {
     const { runId, implAttemptId } = await seed("canonical_events_v1");
 
@@ -536,12 +594,42 @@ describe("projectRunTranscript", () => {
       textLine(implAttemptId, 2, "impl output"),
     ]);
 
-    // Inject a failure on the 2nd insert INSIDE the projection transaction.
-    await expect(
-      projectRunTranscript(runId, {
-        client: clientFailingOnNthInsert(db, 2),
-      }),
-    ).rejects.toThrow();
+    // A real database trigger rejects the second attempt's message inside the
+    // bounded transaction, including the first message and coalescing state.
+    await testDatabase.pool.query(
+      "CREATE TABLE transcript_projection_fault (attempt_id text PRIMARY KEY)",
+    );
+    await testDatabase.pool.query(
+      "INSERT INTO transcript_projection_fault VALUES ($1)",
+      [implAttemptId],
+    );
+    await testDatabase.pool
+      .query(`CREATE FUNCTION fail_transcript_projection() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM transcript_projection_fault WHERE attempt_id = NEW.node_attempt_id) THEN
+          RAISE EXCEPTION 'injected transcript projection failure' USING ERRCODE = '40001';
+        END IF;
+        RETURN NEW;
+      END $$`);
+    await testDatabase.pool
+      .query(`CREATE TRIGGER fail_transcript_projection BEFORE INSERT ON run_messages
+      FOR EACH ROW EXECUTE FUNCTION fail_transcript_projection()`);
+    try {
+      const failed = await projectRunTranscript(runId, { client: db });
+
+      expect(failed).toMatchObject({
+        status: "missing-events",
+        rowsUpserted: 0,
+      });
+    } finally {
+      await testDatabase.pool.query(
+        "DROP TRIGGER fail_transcript_projection ON run_messages",
+      );
+      await testDatabase.pool.query(
+        "DROP FUNCTION fail_transcript_projection()",
+      );
+      await testDatabase.pool.query("DROP TABLE transcript_projection_fault");
+    }
 
     // The transaction rolled back — nothing committed, so the cursor (max
     // supervisor_event_id) never advanced past the missing rows.
@@ -552,7 +640,11 @@ describe("projectRunTranscript", () => {
 
     expect(afterFailure).toHaveLength(0);
 
-    // A clean re-projection derives and commits the FULL transcript.
+    // The durable retry is due; a subsequent quantum replays from its cursor.
+    await testDatabase.pool.query(
+      "UPDATE execution_event_consumers SET next_retry_at = now() WHERE run_id = $1 AND consumer_name = 'canonical-run-transcript-v2'",
+      [runId],
+    );
     const repaired = await projectRunTranscript(runId, {
       client: db,
     });
@@ -566,43 +658,3 @@ describe("projectRunTranscript", () => {
     expect(impl?.messages).toHaveLength(1);
   });
 });
-
-// Wraps the real client so the Nth `insert` issued inside a `transaction`
-// throws — simulating a mid-batch DB/timeout failure to prove atomic rollback.
-function clientFailingOnNthInsert(real: Db, failOnNth: number): Db {
-  let inserts = 0;
-  const bound = (target: any, prop: PropertyKey) => {
-    const value = target[prop];
-
-    return typeof value === "function" ? value.bind(target) : value;
-  };
-
-  return new Proxy(real as unknown as Record<PropertyKey, unknown>, {
-    get(target, prop) {
-      if (prop !== "transaction") return bound(target, prop);
-
-      return (cb: (tx: unknown) => unknown, ...rest: unknown[]) =>
-        (target as any).transaction(
-          (tx: any) => {
-            const txProxy = new Proxy(tx, {
-              get(t, p) {
-                if (p !== "insert") return bound(t, p);
-
-                return (...args: unknown[]) => {
-                  inserts += 1;
-                  if (inserts >= failOnNth) {
-                    throw new Error("injected projection failure");
-                  }
-
-                  return t.insert(...args);
-                };
-              },
-            });
-
-            return cb(txProxy);
-          },
-          ...rest,
-        );
-    },
-  }) as unknown as Db;
-}

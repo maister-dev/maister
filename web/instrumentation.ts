@@ -75,7 +75,7 @@ export async function register(): Promise<void> {
   for (const step of [
     "ensureLocalExecutionHost",
     "recoverExecutionCommands",
-    "projectCanonicalPromptCommands",
+    "startCanonicalProjectionWorker",
     "sweepExpiredRuntimeObjects",
     "reportLegacyActiveRuns",
   ] as const) {
@@ -89,14 +89,12 @@ export async function register(): Promise<void> {
         await hosts.ensureLocalExecutionDataPlane();
       } else if (step === "recoverExecutionCommands") {
         await hosts.recoverExecutionCommands({ graceMs: 0 });
-      } else if (step === "projectCanonicalPromptCommands") {
-        const { getDb } = await import("@/lib/db/client");
+      } else if (step === "startCanonicalProjectionWorker") {
+        const { startCanonicalProjectionWorker } = await import(
+          "@/lib/execution-host/events/projection-runtime"
+        );
 
-        await Promise.all([
-          hosts.projectPendingCanonicalPromptCommands({ db: getDb() }),
-          hosts.projectPendingCanonicalSessionLifecycle({ db: getDb() }),
-          hosts.projectPendingCanonicalRuntimeObjects({ db: getDb() }),
-        ]);
+        startCanonicalProjectionWorker();
       } else if (step === "sweepExpiredRuntimeObjects") {
         await hosts.sweepExpiredRuntimeObjects();
       } else {

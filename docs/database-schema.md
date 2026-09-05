@@ -2740,6 +2740,14 @@ retry, and poison-event state. The artifact and transcript projectors consume
 only manager-owned `execution_events`; a host path is not persisted in either
 cursor or locator.
 
+Migrations `0137`–`0139` add the autonomous projection service index and
+bootstrap cursor (`execution_projection_backfills`), fixed-size transcript
+coalescing state (`run_transcript_states`), the message tool-key index and
+incremental cost session buckets. Their fields are specified in the
+[stabilization persistence contract](#ab-stabilization-persistence-contract-designed);
+these projection fields are implemented. Other fields in that contract remain
+Designed until their owning increment is verified.
+
 ## `project_tokens`
 
 **(Implemented, migration `0020_m16_api_tokens.sql`; expanded by
@@ -4048,6 +4056,13 @@ explicitly held for repair. They cannot be backfilled from redacted payloads.
 | `execution_commands.retirement_eligible_at` | `timestamptz`, null | Immutable time at eligibility-generation admission. |
 | `execution_commands.retirement_receipt` | `jsonb`, null | Exact host-confirmed eligibility identity; no compaction before confirmation. |
 | `execution_event_consumers.last_served_at` | `timestamptz`, null | Fair due selection by service time plus run/consumer key; existing `claim_owner` is a fresh token per claim. |
+| `execution_projection_backfills.consumer_name` | `text`, primary key | One bounded bootstrap scan per registered projection version; an operational cursor, not a Flow ledger. |
+| `execution_projection_backfills.after_run_id` | `text`, null | Last examined run key, committed with missing consumer inserts; no FK because deleting that run must not reset progress. |
+| `execution_projection_backfills.completed_at` | `timestamptz`, null | Set after the keyset scan is exhausted. All live canonical writers seed affected consumer pairs in their own transaction. |
+| `execution_projection_backfills.updated_at` | `timestamptz`, now | Last committed bootstrap quantum. |
+| `run_transcript_states` | Run/nullable attempt unique (`NULLS NOT DISTINCT`), deterministic text ID; FK cascade to run/attempt | Bounded coalescing state for `canonical-run-transcript-v2`: next message sequence and nullable open text, thought and usage sequences. No payloads or tool map. Changes commit with the event cursor. |
+| `run_messages.projection_tool_key` | Nullable SHA-256 text, indexed with run/attempt and descending sequence | Looks up the latest message for one canonical tool call without loading the transcript or an unbounded tool map. Existing message IDs and sequence upsert keys remain stable during v2 replay. |
+| `run_cost_rollups.by_session` | Non-null JSONB, default `{}` | Incremental token buckets retain session attribution. Existing runner-snapshot changes rederive `by_runner` in PostgreSQL from these buckets without replaying or transferring all usage events. |
 | `execution_runtime_objects.declared_size_bytes` | `bigint`, null | Optional immutable expected size, distinct from null pending sealed metadata. |
 | `execution_runtime_objects.declared_sha256` | `text`, null | Optional immutable expected hash; lowercase 64-hex when supplied. |
 | `execution_runtime_objects.origin` | `jsonb`, required for new allocations | Closed native-command versus historical-import union; import has `importId`, `manifestHash`, `itemId`; no fabricated active assignment. |

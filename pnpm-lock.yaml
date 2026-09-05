@@ -387,7 +387,7 @@ importers:
         specifier: ^7.5.16
         version: 7.5.16
       undici:
-        specifier: ^8.4.1
+        specifier: 8.4.1
         version: 8.4.1
       yaml:
         specifier: ^2.9.0

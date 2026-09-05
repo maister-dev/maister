@@ -6,10 +6,12 @@ import { isDeepStrictEqual } from "node:util";
 
 import { and, eq } from "drizzle-orm";
 
+import { CANONICAL_PROJECTION_CONSUMERS } from "./projection-consumers";
 import {
   ExecutionEventProjectionError,
   projectExecutionEvents,
   type ExecutionEventProjectorSummary,
+  type ExecutionEventProjector,
 } from "./projector";
 
 import { commandSignals } from "@/lib/execution-host/signals";
@@ -34,8 +36,6 @@ type PromptCommandPayload = {
   result?: Record<string, unknown>;
   error?: Record<string, unknown>;
 };
-
-const COMMAND_CONSUMER_NAME = "canonical-prompt-command-v1";
 
 function projectionError(reason: string): ExecutionEventProjectionError {
   return new ExecutionEventProjectionError(reason, true);
@@ -237,6 +237,19 @@ async function projectPromptCommand(
   }
 }
 
+export const canonicalPromptProjector: ExecutionEventProjector = {
+  consumerName: CANONICAL_PROJECTION_CONSUMERS.prompt,
+  project: projectPromptCommand,
+  afterCommit: (events) => {
+    for (const event of events) {
+      if (event.eventType !== "session.command") continue;
+      const commandId = event.payload?.commandId;
+
+      if (typeof commandId === "string") commandSignals.wake(commandId);
+    }
+  },
+};
+
 // The sole terminal authority for canonical prompt commands. The consumer
 // cursor, command transition, and conflict detection share one transaction;
 // the post-commit wake carries no result payload and cannot be authoritative.
@@ -251,18 +264,7 @@ export async function projectCanonicalPromptCommands(input: {
     runId: input.runId,
     now: input.now,
     batchSize: input.batchSize,
-    projector: {
-      consumerName: COMMAND_CONSUMER_NAME,
-      project: projectPromptCommand,
-      afterCommit: (events) => {
-        for (const event of events) {
-          if (event.eventType !== "session.command") continue;
-          const commandId = event.payload?.commandId;
-
-          if (typeof commandId === "string") commandSignals.wake(commandId);
-        }
-      },
-    },
+    projector: canonicalPromptProjector,
   });
 }
 

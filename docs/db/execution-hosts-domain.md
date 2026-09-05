@@ -22,6 +22,13 @@ the host keeps runtime bytes and SQLite outbox files private. See
 [`execution-event-plane.md`](../system-analytics/execution-event-plane.md) and
 [`execution-data-cutover.md`](../system-analytics/execution-data-cutover.md).
 
+Migration `0137_execution_projection_workers` adds indexed service ordering
+on `execution_event_consumers.last_served_at` and the independent
+`execution_projection_backfills` keyset cursor. The bootstrap cursor has no
+run FK: deleting its last examined run must not restart the scan. Consumer
+leases, domain application and retry/rearm behavior are defined in the
+[event-plane worker contract](../system-analytics/execution-event-plane.md#durable-bounded-projection-and-reconciliation-workers).
+
 ```mermaid
 erDiagram
     EXECUTION_HOSTS ||--o{ EXECUTION_ASSIGNMENTS : "placed on (RESTRICT)"

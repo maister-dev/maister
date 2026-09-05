@@ -8,6 +8,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { and, asc, eq, gte, sql } from "drizzle-orm";
 import { ZodError } from "zod";
 
+import { seedCanonicalProjectionConsumers } from "./projection-consumers";
 import { runEventWakeBus } from "./run-wake";
 
 import {
@@ -428,6 +429,7 @@ async function promoteContiguousPrefix(
         .set({ ingestDisposition: "accepted", runSequence })
         .where(eq(executionEvents.id, event.id));
       acceptedCount += 1;
+      await seedCanonicalProjectionConsumers(tx, event.runId);
     } else {
       await tx
         .update(executionEvents)

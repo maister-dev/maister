@@ -6,6 +6,7 @@ import pino from "pino";
 import { Client } from "pg";
 
 import { redactRuntimeEventPayload } from "@/lib/execution-host/runtime-events";
+import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
 
 type ImportSourceKind = "events" | "transcript" | "cost" | "runtime_objects";
 type LegacyRun = {
@@ -491,7 +492,16 @@ async function insertLegacyEvent(input: {
       input.runSequence.toString(),
     ],
   );
-  if (inserted.rowCount === 1) return;
+  if (inserted.rowCount === 1) {
+    await input.client.query(
+      `INSERT INTO execution_event_consumers (consumer_name, run_id)
+       SELECT consumer_name, $1 FROM unnest($2::text[]) AS consumer_name
+       ON CONFLICT DO NOTHING`,
+      [input.runId, Object.values(CANONICAL_PROJECTION_CONSUMERS)],
+    );
+
+    return;
+  }
   const existing = await input.client.query<{
     id: string;
     eventType: string;

@@ -13,7 +13,9 @@ import {
 import {
   ExecutionEventProjectionError,
   projectExecutionEvents,
+  type ExecutionEventProjector,
 } from "@/lib/execution-host/events/projector";
+import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
 import * as schemaModule from "@/lib/db/schema";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches the store/ledger idiom).
@@ -22,7 +24,10 @@ const { runs, nodeAttempts } = schemaModule as unknown as Record<string, any>;
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
 
-const CANONICAL_ARTIFACT_CONSUMER = "canonical-artifact-projector-v1";
+export const canonicalArtifactProjector: ExecutionEventProjector = {
+  consumerName: CANONICAL_PROJECTION_CONSUMERS.artifact,
+  project: projectCanonicalArtifactEvent,
+};
 
 type Attribution = {
   nodeAttemptId: string;
@@ -284,10 +289,7 @@ async function projectCanonicalRunEvents(
   const result = await projectExecutionEvents({
     db: d,
     runId,
-    projector: {
-      consumerName: CANONICAL_ARTIFACT_CONSUMER,
-      project: projectCanonicalArtifactEvent,
-    },
+    projector: canonicalArtifactProjector,
   });
 
   // The public result predates canonical BIGINT run ordering. Keep its legacy
