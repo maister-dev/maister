@@ -123,11 +123,13 @@ class LifecycleAgent {
         notification.params.update.content.text = spec.escaped
           ? "é" + "\\".repeat(Math.floor((available - 2) / 2)) + "x".repeat((available - 2) % 2)
           : "x".repeat(available);
-        await new Promise((resolve, reject) =>
-          process.stdout.write(JSON.stringify(notification) + "\n", (error) =>
-            error ? reject(error) : resolve(),
-          ),
-        );
+        for (let index = 0; index < (spec.frames ?? 1); index += 1) {
+          await new Promise((resolve, reject) =>
+            process.stdout.write(JSON.stringify(notification) + "\n", (error) =>
+              error ? reject(error) : resolve(),
+            ),
+          );
+        }
         return { stopReason: "end_turn" };
       }
       const glyph = spec.multibyte ? "é" : "x";

@@ -1,3 +1,4 @@
+import type { FrameAdmission } from "./producer-pressure";
 import type {
   AnyMessage,
   Client,
@@ -226,6 +227,14 @@ function publishCapturedFrame(
   );
 }
 
+export type CapturedStdoutSegment = {
+  descriptor: number;
+  sizeBytes: number;
+  firstLogByteOffset: number;
+  completeFrames: number;
+  trailingFrameBytes: number;
+};
+
 /** Retains at most one input chunk; a partial frame is an exclusive disk spool. */
 export function captureAcpFrames(input: {
   source: NodeReadable;
@@ -234,6 +243,9 @@ export function captureAcpFrames(input: {
   onLine: (line: string) => void;
   onFailure: (error: SupervisorError) => void;
   onDrained: () => void;
+  beforeFrame?: () => Promise<FrameAdmission>;
+  shouldDrain?: () => boolean;
+  onSegment?: (segment: CapturedStdoutSegment) => void;
 }): NodeReadable {
   input.log.once("error", () =>
     input.onFailure(incomplete("producer_output_storage")),
@@ -242,6 +254,23 @@ export function captureAcpFrames(input: {
     const temporary = join(input.directory, `.acp-frame-${randomUUID()}.tmp`);
     let spool: FileHandle | null = null;
     let length = 0;
+    let firstLogByteOffset = 0;
+    let draining = false;
+    let segmentPublished = false;
+    let completeFrames = 0;
+    let trailingFrameBytes = 0;
+    const publishSegment = (): void => {
+      if (!draining || segmentPublished || length === 0 || !spool) return;
+      if (!input.onSegment) throw incomplete("producer_output_incomplete");
+      input.onSegment({
+        descriptor: spool.fd,
+        sizeBytes: length,
+        firstLogByteOffset,
+        completeFrames,
+        trailingFrameBytes,
+      });
+      segmentPublished = true;
+    };
 
     try {
       spool = await open(temporary, "wx+", 0o600);
@@ -255,7 +284,10 @@ export function captureAcpFrames(input: {
           const end = newline === -1 ? chunk.byteLength : newline + 1;
           const part = chunk.subarray(offset, end);
 
-          if (length + part.byteLength > MAX_ACP_FRAME_BYTES)
+          if (
+            length + part.byteLength >
+            (draining ? 2_097_152 : MAX_ACP_FRAME_BYTES)
+          )
             throw incomplete("producer_frame_limit");
           let written = 0;
 
@@ -274,7 +306,19 @@ export function captureAcpFrames(input: {
           await writeChunk(input.log, part);
           length += part.byteLength;
           offset = end;
+          trailingFrameBytes += part.byteLength;
           if (newline === -1) continue;
+          completeFrames += 1;
+          trailingFrameBytes = 0;
+          if (draining) continue;
+          const admission = input.beforeFrame
+            ? await input.beforeFrame()
+            : undefined;
+
+          if (admission?.kind === "drain") {
+            draining = true;
+            continue;
+          }
           const release = await acquireDecoder();
 
           let frame: Buffer | null = null;
@@ -288,18 +332,33 @@ export function captureAcpFrames(input: {
             // while waiting for another producer's decoder slot.
             frame = null;
             release();
+            admission?.release();
           }
+          firstLogByteOffset += length;
           length = 0;
+          completeFrames = 0;
           await spool.truncate(0);
         }
       }
+      if (length !== 0 && input.shouldDrain?.()) draining = true;
+      if (draining) {
+        publishSegment();
+        throw incomplete("producer_output_incomplete");
+      }
       if (length !== 0) throw incomplete("producer_frame_incomplete");
     } catch (error) {
-      const failure =
+      // Even an over-budget or truncated drain preserves its captured prefix
+      // before the typed failure and terminal barrier become observable.
+      let failure =
         error instanceof SupervisorError
           ? error
           : incomplete("producer_output_storage");
 
+      try {
+        publishSegment();
+      } catch {
+        failure = incomplete("producer_output_storage");
+      }
       input.onFailure(failure);
       throw failure;
     } finally {

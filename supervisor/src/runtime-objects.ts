@@ -11,6 +11,7 @@ import {
   mkdirSync,
   openSync,
   renameSync,
+  readSync,
   writeSync,
   unlinkSync,
 } from "node:fs";
@@ -117,6 +118,39 @@ export class RuntimeObjectRegistry {
     hostSessionId: string;
     payload: Record<string, unknown>;
   }): RuntimeObjectPublicMetadata {
+    return this.captureProducerBytes({
+      ...input,
+      logicalName: "session-content.json",
+      mimeType: "application/json",
+      chunks: encodeSessionContent(input.payload),
+    });
+  }
+
+  captureStdoutSegment(input: {
+    runId: string;
+    assignmentId: string;
+    assignmentEpoch: number;
+    hostSessionId: string;
+    descriptor: number;
+    sizeBytes: number;
+  }): RuntimeObjectPublicMetadata {
+    return this.captureProducerBytes({
+      ...input,
+      logicalName: "stdout-overflow.ndjson",
+      mimeType: "application/x-ndjson",
+      chunks: readCapturedBytes(input.descriptor, input.sizeBytes),
+    });
+  }
+
+  private captureProducerBytes(input: {
+    runId: string;
+    assignmentId: string;
+    assignmentEpoch: number;
+    hostSessionId: string;
+    logicalName: string;
+    mimeType: string;
+    chunks: Iterable<Uint8Array>;
+  }): RuntimeObjectPublicMetadata {
     const objectId = randomUUID();
     const privatePath = objectPath(this.root, objectId, 1);
     const temporary = `${privatePath}.tmp`;
@@ -128,7 +162,7 @@ export class RuntimeObjectRegistry {
     const descriptor = openSync(temporary, "wx", 0o600);
 
     try {
-      for (const chunk of encodeSessionContent(input.payload)) {
+      for (const chunk of input.chunks) {
         if (sizeBytes + chunk.byteLength > 2_097_152) {
           throw new SupervisorError(
             "ACP_PROTOCOL",
@@ -181,8 +215,8 @@ export class RuntimeObjectRegistry {
       assignmentEpoch: input.assignmentEpoch,
       hostSessionId: input.hostSessionId,
       kind: "raw_transcript",
-      logicalName: "session-content.json",
-      mimeType: "application/json",
+      logicalName: input.logicalName,
+      mimeType: input.mimeType,
       sizeBytes,
       sha256: hash.digest("hex"),
       generation: 1,
@@ -707,5 +741,47 @@ export class RuntimeObjectRegistry {
     });
 
     return publicMetadata(deleted);
+  }
+}
+
+function* readCapturedBytes(
+  descriptor: number,
+  sizeBytes: number,
+): Generator<Uint8Array> {
+  if (
+    !Number.isSafeInteger(sizeBytes) ||
+    sizeBytes < 1 ||
+    sizeBytes > 2_097_152
+  ) {
+    throw new SupervisorError(
+      "ACP_PROTOCOL",
+      "captured stdout segment size is invalid",
+      {
+        details: { reason: "required_output_incomplete" },
+      },
+    );
+  }
+  const buffer = Buffer.allocUnsafe(65_536);
+  let offset = 0;
+
+  while (offset < sizeBytes) {
+    const count = readSync(
+      descriptor,
+      buffer,
+      0,
+      Math.min(buffer.byteLength, sizeBytes - offset),
+      offset,
+    );
+
+    if (count === 0)
+      throw new SupervisorError(
+        "ACP_PROTOCOL",
+        "captured stdout segment is incomplete",
+        {
+          details: { reason: "required_output_incomplete" },
+        },
+      );
+    yield buffer.subarray(0, count);
+    offset += count;
   }
 }

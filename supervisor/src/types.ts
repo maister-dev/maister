@@ -970,6 +970,10 @@ export type SessionRecord = {
   createdByCommandId: string;
   activePromptCommandId?: string;
   outputDrained?: Promise<void>;
+  outputEventReservationId?: string;
+  stopOutputForTeardown?: () => void;
+  outputTeardownStarted?: boolean;
+  outputPaused?: boolean;
   outputTerminal?: Promise<void>;
   terminalPublished?: boolean;
   outputFailure?: SupervisorErrorBody;

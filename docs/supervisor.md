@@ -706,7 +706,11 @@ The supervisor writes externally observable events to its private SQLite
 outbox before live publication. `GET /runtime-events` replays host-global
 events after an exclusive decimal cursor and `POST /runtime-events/ack`
 advances a stream-bound contiguous watermark. The in-memory per-session SSE
-ring remains a local diagnostic surface only; it is neither browser replay nor
+Each replay page is at most 500 events and 1 MiB; a response closes at a page
+boundary while backlog remains, so reconnect continues from its last delivered
+cursor. Startup audits iterate individual envelopes and verify persisted quota
+counters against retained rows.
+The ring remains a local diagnostic surface only; it is neither browser replay nor
 run-state authority. The supervisor no longer writes `run.events.jsonl`.
 
 ### Execution-host state store _(Implemented — ADR-166)_
@@ -722,7 +726,17 @@ run_dir, context_mounts?, adopted_at, released_at?`, one ACTIVE row per
 `command_receipts`, the durable host-global `runtime_event_streams` /
 `runtime_event_outbox`, and a private `runtime_objects` registry. Runtime
 object bytes live beside this store under `runtime-objects/`; only opaque IDs
-and checksummed metadata cross its API. The file carries a `PRAGMA user_version` (currently 6)
+and checksummed metadata cross its API. SQLite version 7 adds `budget_partition`
+to retained events and transactional `runtime_event_budget` counters,
+`runtime_event_pressure` hysteresis, `runtime_event_wallets`, serialized
+`runtime_event_teardowns`, and temporary `runtime_event_frames` reservations.
+The additive migration charges every existing event to the regular partition
+without rewriting its envelope. Producer wallets persist across restart;
+parser reservations expire with their owning process. Startup repairs accepted
+producer commands and records lost sessions using their original reserved
+credits. Accepted receipts cannot expire before that repair. Full command and
+receipt retention eligibility remains S2.
+The file carries a `PRAGMA user_version` (currently 7)
 that gates in-place migrations at open: a version-0 store (inline
 `UNIQUE (run_id, real_path)`, which blocked re-adoption after a release) is
 rebuilt under the partial index with every row kept; a fresh store starts at

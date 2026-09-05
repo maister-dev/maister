@@ -1,3 +1,4 @@
+import type { ReceiptAdmission } from "./outbox-budget";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type * as acp from "@agentclientprotocol/sdk";
 import type { Logger } from "pino";
@@ -255,6 +256,8 @@ function runtimeEventSupervisorError(error: unknown): SupervisorError {
           : error.reason;
 
     if (
+      reason === "command_in_progress" ||
+      reason === "command_invariant_conflict" ||
       reason === "stream_identity_conflict" ||
       reason === "replay_floor_lost" ||
       reason === "ack_not_contiguous" ||
@@ -618,11 +621,20 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     const { reply, parsed, kind, entry } = args;
     const envelope = parsed.envelope;
     const sessionKind = isSessionCommandKind(kind) ? kind : null;
-    const admissionExempt =
-      kind === "session.cancel" ||
-      kind === "session.checkpoint" ||
-      kind === "session.delete" ||
-      kind === "workspace.release";
+    const admission: ReceiptAdmission | undefined =
+      kind === "session.create"
+        ? {
+            kind: "producer",
+            outputBindingCount:
+              StartSessionRequestSchema.parse(parsed.payload).outputObjects
+                ?.length ?? 0,
+          }
+        : entry?.record.status === "live" &&
+            ["session.cancel", "session.checkpoint", "session.delete"].includes(
+              kind,
+            )
+          ? { kind: "teardown", walletId: entry.record.createdByCommandId }
+          : undefined;
     const commandEvents = new Map<
       "accepted" | "completed" | "rejected",
       SessionCommandEvent
@@ -642,8 +654,12 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
             const event = args.runtimeEvent?.(transition);
 
             if (event)
-              hostState.putReceiptWithRuntimeEvent(transition.row, event);
-            else hostState.putReceipt(transition.row);
+              hostState.putReceiptWithRuntimeEvent(
+                transition.row,
+                event,
+                transition.admission,
+              );
+            else hostState.putReceipt(transition.row, transition.admission);
           }
         : entry && sessionKind
           ? (transition) => {
@@ -673,6 +689,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
               hostState.putReceiptWithRuntimeEvent(
                 transition.row,
                 runtimeEvents.sessionEventInput(entry.record, event),
+                transition.admission,
               );
               commandEvents.set(transition.phase, event);
             }
@@ -690,7 +707,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
               emitCommandEvent(entry, event, true);
             }
           : undefined,
-      admissionExempt,
+      admission,
       run: async () => {
         if (fence.advanced) {
           await evictLowerEpochSessions({
@@ -744,8 +761,13 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       persistReceipt: (transition) => {
         const event = args.runtimeEvent(transition);
 
-        if (event) hostState.putReceiptWithRuntimeEvent(transition.row, event);
-        else hostState.putReceipt(transition.row);
+        if (event)
+          hostState.putReceiptWithRuntimeEvent(
+            transition.row,
+            event,
+            transition.admission,
+          );
+        else hostState.putReceipt(transition.row, transition.admission);
       },
       run: async () => {
         if (fence.advanced) {
@@ -812,12 +834,16 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     const outcome = await receipts.execute({
       envelope: args.parsed.envelope,
       hostSessionId: args.object.id,
-      admissionExempt: true,
       persistReceipt: (transition) => {
         const event = args.runtimeEvent(transition);
 
-        if (event) hostState.putReceiptWithRuntimeEvent(transition.row, event);
-        else hostState.putReceipt(transition.row);
+        if (event)
+          hostState.putReceiptWithRuntimeEvent(
+            transition.row,
+            event,
+            transition.admission,
+          );
+        else hostState.putReceipt(transition.row, transition.admission);
       },
       run: args.execute,
     });
@@ -878,6 +904,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         hostState.putReceiptWithRuntimeEvent(
           transition.row,
           runtimeEvents.sessionEventInput(entry.record, event),
+          transition.admission,
         );
         commandEvents.set(transition.phase, event);
       },
@@ -902,7 +929,17 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           });
         }
 
-        return args.execute();
+        try {
+          return await args.execute();
+        } finally {
+          if (
+            entry.record.outputTeardownStarted ||
+            entry.child.exitCode !== null ||
+            entry.child.signalCode !== null
+          ) {
+            await entry.record.outputDrained;
+          }
+        }
       },
     });
 
@@ -1072,6 +1109,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           assignmentId: entry.record.assignmentId,
           assignmentEpoch: entry.record.assignmentEpoch,
           metadata,
+          walletId: entry.record.createdByCommandId,
         }),
       );
       sealedRuntimeObjects.push(metadata);
@@ -1094,6 +1132,13 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   }
 
   app.setErrorHandler((err, _req, reply) => {
+    if (err instanceof HostRuntimeEventError) {
+      const failure = runtimeEventSupervisorError(err);
+
+      reply.status(httpStatusForCode(failure.code)).send(errorBody(failure));
+
+      return;
+    }
     if (isSupervisorError(err)) {
       const status =
         err.details?.reason === "runtime_object_range_invalid"
@@ -1554,7 +1599,9 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         close("slow_client");
       }
     };
-    const close = (reason: "disconnect" | "slow_client"): void => {
+    const close = (
+      reason: "disconnect" | "slow_client" | "replay_page",
+    ): void => {
       if (closed) return;
       closed = true;
       unsubscribe();
@@ -1593,6 +1640,13 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     );
 
     for (const event of replay) send(event);
+    if (
+      !closed &&
+      highestSequence !== null &&
+      hostState.hasRuntimeEventsAfter(streamId, highestSequence)
+    ) {
+      close("replay_page");
+    }
     replaying = false;
     pending
       .sort((left, right) =>
@@ -1880,6 +1934,8 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
           spawned = await spawnSession({
             sessionId,
+            hostState,
+            runtimeEventPublisher: runtimeEvents,
             request,
             workspace,
             createdBy: {
@@ -2136,6 +2192,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       entry,
       execute: async () => {
         registry.markIntentionalShutdown(req.params.id, "intentional");
+        entry.record.stopOutputForTeardown?.();
         entry.child.kill("SIGTERM");
         const exited = await waitForChildExit(entry, killGraceMs);
 
@@ -2317,6 +2374,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         }
 
         registry.markIntentionalShutdown(sessionId, "checkpoint");
+        entry.record.stopOutputForTeardown?.();
         entry.child.kill("SIGTERM");
 
         const exited = await waitForChildExit(entry, killGraceMs);

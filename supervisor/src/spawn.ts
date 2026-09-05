@@ -1,3 +1,5 @@
+import type { HostState } from "./host-state";
+import type { RuntimeEventPublisher } from "./runtime-event-publisher";
 import type { Logger } from "pino";
 import type { WorkspaceResolution } from "./workspace-registry";
 import type { Readable } from "node:stream";
@@ -6,8 +8,9 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 
+import { producerPressure } from "./producer-pressure";
 import { captureAcpFrames, reserveOutputProducer } from "./bounded-acp-stream";
 import { SESSION_EVENT_CHANNEL } from "./registry";
 import {
@@ -28,6 +31,8 @@ type RuntimeObjectEnvPaths = Partial<Record<RuntimeObjectEnvName, string>>;
 
 export type SpawnSessionOptions = {
   sessionId: string;
+  hostState?: HostState;
+  runtimeEventPublisher?: RuntimeEventPublisher;
   request: StartSessionRequest;
   // ADR-166: every run-dir path and the cwd come from the resolved workspace
   // (the adopted handle) — the single path-derivation site.
@@ -118,9 +123,9 @@ export async function spawnSession(
   });
   const binary = binaryResolution.binary;
 
-  // The host owns its step log; canonical session events are persisted to the
-  // host outbox instead of a shared per-run file.
-  const { logPath } = workspace;
+  // Each incarnation owns an exclusive raw log. Reusing a step's append file
+  // would interleave producers and invalidate captured segment byte offsets.
+  const logPath = join(dirname(workspace.logPath), `${sessionId}.log`);
 
   await mkdir(dirname(logPath), { recursive: true });
   const seedMonotonicId = 0;
@@ -193,7 +198,7 @@ export async function spawnSession(
   let logStream: WriteStream;
 
   try {
-    logStream = createWriteStream(logPath, { flags: "a", mode: 0o600 });
+    logStream = createWriteStream(logPath, { flags: "wx", mode: 0o600 });
     await once(logStream, "open");
   } catch (error) {
     releaseOutputProducer();
@@ -292,6 +297,14 @@ export async function spawnSession(
     turnsSinceProgress: 0,
   };
 
+  try {
+    opts.hostState?.bindProducerSession(record.createdByCommandId, sessionId);
+  } catch (error) {
+    child.kill("SIGKILL");
+    logStream.end();
+    releaseOutputProducer();
+    throw error;
+  }
   const emitter = new EventEmitter();
 
   emitter.setMaxListeners(0);
@@ -316,6 +329,15 @@ export async function spawnSession(
   record.outputDrained = new Promise<void>((resolve) => {
     drained = resolve;
   });
+  const pressure = opts.hostState
+    ? producerPressure(opts.hostState, record)
+    : undefined;
+
+  record.stopOutputForTeardown = () => {
+    record.outputTeardownStarted = true;
+    pressure?.beginTeardown();
+  };
+  child.once("exit", () => record.stopOutputForTeardown?.());
   record.abortOutput = (error) => {
     if (record.outputFailure) return;
     record.outputFailure = {
@@ -332,11 +354,18 @@ export async function spawnSession(
       },
       "producer-output-incomplete",
     );
+    pressure?.beginTeardown();
     child.kill("SIGKILL");
     child.stdout?.destroy();
   };
   const acpStdoutTap = captureAcpFrames({
     source: child.stdout,
+    beforeFrame: pressure?.beforeFrame,
+    shouldDrain: pressure?.shouldDrain,
+    onSegment: opts.runtimeEventPublisher
+      ? (segment) =>
+          opts.runtimeEventPublisher?.publishStdoutSegment(record, segment)
+      : undefined,
     directory: dirname(logPath),
     log: logStream,
     onLine(line) {

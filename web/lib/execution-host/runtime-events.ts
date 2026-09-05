@@ -27,6 +27,23 @@ export type SessionContentReference = z.infer<
   typeof SessionContentReferenceSchema
 >;
 
+export const StdoutSegmentMetadataSchema = z
+  .object({
+    commandId: z.string().uuid(),
+    firstLogByteOffset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    capturedBytes: z.number().int().min(1).max(2_097_152),
+    completeFrames: z.number().int().min(0).max(2_097_152),
+    trailingFrameBytes: z.number().int().min(0).max(2_097_152),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.completeFrames <= value.capturedBytes &&
+      value.trailingFrameBytes <= value.capturedBytes &&
+      Number.isSafeInteger(value.firstLogByteOffset + value.capturedBytes),
+    "stdout segment bounds are inconsistent",
+  );
+
 const SessionContentPayloadSchema = z
   .object({
     sourceMonotonicId: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
@@ -274,6 +291,28 @@ export const RuntimeEventEnvelopeSchema = z
   })
   .strict()
   .superRefine((value, context) => {
+    if (value.payload.stdoutSegment !== undefined) {
+      const parsed = StdoutSegmentMetadataSchema.safeParse(
+        value.payload.stdoutSegment,
+      );
+
+      if (
+        !parsed.success ||
+        value.eventType !== "runtime_object.available" ||
+        value.hostSessionId === null ||
+        value.payload.kind !== "raw_transcript" ||
+        value.payload.logicalName !== "stdout-overflow.ndjson" ||
+        value.payload.mimeType !== "application/x-ndjson" ||
+        parsed.data.capturedBytes !== value.payload.sizeBytes
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["payload", "stdoutSegment"],
+          message:
+            "stdout segment metadata does not match its available object",
+        });
+      }
+    }
     if (value.payloadSchema === "maister.session.content.v2") {
       const parsed = SessionContentPayloadSchema.safeParse(value.payload);
 

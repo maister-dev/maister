@@ -11,7 +11,31 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import {
+  DEFAULT_RUNTIME_LIMITS,
+  runtimeLimitsFromEnv,
+  validateRuntimeLimits,
+  type RuntimeLimits,
+} from "./runtime-limits";
+import {
+  admitReceipt,
+  assertOutboxAdmission,
+  assertStoredOutboxFits,
+  closeProducerWallet,
+  outboxBudgetSnapshot,
+  OUTBOX_BUDGET_SCHEMA,
+  refreshOutboxPressure,
+  markProducerEnded,
+  reserveFrameCapacity,
+  settleReceiptBudget,
+  type ReceiptAdmission,
+  spendEventCapacity,
+  type EventFunding,
+  type OutboxBudgetSnapshot,
+} from "./outbox-budget";
+import { HostRuntimeEventError } from "./host-runtime-errors";
+import {
   buildRuntimeEventEnvelope,
+  MAX_RUNTIME_EVENT_BYTES,
   RuntimeEventEnvelopeSchema,
   type RuntimeEventDraft,
 } from "./runtime-events";
@@ -27,35 +51,23 @@ export const RECEIPT_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 export const RECEIPT_PRUNE_INTERVAL_MS = 60 * 60 * 1_000;
 export const EXECUTION_HOST_PROTOCOL_VERSION = 1;
 // `PRAGMA user_version` of the state file; bumped with every migration below.
-export const HOST_STATE_SCHEMA_VERSION = 6;
+export const HOST_STATE_SCHEMA_VERSION = 7;
 const MAX_HOST_EVENT_SEQUENCE = (1n << 63n) - 1n;
 const HOST_EVENT_SEQUENCE_SORT_WIDTH = 20;
 
-export const MAX_RUNTIME_EVENT_OUTBOX_BYTES = 64 * 1024 * 1024;
-export const SOFT_RUNTIME_EVENT_OUTBOX_BYTES = 48 * 1024 * 1024;
-export const HARD_RUNTIME_EVENT_OUTBOX_BYTES = 56 * 1024 * 1024;
+export const HARD_RUNTIME_EVENT_OUTBOX_BYTES =
+  DEFAULT_RUNTIME_LIMITS.eventHardBytes;
+export const SOFT_RUNTIME_EVENT_OUTBOX_BYTES =
+  DEFAULT_RUNTIME_LIMITS.eventSoftBytes;
 export const TERMINAL_RUNTIME_EVENT_RESERVE_BYTES =
-  MAX_RUNTIME_EVENT_OUTBOX_BYTES - HARD_RUNTIME_EVENT_OUTBOX_BYTES;
-export const RUNTIME_EVENT_ACK_PRUNE_GRACE_MS = 24 * 60 * 60 * 1_000;
+  DEFAULT_RUNTIME_LIMITS.eventControlBytes;
+export const MAX_RUNTIME_EVENT_OUTBOX_BYTES =
+  HARD_RUNTIME_EVENT_OUTBOX_BYTES + TERMINAL_RUNTIME_EVENT_RESERVE_BYTES;
+export const RUNTIME_EVENT_ACK_PRUNE_GRACE_MS =
+  DEFAULT_RUNTIME_LIMITS.eventAckGraceMs;
 export const RUNTIME_EVENT_PRUNE_INTERVAL_MS = 60 * 60 * 1_000;
 
-export class HostRuntimeEventError extends Error {
-  readonly reason:
-    | "event_outbox_soft_limit"
-    | "event_outbox_hard_limit"
-    | "event_outbox_terminal_reserve_exhausted"
-    | "stream_identity_conflict"
-    | "replay_floor_exceeded"
-    | "ack_not_contiguous"
-    | "ack_beyond_emitted"
-    | "stream_corrupt";
-
-  constructor(reason: HostRuntimeEventError["reason"], message: string) {
-    super(message);
-    this.name = "HostRuntimeEventError";
-    this.reason = reason;
-  }
-}
+export { HostRuntimeEventError } from "./host-runtime-errors";
 
 export class HostKeyConflictError extends Error {
   readonly storedKeyPrefix: string;
@@ -172,9 +184,11 @@ export type HostRuntimeEventRow = {
 export type AppendRuntimeEventInput = {
   draft: RuntimeEventDraft;
   terminal?: boolean;
+  funding?: EventFunding;
 };
 
 export type RuntimeEventOutboxStats = {
+  budget: OutboxBudgetSnapshot;
   streamId: string;
   acknowledgedThrough: string | null;
   replayFloor: string | null;
@@ -185,6 +199,7 @@ export type RuntimeEventOutboxStats = {
 };
 
 export type HostState = {
+  readonly limits: RuntimeLimits;
   readonly hostKey: string;
   readonly bootId: string;
   // Realpath of the state dir (null in memory): path checks against it must
@@ -193,7 +208,18 @@ export type HostState = {
   getFence(runId: string): RunFence | null;
   setFence(runId: string, assignmentId: string, epoch: number): void;
   getReceipt(commandId: string): CommandReceiptRow | null;
-  putReceipt(row: CommandReceiptRow): void;
+  putReceipt(row: CommandReceiptRow, admission?: ReceiptAdmission): void;
+  reserveProducerReceipt(
+    row: CommandReceiptRow,
+    outputBindingCount: number,
+  ): void;
+  closeProducerWallet(walletId: string): void;
+  bindProducerSession(walletId: string, hostSessionId: string): void;
+  tryReserveRuntimeFrame(walletId: string): string | null;
+  releaseRuntimeFrame(reservationId: string): void;
+  subscribeRuntimeCapacity(
+    listener: (snapshot: OutboxBudgetSnapshot) => void,
+  ): () => void;
   // A fresh supervisor process has no ACP process to join. Canonical async
   // prompt receipts retain their fence/session binding, so startup can make
   // the loss explicit through one durable terminal receipt/event pair.
@@ -217,6 +243,7 @@ export type HostState = {
   putReceiptWithRuntimeEvent(
     receipt: CommandReceiptRow,
     event: AppendRuntimeEventInput,
+    admission?: ReceiptAdmission,
   ): HostRuntimeEventRow;
   getRuntimeEventStreamId(): string;
   runtimeEventsAfter(
@@ -225,6 +252,7 @@ export type HostState = {
     limit?: number,
   ): HostRuntimeEventRow[];
   pendingRuntimeEvents(streamId: string, limit?: number): HostRuntimeEventRow[];
+  hasRuntimeEventsAfter(streamId: string, sequence: string): boolean;
   ackRuntimeEvents(streamId: string, throughSequence: string): string;
   runtimeEventOutboxStats(): RuntimeEventOutboxStats;
   assertCanAcceptMutatingCommand(): void;
@@ -236,6 +264,7 @@ export type HostState = {
 };
 
 export type OpenHostStateOptions = {
+  limits?: RuntimeLimits;
   stateDir?: string;
   // Tests and route-only boots: an ephemeral store with a minted key.
   inMemory?: boolean;
@@ -352,6 +381,7 @@ CREATE TABLE IF NOT EXISTS runtime_event_outbox (
   event_id TEXT NOT NULL UNIQUE,
   envelope_json TEXT NOT NULL,
   encoded_bytes INTEGER NOT NULL CHECK (encoded_bytes >= 0),
+  budget_partition TEXT NOT NULL DEFAULT 'regular' CHECK (budget_partition IN ('regular', 'control', 'emergency')),
   occurred_at TEXT NOT NULL,
   acknowledged_at TEXT,
   created_at TEXT NOT NULL,
@@ -362,6 +392,7 @@ CREATE INDEX IF NOT EXISTS runtime_event_outbox_stream_replay_idx
   ON runtime_event_outbox (stream_id, sequence_sort_key);
 CREATE INDEX IF NOT EXISTS runtime_event_outbox_stream_pending_idx
   ON runtime_event_outbox (stream_id, acknowledged_at, sequence_sort_key);
+${OUTBOX_BUDGET_SCHEMA}
 `;
 
 // user_version 0 stores carry an inline UNIQUE (run_id, real_path) on
@@ -474,6 +505,21 @@ PRAGMA user_version = 6;
 COMMIT;
 `;
 
+const MIGRATE_V6_TO_V7 = `
+BEGIN IMMEDIATE;
+ALTER TABLE runtime_event_outbox ADD COLUMN budget_partition TEXT NOT NULL DEFAULT 'regular'
+  CHECK (budget_partition IN ('regular', 'control', 'emergency'));
+${OUTBOX_BUDGET_SCHEMA}
+UPDATE runtime_event_budget SET
+  retained_count = (SELECT COUNT(*) FROM runtime_event_outbox),
+  retained_bytes = (SELECT COALESCE(SUM(encoded_bytes), 0) FROM runtime_event_outbox),
+  unacknowledged_count = (SELECT COUNT(*) FROM runtime_event_outbox WHERE acknowledged_at IS NULL),
+  unacknowledged_bytes = (SELECT COALESCE(SUM(encoded_bytes), 0) FROM runtime_event_outbox WHERE acknowledged_at IS NULL)
+WHERE partition = 'regular';
+PRAGMA user_version = 7;
+COMMIT;
+`;
+
 function applySchema(db: DatabaseSync): void {
   const fresh =
     db
@@ -499,10 +545,14 @@ function applySchema(db: DatabaseSync): void {
   if (Number(user_version) < 4) db.exec(MIGRATE_V3_TO_V4);
   if (Number(user_version) < 5) db.exec(MIGRATE_V4_TO_V5);
   if (Number(user_version) < 6) db.exec(MIGRATE_V5_TO_V6);
+  if (Number(user_version) < 7) db.exec(MIGRATE_V6_TO_V7);
   db.exec(SCHEMA);
 }
 
 export function openHostState(opts: OpenHostStateOptions = {}): HostState {
+  const limits = opts.limits
+    ? validateRuntimeLimits(opts.limits)
+    : runtimeLimitsFromEnv();
   const now = opts.now ?? (() => new Date());
   const log = opts.logger?.child({ component: "host-state" });
   const stateDir = opts.inMemory ? null : path.resolve(opts.stateDir ?? "");
@@ -564,6 +614,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
 
   try {
     auditRuntimeEventState(db);
+    assertStoredOutboxFits(db, limits);
   } catch (error) {
     db.close();
     if (error instanceof HostRuntimeEventError) throw error;
@@ -576,6 +627,27 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
   }
 
   const bootId = randomUUID();
+
+  // An old process cannot still own a parser reservation on this single host.
+  // Its accepted commands retain their independent durable terminal wallets.
+  db.exec("DELETE FROM runtime_event_frames");
+  refreshOutboxPressure(db, limits);
+  const capacityListeners = new Set<(snapshot: OutboxBudgetSnapshot) => void>();
+  const notifyCapacity = (): void => {
+    const previous = outboxBudgetSnapshot(db).pressured;
+    const pressured = refreshOutboxPressure(db, limits);
+    const snapshot = outboxBudgetSnapshot(db);
+
+    if (previous !== pressured)
+      log?.info({ ...snapshot }, "runtime-event-pressure-changed");
+    for (const listener of capacityListeners) {
+      try {
+        listener(snapshot);
+      } catch (error) {
+        log?.warn({ err: error }, "runtime-event-capacity-listener-failed");
+      }
+    }
+  };
   const runtimeEventListeners = new Set<(event: HostRuntimeEventRow) => void>();
 
   const notifyRuntimeEventListeners = (event: HostRuntimeEventRow): void => {
@@ -592,6 +664,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
   };
 
   const state: HostState = {
+    limits,
     hostKey,
     bootId,
     stateDirReal,
@@ -670,101 +743,215 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         completedAt: row.completed_at,
       };
     },
-    putReceipt(row) {
-      writeReceiptRow(db, row);
+    putReceipt(row, admission) {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        admitReceipt(db, limits, row, admission);
+        writeReceiptRow(db, row);
+        settleReceiptBudget(db, row);
+        db.exec("COMMIT");
+      } catch (error) {
+        if (db.isTransaction) db.exec("ROLLBACK");
+        throw error;
+      }
+      notifyCapacity();
+    },
+    reserveProducerReceipt(row, outputBindingCount) {
+      state.putReceipt(row, { kind: "producer", outputBindingCount });
+    },
+    bindProducerSession(walletId, hostSessionId) {
+      const result = db
+        .prepare(
+          `UPDATE runtime_event_wallets SET host_session_id = ?
+        WHERE wallet_id = ? AND closed = 0 AND (host_session_id IS NULL OR host_session_id = ?)`,
+        )
+        .run(hostSessionId, walletId, hostSessionId);
+
+      if (result.changes !== 1)
+        throw new HostRuntimeEventError(
+          "stream_identity_conflict",
+          "producer session does not match its reserved wallet",
+        );
+    },
+    closeProducerWallet(walletId) {
+      closeProducerWallet(db, walletId);
+      notifyCapacity();
+    },
+    tryReserveRuntimeFrame(walletId) {
+      const reservationId = randomUUID();
+
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const reserved = reserveFrameCapacity(db, limits, {
+          reservationId,
+          bootId,
+          walletId,
+        });
+
+        db.exec("COMMIT");
+        notifyCapacity();
+
+        return reserved ? reservationId : null;
+      } catch (error) {
+        if (db.isTransaction) db.exec("ROLLBACK");
+        throw error;
+      }
+    },
+    releaseRuntimeFrame(reservationId) {
+      db.prepare(
+        "DELETE FROM runtime_event_frames WHERE reservation_id = ? AND boot_id = ?",
+      ).run(reservationId, bootId);
+      notifyCapacity();
+    },
+    subscribeRuntimeCapacity(listener) {
+      capacityListeners.add(listener);
+
+      return () => capacityListeners.delete(listener);
     },
     recoverAcceptedPromptReceipts() {
-      const rows = db
-        .prepare(
-          `SELECT command_id, run_id, kind, assignment_id, epoch, host_session_id, request_digest, event_id, phase, http_status, body_json, received_at, completed_at
-           FROM command_receipts
-           WHERE kind = 'session.prompt'
-             AND phase = 'accepted'
-             AND assignment_id IS NOT NULL
-             AND host_session_id IS NOT NULL
-           ORDER BY received_at ASC, command_id ASC`,
-        )
-        .all() as Array<{
+      let recoveredCount = 0;
+
+      type LostReceipt = {
         command_id: string;
         run_id: string;
         kind: string;
         assignment_id: string;
         epoch: number;
-        host_session_id: string;
+        host_session_id: string | null;
         request_digest: string | null;
-        event_id: string | null;
-        phase: ReceiptPhase;
-        http_status: number;
-        body_json: string;
         received_at: string;
-        completed_at: string | null;
-      }>;
+      };
+      type LostWallet = {
+        wallet_id: string;
+        run_id: string;
+        assignment_id: string;
+        assignment_epoch: number;
+        host_session_id: string | null;
+      };
+      const walletFor =
+        db.prepare(`SELECT wallet_id, run_id, assignment_id, assignment_epoch, host_session_id
+        FROM runtime_event_wallets WHERE closed = 0 AND (wallet_id = ? OR host_session_id = ?)`);
 
-      if (rows.length === 0) return 0;
+      // Each repair commits separately so both transient memory and the SQLite
+      // write transaction are bounded even for an older receipt backlog.
+      for (;;) {
+        const rows = db
+          .prepare(
+            `SELECT command_id, run_id, kind, assignment_id, epoch,
+            host_session_id, request_digest, received_at FROM command_receipts
+          WHERE phase = 'accepted' AND assignment_id IS NOT NULL AND (
+            (kind = 'session.prompt' AND host_session_id IS NOT NULL) OR
+            EXISTS (SELECT 1 FROM runtime_event_wallets w WHERE w.closed = 0 AND
+              (w.wallet_id = command_receipts.command_id OR w.host_session_id = command_receipts.host_session_id)))
+          ORDER BY received_at ASC, command_id ASC LIMIT 100`,
+          )
+          .all() as LostReceipt[];
 
-      const recovered: HostRuntimeEventRow[] = [];
-
-      db.exec("BEGIN IMMEDIATE");
-      try {
+        if (rows.length === 0) break;
         for (const row of rows) {
+          const wallet = walletFor.get(row.command_id, row.host_session_id) as
+            | LostWallet
+            | undefined;
+
+          if (
+            wallet &&
+            ["session.prompt", "session.create"].includes(row.kind) &&
+            (wallet.run_id !== row.run_id ||
+              wallet.assignment_id !== row.assignment_id ||
+              wallet.assignment_epoch !== row.epoch)
+          ) {
+            throw new HostRuntimeEventError(
+              "stream_corrupt",
+              "accepted producer receipt does not match its durable wallet fence",
+            );
+          }
           const body = {
             code: "PRECONDITION",
             message: "the turn for this command id was lost in a host restart",
             details: { reason: "turn_lost", runId: row.run_id },
           };
-          const event = appendRuntimeEventInTransaction(db, {
-            hostKey,
-            bootId,
-            now,
-            input: {
-              terminal: true,
-              draft: {
-                runId: row.run_id,
-                assignmentId: row.assignment_id,
-                assignmentEpoch: Number(row.epoch),
-                hostSessionId: row.host_session_id,
-                eventType: "session.command",
-                occurredAt: now().toISOString(),
-                payload: {
-                  commandId: row.command_id,
-                  kind: "session.prompt",
-                  phase: "completed",
-                  status: "failed",
-                  error: body,
-                },
-              },
-            },
-          });
-
-          writeReceiptRow(db, {
+          const receipt: CommandReceiptRow = {
             commandId: row.command_id,
             runId: row.run_id,
             kind: row.kind,
             assignmentId: row.assignment_id,
-            epoch: Number(row.epoch),
-            hostSessionId: row.host_session_id,
+            epoch: row.epoch,
+            hostSessionId:
+              row.host_session_id ?? wallet?.host_session_id ?? null,
             requestDigest: row.request_digest,
-            eventId: event.eventId,
+            eventId: null,
             phase: "rejected",
             httpStatus: 409,
             body,
             receivedAt: row.received_at,
             completedAt: now().toISOString(),
-          });
-          recovered.push(event);
-        }
-        db.exec("COMMIT");
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
-      }
-      recovered.forEach(notifyRuntimeEventListeners);
+          };
 
-      return recovered.length;
+          state.putReceiptWithRuntimeEvent(receipt, {
+            terminal: true,
+            ...(wallet
+              ? {
+                  funding: {
+                    partition: "control" as const,
+                    walletId: wallet.wallet_id,
+                    commandId: row.command_id,
+                  },
+                }
+              : {}),
+            draft: {
+              runId: row.run_id,
+              assignmentId: wallet?.assignment_id ?? row.assignment_id,
+              assignmentEpoch: wallet?.assignment_epoch ?? row.epoch,
+              hostSessionId: receipt.hostSessionId,
+              eventType: "session.command",
+              occurredAt: now().toISOString(),
+              payload: {
+                commandId: row.command_id,
+                kind: row.kind,
+                phase: "completed",
+                status: "failed",
+                error: body,
+              },
+            },
+          });
+          recoveredCount += 1;
+        }
+      }
+      const wallets = db
+        .prepare(
+          `SELECT wallet_id, run_id, assignment_id, assignment_epoch, host_session_id
+        FROM runtime_event_wallets WHERE closed = 0 AND session_ended = 0`,
+        )
+        .all() as LostWallet[];
+
+      for (const wallet of wallets) {
+        if (wallet.host_session_id === null) {
+          state.closeProducerWallet(wallet.wallet_id);
+          continue;
+        }
+        state.appendRuntimeEvent({
+          terminal: true,
+          funding: { partition: "control", walletId: wallet.wallet_id },
+          draft: {
+            runId: wallet.run_id,
+            assignmentId: wallet.assignment_id,
+            assignmentEpoch: wallet.assignment_epoch,
+            hostSessionId: wallet.host_session_id,
+            eventType: "session.crashed",
+            occurredAt: now().toISOString(),
+            payload: { exitCode: null, signal: null, reason: "host_restart" },
+          },
+        });
+      }
+
+      return recoveredCount;
     },
     pruneReceipts(olderThan) {
       const result = db
-        .prepare("DELETE FROM command_receipts WHERE received_at < ?")
+        .prepare(
+          `DELETE FROM command_receipts WHERE received_at < ? AND phase <> 'accepted'
+          AND NOT EXISTS (SELECT 1 FROM runtime_event_wallets w WHERE w.wallet_id = command_receipts.command_id AND w.closed = 0)`,
+        )
         .run(olderThan.toISOString());
 
       return Number(result.changes);
@@ -889,6 +1076,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
 
       try {
         const event = appendRuntimeEventInTransaction(db, {
+          limits,
           hostKey,
           bootId,
           now,
@@ -896,19 +1084,22 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         });
 
         db.exec("COMMIT");
+        notifyCapacity();
         notifyRuntimeEventListeners(event);
 
         return event;
       } catch (error) {
-        db.exec("ROLLBACK");
+        if (db.isTransaction) db.exec("ROLLBACK");
         throw error;
       }
     },
-    putReceiptWithRuntimeEvent(receipt, eventInput) {
+    putReceiptWithRuntimeEvent(receipt, eventInput, admission) {
       db.exec("BEGIN IMMEDIATE");
 
       try {
+        admitReceipt(db, limits, receipt, admission);
         const event = appendRuntimeEventInTransaction(db, {
+          limits,
           hostKey,
           bootId,
           now,
@@ -916,13 +1107,15 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         });
 
         writeReceiptRow(db, { ...receipt, eventId: event.eventId });
+        settleReceiptBudget(db, receipt);
 
         db.exec("COMMIT");
+        notifyCapacity();
         notifyRuntimeEventListeners(event);
 
         return event;
       } catch (error) {
-        db.exec("ROLLBACK");
+        if (db.isTransaction) db.exec("ROLLBACK");
         throw error;
       }
     },
@@ -947,41 +1140,36 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         );
       }
 
-      const rows = db
-        .prepare(
-          `SELECT stream_id, sequence, event_id, envelope_json, encoded_bytes, occurred_at,
-                  acknowledged_at, created_at
-           FROM runtime_event_outbox
-           WHERE stream_id = ? AND (? IS NULL OR sequence_sort_key > ?)
-           ORDER BY sequence_sort_key ASC
-           LIMIT ?`,
-        )
-        .all(
-          streamId,
-          afterSortKey,
-          afterSortKey,
-          validateRuntimeEventLimit(limit),
-        ) as RuntimeEventOutboxDbRow[];
-
-      return rows.map(toHostRuntimeEventRow);
+      return runtimeEventPage(
+        db,
+        streamId,
+        afterSortKey,
+        validateRuntimeEventLimit(limit),
+      );
     },
     pendingRuntimeEvents(streamId, limit = 500) {
-      getRuntimeEventStream(db, streamId);
-      const rows = db
-        .prepare(
-          `SELECT stream_id, sequence, event_id, envelope_json, encoded_bytes, occurred_at,
-                  acknowledged_at, created_at
-           FROM runtime_event_outbox
-           WHERE stream_id = ? AND acknowledged_at IS NULL
-           ORDER BY sequence_sort_key ASC
-           LIMIT ?`,
-        )
-        .all(
-          streamId,
-          validateRuntimeEventLimit(limit),
-        ) as RuntimeEventOutboxDbRow[];
+      const stream = getRuntimeEventStream(db, streamId);
 
-      return rows.map(toHostRuntimeEventRow);
+      return runtimeEventPage(
+        db,
+        streamId,
+        stream.acknowledged_sort_key,
+        validateRuntimeEventLimit(limit),
+      );
+    },
+    hasRuntimeEventsAfter(streamId, sequence) {
+      getRuntimeEventStream(db, streamId);
+
+      return (
+        db
+          .prepare(
+            "SELECT 1 FROM runtime_event_outbox WHERE stream_id = ? AND sequence_sort_key > ? LIMIT 1",
+          )
+          .get(
+            streamId,
+            hostEventSequenceSortKey(parseHostEventSequence(sequence)),
+          ) !== undefined
+      );
     },
     ackRuntimeEvents(streamId, throughSequence) {
       const through = parseHostEventSequence(throughSequence);
@@ -1016,11 +1204,11 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
              WHERE stream_id = ? AND sequence_sort_key > ? AND sequence_sort_key <= ?
              ORDER BY sequence_sort_key ASC`,
           )
-          .all(
+          .iterate(
             streamId,
             hostEventSequenceSortKey(acknowledged),
             hostEventSequenceSortKey(through),
-          ) as Array<{ sequence: string }>;
+          ) as IterableIterator<{ sequence: string }>;
 
         let expected = acknowledged + 1n;
 
@@ -1056,9 +1244,11 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         ).run(nowIso, streamId, throughSortKey);
         db.exec("COMMIT");
 
+        notifyCapacity();
+
         return throughText;
       } catch (error) {
-        db.exec("ROLLBACK");
+        if (db.isTransaction) db.exec("ROLLBACK");
         throw error;
       }
     },
@@ -1069,17 +1259,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       );
     },
     assertCanAcceptMutatingCommand() {
-      const stats = runtimeEventOutboxStats(
-        db,
-        ensureRuntimeEventStream(db, now).stream_id,
-      );
-
-      if (stats.unacknowledgedBytes >= SOFT_RUNTIME_EVENT_OUTBOX_BYTES) {
-        throw new HostRuntimeEventError(
-          "event_outbox_soft_limit",
-          "runtime event outbox is above the command admission soft limit",
-        );
-      }
+      assertOutboxAdmission(db, limits);
     },
     pruneAcknowledgedRuntimeEvents(olderThan) {
       db.exec("BEGIN IMMEDIATE");
@@ -1126,9 +1306,11 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
 
         db.exec("COMMIT");
 
+        notifyCapacity();
+
         return Number(result.changes);
       } catch (error) {
-        db.exec("ROLLBACK");
+        if (db.isTransaction) db.exec("ROLLBACK");
         throw error;
       }
     },
@@ -1229,30 +1411,30 @@ function runtimeEventOutboxStats(
   streamId: string,
 ): RuntimeEventOutboxStats {
   const stream = getRuntimeEventStream(db, streamId);
-  const row = db
-    .prepare(
-      `SELECT
-         COUNT(*) AS retained_count,
-         COALESCE(SUM(encoded_bytes), 0) AS retained_bytes,
-         COALESCE(SUM(CASE WHEN acknowledged_at IS NULL THEN 1 ELSE 0 END), 0) AS unacknowledged_count,
-         COALESCE(SUM(CASE WHEN acknowledged_at IS NULL THEN encoded_bytes ELSE 0 END), 0) AS unacknowledged_bytes
-       FROM runtime_event_outbox WHERE stream_id = ?`,
-    )
-    .get(streamId) as {
-    retained_count: number;
-    retained_bytes: number;
-    unacknowledged_count: number;
-    unacknowledged_bytes: number;
-  };
+  const budget = outboxBudgetSnapshot(db);
+  const partitions = [budget.regular, budget.control, budget.emergency];
 
   return {
+    budget,
     streamId,
     acknowledgedThrough: stream.acknowledged_through,
     replayFloor: stream.replay_floor_sequence,
-    unacknowledgedCount: Number(row.unacknowledged_count),
-    unacknowledgedBytes: Number(row.unacknowledged_bytes),
-    retainedCount: Number(row.retained_count),
-    retainedBytes: Number(row.retained_bytes),
+    unacknowledgedCount: partitions.reduce(
+      (sum, item) => sum + item.unacknowledgedCount,
+      0,
+    ),
+    unacknowledgedBytes: partitions.reduce(
+      (sum, item) => sum + item.unacknowledgedBytes,
+      0,
+    ),
+    retainedCount: partitions.reduce(
+      (sum, item) => sum + item.retainedCount,
+      0,
+    ),
+    retainedBytes: partitions.reduce(
+      (sum, item) => sum + item.retainedBytes,
+      0,
+    ),
   };
 }
 
@@ -1263,6 +1445,7 @@ function appendRuntimeEventInTransaction(
     bootId: string;
     now: () => Date;
     input: AppendRuntimeEventInput;
+    limits: RuntimeLimits;
   },
 ): HostRuntimeEventRow {
   const stream = ensureRuntimeEventStream(db, args.now);
@@ -1285,30 +1468,21 @@ function appendRuntimeEventInTransaction(
   });
   const envelopeJson = JSON.stringify(envelope);
   const encodedBytes = Buffer.byteLength(envelopeJson, "utf8");
-  const stats = runtimeEventOutboxStats(db, stream.stream_id);
-  const projectedBytes = stats.retainedBytes + encodedBytes;
-
-  if (args.input.terminal) {
-    if (projectedBytes > MAX_RUNTIME_EVENT_OUTBOX_BYTES) {
-      throw new HostRuntimeEventError(
-        "event_outbox_terminal_reserve_exhausted",
-        "runtime event terminal reserve is exhausted",
-      );
-    }
-  } else if (projectedBytes > HARD_RUNTIME_EVENT_OUTBOX_BYTES) {
-    throw new HostRuntimeEventError(
-      "event_outbox_hard_limit",
-      "runtime event outbox regular partition is full",
-    );
-  }
+  const partition = spendEventCapacity(db, args.limits, {
+    funding: args.input.funding ?? { partition: "regular" },
+    encodedBytes,
+    runId: args.input.draft.runId,
+    assignmentId: args.input.draft.assignmentId,
+    assignmentEpoch: args.input.draft.assignmentEpoch,
+  });
 
   const createdAt = args.now().toISOString();
 
   db.prepare(
     `INSERT INTO runtime_event_outbox
        (stream_id, sequence, sequence_sort_key, event_id, envelope_json, encoded_bytes,
-        occurred_at, acknowledged_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+        occurred_at, acknowledged_at, created_at, budget_partition)
+     VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
   ).run(
     stream.stream_id,
     sequenceText,
@@ -1318,10 +1492,23 @@ function appendRuntimeEventInTransaction(
     encodedBytes,
     envelope.occurredAt,
     createdAt,
+    partition,
   );
   db.prepare(
     "UPDATE runtime_event_streams SET next_sequence = ?, updated_at = ? WHERE stream_id = ?",
   ).run((sequence + 1n).toString(), createdAt, stream.stream_id);
+
+  if (
+    args.input.funding?.partition === "control" &&
+    args.input.draft.hostSessionId &&
+    ["session.exited", "session.crashed"].includes(args.input.draft.eventType)
+  ) {
+    markProducerEnded(
+      db,
+      args.input.funding.walletId,
+      args.input.draft.hostSessionId,
+    );
+  }
 
   return {
     streamId: stream.stream_id,
@@ -1367,6 +1554,34 @@ function writeReceiptRow(db: DatabaseSync, row: CommandReceiptRow): void {
 }
 
 function auditRuntimeEventState(db: DatabaseSync): void {
+  for (const partition of ["regular", "control", "emergency"] as const) {
+    const actual = db
+      .prepare(
+        `SELECT COUNT(*) AS count, COALESCE(SUM(encoded_bytes), 0) AS bytes,
+      COALESCE(SUM(acknowledged_at IS NULL), 0) AS pending_count,
+      COALESCE(SUM(CASE WHEN acknowledged_at IS NULL THEN encoded_bytes ELSE 0 END), 0) AS pending_bytes
+      FROM runtime_event_outbox WHERE budget_partition = ?`,
+      )
+      .get(partition) as {
+      count: number;
+      bytes: number;
+      pending_count: number;
+      pending_bytes: number;
+    };
+    const stored = outboxBudgetSnapshot(db)[partition];
+
+    if (
+      actual.count !== stored.retainedCount ||
+      actual.bytes !== stored.retainedBytes ||
+      actual.pending_count !== stored.unacknowledgedCount ||
+      actual.pending_bytes !== stored.unacknowledgedBytes
+    ) {
+      throw new HostRuntimeEventError(
+        "stream_corrupt",
+        "runtime event budget does not match its retained rows",
+      );
+    }
+  }
   const streams = db
     .prepare(
       `SELECT stream_id, next_sequence, acknowledged_through, acknowledged_sort_key,
@@ -1400,13 +1615,25 @@ function auditRuntimeEventState(db: DatabaseSync): void {
     );
   }
 
+  const invalid = db
+    .prepare(
+      `SELECT 1 FROM runtime_event_outbox
+    WHERE encoded_bytes > ? OR length(CAST(envelope_json AS BLOB)) <> encoded_bytes LIMIT 1`,
+    )
+    .get(MAX_RUNTIME_EVENT_BYTES);
+
+  if (invalid)
+    throw new HostRuntimeEventError(
+      "stream_corrupt",
+      "runtime event encoded length is invalid",
+    );
   const rows = db
     .prepare(
       `SELECT stream_id, sequence, event_id, envelope_json, encoded_bytes, occurred_at,
               acknowledged_at, created_at
        FROM runtime_event_outbox WHERE stream_id = ? ORDER BY sequence_sort_key ASC`,
     )
-    .all(stream.stream_id) as RuntimeEventOutboxDbRow[];
+    .iterate(stream.stream_id) as IterableIterator<RuntimeEventOutboxDbRow>;
   let expected = replayFloor + 1n;
 
   for (const row of rows) {
@@ -1501,6 +1728,47 @@ function validateRuntimeEventLimit(limit: number): number {
   }
 
   return limit;
+}
+
+function runtimeEventPage(
+  db: DatabaseSync,
+  streamId: string,
+  afterSortKey: string | null,
+  limit: number,
+): HostRuntimeEventRow[] {
+  const candidates = db
+    .prepare(
+      `SELECT sequence_sort_key, encoded_bytes FROM runtime_event_outbox
+    WHERE stream_id = ? AND sequence_sort_key > ? ORDER BY sequence_sort_key ASC LIMIT ?`,
+    )
+    .all(streamId, afterSortKey ?? "", Math.min(limit, 500)) as Array<{
+    sequence_sort_key: string;
+    encoded_bytes: number;
+  }>;
+  let bytes = 0;
+  let through: string | null = null;
+
+  for (const row of candidates) {
+    if (row.encoded_bytes > MAX_RUNTIME_EVENT_BYTES || row.encoded_bytes < 1) {
+      throw new HostRuntimeEventError(
+        "stream_corrupt",
+        "runtime event replay length is invalid",
+      );
+    }
+    if (bytes + row.encoded_bytes > MAX_RUNTIME_EVENT_BYTES) break;
+    bytes += row.encoded_bytes;
+    through = row.sequence_sort_key;
+  }
+  if (through === null) return [];
+  const rows = db
+    .prepare(
+      `SELECT stream_id, sequence, event_id, envelope_json, encoded_bytes, occurred_at,
+      acknowledged_at, created_at FROM runtime_event_outbox
+    WHERE stream_id = ? AND sequence_sort_key > ? AND sequence_sort_key <= ? ORDER BY sequence_sort_key ASC`,
+    )
+    .all(streamId, afterSortKey ?? "", through) as RuntimeEventOutboxDbRow[];
+
+  return rows.map(toHostRuntimeEventRow);
 }
 
 function toHostRuntimeEventRow(
@@ -1601,7 +1869,7 @@ export function startRuntimeEventPruner(
 ): () => void {
   const prune = (): void => {
     const pruned = state.pruneAcknowledgedRuntimeEvents(
-      new Date(now().getTime() - RUNTIME_EVENT_ACK_PRUNE_GRACE_MS),
+      new Date(now().getTime() - state.limits.eventAckGraceMs),
     );
 
     if (pruned > 0) {

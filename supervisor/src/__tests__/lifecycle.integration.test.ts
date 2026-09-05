@@ -522,7 +522,7 @@ describe("supervisor lifecycle integration", () => {
   it("logs do NOT contain the sentinel ANTHROPIC_AUTH_TOKEN value", async () => {
     const sentinel = "sk-test-redact-sentinel";
     const host = await bootFor(["--lines", "2"]);
-    const { url, runtimeRoot } = host;
+    const { url } = host;
     const sessionId = await createSession(host, {
       executorEnv: { ANTHROPIC_AUTH_TOKEN: sentinel },
     });
@@ -531,7 +531,7 @@ describe("supervisor lifecycle integration", () => {
     await sendPrompt(host, sessionId);
     await eventPromise;
 
-    const logPath = `${runtimeRoot}/.maister/demo/runs/run-int/step-1.log`;
+    const logPath = host.registry.get(sessionId)!.record.logPath;
     const logContents = await readFile(logPath, "utf8");
 
     expect(logContents).not.toContain(sentinel);

@@ -137,6 +137,7 @@ export async function evictLowerEpochSessions(args: {
     }
 
     args.registry.markIntentionalShutdown(sessionId, "fenced");
+    entry.record.stopOutputForTeardown?.();
     entry.child.kill("SIGTERM");
 
     const exited = await waitForChildExit(entry, args.killGraceMs);

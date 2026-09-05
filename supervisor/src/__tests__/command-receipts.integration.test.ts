@@ -58,7 +58,6 @@ function canonicalRuntimeEvents(
     if (page.length === 0) break;
     events.push(...page.map((row) => row.envelope as RuntimeEventEnvelope));
     after = page.at(-1)?.sequence ?? null;
-    if (page.length < 500) break;
   }
 
   return events
@@ -292,12 +291,10 @@ describe("command receipts", () => {
       fixtureArgs: ["--hang"],
     });
     const runId = `run-${randomUUID().slice(0, 8)}`;
-    const created = await postJson(
-      `${first.url}/sessions`,
-      await createEnvelope(first, { runId }),
-    );
+    const create = await createEnvelope(first, { runId });
+    const created = await postJson(`${first.url}/sessions`, create);
     const commandId = randomUUID();
-    const assignmentId = randomUUID();
+    const assignmentId = create.fence.assignmentId;
 
     first.hostState.putReceipt({
       commandId,

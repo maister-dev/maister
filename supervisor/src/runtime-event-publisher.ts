@@ -1,3 +1,5 @@
+import type { EventFunding } from "./outbox-budget";
+import type { CapturedStdoutSegment } from "./bounded-acp-stream";
 import type { Logger } from "pino";
 import type { CostRecord } from "./cost";
 import type { AppendRuntimeEventInput, HostState } from "./host-state";
@@ -7,6 +9,7 @@ import type {
 } from "./runtime-objects";
 import type { SessionEvent, SessionRecord } from "./types";
 
+import { CONTROL_EVENT_MAX_BYTES } from "./runtime-limits";
 import {
   assertRuntimeEventPayloadSafe,
   SessionContentReferenceSchema,
@@ -90,11 +93,22 @@ export class RuntimeEventPublisher {
       );
     }
     const assignment = assignmentForRecord(record);
+    const funding = this.sessionFunding(record, event);
     const original = sessionEventPayload(record, event);
     let payload = original;
 
     try {
       assertRuntimeEventPayloadSafe(original);
+      if (
+        funding.partition === "control" &&
+        Buffer.byteLength(JSON.stringify(original)) >
+          CONTROL_EVENT_MAX_BYTES - 2048
+      ) {
+        throw new SupervisorError(
+          "ACP_PROTOCOL",
+          "control event requires a bounded content reference",
+        );
+      }
     } catch {
       // Preserve opaque content exactly instead of feeding it to a redactor
       // that can alter tool output, paths, or required structured results.
@@ -150,7 +164,97 @@ export class RuntimeEventPublisher {
         payload,
       },
       terminal: isTerminalSessionEvent(event),
+      funding,
     };
+  }
+
+  private sessionFunding(
+    record: SessionRecord,
+    event: SessionEvent,
+  ): EventFunding {
+    const terminal =
+      event.type === "session.exited" || event.type === "session.crashed";
+    const pressured = this.state.runtimeEventOutboxStats().budget.pressured;
+    const completion = isTerminalSessionEvent(event);
+    const teardown =
+      event.type === "session.command" &&
+      ["session.cancel", "session.checkpoint", "session.delete"].includes(
+        event.kind,
+      );
+
+    if (
+      terminal ||
+      (pressured &&
+        (completion || teardown || event.type === "session.chat_turn"))
+    ) {
+      return {
+        partition: "control",
+        walletId: record.createdByCommandId,
+        ...(event.type === "session.command"
+          ? { commandId: event.commandId }
+          : {}),
+      };
+    }
+
+    const fromFrame = [
+      "session.line",
+      "session.update",
+      "session.permission_request",
+      "session.hook_trip",
+    ].includes(event.type);
+
+    return {
+      partition: "regular",
+      reservationId: fromFrame ? record.outputEventReservationId : undefined,
+    };
+  }
+
+  /** A pressured teardown seals all captured, unsequenced bytes as one object. */
+  publishStdoutSegment(
+    record: SessionRecord,
+    segment: CapturedStdoutSegment,
+  ): void {
+    if (!this.objects)
+      throw new SupervisorError(
+        "ACP_PROTOCOL",
+        "stdout preservation requires the runtime object registry",
+        {
+          details: { reason: "required_output_incomplete" },
+        },
+      );
+    const assignment = assignmentForRecord(record);
+    const metadata = this.objects.captureStdoutSegment({
+      runId: record.runId,
+      ...assignment,
+      hostSessionId: record.sessionId,
+      descriptor: segment.descriptor,
+      sizeBytes: segment.sizeBytes,
+    });
+    const input = this.runtimeObjectInput({
+      runId: record.runId,
+      ...assignment,
+      metadata,
+    });
+
+    this.state.appendRuntimeEvent({
+      ...input,
+      funding: { partition: "control", walletId: record.createdByCommandId },
+      draft: {
+        ...input.draft,
+        hostSessionId: record.sessionId,
+        payload: {
+          ...input.draft.payload,
+          stdoutSegment: {
+            commandId:
+              record.activePromptCommandId ?? record.createdByCommandId,
+            firstLogByteOffset: segment.firstLogByteOffset,
+            capturedBytes: segment.sizeBytes,
+            completeFrames: segment.completeFrames,
+            trailingFrameBytes: segment.trailingFrameBytes,
+          },
+        },
+      },
+    });
   }
 
   sessionContentReference(
@@ -164,11 +268,21 @@ export class RuntimeEventPublisher {
     assignmentId: string;
     assignmentEpoch: number;
     metadata: RuntimeObjectPublicMetadata;
+    walletId?: string;
   }): AppendRuntimeEventInput {
     const metadata = input.metadata;
     const available = metadata.state === "available";
 
     return {
+      ...(input.walletId &&
+      this.state.runtimeEventOutboxStats().budget.pressured
+        ? {
+            funding: {
+              partition: "control" as const,
+              walletId: input.walletId,
+            },
+          }
+        : {}),
       terminal: metadata.state === "deleted" || metadata.state === "corrupt",
       draft: {
         runId: input.runId,
@@ -261,6 +375,10 @@ export class RuntimeEventPublisher {
   publishUsage(record: SessionRecord, cost: CostRecord): void {
     const assignment = assignmentForRecord(record);
     const persisted = this.state.appendRuntimeEvent({
+      funding: {
+        partition: "regular",
+        reservationId: record.outputEventReservationId,
+      },
       draft: {
         runId: record.runId,
         assignmentId: assignment.assignmentId,

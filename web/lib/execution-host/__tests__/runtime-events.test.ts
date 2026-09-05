@@ -17,6 +17,35 @@ function fixture(name: string): unknown {
 }
 
 describe("execution-host runtime event wire boundary", () => {
+  it("accepts bounded stdout segment metadata only on its matching available object", () => {
+    const segment = RuntimeEventEnvelopeSchema.parse(
+      fixture("envelope.stdout-segment.valid.json"),
+    );
+
+    expect(
+      RuntimeEventEnvelopeSchema.safeParse({ ...segment, hostSessionId: null })
+        .success,
+    ).toBe(false);
+    expect(
+      RuntimeEventEnvelopeSchema.safeParse({
+        ...segment,
+        payload: { ...segment.payload, sizeBytes: 7 },
+      }).success,
+    ).toBe(false);
+    expect(
+      RuntimeEventEnvelopeSchema.safeParse({
+        ...segment,
+        payload: {
+          ...segment.payload,
+          stdoutSegment: {
+            ...(segment.payload.stdoutSegment as Record<string, unknown>),
+            capturedBytes: 2_097_153,
+          },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
   it("requires the version and exact binding of a referenced session payload", () => {
     const content = RuntimeEventEnvelopeSchema.parse(
       fixture("envelope.content-v2.valid.json"),

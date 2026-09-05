@@ -7,10 +7,12 @@ declare module "node:sqlite" {
       lastInsertRowid: number | bigint;
     };
     get(...params: unknown[]): Record<string, unknown> | undefined;
+    iterate(...params: unknown[]): IterableIterator<Record<string, unknown>>;
     all(...params: unknown[]): Array<Record<string, unknown>>;
   }
   export class DatabaseSync {
     constructor(filename: string);
+    readonly isTransaction: boolean;
     exec(sql: string): void;
     prepare(sql: string): StatementSync;
     close(): void;

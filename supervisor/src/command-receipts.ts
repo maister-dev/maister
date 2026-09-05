@@ -1,9 +1,11 @@
 import type { Logger } from "pino";
+import type { ReceiptAdmission } from "./outbox-budget";
 import type { CommandReceiptRow, HostState, ReceiptPhase } from "./host-state";
 import type { CommandEnvelope, SupervisorErrorBody } from "./types";
 
 import { createHash } from "node:crypto";
 
+import { HostRuntimeEventError } from "./host-runtime-errors";
 import {
   errorBody,
   httpStatusForCode,
@@ -24,6 +26,7 @@ export type CommandOutcome = {
 export type ExecutedCommand = CommandOutcome & { replayed: boolean };
 
 export type ReceiptTransition = {
+  admission?: ReceiptAdmission;
   row: CommandReceiptRow;
   phase: ReceiptPhase;
   outcome: CommandOutcome;
@@ -35,7 +38,7 @@ type ExecuteCommandArgs = {
   onAccepted?: () => void;
   persistReceipt?: (transition: ReceiptTransition) => void;
   afterReceipt?: (transition: ReceiptTransition) => void;
-  admissionExempt?: boolean;
+  admission?: ReceiptAdmission;
   run: () => Promise<CommandOutcome>;
 };
 
@@ -62,7 +65,7 @@ export class CommandReceipts {
   }
 
   // ACP processes are intentionally not recovered across a supervisor restart.
-  // Canonical prompt receipts with durable provenance therefore become an
+  // Canonical receipts backed by producer wallets therefore become an
   // explicit terminal `turn_lost` pair before the host accepts new traffic.
   recoverAcceptedPrompts(): number {
     const recovered = this.state.recoverAcceptedPromptReceipts();
@@ -70,7 +73,7 @@ export class CommandReceipts {
     if (recovered > 0) {
       this.logger.warn(
         { recovered },
-        "accepted-prompt-receipts-terminalized-after-restart",
+        "accepted-producer-receipts-terminalized-after-restart",
       );
     }
 
@@ -136,10 +139,6 @@ export class CommandReceipts {
       return { ...rejected, replayed: false };
     }
 
-    if (!args.admissionExempt) {
-      this.state.assertCanAcceptMutatingCommand();
-    }
-
     const receivedAt = this.now().toISOString();
     const promise = this.runFresh(args, receivedAt);
 
@@ -184,9 +183,6 @@ export class CommandReceipts {
         replayed: true,
       };
     }
-    if (!existing && !args.admissionExempt) {
-      this.state.assertCanAcceptMutatingCommand();
-    }
     const receivedAt = existing?.receivedAt ?? this.now().toISOString();
     const promise = this.runFresh(args, receivedAt);
 
@@ -207,7 +203,7 @@ export class CommandReceipts {
     hostSessionId?: string;
     persistReceipt?: (transition: ReceiptTransition) => void;
     afterReceipt?: (transition: ReceiptTransition) => void;
-    admissionExempt?: boolean;
+    admission?: ReceiptAdmission;
     run: () => Promise<CommandOutcome>;
   }): Promise<ExecutedCommand> {
     const { envelope } = args;
@@ -251,7 +247,6 @@ export class CommandReceipts {
 
       return { ...rejected, replayed: false };
     }
-    if (!args.admissionExempt) this.state.assertCanAcceptMutatingCommand();
 
     const receivedAt = this.now().toISOString();
     const accepted = {
@@ -285,7 +280,7 @@ export class CommandReceipts {
       hostSessionId?: string;
       persistReceipt?: (transition: ReceiptTransition) => void;
       afterReceipt?: (transition: ReceiptTransition) => void;
-      admissionExempt?: boolean;
+      admission?: ReceiptAdmission;
       run: () => Promise<CommandOutcome>;
     },
     receivedAt: string,
@@ -358,6 +353,7 @@ export class CommandReceipts {
     callbacks: {
       envelope: CommandEnvelope;
       hostSessionId?: string;
+      admission?: ReceiptAdmission;
       onAccepted?: () => void;
       persistReceipt?: (transition: ReceiptTransition) => void;
       afterReceipt?: (transition: ReceiptTransition) => void;
@@ -381,15 +377,21 @@ export class CommandReceipts {
     };
 
     try {
-      const transition = { row, phase, outcome } satisfies ReceiptTransition;
+      const transition = {
+        row,
+        phase,
+        outcome,
+        admission: callbacks.admission,
+      } satisfies ReceiptTransition;
 
       if (callbacks.persistReceipt) {
         callbacks.persistReceipt(transition);
       } else {
-        this.state.putReceipt(row);
+        this.state.putReceipt(row, transition.admission);
       }
       callbacks.afterReceipt?.(transition);
     } catch (err) {
+      if (err instanceof HostRuntimeEventError) throw err;
       this.logger.error(
         {
           commandId: envelope.command.id,

@@ -1,3 +1,4 @@
+import type { RuntimeLimits } from "../../runtime-limits";
 // ADR-166 test harness: boot the supervisor routes in-process on a REAL
 // execution-host state store (temp dir) with a fake ACP adapter fixture.
 import type { FastifyInstance } from "fastify";
@@ -37,6 +38,8 @@ export type BootedHost = {
 };
 
 export type BootHostOptions = {
+  limits?: RuntimeLimits;
+  now?: () => Date;
   fixture?: string;
   fixtureArgs?: string[];
   stateDir?: string;
@@ -62,7 +65,13 @@ export async function bootHost(
   const ownsHostState = !opts.hostState;
   const hostState =
     opts.hostState ??
-    openHostState({ stateDir, pinnedKey: opts.pinnedKey, logger });
+    openHostState({
+      stateDir,
+      pinnedKey: opts.pinnedKey,
+      logger,
+      limits: opts.limits,
+      now: opts.now,
+    });
   const registry = new SessionRegistry(logger);
   const app = Fastify({ logger: false });
   const workspaceRoots = opts.workspaceRoots ?? [await realpath(runtimeRoot)];

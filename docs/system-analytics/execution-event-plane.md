@@ -85,8 +85,8 @@ payload. Current prompt identity, or the creating command outside a prompt,
 binds each segment; these segments do not replace command-terminal output.
 `firstFrame` equals the source monotonic ID and `frameCount` is one. `source`
 is `raw_stdout` for a line, `terminal_output` for command/session terminal
-content and `session_update` for other session events. Ordered multi-frame
-pressure segments require a separately validated format before activation.
+content and `session_update` for other session events. Multi-frame pressure
+segments use the separate raw-object format described below.
 
 The output pool accounts for accumulated gate-chat text at its UTF-16 storage
 size before concatenation (at most 2 MiB per producer and within the shared
@@ -109,6 +109,47 @@ write and cursor still commit together. Unavailable content is retryable and
 cannot advance the cursor. Full raw payloads never enter the canonical event
 table or a general metadata DTO. A browser read of reconstructed output uses
 the same repository-content permission as the corresponding object download.
+
+## Outbox partitions and producer pressure (S1.3 in progress)
+
+Logical admission and append accounting use the same transactional row/byte
+counters. ACKed rows continue to count until replay grace expires and pruning
+removes them. Low/soft/hard hysteresis prevents repeated admission at the soft
+boundary. Regular storage is separate from control and the emergency floor;
+the exact validated defaults are owned by [configuration](../configuration.md).
+
+Accepting a session create reserves `(18 + output binding count)` control rows
+with its receipt, before spawning. Each control row is at most 16 KiB. A
+producer owns at most one accepted prompt; duplicate command IDs reattach.
+Checkpoint/cancel/delete reserve their acceptance and completion credits and
+serialize against another live teardown. Under pressure, a new ID cannot
+repeat an already accepted step. The existing ID replays without another spend.
+Committed control rows remain charged after unused wallet credits return.
+
+Before decoding a complete ACP frame, the producer reserves four regular event
+rows and 4 MiB for its raw line, optional cost, semantic notification and one
+guardrail event. Captured partial frames stay on disk; capacity waits hold no
+decoder permit. Commit-driven notifications wake paused readers after capacity
+returns below the low watermark. This does not poll runtime files.
+
+An independent checkpoint/delete can stop a producer whose shared stdout pipe
+is paused. Before its terminal evidence, the host seals the captured unsequenced
+bytes into one immutable `raw_transcript` object named `stdout-overflow.ndjson`,
+MIME `application/x-ndjson`, at most 2 MiB. A wallet-funded
+`runtime_object.available` event carries ordinary metadata plus a closed
+`stdoutSegment` descriptor: source `commandId`, `firstLogByteOffset`,
+`capturedBytes`, `completeFrames` and `trailingFrameBytes`. The envelope binds
+the host session and assignment. Each incarnation creates its own exclusive raw log. Offsets are bytes in that log;
+newline boundaries in the exact object delimit complete frames. A captured
+prefix is retained even when draining exceeds its bound or ends mid-frame.
+The interrupted prompt fails with `required_output_incomplete`; raw preservation
+does not claim that skipped semantic callbacks completed successfully.
+
+The logical queue, pressured pipe, bounded replay and restart repairs have
+executed integration evidence. Physical SQLite/WAL high-water enforcement,
+aggregate object/spool disk quota, storage-failure readiness and full concurrent
+producer qualification remain open S1.3/S1.8 work. Their designed limits are
+not yet a qualified physical storage guarantee.
 
 ## Durable bounded projection and reconciliation workers
 
