@@ -4,7 +4,7 @@ import type { ReactElement } from "react";
 
 import { useRepositorySummary } from "@/components/use-repository-summary";
 import type { Locale } from "@/lib/locale";
-import { GITHUB_REPOSITORY } from "@/lib/site-config";
+import { GITHUB_REPOSITORY, GITHUB_URL } from "@/lib/site-config";
 
 type RepositoryLabels = {
   branch: string;
@@ -34,7 +34,9 @@ type RepositoryMetricsProps = {
   metrics: ReadonlyArray<RepositoryMetric>;
 };
 
-function placeholderMetrics(labels: RepositoryLabels): ReadonlyArray<RepositoryMetric> {
+function placeholderMetrics(
+  labels: RepositoryLabels,
+): ReadonlyArray<RepositoryMetric> {
   return [
     { label: labels.stars, value: "—" },
     { label: labels.forks, value: "—" },
@@ -73,7 +75,11 @@ export function GitHubRepoWidget({
 
   if (state.status === "loading") {
     return (
-      <div aria-busy="true" aria-live="polite" className="repo-widget is-loading">
+      <div
+        aria-busy="true"
+        aria-live="polite"
+        className="repo-widget is-loading"
+      >
         <div className="repo-widget-head">
           <span className="repo-status is-loading">
             <span aria-hidden="true" />
@@ -88,20 +94,21 @@ export function GitHubRepoWidget({
 
   if (state.status === "error") {
     return (
-      <div className="repo-widget is-error" role="alert">
-        <div className="repo-widget-head">
-          <span className="repo-status is-error">
-            <span aria-hidden="true" />
-            {labels.error}
-          </span>
-          <span className="repo-widget-head-actions">
-            <span>{GITHUB_REPOSITORY}</span>
-            <button className="text-button" type="button" onClick={retry}>
-              {labels.retry} ↻
-            </button>
-          </span>
+      <div className="repo-widget is-fallback">
+        <div>
+          <p>{labels.error}</p>
+          <a
+            className="button button-secondary"
+            href={GITHUB_URL}
+            rel="noreferrer"
+            target="_blank"
+          >
+            {GITHUB_REPOSITORY} ↗
+          </a>
+          <button className="text-button" type="button" onClick={retry}>
+            {labels.retry} ↻
+          </button>
         </div>
-        <RepositoryMetrics metrics={placeholderMetrics(labels)} />
       </div>
     );
   }

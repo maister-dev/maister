@@ -8,8 +8,6 @@ import { useRepositorySummary } from "@/components/use-repository-summary";
 import { GITHUB_URL } from "@/lib/site-config";
 
 type HeaderRepositoryControlProps = {
-  errorLabel: string;
-  loadingLabel: string;
   locale: Locale;
   starsLabel: string;
 };
@@ -23,25 +21,20 @@ function formatStars(stars: number, locale: Locale): string {
 }
 
 export function HeaderRepositoryControl({
-  errorLabel,
-  loadingLabel,
   locale,
   starsLabel,
 }: HeaderRepositoryControlProps): ReactElement {
   const { state } = useRepositorySummary();
-  const starCount = state.status === "ready" ? formatStars(state.data.stars, locale) : "—";
-  const stateLabel = state.status === "error" ? errorLabel : loadingLabel;
-  const accessibleLabel =
-    state.status === "ready" ? `GitHub, ${starCount} ${starsLabel}` : `GitHub, ${stateLabel}`;
+  const starCount =
+    state.status === "ready" ? formatStars(state.data.stars, locale) : null;
 
   return (
     <a
-      aria-label={accessibleLabel}
+      aria-label={starCount ? `GitHub, ${starCount} ${starsLabel}` : "GitHub"}
       className="header-repository"
       href={GITHUB_URL}
       rel="noreferrer"
       target="_blank"
-      title={state.status === "ready" ? undefined : stateLabel}
     >
       <span className="header-repository-main">
         <svg aria-hidden="true" viewBox="0 0 16 16">
@@ -52,10 +45,12 @@ export function HeaderRepositoryControl({
         </svg>
         <span className="header-repository-name">GitHub</span>
       </span>
-      <span className="header-repository-stars">
-        <span aria-hidden="true">★</span>
-        {starCount}
-      </span>
+      {starCount ? (
+        <span className="header-repository-stars">
+          <span aria-hidden="true">★</span>
+          {starCount}
+        </span>
+      ) : null}
     </a>
   );
 }

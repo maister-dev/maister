@@ -12,17 +12,20 @@ type FeatureCopy = {
   meta: string;
 };
 
+export type TourShotId = "portfolio" | "board" | "run" | "inbox" | "review";
+
 type LandingContent = {
   meta: {
     title: string;
     description: string;
   };
   nav: {
+    why: string;
     product: string;
     workflow: string;
-    agentization: string;
     controls: string;
-    architecture: string;
+    packages: string;
+    compare: string;
     docs: string;
   };
   controls: {
@@ -40,26 +43,15 @@ type LandingContent = {
     body: string;
     primary: string;
     secondary: string;
-    scope: ReadonlyArray<{ label: string; value: string }>;
-    graphTitle: string;
-    graphLive: string;
-    graphLabels: ReadonlyArray<string>;
-    terminal: ReadonlyArray<string>;
-  };
-  positioning: {
-    eyebrow: string;
-    title: string;
-    body: string;
-    items: ReadonlyArray<{
+    install: {
       label: string;
-      title: string;
-      body: string;
-    }>;
-    dogfood: {
-      label: string;
-      title: string;
-      body: string;
+      command: string;
+      copy: string;
+      copied: string;
+      hint: string;
+      hintLink: string;
     };
+    rail: ReadonlyArray<{ label: string; value: string }>;
   };
   problem: {
     eyebrow: string;
@@ -72,6 +64,18 @@ type LandingContent = {
       body: string;
     }>;
   };
+  tour: {
+    eyebrow: string;
+    title: string;
+    body: string;
+    shots: ReadonlyArray<{
+      id: TourShotId;
+      label: string;
+      title: string;
+      body: string;
+      alt: string;
+    }>;
+  };
   workflow: {
     eyebrow: string;
     title: string;
@@ -79,80 +83,43 @@ type LandingContent = {
     nodes: ReadonlyArray<{ label: string; detail: string }>;
     note: string;
   };
-  collaboration: {
-    eyebrow: string;
-    title: string;
-    accent: string;
-    body: string;
-    diagramLabel: string;
-    humanLabel: string;
-    agentLabel: string;
-    modes: ReadonlyArray<{
-      from: "human" | "agent";
-      to: "human" | "agent";
-      direction: "→" | "↔";
-      title: string;
-      body: string;
-      meta: string;
-    }>;
-  };
   controlsSection: {
     eyebrow: string;
     title: string;
     body: string;
-    spotlights: ReadonlyArray<{
-      kicker: string;
-      title: string;
-      body: string;
-      status: string;
-      points: ReadonlyArray<string>;
-    }>;
     features: ReadonlyArray<FeatureCopy>;
   };
   autonomy: {
     eyebrow: string;
     title: string;
     body: string;
-    humanLabel: string;
-    systemLabel: string;
-    levels: ReadonlyArray<{
-      mode: string;
-      artifact: string;
-      title: string;
-      body: string;
-      human: string;
-      system: string;
-    }>;
-    builtIns: {
-      eyebrow: string;
-      title: string;
-      body: string;
-      agents: ReadonlyArray<{
-        id: string;
-        name: string;
-        trigger: string;
-        body: string;
-      }>;
-    };
+    levels: ReadonlyArray<{ mode: string; artifact: string }>;
+    link: string;
   };
-  architecture: {
+  packages: {
     eyebrow: string;
     title: string;
     body: string;
-    current: string;
-    nodes: {
-      operator: string;
-      control: string;
-      ledger: string;
-      host: string;
-      hostActive: string;
-      hostFuture: string;
-      agents: string;
-      workspace: string;
+    items: ReadonlyArray<{ id: string; name: string; body: string }>;
+    link: LinkCopy;
+  };
+  compare: {
+    eyebrow: string;
+    title: string;
+    body: string;
+    columns: {
+      criterion: string;
+      kanban: string;
+      runners: string;
+      maister: string;
     };
-    adapters: string;
-    ready: string;
-    gated: string;
+    rows: ReadonlyArray<{
+      criterion: string;
+      kanban: string;
+      runners: string;
+      maister: string;
+    }>;
+    note: string;
   };
   repository: {
     eyebrow: string;
@@ -169,6 +136,29 @@ type LandingContent = {
     license: string;
     branch: string;
     updated: string;
+    dogfood: {
+      label: string;
+      title: string;
+      body: string;
+    };
+    links: {
+      discussions: string;
+      issues: string;
+      contributing: string;
+    };
+  };
+  services: {
+    eyebrow: string;
+    title: string;
+    body: string;
+    offers: ReadonlyArray<{ name: string; duration: string; body: string }>;
+    cta: LinkCopy;
+    note: string;
+  };
+  faq: {
+    eyebrow: string;
+    title: string;
+    items: ReadonlyArray<{ question: string; answer: string }>;
   };
   final: {
     eyebrow: string;
@@ -183,10 +173,10 @@ type LandingContent = {
     taglineAccent: string;
     product: {
       title: string;
-      overview: string;
+      why: string;
+      tour: string;
       workflow: string;
-      collaboration: string;
-      architecture: string;
+      compare: string;
     };
     docs: {
       title: string;
@@ -230,11 +220,12 @@ const CONTENT = {
         "Self-hosted execution and governance for repeatable AI-powered SDLC processes over private code.",
     },
     nav: {
-      product: "Why MAIster",
-      workflow: "Delivery spine",
-      agentization: "Agentization",
+      why: "Why MAIster",
+      product: "Product",
+      workflow: "How it works",
       controls: "Controls",
-      architecture: "Architecture",
+      packages: "Packages",
+      compare: "Compare",
       docs: "Docs",
     },
     controls: {
@@ -246,80 +237,38 @@ const CONTENT = {
       language: "Language",
     },
     hero: {
-      eyebrow: "Self-hosted · private code · MIT licensed",
+      eyebrow: "Open source · self-hosted · MIT licensed",
       title: "Turn AI coding from a terminal habit into",
       accent: "a delivery system.",
-      body:
-        "MAIster runs versioned software-delivery Flows across your repositories. Agents work in isolated worktrees, humans enter at declared gates, and evidence decides what can ship.",
+      body: "MAIster runs versioned software-delivery Flows across your repositories. Agents work in isolated worktrees, humans enter at declared gates, and evidence decides what can ship.",
       primary: "Get started",
       secondary: "Read the docs",
-      scope: [
-        { label: "runtime", value: "ACP" },
-        { label: "process", value: "graph Flows" },
-        { label: "proof", value: "typed evidence" },
-        { label: "control", value: "HITL + review" },
-      ],
-      graphTitle: "~/private-repos · governed delivery",
-      graphLive: "running",
-      graphLabels: ["intent", "flow", "work", "evidence", "review", "ship"],
-      terminal: [
-        "run/TASK-427 · flow feature@1.8.0",
-        "↳ isolated workspace · package core@v1.8.0",
-        "⚡ implementation claimed by codex",
-        "✓ tests · types · evidence current",
-        "? human review · approval required",
-        "✓ promoted → main@4f2a",
-      ],
-    },
-    positioning: {
-      eyebrow: "Product view",
-      title: "A private development control plane for solo founders and tiny teams.",
-      body:
-        "Run parallel feature work across a portfolio of products without spending the day in coding-agent terminals.",
-      items: [
-        {
-          label: "Audience",
-          title: "One technical owner or a tiny team",
-          body: "Low-ops setup, direct control, and enough governance to delegate more work without adding enterprise process.",
-        },
-        {
-          label: "Portfolio",
-          title: "Many features across several products",
-          body: "A cross-project portfolio, Kanban boards, task graph, priority queue, isolated workspaces, and one attention inbox keep parallel delivery readable.",
-        },
-        {
-          label: "API-first",
-          title: "Web for people. REST and MCP for personal agents.",
-          body: "Your assistant can create tasks, launch Runs, inspect readiness, report evidence, and follow results through scoped tokens and the same audit trail.",
-        },
-        {
-          label: "Privacy",
-          title: "Install MAIster on your own machines",
-          body: "Repositories, prompts, diffs, secrets, and artifact bodies stay inside your infrastructure. The control plane and execution host remain under your administration.",
-        },
-        {
-          label: "ACP + provider access",
-          title: "Use agent subscriptions without giving up control",
-          body: "MAIster starts Codex, Claude Code, and other coding-agent CLIs through ACP using authentication configured on the execution host, including supported subscription-backed sessions; API providers stay in the same runner catalog. The supervisor keeps the channel two-way: an agent can request permission or a human decision, while MAIster can return the answer, send a corrective prompt, stop the session, or checkpoint it and resume later. Teams get the familiar CLI interaction model inside a governed Flow and shared audit trail, without forcing every run into YOLO mode.",
-        },
-        {
-          label: "Execution fleet",
-          title: "One control plane with a path to multiple supervisors",
-          body: "The current release uses one trusted execution host. Durable host identity, assignments, epoch fencing, command receipts, and workspace handles now form the base for multi-server placement and transport.",
-        },
-      ],
-      dogfood: {
-        label: "Built with MAIster",
-        title: "MAIster is built in MAIster.",
-        body: "The team uses MAIster packages, Flows, agents, evidence, review, and promotion to develop MAIster itself. Product gaps surface in real delivery work.",
+      install: {
+        label: "Run it on your own host",
+        command: "git clone https://github.com/maister-dev/maister.git",
+        copy: "Copy",
+        copied: "Copied",
+        hint: "Postgres in Docker, two host processes, first governed run in about ten minutes.",
+        hintLink: "Follow the quickstart",
       },
+      rail: [
+        {
+          label: "coding agents",
+          value: "Claude · Codex · Gemini · OpenCode · MiMo",
+        },
+        {
+          label: "providers",
+          value: "Anthropic · OpenAI · OpenRouter · compatible",
+        },
+        { label: "interfaces", value: "Web · REST · MCP · ACP" },
+        { label: "runs on", value: "your host · Postgres · git worktrees" },
+      ],
     },
     problem: {
       eyebrow: "The operating gap",
       title: "Coding agents execute.",
       accent: "MAIster makes the work governable.",
-      body:
-        "The hard part is no longer producing code. It is keeping parallel agent work repeatable, reviewable, constrained, and connected to the way software actually ships.",
+      body: "The hard part is no longer producing code. It is keeping parallel agent work repeatable, reviewable, constrained, and connected to the way software actually ships.",
       items: [
         {
           before: "Many terminals",
@@ -343,11 +292,52 @@ const CONTENT = {
         },
       ],
     },
+    tour: {
+      eyebrow: "Product tour",
+      title: "One control plane for every project, Run, and decision.",
+      body: "MAIster is designed for a technical owner or small engineering team operating multiple private repositories and coding agents on its own infrastructure. Web for people, REST and MCP for personal agents.",
+      shots: [
+        {
+          id: "portfolio",
+          label: "Portfolio",
+          title: "Every project and active workspace on one screen.",
+          body: "Projects, active workspaces, runner readiness, and the needs-you count stay visible without opening a single terminal.",
+          alt: "MAIster portfolio: project cards with active workspaces, runner readiness, and the launch button",
+        },
+        {
+          id: "board",
+          label: "Board",
+          title: "Kanban visibility across the portfolio.",
+          body: "Each project board shows which tasks are queued, running, blocked, awaiting review, or done. The same state stays visible across repositories without following every terminal.",
+          alt: "MAIster project board with Backlog, Prepare, In production, and On review columns",
+        },
+        {
+          id: "run",
+          label: "Run",
+          title: "A Flow you can inspect while it runs.",
+          body: "The Run page shows the graph, the current node, readiness, tokens, and the branch the work lives on. Every attempt stays in the ledger.",
+          alt: "MAIster Run page with the Flow graph, readiness state, and the run inspector",
+        },
+        {
+          id: "inbox",
+          label: "Inbox",
+          title: "Give each teammate one queue for decisions.",
+          body: "When an agent needs a human decision, MAIster opens the request in the inbox and on the Run page: a permission, form, review, or escalation. The answer returns to the originating Run.",
+          alt: "MAIster inbox with two human review requests waiting for a decision",
+        },
+        {
+          id: "review",
+          label: "Review & promote",
+          title: "Artifact review and deliberate landing.",
+          body: "Review the diff, reports, plans, and other production artifacts together. Approve the result, return the Run for rework with actionable comments, or promote it to the selected branch through a PR or local merge.",
+          alt: "MAIster review workspace with the changed files tree and the diff viewer",
+        },
+      ],
+    },
     workflow: {
       eyebrow: "The delivery spine",
       title: "A process you can inspect from intent to promotion.",
-      body:
-        "MAIster is not another coding agent and not a generic workflow canvas. It is the execution layer that gives your existing agents a repeatable path through real software delivery.",
+      body: "MAIster is not another coding agent and not a generic workflow canvas. It is the execution layer that gives your existing agents a repeatable path through real software delivery.",
       nodes: [
         { label: "Project", detail: "private repository" },
         { label: "Flow package", detail: "versioned process" },
@@ -362,183 +352,10 @@ const CONTENT = {
       ],
       note: "Every handoff leaves a ledger entry. Every promotion crosses the same readiness choke point.",
     },
-    collaboration: {
-      eyebrow: "Four ways to collaborate",
-      title: "Humans, agents,",
-      accent: "and every direction between them.",
-      body:
-        "MAIster gives people and agents one shared delivery surface. Each handoff carries a task, artifact, decision, or typed result, so the team can trace ownership and the next action.",
-      diagramLabel: "Four collaboration directions between humans and AI agents",
-      humanLabel: "Human",
-      agentLabel: "Agent",
-      modes: [
-        {
-          from: "human",
-          to: "human",
-          direction: "↔",
-          title: "Human ↔ Human",
-          body:
-            "Plan work in one task graph, assign decisions, review diffs, and hand work across products without losing its Run history.",
-          meta: "tasks · assignments · review",
-        },
-        {
-          from: "human",
-          to: "agent",
-          direction: "→",
-          title: "Human → Agent",
-          body:
-            "Start a Scratch Run, launch a versioned Flow, or summon a platform agent. You set intent, access, policy, budget, and the points that require a decision.",
-          meta: "scratch · Flow · platform agent",
-        },
-        {
-          from: "agent",
-          to: "human",
-          direction: "→",
-          title: "Agent → Human",
-          body:
-            "When an agent needs a human decision, MAIster opens the request in the inbox and on the Run page: a permission, form, review, or escalation. The same request can also reach an external channel, such as chat through a personal assistant, and the answer returns to the originating Run.",
-          meta: "MAIster UI · optional channels · scoped response",
-        },
-        {
-          from: "agent",
-          to: "agent",
-          direction: "↔",
-          title: "Agent ↔ Agent",
-          body:
-            "Orchestrators delegate bounded child Runs to agents or Flows, exchange typed results, and send one independently checked implementation into review.",
-          meta: "Run tree · RAH · independent judge",
-        },
-      ],
-    },
     controlsSection: {
       eyebrow: "The product, not just the runner",
       title: "MAIster keeps the system around the agents visible.",
-      body:
-        "The deterministic spine stays small: ownership, state, evidence, budgets, and promotion. Around it, MAIster adds shared and private memory, artifact authoring and improvement, comparison, and the operating surfaces required for sustained agent work.",
-      spotlights: [
-        {
-          kicker: "Project Brain · memory · improvement",
-          title: "Carry experience forward and turn repeated signals into reviewed changes.",
-          body:
-            "Project Brain combines vector-indexed code and analytics with owned sources and accepted lessons. Each attached platform agent can keep separate durable memory. Brain Improver groups recurring evidence and drafts changes to rules, skills, Flows, architecture decisions, roadmaps, or project state for human review.",
-          status: "Implemented foundation",
-          points: [
-            "Shared project memory and private per-agent memory remain separate",
-            "Every improvement proposal cites the evidence that produced it",
-            "The team reviews changes before MAIster creates a draft or a normal delivery task",
-          ],
-        },
-        {
-          kicker: "Engineering control · business interfaces",
-          title: "Engineers configure delivery. Business keeps its own front door.",
-          body:
-            "The engineering team versions Flow packages, policies, and platform agents. Domain-event agents can watch failed or crashed Runs and failed gates, investigate errors, create follow-up work, or call in a person. Scoped REST/MCP, the assistant pulse, and signed webhooks connect that system to a chat, personal assistant, customer portal, or internal bot.",
-          status: "Agent substrate · external API · webhooks implemented",
-          points: [
-            "Flows, policies, and agents ship together in trusted packages",
-            "Flow Studio's visual editor and AI assistant create new Flows, fork packaged Flows into editable local versions, attach them to projects, and launch tasks through them",
-            "run.failed, run.crashed, and gate.failed can trigger monitoring or recovery agents",
-            "REST/MCP surfaces accept commands; activity feeds and signed webhooks publish events",
-          ],
-        },
-        {
-          kicker: "Attention inbox · human focus",
-          title: "Give each teammate one queue for decisions.",
-          body:
-            "MAIster collects work that needs a person: permissions, forms, clarification, review, promotion, and escalated failures. Autonomous Flows and agents stay out of the inbox while they remain within policy. Give a personal assistant a user token with project access plus the exact HITL scopes; it can bring an inbox card into chat, take the human answer, close the request in MAIster, and let the same Run resume.",
-          status: "Implemented",
-          points: [
-            "Inbox card → assistant message in chat",
-            "Human reply → scoped hitl_respond → Run resumes",
-            "Project membership and hitl:inbox:read + hitl:respond:human bound access",
-          ],
-        },
-        {
-          kicker: "Task graph · execution queue",
-          title: "One intent, explicit dependencies, many comparable Runs.",
-          body:
-            "A task persists as the unit of intent. Typed relations connect work across the plan, the priority queue admits it as capacity frees, and every implementation attempt remains attached to the same task.",
-          status: "Implemented",
-          points: [
-            "Typed blocks, depends-on, parent, requirement, and duplicate relations",
-            "Priority, pause, concurrency, queue position, and safe auto-start",
-            "One task → many Runs with preserved lineage, evidence, cost, and outcome",
-          ],
-        },
-        {
-          kicker: "Run economics · Observatory",
-          title: "See the resource bill for every Run of a task.",
-          body:
-            "Run Inspector shows input, output, cache-read, and cache-creation tokens beside active and wall-clock time. Runs remain linked to their task, so you can compare attempts and find where the team spends its agent budget.",
-          status: "Tokens + time implemented · currency pricing pending",
-          points: [
-            "Rollups by Run, node attempt, Run tree, runner, and model",
-            "Warn → escalate → terminate budget ladder",
-            "Portfolio and project views expose throughput, retries, and resource use",
-          ],
-        },
-        {
-          kicker: "Flow routing · agents and models",
-          title: "Match each stage to the right coding agent and model.",
-          body:
-            "A Flow assigns a coding agent, runner profile, and model to each stage. Use a faster, lower-cost model for routine tasks and a more capable one for complex planning, implementation, or review. The package preserves the routing, so the team reduces delivery time and resource use without switching CLIs or settings by hand.",
-          status: "Implemented",
-          points: [
-            "Mix coding agents and models across planning, implementation, verification, and judging",
-            "Route simple tasks to faster, lower-cost models and complex work to more capable ones",
-            "Track the agent, model, runner, time, and token cost for each stage",
-            "Flow packages, skills, and platform-agent instructions are portable artifacts you can move between projects and MAIster installations",
-          ],
-        },
-        {
-          kicker: "Studio · Evaluation Lab",
-          title: "Run one task several ways and compare the result.",
-          body:
-            "Flow Studio provides visual graph and package-aware authoring. A Study can launch or reuse 2..N Runs of one task, each with a different Flow revision and runner/model recipe. Objective checks and independent AI judges compare quality; token and time rollups put resource use beside each result.",
-          status: "Implemented · currency pricing pending",
-          points: [
-            "Flow A versus Flow B, or one Flow across different runners and models",
-            "Versioned N-way, pairwise, and tournament methods",
-            "Immutable evidence, AI disagreement, resource use, and a human verdict",
-          ],
-        },
-        {
-          kicker: "RAH · recursive orchestration",
-          title: "A governed agent harness with a visible Run tree.",
-          body:
-            "RAH lets an orchestrator decompose work into bounded agent or Flow children, collect typed public results, reduce them, and pass a single implementation to independent verification and human review.",
-          status: "Implemented engine · packaged Flow",
-          points: [
-            "Recursive Run tree with depth, fan-out, active-child, token, and time bounds",
-            "Typed run results with schema identity, revisions, and deterministic collection",
-            "Read-only researchers → one writer → independent judge → human review",
-          ],
-        },
-        {
-          kicker: "PR lifecycle · branch sync",
-          title: "MAIster watches pull requests and returns conflicted branches to the work loop.",
-          body:
-            "The scheduler checks the provider for pull request state and conflict changes. MAIster handles a clean branch sync with git alone. A conflict starts a fresh ACP resolver session; after it finishes, MAIster verifies the tree and returns the Run to review before pushing or landing the result.",
-          status: "Scheduler + AI resolver implemented",
-          points: [
-            "The scheduler records open, merged, closed, and conflicted pull request states",
-            "A clean rebase or merge completes without spending an agent session",
-            "A conflict starts a fresh resolver session, then a verification gate checks the result",
-          ],
-        },
-        {
-          kicker: "Execution hosts",
-          title: "One control plane, with a deliberate path to many supervisors.",
-          body:
-            "Today MAIster runs one trusted local execution host. That host already has durable identity, epoch-fenced assignments, idempotent command receipts, and opaque workspace handles—the boundary needed before multiple supervisor hosts are safe.",
-          status: "Stage A now · multi-host next",
-          points: [
-            "Current: one local supervisor and shared storage",
-            "Ready foundation: addressed hosts, assignment history, fencing",
-            "Next: placement, remote transport, and cross-host recovery",
-          ],
-        },
-      ],
+      body: "The deterministic spine stays small: ownership, state, evidence, budgets, and promotion. Around it, MAIster adds shared and private memory, artifact authoring and improvement, comparison, and the operating surfaces required for sustained agent work.",
       features: [
         {
           number: "01",
@@ -548,48 +365,30 @@ const CONTENT = {
         },
         {
           number: "02",
-          title: "Graph execution",
-          body: "Typed nodes, named transitions, bounded rework, dynamic decisions, orchestration, and consensus without hiding the run ledger.",
-          meta: "engine 3 · append-only attempts",
-        },
-        {
-          number: "03",
           title: "Evidence-gated readiness",
           body: "A Flow can bring up an isolated application stack and its dependencies, run integration and E2E suites, and keep reports and logs as required evidence. Together with AI judgments, external checks, and human review, that evidence blocks or clears promotion.",
           meta: "system bring-up · E2E · promotion gate",
         },
         {
-          number: "04",
+          number: "03",
           title: "Human attention by design",
           body: "Permissions, forms, plan review, manual takeover, rework, and conflict resolution appear when the Flow says they matter.",
           meta: "HITL · assignments · inbox",
         },
         {
-          number: "05",
+          number: "04",
           title: "Governed multi-agent work",
           body: "Run trees, package agents, triggers, and consensus share budgets and audit instead of creating an invisible swarm.",
           meta: "orchestration · budgets · audit",
         },
         {
-          number: "06",
-          title: "Artifact review and deliberate landing",
-          body: "Review the diff, reports, plans, and other production artifacts together. Approve the result, return the Run for rework with actionable comments, or promote it to the selected branch through a PR or local merge.",
-          meta: "artifact review · rework · promote",
-        },
-        {
-          number: "07",
-          title: "Kanban visibility across the portfolio",
-          body: "Each project board shows which tasks are queued, running, blocked, awaiting review, or done. The portfolio and attention inbox keep the same state visible across repositories without following every terminal.",
-          meta: "Kanban · queue · needs you",
-        },
-        {
-          number: "08",
+          number: "05",
           title: "Scoped runtime capabilities",
           body: "Materialize only the declared skills, MCP servers, tools, environment, and guardrails for each ACP session.",
           meta: "capabilities · sandbox · policy",
         },
         {
-          number: "09",
+          number: "06",
           title: "Compare Flows, agents, and models",
           body: "Run one task with different Flow revisions, coding agents, and models. Compare evidence and AI-judge scores with elapsed time, token usage, and the calculated cost of every Run.",
           meta: "Flow · agent · model · quality · cost",
@@ -599,101 +398,143 @@ const CONTENT = {
     autonomy: {
       eyebrow: "The path to agentization",
       title: "Grow from one co-working session to governed platform agents.",
-      body:
-        "MAIster separates agentization into four stages. Each stage has its own durable object, control boundary, and observable handoff. Move right when the previous level becomes repeatable and produces evidence.",
-      humanLabel: "Human",
-      systemLabel: "MAIster",
+      body: "MAIster separates agentization into four stages. Each stage has its own durable object, control boundary, and observable handoff. Move right when the previous level becomes repeatable and produces evidence.",
       levels: [
+        { mode: "Co-work", artifact: "Scratch Run" },
+        { mode: "Human in the loop", artifact: "Flow" },
+        { mode: "Adversarial · human on the loop", artifact: "Policy" },
+        { mode: "Full Agentic", artifact: "Platform Agent" },
+      ],
+      link: "Read about the four stages",
+    },
+    packages: {
+      eyebrow: "Flow packages",
+      title: "Bring your method as a versioned package.",
+      body: "Flows, skills, agents, and MCP templates ship together in trusted packages, installed from git and pinned by tag. The public catalog already carries the methods teams use with coding agents, so a Flow written for one project moves to the next installation unchanged.",
+      items: [
         {
-          mode: "Co-work",
-          artifact: "Scratch Run",
-          title: "Work beside the agent in one isolated workspace.",
-          body: "A conversational coding session for an intent that is still being discovered. No task or reusable process is required yet.",
-          human: "Frames the problem, steers the session, and decides what to keep.",
-          system: "Pins runtime capabilities and records messages, files, cost, and workspace state.",
+          id: "aif",
+          name: "AI Factory",
+          body: "Plan, implement, review, evolve: five governed flows with their skills and agents.",
         },
         {
-          mode: "Human in the loop",
-          artifact: "Flow",
-          title: "Turn repeatable work into an inspectable delivery graph.",
-          body: "A versioned Flow declares agents, checks, rework, evidence, review, and the exact points where a person must decide.",
-          human: "Approves permissions, answers forms, reviews plans or diffs, and resolves exceptions.",
-          system: "Executes the graph, keeps the attempt ledger, and blocks promotion on unmet gates.",
+          id: "superpowers",
+          name: "Superpowers",
+          body: "Four typed flows with structured design, verification, and review handoffs.",
         },
         {
-          mode: "Adversarial · human on the loop",
-          artifact: "Policy",
-          title: "Let the system challenge itself while people supervise outcomes.",
-          body: "Strict checks, judge and consensus nodes, bounded rework, budgets, and escalation rules move attention from every step to the exceptions.",
-          human: "Sets risk boundaries, watches evidence and alerts, and intervenes when policy escalates.",
-          system: "Applies a snapshotted execution policy for permissions, retries, gates, budgets, and promotion.",
+          id: "spec-kit",
+          name: "Spec Kit",
+          body: "Spec-driven development from GitHub as governed flows.",
         },
         {
-          mode: "Full Agentic",
-          artifact: "Platform Agent",
-          title: "Give recurring work a durable, governed owner.",
-          body: "A package-defined platform agent has identity, Project Brain access, private memory, project grants, triggers, a runner policy, and a budget.",
-          human: "Defines the mandate, grants, policy, budget, and review expectations.",
-          system: "Launches the agent manually, on schedule, by webhook, domain event, or mention—and keeps every Run visible.",
+          id: "openspec",
+          name: "OpenSpec",
+          body: "Spec-driven flows with typed change and review handoffs.",
+        },
+        {
+          id: "bmad",
+          name: "BMAD Method",
+          body: "Planning, build, test architecture, and creative flows with platform agents.",
+        },
+        {
+          id: "pstack",
+          name: "pstack",
+          body: "Evidence-first engineering with typed result profiles and an evaluation method.",
+        },
+        {
+          id: "env-e2e",
+          name: "env-e2e",
+          body: "An ephemeral docker-compose stack plus Playwright E2E as readiness evidence.",
+        },
+        {
+          id: "core",
+          name: "core",
+          body: "Triage, Brain Improver, the evaluation judge, and Java, React, and Postgres skill packs.",
         },
       ],
-      builtIns: {
-        eyebrow: "Built into MAIster Core",
-        title: "Start with useful platform agents, then ship your own in packages.",
-        body:
-          "The built-in core package demonstrates the same governed agent contract available to every trusted package: explicit identity, triggers, capabilities, policy, project attachment, and an auditable Run.",
-        agents: [
-          {
-            id: "core:triager",
-            name: "Triager",
-            trigger: "task events · manual",
-            body: "Routes incoming tasks: Flow, runner, branch, priority, duplicates, dependencies, clarification, and enqueue intent.",
-          },
-          {
-            id: "core:improver",
-            name: "Brain Improver",
-            trigger: "schedule · manual",
-            body: "Finds recurring Project Brain evidence clusters and drafts small, reviewable improvement proposals.",
-          },
-          {
-            id: "core:experiment-judge",
-            name: "Evaluation Judge",
-            trigger: "Evaluation Lab",
-            body: "Scores blinded Run candidates against a versioned rubric; advisory only, with the final verdict left to a person.",
-          },
-        ],
+      link: {
+        label: "Browse the catalog",
+        ariaLabel: "Open the maister-plugins catalog on GitHub",
       },
     },
-    architecture: {
-      eyebrow: "Self-hosted boundary",
-      title: "Your source stays where the work runs—from one host to a future fleet.",
-      body:
-        "The web control plane owns product state. A separate execution-host supervisor owns ACP sessions and agent processes. Postgres keeps the durable ledger; isolated git worktrees hold code and evidence payloads.",
-      current:
-        "Current: one trusted local supervisor with shared storage. Already implemented: durable host identity, addressable assignments, epochs, fencing, command receipts, and opaque workspace handles. Next: multiple simultaneous supervisor hosts, placement, remote transport, and cross-host recovery.",
-      nodes: {
-        operator: "Operator",
-        control: "Web control plane",
-        ledger: "Postgres ledger",
-        host: "Execution-host supervisor",
-        hostActive: "host 01 · active local",
-        hostFuture: "host 02+ · multi-host stage",
-        agents: "ACP agent adapters",
-        workspace: "Isolated worktrees + evidence",
+    compare: {
+      eyebrow: "Compare",
+      title: "Not another Kanban for agents. Not an unattended runner.",
+      body: "Boards give you a worktree per agent and a diff to read. Runners give you unattended runs and a pull request to check. MAIster gives your existing agents a repeatable, evidence-gated path through real delivery.",
+      columns: {
+        criterion: "",
+        kanban: "Kanban orchestrators",
+        runners: "Autonomous runners",
+        maister: "MAIster",
       },
-      adapters: "One governed runtime catalog",
-      ready: "Claude · Codex · Gemini · OpenCode · MiMo",
-      gated: "Anthropic · OpenAI · OpenRouter · compatible providers",
+      rows: [
+        {
+          criterion: "Process",
+          kanban: "A board and a worktree per agent",
+          runners: "An issue tracker as the queue",
+          maister: "A versioned Flow package pinned to every Run",
+        },
+        {
+          criterion: "Proof before merge",
+          kanban: "Read the diff",
+          runners: "Check the pull request",
+          maister: "Typed evidence gates, readiness, and human review",
+        },
+        {
+          criterion: "Human checkpoints",
+          kanban: "Approve when the CLI asks",
+          runners: "Watch the PR",
+          maister:
+            "Declared in the Flow: permission, form, review, escalation, one inbox",
+        },
+        {
+          criterion: "Budgets",
+          kanban: "None",
+          runners: "Per agent",
+          maister: "Per Run, node, and Run tree: warn → escalate → terminate",
+        },
+        {
+          criterion: "Capabilities",
+          kanban: "Whatever the CLI has",
+          runners: "Whatever the CLI has",
+          maister:
+            "Only the declared skills, MCPs, tools, and environment per session",
+        },
+        {
+          criterion: "Agents",
+          kanban: "Several CLIs side by side",
+          runners: "Usually one vendor",
+          maister:
+            "Claude, Codex, Gemini, OpenCode, MiMo through ACP, including subscriptions",
+        },
+        {
+          criterion: "Compare variants",
+          kanban: "By hand",
+          runners: "By hand",
+          maister:
+            "Evaluation Lab: one task, several Flows, agents, and models",
+        },
+        {
+          criterion: "Where it runs",
+          kanban: "Your laptop",
+          runners: "Their cloud or yours",
+          maister: "Your host, MIT",
+        },
+      ],
+      note: "Kanban orchestrators: Vibe Kanban, Superset, Paseo, and similar tools. Autonomous runners: Symphony, Paperclip, and similar. Categories, not verdicts: several of them are good at what they do.",
     },
     repository: {
       eyebrow: "Built in the open",
       title: "Inspect the system, not a sales promise.",
-      body:
-        "MAIster is MIT licensed. Follow the implementation, architecture decisions, and delivery history directly in the repository. Feature requests, bug reports, and pull requests are welcome.",
-      open: { label: "Open on GitHub", ariaLabel: "Open the MAIster repository on GitHub" },
+      body: "MAIster is MIT licensed. Follow the implementation, architecture decisions, and delivery history directly in the repository. Feature requests, bug reports, and pull requests are welcome.",
+      open: {
+        label: "Open on GitHub",
+        ariaLabel: "Open the MAIster repository on GitHub",
+      },
       connected: "GitHub API connected",
       loading: "Loading live repository data…",
-      error: "GitHub data is temporarily unavailable.",
+      error: "Live repository data is unavailable right now.",
       retry: "Try again",
       stars: "Stars",
       forks: "Forks",
@@ -701,25 +542,98 @@ const CONTENT = {
       license: "License",
       branch: "Default branch",
       updated: "Last push",
+      dogfood: {
+        label: "Built with MAIster",
+        title: "MAIster is built in MAIster.",
+        body: "The team uses MAIster packages, Flows, agents, evidence, review, and promotion to develop MAIster itself. Product gaps surface in real delivery work.",
+      },
+      links: {
+        discussions: "Discussions",
+        issues: "Issues",
+        contributing: "Contributing guide",
+      },
+    },
+    services: {
+      eyebrow: "Services",
+      title: "Need this running in your team?",
+      body: "MAIster is free and MIT licensed. If you want it in production without spending your own weeks on it, the maintainer works with teams directly.",
+      offers: [
+        {
+          name: "Agentic SDLC assessment",
+          duration: "one week",
+          body: "Where your team's agent work loses time and quality, and which process to automate first. You get a written report and two Flow packages for your own process.",
+        },
+        {
+          name: "Implementation sprint",
+          duration: "two to four weeks",
+          body: "MAIster on your host, connected to your git provider and CI. Flows for bugfix, feature, review, docs, and dependencies; gates, budgets, and roles; a trained team; thirty days of support.",
+        },
+        {
+          name: "Support and evolution",
+          duration: "monthly",
+          body: "Upgrades, new packages, incident review, and priority in the roadmap.",
+        },
+      ],
+      cta: {
+        label: "Book a call",
+        ariaLabel: "Contact the maintainer on Telegram",
+      },
+      note: "Replies within one working day.",
+    },
+    faq: {
+      eyebrow: "Questions",
+      title: "Before you install",
+      items: [
+        {
+          question: "Does my code leave my infrastructure?",
+          answer:
+            "No. Repositories, prompts, diffs, secrets, and artifact bodies stay inside your infrastructure. The control plane and execution host remain under your administration. MAIster ships no analytics and no telemetry; the only outbound traffic goes to the model providers, git remotes, and MCP servers you configure.",
+        },
+        {
+          question: "Which coding agents work?",
+          answer:
+            "Claude Code, Codex, Gemini CLI, OpenCode, and MiMo run through the Agent Client Protocol. MAIster starts the CLIs with the authentication configured on the execution host, including supported subscription-backed sessions; API providers such as Anthropic, OpenAI, and OpenRouter stay in the same runner catalog.",
+        },
+        {
+          question: "Can I keep the method my team already uses?",
+          answer:
+            "Yes. Spec Kit, OpenSpec, BMAD, Superpowers, and AI Factory already ship as packages, and any git repository with a flow.yaml can become one. Flow Studio edits packaged Flows visually and forks them into local versions.",
+        },
+        {
+          question: "What does a first run look like?",
+          answer:
+            "Register a repository, create a task, pick a Flow, launch. The Run gets an isolated worktree, a recorded Flow revision, and an observable outcome. Promotion stays a separate, explicit action.",
+        },
+        {
+          question: "How does it run?",
+          answer:
+            "The web control plane owns product state. A separate execution-host supervisor owns ACP sessions and agent processes. Postgres keeps the durable ledger; isolated git worktrees hold code and evidence payloads. Today both processes share one trusted host; multi-host placement is on the roadmap.",
+        },
+        {
+          question: "What does it cost?",
+          answer:
+            "MAIster is MIT licensed; you pay only your model providers. Run Inspector shows input, output, cache-read, and cache-creation tokens beside active and wall-clock time, and budgets warn, escalate, and terminate. Currency pricing is on the roadmap.",
+        },
+      ],
     },
     final: {
       eyebrow: "Start with one real process",
       title: "Replace one babysat terminal with a Flow you can trust.",
-      body:
-        "Run MAIster on your own host, connect a private repository, and qualify the first repeatable delivery process with evidence and review built in.",
+      body: "Run MAIster on your own host, connect a private repository, and qualify the first repeatable delivery process with evidence and review built in.",
       primary: "Read the quickstart",
       secondary: "Explore the repository",
     },
     footer: {
       motto: "Ship happens",
-      tagline: "The control plane for software delivery by people and AI agents.",
+      tagline:
+        "The control plane for software delivery by people and AI agents.",
       taglineAccent: "Work, evidence, and decisions in one place.",
       product: {
         title: "Product",
-        overview: "Product view",
+        why: "Why MAIster",
+        tour: "Product tour",
         workflow: "Delivery spine",
-        collaboration: "Collaboration",
-        architecture: "Architecture",
+        compare: "Compare",
       },
       docs: {
         title: "Docs",
@@ -761,11 +675,12 @@ const CONTENT = {
         "Устанавливаемый в своей инфраструктуре контур исполнения и контроля воспроизводимой разработки с ИИ над приватным кодом.",
     },
     nav: {
-      product: "Зачем MAIster",
-      workflow: "Контур доставки",
-      agentization: "Агентизация",
+      why: "Зачем MAIster",
+      product: "Продукт",
+      workflow: "Как работает",
       controls: "Контроль",
-      architecture: "Архитектура",
+      packages: "Пакеты",
+      compare: "Сравнение",
       docs: "Документация",
     },
     controls: {
@@ -777,80 +692,35 @@ const CONTENT = {
       language: "Язык",
     },
     hero: {
-      eyebrow: "На своих серверах · приватный код · лицензия MIT",
+      eyebrow: "Открытый код · на своих серверах · лицензия MIT",
       title: "Превратите разработку с ИИ",
       accent: "в управляемую систему доставки.",
-      body:
-        "MAIster запускает версионированные процессы разработки над вашими репозиториями. Агенты работают в изолированных Git worktree, человек подключается на заданных контрольных точках, а готовность подтверждается доказательствами.",
+      body: "MAIster запускает версионированные процессы разработки над вашими репозиториями. Агенты работают в изолированных Git worktree, человек подключается на заданных контрольных точках, а готовность подтверждается доказательствами.",
       primary: "Начать",
       secondary: "Документация",
-      scope: [
-        { label: "среда", value: "ACP" },
-        { label: "процесс", value: "графы Flow" },
-        { label: "доказательства", value: "типизированные" },
-        { label: "контроль", value: "решения человека" },
-      ],
-      graphTitle: "~/private-repos · управляемая доставка",
-      graphLive: "в работе",
-      graphLabels: ["идея", "Flow", "работа", "проверка", "решение", "готово"],
-      terminal: [
-        "запуск/TASK-427 · Flow feature@1.8.0",
-        "↳ изолированная рабочая область · пакет core@v1.8.0",
-        "⚡ реализацию взял codex",
-        "✓ тесты · типы · доказательства актуальны",
-        "? проверка человеком · требуется решение",
-        "✓ отправлено → main@4f2a",
-      ],
-    },
-    positioning: {
-      eyebrow: "Позиционирование",
-      title: "Приватный контур управления разработкой для независимых основателей и небольших команд.",
-      body:
-        "Ведите параллельную разработку множества функций в нескольких продуктах без постоянного наблюдения за терминалами агентов-разработчиков.",
-      items: [
-        {
-          label: "Для кого",
-          title: "Один технический владелец или маленькая команда",
-          body: "Небольшая стоимость эксплуатации, прямой контроль и понятные правила делегирования без корпоративной бюрократии.",
-        },
-        {
-          label: "Портфель",
-          title: "Много функций в нескольких продуктах",
-          body: "Портфель проектов, канбан-доски, граф задач, приоритетная очередь, изолированные рабочие области и единый раздел «Входящие» собирают параллельную разработку в одну картину.",
-        },
-        {
-          label: "Управление через API",
-          title: "Веб-интерфейс для людей. REST и MCP для личных агентов.",
-          body: "Ваш помощник может создавать задачи, запускать процессы, проверять готовность, отправлять доказательства и следить за результатом через токены с ограниченными правами и общий журнал действий.",
-        },
-        {
-          label: "Приватность",
-          title: "Установите MAIster на свои машины",
-          body: "Репозитории, запросы, изменения, секреты и содержимое артефактов остаются в вашей инфраструктуре. Контур управления и узел исполнения находятся под вашим контролем.",
-        },
-        {
-          label: "ACP И АВТОРИЗАЦИЯ",
-          title: "Используйте подписки на агентов и сохраняйте управление",
-          body: "MAIster запускает Codex, Claude Code и другие консольные агенты через ACP, используя авторизацию узла исполнения, включая поддерживаемые подписочные сессии; API-провайдеры входят в тот же каталог профилей запуска. Супервизор держит двусторонний канал: агент запрашивает разрешение или решение человека, а MAIster возвращает ответ, отправляет корректирующий запрос, останавливает либо приостанавливает сессию с последующим продолжением. Команда получает привычную интерактивность консольных приложений внутри управляемого Flow и общего журнала, без обязательного YOLO-режима.",
-        },
-        {
-          label: "Узлы исполнения",
-          title: "Один контур управления с путём к нескольким супервизорам",
-          body: "Текущая версия использует один доверенный узел исполнения. Постоянный идентификатор узла, защищённые назначения, квитанции команд и дескрипторы рабочих областей создают основу для распределения работы между серверами.",
-        },
-      ],
-      dogfood: {
-        label: "Собственное использование",
-        title: "MAIster дорабатывается в MAIster.",
-        body: "Команда использует пакеты, процессы, агентов, доказательства, проверку и выпуск MAIster для развития самого MAIster. Продуктовые пробелы проявляются в реальной работе.",
+      install: {
+        label: "Запустите на своём узле",
+        command: "git clone https://github.com/maister-dev/maister.git",
+        copy: "Копировать",
+        copied: "Скопировано",
+        hint: "Postgres в Docker, два процесса на узле, первый управляемый запуск примерно через десять минут.",
+        hintLink: "Открыть инструкцию",
       },
+      rail: [
+        { label: "агенты", value: "Claude · Codex · Gemini · OpenCode · MiMo" },
+        {
+          label: "провайдеры",
+          value: "Anthropic · OpenAI · OpenRouter · совместимые",
+        },
+        { label: "интерфейсы", value: "Web · REST · MCP · ACP" },
+        { label: "работает на", value: "вашем узле · Postgres · Git worktree" },
+      ],
     },
     problem: {
       eyebrow: "Операционный разрыв",
       title: "Агенты-разработчики выполняют работу.",
       accent: "MAIster делает её управляемой.",
-      body:
-        "Одного написанного кода мало. Параллельная работа агентов должна быть воспроизводимой, проверяемой, ограниченной и встроенной в процесс доставки ПО.",
+      body: "Одного написанного кода мало. Параллельная работа агентов должна быть воспроизводимой, проверяемой, ограниченной и встроенной в процесс доставки ПО.",
       items: [
         {
           before: "Много терминалов",
@@ -874,11 +744,52 @@ const CONTENT = {
         },
       ],
     },
+    tour: {
+      eyebrow: "Экскурсия по продукту",
+      title: "Один контур управления для всех проектов, запусков и решений.",
+      body: "MAIster создан для технического владельца или небольшой команды, которая ведёт несколько приватных репозиториев и агентов-разработчиков в своей инфраструктуре. Веб-интерфейс для людей, REST и MCP для личных агентов.",
+      shots: [
+        {
+          id: "portfolio",
+          label: "Портфель",
+          title: "Все проекты и активные рабочие области на одном экране.",
+          body: "Проекты, активные рабочие области, готовность профилей запуска и счётчик «требуют внимания» видны без единого открытого терминала.",
+          alt: "Портфель MAIster: карточки проектов с активными рабочими областями, готовностью профилей запуска и кнопкой запуска",
+        },
+        {
+          id: "board",
+          label: "Доска",
+          title: "Канбан-доска и наблюдаемость портфеля.",
+          body: "Канбан-доска проекта показывает, какие задачи стоят в очереди, выполняются, заблокированы, ждут проверки или завершены. Та же картина собирается по всем репозиториям без обхода терминалов.",
+          alt: "Доска проекта MAIster с колонками Бэклог, Подготовка, В производстве и На ревью",
+        },
+        {
+          id: "run",
+          label: "Запуск",
+          title: "Flow, который можно рассмотреть прямо во время работы.",
+          body: "Страница запуска показывает граф, текущий узел, готовность, токены и ветку, в которой идёт работа. Каждая попытка остаётся в реестре.",
+          alt: "Страница запуска MAIster с графом Flow, состоянием готовности и инспектором запуска",
+        },
+        {
+          id: "inbox",
+          label: "Входящие",
+          title: "Одна очередь решений вместо обхода терминалов.",
+          body: "Когда агенту нужно решение человека, MAIster открывает запрос во «Входящих» и на странице запуска: разрешение, форму, проверку или уведомление о проблеме. Ответ возвращается в исходный запуск.",
+          alt: "Раздел «Входящие» MAIster с двумя запросами на проверку, ожидающими решения",
+        },
+        {
+          id: "review",
+          label: "Проверка и доставка",
+          title: "Проверка артефактов и доставка результата.",
+          body: "Проверяйте вместе изменения, отчёты, планы и другие производственные артефакты. Результат можно принять, вернуть запуск на доработку с конкретными комментариями или отправить в выбранную ветку через PR либо локальное слияние.",
+          alt: "Рабочая область проверки MAIster с деревом изменённых файлов и просмотром изменений",
+        },
+      ],
+    },
     workflow: {
       eyebrow: "Контур доставки",
       title: "Процесс виден целиком: от намерения до доставки результата.",
-      body:
-        "MAIster проводит уже используемых вами агентов-разработчиков через воспроизводимый процесс: от постановки задачи до проверки и отправки результата.",
+      body: "MAIster проводит уже используемых вами агентов-разработчиков через воспроизводимый процесс: от постановки задачи до проверки и отправки результата.",
       nodes: [
         { label: "Проект", detail: "приватный репозиторий" },
         { label: "Пакет Flow", detail: "версионированный процесс" },
@@ -893,183 +804,10 @@ const CONTENT = {
       ],
       note: "Каждая передача оставляет запись в реестре. Перед доставкой результата MAIster проверяет его готовность.",
     },
-    collaboration: {
-      eyebrow: "Четыре направления совместной работы",
-      title: "Люди, ИИ-агенты",
-      accent: "и совместная работа во всех направлениях.",
-      body:
-        "MAIster даёт людям и агентам общий контур поставки. Каждая передача сохраняет задачу, артефакт, решение или типизированный результат, поэтому команда видит ответственного и следующий шаг.",
-      diagramLabel: "Четыре направления совместной работы людей и ИИ-агентов",
-      humanLabel: "Человек",
-      agentLabel: "Агент",
-      modes: [
-        {
-          from: "human",
-          to: "human",
-          direction: "↔",
-          title: "Человек ↔ Человек",
-          body:
-            "Команда планирует работу в одном графе задач, назначает ответственных, проверяет изменения и передаёт работу между продуктами без потери истории запусков.",
-          meta: "задачи · ответственные · проверка",
-        },
-        {
-          from: "human",
-          to: "agent",
-          direction: "→",
-          title: "Человек → Агент",
-          body:
-            "Запустите пробную сессию, выберите версионированный Flow или запустите платформенного агента. Человек задаёт цель, доступ, правила, бюджет и точки принятия решений.",
-          meta: "пробный запуск · Flow · платформенный агент",
-        },
-        {
-          from: "agent",
-          to: "human",
-          direction: "→",
-          title: "Агент → Человек",
-          body:
-            "Когда агенту нужно решение человека, MAIster открывает запрос во «Входящих» и на странице запуска: разрешение, форму, проверку или уведомление о проблеме. Тот же запрос можно вывести во внешний канал, например в чат через личного помощника; ответ вернётся в исходный запуск.",
-          meta: "интерфейс MAIster · внешние каналы · ответ с ограниченными правами",
-        },
-        {
-          from: "agent",
-          to: "agent",
-          direction: "↔",
-          title: "Агент ↔ Агент",
-          body:
-            "Управляющий агент поручает ограниченные дочерние запуски агентам или процессам Flow, собирает типизированные результаты и передаёт одну реализацию на независимую проверку.",
-          meta: "дерево запусков · RAH · независимый судья",
-        },
-      ],
-    },
     controlsSection: {
       eyebrow: "Весь контур работы агентов",
       title: "MAIster делает видимой всю систему вокруг агентов.",
-      body:
-        "Небольшой детерминированный каркас хранит ответственных, состояние, доказательства, бюджеты и правила доставки. К нему MAIster добавляет общую и приватную память, создание и совершенствование артефактов, сравнение и рабочие интерфейсы для постоянной работы агентов.",
-      spotlights: [
-        {
-          kicker: "Мозг проекта · память · улучшения",
-          title: "Сохраняйте опыт и превращайте повторяющиеся сигналы в проверяемые изменения.",
-          body:
-            "Мозг проекта объединяет векторный индекс кода и аналитики с проверенными источниками и принятыми уроками. Каждый подключённый платформенный агент может вести отдельную долговременную память. Brain Improver группирует повторяющиеся доказательства и готовит для человека изменения правил, навыков, Flow, архитектурных решений, дорожной карты или состояния проекта.",
-          status: "Базовый контур реализован",
-          points: [
-            "Общая память проекта отделена от приватной памяти каждого агента",
-            "Каждое предложение ссылается на доказательства, из которых оно получено",
-            "Команда проверяет изменения до создания черновика или обычной задачи на доработку",
-          ],
-        },
-        {
-          kicker: "Инженерный контур · бизнес-интерфейсы",
-          title: "Инженеры настраивают поставку. Бизнес работает в привычном интерфейсе.",
-          body:
-            "Инженерная команда версионирует пакеты Flow, правила и платформенных агентов. Агенты следят за сбоями и непройденными проверками, разбирают ошибки, создают задачи на продолжение или зовут человека. REST/MCP с ограниченными правами и подписанные вебхуки подключают к этому контуру чат, личного помощника, портал заказчика или внутреннего бота.",
-          status: "Среда агентов · внешний API · вебхуки реализованы",
-          points: [
-            "Процессы Flow, правила и агенты поставляются вместе в доверенных пакетах",
-            "Визуальный редактор и ИИ-помощник в Студии создают Flow, ответвляют пакетные Flow в изменяемые локальные версии, подключают их к проектам и запускают по ним задачи",
-            "События run.failed, run.crashed и gate.failed запускают агентов наблюдения или восстановления",
-            "REST/MCP принимает команды, а ленты активности и подписанные вебхуки публикуют события",
-          ],
-        },
-        {
-          kicker: "Входящие · фокус человека",
-          title: "Одна очередь решений вместо обхода терминалов.",
-          body:
-            "MAIster собирает во «Входящих» работу, где нужен человек: запросы доступа, формы, уточнения, проверку, доставку результата и сбои по правилам эскалации. Автономные процессы Flow и агенты не требуют внимания, пока соблюдают заданные правила. Личный помощник с ограниченными правами может принести карточку в чат, принять ответ человека и закрыть запрос в MAIster. Тот же запуск продолжит работу.",
-          status: "Реализовано",
-          points: [
-            "Карточка во «Входящих» → сообщение помощника в чате",
-            "Ответ человека → запрос закрыт → запуск продолжается",
-            "Доступ к проекту и отдельные права на чтение и ответ ограничивают полномочия помощника",
-          ],
-        },
-        {
-          kicker: "Граф задач · очередь исполнения",
-          title: "Одна задача, явные зависимости и несколько сравнимых запусков.",
-          body:
-            "Задача хранит исходную цель и всю историю исполнения. Типизированные связи соединяют работу в плане, приоритетная очередь запускает её по мере освобождения ресурсов, а каждая попытка реализации остаётся привязана к исходной задаче.",
-          status: "Реализовано",
-          points: [
-            "Связи: блокирует, зависит от, родительская, требование и дубликат",
-            "Приоритет, пауза, ограничение параллельности, позиция в очереди и безопасный автозапуск",
-            "Одна задача → много запусков с общей историей, доказательствами, стоимостью и результатом",
-          ],
-        },
-        {
-          kicker: "Экономика запусков · обзор",
-          title: "Посмотрите, сколько ресурсов стоил каждый запуск задачи.",
-          body:
-            "Инспектор запуска показывает входные, выходные и кешированные токены рядом с активным и полным временем работы. Запуски остаются привязаны к исходной задаче, поэтому попытки можно сравнить и увидеть, на что команда расходует агентный бюджет.",
-          status: "Токены + время реализованы · денежные тарифы позже",
-          points: [
-            "Сводки по запуску, попытке узла, дереву запусков, профилю запуска и модели",
-            "Порог бюджета: предупредить → позвать человека → остановить",
-            "Портфель и проект показывают пропускную способность, повторные попытки и расход ресурсов",
-          ],
-        },
-        {
-          kicker: "Маршрутизация Flow · агенты и модели",
-          title: "Подбирайте кодирующего агента и модель под каждый этап.",
-          body:
-            "Flow назначает каждому этапу кодирующего агента, профиль запуска и модель. Для типовых задач подойдут быстрые и недорогие модели, для сложного планирования, разработки или проверки можно выбрать более мощные. Команда закрепляет маршрутизацию в пакете и сокращает время и расход ресурсов без ручного переключения CLI и настроек.",
-          status: "Реализовано",
-          points: [
-            "Разные кодирующие агенты и модели для планирования, разработки, проверки и оценки",
-            "Быстрые и недорогие модели для простых задач, более мощные для сложных",
-            "Агент, модель, профиль запуска, время и расход токенов видны по каждому этапу",
-            "Flow-пакеты — такие же переносимые артефакты, как навыки и инструкции платформенных агентов: переносите их между проектами и инсталляциями MAIster",
-          ],
-        },
-        {
-          kicker: "Студия Flow · лаборатория сравнений",
-          title: "Прогоните одну задачу несколькими способами и сравните результат.",
-          body:
-            "Студия Flow даёт визуальный редактор графа с учётом структуры пакета. Исследование запускает или подключает от двух запусков одной задачи с разными версиями Flow, профилями запуска и моделями. Объективные проверки и независимые ИИ-судьи сравнивают качество, а сводка токенов и времени показывает расход ресурсов рядом с результатом.",
-          status: "Реализовано · денежные тарифы позже",
-          points: [
-            "Flow A против Flow B или один Flow на разных профилях запуска и моделях",
-            "Версионированные сравнения всех со всеми, попарные и турнирные методики",
-            "Неизменяемые доказательства, расхождение оценок ИИ, расход ресурсов и решение человека",
-          ],
-        },
-        {
-          kicker: "RAH · рекурсивная оркестрация",
-          title: "Управляемая оркестрация с видимым деревом запусков.",
-          body:
-            "RAH позволяет управляющему агенту делить работу на ограниченные дочерние запуски агентов или процессов Flow, собирать их типизированные публичные результаты и передавать одну реализацию независимому судье и человеку.",
-          status: "Движок реализован · Flow поставляется пакетом",
-          points: [
-            "Рекурсивное дерево запусков с пределами глубины, ветвления, активных потомков, токенов и времени",
-            "Типизированные результаты запусков с версией схемы и воспроизводимым сбором",
-            "Исследователи без права записи → один разработчик → независимый судья → проверка человеком",
-          ],
-        },
-        {
-          kicker: "Жизненный цикл PR · синхронизация веток",
-          title: "MAIster следит за PR и возвращает конфликтные ветки в работу.",
-          body:
-            "Планировщик проверяет у провайдера состояние PR и наличие конфликтов. Чистую ветку MAIster синхронизирует средствами Git. При конфликте он запускает новую ACP-сессию ИИ-разрешателя, проверяет итоговое дерево и возвращает запуск на проверку до отправки результата.",
-          status: "Планировщик и ИИ-разрешатель реализованы",
-          points: [
-            "Планировщик фиксирует открытие, слияние, закрытие и конфликты PR",
-            "Чистое перебазирование или слияние проходит без отдельной сессии агента",
-            "Конфликт запускает новую сессию разрешателя, после неё MAIster проверяет результат",
-          ],
-        },
-        {
-          kicker: "Узлы исполнения",
-          title: "Один контур управления и путь к нескольким супервизорам.",
-          body:
-            "Сейчас MAIster работает с одним доверенным локальным узлом исполнения. У него есть постоянный идентификатор, назначения с защитой от устаревших команд, безопасные повторные команды и непрозрачные идентификаторы рабочих областей. Эти механизмы нужны для работы на нескольких узлах.",
-          status: "Этап A готов · несколько узлов дальше",
-          points: [
-            "Сейчас: один локальный супервизор и общее хранилище",
-            "Готовая основа: адресуемые узлы, история назначений и защита от устаревших команд",
-            "Дальше: распределение работы, удалённый транспорт и восстановление на другом узле",
-          ],
-        },
-      ],
+      body: "Небольшой детерминированный каркас хранит ответственных, состояние, доказательства, бюджеты и правила доставки. К нему MAIster добавляет общую и приватную память, создание и совершенствование артефактов, сравнение и рабочие интерфейсы для постоянной работы агентов.",
       features: [
         {
           number: "01",
@@ -1079,48 +817,30 @@ const CONTENT = {
         },
         {
           number: "02",
-          title: "Исполнение графа",
-          body: "Типизированные узлы, именованные переходы, ограниченные циклы доработки, динамические решения, оркестрация и согласование с видимым реестром.",
-          meta: "движок 3 · журнал попыток",
-        },
-        {
-          number: "03",
           title: "Готовность по доказательствам",
           body: "Прямо внутри Flow можно поднять изолированный контур приложения с зависимостями, прогнать интеграционные и E2E-тесты, а отчёты и журналы сохранить как обязательные доказательства. Вместе с оценками ИИ, внешними проверками и решением человека они блокируют или разрешают доставку результата.",
           meta: "запуск системы · E2E · проверка доставки",
         },
         {
-          number: "04",
+          number: "03",
           title: "Внимание человека по правилам",
           body: "Запросы доступа, формы, проверка плана, ручной перехват, доработка и разрешение конфликтов появляются там, где их объявляет Flow.",
           meta: "участие человека · ответственные · входящие",
         },
         {
-          number: "05",
+          number: "04",
           title: "Управляемая работа нескольких агентов",
           body: "Деревья запусков, агенты из пакетов, условия запуска и согласование работают с общими бюджетами и журналом действий.",
           meta: "оркестрация · бюджеты · аудит",
         },
         {
-          number: "06",
-          title: "Проверка артефактов и доставка",
-          body: "Проверяйте вместе изменения, отчёты, планы и другие производственные артефакты. Результат можно принять, вернуть запуск на доработку с конкретными комментариями или отправить в выбранную ветку через PR либо локальное слияние.",
-          meta: "проверка артефактов · доработка · доставка",
-        },
-        {
-          number: "07",
-          title: "Канбан-доска и наблюдаемость портфеля",
-          body: "Канбан-доска проекта показывает, какие задачи стоят в очереди, выполняются, заблокированы, ждут проверки или завершены. Портфель и раздел «Входящие» собирают ту же картину по всем репозиториям без обхода терминалов.",
-          meta: "канбан · очередь · требуется внимание",
-        },
-        {
-          number: "08",
+          number: "05",
           title: "Ограниченные возможности среды",
           body: "Каждая ACP-сессия получает только объявленные навыки, MCP-серверы, инструменты, переменные окружения и ограничения.",
           meta: "возможности · изоляция · правила",
         },
         {
-          number: "09",
+          number: "06",
           title: "Сравнение Flow, агентов и моделей",
           body: "Запускайте одну задачу на разных версиях Flow, кодирующих агентах и моделях. Сопоставляйте доказательства и оценки ИИ-судей со временем, расходом токенов и рассчитанной стоимостью каждого запуска.",
           meta: "Flow · агент · модель · качество · стоимость",
@@ -1130,101 +850,148 @@ const CONTENT = {
     autonomy: {
       eyebrow: "Путь агентизации",
       title: "От совместной сессии до управляемых платформенных агентов.",
-      body:
-        "MAIster делит агентизацию на четыре уровня. У каждого есть сохраняемый объект, граница контроля и видимая передача работы. Переходите вправо, когда предыдущий уровень стал воспроизводимым и даёт доказательства.",
-      humanLabel: "Человек",
-      systemLabel: "MAIster",
+      body: "MAIster делит агентизацию на четыре уровня. У каждого есть сохраняемый объект, граница контроля и видимая передача работы. Переходите вправо, когда предыдущий уровень стал воспроизводимым и даёт доказательства.",
       levels: [
-        {
-          mode: "Совместная работа",
-          artifact: "Пробный запуск",
-          title: "Работайте рядом с агентом в одной изолированной рабочей области.",
-          body: "Диалоговая сессия с агентом-разработчиком подходит для задачи, которую вы ещё исследуете. Формальная задача и повторяемый процесс пока не нужны.",
-          human: "Формулирует проблему, направляет сессию и решает, что сохранить.",
-          system: "Закрепляет возможности среды и записывает сообщения, файлы, стоимость и состояние рабочей области.",
-        },
-        {
-          mode: "Человек в контуре",
-          artifact: "Flow",
-          title: "Превратите повторяемую работу в проверяемый граф доставки.",
-          body: "Версионированный Flow объявляет агентов, проверки, доработку, доказательства и конкретные точки решения человека.",
-          human: "Подтверждает доступ, отвечает на формы, проверяет планы или изменения и разрешает исключения.",
-          system: "Исполняет граф, ведёт реестр попыток и блокирует доставку при непройденных проверках.",
-        },
+        { mode: "Совместная работа", artifact: "Пробный запуск" },
+        { mode: "Человек в контуре", artifact: "Flow" },
         {
           mode: "Состязательная проверка · человек наблюдает",
           artifact: "Правила",
-          title: "Пусть система оспаривает себя, пока человек контролирует результат.",
-          body: "Строгие проверки, узлы ИИ-судей и согласования, ограниченная доработка, бюджеты и правила эскалации переводят внимание с каждого шага на исключения.",
-          human: "Задаёт границы риска, наблюдает доказательства и предупреждения, вмешивается при эскалации.",
-          system: "Применяет зафиксированные правила исполнения для доступа, повторных попыток, проверок, бюджетов и доставки.",
+        },
+        { mode: "Полная автономность", artifact: "Платформенный агент" },
+      ],
+      link: "Подробнее о четырёх уровнях",
+    },
+    packages: {
+      eyebrow: "Пакеты Flow",
+      title: "Принесите свою методику как версионированный пакет.",
+      body: "Flow, навыки, агенты и шаблоны MCP поставляются вместе в доверенных пакетах: устанавливаются из Git и закрепляются тегом. В открытом каталоге уже есть методики, которые команды используют с агентами-разработчиками, поэтому Flow, написанный для одного проекта, без изменений переезжает в следующую инсталляцию.",
+      items: [
+        {
+          id: "aif",
+          name: "AI Factory",
+          body: "Планирование, реализация, проверка, развитие: пять управляемых Flow со своими навыками и агентами.",
         },
         {
-          mode: "Полная автономность",
-          artifact: "Платформенный агент",
-          title: "Передайте повторяемую работу постоянному управляемому владельцу.",
-          body: "Платформенный агент из пакета имеет собственный идентификатор, доступ к мозгу проекта, приватную память, права в проектах, условия запуска, профиль исполнения и бюджет.",
-          human: "Определяет мандат, доступы, правила, бюджет и требования к проверке.",
-          system: "Запускает агента вручную, по расписанию, вебхуку, событию проекта или упоминанию. Каждый запуск остаётся видимым.",
+          id: "superpowers",
+          name: "Superpowers",
+          body: "Четыре типизированных Flow со структурированным проектированием, проверкой и передачей на ревью.",
+        },
+        {
+          id: "spec-kit",
+          name: "Spec Kit",
+          body: "Разработка от спецификации от GitHub в виде управляемых Flow.",
+        },
+        {
+          id: "openspec",
+          name: "OpenSpec",
+          body: "Flow от спецификации с типизированной передачей изменений и проверки.",
+        },
+        {
+          id: "bmad",
+          name: "BMAD Method",
+          body: "Планирование, сборка, тестовая архитектура и творческие Flow с платформенными агентами.",
+        },
+        {
+          id: "pstack",
+          name: "pstack",
+          body: "Инженерия от доказательств с типизированными профилями результата и методикой оценки.",
+        },
+        {
+          id: "env-e2e",
+          name: "env-e2e",
+          body: "Временный контур docker-compose и Playwright E2E как доказательство готовности.",
+        },
+        {
+          id: "core",
+          name: "core",
+          body: "Триаж, Brain Improver, судья оценок и наборы навыков для Java, React и Postgres.",
         },
       ],
-      builtIns: {
-        eyebrow: "Встроено в ядро MAIster",
-        title: "Начните с готовых платформенных агентов и поставляйте собственных в пакетах.",
-        body:
-          "Встроенный пакет использует тот же управляемый контракт, который доступен любому доверенному пакету: собственный идентификатор, условия запуска, возможности, правила, доступ к проектам и полный журнал каждого запуска.",
-        agents: [
-          {
-            id: "core:triager",
-            name: "Triager",
-            trigger: "события задач · вручную",
-            body: "Маршрутизирует входящие задачи: выбирает Flow, профиль запуска, ветку и приоритет, находит дубликаты и зависимости, запрашивает уточнение и ставит работу в очередь.",
-          },
-          {
-            id: "core:improver",
-            name: "Brain Improver",
-            trigger: "по расписанию · вручную",
-            body: "Находит повторяющиеся группы доказательств в мозге проекта и готовит небольшие предложения для проверки человеком.",
-          },
-          {
-            id: "core:experiment-judge",
-            name: "Evaluation Judge",
-            trigger: "лаборатория сравнений",
-            body: "Оценивает скрытые варианты запусков по версионированной методике. Агент даёт рекомендацию, а итоговое решение принимает человек.",
-          },
-        ],
+      link: {
+        label: "Открыть каталог",
+        ariaLabel: "Открыть каталог maister-plugins на GitHub",
       },
     },
-    architecture: {
-      eyebrow: "Граница самостоятельного размещения",
-      title: "Код остаётся на узлах, где агенты выполняют работу.",
-      body:
-        "Веб-контур управления хранит состояние продукта. Отдельный супервизор узла исполнения управляет ACP-сессиями и процессами агентов. Postgres хранит постоянный реестр, а изолированные Git worktree содержат код и данные доказательств.",
-      current:
-        "Сейчас MAIster работает с одним доверенным локальным супервизором и общим хранилищем. Уже реализованы постоянные идентификаторы узлов, адресуемые назначения, эпохи владения, защита от устаревших команд, безопасные повторы и непрозрачные идентификаторы рабочих областей. Следующий этап: несколько супервизоров, распределение работы, удалённый транспорт и восстановление на другом узле.",
-      nodes: {
-        operator: "Оператор",
-        control: "Веб-контур управления",
-        ledger: "Реестр Postgres",
-        host: "Супервизор узла исполнения",
-        hostActive: "узел 01 · активен локально",
-        hostFuture: "узлы 02+ · следующий этап",
-        agents: "ACP-адаптеры",
-        workspace: "Изолированные worktree + доказательства",
+    compare: {
+      eyebrow: "Сравнение",
+      title: "Не ещё одна канбан-доска для агентов. Не автономный исполнитель.",
+      body: "Доски дают worktree на агента и изменения для чтения. Автономные исполнители дают запуски без присмотра и PR для проверки. MAIster проводит уже используемых вами агентов по воспроизводимому процессу с проверкой готовности по доказательствам.",
+      columns: {
+        criterion: "",
+        kanban: "Канбан-оркестраторы",
+        runners: "Автономные исполнители",
+        maister: "MAIster",
       },
-      adapters: "Единый каталог сред исполнения",
-      ready: "Claude · Codex · Gemini · OpenCode · MiMo",
-      gated: "Anthropic · OpenAI · OpenRouter · совместимые провайдеры",
+      rows: [
+        {
+          criterion: "Процесс",
+          kanban: "Доска и worktree на агента",
+          runners: "Трекер задач как очередь",
+          maister:
+            "Версионированный пакет Flow, закреплённый за каждым запуском",
+        },
+        {
+          criterion: "Доказательства до слияния",
+          kanban: "Прочитать изменения",
+          runners: "Проверить PR",
+          maister: "Типизированные проверки, готовность и решение человека",
+        },
+        {
+          criterion: "Точки участия человека",
+          kanban: "Подтвердить, когда спросит CLI",
+          runners: "Следить за PR",
+          maister:
+            "Объявлены во Flow: разрешение, форма, проверка, эскалация, один раздел «Входящие»",
+        },
+        {
+          criterion: "Бюджеты",
+          kanban: "Нет",
+          runners: "На агента",
+          maister:
+            "На запуск, узел и дерево запусков: предупредить → позвать человека → остановить",
+        },
+        {
+          criterion: "Возможности",
+          kanban: "Всё, что есть у CLI",
+          runners: "Всё, что есть у CLI",
+          maister:
+            "Только объявленные навыки, MCP, инструменты и окружение на сессию",
+        },
+        {
+          criterion: "Агенты",
+          kanban: "Несколько CLI рядом",
+          runners: "Обычно один вендор",
+          maister:
+            "Claude, Codex, Gemini, OpenCode, MiMo через ACP, включая подписки",
+        },
+        {
+          criterion: "Сравнение вариантов",
+          kanban: "Вручную",
+          runners: "Вручную",
+          maister:
+            "Лаборатория сравнений: одна задача, несколько Flow, агентов и моделей",
+        },
+        {
+          criterion: "Где работает",
+          kanban: "На ноутбуке",
+          runners: "В их облаке или у вас",
+          maister: "На вашем узле, MIT",
+        },
+      ],
+      note: "Канбан-оркестраторы: Vibe Kanban, Superset, Paseo и похожие инструменты. Автономные исполнители: Symphony, Paperclip и похожие. Это категории, а не приговор: многие из них хорошо делают своё дело.",
     },
     repository: {
       eyebrow: "Разрабатывается открыто",
       title: "Проверьте реализацию прямо в репозитории.",
-      body:
-        "MAIster распространяется по лицензии MIT. Реализацию, архитектурные решения и историю разработки можно проверить прямо в репозитории. Предлагайте новые возможности, сообщайте об ошибках и присылайте изменения через PR — мы рады участию.",
-      open: { label: "Открыть GitHub", ariaLabel: "Открыть репозиторий MAIster на GitHub" },
+      body: "MAIster распространяется по лицензии MIT. Реализацию, архитектурные решения и историю разработки можно проверить прямо в репозитории. Предлагайте новые возможности, сообщайте об ошибках и присылайте изменения через PR — мы рады участию.",
+      open: {
+        label: "Открыть GitHub",
+        ariaLabel: "Открыть репозиторий MAIster на GitHub",
+      },
       connected: "GitHub API подключён",
       loading: "Загружаем данные репозитория…",
-      error: "Данные GitHub временно недоступны.",
+      error: "Данные репозитория сейчас недоступны.",
       retry: "Повторить",
       stars: "Звёзды",
       forks: "Форки",
@@ -1232,25 +999,96 @@ const CONTENT = {
       license: "Лицензия",
       branch: "Основная ветка",
       updated: "Последнее обновление",
+      dogfood: {
+        label: "Собственное использование",
+        title: "MAIster дорабатывается в MAIster.",
+        body: "Команда использует пакеты, процессы, агентов, доказательства, проверку и выпуск MAIster для развития самого MAIster. Продуктовые пробелы проявляются в реальной работе.",
+      },
+      links: {
+        discussions: "Обсуждения",
+        issues: "Задачи",
+        contributing: "Как внести вклад",
+      },
+    },
+    services: {
+      eyebrow: "Услуги",
+      title: "Нужно, чтобы это заработало у вашей команды?",
+      body: "MAIster бесплатен и распространяется по лицензии MIT. Если хотите запустить его в работу, не тратя собственные недели, автор работает с командами напрямую.",
+      offers: [
+        {
+          name: "Аудит агентной разработки",
+          duration: "одна неделя",
+          body: "Где работа команды с агентами теряет время и качество и какой процесс автоматизировать первым. Результат: письменный отчёт и два пакета Flow под ваш процесс.",
+        },
+        {
+          name: "Спринт внедрения",
+          duration: "две–четыре недели",
+          body: "MAIster на вашем узле, подключённый к вашему Git-провайдеру и CI. Flow для исправлений, фич, ревью, документации и зависимостей; проверки, бюджеты и роли; обученная команда; тридцать дней поддержки.",
+        },
+        {
+          name: "Поддержка и развитие",
+          duration: "помесячно",
+          body: "Обновления, новые пакеты, разбор инцидентов и приоритет в дорожной карте.",
+        },
+      ],
+      cta: { label: "Обсудить", ariaLabel: "Написать автору в Telegram" },
+      note: "Ответ в течение одного рабочего дня.",
+    },
+    faq: {
+      eyebrow: "Вопросы",
+      title: "Перед установкой",
+      items: [
+        {
+          question: "Код уходит из моей инфраструктуры?",
+          answer:
+            "Нет. Репозитории, запросы, изменения, секреты и содержимое артефактов остаются в вашей инфраструктуре. Контур управления и узел исполнения находятся под вашим контролем. В MAIster нет аналитики и телеметрии; наружу уходят только обращения к провайдерам моделей, Git-репозиториям и MCP-серверам, которые вы настроили.",
+        },
+        {
+          question: "Какие агенты-разработчики поддерживаются?",
+          answer:
+            "Claude Code, Codex, Gemini CLI, OpenCode и MiMo работают через Agent Client Protocol. MAIster запускает консольные агенты с авторизацией узла исполнения, включая поддерживаемые подписочные сессии; API-провайдеры Anthropic, OpenAI и OpenRouter входят в тот же каталог профилей запуска.",
+        },
+        {
+          question: "Можно оставить методику, которую команда уже использует?",
+          answer:
+            "Да. Spec Kit, OpenSpec, BMAD, Superpowers и AI Factory уже поставляются пакетами, а пакетом может стать любой Git-репозиторий с flow.yaml. Студия Flow редактирует пакетные Flow визуально и ответвляет их в локальные версии.",
+        },
+        {
+          question: "Как выглядит первый запуск?",
+          answer:
+            "Зарегистрируйте репозиторий, создайте задачу, выберите Flow и запустите. Запуск получает изолированный worktree, зафиксированную версию Flow и наблюдаемый результат. Доставка результата остаётся отдельным явным действием.",
+        },
+        {
+          question: "Как это устроено?",
+          answer:
+            "Веб-контур управления хранит состояние продукта. Отдельный супервизор узла исполнения управляет ACP-сессиями и процессами агентов. Postgres хранит постоянный реестр, а изолированные Git worktree содержат код и данные доказательств. Сейчас оба процесса работают на одном доверенном узле; работа на нескольких узлах в дорожной карте.",
+        },
+        {
+          question: "Сколько это стоит?",
+          answer:
+            "MAIster распространяется по лицензии MIT; вы платите только провайдерам моделей. Инспектор запуска показывает входные, выходные и кешированные токены рядом с активным и полным временем работы, а бюджеты предупреждают, зовут человека и останавливают запуск. Денежные тарифы в дорожной карте.",
+        },
+      ],
     },
     final: {
       eyebrow: "Начните с одного реального процесса",
-      title: "Замените один терминал под присмотром на Flow, которому можно доверять.",
-      body:
-        "Запустите MAIster на своём узле, подключите приватный репозиторий и проверьте первый воспроизводимый процесс со встроенными доказательствами и проверкой человеком.",
+      title:
+        "Замените один терминал под присмотром на Flow, которому можно доверять.",
+      body: "Запустите MAIster на своём узле, подключите приватный репозиторий и проверьте первый воспроизводимый процесс со встроенными доказательствами и проверкой человеком.",
       primary: "Открыть инструкцию",
       secondary: "Изучить репозиторий",
     },
     footer: {
       motto: "Ship happens",
-      tagline: "Контур управления разработкой для команд из людей и ИИ-агентов.",
+      tagline:
+        "Контур управления разработкой для команд из людей и ИИ-агентов.",
       taglineAccent: "Работа, доказательства и решения в одном месте.",
       product: {
         title: "Продукт",
-        overview: "Позиционирование",
+        why: "Зачем MAIster",
+        tour: "Экскурсия по продукту",
         workflow: "Контур доставки",
-        collaboration: "Совместная работа",
-        architecture: "Архитектура",
+        compare: "Сравнение",
       },
       docs: {
         title: "Документация",
