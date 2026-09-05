@@ -6,6 +6,8 @@ export const EMERGENCY_EVENT_BYTES =
   EMERGENCY_EVENT_ROWS * CONTROL_EVENT_MAX_BYTES;
 export const PRODUCER_BASE_CONTROL_ROWS = 18;
 export const MAX_DECLARED_OUTPUT_BINDINGS = 32;
+export const MAX_RECEIPT_BODY_BYTES = 2 * 1024 * 1024;
+export const SQLITE_WRITE_HEADROOM_BYTES = 8 * 1024 * 1024;
 
 export type RuntimeLimits = Readonly<{
   eventLowBytes: number;
@@ -102,12 +104,21 @@ export function validateRuntimeLimits(limits: RuntimeLimits): RuntimeLimits {
       "event control capacity must fund the emergency floor and a producer wallet at 16 KiB per row",
     );
   }
+  const minimumStateBytes =
+    limits.eventHardBytes +
+    limits.eventControlBytes +
+    sqliteControlHeadroomBytes(limits) +
+    SQLITE_WRITE_HEADROOM_BYTES;
+
   if (
-    !Number.isSafeInteger(limits.eventHardBytes + limits.eventControlBytes) ||
-    limits.stateMaxBytes <= limits.eventHardBytes + limits.eventControlBytes
+    !Number.isSafeInteger(minimumStateBytes) ||
+    limits.stateMaxBytes <= minimumStateBytes ||
+    !Number.isSafeInteger(
+      limits.runtimeMinFreeBytes + limits.stateMaxBytes + limits.objectMaxBytes,
+    )
   ) {
     throw new RuntimeLimitsError(
-      "host state capacity must exceed the event partitions",
+      "host state capacity must exceed the event partitions plus reserved write headroom; combined filesystem budgets must be safe integers",
     );
   }
 
@@ -146,4 +157,18 @@ export function producerWalletRows(outputBindingCount: number): number {
   }
 
   return PRODUCER_BASE_CONTROL_ROWS + outputBindingCount;
+}
+
+/** Event pages, index/WAL overhead, and one bounded terminal receipt per wallet. */
+export function sqliteControlHeadroomBytes(limits: RuntimeLimits): number {
+  const wallets = Math.floor(
+    (limits.eventControlRows - EMERGENCY_EVENT_ROWS) /
+      PRODUCER_BASE_CONTROL_ROWS,
+  );
+
+  return (
+    2 * limits.eventControlBytes +
+    limits.eventControlRows * 64 * 1024 +
+    wallets * (2 * MAX_RECEIPT_BODY_BYTES + 64 * 1024)
+  );
 }

@@ -1344,6 +1344,7 @@ This table supersedes inconsistent budget descriptions for this work. Binary uni
 | Emergency floor | 1 MiB / 64 control rows | Kept outside producer wallets for host storage/degraded/stop evidence. |
 | Producer terminal wallet | `(18 + declared outputBindingCount)` rows ×16 KiB; existing output-binding maximum 32 | Base lifecycle/teardown/error/overflow references plus one availability per declared output. Up to 50 rows/800 KiB; 960 nonemergency rows support at least 19 worst-case simultaneous producers. Admission uses actual wallets, not the six-run cap. |
 | ACK replay grace | 24 hours after confirmed ACK | Never prune unACKed rows or shorten grace to hide capacity pressure. ACKed retained rows still consume real storage. |
+| Durable receipt body | 2 MiB serialized JSON | Bound a single receipt mutation; larger semantic output uses an immutable reference. Oversized legacy receipts require bounded migration before pruning. |
 | SQLite physical storage | 2 GiB host-state high-water; bounded WAL checkpoints at 64 MiB target, checked with SQLite page/WAL counters | Separate physical overhead from 528 MiB event payload quota; size includes receipts/indexes. Target checkpoint size is not a guaranteed hard limit while readers pin WAL. Refuse effects/pause before physical high-water; close bounded readers and checkpoint without deleting evidence. |
 | Host runtime byte quota | 10 GiB hard / 8 GiB soft / 6 GiB resume-low; require ≥1 GiB filesystem free headroom | Separate host objects/raw spools from outbox. Finite host storage cannot promise unlimited output/outage retention; pressure pauses production or produces explicit incomplete-output terminal failure. Never GC required evidence for space. |
 | Ordinary manager uploads | 25 MiB/object, 100 MiB/command batch | Preserve normal upload contract. Historical import uses bounded chunks, not this whole-file cap. |
@@ -1353,6 +1354,25 @@ This table supersedes inconsistent budget descriptions for this work. Binary uni
 | GC | 100 examined rows/quantum, due-keyset cursor advanced for every examined item; 30 s operation lease, 10 s renewal when needed | Protected first pages cannot starve later rows; remote deletes occur outside DB lock. |
 
 **Physical-capacity qualification:** logical SQLite quotas are not exact on-disk caps. Measure max envelope/index/receipt footprint and WAL behavior at configured producer concurrency. Before promising a physical maximum, account for the worst already-admitted burst and filesystem free-space guard; refuse configurations whose hard limits plus reserved in-flight storage exceed the host budget. Disk-full/fdatasync failure can prevent any final record: mark host unavailable, stop affected producers, retain all existing bytes/receipts, fail readiness and require storage repair; do not claim durable terminal evidence was committed when it was not.
+
+The current S1.3 SQLite guard measures the database, WAL and shared-memory
+files, SQLite page/free-page counters and filesystem free bytes before runtime
+writes. Each write keeps 8 MiB of physical headroom. Fresh admission additionally
+keeps `2 × controlBytes + 64 KiB × controlRows + walletCount × (4 MiB + 64 KiB)`
+for control pages/indexes and terminal receipts, where
+`walletCount = floor((controlRows − 64) / 18)`. Outstanding frame reservations
+add twice their reserved event bytes plus 16 KiB per row. Physical pressure
+requires another 8 MiB before resuming. Configuration must fit the event
+partitions plus this control/write headroom. These allowances are conservative
+admission guards. An uncheckpointed WAL at the 64-MiB target also pauses fresh
+admission while reserved terminal work remains writable; worst-case concurrent
+object/spool and full deployment
+qualification remain open. A passive checkpoint attempts WAL truncation only
+after all frames are checkpointed; a pinned reader cannot justify deleting
+history. New receipt bodies are capped at 2 MiB, receipt pruning handles one
+row per transaction, and event pruning handles at most 100 rows/1 MiB before
+yielding. Native storage failures latch unavailable readiness and stop active
+producers; repair and a successful restart are required before further writes.
 
 **Producer protocol:** bounded byte framer → durable raw/semantic output sink → canonical summary/object registration → SQLite append → optional live hints/ACP delivery. Retain the currently blocked frame and pause upstream without assigning an event sequence until append commits. Respect backpressure from both log stream and ACP tap; wrap/replace the SDK stream adapter at the seam if its eager string/ReadableStream queue defeats the bound. An oversized frame is a typed producer protocol error with bounded preserved diagnostic bytes, never an uncaught process error.
 

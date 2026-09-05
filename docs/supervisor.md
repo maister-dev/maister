@@ -741,6 +741,14 @@ watermark and partition counters commit with each range. Legacy per-row ACK
 timestamps remain readable without rewriting retained event bodies. Pruning
 deletes only the oldest eligible prefix, at most 100 rows and 1 MiB per
 transaction, and never bypasses replay grace.
+Runtime writes also pass the physical guard described in
+[configuration](configuration.md#a-b-stabilization-resource-budget-designed).
+A native SQLite/filesystem capacity or I/O failure stops live producers and
+latches `GET /health` to `503 EXECUTOR_UNAVAILABLE` with
+`runtime_storage_unavailable`. Existing receipts/events and unfinished captured
+files remain for repair. The host does not publish a successful terminal event
+when its commit failed. A fresh process must successfully open the repaired
+store before admissions resume.
 The file carries a `PRAGMA user_version` (currently 8)
 that gates in-place migrations at open: a version-0 store (inline
 `UNIQUE (run_id, real_path)`, which blocked re-adoption after a release) is

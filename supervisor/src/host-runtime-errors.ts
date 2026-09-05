@@ -1,5 +1,6 @@
 export class HostRuntimeEventError extends Error {
   readonly reason:
+    | "runtime_storage_unavailable"
     | "command_in_progress"
     | "command_invariant_conflict"
     | "event_outbox_soft_limit"
@@ -11,8 +12,12 @@ export class HostRuntimeEventError extends Error {
     | "ack_beyond_emitted"
     | "stream_corrupt";
 
-  constructor(reason: HostRuntimeEventError["reason"], message: string) {
-    super(message);
+  constructor(
+    reason: HostRuntimeEventError["reason"],
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
     this.name = "HostRuntimeEventError";
     this.reason = reason;
   }

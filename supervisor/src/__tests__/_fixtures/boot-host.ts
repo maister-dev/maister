@@ -142,14 +142,19 @@ export async function bootHost(
         }
       }
       await Promise.all(exits);
-      await Promise.all(
+      const terminals = await Promise.allSettled(
         registry
           .list()
           .map((record) => record.outputTerminal ?? record.outputDrained),
       );
+      const failed = terminals.find((result) => result.status === "rejected");
+      const storageAvailable = hostState.runtimeStorageAvailable();
+
       await app.close();
       registry.clear("test-shutdown");
       if (ownsHostState) hostState.close();
+      if (failed?.status === "rejected" && storageAvailable)
+        throw failed.reason;
     },
   };
 }

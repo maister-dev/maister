@@ -195,7 +195,8 @@ export class RuntimeObjectRegistry {
       }
       fsyncSync(descriptor);
     } catch (error) {
-      unlinkSync(temporary);
+      this.state.reportRuntimeStorageFailure(error);
+      if (this.state.runtimeStorageAvailable()) unlinkSync(temporary);
       throw error;
     } finally {
       closeSync(descriptor);
@@ -585,7 +586,9 @@ export class RuntimeObjectRegistry {
         throw new Error("runtime object size changed during sealing");
       }
     } catch (error) {
-      await rm(temporary, { force: true });
+      this.state.reportRuntimeStorageFailure(error);
+      if (this.state.runtimeStorageAvailable())
+        await rm(temporary, { force: true });
       throw error;
     }
     const sealed = this.state.updateRuntimeObject(object.id, {

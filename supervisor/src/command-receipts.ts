@@ -260,6 +260,7 @@ export class CommandReceipts {
     this.inflight.set(commandId, completion);
     void completion
       .catch((error) => {
+        this.state.reportRuntimeStorageFailure(error);
         this.logger.error(
           {
             commandId,
@@ -291,6 +292,7 @@ export class CommandReceipts {
     try {
       outcome = await args.run();
     } catch (error) {
+      this.state.reportRuntimeStorageFailure(error);
       const supervisorError = isSupervisorError(error)
         ? error
         : new SupervisorError(
@@ -332,6 +334,7 @@ export class CommandReceipts {
     try {
       outcome = await args.run();
     } catch (err) {
+      this.state.reportRuntimeStorageFailure(err);
       if (!isSupervisorError(err)) throw err;
 
       outcome = { status: httpStatusForCode(err.code), body: errorBody(err) };

@@ -243,13 +243,16 @@ export function captureAcpFrames(input: {
   onLine: (line: string) => void;
   onFailure: (error: SupervisorError) => void;
   onDrained: () => void;
+  onStorageFailure?: (error: unknown) => void;
+  storageAvailable?: () => boolean;
   beforeFrame?: () => Promise<FrameAdmission>;
   shouldDrain?: () => boolean;
   onSegment?: (segment: CapturedStdoutSegment) => void;
 }): NodeReadable {
-  input.log.once("error", () =>
-    input.onFailure(incomplete("producer_output_storage")),
-  );
+  input.log.once("error", (error) => {
+    input.onStorageFailure?.(error);
+    input.onFailure(incomplete("producer_output_storage"));
+  });
   async function* frames(): AsyncGenerator<Buffer> {
     const temporary = join(input.directory, `.acp-frame-${randomUUID()}.tmp`);
     let spool: FileHandle | null = null;
@@ -347,6 +350,7 @@ export function captureAcpFrames(input: {
       }
       if (length !== 0) throw incomplete("producer_frame_incomplete");
     } catch (error) {
+      input.onStorageFailure?.(error);
       // Even an over-budget or truncated drain preserves its captured prefix
       // before the typed failure and terminal barrier become observable.
       let failure =
@@ -356,7 +360,8 @@ export function captureAcpFrames(input: {
 
       try {
         publishSegment();
-      } catch {
+      } catch (error) {
+        input.onStorageFailure?.(error);
         failure = incomplete("producer_output_storage");
       }
       input.onFailure(failure);
@@ -365,8 +370,11 @@ export function captureAcpFrames(input: {
       try {
         if (spool) {
           await spool.close();
-          await unlink(temporary);
+          if (input.storageAvailable?.() !== false) await unlink(temporary);
         }
+      } catch (error) {
+        input.onStorageFailure?.(error);
+        throw error;
       } finally {
         const flushed = finished(input.log);
 

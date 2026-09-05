@@ -360,6 +360,8 @@ export async function spawnSession(
   };
   const acpStdoutTap = captureAcpFrames({
     source: child.stdout,
+    onStorageFailure: opts.hostState?.reportRuntimeStorageFailure,
+    storageAvailable: opts.hostState?.runtimeStorageAvailable,
     beforeFrame: pressure?.beforeFrame,
     shouldDrain: pressure?.shouldDrain,
     onSegment: opts.runtimeEventPublisher

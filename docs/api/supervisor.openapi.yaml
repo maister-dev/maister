@@ -305,6 +305,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorHealthResponse" }
+        "503":
+          description: Runtime storage failed; repair storage before restarting admissions.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
   /diagnostics:
     get:
       tags: [health]
@@ -2431,6 +2436,7 @@ components:
         - event_redaction_failed
         - event_payload_oversize
         - event_outbox_backpressure
+        - runtime_storage_unavailable
         - runtime_output_buffer_capacity
         - runtime_output_frame_too_large
         - required_output_incomplete

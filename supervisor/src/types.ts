@@ -564,6 +564,7 @@ export const REASON_TOKENS = [
   "event_redaction_failed",
   "event_payload_oversize",
   "event_outbox_backpressure",
+  "runtime_storage_unavailable",
   "command_invariant_conflict",
   "command_in_progress",
   "runtime_object_delete_failed",

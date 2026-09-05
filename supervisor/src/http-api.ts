@@ -246,6 +246,10 @@ function countSessionsByStatus(
 
 function runtimeEventSupervisorError(error: unknown): SupervisorError {
   if (error instanceof HostRuntimeEventError) {
+    if (error.reason === "runtime_storage_unavailable")
+      return new SupervisorError("EXECUTOR_UNAVAILABLE", error.message, {
+        details: { reason: error.reason },
+      });
     const reason =
       error.reason === "replay_floor_exceeded"
         ? "replay_floor_lost"
@@ -501,6 +505,22 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     done(null, body),
   );
 
+  const unsubscribeStorageFailure = hostState.subscribeRuntimeStorageFailure(
+    () => {
+      registry.forEach((entry) => {
+        if (entry.record.status !== "live") return;
+        entry.record.abortOutput?.(
+          new SupervisorError(
+            "EXECUTOR_UNAVAILABLE",
+            "runtime storage failed; required output could not be committed",
+            { details: { reason: "runtime_storage_unavailable" } },
+          ),
+        );
+      });
+    },
+  );
+
+  app.addHook("onClose", async () => unsubscribeStorageFailure());
   const receipts = new CommandReceipts(hostState, logger);
   const recoveredPromptReceipts = receipts.recoverAcceptedPrompts();
 
@@ -1132,6 +1152,16 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   }
 
   app.setErrorHandler((err, _req, reply) => {
+    hostState.reportRuntimeStorageFailure(err);
+    if (!hostState.runtimeStorageAvailable()) {
+      reply.status(503).send({
+        code: "EXECUTOR_UNAVAILABLE",
+        message: "runtime storage requires repair",
+        details: { reason: "runtime_storage_unavailable" },
+      });
+
+      return;
+    }
     if (err instanceof HostRuntimeEventError) {
       const failure = runtimeEventSupervisorError(err);
 
@@ -1169,6 +1199,15 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   });
 
   app.get("/health", async (_req, reply) => {
+    if (!hostState.runtimeStorageAvailable()) {
+      reply.status(503).send({
+        code: "EXECUTOR_UNAVAILABLE",
+        message: "runtime storage requires repair",
+        details: { reason: "runtime_storage_unavailable" },
+      });
+
+      return;
+    }
     const body: SupervisorHealthResponse = {
       status: "ready",
       host: {
