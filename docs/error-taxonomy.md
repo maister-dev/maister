@@ -601,6 +601,39 @@ transport is `503`. The response body stays the normal safe `MaisterError`
 shape; host paths, payload bytes, and transport diagnostics remain server logs
 only.
 
+## A/B stabilization reasons (Designed)
+
+The existing `MaisterError`/`SupervisorError` code families remain the public
+classification. These reason tokens are closed, localized discriminants when
+exposed to a user; original provider text and private request/receipt fields
+remain server-only. The [identifier/refusal contract](system-analytics/execution-hosts.md#identifier-classification-and-refusal-contract-designed)
+defines the authoritative row joins. A failed read never proves remote failure.
+
+| Observation / reason | Code / HTTP | Recovery and allowed diagnostic fields |
+| --- | --- | --- |
+| `transport_request_invalid` | `ACP_PROTOCOL` / 500 | Proven local construction failure: retain not-sent intent; fix construction, no remote-unknown retry. Runtime/library versions, byte count, safe cause code. |
+| `admission_unknown` | `EXECUTOR_UNAVAILABLE` / 503 | Keep original command/request, query canonical+receipt evidence after reconnect even beyond outbound retry budget. Attempts/deadline/admission certainty. |
+| `event_outbox_backpressured` | `EXECUTOR_UNAVAILABLE` / 503 | Refuse fresh effects, preserve admitted producers and reserved teardown; resume below validated low watermarks. Row/byte/wallet counts. |
+| `runtime_output_frame_too_large`, `required_output_incomplete` | `ACP_PROTOCOL` / terminal prompt failure evidence | Preserve bounded diagnostic/output objects, stop only the affected producer, never report empty success. Observed/maximum byte counts and opaque object IDs. |
+| `prompt_terminal_conflict`, `command_invariant_conflict` | `ACP_PROTOCOL` or existing `CONFLICT` mapping / 409 | Preserve both bounded evidence identities, quarantine the operation; never overwrite or replay ACP under a fresh ID. Digest/schema/command identities. |
+| `prompt_owner_invalid`, `prompt_owner_superseded` | `CONFLICT` / 409 for a caller; explicit nonapplying worker disposition | Recheck exact owner row/generation and current status. No current-domain mutation from stale evidence. Variant/generation/refusal code. |
+| `projection_poisoned`, `owner_application_poisoned` | `ACP_PROTOCOL` / operational degraded state | Keep cursor/failed event or command, isolate other work; explicit generation-bound repair/rearm. Consumer/owner kind, attempts and safe cause. |
+| `protected_execution_evidence` | `CONFLICT` / 409 | Refuse parent deletion/retirement while accepted, unknown, unapplied, import or delivery holds exist. Hold category and counts. |
+| `runtime_object_missing` | `PRECONDITION` / 404 | Persist verified missing evidence and retain catalog/associations; no empty substitute. Object/generation. |
+| `runtime_object_deleted` | `PRECONDITION` / 410 | Preserve tombstone, identical deletion replay succeeds. Object/generation. |
+| `runtime_object_integrity_mismatch` | `PRECONDITION` / 422 | Persist verified corrupt state; no successful response with obsolete digest. Expected/observed size and hash agreement. |
+| `runtime_object_range_invalid` | `PRECONDITION` / 416 | Refuse malformed/multiple/out-of-bounds/oversized range; never send the full object instead. Bounded numeric range. |
+| `runtime_object_read_busy`, `runtime_storage_unavailable` | `EXECUTOR_UNAVAILABLE` / 503 | Bound verification concurrency; persistence failure cannot claim a durable missing/corrupt transition. Safe resource category/count. |
+| `legacy_import_source_changed`, `legacy_import_source_missing`, `legacy_import_association_ambiguous` | `PRECONDITION` / CLI failure or 409 | Preserve original manifest and sources; lane remains incomplete/failed until evidence-bound repair. Import/item/lane IDs, counts and digest equality. |
+| `legacy_import_not_enabled`, `legacy_import_generation_conflict` | `PRECONDITION` / 409 on maintenance socket | Refuse outside the locally enabled immutable manifest generation or after revocation. No TCP import surface or source paths. |
+
+All logs use existing configurable structured loggers: debug for bounded
+entry/exit/attempt detail, info for durable transitions, warn for retry/stale
+observations, error for poison or service failure. Never log raw paths, tokens,
+full prompts, environment values, object bodies, arbitrary exception bodies or
+private canonical request JSON. Metric labels use bounded reason/kind/status
+sets; command/run/object IDs belong in logs, not unbounded metric labels.
+
 ## Construction
 
 ```ts

@@ -10,7 +10,7 @@ info:
     families.
     Consumed by the Next.js web tier through `web/lib/supervisor-client.ts`.
 
-    **Implemented contract.** The lifecycle
+    **Implemented route surface; A/B stabilization is Designed.** The lifecycle
     (`POST` / `DELETE` `/sessions`, `GET /sessions`,
     `GET /sessions/:id/stream`), asynchronous ACP prompt admission
     (`POST /sessions/{id}/prompts`), permission-only HITL input
@@ -65,7 +65,7 @@ servers:
   - url: http://localhost:{port}
     description: |
       Local supervisor on the operator's workstation. POC ships single-host
-      docker compose; production deployments substitute their own host.
+      host web/supervisor processes with Postgres-only compose.
     variables:
       port:
         default: "7777"
@@ -2969,3 +2969,161 @@ components:
           type: integer
           minimum: 0
           description: Cache validity window for this draft key.
+    ImmutablePromptRequestV2:
+      x-implementation-status: Designed
+      description: |
+        Private exact JCS input retained by the manager. Activated with the v2
+        prompt capability after all owner adapters are ready. This is never a
+        public command DTO. IDs/issuedAt are reused from the logical-key lookup.
+        The URL-selected hostSessionId is part of the SHA-256 request identity.
+      type: object
+      additionalProperties: false
+      required: [requestVersion, command, fence, target, payload]
+      properties:
+        requestVersion: { type: integer, enum: [2] }
+        command:
+          type: object
+          additionalProperties: false
+          required: [id, kind, issuedAt]
+          properties:
+            id: { type: string, format: uuid }
+            kind: { type: string, enum: [session.prompt] }
+            issuedAt: { type: string, format: date-time }
+        fence: { $ref: '#/components/schemas/CommandFence' }
+        target:
+          type: object
+          additionalProperties: false
+          required: [hostSessionId]
+          properties:
+            hostSessionId: { type: string, minLength: 1, maxLength: 128 }
+        payload: { $ref: '#/components/schemas/SendPromptRequest' }
+    CommandOutputReferenceV2:
+      x-implementation-status: Designed
+      type: object
+      additionalProperties: false
+      required: [objectId, generation, sizeBytes, sha256, commandId, hostSessionId, acceptedSequence, terminalSequence]
+      properties:
+        objectId: { type: string, format: uuid }
+        generation: { type: integer, minimum: 1, maximum: 2147483647 }
+        sizeBytes: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        commandId: { type: string, format: uuid }
+        hostSessionId: { type: string, minLength: 1, maxLength: 128 }
+        acceptedSequence: { type: string, pattern: '^(0|[1-9][0-9]{0,18})$', maxLength: 19 }
+        terminalSequence: { type: string, pattern: '^(0|[1-9][0-9]{0,18})$', maxLength: 19 }
+      description: |
+        Immutable full semantic output. Sequence strings are signed-BIGINT-safe;
+        command, session, generation and both sequence bounds must agree with
+        canonical evidence. Required bytes cannot be replaced by a redacted snippet.
+    CommandTerminalEvidenceV2:
+      x-implementation-status: Designed
+      type: object
+      additionalProperties: false
+      required: [outcomeVersion, status, eventId, streamId, sequence, result, error]
+      properties:
+        outcomeVersion: { type: integer, enum: [2] }
+        status: { type: string, enum: [succeeded, failed, fenced] }
+        eventId: { type: string, format: uuid }
+        streamId: { type: string, format: uuid }
+        sequence: { type: string, pattern: '^(0|[1-9][0-9]{0,18})$', maxLength: 19 }
+        result:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Versioned bounded per-kind result, including output reference for prompt success; never raw semantic output.
+          properties:
+            output: { $ref: '#/components/schemas/CommandOutputReferenceV2' }
+        error:
+          nullable: true
+          allOf: [{ $ref: '#/components/schemas/SupervisorErrorBody' }]
+      description: |
+        Success requires a result and null error; failure/fencing requires an
+        exact nested error and null result. The reducer validates the per-kind
+        result contract and preserves nested details. Its canonical identity
+        must match independently acquired receipt and canonical-event evidence.
+    CommandReceiptV2:
+      x-implementation-status: Designed
+      type: object
+      additionalProperties: false
+      required: [receiptVersion, commandId, kind, hostKey, runId, assignmentId, assignmentEpoch, hostSessionId, requestSchema, requestSha256, phase, httpStatus, receivedAt, terminal]
+      properties:
+        receiptVersion: { type: integer, enum: [2] }
+        commandId: { type: string, format: uuid }
+        kind: { $ref: '#/components/schemas/CommandKind' }
+        hostKey: { type: string, pattern: '^[A-Za-z0-9_-]{8,64}$' }
+        runId: { type: string, minLength: 1, maxLength: 128 }
+        assignmentId: { type: string, format: uuid }
+        assignmentEpoch: { type: integer, minimum: 1, maximum: 2147483647 }
+        hostSessionId: { type: string, nullable: true, minLength: 1, maxLength: 128 }
+        requestSchema: { type: string, enum: [maister.command.request.v2] }
+        requestSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        phase: { type: string, enum: [accepted, completed, rejected] }
+        httpStatus: { type: integer, minimum: 100, maximum: 599 }
+        receivedAt: { type: string, format: date-time }
+        terminal:
+          nullable: true
+          allOf: [{ $ref: '#/components/schemas/CommandTerminalEvidenceV2' }]
+      description: |
+        Host/fence/target are derived from the stored admission, never the querying
+        caller. Accepted has null terminal; completed/rejected has exact terminal
+        evidence. Receipt alone cannot settle a prompt. Absence or failed reads
+        preserve unknown outcome. Pre-effect refusal is explicit typed evidence.
+    CommandRetirementRequestV1:
+      x-implementation-status: Designed
+      type: object
+      additionalProperties: false
+      required: [retirementId, generation, requestSha256, terminalEvidenceSha256, terminalSequence, ownerDisposition, eligibleAt]
+      properties:
+        retirementId: { type: string, format: uuid }
+        generation: { type: integer, minimum: 1, maximum: 2147483647 }
+        requestSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        terminalEvidenceSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        terminalSequence: { type: string, pattern: '^(0|[1-9][0-9]{0,18})$', maxLength: 19 }
+        ownerDisposition: { type: string, enum: [applied, superseded, not_applicable] }
+        eligibleAt: { type: string, format: date-time }
+      description: |
+        POST /commands/{commandId}/retirement over the existing trusted local
+        administrative transport. URL commandId selects the host receipt; the host
+        rechecks request/terminal identity, terminal phase, contiguous ACK and grace.
+        The manager admits this proof only under terminal run and delivery/reference
+        holds. Same retirement ID/generation replays, conflict or ineligibility is
+        409; ACK loss retains manager evidence. Response echoes the verified request
+        plus commandId and confirmedAt. Parent deletion cannot bypass this protocol.
+    HistoricalImportChunkIdentityV1:
+      x-implementation-status: Designed
+      type: object
+      additionalProperties: false
+      required: [generation, manifestSha256, offset, sizeBytes, sha256, objectId]
+      properties:
+        generation: { type: integer, minimum: 1, maximum: 2147483647 }
+        manifestSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        offset: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        sizeBytes: { type: integer, minimum: 0, maximum: 8388608 }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        objectId: { type: string, format: uuid }
+      description: |
+        Maintenance Unix-socket transport only; no TCP import route. URL-selected
+        importId/itemId/chunkIndex and these header-derived metadata values must
+        match the locally enabled frozen manifest. Request body is exact bytes;
+        Content-Length and Content-Digest must agree. Supervisor-derived host and
+        manifest bindings replace an active assignment, never a forged fence.
+        Matching chunk/seal retries replay; changed bytes or generation is 409.
+        Local OS authority, explicit enablement and revocation govern access.
+
+x-ab-stabilization:
+  status: Designed
+  activation: Paired host/manager capabilities after existing commands are drained or explicitly held for repair; no indefinite legacy execution path.
+  commandIdentity: ImmutablePromptRequestV2 and CommandReceiptV2 bind the URL-selected target as well as the envelope and exact result/error identity.
+  readPolicy:
+    contentType: application/octet-stream
+    contentDisposition: attachment
+    xContentTypeOptions: nosniff
+    contentSecurityPolicy: "sandbox; default-src 'none'"
+    cacheControl: private, no-store
+    contentDigest: SHA-256 of actual 200/206 message bytes
+    reprDigest: SHA-256 of the full verified representation
+    etag: Strong generation and full-representation hash identity
+    verification: No-follow descriptor, full streaming hash and bounded private response spool verified before success headers; manager verifies actual response bytes.
+  identifiers: ../system-analytics/execution-hosts.md#identifier-classification-and-refusal-contract-designed
+  refusalReasons: ../error-taxonomy.md#ab-stabilization-reasons-designed
+  maintenanceImport: ../system-analytics/execution-data-cutover.md#historical-import-and-guarded-upgrade-protocol-designed

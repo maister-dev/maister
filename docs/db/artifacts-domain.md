@@ -118,3 +118,15 @@ claimed locator. `decision_request.source_artifact_id` references this exact
 instance; the parent review schema repeats only server-derived ID/hash/attempt
 metadata needed for validation and presentation. A superseded artifact cannot
 open a decision child or authorize approval.
+
+## Runtime-object stabilization (Designed)
+
+Runtime-object intent separates declared expected size/hash from established
+sealed size/hash. Pending nullable fields cannot be compared as though sealed.
+The [catalog field contract](../database-schema.md#ab-stabilization-persistence-contract-designed)
+and [object lifecycle](../system-analytics/execution-runtime-objects.md) govern
+import origins, association locks, no-resurrection and delivery holds.
+Artifact validity and required-evidence roles survive every locator replacement;
+structured result transport remains a distinct contract. These changes are
+forward additions after 0136; the current consolidated ERD still describes the
+implemented schema.

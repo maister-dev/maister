@@ -1,5 +1,13 @@
 # Implementation Plan: Stage B — Durable Execution-Host Event and Runtime-Data Plane
 
+> Historical implementation record. Current A/B stabilization is tracked in
+> [stage-ab-stabilization.md](stage-ab-stabilization.md). Earlier completed boxes
+> do not discharge the open R01–R17 audit findings or current qualification.
+> As built: 0131 events/import/incarnations, 0132 checks, 0133 objects,
+> 0134 scratch association/mirror cut, 0135 five-lane guard/cursor cut,
+> 0136 canonical-only constraint. Committed migrations remain unchanged.
+
+
 **Branch:** `feature/stage-b-durable-execution-host-data-plane`
 **Baseline:** `06aa7f7e137773cb31d55610148fe138f14c7be8` (Stage A complete)
 **Created:** 2026-09-04

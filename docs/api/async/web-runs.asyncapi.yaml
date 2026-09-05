@@ -141,3 +141,19 @@ components:
       example:
         type: session.stream_timeout
         reason: no canonical events within keepalive window
+    RuntimeOutputReferenceV2:
+      x-implementation-status: Designed
+      type: object
+      additionalProperties: false
+      required: [objectId, sizeBytes, contentAvailable]
+      properties:
+        objectId: { type: string, format: uuid }
+        sizeBytes: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        contentAvailable: { type: boolean }
+      description: |
+        User-safe projection of host output references. No command/assignment,
+        ACP/host-session identity, local path or raw object bytes reach browser
+        events. Raw content requires the same project readRepoFiles authorization
+        as the content route; denial preserves a contentAvailable=false projection.
+        Existing escaped text consumers fetch authorized bounded ranges, never
+        execute supplied MIME or treat an absent reference body as successful output.

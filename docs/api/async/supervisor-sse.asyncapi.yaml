@@ -583,3 +583,19 @@ components:
         (ADR-108, M40; `capability_guard` Implemented — ADR-130) Emitted
         when a guardrail rule trips at the supervisor↔ACP seam. See
         `system-analytics/guardrail-hooks.md`.
+x-ab-stabilization:
+  status: Designed
+  canonicalAuthority: execution-host-events.asyncapi.yaml
+  outputReferences: |
+    Oversized semantic output is preserved in host objects and represented by
+    negotiated bounded references. Consumers retain frame order and must resolve
+    authorized original bytes before applying required semantic output. The
+    per-session hint stream cannot substitute for canonical Postgres evidence.
+  terminalOrdering: |
+    Flush captured frames to preserved object references or typed incomplete-output
+    evidence before prompt/session terminal publication. No later ordinary event
+    from the terminated producer is admitted; stdout pause affects ACP replies too.
+  projectionWake: |
+    Due DB projection/reconciliation work runs autonomously after restart and
+    without new SSE traffic. Ingest ACK depends on canonical commit, never on a
+    successful projection or completion of a transport stream.

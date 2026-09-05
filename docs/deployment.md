@@ -1,5 +1,7 @@
 [← Getting started](getting-started.md) · [Back to README](../README.md)
 
+> A/B stabilization is in progress. The [runtime floor, resource budgets and host-process wiring](configuration.md#ab-runtime-and-deployment-qualification-designed) are Designed until their validation gates pass. The [qualification topology](system-analytics/test-infrastructure.md#ab-stabilization-test-lanes-designed) defines executable evidence; earlier aggregate pass counts do not qualify this release.
+
 # Deploying MAIster on a Linux VPS
 
 Production deployment for a single host. Per [ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres),

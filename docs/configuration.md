@@ -1316,18 +1316,68 @@ session. Postgres rollups retain the attribution; no cost JSONL file is read by
 the control plane. Resume cost remains observability only and does not alter a
 control-plane decision.
 
-## Stage B execution-host data plane (Implemented — ADR-167)
+## Stage B execution-host data plane (partial implementation — ADR-167)
 
-Stage B deliberately introduces **no operator setting**. The fixed negotiated
+The original Stage B release introduced **no operator setting**. The Designed stabilization settings below supersede that restriction when their consuming increment is implemented. The fixed negotiated
 limits (`1 MiB` event envelope, `500` replay batch, `25 MiB` runtime object)
 are published by the supervisor's read-only `/capabilities` document and
 validated by the web tier. The default one-host launch needs neither relay,
 object store, host enrollment, nor a web runtime-data mount. Canonical mode is
 mandatory for admission. `MAISTER_EXECUTION_HOST_STATE_DIR` remains
 supervisor-private; it contains durable identity, fences, receipts, and the
-host event outbox, never a web-readable data-plane API. There is intentionally
-no new operator setting: fixed protocol limits are advertised by capabilities.
+host event outbox, never a web-readable data-plane API. Protocol limits are advertised by capabilities; operator resource limits are validated at boot.
 Future remote-host settings are deferred rather than accepted-and-ignored.
+
+## A/B stabilization resource budget (Designed)
+
+This table supersedes inconsistent budget descriptions for this work. Binary units are bytes; row and byte ceilings are both enforced. Retain the accepted Stage B 400/512 MiB and row policy rather than tuning production numbers to small tests. S0 freezes the arithmetic; S1 qualifies the physical footprint on the single-host target; any adjustment requires a stated measured resource reason and updates this one table and all consumers before implementation continues.
+
+| Resource / setting | Normative default / rule | Rationale and enforcement |
+| --- | --- | --- |
+| ACP frame | 1 MiB **UTF-8**, including framing accounting | Existing intended limit, fixed from JS code-unit comparison. Streaming byte counter refuses before unbounded decode. |
+| Canonical envelope / JSON | 1 MiB; depth 16; 256 keys/object; 1,024 array items; 64 KiB/string | Preserve negotiated contract; move required larger semantic bodies into host objects. |
+| Producer buffering | ≤2 MiB raw pending bytes per producer, including partial frame and queued frame; ≤10 MiB whole-host output-buffer pool | One fair global permit allocator covers retained raw buffers, decoded strings, SDK handoff and publication queues; per-producer ceilings do not multiply the global pool. Charge actual buffer/string storage and bounded parser/object overhead, with heap-profile validation. Reserve before reading/decoding; at most one SDK frame queued per consumer. Spool incomplete frames under host quota or release/yield permits so partial frames cannot pin all capacity. This is an output-buffer budget, not a whole-process RSS claim. |
+| Outbox resume low | 320 MiB / 64,000 regular rows | 80% of soft threshold gives hysteresis. Both retained and unACKed counters must be below low before admissions resume. |
+| Outbox soft | 400 MiB / 80,000 regular rows | Refuse fresh mutating work, retain headroom for admitted output. Check retained **and** unACKed independently. |
+| Outbox regular hard | 512 MiB / 100,000 regular rows | 112 MiB / 20,000 rows between soft and hard is drain headroom, not an outage-duration promise. Reserve capacity before append/effect. |
+| Control/terminal partition | Separate 16 MiB / 1,024 rows; each credited event ≤16 KiB | Byte and row caps agree. Large terminal result/error uses an immutable reference. No ordinary producer may consume unallocated reserve. |
+| Emergency floor | 1 MiB / 64 control rows | Kept outside producer wallets for host storage/degraded/stop evidence. |
+| Producer terminal wallet | `(18 + declared outputBindingCount)` rows ×16 KiB; existing output-binding maximum 32 | Base lifecycle/teardown/error/overflow references plus one availability per declared output. Up to 50 rows/800 KiB; 960 nonemergency rows support at least 19 worst-case simultaneous producers. Admission uses actual wallets, not the six-run cap. |
+| ACK replay grace | 24 hours after confirmed ACK | Never prune unACKed rows or shorten grace to hide capacity pressure. ACKed retained rows still consume real storage. |
+| SQLite physical storage | 2 GiB host-state high-water; bounded WAL checkpoints at 64 MiB target, checked with SQLite page/WAL counters | Separate physical overhead from 528 MiB event payload quota; size includes receipts/indexes. Target checkpoint size is not a guaranteed hard limit while readers pin WAL. Refuse effects/pause before physical high-water; close bounded readers and checkpoint without deleting evidence. |
+| Host runtime byte quota | 10 GiB hard / 8 GiB soft / 6 GiB resume-low; require ≥1 GiB filesystem free headroom | Separate host objects/raw spools from outbox. Finite host storage cannot promise unlimited output/outage retention; pressure pauses production or produces explicit incomplete-output terminal failure. Never GC required evidence for space. |
+| Ordinary manager uploads | 25 MiB/object, 100 MiB/command batch | Preserve normal upload contract. Historical import uses bounded chunks, not this whole-file cap. |
+| Read response/range | One range, ≤8 MiB; ≤2 concurrent verification scans, 64 KiB streaming hash buffer each; response spool ≤16 MiB total | Bounded memory/disk; large logs remain accessible through successive ranges. No implicit full-response fallback. |
+| Projection | 2 concurrent claims; 100 events/1 MiB/~1 s quantum; 5 s transaction; 30 s lease; ≤1 s idle wake | Fair work and lease arithmetic from the [projection worker contract](system-analytics/execution-event-plane.md#durable-bounded-projection-and-reconciliation-workers-designed). |
+| Historical import | 100 inventory entries/page, 2 concurrent files, ≤8 MiB chunks, 100 MiB transferred per bounded invocation | Resumable large logs without holding entire history in RAM; persisted keyset/offset after verified chunks. |
+| GC | 100 examined rows/quantum, due-keyset cursor advanced for every examined item; 30 s operation lease, 10 s renewal when needed | Protected first pages cannot starve later rows; remote deletes occur outside DB lock. |
+
+**Physical-capacity qualification:** logical SQLite quotas are not exact on-disk caps. Measure max envelope/index/receipt footprint and WAL behavior at configured producer concurrency. Before promising a physical maximum, account for the worst already-admitted burst and filesystem free-space guard; refuse configurations whose hard limits plus reserved in-flight storage exceed the host budget. Disk-full/fdatasync failure can prevent any final record: mark host unavailable, stop affected producers, retain all existing bytes/receipts, fail readiness and require storage repair; do not claim durable terminal evidence was committed when it was not.
+
+**Producer protocol:** bounded byte framer → durable raw/semantic output sink → canonical summary/object registration → SQLite append → optional live hints/ACP delivery. Retain the currently blocked frame and pause upstream without assigning an event sequence until append commits. Respect backpressure from both log stream and ACP tap; wrap/replace the SDK stream adapter at the seam if its eager string/ReadableStream queue defeats the bound. An oversized frame is a typed producer protocol error with bounded preserved diagnostic bytes, never an uncaught process error.
+
+ACP replies and notifications share stdout. `stdout.pause()` pauses both. Do not promise that terminal replies magically bypass a blocked pipe. Normal resume occurs after capacity frees below low; a credited checkpoint/delete can independently cancel deferreds and terminate the child, observe exit, and commit bounded terminal evidence. Turn-only cancellation remains pending while the pipe is blocked until adapter confirmation or an explicitly authorized checkpoint/delete; never silently escalate cancel into destructive teardown. Bulk deferred release uses a bounded summary, not unbounded per-permission reserve events.
+
+Before terminal publication, a per-producer ordering barrier freezes normal appends, drains every already-captured frame into preserved bytes and wallet-funded references in order, or records exact incomplete-output evidence. Only then append prompt/session terminal; no later normal append from that incarnation is legal. The base wallet includes two pending-output/overflow references; if several frames were captured, seal them into one ordered segment with counts/offsets rather than emitting unbounded references. Test pressured stdout → checkpoint with a captured unsequenced frame and assert its representation precedes terminal. Wallet reservation, event spend and receipt transitions are transactional in SQLite. Return unused credits when producer completion is durable; actual committed reserve rows remain counted through ACK+grace. Ordinary control admissions use available regular capacity; while pressured allow only the serialized, credited teardown chain. Repeated command IDs replay rather than consume new credits. Exhausted credit refuses new effects; already promised wallets cannot be stolen by another producer. Preserve full semantic output in objects before success; object failure yields explicit required-output/evidence failure rather than an empty successful result.
+
+Settings are validated at boot and exposed as bounded capability metadata where peers need limits. Planned env groups: `MAISTER_EVENT_OUTBOX_{LOW,SOFT,HARD}_BYTES`, corresponding `_ROWS`, `MAISTER_EVENT_OUTBOX_CONTROL_{BYTES,ROWS}`, `MAISTER_EVENT_ACK_GRACE_MS`, `MAISTER_EXECUTION_HOST_STATE_MAX_BYTES`, `MAISTER_RUNTIME_OBJECT_{LOW,SOFT,MAX}_BYTES`, `MAISTER_RUNTIME_MIN_FREE_BYTES`, and `MAISTER_PROJECTION_{CONCURRENCY,BATCH_ROWS,BATCH_BYTES,LEASE_MS}`. Fixed protocol bounds remain constants advertised by capability versions. Enforce low < soft < hard, wallet/reserve arithmetic, safe integers, bounded config sizes and deployment parity. Test-only reduced budgets are explicit fixtures of the same validated policy; they never alter defaults.
+
+## A/B runtime and deployment qualification (Designed)
+
+Choose an explicit binary HTTP stack: the project's **pinned Undici 8.4.1** API with an explicit dispatcher, its matching Request/Response types and explicit abort/body cleanup. Remove the native-fetch/legacy-dispatcher mixing on this path. Do not patch installed dependency source, globally install a dispatcher, retry malformed local header construction as a remote uncertainty, or add a runtime-dependent fallback. Existing JSON/SSE paths must retain their timeout semantics; audit every shared adapter caller before changing types.
+
+Proposed supported application runtime range is **Node >=24.15.0 <25** for this release. This consciously narrows the old unqualified Node 24 claim because earlier patch versions have not been qualified; it is not evidence that all older patches are broken. The fix must pass the diagnosed 24.15 runtime, not simply raise the floor to 24.19 to erase its failure. Qualify 24.15.0 and 24.19.0 explicitly, select a passing reproducibly pinned Node 24 image tag/digest at implementation, and enforce the floor in root/web/supervisor engines, runtime preflight, CI, operator instructions and Dockerfile. Node 26 in the planning shell is outside this acceptance matrix. Record runtime, `process.versions.undici`, installed dependency version and image digest in qualification evidence.
+
+| Surface | Wiring obligation in S1/S3/S4 |
+| --- | --- |
+| Runtime config/validation | Shared documented values, strict integer/relationship validation; supervisor receives host/outbox/object/import bounds, web receives worker/transport bounds. Environment override round-trip set → removed/default → set is tested at boot. |
+| `.env.example`, `supervisor/.env.sample`, `deploy/maister.env.example` | Add settings to the actual consuming process template, comments about ownership and safe defaults; no host-private paths sent to browser/manager APIs. |
+| `deploy/maister-web.service`, `deploy/maister-supervisor.service` | Verify EnvironmentFile, shutdown budgets, Node resolution and disjoint host-state configuration. Update stale shared-runtime prose only within this boundary. |
+| `Dockerfile` | Pin qualified Node tag/digest; copy all required workspace manifests/config needed by frozen install, propagate environment defaults or documented override contract and verify image health/binary upload. Do not claim the image is the default deployment topology. |
+| `compose.yml`, `compose.production.yml` | Remain Postgres-only. Add explicit parity comments pointing to host-process env/config and stating no web/supervisor environment block exists. Validate rendered compose remains unchanged in service/port topology. Do not inject host variables into Postgres. |
+| `compose.override.yml` | Absent, so no fabricated edits/service. State this intentional non-applicability in wiring acceptance. Dedicated test isolation config is test-only and named separately. |
+| `.github/workflows/ci.yml` and package scripts/engines | Runtime matrix, discovery gate and mandatory scoped A/B real-integration qualification; avoid silently relying on the current label-gated web integration lane. |
+| Docs | `docs/configuration.md` is canonical env table; `getting-started.md`, `deployment.md`, `supervisor.md` explain runtime minimum, storage pressure and guarded upgrade. No duplicated conflicting budget tables. |
 
 ## See Also
 

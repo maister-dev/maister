@@ -7,14 +7,14 @@ Behavior lives in
 the narrative column reference is
 [`../database-schema.md#execution-host-tables`](../database-schema.md#execution-host-tables-implemented--adr-166-migration-0130).
 
-> **Status: Implemented (Stage A); Designed (Stage B).** Migration `0130_execution_hosts` (single, additive,
+> **Status: Implemented schema foundations; Designed A/B stabilization corrections.** Migration `0130_execution_hosts` (single, additive,
 > never data-dependent) adds the three tables, the four attribution columns,
 > and the indexes below. Historical rows keep `execution_assignment_id = NULL`
 > forever — the documented meaning is "pre-Stage-A, never placed".
 
-Stage B migrations `0131_foamy_venom` and `0132_soft_loa` add the canonical
-manager-owned protocol facts without changing a historical run's frozen
-`legacy_file_v1` mode: `execution_event_streams`, `execution_events`,
+Migration `0131_foamy_venom` adds canonical manager-owned protocol facts;
+`0132_soft_loa` adds owner/event CHECK constraints. Historical mode is removed
+by guarded `0135`/`0136`, not by these additive migrations: `execution_event_streams`, `execution_events`,
 `execution_event_consumers`, `run_session_incarnations`,
 `execution_data_plane_imports`, and `execution_event_ingest_failures`. The
 canonical event payload is redacted metadata, never local content or a path;
@@ -169,18 +169,24 @@ hard-deleted while any assignment or command references it — retirement is
 `retired_at`, which is also what frees the partial unique index for the next
 local host.
 
+## Stabilization additions (Designed)
+
+The [canonical field/constraint table](../database-schema.md#ab-stabilization-persistence-contract-designed)
+owns exact future names and activation rules. The existing command ledger gains
+private immutable request bytes, independent receipt/event evidence, owner
+application claims and retirement confirmation. The consumer row gains fair
+service order. The object catalog gains declared-versus-sealed identity,
+import origin and deletion/examination intent. No generated ERD is changed
+until the matching forward Drizzle migration exists.
+
 ## Retention
 
-- `execution_commands`: terminal rows (`succeeded | failed | fenced`) older
-  than **7 days** are pruned by the `system_sweep` pass (constant, no env
-  var). Open rows are never pruned.
-- `execution_assignments`: kept — the immutable placement history is the
-  audit trail (R-04).
-- `execution_hosts`: kept; `retired_at` marks a superseded identity.
-- Supervisor-private state (`host_identity`, `run_fences`, `workspaces`,
-  `command_receipts` in the host's `state.sqlite`) is NOT in Postgres and is
-  documented in [`../supervisor.md`](../supervisor.md#execution-host-state-store);
-  receipts prune on a 7-day TTL at boot and hourly.
+The existing age-only command/receipt pruning is incomplete (AB-10).
+The [Designed retirement protocol](../system-analytics/execution-prompt-lifecycle.md#command-retirement-and-bounded-retry-policy-designed)
+requires terminal ACK, owner disposition, terminal run/delivery holds and grace,
+followed by host confirmation before compaction. Existing cascade FKs must not
+remove protected commands or import proofs. No in-place migration amendment is
+permitted; guarded forward corrections and a real run-delete race enforce this.
 
 ## Linked artifacts
 

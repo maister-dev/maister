@@ -120,7 +120,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 
 | `execution_hosts` | **(ADR-166 — Implemented, migration `0130`)** Registered execution hosts. Stage A: exactly one non-retired `kind='local_direct'` row (partial unique index), identity `host_key` minted by the supervisor, readiness + capabilities refreshed by the web registrar. The supervisor URL is env, never a column. | (none — retired via `retired_at`, never deleted while referenced) |
 | `execution_assignments` | **(ADR-166 — Implemented, migration `0130`)** Append-only per-run placement ledger: one row per `(run_id, epoch)`, `state ∈ active|superseded|released`, `placement_reason`, the opaque `execution_workspace_id` handle. At most one `active` row per run (partial unique index). | `runs.id`, `execution_hosts.id` (RESTRICT), self-ref `superseded_by_id` (SET NULL) |
-| `execution_commands` | **(ADR-166 — Implemented, migration `0130`)** Host-bound command intent + delivery ledger (`queued → delivering → accepted → succeeded|failed|fenced`), one row per wire `command.id`, REDACTED payload, per-kind retry budget, `driverless` recovery flag. Terminal rows pruned after 7 days. | `runs.id`, `execution_assignments.id`, `execution_hosts.id` (RESTRICT) |
+| `execution_commands` | **(ADR-166 — Implemented, migration `0130`)** Host-bound command intent + delivery ledger (`queued → delivering → accepted → succeeded|failed|fenced`), one row per wire `command.id`, REDACTED payload, per-kind retry budget, `driverless` recovery flag. Age-only pruning currently exists but violates the Designed retirement contract below; accepted/unknown/unapplied evidence must remain protected. | `runs.id`, `execution_assignments.id`, `execution_hosts.id` (RESTRICT) |
 | `execution_event_streams` | **(ADR-167 — Implemented, migrations `0131`–`0132`)** Manager-side host stream identity, durable received/contiguous/acknowledged cursors, gap state, boot observation, and consumer claim fields. | `execution_hosts.id` (RESTRICT) |
 | `execution_events` | **(ADR-167 — Implemented, migrations `0131`–`0132`)** Canonical redacted host/manager/import event facts. Partial unique host position and per-run sequence indexes make at-least-once delivery exactly-one at storage. | `runs.id` (CASCADE), host/stream (RESTRICT), assignment/incarnation (SET NULL) |
 | `execution_event_consumers` | **(ADR-167 — Implemented, migration `0131`)** Per-consumer, per-run projection cursor with poison/retry claim state; it is deliberately distinct from ingestion. | `runs.id` (CASCADE), poison event (SET NULL) |
@@ -4021,6 +4021,77 @@ capability_ref_id)`, `project_flow_roles(project_id, role_ref)`,
 `scratch_capability_profiles.run_id`,
 `execution_event_consumers(consumer_name, run_id)`, and
 `assignments.hitl_request_id`) implicitly create their own indexes in Postgres.
+
+## A/B stabilization persistence contract (Designed)
+
+These forward additions belong to the existing command/catalog/consumer ledgers;
+no SQL migration is changed or applied by the specification increment. The
+[command reducer and recovery windows](system-analytics/execution-prompt-lifecycle.md)
+define transition authority. New prompt rows activate only after every owner
+adapter supports the contract and existing accepted/unknown rows are drained or
+explicitly held for repair. They cannot be backfilled from redacted payloads.
+
+| Table / column | Type / initial value | Constraint and purpose |
+| --- | --- | --- |
+| `execution_commands.request_canonical_json` | `text`, nullable only before activation or for existing non-prompt commands | Immutable exact JCS UTF-8 request; `request_schema = maister.command.request.v2`, SHA-256 must match; private, excluded from DTOs/logs. |
+| `execution_commands.transport_state` | `text`, `not_sent` | CHECK `not_sent|dispatching|acknowledged|unknown|reconciliation_required`; no terminal command inference. |
+| `execution_commands.receipt_evidence` | `jsonb`, null | Validated immutable v2 receipt identity/outcome, independent of event order; conflicting replay quarantines without overwrite. |
+| `execution_commands.terminal_event_id` | `text`, null | Exact canonical event ID, resolved against the same command/fence/target; event cannot be pruned while referenced. |
+| `execution_commands.terminal_evidence_sha256` | `text`, null | Lowercase 64-hex digest of the agreed versioned terminal identity. |
+| `execution_commands.application_state` | `text`, `pending` | CHECK `pending|applying|applied|superseded|poisoned`; `applied` iff `completion_applied_at` nonnull. Non-prompt rows have no application obligation. |
+| `execution_commands.application_claim_owner` | `text`, null | Unique claim token; populated exactly with lease expiry while applying. |
+| `execution_commands.application_claim_expires_at` | `timestamptz`, null | DB-clock claim deadline, checked with token in every application/failure CAS. |
+| `execution_commands.application_attempts` | `integer`, 0 | Nonnegative; transient failure advances attempts and next retry without changing command terminal evidence. |
+| `execution_commands.application_next_retry_at` | `timestamptz`, null | Indexed due selection; poison has no automatic retry deadline. |
+| `execution_commands.application_error` | `jsonb`, null | Closed safe reason/phase/cause fields, bounded; no arbitrary provider text. |
+| `execution_commands.retirement_state` | `text`, `retained` | CHECK `retained|eligible|host_confirmed|tombstone`; eligible requires terminal evidence, owner disposition and run/delivery/ACK/grace predicates. |
+| `execution_commands.retirement_eligible_at` | `timestamptz`, null | Immutable time at eligibility-generation admission. |
+| `execution_commands.retirement_receipt` | `jsonb`, null | Exact host-confirmed eligibility identity; no compaction before confirmation. |
+| `execution_event_consumers.last_served_at` | `timestamptz`, null | Fair due selection by service time plus run/consumer key; existing `claim_owner` is a fresh token per claim. |
+| `execution_runtime_objects.declared_size_bytes` | `bigint`, null | Optional immutable expected size, distinct from null pending sealed metadata. |
+| `execution_runtime_objects.declared_sha256` | `text`, null | Optional immutable expected hash; lowercase 64-hex when supplied. |
+| `execution_runtime_objects.origin` | `jsonb`, required for new allocations | Closed native-command versus historical-import union; import has `importId`, `manifestHash`, `itemId`; no fabricated active assignment. |
+| `execution_runtime_objects.last_examined_at` | `timestamptz`, null | Fair retention selection advances for protected and failing candidates too. |
+| `execution_runtime_objects.delete_command_id` | `text`, null | Stable delete intent identity while deleting; no new key on lost ACK. |
+
+Retain `(run_id, logical_operation_key)` uniqueness for prompts. Namespace the
+key by owner variant and its durable generation; lock/look up that key before
+allocating command UUID/issuedAt. A new v2 prompt requires `owner_kind`, strictly
+typed `owner_ref`, logical key, exact request/digest/schema, target incarnation
+and accepted assignment generation together. Versioned owner references keep
+`flow_node_attempt|scratch_message|gate_chat|agent_turn|sync_resolution` as the
+coarse family and distinguish the concrete variants below. Owner IDs are
+server-derived and revalidated against authoritative rows under the owner lock.
+
+| Family / `owner_ref.variant` | Required exact owner identity fields beyond `version: 1`, `runId`, `runSessionId`, `incarnationId`, `assignmentId`, `assignmentEpoch` |
+| --- | --- |
+| flow / `node|permission_resume|gate_skill|gate_ai` | `nodeAttemptId`, `promptOrdinal`; permission resume adds `hitlRequestId`; gates add `gateId`, `evaluationId`. |
+| flow / `consensus_verifier|consensus_synthesis` | `nodeAttemptId`, `round`; verifier adds `verifierId`, `targetId`, `verdictId`; synthesis adds `synthesisId`. |
+| agent / `initial|resume|rework|live_message|persistent_message|consensus_draft` | `turnId`, `promptOrdinal`; message variants add `messageId`; draft adds `nodeAttemptId`, `round`, `participantId`. |
+| scratch / `initial|message|recovery|package_initial|package_message|package_recovery` | `scratchRunId`, `turnId`, `promptOrdinal`; message variants add `messageId`; package variants add `localPackageId`, `postprocessActionId`, `lockGeneration`. |
+| gate chat / `reply` | `hitlRequestId`, `turnId`, `userMessageId`, `leaseGeneration`. |
+| sync / `resolver` | `syncAttemptId`, `operationAttemptId`, `expectedPhase: agent_running`, `promptOrdinal`. |
+
+Every variant is a closed object, not an untyped JSON bag. IDs use the existing
+owning column's validated type; ordinals/rounds are nonnegative safe integers,
+assignment epochs positive bounded integers. A generation is the exact stable
+owning record/claim identity, never a retry UUID or freshly sampled clock.
+Unknown variant, missing row, wrong association or generation refuses before
+dispatch. Pending admission stores the full owner reference and request in one
+transaction. Additional owner action phases are persisted in their existing
+domain ledgers; completion and durable successor readiness share that domain
+transaction with the command application marker.
+
+Indexes cover command evidence reconciliation by transport state/next attempt,
+owner application by application state/due time/lease, consumer service order,
+and object retention by last examination/id. Each index belongs to a generated
+forward migration and is proven by a real two-connection race. All new enum,
+nonnegative, paired-null and terminal-marker constraints are generated from
+Drizzle. Run/assignment deletes must refuse protected evidence before existing
+FK cascades; they cannot bypass retirement. The host stores its own receipt,
+terminal-wallet and import progress in private SQLite, never in a second Flow
+ledger. Pre-0134 import progress uses existing 0131 lane fields and the private
+host manifest; forward columns are not prerequisites for that stage.
 
 ## Workflow
 
