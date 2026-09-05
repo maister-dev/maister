@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { ScheduledLaunchRequest } from "@/lib/scheduled-launches/types";
+
 import { and, asc, desc, eq, ne, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 
@@ -17,8 +19,6 @@ import {
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
-import type { ScheduledLaunchRequest } from "@/lib/scheduled-launches/types";
-
 type DateValue = Date | string | null;
 
 function iso(value: DateValue): string | null {
@@ -35,7 +35,10 @@ function durationMs(value: unknown): number | null {
 
   if (Number.isSafeInteger(parsed) && parsed >= 0) return parsed;
 
-  throw new MaisterError("PRECONDITION", "scheduled launch contains an invalid late duration");
+  throw new MaisterError(
+    "PRECONDITION",
+    "scheduled launch contains an invalid late duration",
+  );
 }
 
 export type ScheduledLaunchDTO = {
@@ -181,14 +184,14 @@ export async function listScheduledLaunchEvents(input: {
     .from(scheduledTaskLaunchEvents)
     .innerJoin(
       scheduledTaskLaunches,
-      eq(
-        scheduledTaskLaunchEvents.scheduledLaunchId,
-        scheduledTaskLaunches.id,
-      ),
+      eq(scheduledTaskLaunchEvents.scheduledLaunchId, scheduledTaskLaunches.id),
     )
     .where(
       and(
-        eq(scheduledTaskLaunchEvents.scheduledLaunchId, input.scheduledLaunchId),
+        eq(
+          scheduledTaskLaunchEvents.scheduledLaunchId,
+          input.scheduledLaunchId,
+        ),
         eq(scheduledTaskLaunches.projectId, input.projectId),
       ),
     )
@@ -230,14 +233,16 @@ type AutomationCursor = {
   updatedAt: string;
 };
 
-const automationCursorSchema = z.object({
-  version: z.literal(1),
-  active: z.boolean(),
-  nextActionAt: z.string().datetime().nullable(),
-  kindRank: z.number().int().min(0).max(3),
-  id: z.string().min(1),
-  updatedAt: z.string().datetime(),
-}).refine((cursor) => cursor.active === (cursor.nextActionAt !== null));
+const automationCursorSchema = z
+  .object({
+    version: z.literal(1),
+    active: z.boolean(),
+    nextActionAt: z.string().datetime().nullable(),
+    kindRank: z.number().int().min(0).max(3),
+    id: z.string().min(1),
+    updatedAt: z.string().datetime(),
+  })
+  .refine((cursor) => cursor.active === (cursor.nextActionAt !== null));
 
 function kindRank(type: AutomationKind): number {
   return {
@@ -275,7 +280,10 @@ function decodeCursor(cursor: string | undefined): AutomationCursor | null {
   }
 }
 
-function compareAutomationRows(left: AutomationRow, right: AutomationRow): number {
+function compareAutomationRows(
+  left: AutomationRow,
+  right: AutomationRow,
+): number {
   const leftActive = left.nextActionAt !== null;
   const rightActive = right.nextActionAt !== null;
 
@@ -556,7 +564,9 @@ async function listProjectAutomationRows(input: {
       errorCode: row.lastErrorCode,
       errorMessage: row.lastErrorMessage,
       lateByMs: null,
-      resultingRun: row.lastRunId ? { id: row.lastRunId, status: "Unknown" } : null,
+      resultingRun: row.lastRunId
+        ? { id: row.lastRunId, status: "Unknown" }
+        : null,
       detailHref: `/api/projects/${projectIdentifier}/automations/${row.triggerType === "cron" ? "agent_cron" : "agent_event"}/${row.id}`,
       updatedAt: iso(row.updatedAt)!,
     })),

@@ -132,6 +132,15 @@ beforeAll(async () => {
   db = testDatabase.db;
   // ADR-166: every launch places the run on the local execution host.
   ({ fake } = await fakeExecutionHosts(db));
+  fake.setStreamEvents([
+    {
+      type: "session.exited",
+      sessionId: "fake",
+      monotonicId: 1,
+      exitCode: 0,
+      reason: "checkpoint",
+    },
+  ]);
 
   ({ issueOrchestratorRunToken } = await import("@/lib/agents/tokens"));
   ({ POST: promotePost } = await import("@/app/api/v1/ext/runs/promote/route"));
@@ -241,7 +250,8 @@ beforeEach(async () => {
   );
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await fake.waitForCanonicalEvents();
   vi.clearAllMocks();
 });
 

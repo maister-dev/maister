@@ -9,10 +9,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 
-import {
-  evalErrorKey,
-  evalRequest,
-} from "@/components/evaluations/api-error";
+import { evalErrorKey, evalRequest } from "@/components/evaluations/api-error";
 import { useModalFocusTrap } from "@/components/feedback/use-modal-focus-trap";
 
 export interface StudySummary {

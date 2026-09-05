@@ -197,6 +197,7 @@ describe("scheduled task launch dispatcher", () => {
       now,
       db,
     });
+
     await insertLinkedRun({
       fixture,
       scheduledLaunchId: created.intent.id,

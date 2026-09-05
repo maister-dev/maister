@@ -25,10 +25,7 @@ class CommandSignalBus {
     this.legacyEmitter.emit(event.commandId, event);
   }
 
-  subscribe(
-    commandId: string,
-    listener: () => void,
-  ): () => void {
+  subscribe(commandId: string, listener: () => void): () => void {
     this.emitter.on(commandId, listener);
 
     return () => {
@@ -38,7 +35,9 @@ class CommandSignalBus {
 
   subscribeLegacy(
     commandId: string,
-    listener: (event: Extract<SupervisorEvent, { type: "session.command" }>) => void,
+    listener: (
+      event: Extract<SupervisorEvent, { type: "session.command" }>,
+    ) => void,
   ): () => void {
     this.legacyEmitter.on(commandId, listener);
 

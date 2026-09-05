@@ -25,7 +25,10 @@ import {
   vi,
 } from "vitest";
 
-import { TEST_HOST_IDENTITY } from "@/test-support/supervisor-health-fixture";
+import {
+  readyExecutionHostCapabilities,
+  TEST_HOST_IDENTITY,
+} from "@/test-support/supervisor-health-fixture";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -51,6 +54,9 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
 
   return {
     ...actual,
+    getExecutionHostCapabilities: vi.fn(async () =>
+      readyExecutionHostCapabilities(),
+    ),
     checkSupervisorHealth: vi.fn(async () => ({
       kind: "ready" as const,
       health: {

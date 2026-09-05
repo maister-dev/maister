@@ -24,6 +24,7 @@ async function insertTerminalScratchRun(input: {
   sessionId: string;
 }): Promise<void> {
   const { pool } = testDatabase;
+
   await pool.query(
     `insert into runs
       (id, project_id, run_kind, status, flow_version, flow_revision, execution_data_plane_mode)
@@ -104,6 +105,7 @@ describe("0134_lovely_tarot", () => {
       `select 1 from information_schema.columns
        where table_name = 'scratch_runs' and column_name = 'supervisor_session_id'`,
     );
+
     expect(column.rows).toHaveLength(1);
   });
 
@@ -112,7 +114,9 @@ describe("0134_lovely_tarot", () => {
       `delete from scratch_runs where run_id = $1`,
       [rejectedRunId],
     );
-    await testDatabase.pool.query(`delete from runs where id = $1`, [rejectedRunId]);
+    await testDatabase.pool.query(`delete from runs where id = $1`, [
+      rejectedRunId,
+    ]);
 
     await applyMainMigration(testDatabase.db, "0134_lovely_tarot");
 
@@ -121,6 +125,7 @@ describe("0134_lovely_tarot", () => {
        from run_sessions where run_id = $1 and session_name = 'default'`,
       [preservedRunId],
     );
+
     expect(session.rows).toEqual([
       {
         id: `legacy-scratch-session:${preservedRunId}`,
@@ -134,6 +139,7 @@ describe("0134_lovely_tarot", () => {
        from run_session_incarnations where run_id = $1`,
       [preservedRunId],
     );
+
     expect(incarnation.rows).toEqual([
       {
         run_id: preservedRunId,
@@ -148,6 +154,7 @@ describe("0134_lovely_tarot", () => {
       `select 1 from information_schema.columns
        where table_name = 'scratch_runs' and column_name = 'supervisor_session_id'`,
     );
+
     expect(column.rows).toHaveLength(0);
   });
 });

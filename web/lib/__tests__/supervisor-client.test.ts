@@ -104,7 +104,7 @@ describe("createSessionEnveloped", () => {
     );
   });
 
-  it("serializes the envelope verbatim, capability launch fields inside the payload", async () => {
+  it("serializes opaque capability and output bindings without runtime paths", async () => {
     mockOnce(
       new Response(
         JSON.stringify({ sessionId: "s1", pid: 4242, acpSessionId: "acp-1" }),
@@ -116,10 +116,21 @@ describe("createSessionEnveloped", () => {
       ...validEnvelope,
       payload: {
         ...validEnvelope.payload,
-        capabilityProfilePath:
-          "/repos/x/.maister/capabilities/run/profile.json",
+        capabilityProfileObjectId: "f7f4ea9b-598b-4f97-97b5-5ca52d46056e",
+        capabilityInstructionsObjectId: "50ba2f75-bc42-4968-bbd0-1ac0a50ec840",
+        outputObjects: [
+          {
+            objectId: "75cb17b1-ea05-45af-9209-15f181b10925",
+            kind: "plan_review",
+            logicalName: "plan-review.json",
+            mimeType: "application/json",
+            generation: 1,
+            retentionClass: "run",
+            envName: "MAISTER_PLAN_REVIEW_FILE",
+          },
+        ],
         adapterLaunch: {
-          env: { MAISTER_CAPABILITY_PROFILE_PATH: "/repos/x/profile.json" },
+          env: { MAISTER_PROFILE_MODE: "strict" },
           preArgs: ["--capability-profile"],
         },
       },
@@ -133,15 +144,22 @@ describe("createSessionEnveloped", () => {
       fence: validEnvelope.fence,
       payload: {
         executionWorkspaceId: "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c",
-        capabilityProfilePath:
-          "/repos/x/.maister/capabilities/run/profile.json",
+        capabilityProfileObjectId: "f7f4ea9b-598b-4f97-97b5-5ca52d46056e",
+        capabilityInstructionsObjectId: "50ba2f75-bc42-4968-bbd0-1ac0a50ec840",
+        outputObjects: [
+          expect.objectContaining({
+            objectId: "75cb17b1-ea05-45af-9209-15f181b10925",
+            envName: "MAISTER_PLAN_REVIEW_FILE",
+          }),
+        ],
         adapterLaunch: {
-          env: { MAISTER_CAPABILITY_PROFILE_PATH: "/repos/x/profile.json" },
+          env: { MAISTER_PROFILE_MODE: "strict" },
           preArgs: ["--capability-profile"],
         },
       },
     });
     expect(body.payload).not.toHaveProperty("worktreePath");
+    expect(body.payload).not.toHaveProperty("capabilityProfilePath");
   });
 
   it("translates 409 PRECONDITION to MaisterError", async () => {

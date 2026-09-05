@@ -1,10 +1,10 @@
+import type { FlowYamlV1 } from "@/lib/config.schema";
+import type { NodeAttempt } from "@/lib/db/schema";
+
 import { describe, expect, it } from "vitest";
 
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { resolveReentryNode } from "@/lib/runs/reentry";
-
-import type { FlowYamlV1 } from "@/lib/config.schema";
-import type { NodeAttempt } from "@/lib/db/schema";
 
 // T-A6 (AC-A6) — ADR-160 re-entry resolution chain. Ordered, server-state only:
 //   1. the compiled flow-level `reentry`;
@@ -137,6 +137,7 @@ describe("T-A6 ADR-160 — resolveReentryNode chain", () => {
   // compiled graph is the allow-list; an unknown target falls through.
   it("falls through rather than throwing when the takeover target is absent from the graph", () => {
     const g = graph({ takeoverTarget: "verify" });
+
     // Simulate a target that compiled away (or a hand-edited revision).
     g.nodes.delete("verify");
 

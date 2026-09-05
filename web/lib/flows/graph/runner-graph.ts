@@ -24,7 +24,7 @@ import type { CompiledNode } from "./compile";
 import type { Db, LoadedRun, RunFlowOptions } from "./runner-core";
 
 import { randomUUID } from "node:crypto";
-import { access, readFile, stat, unlink } from "node:fs/promises";
+import { readFile, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -106,8 +106,8 @@ import {
 } from "./artifact-store";
 import {
   capturePlanReviewArtifacts,
-  planReviewStagingPaths,
-  type PlanReviewStagingPaths,
+  planReviewOutputBindings,
+  type PlanReviewOutputBindings,
 } from "./plan-review-artifact";
 import { createPlanReviewDecisionRequests } from "./plan-review-decisions";
 import { recordDefaultArtifacts } from "./default-artifacts";
@@ -1483,6 +1483,7 @@ async function executeNodeAction(
     execution?: AgentExecution;
     bindExecution?: () => Promise<AgentExecution>;
     capabilityProfilePath?: string;
+    capabilityInstructionsPath?: string;
     adapterLaunch?: ScratchAdapterLaunch;
     mcpServers?: AgentMcpServer[];
     profileDigest?: string;
@@ -1501,7 +1502,7 @@ async function executeNodeAction(
     sessionName?: string;
     sessionExecutor?: LoadedRun["executor"];
     sessionRunner?: LoadedRun["runner"];
-    planReviewStagingPaths?: PlanReviewStagingPaths;
+    planReviewOutputBindings?: PlanReviewOutputBindings;
     db: Db;
   },
 ): Promise<NodeResult> {
@@ -1687,26 +1688,20 @@ async function executeNodeAction(
               id: sessionExecutor.id,
               agent: sessionExecutor.agent,
               model: sessionExecutor.model,
-              env: {
-                ...(sessionExecutor.env ?? {}),
-                ...(ctx.planReviewStagingPaths
-                  ? {
-                      MAISTER_PLAN_DOCUMENT_FILE:
-                        ctx.planReviewStagingPaths.planDocumentStagingPath,
-                      MAISTER_PLAN_REVIEW_FILE:
-                        ctx.planReviewStagingPaths.planReviewStagingPath,
-                    }
-                  : {}),
-              },
+              env: sessionExecutor.env ?? undefined,
             },
             runner: runnerSupervisorInput({ snapshot: sessionRunner }),
             capabilityProfilePath: ctx.capabilityProfilePath,
+            capabilityInstructionsPath: ctx.capabilityInstructionsPath,
             adapterLaunch: mergeRunnerAdapterLaunch(
               sessionRunner,
               ctx.adapterLaunch,
             ),
             mcpServers: ctx.mcpServers,
             profileDigest: ctx.profileDigest,
+            outputObjects: ctx.planReviewOutputBindings
+              ? Object.values(ctx.planReviewOutputBindings)
+              : undefined,
             // ADR-130: derived capability-enforcement set for the capability_guard
             // interceptor (absent → inert).
             enforcementProfile: ctx.enforcementProfile,
@@ -1958,6 +1953,7 @@ async function materializeNodeCapabilities(
 ): Promise<
   | {
       capabilityProfilePath: string;
+      capabilityInstructionsPath: string;
       adapterLaunch: ScratchAdapterLaunch;
       mcpServers: AgentMcpServer[];
       plan: MaterializationPlan;
@@ -2141,6 +2137,7 @@ async function materializeNodeCapabilities(
 
   return {
     capabilityProfilePath: m.profilePath,
+    capabilityInstructionsPath: m.instructionsPath,
     adapterLaunch: m.adapterLaunch,
     mcpServers,
     plan,
@@ -3157,6 +3154,7 @@ export async function runGraph(
       let materialized:
         | {
             capabilityProfilePath: string;
+            capabilityInstructionsPath: string;
             adapterLaunch: ScratchAdapterLaunch;
             mcpServers: AgentMcpServer[];
             plan: MaterializationPlan;
@@ -3265,12 +3263,14 @@ export async function runGraph(
         graph,
         node.id,
       );
-      const planReviewPaths = planReviewCaptureTarget
-        ? planReviewStagingPaths({
-            runtimeRoot,
-            projectSlug: loaded.projectSlug,
+      const planReviewBindings = planReviewCaptureTarget
+        ? planReviewOutputBindings({
             runId,
             nodeAttemptId,
+            assignmentId:
+              reusesCompletedAttempt && lastForNode?.executionAssignmentId
+                ? lastForNode.executionAssignmentId
+                : (await ensureExecution()).client.assignment.id,
           })
         : undefined;
       let result: NodeResult;
@@ -3298,6 +3298,8 @@ export async function runGraph(
               execution: execution ?? undefined,
               bindExecution: ensureExecution,
               capabilityProfilePath: materialized?.capabilityProfilePath,
+              capabilityInstructionsPath:
+                materialized?.capabilityInstructionsPath,
               adapterLaunch: materialized?.adapterLaunch,
               mcpServers: materialized?.mcpServers,
               profileDigest: materialized?.plan.profileDigest,
@@ -3309,7 +3311,7 @@ export async function runGraph(
               sessionName: nodeSessionName,
               sessionExecutor: nodeExecutor,
               sessionRunner: nodeRunnerSnapshot,
-              planReviewStagingPaths: planReviewPaths,
+              planReviewOutputBindings: planReviewBindings,
               db,
             });
           } finally {
@@ -3356,7 +3358,7 @@ export async function runGraph(
               });
 
           log2.error(
-            { nodeId: node.id, code: e.code },
+            { nodeId: node.id, code: e.code, err: e.message },
             "node action threw — Failed",
           );
           await markNodeFailed(nodeAttemptId, { errorCode: e.code }, db);
@@ -3478,7 +3480,7 @@ export async function runGraph(
             return;
           }
         }
-        // M12 (T3.3): record defaults at pause so log/guards/diff exist for
+        // M12 (T3.3): record defaults at pause so HITL/diff evidence exists for
         // the paused node even when it hasn't finished yet.
         await recordDefaultArtifacts(
           {
@@ -3486,9 +3488,7 @@ export async function runGraph(
             nodeAttemptId,
             nodeId: node.id,
             attempt: nodeAttemptNumber,
-            projectSlug: loaded.projectSlug,
             workspace: loaded.workspace,
-            runtimeRoot,
           },
           db,
         ).catch((err) => {
@@ -3817,10 +3817,12 @@ export async function runGraph(
 
       const planReviewCapturedArtifactIds = new Set<string>();
 
-      if (planReviewCaptureTarget && planReviewPaths) {
+      if (planReviewCaptureTarget && planReviewBindings) {
         try {
           const captured = await capturePlanReviewArtifacts({
-            paths: planReviewPaths,
+            db,
+            runId,
+            bindings: planReviewBindings,
             maxBytes: nodeOutputMaxBytes(),
           });
           const definitions = new Map(
@@ -3854,8 +3856,8 @@ export async function runGraph(
               kind: "plan",
               producer: "runner",
               locator: {
-                kind: "file",
-                path: captured.planDocument.relativePath,
+                kind: "execution-object",
+                objectId: captured.planDocument.objectId,
               },
               hash: captured.planDocument.hash,
               sizeBytes: captured.planDocument.bytes,
@@ -3877,8 +3879,8 @@ export async function runGraph(
               kind: "plan",
               producer: "runner",
               locator: {
-                kind: "file",
-                path: captured.planReview.relativePath,
+                kind: "execution-object",
+                objectId: captured.planReview.objectId,
               },
               hash: captured.planReview.hash,
               sizeBytes: captured.planReview.bytes,
@@ -4110,23 +4112,11 @@ export async function runGraph(
           } else {
             // F1 catch-all: any other declared kind with no `path` and not
             // diff/commit_set (lint_report, ai_judgment, human_note,
-            // test_report, …). Source the node's captured stdout. Prefer a
-            // file locator to <nodeId>.log when that file exists (run-dir
-            // confined → payload-serveable); otherwise an inline locator with
-            // the stdout text. Record ONLY when there is real content — an
-            // empty no-content output is left to the §3.6 backstop.
-            const logPath = path.join(nodeRunDir, `${node.id}.log`);
-            let logExists = false;
-
-            try {
-              await access(logPath);
-              logExists = true;
-            } catch {
-              logExists = false;
-            }
-
+            // test_report, …). The canonical event consumer already captures
+            // the host transcript; persist the bounded projection inline and
+            // never probe an execution host's run directory.
             const stdoutText = result.stdout ?? "";
-            const hasContent = logExists || stdoutText.trim().length > 0;
+            const hasContent = stdoutText.trim().length > 0;
 
             if (hasContent) {
               const newId = `run:${nodeAttemptId}:${produces.id}`;
@@ -4141,14 +4131,12 @@ export async function runGraph(
                   artifactDefId: produces.id,
                   kind: produces.kind,
                   producer: "runner",
-                  locator: logExists
-                    ? { kind: "file", path: `${node.id}.log` }
-                    : {
-                        kind: "inline",
-                        // Cap inline payload to match the ledger's 1 MB stdout
-                        // cap (runner-cli buffers up to 4 MB) — bound the row.
-                        text: stdoutText.slice(0, 1024 * 1024),
-                      },
+                  locator: {
+                    kind: "inline",
+                    // Cap inline payload to match the ledger's 1 MB stdout
+                    // cap (runner-cli buffers up to 4 MB) — bound the row.
+                    text: stdoutText.slice(0, 1024 * 1024),
+                  },
                   validity: "current",
                   requiredFor: produces.requiredFor,
                   visibility: produces.visibility ?? "internal",
@@ -4165,7 +4153,7 @@ export async function runGraph(
 
       // F1 §3.6 backstop: every declared output MUST have a current artifact by
       // node finish, else the node fails. Catches kinds the producers above
-      // could not source (empty stdout, no <nodeId>.log) so a `requiredFor`
+      // could not source (for example, empty canonical stdout) so a `requiredFor`
       // output is never silently skipped while the run reaches Review.
       if (artifactEnforcementActive && node.output?.produces) {
         let missingId: string | undefined;
@@ -4212,9 +4200,7 @@ export async function runGraph(
           nodeAttemptId,
           nodeId: node.id,
           attempt: nodeAttemptNumber,
-          projectSlug: loaded.projectSlug,
           workspace: loaded.workspace,
-          runtimeRoot,
         },
         db,
       ).catch((err) => {

@@ -4,6 +4,8 @@ import type { PromptAccepted, PromptResult } from "@/lib/supervisor-client";
 import type { CommandReceipt } from "./contracts";
 import type { CommandEnvelope, CommandKind } from "./types";
 
+import { isDeepStrictEqual } from "node:util";
+
 import pino, { type Logger } from "pino";
 
 import {
@@ -391,23 +393,9 @@ export type StartAsyncPromptOptions = {
   now?: () => Date;
 };
 
-function receiptError(receipt: CommandReceipt): MaisterError {
-  const body = receipt.body;
-  const code = body.code === "FENCED" ? "CONFLICT" : "ACP_PROTOCOL";
-  const message =
-    typeof body.message === "string" ? body.message : "prompt rejected";
-
-  return new MaisterError(code, message, {
-    details: {
-      ...(typeof body.reason === "string" ? { reason: body.reason } : {}),
-      commandId: receipt.commandId,
-    },
-  });
-}
-
 // Canonical mode never waits for an ACP response. The accepted command/receipt
 // is the admission result; terminal state arrives through a committed canonical
-// event, or is recovered from the same host receipt after an acknowledgement
+// event and is reconciled against the same host receipt after acknowledgement
 // loss. The command id remains unchanged across every retry.
 export async function startAsyncPrompt(
   opts: StartAsyncPromptOptions,
@@ -424,6 +412,7 @@ export async function startAsyncPrompt(
       logger,
       now: now(),
     });
+
     if (!claimed.changed) {
       return { commandId };
     }
@@ -431,6 +420,7 @@ export async function startAsyncPrompt(
 
     try {
       const accepted = await opts.start(opts.envelope);
+
       if (accepted.commandId !== commandId || accepted.state !== "accepted") {
         throw new MaisterError(
           "ACP_PROTOCOL",
@@ -444,12 +434,14 @@ export async function startAsyncPrompt(
         { commandId, commandKind: "session.prompt", attempt: attempts },
         "prompt-command-accepted",
       );
+
       return { commandId };
     } catch (error) {
       if (!isUnknownOutcome(error)) {
         const domainError = isMaisterError(error)
           ? error
           : new MaisterError("ACP_PROTOCOL", String(error));
+
         await (isFencedError(domainError) ? markFenced : markFailed)(
           opts.db,
           commandId,
@@ -462,6 +454,7 @@ export async function startAsyncPrompt(
       }
 
       let receipt: CommandReceipt | null;
+
       try {
         receipt = await lookupReceiptUntilReachable(
           opts.lookupReceipt,
@@ -478,10 +471,17 @@ export async function startAsyncPrompt(
               details: { reason: "receipt_lookup_failed", commandId },
             },
           );
-          await markFailed(opts.db, commandId, attempts, errorRecord(unavailable), {
-            logger,
-            now: now(),
-          });
+
+          await markFailed(
+            opts.db,
+            commandId,
+            attempts,
+            errorRecord(unavailable),
+            {
+              logger,
+              now: now(),
+            },
+          );
           commandSignals.wake(commandId);
           throw unavailable;
         }
@@ -500,30 +500,40 @@ export async function startAsyncPrompt(
         await sleep(backoffMs(policy.backoffBaseMs, attempts));
         continue;
       }
-      if (receipt?.phase === "accepted") {
-        await markAccepted(opts.db, commandId, attempts, { logger, now: now() });
-        commandSignals.wake(commandId);
-        return { commandId };
-      }
-      if (receipt?.phase === "completed") {
-        await markSucceeded(opts.db, commandId, attempts, receipt.body, {
+      if (receipt) {
+        if (!receiptMatchesPromptCommand(opts.command, receipt)) {
+          const mismatch = new MaisterError(
+            "ACP_PROTOCOL",
+            `prompt ${commandId} admission receipt identity does not match its durable command`,
+            {
+              details: {
+                reason: "prompt_receipt_identity_mismatch",
+                commandId,
+              },
+            },
+          );
+
+          await markFailed(
+            opts.db,
+            commandId,
+            attempts,
+            errorRecord(mismatch),
+            { logger, now: now() },
+          );
+          commandSignals.wake(commandId);
+          throw mismatch;
+        }
+
+        // A terminal receipt is reconciliation evidence, not a second
+        // terminal writer. The canonical event projector alone settles the
+        // command, including after an admission acknowledgement is lost.
+        await markAccepted(opts.db, commandId, attempts, {
           logger,
           now: now(),
         });
         commandSignals.wake(commandId);
+
         return { commandId };
-      }
-      if (receipt?.phase === "rejected") {
-        const errorFromReceipt = receiptError(receipt);
-        await (isFencedError(errorFromReceipt) ? markFenced : markFailed)(
-          opts.db,
-          commandId,
-          attempts,
-          errorRecord(errorFromReceipt),
-          { logger, now: now() },
-        );
-        commandSignals.wake(commandId);
-        throw errorFromReceipt;
       }
       if (attempts >= policy.maxAttempts) {
         const exhausted = new MaisterError(
@@ -531,6 +541,7 @@ export async function startAsyncPrompt(
           `prompt ${commandId} exhausted its delivery budget`,
           { details: { reason: "delivery_budget_exhausted", commandId } },
         );
+
         await markFailed(opts.db, commandId, attempts, errorRecord(exhausted), {
           logger,
           now: now(),
@@ -557,6 +568,7 @@ export async function startAsyncPrompt(
 
 function promptResultFromCommand(row: ExecutionCommand): PromptResult {
   const result = row.result;
+
   if (!result || typeof result.stopReason !== "string") {
     throw new MaisterError(
       "ACP_PROTOCOL",
@@ -568,11 +580,30 @@ function promptResultFromCommand(row: ExecutionCommand): PromptResult {
   return result as PromptResult;
 }
 
+function sameJson(
+  left: Record<string, unknown> | null,
+  right: Record<string, unknown> | null,
+): boolean {
+  return isDeepStrictEqual(left, right);
+}
+
 function promptFailureFromCommand(row: ExecutionCommand): MaisterError {
   const error = row.lastError ?? {};
+  const nestedDetails =
+    error.details &&
+    typeof error.details === "object" &&
+    !Array.isArray(error.details)
+      ? (error.details as Record<string, unknown>)
+      : null;
+  const reason =
+    typeof error.reason === "string"
+      ? error.reason
+      : typeof nestedDetails?.reason === "string"
+        ? nestedDetails.reason
+        : undefined;
   const fenced =
     error.code === "FENCED" ||
-    (error.code === "CONFLICT" && error.reason === "assignment_fenced");
+    (error.code === "CONFLICT" && reason === "assignment_fenced");
   const code = fenced ? "CONFLICT" : "ACP_PROTOCOL";
   const message =
     typeof error.message === "string"
@@ -581,10 +612,85 @@ function promptFailureFromCommand(row: ExecutionCommand): MaisterError {
 
   return new MaisterError(code, message, {
     details: {
-      ...(typeof error.reason === "string" ? { reason: error.reason } : {}),
+      ...(reason ? { reason } : {}),
       commandId: row.id,
     },
   });
+}
+
+function receiptMatchesPromptCommand(
+  row: ExecutionCommand,
+  receipt: CommandReceipt,
+): boolean {
+  return (
+    receipt.commandId === row.id &&
+    receipt.runId === row.runId &&
+    receipt.kind === row.kind &&
+    receipt.assignmentEpoch === row.assignmentEpoch
+  );
+}
+
+function promptTerminalConflict(
+  row: ExecutionCommand,
+  receipt: CommandReceipt,
+  logger: Logger,
+  checks: {
+    identityAgrees: boolean;
+    phaseAgrees: boolean;
+    bodyAgrees: boolean;
+  },
+): MaisterError {
+  logger.error(
+    {
+      commandId: row.id,
+      eventState: row.state,
+      receiptPhase: receipt.phase,
+      receiptEventId: receipt.eventId,
+      ...checks,
+    },
+    "prompt-terminal-conflict",
+  );
+
+  return new MaisterError(
+    "CONFLICT",
+    `prompt ${row.id} terminal event and receipt disagree`,
+    {
+      details: {
+        reason: "prompt_terminal_conflict",
+        commandId: row.id,
+      },
+    },
+  );
+}
+
+function validateOpenPromptReceipt(input: {
+  row: ExecutionCommand;
+  receipt: CommandReceipt;
+  logger: Logger;
+}): void {
+  const { row, receipt, logger } = input;
+
+  if (receipt.phase === "accepted") return;
+
+  const identityAgrees = receiptMatchesPromptCommand(row, receipt);
+
+  if (!identityAgrees) {
+    throw promptTerminalConflict(row, receipt, logger, {
+      identityAgrees,
+      phaseAgrees: true,
+      bodyAgrees: true,
+    });
+  }
+
+  if (receipt.phase === "completed") {
+    if (typeof receipt.body.stopReason !== "string") {
+      throw new MaisterError(
+        "ACP_PROTOCOL",
+        `prompt ${row.id} receipt has no valid terminal result`,
+        { details: { reason: "prompt_result_invalid", commandId: row.id } },
+      );
+    }
+  }
 }
 
 async function waitForCommandWake(
@@ -616,6 +722,7 @@ async function waitForCommandWake(
     };
     const unsubscribe = commandSignals.subscribe(commandId, finish);
     const timeout = setTimeout(finish, 250);
+
     signal?.addEventListener("abort", abort, { once: true });
   });
 }
@@ -624,17 +731,96 @@ export async function waitForPromptCompletion(input: {
   db: Db;
   handle: PromptHandle;
   signal?: AbortSignal;
+  assignmentIsCurrent?: () => Promise<boolean>;
+  lookupReceipt?: (commandId: string) => Promise<CommandReceipt | null>;
+  logger?: Logger;
 }): Promise<PromptResult> {
+  const logger = input.logger ?? defaultLog;
+
   for (;;) {
     const row = await getCommand(input.db, input.handle.commandId);
+
     if (!row || row.kind !== "session.prompt") {
-      throw new MaisterError("PRECONDITION", "prompt command is not available", {
-        details: { reason: "prompt_command_missing", commandId: input.handle.commandId },
-      });
+      throw new MaisterError(
+        "PRECONDITION",
+        "prompt command is not available",
+        {
+          details: {
+            reason: "prompt_command_missing",
+            commandId: input.handle.commandId,
+          },
+        },
+      );
     }
-    if (row.state === "succeeded") return promptResultFromCommand(row);
-    if (row.state === "failed" || row.state === "fenced") {
+    if (row.state === "fenced") {
       throw promptFailureFromCommand(row);
+    }
+    let receipt: CommandReceipt | null = null;
+
+    if (input.lookupReceipt) {
+      try {
+        receipt = await input.lookupReceipt(row.id);
+      } catch (error) {
+        logger.warn(
+          {
+            commandId: row.id,
+            reason:
+              error instanceof Error ? error.message : "receipt_lookup_failed",
+          },
+          "prompt-terminal-receipt-unavailable",
+        );
+      }
+    }
+    if (row.state === "succeeded" || row.state === "failed") {
+      if (!input.lookupReceipt) {
+        if (row.state === "succeeded") return promptResultFromCommand(row);
+
+        throw promptFailureFromCommand(row);
+      }
+
+      if (!receipt || receipt.phase === "accepted") {
+        if (
+          receipt?.phase === "accepted" &&
+          !receipt.inflight &&
+          row.state === "failed" &&
+          row.lastError?.reason === "turn_lost"
+        ) {
+          throw promptFailureFromCommand(row);
+        }
+        await waitForCommandWake(row.id, input.signal);
+        continue;
+      }
+
+      const expectedPhase =
+        row.state === "succeeded" ? "completed" : "rejected";
+      const expectedBody =
+        row.state === "succeeded" ? row.result : row.lastError;
+      const identityAgrees = receiptMatchesPromptCommand(row, receipt);
+      const phaseAgrees = receipt.phase === expectedPhase;
+      const bodyAgrees = sameJson(receipt.body, expectedBody);
+      const agrees = identityAgrees && phaseAgrees && bodyAgrees;
+
+      if (!agrees) {
+        throw promptTerminalConflict(row, receipt, logger, {
+          identityAgrees,
+          phaseAgrees,
+          bodyAgrees,
+        });
+      }
+
+      if (row.state === "succeeded") return promptResultFromCommand(row);
+
+      throw promptFailureFromCommand(row);
+    }
+    if (receipt) validateOpenPromptReceipt({ row, receipt, logger });
+    if (input.assignmentIsCurrent && !(await input.assignmentIsCurrent())) {
+      // The host may have atomically committed the terminal receipt/event just
+      // before checkpoint released this assignment. Keep the old driver
+      // waiting for that durable outcome; locally fencing here would race the
+      // legitimate terminal event and poison its projector.
+      await waitForCommandWake(row.id, input.signal);
+
+      continue;
     }
     await waitForCommandWake(row.id, input.signal);
   }

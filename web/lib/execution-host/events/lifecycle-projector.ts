@@ -1,10 +1,17 @@
 import "server-only";
 
+import type { Db } from "@/lib/execution-host/db";
+
 import { randomUUID } from "node:crypto";
 
 import { and, eq } from "drizzle-orm";
 
-import type { Db } from "@/lib/execution-host/db";
+import {
+  ExecutionEventProjectionError,
+  projectExecutionEvents,
+  type ExecutionEventProjectorSummary,
+} from "./projector";
+
 import {
   executionAssignments,
   executionEvents,
@@ -13,12 +20,6 @@ import {
   runs,
   type ExecutionEvent,
 } from "@/lib/db/schema";
-
-import {
-  ExecutionEventProjectionError,
-  projectExecutionEvents,
-  type ExecutionEventProjectorSummary,
-} from "./projector";
 
 const LIFECYCLE_CONSUMER_NAME = "canonical-session-lifecycle-v1";
 
@@ -43,7 +44,9 @@ async function currentCanonicalAssignment(
     .from(runs)
     .where(eq(runs.id, event.runId))
     .limit(1);
-  if (!runRows[0]) throw permanent("canonical lifecycle event references a missing run");
+
+  if (!runRows[0])
+    throw permanent("canonical lifecycle event references a missing run");
   const assignment = await tx
     .select({ id: executionAssignments.id })
     .from(executionAssignments)
@@ -57,14 +60,17 @@ async function currentCanonicalAssignment(
       ),
     )
     .limit(1);
+
   return Boolean(assignment[0]);
 }
 
 function sessionName(payload: Record<string, unknown> | null): string {
   const value = payload?.sessionName;
+
   if (typeof value !== "string" || value.length === 0) {
     throw permanent("session.created event is missing sessionName");
   }
+
   return value;
 }
 
@@ -80,7 +86,11 @@ async function bindEventToIncarnation(
 }
 
 async function projectCreated(tx: Db, event: ExecutionEvent): Promise<void> {
-  if (!event.executionHostId || !event.executionAssignmentId || !event.hostSessionId) {
+  if (
+    !event.executionHostId ||
+    !event.executionAssignmentId ||
+    !event.hostSessionId
+  ) {
     throw permanent("session.created event is missing host/session identity");
   }
   const name = sessionName(event.payload);
@@ -91,15 +101,22 @@ async function projectCreated(tx: Db, event: ExecutionEvent): Promise<void> {
   const sessions = await tx
     .select()
     .from(runSessions)
-    .where(and(eq(runSessions.runId, event.runId), eq(runSessions.sessionName, name)))
+    .where(
+      and(
+        eq(runSessions.runId, event.runId),
+        eq(runSessions.sessionName, name),
+      ),
+    )
     .for("update")
     .limit(1);
   let session = sessions[0];
+
   if (!session) {
     const inserted = await tx
       .insert(runSessions)
       .values({ id: randomUUID(), runId: event.runId, sessionName: name })
       .returning();
+
     session = inserted[0];
   }
   if (!session) throw permanent("run session insert did not return a row");
@@ -116,11 +133,18 @@ async function projectCreated(tx: Db, event: ExecutionEvent): Promise<void> {
     .for("update")
     .limit(1);
   const incarnation = existing[0];
+
   if (incarnation) {
-    if (incarnation.runId !== event.runId || incarnation.runSessionId !== session.id) {
-      throw permanent("host session incarnation belongs to another run session");
+    if (
+      incarnation.runId !== event.runId ||
+      incarnation.runSessionId !== session.id
+    ) {
+      throw permanent(
+        "host session incarnation belongs to another run session",
+      );
     }
     await bindEventToIncarnation(tx, event, incarnation.id);
+
     return;
   }
 
@@ -143,7 +167,9 @@ async function projectCreated(tx: Db, event: ExecutionEvent): Promise<void> {
     })
     .returning();
   const created = inserted[0];
-  if (!created) throw permanent("run session incarnation insert did not return a row");
+
+  if (!created)
+    throw permanent("run session incarnation insert did not return a row");
   await tx
     .update(runSessions)
     .set({
@@ -172,17 +198,20 @@ async function projectTerminal(tx: Db, event: ExecutionEvent): Promise<void> {
     .for("update")
     .limit(1);
   const incarnation = rows[0];
+
   if (!incarnation || incarnation.runId !== event.runId) {
     throw permanent("terminal session event has no matching incarnation");
   }
   const checkpointed =
-    event.eventType === "session.exited" && event.payload?.reason === "checkpoint";
+    event.eventType === "session.exited" &&
+    event.payload?.reason === "checkpoint";
   const nextState =
     event.eventType === "session.crashed"
       ? "crashed"
       : checkpointed
         ? "checkpointed"
         : "exited";
+
   if (incarnation.state !== nextState) {
     await tx
       .update(runSessionIncarnations)
@@ -207,6 +236,7 @@ async function projectLifecycle(tx: Db, event: ExecutionEvent): Promise<void> {
   if (!(await currentCanonicalAssignment(tx, event))) return;
   if (event.eventType === "session.created") {
     await projectCreated(tx, event);
+
     return;
   }
   await projectTerminal(tx, event);
@@ -234,17 +264,18 @@ export async function projectPendingCanonicalSessionLifecycle(input: {
   db: Db;
   batchSize?: number;
 }): Promise<number> {
-  const runRows = await input.db
-    .select({ id: runs.id })
-    .from(runs);
+  const runRows = await input.db.select({ id: runs.id }).from(runs);
   let projected = 0;
+
   for (const run of runRows) {
     const summary = await projectCanonicalSessionLifecycle({
       db: input.db,
       runId: run.id,
       batchSize: input.batchSize,
     });
+
     projected += summary.projected;
   }
+
   return projected;
 }

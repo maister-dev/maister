@@ -17,6 +17,7 @@ import {
   lt,
   notExists,
   notInArray,
+  or,
 } from "drizzle-orm";
 import pino from "pino";
 
@@ -826,6 +827,64 @@ async function fetchBudgetCandidates(db: Db): Promise<BudgetCandidate[]> {
     .limit(PER_TICK_LIMIT);
 
   return rows;
+}
+
+function hasConfiguredBudgetMeter(candidate: BudgetCandidate): boolean {
+  const snapshotBudget = budgetFromSnapshot(candidate.executionPolicy);
+  const override = candidate.budgetState?.ceilingOverride;
+
+  return (["run", "task", "tree"] as const).some((scope) =>
+    (
+      [
+        "maxTokens",
+        "hardMaxTokens",
+        "consecutiveFailures",
+        "wallClockMinutes",
+      ] as const
+    ).some((meter) =>
+      isSetLimit(effectiveLimit(snapshotBudget, override, scope, meter)),
+    ),
+  );
+}
+
+async function budgetReconciliationRunIds(
+  db: Db,
+  candidates: readonly BudgetCandidate[],
+): Promise<string[]> {
+  const budgeted = candidates.filter(hasConfiguredBudgetMeter);
+  const runIds = new Set(budgeted.map((candidate) => candidate.id));
+  const taskIds = [
+    ...new Set(
+      budgeted
+        .map((candidate) => candidate.taskId)
+        .filter((taskId): taskId is string => taskId !== null),
+    ),
+  ];
+  const rootRunIds = budgeted
+    .filter((candidate) => candidate.parentRunId === null)
+    .map((candidate) => candidate.id);
+
+  if (taskIds.length > 0) {
+    const taskRuns = await db
+      .select({ id: runs.id })
+      .from(runs)
+      .where(inArray(runs.taskId, taskIds));
+
+    for (const run of taskRuns) runIds.add(run.id);
+  }
+
+  if (rootRunIds.length > 0) {
+    const treeRuns = await db
+      .select({ id: runs.id })
+      .from(runs)
+      .where(
+        or(inArray(runs.id, rootRunIds), inArray(runs.rootRunId, rootRunIds)),
+      );
+
+    for (const run of treeRuns) runIds.add(run.id);
+  }
+
+  return [...runIds];
 }
 
 // Resolve the project slug for a candidate (lazy — only the escalate path needs
@@ -2129,6 +2188,26 @@ async function runBudgetPass(db: Db, hosts: ExecutionHosts): Promise<number> {
 
   if (candidates.length === 0) return 0;
 
+  const reconciliationRunIds = await budgetReconciliationRunIds(db, candidates);
+
+  await runWithConcurrency(
+    reconciliationRunIds,
+    PER_PASS_CONCURRENCY,
+    async (runId) => {
+      try {
+        await reconcileRunCostRollups(runId, { client: db });
+      } catch (err) {
+        log.warn(
+          {
+            runId,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          "[budget] reconcile before read failed — evaluating on existing rollups",
+        );
+      }
+    },
+  );
+
   let acted = 0;
 
   await runWithConcurrency(
@@ -2138,39 +2217,9 @@ async function runBudgetPass(db: Db, hosts: ExecutionHosts): Promise<number> {
       const snapshotBudget = budgetFromSnapshot(candidate.executionPolicy);
       const override = candidate.budgetState?.ceilingOverride;
 
-      // Fail-OPEN fast path: no scope carries any positive meter → never touch.
-      const anySet = (["run", "task", "tree"] as const).some((scope) =>
-        (
-          [
-            "maxTokens",
-            "hardMaxTokens",
-            "consecutiveFailures",
-            "wallClockMinutes",
-          ] as const
-        ).some((meter) =>
-          isSetLimit(effectiveLimit(snapshotBudget, override, scope, meter)),
-        ),
-      );
-
-      if (!anySet) return;
-
-      // Force-reconcile the candidate run's rollups before reading (throttled to
-      // a stale source cursor would avoid disk I/O across a large tree; the
-      // correct-first version reconciles the candidate run each evaluation, a
-      // no-op `missing-cost-file` when nothing is on disk). Task/tree member runs
-      // are read from their existing rollups (reconciled by their own candidacy /
-      // the runner's write path) — see spec E11 throttle note.
-      try {
-        await reconcileRunCostRollups(candidate.id, { client: db });
-      } catch (err) {
-        log.warn(
-          {
-            runId: candidate.id,
-            err: err instanceof Error ? err.message : String(err),
-          },
-          "[budget] reconcile before read failed — evaluating on existing rollups",
-        );
-      }
+      // Fail-open fast path: no scope carries any positive meter, so this run
+      // neither contributes to the reconciliation set nor receives an action.
+      if (!hasConfiguredBudgetMeter(candidate)) return;
 
       const verdict = await evaluateBudgetForCandidate(
         db,

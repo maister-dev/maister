@@ -18,7 +18,7 @@ import { MaisterError } from "@/lib/errors";
 
 // ADR-130: the web-derived capability-enforcement set delivered to the supervisor
 // on `enforcementProfile` (structurally validated by the supervisor's zod schema).
-// Distinct from the M14 capabilityProfilePath (child-env only).
+// Distinct from the opaque capability runtime-object inputs (child-env only).
 export type SessionEnforcementProfile = {
   tools?: { allow: string[] };
   mcps?: { allowServers: string[] };

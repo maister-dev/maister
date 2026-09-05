@@ -166,6 +166,57 @@ describe("execution-data-plane:import-legacy", () => {
     );
     expect(count.rows).toEqual([{ count: 2 }]);
 
+    const unpreservedRunId = randomUUID();
+    await testDatabase.pool.query(
+      `insert into runs
+        (id, project_id, run_kind, status, flow_version, flow_revision, execution_data_plane_mode)
+       select $1, project_id, 'scratch', 'Done', 'scratch', 'manual', 'legacy_file_v1'
+       from runs where id = $2`,
+      [unpreservedRunId, runId],
+    );
+    const unpreservedDir = join(
+      runtimeRoot,
+      ".maister",
+      slug,
+      "runs",
+      unpreservedRunId,
+    );
+    await mkdir(unpreservedDir, { recursive: true });
+    await writeFile(
+      join(unpreservedDir, "run.events.jsonl"),
+      `${JSON.stringify({
+        type: "session.exited",
+        sessionId: "legacy-unpreserved",
+        monotonicId: 1,
+        exitCode: 0,
+        ts: "2026-09-04T00:00:02.000Z",
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(join(unpreservedDir, "cost.jsonl"), "", "utf8");
+    const unpreservedLog = join(unpreservedDir, "plan.log");
+    await writeFile(unpreservedLog, "host transcript bytes", "utf8");
+
+    await expect(runImporter()).rejects.toThrow();
+    const objectFailure = await testDatabase.pool.query(
+      `select state, last_source_position, last_error
+       from execution_data_plane_imports
+       where run_id = $1 and source_kind = 'runtime_objects'`,
+      [unpreservedRunId],
+    );
+    expect(objectFailure.rows).toEqual([
+      {
+        state: "failed",
+        last_source_position: "entries:1",
+        last_error: {
+          reason: "runtime_object_unpreserved",
+          sourcePosition: "entries:1",
+        },
+      },
+    ]);
+    await rm(unpreservedLog);
+    await expect(runImporter()).resolves.toContain('"alreadyComplete":false');
+
     const malformedRunId = randomUUID();
     await testDatabase.pool.query(
       `insert into runs

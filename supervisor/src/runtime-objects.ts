@@ -1,9 +1,20 @@
 import type { HostRuntimeObjectRow, HostState } from "./host-state";
-import type { ReserveRuntimeObjectPayload } from "./types";
+import type {
+  ReserveRuntimeObjectPayload,
+  RuntimeObjectOutputBinding,
+} from "./types";
 
 import { createHash } from "node:crypto";
-import { lstat, mkdir, open, realpath, rename, rm, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import {
+  lstat,
+  mkdir,
+  open,
+  realpath,
+  rename,
+  rm,
+  stat,
+} from "node:fs/promises";
+import { resolve } from "node:path";
 
 import { SupervisorError } from "./types";
 
@@ -25,7 +36,9 @@ export type RuntimeObjectPublicMetadata = {
   deletedAt: string | null;
 };
 
-function publicMetadata(row: HostRuntimeObjectRow): RuntimeObjectPublicMetadata {
+function publicMetadata(
+  row: HostRuntimeObjectRow,
+): RuntimeObjectPublicMetadata {
   return {
     objectId: row.id,
     kind: row.kind,
@@ -43,14 +56,24 @@ function publicMetadata(row: HostRuntimeObjectRow): RuntimeObjectPublicMetadata 
   };
 }
 
-function objectPath(root: string, objectId: string, generation: number): string {
+function objectPath(
+  root: string,
+  objectId: string,
+  generation: number,
+): string {
   const path = resolve(root, `${objectId}.${generation}`);
   const prefix = `${resolve(root)}/`;
+
   if (!path.startsWith(prefix)) {
-    throw new SupervisorError("PRECONDITION", "runtime object identifier is invalid", {
-      details: { reason: "runtime_object_missing" },
-    });
+    throw new SupervisorError(
+      "PRECONDITION",
+      "runtime object identifier is invalid",
+      {
+        details: { reason: "runtime_object_missing" },
+      },
+    );
   }
+
   return path;
 }
 
@@ -59,11 +82,13 @@ function requireObject(
   objectId: string,
 ): HostRuntimeObjectRow {
   const object = state.getRuntimeObject(objectId);
+
   if (!object) {
     throw new SupervisorError("PRECONDITION", "runtime object is missing", {
       details: { reason: "runtime_object_missing" },
     });
   }
+
   return object;
 }
 
@@ -81,6 +106,7 @@ export class RuntimeObjectRegistry {
     payload: ReserveRuntimeObjectPayload;
   }): Promise<RuntimeObjectPublicMetadata> {
     const existing = this.state.getRuntimeObject(input.payload.objectId);
+
     if (existing) {
       if (
         existing.runId !== input.runId ||
@@ -101,10 +127,12 @@ export class RuntimeObjectRegistry {
           { details: { reason: "command_invariant_conflict" } },
         );
       }
+
       return publicMetadata(existing);
     }
     await mkdir(this.root, { recursive: true });
     const createdAt = this.now().toISOString();
+
     this.state.insertRuntimeObject({
       id: input.payload.objectId,
       runId: input.runId,
@@ -119,14 +147,192 @@ export class RuntimeObjectRegistry {
       generation: input.payload.generation,
       retentionClass: input.payload.retentionClass,
       state: "pending",
-      privatePath: objectPath(this.root, input.payload.objectId, input.payload.generation),
+      privatePath: objectPath(
+        this.root,
+        input.payload.objectId,
+        input.payload.generation,
+      ),
       createdAt,
       sealedAt: null,
       expiresAt: input.payload.expiresAt ?? null,
       deletedAt: null,
       lastError: null,
     });
+
     return publicMetadata(requireObject(this.state, input.payload.objectId));
+  }
+
+  async allocateOutput(input: {
+    runId: string;
+    assignmentId: string;
+    assignmentEpoch: number;
+    hostSessionId: string;
+    binding: RuntimeObjectOutputBinding;
+  }): Promise<{ metadata: RuntimeObjectPublicMetadata; path: string }> {
+    const existing = this.state.getRuntimeObject(input.binding.objectId);
+
+    if (existing) {
+      if (
+        existing.runId !== input.runId ||
+        existing.assignmentId !== input.assignmentId ||
+        existing.assignmentEpoch !== input.assignmentEpoch ||
+        existing.hostSessionId !== input.hostSessionId ||
+        existing.kind !== input.binding.kind ||
+        existing.logicalName !== input.binding.logicalName ||
+        existing.mimeType !== input.binding.mimeType ||
+        existing.generation !== input.binding.generation ||
+        existing.retentionClass !== input.binding.retentionClass ||
+        existing.expiresAt !== (input.binding.expiresAt ?? null)
+      ) {
+        throw new SupervisorError(
+          "PRECONDITION",
+          "runtime output object id is already bound to different metadata",
+          { details: { reason: "command_invariant_conflict" } },
+        );
+      }
+
+      return { metadata: publicMetadata(existing), path: existing.privatePath };
+    }
+
+    await mkdir(this.root, { recursive: true });
+    const createdAt = this.now().toISOString();
+    const privatePath = objectPath(
+      this.root,
+      input.binding.objectId,
+      input.binding.generation,
+    );
+
+    this.state.insertRuntimeObject({
+      id: input.binding.objectId,
+      runId: input.runId,
+      assignmentId: input.assignmentId,
+      assignmentEpoch: input.assignmentEpoch,
+      hostSessionId: input.hostSessionId,
+      kind: input.binding.kind,
+      logicalName: input.binding.logicalName,
+      mimeType: input.binding.mimeType,
+      sizeBytes: null,
+      sha256: null,
+      generation: input.binding.generation,
+      retentionClass: input.binding.retentionClass,
+      state: "pending",
+      privatePath,
+      createdAt,
+      sealedAt: null,
+      expiresAt: input.binding.expiresAt ?? null,
+      deletedAt: null,
+      lastError: null,
+    });
+
+    return {
+      metadata: publicMetadata(
+        requireObject(this.state, input.binding.objectId),
+      ),
+      path: privatePath,
+    };
+  }
+
+  async sealOutput(input: {
+    objectId: string;
+    hostSessionId: string;
+  }): Promise<RuntimeObjectPublicMetadata> {
+    const object = requireObject(this.state, input.objectId);
+
+    if (object.hostSessionId !== input.hostSessionId) {
+      throw new SupervisorError(
+        "FENCED",
+        "runtime output object belongs to a different host session",
+        { details: { reason: "assignment_fenced" } },
+      );
+    }
+    if (object.state === "available") return publicMetadata(object);
+    if (object.state !== "pending") {
+      throw new SupervisorError(
+        "PRECONDITION",
+        `runtime output object cannot be sealed from state ${object.state}`,
+        { details: { reason: "runtime_object_missing" } },
+      );
+    }
+
+    let metadata: Awaited<ReturnType<typeof lstat>>;
+
+    try {
+      metadata = await lstat(object.privatePath);
+    } catch (error) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        `required runtime output ${object.logicalName} was not produced`,
+        { cause: error, details: { reason: "runtime_object_missing" } },
+      );
+    }
+    if (!metadata.isFile() || metadata.size > MAX_RUNTIME_OBJECT_BYTES) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        `runtime output ${object.logicalName} is not a bounded regular file`,
+        {
+          details: {
+            reason:
+              metadata.size > MAX_RUNTIME_OBJECT_BYTES
+                ? "runtime_object_too_large"
+                : "runtime_object_missing",
+          },
+        },
+      );
+    }
+
+    const digest = createHash("sha256");
+    const handle = await open(object.privatePath, "r");
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let sizeBytes = 0;
+
+    try {
+      for (;;) {
+        const result = await handle.read(buffer, 0, buffer.byteLength, null);
+
+        if (result.bytesRead === 0) break;
+        sizeBytes += result.bytesRead;
+        if (sizeBytes > MAX_RUNTIME_OBJECT_BYTES) {
+          throw new SupervisorError(
+            "PRECONDITION",
+            `runtime output ${object.logicalName} exceeds the byte limit`,
+            { details: { reason: "runtime_object_too_large" } },
+          );
+        }
+        digest.update(buffer.subarray(0, result.bytesRead));
+      }
+    } finally {
+      await handle.close();
+    }
+
+    const sealed = this.state.updateRuntimeObject(object.id, {
+      state: "available",
+      sizeBytes,
+      sha256: digest.digest("hex"),
+      sealedAt: this.now().toISOString(),
+      deletedAt: null,
+      lastError: null,
+    });
+
+    return publicMetadata(sealed);
+  }
+
+  async discardPendingOutputs(input: {
+    objectIds: readonly string[];
+    hostSessionId: string;
+  }): Promise<void> {
+    for (const objectId of input.objectIds) {
+      const object = this.state.getRuntimeObject(objectId);
+
+      if (
+        !object ||
+        object.hostSessionId !== input.hostSessionId ||
+        object.state !== "pending"
+      ) {
+        continue;
+      }
+      await rm(object.privatePath, { force: true });
+      this.state.deleteRuntimeObject(objectId);
+    }
   }
 
   metadata(objectId: string): RuntimeObjectPublicMetadata {
@@ -143,6 +349,7 @@ export class RuntimeObjectRegistry {
     chunks: AsyncIterable<Uint8Array>;
   }): Promise<RuntimeObjectPublicMetadata> {
     const object = requireObject(this.state, input.objectId);
+
     if (
       object.assignmentId !== input.assignmentId ||
       object.assignmentEpoch !== input.assignmentEpoch ||
@@ -150,12 +357,19 @@ export class RuntimeObjectRegistry {
       object.sizeBytes !== input.sizeBytes ||
       object.sha256 !== input.sha256
     ) {
-      throw new SupervisorError("FENCED", "runtime object upload fence is stale", {
-        details: { reason: "assignment_fenced" },
-      });
+      throw new SupervisorError(
+        "FENCED",
+        "runtime object upload fence is stale",
+        {
+          details: { reason: "assignment_fenced" },
+        },
+      );
     }
     if (object.state === "available") {
-      if (object.sizeBytes === input.sizeBytes && object.sha256 === input.sha256) {
+      if (
+        object.sizeBytes === input.sizeBytes &&
+        object.sha256 === input.sha256
+      ) {
         return publicMetadata(object);
       }
       throw new SupervisorError(
@@ -165,24 +379,35 @@ export class RuntimeObjectRegistry {
       );
     }
     if (object.state !== "pending") {
-      throw new SupervisorError("PRECONDITION", "runtime object cannot accept content", {
-        details: { reason: "runtime_object_missing" },
-      });
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object cannot accept content",
+        {
+          details: { reason: "runtime_object_missing" },
+        },
+      );
     }
     if (input.sizeBytes > MAX_RUNTIME_OBJECT_BYTES) {
-      throw new SupervisorError("PRECONDITION", "runtime object content size is invalid", {
-        details: { reason: "runtime_object_integrity_mismatch" },
-      });
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object content size is invalid",
+        {
+          details: { reason: "runtime_object_integrity_mismatch" },
+        },
+      );
     }
     await mkdir(this.root, { recursive: true });
     const temporary = `${object.privatePath}.${input.generation}.partial`;
     const digest = createHash("sha256");
     let receivedBytes = 0;
+
     try {
       const handle = await open(temporary, "w", 0o600);
+
       try {
         for await (const chunk of input.chunks) {
           const bytes = Buffer.from(chunk);
+
           receivedBytes += bytes.byteLength;
           if (
             receivedBytes > input.sizeBytes ||
@@ -196,12 +421,14 @@ export class RuntimeObjectRegistry {
           }
           digest.update(bytes);
           let offset = 0;
+
           while (offset < bytes.byteLength) {
             const written = await handle.write(
               bytes,
               offset,
               bytes.byteLength - offset,
             );
+
             offset += written.bytesWritten;
           }
         }
@@ -209,6 +436,7 @@ export class RuntimeObjectRegistry {
         await handle.close();
       }
       const actualDigest = digest.digest("hex");
+
       if (receivedBytes !== input.sizeBytes || actualDigest !== input.sha256) {
         throw new SupervisorError(
           "PRECONDITION",
@@ -218,6 +446,7 @@ export class RuntimeObjectRegistry {
       }
       await rename(temporary, object.privatePath);
       const written = await stat(object.privatePath);
+
       if (written.size !== input.sizeBytes) {
         throw new Error("runtime object size changed during sealing");
       }
@@ -233,16 +462,25 @@ export class RuntimeObjectRegistry {
       deletedAt: null,
       lastError: null,
     });
+
     return publicMetadata(sealed);
   }
 
-  async read(objectId: string): Promise<{ metadata: RuntimeObjectPublicMetadata; path: string }> {
+  async read(
+    objectId: string,
+  ): Promise<{ metadata: RuntimeObjectPublicMetadata; path: string }> {
     const object = requireObject(this.state, objectId);
+
     if (object.state !== "available") {
-      throw new SupervisorError("PRECONDITION", "runtime object content is unavailable", {
-        details: { reason: "runtime_object_missing" },
-      });
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object content is unavailable",
+        {
+          details: { reason: "runtime_object_missing" },
+        },
+      );
     }
+
     return { metadata: publicMetadata(object), path: object.privatePath };
   }
 
@@ -254,8 +492,10 @@ export class RuntimeObjectRegistry {
     runId: string;
     assignmentId: string;
     assignmentEpoch: number;
+    expectedKind: ReserveRuntimeObjectPayload["kind"];
   }): Promise<{ metadata: RuntimeObjectPublicMetadata; path: string }> {
     const object = requireObject(this.state, input.objectId);
+
     if (
       object.runId !== input.runId ||
       object.assignmentId !== input.assignmentId ||
@@ -265,6 +505,13 @@ export class RuntimeObjectRegistry {
         "FENCED",
         "runtime object does not belong to the prompt assignment",
         { details: { reason: "assignment_fenced" } },
+      );
+    }
+    if (object.kind !== input.expectedKind) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object kind does not match the requested session input",
+        { details: { reason: "command_invariant_conflict" } },
       );
     }
     if (object.state !== "available") {
@@ -279,6 +526,7 @@ export class RuntimeObjectRegistry {
       realpath(object.privatePath),
       Promise.resolve(publicMetadata(object)),
     ]);
+
     if (!resolvedObject.startsWith(`${resolvedRoot}/`)) {
       throw new SupervisorError(
         "PRECONDITION",
@@ -293,6 +541,7 @@ export class RuntimeObjectRegistry {
         { details: { reason: "runtime_object_missing" } },
       );
     }
+
     return { metadata, path: resolvedObject };
   }
 
@@ -303,14 +552,19 @@ export class RuntimeObjectRegistry {
     generation: number;
   }): Promise<RuntimeObjectPublicMetadata> {
     const object = requireObject(this.state, input.objectId);
+
     if (
       object.assignmentId !== input.assignmentId ||
       object.assignmentEpoch !== input.assignmentEpoch ||
       object.generation !== input.generation
     ) {
-      throw new SupervisorError("FENCED", "runtime object deletion fence is stale", {
-        details: { reason: "assignment_fenced" },
-      });
+      throw new SupervisorError(
+        "FENCED",
+        "runtime object deletion fence is stale",
+        {
+          details: { reason: "assignment_fenced" },
+        },
+      );
     }
     if (object.state === "deleted") return publicMetadata(object);
     this.state.updateRuntimeObject(object.id, {
@@ -324,15 +578,24 @@ export class RuntimeObjectRegistry {
     try {
       await rm(object.privatePath, { force: true });
     } catch (error) {
-      const failed = this.state.updateRuntimeObject(object.id, {
-        state: "corrupt",
+      this.state.updateRuntimeObject(object.id, {
+        state: "deleting",
         sizeBytes: object.sizeBytes,
         sha256: object.sha256,
         sealedAt: object.sealedAt,
         deletedAt: null,
-        lastError: { message: error instanceof Error ? error.message : String(error) },
+        lastError: {
+          message: error instanceof Error ? error.message : String(error),
+        },
       });
-      return publicMetadata(failed);
+      throw new SupervisorError(
+        "EXECUTOR_UNAVAILABLE",
+        `runtime object ${object.id} could not be deleted`,
+        {
+          cause: error,
+          details: { reason: "runtime_object_delete_failed" },
+        },
+      );
     }
     const deleted = this.state.updateRuntimeObject(object.id, {
       state: "deleted",
@@ -342,6 +605,7 @@ export class RuntimeObjectRegistry {
       deletedAt: this.now().toISOString(),
       lastError: null,
     });
+
     return publicMetadata(deleted);
   }
 }

@@ -141,6 +141,7 @@ async function recordCanonicalEvents(
         type: string;
         update: Record<string, unknown>;
       };
+
       return {
         id: randomUUID(),
         source: "manager",

@@ -294,10 +294,9 @@ export async function materializeAdapterCapabilityHome(args: {
         ownedByRunPaths,
       });
 
-      homeRoot = reusableHome ?? path.join(
-        capabilityRoot,
-        `${homePrefix}${randomUUID()}`,
-      );
+      homeRoot =
+        reusableHome ??
+        path.join(capabilityRoot, `${homePrefix}${randomUUID()}`);
 
       await recordIntent([homeRoot]);
 

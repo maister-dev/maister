@@ -262,7 +262,11 @@ describe("0121 migration triple", () => {
     );
     expect(
       existsSync(
-        path.join(MIGRATIONS_DIR, "meta", `${entry!.tag.slice(0, 4)}_snapshot.json`),
+        path.join(
+          MIGRATIONS_DIR,
+          "meta",
+          `${entry!.tag.slice(0, 4)}_snapshot.json`,
+        ),
       ),
     ).toBe(true);
   });

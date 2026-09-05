@@ -133,13 +133,35 @@ beforeAll(async () => {
   fake = createFakeExecutionHost();
 
   Object.assign(fake.transport, {
-    createSession: async (envelope: { payload: unknown }) =>
-      supervisorMock.createSession(envelope.payload),
-    sendPrompt: async (
-      sessionId: string,
-      envelope: { payload: unknown },
-      opts?: unknown,
-    ) => supervisorMock.sendPrompt(sessionId, envelope.payload, opts),
+    createSession: async (envelope: {
+      command: { id: string };
+      fence: { runId: string; assignmentEpoch: number };
+      payload: {
+        executionWorkspaceId: string;
+        stepId?: string;
+        sessionName?: string;
+      };
+    }) => {
+      const result = (await supervisorMock.createSession(envelope.payload)) as {
+        sessionId: string;
+        pid: number;
+        acpSessionId: string;
+      };
+
+      fake.sessions.set(result.sessionId, {
+        sessionId: result.sessionId,
+        runId: envelope.fence.runId,
+        stepId: envelope.payload.stepId ?? "assistant",
+        sessionName: envelope.payload.sessionName ?? "default",
+        acpSessionId: result.acpSessionId,
+        executionWorkspaceId: envelope.payload.executionWorkspaceId,
+        assignmentEpoch: envelope.fence.assignmentEpoch,
+        createdByCommandId: envelope.command.id,
+        status: "live",
+      });
+
+      return result;
+    },
     streamSession: (sessionId: string, opts?: unknown) =>
       supervisorMock.streamSession(sessionId, opts),
     listSessions: () => supervisorMock.listSessions(),
@@ -160,6 +182,15 @@ beforeAll(async () => {
 
       return { ok: true as const, replayed: false };
     },
+  });
+  fake.setPromptBehavior(async ({ sessionId, envelope }) => {
+    const result = await supervisorMock.sendPrompt(sessionId, envelope.payload);
+
+    for await (const event of supervisorMock.streamSession(sessionId)) {
+      fake.pushEvent(sessionId, event);
+    }
+
+    return result;
   });
   await fakeExecutionHosts(db, { fake });
 

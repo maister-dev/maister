@@ -37,3 +37,17 @@ export function readySupervisorHealth(
     },
   };
 }
+
+export function readyExecutionHostCapabilities() {
+  return {
+    dataPlaneVersion: "execution-host-data-plane.v1" as const,
+    eventStream: true,
+    asyncPrompt: true,
+    runtimeObjects: true,
+    limits: {
+      maxEventBytes: 1_048_576 as const,
+      maxObjectBytes: 26_214_400 as const,
+      maxReplayBatch: 500 as const,
+    },
+  };
+}

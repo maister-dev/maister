@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assignmentEvents as assignmentEventsTable,
   assignments as assignmentsTable,
+  executionAssignments as executionAssignmentsTable,
   hitlRequests as hitlRequestsTable,
   runs as runsTable,
   webhookEvents as webhookEventsTable,
@@ -75,6 +76,7 @@ type FakeTableName =
   | "runs"
   | "assignments"
   | "assignment_events"
+  | "execution_assignments"
   | "webhook_events";
 
 function tableOf(table: unknown): FakeTableName {
@@ -82,6 +84,7 @@ function tableOf(table: unknown): FakeTableName {
   if (table === runsTable) return "runs";
   if (table === assignmentsTable) return "assignments";
   if (table === assignmentEventsTable) return "assignment_events";
+  if (table === executionAssignmentsTable) return "execution_assignments";
   if (table === webhookEventsTable) return "webhook_events";
 
   throw new Error("unknown table");
@@ -92,6 +95,7 @@ function makeFakeDb(
     insertFails?: boolean;
     priorIntent?: Record<string, unknown> | null;
     resolvedPromptUpdateFails?: boolean;
+    executionAssignmentState?: "active" | "superseded" | "released";
   } = {},
 ): InsertSpy & {
   insert: (...args: unknown[]) => unknown;
@@ -178,7 +182,9 @@ function makeFakeDb(
               : [...state.insertCalls]
             : name === "runs"
               ? [{ projectId: "proj-1", taskId: null }]
-              : [];
+              : name === "execution_assignments"
+                ? [{ state: opts.executionAssignmentState ?? "active" }]
+                : [];
         const result: any = Promise.resolve(rows);
 
         result.limit = async () => rows;
@@ -738,6 +744,25 @@ describe("runner-agent — driver yield rule (ADR-166)", () => {
     expect(result.ok).toBe(false);
     expect(result.fenced).toBe(true);
     expect(result.errorCode).toBe("CONFLICT");
+    expect(api.fake.callsOf("deleteSession")).toHaveLength(0);
+    expect(db.updates.filter((u) => u.set.status)).toHaveLength(0);
+  });
+
+  it("yields when checkpoint release wins before the terminal event is projected", async () => {
+    const db = makeFakeDb({ executionAssignmentState: "released" });
+    const api = makeApi({ events: [], promptStopReason: "cancelled" });
+
+    const result = await runAgentStep(
+      { id: "plan", type: "agent", mode: "new-session", prompt: "go" },
+      makeCtx(db),
+      api,
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      fenced: true,
+      errorCode: "CONFLICT",
+    });
     expect(api.fake.callsOf("deleteSession")).toHaveLength(0);
     expect(db.updates.filter((u) => u.set.status)).toHaveLength(0);
   });

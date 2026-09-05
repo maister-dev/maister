@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
-
 import type { SessionEnforcementProfile } from "../types";
+
+import { describe, expect, it } from "vitest";
 
 import {
   HOOK_RULE_META,

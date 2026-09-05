@@ -212,6 +212,14 @@ vi.mock("@/lib/execution-host", () => ({
     id: "host-1",
     hostKey: "eh_test0000000000000000000000000000",
     kind: "local_direct",
+    capabilities: {
+      dataPlane: {
+        version: "execution-host-data-plane.v1",
+        eventStream: true,
+        asyncPrompt: true,
+        runtimeObjects: true,
+      },
+    },
   })),
   mintPlacement: vi.fn(async (_tx: unknown, input: { runId: string }) => ({
     id: `assignment-${input.runId}`,

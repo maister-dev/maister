@@ -22,8 +22,7 @@ export const SCHEDULED_LAUNCH_OUTCOMES = [
   "failed",
 ] as const;
 
-export type ScheduledLaunchOutcome =
-  (typeof SCHEDULED_LAUNCH_OUTCOMES)[number];
+export type ScheduledLaunchOutcome = (typeof SCHEDULED_LAUNCH_OUTCOMES)[number];
 
 export type ScheduledLaunchDisambiguation = "earlier" | "later";
 

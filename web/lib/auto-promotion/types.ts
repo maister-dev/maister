@@ -5,7 +5,11 @@
 // participant. Written by the controlled-launch path and the launched-participant
 // restart path; DELETE /api/runs/[runId]/promotion-hold refuses to clear it while
 // the owning study is still live.
-export type PromotionHoldSource = "user" | "system" | "launch" | "evaluation_study";
+export type PromotionHoldSource =
+  | "user"
+  | "system"
+  | "launch"
+  | "evaluation_study";
 
 export interface PromotionHold {
   source: PromotionHoldSource;

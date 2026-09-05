@@ -21,7 +21,10 @@ describe("contentBlockUriViolation (supervisor URI confinement)", () => {
   it("allows a resource_link inside the worktree", () => {
     expect(
       contentBlockUriViolation(
-        [{ type: "text", text: "see" }, fileLink("/srv/worktrees/proj/run-1/src/a.ts")],
+        [
+          { type: "text", text: "see" },
+          fileLink("/srv/worktrees/proj/run-1/src/a.ts"),
+        ],
         roots,
       ),
     ).toBeNull();
@@ -43,15 +46,21 @@ describe("contentBlockUriViolation (supervisor URI confinement)", () => {
   });
 
   it("rejects a file:// path outside the sandbox (e.g. /etc/passwd)", () => {
-    expect(
-      contentBlockUriViolation([fileLink("/etc/passwd")], roots),
-    ).toMatch(/escapes the run sandbox/);
+    expect(contentBlockUriViolation([fileLink("/etc/passwd")], roots)).toMatch(
+      /escapes the run sandbox/,
+    );
   });
 
   it("rejects a `..` traversal that escapes the worktree", () => {
     expect(
       contentBlockUriViolation(
-        [{ type: "resource_link", uri: "file:///srv/worktrees/proj/run-1/../../../etc/shadow", name: "x" }],
+        [
+          {
+            type: "resource_link",
+            uri: "file:///srv/worktrees/proj/run-1/../../../etc/shadow",
+            name: "x",
+          },
+        ],
         roots,
       ),
     ).toMatch(/escapes the run sandbox/);
@@ -94,7 +103,9 @@ describe("contentBlockUriViolation (supervisor URI confinement)", () => {
 
   it("is a no-op for a plain string prompt (no content blocks)", () => {
     expect(contentBlockUriViolation(undefined, roots)).toBeNull();
-    expect(contentBlockUriViolation([{ type: "text", text: "hi" }], roots)).toBeNull();
+    expect(
+      contentBlockUriViolation([{ type: "text", text: "hi" }], roots),
+    ).toBeNull();
   });
 });
 
@@ -136,7 +147,10 @@ describe("contentBlockUriViolation — confineRoot (local-package session)", () 
 
   it("rejects a file inside the project repo — confineRoot replaces repoPath", () => {
     expect(
-      contentBlockUriViolation([fileLink("/srv/repos/proj/README.md")], lpRoots),
+      contentBlockUriViolation(
+        [fileLink("/srv/repos/proj/README.md")],
+        lpRoots,
+      ),
     ).toMatch(/escapes the run sandbox/);
   });
 

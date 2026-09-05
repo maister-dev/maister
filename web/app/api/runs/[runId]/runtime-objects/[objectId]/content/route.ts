@@ -5,19 +5,20 @@ import { z } from "zod";
 
 import { httpStatusForAuthz, requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
-import { isMaisterError, MaisterError } from "@/lib/errors";
+import { isMaisterError } from "@/lib/errors";
 import {
   getRuntimeObjectForRun,
   openRuntimeObjectContent,
 } from "@/lib/execution-host/runtime-objects";
 import { authorizeRuntimeObjectActor } from "@/lib/execution-host/runtime-object-access";
+import { parseSingleByteRange } from "@/lib/http/single-byte-range";
 
 type RouteParams = { params: Promise<{ runId: string; objectId: string }> };
-const rangePattern = /^bytes=(\d+)-(\d*)$/;
 
 function errorResponse(error: unknown): NextResponse {
   if (isMaisterError(error)) {
     const reason = error.details?.reason;
+
     if (reason === "runtime_object_not_found") {
       return NextResponse.json({ message: "not found" }, { status: 404 });
     }
@@ -48,33 +49,17 @@ function errorResponse(error: unknown): NextResponse {
         { status: 503 },
       );
     }
+
     return NextResponse.json(
       { code: error.code, message: error.message },
       { status: httpStatusForAuthz(error.code) ?? 409 },
     );
   }
+
   return NextResponse.json(
     { code: "CRASH", message: "internal error" },
     { status: 500 },
   );
-}
-
-function parseRange(header: string | null): { start: number; end?: number } | undefined {
-  if (!header) return undefined;
-  const match = header.match(rangePattern);
-  if (!match) {
-    throw new MaisterError("PRECONDITION", "runtime object Range must use a single byte range", {
-      details: { reason: "runtime_object_range_invalid" },
-    });
-  }
-  const start = Number(match[1]);
-  const end = match[2] === "" ? undefined : Number(match[2]);
-  if (!Number.isSafeInteger(start) || start < 0 || (end !== undefined && (!Number.isSafeInteger(end) || end < start))) {
-    throw new MaisterError("PRECONDITION", "runtime object Range is invalid", {
-      details: { reason: "runtime_object_range_invalid" },
-    });
-  }
-  return { start, ...(end === undefined ? {} : { end }) };
 }
 
 export async function GET(
@@ -84,16 +69,21 @@ export async function GET(
   try {
     const sessionUser = await requireActiveSession();
     const { runId, objectId } = await params;
+
     if (!z.string().uuid().safeParse(objectId).success) {
       return NextResponse.json({ message: "not found" }, { status: 404 });
     }
     const db = getDb();
     const loaded = await getRuntimeObjectForRun({ db, runId, objectId });
+
     if (!loaded) {
       return NextResponse.json({ message: "not found" }, { status: 404 });
     }
     await authorizeRuntimeObjectActor(loaded, sessionUser.id);
-    const range = parseRange(request.headers.get("range"));
+    const range = parseSingleByteRange(request.headers.get("range"), {
+      syntax: "runtime object Range must use a single byte range",
+      bounds: "runtime object Range is invalid",
+    });
     const { object, content } = await openRuntimeObjectContent({
       db,
       runId,
@@ -105,11 +95,15 @@ export async function GET(
       "accept-ranges": "bytes",
       etag: `\"${object.sha256}\"`,
     });
+
     if (content.contentLength !== null) {
       headers.set("content-length", String(content.contentLength));
     }
-    if (content.contentDigest) headers.set("content-digest", content.contentDigest);
-    if (content.contentRange) headers.set("content-range", content.contentRange);
+    if (content.contentDigest)
+      headers.set("content-digest", content.contentDigest);
+    if (content.contentRange)
+      headers.set("content-range", content.contentRange);
+
     return new Response(content.body, {
       status: content.contentRange ? 206 : 200,
       headers,

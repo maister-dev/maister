@@ -2,9 +2,6 @@ import "server-only";
 
 import type { Workspace as WorkspaceRow } from "@/lib/db/schema";
 
-import { access } from "node:fs/promises";
-import path from "node:path";
-
 import { and, desc, eq, isNotNull } from "drizzle-orm";
 import pino from "pino";
 
@@ -23,17 +20,6 @@ const log = pino({
   name: "default-artifacts",
   level: process.env.LOG_LEVEL ?? "info",
 });
-
-// Returns true when the file at `filePath` exists (best-effort, no throw).
-async function fileExists(filePath: string): Promise<boolean> {
-  try {
-    await access(filePath);
-
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 // Attempt git merge-base to get the diff base commit. Falls back to the empty
 // tree SHA so the diff locator always has a valid (if meaningless) baseCommit
@@ -75,15 +61,12 @@ export type RecordDefaultArtifactsArgs = {
   nodeAttemptId: string;
   nodeId: string;
   attempt: number;
-  projectSlug: string;
   workspace: WorkspaceRow;
-  runtimeRoot: string;
 };
 
 // Record default ("index") artifact rows for a just-finished graph node. The
 // rows point at EXISTING payloads; no payload is created here.
 //
-// - log: if <runDir>/<nodeId>.log exists → kind "log"
 // - hitl-response: if a hitl_requests row with non-null response exists for
 //   (runId, nodeId) → kind "human_note", locator hitl-response
 // - diff: always → kind "diff", locator git-range
@@ -93,17 +76,7 @@ export async function recordDefaultArtifacts(
   args: RecordDefaultArtifactsArgs,
   db: Db,
 ): Promise<void> {
-  const {
-    runId,
-    nodeAttemptId,
-    nodeId,
-    attempt,
-    workspace,
-    runtimeRoot,
-    projectSlug,
-  } = args;
-
-  const runDir = path.join(runtimeRoot, ".maister", projectSlug, "runs", runId);
+  const { runId, nodeAttemptId, nodeId, attempt, workspace } = args;
 
   function makeId(kind: string): string {
     return `run:${nodeAttemptId}:default:${kind}`;
@@ -120,30 +93,7 @@ export async function recordDefaultArtifacts(
     retention: "run" as const,
   };
 
-  // 1. Log artifact (best-effort: only if payload exists)
-  const logPath = path.join(runDir, `${nodeId}.log`);
-
-  if (await fileExists(logPath)) {
-    try {
-      await recordArtifact(
-        {
-          ...baseArgs,
-          id: makeId("log"),
-          artifactDefId: `default:${nodeId}:log`,
-          kind: "log",
-          locator: { kind: "file", path: `${nodeId}.log` },
-        },
-        db,
-      );
-    } catch (err) {
-      log.warn(
-        { runId, nodeId, err: (err as Error).message },
-        "default log artifact record failed (non-fatal)",
-      );
-    }
-  }
-
-  // 2. HITL response (best-effort: only if responded row exists)
+  // 1. HITL response (best-effort: only if responded row exists)
   try {
     // On an on_reject rework loop a step has multiple responded HITL rows
     // (reject, then the final approve). Bind the human_note to the LATEST one
@@ -183,7 +133,7 @@ export async function recordDefaultArtifacts(
     );
   }
 
-  // 3. Diff artifact (always — uses safe fallback when git unavailable)
+  // 2. Diff artifact (always — uses safe fallback when git unavailable)
   try {
     const baseCommit = await safeBaseCommit(workspace);
     const headRef = await safeHeadRef(workspace);

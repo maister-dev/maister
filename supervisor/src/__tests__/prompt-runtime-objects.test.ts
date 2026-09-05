@@ -18,6 +18,7 @@ describe("resolvePromptRuntimeObjects", () => {
       resolver: {
         async resolvePromptReference(input) {
           calls.push(input);
+
           return {
             metadata: { mimeType: "text/plain" },
             path: "/private/execution-host/runtime-objects/b7e5e032-6049-48b2-806f-e5db714a93cb.1",

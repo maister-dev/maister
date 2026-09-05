@@ -30,6 +30,7 @@ export const TEARDOWN_COMMAND_KINDS = [
   "session.checkpoint",
   "session.delete",
   "session.cancel",
+  "runtime_object.delete",
   "workspace.release",
 ] as const satisfies readonly CommandKind[];
 

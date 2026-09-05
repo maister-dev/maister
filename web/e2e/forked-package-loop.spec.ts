@@ -372,9 +372,9 @@ test("install → fork → edit → cut → evaluation batch shows fork-vs-upstr
     }
   ).options;
 
-  expect(
-    pins.find((o) => o.packageInstallId === upstreamInstallId)?.kind,
-  ).toBe("upstream");
+  expect(pins.find((o) => o.packageInstallId === upstreamInstallId)?.kind).toBe(
+    "upstream",
+  );
   expect(pins.find((o) => o.packageInstallId === cut1InstallId)?.kind).toBe(
     "local_cut",
   );

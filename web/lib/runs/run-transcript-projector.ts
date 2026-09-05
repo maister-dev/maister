@@ -71,6 +71,7 @@ async function projectCanonicalRunTranscript(
         ? row.payload.nodeAttemptId
         : null;
     const entries = byAttempt.get(nodeAttemptId) ?? [];
+
     if (row.eventType === "session.update") {
       entries.push({
         kind: "update",
@@ -112,6 +113,7 @@ async function projectCanonicalRunTranscript(
       )
       .for("update")
       .limit(1);
+
     if (!consumer) {
       throw new Error("canonical transcript consumer row disappeared");
     }
@@ -127,7 +129,8 @@ async function projectCanonicalRunTranscript(
         row.runSequence !== null &&
         (consumer.lastRunSequence === null ||
           row.runSequence > consumer.lastRunSequence) &&
-        (row.eventType === "session.update" || RESET_EVENT_TYPES.has(row.eventType)),
+        (row.eventType === "session.update" ||
+          RESET_EVENT_TYPES.has(row.eventType)),
     );
 
     if (!hasNewTranscriptEvent) {
@@ -150,6 +153,7 @@ async function projectCanonicalRunTranscript(
             eq(executionEventConsumers.runId, runId),
           ),
         );
+
       return;
     }
 
@@ -230,6 +234,7 @@ export async function projectRunTranscript(
     .where(eq(runs.id, runId));
 
   if (!run) return { status: "missing-run", nodeAttempts: 0, rowsUpserted: 0 };
+
   return projectCanonicalRunTranscript(runId, client);
 }
 
@@ -386,6 +391,7 @@ export async function getWholeRunTranscriptMessages(
     .from(runMessages)
     .where(eq(runMessages.runId, runId))
     .orderBy(asc(runMessages.createdAt), asc(runMessages.sequence));
+
   return {
     messages: messages.map((message) => ({
       id: message.id,

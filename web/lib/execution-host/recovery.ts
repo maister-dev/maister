@@ -29,7 +29,11 @@ import {
   EXECUTION_COMMAND_RETENTION_DAYS,
 } from "./types";
 
-import { executionAssignments, runs } from "@/lib/db/schema";
+import {
+  executionAssignments,
+  executionRuntimeObjects,
+  runs,
+} from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 
 const defaultLog = pino({
@@ -102,6 +106,12 @@ function driverlessSend(
           target,
           envelope as CommandEnvelope<Record<string, never>>,
         );
+    case "runtime_object.delete":
+      return (envelope) =>
+        transport.deleteRuntimeObject(
+          target,
+          envelope as CommandEnvelope<{ generation: number }>,
+        );
     default:
       return null;
   }
@@ -165,6 +175,22 @@ async function foldReceipt(
           );
         }
       }
+      if (row.kind === "runtime_object.delete" && row.targetSessionId) {
+        await tx
+          .update(executionRuntimeObjects)
+          .set({ state: "deleted", deletedAt: now, lastError: null })
+          .where(
+            and(
+              eq(executionRuntimeObjects.id, row.targetSessionId),
+              eq(executionRuntimeObjects.runId, row.runId),
+              eq(
+                executionRuntimeObjects.executionAssignmentId,
+                row.executionAssignmentId,
+              ),
+              eq(executionRuntimeObjects.assignmentEpoch, row.assignmentEpoch),
+            ),
+          );
+      }
     });
     logger.info(
       {
@@ -180,10 +206,32 @@ async function foldReceipt(
   }
 
   if (receipt.phase === "rejected") {
-    const body = receipt.body as { code?: unknown };
+    const body = receipt.body as {
+      code?: unknown;
+      message?: unknown;
+      reason?: unknown;
+      details?: unknown;
+    };
+    const details =
+      body.details &&
+      typeof body.details === "object" &&
+      !Array.isArray(body.details)
+        ? body.details
+        : null;
+    const reason =
+      typeof body.reason === "string"
+        ? body.reason
+        : details && "reason" in details && typeof details.reason === "string"
+          ? details.reason
+          : null;
     const fenced = body.code === "FENCED";
+    const error = {
+      code: typeof body.code === "string" ? body.code : "ACP_PROTOCOL",
+      ...(typeof body.message === "string" ? { message: body.message } : {}),
+      ...(reason ? { reason } : {}),
+    };
 
-    await (fenced ? markFenced : markFailed)(db, row.id, null, receipt.body, {
+    await (fenced ? markFenced : markFailed)(db, row.id, null, error, {
       logger,
       now,
     });
@@ -197,7 +245,7 @@ async function foldReceipt(
       "command-recovered-from-receipt",
     );
 
-    return "folded";
+    return reason === "turn_lost" ? "turnLost" : "folded";
   }
 
   if (receipt.inflight) return "skippedInFlight";
@@ -294,11 +342,35 @@ export async function recoverExecutionCommands(
 
         return;
       }
+      const runtimeObjectId =
+        queued.kind === "runtime_object.delete" ? queued.targetSessionId : null;
+
       await deliverCommand({
         db,
         command: queued,
         envelope: envelopeFor(queued, host),
         send,
+        onAck: runtimeObjectId
+          ? async (tx) => {
+              await tx
+                .update(executionRuntimeObjects)
+                .set({ state: "deleted", deletedAt: at, lastError: null })
+                .where(
+                  and(
+                    eq(executionRuntimeObjects.id, runtimeObjectId),
+                    eq(executionRuntimeObjects.runId, queued.runId),
+                    eq(
+                      executionRuntimeObjects.executionAssignmentId,
+                      queued.executionAssignmentId,
+                    ),
+                    eq(
+                      executionRuntimeObjects.assignmentEpoch,
+                      queued.assignmentEpoch,
+                    ),
+                  ),
+                );
+            }
+          : undefined,
         logger,
         now,
       });

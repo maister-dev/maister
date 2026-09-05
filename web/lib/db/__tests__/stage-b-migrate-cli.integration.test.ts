@@ -24,9 +24,7 @@ let runId: string;
 async function migrationHash(tag: string): Promise<string> {
   const contents = await readFile(resolve(migrationsDir, `${tag}.sql`));
 
-  return createHash("sha256")
-    .update(new Uint8Array(contents))
-    .digest("hex");
+  return createHash("sha256").update(new Uint8Array(contents)).digest("hex");
 }
 
 async function runMigrationCli(): Promise<{
@@ -71,6 +69,7 @@ beforeAll(async () => {
   await migrate(testDatabase.db, { migrationsFolder: preStageBRoot });
 
   const projectId = randomUUID();
+
   runId = randomUUID();
   await testDatabase.pool.query(
     `insert into projects (id, slug, name, repo_path, maister_yaml_path, task_key)
@@ -108,12 +107,14 @@ describe("db:migrate Stage B cutover", () => {
       `select 1 from information_schema.tables
        where table_name = 'execution_data_plane_imports'`,
     );
+
     expect(additiveTable.rows).toHaveLength(1);
     const mirrorColumn = await testDatabase.pool.query(
       `select 1 from information_schema.columns
        where table_name = 'scratch_runs'
          and column_name = 'supervisor_session_id'`,
     );
+
     expect(mirrorColumn.rows).toHaveLength(1);
     const applied = await testDatabase.pool.query<{ tag: string }>(
       `select j.tag
@@ -125,11 +126,9 @@ describe("db:migrate Stage B cutover", () => {
       [
         JSON.stringify(
           await Promise.all(
-            [
-              "0131_foamy_venom",
-              "0132_soft_loa",
-              "0133_rich_blob",
-            ].map(async (tag) => ({ tag, hash: await migrationHash(tag) })),
+            ["0131_foamy_venom", "0132_soft_loa", "0133_rich_blob"].map(
+              async (tag) => ({ tag, hash: await migrationHash(tag) }),
+            ),
           ),
         ),
       ],
@@ -158,6 +157,7 @@ describe("db:migrate Stage B cutover", () => {
       "select execution_data_plane_mode as mode from runs where id = $1",
       [runId],
     );
+
     expect(mode.rows).toEqual([{ mode: "canonical_events_v1" }]);
     const scratchProof = await testDatabase.pool.query(
       `select state, source_fingerprint as fingerprint
@@ -165,6 +165,7 @@ describe("db:migrate Stage B cutover", () => {
        where run_id = $1 and source_kind = 'scratch_session'`,
       [runId],
     );
+
     expect(scratchProof.rows).toEqual([
       { state: "complete", fingerprint: "not-a-scratch-run" },
     ]);

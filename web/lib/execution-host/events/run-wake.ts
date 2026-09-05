@@ -16,19 +16,30 @@ class RunEventWakeBus {
     this.emitter.emit(runId);
   }
 
-  wait(runId: string, timeoutMs: number): Promise<void> {
+  wait(runId: string, timeoutMs: number, signal?: AbortSignal): Promise<void> {
     return new Promise((resolve) => {
       let timeout: ReturnType<typeof setTimeout> | undefined;
       const listener = () => cleanup();
       const cleanup = () => {
         if (timeout) clearTimeout(timeout);
         this.emitter.off(runId, listener);
+        signal?.removeEventListener("abort", cleanup);
         resolve();
       };
 
+      if (signal?.aborted) {
+        resolve();
+
+        return;
+      }
       this.emitter.once(runId, listener);
+      signal?.addEventListener("abort", cleanup, { once: true });
       timeout = setTimeout(cleanup, timeoutMs);
     });
+  }
+
+  waiterCount(runId: string): number {
+    return this.emitter.listenerCount(runId);
   }
 }
 

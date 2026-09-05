@@ -52,10 +52,7 @@ export async function cleanupLocalPackageAssistantMaterialization(args: {
     workingDir,
     args.runId,
   );
-  const capabilityRootRelative = path.relative(
-    workingDir,
-    capabilityRoot,
-  );
+  const capabilityRootRelative = path.relative(workingDir, capabilityRoot);
 
   try {
     await assertSafeAgentMaterializationPath(

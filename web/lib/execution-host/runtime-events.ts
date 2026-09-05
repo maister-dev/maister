@@ -37,7 +37,9 @@ const SEQUENCE = /^(0|[1-9][0-9]{0,18})$/;
 // Match the supervisor's durable host-state contract: the default is an
 // `eh_` UUID, while a validated operator-pinned key remains supported.
 const HOST_KEY = /^[A-Za-z0-9_-]{8,64}$/;
-const SECRET_KEY = /authorization|cookie|(^|[_-])(access|refresh|auth)?token(s)?$|secret|password|api[_-]?key|headers|environment|^env$/i;
+const HOST_SESSION_ID = /^[A-Za-z0-9._-]{1,128}$/;
+const SECRET_KEY =
+  /authorization|cookie|(^|[_-])(access|refresh|auth)?token(s)?$|secret|password|api[_-]?key|headers|environment|^env$/i;
 const ABSOLUTE_PATH = /(?:^|\s)\/(?:[^\s]*)/;
 const FILE_URI = /^file:\/\//i;
 const MAX_RUNTIME_EVENT_BYTES = 1_048_576;
@@ -61,20 +63,30 @@ const EVENT_SCHEMA_PAIRS = new Map(
   ]),
 );
 
-export function assertRuntimeEventPayloadSafe(value: Record<string, unknown>): void {
+export function assertRuntimeEventPayloadSafe(
+  value: Record<string, unknown>,
+): void {
   const visit = (current: unknown, key?: string): void => {
     if (key && SECRET_KEY.test(key)) {
-      throw new Error(`runtime event payload contains a secret-bearing key: ${key}`);
+      throw new Error(
+        `runtime event payload contains a secret-bearing key: ${key}`,
+      );
     }
-    if (typeof current === "string" && (FILE_URI.test(current) || ABSOLUTE_PATH.test(current))) {
+    if (
+      typeof current === "string" &&
+      (FILE_URI.test(current) || ABSOLUTE_PATH.test(current))
+    ) {
       throw new Error("runtime event payload contains a host filesystem path");
     }
     if (Array.isArray(current)) {
       current.forEach((entry) => visit(entry));
+
       return;
     }
     if (current && typeof current === "object") {
-      Object.entries(current).forEach(([entryKey, entry]) => visit(entry, entryKey));
+      Object.entries(current).forEach(([entryKey, entry]) =>
+        visit(entry, entryKey),
+      );
     }
   };
 
@@ -87,6 +99,7 @@ function encodedByteLength(value: unknown): number {
 
 function normalizeJsonValue(value: unknown): JsonValue {
   const serialized = JSON.stringify(value);
+
   if (serialized === undefined) {
     throw new Error("runtime event payload is not JSON serializable");
   }
@@ -94,7 +107,10 @@ function normalizeJsonValue(value: unknown): JsonValue {
   return JSON.parse(serialized) as JsonValue;
 }
 
-function assertJsonValue(value: unknown, depth: number): asserts value is JsonValue {
+function assertJsonValue(
+  value: unknown,
+  depth: number,
+): asserts value is JsonValue {
   if (depth > MAX_RUNTIME_EVENT_DEPTH) {
     throw new Error("runtime event payload exceeds maximum depth");
   }
@@ -103,12 +119,14 @@ function assertJsonValue(value: unknown, depth: number): asserts value is JsonVa
     if (!Number.isFinite(value)) {
       throw new Error("runtime event payload contains a non-finite number");
     }
+
     return;
   }
   if (typeof value === "string") {
     if (encodedByteLength(value) > MAX_RUNTIME_EVENT_STRING_BYTES) {
       throw new Error("runtime event payload string exceeds maximum bytes");
     }
+
     return;
   }
   if (Array.isArray(value)) {
@@ -116,12 +134,18 @@ function assertJsonValue(value: unknown, depth: number): asserts value is JsonVa
       throw new Error("runtime event payload array exceeds maximum items");
     }
     value.forEach((entry) => assertJsonValue(entry, depth + 1));
+
     return;
   }
-  if (!value || typeof value !== "object" || Object.getPrototypeOf(value) !== Object.prototype) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Object.getPrototypeOf(value) !== Object.prototype
+  ) {
     throw new Error("runtime event payload must contain plain JSON values");
   }
   const entries = Object.entries(value);
+
   if (entries.length > MAX_RUNTIME_EVENT_KEYS) {
     throw new Error("runtime event payload object exceeds maximum keys");
   }
@@ -142,6 +166,7 @@ function redactJsonValue(value: JsonValue): JsonValue {
         .map(([key, entry]) => [key, redactJsonValue(entry)]),
     );
   }
+
   return value;
 }
 
@@ -152,11 +177,17 @@ export function redactRuntimeEventPayload(
   value: unknown,
 ): Record<string, JsonValue> {
   const normalized = normalizeJsonValue(value);
+
   assertJsonValue(normalized, 0);
-  if (!normalized || Array.isArray(normalized) || typeof normalized !== "object") {
+  if (
+    !normalized ||
+    Array.isArray(normalized) ||
+    typeof normalized !== "object"
+  ) {
     throw new Error("runtime event payload must be an object");
   }
   const redacted = redactJsonValue(normalized) as Record<string, JsonValue>;
+
   if (encodedByteLength(redacted) > MAX_RUNTIME_EVENT_BYTES) {
     throw new Error("runtime event payload exceeds maximum encoded bytes");
   }
@@ -172,15 +203,18 @@ export const RuntimeEventEnvelopeSchema = z
     hostKey: z.string().regex(HOST_KEY),
     hostBootId: z.string().uuid(),
     streamId: z.string().uuid(),
-    sequence: z.string().regex(SEQUENCE).refine(
-      (value) =>
-        SEQUENCE.test(value) && BigInt(value) <= 9_223_372_036_854_775_807n,
-      "sequence exceeds signed BIGINT",
-    ),
+    sequence: z
+      .string()
+      .regex(SEQUENCE)
+      .refine(
+        (value) =>
+          SEQUENCE.test(value) && BigInt(value) <= 9_223_372_036_854_775_807n,
+        "sequence exceeds signed BIGINT",
+      ),
     runId: z.string().min(1).max(128),
     assignmentId: z.string().uuid(),
     assignmentEpoch: z.number().int().min(1).max(2_147_483_647),
-    hostSessionId: z.string().uuid().nullable(),
+    hostSessionId: z.string().regex(HOST_SESSION_ID).nullable(),
     eventType: z.enum(RUNTIME_EVENT_TYPES),
     occurredAt: z.string().datetime({ offset: true }),
     payloadSchema: z.enum(RUNTIME_EVENT_PAYLOAD_SCHEMAS),
@@ -201,7 +235,10 @@ export const RuntimeEventEnvelopeSchema = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["payload"],
-        message: error instanceof Error ? error.message : "unsafe runtime event payload",
+        message:
+          error instanceof Error
+            ? error.message
+            : "unsafe runtime event payload",
       });
     }
     if (
@@ -221,11 +258,14 @@ export type RuntimeEventEnvelope = z.infer<typeof RuntimeEventEnvelopeSchema>;
 export const RuntimeEventAckSchema = z
   .object({
     streamId: z.string().uuid(),
-    throughSequence: z.string().regex(SEQUENCE).refine(
-      (value) =>
-        SEQUENCE.test(value) && BigInt(value) <= 9_223_372_036_854_775_807n,
-      "throughSequence exceeds signed BIGINT",
-    ),
+    throughSequence: z
+      .string()
+      .regex(SEQUENCE)
+      .refine(
+        (value) =>
+          SEQUENCE.test(value) && BigInt(value) <= 9_223_372_036_854_775_807n,
+        "throughSequence exceeds signed BIGINT",
+      ),
   })
   .strict();
 

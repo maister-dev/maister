@@ -70,7 +70,8 @@ export async function seedRun(
     contextMounts: input.contextMounts ?? null,
     rootRunId: input.rootRunId ?? null,
     workspaceMode: input.workspaceMode ?? null,
-    executionDataPlaneMode: input.executionDataPlaneMode ?? "canonical_events_v1",
+    executionDataPlaneMode:
+      input.executionDataPlaneMode ?? "canonical_events_v1",
   });
 
   return runId;

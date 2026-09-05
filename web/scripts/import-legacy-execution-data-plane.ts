@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { lstat, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
 import pino from "pino";
@@ -276,6 +276,89 @@ function runtimeFilePath(input: {
   return target;
 }
 
+function runtimeRunDirectory(input: {
+  root: string;
+  ownerSlug: string;
+  runId: string;
+}): string {
+  const root = path.resolve(input.root);
+  const target = path.resolve(
+    root,
+    ".maister",
+    input.ownerSlug,
+    "runs",
+    input.runId,
+  );
+  if (!target.startsWith(`${root}${path.sep}`)) {
+    throw new LegacyImportError(
+      "legacy runtime directory is outside the configured import root",
+      "runtime_objects",
+      "source_outside_root",
+    );
+  }
+
+  return target;
+}
+
+function isManagerOwnedLegacyFile(relativePath: string): boolean {
+  if (relativePath.includes(path.sep)) return false;
+  return (
+    relativePath === "run.events.jsonl" ||
+    relativePath === "cost.jsonl" ||
+    relativePath === "run.json" ||
+    relativePath === "needs-input.json" ||
+    relativePath === "flow-assistant-actions.jsonl" ||
+    /^input-[A-Za-z0-9._-]+\.json$/.test(relativePath) ||
+    /^node-start-[A-Za-z0-9._-]+\.json$/.test(relativePath) ||
+    /^output-[A-Za-z0-9._-]+\.json$/.test(relativePath)
+  );
+}
+
+async function auditLegacyRuntimeObjects(runDirectory: string): Promise<{
+  fingerprint: string;
+  checkedEntries: number;
+}> {
+  const pending = [runDirectory];
+  const manifest: string[] = [];
+  const unpreserved: string[] = [];
+
+  while (pending.length > 0) {
+    const directory = pending.pop();
+    if (!directory) throw new Error("legacy runtime audit directory disappeared");
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const absolute = path.join(directory, entry.name);
+      const relative = path.relative(runDirectory, absolute);
+      if (entry.isDirectory()) {
+        manifest.push(`directory:${relative}`);
+        pending.push(absolute);
+        continue;
+      }
+      const metadata = await lstat(absolute);
+      const kind = metadata.isFile() ? "file" : metadata.isSymbolicLink() ? "symlink" : "other";
+      manifest.push(`${kind}:${relative}:${metadata.size}`);
+      if (!metadata.isFile() || !isManagerOwnedLegacyFile(relative)) {
+        unpreserved.push(relative);
+      }
+    }
+  }
+
+  manifest.sort();
+  unpreserved.sort();
+  const fingerprint = sha256(`runtime-object-audit-v1\n${manifest.join("\n")}`);
+  if (unpreserved.length > 0) {
+    throw new LegacyImportError(
+      `legacy run has ${unpreserved.length} unpreserved host runtime object(s)`,
+      "runtime_objects",
+      "runtime_object_unpreserved",
+      `entries:${unpreserved.length}`,
+      fingerprint,
+    );
+  }
+
+  return { fingerprint, checkedEntries: manifest.length };
+}
+
 async function readRequiredFile(
   filePath: string,
   sourceKind: "events" | "cost",
@@ -463,6 +546,12 @@ async function importRun(input: {
       "owner_missing",
     );
   }
+  const runDirectory = runtimeRunDirectory({
+    root: input.root,
+    ownerSlug: input.run.ownerSlug,
+    runId: input.run.id,
+  });
+  const runtimeObjectAudit = await auditLegacyRuntimeObjects(runDirectory);
   const eventsContents = await readRequiredFile(
     runtimeFilePath({
       root: input.root,
@@ -548,16 +637,27 @@ async function importRun(input: {
     if (requiredKinds.every((kind) => complete.has(kind))) {
       const priorEvents = priorImports.rows.find((row) => row.sourceKind === "events");
       const priorCost = priorImports.rows.find((row) => row.sourceKind === "cost");
-      if (
-        priorEvents?.fingerprint !== eventFingerprint ||
-        priorCost?.fingerprint !== costFingerprint
-      ) {
+      const priorRuntimeObjects = priorImports.rows.find(
+        (row) => row.sourceKind === "runtime_objects",
+      );
+      const changedSource =
+        priorEvents?.fingerprint !== eventFingerprint
+          ? { kind: "events" as const, fingerprint: eventFingerprint }
+          : priorCost?.fingerprint !== costFingerprint
+            ? { kind: "cost" as const, fingerprint: costFingerprint }
+            : priorRuntimeObjects?.fingerprint !== runtimeObjectAudit.fingerprint
+              ? {
+                  kind: "runtime_objects" as const,
+                  fingerprint: runtimeObjectAudit.fingerprint,
+                }
+              : null;
+      if (changedSource) {
         throw new LegacyImportError(
           "completed legacy import source fingerprint changed",
-          "events",
+          changedSource.kind,
           "source_fingerprint_changed",
           null,
-          eventFingerprint,
+          changedSource.fingerprint,
         );
       }
       await input.client.query("COMMIT");
@@ -660,8 +760,8 @@ async function importRun(input: {
       runId: input.run.id,
       sourceKind: "runtime_objects",
       state: "complete",
-      fingerprint: "catalog-query:no-file-locators",
-      lastSourcePosition: "catalog-verified",
+      fingerprint: runtimeObjectAudit.fingerprint,
+      lastSourcePosition: `entries:${runtimeObjectAudit.checkedEntries}`,
       importedCount: 0,
       error: null,
     });

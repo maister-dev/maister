@@ -45,7 +45,6 @@ beforeAll(async () => {
     repoPath: "/repos/sweep-cost-app",
     maisterYamlPath: "/repos/sweep-cost-app/maister.yaml",
   });
-
 }, 180_000);
 
 afterAll(async () => {
@@ -129,7 +128,10 @@ async function seedRollup(
   });
 }
 
-async function recordCanonicalUsage(runId: string, input: number): Promise<void> {
+async function recordCanonicalUsage(
+  runId: string,
+  input: number,
+): Promise<void> {
   await db.insert(schema.executionEvents).values({
     id: randomUUID(),
     source: "manager",

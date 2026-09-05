@@ -6,7 +6,10 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { executionEvents, runs } = schemaModule as unknown as Record<string, any>;
+const { executionEvents, runs } = schemaModule as unknown as Record<
+  string,
+  any
+>;
 
 // FR-A2/A3: a live availableCommands entry, names AS-EMITTED by the adapter
 // (codex bakes `$`; claude bare / `mcp:`). The composer maps to canonical refs.
@@ -114,10 +117,14 @@ export async function readScratchAvailableCommands(
     .from(runs)
     .where(eq(runs.id, runId))
     .limit(1);
+
   if (!runRows[0]) return [];
 
   const events = await db
-    .select({ eventType: executionEvents.eventType, payload: executionEvents.payload })
+    .select({
+      eventType: executionEvents.eventType,
+      payload: executionEvents.payload,
+    })
     .from(executionEvents)
     .where(
       and(
@@ -127,10 +134,15 @@ export async function readScratchAvailableCommands(
       ),
     )
     .orderBy(asc(executionEvents.runSequence));
+
   return extractLatestAvailableCommands(
     events
-      .map((event: { eventType: string; payload: Record<string, unknown> | null }) =>
-        JSON.stringify({ type: event.eventType, ...(event.payload ?? {}) }),
+      .map(
+        (event: {
+          eventType: string;
+          payload: Record<string, unknown> | null;
+        }) =>
+          JSON.stringify({ type: event.eventType, ...(event.payload ?? {}) }),
       )
       .join("\n"),
   );

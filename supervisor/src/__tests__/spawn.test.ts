@@ -1,6 +1,5 @@
 import type { SessionEvent, StartSessionRequest } from "../types";
 
-import { EventEmitter } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -11,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { SESSION_EVENT_CHANNEL } from "../registry";
 import { spawnSession } from "../spawn";
+
 import { directoryWorkspace, HANDLE } from "./_fixtures/workspace";
 
 const FIXTURE_PATH = resolve(
@@ -59,9 +59,14 @@ describe("spawnSession", () => {
       preArgs: [FIXTURE_PATH, "--lines", "3"],
     });
     const events: SessionEvent[] = [];
-    emitter.on(SESSION_EVENT_CHANNEL, (event: SessionEvent) => events.push(event));
 
-    await new Promise<void>((resolvePromise) => child.once("exit", resolvePromise));
+    emitter.on(SESSION_EVENT_CHANNEL, (event: SessionEvent) =>
+      events.push(event),
+    );
+
+    await new Promise<void>((resolvePromise) =>
+      child.once("exit", resolvePromise),
+    );
     await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 25));
 
     expect(events.map((event) => event.monotonicId)).toEqual([1, 2, 3]);
@@ -85,7 +90,9 @@ describe("spawnSession", () => {
       preArgs: [FIXTURE_PATH, "--lines", "0"],
     });
 
-    await new Promise<void>((resolvePromise) => child.once("exit", resolvePromise));
+    await new Promise<void>((resolvePromise) =>
+      child.once("exit", resolvePromise),
+    );
 
     await expect(
       import("node:fs/promises").then(({ access }) =>

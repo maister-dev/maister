@@ -150,7 +150,9 @@ export function PackageSourceModal({
         ? await sendJson("/api/admin/package-sources", "POST", {
             url,
             kind,
-            ...(kind === "git" && trimmedBase ? { baseBranch: trimmedBase } : {}),
+            ...(kind === "git" && trimmedBase
+              ? { baseBranch: trimmedBase }
+              : {}),
             ...(note ? { note } : {}),
             enabled,
           })

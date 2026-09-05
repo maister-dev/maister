@@ -6,12 +6,12 @@
 // a matching model emits none. Asserted against the host's durable outbox,
 // which is the only execution-event replay source in Stage B.
 import type { RunnerLaunch } from "../types";
+import type { RuntimeEventEnvelope } from "../runtime-events";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { modelCatalogCache } from "../model-catalog/cache";
 import { draftFromRunner } from "../model-catalog/harvest";
-import type { RuntimeEventEnvelope } from "../runtime-events";
 
 import {
   bootHost,
@@ -117,9 +117,7 @@ describe("T5.3 — configured model application + advisory", () => {
     });
     // The run was NOT failed — the session spawned successfully (201) and the
     // event is a session.update, not session.crashed.
-    const terminal = events.find(
-      (e) => e.type === "session.crashed",
-    );
+    const terminal = events.find((e) => e.type === "session.crashed");
 
     expect(terminal).toBeUndefined();
   });
@@ -185,9 +183,7 @@ describe("T3.2 — resumed-session model application + harvest (codex)", () => {
       observedModelId: "glm-5.1",
       channel: "set_session_model",
     });
-    expect(
-      events.find((e) => e.type === "session.crashed"),
-    ).toBeUndefined();
+    expect(events.find((e) => e.type === "session.crashed")).toBeUndefined();
 
     // Passive harvest of ResumeSessionResponse.models into the shared cache.
     const harvested = modelCatalogCache.get(draftFromRunner(codexRunner));

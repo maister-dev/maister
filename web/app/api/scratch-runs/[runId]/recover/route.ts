@@ -4,6 +4,8 @@ import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { RunnerSnapshot } from "@/lib/acp-runners/resolve";
 
+import { join } from "node:path";
+
 import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
@@ -40,6 +42,7 @@ import {
   isFencedError,
   localHost,
   mintPlacement,
+  publishCapabilityBundle,
   releaseAssignmentForRun,
 } from "@/lib/execution-host";
 
@@ -359,9 +362,11 @@ export async function POST(
     // listing only diagnoses whether that already-associated host session is
     // still live; it must never discover a session for this run by scanning.
     let liveSessionIds = new Set<string>();
+
     if (hostSessionId) {
       try {
         const activeExecution = await hosts.executionFor(runId);
+
         liveSessionIds = liveScratchHostSessionIds(
           await activeExecution.admin.listSessions(),
         );
@@ -456,12 +461,25 @@ export async function POST(
     let session: Awaited<ReturnType<typeof execution.client.createSession>>;
 
     try {
+      const capabilityBundle = profile?.materializedPath
+        ? await publishCapabilityBundle({
+            client: execution.client,
+            runId,
+            sourceId: "scratch-session",
+            profileLogicalName: "scratch-capability-profile.json",
+            profilePath: join(profile.materializedPath, "profile.json"),
+            instructionsLogicalName: "scratch-capability-instructions.md",
+            instructionsPath: join(profile.materializedPath, "instructions.md"),
+          })
+        : undefined;
+
       session = await execution.client.createSession({
         stepId: scratchStepId(),
         executor,
         runner: runnerSupervisorInput({ snapshot: runnerSnapshot }),
         resumeSessionId: acpSessionId,
-        capabilityProfilePath: profile?.materializedPath ?? undefined,
+        capabilityProfileObjectId: capabilityBundle?.profileObjectId,
+        capabilityInstructionsObjectId: capabilityBundle?.instructionsObjectId,
         adapterLaunch: mergeRunnerAdapterLaunch(
           runnerSnapshot,
           profile?.adapterLaunch ?? undefined,

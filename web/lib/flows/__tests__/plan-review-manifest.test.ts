@@ -40,13 +40,11 @@ function manifest(engineMin = "3.1.0"): Record<string, unknown> {
             {
               id: "plan-document",
               kind: "plan",
-              path: "plan.md",
               current: true,
             },
             {
               id: "plan-review",
               kind: "plan",
-              path: "plan-review.json",
               current: true,
             },
           ],
@@ -143,11 +141,10 @@ describe("Plan-review manifest contract", () => {
       action: { prompt: "Write the immutable plan artifacts." },
       output: {
         produces: [
-          { id: "plan-document", kind: "plan", path: "plan.md", current: true },
+          { id: "plan-document", kind: "plan", current: true },
           {
             id: "plan-review",
             kind: "plan",
-            path: "plan-review.json",
             current: true,
           },
         ],

@@ -34,17 +34,12 @@ function entries(
   }));
 }
 
-const HOST_RUNTIME_DIRECT = [] as const;
-
 const MANAGER_FLOW_DIRECT = [
-  "lib/flows/graph/default-artifacts.ts",
   "lib/flows/graph/node-output.ts",
-  "lib/flows/graph/plan-review-artifact.ts",
   "lib/flows/graph/runner-graph.ts",
   "lib/runs/hook-trip.ts",
   "lib/runs/keepalive-sweeper.ts",
   "lib/runs/node-interrupt.ts",
-  "lib/scratch-runs/service.ts",
   "lib/services/runs.ts",
   "lib/atomic.ts",
   "lib/config.ts",
@@ -79,6 +74,7 @@ const MANAGER_REPOSITORY_DIRECT = [
   "lib/capabilities/materialize.ts",
   "lib/capabilities/settings-ownership.ts",
   "lib/execution-host/adoption.ts",
+  "lib/execution-host/capability-profile.ts",
   "lib/flows/graph/artifact-content.ts",
   "lib/flows/graph/mutation-check.ts",
   "lib/flows/graph/workspace-checkpoint.ts",

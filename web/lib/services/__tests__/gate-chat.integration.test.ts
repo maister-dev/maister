@@ -42,6 +42,7 @@ import {
   type SupervisorEvent,
 } from "@/lib/execution-host";
 import { type Db as ExecutionDb } from "@/lib/execution-host/db";
+import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
 import { captureCheckpoint } from "@/lib/flows/graph/workspace-checkpoint";
 import { resolveDirtyWorktree } from "@/lib/runs/dirty-resolution";
 import {
@@ -1051,35 +1052,10 @@ describe("sendGateChatTurn — deferred-release + live-path idempotency (ADR-078
     const { runId, hitlId } = await seedChatPause();
     const api = await scriptHost({ runId });
 
-    let consumerReleased = false;
-
     api.setLiveRunId(runId);
     api.fake.setPromptBehavior(async () => {
       throw new MaisterError("ACP_PROTOCOL", "supervisor refused the prompt");
     });
-    // Ends ONLY when the service aborts the deferred. If the prompt-failure
-    // path forgot to release it, `await consumer` would hang and time out.
-    api.fake.transport.streamSession = async function* (
-      _sid: string,
-      opts?: { signal?: AbortSignal },
-    ) {
-      const signal = opts?.signal;
-
-      try {
-        await new Promise<void>((resolve) => {
-          if (signal?.aborted) {
-            resolve();
-
-            return;
-          }
-
-          signal?.addEventListener("abort", () => resolve(), { once: true });
-        });
-      } finally {
-        consumerReleased = true;
-      }
-    };
-
     await expect(
       sendGateChatTurn({
         runId,
@@ -1090,7 +1066,7 @@ describe("sendGateChatTurn — deferred-release + live-path idempotency (ADR-078
     ).rejects.toMatchObject({ code: "ACP_PROTOCOL" });
 
     expect(api.fake.callsOf("sendPrompt")).toHaveLength(1);
-    expect(consumerReleased).toBe(true);
+    expect(runEventWakeBus.waiterCount(runId)).toBe(0);
 
     // The user turn persisted before the side-effect; no agent row after.
     const rows = await chatRows(hitlId);

@@ -9,10 +9,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
-import {
-  evalErrorKey,
-  evalRequest,
-} from "@/components/evaluations/api-error";
+import { evalErrorKey, evalRequest } from "@/components/evaluations/api-error";
 import { useFeedback } from "@/components/feedback/feedback-provider";
 import { useModalFocusTrap } from "@/components/feedback/use-modal-focus-trap";
 

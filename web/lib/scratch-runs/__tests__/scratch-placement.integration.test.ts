@@ -352,11 +352,11 @@ describe("scratch run placement (ADR-166 Q1–Q3)", () => {
       { params: Promise.resolve({ runId }) },
     );
 
-    expect(response.status).toBe(202);
-    await expect(response.json()).resolves.toMatchObject({
+    await expect(response.clone().json()).resolves.toMatchObject({
       runId,
       action: "recover",
     });
+    expect(response.status).toBe(202);
 
     const creates = fake.callsOf("createSession");
 

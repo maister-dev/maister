@@ -13,6 +13,8 @@ export type {
   ExecutionHostTransport,
   HostHealth,
   InputDeliveryResult,
+  RuntimeObjectMetadata,
+  RuntimeObjectOutputBinding,
   InputPayload,
   WorkspaceRecord,
 } from "./contracts";
@@ -94,6 +96,7 @@ export type {
   RegistrationObservation,
   RegistrationResult,
 } from "./registrar";
+export { ensureLocalExecutionDataPlane } from "./event-plane";
 export { hostForAssignment, localHost } from "./resolver";
 export {
   defaultTransport,
@@ -154,6 +157,22 @@ export {
   projectCanonicalRuntimeObjects,
   projectPendingCanonicalRuntimeObjects,
 } from "./events/runtime-object-projector";
+export {
+  RUNTIME_OBJECT_RETENTION_INTERVAL_MS,
+  startRuntimeObjectRetentionTimer,
+  stopRuntimeObjectRetentionTimer,
+  sweepExpiredRuntimeObjects,
+} from "./runtime-object-retention";
+export type { RuntimeObjectRetentionSummary } from "./runtime-object-retention";
+export {
+  deterministicRuntimeObjectId,
+  deterministicRuntimeOutputObjectId,
+  openRuntimeObjectContent,
+  publishRuntimeObject,
+  readRuntimeObjectContent,
+} from "./runtime-objects";
+export { publishCapabilityBundle } from "./capability-profile";
+export type { PublishedCapabilityBundle } from "./capability-profile";
 export {
   DRIVER_OWNED_RUN_STATUSES,
   findActiveLocalHost,

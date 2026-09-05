@@ -76,25 +76,17 @@ export async function register(): Promise<void> {
     "ensureLocalExecutionHost",
     "recoverExecutionCommands",
     "projectCanonicalPromptCommands",
+    "sweepExpiredRuntimeObjects",
     "reportLegacyActiveRuns",
   ] as const) {
     try {
       const hosts = await import("@/lib/execution-host");
 
       if (step === "ensureLocalExecutionHost") {
-        const registration = await hosts.ensureLocalExecutionHost();
-        if (registration.status === "registered") {
-          const { getDb } = await import("@/lib/db/client");
-
-          // B1: launch the durable event consumer before recovery work. It
-          // owns no domain transition itself; all replay/ACK state is first
-          // committed to Postgres, so a web restart merely reconnects.
-          hosts.startRuntimeEventConsumer({
-            db: getDb(),
-            executionHostId: registration.host.id,
-            transport: hosts.defaultTransport(),
-          });
-        }
+        // B1/B4: registration and consumer startup are one idempotent
+        // activation. Lazy resolution and the system sweep invoke the same
+        // operation, closing the web-first rolling-upgrade window.
+        await hosts.ensureLocalExecutionDataPlane();
       } else if (step === "recoverExecutionCommands") {
         await hosts.recoverExecutionCommands({ graceMs: 0 });
       } else if (step === "projectCanonicalPromptCommands") {
@@ -105,6 +97,8 @@ export async function register(): Promise<void> {
           hosts.projectPendingCanonicalSessionLifecycle({ db: getDb() }),
           hosts.projectPendingCanonicalRuntimeObjects({ db: getDb() }),
         ]);
+      } else if (step === "sweepExpiredRuntimeObjects") {
+        await hosts.sweepExpiredRuntimeObjects();
       } else {
         // ADR-166 D9: pre-Stage-A runs still executing without a placement
         // are reported here; the reconcile sweep classifies the Running ones.
@@ -117,6 +111,18 @@ export async function register(): Promise<void> {
         err instanceof Error ? err.message : String(err),
       );
     }
+  }
+
+  try {
+    const hosts = await import("@/lib/execution-host");
+
+    hosts.startRuntimeObjectRetentionTimer();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(
+      "[instrumentation] runtime-object retention timer failed to start:",
+      err instanceof Error ? err.message : String(err),
+    );
   }
 
   try {

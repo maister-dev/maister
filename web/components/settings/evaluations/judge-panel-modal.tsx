@@ -9,10 +9,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
-import {
-  evalErrorKey,
-  evalRequest,
-} from "@/components/evaluations/api-error";
+import { evalErrorKey, evalRequest } from "@/components/evaluations/api-error";
 import { useFeedback } from "@/components/feedback/feedback-provider";
 import { useModalFocusTrap } from "@/components/feedback/use-modal-focus-trap";
 
@@ -52,7 +49,11 @@ const DEFAULT_POLICY = {
   randomizeOrder: true,
 };
 
-export function JudgePanelModal({ mode, panel, onClose }: Props): ReactElement | null {
+export function JudgePanelModal({
+  mode,
+  panel,
+  onClose,
+}: Props): ReactElement | null {
   const t = useTranslations("settingsEvaluations");
   const tErr = useTranslations("evaluationsErrors");
   const feedback = useFeedback();
@@ -92,9 +93,7 @@ export function JudgePanelModal({ mode, panel, onClose }: Props): ReactElement |
     const value = policy[field];
     const bounds = NUMERIC_BOUNDS[field];
 
-    return (
-      !Number.isInteger(value) || value < bounds.min || value > bounds.max
-    );
+    return !Number.isInteger(value) || value < bounds.min || value > bounds.max;
   }
 
   const boundsInvalid = NUMERIC_FIELDS.some(fieldInvalid);
@@ -134,17 +133,14 @@ export function JudgePanelModal({ mode, panel, onClose }: Props): ReactElement |
           body: JSON.stringify(body),
         });
       } else {
-        await evalRequest(
-          `/api/admin/evaluations/judge-panels/${panel!.id}`,
-          {
-            method: "PATCH",
-            headers: {
-              "content-type": "application/json",
-              "if-match": String(panel!.revision),
-            },
-            body: JSON.stringify(body),
+        await evalRequest(`/api/admin/evaluations/judge-panels/${panel!.id}`, {
+          method: "PATCH",
+          headers: {
+            "content-type": "application/json",
+            "if-match": String(panel!.revision),
           },
-        );
+          body: JSON.stringify(body),
+        });
       }
 
       feedback.success({

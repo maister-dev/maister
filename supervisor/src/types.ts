@@ -42,15 +42,6 @@ const runnerEnvValueSchema = z
     "env ref value must be env:NAME",
   );
 
-const worktreePathSchema = z
-  .string()
-  .min(1)
-  .max(4096)
-  .refine(
-    (p) => p.startsWith("/") && !p.split("/").includes(".."),
-    "worktreePath must be an absolute path with no '..' segments",
-  );
-
 // Adoption paths (the workspace path, `repoPath`, and every context-mount
 // path) are shape-validated only here: the workspace registry owns the D7
 // rule tokens (`relative_path`, `parent_segment`, …) so a refusal always
@@ -60,6 +51,54 @@ const adoptPathSchema = z
   .min(1)
   .max(4096)
   .refine((p) => !p.includes("\0"), "path must not contain null byte");
+
+const RuntimeObjectOutputBindingSchema = z
+  .object({
+    objectId: z.string().uuid(),
+    kind: z.enum([
+      "session_log",
+      "raw_transcript",
+      "cost_diagnostic",
+      "checkpoint",
+      "attachment",
+      "capability_profile",
+      "agent_memory_snapshot",
+      "node_result",
+      "evidence",
+      "generated_artifact",
+      "plan_review",
+      "diagnostic",
+    ]),
+    logicalName: z
+      .string()
+      .min(1)
+      .max(255)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, "logicalName must be a basename"),
+    mimeType: z.string().min(1).max(255),
+    generation: z.number().int().min(1),
+    retentionClass: z.enum(["run", "delivery", "ephemeral"]),
+    expiresAt: z.string().datetime({ offset: true }).nullable().optional(),
+    envName: z.enum([
+      "MAISTER_OUTPUT_FILE",
+      "MAISTER_PLAN_DOCUMENT_FILE",
+      "MAISTER_PLAN_REVIEW_FILE",
+    ]),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if ((value.retentionClass === "ephemeral") !== Boolean(value.expiresAt)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["expiresAt"],
+        message:
+          "expiresAt must be present exactly for ephemeral runtime objects",
+      });
+    }
+  });
+
+export type RuntimeObjectOutputBinding = z.infer<
+  typeof RuntimeObjectOutputBindingSchema
+>;
 
 export const RunnerProviderSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("anthropic") }).strict(),
@@ -122,13 +161,31 @@ const launchArgSchema = z
   .max(1024)
   .refine((v) => !v.includes("\0"), "launch arg must not contain null byte");
 
+const SERVER_DERIVED_RUNTIME_ENV_NAMES = new Set([
+  "MAISTER_CAPABILITY_PROFILE_PATH",
+  "MAISTER_CAPABILITY_INSTRUCTIONS_PATH",
+  "MAISTER_OUTPUT_FILE",
+  "MAISTER_PLAN_DOCUMENT_FILE",
+  "MAISTER_PLAN_REVIEW_FILE",
+]);
+
 export const AdapterLaunchSchema = z
   .object({
     env: z.record(z.string().min(1), z.string()).optional(),
     preArgs: z.array(launchArgSchema).max(32).optional(),
     postArgs: z.array(launchArgSchema).max(32).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    for (const name of Object.keys(value.env ?? {})) {
+      if (!SERVER_DERIVED_RUNTIME_ENV_NAMES.has(name)) continue;
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${name} is server-derived from an opaque runtime object`,
+        path: ["env", name],
+      });
+    }
+  });
 
 // M27/T-C4: transport-tagged. stdio uses command/args/envKeys; sse/http use
 // url/headerKeys. Header/env VALUES are resolved supervisor-side from the NAME
@@ -192,7 +249,7 @@ export type SessionEnforcementProfile = z.infer<
 
 // ADR-157: ONE read-only sibling-repo context mount the web tier already
 // materialized for this session. A first-class request field (the
-// `capabilityProfilePath` precedent) — never an `executor.env` overload, which
+// opaque capability-input precedent) — never an `executor.env` overload, which
 // is the provider-secret channel. The supervisor derives
 // `MAISTER_CONTEXT_REPOS` + the prompt preamble from it and denies write-class
 // tool calls resolving under `path`; it never resolves a slug or a ref, and
@@ -247,6 +304,8 @@ export const LEGACY_SESSION_PATH_FIELDS = [
   "repoPath",
   "confineRoot",
   "contextMounts",
+  "capabilityProfilePath",
+  "capabilityInstructionsPath",
 ] as const;
 
 export function legacySessionPathField(payload: unknown): string | null {
@@ -293,9 +352,9 @@ export const StartSessionRequestSchema = z
       .max(128)
       .regex(SAFE_PATH_SEGMENT, safeSegmentMessage("resumeSessionId"))
       .optional(),
-    // The one residual path in the request: it MUST resolve inside the
-    // handle's path (WorkspaceRegistry.resolveForSession → `outside_workspace`).
-    capabilityProfilePath: worktreePathSchema.optional(),
+    capabilityProfileObjectId: z.string().uuid().optional(),
+    capabilityInstructionsObjectId: z.string().uuid().optional(),
+    outputObjects: z.array(RuntimeObjectOutputBindingSchema).max(32).optional(),
     adapterLaunch: AdapterLaunchSchema.optional(),
     mcpServers: z.array(McpServerInputSchema).max(64).optional(),
     // M34 (ADR-090 L1): session-scoped read-only — the requestPermission
@@ -398,6 +457,7 @@ export const RUNTIME_OBJECT_KINDS = [
   "checkpoint",
   "attachment",
   "capability_profile",
+  "capability_instructions",
   "agent_memory_snapshot",
   "node_result",
   "evidence",
@@ -418,7 +478,9 @@ const runtimeObjectLogicalNameSchema = z
   .min(1)
   .max(255)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, "logicalName must be a basename");
-const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/, "sha256 must be lowercase hex");
+const sha256Schema = z
+  .string()
+  .regex(/^[a-f0-9]{64}$/, "sha256 must be lowercase hex");
 
 export const ReserveRuntimeObjectPayloadSchema = z
   .object({
@@ -502,6 +564,7 @@ export const REASON_TOKENS = [
   "event_outbox_backpressure",
   "command_invariant_conflict",
   "command_in_progress",
+  "runtime_object_delete_failed",
   "runtime_object_missing",
   "runtime_object_range_invalid",
   "runtime_object_integrity_mismatch",
@@ -943,6 +1006,7 @@ export type SessionRecord = {
   // via hooksConfig — read-only is the mount's whole point) and the prompt
   // preamble. Absent/empty → both are inert.
   contextMounts?: ContextMount[];
+  runtimeOutputObjectIds?: string[];
   // ADR-157: the mount preamble is rendered onto the FIRST prompt of this
   // session only. A resume rebuilds this record, so a respawn re-grounds.
   contextMountPreambleSent?: boolean;

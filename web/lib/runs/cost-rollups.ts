@@ -322,6 +322,7 @@ export async function reconcileRunCostRollups(
     .orderBy(executionEvents.runSequence);
   const sourceLines = events.map((event) => {
     const payload = event.payload ?? {};
+
     return JSON.stringify({
       input_tokens: payload.inputTokens,
       output_tokens: payload.outputTokens,
@@ -345,10 +346,7 @@ export async function reconcileRunCostRollups(
   const nodeIdByAttemptId = new Map(
     attemptRows.map((attempt) => [attempt.id, attempt.nodeId] as const),
   );
-  const aggregation = aggregateCostJsonlLines(
-    sourceLines,
-    nodeIdByAttemptId,
-  );
+  const aggregation = aggregateCostJsonlLines(sourceLines, nodeIdByAttemptId);
   const sessionRows = await client
     .select({
       sessionName: runSessions.sessionName,

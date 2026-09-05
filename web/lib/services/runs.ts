@@ -95,10 +95,7 @@ import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { tryStartRun } from "@/lib/scheduler";
-import {
-  localHost,
-  mintPlacement,
-} from "@/lib/execution-host";
+import { localHost, mintPlacement } from "@/lib/execution-host";
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
 import { fetchProjectRemote, listProjectRemotes } from "@/lib/git-remotes";
 import {

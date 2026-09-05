@@ -36,7 +36,10 @@ import {
   releaseStaleAssignments,
 } from "@/lib/execution-host/recovery";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
-import { resetResolverForTests } from "@/lib/execution-host/resolver";
+import {
+  localHost,
+  resetResolverForTests,
+} from "@/lib/execution-host/resolver";
 import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
 import { runFlow } from "@/lib/flows/runner";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
@@ -126,6 +129,36 @@ async function diagnose(runId: string): Promise<string> {
       (await hitlRows(runId)).map((h) =>
         pick(h, ["id", "kind", "stepId", "respondedAt", "createdAt"]),
       ),
+    ),
+    await rows("assignments", async () =>
+      (
+        (await db
+          .select()
+          .from(schema.assignments)
+          .where(eq(schema.assignments.runId, runId))) as Array<
+          Record<string, any>
+        >
+      ).map((assignment) =>
+        pick(assignment, ["id", "hitlRequestId", "status", "cancelledAt"]),
+      ),
+    ),
+    await rows(
+      "assignment_events",
+      async () =>
+        (await db
+          .select({
+            assignmentId: schema.assignmentEvents.assignmentId,
+            eventKind: schema.assignmentEvents.eventKind,
+            payload: schema.assignmentEvents.payload,
+          })
+          .from(schema.assignmentEvents)
+          .innerJoin(
+            schema.assignments,
+            eq(schema.assignmentEvents.assignmentId, schema.assignments.id),
+          )
+          .where(eq(schema.assignments.runId, runId))) as Array<
+          Record<string, any>
+        >,
     ),
     await rows("run_sessions", async () =>
       pick(await sessionRow(runId), [
@@ -240,11 +273,13 @@ async function seedAgentRun(name: string, run: Record<string, unknown> = {}) {
     workspace: { worktreePath, parentRepoPath: repoPath },
     run,
   });
+  const placementHost = await localHost({ db });
 
   await db.transaction((tx) =>
     mintPlacement(tx as unknown as Db, {
       runId: seeded.runId,
       reason: "launch",
+      host: placementHost,
     }),
   );
 
@@ -345,11 +380,20 @@ describe("Stage A lifecycle regression (real supervisor)", () => {
     // 3. The operator's answer on an idle run resumes it: epoch 2 (`resume`)
     //    is minted inside the claim, the workspace handle is copied forward (no
     //    second adopt), the create resumes the prior ACP session.
-    const res = await respondToHitl(
-      { runId, hitlRequestId: hitl.id, body: { optionId: "allow" } },
-      actor,
-      { db, executionHosts: hosts },
-    );
+    let res: Awaited<ReturnType<typeof respondToHitl>>;
+
+    try {
+      res = await respondToHitl(
+        { runId, hitlRequestId: hitl.id, body: { optionId: "allow" } },
+        actor,
+        { db, executionHosts: hosts },
+      );
+    } catch (error) {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}\n${await diagnose(runId)}`,
+        { cause: error },
+      );
+    }
 
     expect(res.status).toBe(202);
     assignments = await assignmentsOf(runId);

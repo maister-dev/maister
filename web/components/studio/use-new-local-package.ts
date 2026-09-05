@@ -1,11 +1,12 @@
 "use client";
 
+import type { CreateFlowInput } from "@/lib/local-packages/create-flow-contract";
+
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
 import { readCreateFlowApiError } from "@/lib/local-packages/create-flow-api-error";
-import type { CreateFlowInput } from "@/lib/local-packages/create-flow-contract";
 
 // Shared "create a fresh local package" flow for the two studio list surfaces
 // (`/studio/packages` central list + `/studio/local` management list). Both POST

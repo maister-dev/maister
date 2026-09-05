@@ -1,5 +1,4 @@
 import { NextRequest } from "next/server";
-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MaisterError } from "@/lib/errors-core";
@@ -17,9 +16,8 @@ vi.mock("@/lib/authz", () => ({
   requireProjectAction: mocks.requireProjectAction,
 }));
 vi.mock("@/lib/api/project-route-helpers", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/lib/api/project-route-helpers")
-  >();
+  const actual =
+    await importOriginal<typeof import("@/lib/api/project-route-helpers")>();
 
   return { ...actual, resolveProject: mocks.resolveProject };
 });
@@ -117,7 +115,9 @@ describe("GET /api/projects/[slug]/automations", () => {
 describe("GET /api/projects/[slug]/automations/[kind]/[automationId]", () => {
   it("returns a typed detail only inside the resolved project", async () => {
     const response = await detail.GET(
-      request("http://x/api/projects/demo/automations/one_time_task_launch/automation-1"),
+      request(
+        "http://x/api/projects/demo/automations/one_time_task_launch/automation-1",
+      ),
       params(),
     );
 
@@ -134,7 +134,9 @@ describe("GET /api/projects/[slug]/automations/[kind]/[automationId]", () => {
     mocks.getProjectAutomationDetail.mockResolvedValue(null);
 
     const response = await detail.GET(
-      request("http://x/api/projects/demo/automations/one_time_task_launch/foreign"),
+      request(
+        "http://x/api/projects/demo/automations/one_time_task_launch/foreign",
+      ),
       params({ automationId: "foreign" }),
     );
 

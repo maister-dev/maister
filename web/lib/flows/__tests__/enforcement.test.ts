@@ -302,12 +302,14 @@ describe("evaluateNodeEnforcement — FROZEN truth table", () => {
       "claude",
     );
 
-    expect(refused.find((e: EnforcementEntry) => e.class === "skills")).toEqual({
-      class: "skills",
-      declared: "strict",
-      capability: "instructed",
-      verdict: "refused",
-    });
+    expect(refused.find((e: EnforcementEntry) => e.class === "skills")).toEqual(
+      {
+        class: "skills",
+        declared: "strict",
+        capability: "instructed",
+        verdict: "refused",
+      },
+    );
 
     // tools flipped to enforced → strict tools resolves to the enforced verdict.
     const enforced = evaluateNodeEnforcement(

@@ -21,10 +21,7 @@ import {
   commitImport,
   previewImport,
 } from "@/lib/local-packages/import";
-import {
-  assertHoldsLock,
-  withWorkingDirLock,
-} from "@/lib/local-packages/lock";
+import { assertHoldsLock, withWorkingDirLock } from "@/lib/local-packages/lock";
 import { getLocalPackage } from "@/lib/local-packages/service";
 
 const log = pino({

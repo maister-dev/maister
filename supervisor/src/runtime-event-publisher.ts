@@ -1,5 +1,4 @@
 import type { Logger } from "pino";
-
 import type { CostRecord } from "./cost";
 import type { AppendRuntimeEventInput, HostState } from "./host-state";
 import type { RuntimeObjectPublicMetadata } from "./runtime-objects";
@@ -16,15 +15,14 @@ function sessionEventPayload(
   record: SessionRecord,
   event: SessionEvent,
 ): Record<string, unknown> {
-  const {
-    type: _type,
-    sessionId: _sessionId,
-    monotonicId,
-    ...payload
-  } = event;
+  const payload = Object.fromEntries(
+    Object.entries(event).filter(
+      ([key]) => !["type", "sessionId", "monotonicId"].includes(key),
+    ),
+  );
 
   return {
-    sourceMonotonicId: monotonicId,
+    sourceMonotonicId: event.monotonicId,
     sessionName: record.sessionName,
     ...(record.nodeAttemptId ? { nodeAttemptId: record.nodeAttemptId } : {}),
     ...payload,
@@ -101,7 +99,9 @@ export class RuntimeEventPublisher {
         assignmentId: input.assignmentId,
         assignmentEpoch: input.assignmentEpoch,
         hostSessionId: null,
-        eventType: available ? "runtime_object.available" : "runtime_object.state",
+        eventType: available
+          ? "runtime_object.available"
+          : "runtime_object.state",
         occurredAt: this.now().toISOString(),
         payload: available
           ? {
@@ -114,12 +114,14 @@ export class RuntimeEventPublisher {
               generation: metadata.generation,
               retentionClass: metadata.retentionClass,
               state: metadata.state,
+              sealedAt: metadata.sealedAt,
               expiresAt: metadata.expiresAt,
             }
           : {
               objectId: metadata.objectId,
               generation: metadata.generation,
               state: metadata.state,
+              deletedAt: metadata.deletedAt,
             },
       },
     };

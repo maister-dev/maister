@@ -13,7 +13,10 @@ const flowIdSchema = z
   .trim()
   .min(1)
   .max(64)
-  .regex(/^[A-Za-z0-9._-]+$/, "Flow ID may contain letters, numbers, ., _ and -")
+  .regex(
+    /^[A-Za-z0-9._-]+$/,
+    "Flow ID may contain letters, numbers, ., _ and -",
+  )
   .refine(
     (id) => id !== "." && id !== ".." && !id.includes(".."),
     "Flow ID cannot contain a traversal segment",

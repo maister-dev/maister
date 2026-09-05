@@ -11,6 +11,7 @@ import type {
   SupervisorModelCatalog,
   SupervisorModelCatalogDraft,
   SupervisorSessionRecord,
+  SupervisorRuntimeOutputBinding,
 } from "@/lib/supervisor-client";
 import type { PlatformStatus } from "@/types/platform-status";
 import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
@@ -158,6 +159,8 @@ export type RuntimeObjectContent = {
   contentDigest: string | null;
 };
 
+export type RuntimeObjectOutputBinding = SupervisorRuntimeOutputBinding;
+
 // Content remains host-owned while the manager proxies a bounded response. A
 // browser payload route must forward this stream instead of materializing an
 // arbitrary runtime object in web-process memory.
@@ -176,9 +179,9 @@ export interface ExecutionHostTransport {
   health(opts?: { timeoutMs?: number }): Promise<HostHealth>;
   // Null means an older supervisor returned the sole bounded compatibility
   // signal (404); malformed documents are a typed wire failure, never legacy.
-  capabilities(
-    opts?: { timeoutMs?: number },
-  ): Promise<ExecutionHostDataPlaneCapabilities | null>;
+  capabilities(opts?: {
+    timeoutMs?: number;
+  }): Promise<ExecutionHostDataPlaneCapabilities | null>;
   // The host's adapter diagnostics (smoke evidence) — a read-only admin
   // surface like `health`, never fenced.
   diagnostics(opts?: {
@@ -198,9 +201,10 @@ export interface ExecutionHostTransport {
     sessionId: string,
     opts?: { lastEventId?: number; signal?: AbortSignal },
   ): AsyncGenerator<SupervisorEvent, void, void>;
-  streamRuntimeEvents(
-    opts?: { afterSequence?: string; signal?: AbortSignal },
-  ): AsyncGenerator<RuntimeEventEnvelope, void, void>;
+  streamRuntimeEvents(opts?: {
+    afterSequence?: string;
+    signal?: AbortSignal;
+  }): AsyncGenerator<RuntimeEventEnvelope, void, void>;
   acknowledgeRuntimeEvents(input: {
     streamId: string;
     throughSequence: string;

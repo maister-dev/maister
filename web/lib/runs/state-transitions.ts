@@ -857,6 +857,7 @@ export async function failResumedRun(
     { runId, to: "Failed", reason },
     "run-state transition — failed during resume",
   );
+
   return { ok: true };
 }
 
@@ -1149,6 +1150,7 @@ export async function markAbandoned(
   }
 
   log.info({ runId, to: "Abandoned" }, "run-state transition — abandoned");
+
   return { ok: true };
 }
 
@@ -1223,6 +1225,7 @@ export async function crashResumedRun(
     { runId, from: "NeedsInput", to: "Crashed", reason },
     "run-state transition — crashed during resume",
   );
+
   return { ok: true };
 }
 
@@ -1344,6 +1347,7 @@ export async function crashRunningRun(
     { runId, from: "Running", to: "Crashed", reason },
     "run-state transition — crashed (reconcile/GC)",
   );
+
   return { ok: true };
 }
 
@@ -1431,5 +1435,6 @@ export async function crashWaitingOnChildren(
     { runId, from: "WaitingOnChildren", to: "Crashed", reason },
     "run-state transition — orchestrator crashed (reconcile)",
   );
+
   return { ok: true };
 }

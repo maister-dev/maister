@@ -303,6 +303,7 @@ export async function runResolverSession(args: {
       stepId: SYNC_STEP_ID,
       prompt: args.prompt,
     });
+
     promptResult = await client.waitForPrompt(promptHandle);
   } catch (err) {
     consumer.abort.abort();

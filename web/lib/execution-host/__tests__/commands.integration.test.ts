@@ -3,11 +3,14 @@
 
 import type { Db } from "@/lib/execution-host/db";
 
+import { randomUUID } from "node:crypto";
+
 import { eq } from "drizzle-orm";
 import pino from "pino";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 import { mintAssignment } from "@/lib/execution-host/assignments";
 import {
   claimDelivering,
@@ -18,6 +21,12 @@ import {
   markFenced,
   markSucceeded,
 } from "@/lib/execution-host/commands";
+import { UNKNOWN_OUTCOME_DETAIL } from "@/lib/execution-host/contracts";
+import {
+  startAsyncPrompt,
+  waitForPromptCompletion,
+} from "@/lib/execution-host/deliverer";
+import { buildEnvelope } from "@/lib/execution-host/ledger";
 import {
   seedLocalHost,
   seedProject,
@@ -164,7 +173,18 @@ describe("insertCommand", () => {
         env: { ZAI_API_KEY: SENTINEL_TOKEN },
         apiKey: SENTINEL_TOKEN,
       },
-      capabilityProfilePath: SENTINEL_PATH,
+      capabilityProfileObjectId: "f7f4ea9b-598b-4f97-97b5-5ca52d46056e",
+      outputObjects: [
+        {
+          objectId: "75cb17b1-ea05-45af-9209-15f181b10925",
+          kind: "plan_review",
+          logicalName: "plan-review.json",
+          mimeType: "application/json",
+          generation: 1,
+          retentionClass: "run",
+          envName: "MAISTER_PLAN_REVIEW_FILE",
+        },
+      ],
       adapterLaunch: {
         env: { MAISTER_CAPABILITY_PROFILE: SENTINEL_PATH },
         preArgs: ["--x"],
@@ -263,6 +283,8 @@ describe("insertCommand", () => {
       },
       mcpServerCount: 2,
       hasCapabilityProfile: true,
+      hasCapabilityInstructions: false,
+      runtimeOutputCount: 1,
       hasAdapterLaunch: true,
       hasHooksConfig: true,
       hasEnforcementProfile: false,
@@ -453,5 +475,137 @@ describe("CAS transitions", () => {
       "delivering",
       "queued",
     ]);
+  });
+});
+
+describe("prompt receipt reconciliation", () => {
+  it("keeps a terminal admission receipt as evidence until its canonical event arrives", async () => {
+    const { runId, assignment } = await seedAssignment();
+    const row = await insertCommand(db, {
+      runId,
+      assignmentId: assignment.id,
+      hostId,
+      assignmentEpoch: assignment.epoch,
+      kind: "session.prompt",
+      maxAttempts: 3,
+      payload: { stepId: "plan", prompt: "lost admission acknowledgement" },
+    });
+    const terminalBody = { stopReason: "end_turn", meta: null };
+    const handle = await startAsyncPrompt({
+      db,
+      command: row,
+      envelope: buildEnvelope({
+        commandId: row.id,
+        kind: "session.prompt",
+        hostKey: "eh_test",
+        assignmentId: assignment.id,
+        assignmentEpoch: assignment.epoch,
+        runId,
+        payload: row.payload,
+      }),
+      start: async () => {
+        throw new MaisterError("EXECUTOR_UNAVAILABLE", "admission ACK lost", {
+          details: { transport: UNKNOWN_OUTCOME_DETAIL },
+        });
+      },
+      lookupReceipt: async () => ({
+        commandId: row.id,
+        runId,
+        kind: "session.prompt",
+        assignmentEpoch: assignment.epoch,
+        phase: "completed",
+        httpStatus: 200,
+        body: terminalBody,
+        receivedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        eventId: randomUUID(),
+        inflight: false,
+      }),
+      sleep: async () => {},
+    });
+
+    expect(handle).toEqual({ commandId: row.id });
+    expect(await readCommand(row.id)).toMatchObject({
+      state: "accepted",
+      result: null,
+      lastError: null,
+    });
+  });
+
+  it("keeps canonical event authority after release, then accepts its agreeing terminal receipt", async () => {
+    const { runId, assignment } = await seedAssignment();
+    const row = await insertCommand(db, {
+      runId,
+      assignmentId: assignment.id,
+      hostId,
+      assignmentEpoch: assignment.epoch,
+      kind: "session.prompt",
+      maxAttempts: 3,
+      payload: { stepId: "plan", prompt: "checkpoint race" },
+    });
+
+    await claimDelivering(db, row.id, 0);
+    await markAccepted(db, row.id, 1);
+    await testDatabase.pool.query(
+      `update execution_assignments
+       set state = 'released', ended_at = now(), released_reason = 'checkpointed'
+       where id = $1`,
+      [assignment.id],
+    );
+
+    const terminalBody = { stopReason: "cancelled" };
+    const terminalReceipt = {
+      commandId: row.id,
+      runId,
+      kind: "session.prompt" as const,
+      assignmentEpoch: assignment.epoch,
+      phase: "completed" as const,
+      httpStatus: 200,
+      body: terminalBody,
+      receivedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      eventId: null,
+      inflight: false,
+    };
+    const abort = new AbortController();
+    const abortTimer = setTimeout(() => abort.abort(), 25);
+
+    await expect(
+      waitForPromptCompletion({
+        db,
+        handle: { commandId: row.id },
+        signal: abort.signal,
+        assignmentIsCurrent: async () => false,
+        lookupReceipt: async () => terminalReceipt,
+      }),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "prompt_wait_aborted" },
+    });
+    clearTimeout(abortTimer);
+    expect(await readCommand(row.id)).toMatchObject({
+      state: "accepted",
+      result: null,
+      lastError: null,
+    });
+
+    await markSucceeded(db, row.id, null, terminalBody);
+    const publishedReceipt = {
+      ...terminalReceipt,
+      eventId: randomUUID(),
+    };
+    const result = await waitForPromptCompletion({
+      db,
+      handle: { commandId: row.id },
+      assignmentIsCurrent: async () => false,
+      lookupReceipt: async () => publishedReceipt,
+    });
+
+    expect(result).toEqual(terminalBody);
+    expect(await readCommand(row.id)).toMatchObject({
+      state: "succeeded",
+      result: terminalBody,
+      lastError: null,
+    });
   });
 });

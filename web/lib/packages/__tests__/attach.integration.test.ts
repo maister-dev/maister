@@ -670,6 +670,7 @@ nodes:
       expect(attached).not.toBeNull();
       if (!attached) throw new Error("trusted package attachment is missing");
       const memberFlowId = attached.memberFlows[0]?.flowRowId;
+
       if (!memberFlowId) throw new Error("trusted package Flow is missing");
 
       const [before] = await db

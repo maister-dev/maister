@@ -337,6 +337,7 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
   it("execution-object locator → 200 uses the manager-authorized opaque content contract", async () => {
     const objectId = "d0b23d15-a3de-49e8-a73f-5e9e96c847cb";
     const body = new TextEncoder().encode("host-owned artifact");
+
     vi.mocked(openRuntimeObjectContent).mockResolvedValue({
       object: {
         id: objectId,
@@ -379,6 +380,7 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
 
   it("execution-object locator rejects an invalid range without exposing host details", async () => {
     const objectId = "d0b23d15-a3de-49e8-a73f-5e9e96c847cb";
+
     seedArtifact({
       id: "art-object-invalid-range",
       locator: { kind: "execution-object", objectId },
@@ -399,6 +401,7 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
   it("execution-object locator forwards a single valid range to the manager contract", async () => {
     const objectId = "d0b23d15-a3de-49e8-a73f-5e9e96c847cb";
     const body = new TextEncoder().encode("owned");
+
     vi.mocked(openRuntimeObjectContent).mockResolvedValue({
       object: { id: objectId, mimeType: "text/plain" },
       content: {

@@ -98,16 +98,16 @@ describe("findPendingMigrations", () => {
     `);
 
     expect(tables.rows.map((row) => row.table_name)).toEqual([
-      'scheduled_task_launch_attempts',
-      'scheduled_task_launch_events',
-      'scheduled_task_launches',
+      "scheduled_task_launch_attempts",
+      "scheduled_task_launch_events",
+      "scheduled_task_launches",
     ]);
     expect(constraints.rows.map((row) => row.conname)).toEqual([
-      'runs_scheduled_launch_id_unique',
-      'scheduled_task_launches_state_shape_check',
+      "runs_scheduled_launch_id_unique",
+      "scheduled_task_launches_state_shape_check",
     ]);
     expect(indexes.rows.map((row) => row.indexname)).toEqual([
-      'scheduled_task_launch_attempts_launch_live_uq',
+      "scheduled_task_launch_attempts_launch_live_uq",
     ]);
   });
 });

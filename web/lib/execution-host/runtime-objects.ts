@@ -1,9 +1,5 @@
 import "server-only";
 
-import { randomUUID, createHash } from "node:crypto";
-
-import { and, eq } from "drizzle-orm";
-
 import type { Db } from "./db";
 import type {
   ExecutionHostTransport,
@@ -12,18 +8,16 @@ import type {
   RuntimeObjectMetadata,
 } from "./contracts";
 import type { BoundClient } from "./client";
-import type {
-  RuntimeObjectKind,
-  RuntimeObjectRetentionClass,
-} from "./types";
+import type { RuntimeObjectKind, RuntimeObjectRetentionClass } from "./types";
 import type { ExecutionHost, ExecutionRuntimeObject } from "@/lib/db/schema";
 
+import { randomUUID, createHash } from "node:crypto";
+
+import { and, eq } from "drizzle-orm";
+
 import { defaultTransport } from "./default-transport";
-import {
-  executionHosts,
-  executionRuntimeObjects,
-  runs,
-} from "@/lib/db/schema";
+
+import { executionHosts, executionRuntimeObjects, runs } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
 export const MAX_RUNTIME_OBJECT_BYTES = 26_214_400;
@@ -44,6 +38,60 @@ export type RuntimeObjectWithRun = {
 export type RuntimeObjectTransportResolver = (
   host: ExecutionHost,
 ) => Promise<ExecutionHostTransport>;
+
+function integrityError(runId: string, message: string): MaisterError {
+  return new MaisterError("CONFLICT", message, {
+    details: { reason: "runtime_object_integrity_mismatch", runId },
+  });
+}
+
+export function assertRuntimeObjectContentHeaders(input: {
+  runId: string;
+  sizeBytes: bigint;
+  range?: { start: number; end?: number };
+  contentLength: number | null;
+  contentRange: string | null;
+}): void {
+  const total = Number(input.sizeBytes);
+
+  if (!Number.isSafeInteger(total) || total < 0) {
+    throw integrityError(
+      input.runId,
+      "runtime object catalogue size is invalid",
+    );
+  }
+  if (!input.range) {
+    if (input.contentRange !== null || input.contentLength !== total) {
+      throw integrityError(
+        input.runId,
+        "runtime object response length differs from its manager catalogue",
+      );
+    }
+
+    return;
+  }
+
+  const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(input.contentRange ?? "");
+  const start = match ? Number(match[1]) : NaN;
+  const end = match ? Number(match[2]) : NaN;
+  const responseTotal = match ? Number(match[3]) : NaN;
+  const expectedEnd = input.range.end ?? total - 1;
+
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(end) ||
+    !Number.isSafeInteger(responseTotal) ||
+    start !== input.range.start ||
+    end !== expectedEnd ||
+    responseTotal !== total ||
+    input.contentLength !== end - start + 1
+  ) {
+    throw integrityError(
+      input.runId,
+      "runtime object range metadata differs from its manager catalogue",
+    );
+  }
+}
 
 // A retried manager operation must address the same host object. The ID binds
 // that operation to the exact bytes without leaking a manager-selected path.
@@ -71,6 +119,18 @@ export function deterministicRuntimeObjectId(input: {
   const hex = bytes.toString("hex");
 
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export function deterministicRuntimeOutputObjectId(input: {
+  runId: string;
+  sourceKey: string;
+}): string {
+  return deterministicRuntimeObjectId({
+    ...input,
+    sha256: createHash("sha256")
+      .update(`runtime-output-allocation:${input.sourceKey}`, "utf8")
+      .digest("hex"),
+  });
 }
 
 // The manager never chooses a host path. It reserves an opaque object ID through
@@ -130,6 +190,7 @@ export async function publishRuntimeObject(input: {
     bytes: input.bytes,
     sha256,
   });
+
   return { objectId, metadata };
 }
 
@@ -162,6 +223,7 @@ export async function getRuntimeObjectForRun(input: {
       ),
     )
     .limit(1);
+
   return rows[0] ?? null;
 }
 
@@ -177,7 +239,9 @@ export async function readRuntimeObjectContent(input: {
   return {
     object: opened.object,
     content: {
-      bytes: new Uint8Array(await new Response(opened.content.body).arrayBuffer()),
+      bytes: new Uint8Array(
+        await new Response(opened.content.body).arrayBuffer(),
+      ),
       contentRange: opened.content.contentRange,
       contentDigest: opened.content.contentDigest,
     },
@@ -190,31 +254,58 @@ export async function openRuntimeObjectContent(input: {
   objectId: string;
   range?: { start: number; end?: number };
   transportForHost?: RuntimeObjectTransportResolver;
-}): Promise<{ object: ExecutionRuntimeObject; content: RuntimeObjectContentStream }> {
+}): Promise<{
+  object: ExecutionRuntimeObject;
+  content: RuntimeObjectContentStream;
+}> {
   const loaded = await getRuntimeObjectForRun(input);
+
   if (!loaded) {
-    throw new MaisterError("PRECONDITION", "runtime object was not found for this run", {
-      details: { reason: "runtime_object_missing", runId: input.runId },
-    });
+    throw new MaisterError(
+      "PRECONDITION",
+      "runtime object was not found for this run",
+      {
+        details: { reason: "runtime_object_missing", runId: input.runId },
+      },
+    );
   }
   if (loaded.object.state !== "available" || !loaded.object.sha256) {
-    throw new MaisterError("PRECONDITION", "runtime object content is not available", {
-      details: { reason: "runtime_object_missing", runId: input.runId },
-    });
+    throw new MaisterError(
+      "PRECONDITION",
+      "runtime object content is not available",
+      {
+        details: { reason: "runtime_object_missing", runId: input.runId },
+      },
+    );
   }
   const transport = input.transportForHost
     ? await input.transportForHost(loaded.executionHost)
     : defaultRuntimeObjectTransport(loaded.executionHost);
-  const content = await transport.openRuntimeObjectContent(
-    input.objectId,
-    { range: input.range },
-  );
+  const content = await transport.openRuntimeObjectContent(input.objectId, {
+    range: input.range,
+  });
   const expectedDigest = `sha-256=:${Buffer.from(loaded.object.sha256, "hex").toString("base64")}:`;
+
   if (content.contentDigest !== expectedDigest) {
-    throw new MaisterError("CONFLICT", "runtime object content digest differs from its manager catalogue", {
-      details: { reason: "runtime_object_integrity_mismatch", runId: input.runId },
-    });
+    throw integrityError(
+      input.runId,
+      "runtime object content digest differs from its manager catalogue",
+    );
   }
+  if (loaded.object.sizeBytes === null) {
+    throw integrityError(
+      input.runId,
+      "available runtime object has no manager catalogue size",
+    );
+  }
+  assertRuntimeObjectContentHeaders({
+    runId: input.runId,
+    sizeBytes: loaded.object.sizeBytes,
+    range: input.range,
+    contentLength: content.contentLength,
+    contentRange: content.contentRange,
+  });
+
   return { object: loaded.object, content };
 }
 
@@ -233,5 +324,6 @@ function defaultRuntimeObjectTransport(
       },
     );
   }
+
   return defaultTransport();
 }

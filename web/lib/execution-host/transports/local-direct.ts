@@ -61,7 +61,8 @@ function toRuntimeObjectMetadata(
   return {
     ...metadata,
     kind: metadata.kind as RuntimeObjectMetadata["kind"],
-    retentionClass: metadata.retentionClass as RuntimeObjectMetadata["retentionClass"],
+    retentionClass:
+      metadata.retentionClass as RuntimeObjectMetadata["retentionClass"],
     state: metadata.state as RuntimeObjectMetadata["state"],
   };
 }
@@ -135,9 +136,13 @@ export function createLocalDirectTransport(): ExecutionHostTransport {
     },
     async getRuntimeObject(objectId) {
       const metadata = await wire.getRuntimeObject(objectId);
+
       return metadata ? toRuntimeObjectMetadata(metadata) : null;
     },
-    async getRuntimeObjectContent(objectId, opts): Promise<RuntimeObjectContent> {
+    async getRuntimeObjectContent(
+      objectId,
+      opts,
+    ): Promise<RuntimeObjectContent> {
       return wire.getRuntimeObjectContent(objectId, opts);
     },
     async openRuntimeObjectContent(objectId, opts) {

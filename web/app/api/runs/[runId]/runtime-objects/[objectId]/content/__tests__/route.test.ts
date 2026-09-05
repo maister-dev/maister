@@ -46,14 +46,19 @@ async function invoke(headers?: HeadersInit): Promise<Response> {
       { method: "GET", headers },
     ),
   );
-  return GET(req, { params: Promise.resolve({ runId: RUN_ID, objectId: OBJECT_ID }) });
+
+  return GET(req, {
+    params: Promise.resolve({ runId: RUN_ID, objectId: OBJECT_ID }),
+  });
 }
 
 beforeEach(() => {
   vi.mocked(requireActiveSession).mockReset();
   vi.mocked(requireActiveSession).mockResolvedValue({ id: "user-1" } as never);
   vi.mocked(requireProjectAction).mockReset();
-  vi.mocked(requireProjectAction).mockResolvedValue({ role: "viewer" } as never);
+  vi.mocked(requireProjectAction).mockResolvedValue({
+    role: "viewer",
+  } as never);
   vi.mocked(getRuntimeObjectForRun).mockReset();
   vi.mocked(getRuntimeObjectForRun).mockResolvedValue(loadedObject() as never);
   vi.mocked(openRuntimeObjectContent).mockReset();
@@ -128,7 +133,9 @@ describe("GET /api/runs/[runId]/runtime-objects/[objectId]/content", () => {
   });
 
   it("hides a projectless local-package assistant object from another user", async () => {
-    vi.mocked(requireActiveSession).mockResolvedValueOnce({ id: "user-2" } as never);
+    vi.mocked(requireActiveSession).mockResolvedValueOnce({
+      id: "user-2",
+    } as never);
     vi.mocked(getRuntimeObjectForRun).mockResolvedValueOnce({
       ...loadedObject(),
       projectId: null,

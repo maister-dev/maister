@@ -48,7 +48,6 @@ beforeAll(async () => {
     repoPath: "/repos/consumer-cost-app",
     maisterYamlPath: "/repos/consumer-cost-app/maister.yaml",
   });
-
 }, 180_000);
 
 afterAll(async () => {
@@ -102,7 +101,10 @@ async function seedSession(runId: string, slug = "claude"): Promise<void> {
   });
 }
 
-async function recordCanonicalUsage(runId: string, input: number): Promise<void> {
+async function recordCanonicalUsage(
+  runId: string,
+  input: number,
+): Promise<void> {
   await db.insert(schema.executionEvents).values({
     id: randomUUID(),
     source: "manager",

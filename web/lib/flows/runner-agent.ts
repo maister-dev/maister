@@ -22,12 +22,18 @@ import {
   systemCloseActiveAssignmentsForRun,
 } from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
-import { hitlRequests, nodeAttempts, runs } from "@/lib/db/schema";
+import {
+  executionAssignments,
+  hitlRequests,
+  nodeAttempts,
+  runs,
+} from "@/lib/db/schema";
 import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
 import { markCheckpointedFromExit } from "@/lib/runs/state-transitions";
 import {
   createExecutionHosts,
   isFencedError,
+  publishCapabilityBundle,
   type BoundClient,
   type CreateSessionResult,
   type ExecutionHosts,
@@ -35,6 +41,7 @@ import {
   type HostSessionId,
   type PlacementReason,
   type PromptResult,
+  type RuntimeObjectOutputBinding,
   type SupervisorEvent,
   type SupervisorExecutorInput,
   type SupervisorRunnerInput,
@@ -95,6 +102,8 @@ export type RunAgentStepCtx = {
   sessionName?: string;
   context: FlowContext;
   capabilityProfilePath?: string;
+  capabilityInstructionsPath?: string;
+  outputObjects?: RuntimeObjectOutputBinding[];
   adapterLaunch?: ScratchAdapterLaunch;
   mcpServers?: AgentMcpServer[];
   profileDigest?: string;
@@ -131,6 +140,19 @@ export async function bindExecution(
   opts: { assignmentId?: string | null; reason?: PlacementReason } = {},
 ): Promise<AgentExecution> {
   return hosts.executionFor(runId, opts);
+}
+
+async function assignmentIsCurrent(
+  db: DbClientLike,
+  execution: AgentExecution,
+): Promise<boolean> {
+  const rows = await db
+    .select({ state: executionAssignments.state })
+    .from(executionAssignments)
+    .where(eq(executionAssignments.id, execution.client.assignment.id))
+    .limit(1);
+
+  return rows[0]?.state === "active";
 }
 
 type PermissionDeliverer = (
@@ -793,7 +815,12 @@ export async function runAgentStep(
   step: AgentStepLike,
   ctx: RunAgentStepCtx,
   execution?: AgentExecution,
-): Promise<StepResult & { acpSessionId?: string; sessionFallback?: boolean }> {
+): Promise<
+  StepResult & {
+    acpSessionId?: string;
+    sessionFallback?: boolean;
+  }
+> {
   let promptTemplate = step.prompt;
 
   // M34 (ADR-089): a catalog-agent binding substitutes the inline prompt —
@@ -930,7 +957,12 @@ async function runNewSession(
   ctx: RunAgentStepCtx,
   execution: AgentExecution,
   resolvedPrompt: string,
-): Promise<StepResult & { acpSessionId?: string; sessionFallback?: boolean }> {
+): Promise<
+  StepResult & {
+    acpSessionId?: string;
+    sessionFallback?: boolean;
+  }
+> {
   const startedAt = Date.now();
   const { client } = execution;
   let session: (CreateSessionResult & { hostSessionId: HostSessionId }) | null =
@@ -940,6 +972,19 @@ async function runNewSession(
   let fenced = false;
 
   try {
+    const capabilityBundle =
+      ctx.capabilityProfilePath && ctx.capabilityInstructionsPath
+        ? await publishCapabilityBundle({
+            client,
+            runId: ctx.runId,
+            sourceId: ctx.nodeAttemptId ?? ctx.stepId,
+            profileLogicalName: `${ctx.stepId}-capability-profile.json`,
+            profilePath: ctx.capabilityProfilePath,
+            instructionsLogicalName: `${ctx.stepId}-capability-instructions.md`,
+            instructionsPath: ctx.capabilityInstructionsPath,
+          })
+        : undefined;
+
     // ADR-166 D7: the handle form — the worktree, repo root, and context
     // mounts are adopted ONCE per assignment (`runs.context_mounts` rides the
     // adopt payload); the session body carries no path.
@@ -949,7 +994,9 @@ async function runNewSession(
       sessionName: ctx.sessionName,
       executor: executorToSupervisorInput(ctx.executor),
       runner: ctx.runner,
-      capabilityProfilePath: ctx.capabilityProfilePath,
+      capabilityProfileObjectId: capabilityBundle?.profileObjectId,
+      capabilityInstructionsObjectId: capabilityBundle?.instructionsObjectId,
+      outputObjects: ctx.outputObjects,
       adapterLaunch: ctx.adapterLaunch,
       mcpServers: ctx.mcpServers,
       autoApprovePermissions: ctx.autoApprovePermissions,
@@ -1009,11 +1056,13 @@ async function runNewSession(
         // with a failure ("ACP connection closed") that is NOT the step's — the
         // consumer sees `session.exited{reason:"checkpoint"}` on the stream.
         // Give that signal a moment to land, then treat the turn as paused.
-        if (
-          isFencedError(err) ||
-          !(await consumer.checkpointObserved(10_000))
-        ) {
-          throw err;
+        if (await assignmentIsCurrent(ctx.db ?? getDb(), execution)) {
+          if (
+            isFencedError(err) ||
+            !(await consumer.checkpointObserved(10_000))
+          ) {
+            throw err;
+          }
         }
         log.info(
           {
@@ -1028,6 +1077,38 @@ async function runNewSession(
     } finally {
       consumer.abort.abort();
       await consumer.done;
+    }
+
+    // A checkpoint command may commit and release this assignment before its
+    // terminal host event reaches the canonical stream. That event is then
+    // correctly retained as stale and cannot drive projections, so the old
+    // session consumer cannot rely on seeing `session.exited{checkpoint}`.
+    // Re-check manager ownership after every terminal prompt result: a driver
+    // whose assignment is no longer active must yield before it can mark the
+    // parked node Failed or overwrite the newer resume generation.
+    if (!(await assignmentIsCurrent(ctx.db ?? getDb(), execution))) {
+      fenced = true;
+      log.warn(
+        {
+          runId: ctx.runId,
+          stepId: ctx.stepId,
+          assignmentId: client.assignment.id,
+          assignmentEpoch: client.assignment.epoch,
+          hostSessionId: session.hostSessionId,
+        },
+        "driver-yielded after prompt completion",
+      );
+
+      return {
+        ok: false,
+        fenced: true,
+        stdout: consumer.snapshot(),
+        vars: {},
+        durationMs: Date.now() - startedAt,
+        errorCode: "CONFLICT" as const,
+        acpSessionId: session.acpSessionId,
+        sessionFallback,
+      };
     }
 
     // Permission-persistence failure overrides the adapter's stopReason:

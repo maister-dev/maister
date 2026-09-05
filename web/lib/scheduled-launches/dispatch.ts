@@ -1,14 +1,16 @@
 import "server-only";
 
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { ScheduledLaunchReservation } from "@/lib/scheduled-launches/types";
+import type * as schema from "@/lib/db/schema";
+
 import path from "node:path";
 
 import { and, eq, lte, or, sql } from "drizzle-orm";
-import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import {
-  projects,
   runs,
   scheduledTaskLaunchAttempts,
   scheduledTaskLaunchEvents,
@@ -21,7 +23,6 @@ import {
   dispatchClaimedScheduledLaunch,
   SCHEDULED_LAUNCH_CLAIM_LEASE_MS,
 } from "@/lib/scheduled-launches/service";
-import type { ScheduledLaunchReservation } from "@/lib/scheduled-launches/types";
 import {
   listWorktrees,
   localBranchHead,
@@ -30,7 +31,6 @@ import {
   statusPorcelain,
 } from "@/lib/worktree";
 import { readWorktreeProvenanceMetadata } from "@/lib/worktree-provenance";
-import type * as schema from "@/lib/db/schema";
 
 const log = pino({
   name: "scheduled-launch-dispatcher",
@@ -157,8 +157,12 @@ async function reclaimOneStaleDispatch(input: {
       row.scheduledForAt instanceof Date
         ? row.scheduledForAt
         : new Date(row.scheduledForAt);
+
     if (Number.isNaN(scheduledForAt.getTime())) {
-      throw new MaisterError("PRECONDITION", "scheduled launch contains an invalid timestamp");
+      throw new MaisterError(
+        "PRECONDITION",
+        "scheduled launch contains an invalid timestamp",
+      );
     }
 
     const linkedRuns = await tx
@@ -222,6 +226,7 @@ async function reclaimOneStaleDispatch(input: {
     }
 
     const claimFence = row.claimFence + 1;
+
     await tx
       .update(scheduledTaskLaunchAttempts)
       .set({ state: "Reserved", claimFence, updatedAt: input.now })
@@ -365,12 +370,18 @@ async function cleanVerifiedReservationWorktree(input: {
   now: Date;
 }): Promise<"absent" | "cleaned" | "unsafe"> {
   const { reservation, projectRepoPath, projectSlug } = input.stale;
-  const expectedPath = path.join(worktreesRoot(), projectSlug, reservation.runId);
+  const expectedPath = path.join(
+    worktreesRoot(),
+    projectSlug,
+    reservation.runId,
+  );
 
   if (reservation.worktreePath !== expectedPath) return "unsafe";
 
   const worktrees = await listWorktrees(projectRepoPath);
-  const worktree = worktrees.find((item) => item.path === reservation.worktreePath);
+  const worktree = worktrees.find(
+    (item) => item.path === reservation.worktreePath,
+  );
 
   if (!worktree) {
     const branchHead = await localBranchHead({
@@ -391,17 +402,20 @@ async function cleanVerifiedReservationWorktree(input: {
   const provenance = await readWorktreeProvenanceMetadata(
     reservation.worktreePath,
   );
+
   if (provenance.runId !== reservation.runId) return "unsafe";
 
   const porcelain = await statusPorcelain({
     worktreePath: reservation.worktreePath,
   });
+
   if (porcelain.trim() !== "") return "unsafe";
 
   const branchHead = await localBranchHead({
     projectRepoPath,
     branch: reservation.branch,
   });
+
   if (!branchHead || !input.stale.launchRequest.baseCommit) return "unsafe";
   if (branchHead !== input.stale.launchRequest.baseCommit) return "unsafe";
 
@@ -466,12 +480,17 @@ export async function dispatchDueScheduledLaunches(input?: {
 
   for (let index = 0; index < batchSize; index += 1) {
     const stale = await reclaimOneStaleDispatch({ db, now });
+
     if (!stale) break;
 
     summary.recovered += 1;
     const state = await dispatchRecoveredStale({ db, stale, now });
+
     if (state === "Launched") summary.launched += 1;
-    if (state === "Launched" && now.getTime() > stale.scheduledForAt.getTime()) {
+    if (
+      state === "Launched" &&
+      now.getTime() > stale.scheduledForAt.getTime()
+    ) {
       summary.late += 1;
     }
     if (state === "RetryWaiting") summary.retried += 1;
@@ -479,6 +498,7 @@ export async function dispatchDueScheduledLaunches(input?: {
   }
 
   const due = await listDueScheduledLaunches({ db, now, limit: batchSize });
+
   summary.truncated = due.truncated;
   summary.scanned = due.rows.length;
 
@@ -491,6 +511,7 @@ export async function dispatchDueScheduledLaunches(input?: {
         now,
         db,
       });
+
       summary.claimed += 1;
       const result = await dispatchClaimedScheduledLaunch({
         projectId: candidate.projectId,
@@ -515,7 +536,11 @@ export async function dispatchDueScheduledLaunches(input?: {
 
       summary.failed += 1;
       log.warn(
-        { err: error, scheduledLaunchId: candidate.id, projectId: candidate.projectId },
+        {
+          err: error,
+          scheduledLaunchId: candidate.id,
+          projectId: candidate.projectId,
+        },
         "scheduled launch dispatch failed",
       );
     }

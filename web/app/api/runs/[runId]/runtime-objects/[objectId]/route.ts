@@ -16,11 +16,13 @@ function errorResponse(error: unknown): NextResponse {
     if (error.details?.reason === "runtime_object_not_found") {
       return NextResponse.json({ message: "not found" }, { status: 404 });
     }
+
     return NextResponse.json(
       { code: error.code, message: error.message },
       { status: httpStatusForAuthz(error.code) ?? 409 },
     );
   }
+
   return NextResponse.json(
     { code: "CRASH", message: "internal error" },
     { status: 500 },
@@ -34,6 +36,7 @@ export async function GET(
   try {
     const sessionUser = await requireActiveSession();
     const { runId, objectId } = await params;
+
     if (!z.string().uuid().safeParse(objectId).success) {
       return NextResponse.json({ message: "not found" }, { status: 404 });
     }
@@ -42,11 +45,13 @@ export async function GET(
       runId,
       objectId,
     });
+
     if (!loaded) {
       return NextResponse.json({ message: "not found" }, { status: 404 });
     }
     await authorizeRuntimeObjectActor(loaded, sessionUser.id);
     const { object } = loaded;
+
     return NextResponse.json({
       objectId: object.id,
       kind: object.kind,

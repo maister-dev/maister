@@ -47,7 +47,6 @@ beforeAll(async () => {
     repoPath: "/repos/cost-app",
     maisterYamlPath: "/repos/cost-app/maister.yaml",
   });
-
 }, 180_000);
 
 afterAll(async () => {
@@ -76,7 +75,8 @@ async function seedRun(opts: {
     projectId,
     status: "Done",
     runKind: opts.runKind ?? "flow",
-    executionDataPlaneMode: opts.executionDataPlaneMode ?? "canonical_events_v1",
+    executionDataPlaneMode:
+      opts.executionDataPlaneMode ?? "canonical_events_v1",
     flowVersion: "v1.0.0",
     startedAt: new Date(),
     endedAt: new Date(),
@@ -120,7 +120,10 @@ type CostLine = {
   cache_creation_input_tokens?: number;
 };
 
-async function recordCanonicalUsage(runId: string, lines: CostLine[]): Promise<void> {
+async function recordCanonicalUsage(
+  runId: string,
+  lines: CostLine[],
+): Promise<void> {
   await db.insert(schema.executionEvents).values(
     lines.map((line, index) => ({
       id: randomUUID(),
@@ -159,7 +162,10 @@ async function readByRunner(
 
 describe("reconcileRunCostRollups — by_runner", () => {
   it("uses canonical usage events without reading cost.jsonl", async () => {
-    const runId = await seedRun({ executionDataPlaneMode: "canonical_events_v1" });
+    const runId = await seedRun({
+      executionDataPlaneMode: "canonical_events_v1",
+    });
+
     await seedSession({
       runId,
       sessionName: "default",

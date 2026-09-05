@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { Db } from "@/lib/execution-host/db";
+
 import { and, asc, desc, eq, gt, isNotNull } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
@@ -10,7 +12,12 @@ import {
   requireProjectRole,
 } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
+import {
+  executionEvents,
+  localPackages,
+  projects,
+  runs,
+} from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { keepaliveMs } from "@/lib/runs/keepalive-config";
 import {
@@ -19,12 +26,6 @@ import {
 } from "@/lib/runs/stream-options";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
 import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
-
-// FIXME(any): dual drizzle-orm peer-dep variants.
-const { localPackages, projects, runs, executionEvents } = schemaModule as unknown as Record<
-  string,
-  any
->;
 
 const log = pino({
   name: "api-runs-stream",
@@ -48,7 +49,7 @@ type RunLite = {
 };
 
 async function loadRunLite(runId: string): Promise<RunLite | null> {
-  const db = getDb() as any;
+  const db = getDb() as unknown as Db;
   const rows = await db
     .select({
       id: runs.id,
@@ -63,9 +64,10 @@ async function loadRunLite(runId: string): Promise<RunLite | null> {
     .leftJoin(localPackages, eq(localPackages.id, runs.localPackageId))
     .where(eq(runs.id, runId));
 
-  const row = rows[0];
+  const row: RunLite | undefined = rows[0];
 
   if (!row) return null;
+
   return {
     id: row.id,
     status: row.status,
@@ -79,7 +81,7 @@ async function loadRunLite(runId: string): Promise<RunLite | null> {
 async function refreshRunStatus(
   runId: string,
 ): Promise<{ status: string; currentStepId: string | null } | null> {
-  const db = getDb() as any;
+  const db = getDb() as unknown as Db;
   const rows = await db
     .select({ status: runs.status, currentStepId: runs.currentStepId })
     .from(runs)
@@ -110,21 +112,29 @@ function parseCanonicalLastEventId(req: NextRequest): bigint {
   const header = req.headers.get("last-event-id");
   const query = new URL(req.url).searchParams.get("lastEventId");
   const raw = header ?? query;
+
   if (!raw) return -1n;
   if (!/^(0|[1-9][0-9]{0,18})$/.test(raw)) {
     throw new Error("canonical run stream cursor must be a decimal sequence");
   }
+
   return BigInt(raw);
 }
 
 async function latestCanonicalRunSequence(runId: string): Promise<bigint> {
-  const db = getDb() as any;
+  const db = getDb() as unknown as Db;
   const rows = await db
     .select({ runSequence: executionEvents.runSequence })
     .from(executionEvents)
-    .where(and(eq(executionEvents.runId, runId), isNotNull(executionEvents.runSequence)))
+    .where(
+      and(
+        eq(executionEvents.runId, runId),
+        isNotNull(executionEvents.runSequence),
+      ),
+    )
     .orderBy(desc(executionEvents.runSequence))
     .limit(1);
+
   return rows[0]?.runSequence ?? -1n;
 }
 
@@ -132,7 +142,8 @@ async function readCanonicalRunEvents(
   runId: string,
   afterSequence: bigint,
 ): Promise<Array<Record<string, unknown>>> {
-  const db = getDb() as any;
+  const db = getDb() as unknown as Db;
+
   return db
     .select({
       id: executionEvents.id,
@@ -154,7 +165,9 @@ async function readCanonicalRunEvents(
     .limit(500);
 }
 
-function canonicalBrowserEvent(event: Record<string, unknown>): Record<string, unknown> {
+function canonicalBrowserEvent(
+  event: Record<string, unknown>,
+): Record<string, unknown> {
   return {
     type: event.eventType,
     eventId: event.id,
@@ -194,22 +207,31 @@ function canonicalRunEventStream(input: {
 
       if (!input.replayEvents) {
         controller.enqueue(
-          encoder.encode(formatSyntheticSseEvent(JSON.stringify(streamReadyEvent()))),
+          encoder.encode(
+            formatSyntheticSseEvent(JSON.stringify(streamReadyEvent())),
+          ),
         );
       }
 
       try {
         while (!input.req.signal.aborted) {
           const events = await readCanonicalRunEvents(input.run.id, cursor);
+
           for (const event of events) {
             const sequence = event.runSequence;
+
             if (typeof sequence !== "bigint") {
-              throw new Error("canonical run event is missing a bigint run sequence");
+              throw new Error(
+                "canonical run event is missing a bigint run sequence",
+              );
             }
             cursor = sequence;
             controller.enqueue(
               encoder.encode(
-                formatSseEvent(sequence.toString(), JSON.stringify(canonicalBrowserEvent(event))),
+                formatSseEvent(
+                  sequence.toString(),
+                  JSON.stringify(canonicalBrowserEvent(event)),
+                ),
               ),
             );
             eventsSent += 1;
@@ -219,6 +241,7 @@ function canonicalRunEventStream(input: {
           if (Date.now() - lastStatusCheck >= STATUS_REFRESH_MS) {
             lastStatusCheck = Date.now();
             const status = await refreshRunStatus(input.run.id);
+
             if (!status || TERMINAL_RUN_STATUS.has(status.status)) break;
           }
           if (Date.now() - lastEventAt > maxQuietMs) {
@@ -243,7 +266,10 @@ function canonicalRunEventStream(input: {
         log.warn(
           {
             runId: input.run.id,
-            reason: error instanceof Error ? error.message : "canonical_stream_failure",
+            reason:
+              error instanceof Error
+                ? error.message
+                : "canonical_stream_failure",
           },
           "canonical-run-stream-error",
         );
@@ -261,6 +287,7 @@ function canonicalRunEventStream(input: {
       }
     },
   });
+
   return new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream",
@@ -342,6 +369,7 @@ export async function GET(
   );
 
   let replayCursor: bigint | null = null;
+
   if (replayEvents) {
     try {
       replayCursor = parseCanonicalLastEventId(req);
@@ -349,12 +377,16 @@ export async function GET(
       return NextResponse.json(
         {
           code: "PRECONDITION",
-          message: error instanceof Error ? error.message : "invalid canonical run stream cursor",
+          message:
+            error instanceof Error
+              ? error.message
+              : "invalid canonical run stream cursor",
         },
         { status: 400 },
       );
     }
   }
+
   return canonicalRunEventStream({
     req,
     run,

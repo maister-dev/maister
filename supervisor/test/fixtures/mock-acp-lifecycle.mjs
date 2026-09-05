@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
+import { writeFile } from "node:fs/promises";
 import { Readable, Writable } from "node:stream";
 
 import * as acp from "@agentclientprotocol/sdk";
@@ -14,6 +15,7 @@ let hangPrompt = false;
 let hangPermission = false;
 let exitDelayMs = 0;
 let emitUsage = false;
+const outputWrites = [];
 
 for (let i = 0; i < args.length; i += 1) {
   const arg = args[i];
@@ -36,6 +38,8 @@ for (let i = 0; i < args.length; i += 1) {
     exitDelayMs = Number.parseInt(args[++i], 10);
   } else if (arg === "--emit-usage") {
     emitUsage = true;
+  } else if (arg === "--write-env") {
+    outputWrites.push({ envName: args[++i], content: args[++i] });
   }
 }
 
@@ -96,6 +100,15 @@ class LifecycleAgent {
   }
 
   async prompt(params) {
+    for (const output of outputWrites) {
+      const outputPath = process.env[output.envName];
+
+      if (!outputPath) {
+        throw new Error(`missing required output environment ${output.envName}`);
+      }
+      await writeFile(outputPath, output.content, { encoding: "utf8", mode: 0o600 });
+    }
+
     for (let i = 0; i < lines; i += 1) {
       const isLast = i === lines - 1;
 

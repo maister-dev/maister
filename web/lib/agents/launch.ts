@@ -2253,6 +2253,7 @@ async function startConsensusRunnerDraftSession(args: {
       stepId: "agent",
       prompt: consensusDraftPromptBlock(args.payload),
     });
+
     await execution.client.waitForPrompt(promptHandle);
 
     log.info(
@@ -3035,6 +3036,7 @@ export async function sendAgentMessage(
       stepId: "agent",
       prompt,
     });
+
     await client.waitForPrompt(promptHandle);
 
     return { childRunId, status: "Running" };
@@ -3768,6 +3770,7 @@ export async function startAgentSession(
       stepId: "agent",
       prompt,
     });
+
     await execution.client.waitForPrompt(promptHandle);
   } catch (err) {
     if (isFencedError(err)) {

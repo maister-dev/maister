@@ -212,19 +212,20 @@ describe("execution fence", () => {
     // Fixture --hang-prompt: the accepted command remains in-flight when the
     // higher epoch evicts it.
     const promptCommand = envelope(
-        "session.prompt",
-        {
-          hostKey: host.hostState.hostKey,
-          runId,
-          assignmentId: a1,
-          assignmentEpoch: 1,
-        },
-        { stepId: "step-1", prompt: "hello" },
+      "session.prompt",
+      {
+        hostKey: host.hostState.hostKey,
+        runId,
+        assignmentId: a1,
+        assignmentEpoch: 1,
+      },
+      { stepId: "step-1", prompt: "hello" },
     );
     const admitted = await postJson(
       `${host.url}/sessions/${sessionId}/prompts`,
       promptCommand,
     );
+
     expect(admitted.status).toBe(202);
 
     await waitFor(() => events.some((e) => e.type === "session.update"), 5_000);
@@ -257,7 +258,9 @@ describe("execution fence", () => {
     expect(exited?.reason).toBe("fenced");
 
     await waitFor(
-      () => host.hostState.getReceipt(promptCommand.command.id)?.phase === "rejected",
+      () =>
+        host.hostState.getReceipt(promptCommand.command.id)?.phase ===
+        "rejected",
     );
     const prompt = host.hostState.getReceipt(promptCommand.command.id);
 
@@ -361,19 +364,20 @@ describe("execution fence", () => {
     });
 
     const promptCommand = envelope(
-        "session.prompt",
-        {
-          hostKey: host.hostState.hostKey,
-          runId,
-          assignmentId: a1,
-          assignmentEpoch: 1,
-        },
-        { stepId: "step-1", prompt: "hello" },
+      "session.prompt",
+      {
+        hostKey: host.hostState.hostKey,
+        runId,
+        assignmentId: a1,
+        assignmentEpoch: 1,
+      },
+      { stepId: "step-1", prompt: "hello" },
     );
     const admitted = await postJson(
       `${host.url}/sessions/${oldSessionId}/prompts`,
       promptCommand,
     );
+
     expect(admitted.status).toBe(202);
 
     await waitFor(() => events.some((e) => e.type === "session.update"), 5_000);
@@ -414,10 +418,13 @@ describe("execution fence", () => {
     expect(host.registry.get(oldSessionId)?.record.fencedByEpoch).toBe(2);
 
     await waitFor(
-      () => host.hostState.getReceipt(promptCommand.command.id)?.phase === "rejected",
+      () =>
+        host.hostState.getReceipt(promptCommand.command.id)?.phase ===
+        "rejected",
     );
     expect(
-      receiptBody(host.hostState.getReceipt(promptCommand.command.id)?.body).code,
+      receiptBody(host.hostState.getReceipt(promptCommand.command.id)?.body)
+        .code,
     ).toBe("FENCED");
   });
 
@@ -446,19 +453,20 @@ describe("execution fence", () => {
 
     try {
       const promptCommand = envelope(
-          "session.prompt",
-          {
-            hostKey: host.hostState.hostKey,
-            runId,
-            assignmentId: a1,
-            assignmentEpoch: 1,
-          },
-          { stepId: "step-1", prompt: "hello" },
+        "session.prompt",
+        {
+          hostKey: host.hostState.hostKey,
+          runId,
+          assignmentId: a1,
+          assignmentEpoch: 1,
+        },
+        { stepId: "step-1", prompt: "hello" },
       );
       const admitted = await postJson(
         `${host.url}/sessions/${sessionId}/prompts`,
         promptCommand,
       );
+
       expect(admitted.status).toBe(202);
 
       await waitFor(
@@ -503,10 +511,13 @@ describe("execution fence", () => {
       expect(exited?.reason).toBe("fenced");
 
       await waitFor(
-        () => host.hostState.getReceipt(promptCommand.command.id)?.phase === "rejected",
+        () =>
+          host.hostState.getReceipt(promptCommand.command.id)?.phase ===
+          "rejected",
       );
       expect(
-        receiptBody(host.hostState.getReceipt(promptCommand.command.id)?.body).code,
+        receiptBody(host.hostState.getReceipt(promptCommand.command.id)?.body)
+          .code,
       ).toBe("FENCED");
 
       // The new driver finds no deferred; the old driver is fenced outright.

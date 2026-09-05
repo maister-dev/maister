@@ -85,6 +85,7 @@ export function CreateFlowDialog({
       parsedSources = parseOptionalArray(sources);
     } catch {
       setValidationError(t("invalidJson"));
+
       return;
     }
 
@@ -111,6 +112,7 @@ export function CreateFlowDialog({
       setValidationError(
         t(createFlowValidationErrorKey(flow.error.issues[0]?.path ?? [])),
       );
+
       return;
     }
 
@@ -119,11 +121,13 @@ export function CreateFlowDialog({
 
       if (!packageName.success) {
         setValidationError(t("invalidPackageName"));
+
         return;
       }
 
       setValidationError(null);
       await onSubmit({ mode, name: packageName.data, flow: flow.data });
+
       return;
     }
 

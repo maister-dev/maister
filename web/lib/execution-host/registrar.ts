@@ -196,6 +196,7 @@ export async function ensureLocalExecutionHost(
   }
 
   let dataPlane: Awaited<ReturnType<ExecutionHostTransport["capabilities"]>>;
+
   try {
     dataPlane = await transport.capabilities({
       timeoutMs: opts.healthTimeoutMs,

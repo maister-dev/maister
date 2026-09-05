@@ -1,26 +1,9 @@
-import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
-  capturePlanReviewArtifacts,
-  planReviewStagingPaths,
+  parsePlanReviewBytes,
+  planReviewOutputBindings,
 } from "../plan-review-artifact";
-
-const tempDirectories: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    tempDirectories.splice(0).map(async (directory) => {
-      await import("node:fs/promises").then(({ rm }) =>
-        rm(directory, { recursive: true, force: true }),
-      );
-    }),
-  );
-});
 
 function validContract(): Record<string, unknown> {
   return {
@@ -32,8 +15,16 @@ function validContract(): Record<string, unknown> {
         id: "runtime",
         question: "Which runtime?",
         options: [
-          { id: "node", label: "Node", consequences: "Use the existing runtime." },
-          { id: "bun", label: "Bun", consequences: "Add a new runtime." },
+          {
+            id: "node",
+            label: "Node",
+            consequences: "Use the existing runtime.",
+          },
+          {
+            id: "bun",
+            label: "Bun",
+            consequences: "Add a new runtime.",
+          },
         ],
         recommendation: "node",
         blocking: true,
@@ -42,62 +33,47 @@ function validContract(): Record<string, unknown> {
   };
 }
 
-describe("plan-review artifact capture", () => {
-  it("validates staging outputs and copies immutable, hashed artifacts", async () => {
-    const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "plan-review-"));
-    tempDirectories.push(runtimeRoot);
-    const paths = planReviewStagingPaths({
-      runtimeRoot,
-      projectSlug: "demo",
+describe("plan-review runtime object contract", () => {
+  it("allocates deterministic, distinct output objects without a path", () => {
+    const first = planReviewOutputBindings({
       runId: "run-1",
       nodeAttemptId: "attempt-1",
+      assignmentId: "assignment-1",
     });
-    const plan = "# Typed review\n";
-    const review = JSON.stringify(validContract());
-
-    await mkdir(path.dirname(paths.planDocumentStagingPath), { recursive: true });
-    await writeFile(paths.planDocumentStagingPath, plan);
-    await writeFile(paths.planReviewStagingPath, review);
-
-    const captured = await capturePlanReviewArtifacts({
-      paths,
-      maxBytes: 10_000,
+    const replay = planReviewOutputBindings({
+      runId: "run-1",
+      nodeAttemptId: "attempt-1",
+      assignmentId: "assignment-1",
+    });
+    const resumed = planReviewOutputBindings({
+      runId: "run-1",
+      nodeAttemptId: "attempt-1",
+      assignmentId: "assignment-2",
     });
 
-    expect(captured.contract.decisions).toHaveLength(1);
-    expect(captured.planDocument.hash).toBe(
-      createHash("sha256").update(plan).digest("hex"),
-    );
-    expect(captured.planReview.hash).toBe(
-      createHash("sha256").update(review).digest("hex"),
-    );
-    await expect(readFile(paths.planDocumentArtifactPath, "utf8")).resolves.toBe(
-      plan,
-    );
-    await expect(readFile(paths.planReviewArtifactPath, "utf8")).resolves.toBe(
-      review,
-    );
+    expect(replay).toEqual(first);
+    expect(resumed.planDocument.objectId).not.toBe(first.planDocument.objectId);
+    expect(resumed.planReview.objectId).not.toBe(first.planReview.objectId);
+    expect(first.planDocument.objectId).not.toBe(first.planReview.objectId);
+    expect(first.planDocument.envName).toBe("MAISTER_PLAN_DOCUMENT_FILE");
+    expect(first.planReview.envName).toBe("MAISTER_PLAN_REVIEW_FILE");
+    expect(first.planDocument).not.toHaveProperty("path");
+    expect(first.planReview).not.toHaveProperty("path");
   });
 
-  it("refuses malformed contract files before copying a review artifact", async () => {
-    const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "plan-review-"));
-    tempDirectories.push(runtimeRoot);
-    const paths = planReviewStagingPaths({
-      runtimeRoot,
-      projectSlug: "demo",
-      runId: "run-1",
-      nodeAttemptId: "attempt-1",
-    });
+  it("parses V1 and fails explicitly for malformed or invalid contracts", () => {
+    const parsed = parsePlanReviewBytes(
+      new TextEncoder().encode(JSON.stringify(validContract())),
+    );
 
-    await mkdir(path.dirname(paths.planDocumentStagingPath), { recursive: true });
-    await writeFile(paths.planDocumentStagingPath, "# Plan\n");
-    await writeFile(paths.planReviewStagingPath, "{not-json");
-
-    await expect(
-      capturePlanReviewArtifacts({ paths, maxBytes: 10_000 }),
-    ).rejects.toMatchObject({ code: "CONFIG" });
-    await expect(readFile(paths.planReviewArtifactPath)).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+    expect(parsed.decisions).toHaveLength(1);
+    expect(() =>
+      parsePlanReviewBytes(new TextEncoder().encode("{not-json")),
+    ).toThrowError(expect.objectContaining({ code: "CONFIG" }));
+    expect(() =>
+      parsePlanReviewBytes(
+        new TextEncoder().encode(JSON.stringify({ schemaVersion: 1 })),
+      ),
+    ).toThrowError(expect.objectContaining({ code: "CONFIG" }));
   });
 });

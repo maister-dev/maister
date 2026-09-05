@@ -33,11 +33,9 @@ export type ExecPolicyAuditRecord = {
   detail?: Record<string, unknown>;
 };
 
-// Returns the record so callers can both log and forward it. NOTE: the per-run
-// timeline (run.events.jsonl) integration lands with the Phase-A web-side
-// autonomy actions (downgraded check, ralph relaunch), where those events fire
-// and the supervisor's line schema is matched. At launch the durable record is
-// the runs.execution_policy snapshot + this structured line.
+// Returns the record so callers can both log and forward it. Durable policy
+// facts belong in manager-owned state/canonical events; this structured log is
+// operational telemetry and never a run-state authority.
 export function logExecPolicyAction(
   record: ExecPolicyAuditRecord,
 ): ExecPolicyAuditRecord {

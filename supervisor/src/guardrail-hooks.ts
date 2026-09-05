@@ -82,8 +82,7 @@ export function extractToolIdentity(toolCall: unknown): ToolIdentity {
     claudeCode && typeof claudeCode.toolName === "string" && claudeCode.toolName
       ? claudeCode.toolName
       : null;
-  const titleName =
-    typeof tc.title === "string" && tc.title ? tc.title : null;
+  const titleName = typeof tc.title === "string" && tc.title ? tc.title : null;
   const name = metaName ?? titleName;
 
   return { name, mcpServer: name ? mcpServerFromToolName(name) : null };

@@ -178,6 +178,7 @@ describe("M8 T1 spike — cancel→checkpoint→resume→re-issue round-trip", (
       `${url}/sessions/${first.sessionId}/prompts`,
       prompt1,
     );
+
     expect(admitted1.status).toBe(202);
 
     const permEvent = await listenForEvent(
@@ -208,7 +209,8 @@ describe("M8 T1 spike — cancel→checkpoint→resume→re-issue round-trip", (
     // The mock's prompt() observes outcome:"cancelled", emits an
     // "agent_message_chunk", and resolves.
     await waitFor(
-      () => host.hostState.getReceipt(prompt1.command.id)?.phase === "completed",
+      () =>
+        host.hostState.getReceipt(prompt1.command.id)?.phase === "completed",
     );
     expect(host.hostState.getReceipt(prompt1.command.id)?.httpStatus).toBe(200);
 
@@ -250,6 +252,7 @@ describe("M8 T1 spike — cancel→checkpoint→resume→re-issue round-trip", (
       `${url}/sessions/${second.sessionId}/prompts`,
       prompt2,
     );
+
     expect(admitted2.status).toBe(202);
 
     // The re-issued permission MUST carry the original toolCall.
@@ -282,7 +285,8 @@ describe("M8 T1 spike — cancel→checkpoint→resume→re-issue round-trip", (
     expect(inputRes.status).toBe(200);
 
     await waitFor(
-      () => host.hostState.getReceipt(prompt2.command.id)?.phase === "completed",
+      () =>
+        host.hostState.getReceipt(prompt2.command.id)?.phase === "completed",
     );
     expect(host.hostState.getReceipt(prompt2.command.id)?.httpStatus).toBe(200);
 

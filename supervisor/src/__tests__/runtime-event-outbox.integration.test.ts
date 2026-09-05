@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { describe, expect, it } from "vitest";
 
 import { openHostState } from "../host-state";
 
@@ -31,13 +32,17 @@ describe("Stage B durable host event outbox", () => {
 
     expect(first.sequence).toBe("0");
     expect(second.sequence).toBe("1");
-    expect(state.runtimeEventsAfter(streamId, null).map(({ sequence }) => sequence)).toEqual(["0", "1"]);
+    expect(
+      state.runtimeEventsAfter(streamId, null).map(({ sequence }) => sequence),
+    ).toEqual(["0", "1"]);
     expect(state.ackRuntimeEvents(streamId, "1")).toBe("1");
     // Acknowledgement advances the host's durable delivery watermark without
     // destroying its replay window. A reconnect with an older Last-Event-ID
     // can therefore still be served; a fresh delivery loop asks for pending
     // events and observes none.
-    expect(state.runtimeEventsAfter(streamId, null).map(({ sequence }) => sequence)).toEqual(["0", "1"]);
+    expect(
+      state.runtimeEventsAfter(streamId, null).map(({ sequence }) => sequence),
+    ).toEqual(["0", "1"]);
     expect(state.pendingRuntimeEvents(streamId)).toEqual([]);
     state.close();
   });
@@ -57,12 +62,18 @@ describe("Stage B durable host event outbox", () => {
     try {
       const first = openHostState({ stateDir });
       const streamId = first.getRuntimeEventStreamId();
+
       first.appendRuntimeEvent(eventDraft());
       first.close();
 
       const restarted = openHostState({ stateDir });
+
       expect(restarted.getRuntimeEventStreamId()).toBe(streamId);
-      expect(restarted.pendingRuntimeEvents(streamId).map(({ sequence }) => sequence)).toEqual(["0"]);
+      expect(
+        restarted
+          .pendingRuntimeEvents(streamId)
+          .map(({ sequence }) => sequence),
+      ).toEqual(["0"]);
       restarted.close();
     } finally {
       rmSync(stateDir, { force: true, recursive: true });

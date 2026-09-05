@@ -1,5 +1,6 @@
 // ADR-166 T2.2/T2.4 — receipts (R1–R8) and session.command events (S1–S4).
 import type { SessionEvent } from "../types";
+import type { RuntimeEventEnvelope } from "../runtime-events";
 
 import { randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
@@ -10,7 +11,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { openHostState } from "../host-state";
 import { SESSION_EVENT_CHANNEL } from "../registry";
-import type { RuntimeEventEnvelope } from "../runtime-events";
 
 import {
   adoptDirectory,
@@ -214,12 +214,12 @@ describe("command receipts", () => {
         commandId,
       ),
     );
-    await waitFor(
-      () => {
-        const receipt = host.hostState.getReceipt(commandId);
-        return receipt?.phase === "completed";
-      },
-    );
+
+    await waitFor(() => {
+      const receipt = host.hostState.getReceipt(commandId);
+
+      return receipt?.phase === "completed";
+    });
     const terminal = host.hostState.getReceipt(commandId);
 
     expect(admitted.status).toBe(202);
@@ -298,6 +298,7 @@ describe("command receipts", () => {
     );
     const commandId = randomUUID();
     const assignmentId = randomUUID();
+
     first.hostState.putReceipt({
       commandId,
       runId,
@@ -320,13 +321,16 @@ describe("command receipts", () => {
       stateDir,
       fixtureArgs: ["--hang"],
     });
+
     booted.push(second);
     const receipt = second.hostState.getReceipt(commandId);
     const events = second.hostState.runtimeEventsAfter(
       second.hostState.getRuntimeEventStreamId(),
       null,
     );
-    const event = events.find((candidate) => candidate.eventId === receipt?.eventId);
+    const event = events.find(
+      (candidate) => candidate.eventId === receipt?.eventId,
+    );
 
     expect(receipt).toMatchObject({
       phase: "rejected",
@@ -480,11 +484,7 @@ describe("command receipts", () => {
       { stepId: "step-1", prompt: "hello" },
       randomUUID(),
     );
-    const first = await completePrompt(
-      host,
-      sessionId,
-      prompt,
-    );
+    const first = await completePrompt(host, sessionId, prompt);
 
     expect(first.status).toBe(200);
 
@@ -500,11 +500,7 @@ describe("command receipts", () => {
       5_000,
     );
 
-    const again = await completePrompt(
-      host,
-      sessionId,
-      prompt,
-    );
+    const again = await completePrompt(host, sessionId, prompt);
 
     expect(again.status).toBe(200);
     expect(again.body).toEqual(first.body);

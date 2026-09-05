@@ -1,3 +1,5 @@
+import type { ExecutionHostTransport } from "@/lib/execution-host/contracts";
+
 import { randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -13,7 +15,6 @@ import { projectCanonicalSessionLifecycle } from "@/lib/execution-host/events/li
 import { projectCanonicalRuntimeObjects } from "@/lib/execution-host/events/runtime-object-projector";
 import { streamCanonicalSessionEvents } from "@/lib/execution-host/events/session-stream";
 import { appendManagerRunStreamEvent } from "@/lib/runs/run-stream-event";
-import type { ExecutionHostTransport } from "@/lib/execution-host/contracts";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -73,7 +74,10 @@ afterAll(async () => {
   await testDatabase?.stop();
 });
 
-function event(sequence: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function event(
+  sequence: string,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
   return {
     envelopeVersion: 1,
     eventId: randomUUID(),
@@ -101,6 +105,7 @@ describe("runtime event ingestion", () => {
     const canonicalHostKey = `eh_${randomUUID().replace(/-/g, "")}`;
     const canonicalStreamId = randomUUID();
     const hostSessionId = randomUUID();
+
     await testDatabase.pool.query(
       `insert into runs
         (id, project_id, run_kind, status, flow_version, flow_revision, execution_data_plane_mode)
@@ -135,7 +140,10 @@ describe("runtime event ingestion", () => {
         payloadSchema: "maister.session.update.v1" as const,
         payload: {
           sourceMonotonicId: 12,
-          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "durable" } },
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "durable" },
+          },
         },
       },
       {
@@ -155,6 +163,7 @@ describe("runtime event ingestion", () => {
         payload: { sourceMonotonicId: 13, exitCode: 0, reason: "intentional" },
       },
     ];
+
     for (const envelope of envelopes) {
       await ingestRuntimeEvent({
         db: testDatabase.db,
@@ -164,6 +173,7 @@ describe("runtime event ingestion", () => {
     }
 
     const replayed = [];
+
     for await (const event of streamCanonicalSessionEvents({
       db: testDatabase.db,
       runId: canonicalRunId,
@@ -193,6 +203,7 @@ describe("runtime event ingestion", () => {
     const canonicalAssignmentId = randomUUID();
     const canonicalHostKey = `eh_${randomUUID().replace(/-/g, "")}`;
     const canonicalStreamId = randomUUID();
+
     await testDatabase.pool.query(
       `insert into runs
         (id, project_id, run_kind, status, flow_version, flow_revision, execution_data_plane_mode)
@@ -272,6 +283,7 @@ describe("runtime event ingestion", () => {
 
   it("rejects unsafe manager event payloads before allocating canonical history", async () => {
     const canonicalRunId = randomUUID();
+
     await testDatabase.pool.query(
       `insert into runs
         (id, project_id, run_kind, status, flow_version, flow_revision, execution_data_plane_mode)
@@ -290,6 +302,7 @@ describe("runtime event ingestion", () => {
       "select count(*)::int as count from execution_events where run_id = $1",
       [canonicalRunId],
     );
+
     expect(rows.rows[0]?.count).toBe(0);
   });
 
@@ -317,12 +330,31 @@ describe("runtime event ingestion", () => {
       [runId],
     );
 
-    expect(held).toMatchObject({ disposition: "pending_gap", contiguousThrough: null });
-    expect(promoted).toMatchObject({ contiguousThrough: "1", acceptedCount: 2 });
-    expect(duplicate).toMatchObject({ disposition: "duplicate", contiguousThrough: "1" });
+    expect(held).toMatchObject({
+      disposition: "pending_gap",
+      contiguousThrough: null,
+    });
+    expect(promoted).toMatchObject({
+      contiguousThrough: "1",
+      acceptedCount: 2,
+    });
+    expect(duplicate).toMatchObject({
+      disposition: "duplicate",
+      contiguousThrough: "1",
+    });
     expect(stored.rows).toEqual([
-      { id: first.eventId, host_sequence: "0", run_sequence: "0", ingest_disposition: "accepted" },
-      { id: later.eventId, host_sequence: "1", run_sequence: "1", ingest_disposition: "accepted" },
+      {
+        id: first.eventId,
+        host_sequence: "0",
+        run_sequence: "0",
+        ingest_disposition: "accepted",
+      },
+      {
+        id: later.eventId,
+        host_sequence: "1",
+        run_sequence: "1",
+        ingest_disposition: "accepted",
+      },
     ]);
   });
 
@@ -342,7 +374,11 @@ describe("runtime event ingestion", () => {
       [stale.eventId],
     );
 
-    expect(result).toMatchObject({ disposition: "stale_epoch", contiguousThrough: "2", staleEpochCount: 1 });
+    expect(result).toMatchObject({
+      disposition: "stale_epoch",
+      contiguousThrough: "2",
+      staleEpochCount: 1,
+    });
     expect(stored.rows[0]).toEqual({
       run_sequence: null,
       ingest_disposition: "stale_epoch",
@@ -352,14 +388,24 @@ describe("runtime event ingestion", () => {
 
   it("ACKs only after commit and reconciles an acknowledgement response loss from the durable watermark", async () => {
     const next = event("3");
-    const acknowledgements: Array<{ streamId: string; throughSequence: string }> = [];
+    const acknowledgements: Array<{
+      streamId: string;
+      throughSequence: string;
+    }> = [];
     const transport = {
       async *streamRuntimeEvents() {
         yield next;
       },
-      async acknowledgeRuntimeEvents(input: { streamId: string; throughSequence: string }) {
+      async acknowledgeRuntimeEvents(input: {
+        streamId: string;
+        throughSequence: string;
+      }) {
         acknowledgements.push(input);
-        return { streamId: input.streamId, acknowledgedThrough: input.throughSequence };
+
+        return {
+          streamId: input.streamId,
+          acknowledgedThrough: input.throughSequence,
+        };
       },
     } as unknown as ExecutionHostTransport;
     const consumed = await consumeRuntimeEventStreamOnce({
@@ -369,6 +415,7 @@ describe("runtime event ingestion", () => {
       owner: "test-consumer-a",
       maxEvents: 1,
     });
+
     await testDatabase.pool.query(
       `update execution_event_streams
        set last_ack_confirmed_sequence = null, claim_owner = null, claim_expires_at = null
@@ -380,9 +427,16 @@ describe("runtime event ingestion", () => {
       executionHostId: hostId,
       transport: {
         async *streamRuntimeEvents() {},
-        async acknowledgeRuntimeEvents(input: { streamId: string; throughSequence: string }) {
+        async acknowledgeRuntimeEvents(input: {
+          streamId: string;
+          throughSequence: string;
+        }) {
           acknowledgements.push(input);
-          return { streamId: input.streamId, acknowledgedThrough: input.throughSequence };
+
+          return {
+            streamId: input.streamId,
+            acknowledgedThrough: input.throughSequence,
+          };
         },
       } as unknown as ExecutionHostTransport,
       owner: "test-consumer-b",
@@ -415,6 +469,7 @@ describe("runtime event ingestion", () => {
       owner: "projector-lifecycle",
     });
     const poisonEvent = event("4");
+
     await ingestRuntimeEvent({
       db: testDatabase.db,
       executionHostId: hostId,
@@ -426,7 +481,10 @@ describe("runtime event ingestion", () => {
       projector: {
         consumerName: "test-lifecycle",
         project: async () => {
-          throw new ExecutionEventProjectionError("invalid lifecycle transition", true);
+          throw new ExecutionEventProjectionError(
+            "invalid lifecycle transition",
+            true,
+          );
         },
       },
       owner: "projector-lifecycle",
@@ -468,6 +526,7 @@ describe("runtime event ingestion", () => {
     const promptRunId = randomUUID();
     const promptAssignmentId = randomUUID();
     const commandId = randomUUID();
+
     await testDatabase.pool.query(
       `insert into runs
          (id, project_id, run_kind, status, execution_data_plane_mode, flow_version, flow_revision)
@@ -499,6 +558,7 @@ describe("runtime event ingestion", () => {
         result: { stopReason: "end_turn", meta: null },
       },
     });
+
     await ingestRuntimeEvent({
       db: testDatabase.db,
       executionHostId: hostId,
@@ -538,6 +598,7 @@ describe("runtime event ingestion", () => {
         error: { code: "PRECONDITION", message: "stale" },
       },
     });
+
     await ingestRuntimeEvent({
       db: testDatabase.db,
       executionHostId: hostId,
@@ -551,9 +612,11 @@ describe("runtime event ingestion", () => {
       "select state, result from execution_commands where id = $1",
       [commandId],
     );
+
     expect(afterStale.rows[0]).toEqual(row.rows[0]);
 
     const hostSessionId = randomUUID();
+
     await ingestRuntimeEvent({
       db: testDatabase.db,
       executionHostId: hostId,
@@ -579,6 +642,7 @@ describe("runtime event ingestion", () => {
        from run_session_incarnations where run_id = $1`,
       [promptRunId],
     );
+
     expect(activeIncarnation.rows).toEqual([
       {
         state: "active",
@@ -607,13 +671,126 @@ describe("runtime event ingestion", () => {
       "select state, ended_at is not null as ended from run_session_incarnations where run_id = $1",
       [promptRunId],
     );
+
     expect(exitedIncarnation.rows).toEqual([{ state: "exited", ended: true }]);
+  });
+
+  it("accepts a late terminal event for its exact released-assignment command while quarantining unrelated stale events", async () => {
+    const lateRunId = randomUUID();
+    const lateHostId = randomUUID();
+    const lateAssignmentId = randomUUID();
+    const lateCommandId = randomUUID();
+    const lateHostKey = `eh_${randomUUID().replace(/-/g, "")}`;
+    const lateStreamId = randomUUID();
+    const lateSessionId = randomUUID();
+
+    await testDatabase.pool.query(
+      `insert into runs
+         (id, project_id, run_kind, status, execution_data_plane_mode, flow_version, flow_revision)
+       values ($1, $2, 'scratch', 'Pending', 'canonical_events_v1', 'scratch', 'manual')`,
+      [lateRunId, projectId],
+    );
+    await testDatabase.pool.query(
+      `insert into execution_hosts
+         (id, host_key, kind, display_name, transport, retired_at)
+       values ($1, $2, 'local_direct', 'late command host', '{"kind":"local_direct"}', now())`,
+      [lateHostId, lateHostKey],
+    );
+    await testDatabase.pool.query(
+      `insert into execution_assignments
+         (id, run_id, execution_host_id, epoch, state, placement_reason, ended_at, released_reason)
+       values ($1, $2, $3, 1, 'released', 'launch', now(), 'checkpointed')`,
+      [lateAssignmentId, lateRunId, lateHostId],
+    );
+    await testDatabase.pool.query(
+      `insert into execution_commands
+         (id, run_id, execution_assignment_id, execution_host_id, assignment_epoch,
+          kind, target_session_id, payload, state, max_attempts)
+       values ($1, $2, $3, $4, 1, 'session.prompt', $5, '{}', 'accepted', 3)`,
+      [lateCommandId, lateRunId, lateAssignmentId, lateHostId, lateSessionId],
+    );
+    const terminal = {
+      envelopeVersion: 1,
+      eventId: randomUUID(),
+      hostKey: lateHostKey,
+      hostBootId: randomUUID(),
+      streamId: lateStreamId,
+      sequence: "0",
+      runId: lateRunId,
+      assignmentId: lateAssignmentId,
+      assignmentEpoch: 1,
+      hostSessionId: lateSessionId,
+      eventType: "session.command",
+      occurredAt: "2026-09-04T00:00:00.000Z",
+      payloadSchema: "maister.session.command.v1",
+      payload: {
+        commandId: lateCommandId,
+        kind: "session.prompt",
+        phase: "completed",
+        status: "succeeded",
+        result: { stopReason: "cancelled" },
+      },
+    };
+
+    const accepted = await ingestRuntimeEvent({
+      db: testDatabase.db,
+      executionHostId: lateHostId,
+      envelope: terminal,
+    });
+
+    expect(accepted).toMatchObject({ disposition: "accepted" });
+    await projectCanonicalPromptCommands({
+      db: testDatabase.db,
+      runId: lateRunId,
+    });
+
+    const unrelated = {
+      ...terminal,
+      eventId: randomUUID(),
+      sequence: "1",
+      payload: { ...terminal.payload, commandId: randomUUID() },
+    };
+    const stale = await ingestRuntimeEvent({
+      db: testDatabase.db,
+      executionHostId: lateHostId,
+      envelope: unrelated,
+    });
+    const rows = await testDatabase.pool.query(
+      `select id, run_sequence::text, ingest_disposition
+       from execution_events where event_stream_id = (
+         select id from execution_event_streams
+         where execution_host_id = $1 and stream_id = $2
+       ) order by host_sequence`,
+      [lateHostId, lateStreamId],
+    );
+    const command = await testDatabase.pool.query(
+      "select state, result from execution_commands where id = $1",
+      [lateCommandId],
+    );
+
+    expect(stale).toMatchObject({ disposition: "stale_epoch" });
+    expect(rows.rows).toEqual([
+      {
+        id: terminal.eventId,
+        run_sequence: "0",
+        ingest_disposition: "accepted",
+      },
+      {
+        id: unrelated.eventId,
+        run_sequence: null,
+        ingest_disposition: "stale_epoch",
+      },
+    ]);
+    expect(command.rows).toEqual([
+      { state: "succeeded", result: { stopReason: "cancelled" } },
+    ]);
   });
 
   it("projects host-owned runtime object metadata once without reading a runtime path", async () => {
     const objectRunId = randomUUID();
     const objectAssignmentId = randomUUID();
     const objectId = randomUUID();
+
     await testDatabase.pool.query(
       `insert into runs
          (id, project_id, run_kind, status, execution_data_plane_mode, flow_version, flow_revision)
@@ -703,6 +880,7 @@ describe("runtime event ingestion", () => {
       db: testDatabase.db,
       runId: objectRunId,
     });
+
     expect(conflicting).toMatchObject({ projected: 0, poisoned: true });
     const poison = await testDatabase.pool.query(
       `select state, last_error->>'message' as message
@@ -710,6 +888,7 @@ describe("runtime event ingestion", () => {
        where consumer_name = 'canonical-runtime-object-v1' and run_id = $1`,
       [objectRunId],
     );
+
     expect(poison.rows).toEqual([
       {
         state: "poisoned",
@@ -721,6 +900,7 @@ describe("runtime event ingestion", () => {
       `select size_bytes::text, sha256 from execution_runtime_objects where id = $1`,
       [objectId],
     );
+
     expect(preserved.rows).toEqual([
       { size_bytes: "11", sha256: "a".repeat(64) },
     ]);
@@ -728,6 +908,7 @@ describe("runtime event ingestion", () => {
 
   it("rejects duplicate event IDs whose immutable envelope spine changed", async () => {
     const baseline = event("11");
+
     await ingestRuntimeEvent({
       db: testDatabase.db,
       executionHostId: hostId,
@@ -782,6 +963,7 @@ describe("runtime event ingestion", () => {
        where execution_host_id = $1 and stream_id = $2`,
       [hostId, streamId],
     );
+
     expect(stored.rows).toEqual([{ count: 1 }]);
     expect(watermark.rows).toEqual([{ sequence: "11" }]);
   });

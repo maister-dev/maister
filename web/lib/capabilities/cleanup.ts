@@ -9,13 +9,9 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { restoreAgentMaterialization } from "@/lib/agents/dirty-watchdog";
-import {
-  assertSafeAgentMaterializationPath,
-} from "@/lib/agents/materialization-manifest";
+import { assertSafeAgentMaterializationPath } from "@/lib/agents/materialization-manifest";
 import { capabilityMaterializationRootPath } from "@/lib/capabilities/materialize";
-import {
-  reclaimCapabilitySettings,
-} from "@/lib/capabilities/settings-ownership";
+import { reclaimCapabilitySettings } from "@/lib/capabilities/settings-ownership";
 import {
   getNodeAttemptsForRun,
   updateMaterializationCleanup,

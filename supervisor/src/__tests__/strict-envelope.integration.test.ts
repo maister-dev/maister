@@ -109,6 +109,8 @@ describe("strict envelope contract", () => {
       repoPath: "/tmp/repo",
       confineRoot: "/tmp/confine",
       contextMounts: [],
+      capabilityProfilePath: "/tmp/profile.json",
+      capabilityInstructionsPath: "/tmp/instructions.md",
     };
 
     for (const field of LEGACY_SESSION_PATH_FIELDS) {

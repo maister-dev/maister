@@ -172,10 +172,17 @@ async function writeEvents(_slug: string, runId: string, lines: string[]) {
   for (const line of lines) {
     const parsed = JSON.parse(line) as Record<string, unknown>;
     const monotonicId = parsed.monotonicId;
+
     if (typeof monotonicId !== "number") {
       throw new Error("canonical transcript fixture requires a monotonic id");
     }
-    const { type, monotonicId: _id, sessionName: _sessionName, ...payload } = parsed;
+    const type = parsed.type;
+    const payload = Object.fromEntries(
+      Object.entries(parsed).filter(
+        ([key]) => !["type", "monotonicId", "sessionName"].includes(key),
+      ),
+    );
+
     if (typeof type !== "string") {
       throw new Error("canonical transcript fixture requires an event type");
     }
@@ -201,6 +208,7 @@ async function writeEvents(_slug: string, runId: string, lines: string[]) {
 describe("projectRunTranscript", () => {
   it("projects a canonical transcript from Postgres without reading the host runtime directory", async () => {
     const { runId, implAttemptId } = await seed("canonical_events_v1");
+
     await db.insert(schema.executionEvents).values([
       {
         id: randomUUID(),
@@ -251,7 +259,10 @@ describe("projectRunTranscript", () => {
 
     expect(result).toMatchObject({ status: "projected", nodeAttempts: 1 });
     expect(transcript?.messages).toEqual([
-      expect.objectContaining({ role: "assistant", content: "canonical event" }),
+      expect.objectContaining({
+        role: "assistant",
+        content: "canonical event",
+      }),
     ]);
   });
 
@@ -435,7 +446,9 @@ describe("projectRunTranscript", () => {
       textLine(b.planAttemptId, 2, "would leak into A's transcript"),
     ]);
 
-    await expect(projectRunTranscript(a.runId, { client: db })).rejects.toMatchObject({
+    await expect(
+      projectRunTranscript(a.runId, { client: db }),
+    ).rejects.toMatchObject({
       code: "CONFLICT",
     });
 
@@ -472,7 +485,9 @@ describe("projectRunTranscript", () => {
       content: "cross-run row",
     });
 
-    const aPlanAfter = await getRunNodeTranscript(a.runId, "plan", { client: db });
+    const aPlanAfter = await getRunNodeTranscript(a.runId, "plan", {
+      client: db,
+    });
 
     expect(aPlanAfter?.messages).toEqual([]);
   });
@@ -504,7 +519,10 @@ describe("projectRunTranscript", () => {
       .where(eq(schema.runMessages.runId, runId));
 
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ role: "assistant", content: "Plan ready!" });
+    expect(rows[0]).toMatchObject({
+      role: "assistant",
+      content: "Plan ready!",
+    });
   });
 
   // Codex adversarial finding #1: a partial/failed projection must not advance

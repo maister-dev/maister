@@ -1,7 +1,11 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type * as acp from "@agentclientprotocol/sdk";
 import type { Logger } from "pino";
-import type { AppendRuntimeEventInput, HostState } from "./host-state";
+import type {
+  AppendRuntimeEventInput,
+  HostRuntimeObjectRow,
+  HostState,
+} from "./host-state";
 import type { SessionRegistry, RegistryEntry } from "./registry";
 import type { WorkspaceResolution } from "./workspace-registry";
 
@@ -87,7 +91,7 @@ import {
   type AdoptWorkspaceResponse,
   type CommandEnvelope,
   type CommandKind,
-  type ReserveRuntimeObjectPayload,
+  type RuntimeObjectOutputBinding,
   type SessionEvent,
   type SessionStatus,
   type SupervisorDiagnosticsResponse,
@@ -268,7 +272,9 @@ function runtimeEventSupervisorError(error: unknown): SupervisorError {
   );
 }
 
-function parseRuntimeEventCursor(header: string | string[] | undefined): string | null {
+function parseRuntimeEventCursor(
+  header: string | string[] | undefined,
+): string | null {
   if (header === undefined) return null;
   if (Array.isArray(header)) {
     throw new SupervisorError(
@@ -487,13 +493,13 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     throw new Error("registerRoutes requires an execution-host state store");
   }
 
-  app.addContentTypeParser(
-    "application/octet-stream",
-    (_request, body, done) => done(null, body),
+  app.addContentTypeParser("application/octet-stream", (_request, body, done) =>
+    done(null, body),
   );
 
   const receipts = new CommandReceipts(hostState, logger);
   const recoveredPromptReceipts = receipts.recoverAcceptedPrompts();
+
   if (recoveredPromptReceipts > 0) {
     logger.warn(
       { recoveredPromptReceipts },
@@ -512,6 +518,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     logger,
   });
   const fenceLog = logger.child({ component: "execution-fence" });
+
   // ADR-166 D4/D10 (strict): every host-bound command is a `CommandEnvelope`
   // whose `payload` is the route's body. A bare body is refused by name
   // (`missing_envelope`) before anything else is read; `guard` lets a route
@@ -547,19 +554,14 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   // ADR-166 D5: the durable completion signal that is NOT the long-lived HTTP
   // response. The host outbox records post-terminal completion independently
   // of the ACP session's lifecycle.
-  type SessionCommandEvent = Extract<
-    SessionEvent,
-    { type: "session.command" }
-  >;
+  type SessionCommandEvent = Extract<SessionEvent, { type: "session.command" }>;
 
   function createCommandEvent(
     entry: RegistryEntry,
-    event: Omit<
-      SessionCommandEvent,
-      "sessionId" | "monotonicId"
-    >,
+    event: Omit<SessionCommandEvent, "sessionId" | "monotonicId">,
   ): SessionCommandEvent {
     entry.record.monotonicId += 1;
+
     return {
       ...event,
       sessionId: entry.record.sessionId,
@@ -577,7 +579,6 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     } else {
       entry.emitter.emit(SESSION_EVENT_CHANNEL, event);
     }
-
   }
 
   function commandStatus(
@@ -630,15 +631,16 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     const outcome = await receipts.execute({
       envelope,
       hostSessionId: entry?.record.sessionId,
-      persistReceipt:
-        args.runtimeEvent
+      persistReceipt: args.runtimeEvent
+        ? (transition) => {
+            const event = args.runtimeEvent?.(transition);
+
+            if (event)
+              hostState.putReceiptWithRuntimeEvent(transition.row, event);
+            else hostState.putReceipt(transition.row);
+          }
+        : entry && sessionKind
           ? (transition) => {
-              const event = args.runtimeEvent?.(transition);
-              if (event) hostState.putReceiptWithRuntimeEvent(transition.row, event);
-              else hostState.putReceipt(transition.row);
-            }
-          : entry && sessionKind
-            ? (transition) => {
               const status = commandStatus(transition.outcome);
               const event = createCommandEvent(entry, {
                 type: "session.command",
@@ -667,8 +669,8 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
                 runtimeEvents.sessionEventInput(entry.record, event),
               );
               commandEvents.set(transition.phase, event);
-              }
-            : undefined,
+            }
+          : undefined,
       afterReceipt:
         entry && sessionKind
           ? (transition) => {
@@ -727,13 +729,15 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     });
     const outcome = await receipts.executeRestartableUpload({
       envelope: args.parsed.envelope,
-      hostSessionId: args.parsed.envelope.payload &&
+      hostSessionId:
+        args.parsed.envelope.payload &&
         typeof args.parsed.envelope.payload === "object" &&
         "objectId" in args.parsed.envelope.payload
-        ? String(args.parsed.envelope.payload.objectId)
-        : undefined,
+          ? String(args.parsed.envelope.payload.objectId)
+          : undefined,
       persistReceipt: (transition) => {
         const event = args.runtimeEvent(transition);
+
         if (event) hostState.putReceiptWithRuntimeEvent(transition.row, event);
         else hostState.putReceipt(transition.row);
       },
@@ -751,7 +755,73 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         return args.execute();
       },
     });
+
     if (outcome.replayed) args.reply.header(REPLAYED_HEADER, "true");
+    args.reply.status(outcome.status).send(outcome.body);
+  }
+
+  function assertRuntimeObjectDeleteFence(
+    object: HostRuntimeObjectRow,
+    envelope: CommandEnvelope,
+  ): void {
+    const fence = envelope.fence;
+
+    if (fence.hostKey !== hostState.hostKey) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object deletion names a different execution host",
+        { details: { reason: "host_mismatch", runId: fence.runId } },
+      );
+    }
+    if (fence.runId !== object.runId) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object deletion names a different run",
+        { details: { reason: "run_mismatch", runId: fence.runId } },
+      );
+    }
+    if (
+      fence.assignmentId !== object.assignmentId ||
+      fence.assignmentEpoch !== object.assignmentEpoch
+    ) {
+      throw new SupervisorError(
+        "FENCED",
+        "runtime object deletion does not match the object's immutable assignment",
+        { details: { reason: "assignment_fenced", runId: fence.runId } },
+      );
+    }
+  }
+
+  async function runRuntimeObjectDeleteCommand(args: {
+    reply: FastifyReply;
+    parsed: ParsedCommand<unknown>;
+    object: HostRuntimeObjectRow;
+    runtimeEvent: (transition: {
+      phase: "accepted" | "completed" | "rejected";
+      outcome: CommandOutcome;
+    }) => AppendRuntimeEventInput | null;
+    execute: () => Promise<CommandOutcome>;
+  }): Promise<void> {
+    assertRuntimeObjectDeleteFence(args.object, args.parsed.envelope);
+    const outcome = await receipts.execute({
+      envelope: args.parsed.envelope,
+      hostSessionId: args.object.id,
+      admissionExempt: true,
+      persistReceipt: (transition) => {
+        const event = args.runtimeEvent(transition);
+
+        if (event) hostState.putReceiptWithRuntimeEvent(transition.row, event);
+        else hostState.putReceipt(transition.row);
+      },
+      run: args.execute,
+    });
+
+    if (outcome.replayed) args.reply.header(REPLAYED_HEADER, "true");
+    if (outcome.status === 204) {
+      args.reply.status(204).send();
+
+      return;
+    }
     args.reply.status(outcome.status).send(outcome.body);
   }
 
@@ -788,13 +858,17 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
             : status === "succeeded"
               ? {
                   status,
-                  result: (transition.outcome.body ?? {}) as Record<string, unknown>,
+                  result: (transition.outcome.body ?? {}) as Record<
+                    string,
+                    unknown
+                  >,
                 }
               : {
                   status,
                   error: transition.outcome.body as SupervisorErrorBody,
                 }),
         });
+
         hostState.putReceiptWithRuntimeEvent(
           transition.row,
           runtimeEvents.sessionEventInput(entry.record, event),
@@ -803,8 +877,11 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       },
       afterReceipt: (transition) => {
         const event = commandEvents.get(transition.phase);
+
         if (!event) {
-          throw new Error(`canonical command event was not persisted for ${envelope.command.id}`);
+          throw new Error(
+            `canonical command event was not persisted for ${envelope.command.id}`,
+          );
         }
         emitCommandEvent(entry, event, true);
       },
@@ -822,6 +899,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         return args.execute();
       },
     });
+
     if (outcome.replayed) reply.header(REPLAYED_HEADER, "true");
     reply.status(outcome.status).send(outcome.body);
   }
@@ -833,11 +911,15 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   }): Promise<CommandOutcome> {
     const { entry, sessionId, parsed } = input;
     const body = parsed.payload;
+
     if (entry.record.status !== "live") {
       throw new SupervisorError("PRECONDITION", "session not live");
     }
     if (!entry.connection || !entry.acpSessionId) {
-      throw new SupervisorError("PRECONDITION", "session has no ACP connection");
+      throw new SupervisorError(
+        "PRECONDITION",
+        "session has no ACP connection",
+      );
     }
     const uriViolation = contentBlockUriViolation(body.contentBlocks, {
       worktreePath: entry.record.worktreePath,
@@ -845,6 +927,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       runDir: dirname(entry.record.logPath),
       confineRoot: entry.record.confineRoot,
     });
+
     if (uriViolation) {
       logger.warn(
         { sessionId, status: 409, message: uriViolation },
@@ -859,6 +942,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       assignmentId: parsed.envelope.fence.assignmentId,
       assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
     });
+
     entry.record.stepId = body.stepId;
     if (body.nodeAttemptId) entry.record.nodeAttemptId = body.nodeAttemptId;
     else delete entry.record.nodeAttemptId;
@@ -871,6 +955,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         sessionUpdate?: string;
         content?: { type?: string; text?: string };
       } | null;
+
       if (
         update?.sessionUpdate === "agent_message_chunk" &&
         update.content?.type === "text" &&
@@ -879,17 +964,23 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         chatBuf += update.content.text;
       }
     };
+
     if (chatHitlId) entry.emitter.on(SESSION_EVENT_CHANNEL, chatListener);
     entry.record.readOnlyTurn = body.readOnlyTurn === true;
     const mountPreamble = takeContextMountPreamble(entry.record);
+
     if (mountPreamble) {
       logger.info(
-        { sessionId, mounts: entry.record.contextMounts?.map((mount) => mount.slug) },
+        {
+          sessionId,
+          mounts: entry.record.contextMounts?.map((mount) => mount.slug),
+        },
         "context-mount preamble prepended",
       );
     }
 
     let response: Awaited<ReturnType<typeof sendPromptOnConnection>>;
+
     try {
       response = await sendPromptOnConnection(
         entry.connection,
@@ -938,7 +1029,35 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       },
       "prompt-turn-completed",
     );
-    return { status: 200, body: { stopReason: response.stopReason, meta: response._meta } };
+    const sealedRuntimeObjects: RuntimeObjectPublicMetadata[] = [];
+
+    for (const objectId of entry.record.runtimeOutputObjectIds ?? []) {
+      const metadata = await runtimeObjects.sealOutput({
+        objectId,
+        hostSessionId: sessionId,
+      });
+
+      hostState.appendRuntimeEvent(
+        runtimeEvents.runtimeObjectInput({
+          runId: entry.record.runId,
+          assignmentId: entry.record.assignmentId,
+          assignmentEpoch: entry.record.assignmentEpoch,
+          metadata,
+        }),
+      );
+      sealedRuntimeObjects.push(metadata);
+    }
+
+    return {
+      status: 200,
+      body: {
+        stopReason: response.stopReason,
+        meta: response._meta,
+        ...(sealedRuntimeObjects.length > 0
+          ? { runtimeObjects: sealedRuntimeObjects }
+          : {}),
+      },
+    };
   }
 
   app.setErrorHandler((err, _req, reply) => {
@@ -948,7 +1067,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           ? 416
           : err.details?.reason === "runtime_object_too_large"
             ? 413
-          : httpStatusForCode(err.code);
+            : httpStatusForCode(err.code);
 
       reply.status(status).send(errorBody(err));
 
@@ -1008,6 +1127,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   ): AppendRuntimeEventInput | null {
     if (outcome.status >= 400) return null;
     const body = outcome.body as Partial<RuntimeObjectPublicMetadata> | null;
+
     if (
       !body ||
       typeof body.objectId !== "string" ||
@@ -1019,8 +1139,11 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       typeof body.state !== "string" ||
       typeof body.createdAt !== "string"
     ) {
-      throw new Error("runtime object command completed without typed metadata");
+      throw new Error(
+        "runtime object command completed without typed metadata",
+      );
     }
+
     return runtimeEvents.runtimeObjectInput({
       runId: fence.runId,
       assignmentId: fence.assignmentId,
@@ -1036,6 +1159,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       ReserveRuntimeObjectPayloadSchema,
       { route: "POST /runtime-objects" },
     );
+
     await runCommand({
       reply,
       parsed,
@@ -1058,13 +1182,22 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   });
 
   app.get("/runtime-objects/:id", async (req, reply) => {
-    const parsed = z.string().uuid().safeParse((req.params as { id?: unknown }).id);
+    const parsed = z
+      .string()
+      .uuid()
+      .safeParse((req.params as { id?: unknown }).id);
+
     if (!parsed.success) {
-      throw new SupervisorError("PRECONDITION", "runtime object id is invalid", {
-        details: { reason: "runtime_object_missing" },
-      });
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object id is invalid",
+        {
+          details: { reason: "runtime_object_missing" },
+        },
+      );
     }
     const metadata = runtimeObjects.metadata(parsed.data);
+
     if (metadata.sha256) {
       reply.header("ETag", `\"${metadata.sha256}\"`);
     }
@@ -1072,15 +1205,24 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   });
 
   app.put("/runtime-objects/:id/content", async (req, reply) => {
-    const objectId = z.string().uuid().safeParse((req.params as { id?: unknown }).id);
+    const objectId = z
+      .string()
+      .uuid()
+      .safeParse((req.params as { id?: unknown }).id);
+
     if (!objectId.success) {
-      throw new SupervisorError("PRECONDITION", "runtime object id is invalid", {
-        details: { reason: "runtime_object_missing" },
-      });
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object id is invalid",
+        {
+          details: { reason: "runtime_object_missing" },
+        },
+      );
     }
     const rawContentLength = req.headers["content-length"];
     const contentLength =
       typeof rawContentLength === "string" ? Number(rawContentLength) : NaN;
+
     if (
       Number.isSafeInteger(contentLength) &&
       contentLength > MAX_RUNTIME_OBJECT_BYTES
@@ -1101,32 +1243,48 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       sha256: req.headers["x-maister-sha256"],
       contentDigest: req.headers["content-digest"],
     });
+
     if (!headers.success) {
-      throw new SupervisorError("PRECONDITION", "runtime object upload headers are invalid", {
-        details: { reason: "runtime_object_integrity_mismatch" },
-      });
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object upload headers are invalid",
+        {
+          details: { reason: "runtime_object_integrity_mismatch" },
+        },
+      );
     }
     const object = hostState.getRuntimeObject(objectId.data);
+
     if (!object) {
       throw new SupervisorError("PRECONDITION", "runtime object is missing", {
         details: { reason: "runtime_object_missing" },
       });
     }
     const expectedDigest = `sha-256=:${Buffer.from(headers.data.sha256, "hex").toString("base64")}:`;
+
     if (headers.data.contentDigest !== expectedDigest) {
-      throw new SupervisorError("PRECONDITION", "Content-Digest does not match x-maister-sha256", {
-        details: { reason: "runtime_object_integrity_mismatch" },
-      });
+      throw new SupervisorError(
+        "PRECONDITION",
+        "Content-Digest does not match x-maister-sha256",
+        {
+          details: { reason: "runtime_object_integrity_mismatch" },
+        },
+      );
     }
     const uploadStream = req.body;
+
     if (
       !uploadStream ||
       typeof uploadStream !== "object" ||
       !(Symbol.asyncIterator in uploadStream)
     ) {
-      throw new SupervisorError("PRECONDITION", "runtime object upload must be binary", {
-        details: { reason: "runtime_object_integrity_mismatch" },
-      });
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object upload must be binary",
+        {
+          details: { reason: "runtime_object_integrity_mismatch" },
+        },
+      );
     }
     const envelope: CommandEnvelope = {
       command: {
@@ -1147,6 +1305,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         sha256: headers.data.sha256,
       },
     };
+
     await runRestartableUploadCommand({
       reply,
       parsed: { envelope, payload: envelope.payload },
@@ -1171,27 +1330,46 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   });
 
   app.get("/runtime-objects/:id/content", async (req, reply) => {
-    const objectId = z.string().uuid().safeParse((req.params as { id?: unknown }).id);
+    const objectId = z
+      .string()
+      .uuid()
+      .safeParse((req.params as { id?: unknown }).id);
+
     if (!objectId.success) {
-      throw new SupervisorError("PRECONDITION", "runtime object id is invalid", {
-        details: { reason: "runtime_object_missing" },
-      });
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object id is invalid",
+        {
+          details: { reason: "runtime_object_missing" },
+        },
+      );
     }
     const content = await runtimeObjects.read(objectId.data);
     const total = content.metadata.sizeBytes;
+
     if (total === null) throw new Error("available runtime object has no size");
     const maxRangeBytes = 8 * 1024 * 1024;
     const range = req.headers.range;
+
     if (range && Array.isArray(range)) {
-      throw new SupervisorError("PRECONDITION", "runtime object range is invalid", {
-        details: { reason: "runtime_object_range_invalid" },
-      });
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object range is invalid",
+        {
+          details: { reason: "runtime_object_range_invalid" },
+        },
+      );
     }
     const match = range?.match(/^bytes=(\d+)-(\d*)$/);
+
     if (range && !match) {
-      throw new SupervisorError("PRECONDITION", "runtime object range is invalid", {
-        details: { reason: "runtime_object_range_invalid" },
-      });
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object range is invalid",
+        {
+          details: { reason: "runtime_object_range_invalid" },
+        },
+      );
     }
     if (!match) {
       if (total > maxRangeBytes) {
@@ -1210,11 +1388,13 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           "Content-Digest",
           `sha-256=:${Buffer.from(content.metadata.sha256 ?? "", "hex").toString("base64")}:`,
         );
+
       return reply.status(200).send(createReadStream(content.path));
     }
     const start = Number(match[1]);
     const requestedEnd = match[2] ? Number(match[2]) : total - 1;
     const requestedLength = requestedEnd - start + 1;
+
     if (
       !Number.isSafeInteger(start) ||
       !Number.isSafeInteger(requestedEnd) ||
@@ -1223,16 +1403,24 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       requestedEnd >= total ||
       requestedLength > maxRangeBytes
     ) {
-      throw new SupervisorError("PRECONDITION", "runtime object range is invalid", {
-        details: { reason: "runtime_object_range_invalid" },
-      });
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object range is invalid",
+        {
+          details: { reason: "runtime_object_range_invalid" },
+        },
+      );
     }
     reply
       .header("Accept-Ranges", "bytes")
       .header("Content-Type", content.metadata.mimeType)
       .header("Content-Length", String(requestedLength))
       .header("ETag", `\"${content.metadata.sha256}\"`)
-      .header("Content-Digest", `sha-256=:${Buffer.from(content.metadata.sha256 ?? "", "hex").toString("base64")}:`);
+      .header(
+        "Content-Digest",
+        `sha-256=:${Buffer.from(content.metadata.sha256 ?? "", "hex").toString("base64")}:`,
+      );
+
     return reply
       .header("Content-Range", `bytes ${start}-${requestedEnd}/${total}`)
       .status(206)
@@ -1240,13 +1428,22 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   });
 
   app.delete("/runtime-objects/:id", async (req, reply) => {
-    const objectId = z.string().uuid().safeParse((req.params as { id?: unknown }).id);
+    const objectId = z
+      .string()
+      .uuid()
+      .safeParse((req.params as { id?: unknown }).id);
+
     if (!objectId.success) {
-      throw new SupervisorError("PRECONDITION", "runtime object id is invalid", {
-        details: { reason: "runtime_object_missing" },
-      });
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object id is invalid",
+        {
+          details: { reason: "runtime_object_missing" },
+        },
+      );
     }
     const object = hostState.getRuntimeObject(objectId.data);
+
     if (!object) {
       throw new SupervisorError("PRECONDITION", "runtime object is missing", {
         details: { reason: "runtime_object_missing" },
@@ -1258,11 +1455,11 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       DeleteRuntimeObjectPayloadSchema,
       { route: "DELETE /runtime-objects/:id" },
     );
-    await runCommand({
+
+    await runRuntimeObjectDeleteCommand({
       reply,
       parsed,
-      kind: "runtime_object.delete",
-      expectedRunId: object.runId,
+      object,
       runtimeEvent: (transition) =>
         transition.phase === "accepted"
           ? null
@@ -1306,7 +1503,9 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     let replaying = true;
     let highestSequence = afterSequence;
     const pending: ReturnType<typeof hostState.runtimeEventsAfter> = [];
-    const send = (event: ReturnType<typeof hostState.runtimeEventsAfter>[number]): void => {
+    const send = (
+      event: ReturnType<typeof hostState.runtimeEventsAfter>[number],
+    ): void => {
       if (closed) return;
       if (
         highestSequence !== null &&
@@ -1316,6 +1515,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       }
 
       const frame = `id: ${event.sequence}\nevent: ${String(event.envelope.eventType)}\ndata: ${JSON.stringify(event.envelope)}\n\n`;
+
       highestSequence = event.sequence;
       if (!reply.raw.write(frame)) {
         close("slow_client");
@@ -1343,9 +1543,11 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       if (replaying) {
         if (pending.length >= MAX_RUNTIME_EVENT_SSE_PENDING) {
           close("slow_client");
+
           return;
         }
         pending.push(event);
+
         return;
       }
       send(event);
@@ -1377,6 +1579,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       );
     }
     const currentStreamId = hostState.getRuntimeEventStreamId();
+
     if (parsed.data.streamId !== currentStreamId) {
       throw new SupervisorError(
         "PRECONDITION",
@@ -1586,14 +1789,63 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         // site.
         const workspace: WorkspaceResolution = workspaces.resolveForSession(
           request.executionWorkspaceId,
-          {
-            stepId: request.stepId,
-            capabilityProfilePath: request.capabilityProfilePath,
-          },
+          { stepId: request.stepId },
         );
         const sessionId = randomUUID();
-        const { child, emitter, record, acpStdoutTap } =
-          await spawnSession({
+        const outputPaths: Partial<
+          Record<RuntimeObjectOutputBinding["envName"], string>
+        > = {};
+        const outputObjectIds = new Set<string>();
+        const outputEnvironmentNames = new Set<string>();
+
+        for (const binding of request.outputObjects ?? []) {
+          if (
+            outputObjectIds.has(binding.objectId) ||
+            outputEnvironmentNames.has(binding.envName)
+          ) {
+            throw new SupervisorError(
+              "PRECONDITION",
+              "runtime output bindings must use unique object IDs and environment names",
+              { details: { reason: "command_invariant_conflict" } },
+            );
+          }
+          outputObjectIds.add(binding.objectId);
+          outputEnvironmentNames.add(binding.envName);
+        }
+        let spawned: Awaited<ReturnType<typeof spawnSession>>;
+
+        try {
+          for (const binding of request.outputObjects ?? []) {
+            const allocated = await runtimeObjects.allocateOutput({
+              runId: parsed.envelope.fence.runId,
+              assignmentId: parsed.envelope.fence.assignmentId,
+              assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
+              hostSessionId: sessionId,
+              binding,
+            });
+
+            outputPaths[binding.envName] = allocated.path;
+          }
+          const capabilityProfile = request.capabilityProfileObjectId
+            ? await runtimeObjects.resolvePromptReference({
+                objectId: request.capabilityProfileObjectId,
+                runId: parsed.envelope.fence.runId,
+                assignmentId: parsed.envelope.fence.assignmentId,
+                assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
+                expectedKind: "capability_profile",
+              })
+            : null;
+          const capabilityInstructions = request.capabilityInstructionsObjectId
+            ? await runtimeObjects.resolvePromptReference({
+                objectId: request.capabilityInstructionsObjectId,
+                runId: parsed.envelope.fence.runId,
+                assignmentId: parsed.envelope.fence.assignmentId,
+                assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
+                expectedKind: "capability_instructions",
+              })
+            : null;
+
+          spawned = await spawnSession({
             sessionId,
             request,
             workspace,
@@ -1605,7 +1857,21 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
             logger,
             binaryOverride: opts.spawnOverrides?.binary,
             preArgs: opts.spawnOverrides?.preArgs,
+            runtimeObjectEnv: {
+              capabilityProfilePath: capabilityProfile?.path,
+              capabilityInstructionsPath: capabilityInstructions?.path,
+              outputPaths,
+              outputObjectIds: [...outputObjectIds],
+            },
           });
+        } catch (error) {
+          await runtimeObjects.discardPendingOutputs({
+            objectIds: [...outputObjectIds],
+            hostSessionId: sessionId,
+          });
+          throw error;
+        }
+        const { child, emitter, record, acpStdoutTap } = spawned;
 
         // M34 lifecycle: propagate the reap-on-end-turn flag onto the record so
         // the prompt handler can reap a one-shot agent session when its turn ends.
@@ -1722,10 +1988,12 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   // completion seam; the asynchronous turn itself publishes canonical events.
   app.post<SessionIdParams>("/sessions/:id/prompts", async (req, reply) => {
     const entry = registry.get(req.params.id);
+
     if (!entry) {
       reply
         .status(404)
         .send({ code: "PRECONDITION", message: "unknown session" });
+
       return;
     }
     const parsed = parseCommandBody(
@@ -1734,6 +2002,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       SendPromptRequestSchema,
       { route: "POST /sessions/:id/prompts" },
     );
+
     await runAsyncPromptCommand({
       reply,
       parsed,

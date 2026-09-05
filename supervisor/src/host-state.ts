@@ -30,6 +30,7 @@ export const EXECUTION_HOST_PROTOCOL_VERSION = 1;
 export const HOST_STATE_SCHEMA_VERSION = 6;
 const MAX_HOST_EVENT_SEQUENCE = (1n << 63n) - 1n;
 const HOST_EVENT_SEQUENCE_SORT_WIDTH = 20;
+
 export const MAX_RUNTIME_EVENT_OUTBOX_BYTES = 64 * 1024 * 1024;
 export const SOFT_RUNTIME_EVENT_OUTBOX_BYTES = 48 * 1024 * 1024;
 export const HARD_RUNTIME_EVENT_OUTBOX_BYTES = 56 * 1024 * 1024;
@@ -49,10 +50,7 @@ export class HostRuntimeEventError extends Error {
     | "ack_beyond_emitted"
     | "stream_corrupt";
 
-  constructor(
-    reason: HostRuntimeEventError["reason"],
-    message: string,
-  ) {
+  constructor(reason: HostRuntimeEventError["reason"], message: string) {
     super(message);
     this.name = "HostRuntimeEventError";
     this.reason = reason;
@@ -144,7 +142,14 @@ export type HostRuntimeObjectRow = {
   sha256: string | null;
   generation: number;
   retentionClass: string;
-  state: "pending" | "available" | "deleting" | "missing" | "deleted" | "expired" | "corrupt";
+  state:
+    | "pending"
+    | "available"
+    | "deleting"
+    | "missing"
+    | "deleted"
+    | "expired"
+    | "corrupt";
   privatePath: string;
   createdAt: string;
   sealedAt: string | null;
@@ -200,9 +205,13 @@ export type HostState = {
   releaseWorkspace(id: string, releasedAt: string): boolean;
   getRuntimeObject(id: string): HostRuntimeObjectRow | null;
   insertRuntimeObject(row: HostRuntimeObjectRow): void;
+  deleteRuntimeObject(id: string): boolean;
   updateRuntimeObject(
     id: string,
-    patch: Pick<HostRuntimeObjectRow, "state" | "sizeBytes" | "sha256" | "sealedAt" | "deletedAt" | "lastError">,
+    patch: Pick<
+      HostRuntimeObjectRow,
+      "state" | "sizeBytes" | "sha256" | "sealedAt" | "deletedAt" | "lastError"
+    >,
   ): HostRuntimeObjectRow;
   appendRuntimeEvent(input: AppendRuntimeEventInput): HostRuntimeEventRow;
   putReceiptWithRuntimeEvent(
@@ -220,7 +229,9 @@ export type HostState = {
   runtimeEventOutboxStats(): RuntimeEventOutboxStats;
   assertCanAcceptMutatingCommand(): void;
   pruneAcknowledgedRuntimeEvents(olderThan: Date): number;
-  subscribeRuntimeEvents(listener: (event: HostRuntimeEventRow) => void): () => void;
+  subscribeRuntimeEvents(
+    listener: (event: HostRuntimeEventRow) => void,
+  ): () => void;
   close(): void;
 };
 
@@ -565,9 +576,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
   }
 
   const bootId = randomUUID();
-  const runtimeEventListeners = new Set<
-    (event: HostRuntimeEventRow) => void
-  >();
+  const runtimeEventListeners = new Set<(event: HostRuntimeEventRow) => void>();
 
   const notifyRuntimeEventListeners = (event: HostRuntimeEventRow): void => {
     for (const listener of runtimeEventListeners) {
@@ -690,9 +699,11 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         received_at: string;
         completed_at: string | null;
       }>;
+
       if (rows.length === 0) return 0;
 
       const recovered: HostRuntimeEventRow[] = [];
+
       db.exec("BEGIN IMMEDIATE");
       try {
         for (const row of rows) {
@@ -724,6 +735,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
               },
             },
           });
+
           writeReceiptRow(db, {
             commandId: row.command_id,
             runId: row.run_id,
@@ -747,6 +759,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         throw error;
       }
       recovered.forEach(notifyRuntimeEventListeners);
+
       return recovered.length;
     },
     pruneReceipts(olderThan) {
@@ -799,7 +812,9 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       return Number(result.changes) > 0;
     },
     getRuntimeObject(id) {
-      const row = db.prepare("SELECT * FROM runtime_objects WHERE id = ?").get(id);
+      const row = db
+        .prepare("SELECT * FROM runtime_objects WHERE id = ?")
+        .get(id);
 
       return row ? toHostRuntimeObjectRow(row) : null;
     },
@@ -833,8 +848,18 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         row.lastError ? JSON.stringify(row.lastError) : null,
       );
     },
+    deleteRuntimeObject(id) {
+      const result = db
+        .prepare("DELETE FROM runtime_objects WHERE id = ?")
+        .run(id);
+
+      return Number(result.changes) > 0;
+    },
     updateRuntimeObject(id, patch) {
-      const existing = db.prepare("SELECT * FROM runtime_objects WHERE id = ?").get(id);
+      const existing = db
+        .prepare("SELECT * FROM runtime_objects WHERE id = ?")
+        .get(id);
+
       if (!existing) throw new Error(`runtime object ${id} is missing`);
       db.prepare(
         `UPDATE runtime_objects
@@ -850,8 +875,13 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         patch.lastError ? JSON.stringify(patch.lastError) : null,
         id,
       );
-      const updated = db.prepare("SELECT * FROM runtime_objects WHERE id = ?").get(id);
-      if (!updated) throw new Error(`runtime object ${id} vanished during update`);
+      const updated = db
+        .prepare("SELECT * FROM runtime_objects WHERE id = ?")
+        .get(id);
+
+      if (!updated)
+        throw new Error(`runtime object ${id} vanished during update`);
+
       return toHostRuntimeObjectRow(updated);
     },
     appendRuntimeEvent(input) {
@@ -867,6 +897,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
 
         db.exec("COMMIT");
         notifyRuntimeEventListeners(event);
+
         return event;
       } catch (error) {
         db.exec("ROLLBACK");
@@ -883,10 +914,12 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
           now,
           input: eventInput,
         });
+
         writeReceiptRow(db, { ...receipt, eventId: event.eventId });
 
         db.exec("COMMIT");
         notifyRuntimeEventListeners(event);
+
         return event;
       } catch (error) {
         db.exec("ROLLBACK");
@@ -923,7 +956,12 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
            ORDER BY sequence_sort_key ASC
            LIMIT ?`,
         )
-        .all(streamId, afterSortKey, afterSortKey, validateRuntimeEventLimit(limit)) as RuntimeEventOutboxDbRow[];
+        .all(
+          streamId,
+          afterSortKey,
+          afterSortKey,
+          validateRuntimeEventLimit(limit),
+        ) as RuntimeEventOutboxDbRow[];
 
       return rows.map(toHostRuntimeEventRow);
     },
@@ -938,7 +976,10 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
            ORDER BY sequence_sort_key ASC
            LIMIT ?`,
         )
-        .all(streamId, validateRuntimeEventLimit(limit)) as RuntimeEventOutboxDbRow[];
+        .all(
+          streamId,
+          validateRuntimeEventLimit(limit),
+        ) as RuntimeEventOutboxDbRow[];
 
       return rows.map(toHostRuntimeEventRow);
     },
@@ -958,6 +999,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
 
         if (through < acknowledged) {
           db.exec("COMMIT");
+
           return acknowledged.toString();
         }
 
@@ -981,6 +1023,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
           ) as Array<{ sequence: string }>;
 
         let expected = acknowledged + 1n;
+
         for (const row of rows) {
           if (parseHostEventSequence(row.sequence) !== expected) {
             throw new HostRuntimeEventError(
@@ -1000,6 +1043,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
 
         const throughText = through.toString();
         const throughSortKey = hostEventSequenceSortKey(through);
+
         db.prepare(
           `UPDATE runtime_event_streams
            SET acknowledged_through = ?, acknowledged_sort_key = ?, updated_at = ?
@@ -1011,6 +1055,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
            WHERE stream_id = ? AND sequence_sort_key <= ? AND acknowledged_at IS NULL`,
         ).run(nowIso, streamId, throughSortKey);
         db.exec("COMMIT");
+
         return throughText;
       } catch (error) {
         db.exec("ROLLBACK");
@@ -1018,7 +1063,10 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       }
     },
     runtimeEventOutboxStats() {
-      return runtimeEventOutboxStats(db, ensureRuntimeEventStream(db, now).stream_id);
+      return runtimeEventOutboxStats(
+        db,
+        ensureRuntimeEventStream(db, now).stream_id,
+      );
     },
     assertCanAcceptMutatingCommand() {
       const stats = runtimeEventOutboxStats(
@@ -1051,23 +1099,33 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
 
         if (rows.length === 0) {
           db.exec("COMMIT");
+
           return 0;
         }
 
         const last = rows.at(-1);
-        if (!last) throw new Error("acknowledged runtime-event rows disappeared");
+
+        if (!last)
+          throw new Error("acknowledged runtime-event rows disappeared");
         db.prepare(
           `UPDATE runtime_event_streams
            SET replay_floor_sequence = ?, replay_floor_sort_key = ?, updated_at = ?
            WHERE stream_id = ?`,
-        ).run(last.sequence, last.sequence_sort_key, now().toISOString(), stream.stream_id);
+        ).run(
+          last.sequence,
+          last.sequence_sort_key,
+          now().toISOString(),
+          stream.stream_id,
+        );
         const result = db
           .prepare(
             `DELETE FROM runtime_event_outbox
              WHERE stream_id = ? AND acknowledged_at IS NOT NULL AND acknowledged_at < ?`,
           )
           .run(stream.stream_id, olderThan.toISOString());
+
         db.exec("COMMIT");
+
         return Number(result.changes);
       } catch (error) {
         db.exec("ROLLBACK");
@@ -1076,6 +1134,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     },
     subscribeRuntimeEvents(listener) {
       runtimeEventListeners.add(listener);
+
       return () => runtimeEventListeners.delete(listener);
     },
     close() {
@@ -1154,6 +1213,7 @@ function ensureRuntimeEventStream(
 
   const streamId = randomUUID();
   const createdAt = now().toISOString();
+
   db.prepare(
     `INSERT INTO runtime_event_streams
        (stream_id, next_sequence, acknowledged_through, acknowledged_sort_key,
@@ -1243,6 +1303,7 @@ function appendRuntimeEventInTransaction(
   }
 
   const createdAt = args.now().toISOString();
+
   db.prepare(
     `INSERT INTO runtime_event_outbox
        (stream_id, sequence, sequence_sort_key, event_id, envelope_json, encoded_bytes,
@@ -1321,6 +1382,7 @@ function auditRuntimeEventState(db: DatabaseSync): void {
     );
   }
   const stream = streams[0];
+
   if (!stream) return;
 
   const next = parseHostEventSequence(stream.next_sequence);
@@ -1349,6 +1411,7 @@ function auditRuntimeEventState(db: DatabaseSync): void {
 
   for (const row of rows) {
     const sequence = parseHostEventSequence(row.sequence);
+
     if (sequence !== expected || sequence >= next) {
       throw new HostRuntimeEventError(
         "stream_corrupt",
@@ -1358,6 +1421,7 @@ function auditRuntimeEventState(db: DatabaseSync): void {
     const envelope = RuntimeEventEnvelopeSchema.parse(
       JSON.parse(row.envelope_json),
     );
+
     if (
       envelope.streamId !== stream.stream_id ||
       envelope.sequence !== row.sequence ||
@@ -1370,7 +1434,7 @@ function auditRuntimeEventState(db: DatabaseSync): void {
         "runtime event outbox envelope does not match its indexed fields",
       );
     }
-    if ((sequence <= acknowledged) !== (row.acknowledged_at !== null)) {
+    if (sequence <= acknowledged !== (row.acknowledged_at !== null)) {
       throw new HostRuntimeEventError(
         "stream_corrupt",
         "runtime event acknowledgement markers are inconsistent",
@@ -1400,12 +1464,17 @@ type RuntimeEventOutboxDbRow = {
 
 function parseHostEventSequence(value: string): bigint {
   if (!/^(0|[1-9][0-9]*)$/.test(value)) {
-    throw new Error(`runtime event sequence must be a canonical decimal integer: ${value}`);
+    throw new Error(
+      `runtime event sequence must be a canonical decimal integer: ${value}`,
+    );
   }
 
   const sequence = BigInt(value);
+
   if (sequence > MAX_HOST_EVENT_SEQUENCE) {
-    throw new Error(`runtime event sequence exceeds the host counter limit: ${value}`);
+    throw new Error(
+      `runtime event sequence exceeds the host counter limit: ${value}`,
+    );
   }
 
   return sequence;
@@ -1416,7 +1485,9 @@ function hostEventSequenceSortKey(sequence: bigint): string {
   // sentinel. '-' sorts before the decimal digits under SQLite BINARY collation.
   if (sequence === -1n) return "-".padEnd(HOST_EVENT_SEQUENCE_SORT_WIDTH, "0");
   if (sequence < 0n || sequence > MAX_HOST_EVENT_SEQUENCE) {
-    throw new Error(`runtime event sequence cannot be sorted: ${sequence.toString()}`);
+    throw new Error(
+      `runtime event sequence cannot be sorted: ${sequence.toString()}`,
+    );
   }
 
   return sequence.toString().padStart(HOST_EVENT_SEQUENCE_SORT_WIDTH, "0");
@@ -1424,13 +1495,17 @@ function hostEventSequenceSortKey(sequence: bigint): string {
 
 function validateRuntimeEventLimit(limit: number): number {
   if (!Number.isInteger(limit) || limit < 1 || limit > 50_000) {
-    throw new Error("runtime event replay limit must be an integer between 1 and 50000");
+    throw new Error(
+      "runtime event replay limit must be an integer between 1 and 50000",
+    );
   }
 
   return limit;
 }
 
-function toHostRuntimeEventRow(row: RuntimeEventOutboxDbRow): HostRuntimeEventRow {
+function toHostRuntimeEventRow(
+  row: RuntimeEventOutboxDbRow,
+): HostRuntimeEventRow {
   return {
     streamId: row.stream_id,
     sequence: row.sequence,
@@ -1481,7 +1556,10 @@ function toHostRuntimeObjectRow(
       row.size_bytes === null || row.size_bytes === undefined
         ? null
         : Number(row.size_bytes),
-    sha256: row.sha256 === null || row.sha256 === undefined ? null : String(row.sha256),
+    sha256:
+      row.sha256 === null || row.sha256 === undefined
+        ? null
+        : String(row.sha256),
     generation: Number(row.generation),
     retentionClass: String(row.retention_class),
     state: String(row.state) as HostRuntimeObjectRow["state"],
@@ -1533,6 +1611,7 @@ export function startRuntimeEventPruner(
 
   prune();
   const handle = setInterval(prune, RUNTIME_EVENT_PRUNE_INTERVAL_MS);
+
   handle.unref();
 
   return () => clearInterval(handle);

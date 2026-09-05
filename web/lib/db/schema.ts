@@ -2286,7 +2286,9 @@ export const executionCommands = pgTable(
       "execution_commands_prompt_logical_operation_uq",
     )
       .on(t.runId, t.logicalOperationKey)
-      .where(sql`${t.kind} = 'session.prompt' AND ${t.logicalOperationKey} IS NOT NULL`),
+      .where(
+        sql`${t.kind} = 'session.prompt' AND ${t.logicalOperationKey} IS NOT NULL`,
+      ),
     kindCheck: check(
       "execution_commands_kind_check",
       inLiteralList(t.kind, COMMAND_KINDS),
@@ -3653,25 +3655,48 @@ export const executionEventStreams = pgTable(
       .notNull()
       .default("observed"),
     lastReceivedSequence: bigint("last_received_sequence", { mode: "bigint" }),
-    lastContiguousSequence: bigint("last_contiguous_sequence", { mode: "bigint" }),
-    lastAckConfirmedSequence: bigint("last_ack_confirmed_sequence", { mode: "bigint" }),
+    lastContiguousSequence: bigint("last_contiguous_sequence", {
+      mode: "bigint",
+    }),
+    lastAckConfirmedSequence: bigint("last_ack_confirmed_sequence", {
+      mode: "bigint",
+    }),
     replayFloorSequence: bigint("replay_floor_sequence", { mode: "bigint" }),
     lastBootId: text("last_boot_id"),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true, mode: "date" }),
     firstGapSequence: bigint("first_gap_sequence", { mode: "bigint" }),
-    gapDetectedAt: timestamp("gap_detected_at", { withTimezone: true, mode: "date" }),
+    gapDetectedAt: timestamp("gap_detected_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
     gapStatus: text("gap_status", { enum: ["open", "unrecoverable"] }),
     lastError: jsonb("last_error").$type<Record<string, unknown>>(),
-    nextRetryAt: timestamp("next_retry_at", { withTimezone: true, mode: "date" }),
+    nextRetryAt: timestamp("next_retry_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
     claimOwner: text("claim_owner"),
-    claimExpiresAt: timestamp("claim_expires_at", { withTimezone: true, mode: "date" }),
-    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+    claimExpiresAt: timestamp("claim_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
     closedAt: timestamp("closed_at", { withTimezone: true, mode: "date" }),
   },
   (t) => ({
-    uniqHostStream: unique("execution_event_streams_host_stream_uq").on(t.executionHostId, t.streamId),
-    uniqActiveHost: uniqueIndex("execution_event_streams_active_host_uq").on(t.executionHostId).where(sql`${t.state} = 'active'`),
-    idxRetry: index("execution_event_streams_retry_idx").on(t.nextRetryAt, t.claimExpiresAt),
+    uniqHostStream: unique("execution_event_streams_host_stream_uq").on(
+      t.executionHostId,
+      t.streamId,
+    ),
+    uniqActiveHost: uniqueIndex("execution_event_streams_active_host_uq")
+      .on(t.executionHostId)
+      .where(sql`${t.state} = 'active'`),
+    idxRetry: index("execution_event_streams_retry_idx").on(
+      t.nextRetryAt,
+      t.claimExpiresAt,
+    ),
   }),
 );
 
@@ -3679,24 +3704,55 @@ export const runSessionIncarnations = pgTable(
   "run_session_incarnations",
   {
     id: text("id").primaryKey(),
-    runSessionId: text("run_session_id").notNull().references(() => runSessions.id, { onDelete: "cascade" }),
-    runId: text("run_id").notNull().references(() => runs.id, { onDelete: "cascade" }),
-    executionAssignmentId: text("execution_assignment_id").references(() => executionAssignments.id, { onDelete: "set null" }),
+    runSessionId: text("run_session_id")
+      .notNull()
+      .references(() => runSessions.id, { onDelete: "cascade" }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    executionAssignmentId: text("execution_assignment_id").references(
+      () => executionAssignments.id,
+      { onDelete: "set null" },
+    ),
     assignmentEpoch: integer("assignment_epoch"),
-    executionHostId: text("execution_host_id").notNull().references(() => executionHosts.id, { onDelete: "restrict" }),
+    executionHostId: text("execution_host_id")
+      .notNull()
+      .references(() => executionHosts.id, { onDelete: "restrict" }),
     hostSessionId: text("host_session_id").notNull(),
     hostBootId: text("host_boot_id"),
     acpSessionId: text("acp_session_id"),
-    state: text("state", { enum: ["created", "active", "checkpointed", "exited", "crashed", "lost", "deleted"] }).notNull(),
+    state: text("state", {
+      enum: [
+        "created",
+        "active",
+        "checkpointed",
+        "exited",
+        "crashed",
+        "lost",
+        "deleted",
+      ],
+    }).notNull(),
     origin: text("origin", { enum: ["native", "legacy_backfill"] }).notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
-    activatedAt: timestamp("activated_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    activatedAt: timestamp("activated_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
     endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
     terminalReason: jsonb("terminal_reason").$type<Record<string, unknown>>(),
   },
   (t) => ({
-    uniqHostSession: unique("run_session_incarnations_host_session_uq").on(t.executionHostId, t.hostSessionId),
-    uniqActiveRunSession: uniqueIndex("run_session_incarnations_active_run_session_uq").on(t.runSessionId).where(sql`${t.state} IN ('created', 'active', 'checkpointed')`),
+    uniqHostSession: unique("run_session_incarnations_host_session_uq").on(
+      t.executionHostId,
+      t.hostSessionId,
+    ),
+    uniqActiveRunSession: uniqueIndex(
+      "run_session_incarnations_active_run_session_uq",
+    )
+      .on(t.runSessionId)
+      .where(sql`${t.state} IN ('created', 'active', 'checkpointed')`),
   }),
 );
 
@@ -3704,15 +3760,31 @@ export const executionEvents = pgTable(
   "execution_events",
   {
     id: text("id").primaryKey(),
-    source: text("source", { enum: ["host", "manager", "legacy_import"] }).notNull(),
+    source: text("source", {
+      enum: ["host", "manager", "legacy_import"],
+    }).notNull(),
     sourceKey: text("source_key"),
-    runId: text("run_id").notNull().references(() => runs.id, { onDelete: "cascade" }),
-    executionHostId: text("execution_host_id").references(() => executionHosts.id, { onDelete: "restrict" }),
-    eventStreamId: text("event_stream_id").references(() => executionEventStreams.id, { onDelete: "restrict" }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    executionHostId: text("execution_host_id").references(
+      () => executionHosts.id,
+      { onDelete: "restrict" },
+    ),
+    eventStreamId: text("event_stream_id").references(
+      () => executionEventStreams.id,
+      { onDelete: "restrict" },
+    ),
     hostSequence: bigint("host_sequence", { mode: "bigint" }),
-    executionAssignmentId: text("execution_assignment_id").references(() => executionAssignments.id, { onDelete: "set null" }),
+    executionAssignmentId: text("execution_assignment_id").references(
+      () => executionAssignments.id,
+      { onDelete: "set null" },
+    ),
     assignmentEpoch: integer("assignment_epoch"),
-    runSessionIncarnationId: text("run_session_incarnation_id").references(() => runSessionIncarnations.id, { onDelete: "set null" }),
+    runSessionIncarnationId: text("run_session_incarnation_id").references(
+      () => runSessionIncarnations.id,
+      { onDelete: "set null" },
+    ),
     hostBootId: text("host_boot_id"),
     hostSessionId: text("host_session_id"),
     envelopeVersion: integer("envelope_version"),
@@ -3721,17 +3793,33 @@ export const executionEvents = pgTable(
     payload: jsonb("payload").$type<Record<string, unknown>>(),
     payloadSha256: text("payload_sha256"),
     payloadBytes: integer("payload_bytes"),
-    occurredAt: timestamp("occurred_at", { withTimezone: true, mode: "date" }).notNull(),
-    receivedAt: timestamp("received_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+    occurredAt: timestamp("occurred_at", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
     runSequence: bigint("run_sequence", { mode: "bigint" }),
-    ingestDisposition: text("ingest_disposition", { enum: ["pending_gap", "accepted", "stale_epoch", "quarantined"] }).notNull(),
+    ingestDisposition: text("ingest_disposition", {
+      enum: ["pending_gap", "accepted", "stale_epoch", "quarantined"],
+    }).notNull(),
     ingestError: jsonb("ingest_error").$type<Record<string, unknown>>(),
   },
   (t) => ({
-    uniqHostPosition: uniqueIndex("execution_events_host_position_uq").on(t.eventStreamId, t.hostSequence).where(sql`${t.eventStreamId} IS NOT NULL`),
-    uniqSourceKey: uniqueIndex("execution_events_source_run_key_uq").on(t.source, t.runId, t.sourceKey).where(sql`${t.sourceKey} IS NOT NULL`),
-    uniqRunSequence: uniqueIndex("execution_events_run_sequence_uq").on(t.runId, t.runSequence).where(sql`${t.runSequence} IS NOT NULL`),
-    idxRunSequence: index("execution_events_run_sequence_idx").on(t.runId, t.runSequence),
+    uniqHostPosition: uniqueIndex("execution_events_host_position_uq")
+      .on(t.eventStreamId, t.hostSequence)
+      .where(sql`${t.eventStreamId} IS NOT NULL`),
+    uniqSourceKey: uniqueIndex("execution_events_source_run_key_uq")
+      .on(t.source, t.runId, t.sourceKey)
+      .where(sql`${t.sourceKey} IS NOT NULL`),
+    uniqRunSequence: uniqueIndex("execution_events_run_sequence_uq")
+      .on(t.runId, t.runSequence)
+      .where(sql`${t.runSequence} IS NOT NULL`),
+    idxRunSequence: index("execution_events_run_sequence_idx").on(
+      t.runId,
+      t.runSequence,
+    ),
     sourceShapeCheck: check(
       "execution_events_source_shape_check",
       sql`(${t.source} = 'host' AND ${t.eventStreamId} IS NOT NULL AND ${t.hostSequence} IS NOT NULL) OR (${t.source} IN ('manager', 'legacy_import') AND ${t.sourceKey} IS NOT NULL AND ${t.eventStreamId} IS NULL AND ${t.hostSequence} IS NULL)`,
@@ -3750,21 +3838,38 @@ export const executionRuntimeObjects = pgTable(
   "execution_runtime_objects",
   {
     id: text("id").primaryKey(),
-    runId: text("run_id").notNull().references(() => runs.id, { onDelete: "cascade" }),
-    executionHostId: text("execution_host_id").notNull().references(() => executionHosts.id, { onDelete: "restrict" }),
-    executionAssignmentId: text("execution_assignment_id").references(() => executionAssignments.id, { onDelete: "set null" }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    executionHostId: text("execution_host_id")
+      .notNull()
+      .references(() => executionHosts.id, { onDelete: "restrict" }),
+    executionAssignmentId: text("execution_assignment_id").references(
+      () => executionAssignments.id,
+      { onDelete: "set null" },
+    ),
     assignmentEpoch: integer("assignment_epoch"),
-    runSessionIncarnationId: text("run_session_incarnation_id").references(() => runSessionIncarnations.id, { onDelete: "set null" }),
+    runSessionIncarnationId: text("run_session_incarnation_id").references(
+      () => runSessionIncarnations.id,
+      { onDelete: "set null" },
+    ),
     kind: text("kind", { enum: RUNTIME_OBJECT_KINDS }).notNull(),
     logicalName: text("logical_name").notNull(),
     mimeType: text("mime_type").notNull(),
     sizeBytes: bigint("size_bytes", { mode: "bigint" }),
     sha256: text("sha256"),
     generation: integer("generation").notNull(),
-    retentionClass: text("retention_class", { enum: RUNTIME_OBJECT_RETENTION_CLASSES }).notNull(),
+    retentionClass: text("retention_class", {
+      enum: RUNTIME_OBJECT_RETENTION_CLASSES,
+    }).notNull(),
     state: text("state", { enum: RUNTIME_OBJECT_STATES }).notNull(),
-    sourceEventId: text("source_event_id").references(() => executionEvents.id, { onDelete: "set null" }),
-    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+    sourceEventId: text("source_event_id").references(
+      () => executionEvents.id,
+      { onDelete: "set null" },
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
     sealedAt: timestamp("sealed_at", { withTimezone: true, mode: "date" }),
     expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }),
     deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "date" }),
@@ -3774,7 +3879,10 @@ export const executionRuntimeObjects = pgTable(
     uniqSourceEvent: uniqueIndex("execution_runtime_objects_source_event_uq")
       .on(t.sourceEventId)
       .where(sql`${t.sourceEventId} IS NOT NULL`),
-    idxRunState: index("execution_runtime_objects_run_state_idx").on(t.runId, t.state),
+    idxRunState: index("execution_runtime_objects_run_state_idx").on(
+      t.runId,
+      t.state,
+    ),
     idxExpiry: index("execution_runtime_objects_expiry_idx")
       .on(t.expiresAt)
       .where(sql`${t.expiresAt} IS NOT NULL`),
@@ -3805,33 +3913,71 @@ export const executionEventConsumers = pgTable(
   "execution_event_consumers",
   {
     consumerName: text("consumer_name").notNull(),
-    runId: text("run_id").notNull().references(() => runs.id, { onDelete: "cascade" }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
     lastRunSequence: bigint("last_run_sequence", { mode: "bigint" }),
-    state: text("state", { enum: ["ready", "retrying", "poisoned"] }).notNull().default("ready"),
+    state: text("state", { enum: ["ready", "retrying", "poisoned"] })
+      .notNull()
+      .default("ready"),
     attempts: integer("attempts").notNull().default(0),
-    nextRetryAt: timestamp("next_retry_at", { withTimezone: true, mode: "date" }),
-    poisonEventId: text("poison_event_id").references(() => executionEvents.id, { onDelete: "set null" }),
+    nextRetryAt: timestamp("next_retry_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    poisonEventId: text("poison_event_id").references(
+      () => executionEvents.id,
+      { onDelete: "set null" },
+    ),
     lastError: jsonb("last_error").$type<Record<string, unknown>>(),
     claimOwner: text("claim_owner"),
-    claimExpiresAt: timestamp("claim_expires_at", { withTimezone: true, mode: "date" }),
-    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+    claimExpiresAt: timestamp("claim_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
   },
-  (t) => ({ primary: primaryKey({ columns: [t.consumerName, t.runId] }), idxRetry: index("execution_event_consumers_retry_idx").on(t.nextRetryAt, t.claimExpiresAt) }),
+  (t) => ({
+    primary: primaryKey({ columns: [t.consumerName, t.runId] }),
+    idxRetry: index("execution_event_consumers_retry_idx").on(
+      t.nextRetryAt,
+      t.claimExpiresAt,
+    ),
+  }),
 );
 
 export const executionDataPlaneImports = pgTable(
   "execution_data_plane_imports",
   {
-    runId: text("run_id").notNull().references(() => runs.id, { onDelete: "cascade" }),
-    sourceKind: text("source_kind", { enum: ["events", "transcript", "cost", "runtime_objects", "scratch_session"] }).notNull(),
-    state: text("state", { enum: ["pending", "complete", "missing", "failed"] }).notNull().default("pending"),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    sourceKind: text("source_kind", {
+      enum: [
+        "events",
+        "transcript",
+        "cost",
+        "runtime_objects",
+        "scratch_session",
+      ],
+    }).notNull(),
+    state: text("state", { enum: ["pending", "complete", "missing", "failed"] })
+      .notNull()
+      .default("pending"),
     sourceFingerprint: text("source_fingerprint"),
     lastSourcePosition: text("last_source_position"),
     importedCount: integer("imported_count").notNull().default(0),
     lastError: jsonb("last_error").$type<Record<string, unknown>>(),
     startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),
-    completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
+    completedAt: timestamp("completed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
     attempts: integer("attempts").notNull().default(0),
   },
   (t) => ({ primary: primaryKey({ columns: [t.runId, t.sourceKind] }) }),
@@ -3841,7 +3987,9 @@ export const executionEventIngestFailures = pgTable(
   "execution_event_ingest_failures",
   {
     id: text("id").primaryKey(),
-    executionHostId: text("execution_host_id").notNull().references(() => executionHosts.id, { onDelete: "restrict" }),
+    executionHostId: text("execution_host_id")
+      .notNull()
+      .references(() => executionHosts.id, { onDelete: "restrict" }),
     streamId: text("stream_id"),
     eventIdText: text("event_id_text"),
     sequenceText: text("sequence_text"),
@@ -3849,18 +3997,32 @@ export const executionEventIngestFailures = pgTable(
     details: jsonb("details").$type<Record<string, unknown>>(),
     encodedBytes: integer("encoded_bytes").notNull().default(0),
     occurrences: integer("occurrences").notNull().default(1),
-    firstSeenAt: timestamp("first_seen_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
-    lastSeenAt: timestamp("last_seen_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+    firstSeenAt: timestamp("first_seen_at", {
+      withTimezone: true,
+      mode: "date",
+    })
+      .notNull()
+      .defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
   },
   (t) => ({
-    uniqFailure: unique("execution_event_ingest_failures_identity_uq").on(t.executionHostId, t.streamId, t.eventIdText, t.sequenceText, t.reason),
+    uniqFailure: unique("execution_event_ingest_failures_identity_uq").on(
+      t.executionHostId,
+      t.streamId,
+      t.eventIdText,
+      t.sequenceText,
+      t.reason,
+    ),
   }),
 );
 
 export type ExecutionEvent = typeof executionEvents.$inferSelect;
 export type ExecutionEventStream = typeof executionEventStreams.$inferSelect;
 export type RunSessionIncarnation = typeof runSessionIncarnations.$inferSelect;
-export type ExecutionRuntimeObject = typeof executionRuntimeObjects.$inferSelect;
+export type ExecutionRuntimeObject =
+  typeof executionRuntimeObjects.$inferSelect;
 
 export const runCostRollups = pgTable(
   "run_cost_rollups",

@@ -34,9 +34,14 @@ import type { AddressInfo } from "node:net";
 import type { Pool } from "pg";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { createServer, type IncomingMessage, type Server } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from "node:http";
 import path from "node:path";
 
 import { E2E_EXECUTION_HOST_SLUG } from "./fixtures";
@@ -63,6 +68,62 @@ import {
 
 const STUB_RELEASE_BACKSTOP_MS = 15_000;
 const STUB_RELEASE_POLL_MS = 150;
+const STAGE_B_STREAM_ID = "9de93d52-7097-44df-977f-d912143f09e8";
+
+const EVENT_PAYLOAD_SCHEMAS = {
+  "session.created": "maister.session.created.v1",
+  "session.line": "maister.session.line.v1",
+  "session.update": "maister.session.update.v1",
+  "session.permission_request": "maister.session.permission-request.v1",
+  "session.hook_trip": "maister.session.hook-trip.v1",
+  "session.command": "maister.session.command.v1",
+  "session.chat_turn": "maister.session.chat-turn.v1",
+  "session.exited": "maister.session.exited.v1",
+  "session.crashed": "maister.session.crashed.v1",
+  "usage.recorded": "maister.usage.recorded.v1",
+  "runtime_object.available": "maister.runtime-object.available.v1",
+  "runtime_object.state": "maister.runtime-object.state.v1",
+} as const;
+
+type StageBEventType = keyof typeof EVENT_PAYLOAD_SCHEMAS;
+type StageBEnvelope = {
+  envelopeVersion: 1;
+  eventId: string;
+  hostKey: string;
+  hostBootId: string;
+  streamId: string;
+  sequence: string;
+  runId: string;
+  assignmentId: string;
+  assignmentEpoch: number;
+  hostSessionId: string | null;
+  eventType: StageBEventType;
+  occurredAt: string;
+  payloadSchema: (typeof EVENT_PAYLOAD_SCHEMAS)[StageBEventType];
+  payload: Record<string, unknown>;
+};
+
+type TestRuntimeObject = {
+  runId: string;
+  assignmentId: string;
+  assignmentEpoch: number;
+  metadata: {
+    objectId: string;
+    kind: string;
+    logicalName: string;
+    mimeType: string;
+    sizeBytes: number | null;
+    sha256: string | null;
+    generation: number;
+    retentionClass: string;
+    state: "pending" | "available" | "deleted";
+    createdAt: string;
+    sealedAt: string | null;
+    expiresAt: string | null;
+    deletedAt: string | null;
+  };
+  bytes: Uint8Array | null;
+};
 
 // ADR-165 — the seeded RAH flow refs (e2e/_seed/seed-e2e.ts) this supervisor
 // branches on to build a depth-2 tree.
@@ -112,6 +173,8 @@ type SessionRecord = {
   runKind: "flow" | "scratch" | "agent" | "unknown";
   isResume: boolean;
   mcpServers: AgentMcpServer[];
+  sessionName: string;
+  nodeAttemptId?: string;
   // Set once the agent's turn is decided complete (on sendPrompt). The stream
   // handler flushes it as a `session.exited` frame the moment it is connected;
   // queuing here decouples the prompt POST from the stream GET race.
@@ -207,6 +270,33 @@ function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   });
 }
 
+function readBinaryBody(req: IncomingMessage): Promise<Uint8Array> {
+  return new Promise((resolve, reject) => {
+    const chunks: Uint8Array[] = [];
+
+    req.on("data", (chunk: Buffer | string) => {
+      chunks.push(
+        typeof chunk === "string"
+          ? new TextEncoder().encode(chunk)
+          : Uint8Array.from(chunk),
+      );
+    });
+    req.on("end", () => {
+      const bytes = new Uint8Array(
+        chunks.reduce((total, chunk) => total + chunk.byteLength, 0),
+      );
+      let offset = 0;
+
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      resolve(bytes);
+    });
+    req.on("error", reject);
+  });
+}
+
 // Pull the maister facade token + base url out of the createSession mcpServers
 // payload, exactly where agentFacadeMcpServer (lib/agents/launch.ts) puts them.
 function readFacade(mcpServers: AgentMcpServer[]): {
@@ -286,6 +376,24 @@ export async function startTestSupervisor(
   // simulated fan-out deterministic under parallel load.
   const delegatedRuns = new Set<string>();
   let monotonic = 0;
+  let runtimeSequence = -1n;
+  let acknowledgedThrough = -1n;
+  const runtimeOutbox: StageBEnvelope[] = [];
+  const runtimeSubscribers = new Set<ServerResponse>();
+  const runtimeObjects = new Map<string, TestRuntimeObject>();
+  const promptReceipts = new Map<
+    string,
+    {
+      runId: string;
+      assignmentEpoch: number;
+      phase: "accepted" | "completed";
+      httpStatus: number;
+      body: Record<string, unknown>;
+      receivedAt: string;
+      completedAt: string | null;
+      eventId: string | null;
+    }
+  >();
 
   const nextId = (): number => {
     monotonic += 1;
@@ -293,13 +401,97 @@ export async function startTestSupervisor(
     return monotonic;
   };
 
+  const writeRuntimeEnvelope = (
+    response: ServerResponse,
+    envelope: StageBEnvelope,
+  ): void => {
+    response.write(`id: ${envelope.sequence}\n`);
+    response.write(`data: ${JSON.stringify(envelope)}\n\n`);
+  };
+
+  const appendRuntimeEvent = (input: {
+    runId: string;
+    assignmentId: string;
+    assignmentEpoch: number;
+    hostSessionId: string | null;
+    eventType: StageBEventType;
+    payload: Record<string, unknown>;
+  }): StageBEnvelope => {
+    runtimeSequence += 1n;
+    const envelope: StageBEnvelope = {
+      envelopeVersion: 1,
+      eventId: randomUUID(),
+      hostKey: STUB_HOST_KEY,
+      hostBootId: STUB_BOOT_ID,
+      streamId: STAGE_B_STREAM_ID,
+      sequence: runtimeSequence.toString(),
+      runId: input.runId,
+      assignmentId: input.assignmentId,
+      assignmentEpoch: input.assignmentEpoch,
+      hostSessionId: input.hostSessionId,
+      eventType: input.eventType,
+      occurredAt: new Date().toISOString(),
+      payloadSchema: EVENT_PAYLOAD_SCHEMAS[input.eventType],
+      payload: input.payload,
+    };
+
+    runtimeOutbox.push(envelope);
+    for (const response of runtimeSubscribers) {
+      try {
+        writeRuntimeEnvelope(response, envelope);
+      } catch {
+        runtimeSubscribers.delete(response);
+      }
+    }
+
+    return envelope;
+  };
+
+  const publishSessionEvent = (
+    rec: SessionRecord,
+    event: Record<string, unknown>,
+  ): StageBEnvelope => {
+    const eventType = event.type;
+
+    if (
+      typeof eventType !== "string" ||
+      !(eventType in EVENT_PAYLOAD_SCHEMAS) ||
+      !rec.assignmentId ||
+      rec.assignmentEpoch === undefined
+    ) {
+      throw new Error(
+        "test-supervisor: canonical event lacks a known type or assignment fence",
+      );
+    }
+    const payload = Object.fromEntries(
+      Object.entries(event).filter(
+        ([key]) => !["type", "sessionId", "monotonicId"].includes(key),
+      ),
+    );
+
+    return appendRuntimeEvent({
+      runId: rec.runId,
+      assignmentId: rec.assignmentId,
+      assignmentEpoch: rec.assignmentEpoch,
+      hostSessionId: rec.sessionId,
+      eventType: eventType as StageBEventType,
+      payload: {
+        ...(typeof event.monotonicId === "number"
+          ? { sourceMonotonicId: event.monotonicId }
+          : {}),
+        sessionName: rec.sessionName,
+        ...(rec.nodeAttemptId ? { nodeAttemptId: rec.nodeAttemptId } : {}),
+        ...payload,
+      },
+    });
+  };
+
   // Flush queued text, then a queued clean exit, onto a connected stream
   // (idempotent). Text always precedes the exit: the consumers read the
   // completing turn's accumulated text at the exit frame.
   const flushExit = (rec: SessionRecord): void => {
-    if (!rec.emit) return;
     for (const text of rec.pendingText.splice(0)) {
-      rec.emit({
+      emitOrQueue(rec, {
         type: "session.update",
         sessionId: rec.sessionId,
         monotonicId: nextId(),
@@ -311,7 +503,7 @@ export async function startTestSupervisor(
     }
     if (!rec.exitPending) return;
     rec.exitPending = false;
-    rec.emit({
+    emitOrQueue(rec, {
       type: "session.exited",
       sessionId: rec.sessionId,
       monotonicId: nextId(),
@@ -333,9 +525,13 @@ export async function startTestSupervisor(
   const emitOrQueue = (
     rec: SessionRecord,
     event: Record<string, unknown>,
-  ): void => {
+  ): StageBEnvelope => {
+    const envelope = publishSessionEvent(rec, event);
+
     if (rec.emit) rec.emit(event);
     else rec.queued.push(event);
+
+    return envelope;
   };
 
   // Answer the held prompt of the permission scenario (idempotent).
@@ -349,9 +545,8 @@ export async function startTestSupervisor(
     rec.pendingPrompt = null;
     const out = { stopReason };
 
-    pending.respond(200, out);
     if (pending.env) {
-      emitOrQueue(rec, {
+      const event = emitOrQueue(rec, {
         type: "session.command",
         sessionId: rec.sessionId,
         monotonicId: nextId(),
@@ -361,6 +556,10 @@ export async function startTestSupervisor(
         status: "succeeded",
         result: out,
       });
+
+      pending.respond(200, { ...out, eventId: event.eventId });
+    } else {
+      pending.respond(200, out);
     }
 
     return true;
@@ -587,10 +786,10 @@ export async function startTestSupervisor(
     }
 
     // Every turn (orchestrator turn-0, orchestrator resume, child) ends with a
-    // clean end_turn. Queue it; the stream flushes when connected.
+    // clean end_turn. The caller publishes the durable command completion
+    // before flushing this exit, matching the production lifecycle ordering.
     rec.exitPending = true;
     rec.exitCode = 0;
-    flushExit(rec);
   }
 
   /**
@@ -654,6 +853,98 @@ export async function startTestSupervisor(
       return;
     }
 
+    if (method === "GET" && url === "/capabilities") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          dataPlaneVersion: "execution-host-data-plane.v1",
+          eventStream: true,
+          asyncPrompt: true,
+          runtimeObjects: true,
+          limits: {
+            maxEventBytes: 1_048_576,
+            maxObjectBytes: 26_214_400,
+            maxReplayBatch: 500,
+          },
+        }),
+      );
+
+      return;
+    }
+
+    if (method === "GET" && url === "/runtime-events") {
+      const cursor = req.headers["last-event-id"];
+
+      if (
+        cursor !== undefined &&
+        (Array.isArray(cursor) || !/^(0|[1-9][0-9]{0,18})$/.test(cursor))
+      ) {
+        res.writeHead(409, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            code: "PRECONDITION",
+            message: "invalid runtime event sequence",
+            details: { reason: "invalid_event_sequence" },
+          }),
+        );
+
+        return;
+      }
+      const after = cursor === undefined ? -1n : BigInt(cursor);
+
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+      });
+      for (const envelope of runtimeOutbox) {
+        if (BigInt(envelope.sequence) > after) {
+          writeRuntimeEnvelope(res, envelope);
+        }
+      }
+      runtimeSubscribers.add(res);
+      req.on("close", () => runtimeSubscribers.delete(res));
+
+      return;
+    }
+
+    if (method === "POST" && url === "/runtime-events/ack") {
+      void readJsonBody(req).then((body) => {
+        const streamId = body.streamId;
+        const throughSequence = body.throughSequence;
+
+        if (
+          streamId !== STAGE_B_STREAM_ID ||
+          typeof throughSequence !== "string" ||
+          !/^(0|[1-9][0-9]{0,18})$/.test(throughSequence) ||
+          BigInt(throughSequence) > runtimeSequence
+        ) {
+          res.writeHead(409, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({
+              code: "PRECONDITION",
+              message: "runtime event acknowledgement is invalid",
+              details: { reason: "ack_beyond_emitted" },
+            }),
+          );
+
+          return;
+        }
+        const through = BigInt(throughSequence);
+
+        if (through > acknowledgedThrough) acknowledgedThrough = through;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            streamId: STAGE_B_STREAM_ID,
+            acknowledgedThrough: acknowledgedThrough.toString(),
+          }),
+        );
+      });
+
+      return;
+    }
+
     if (method === "GET" && url === "/diagnostics") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
@@ -703,6 +994,313 @@ export async function startTestSupervisor(
       res.writeHead(status, headers);
       res.end(JSON.stringify(body));
     };
+
+    if (method === "POST" && url === "/runtime-objects") {
+      void readJsonBody(req).then((body) => {
+        const env = stubEnvelope(body);
+
+        if (!env) {
+          sendJson(409, MISSING_ENVELOPE_BODY);
+
+          return;
+        }
+        const replay = stubReplay(env);
+
+        if (replay) {
+          sendJson(replay.status, replay.body, true);
+
+          return;
+        }
+        const refused = stubFence(env);
+
+        if (refused) {
+          stubRecord(env, refused.status, refused.body);
+          sendJson(refused.status, refused.body);
+
+          return;
+        }
+        const objectId = env.payload.objectId;
+
+        if (typeof objectId !== "string") {
+          sendJson(409, {
+            code: "PRECONDITION",
+            message: "runtime object id is required",
+          });
+
+          return;
+        }
+        const existing = runtimeObjects.get(objectId);
+
+        if (existing) {
+          stubRecord(env, 201, existing.metadata);
+          sendJson(201, existing.metadata);
+
+          return;
+        }
+        const createdAt = new Date().toISOString();
+        const object: TestRuntimeObject = {
+          runId: env.fence.runId,
+          assignmentId: env.fence.assignmentId,
+          assignmentEpoch: env.fence.assignmentEpoch,
+          metadata: {
+            objectId,
+            kind: String(env.payload.kind),
+            logicalName: String(env.payload.logicalName),
+            mimeType: String(env.payload.mimeType),
+            sizeBytes: Number(env.payload.sizeBytes),
+            sha256: String(env.payload.sha256),
+            generation: Number(env.payload.generation),
+            retentionClass: String(env.payload.retentionClass),
+            state: "pending",
+            createdAt,
+            sealedAt: null,
+            expiresAt:
+              typeof env.payload.expiresAt === "string"
+                ? env.payload.expiresAt
+                : null,
+            deletedAt: null,
+          },
+          bytes: null,
+        };
+
+        runtimeObjects.set(objectId, object);
+        stubRecord(env, 201, object.metadata);
+        sendJson(201, object.metadata);
+      });
+
+      return;
+    }
+
+    const runtimeObjectMatch = url.match(
+      /^\/runtime-objects\/([0-9a-f-]+)(\/content)?$/,
+    );
+
+    if (method === "GET" && runtimeObjectMatch && !runtimeObjectMatch[2]) {
+      const object = runtimeObjects.get(runtimeObjectMatch[1]);
+
+      if (!object) {
+        sendJson(404, {
+          code: "PRECONDITION",
+          message: "runtime object is missing",
+          details: { reason: "runtime_object_missing" },
+        });
+
+        return;
+      }
+      sendJson(200, object.metadata);
+
+      return;
+    }
+
+    if (method === "PUT" && runtimeObjectMatch?.[2]) {
+      const object = runtimeObjects.get(runtimeObjectMatch[1]);
+
+      if (!object) {
+        req.resume();
+        sendJson(404, {
+          code: "PRECONDITION",
+          message: "runtime object is missing",
+          details: { reason: "runtime_object_missing" },
+        });
+
+        return;
+      }
+      void readBinaryBody(req).then((bytes) => {
+        const commandId = req.headers["x-maister-command-id"];
+        const assignmentId = req.headers["x-maister-assignment-id"];
+        const assignmentEpoch = Number(
+          req.headers["x-maister-assignment-epoch"],
+        );
+        const sha256 = createHash("sha256").update(bytes).digest("hex");
+        const expectedSha256 = req.headers["x-maister-sha256"];
+
+        if (
+          typeof commandId !== "string" ||
+          assignmentId !== object.assignmentId ||
+          assignmentEpoch !== object.assignmentEpoch ||
+          expectedSha256 !== object.metadata.sha256 ||
+          sha256 !== object.metadata.sha256 ||
+          bytes.byteLength !== object.metadata.sizeBytes
+        ) {
+          sendJson(409, {
+            code: "PRECONDITION",
+            message: "runtime object upload failed integrity validation",
+            details: { reason: "runtime_object_integrity_mismatch" },
+          });
+
+          return;
+        }
+        const now = new Date().toISOString();
+
+        object.bytes = bytes;
+        object.metadata = {
+          ...object.metadata,
+          state: "available",
+          sealedAt: now,
+        };
+        const uploadEnvelope = stubEnvelope({
+          command: { id: commandId, kind: "runtime_object.upload" },
+          fence: {
+            hostKey: STUB_HOST_KEY,
+            assignmentId: object.assignmentId,
+            assignmentEpoch: object.assignmentEpoch,
+            runId: object.runId,
+          },
+          payload: {
+            generation: object.metadata.generation,
+            sizeBytes: bytes.byteLength,
+            sha256,
+          },
+        });
+
+        stubRecord(uploadEnvelope, 200, object.metadata);
+        appendRuntimeEvent({
+          runId: object.runId,
+          assignmentId: object.assignmentId,
+          assignmentEpoch: object.assignmentEpoch,
+          hostSessionId: null,
+          eventType: "runtime_object.available",
+          payload: {
+            objectId: object.metadata.objectId,
+            kind: object.metadata.kind,
+            logicalName: object.metadata.logicalName,
+            mimeType: object.metadata.mimeType,
+            sizeBytes: object.metadata.sizeBytes,
+            sha256: object.metadata.sha256,
+            generation: object.metadata.generation,
+            retentionClass: object.metadata.retentionClass,
+            state: object.metadata.state,
+            sealedAt: object.metadata.sealedAt,
+            expiresAt: object.metadata.expiresAt,
+          },
+        });
+        sendJson(200, object.metadata);
+      });
+
+      return;
+    }
+
+    if (method === "GET" && runtimeObjectMatch?.[2]) {
+      const object = runtimeObjects.get(runtimeObjectMatch[1]);
+
+      if (!object?.bytes || object.metadata.state !== "available") {
+        sendJson(410, {
+          code: "PRECONDITION",
+          message: "runtime object content is missing",
+          details: { reason: "runtime_object_missing" },
+        });
+
+        return;
+      }
+      const requested = req.headers.range;
+      const match = requested?.match(/^bytes=(\d+)-(\d*)$/);
+
+      if (requested && !match) {
+        res.writeHead(416);
+        res.end();
+
+        return;
+      }
+      const start = match ? Number(match[1]) : 0;
+      const requestedEnd = match?.[2]
+        ? Number(match[2])
+        : object.bytes.length - 1;
+      const end = Math.min(requestedEnd, object.bytes.length - 1);
+
+      if (start < 0 || start > end || start >= object.bytes.length) {
+        res.writeHead(416);
+        res.end();
+
+        return;
+      }
+      const bytes = object.bytes.subarray(start, end + 1);
+      const checksum = object.metadata.sha256;
+
+      if (!checksum) {
+        sendJson(409, {
+          code: "PRECONDITION",
+          message: "runtime object checksum is missing",
+          details: { reason: "runtime_object_unsealed" },
+        });
+
+        return;
+      }
+      const digest = `sha-256=:${Buffer.from(checksum, "hex").toString("base64")}:`;
+
+      res.writeHead(match ? 206 : 200, {
+        "content-type": object.metadata.mimeType,
+        "content-length": String(bytes.length),
+        "content-digest": digest,
+        "accept-ranges": "bytes",
+        ...(match
+          ? { "content-range": `bytes ${start}-${end}/${object.bytes.length}` }
+          : {}),
+      });
+      res.end(bytes);
+
+      return;
+    }
+
+    if (method === "DELETE" && runtimeObjectMatch && !runtimeObjectMatch[2]) {
+      void readJsonBody(req).then((body) => {
+        const env = stubEnvelope(body);
+        const object = runtimeObjects.get(runtimeObjectMatch[1]);
+
+        if (!env || !object) {
+          sendJson(404, {
+            code: "PRECONDITION",
+            message: "runtime object is missing",
+            details: { reason: "runtime_object_missing" },
+          });
+
+          return;
+        }
+        const replay = stubReplay(env);
+
+        if (replay) {
+          res.writeHead(replay.status, {
+            "x-maister-command-replayed": "true",
+          });
+          res.end();
+
+          return;
+        }
+        const refused = stubFence(env, object.runId);
+
+        if (refused) {
+          stubRecord(env, refused.status, refused.body);
+          sendJson(refused.status, refused.body);
+
+          return;
+        }
+        const deletedAt = new Date().toISOString();
+
+        object.bytes = null;
+        object.metadata = {
+          ...object.metadata,
+          state: "deleted",
+          deletedAt,
+        };
+        stubRecord(env, 204, {});
+        appendRuntimeEvent({
+          runId: object.runId,
+          assignmentId: object.assignmentId,
+          assignmentEpoch: object.assignmentEpoch,
+          hostSessionId: null,
+          eventType: "runtime_object.state",
+          payload: {
+            objectId: object.metadata.objectId,
+            generation: object.metadata.generation,
+            state: "deleted",
+            deletedAt,
+          },
+        });
+        res.writeHead(204);
+        res.end();
+      });
+
+      return;
+    }
 
     if (method === "POST" && url === "/workspaces/adopt") {
       void readJsonBody(req).then((body) => {
@@ -808,6 +1406,25 @@ export async function startTestSupervisor(
     const commandMatch = url.match(/^\/commands\/([0-9a-f-]+)$/);
 
     if (method === "GET" && commandMatch) {
+      const promptReceipt = promptReceipts.get(commandMatch[1]);
+
+      if (promptReceipt) {
+        sendJson(200, {
+          commandId: commandMatch[1],
+          runId: promptReceipt.runId,
+          kind: "session.prompt",
+          assignmentEpoch: promptReceipt.assignmentEpoch,
+          phase: promptReceipt.phase,
+          httpStatus: promptReceipt.httpStatus,
+          body: promptReceipt.body,
+          receivedAt: promptReceipt.receivedAt,
+          completedAt: promptReceipt.completedAt,
+          eventId: promptReceipt.eventId,
+          inflight: promptReceipt.phase === "accepted",
+        });
+
+        return;
+      }
       const receipt = stubReceipt(commandMatch[1]);
 
       if (!receipt) {
@@ -892,6 +1509,55 @@ export async function startTestSupervisor(
           return;
         }
         const body = resolved.request as Record<string, unknown>;
+        const capabilityProfileObjectId = body.capabilityProfileObjectId;
+
+        if (typeof capabilityProfileObjectId === "string") {
+          const profile = runtimeObjects.get(capabilityProfileObjectId);
+
+          if (
+            !profile ||
+            profile.runId !== resolved.runId ||
+            profile.assignmentId !== env.fence.assignmentId ||
+            profile.assignmentEpoch !== env.fence.assignmentEpoch ||
+            profile.metadata.state !== "available" ||
+            profile.metadata.kind !== "capability_profile"
+          ) {
+            sendJson(409, {
+              code: "FENCED",
+              message:
+                "capability profile object does not belong to this assignment",
+              details: { reason: "assignment_fenced" },
+            });
+
+            return;
+          }
+        }
+        const capabilityInstructionsObjectId =
+          body.capabilityInstructionsObjectId;
+
+        if (typeof capabilityInstructionsObjectId === "string") {
+          const instructions = runtimeObjects.get(
+            capabilityInstructionsObjectId,
+          );
+
+          if (
+            !instructions ||
+            instructions.runId !== resolved.runId ||
+            instructions.assignmentId !== env.fence.assignmentId ||
+            instructions.assignmentEpoch !== env.fence.assignmentEpoch ||
+            instructions.metadata.state !== "available" ||
+            instructions.metadata.kind !== "capability_instructions"
+          ) {
+            sendJson(409, {
+              code: "FENCED",
+              message:
+                "capability instructions object does not belong to this assignment",
+              details: { reason: "assignment_fenced" },
+            });
+
+            return;
+          }
+        }
         const sessionId = randomUUID();
         const acpSessionId = (body.resumeSessionId as string) || randomUUID();
         const runId = resolved.runId;
@@ -924,6 +1590,11 @@ export async function startTestSupervisor(
           runKind,
           isResume: typeof body.resumeSessionId === "string",
           mcpServers,
+          sessionName: String(body.sessionName ?? "default"),
+          nodeAttemptId:
+            typeof body.nodeAttemptId === "string"
+              ? body.nodeAttemptId
+              : undefined,
           exitPending: false,
           pendingText: [],
           exitCode: 0,
@@ -990,6 +1661,36 @@ export async function startTestSupervisor(
             rec.detached = true;
           },
         });
+        const outputBindings = Array.isArray(body.outputObjects)
+          ? (body.outputObjects as Array<Record<string, unknown>>)
+          : [];
+
+        for (const output of outputBindings) {
+          const objectId = String(output.objectId);
+
+          runtimeObjects.set(objectId, {
+            runId,
+            assignmentId: env.fence.assignmentId,
+            assignmentEpoch: env.fence.assignmentEpoch,
+            metadata: {
+              objectId,
+              kind: String(output.kind),
+              logicalName: String(output.logicalName),
+              mimeType: String(output.mimeType),
+              sizeBytes: null,
+              sha256: null,
+              generation: Number(output.generation),
+              retentionClass: String(output.retentionClass),
+              state: "pending",
+              createdAt: new Date().toISOString(),
+              sealedAt: null,
+              expiresAt:
+                typeof output.expiresAt === "string" ? output.expiresAt : null,
+              deletedAt: null,
+            },
+            bytes: null,
+          });
+        }
         created.push({
           runId,
           runKind,
@@ -1001,19 +1702,47 @@ export async function startTestSupervisor(
         const out = { sessionId, pid: 4242, acpSessionId };
 
         stubRecord(env, 201, out);
+        publishSessionEvent(rec, {
+          type: "session.created",
+          sessionId,
+          monotonicId: nextId(),
+          adapter: String(
+            (body.runner as { adapter?: string } | undefined)?.adapter ??
+              (body.executor as { agent?: string } | undefined)?.agent ??
+              "claude",
+          ),
+          sessionName: rec.sessionName,
+          acpSessionId,
+        });
         sendJson(201, out);
       });
 
       return;
     }
 
-    const promptMatch = url.match(/^\/sessions\/([0-9a-f-]+)\/prompt$/);
+    const promptMatch = url.match(/^\/sessions\/([0-9a-f-]+)\/prompts$/);
 
     if (method === "POST" && promptMatch) {
       const rec = sessions.get(promptMatch[1]);
 
       void readJsonBody(req).then(async (rawBody) => {
         const env = stubEnvelope(rawBody);
+
+        if (!env || !rec) {
+          sendJson(404, {
+            code: "PRECONDITION",
+            message: "session is missing",
+          });
+
+          return;
+        }
+        const existingPrompt = promptReceipts.get(env.command.id);
+
+        if (existingPrompt) {
+          sendJson(202, { commandId: env.command.id, state: "accepted" }, true);
+
+          return;
+        }
         const replay = stubReplay(env);
 
         if (replay) {
@@ -1031,28 +1760,78 @@ export async function startTestSupervisor(
         }
         const body = stubPayload(rawBody) as Record<string, unknown>;
 
-        // ADR-166: the durable completion signal beside the HTTP response.
-        if (env && rec?.emit) {
-          rec.emit({
+        const receivedAt = new Date().toISOString();
+
+        promptReceipts.set(env.command.id, {
+          runId: rec.runId,
+          assignmentEpoch: env.fence.assignmentEpoch,
+          phase: "accepted",
+          httpStatus: 202,
+          body: { commandId: env.command.id, state: "accepted" },
+          receivedAt,
+          completedAt: null,
+          eventId: null,
+        });
+        emitOrQueue(rec, {
+          type: "session.command",
+          sessionId: rec.sessionId,
+          monotonicId: nextId(),
+          commandId: env.command.id,
+          kind: "session.prompt",
+          phase: "accepted",
+        });
+        sendJson(202, { commandId: env.command.id, state: "accepted" });
+
+        const complete = (out: Record<string, unknown>): void => {
+          const terminal = emitOrQueue(rec, {
             type: "session.command",
             sessionId: rec.sessionId,
             monotonicId: nextId(),
             commandId: env.command.id,
             kind: "session.prompt",
-            phase: "accepted",
+            phase: "completed",
+            status: "succeeded",
+            result: out,
           });
-        }
-        // Permission scenario: park on a permission request and HOLD the HTTP
-        // response — `/input` (end_turn) or `/checkpoint` (cancelled) answers it.
-        if (rec?.permission) {
+
+          promptReceipts.set(env.command.id, {
+            runId: rec.runId,
+            assignmentEpoch: env.fence.assignmentEpoch,
+            phase: "completed",
+            httpStatus: 200,
+            body: out,
+            receivedAt,
+            completedAt: new Date().toISOString(),
+            eventId: terminal.eventId,
+          });
+        };
+
+        // Permission scenario: admission is already durable. `/input` or
+        // `/checkpoint` settles the prompt receipt and terminal event later.
+        if (rec.permission) {
           const requestId = randomUUID();
 
           rec.pendingPrompt = {
             requestId,
             env,
-            respond: (status, out) => {
-              stubRecord(env, status, out);
-              sendJson(status, out);
+            respond: (_status, result) => {
+              const body = result as Record<string, unknown>;
+              const eventId =
+                typeof body.eventId === "string" ? body.eventId : null;
+              const promptBody = { ...body };
+
+              delete promptBody.eventId;
+
+              promptReceipts.set(env.command.id, {
+                runId: rec.runId,
+                assignmentEpoch: env.fence.assignmentEpoch,
+                phase: "completed",
+                httpStatus: 200,
+                body: promptBody,
+                receivedAt,
+                completedAt: new Date().toISOString(),
+                eventId,
+              });
             },
           };
           emitOrQueue(rec, {
@@ -1075,52 +1854,82 @@ export async function startTestSupervisor(
         }
         // stub-compat: record the prompt; the stream stays held until release
         // (do NOT auto-drive — the spec controls termination).
-        if (rec?.stub) {
+        if (rec.stub) {
           stubAppendPrompt(promptMatch[1], body);
           const out = { stopReason: "end_turn" };
 
-          stubRecord(env, 200, out);
-          sendJson(200, out);
+          complete(out);
+
+          const releasePath = path.join(
+            opts.stubCompat!.sessionsDir,
+            `${rec.sessionId}.release`,
+          );
+          const startedAt = Date.now();
+          const timer = setInterval(() => {
+            if (
+              !existsSync(releasePath) &&
+              Date.now() - startedAt <= STUB_RELEASE_BACKSTOP_MS
+            ) {
+              return;
+            }
+            clearInterval(timer);
+            stubExitSession(rec.sessionId);
+            emitOrQueue(rec, {
+              type: "session.exited",
+              sessionId: rec.sessionId,
+              monotonicId: nextId(),
+              exitCode: 0,
+            });
+          }, STUB_RELEASE_POLL_MS);
 
           return;
         }
         // Drive the agent's turn (spawn children for orchestrator turn-0, then
         // queue the clean exit). Errors surface as a crash on the stream.
-        if (rec) {
-          try {
-            await driveTurn(rec);
-          } catch (err) {
+        void driveTurn(rec).then(
+          () => {
+            complete({ stopReason: "end_turn" });
+            flushExit(rec);
+          },
+          (err: unknown) => {
             const message = err instanceof Error ? err.message : String(err);
 
             console.error(`test-supervisor: turn failed: ${message}`);
             rec.exitPending = false;
-            if (rec.emit) {
-              rec.emit({
-                type: "session.crashed",
-                sessionId: rec.sessionId,
-                monotonicId: nextId(),
-                exitCode: 1,
-                signal: null,
-              });
-            }
-          }
-        }
-        const out = { stopReason: "end_turn" };
+            const failure = {
+              code: "ACP_PROTOCOL",
+              message: "test supervisor turn failed",
+            };
+            const terminal = emitOrQueue(rec, {
+              type: "session.command",
+              sessionId: rec.sessionId,
+              monotonicId: nextId(),
+              commandId: env.command.id,
+              kind: "session.prompt",
+              phase: "completed",
+              status: "failed",
+              error: failure,
+            });
 
-        stubRecord(env, 200, out);
-        if (env && rec?.emit) {
-          rec.emit({
-            type: "session.command",
-            sessionId: rec.sessionId,
-            monotonicId: nextId(),
-            commandId: env.command.id,
-            kind: "session.prompt",
-            phase: "completed",
-            status: "succeeded",
-            result: out,
-          });
-        }
-        sendJson(200, out);
+            promptReceipts.set(env.command.id, {
+              runId: rec.runId,
+              assignmentEpoch: env.fence.assignmentEpoch,
+              phase: "completed",
+              httpStatus: 500,
+              body: failure,
+              receivedAt,
+              completedAt: new Date().toISOString(),
+              eventId: terminal.eventId,
+            });
+            emitOrQueue(rec, {
+              type: "session.crashed",
+              sessionId: rec.sessionId,
+              monotonicId: nextId(),
+              exitCode: 1,
+              signal: null,
+            });
+          },
+        );
       });
 
       return;
@@ -1356,6 +2165,11 @@ export async function startTestSupervisor(
     url: serverUrl,
     createdSessions: () => created,
     delegations: () => delegations,
-    stop: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    stop: () =>
+      new Promise<void>((resolve) => {
+        for (const response of runtimeSubscribers) response.end();
+        runtimeSubscribers.clear();
+        server.close(() => resolve());
+      }),
   };
 }

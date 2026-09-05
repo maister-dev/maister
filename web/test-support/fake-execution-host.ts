@@ -33,7 +33,11 @@ import type { PlatformStatus } from "@/types/platform-status";
 
 import { createHash, randomUUID } from "node:crypto";
 
-import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
+import {
+  isMaisterError,
+  MaisterError,
+  type MaisterErrorCode,
+} from "@/lib/errors";
 import { isReadoptableWorkspaceError } from "@/lib/execution-host/adoption";
 import {
   createExecutionHosts,
@@ -43,7 +47,10 @@ import {
 } from "@/lib/execution-host/client";
 import { UNKNOWN_OUTCOME_DETAIL } from "@/lib/execution-host/contracts";
 import { buildEnvelope } from "@/lib/execution-host/ledger";
-import { resetResolverForTests } from "@/lib/execution-host/resolver";
+import {
+  primeResolverForTests,
+  resetResolverForTests,
+} from "@/lib/execution-host/resolver";
 import { setDefaultTransportForTests } from "@/lib/execution-host/default-transport";
 import { commandSignals } from "@/lib/execution-host/signals";
 import {
@@ -111,6 +118,7 @@ export type FakeSession = {
   // HITL_TIMEOUT, like the host); an INJECTED record leaves it undefined —
   // its pending set is unknown, so any id is accepted while it is live.
   pending?: Set<string>;
+  runtimeOutputObjectIds?: string[];
 };
 
 export type PromptContext = {
@@ -156,6 +164,16 @@ export type FakeExecutionHost = {
   setPromptBehavior(
     behavior: (ctx: PromptContext) => Promise<PromptResult>,
   ): void;
+  setCanonicalEventSink(
+    sink: (input: {
+      envelope: CommandEnvelope<unknown>;
+      sessionId: string;
+      event: SupervisorEvent;
+      eventId: string;
+    }) => Promise<void>,
+  ): void;
+  waitForCanonicalEvents(): Promise<void>;
+  writeRuntimeOutput(objectId: string, bytes: Uint8Array): void;
   // A host restart: new bootId, every live session is gone (the registry is
   // empty), fences + receipts + handles survive, an in-flight turn is lost
   // (its receipt stays `accepted` with `inflight:false`).
@@ -358,6 +376,17 @@ function replayed<T>(method: TransportMethod, body: T): T {
     : body;
 }
 
+type CanonicalStreamState = {
+  bootId: string;
+  streamId: string;
+  nextSequence: bigint;
+};
+
+const canonicalStreamStates = new WeakMap<
+  FakeExecutionHost,
+  CanonicalStreamState
+>();
+
 export function createFakeExecutionHost(
   opts: { hostKey?: string; bootId?: string } = {},
 ): FakeExecutionHost {
@@ -374,6 +403,7 @@ export function createFakeExecutionHost(
     string,
     { metadata: RuntimeObjectMetadata; bytes: Uint8Array | null; runId: string }
   >();
+  const runtimeOutputWrites = new Map<string, Uint8Array>();
   const fences = new Map<string, number>();
   // The assignment that owns each run's high-water (the host stores both).
   const fenceOwners = new Map<string, string>();
@@ -399,6 +429,51 @@ export function createFakeExecutionHost(
     stopReason: "end_turn",
     meta: null,
   });
+  let canonicalEventSink:
+    | ((input: {
+        envelope: CommandEnvelope<unknown>;
+        sessionId: string;
+        event: SupervisorEvent;
+        eventId: string;
+      }) => Promise<void>)
+    | null = null;
+  let canonicalEventTail = Promise.resolve();
+  const activePromptEnvelopes = new Map<
+    string,
+    CommandEnvelope<SendPromptInput>
+  >();
+  const scriptedCanonicalSessions = new Set<string>();
+
+  const publishCanonical = (
+    envelope: CommandEnvelope<unknown>,
+    sessionId: string,
+    event: SupervisorEvent,
+  ): Promise<void> => {
+    if (!canonicalEventSink) return Promise.resolve();
+
+    const eventId = randomUUID();
+
+    canonicalEventTail = canonicalEventTail.then(async () => {
+      await canonicalEventSink?.({
+        envelope,
+        sessionId,
+        event: { ...event, sessionId },
+        eventId,
+      });
+
+      if (event.type !== "session.command" || event.phase !== "completed") {
+        return;
+      }
+
+      const receipt = receipts.get(event.commandId);
+
+      if (!receipt || receipt.phase === "accepted") return;
+
+      receipts.set(event.commandId, { ...receipt, eventId });
+    });
+
+    return canonicalEventTail;
+  };
 
   const record = async (
     method: TransportMethod,
@@ -754,6 +829,7 @@ export function createFakeExecutionHost(
     async capabilities(opts) {
       await record("capabilities", null, [opts]);
       loseAdminResponse("capabilities");
+
       return {
         dataPlaneVersion: "execution-host-data-plane.v1",
         eventStream: false,
@@ -874,6 +950,7 @@ export function createFakeExecutionHost(
     },
     async acknowledgeRuntimeEvents(input) {
       await record("acknowledgeRuntimeEvents", null, [input]);
+
       return {
         streamId: input.streamId,
         acknowledgedThrough: input.throughSequence,
@@ -903,23 +980,33 @@ export function createFakeExecutionHost(
     async getRuntimeObject(objectId) {
       await record("getRuntimeObject", null, [objectId]);
       loseAdminResponse("getRuntimeObject");
+
       return runtimeObjects.get(objectId)?.metadata ?? null;
     },
-    async getRuntimeObjectContent(objectId, opts): Promise<RuntimeObjectContent> {
+    async getRuntimeObjectContent(
+      objectId,
+      opts,
+    ): Promise<RuntimeObjectContent> {
       await record("getRuntimeObjectContent", null, [objectId, opts]);
       const object = runtimeObjects.get(objectId);
+
       if (!object?.bytes || object.metadata.state !== "available") {
         throw precondition("fake: runtime object is missing", {
           reason: "runtime_object_missing",
         });
       }
       const start = opts?.range?.start ?? 0;
-      const end = Math.min(opts?.range?.end ?? object.bytes.byteLength - 1, object.bytes.byteLength - 1);
+      const end = Math.min(
+        opts?.range?.end ?? object.bytes.byteLength - 1,
+        object.bytes.byteLength - 1,
+      );
+
       if (start < 0 || end < start) {
         throw precondition("fake: runtime object range is invalid", {
           reason: "runtime_object_range_invalid",
         });
       }
+
       return {
         bytes: object.bytes.slice(start, end + 1),
         contentRange: opts?.range
@@ -953,6 +1040,7 @@ export function createFakeExecutionHost(
         guard: () => envelope.fence.runId,
         execute: async () => {
           const current = runtimeObjects.get(envelope.payload.objectId);
+
           if (current) return { status: 201, body: current.metadata };
           const metadata: RuntimeObjectMetadata = {
             objectId: envelope.payload.objectId,
@@ -969,11 +1057,13 @@ export function createFakeExecutionHost(
             expiresAt: envelope.payload.expiresAt ?? null,
             deletedAt: null,
           };
+
           runtimeObjects.set(metadata.objectId, {
             metadata,
             bytes: null,
             runId: envelope.fence.runId,
           });
+
           return { status: 201, body: metadata };
         },
       });
@@ -986,12 +1076,14 @@ export function createFakeExecutionHost(
         guard: () => runtimeObjects.get(input.objectId)?.runId,
         execute: async () => {
           const object = runtimeObjects.get(input.objectId);
+
           if (!object) {
             throw precondition("fake: runtime object is missing", {
               reason: "runtime_object_missing",
             });
           }
           const digest = createHash("sha256").update(input.bytes).digest("hex");
+
           if (
             digest !== input.envelope.payload.sha256 ||
             input.bytes.byteLength !== input.envelope.payload.sizeBytes ||
@@ -1008,7 +1100,13 @@ export function createFakeExecutionHost(
             state: "available",
             sealedAt: new Date().toISOString(),
           };
-          runtimeObjects.set(input.objectId, { ...object, metadata, bytes: input.bytes });
+
+          runtimeObjects.set(input.objectId, {
+            ...object,
+            metadata,
+            bytes: input.bytes,
+          });
+
           return { status: 200, body: metadata };
         },
       });
@@ -1021,7 +1119,11 @@ export function createFakeExecutionHost(
         guard: () => runtimeObjects.get(objectId)?.runId,
         execute: async () => {
           const object = runtimeObjects.get(objectId);
-          if (!object || object.metadata.generation !== envelope.payload.generation) {
+
+          if (
+            !object ||
+            object.metadata.generation !== envelope.payload.generation
+          ) {
             throw precondition("fake: runtime object is missing", {
               reason: "runtime_object_missing",
             });
@@ -1031,7 +1133,9 @@ export function createFakeExecutionHost(
             state: "deleted",
             deletedAt: new Date().toISOString(),
           };
+
           runtimeObjects.set(objectId, { ...object, metadata, bytes: null });
+
           return { status: 204, body: metadata };
         },
       });
@@ -1177,8 +1281,80 @@ export function createFakeExecutionHost(
             }
           }
           const ws = workspaces.get(payload.executionWorkspaceId)!;
+
+          if (payload.capabilityProfileObjectId) {
+            const profile = runtimeObjects.get(
+              payload.capabilityProfileObjectId,
+            );
+
+            if (
+              !profile ||
+              profile.runId !== envelope.fence.runId ||
+              profile.metadata.state !== "available" ||
+              profile.metadata.kind !== "capability_profile"
+            ) {
+              throw precondition("fake: capability profile is missing", {
+                reason: "runtime_object_missing",
+              });
+            }
+          }
+          if (payload.capabilityInstructionsObjectId) {
+            const instructions = runtimeObjects.get(
+              payload.capabilityInstructionsObjectId,
+            );
+
+            if (
+              !instructions ||
+              instructions.runId !== envelope.fence.runId ||
+              instructions.metadata.state !== "available" ||
+              instructions.metadata.kind !== "capability_instructions"
+            ) {
+              throw precondition("fake: capability instructions are missing", {
+                reason: "runtime_object_missing",
+              });
+            }
+          }
+          for (const output of payload.outputObjects ?? []) {
+            const existing = runtimeObjects.get(output.objectId);
+
+            if (existing) {
+              const sameBinding =
+                existing.runId === envelope.fence.runId &&
+                existing.metadata.kind === output.kind &&
+                existing.metadata.logicalName === output.logicalName &&
+                existing.metadata.mimeType === output.mimeType &&
+                existing.metadata.generation === output.generation &&
+                existing.metadata.retentionClass === output.retentionClass;
+
+              if (!sameBinding) {
+                throw precondition("fake: runtime output binding conflicts", {
+                  reason: "command_invariant_conflict",
+                });
+              }
+              continue;
+            }
+            runtimeObjects.set(output.objectId, {
+              runId: envelope.fence.runId,
+              bytes: null,
+              metadata: {
+                objectId: output.objectId,
+                kind: output.kind,
+                logicalName: output.logicalName,
+                mimeType: output.mimeType,
+                sizeBytes: null,
+                sha256: null,
+                generation: output.generation,
+                retentionClass: output.retentionClass,
+                state: "pending",
+                createdAt: new Date().toISOString(),
+                sealedAt: null,
+                expiresAt: output.expiresAt ?? null,
+                deletedAt: null,
+              },
+            });
+          }
           const session: FakeSession = {
-            sessionId: `sess-${randomUUID()}`,
+            sessionId: randomUUID(),
             runId: envelope.fence.runId,
             projectSlug: ws.projectSlug,
             stepId: payload.stepId ?? "fake",
@@ -1194,6 +1370,9 @@ export function createFakeExecutionHost(
             status: "live",
             startedAt: new Date().toISOString(),
             pending: new Set(),
+            runtimeOutputObjectIds: payload.outputObjects?.map(
+              (output) => output.objectId,
+            ),
           };
 
           sessions.set(session.sessionId, session);
@@ -1291,16 +1470,156 @@ export function createFakeExecutionHost(
             );
           }
 
-          return { status: 200, body: result };
+          const sealedRuntimeObjects = (
+            session.runtimeOutputObjectIds ?? []
+          ).map((objectId) => {
+            const object = runtimeObjects.get(objectId);
+            const bytes = runtimeOutputWrites.get(objectId);
+
+            if (!object || !bytes) {
+              throw precondition("fake: runtime output is missing", {
+                reason: "runtime_object_missing",
+              });
+            }
+            const sha256 = createHash("sha256").update(bytes).digest("hex");
+            const metadata: RuntimeObjectMetadata = {
+              ...object.metadata,
+              sizeBytes: bytes.byteLength,
+              sha256,
+              state: "available",
+              sealedAt: new Date().toISOString(),
+            };
+
+            runtimeObjects.set(objectId, {
+              ...object,
+              bytes,
+              metadata,
+            });
+
+            return metadata;
+          });
+
+          return {
+            status: 200,
+            body:
+              sealedRuntimeObjects.length > 0
+                ? { ...result, runtimeObjects: sealedRuntimeObjects }
+                : result,
+          };
         },
       });
     },
     async startPrompt(sessionId, envelope, opts) {
       await record("startPrompt", envelope, [sessionId, opts]);
-      // The fake's scripted turns are exercised through `sendPrompt`; this
-      // method exists to model the accepted-command wire seam without making
-      // test fixtures invent a second prompt engine.
       liveSessionForPrompt(sessionId);
+      await publishCanonical(envelope, sessionId, {
+        type: "session.command",
+        sessionId,
+        monotonicId: ++monotonicId,
+        commandId: envelope.command.id,
+        kind: "session.prompt",
+        phase: "accepted",
+      });
+      activePromptEnvelopes.set(sessionId, envelope);
+
+      // Admission is the short HTTP phase. The scripted ACP turn starts only
+      // after this promise settles, then publishes the same durable terminal
+      // event path as the real host. Graph integration tests therefore exercise
+      // the canonical manager ledger instead of a test-only synchronous prompt.
+      setTimeout(() => {
+        void transport
+          .sendPrompt(sessionId, envelope, opts)
+          .then(
+            async (result) => {
+              const scripted = scriptedCanonicalSessions.has(sessionId)
+                ? []
+                : (scriptedEvents ?? []);
+
+              scriptedCanonicalSessions.add(sessionId);
+              for (const event of scripted) {
+                await publishCanonical(envelope, sessionId, event);
+              }
+              await publishCanonical(envelope, sessionId, {
+                type: "session.command",
+                sessionId,
+                monotonicId: ++monotonicId,
+                commandId: envelope.command.id,
+                kind: "session.prompt",
+                phase: "completed",
+                status: "succeeded",
+                result,
+              });
+            },
+            async (error: unknown) => {
+              const unknownOutcome =
+                isMaisterError(error) &&
+                error.details?.transport === UNKNOWN_OUTCOME_DETAIL;
+              const observed = receipts.get(envelope.command.id);
+              let terminalStatus: "succeeded" | "failed" | "fenced";
+              let terminalResult: Record<string, unknown> | undefined;
+              let terminalError: Record<string, unknown> | undefined;
+
+              if (unknownOutcome && observed?.phase === "completed") {
+                terminalStatus = "succeeded";
+                terminalResult = observed.body;
+              } else if (observed?.phase === "rejected") {
+                terminalStatus =
+                  observed.body.code === "FENCED" ? "fenced" : "failed";
+                terminalError = observed.body;
+              } else {
+                const failure =
+                  unknownOutcome && observed?.phase === "accepted"
+                    ? precondition(
+                        "the accepted prompt turn was lost before completion",
+                        {
+                          reason: "turn_lost",
+                          runId: envelope.fence.runId,
+                        },
+                      )
+                    : isMaisterError(error)
+                      ? error
+                      : new MaisterError(
+                          "ACP_PROTOCOL",
+                          error instanceof Error
+                            ? error.message
+                            : String(error),
+                        );
+
+                terminalError = errorBodyOf(failure);
+                terminalStatus =
+                  terminalError.code === "FENCED" ? "fenced" : "failed";
+                writeReceipt(
+                  envelope,
+                  "rejected",
+                  httpStatusOf(failure) ?? 500,
+                  terminalError,
+                );
+              }
+
+              await publishCanonical(envelope, sessionId, {
+                type: "session.command",
+                sessionId,
+                monotonicId: ++monotonicId,
+                commandId: envelope.command.id,
+                kind: "session.prompt",
+                phase: "completed",
+                status: terminalStatus,
+                ...(terminalResult ? { result: terminalResult } : {}),
+                ...(terminalError
+                  ? {
+                      error: terminalError as {
+                        code: string;
+                        message: string;
+                        details?: Record<string, unknown>;
+                      },
+                    }
+                  : {}),
+              });
+            },
+          )
+          .finally(() => activePromptEnvelopes.delete(sessionId));
+      }, 0);
+
       return { commandId: envelope.command.id, state: "accepted" as const };
     },
     deliverInput(sessionId, envelope, opts) {
@@ -1474,6 +1793,26 @@ export function createFakeExecutionHost(
     setPromptBehavior(behavior) {
       promptBehavior = behavior;
     },
+    setCanonicalEventSink(sink) {
+      canonicalEventSink = sink;
+    },
+    async waitForCanonicalEvents() {
+      for (;;) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        const observedTail = canonicalEventTail;
+
+        await observedTail;
+        if (
+          activePromptEnvelopes.size === 0 &&
+          observedTail === canonicalEventTail
+        ) {
+          return;
+        }
+      }
+    },
+    writeRuntimeOutput(objectId, bytes) {
+      runtimeOutputWrites.set(objectId, Uint8Array.from(bytes));
+    },
     restart() {
       identity.bootId = randomUUID();
       // Every in-flight turn dies with the process: the caller's request
@@ -1491,6 +1830,9 @@ export function createFakeExecutionHost(
     monotonic: () => monotonicId,
     pushEvent(sessionId, event) {
       enqueue(sessionId, event);
+      const envelope = activePromptEnvelopes.get(sessionId);
+
+      if (envelope) void publishCanonical(envelope, sessionId, event);
     },
     endStream(sessionId) {
       streamQueueFor(sessionId).close();
@@ -1544,6 +1886,20 @@ export async function fakeExecutionHosts(
   const { getActiveAssignment } = await import(
     "@/lib/execution-host/assignments"
   );
+  const { ingestRuntimeEvent } = await import(
+    "@/lib/execution-host/events/ingest"
+  );
+  const { projectCanonicalPromptCommands } = await import(
+    "@/lib/execution-host/events/prompt-projector"
+  );
+  const { projectCanonicalSessionLifecycle } = await import(
+    "@/lib/execution-host/events/lifecycle-projector"
+  );
+  const {
+    RUNTIME_EVENT_PAYLOAD_SCHEMAS,
+    RUNTIME_EVENT_TYPES,
+    redactRuntimeEventPayload,
+  } = await import("@/lib/execution-host/runtime-events");
 
   resetResolverForTests();
   const active = await db
@@ -1590,10 +1946,37 @@ export async function fakeExecutionHosts(
   const { localHost } = await import("@/lib/execution-host/resolver");
 
   await localHost({ db, transport: fake.transport, force: true });
+  // The default fake deliberately advertises no host event stream so lazy
+  // registration cannot start an unrelated background consumer in integration
+  // suites. This helper supplies canonical events directly to the manager sink,
+  // so persist the capabilities that its DB-backed execution boundary provides.
+  await db
+    .update(executionHosts)
+    .set({
+      capabilities: {
+        protocolVersion: 1,
+        supervisorVersion: "fake",
+        adapters: [],
+        dataPlane: {
+          version: "execution-host-data-plane.v1",
+          eventStream: true,
+          asyncPrompt: true,
+          runtimeObjects: true,
+          limits: {
+            maxEventBytes: 1_048_576,
+            maxObjectBytes: 26_214_400,
+            maxReplayBatch: 500,
+          },
+        },
+      },
+    })
+    .where(eq(executionHosts.id, hostId));
   const [host] = await db
     .select()
     .from(executionHosts)
     .where(eq(executionHosts.id, hostId));
+
+  primeResolverForTests(host);
 
   let assignment: ExecutionAssignment | null = null;
 
@@ -1611,6 +1994,83 @@ export async function fakeExecutionHosts(
         }),
       ));
   }
+
+  let canonicalStreamState = canonicalStreamStates.get(fake);
+
+  if (!canonicalStreamState) {
+    canonicalStreamState = {
+      bootId: fake.identity.bootId,
+      streamId: randomUUID(),
+      nextSequence: 0n,
+    };
+    canonicalStreamStates.set(fake, canonicalStreamState);
+  }
+  const payloadSchemas = new Map(
+    RUNTIME_EVENT_TYPES.map((eventType, index) => [
+      eventType,
+      RUNTIME_EVENT_PAYLOAD_SCHEMAS[index],
+    ]),
+  );
+
+  fake.setCanonicalEventSink(
+    async ({ envelope, sessionId, event, eventId }) => {
+      if (canonicalStreamState.bootId !== fake.identity.bootId) {
+        canonicalStreamState.bootId = fake.identity.bootId;
+        canonicalStreamState.streamId = randomUUID();
+        canonicalStreamState.nextSequence = 0n;
+      }
+      const eventType = event.type;
+      const payloadSchema = payloadSchemas.get(eventType);
+
+      if (!payloadSchema) {
+        throw new Error(
+          `fake canonical event type is unsupported: ${eventType}`,
+        );
+      }
+      const eventPayload = Object.fromEntries(
+        Object.entries(event).filter(
+          ([key]) => !["type", "sessionId", "monotonicId"].includes(key),
+        ),
+      );
+      const payload = redactRuntimeEventPayload({
+        sourceMonotonicId: event.monotonicId,
+        ...eventPayload,
+      });
+      const currentSequence = canonicalStreamState.nextSequence;
+
+      canonicalStreamState.nextSequence += 1n;
+      await ingestRuntimeEvent({
+        db,
+        executionHostId: hostId,
+        envelope: {
+          envelopeVersion: 1,
+          eventId,
+          hostKey: fake.identity.hostKey,
+          hostBootId: fake.identity.bootId,
+          streamId: canonicalStreamState.streamId,
+          sequence: currentSequence.toString(),
+          runId: envelope.fence.runId,
+          assignmentId: envelope.fence.assignmentId,
+          assignmentEpoch: envelope.fence.assignmentEpoch,
+          hostSessionId: sessionId,
+          eventType,
+          occurredAt: new Date().toISOString(),
+          payloadSchema,
+          payload,
+        },
+      });
+      await Promise.all([
+        projectCanonicalPromptCommands({
+          db,
+          runId: envelope.fence.runId,
+        }),
+        projectCanonicalSessionLifecycle({
+          db,
+          runId: envelope.fence.runId,
+        }),
+      ]);
+    },
+  );
 
   return {
     hosts: createExecutionHosts({
@@ -1854,10 +2314,18 @@ export function memoryBoundClient(args: {
     },
     async waitForPrompt(handle) {
       const completion = promptCompletions.get(handle.commandId);
+
       if (!completion) {
-        throw new MaisterError("PRECONDITION", "prompt command is not available", {
-          details: { reason: "prompt_command_missing", commandId: handle.commandId },
-        });
+        throw new MaisterError(
+          "PRECONDITION",
+          "prompt command is not available",
+          {
+            details: {
+              reason: "prompt_command_missing",
+              commandId: handle.commandId,
+            },
+          },
+        );
       }
 
       return completion;

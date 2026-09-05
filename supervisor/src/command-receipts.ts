@@ -66,12 +66,14 @@ export class CommandReceipts {
   // explicit terminal `turn_lost` pair before the host accepts new traffic.
   recoverAcceptedPrompts(): number {
     const recovered = this.state.recoverAcceptedPromptReceipts();
+
     if (recovered > 0) {
       this.logger.warn(
         { recovered },
         "accepted-prompt-receipts-terminalized-after-restart",
       );
     }
+
     return recovered;
   }
 
@@ -119,7 +121,13 @@ export class CommandReceipts {
         body: errorBody(turnLost),
       };
 
-      this.writeReceipt(envelope, "rejected", rejected, existing.receivedAt, args);
+      this.writeReceipt(
+        envelope,
+        "rejected",
+        rejected,
+        existing.receivedAt,
+        args,
+      );
       this.logger.warn(
         { commandId, kind: envelope.command.kind },
         "command-turn-lost",
@@ -154,6 +162,7 @@ export class CommandReceipts {
     const { envelope } = args;
     const commandId = envelope.command.id;
     const existing = this.state.getReceipt(commandId);
+
     if (existing) assertReceiptInvariant(existing, envelope);
     if (existing && existing.phase !== "accepted") {
       return {
@@ -180,6 +189,7 @@ export class CommandReceipts {
     }
     const receivedAt = existing?.receivedAt ?? this.now().toISOString();
     const promise = this.runFresh(args, receivedAt);
+
     this.inflight.set(commandId, promise);
     try {
       return { ...(await promise), replayed: false };
@@ -203,6 +213,7 @@ export class CommandReceipts {
     const { envelope } = args;
     const commandId = envelope.command.id;
     const existing = this.state.getReceipt(commandId);
+
     if (existing) assertReceiptInvariant(existing, envelope);
 
     if (existing && existing.phase !== "accepted") {
@@ -229,7 +240,15 @@ export class CommandReceipts {
         status: httpStatusForCode(turnLost.code),
         body: errorBody(turnLost),
       } satisfies CommandOutcome;
-      this.writeReceipt(envelope, "rejected", rejected, existing.receivedAt, args);
+
+      this.writeReceipt(
+        envelope,
+        "rejected",
+        rejected,
+        existing.receivedAt,
+        args,
+      );
+
       return { ...rejected, replayed: false };
     }
     if (!args.admissionExempt) this.state.assertCanAcceptMutatingCommand();
@@ -239,8 +258,10 @@ export class CommandReceipts {
       status: 202,
       body: { commandId, state: "accepted" },
     } satisfies CommandOutcome;
+
     this.writeReceipt(envelope, "accepted", accepted, receivedAt, args);
     const completion = this.completeAsync(args, receivedAt);
+
     this.inflight.set(commandId, completion);
     void completion
       .catch((error) => {
@@ -254,6 +275,7 @@ export class CommandReceipts {
         );
       })
       .finally(() => this.inflight.delete(commandId));
+
     return { ...accepted, replayed: false };
   }
 
@@ -270,6 +292,7 @@ export class CommandReceipts {
   ): Promise<CommandOutcome> {
     let outcome: CommandOutcome;
     let phase: "completed" | "rejected" = "completed";
+
     try {
       outcome = await args.run();
     } catch (error) {
@@ -277,9 +300,12 @@ export class CommandReceipts {
         ? error
         : new SupervisorError(
             "ACP_PROTOCOL",
-            error instanceof Error ? error.message : "asynchronous prompt failed",
+            error instanceof Error
+              ? error.message
+              : "asynchronous prompt failed",
             { cause: error },
           );
+
       outcome = {
         status: httpStatusForCode(supervisorError.code),
         body: errorBody(supervisorError),
@@ -287,6 +313,7 @@ export class CommandReceipts {
       phase = "rejected";
     }
     this.writeReceipt(args.envelope, phase, outcome, receivedAt, args);
+
     return outcome;
   }
 
@@ -355,6 +382,7 @@ export class CommandReceipts {
 
     try {
       const transition = { row, phase, outcome } satisfies ReceiptTransition;
+
       if (callbacks.persistReceipt) {
         callbacks.persistReceipt(transition);
       } else {
@@ -433,7 +461,13 @@ export function receiptToResponse(
 // leaves the host except through the manager command ledger's existing digest.
 export function commandRequestDigest(envelope: CommandEnvelope): string {
   return createHash("sha256")
-    .update(canonicalJson({ command: envelope.command, fence: envelope.fence, payload: envelope.payload }))
+    .update(
+      canonicalJson({
+        command: envelope.command,
+        fence: envelope.fence,
+        payload: envelope.payload,
+      }),
+    )
     .digest("hex");
 }
 
@@ -458,7 +492,12 @@ function assertReceiptInvariant(
 }
 
 function canonicalJson(value: unknown): string {
-  if (value === null || typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
+  if (
+    value === null ||
+    typeof value === "boolean" ||
+    typeof value === "number" ||
+    typeof value === "string"
+  ) {
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
@@ -466,13 +505,17 @@ function canonicalJson(value: unknown): string {
   }
   if (value && typeof value === "object") {
     const object = value as Record<string, unknown>;
+
     return `{${Object.keys(object)
       .sort()
       .map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`)
       .join(",")}}`;
   }
 
-  throw new SupervisorError("PRECONDITION", "command request contains a non-JSON value");
+  throw new SupervisorError(
+    "PRECONDITION",
+    "command request contains a non-JSON value",
+  );
 }
 
 export function isErrorBody(body: unknown): body is SupervisorErrorBody {

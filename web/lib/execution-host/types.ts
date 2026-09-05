@@ -52,6 +52,7 @@ export const RUNTIME_OBJECT_KINDS = [
   "checkpoint",
   "attachment",
   "capability_profile",
+  "capability_instructions",
   "agent_memory_snapshot",
   "node_result",
   "evidence",

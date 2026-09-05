@@ -20,6 +20,13 @@ import { getAdapterRuntime, resolveAdapterBinary } from "./adapter-registry";
 import { effectiveStartSessionRequest } from "./runner-provisioner";
 
 const MAX_LINE_BYTES = 1024 * 1024;
+
+type RuntimeObjectEnvName =
+  | "MAISTER_OUTPUT_FILE"
+  | "MAISTER_PLAN_DOCUMENT_FILE"
+  | "MAISTER_PLAN_REVIEW_FILE";
+type RuntimeObjectEnvPaths = Partial<Record<RuntimeObjectEnvName, string>>;
+
 export type SpawnSessionOptions = {
   sessionId: string;
   request: StartSessionRequest;
@@ -37,6 +44,12 @@ export type SpawnSessionOptions = {
   logger: Logger;
   binaryOverride?: string;
   preArgs?: string[];
+  runtimeObjectEnv?: {
+    capabilityProfilePath?: string;
+    capabilityInstructionsPath?: string;
+    outputPaths?: RuntimeObjectEnvPaths;
+    outputObjectIds?: string[];
+  };
 };
 
 export type SpawnSessionResult = {
@@ -49,16 +62,20 @@ export type SpawnSessionResult = {
 };
 
 // The request fields the child environment is layered from. The model-catalog
-// probe and the adapter smoke build one without a session, so the parameter is
 // the subset rather than a full StartSessionRequest.
 export type ChildEnvRequest = Pick<
   StartSessionRequest,
-  "executor" | "capabilityProfilePath" | "adapterLaunch"
+  "executor" | "adapterLaunch"
 >;
 
 export function buildChildEnv(
   request: ChildEnvRequest,
-  opts: { contextMounts?: ContextMount[] } = {},
+  opts: {
+    contextMounts?: ContextMount[];
+    capabilityProfilePath?: string;
+    capabilityInstructionsPath?: string;
+    outputPaths?: RuntimeObjectEnvPaths;
+  } = {},
 ): NodeJS.ProcessEnv {
   // ADR-166: mounts come from the resolved workspace (the adopted handle) —
   // the request body never carries a path.
@@ -67,8 +84,14 @@ export function buildChildEnv(
   return {
     ...process.env,
     ...(request.executor.env ?? {}),
-    ...(request.capabilityProfilePath
-      ? { MAISTER_CAPABILITY_PROFILE_PATH: request.capabilityProfilePath }
+    ...(request.adapterLaunch?.env ?? {}),
+    ...(opts.capabilityProfilePath
+      ? { MAISTER_CAPABILITY_PROFILE_PATH: opts.capabilityProfilePath }
+      : {}),
+    ...(opts.capabilityInstructionsPath
+      ? {
+          MAISTER_CAPABILITY_INSTRUCTIONS_PATH: opts.capabilityInstructionsPath,
+        }
       : {}),
     // ADR-157 (D8b): self-describing JSON array of the request's mounts — a
     // `:`-joined path list would drop the slug and the resolved commit, the two
@@ -79,7 +102,7 @@ export function buildChildEnv(
     ...(contextMounts && contextMounts.length > 0
       ? { MAISTER_CONTEXT_REPOS: JSON.stringify(contextMounts) }
       : {}),
-    ...(request.adapterLaunch?.env ?? {}),
+    ...(opts.outputPaths ?? {}),
   };
 }
 
@@ -126,6 +149,10 @@ export async function spawnSession(
 
   const childEnv = buildChildEnv(request, {
     contextMounts: workspace.contextMounts,
+    capabilityProfilePath: opts.runtimeObjectEnv?.capabilityProfilePath,
+    capabilityInstructionsPath:
+      opts.runtimeObjectEnv?.capabilityInstructionsPath,
+    outputPaths: opts.runtimeObjectEnv?.outputPaths,
   });
 
   logger.info(
@@ -151,7 +178,15 @@ export async function spawnSession(
           Object.keys(request.adapterLaunch.env).length > 0,
       ),
       adapterEnvKeys: Object.keys(request.adapterLaunch?.env ?? {}).sort(),
-      hasCapabilityProfile: Boolean(request.capabilityProfilePath),
+      hasCapabilityProfile: Boolean(
+        opts.runtimeObjectEnv?.capabilityProfilePath,
+      ),
+      hasCapabilityInstructions: Boolean(
+        opts.runtimeObjectEnv?.capabilityInstructionsPath,
+      ),
+      runtimeOutputEnvNames: Object.keys(
+        opts.runtimeObjectEnv?.outputPaths ?? {},
+      ).sort(),
     },
     "spawn",
   );
@@ -230,6 +265,7 @@ export async function spawnSession(
     // ADR-157: arm the unconditional read-only mount guard + the prompt preamble
     // with the mounts the web tier materialized for this session.
     contextMounts: workspace.contextMounts,
+    runtimeOutputObjectIds: opts.runtimeObjectEnv?.outputObjectIds,
     capabilityDenyCount: 0,
     capabilityPendingWriteIds: new Set<string>(),
     repeatCount: 0,

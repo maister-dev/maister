@@ -1,19 +1,20 @@
 import "server-only";
 
+import type { ExecutionHostTransport } from "@/lib/execution-host/contracts";
+import type { Db } from "@/lib/execution-host/db";
+
 import { randomUUID } from "node:crypto";
 
 import { and, eq, isNull, lt, or } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
-import type { ExecutionHostTransport } from "@/lib/execution-host/contracts";
-import type { Db } from "@/lib/execution-host/db";
-import { MaisterError } from "@/lib/errors";
-import { executionEventStreams, runs } from "@/lib/db/schema";
-
 import { ingestRuntimeEvent } from "./ingest";
 import { projectCanonicalSessionLifecycle } from "./lifecycle-projector";
 import { projectCanonicalPromptCommands } from "./prompt-projector";
 import { projectCanonicalRuntimeObjects } from "./runtime-object-projector";
+
+import { MaisterError } from "@/lib/errors";
+import { executionEventStreams, runs } from "@/lib/db/schema";
 
 const CLAIM_LEASE_MS = 30_000;
 const RECONNECT_MIN_MS = 250;
@@ -60,13 +61,15 @@ export async function claimRuntimeEventStream(input: {
   const now = input.now ?? new Date();
   const leaseMs = input.leaseMs ?? CLAIM_LEASE_MS;
   const expiresAt = new Date(now.getTime() + leaseMs);
+
   return input.db.transaction(async (tx) => {
     const rows = await tx
       .select({
         id: executionEventStreams.id,
         streamId: executionEventStreams.streamId,
         lastContiguousSequence: executionEventStreams.lastContiguousSequence,
-        lastAckConfirmedSequence: executionEventStreams.lastAckConfirmedSequence,
+        lastAckConfirmedSequence:
+          executionEventStreams.lastAckConfirmedSequence,
       })
       .from(executionEventStreams)
       .where(
@@ -78,6 +81,7 @@ export async function claimRuntimeEventStream(input: {
       .for("update")
       .limit(1);
     const stream = rows[0];
+
     if (!stream) return null;
     const updated = await tx
       .update(executionEventStreams)
@@ -89,7 +93,9 @@ export async function claimRuntimeEventStream(input: {
         ),
       )
       .returning({ id: executionEventStreams.id });
+
     if (!updated[0]) return null;
+
     return {
       streamRowId: stream.id,
       streamId: stream.streamId,
@@ -108,18 +114,21 @@ export async function recordConfirmedRuntimeEventAck(input: {
 }): Promise<boolean> {
   const now = input.now ?? new Date();
   const through = BigInt(input.throughSequence);
+
   return input.db.transaction(async (tx) => {
     const rows = await tx
       .select({
         claimOwner: executionEventStreams.claimOwner,
         lastContiguousSequence: executionEventStreams.lastContiguousSequence,
-        lastAckConfirmedSequence: executionEventStreams.lastAckConfirmedSequence,
+        lastAckConfirmedSequence:
+          executionEventStreams.lastAckConfirmedSequence,
       })
       .from(executionEventStreams)
       .where(eq(executionEventStreams.id, input.claim.streamRowId))
       .for("update")
       .limit(1);
     const stream = rows[0];
+
     if (
       !stream ||
       stream.claimOwner !== input.owner ||
@@ -129,6 +138,7 @@ export async function recordConfirmedRuntimeEventAck(input: {
       return false;
     }
     const current = stream.lastAckConfirmedSequence ?? -1n;
+
     if (through <= current) return true;
     await tx
       .update(executionEventStreams)
@@ -139,6 +149,7 @@ export async function recordConfirmedRuntimeEventAck(input: {
         lastError: null,
       })
       .where(eq(executionEventStreams.id, input.claim.streamRowId));
+
     return true;
   });
 }
@@ -152,14 +163,18 @@ async function recordConsumerFailure(input: {
   now: Date;
   retryAt: Date;
 }): Promise<void> {
-  const reason = input.error instanceof MaisterError
-    ? input.error.code
-    : input.error instanceof Error
-      ? input.error.name
-      : "unknown";
+  const reason =
+    input.error instanceof MaisterError
+      ? input.error.code
+      : input.error instanceof Error
+        ? input.error.name
+        : "unknown";
   const details = {
     reason,
-    message: input.error instanceof Error ? input.error.message.slice(0, 512) : "unknown event consumer failure",
+    message:
+      input.error instanceof Error
+        ? input.error.message.slice(0, 512)
+        : "unknown event consumer failure",
   };
   const where = input.streamRowId
     ? eq(executionEventStreams.id, input.streamRowId)
@@ -167,6 +182,7 @@ async function recordConsumerFailure(input: {
         eq(executionEventStreams.executionHostId, input.executionHostId),
         eq(executionEventStreams.claimOwner, input.owner),
       );
+
   await input.db
     .update(executionEventStreams)
     .set({
@@ -183,6 +199,7 @@ async function isCanonicalRun(db: Db, runId: string): Promise<boolean> {
     .from(runs)
     .where(eq(runs.id, runId))
     .limit(1);
+
   return Boolean(rows[0]);
 }
 
@@ -213,6 +230,7 @@ export async function consumeRuntimeEventStreamOnce(input: {
   });
   const controller = new AbortController();
   const stop = (): void => controller.abort();
+
   input.signal?.addEventListener("abort", stop, { once: true });
   const maxEvents = input.maxEvents ?? Number.POSITIVE_INFINITY;
 
@@ -225,6 +243,7 @@ export async function consumeRuntimeEventStreamOnce(input: {
         streamId: claim.streamId,
         throughSequence: claim.afterSequence,
       });
+
       if (
         ack.streamId !== claim.streamId ||
         ack.acknowledgedThrough !== claim.afterSequence
@@ -241,8 +260,10 @@ export async function consumeRuntimeEventStreamOnce(input: {
         throughSequence: ack.acknowledgedThrough,
         now: now(),
       });
+
       if (!recorded) {
         summary.reconnectRequired = true;
+
         return summary;
       }
       summary.acknowledged += 1;
@@ -259,6 +280,7 @@ export async function consumeRuntimeEventStreamOnce(input: {
         now: now(),
         logger,
       });
+
       summary.received += 1;
       summary.duplicates += result.disposition === "duplicate" ? 1 : 0;
       summary.staleEpochs += result.staleEpochCount;
@@ -281,8 +303,15 @@ export async function consumeRuntimeEventStreamOnce(input: {
           streamId: claim.streamId,
           throughSequence: result.contiguousThrough,
         });
-        if (ack.streamId !== claim.streamId || ack.acknowledgedThrough !== result.contiguousThrough) {
-          throw new MaisterError("ACP_PROTOCOL", "execution host returned a mismatched runtime event acknowledgement");
+
+        if (
+          ack.streamId !== claim.streamId ||
+          ack.acknowledgedThrough !== result.contiguousThrough
+        ) {
+          throw new MaisterError(
+            "ACP_PROTOCOL",
+            "execution host returned a mismatched runtime event acknowledgement",
+          );
         }
         const recorded = await recordConfirmedRuntimeEventAck({
           db: input.db,
@@ -291,6 +320,7 @@ export async function consumeRuntimeEventStreamOnce(input: {
           throughSequence: ack.acknowledgedThrough,
           now: now(),
         });
+
         if (!recorded) {
           summary.reconnectRequired = true;
           break;
@@ -323,7 +353,9 @@ export async function consumeRuntimeEventStreamOnce(input: {
               hostId: input.executionHostId,
               runId: envelope.runId,
               reason:
-                error instanceof MaisterError ? error.code : "projection_failure",
+                error instanceof MaisterError
+                  ? error.code
+                  : "projection_failure",
               err: error instanceof Error ? error.message : String(error),
             },
             "canonical-prompt-command-projection-failed",
@@ -334,6 +366,7 @@ export async function consumeRuntimeEventStreamOnce(input: {
     }
   } catch (error) {
     const retryAt = new Date(now().getTime() + RECONNECT_MIN_MS);
+
     await recordConsumerFailure({
       db: input.db,
       executionHostId: input.executionHostId,
@@ -348,6 +381,7 @@ export async function consumeRuntimeEventStreamOnce(input: {
     controller.abort();
     input.signal?.removeEventListener("abort", stop);
   }
+
   return summary;
 }
 
@@ -357,7 +391,9 @@ declare global {
   var __maisterRuntimeEventConsumers: Map<string, ConsumerLoop> | undefined;
 }
 
-const consumers = globalThis.__maisterRuntimeEventConsumers ?? new Map<string, ConsumerLoop>();
+const consumers =
+  globalThis.__maisterRuntimeEventConsumers ?? new Map<string, ConsumerLoop>();
+
 globalThis.__maisterRuntimeEventConsumers = consumers;
 
 export function startRuntimeEventConsumer(input: {
@@ -367,12 +403,14 @@ export function startRuntimeEventConsumer(input: {
   logger?: Logger;
 }): () => void {
   const existing = consumers.get(input.executionHostId);
+
   if (existing) return () => existing.controller.abort();
   const controller = new AbortController();
   const owner = `web-event-consumer:${randomUUID()}`;
   const logger = input.logger ?? defaultLog;
   const promise = (async (): Promise<void> => {
     let delayMs = RECONNECT_MIN_MS;
+
     while (!controller.signal.aborted) {
       try {
         const summary = await consumeRuntimeEventStreamOnce({
@@ -381,13 +419,17 @@ export function startRuntimeEventConsumer(input: {
           signal: controller.signal,
           logger,
         });
-        delayMs = summary.reconnectRequired ? RECONNECT_MIN_MS : RECONNECT_MIN_MS;
+
+        delayMs = summary.reconnectRequired
+          ? RECONNECT_MIN_MS
+          : RECONNECT_MIN_MS;
       } catch (error) {
         logger.warn(
           {
             hostId: input.executionHostId,
             delayMs,
-            reason: error instanceof MaisterError ? error.code : "transport_failure",
+            reason:
+              error instanceof MaisterError ? error.code : "transport_failure",
           },
           "runtime-event-consumer-reconnect",
         );
@@ -396,14 +438,19 @@ export function startRuntimeEventConsumer(input: {
       if (!controller.signal.aborted) {
         await new Promise<void>((resolve) => {
           const handle = setTimeout(resolve, delayMs);
+
           handle.unref();
         });
       }
     }
   })().finally(() => {
-    consumers.delete(input.executionHostId);
+    if (consumers.get(input.executionHostId)?.controller === controller) {
+      consumers.delete(input.executionHostId);
+    }
   });
+
   consumers.set(input.executionHostId, { controller, promise });
+
   return () => controller.abort();
 }
 

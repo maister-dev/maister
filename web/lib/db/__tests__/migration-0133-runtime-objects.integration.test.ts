@@ -23,6 +23,7 @@ beforeAll(async () => {
   );
   const projectId = randomUUID();
   const short = projectId.replace(/-/g, "").slice(0, 8);
+
   runId = randomUUID();
   hostId = randomUUID();
 
@@ -60,7 +61,10 @@ describe("0133_rich_blob", () => {
       `select execution_data_plane_mode from runs where id = $1`,
       [runId],
     );
-    expect(before.rows[0]).toEqual({ execution_data_plane_mode: "canonical_events_v1" });
+
+    expect(before.rows[0]).toEqual({
+      execution_data_plane_mode: "canonical_events_v1",
+    });
 
     await testDatabase.pool.query(
       `insert into execution_runtime_objects

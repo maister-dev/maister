@@ -1,4 +1,11 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -22,7 +29,11 @@ describe("gitInitWithCommit", () => {
     await mkdir(path.dirname(hookPath), { recursive: true });
     await writeFile(hookPath, `#!/bin/sh\ntouch "${sentinelPath}"\n`, "utf8");
     await chmod(hookPath, 0o755);
-    await writeFile(path.join(workingDir, "maister-package.yaml"), "flows: []\n", "utf8");
+    await writeFile(
+      path.join(workingDir, "maister-package.yaml"),
+      "flows: []\n",
+      "utf8",
+    );
 
     await gitInitWithCommit(workingDir, "main", "maister: test initial commit");
 

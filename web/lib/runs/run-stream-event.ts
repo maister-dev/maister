@@ -1,14 +1,14 @@
 import "server-only";
 
+import type { Db } from "@/lib/execution-host/db";
+
 import { createHash } from "node:crypto";
 
 import { and, eq } from "drizzle-orm";
 
-import type { Db } from "@/lib/execution-host/db";
 import { assertRuntimeEventPayloadSafe } from "@/lib/execution-host/runtime-events";
 import { executionEvents, runs } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
-
 import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
 
 export type ManagerRunStreamEvent = {
@@ -35,18 +35,30 @@ export type ManagerRunStreamAppendResult = {
 const MANAGER_PAYLOAD_SCHEMA = "maister.manager.run-stream.v1";
 
 function stableJson(value: unknown): string {
-  if (value === null || typeof value === "boolean" || typeof value === "number") {
+  if (
+    value === null ||
+    typeof value === "boolean" ||
+    typeof value === "number"
+  ) {
     if (typeof value === "number" && !Number.isFinite(value)) {
-      throw new MaisterError("PRECONDITION", "manager run event contains a non-finite number");
+      throw new MaisterError(
+        "PRECONDITION",
+        "manager run event contains a non-finite number",
+      );
     }
+
     return JSON.stringify(value);
   }
   if (typeof value === "string") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (!value || typeof value !== "object") {
-    throw new MaisterError("PRECONDITION", "manager run event contains a non-JSON value");
+    throw new MaisterError(
+      "PRECONDITION",
+      "manager run event contains a non-JSON value",
+    );
   }
   const record = value as Record<string, unknown>;
+
   return `{${Object.keys(record)
     .sort()
     .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
@@ -63,26 +75,35 @@ function deterministicManagerEventId(runId: string, sourceKey: string): string {
       .digest()
       .subarray(0, 16),
   );
+
   bytes[6] = (bytes[6] & 0x0f) | 0x50;
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
   const hex = bytes.toString("hex");
+
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function managerPayload(event: ManagerRunStreamEvent): Record<string, unknown> {
   if (!event.type || event.type.length > 128) {
-    throw new MaisterError("PRECONDITION", "manager run event type is required and bounded");
+    throw new MaisterError(
+      "PRECONDITION",
+      "manager run event type is required and bounded",
+    );
   }
   const payload = event.data ?? {};
+
   try {
     assertRuntimeEventPayloadSafe(payload);
   } catch (error) {
     throw new MaisterError(
       "PRECONDITION",
-      error instanceof Error ? error.message : "manager run event payload is unsafe",
+      error instanceof Error
+        ? error.message
+        : "manager run event payload is unsafe",
       { details: { reason: "manager_event_payload_invalid" } },
     );
   }
+
   return payload;
 }
 
@@ -94,7 +115,10 @@ export async function appendManagerRunStreamEvent(
   input: ManagerRunStreamAppend,
 ): Promise<ManagerRunStreamAppendResult> {
   if (!input.sourceKey || input.sourceKey.length > 512) {
-    throw new MaisterError("PRECONDITION", "manager run event source key is required and bounded");
+    throw new MaisterError(
+      "PRECONDITION",
+      "manager run event source key is required and bounded",
+    );
   }
   const payload = managerPayload(input.event);
   const payloadJson = stableJson(payload);
@@ -109,8 +133,12 @@ export async function appendManagerRunStreamEvent(
       .for("update")
       .limit(1);
     const lockedRun = lockedRuns[0];
+
     if (!lockedRun) {
-      throw new MaisterError("PRECONDITION", `run ${input.runId} disappeared during manager event append`);
+      throw new MaisterError(
+        "PRECONDITION",
+        `run ${input.runId} disappeared during manager event append`,
+      );
     }
     const existingRows = await tx
       .select({
@@ -129,20 +157,30 @@ export async function appendManagerRunStreamEvent(
       )
       .limit(1);
     const existing = existingRows[0];
+
     if (existing) {
       if (
         existing.eventType !== input.event.type ||
         existing.payloadSha256 !== payloadSha256 ||
         existing.runSequence === null
       ) {
-        throw new MaisterError("CONFLICT", "manager event source key was reused with different immutable data", {
-          details: { reason: "event_identity_conflict", sourceKey: input.sourceKey },
-        });
+        throw new MaisterError(
+          "CONFLICT",
+          "manager event source key was reused with different immutable data",
+          {
+            details: {
+              reason: "event_identity_conflict",
+              sourceKey: input.sourceKey,
+            },
+          },
+        );
       }
+
       return { eventId: existing.id, runSequence: existing.runSequence };
     }
     const runSequence = lockedRun.nextSequence;
     const eventId = deterministicManagerEventId(input.runId, input.sourceKey);
+
     await tx.insert(executionEvents).values({
       id: eventId,
       source: "manager",
@@ -161,9 +199,12 @@ export async function appendManagerRunStreamEvent(
       .update(runs)
       .set({ nextExecutionEventSequence: runSequence + 1n })
       .where(eq(runs.id, input.runId));
+
     return { eventId, runSequence };
   });
+
   runEventWakeBus.wake(input.runId);
+
   return {
     mode: "canonical_events_v1",
     eventId: result.eventId,

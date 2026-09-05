@@ -296,15 +296,14 @@ describe("F3: git artifact payloads render against the stored immutable ref", ()
   // `diff` (git-range) with headRef = workspace.branch (MUTABLE). Same drift.
   it("default-artifact diff renders the recorded headRef, not the live branch tip", async () => {
     const repo = await makeRepo();
-    const { runId, nodeAttemptId, slug, workspaceId } = await seedRun(repo);
+    const { runId, nodeAttemptId, workspaceId } = await seedRun(repo);
 
     // Pass the real workspace row (carries worktreePath + branch) to
-    // recordDefaultArtifacts; runtimeRoot only governs the optional log path.
+    // recordDefaultArtifacts.
     const wsRows = (await db
       .select()
       .from(schema.workspaces)
       .where(eq(schema.workspaces.id, workspaceId))) as unknown as any[];
-    const runtimeRoot = await mkdtemp(join(tmpdir(), "default-diff-rt-"));
 
     await recordDefaultArtifacts(
       {
@@ -312,9 +311,7 @@ describe("F3: git artifact payloads render against the stored immutable ref", ()
         nodeAttemptId,
         nodeId: "implement",
         attempt: 1,
-        projectSlug: slug,
         workspace: wsRows[0],
-        runtimeRoot,
       },
       db,
     );

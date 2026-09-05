@@ -3,28 +3,48 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { requireProjectAction } from "@/lib/authz";
 import {
+  runSessions as runSessionsTable,
   runs as runsTable,
   scratchRuns as scratchRunsTable,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
 type Row = Record<string, unknown>;
-type Tables = { runs: Row[]; scratch_runs: Row[] };
+type Tables = { run_sessions: Row[]; runs: Row[]; scratch_runs: Row[] };
 
 const dbState: { tables: Tables } = {
-  tables: { runs: [], scratch_runs: [] },
+  tables: { run_sessions: [], runs: [], scratch_runs: [] },
 };
 
 function tableOf(t: unknown): keyof Tables {
+  if (t === runSessionsTable) return "run_sessions";
   if (t === runsTable) return "runs";
   if (t === scratchRunsTable) return "scratch_runs";
   throw new Error("unknown table");
 }
 
+function selectedRows(table: unknown): Row[] {
+  return dbState.tables[tableOf(table)];
+}
+
 const selectChain = () => ({
-  from: (table: unknown) => ({
-    where: async () => dbState.tables[tableOf(table)],
-  }),
+  from: (table: unknown) => {
+    const query = {
+      then: <TResult1 = Row[], TResult2 = never>(
+        onFulfilled?:
+          | ((value: Row[]) => TResult1 | PromiseLike<TResult1>)
+          | null,
+        onRejected?:
+          | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
+          | null,
+      ): Promise<TResult1 | TResult2> =>
+        Promise.resolve(selectedRows(table)).then(onFulfilled, onRejected),
+      orderBy: () => query,
+      limit: async (count: number) => selectedRows(table).slice(0, count),
+    };
+
+    return { where: () => query };
+  },
 });
 
 const fakeDb = { select: selectChain };
@@ -92,7 +112,7 @@ function seedScratchRun(
   overrides: Partial<{
     runKind: "flow" | "scratch";
     dialogStatus: string;
-    supervisorSessionId: string | null;
+    hostSessionId: string | null;
   }> = {},
 ): string {
   const runId = "run-interrupt";
@@ -108,9 +128,16 @@ function seedScratchRun(
       runId,
       projectId: "project-1",
       dialogStatus: overrides.dialogStatus ?? "Running",
-      supervisorSessionId: Object.hasOwn(overrides, "supervisorSessionId")
-        ? overrides.supervisorSessionId
+    });
+    dbState.tables.run_sessions.push({
+      id: "run-session-1",
+      runId,
+      sessionName: "scratch-dialog",
+      acpSessionId: "acp-1",
+      hostSessionId: Object.hasOwn(overrides, "hostSessionId")
+        ? overrides.hostSessionId
         : "sup-1",
+      updatedAt: new Date(),
     });
   }
 
@@ -129,7 +156,7 @@ async function invokePost(runId: string) {
 }
 
 beforeEach(() => {
-  dbState.tables = { runs: [], scratch_runs: [] };
+  dbState.tables = { run_sessions: [], runs: [], scratch_runs: [] };
   vi.mocked(cancelPrompt).mockClear();
   vi.mocked(cancelPrompt).mockResolvedValue({ cancelled: true });
   vi.mocked(requireProjectAction).mockClear();
@@ -162,7 +189,7 @@ describe("POST /api/scratch-runs/[runId]/interrupt", () => {
   it("is a no-op for a terminal run", async () => {
     const runId = seedScratchRun({
       dialogStatus: "Done",
-      supervisorSessionId: null,
+      hostSessionId: null,
     });
 
     const res = await invokePost(runId);

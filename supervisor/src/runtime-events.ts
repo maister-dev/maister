@@ -12,7 +12,9 @@ const SEQUENCE = /^(0|[1-9][0-9]{0,18})$/;
 // The default identity is `eh_<uuid-without-dashes>`, but a pinned local
 // identity is deliberately allowed by the execution-host contract too.
 const HOST_KEY = /^[A-Za-z0-9_-]{8,64}$/;
-const SECRET_KEY = /authorization|cookie|(^|[_-])(access|refresh|auth)?token(s)?$|secret|password|api[_-]?key|headers|environment|^env$/i;
+const HOST_SESSION_ID = /^[A-Za-z0-9._-]{1,128}$/;
+const SECRET_KEY =
+  /authorization|cookie|(^|[_-])(access|refresh|auth)?token(s)?$|secret|password|api[_-]?key|headers|environment|^env$/i;
 const ABSOLUTE_PATH = /(?:^|\s)\/(?:[^\s]*)/;
 const FILE_URI = /^file:\/\//i;
 
@@ -73,7 +75,7 @@ export const RuntimeEventEnvelopeSchema = z
     runId: z.string().min(1).max(128),
     assignmentId: z.string().uuid(),
     assignmentEpoch: z.number().int().min(1).max(2_147_483_647),
-    hostSessionId: z.string().uuid().nullable(),
+    hostSessionId: z.string().regex(HOST_SESSION_ID).nullable(),
     eventType: z.enum(RUNTIME_EVENT_TYPES),
     occurredAt: z.string().datetime({ offset: true }),
     payloadSchema: z.enum(RUNTIME_EVENT_PAYLOAD_SCHEMAS),
@@ -94,7 +96,10 @@ export const RuntimeEventEnvelopeSchema = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["payload"],
-        message: error instanceof Error ? error.message : "unsafe runtime event payload",
+        message:
+          error instanceof Error
+            ? error.message
+            : "unsafe runtime event payload",
       });
     }
   });
@@ -145,15 +150,20 @@ function normalizeJsonValue(value: unknown): JsonValue {
   return JSON.parse(serialized) as JsonValue;
 }
 
-function assertJsonValue(value: unknown, depth: number): asserts value is JsonValue {
+function assertJsonValue(
+  value: unknown,
+  depth: number,
+): asserts value is JsonValue {
   if (depth > MAX_RUNTIME_EVENT_DEPTH) {
     throw new Error("runtime event payload exceeds maximum depth");
   }
-  if (value === null || typeof value === "boolean" || typeof value === "number") return;
+  if (value === null || typeof value === "boolean" || typeof value === "number")
+    return;
   if (typeof value === "string") {
     if (Buffer.byteLength(value, "utf8") > MAX_RUNTIME_EVENT_STRING_BYTES) {
       throw new Error("runtime event payload string exceeds maximum bytes");
     }
+
     return;
   }
   if (Array.isArray(value)) {
@@ -161,12 +171,18 @@ function assertJsonValue(value: unknown, depth: number): asserts value is JsonVa
       throw new Error("runtime event payload array exceeds maximum items");
     }
     for (const entry of value) assertJsonValue(entry, depth + 1);
+
     return;
   }
-  if (!value || typeof value !== "object" || Object.getPrototypeOf(value) !== Object.prototype) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Object.getPrototypeOf(value) !== Object.prototype
+  ) {
     throw new Error("runtime event payload must contain plain JSON values");
   }
   const entries = Object.entries(value);
+
   if (entries.length > MAX_RUNTIME_EVENT_KEYS) {
     throw new Error("runtime event payload object exceeds maximum keys");
   }
@@ -187,18 +203,25 @@ function redactValue(value: JsonValue): JsonValue {
         .map(([key, entry]) => [key, redactValue(entry)]),
     );
   }
+
   return value;
 }
 
 function assertNoUnsafePayloadValue(value: JsonValue, key?: string): void {
   if (key && SECRET_KEY.test(key)) {
-    throw new Error(`runtime event payload contains a secret-bearing key: ${key}`);
+    throw new Error(
+      `runtime event payload contains a secret-bearing key: ${key}`,
+    );
   }
-  if (typeof value === "string" && (FILE_URI.test(value) || ABSOLUTE_PATH.test(value))) {
+  if (
+    typeof value === "string" &&
+    (FILE_URI.test(value) || ABSOLUTE_PATH.test(value))
+  ) {
     throw new Error("runtime event payload contains a host filesystem path");
   }
   if (Array.isArray(value)) {
     for (const entry of value) assertNoUnsafePayloadValue(entry);
+
     return;
   }
   if (value && typeof value === "object") {
@@ -208,7 +231,9 @@ function assertNoUnsafePayloadValue(value: JsonValue, key?: string): void {
   }
 }
 
-export function assertRuntimeEventPayloadSafe(value: unknown): asserts value is Record<string, JsonValue> {
+export function assertRuntimeEventPayloadSafe(
+  value: unknown,
+): asserts value is Record<string, JsonValue> {
   assertJsonValue(value, 0);
   if (!value || Array.isArray(value) || typeof value !== "object") {
     throw new Error("runtime event payload must be an object");
@@ -219,16 +244,25 @@ export function assertRuntimeEventPayloadSafe(value: unknown): asserts value is 
   }
 }
 
-export function redactRuntimeEventPayload(value: unknown): Record<string, JsonValue> {
+export function redactRuntimeEventPayload(
+  value: unknown,
+): Record<string, JsonValue> {
   const normalized = normalizeJsonValue(value);
+
   assertJsonValue(normalized, 0);
-  if (!normalized || Array.isArray(normalized) || typeof normalized !== "object") {
+  if (
+    !normalized ||
+    Array.isArray(normalized) ||
+    typeof normalized !== "object"
+  ) {
     throw new Error("runtime event payload must be an object");
   }
   const redacted = redactValue(normalized) as Record<string, JsonValue>;
+
   if (encodedByteLength(redacted) > MAX_RUNTIME_EVENT_BYTES) {
     throw new Error("runtime event payload exceeds maximum encoded bytes");
   }
+
   return redacted;
 }
 
@@ -292,9 +326,11 @@ export type RuntimeEventAck = z.infer<typeof RuntimeEventAckSchema>;
 
 function uuidFromSha1(hash: Buffer): string {
   const bytes = Buffer.from(hash.subarray(0, 16));
+
   bytes[6] = (bytes[6] & 0x0f) | 0x50;
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
   const hex = bytes.toString("hex");
+
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
@@ -305,5 +341,8 @@ export function deterministicRuntimeEventId(input: {
 }): string {
   const namespace = Buffer.from("6ba7b8119dad11d180b400c04fd430c8", "hex");
   const name = `urn:maister:execution-event:host:${encodeURIComponent(input.hostKey)}:stream:${encodeURIComponent(input.streamId)}:sequence:${encodeURIComponent(input.sequence)}`;
-  return uuidFromSha1(createHash("sha1").update(namespace).update(name, "utf8").digest());
+
+  return uuidFromSha1(
+    createHash("sha1").update(namespace).update(name, "utf8").digest(),
+  );
 }

@@ -147,6 +147,16 @@ export class SessionRegistry {
     return removed;
   }
 
+  clear(reason: string): void {
+    const sessionIds = Array.from(this.entries.keys());
+
+    this.entries.clear();
+    for (const sessionId of sessionIds) {
+      pendingPermissions.purgeSession(sessionId);
+      this.logger.debug({ sessionId, reason }, "remove");
+    }
+  }
+
   size(): number {
     return this.entries.size;
   }

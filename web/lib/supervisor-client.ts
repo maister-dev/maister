@@ -92,7 +92,9 @@ export type CreateSessionInput = {
   executor: SupervisorExecutorInput;
   runner?: SupervisorRunnerInput;
   resumeSessionId?: string;
-  capabilityProfilePath?: string;
+  capabilityProfileObjectId?: string;
+  capabilityInstructionsObjectId?: string;
+  outputObjects?: SupervisorRuntimeOutputBinding[];
   adapterLaunch?: SupervisorAdapterLaunchInput;
   mcpServers?: AgentMcpServer[];
   // M34 (ADR-090 L1): session-scoped read-only — the supervisor auto-denies
@@ -135,6 +137,33 @@ export type PromptStopReason =
 export type PromptResult = {
   stopReason: PromptStopReason;
   meta?: unknown;
+  runtimeObjects?: RuntimeObjectWireMetadata[];
+};
+
+export type SupervisorRuntimeOutputBinding = {
+  objectId: string;
+  kind:
+    | "session_log"
+    | "raw_transcript"
+    | "cost_diagnostic"
+    | "checkpoint"
+    | "attachment"
+    | "capability_profile"
+    | "agent_memory_snapshot"
+    | "node_result"
+    | "evidence"
+    | "generated_artifact"
+    | "plan_review"
+    | "diagnostic";
+  logicalName: string;
+  mimeType: string;
+  generation: number;
+  retentionClass: "run" | "delivery" | "ephemeral";
+  expiresAt?: string | null;
+  envName:
+    | "MAISTER_OUTPUT_FILE"
+    | "MAISTER_PLAN_DOCUMENT_FILE"
+    | "MAISTER_PLAN_REVIEW_FILE";
 };
 
 // T5.4: structured ACP prompt content the web tier assembles (text + a
@@ -919,6 +948,7 @@ export async function* streamRuntimeEvents(
   );
 
   let res: Response;
+
   try {
     res = await fetchLongLivedSupervisor(
       url,
@@ -941,12 +971,14 @@ export async function* streamRuntimeEvents(
   try {
     while (true) {
       const { done, value } = await reader.read();
+
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
       let newline = buffer.indexOf("\n");
 
       while (newline !== -1) {
         const rawLine = buffer.slice(0, newline);
+
         buffer = buffer.slice(newline + 1);
         const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
 
@@ -958,6 +990,7 @@ export async function* streamRuntimeEvents(
             );
           }
           let data: unknown;
+
           try {
             data = JSON.parse(currentData);
           } catch (error) {
@@ -987,6 +1020,7 @@ export async function* streamRuntimeEvents(
           frameId = line.slice(3).trim();
         } else if (line.startsWith("data:")) {
           const chunk = line.slice(5).trimStart();
+
           currentData = currentData ? `${currentData}\n${chunk}` : chunk;
         }
         newline = buffer.indexOf("\n");
@@ -1206,7 +1240,10 @@ const RuntimeObjectWireMetadataSchema = z
     logicalName: z.string().min(1),
     mimeType: z.string().min(1),
     sizeBytes: z.number().int().nonnegative().nullable(),
-    sha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+    sha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .nullable(),
     generation: z.number().int().min(1),
     retentionClass: z.string().min(1),
     state: z.string().min(1),
@@ -1217,11 +1254,18 @@ const RuntimeObjectWireMetadataSchema = z
   })
   .strict();
 
-function parseRuntimeObjectWireMetadata(value: unknown): RuntimeObjectWireMetadata {
+function parseRuntimeObjectWireMetadata(
+  value: unknown,
+): RuntimeObjectWireMetadata {
   const parsed = RuntimeObjectWireMetadataSchema.safeParse(value);
+
   if (!parsed.success) {
-    throw new MaisterError("ACP_PROTOCOL", "supervisor returned invalid runtime object metadata");
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "supervisor returned invalid runtime object metadata",
+    );
   }
+
   return parsed.data;
 }
 
@@ -1322,6 +1366,7 @@ export async function getRuntimeObject(
       fallbackCode: "PRECONDITION",
       timeoutMs: ADMIN_READ_TIMEOUT_MS,
     });
+
     return parseRuntimeObjectWireMetadata(response.body);
   } catch (error) {
     if (httpStatusOf(error) === 404) return null;
@@ -1341,6 +1386,7 @@ export async function reserveRuntimeObject(
     fallbackCode: "ACP_PROTOCOL",
     timeoutMs: opts.timeoutMs,
   });
+
   return parseRuntimeObjectWireMetadata(response.body);
 }
 
@@ -1356,6 +1402,7 @@ async function runtimeObjectBinaryResponse(input: {
   const timer = controller
     ? setTimeout(() => controller.abort(), input.timeoutMs ?? undefined)
     : null;
+
   try {
     return await fetch(`${baseUrl()}${input.path}`, {
       method: input.method,
@@ -1376,6 +1423,7 @@ async function throwRuntimeObjectWireError(
   ctx: string,
 ): Promise<never> {
   let body: unknown = null;
+
   try {
     body = await response.json();
   } catch {
@@ -1412,7 +1460,9 @@ export async function uploadRuntimeObject(input: {
       "x-maister-command-id": input.envelope.command.id,
       "x-maister-command-issued-at": input.envelope.command.issuedAt,
       "x-maister-assignment-id": input.envelope.fence.assignmentId,
-      "x-maister-assignment-epoch": String(input.envelope.fence.assignmentEpoch),
+      "x-maister-assignment-epoch": String(
+        input.envelope.fence.assignmentEpoch,
+      ),
       "x-maister-object-generation": String(input.envelope.payload.generation),
       "x-maister-sha256": input.envelope.payload.sha256,
     },
@@ -1420,14 +1470,21 @@ export async function uploadRuntimeObject(input: {
     timeoutMs: input.timeoutMs,
     ctx: "uploadRuntimeObject",
   });
-  if (!response.ok) return throwRuntimeObjectWireError(response, "uploadRuntimeObject");
+
+  if (!response.ok)
+    return throwRuntimeObjectWireError(response, "uploadRuntimeObject");
+
   return parseRuntimeObjectWireMetadata(await response.json());
 }
 
 export async function getRuntimeObjectContent(
   objectId: string,
   opts: { range?: { start: number; end?: number } } = {},
-): Promise<{ bytes: Uint8Array; contentRange: string | null; contentDigest: string | null }> {
+): Promise<{
+  bytes: Uint8Array;
+  contentRange: string | null;
+  contentDigest: string | null;
+}> {
   const opened = await openRuntimeObjectContent(objectId, opts);
 
   return {
@@ -1456,7 +1513,9 @@ export async function openRuntimeObjectContent(
     timeoutMs: ADMIN_READ_TIMEOUT_MS,
     ctx: "getRuntimeObjectContent",
   });
-  if (!response.ok) return throwRuntimeObjectWireError(response, "getRuntimeObjectContent");
+
+  if (!response.ok)
+    return throwRuntimeObjectWireError(response, "getRuntimeObjectContent");
   if (!response.body) {
     throw new MaisterError(
       "ACP_PROTOCOL",
@@ -1465,7 +1524,9 @@ export async function openRuntimeObjectContent(
     );
   }
   const contentLength = response.headers.get("content-length");
-  const parsedContentLength = contentLength === null ? null : Number(contentLength);
+  const parsedContentLength =
+    contentLength === null ? null : Number(contentLength);
+
   if (
     parsedContentLength !== null &&
     (!Number.isSafeInteger(parsedContentLength) || parsedContentLength < 0)
@@ -1476,6 +1537,7 @@ export async function openRuntimeObjectContent(
       { details: { reason: "runtime_object_integrity_mismatch" } },
     );
   }
+
   return {
     body: response.body,
     contentLength: parsedContentLength,
@@ -1581,13 +1643,18 @@ export async function startPromptEnveloped(
     timeoutMs: opts.timeoutMs ?? 10_000,
   });
   const body = response.body;
+
   if (
     response.status !== 202 ||
     body?.commandId !== envelope.command.id ||
     body?.state !== "accepted"
   ) {
-    throw new MaisterError("ACP_PROTOCOL", "supervisor returned an invalid asynchronous prompt acceptance");
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "supervisor returned an invalid asynchronous prompt acceptance",
+    );
   }
+
   return body;
 }
 

@@ -1,5 +1,6 @@
-import { MaisterError } from "@/lib/errors";
 import type { ActivitySalience } from "@/lib/ext-activity/types";
+
+import { MaisterError } from "@/lib/errors";
 
 const SALIENCE_RANK: Record<ActivitySalience, number> = {
   low: 1,
@@ -9,9 +10,7 @@ const SALIENCE_RANK: Record<ActivitySalience, number> = {
 
 const DEFAULT_ACTIVITY_SALIENCE: ActivitySalience = "low";
 
-export function parseActivitySalience(
-  raw?: string | null,
-): ActivitySalience {
+export function parseActivitySalience(raw?: string | null): ActivitySalience {
   if (raw == null || raw.length === 0) return DEFAULT_ACTIVITY_SALIENCE;
   if (raw === "high" || raw === "normal" || raw === "low") return raw;
 

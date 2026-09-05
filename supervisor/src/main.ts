@@ -201,6 +201,10 @@ export async function start(): Promise<void> {
 
     await app.close();
 
+    // No child callback may reach the durable publisher after its SQLite
+    // store closes. Any process that ignored SIGKILL is about to be reaped by
+    // process exit, so detach the registry boundary before closing host state.
+    registry.clear("shutdown");
     hostState.close();
     logger.info({ elapsedMs: Date.now() - startedAt }, "shutdown-done");
     await new Promise<void>((r) => logger.flush(() => r()));
@@ -226,7 +230,9 @@ async function waitForNoLiveSessions(
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    const hasLive = registry.list().some((session) => session.status === "live");
+    const hasLive = registry
+      .list()
+      .some((session) => session.status === "live");
 
     if (!hasLive) return;
     await sleep(25);

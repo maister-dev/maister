@@ -176,11 +176,7 @@ export function resolveAutoApproveOption(
   );
 }
 
-type AcpMethod =
-  | "initialize"
-  | "newSession"
-  | "resumeSession"
-  | "prompt";
+type AcpMethod = "initialize" | "newSession" | "resumeSession" | "prompt";
 
 const ACP_HANDSHAKE_TIMEOUT_ENV = "MAISTER_ACP_HANDSHAKE_TIMEOUT_MS";
 

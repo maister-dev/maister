@@ -133,7 +133,10 @@ export async function ingestForReworkReturn(
           remote,
         };
 
-  log.info({ runId: args.runId, branch: args.branch, ...result }, "[rework-ingest] done");
+  log.info(
+    { runId: args.runId, branch: args.branch, ...result },
+    "[rework-ingest] done",
+  );
 
   return result;
 }

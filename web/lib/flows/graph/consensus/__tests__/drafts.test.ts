@@ -48,7 +48,9 @@ function fakeDb(args: {
         where: () => {
           if (shape && "executionDataPlaneMode" in shape) {
             return Promise.resolve(
-              args.parentMode ? [{ executionDataPlaneMode: args.parentMode }] : [],
+              args.parentMode
+                ? [{ executionDataPlaneMode: args.parentMode }]
+                : [],
             );
           }
           const existing = args.existingRows?.[selectCall];

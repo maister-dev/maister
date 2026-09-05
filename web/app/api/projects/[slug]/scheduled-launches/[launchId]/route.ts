@@ -83,6 +83,7 @@ export async function PATCH(
     if (!existing) return notFoundResponse("scheduled launch not found");
 
     const body = parsePatchScheduledLaunchBody(await req.json());
+
     if (
       body.launchRequest.executionPolicy &&
       requiresLaunchUnattended(body.launchRequest.executionPolicy)
@@ -105,7 +106,10 @@ export async function PATCH(
     });
 
     if (!intent) {
-      throw new MaisterError("CRASH", "scheduled launch disappeared after update");
+      throw new MaisterError(
+        "CRASH",
+        "scheduled launch disappeared after update",
+      );
     }
     log.info(
       { projectId: project.id, scheduledLaunchId: launchId, actorId: user.id },

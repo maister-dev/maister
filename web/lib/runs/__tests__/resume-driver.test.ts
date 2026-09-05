@@ -28,6 +28,8 @@ const fakeBoundClient = () => ({
     commandId: "cmd",
     completion: sendPromptSpy(sessionId, input),
   }),
+  waitForPrompt: (handle: { completion: Promise<unknown> }) =>
+    handle.completion,
   deliverInput: (
     sessionId: string,
     payload: {

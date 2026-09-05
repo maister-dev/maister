@@ -33,7 +33,6 @@ export type WorkspaceResolution = {
 
 export type ResolveForSessionInput = {
   stepId: string;
-  capabilityProfilePath?: string;
 };
 
 function runDirFor(runtimeRoot: string, projectSlug: string, runId: string) {
@@ -221,16 +220,6 @@ export class WorkspaceRegistry {
         "execution workspace has been released",
         { details: { reason: "workspace_released", runId: handle.runId } },
       );
-    }
-
-    if (
-      input.capabilityProfilePath &&
-      !isUnderRoot(
-        path.resolve(handle.path),
-        path.resolve(input.capabilityProfilePath),
-      )
-    ) {
-      throw this.reject("outside_workspace", input.capabilityProfilePath);
     }
 
     const kind = handle.kind as WorkspaceKind;

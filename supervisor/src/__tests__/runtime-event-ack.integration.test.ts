@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { bootHost, cleanupRuntimeRoot, type BootedHost } from "./_fixtures/boot-host";
+import {
+  bootHost,
+  cleanupRuntimeRoot,
+  type BootedHost,
+} from "./_fixtures/boot-host";
 
 let host: BootedHost | undefined;
 
@@ -37,6 +41,7 @@ async function collectRuntimeSse(
     signal: controller.signal,
     headers: lastEventId ? { "Last-Event-ID": lastEventId } : undefined,
   });
+
   if (!response.ok || !response.body) {
     throw new Error(`runtime SSE failed: ${response.status}`);
   }
@@ -52,12 +57,14 @@ async function collectRuntimeSse(
   try {
     while (events.length < expectedCount) {
       const next = await reader.read();
+
       if (next.done) break;
       buffer += decoder.decode(next.value, { stream: true });
       let newline = buffer.indexOf("\n");
 
       while (newline !== -1) {
         const line = buffer.slice(0, newline);
+
         buffer = buffer.slice(newline + 1);
         if (line === "") {
           events.push({
@@ -96,13 +103,18 @@ describe("Stage B host runtime-event acknowledgement", () => {
   it("requires the current stream identity and a contiguous absolute watermark", async () => {
     host = await bootHost();
     const streamId = host.hostState.getRuntimeEventStreamId();
+
     appendEvent("session.created");
 
     const foreign = await host.app.inject({
       method: "POST",
       url: "/runtime-events/ack",
-      payload: { streamId: "76103277-0889-49d7-87f1-f0fd2f5f5922", throughSequence: "0" },
+      payload: {
+        streamId: "76103277-0889-49d7-87f1-f0fd2f5f5922",
+        throughSequence: "0",
+      },
     });
+
     expect(foreign.statusCode).toBe(409);
     expect(foreign.json().details.reason).toBe("stream_identity_conflict");
 
@@ -111,6 +123,7 @@ describe("Stage B host runtime-event acknowledgement", () => {
       url: "/runtime-events/ack",
       payload: { streamId, throughSequence: "0" },
     });
+
     expect(accepted.statusCode).toBe(200);
     expect(accepted.json()).toEqual({ streamId, acknowledgedThrough: "0" });
   });
@@ -118,6 +131,7 @@ describe("Stage B host runtime-event acknowledgement", () => {
   it("replays strictly after the decimal cursor and fails explicitly below the replay floor", async () => {
     host = await bootHost();
     const streamId = host.hostState.getRuntimeEventStreamId();
+
     appendEvent("session.created");
     appendEvent("session.command");
 
@@ -126,6 +140,7 @@ describe("Stage B host runtime-event acknowledgement", () => {
       1,
       "0",
     );
+
     expect(replayed).toEqual([
       expect.objectContaining({
         id: "1",
@@ -142,6 +157,7 @@ describe("Stage B host runtime-event acknowledgement", () => {
     ).toBe(1);
 
     const belowFloor = await fetch(`${host.url}/runtime-events`);
+
     expect(belowFloor.status).toBe(409);
     expect(await belowFloor.json()).toMatchObject({
       details: { reason: "replay_floor_lost" },
@@ -150,6 +166,7 @@ describe("Stage B host runtime-event acknowledgement", () => {
     const malformed = await fetch(`${host.url}/runtime-events`, {
       headers: { "Last-Event-ID": "1.5" },
     });
+
     expect(malformed.status).toBe(409);
     expect(await malformed.json()).toMatchObject({
       details: { reason: "invalid_event_sequence" },

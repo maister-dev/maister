@@ -153,10 +153,8 @@ export async function POST(
     const sessionUser = await requireActiveSession();
 
     const db = getDb() as unknown as Db;
-    const { run, scratch, workspace, hostSessionId } = await loadScratchLifecycleRows(
-      db,
-      runId,
-    );
+    const { run, scratch, workspace, hostSessionId } =
+      await loadScratchLifecycleRows(db, runId);
 
     // ADR-097: a project scratch run keeps its project-scoped gate; a
     // project-less local-package assistant run (project_id NULL) is private to

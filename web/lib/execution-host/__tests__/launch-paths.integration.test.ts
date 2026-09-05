@@ -27,7 +27,10 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
-import { readySupervisorHealth } from "@/test-support/supervisor-health-fixture";
+import {
+  readyExecutionHostCapabilities,
+  readySupervisorHealth,
+} from "@/test-support/supervisor-health-fixture";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -43,6 +46,7 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
   return {
     ...actual,
     checkSupervisorHealth: async () => readySupervisorHealth(),
+    getExecutionHostCapabilities: async () => readyExecutionHostCapabilities(),
   };
 });
 

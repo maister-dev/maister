@@ -54,7 +54,10 @@ export async function POST(
     if (result.requeued > 0) {
       void runControlledLaunchBatch(
         batchId,
-        defaultLaunchRunSeam({ actorUserId: session.id, authorize: async () => {} }),
+        defaultLaunchRunSeam({
+          actorUserId: session.id,
+          authorize: async () => {},
+        }),
       ).catch((err: unknown) =>
         log.error(
           { batchId, err: (err as Error).message },
@@ -63,7 +66,10 @@ export async function POST(
       );
     }
 
-    log.info({ studyId, batchId, requeued: result.requeued }, "launch batch retry");
+    log.info(
+      { studyId, batchId, requeued: result.requeued },
+      "launch batch retry",
+    );
 
     return NextResponse.json(result);
   } catch (err) {

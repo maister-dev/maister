@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactElement } from "react";
+import type { NodeTranscriptPanelLabels } from "@/components/runs/node-transcript-panel";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -9,7 +10,6 @@ import {
   type TranscriptLabels,
   type TranscriptMessage,
 } from "@/components/run-transcript/transcript-view";
-import type { NodeTranscriptPanelLabels } from "@/components/runs/node-transcript-panel";
 import { CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS } from "@/lib/runs/live-inspector";
 import { useRunStream } from "@/lib/use-run-stream";
 

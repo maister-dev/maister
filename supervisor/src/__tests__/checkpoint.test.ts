@@ -52,6 +52,7 @@ async function registerExitedSession(
   sessionId: string,
 ): Promise<void> {
   const emitter = new EventEmitter();
+
   registry.register(
     {
       sessionId,
@@ -158,6 +159,7 @@ describe("POST /sessions/:id/checkpoint — direct route coverage", () => {
   it("already-exited session returns 200 with alreadyCheckpointed: true (idempotency)", async () => {
     booted = await bootBare();
     const sessionId = "00000000-0000-4000-8000-000000000003";
+
     await registerExitedSession(booted.registry, booted.runtimeRoot, sessionId);
     const res = await postJson(
       `${booted.url}/sessions/${sessionId}/checkpoint`,

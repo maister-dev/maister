@@ -63,6 +63,7 @@ async function registerFakeSession(
     monotonicId: 0,
   };
   const emitter = new EventEmitter();
+
   registry.register(record, makeFakeChild(), emitter);
 
   return { record, emitter };
@@ -154,6 +155,7 @@ describe("POST /sessions/:id/input direct validation paths", () => {
   it("known session with unknown requestId returns 410 HITL_TIMEOUT (terminal — deferred expired)", async () => {
     booted = await bootBare();
     const sessionId = "00000000-0000-4000-8000-000000000011";
+
     await registerFakeSession(booted.registry, booted.runtimeRoot, sessionId);
     const res = await postJson(
       `${booted.url}/sessions/${sessionId}/input`,
@@ -194,6 +196,7 @@ describe("POST /sessions/:id/input direct validation paths", () => {
   it("action=cancel on unknown requestId returns 410 HITL_TIMEOUT", async () => {
     booted = await bootBare();
     const sessionId = "00000000-0000-4000-8000-000000000012";
+
     await registerFakeSession(booted.registry, booted.runtimeRoot, sessionId);
     const res = await postJson(
       `${booted.url}/sessions/${sessionId}/input`,
@@ -241,6 +244,7 @@ describe("POST /sessions/:id/input permission round-trip", () => {
   it("uses uuid requestId end-to-end: select resolves with selected outcome", async () => {
     booted = await bootBare();
     const sessionId = "00000000-0000-4000-8000-000000000013";
+
     await registerFakeSession(booted.registry, booted.runtimeRoot, sessionId);
     const requestId = "44444444-4444-4444-4444-444444444444";
     const d = deferredCapture();
@@ -269,6 +273,7 @@ describe("POST /sessions/:id/input permission round-trip", () => {
   it("action=cancel resolves the deferred with {outcome:cancelled}", async () => {
     booted = await bootBare();
     const sessionId = "00000000-0000-4000-8000-000000000014";
+
     await registerFakeSession(booted.registry, booted.runtimeRoot, sessionId);
     const requestId = "55555555-5555-5555-5555-555555555555";
     const d = deferredCapture();
@@ -297,6 +302,7 @@ describe("POST /sessions/:id/input permission round-trip", () => {
   it("second select on the same requestId returns 404 after first resolves", async () => {
     booted = await bootBare();
     const sessionId = "00000000-0000-4000-8000-000000000015";
+
     await registerFakeSession(booted.registry, booted.runtimeRoot, sessionId);
     const requestId = "66666666-6666-6666-6666-666666666666";
     const d = deferredCapture();
@@ -335,6 +341,7 @@ describe("POST /sessions/:id/input permission round-trip", () => {
     booted = await bootBare();
     const sessionA = "00000000-0000-4000-8000-000000000016";
     const sessionB = "00000000-0000-4000-8000-000000000017";
+
     await registerFakeSession(booted.registry, booted.runtimeRoot, sessionA);
     await registerFakeSession(booted.registry, booted.runtimeRoot, sessionB);
     const reqIdA = "77777777-7777-7777-7777-777777777777";
@@ -371,6 +378,7 @@ describe("POST /sessions/:id/input permission round-trip", () => {
     booted = await bootBare();
     const sessionA = "00000000-0000-4000-8000-000000000018";
     const sessionB = "00000000-0000-4000-8000-000000000019";
+
     await registerFakeSession(booted.registry, booted.runtimeRoot, sessionA);
     await registerFakeSession(booted.registry, booted.runtimeRoot, sessionB);
     const reqIdA = "99999999-9999-9999-9999-999999999999";

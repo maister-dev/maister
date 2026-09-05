@@ -1,13 +1,14 @@
-import {
-  assistantActivitySilentAfterSeconds,
-  assistantActivityStalledAfterSeconds,
-  assistantActivityWaitingToolAfterSeconds,
-} from "@/lib/instance-config";
 import type {
   ActivityLiveness,
   ActivityRunStatus,
   ActivityThresholds,
 } from "@/lib/ext-activity/types";
+
+import {
+  assistantActivitySilentAfterSeconds,
+  assistantActivityStalledAfterSeconds,
+  assistantActivityWaitingToolAfterSeconds,
+} from "@/lib/instance-config";
 
 export type DeriveActivityLivenessInput = {
   runStatus: ActivityRunStatus;
@@ -33,7 +34,11 @@ function thresholdsFromConfig(): ActivityThresholds {
   };
 }
 
-function exceedsThreshold(now: Date, since: Date | null, seconds: number): boolean {
+function exceedsThreshold(
+  now: Date,
+  since: Date | null,
+  seconds: number,
+): boolean {
   if (!since) return false;
 
   return now.getTime() - since.getTime() >= seconds * 1000;
@@ -141,8 +146,7 @@ export function deriveActivityLiveness(
 
     return {
       state: "silent",
-      summary:
-        minutes === null ? "silent" : `silent for ${minutes} min`,
+      summary: minutes === null ? "silent" : `silent for ${minutes} min`,
       since: input.lastMeaningfulAt,
       ageMinutes: minutes,
     };

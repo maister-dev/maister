@@ -21,7 +21,6 @@ import type {
 } from "@/lib/studio/flow-assistant/protocol";
 
 import { createHash, randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
 import path from "node:path";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -29,9 +28,7 @@ import pino from "pino";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { ensureLocalPackageGitExclude } from "@/lib/local-packages/git";
-import {
-  assertHoldsLock,
-} from "@/lib/local-packages/lock";
+import { assertHoldsLock } from "@/lib/local-packages/lock";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/authorization";
 import {
   defaultRunSessionValues,
@@ -118,6 +115,7 @@ import {
   isFencedError,
   localHost,
   mintPlacement,
+  publishCapabilityBundle,
   releaseAssignmentForRun,
   type BoundClient,
   type ExecutionHosts,
@@ -439,8 +437,10 @@ async function storeUploadedFiles(args: {
   if (args.files.length === 0) return [];
 
   const safeNames = new Set<string>();
+
   for (const file of args.files) {
     const fileName = safeUploadFileName(file.fileName);
+
     if (safeNames.has(fileName)) {
       throw new MaisterError(
         "PRECONDITION",
@@ -457,9 +457,11 @@ async function storeUploadedFiles(args: {
   }
 
   const attachments: ReturnType<typeof uploadedFileMetadata>[] = [];
+
   for (const source of args.files) {
     const fileName = safeUploadFileName(source.fileName);
     const sha256 = createHash("sha256").update(source.bytes).digest("hex");
+
     try {
       const published = await publishRuntimeObject({
         client: args.client,
@@ -481,6 +483,7 @@ async function storeUploadedFiles(args: {
         file: source,
         objectId: published.objectId,
       });
+
       attachments.push(attachment);
       log.info(
         {
@@ -1087,6 +1090,7 @@ export async function* launchScratchRunStaged(
     const { client, admin } = await hosts.executionFor(runId, {
       assignmentId: launchAssignmentId,
     });
+
     uploadedAttachments = await storeUploadedFiles({
       client,
       runId,
@@ -1104,13 +1108,23 @@ export async function* launchScratchRunStaged(
         }),
       );
     }
+    const capabilityBundle = await publishCapabilityBundle({
+      client,
+      runId,
+      sourceId: "scratch-session",
+      profileLogicalName: "scratch-capability-profile.json",
+      profilePath: materialized.profilePath,
+      instructionsLogicalName: "scratch-capability-instructions.md",
+      instructionsPath: materialized.instructionsPath,
+    });
     const session = await client.createSession({
       stepId: scratchStepId(),
       executor: runnerExecutorInput(runnerResolution.runnerSnapshot),
       runner: runnerSupervisorInput({
         snapshot: runnerResolution.runnerSnapshot,
       }),
-      capabilityProfilePath: materialized.profilePath,
+      capabilityProfileObjectId: capabilityBundle.profileObjectId,
+      capabilityInstructionsObjectId: capabilityBundle.instructionsObjectId,
       adapterLaunch: mergeRunnerAdapterLaunch(runnerResolution.runnerSnapshot, {
         ...materialized.adapterLaunch,
         env: {
@@ -1707,6 +1721,15 @@ export async function* launchLocalPackageAssistantStaged(
     const { client, admin } = await hosts.executionFor(runId, {
       assignmentId: launchAssignmentId,
     });
+    const capabilityBundle = await publishCapabilityBundle({
+      client,
+      runId,
+      sourceId: "scratch-session",
+      profileLogicalName: "scratch-capability-profile.json",
+      profilePath: materialized.profilePath,
+      instructionsLogicalName: "scratch-capability-instructions.md",
+      instructionsPath: materialized.instructionsPath,
+    });
     const session = await client.createSession({
       readOnlySession: true,
       stepId: scratchStepId(),
@@ -1714,7 +1737,8 @@ export async function* launchLocalPackageAssistantStaged(
       runner: runnerSupervisorInput({
         snapshot: runnerResolution.runnerSnapshot,
       }),
-      capabilityProfilePath: materialized.profilePath,
+      capabilityProfileObjectId: capabilityBundle.profileObjectId,
+      capabilityInstructionsObjectId: capabilityBundle.instructionsObjectId,
       adapterLaunch: mergeRunnerAdapterLaunch(runnerResolution.runnerSnapshot, {
         ...materialized.adapterLaunch,
         env: {
@@ -2047,89 +2071,90 @@ async function appendScratchUserMessage(args: {
 
   try {
     return await args.db.transaction(async (tx: Db) => {
-    await lockRunRows(tx, args.runId);
+      await lockRunRows(tx, args.runId);
 
-    const {
-      run: lockedRun,
-      scratch,
-      workspace,
-    } = await loadScratchRows(tx, args.runId);
-    const activeSession = await loadActiveRunSession(tx, args.runId);
+      const {
+        run: lockedRun,
+        scratch,
+        workspace,
+      } = await loadScratchRows(tx, args.runId);
+      const activeSession = await loadActiveRunSession(tx, args.runId);
 
-    assertScratchCanAcceptUserMessage({
-      runId: args.runId,
-      runStatus: lockedRun.status,
-      dialogStatus: scratch.dialogStatus,
-      // Stage B: the logical-session pointer is the sole live delivery
-      // authority. The deprecated scratch mirror must not select an ACP
-      // session, including during the destructive-migration preflight.
-      hostSessionId: activeSession?.hostSessionId ?? null,
-    });
+      assertScratchCanAcceptUserMessage({
+        runId: args.runId,
+        runStatus: lockedRun.status,
+        dialogStatus: scratch.dialogStatus,
+        // Stage B: the logical-session pointer is the sole live delivery
+        // authority. The deprecated scratch mirror must not select an ACP
+        // session, including during the destructive-migration preflight.
+        hostSessionId: activeSession?.hostSessionId ?? null,
+      });
 
-    const sequenceRows: Array<{ sequence: number }> = await tx
-      .select({ sequence: scratchMessages.sequence })
-      .from(scratchMessages)
-      .where(eq(scratchMessages.runId, args.runId));
-    const sequence = nextScratchMessageSequence(
-      sequenceRows.map((row) => row.sequence),
-    );
-    const message = userScratchMessageDraft({
-      sequence,
-      content: args.body.content,
-    });
-    const now = new Date();
-    const attachments = validateScratchAttachments(args.body.attachments, {
-      projectRepoPath: workspace.parentRepoPath,
-      worktreePath: workspace.worktreePath,
-    });
-    await tx.insert(scratchMessages).values({
-      id: messageId,
-      runId: args.runId,
-      sequence: message.sequence,
-      role: message.role,
-      content: message.content,
-      supervisorEventId: message.supervisorEventId ?? null,
-      createdAt: now,
-    });
-    const metadataAttachments = attachments.map(metadataAttachmentRow);
-    const storedAttachments = storedAttachmentValues({
-      metadataAttachments,
-      uploadedAttachments,
-      runId: args.runId,
-      messageId,
-    });
+      const sequenceRows: Array<{ sequence: number }> = await tx
+        .select({ sequence: scratchMessages.sequence })
+        .from(scratchMessages)
+        .where(eq(scratchMessages.runId, args.runId));
+      const sequence = nextScratchMessageSequence(
+        sequenceRows.map((row) => row.sequence),
+      );
+      const message = userScratchMessageDraft({
+        sequence,
+        content: args.body.content,
+      });
+      const now = new Date();
+      const attachments = validateScratchAttachments(args.body.attachments, {
+        projectRepoPath: workspace.parentRepoPath,
+        worktreePath: workspace.worktreePath,
+      });
 
-    if (storedAttachments.length > 0) {
-      await tx.insert(scratchAttachments).values(storedAttachments);
-    }
-    await tx
-      .update(scratchRuns)
-      .set({
-        dialogStatus: "Running",
-        lastUserMessageAt: now,
-        updatedAt: now,
-        errorCode: null,
-        errorMessage: null,
-        errorMetadata: null,
-      })
-      .where(eq(scratchRuns.runId, args.runId));
-    await tx
-      .update(runs)
-      .set({ status: "Running", currentStepId: scratchStepId() })
-      .where(eq(runs.id, args.runId));
+      await tx.insert(scratchMessages).values({
+        id: messageId,
+        runId: args.runId,
+        sequence: message.sequence,
+        role: message.role,
+        content: message.content,
+        supervisorEventId: message.supervisorEventId ?? null,
+        createdAt: now,
+      });
+      const metadataAttachments = attachments.map(metadataAttachmentRow);
+      const storedAttachments = storedAttachmentValues({
+        metadataAttachments,
+        uploadedAttachments,
+        runId: args.runId,
+        messageId,
+      });
 
-    return {
-      messageId,
-      sequence,
-      hostSessionId: activeSession?.hostSessionId as string,
-      capabilityAgent: activeSession?.capabilityAgent ?? null,
-      // ADR-097: project-less ⇒ a local-package assistant run; its turn-failure
-      // path explicitly releases the supervisor deferred (see caller).
-      isLocalPackageAssistant: !run.projectId,
-      uploadedAttachments,
-      metadataAttachments,
-      execution,
-    };
+      if (storedAttachments.length > 0) {
+        await tx.insert(scratchAttachments).values(storedAttachments);
+      }
+      await tx
+        .update(scratchRuns)
+        .set({
+          dialogStatus: "Running",
+          lastUserMessageAt: now,
+          updatedAt: now,
+          errorCode: null,
+          errorMessage: null,
+          errorMetadata: null,
+        })
+        .where(eq(scratchRuns.runId, args.runId));
+      await tx
+        .update(runs)
+        .set({ status: "Running", currentStepId: scratchStepId() })
+        .where(eq(runs.id, args.runId));
+
+      return {
+        messageId,
+        sequence,
+        hostSessionId: activeSession?.hostSessionId as string,
+        capabilityAgent: activeSession?.capabilityAgent ?? null,
+        // ADR-097: project-less ⇒ a local-package assistant run; its turn-failure
+        // path explicitly releases the supervisor deferred (see caller).
+        isLocalPackageAssistant: !run.projectId,
+        uploadedAttachments,
+        metadataAttachments,
+        execution,
+      };
     });
   } catch (error) {
     await Promise.all(
@@ -2560,6 +2585,7 @@ export async function stopScratchWorkbench(
   let supervisorStopped = false;
 
   const activeSession = await loadActiveRunSession(db, runId);
+
   if (activeSession?.hostSessionId) {
     supervisorStopped = await deleteScratchSupervisorSessionIfLive(
       activeSession.hostSessionId,

@@ -20,6 +20,7 @@ import type { GraphTopology } from "@/lib/queries/flow-graph-view";
 import type { PlatformMcpCatalogEntry } from "@/lib/queries/platform-mcp-catalog";
 import type { ReactElement, ReactNode } from "react";
 import type { PackageBom } from "@/lib/queries/package-bom";
+import type { CreateFlowInput } from "@/lib/local-packages/create-flow-contract";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SparklesIcon } from "@heroicons/react/24/outline";
@@ -63,7 +64,6 @@ import {
 } from "@/components/studio/import-dialog";
 import { readApiError } from "@/lib/api-error";
 import { readCreateFlowApiError } from "@/lib/local-packages/create-flow-api-error";
-import type { CreateFlowInput } from "@/lib/local-packages/create-flow-contract";
 import {
   formatHolderLabel,
   useEditorLock,
@@ -581,6 +581,7 @@ export function LocalPackageEditor({
 
         if (!saved) {
           setCreateFlowError(tApiErrors("requestFailed"));
+
           return;
         }
 
@@ -597,6 +598,7 @@ export function LocalPackageEditor({
           setCreateFlowError(
             await readCreateFlowApiError(res, tApiErrors, tCreateFlow),
           );
+
           return;
         }
 
@@ -633,6 +635,7 @@ export function LocalPackageEditor({
         setRecoveryError(
           await readCreateFlowApiError(res, tApiErrors, tCreateFlow),
         );
+
         return;
       }
 
@@ -642,6 +645,7 @@ export function LocalPackageEditor({
 
       if (recovered.recoveryStatus === "rolled_back") {
         router.push("/studio/packages?create=flow&recovery=rolled-back");
+
         return;
       }
 

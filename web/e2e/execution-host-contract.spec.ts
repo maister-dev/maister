@@ -23,6 +23,20 @@ const CRON_TOKEN = process.env.MAISTER_CRON_TOKEN ?? "e2e-cron-token-change-me";
 
 type AssignmentRow = [epoch: number, state: string, reason: string];
 
+type CanonicalEventRow = {
+  eventType: string;
+  runSequence: string;
+  payload: Record<string, unknown>;
+};
+
+type RuntimeObjectRow = {
+  id: string;
+  logicalName: string;
+  mimeType: string;
+  state: string;
+  sha256: string;
+};
+
 async function runStatus(runId: string): Promise<string | null> {
   return singleValue<string>(`SELECT status AS value FROM runs WHERE id = $1`, [
     runId,
@@ -60,6 +74,21 @@ async function commandRows(runId: string): Promise<
               'kind', kind, 'epoch', assignment_epoch, 'state', state, 'payload', payload)
               ORDER BY created_at), '[]'::json) AS value
        FROM execution_commands WHERE run_id = $1`,
+    [runId],
+  );
+
+  return rows ?? [];
+}
+
+async function canonicalEvents(runId: string): Promise<CanonicalEventRow[]> {
+  const rows = await singleValue<CanonicalEventRow[]>(
+    `SELECT COALESCE(json_agg(json_build_object(
+              'eventType', event_type,
+              'runSequence', run_sequence::text,
+              'payload', payload)
+              ORDER BY run_sequence), '[]'::json) AS value
+       FROM execution_events
+      WHERE run_id = $1 AND ingest_disposition = 'accepted'`,
     [runId],
   );
 
@@ -115,6 +144,104 @@ test("execution-host contract: board launch places the run; checkpoint + resume 
   await expect
     .poll(() => runStatus(runId), { timeout: 60_000 })
     .toBe("NeedsInput");
+
+  // Stage B: prompt admission is asynchronous. The command remains accepted
+  // while HITL is pending, and the manager has already persisted the ordered
+  // host stream as its canonical event source.
+  await expect
+    .poll(
+      () =>
+        canonicalEvents(runId).then((events) =>
+          events.map((event) => event.eventType),
+        ),
+      { timeout: 30_000 },
+    )
+    .toEqual(
+      expect.arrayContaining([
+        "session.created",
+        "session.command",
+        "session.permission_request",
+      ]),
+    );
+  const persistedEvents = await canonicalEvents(runId);
+  const acceptedPrompt = persistedEvents.find(
+    (event) =>
+      event.eventType === "session.command" &&
+      event.payload.kind === "session.prompt" &&
+      event.payload.phase === "accepted",
+  );
+
+  expect(acceptedPrompt).toBeTruthy();
+  expect(persistedEvents.map((event) => BigInt(event.runSequence))).toEqual(
+    persistedEvents.map((_, index) => BigInt(index)),
+  );
+  expect(
+    (await commandRows(runId)).find((row) => row.kind === "session.prompt")
+      ?.state,
+  ).toBe("accepted");
+
+  // Browser replay exposes only the canonical, manager-owned event spine. It
+  // deliberately omits host payloads and every filesystem locator.
+  const browserEvent = await page.evaluate(
+    ({ canonicalRunId }) =>
+      new Promise<Record<string, unknown>>((resolve, reject) => {
+        const source = new EventSource(
+          `/api/runs/${canonicalRunId}/stream?lastEventId=0`,
+        );
+        const timer = window.setTimeout(() => {
+          source.close();
+          reject(new Error("canonical run stream did not replay an event"));
+        }, 10_000);
+
+        source.onmessage = (event) => {
+          window.clearTimeout(timer);
+          source.close();
+          resolve(JSON.parse(event.data) as Record<string, unknown>);
+        };
+        source.onerror = () => {
+          window.clearTimeout(timer);
+          source.close();
+          reject(new Error("canonical run stream failed"));
+        };
+      }),
+    { canonicalRunId: runId },
+  );
+
+  expect(browserEvent.type).toBeTruthy();
+  expect(browserEvent.runSequence).toBeTruthy();
+  expect(browserEvent).not.toHaveProperty("payload");
+  expect(JSON.stringify(browserEvent)).not.toMatch(
+    /[\\/]runtime[\\/]|run\.events\.jsonl/,
+  );
+
+  // The manager catalog owns metadata; bytes remain behind an opaque,
+  // authenticated run/object route and carry an end-to-end digest.
+  const profileObject = await singleValue<RuntimeObjectRow>(
+    `SELECT json_build_object(
+              'id', id,
+              'logicalName', logical_name,
+              'mimeType', mime_type,
+              'state', state,
+              'sha256', sha256) AS value
+       FROM execution_runtime_objects
+      WHERE run_id = $1 AND kind = 'capability_profile'
+      ORDER BY created_at DESC LIMIT 1`,
+    [runId],
+  );
+
+  expect(profileObject).toMatchObject({
+    state: "available",
+    mimeType: "application/json",
+  });
+  expect(profileObject?.id).toMatch(/^[0-9a-f-]{36}$/);
+  expect(profileObject?.sha256).toMatch(/^[a-f0-9]{64}$/);
+  const profileContent = await request.get(
+    `/api/runs/${runId}/runtime-objects/${profileObject?.id}/content`,
+  );
+
+  expect(profileContent.status()).toBe(200);
+  expect(profileContent.headers()["content-digest"]).toMatch(/^sha-256=:/);
+  expect(profileContent.headers()).not.toHaveProperty("x-runtime-path");
   const hitlRequestId = await singleValue<string>(
     `SELECT id AS value FROM hitl_requests
       WHERE run_id = $1 AND kind = 'permission' AND responded_at IS NULL`,
@@ -225,6 +352,29 @@ test("execution-host contract: board launch places the run; checkpoint + resume 
   await expect
     .poll(() => runStatus(runId), { timeout: 90_000 })
     .toMatch(/^(Review|Done)$/);
+  await expect
+    .poll(
+      () =>
+        commandRows(runId).then(
+          (rows) => rows.find((row) => row.kind === "session.prompt")?.state,
+        ),
+      { timeout: 30_000 },
+    )
+    .toBe("succeeded");
+  await expect
+    .poll(
+      () =>
+        canonicalEvents(runId).then((events) =>
+          events.some(
+            (event) =>
+              event.eventType === "session.command" &&
+              event.payload.kind === "session.prompt" &&
+              event.payload.phase === "completed",
+          ),
+        ),
+      { timeout: 30_000 },
+    )
+    .toBe(true);
   await expect
     .poll(() => assignments(runId).then((rows) => rows.map((r) => r[1])), {
       timeout: 30_000,

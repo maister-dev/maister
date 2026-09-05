@@ -177,9 +177,15 @@ export async function POST(
     // releasing frees one — hand it to the queue.
     await promoteNextPending();
 
-    log.info({ runId, ownerUserId: user.id }, "rework claim released to Review");
+    log.info(
+      { runId, ownerUserId: user.id },
+      "rework claim released to Review",
+    );
 
-    return NextResponse.json({ ok: true, runStatus: "Review" }, { status: 200 });
+    return NextResponse.json(
+      { ok: true, runStatus: "Review" },
+      { status: 200 },
+    );
   } catch (err) {
     return errorResponse(err, { runId });
   }

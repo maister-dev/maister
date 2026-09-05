@@ -232,9 +232,7 @@ describe("materializeAdapterCapabilityHome — per-adapter target (FR-C1/C2)", (
           version: 1,
           runId,
           state: "preparing",
-          paths: [
-            `.maister/capabilities/${runId}/${legacyDirectory}`,
-          ],
+          paths: [`.maister/capabilities/${runId}/${legacyDirectory}`],
         }),
       );
 
@@ -249,16 +247,16 @@ describe("materializeAdapterCapabilityHome — per-adapter target (FR-C1/C2)", (
 
       expect(ownedHome).toContain(`${legacyDirectory}-`);
       expect(ownedHome).not.toBe(legacyHome);
-      await expect(readFile(path.join(legacyHome, "keep.txt"), "utf8")).resolves.toBe(
-        "user-content",
-      );
+      await expect(
+        readFile(path.join(legacyHome, "keep.txt"), "utf8"),
+      ).resolves.toBe("user-content");
 
       await releaseAgentMaterialization(work, runId);
 
       await expect(lstat(ownedHome)).rejects.toMatchObject({ code: "ENOENT" });
-      await expect(readFile(path.join(legacyHome, "keep.txt"), "utf8")).resolves.toBe(
-        "user-content",
-      );
+      await expect(
+        readFile(path.join(legacyHome, "keep.txt"), "utf8"),
+      ).resolves.toBe("user-content");
     },
   );
 
@@ -330,7 +328,9 @@ describe("materializeSubagentDefinition (FR-C4)", () => {
         source: "AGENT BODY",
       }),
     ).rejects.toThrow(/symlinked path component/);
-    await expect(readFile(path.join(outside, "agents", "reviewer.md"))).rejects.toMatchObject({
+    await expect(
+      readFile(path.join(outside, "agents", "reviewer.md")),
+    ).rejects.toMatchObject({
       code: "ENOENT",
     });
   });

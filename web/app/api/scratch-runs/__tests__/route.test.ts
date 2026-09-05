@@ -418,12 +418,14 @@ describe("POST /api/scratch-runs", () => {
     expect(mocks.createSession).toHaveBeenCalledWith(
       expect.objectContaining({
         stepId: "dialog",
-        capabilityProfilePath:
-          "/tmp/maister-worktrees/demo/run/.maister/capabilities/run/profile.json",
+        capabilityProfileObjectId: "f7f4ea9b-598b-4f97-97b5-5ca52d46056e",
       }),
     );
     expect(mocks.createSession.mock.calls[0]?.[0]).not.toHaveProperty(
       "worktreePath",
+    );
+    expect(mocks.createSession.mock.calls[0]?.[0]).not.toHaveProperty(
+      "capabilityProfilePath",
     );
     const createArg = mocks.createSession.mock.calls[0]?.[0] as
       | { readOnlySession?: boolean }

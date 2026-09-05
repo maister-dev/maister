@@ -72,9 +72,9 @@ test("node interrupt: parked card → four options → restart with a correction
 
   await expect(disclosure).toBeVisible();
   await disclosure.click();
-  await expect(page.getByRole("combobox", { name: "Target node" })).toContainText(
-    "plan",
-  );
+  await expect(
+    page.getByRole("combobox", { name: "Target node" }),
+  ).toContainText("plan");
 
   // (c) The correction textarea and the workspace-policy selector are present —
   // the correction is what reaches the restarted node's prompt.

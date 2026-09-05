@@ -9,10 +9,7 @@ import {
   notFoundResponse,
 } from "@/lib/api/project-route-helpers";
 import { requireActiveSession, requireGlobalRole } from "@/lib/authz";
-import {
-  assertHoldsLock,
-  withWorkingDirLock,
-} from "@/lib/local-packages/lock";
+import { assertHoldsLock, withWorkingDirLock } from "@/lib/local-packages/lock";
 import {
   deleteWorkingDirFile,
   getLocalPackage,

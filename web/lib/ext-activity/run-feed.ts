@@ -1,16 +1,17 @@
-import {
-  parseScratchMessageContent,
-  summarizeToolInput,
-  type ScratchToolPayload,
-} from "@/lib/run-transcript/transcript";
 import type { RunActivityCursor } from "@/lib/ext-activity/cursor";
-import { filterBySalience } from "@/lib/ext-activity/salience";
 import type {
   ActivityAction,
   ActivitySalience,
   RunActivityItem,
   RunActivitySourceMessage,
 } from "@/lib/ext-activity/types";
+
+import {
+  parseScratchMessageContent,
+  summarizeToolInput,
+  type ScratchToolPayload,
+} from "@/lib/run-transcript/transcript";
+import { filterBySalience } from "@/lib/ext-activity/salience";
 
 type RunActivityPage = {
   items: RunActivityItem[];

@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { ArtifactLocator } from "@/lib/db/schema";
+import type { ExecutionEvent } from "@/lib/db/schema";
 
 import { and, eq } from "drizzle-orm";
 
@@ -13,12 +14,10 @@ import {
   ExecutionEventProjectionError,
   projectExecutionEvents,
 } from "@/lib/execution-host/events/projector";
-import type { ExecutionEvent } from "@/lib/db/schema";
 import * as schemaModule from "@/lib/db/schema";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches the store/ledger idiom).
-const { runs, nodeAttempts } =
-  schemaModule as unknown as Record<string, any>;
+const { runs, nodeAttempts } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -203,7 +202,12 @@ async function canonicalAttribution(
       attempt: nodeAttempts.attempt,
     })
     .from(nodeAttempts)
-    .where(and(eq(nodeAttempts.id, nodeAttemptId), eq(nodeAttempts.runId, event.runId)))
+    .where(
+      and(
+        eq(nodeAttempts.id, nodeAttemptId),
+        eq(nodeAttempts.runId, event.runId),
+      ),
+    )
     .limit(1);
   const attempt = attempts[0] as
     | { id: string; nodeId: string; attempt: number }
@@ -245,9 +249,13 @@ async function projectCanonicalArtifactEvent(
   if (!derivation) return;
 
   const attribution = await canonicalAttribution(tx, event);
+
   await recordArtifact(
     {
-      id: canonicalProjectorArtifactId({ runId: event.runId, eventId: event.id }),
+      id: canonicalProjectorArtifactId({
+        runId: event.runId,
+        eventId: event.id,
+      }),
       runId: event.runId,
       nodeAttemptId: attribution?.nodeAttemptId ?? null,
       nodeId: attribution?.nodeId ?? null,
@@ -303,5 +311,6 @@ export async function projectRunEvents(
   if (!run) {
     throw new Error(`projectRunEvents: run does not exist: ${runId}`);
   }
+
   return projectCanonicalRunEvents(d, runId);
 }

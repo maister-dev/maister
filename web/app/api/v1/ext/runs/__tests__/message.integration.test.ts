@@ -206,7 +206,8 @@ beforeEach(async () => {
   );
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await fake.waitForCanonicalEvents();
   vi.clearAllMocks();
 });
 

@@ -1,10 +1,18 @@
 import "server-only";
 
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { LaunchRunContext, LaunchRunInput } from "@/lib/services/runs";
+import type {
+  ScheduledLaunchReservation,
+  ScheduledLaunchRequest,
+  ScheduledLaunchState,
+} from "@/lib/scheduled-launches/types";
+import type * as schema from "@/lib/db/schema";
+
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { and, eq, sql } from "drizzle-orm";
-import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import pino from "pino";
 import { z } from "zod";
 
@@ -22,17 +30,6 @@ import { worktreesRoot } from "@/lib/instance-config";
 import { storedDeliveryPolicySchema } from "@/lib/runs/delivery-policy";
 import { executionPolicySchema } from "@/lib/runs/execution-policy";
 import { resolveScheduledLaunchTime } from "@/lib/scheduled-launches/time";
-
-import type {
-  LaunchRunContext,
-  LaunchRunInput,
-} from "@/lib/services/runs";
-import type {
-  ScheduledLaunchReservation,
-  ScheduledLaunchRequest,
-  ScheduledLaunchState,
-} from "@/lib/scheduled-launches/types";
-import type * as schema from "@/lib/db/schema";
 
 const scheduledLaunchRequestSchema = z
   .object({
@@ -178,7 +175,10 @@ function parseScheduledTimestamp(value: Date | string): Date {
 
   if (!Number.isNaN(parsed.getTime())) return parsed;
 
-  throw new MaisterError("PRECONDITION", "scheduled launch contains an invalid timestamp");
+  throw new MaisterError(
+    "PRECONDITION",
+    "scheduled launch contains an invalid timestamp",
+  );
 }
 
 async function recordScheduledLaunchEvent(
@@ -268,7 +268,10 @@ export async function createScheduledLaunch(input: {
   });
 
   if (input.idempotencyKey.length === 0 || input.idempotencyKey.length > 128) {
-    throw new MaisterError("CONFIG", "Idempotency-Key must be 1 to 128 characters");
+    throw new MaisterError(
+      "CONFIG",
+      "Idempotency-Key must be 1 to 128 characters",
+    );
   }
   if (scheduledForAt.getTime() <= now.getTime()) {
     throw new MaisterError("CONFIG", "scheduled time must be in the future");
@@ -546,9 +549,7 @@ export async function claimScheduledLaunch(input: {
 
   return db.transaction(async (tx) => {
     const duePredicate =
-      input.source === "tick"
-        ? sql`l.next_attempt_at <= ${now}`
-        : sql`true`;
+      input.source === "tick" ? sql`l.next_attempt_at <= ${now}` : sql`true`;
     const revisionPredicate =
       input.expectedRevision === undefined
         ? sql`true`
@@ -601,7 +602,10 @@ export async function claimScheduledLaunch(input: {
         errorCode: "PRECONDITION",
         now,
       });
-      throw new MaisterError("PRECONDITION", "scheduled launch retry budget is exhausted");
+      throw new MaisterError(
+        "PRECONDITION",
+        "scheduled launch retry budget is exhausted",
+      );
     }
 
     const reservations = await tx
@@ -615,7 +619,8 @@ export async function claimScheduledLaunch(input: {
       );
     const previousReservation = reservations[0];
     const claimFence =
-      Math.max(launch.claimFence ?? 0, previousReservation?.claimFence ?? 0) + 1;
+      Math.max(launch.claimFence ?? 0, previousReservation?.claimFence ?? 0) +
+      1;
     const reservation = previousReservation
       ? {
           id: previousReservation.id,
@@ -700,7 +705,10 @@ async function allocateScheduledLaunchReservation(input: {
   const taskAttemptNumber = allocated[0]?.attemptNumber;
 
   if (taskAttemptNumber === undefined) {
-    throw new MaisterError("PRECONDITION", "scheduled launch task no longer exists");
+    throw new MaisterError(
+      "PRECONDITION",
+      "scheduled launch task no longer exists",
+    );
   }
 
   const runId = randomUUID();
@@ -924,7 +932,10 @@ async function loadReservation(input: {
   const reservation = rows[0];
 
   if (!reservation) {
-    throw new MaisterError("PRECONDITION", "scheduled launch reservation is missing");
+    throw new MaisterError(
+      "PRECONDITION",
+      "scheduled launch reservation is missing",
+    );
   }
 
   return {
@@ -974,7 +985,10 @@ async function finalizeScheduledLaunchRun(input: {
       latestOutcome: "launched",
       errorCode: null,
       errorMessage: null,
-      lateByMs: Math.max(0, input.now.getTime() - input.scheduledForAt.getTime()),
+      lateByMs: Math.max(
+        0,
+        input.now.getTime() - input.scheduledForAt.getTime(),
+      ),
       updatedAt: input.now,
     })
     .where(
@@ -1062,6 +1076,7 @@ export async function dispatchClaimedScheduledLaunch(input: {
       taskId: claimed.taskId,
       claimFence: input.claimFence,
     });
+
     scheduledReservation = reservation;
     const existingRunId = await findLinkedScheduledRunId({
       db,
@@ -1139,6 +1154,7 @@ export async function dispatchClaimedScheduledLaunch(input: {
       db,
       scheduledLaunchId: input.reservation.scheduledLaunchId,
     });
+
     if (linkedRunId && claimed && scheduledReservation) {
       await finalizeScheduledLaunchRun({
         db,
@@ -1189,10 +1205,7 @@ export async function dispatchClaimedScheduledLaunch(input: {
       })
       .where(
         and(
-          eq(
-            scheduledTaskLaunches.id,
-            input.reservation.scheduledLaunchId,
-          ),
+          eq(scheduledTaskLaunches.id, input.reservation.scheduledLaunchId),
           eq(scheduledTaskLaunches.state, "Dispatching"),
           eq(scheduledTaskLaunches.claimId, input.claimId),
           eq(scheduledTaskLaunches.claimFence, input.claimFence),

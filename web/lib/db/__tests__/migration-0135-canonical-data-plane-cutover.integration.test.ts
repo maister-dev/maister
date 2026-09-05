@@ -21,6 +21,7 @@ beforeAll(async () => {
     "0134_lovely_tarot",
   );
   const projectId = randomUUID();
+
   runId = randomUUID();
   const short = projectId.replace(/-/g, "").slice(0, 8);
 
@@ -57,6 +58,7 @@ describe("0135_lush_jetstream and 0136_shiny_the_executioner", () => {
       `select 1 from information_schema.tables
        where table_name = 'artifact_projection_cursors'`,
     );
+
     expect(table.rows).toHaveLength(1);
   });
 
@@ -98,12 +100,14 @@ describe("0135_lush_jetstream and 0136_shiny_the_executioner", () => {
       `select execution_data_plane_mode as mode from runs where id = $1`,
       [runId],
     );
+
     expect(mode.rows).toEqual([{ mode: "canonical_events_v1" }]);
 
     const table = await testDatabase.pool.query(
       `select 1 from information_schema.tables
        where table_name = 'artifact_projection_cursors'`,
     );
+
     expect(table.rows).toHaveLength(0);
     await expect(
       testDatabase.pool.query(

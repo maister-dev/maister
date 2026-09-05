@@ -15,6 +15,8 @@ import type { FlowContext } from "@/lib/flows/types";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { executionAssignments } from "@/lib/db/schema";
+
 const escalateHookTripMock = vi.hoisted(() => ({
   escalateHookTrip: vi.fn(async () => ({ escalated: true })),
 }));
@@ -61,8 +63,9 @@ function makeCtx(overrides: Partial<RunAgentStepCtx> = {}): RunAgentStepCtx {
   };
 }
 
-// Minimal no-op fake DB — the hook path with no nodeAttemptId persists nothing;
-// escalateHookTrip (mocked) never touches it.
+// Minimal fake DB — the hook path with no nodeAttemptId persists nothing;
+// escalateHookTrip (mocked) never touches it. The runner still verifies that
+// its execution assignment remains current before applying terminal effects.
 function makeFakeDb(): any {
   const thenable = (rows: unknown[]) => {
     const r: any = Promise.resolve(rows);
@@ -76,7 +79,12 @@ function makeFakeDb(): any {
   const api: any = {
     insert: () => ({ values: () => thenable([]) }),
     update: () => ({ set: () => ({ where: () => thenable([{ id: "x" }]) }) }),
-    select: () => ({ from: () => ({ where: () => thenable([]) }) }),
+    select: () => ({
+      from: (table: unknown) => ({
+        where: () =>
+          thenable(table === executionAssignments ? [{ state: "active" }] : []),
+      }),
+    }),
     transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(api),
   };
 

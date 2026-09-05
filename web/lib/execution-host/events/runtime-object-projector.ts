@@ -1,8 +1,15 @@
 import "server-only";
 
+import type { Db } from "@/lib/execution-host/db";
+
 import { and, desc, eq } from "drizzle-orm";
 
-import type { Db } from "@/lib/execution-host/db";
+import {
+  ExecutionEventProjectionError,
+  projectExecutionEvents,
+  type ExecutionEventProjectorSummary,
+} from "./projector";
+
 import {
   executionAssignments,
   executionCommands,
@@ -15,12 +22,6 @@ import {
   RUNTIME_OBJECT_RETENTION_CLASSES,
   RUNTIME_OBJECT_STATES,
 } from "@/lib/execution-host/types";
-
-import {
-  ExecutionEventProjectionError,
-  projectExecutionEvents,
-  type ExecutionEventProjectorSummary,
-} from "./projector";
 
 const RUNTIME_OBJECT_CONSUMER = "canonical-runtime-object-v1";
 const kinds = new Set<string>(RUNTIME_OBJECT_KINDS);
@@ -37,9 +38,11 @@ function stringField(
   name: string,
 ): string {
   const value = payload?.[name];
+
   if (typeof value !== "string" || value.length === 0) {
     throw permanent(`runtime object event is missing ${name}`);
   }
+
   return value;
 }
 
@@ -48,26 +51,48 @@ function numberField(
   name: string,
 ): number {
   const value = payload?.[name];
+
   if (typeof value !== "number" || !Number.isSafeInteger(value)) {
     throw permanent(`runtime object event has invalid ${name}`);
   }
+
   return value;
 }
 
-async function hasCurrentFence(tx: Db, event: ExecutionEvent): Promise<boolean> {
+function timestampField(
+  payload: Record<string, unknown> | null,
+  name: string,
+): Date {
+  const value = stringField(payload, name);
+  const parsed = new Date(value);
+
+  if (Number.isNaN(parsed.getTime())) {
+    throw permanent(`runtime object event has invalid ${name}`);
+  }
+
+  return parsed;
+}
+
+async function hasCurrentFence(
+  tx: Db,
+  event: ExecutionEvent,
+): Promise<boolean> {
   if (
     event.source !== "host" ||
     !event.executionHostId ||
     !event.executionAssignmentId ||
     event.assignmentEpoch === null
   ) {
-    throw permanent("runtime object event is missing its host assignment fence");
+    throw permanent(
+      "runtime object event is missing its host assignment fence",
+    );
   }
   const run = await tx
     .select({ executionDataPlaneMode: runs.executionDataPlaneMode })
     .from(runs)
     .where(eq(runs.id, event.runId))
     .limit(1);
+
   if (!run[0]) throw permanent("runtime object event references a missing run");
   const assignment = await tx
     .select({ id: executionAssignments.id })
@@ -82,11 +107,16 @@ async function hasCurrentFence(tx: Db, event: ExecutionEvent): Promise<boolean> 
       ),
     )
     .limit(1);
+
   return Boolean(assignment[0]);
 }
 
 async function projectAvailable(tx: Db, event: ExecutionEvent): Promise<void> {
-  if (!event.executionHostId || !event.executionAssignmentId || event.assignmentEpoch === null) {
+  if (
+    !event.executionHostId ||
+    !event.executionAssignmentId ||
+    event.assignmentEpoch === null
+  ) {
     throw permanent("runtime object available event is missing its fence");
   }
   const objectId = stringField(event.payload, "objectId");
@@ -98,6 +128,11 @@ async function projectAvailable(tx: Db, event: ExecutionEvent): Promise<void> {
   const state = stringField(event.payload, "state");
   const generation = numberField(event.payload, "generation");
   const sizeBytes = numberField(event.payload, "sizeBytes");
+  const sealedAt =
+    typeof event.payload?.sealedAt === "string"
+      ? timestampField(event.payload, "sealedAt")
+      : event.occurredAt;
+
   if (
     !kinds.has(kind) ||
     !retentionClasses.has(retentionClass) ||
@@ -114,6 +149,7 @@ async function projectAvailable(tx: Db, event: ExecutionEvent): Promise<void> {
     expiresRaw === null || expiresRaw === undefined
       ? null
       : new Date(String(expiresRaw));
+
   if (expiresAt && Number.isNaN(expiresAt.getTime())) {
     throw permanent("runtime object available event has invalid expiresAt");
   }
@@ -127,6 +163,7 @@ async function projectAvailable(tx: Db, event: ExecutionEvent): Promise<void> {
     .for("update")
     .limit(1);
   const existing = rows[0];
+
   if (existing) {
     const sameBinding =
       existing.runId === event.runId &&
@@ -147,10 +184,27 @@ async function projectAvailable(tx: Db, event: ExecutionEvent): Promise<void> {
       existing.sizeBytes === BigInt(sizeBytes) &&
       existing.sha256 === checksum &&
       existing.sourceEventId === event.id &&
-      existing.sealedAt?.getTime() === event.occurredAt.getTime() &&
+      existing.sealedAt?.getTime() === sealedAt.getTime() &&
       existing.deletedAt === null &&
       existing.lastError === null;
+
     if (exactReplay) return;
+
+    const receiptReconciled =
+      sameBinding &&
+      existing.state === "available" &&
+      existing.sourceEventId === null &&
+      existing.deletedAt === null &&
+      existing.lastError === null;
+
+    if (receiptReconciled) {
+      await tx
+        .update(executionRuntimeObjects)
+        .set({ sourceEventId: event.id })
+        .where(eq(executionRuntimeObjects.id, objectId));
+
+      return;
+    }
 
     const reserveRows = await tx
       .select({ payload: executionCommands.payload })
@@ -171,14 +225,18 @@ async function projectAvailable(tx: Db, event: ExecutionEvent): Promise<void> {
       .orderBy(desc(executionCommands.createdAt))
       .limit(1);
     const reservePayload = reserveRows[0]?.payload;
+    const reserveDeclarationMatches =
+      reservePayload === undefined ||
+      (reservePayload.sizeBytes === sizeBytes &&
+        reservePayload.sha256 === checksum);
     const matchesPendingIntent =
       sameBinding &&
       existing.state === "pending" &&
       existing.sizeBytes === null &&
       existing.sha256 === null &&
       existing.sealedAt === null &&
-      reservePayload?.sizeBytes === sizeBytes &&
-      reservePayload?.sha256 === checksum;
+      reserveDeclarationMatches;
+
     if (!matchesPendingIntent) {
       throw permanent(
         "runtime object available event conflicts with immutable metadata",
@@ -192,7 +250,7 @@ async function projectAvailable(tx: Db, event: ExecutionEvent): Promise<void> {
         sha256: checksum,
         state: "available",
         sourceEventId: event.id,
-        sealedAt: event.occurredAt,
+        sealedAt,
         deletedAt: null,
         lastError: null,
       })
@@ -212,19 +270,28 @@ async function projectAvailable(tx: Db, event: ExecutionEvent): Promise<void> {
     sizeBytes: BigInt(sizeBytes),
     sha256: checksum,
     generation,
-    retentionClass: retentionClass as (typeof RUNTIME_OBJECT_RETENTION_CLASSES)[number],
+    retentionClass:
+      retentionClass as (typeof RUNTIME_OBJECT_RETENTION_CLASSES)[number],
     state: "available",
     sourceEventId: event.id,
     createdAt: event.occurredAt,
-    sealedAt: event.occurredAt,
+    sealedAt,
     expiresAt,
   });
 }
 
 async function projectState(tx: Db, event: ExecutionEvent): Promise<void> {
+  if (
+    !event.executionHostId ||
+    !event.executionAssignmentId ||
+    event.assignmentEpoch === null
+  ) {
+    throw permanent("runtime object state event is missing its fence");
+  }
   const objectId = stringField(event.payload, "objectId");
   const generation = numberField(event.payload, "generation");
   const state = stringField(event.payload, "state");
+
   if (!states.has(state) || generation < 1) {
     throw permanent("runtime object state event is invalid");
   }
@@ -238,25 +305,48 @@ async function projectState(tx: Db, event: ExecutionEvent): Promise<void> {
     .for("update")
     .limit(1);
   const object = existing[0];
-  if (!object || object.runId !== event.runId || object.generation !== generation) {
-    throw permanent("runtime object state event has no matching catalogue object");
+
+  if (
+    !object ||
+    object.runId !== event.runId ||
+    object.executionHostId !== event.executionHostId ||
+    object.executionAssignmentId !== event.executionAssignmentId ||
+    object.assignmentEpoch !== event.assignmentEpoch ||
+    object.generation !== generation
+  ) {
+    throw permanent(
+      "runtime object state event has no matching catalogue object",
+    );
   }
+  const deletedAtRaw = event.payload?.deletedAt;
+  const deletedAt =
+    deletedAtRaw === null || deletedAtRaw === undefined
+      ? object.deletedAt
+      : timestampField(event.payload, "deletedAt");
+
   await tx
     .update(executionRuntimeObjects)
     .set({
       state: state as (typeof RUNTIME_OBJECT_STATES)[number],
       sourceEventId: event.id,
-      deletedAt: state === "deleted" ? event.occurredAt : object.deletedAt,
+      deletedAt: state === "deleted" ? deletedAt : object.deletedAt,
+      lastError: null,
     })
     .where(eq(executionRuntimeObjects.id, objectId));
 }
 
-async function projectRuntimeObject(tx: Db, event: ExecutionEvent): Promise<void> {
-  if (event.eventType !== "runtime_object.available" && event.eventType !== "runtime_object.state") {
+async function projectRuntimeObject(
+  tx: Db,
+  event: ExecutionEvent,
+): Promise<void> {
+  if (
+    event.eventType !== "runtime_object.available" &&
+    event.eventType !== "runtime_object.state"
+  ) {
     return;
   }
-  if (!(await hasCurrentFence(tx, event))) return;
   if (event.eventType === "runtime_object.available") {
+    if (!(await hasCurrentFence(tx, event))) return;
     await projectAvailable(tx, event);
   } else {
     await projectState(tx, event);
@@ -274,7 +364,10 @@ export async function projectCanonicalRuntimeObjects(input: {
     runId: input.runId,
     now: input.now,
     batchSize: input.batchSize,
-    projector: { consumerName: RUNTIME_OBJECT_CONSUMER, project: projectRuntimeObject },
+    projector: {
+      consumerName: RUNTIME_OBJECT_CONSUMER,
+      project: projectRuntimeObject,
+    },
   });
 }
 
@@ -282,17 +375,18 @@ export async function projectPendingCanonicalRuntimeObjects(input: {
   db: Db;
   batchSize?: number;
 }): Promise<number> {
-  const canonicalRuns = await input.db
-    .select({ id: runs.id })
-    .from(runs);
+  const canonicalRuns = await input.db.select({ id: runs.id }).from(runs);
   let projected = 0;
+
   for (const run of canonicalRuns) {
     const summary = await projectCanonicalRuntimeObjects({
       db: input.db,
       runId: run.id,
       batchSize: input.batchSize,
     });
+
     projected += summary.projected;
   }
+
   return projected;
 }

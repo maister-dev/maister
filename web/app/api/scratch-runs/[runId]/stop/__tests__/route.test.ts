@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { requireProjectAction } from "@/lib/authz";
 import {
+  runSessions as runSessionsTable,
   runs as runsTable,
   scratchRuns as scratchRunsTable,
   workspaces as workspacesTable,
@@ -11,6 +12,7 @@ import { MaisterError } from "@/lib/errors";
 
 type Row = Record<string, unknown>;
 type Tables = {
+  run_sessions: Row[];
   runs: Row[];
   scratch_runs: Row[];
   workspaces: Row[];
@@ -22,20 +24,39 @@ type FakeDb = {
 };
 
 const dbState: { tables: Tables } = {
-  tables: { runs: [], scratch_runs: [], workspaces: [] },
+  tables: { run_sessions: [], runs: [], scratch_runs: [], workspaces: [] },
 };
 
 function tableOf(t: unknown): keyof Tables {
+  if (t === runSessionsTable) return "run_sessions";
   if (t === runsTable) return "runs";
   if (t === scratchRunsTable) return "scratch_runs";
   if (t === workspacesTable) return "workspaces";
   throw new Error("unknown table");
 }
 
+function selectedRows(table: unknown): Row[] {
+  return dbState.tables[tableOf(table)];
+}
+
 const selectChain = () => ({
-  from: (table: unknown) => ({
-    where: async () => dbState.tables[tableOf(table)],
-  }),
+  from: (table: unknown) => {
+    const query = {
+      then: <TResult1 = Row[], TResult2 = never>(
+        onFulfilled?:
+          | ((value: Row[]) => TResult1 | PromiseLike<TResult1>)
+          | null,
+        onRejected?:
+          | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
+          | null,
+      ): Promise<TResult1 | TResult2> =>
+        Promise.resolve(selectedRows(table)).then(onFulfilled, onRejected),
+      orderBy: () => query,
+      limit: async (count: number) => selectedRows(table).slice(0, count),
+    };
+
+    return { where: () => query };
+  },
 });
 
 const updateChain = (table: unknown) => ({
@@ -125,7 +146,7 @@ function seedScratchRun(
     runKind: "flow" | "scratch";
     runStatus: string;
     dialogStatus: string;
-    supervisorSessionId: string | null;
+    hostSessionId: string | null;
     removedAt: Date | null;
   }> = {},
 ): string {
@@ -145,10 +166,17 @@ function seedScratchRun(
       runId,
       projectId: "project-1",
       dialogStatus: overrides.dialogStatus ?? "Running",
-      supervisorSessionId: Object.hasOwn(overrides, "supervisorSessionId")
-        ? overrides.supervisorSessionId
-        : "sup-1",
       updatedAt: null,
+    });
+    dbState.tables.run_sessions.push({
+      id: "run-session-1",
+      runId,
+      sessionName: "scratch-dialog",
+      acpSessionId: "acp-1",
+      hostSessionId: Object.hasOwn(overrides, "hostSessionId")
+        ? overrides.hostSessionId
+        : "sup-1",
+      updatedAt: new Date(),
     });
   }
   dbState.tables.workspaces.push({
@@ -173,7 +201,12 @@ async function invokePost(runId: string) {
 }
 
 beforeEach(() => {
-  dbState.tables = { runs: [], scratch_runs: [], workspaces: [] };
+  dbState.tables = {
+    run_sessions: [],
+    runs: [],
+    scratch_runs: [],
+    workspaces: [],
+  };
   vi.mocked(deleteSession).mockClear();
   vi.mocked(requireProjectAction).mockClear();
   vi.mocked(requireProjectAction).mockResolvedValue({
@@ -199,7 +232,6 @@ describe("POST /api/scratch-runs/[runId]/stop", () => {
     expect(body.supervisorStopped).toBe(true);
     expect(dbState.tables.scratch_runs[0]).toMatchObject({
       dialogStatus: "Review",
-      supervisorSessionId: null,
     });
     expect(dbState.tables.runs[0]).toMatchObject({
       status: "Review",
@@ -212,7 +244,7 @@ describe("POST /api/scratch-runs/[runId]/stop", () => {
     const runId = seedScratchRun({
       runStatus: "Review",
       dialogStatus: "Review",
-      supervisorSessionId: null,
+      hostSessionId: null,
     });
 
     const res = await invokePost(runId);
@@ -228,7 +260,7 @@ describe("POST /api/scratch-runs/[runId]/stop", () => {
     const runId = seedScratchRun({
       runStatus: "Done",
       dialogStatus: "Done",
-      supervisorSessionId: null,
+      hostSessionId: null,
     });
 
     const res = await invokePost(runId);
@@ -251,7 +283,7 @@ describe("POST /api/scratch-runs/[runId]/stop", () => {
   });
 
   it("treats a missing supervisor session as already stopped", async () => {
-    const runId = seedScratchRun({ supervisorSessionId: "sup-gone" });
+    const runId = seedScratchRun({ hostSessionId: "sup-gone" });
 
     vi.mocked(deleteSession).mockRejectedValueOnce(
       new MaisterError("PRECONDITION", "unknown session", {
@@ -266,7 +298,6 @@ describe("POST /api/scratch-runs/[runId]/stop", () => {
     expect(body.supervisorStopped).toBe(false);
     expect(dbState.tables.scratch_runs[0]).toMatchObject({
       dialogStatus: "Review",
-      supervisorSessionId: null,
     });
     expect(dbState.tables.runs[0]).toMatchObject({
       status: "Review",
@@ -291,7 +322,6 @@ describe("POST /api/scratch-runs/[runId]/stop", () => {
     expect(((await res.json()) as { code: string }).code).toBe("CONFLICT");
     expect(dbState.tables.scratch_runs[0]).toMatchObject({
       dialogStatus: "Running",
-      supervisorSessionId: "sup-1",
     });
     expect(dbState.tables.runs[0]).toMatchObject({
       status: "Running",

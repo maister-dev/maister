@@ -50,6 +50,7 @@ async function registerSession(
   },
 ): Promise<void> {
   const emitter = new EventEmitter();
+
   registry.register(
     {
       sessionId,
@@ -109,6 +110,7 @@ describe("POST /sessions/:id/cancel", () => {
   it("acks cancelled:false for a session with no live turn", async () => {
     booted = await bootBare();
     const sessionId = "00000000-0000-4000-8000-000000000001";
+
     await registerSession(booted.registry, booted.runtimeRoot, sessionId, {
       status: "exited",
     });
@@ -129,6 +131,7 @@ describe("POST /sessions/:id/cancel", () => {
     const cancel = vi.fn().mockResolvedValue(undefined);
 
     const sessionId = "00000000-0000-4000-8000-000000000002";
+
     await registerSession(booted.registry, booted.runtimeRoot, sessionId, {
       status: "live",
       connection: { cancel },

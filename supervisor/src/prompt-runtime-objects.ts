@@ -19,7 +19,9 @@ export type PromptObjectResolver = {
   }): Promise<{ metadata: { mimeType: string }; path: string }>;
 };
 
-function isRuntimeObjectBlock(value: unknown): value is PromptRuntimeObjectBlock {
+function isRuntimeObjectBlock(
+  value: unknown,
+): value is PromptRuntimeObjectBlock {
   return (
     Boolean(value) &&
     typeof value === "object" &&
@@ -47,6 +49,7 @@ export async function resolvePromptRuntimeObjects(input: {
         assignmentId: input.assignmentId,
         assignmentEpoch: input.assignmentEpoch,
       });
+
       return {
         type: "resource_link",
         uri: pathToFileURL(resolved.path).href,

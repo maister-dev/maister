@@ -247,12 +247,32 @@ describe("bound client over the real wire", () => {
       objectId,
       state: "available",
       sizeBytes: bytes.byteLength,
-      sha256: "ffd0fa81553b1c5d3b8c49b553605b64ed2be239e167f442ea8cdc77769a8a7a",
+      sha256:
+        "ffd0fa81553b1c5d3b8c49b553605b64ed2be239e167f442ea8cdc77769a8a7a",
     });
 
+    const nextAssignment = await db.transaction((tx) =>
+      mintAssignment(tx as unknown as Db, {
+        runId,
+        hostId: client.host.id,
+        reason: "resume",
+      }),
+    );
+
+    expect(nextAssignment.epoch).toBe(client.assignment.epoch + 1);
+    await (
+      await hosts.forAssignment(nextAssignment)
+    ).createSession({
+      ...CREATE_PAYLOAD,
+      sessionName: "runtime-object-next-epoch",
+    });
+
+    // Runtime-object cleanup is object-scoped: the original assignment may
+    // delete its own immutable object after a newer run epoch is active.
     await client.deleteRuntimeObject({ objectId, generation: 1 });
 
     const commands = await listCommandsForRun(db, runId);
+
     expect(
       commands
         .filter((row) => row.kind.startsWith("runtime_object."))
@@ -268,7 +288,7 @@ describe("bound client over the real wire", () => {
         .every((row) => row.executionAssignmentId === client.assignment.id),
     ).toBe(true);
     const catalog = await testDatabase.pool.query(
-      `select state, size_bytes, sha256
+      `select state, size_bytes, sha256, deleted_at is not null as has_deleted_at
        from execution_runtime_objects
        where id = $1 and run_id = $2`,
       [objectId, runId],
@@ -276,8 +296,14 @@ describe("bound client over the real wire", () => {
     const reserveCommand = commands.find(
       (row) => row.kind === "runtime_object.reserve",
     );
+
     expect(catalog.rows).toEqual([
-      { state: "pending", size_bytes: null, sha256: null },
+      {
+        state: "deleted",
+        size_bytes: String(bytes.byteLength),
+        sha256: published.metadata.sha256,
+        has_deleted_at: true,
+      },
     ]);
     expect(reserveCommand?.payload).toMatchObject({
       objectId,

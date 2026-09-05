@@ -146,14 +146,21 @@ async function loadLastAgentMessage(
   try {
     await projectRunTranscript(run.id, { client });
     const messages = await client
-      .select({ content: runMessages.content, createdAt: runMessages.createdAt })
+      .select({
+        content: runMessages.content,
+        createdAt: runMessages.createdAt,
+      })
       .from(runMessages)
-      .where(and(eq(runMessages.runId, run.id), eq(runMessages.role, "assistant")))
+      .where(
+        and(eq(runMessages.runId, run.id), eq(runMessages.role, "assistant")),
+      )
       .orderBy(desc(runMessages.createdAt), desc(runMessages.sequence))
       .limit(1);
     const message = messages[0];
+
     if (!message || message.content.trim().length === 0) return null;
     const text = message.content.trim();
+
     return {
       text:
         text.length > MAX_MESSAGE_CHARS

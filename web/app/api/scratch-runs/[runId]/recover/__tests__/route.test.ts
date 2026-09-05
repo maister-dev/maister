@@ -437,8 +437,7 @@ describe("POST /api/scratch-runs/[runId]/recover", () => {
           router: undefined,
         },
         resumeSessionId: "acp-old",
-        capabilityProfilePath:
-          "/worktrees/demo/run-recover/.maister/profile.json",
+        capabilityProfileObjectId: "f7f4ea9b-598b-4f97-97b5-5ca52d46056e",
         adapterLaunch: { postArgs: ["--profile"] },
         runner: {
           version: 1,

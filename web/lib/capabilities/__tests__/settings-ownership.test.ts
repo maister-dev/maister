@@ -33,7 +33,9 @@ let root: string;
 beforeEach(async () => {
   // realpath so the macOS /var -> /private/var tmp symlink does not trip the
   // in-worktree path-safety checks (production worktrees are not symlinked).
-  root = await realpath(await mkdtemp(path.join(tmpdir(), "settings-ownership-")));
+  root = await realpath(
+    await mkdtemp(path.join(tmpdir(), "settings-ownership-")),
+  );
 });
 
 afterEach(async () => {
@@ -79,7 +81,9 @@ describe("settings.local.json ownership", () => {
 
     await expect(
       materializeAgentReadOnlySettings(root, "claude", "new-run"),
-    ).rejects.toThrow(/foreign materialization lease lacks an ownership marker/);
+    ).rejects.toThrow(
+      /foreign materialization lease lacks an ownership marker/,
+    );
     await expect(readFile(settingsPath, "utf8")).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -253,7 +257,10 @@ describe("settings.local.json ownership", () => {
 
     await mkdir(path.dirname(settingsPath), { recursive: true });
     await writeFile(settingsPath, '{"user":"original"}\n');
-    await writeFile(operationPath, capabilitySettingsOperation("profile-run", true));
+    await writeFile(
+      operationPath,
+      capabilitySettingsOperation("profile-run", true),
+    );
 
     await expect(
       reclaimCapabilitySettings({ cwd: root, runId: "profile-run" }),
@@ -432,9 +439,9 @@ describe("settings.local.json ownership", () => {
 
     await restoreAgentMaterialization(root, homeRunId);
 
-    await expect(readFile(path.join(root, SETTINGS_RELATIVE), "utf8")).resolves.toBe(
-      '{"profile":true}\n',
-    );
+    await expect(
+      readFile(path.join(root, SETTINGS_RELATIVE), "utf8"),
+    ).resolves.toBe('{"profile":true}\n');
     await expect(stat(homePath)).rejects.toMatchObject({
       code: "ENOENT",
     });

@@ -31,6 +31,7 @@ import {
 import { OPEN_COMMANDS_PAGE_SIZE } from "@/lib/execution-host/commands";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
+import { publishRuntimeObject } from "@/lib/execution-host/runtime-objects";
 import { runReconcileSweep } from "@/lib/reconcile";
 import {
   seedProjectRow,
@@ -500,6 +501,55 @@ describe("execution-command recovery (real supervisor)", () => {
       attempts: 1,
       lastError: { reason: "ORPHANED" },
     });
+  }, 60_000);
+
+  it("V7b: recovery re-delivers a queued runtime-object deletion and folds catalogue state", async () => {
+    const runId = await seedFlowRun("v7-runtime-object");
+    const assignment = await mint(runId);
+    const client = await hosts.forAssignment(assignment);
+    const objectId = randomUUID();
+
+    await publishRuntimeObject({
+      client,
+      objectId,
+      kind: "generated_artifact",
+      logicalName: "recovery.txt",
+      mimeType: "text/plain",
+      retentionClass: "run",
+      bytes: new TextEncoder().encode("recover deletion"),
+    });
+    const command = await insertCommand(db, {
+      runId,
+      assignmentId: assignment.id,
+      hostId,
+      assignmentEpoch: assignment.epoch,
+      kind: "runtime_object.delete",
+      targetSessionId: objectId,
+      payload: { generation: 1 },
+      maxAttempts: 3,
+      driverless: true,
+    });
+
+    await db
+      .update(schema.executionRuntimeObjects)
+      .set({ state: "deleting" })
+      .where(eq(schema.executionRuntimeObjects.id, objectId));
+
+    const summary = await recoverExecutionCommands({ db, graceMs: 0 });
+    const [object] = (await db
+      .select()
+      .from(schema.executionRuntimeObjects)
+      .where(eq(schema.executionRuntimeObjects.id, objectId))) as Array<{
+      state: string;
+      deletedAt: Date | null;
+    }>;
+
+    expect(summary.redelivered).toBeGreaterThanOrEqual(1);
+    expect(await getCommand(db, command.id)).toMatchObject({
+      state: "succeeded",
+    });
+    expect(object.state).toBe("deleted");
+    expect(object.deletedAt).toBeInstanceOf(Date);
   }, 60_000);
 
   it("V8: recovery pages past the open-row page size — every queued driverless row of a 501-row backlog is re-delivered", async () => {

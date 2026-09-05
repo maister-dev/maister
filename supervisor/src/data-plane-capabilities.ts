@@ -18,9 +18,15 @@ export const ExecutionHostCapabilitiesSchema = z
     runtimeObjects: z.boolean(),
     limits: z
       .object({
-        maxEventBytes: z.literal(EXECUTION_HOST_CAPABILITY_LIMITS.maxEventBytes),
-        maxObjectBytes: z.literal(EXECUTION_HOST_CAPABILITY_LIMITS.maxObjectBytes),
-        maxReplayBatch: z.literal(EXECUTION_HOST_CAPABILITY_LIMITS.maxReplayBatch),
+        maxEventBytes: z.literal(
+          EXECUTION_HOST_CAPABILITY_LIMITS.maxEventBytes,
+        ),
+        maxObjectBytes: z.literal(
+          EXECUTION_HOST_CAPABILITY_LIMITS.maxObjectBytes,
+        ),
+        maxReplayBatch: z.literal(
+          EXECUTION_HOST_CAPABILITY_LIMITS.maxReplayBatch,
+        ),
       })
       .strict(),
   })

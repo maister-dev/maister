@@ -68,6 +68,10 @@ export async function ensureAssignment(
   const active = await getActiveAssignment(db, runId);
 
   if (active) return active;
+  // Resolve and activate the local data plane on the caller's durable DB
+  // before entering the run-claim transaction. A background event consumer
+  // must never retain a transaction-scoped Drizzle handle after commit.
+  const host = await localHost({ db, transport: opts.transport });
 
   return db.transaction(async (raw) => {
     const tx = raw as unknown as Db;
@@ -107,8 +111,8 @@ export async function ensureAssignment(
     return mintPlacement(tx, {
       runId,
       reason,
+      host,
       logger: opts.logger,
-      transport: opts.transport,
     });
   });
 }

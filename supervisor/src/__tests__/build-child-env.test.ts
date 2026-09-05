@@ -59,13 +59,16 @@ describe("buildChildEnv — env layering precedence", () => {
     expect(env.SHARED_KEY).toBe("from-adapter");
   });
 
-  it("sets MAISTER_CAPABILITY_PROFILE_PATH when capabilityProfilePath is present", () => {
+  it("sets MAISTER_CAPABILITY_PROFILE_PATH from the server-derived runtime object path", () => {
     const profilePath = `${process.cwd()}/profile.json`;
-    const env = buildChildEnv(
-      makeRequest({ capabilityProfilePath: profilePath }),
-    );
+    const instructionsPath = `${process.cwd()}/instructions.md`;
+    const env = buildChildEnv(makeRequest(), {
+      capabilityProfilePath: profilePath,
+      capabilityInstructionsPath: instructionsPath,
+    });
 
     expect(env.MAISTER_CAPABILITY_PROFILE_PATH).toBe(profilePath);
+    expect(env.MAISTER_CAPABILITY_INSTRUCTIONS_PATH).toBe(instructionsPath);
   });
 
   it("omits MAISTER_CAPABILITY_PROFILE_PATH when capabilityProfilePath is absent", () => {
@@ -76,17 +79,31 @@ describe("buildChildEnv — env layering precedence", () => {
     expect("MAISTER_CAPABILITY_PROFILE_PATH" in env).toBe(false);
   });
 
-  it("adapterLaunch.env overrides MAISTER_CAPABILITY_PROFILE_PATH on collision", () => {
+  it("server-derived object paths override untrusted child environment collisions", () => {
+    const profilePath = `${process.cwd()}/profile.json`;
+    const instructionsPath = `${process.cwd()}/instructions.md`;
     const env = buildChildEnv(
       makeRequest({
-        capabilityProfilePath: `${process.cwd()}/profile.json`,
         adapterLaunch: {
-          env: { MAISTER_CAPABILITY_PROFILE_PATH: "from-adapter" },
+          env: {
+            MAISTER_CAPABILITY_PROFILE_PATH: "from-adapter",
+            MAISTER_CAPABILITY_INSTRUCTIONS_PATH: "from-adapter",
+            MAISTER_PLAN_DOCUMENT_FILE: "from-adapter",
+          },
         },
       }),
+      {
+        capabilityProfilePath: profilePath,
+        capabilityInstructionsPath: instructionsPath,
+        outputPaths: {
+          MAISTER_PLAN_DOCUMENT_FILE: `${process.cwd()}/plan.md`,
+        },
+      },
     );
 
-    expect(env.MAISTER_CAPABILITY_PROFILE_PATH).toBe("from-adapter");
+    expect(env.MAISTER_CAPABILITY_PROFILE_PATH).toBe(profilePath);
+    expect(env.MAISTER_CAPABILITY_INSTRUCTIONS_PATH).toBe(instructionsPath);
+    expect(env.MAISTER_PLAN_DOCUMENT_FILE).toBe(`${process.cwd()}/plan.md`);
   });
 
   it("adds no spurious keys beyond the configured layers", () => {
@@ -98,9 +115,9 @@ describe("buildChildEnv — env layering precedence", () => {
           model: "claude-sonnet-4-6",
           env: { A: "1" },
         },
-        capabilityProfilePath: profilePath,
         adapterLaunch: { env: { B: "2" } },
       }),
+      { capabilityProfilePath: profilePath },
     );
 
     const expected: NodeJS.ProcessEnv = {

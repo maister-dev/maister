@@ -90,6 +90,9 @@ describe("scratchPromptContentBlocks — attachments → path-free prompt blocks
 
     expect(blocks).toHaveLength(2);
     expect(blocks?.[0]).toEqual({ type: "text", text: "mix" });
-    expect(blocks?.[1]).toMatchObject({ type: "runtime_object", name: "a.txt" });
+    expect(blocks?.[1]).toMatchObject({
+      type: "runtime_object",
+      name: "a.txt",
+    });
   });
 });

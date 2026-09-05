@@ -1,6 +1,5 @@
 import "server-only";
 
-import { hasReadyPlatformRunner } from "@/lib/acp-runners/ready-runner";
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { Project, RunKind, ScratchDialogStatus } from "@/lib/db/schema";
@@ -17,6 +16,7 @@ import {
   or,
 } from "drizzle-orm";
 
+import { hasReadyPlatformRunner } from "@/lib/acp-runners/ready-runner";
 import { enumerateRunnerSlots } from "@/lib/acp-runners/runner-slots";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";

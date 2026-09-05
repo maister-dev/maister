@@ -46,7 +46,9 @@ describe("Stage B data-plane capability negotiation", () => {
     ).toBe("canonical_events_v1");
     expect(() =>
       executionDataPlaneModeForHost({
-        capabilities: { dataPlane: { version: "execution-host-data-plane.v1" } },
+        capabilities: {
+          dataPlane: { version: "execution-host-data-plane.v1" },
+        },
       } as never),
     ).toThrow("required canonical data plane");
   });

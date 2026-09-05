@@ -1,8 +1,8 @@
+import type { ScheduledLaunchDisambiguation } from "@/lib/scheduled-launches/types";
+
 import { Temporal } from "@js-temporal/polyfill";
 
 import { MaisterError } from "@/lib/errors-core";
-
-import type { ScheduledLaunchDisambiguation } from "@/lib/scheduled-launches/types";
 
 type ResolveScheduledLaunchTimeInput = {
   scheduledLocalTime: string;
@@ -15,10 +15,9 @@ function toZonedDateTime(
   timezone: string,
   disambiguation: "earlier" | "later",
 ): Temporal.ZonedDateTime {
-  return Temporal.ZonedDateTime.from(
-    `${scheduledLocalTime}[${timezone}]`,
-    { disambiguation },
-  );
+  return Temporal.ZonedDateTime.from(`${scheduledLocalTime}[${timezone}]`, {
+    disambiguation,
+  });
 }
 
 export type ScheduledLaunchTimeDescription = {

@@ -1,8 +1,9 @@
 import "server-only";
 
+import type { RuntimeObjectWithRun } from "@/lib/execution-host/runtime-objects";
+
 import { requireProjectAction } from "@/lib/authz";
 import { MaisterError } from "@/lib/errors";
-import type { RuntimeObjectWithRun } from "@/lib/execution-host/runtime-objects";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/authorization";
 
 export async function authorizeRuntimeObjectActor(

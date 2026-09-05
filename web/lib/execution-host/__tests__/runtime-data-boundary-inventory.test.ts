@@ -21,10 +21,13 @@ function sourceFiles(root: string): readonly string[] {
 
   while (pending.length > 0) {
     const directory = pending.pop();
-    if (!directory) throw new Error("source scan directory unexpectedly absent");
+
+    if (!directory)
+      throw new Error("source scan directory unexpectedly absent");
 
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const path = resolve(directory, entry.name);
+
       if (entry.isDirectory()) {
         if (entry.name !== "__tests__") pending.push(path);
       } else if (
@@ -49,7 +52,9 @@ function directFilesystemSources(): readonly string[] {
 
 function runtimePathConstructorSources(): readonly string[] {
   return SOURCE_ROOTS.flatMap(sourceFiles).filter((source) =>
-    RUNTIME_PATH_CONSTRUCTOR.test(readFileSync(resolve(WEB_DIR, source), "utf8")),
+    RUNTIME_PATH_CONSTRUCTOR.test(
+      readFileSync(resolve(WEB_DIR, source), "utf8"),
+    ),
   );
 }
 
@@ -76,9 +81,11 @@ describe("Stage B runtime-data boundary inventory", () => {
       runtimeDataBoundaryInventory.map(({ source }) => source),
     );
 
-    expect(runtimePathConstructorSources().every((source) => classifiedSources.has(source))).toBe(
-      true,
-    );
+    expect(
+      runtimePathConstructorSources().every((source) =>
+        classifiedSources.has(source),
+      ),
+    ).toBe(true);
   });
 
   it("keeps every legacy host-runtime reader on the Stage B removal path", () => {

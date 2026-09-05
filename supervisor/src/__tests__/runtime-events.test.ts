@@ -12,7 +12,10 @@ import {
 function fixture(name: string): unknown {
   return JSON.parse(
     readFileSync(
-      new URL(`../../../contracts/fixtures/runtime-events/${name}`, import.meta.url),
+      new URL(
+        `../../../contracts/fixtures/runtime-events/${name}`,
+        import.meta.url,
+      ),
       "utf8",
     ),
   ) as unknown;
@@ -41,8 +44,14 @@ describe("Stage B runtime event envelope", () => {
 
     expect(parsed.sequence).toBe("9007199254740993");
     expect(typeof parsed.sequence).toBe("string");
-    expect(RuntimeEventEnvelopeSchema.safeParse({ ...envelope, sequence: 1 }).success).toBe(false);
-    expect(RuntimeEventEnvelopeSchema.safeParse({ ...envelope, sequence: "01" }).success).toBe(false);
+    expect(
+      RuntimeEventEnvelopeSchema.safeParse({ ...envelope, sequence: 1 })
+        .success,
+    ).toBe(false);
+    expect(
+      RuntimeEventEnvelopeSchema.safeParse({ ...envelope, sequence: "01" })
+        .success,
+    ).toBe(false);
   });
 
   it("uses a deterministic UUIDv5 event identity", () => {
@@ -52,11 +61,13 @@ describe("Stage B runtime event envelope", () => {
         streamId: envelope.streamId,
         sequence: envelope.sequence,
       }),
-    ).toBe(deterministicRuntimeEventId({
-      hostKey: envelope.hostKey,
-      streamId: envelope.streamId,
-      sequence: envelope.sequence,
-    }));
+    ).toBe(
+      deterministicRuntimeEventId({
+        hostKey: envelope.hostKey,
+        streamId: envelope.streamId,
+        sequence: envelope.sequence,
+      }),
+    );
   });
 
   it("redacts paths and secret-bearing values before payload persistence", () => {
@@ -74,12 +85,25 @@ describe("Stage B runtime event envelope", () => {
       inputTokens: 12,
       safe: "retained",
     });
-    expect(Buffer.byteLength(JSON.stringify(envelope))).toBeLessThan(MAX_RUNTIME_EVENT_BYTES);
+    expect(Buffer.byteLength(JSON.stringify(envelope))).toBeLessThan(
+      MAX_RUNTIME_EVENT_BYTES,
+    );
   });
 
   it("shares strict wire conformance fixtures with the web boundary", () => {
-    expect(RuntimeEventEnvelopeSchema.safeParse(fixture("envelope.valid.json")).success).toBe(true);
-    expect(RuntimeEventEnvelopeSchema.safeParse(fixture("envelope.invalid-number-sequence.json")).success).toBe(false);
-    expect(RuntimeEventEnvelopeSchema.safeParse(fixture("envelope.invalid-unsafe-payload.json")).success).toBe(false);
+    expect(
+      RuntimeEventEnvelopeSchema.safeParse(fixture("envelope.valid.json"))
+        .success,
+    ).toBe(true);
+    expect(
+      RuntimeEventEnvelopeSchema.safeParse(
+        fixture("envelope.invalid-number-sequence.json"),
+      ).success,
+    ).toBe(false);
+    expect(
+      RuntimeEventEnvelopeSchema.safeParse(
+        fixture("envelope.invalid-unsafe-payload.json"),
+      ).success,
+    ).toBe(false);
   });
 });

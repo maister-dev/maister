@@ -62,9 +62,13 @@ describe("aif-dev flow.yaml — M12 declared-artifact contract", () => {
 
     expect(producesById(improve, "plan-document")?.kind).toBe("plan");
     expect(producesById(improve, "plan-review")?.kind).toBe("plan");
-    const planReview = (review?.settings as {
-      plan_review?: Record<string, unknown>;
-    } | undefined)?.plan_review;
+    const planReview = (
+      review?.settings as
+        | {
+            plan_review?: Record<string, unknown>;
+          }
+        | undefined
+    )?.plan_review;
 
     expect(planReview).toMatchObject({
       plan_document_artifact: "plan-document",
