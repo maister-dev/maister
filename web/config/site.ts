@@ -18,6 +18,6 @@ export const siteConfig = {
     { label: "Sign out", href: "/api/auth/signout" },
   ],
   links: {
-    github: "https://github.com/kanischev/mAIster",
+    github: "https://github.com/maister-dev/maister",
   },
 };

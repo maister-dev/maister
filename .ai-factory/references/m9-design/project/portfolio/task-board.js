@@ -271,7 +271,7 @@
 
   /* repo link */
   const repo = $('.repo[data-action="repo"]');
-  if (repo) repo.addEventListener('click', () => window.open('https://github.com/kanischev/mAIster', '_blank', 'noopener'));
+  if (repo) repo.addEventListener('click', () => window.open('https://github.com/maister-dev/maister', '_blank', 'noopener'));
 
   /* ── "as of" clock ──────────────────────────────────────── */
   const asofTime = $('#asof-time'), asof = $('#asof');

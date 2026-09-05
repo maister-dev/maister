@@ -13,7 +13,7 @@ deployments may not receive backports.
 
 ## Report a vulnerability
 
-Use [GitHub private vulnerability reporting](https://github.com/kanischev/mAIster/security/advisories/new)
+Use [GitHub private vulnerability reporting](https://github.com/maister-dev/maister/security/advisories/new)
 whenever it is available. Do not disclose vulnerability details in a public
 issue, discussion, pull request, commit message, or chat transcript.
 

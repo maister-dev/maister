@@ -25,4 +25,4 @@ First public release candidate.
 - Git history prepared for publication: private identifiers removed, authorship
   and topology preserved.
 
-[Unreleased]: https://github.com/kanischev/mAIster/commits/master
+[Unreleased]: https://github.com/maister-dev/maister/commits/master

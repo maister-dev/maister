@@ -1,4 +1,4 @@
-export const GITHUB_REPOSITORY = "kanischev/mAIster";
+export const GITHUB_REPOSITORY = "maister-dev/maister";
 export const GITHUB_URL = `https://github.com/${GITHUB_REPOSITORY}`;
 export const GITHUB_PROFILE = "kanischev";
 export const GITHUB_PROFILE_URL = `https://github.com/${GITHUB_PROFILE}`;

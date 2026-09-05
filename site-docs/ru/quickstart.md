@@ -20,7 +20,7 @@ description: "Запустите MAIster локально, войдите, по�
 ## 1. Установите MAIster
 
 ```bash
-git clone https://github.com/kanischev/mAIster.git
+git clone https://github.com/maister-dev/maister.git
 cd mAIster
 pnpm install --frozen-lockfile
 cp .env.example .env

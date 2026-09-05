@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Describe the user problem before the implementation. Open-ended product and architecture exploration is usually better suited to [Discussions](https://github.com/kanischev/mAIster/discussions).
+        Describe the user problem before the implementation. Open-ended product and architecture exploration is usually better suited to [Discussions](https://github.com/maister-dev/maister/discussions).
   - type: textarea
     id: problem
     attributes:

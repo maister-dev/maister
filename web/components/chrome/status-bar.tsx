@@ -51,7 +51,7 @@ export async function StatusBar({
       <div className="flex items-center gap-3.5">
         <Link
           className="inline-flex items-center gap-1.5 text-mute transition-colors hover:text-ink"
-          href="https://github.com/kanischev/mAIster/tree/master/docs"
+          href="https://github.com/maister-dev/maister/tree/master/docs"
           rel="noreferrer"
           target="_blank"
         >
@@ -60,7 +60,7 @@ export async function StatusBar({
         <span className="text-line">·</span>
         <a
           className="inline-flex items-center gap-1.5 text-mute transition-colors hover:text-ink"
-          href="https://github.com/kanischev/mAIster"
+          href="https://github.com/maister-dev/maister"
           rel="noreferrer"
           target="_blank"
         >

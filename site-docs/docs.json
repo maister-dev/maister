@@ -38,7 +38,7 @@
   "navbar": {
     "primary": {
       "type": "github",
-      "href": "https://github.com/kanischev/mAIster"
+      "href": "https://github.com/maister-dev/maister"
     }
   },
   "contextual": {
@@ -217,7 +217,7 @@
   },
   "footer": {
     "socials": {
-      "github": "https://github.com/kanischev/mAIster"
+      "github": "https://github.com/maister-dev/maister"
     }
   }
 }

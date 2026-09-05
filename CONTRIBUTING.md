@@ -10,8 +10,8 @@ not through an issue, discussion, or pull request.
 
 ## Before opening an issue
 
-1. Search [existing issues](https://github.com/kanischev/mAIster/issues) and
-   [discussions](https://github.com/kanischev/mAIster/discussions).
+1. Search [existing issues](https://github.com/maister-dev/maister/issues) and
+   [discussions](https://github.com/maister-dev/maister/discussions).
 2. Check the [public documentation](https://docs.imaister.dev) and the
    [engineering docs](docs/).
 3. Reduce bug reports to the smallest reproducible case and remove source code,
@@ -26,7 +26,7 @@ MAIster is a pnpm monorepo. It requires Node 24, pnpm, Git, Docker, PostgreSQL
 16, and a supported Agent Client Protocol (ACP) adapter for live agent runs.
 
 ```bash
-git clone https://github.com/kanischev/mAIster.git
+git clone https://github.com/maister-dev/maister.git
 cd mAIster
 pnpm install --frozen-lockfile
 cp .env.example .env

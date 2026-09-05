@@ -7,7 +7,7 @@ body:
       value: |
         Thanks for helping improve MAIster. Search existing issues first.
 
-        Do not include secrets, private source code, personal data, machine-specific paths, or unredacted logs. Report security vulnerabilities through [GitHub private vulnerability reporting](https://github.com/kanischev/mAIster/security/advisories/new), not this form.
+        Do not include secrets, private source code, personal data, machine-specific paths, or unredacted logs. Report security vulnerabilities through [GitHub private vulnerability reporting](https://github.com/maister-dev/maister/security/advisories/new), not this form.
   - type: input
     id: version
     attributes:

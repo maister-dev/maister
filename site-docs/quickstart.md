@@ -20,7 +20,7 @@ adapters and operate on local git repositories.
 ## 1. Install
 
 ```bash
-git clone https://github.com/kanischev/mAIster.git
+git clone https://github.com/maister-dev/maister.git
 cd mAIster
 pnpm install --frozen-lockfile
 cp .env.example .env

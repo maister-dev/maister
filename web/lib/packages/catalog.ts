@@ -654,7 +654,7 @@ export function discoveryStaleHours(
 // monorepo like maister-plugins is ONE source — discovery scans packages/*
 // inside it and surfaces every package it ships.
 export const DEFAULT_PACKAGE_SOURCE_URLS = [
-  "https://github.com/kanischev/maister-plugins",
+  "https://github.com/maister-dev/maister-plugins",
 ];
 
 const sourceUrlSchema = z.string().min(1).max(512);

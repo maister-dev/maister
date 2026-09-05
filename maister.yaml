@@ -12,7 +12,7 @@ project:
   default_runner: claude-code
 packages:
   - id: aif
-    source: https://github.com/kanischev/maister-plugins
+    source: https://github.com/maister-dev/maister-plugins
     version: aif/v2.5.0
     path: packages/aif
 flows: []

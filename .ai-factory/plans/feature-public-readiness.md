@@ -100,7 +100,7 @@ policy directs sensitive reports to a public issue.
       risk, and material AI assistance.
 
 Acceptance: every YAML form parses and every repository URL targets
-`kanischev/mAIster`.
+`maister-dev/maister`.
 
 ### T5. Connect public surfaces and update the repository map
 

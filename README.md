@@ -59,7 +59,7 @@ Authenticate the coding agent on the supervisor host and register a Ready ACP
 runner before launching a Run. See [Getting Started](docs/getting-started.md).
 
 ```bash
-git clone https://github.com/kanischev/mAIster.git
+git clone https://github.com/maister-dev/maister.git
 cd mAIster
 pnpm install --frozen-lockfile
 
