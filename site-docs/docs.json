@@ -29,7 +29,7 @@
   "icons": {
     "library": "lucide"
   },
-  "favicon": "/assets/favicon.svg",
+  "favicon": "/assets/favicon.png",
   "logo": {
     "light": "/assets/logo-light.svg",
     "dark": "/assets/logo-dark.svg",
