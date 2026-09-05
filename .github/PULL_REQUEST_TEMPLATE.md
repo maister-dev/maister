@@ -34,4 +34,4 @@ command — result
 - [ ] EN and RU content are updated together when applicable.
 - [ ] No secrets, private source, prompts, personal data, or machine-specific paths are included.
 - [ ] Material AI assistance is disclosed and the contribution was human-verified.
-- [ ] I agree to follow the [Code of Conduct](https://github.com/kanischev/mAIster/blob/main/CODE_OF_CONDUCT.md).
+- [ ] I agree to follow the [Code of Conduct](https://github.com/kanischev/mAIster/blob/master/CODE_OF_CONDUCT.md).

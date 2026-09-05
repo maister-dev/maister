@@ -91,7 +91,7 @@ complete; do not duplicate it here).
 | ---- | ---------------- |
 | [`plans/`](plans/README.md) | Dated design docs that fed implementation. Historical records with mandatory kept-current `Status` headers; index in `plans/README.md`. |
 | [`pv/`](pv/) | Product-vision working docs (roadmap rationale, feature briefs). Each carries a status banner; `improvement-roadmap.md` is fully historical. |
-| [`spikes/`](spikes/) | Dated spike reports (plus `kaa-maister-m8-spike-findings-20260529.md` at the docs root, kept for its measurements). |
+| [`spikes/`](spikes/) | Dated spike reports, including `2026-05-29-m8-spike-findings.md` (kept for its measurements). |
 | [`superpowers/`](superpowers/) | Brainstorm→spec→plan outputs of the superpowers workflow; all shipped, headers current. |
 | [`ru/`](ru/README.md) | Russian operator/user documentation (separate audience product per R8; EN docs stay canonical for architecture/API). |
 

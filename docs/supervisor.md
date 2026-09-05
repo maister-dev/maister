@@ -569,7 +569,7 @@ calls this endpoint, which:
    agent observes `{outcome:"cancelled"}` at the ACP layer and records
    the cancellation in its own session JSONL store so a future
    `session/resume <acpSessionId>` can replay the request. See
-   [`kaa-maister-m8-spike-findings-20260529.md`](kaa-maister-m8-spike-findings-20260529.md)
+   [`spikes/2026-05-29-m8-spike-findings.md`](spikes/2026-05-29-m8-spike-findings.md)
    for the verified-via-mock-adapter contract.
 2. Marks the session intentional with reason `"checkpoint"`. Heartbeat
    reads this on the child exit and emits

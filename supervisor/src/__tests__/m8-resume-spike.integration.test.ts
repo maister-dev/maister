@@ -8,7 +8,7 @@
 // process that resumes via the ACP `session/resume` call (reusing the prior
 // acpSessionId), NOT a `--resume` CLI flag.
 //
-// Findings doc: docs/kaa-maister-m8-spike-findings-20260529.md
+// Findings doc: docs/spikes/2026-05-29-m8-spike-findings.md
 import type { ChildProcess } from "node:child_process";
 import type { SessionEvent } from "../types";
 

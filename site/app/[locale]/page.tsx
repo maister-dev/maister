@@ -123,20 +123,20 @@ export default async function LandingPage({ params }: PageProps): Promise<ReactE
       links: [
         { href: GITHUB_URL, label: `${content.footer.project.source} ↗` },
         {
-          href: `${GITHUB_URL}/blob/main/CONTRIBUTING.md`,
+          href: `${GITHUB_URL}/blob/master/CONTRIBUTING.md`,
           label: content.footer.project.contributing,
         },
         { href: `${GITHUB_URL}/issues`, label: content.footer.project.issues },
         { href: `${GITHUB_URL}/discussions`, label: content.footer.project.discussions },
         {
-          href: `${GITHUB_URL}/blob/main/SECURITY.md`,
+          href: `${GITHUB_URL}/blob/master/SECURITY.md`,
           label: content.footer.project.security,
         },
         {
-          href: `${GITHUB_URL}/blob/main/CODE_OF_CONDUCT.md`,
+          href: `${GITHUB_URL}/blob/master/CODE_OF_CONDUCT.md`,
           label: content.footer.project.conduct,
         },
-        { href: `${GITHUB_URL}/blob/main/LICENSE`, label: content.footer.project.license },
+        { href: `${GITHUB_URL}/blob/master/LICENSE`, label: content.footer.project.license },
       ],
       title: content.footer.project.title,
     },
