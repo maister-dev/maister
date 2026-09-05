@@ -40,7 +40,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => ({
     // the DB on every refresh so a demoted/disabled user loses authority and a
     // changed password clears the gate without waiting for the 30-day token to
     // expire. A vanished user invalidates the session (return null → sign-out).
-    // This never runs on the edge (middleware uses authConfig's no-DB variant).
+    // This never runs in the proxy (proxy.ts uses authConfig's no-DB variant).
     jwt: async ({ token, user }) => {
       if (user) {
         const u = user as {

@@ -5,8 +5,8 @@ const THIRTY_DAYS_SECONDS = 60 * 60 * 24 * 30;
 
 /**
  * Edge-safe Auth.js config shared by the Node `auth.ts` (which adds the
- * Drizzle adapter + Credentials provider) and the edge `middleware.ts`.
- * Contains no DB/bcrypt imports so it can run in the middleware runtime.
+ * Drizzle adapter + Credentials provider) and the request `proxy.ts`.
+ * Contains no DB/bcrypt imports so it can run in the proxy runtime.
  */
 export const authConfig = {
   trustHost: true,

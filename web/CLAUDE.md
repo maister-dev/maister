@@ -55,7 +55,7 @@ Two-file edge/Node split:
 
 - `auth.config.ts` — edge-safe (no DB). `jwt` / `session` callbacks seed
   `id` / `role` / `mustChangePassword` from `user` at sign-in, plus
-  `trustHost: true`. Imported by `middleware.ts` (which builds
+  `trustHost: true`. Imported by `proxy.ts` (which builds
   `NextAuth(authConfig)`).
 - `auth.ts` — Node.js runtime only. `@auth/drizzle-adapter` + the
   `CredentialsProvider` (email + password, bcrypt), and a DB-backed `jwt`
@@ -63,7 +63,7 @@ Two-file edge/Node split:
   refresh and **returns `null` (signs the user out) if the user row is gone**.
   Re-exports `auth`, `signIn`, `signOut`, `handlers`.
 
-`web/middleware.ts` protects all `(app)` route-group pages. Unauthenticated
+`web/proxy.ts` protects all `(app)` route-group pages. Unauthenticated
 requests redirect to `/login`. API routes under `app/api/` call
 `requireSession()` / `requireProjectAction()` from `lib/authz.ts` directly
 to return machine-readable JSON errors.
@@ -122,7 +122,7 @@ authorization on the cached `session.user.role`.
 app/
   (auth)/          # Public: /login — no session required.
     login/
-  (app)/           # Protected: session required (middleware redirect).
+  (app)/           # Protected: session required (proxy redirect).
     page.tsx        # Portfolio home (/)
     projects/
       page.tsx      # Project list (/projects)
