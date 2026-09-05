@@ -31,6 +31,9 @@
 #
 # Only Postgres runs in Docker. The web tier and the supervisor run on this
 # host because they spawn coding-agent CLIs and operate on local git repos.
+# Linux and macOS only: Flows run CLI steps through bash, package installs
+# create symlinks, and the supervisor parses colon-separated roots. On Windows
+# run this inside WSL2 (Ubuntu) with Docker Desktop's WSL integration.
 # Everything lives in functions and `main` is the last line, so a download that
 # is cut short executes nothing.
 
@@ -61,6 +64,15 @@ die()  { printf '%s  xx%s  %s\n' "$RED" "$RESET" "$*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
 trap 'printf "\n%s  quickstart stopped.%s Fix the error above and run it again; every step is safe to repeat.\n" "$RED" "$RESET" >&2' ERR
+
+check_platform() {
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+      die "MAIster runs on Linux and macOS. On Windows, install WSL2 (Ubuntu), enable Docker Desktop's WSL integration, and run this same command inside the WSL shell."
+      ;;
+  esac
+  ok "$(uname -s) $(uname -m)"
+}
 
 check_git() {
   have git || die "git is required: https://git-scm.com/downloads"
@@ -258,6 +270,7 @@ EOF
 
 main() {
   step "Checking prerequisites"
+  check_platform
   check_git
   check_node
   check_pnpm

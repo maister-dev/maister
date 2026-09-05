@@ -17,6 +17,10 @@ two long-running Node processes:
 
 ## Prerequisites
 
+- **Linux or macOS.** On Windows use WSL2 (Ubuntu) with Docker Desktop's WSL
+  integration: `cli` nodes and requirement probes run through `bash`, Flow
+  and capability installs create symlinks, and `MAISTER_WORKSPACE_ROOTS` is
+  colon-separated, so a native Windows host is not supported.
 - **Node 24** (per the locked container target — `nvm use 24` if you use nvm)
 - **pnpm 11** (package manager — `npm install -g pnpm` if missing)
 - **git** with `git worktree` support (any modern version)

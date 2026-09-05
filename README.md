@@ -55,7 +55,9 @@ agent runtimes.
 Prerequisites: Node 24, pnpm, Git, Docker with Compose, and a coding agent
 signed in on this host (Claude Code, Codex, Gemini CLI, OpenCode, or MiMo).
 Only Postgres runs in Docker; the web tier and the supervisor run on the host
-because they spawn agent CLIs and work on local git repositories.
+because they spawn agent CLIs and work on local git repositories. Linux and
+macOS are supported; on Windows run everything inside WSL2 with Docker
+Desktop's WSL integration.
 
 One command clones the repository, installs dependencies, writes the env files
 with a generated `AUTH_SECRET`, starts Postgres, applies the migrations, and

@@ -16,6 +16,9 @@ adapters and operate on local git repositories.
 - A local git repository to manage
 - At least one coding agent to run on the supervisor host: Codex, Claude Code,
   OpenCode, Gemini CLI, or MiMo
+- Linux or macOS. On Windows, run every step inside WSL2 (Ubuntu) with Docker
+  Desktop's WSL integration enabled; Flows run CLI steps through bash and
+  package installs create symlinks, so a native Windows install is not supported
 
 ## 1. Install
 
