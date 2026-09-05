@@ -10,11 +10,11 @@ type TourVariant = `${Locale}-${TourTheme}`;
 // through the order in `tourImageSrc`, so a locale or theme without its own
 // capture still shows a real screen.
 const AVAILABLE_VARIANTS: Record<TourShotId, ReadonlyArray<TourVariant>> = {
-  portfolio: ["ru-light"],
-  board: ["ru-light"],
-  run: ["ru-light"],
-  inbox: ["ru-light"],
-  review: ["ru-light"],
+  portfolio: ["en-light", "en-dark", "ru-light", "ru-dark"],
+  board: ["en-light", "en-dark", "ru-light", "ru-dark"],
+  run: ["en-light", "en-dark", "ru-light", "ru-dark"],
+  inbox: ["en-light", "en-dark", "ru-light", "ru-dark"],
+  review: ["en-light", "en-dark", "ru-light", "ru-dark"],
 };
 
 export const TOUR_IMAGE_WIDTH = 1600;
