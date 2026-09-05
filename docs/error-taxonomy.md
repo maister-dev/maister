@@ -580,12 +580,16 @@ Stage B remains within the closed `MaisterError` union. Supervisor protocol
 refusals use `PRECONDITION` (invalid input), `CONFLICT` (foreign/stale stream
 or epoch), `ACP_PROTOCOL` (integrity disagreement), or
 `EXECUTOR_UNAVAILABLE` (backpressure/unreachable host). The stable
-`details.reason` values are `invalid_event_sequence`, `replay_floor_lost`,
+`details.reason` values include `invalid_event_sequence`, `replay_floor_lost`,
 `stream_identity_conflict`, `ack_not_contiguous`, `ack_beyond_emitted`,
-`unsupported_event_schema`, `event_redaction_failed`,
+`event_sequence_invalid`, `event_identity_conflict`, `event_stream_mismatch`,
+`event_schema_invalid`, `stale_assignment_epoch`, `event_redaction_failed`,
 `event_payload_oversize`, `event_outbox_backpressure`,
-`runtime_object_missing`, `runtime_object_range_invalid`, and
-`runtime_object_integrity_mismatch`. Error details contain only safe IDs,
+`data_plane_unsupported`, `command_invariant_conflict`,
+`runtime_object_not_found`, `runtime_object_missing`,
+`runtime_object_range_invalid`, `runtime_object_integrity_mismatch`,
+`runtime_object_too_large`, `runtime_object_delete_failed`, and
+`runtime_object_transport_unsupported`. Error details contain only safe IDs,
 sequence, byte count, limit, and remediation token — never event payload,
 prompt, object bytes, filesystem path, credentials, or environment values.
 

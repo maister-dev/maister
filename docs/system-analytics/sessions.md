@@ -19,11 +19,12 @@ machine ([runs.md](runs.md)), generic graph traversal
 ([consensus.md](consensus.md)), or crash reconciliation
 ([reconciliation-gc.md](reconciliation-gc.md)).
 
-**Stage B transition (Designed):** `run_sessions` stays the logical-session
-authority while host session identity becomes an immutable canonical
-incarnation and prompt completion moves to [execution-prompt-lifecycle.md](execution-prompt-lifecycle.md).
-`run.events.jsonl` and `cost.jsonl` references below describe legacy-mode
-as-built behavior, not the canonical-mode data plane.
+**Stage B data plane (Implemented):** `run_sessions` remains logical-session
+authority; `run_session_incarnations` records immutable fenced host-session
+identity, and prompt completion follows
+[execution-prompt-lifecycle.md](execution-prompt-lifecycle.md). Canonical
+events and usage facts live in Postgres. Host logs and runtime bytes are
+private opaque objects and are not session authority.
 
 ## Domain entities
 
@@ -182,8 +183,8 @@ flowchart LR
   NOT persist.
 - `judge` MUST be an ordinary runner-bearing node resolved through its session
   runner; `judge.settings.model` MUST NOT exist (removed clean-cutover).
-- `POST /sessions` MUST carry `sessionName` so `cost.jsonl` and `run.events.jsonl`
-  are attributable per logical session.
+- `POST /sessions` MUST carry `sessionName` so canonical usage and execution
+  events are attributable to the correct logical session/incarnation.
 - A terminal or abandon transition MUST close EVERY `run_sessions` live process and
   cancel its deferreds in the same status-guarded transaction; HITL/gate
   live-delivery MUST target the ACTIVE session's `acp_session_id`.
@@ -205,7 +206,7 @@ flowchart LR
 - **Soft model/provider mismatch** — a slot with the required capability but a
   different model variant and/or provider kind launches on the ranked fallback,
   persists one warning in `run_sessions.resolution_warning`, and mirrors it to
-  `run.events.jsonl`.
+  the canonical execution event stream.
 - **Adapter without resume on switch** — a session switch targeting an adapter that
   does not advertise `sessionCapabilities.resume` fails loud
   (`MaisterError("CHECKPOINT")`), never silently `session/new`.

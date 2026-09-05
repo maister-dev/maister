@@ -64,7 +64,7 @@ ordering semantics.
 - **EVT-02:** The host commits each validated redacted event to SQLite before publication or terminal acknowledgement.
 - **EVT-03:** At-least-once delivery creates one canonical event and conflicting ID or stream-position reuse is a typed protocol failure.
 - **EVT-04:** Host order is `(streamId, sequence)` and run order is manager-allocated `runSequence`, never occurrence timestamp.
-- **EVT-05:** A stale assignment epoch remains ACKable audit evidence but has no current-run sequence or state mutation.
+- **EVT-05:** A stale assignment epoch remains ACKable audit evidence but ordinarily has no current-run sequence or state mutation. Only an exact late terminal `session.command` match may receive ordering and settle its already-accepted historical command row; it cannot mutate current run/session, cost, artifact, HITL, or prompt-owner state.
 - **EVT-06:** A persisted gap blocks ACK/projection past the contiguous prefix and replays or fails explicitly at the replay floor.
 - **EVT-07:** Host and manager restarts resume from durable outbox/watermark state, and lost ACKs cause harmless replay.
 - **EVT-08:** Only negotiated type/schema pairs persist after deterministic redaction, and unsafe raw payloads are neither stored nor logged.
@@ -81,6 +81,7 @@ ordering semantics.
 - **EDGE-EVT-04:** An ACK for a replaced stream fails with `event_stream_mismatch` (`IT-EVT-07-ACK-RACE`).
 - **EDGE-EVT-05:** Invalid decimal sequences fail with `invalid_event_sequence`; valid skew is metadata and increments a metric (`CT-EVT-05`).
 - **EDGE-EVT-06:** Unknown schema or redaction failure retains only bounded spine/error metadata (`CT-EVT-08`, `IT-EVT-08-QUARANTINE`).
+- **EDGE-EVT-07:** Release or checkpoint may race terminal publication; the manager accepts the late event only when all durable command and fence fields match, and continues to quarantine an unrelated stale event (`IT-EVT-05`).
 
 ## Linked artifacts
 

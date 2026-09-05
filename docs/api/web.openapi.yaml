@@ -71,11 +71,11 @@ info:
       the runner's resume-from-existing-input branch picks it up. Requires
       project membership at `member` or above (`answerHitl`).
     - `GET /api/runs/{runId}/stream` (Stage B, ADR-167) — Server-Sent Events
-      bridge. A canonical-mode run reads manager-owned PostgreSQL events; a
-      frozen legacy-mode run retains its bounded JSONL compatibility reader
-      until the B4 drain. Reconnect uses exclusive `Last-Event-ID`; the browser
+      bridge over manager-owned PostgreSQL events. Reconnect uses exclusive
+      `Last-Event-ID`; the browser
       never sees host paths, prompt content, secrets, or raw object bytes.
-      Requires project membership at `viewer` or above (`readBoard`).
+      Project runs require `viewer`; projectless assistant runs require the
+      authenticated creator derived from the run row.
     - `GET /api/runs/{runId}/runtime-objects/{objectId}` and `/content`
       (Stage B, ADR-167) — manager-catalogued opaque runtime-object metadata
       and bounded bytes. URL values select only the run/object IDs; the server
@@ -5904,10 +5904,9 @@ paths:
         Requires the `readRepoFiles` action (project `member` — strictly above
         `readBoard`/viewer): a transcript exposes tool outputs / file contents a
         viewer must not see (mirrors the workbench file-content gate). For a
-        `canonical_events_v1` run it projects ordered manager-owned
-        `execution_events` into `run_messages`; the JSONL reconcile-on-read
-        path is restricted to an immutable `legacy_file_v1` run until B4. It
-        returns the LATEST attempt of the `?node=` node as ordered
+        run it projects ordered manager-owned `execution_events` into
+        `run_messages`; no route handler reads a host transcript or event file.
+        It returns the LATEST attempt of the `?node=` node as ordered
         `TranscriptMessage` rows plus the node's latest usage. `?node=`
         is server-state validated against the run's compiled flow graph — an
         unknown node is a `409` PRECONDITION. No internal handles (e.g.
@@ -6140,9 +6139,9 @@ paths:
       tags: [runs]
       summary: Stage B — read authorized opaque runtime-object metadata
       description: |
-        Requires `readBoard` on the project derived from the manager catalogue.
-        `runId` and `objectId` are URL-selected only; host, assignment, and
-        private storage location are derived server-side and never returned.
+        `runId` and `objectId` are URL-selected only. Project authorization or
+        projectless creator ownership, plus host, assignment, and private
+        storage location, are derived server-side and never returned.
       operationId: getRunRuntimeObject
       parameters:
         - name: runId
@@ -6168,10 +6167,11 @@ paths:
       tags: [runs]
       summary: Stage B — read authorized bounded runtime-object bytes
       description: |
-        Requires `readBoard` on the project derived from the manager catalogue.
-        The host is selected from the catalogue, never a URL or request-body
-        value. A full response is bounded to 8 MiB; larger objects require one
-        valid inclusive byte range. Response headers include `Content-Digest`.
+        Project runs require `readBoard`; projectless assistant runs require the
+        authenticated creator. The host is selected from the catalogue, never
+        a URL or request-body value. A full response is bounded to 8 MiB; larger
+        objects require one valid inclusive byte range. Response headers include
+        `Content-Digest`.
       operationId: getRunRuntimeObjectContent
       parameters:
         - name: runId
@@ -10051,19 +10051,18 @@ paths:
         (`requireProjectRole(run.projectId, "viewer")`). The `projectId`
         is derived from the run row, never from the query string.
 
-        Server-Sent Events bridge. The immutable per-run data-plane mode
-        selects its source: canonical runs query manager-owned PostgreSQL
-        event records and use an in-process wake only as a latency hint;
-        drained legacy runs retain their bounded JSONL replay reader until B4.
-        The browser never reads a supervisor path or live supervisor state.
+        Server-Sent Events bridge over manager-owned PostgreSQL event records.
+        An in-process wake is only a latency hint. The browser never reads a
+        supervisor path, a runtime event file, or live supervisor state.
 
         Use the standard SSE `Last-Event-ID` header (or `?lastEventId=N`
         query string fallback) to resume after disconnect. Terminal
         states (`Done`, `Abandoned`, `Failed`, `Crashed`) close the
         stream cleanly after draining trailing events.
 
-        Event shape is the supervisor's `SessionEvent` union. See the
-        AsyncAPI doc at `async/web-runs.asyncapi.yaml`.
+        Canonical frames contain only `type`, `eventId`, `runSequence`,
+        `occurredAt`, and `hostSessionId`; they do not expose the host payload.
+        See `async/web-runs.asyncapi.yaml`.
       operationId: streamRunEvents
       parameters:
         - name: runId
@@ -19868,7 +19867,7 @@ components:
         objectId: { type: string, format: uuid }
         kind:
           type: string
-          enum: [session_log, raw_transcript, cost_diagnostic, checkpoint, attachment, capability_profile, agent_memory_snapshot, node_result, evidence, generated_artifact, plan_review, diagnostic]
+          enum: [session_log, raw_transcript, cost_diagnostic, checkpoint, attachment, capability_profile, capability_instructions, agent_memory_snapshot, node_result, evidence, generated_artifact, plan_review, diagnostic]
         logicalName: { type: string, maxLength: 255 }
         mimeType: { type: string, maxLength: 255 }
         sizeBytes: { type: string, nullable: true, pattern: "^[0-9]+$" }

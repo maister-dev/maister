@@ -435,9 +435,10 @@ The supervisor is addressed as a registered execution host
 transport configuration read at call time by the local-direct transport,
 never stored. The HTTP+SSE wire is described in
 [`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml); a supervisor on
-a different host is NOT supported in the current target (the two processes
-share the filesystem — see ADR-023 and ADR-166 §D12 for the deferred
-stages).
+a different host is NOT supported in the current target because repository and
+worktree ownership remains local (Stage C). This is separate from Stage B's
+completed runtime-data cut: web does not read the supervisor's outbox, logs,
+or runtime-object files (ADR-167).
 
 ## Typed Plan-review artifact boundary (Implemented — ADR-137)
 

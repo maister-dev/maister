@@ -81,8 +81,9 @@
 
 ## SSE / Logging
 
-- Supervisor emits structured session events with monotonic ids and also
-  writes raw step logs. Web run SSE tails durable `run.events.jsonl`.
+- Supervisor commits structured session events with monotonic host sequence
+  to its private outbox and may write raw host logs. Web run SSE replays the
+  canonical Postgres run sequence and never tails host files.
 - Eslint rule `no-console: warn` is enforced. Use a logger boundary; do not
   ship `console.log` in committed code.
 

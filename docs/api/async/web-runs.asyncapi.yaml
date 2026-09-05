@@ -1,68 +1,23 @@
 asyncapi: 2.6.0
 info:
-  title: MAIster Web — per-run SSE bridge
-  version: "0.9.0"
+  title: MAIster Web — canonical per-run SSE
+  version: "1.0.0"
   description: |
-    Server-Sent Events delivered by the Next.js web tier's
-    `GET /api/runs/{runId}/stream` endpoint (described in
-    `../web.openapi.yaml`).
+    Browser-safe run notifications delivered by
+    `GET /api/runs/{runId}/stream`.
 
-    Each run replays manager-owned PostgreSQL `execution_events` by the run
-    sequence; a local in-process wake is only a latency hint. The web tier
-    never reads an execution-host runtime path for browser replay.
+    The web tier replays manager-owned PostgreSQL `execution_events` in strict,
+    exclusive `runSequence` order. A local wake signal reduces latency only;
+    reconnect and correctness depend solely on the durable database sequence.
+    Every canonical frame has `id: <runSequence>` and a sanitized metadata
+    payload. Host payloads, prompts, content, credentials, environment values,
+    and filesystem paths are never forwarded to the browser. Transcript, cost,
+    lifecycle, and artifact content are read from their manager-owned projections
+    or authorized runtime-object routes.
 
-    Canonical events are projected into user-safe browser messages plus
-    web-only synthetic/advisory events. `run.runner_resolution_warning` is appended by the web tier after
-    launch commit when a Flow runner slot launches on a same-capability runner
-    with a soft model/provider mismatch; the persisted `run_sessions` warning is
-    the source of truth and the event is the timeline mirror. A `session.update`
-    may carry a supervisor-synthesized
-    `model_advisory` informational payload (ADR-076, see
-    `supervisor-sse.asyncapi.yaml#ModelAdvisoryUpdate`); the bridge forwards it
-    unchanged and unknown-`sessionUpdate` consumers ignore it.
-
-    Differences from `supervisor-sse.asyncapi.yaml`:
-
-    - Replay is exclusive `runSequence` ordering from the manager database and
-      is restart-safe.
-    - Terminal close is driven by the `runs.status` row in Postgres
-      (`Done | Abandoned | Failed | Crashed`), not by the supervisor's
-      session-terminal signal. The bridge drains any trailing events
-      after the terminal status is detected, then closes.
-    - **(M37 — Implemented, ADR-098)** `WaitingOnChildren` joins the
-      `runs.status` union as a NON-terminal orchestrator state: the stream
-      stays OPEN across it (the parked orchestrator idle-checkpoints while
-      its child runs execute and is resumed by a child-terminal domain
-      event). It is NOT a terminal-close trigger — only
-      `Done | Abandoned | Failed | Crashed` close the stream.
-    - Reconnect via `Last-Event-ID` (or `?lastEventId=` fallback) works
-      across step boundaries and across web-tier restarts.
-
-    Consumers SHOULD treat canonical event metadata as authoritative for
-    canonical runs. The browser envelope intentionally excludes raw host event
-    payloads, paths, prompts, content, credentials, and environment values.
-    Use manager read models for transcript, cost, and artifact content.
-
-    Scratch runs reuse this same browser route as an invalidation/replay
-    signal. The stream still emits only durable session events and the
-    synthetic timeout event below; scratch-specific dialog state is read from
-    `GET /api/scratch-runs/{runId}` after an SSE wake-up. v1 does not add a
-    second browser SSE endpoint and does not emit scratch-specific SSE payloads.
-
-    **(Implemented — capability composer, FR-A):** the `session.update` carrying
-    ACP `available_commands_update` is now captured (latest-wins) instead of
-    discarded and surfaced to the running-scratch composer via
-    `GET /api/scratch-runs/{runId}/commands` (scratch-only). **Launch progress
-    (FR-F1/F2) does NOT travel on this run stream** — the run row + this stream
-    do not exist until the launch finishes. Staged launch progress streams on
-    the launch request's OWN `text/event-stream` response
-    (`POST /api/scratch-runs`, sub-plan 2026-06-17, Option 2); see
-    `web.openapi.yaml`.
-
-    **ADR-137 (Implemented):** Plan-review lifecycle invalidation continues to use
-    this single per-run stream. Clients refetch the run HITL projection after a
-    durable decision transition; no second EventSource or plan-content event is
-    introduced.
+    `session.stream_ready` and `session.stream_timeout` are synthetic web-tier
+    messages. They have no SSE `id` and never advance a durable replay cursor.
+    New work has no legacy file-backed stream branch.
   contact:
     name: MAIster maintainers
     url: https://github.com/your-org/mAIster
@@ -73,12 +28,12 @@ servers:
   local:
     url: http://localhost:3000
     protocol: http
-    description: Local Next.js dev server.
+    description: Local Next.js server.
 channels:
   /api/runs/{runId}/stream:
     parameters:
       runId:
-        description: Run id (UUID v4).
+        description: URL-selected run UUID. Its project or private owner is derived server-side.
         schema:
           type: string
           format: uuid
@@ -86,199 +41,95 @@ channels:
       http:
         type: response
         method: GET
-        headers:
-          Content-Type:
-            type: string
-            const: text/event-stream
     subscribe:
       operationId: subscribeRunEvents
-      summary: Stream of run-scoped session events
+      summary: Replay and follow browser-safe canonical run notifications
       description: |
-        Client connects via `GET /api/runs/{runId}/stream`. The immutable run
-        mode selects canonical manager replay or the bounded legacy reader.
-        Every durable SSE frame uses `id: <runSequence-or-monotonicId>` and no
-        custom `event:` field. Canonical data is `BrowserCanonicalRunEvent`;
-        legacy data uses the historical session union. Synthetic timeout events
-        have no `id` because they are not replay cursors.
+        Authentication is principal-derived. Project runs require the viewer
+        role on the project derived from the run row. Projectless local-package
+        assistant runs are restricted to their server-derived creator.
+
+        Replay is exclusive of `Last-Event-ID` or the `lastEventId` query
+        fallback. Invalid, negative, leading-zero, or overlong cursors return
+        HTTP 400 before streaming. A default connection replays from sequence
+        zero. `?replay=false` begins at the current durable tail and first emits
+        `session.stream_ready`. Terminal database run states close the stream
+        after already-readable canonical rows are emitted.
       message:
         oneOf:
           - $ref: "#/components/messages/CanonicalRunEvent"
-          - $ref: "#/components/messages/SessionLine"
-          - $ref: "#/components/messages/SessionUpdate"
-          - $ref: "#/components/messages/SessionPermissionRequest"
-          - $ref: "#/components/messages/SessionExited"
-          - $ref: "#/components/messages/SessionCrashed"
+          - $ref: "#/components/messages/SessionStreamReady"
           - $ref: "#/components/messages/SessionStreamTimeout"
-          - $ref: "#/components/messages/SessionChatTurn"
-          - $ref: "#/components/messages/SessionHookTrip"
-          - $ref: "#/components/messages/RunNeedsInput"
-          - $ref: "#/components/messages/RunRunnerResolutionWarning"
-          - $ref: "#/components/messages/SessionCommand"
 components:
   messages:
     CanonicalRunEvent:
       name: canonical.run.event
       title: Manager-owned canonical run event metadata
       contentType: application/json
-      payload: { $ref: "#/components/schemas/BrowserCanonicalRunEvent" }
-    SessionLine:
-      name: session.line
-      title: Child stdout line
+      payload:
+        $ref: "#/components/schemas/BrowserCanonicalRunEvent"
+    SessionStreamReady:
+      name: session.stream_ready
+      title: Synthetic live-tail readiness signal
       contentType: application/json
-      payload: { $ref: "#/components/schemas/EventBase" }
-    SessionUpdate:
-      name: session.update
-      title: ACP session/update parameter
-      summary: |
-        (Designed — capability composer, FR-A1…A3) The `available_commands_update`
-        sub-kind is now captured (latest-wins per session) instead of discarded;
-        its snapshot is surfaced scratch-only via
-        `GET /api/scratch-runs/{runId}/commands` as `[{ name, description, hint? }]`.
-        Reconnect via `Last-Event-ID` is unaffected; unknown-`sessionUpdate`
-        consumers still ignore it.
-      contentType: application/json
-      payload: { $ref: "#/components/schemas/EventBase" }
-    SessionPermissionRequest:
-      name: session.permission_request
-      title: Pending ACP permission request awaiting HITL decision
-      contentType: application/json
-      payload: { $ref: "#/components/schemas/EventBase" }
-    SessionExited:
-      name: session.exited
-      title: Session terminated cleanly
-      contentType: application/json
-      payload: { $ref: "#/components/schemas/EventBase" }
-    SessionCrashed:
-      name: session.crashed
-      title: Session terminated abnormally
-      contentType: application/json
-      payload: { $ref: "#/components/schemas/EventBase" }
+      payload:
+        $ref: "#/components/schemas/SessionStreamReadyEvent"
     SessionStreamTimeout:
       name: session.stream_timeout
-      title: Synthetic web-side keep-alive timeout
-      summary: |
-        Emitted by the web bridge (not the supervisor) when no events
-        have been observed within `MAISTER_KEEPALIVE_MINUTES`. The
-        stream closes immediately afterwards. Consumers reconnecting
-        with `Last-Event-ID` will resume from the durable file.
+      title: Synthetic quiet-window timeout
       contentType: application/json
-      payload: { $ref: "#/components/schemas/SessionStreamTimeoutEvent" }
-    SessionChatTurn:
-      name: session.chat_turn
-      title: Gate-chat answer-only turn at a HITL pause (M30 — Implemented)
-      summary: |
-        (M30 — Implemented, ADR-078) Answer-only gate-chat reply streamed at a
-        `human`/`form` HITL pause. Rendered in the chat surface, NOT the flow
-        timeline. The full payload (role, body, seq, mutationReverted) is
-        documented in `supervisor-sse.asyncapi.yaml`.
-      contentType: application/json
-      payload: { $ref: "#/components/schemas/EventBase" }
-    SessionHookTrip:
-      name: session.hook_trip
-      title: Guardrail/hook engine trip (ADR-108; capability_guard ADR-130)
-      summary: |
-        (ADR-108, M40; `capability_guard` Implemented — ADR-130) A guardrail rule
-        tripped at the supervisor↔ACP seam, mirrored to the browser. The full
-        payload (rule incl. `capability_guard`, lifecycle, disposition, toolCall) is
-        documented in `supervisor-sse.asyncapi.yaml`; behavior is in
-        `system-analytics/guardrail-hooks.md`.
-      contentType: application/json
-      payload: { $ref: "#/components/schemas/EventBase" }
-    SessionCommand:
-      name: session.command
-      title: Command accepted / completed (Implemented — ADR-166, opaque pass-through)
-      summary: |
-      Forwarded from a canonical `session.command` event. The
-        browser transcript / timeline consumers ignore it (unknown-type
-        tolerance); its consumer is the web-side command ledger. Full payload
-        in `supervisor-sse.asyncapi.yaml#SessionCommandEvent`.
-      contentType: application/json
-      payload: { $ref: "#/components/schemas/EventBase" }
-    RunNeedsInput:
-      name: run.needs_input
-      title: Durable NeedsInput transition tick (run-detail transparency — Implemented)
-      summary: |
-        (Implemented) Persisted as a manager-originated canonical event at a
-        non-agent gate (human / form / review / infra_recovery), where the run
-        transitions to `NeedsInput` with NO supervisor session running — so no
-        `session.update` would otherwise tick the SSE tail and an open run-detail
-        tab would look hung. Carries the standard envelope (`monotonicId` =
-        file-max + 1). It is a refresh signal only: the run-detail tree
-        re-renders the freshly-committed review/HITL panel; it carries no agent
-        output. The per-node agent transcript is NOT a new event type — it reuses
-        the existing `session.update` stream, projected into `run_messages` and
-        read via `GET /api/runs/{runId}/transcript`.
-      contentType: application/json
-      payload: { $ref: "#/components/schemas/EventBase" }
-    RunRunnerResolutionWarning:
-      name: run.runner_resolution_warning
-      title: Durable runner-resolution soft mismatch warning
-      summary: |
-        Appended by the web tier after a launch transaction commits when a Flow
-        runner slot falls back to a same-capability runner because `model`
-        and/or `provider.kind` differs from the Flow intent. The event keeps the
-        logical `sessionName`; consumers should read `run_sessions` for the
-        durable source of truth. Warning payloads contain only public runner id,
-        model, capability, and provider kind metadata.
-      contentType: application/json
-      payload: { $ref: "#/components/schemas/RunRunnerResolutionWarningEvent" }
+      payload:
+        $ref: "#/components/schemas/SessionStreamTimeoutEvent"
   schemas:
     BrowserCanonicalRunEvent:
       type: object
       additionalProperties: false
-      required: [type, eventId, runSequence, occurredAt, hostSessionId]
-      properties:
-        type: { type: string, maxLength: 128 }
-        eventId: { type: string, format: uuid }
-        runSequence:
-          type: string
-          pattern: "^(0|[1-9][0-9]{0,18})$"
-        occurredAt: { type: string, format: date-time }
-        hostSessionId: { type: string, nullable: true }
-
-    EventBase:
-      type: object
-      required: [type, sessionId, monotonicId]
+      required:
+        - type
+        - eventId
+        - runSequence
+        - occurredAt
+        - hostSessionId
       properties:
         type:
           type: string
-          enum:
-            - session.line
-            - session.update
-            - session.permission_request
-            - session.exited
-            - session.crashed
-            - session.chat_turn
-            - session.hook_trip
-            - session.command
-            - run.needs_input
-        sessionId:
+          minLength: 1
+          maxLength: 128
+        eventId:
           type: string
           format: uuid
-        monotonicId:
-          type: integer
-          minimum: 1
-        sessionName:
+        runSequence:
           type: string
-          description: |
-            (M42 — ADR-114) Logical Flow session this line belongs to
-            (`default` for a single-session run). Absent on web-synthesized
-            events that have no session.
-        nodeAttemptId:
+          pattern: "^(0|[1-9][0-9]{0,18})$"
+        occurredAt:
           type: string
-          description: |
-            (Run-detail transparency — T-B0) The node attempt this session
-            executes. Stamped on every line of a flow node session so the flow
-            transcript projector can attribute each `session.update` message to a
-            node (`sessionName` alone is not 1:1 per node). Absent for
-            scratch / single-session runs.
-      description: |
-        Common envelope. Each event variant carries additional fields
-        documented in `supervisor-sse.asyncapi.yaml` — this AsyncAPI
-        doc references the same union via `EventBase` instead of
-        duplicating every payload schema (single source of truth).
+          format: date-time
+        hostSessionId:
+          type: string
+          nullable: true
+      example:
+        type: session.command
+        eventId: 59d83570-19f7-4b80-9ab8-d65a22e4f244
+        runSequence: "42"
+        occurredAt: 2026-09-04T12:00:00.000Z
+        hostSessionId: session-opaque-17
+    SessionStreamReadyEvent:
+      type: object
+      additionalProperties: false
+      required: [type, replay]
+      properties:
+        type:
+          type: string
+          const: session.stream_ready
+        replay:
+          type: boolean
+          const: false
+      example:
+        type: session.stream_ready
+        replay: false
     SessionStreamTimeoutEvent:
       type: object
+      additionalProperties: false
       required: [type, reason]
       properties:
         type:
@@ -286,48 +137,7 @@ components:
           const: session.stream_timeout
         reason:
           type: string
-          description: Human-readable cause (e.g. "no events within keepalive window").
-    RunnerResolutionWarning:
-      type: object
-      additionalProperties: false
-      required: [code, slotKey, requested, launched, message]
-      properties:
-        code:
-          type: string
-          const: runner_intent_soft_mismatch
-        slotKey: { type: string }
-        sessionName: { type: string }
-        requested:
-          type: object
-          additionalProperties: false
-          required: [capabilityAgent]
-          properties:
-            capabilityAgent: { type: string }
-            model: { type: string }
-            providerKind: { type: string }
-        launched:
-          type: object
-          additionalProperties: false
-          required: [runnerId, capabilityAgent, model, providerKind]
-          properties:
-            runnerId: { type: string }
-            capabilityAgent: { type: string }
-            model: { type: string }
-            providerKind: { type: string }
-        message: { type: string }
-    RunRunnerResolutionWarningEvent:
-      type: object
-      additionalProperties: false
-      required: [type, monotonicId, sessionName, warning]
-      properties:
-        type:
-          type: string
-          const: run.runner_resolution_warning
-        monotonicId:
-          type: integer
-          minimum: 1
-        sessionName:
-          type: string
-          description: Logical Flow session whose runner slot fell back.
-        warning:
-          $ref: "#/components/schemas/RunnerResolutionWarning"
+          minLength: 1
+      example:
+        type: session.stream_timeout
+        reason: no canonical events within keepalive window

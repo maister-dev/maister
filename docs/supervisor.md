@@ -136,10 +136,20 @@ Request payload (`envelope.payload`):
     "model": "claude-sonnet-4-6",
     "env": { "ANTHROPIC_BASE_URL": "...", "ANTHROPIC_AUTH_TOKEN": "..." }
   },
-  "capabilityProfilePath": "/repos/myapp/.maister/runs/run-abc/profile.json",
+  "capabilityProfileObjectId": "86456f19-ef72-46be-88bb-dc86c3ecf85b",
+  "capabilityInstructionsObjectId": "50ba2f75-bc42-4968-bbd0-1ac0a50ec840",
+  "outputObjects": [{
+    "objectId": "9742068b-0371-44bd-8108-e779461be15a",
+    "kind": "plan_review",
+    "logicalName": "plan-review.json",
+    "mimeType": "application/json",
+    "generation": 1,
+    "retentionClass": "run",
+    "envName": "MAISTER_PLAN_REVIEW_FILE"
+  }],
   "adapterLaunch": {
-    "env": { "MAISTER_CAPABILITY_PROFILE": "/repos/myapp/.maister/runs/run-abc/profile.json" },
-    "preArgs": ["--config", "/repos/myapp/.maister/runs/run-abc/adapter.json"],
+    "env": { "MAISTER_PROFILE_MODE": "strict" },
+    "preArgs": ["--dangerously-skip-permissions"],
     "postArgs": []
   },
   "resumeSessionId": "uuid-abc"             // optional, checkpoint-resume path (resumed via the ACP session/resume call, NOT a CLI flag)
@@ -179,12 +189,14 @@ diagnostic failures, and unsupported checkpoint strategies are refused before
 spawn when readiness has enough information. There is no fallback to
 Claude/Codex and no operator-entered arbitrary command runner.
 
-`capabilityProfilePath` and `adapterLaunch.env` are Implemented for scratch
-runs. The web tier owns capability policy, resolution, trust checks, and the V1
-materialization of `profile.json` plus `instructions.md`; the supervisor only
-receives server-derived absolute paths and constrained materializer outputs to
-pass to the adapter process. The request body must not allow callers to
-override the adapter binary, `cwd`, run id, project slug, or worktree path.
+`capabilityProfileObjectId`, `capabilityInstructionsObjectId`, `outputObjects`, and constrained
+`adapterLaunch.env` are implemented. The web tier owns capability policy,
+resolution, trust checks, and materialization, then uploads the profile and
+instruction document through the fenced runtime-object contract. The
+supervisor privately resolves both objects and maps predeclared output object
+IDs to allow-listed child environment variables. The request body cannot select
+a host path or override the adapter
+binary, `cwd`, run id, project slug, or worktree path.
 
 `adapterLaunch` supports only:
 
@@ -210,10 +222,10 @@ change. Each mount is validated at adoption like the workspace path itself
 [`POST /workspaces/adopt`](#post-workspacesadopt-implemented--adr-166)); an
 over-length array is a Zod `409 PRECONDITION`.
 
-It is a **first-class request field**, the same shape of thing as
-`capabilityProfilePath` — deliberately **not** an overload of `executor.env`,
-which is the provider-secret channel and stays that. From it the supervisor
-derives exactly one child environment variable:
+It is a **first-class workspace-adoption field**, deliberately not an overload
+of `executor.env`, which is the provider-secret channel and stays that. From
+the server-derived adopted handle the supervisor derives exactly one child
+environment variable:
 
 ```
 MAISTER_CONTEXT_REPOS=[{"slug":"api","path":"/abs/mount","ref":"main","commit":"<sha40>"}]
@@ -467,12 +479,11 @@ duplicate while the original is in flight (any kind) **joins** it; an
 `accepted` receipt with no in-flight promise (restart mid-turn) → `409
 PRECONDITION turn_lost`; a receipt write failure → `500 ACP_PROTOCOL` (the
 effect may have happened — the web reconcile catches an orphan session).
-Receipts prune at boot and hourly (7-day TTL). Prompt completion additionally
-emits the SSE `session.command` event (`phase: accepted`, then `phase:
-completed` with `status` + `result` / `error`), also appended to
-`run.events.jsonl`; a completion that lands after the session's terminal event
-is appended once the closed per-run writer has drained, so the file keeps its
-`monotonicId` order.
+Receipts prune at boot and hourly after their durable eligibility checks.
+Prompt admission and completion emit durable `session.command` events
+(`phase: accepted`, then `phase: completed` with `status` + `result` / `error`)
+to the host outbox. The manager assigns canonical run order during ingestion;
+no lifecycle consumer reads a per-run event file.
 
 ### `DELETE /sessions/:id`
 
@@ -856,7 +867,8 @@ provider settings and `env:NAME` runner references into `executor.env`.
 1. `process.env` — the supervisor's own env at startup (base).
 2. `executor.env` — typed provider and runner env values resolved by the
    supervisor; this layer wins over ambient process values.
-3. request-derived env — `MAISTER_CAPABILITY_PROFILE_PATH` when present and
+3. request-derived env — `MAISTER_CAPABILITY_PROFILE_PATH` and
+   `MAISTER_CAPABILITY_INSTRUCTIONS_PATH` when present, plus
    `MAISTER_CONTEXT_REPOS` derived from the first-class `contextMounts[]`
    request field. **(Implemented — ADR-157)** Neither field is overloaded onto
    runner configuration.

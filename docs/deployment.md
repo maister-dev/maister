@@ -542,8 +542,14 @@ LEFT JOIN step_runs ON step_runs.run_id = terminal_legacy.id;
 Inventory logs contain counts and identifiers only. Never print manifest bodies
 or database credentials.
 
-- **Supervisor restart orphans live runs** until startup reconciliation (ADR-033..036). `Restart=always` recovers the process, not in-flight sessions.
-- **Single host only.** Multi-host (supervisor on a separate machine) needs durable HTTP replay from `run.events.jsonl` — deferred ([ADR-022](decisions.md#adr-022-structured-run-data-projection--runeventsjsonl-is-the-event-log-postgres-holds-derived-read-models)).
+- **Supervisor restart terminates live ACP turns explicitly.** Startup converts
+  accepted non-live prompt receipts to durable `turn_lost`; manager command and
+  run reconciliation then applies the existing checkpoint/crash policy.
+- **Single host only.** The web tier needs no supervisor runtime-data mount:
+  events replay from the host outbox into canonical Postgres state and runtime
+  bytes use opaque object APIs. Repository/worktree placement remains local;
+  multi-host placement and remote trust/relay belong to Stage C/D
+  ([ADR-167](decisions/adr-167.md)).
 - **No managed git secrets.** Provider auth lives in the host's SSH/credential config, not in MAIster ([ADR-025](decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots)). Git auth is **host-ambient** — ssh-agent/keys, the credential helper, optional `gh`, and the one-off Add-project token (Implemented, [ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)). **Persist-config push and remote push/fetch reuse this same host-ambient auth** — there is no managed credential store, and on an auth failure the action returns an advisory without rolling back the local commit / DB state.
 
 ## Running the MCP facade

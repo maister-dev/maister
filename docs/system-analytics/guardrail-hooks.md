@@ -70,7 +70,8 @@ optional claude-native backend delivered through a clean seam.
   number }` (`escalationThreshold` = N, web-resolved from
   `MAISTER_CAPABILITY_DENY_ESCALATION_THRESHOLD`, delivered on the profile so the
   supervisor stays config-free — the ADR-108 `repetition.max` pattern). Distinct
-  from the capability-materialization `capabilityProfilePath` (child-env only)
+  from the capability-materialization object IDs (the supervisor resolves them
+  to host-private child-env paths)
   and the platform-agent `capability_profile` frontmatter — the name collision
   is deliberately avoided.
 - **`capabilityDenyCount`** _(capability_guard — ADR-130)_ — a per-session counter
@@ -749,4 +750,3 @@ three doc-only reconciliations folded back:
   `web/lib/flows/enforcement-evidence.ts` (`assertEnforcementEvidence`),
   `web/lib/flows/graph/runner-graph.ts` (derive→fold→persist `enforcementProfile`, thread to `createInput`, evidence gate) + `web/lib/flows/runner-agent.ts` (`enforcementProfile` in ctx),
   `web/lib/flows/enforcement.ts` (`ENFORCEABILITY_BY_AGENT` `tools`/`mcps`/`hooks` → `enforced`).
-

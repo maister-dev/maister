@@ -8,7 +8,7 @@
   "runId": "run-abc",
   "assignmentId": "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d",
   "assignmentEpoch": 3,
-  "hostSessionId": "5f3a8a2b-7e34-4f6d-9d2c-1d4e5f6a7b8c",
+  "hostSessionId": "session-opaque-17",
   "eventType": "session.command",
   "occurredAt": "2026-09-04T12:00:00.000Z",
   "payloadSchema": "maister.session.command.v1",

@@ -97,11 +97,11 @@ mAIster/
 │   └── <project-slug>/             # One subtree per registered project
 │       ├── flows/<id>/             # Symlink to ~/.maister/flows/<id>@<tag>/
 │       └── runs/<run-id>/
-│           ├── <step-id>.log       # SSE pipe-to-disk (per step)
+│           ├── <step-id>.log       # Host-private diagnostic log; web never reads it
 │           ├── needs-input.json    # HITL signal (structured form)
 │           ├── input-<step-id>.json # HITL response (atomic write)
-│           ├── session.json        # { acp_session_id, executor_id }
-│           └── cost.jsonl          # token-count metrics, append-only
+│           └── ...                 # Repository/worktree material; Stage C boundary
+├── <execution-host-state>/         # Supervisor-private SQLite outbox/receipts + runtime objects
 ├── docs/                           # Product + engineering docs
 │
 ├── supervisor/                     # ── ACP SUPERVISOR DAEMON ──
@@ -293,13 +293,13 @@ affected editor e2e (`m27-flow-editor.spec.ts` precedent).
   via `executionHosts.local()`; `lib/supervisor-client.ts` is the
   local-direct transport behind it and is lint-fenced to that module. The
   supervisor URL is `MAISTER_SUPERVISOR_URL` (env, read at call time),
-  defaults to `http://localhost:7777`; it is never stored. The two
-  processes share the host filesystem — a supervisor on a different host is
-  not supported in the current target.
-- **Live updates:** supervisor emits SSE per ACP `session/update`; Next.js
-  Route Handler (`app/api/runs/[id]/stream/route.ts`) bridges to the
-  browser, tailing `.maister/<project-slug>/runs/<run-id>/<step-id>.log`
-  on reconnect via `lastEventId`. No client-side polling, no WebSockets.
+  defaults to `http://localhost:7777`; it is never stored. Repository and
+  worktree placement remain shared on the supported single host until Stage C;
+  execution-runtime data is not mounted into web.
+- **Live updates:** the supervisor commits redacted events to its private
+  SQLite outbox and the manager ingests canonical Postgres rows. Next.js
+  `app/api/runs/[id]/stream/route.ts` replays those rows exclusively after
+  `lastEventId`; host log files are never a browser or projector authority.
 - **State transitions:** driven by **ACP notifications** (live path) and
   **artifact presence** (durable path, e.g. `needs-input.json`). Never by
   `fs.watch`, `chokidar`, or polling on the web tier. The state machine

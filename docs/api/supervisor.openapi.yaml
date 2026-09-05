@@ -39,8 +39,11 @@ info:
     pre-ADR-166 path field (`runId`, `projectSlug`, `worktreePath`,
     `repoPath`, `confineRoot`, `contextMounts`) is
     `409 PRECONDITION {reason: legacy_field, field}`.
-    Stage A is single-host, loopback, shared-filesystem, and unauthenticated —
-    see [`../system-analytics/execution-hosts.md`](../system-analytics/execution-hosts.md).
+    The supported deployment is single-host and loopback. Repository/worktree
+    material stays local until Stage C, but Stage B removes web access to the
+    supervisor runtime-data filesystem. Remote enrollment/authentication is
+    intentionally not part of this unauthenticated local contract. See
+    [`../system-analytics/execution-hosts.md`](../system-analytics/execution-hosts.md).
 
     **Stage B data plane (Implemented — ADR-167, 0.9.0).** `GET /capabilities`
     is additive and read-only. `GET /runtime-events` and
@@ -567,12 +570,14 @@ paths:
         an `acpSessionId`; everything after that is observable via the SSE
         stream.
 
-        Capability launch fields are server-derived by the web tier:
-        `capabilityProfilePath` points at the run-scoped profile snapshot
-        materialized in the worktree/runtime area, and `adapterLaunch` carries
-        only validated env/arg additions for the selected adapter. The
-        supervisor does not resolve project policy or trust; it validates and
-        passes these fields to the spawned child.
+        Capability launch fields are server-derived by the web tier.
+        `capabilityProfileObjectId` and `capabilityInstructionsObjectId` name
+        manager-catalogued opaque objects; the host validates each
+        run/assignment/kind binding and privately resolves its path.
+        `outputObjects` predeclares bounded host-owned output objects
+        and allow-listed child environment destinations. `adapterLaunch`
+        carries only validated env/arg additions for the selected adapter.
+        The supervisor does not resolve project policy or trust.
 
         ADR-085 adds `nodeAttemptId` attribution metadata for graph-runner
         sessions. The supervisor validates it as a safe id and stamps it on
@@ -636,10 +641,9 @@ paths:
             a fence refusal (`host_mismatch`, `assignment_mismatch`,
             `run_mismatch`), an unknown/released handle
             (`unknown_workspace` / `workspace_released`), a stale epoch
-            (`FENCED`), a residual `capabilityProfilePath` outside the handle
-            (`workspace_rejected` + `outside_workspace`), a missing envelope
-            (`missing_envelope`), or a legacy path field (`legacy_field` +
-            `details.field`).
+            (`FENCED`), a missing or cross-assignment capability/output object,
+            a missing envelope (`missing_envelope`), or a legacy path field
+            (`legacy_field` + `details.field`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -723,6 +727,22 @@ paths:
         content:
           application/json:
             schema: { $ref: "#/components/schemas/PromptCommand" }
+            examples:
+              enveloped:
+                value:
+                  command:
+                    id: "3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a"
+                    kind: "session.prompt"
+                    issuedAt: "2026-09-02T10:00:02.000Z"
+                  fence:
+                    hostKey: "eh_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+                    assignmentId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"
+                    assignmentEpoch: 1
+                    runId: "run-abc"
+                  payload:
+                    stepId: "plan"
+                    nodeAttemptId: "na-1"
+                    prompt: "/aif-plan Add a healthz route"
       responses:
         "202":
           description: Durable prompt admission; not ACP completion.
@@ -1706,7 +1726,7 @@ components:
         confinement roots, the run dir, `runId`, `projectSlug`, and the context
         mounts from the handle (server state). The pre-ADR-166 path fields
         (`runId`, `projectSlug`, `worktreePath`, `repoPath`, `confineRoot`,
-        `contextMounts`) are refused by name: their presence is
+        `contextMounts`, `capabilityProfilePath`, `capabilityInstructionsPath`) are refused by name: their presence is
         `409 PRECONDITION {reason: legacy_field, field}`. Context mounts travel
         on the `workspace.adopt` payload (`AdoptWorkspacePayload.contextMounts`).
       example:
@@ -1723,6 +1743,16 @@ components:
           model: "claude-sonnet-4-6"
           provider: { kind: "anthropic" }
           permissionPolicy: "default"
+        capabilityProfileObjectId: "86456f19-ef72-46be-88bb-dc86c3ecf85b"
+        capabilityInstructionsObjectId: "50ba2f75-bc42-4968-bbd0-1ac0a50ec840"
+        outputObjects:
+          - objectId: "9742068b-0371-44bd-8108-e779461be15a"
+            kind: plan_review
+            logicalName: plan-review.json
+            mimeType: application/json
+            generation: 1
+            retentionClass: run
+            envName: MAISTER_PLAN_REVIEW_FILE
       properties:
         executionWorkspaceId:
           type: string
@@ -1764,19 +1794,25 @@ components:
             only; it never authorizes access to a run or filesystem path.
         executor: { $ref: "#/components/schemas/Executor" }
         runner: { $ref: "#/components/schemas/RunnerLaunch" }
-        capabilityProfilePath:
+        capabilityProfileObjectId:
           type: string
-          minLength: 1
-          maxLength: 4096
+          format: uuid
           description: |
-            Absolute filesystem path to the web-materialized, run-scoped
-            capability profile. Must start with `/` and must not contain `..`
-            segments. The supervisor passes it only through validated
-            `adapterLaunch` env/args; it does not inspect policy. (Implemented —
-            ADR-166) The one residual path in the handle form: it MUST resolve
-            inside the handle's path → otherwise `409 PRECONDITION
-            {reason: workspace_rejected, rule: outside_workspace}`. It leaves
-            with Stage C materialization.
+            Opaque `capability_profile` object previously published under the
+            same run and assignment fence. The host derives its private path;
+            neither caller nor response can select or observe that path.
+        capabilityInstructionsObjectId:
+          type: string
+          format: uuid
+          description: |
+            Opaque `capability_instructions` object previously published under
+            the same run and assignment fence. The host validates the kind and
+            derives `MAISTER_CAPABILITY_INSTRUCTIONS_PATH` privately.
+        outputObjects:
+          type: array
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/RuntimeObjectOutputBinding"
         adapterLaunch:
           $ref: "#/components/schemas/AdapterLaunch"
         resumeSessionId:
@@ -1868,7 +1904,7 @@ components:
             `capability_guard` seam interceptor. Present iff the resolved node/agent
             declares `enforcement.tools: strict` and/or `enforcement.mcps: strict` on
             an enforceable adapter. Seeded onto the in-memory SessionRecord like
-            `hooksConfig`; distinct from `capabilityProfilePath` (child-env only).
+            `hooksConfig`; distinct from the opaque capability profile object.
             Each class key is present iff that class is strict-enforced; an
             out-of-profile tool call is denied at the seam (deny-and-continue) and the
             Nth consecutive deny halts. See `system-analytics/guardrail-hooks.md`.
@@ -1928,7 +1964,8 @@ components:
       description: |
         Constrained launch additions produced by the web capability
         materializer. It cannot override the adapter binary, `cwd`, run id,
-        project slug, worktree path, session id, or ACP session id.
+        project slug, worktree path, session id, ACP session id, or any
+        server-derived runtime-object environment variable.
       properties:
         env:
           type: object
@@ -1938,8 +1975,10 @@ components:
             maxLength: 4096
           description: |
             Extra environment variables for the spawned adapter. Values are
-            never logged. Applied after `executor.env` so run-scoped materialized
-            paths can win on collision.
+            never logged. The reserved `MAISTER_CAPABILITY_PROFILE_PATH`,
+            `MAISTER_CAPABILITY_INSTRUCTIONS_PATH`, `MAISTER_OUTPUT_FILE`,
+            `MAISTER_PLAN_DOCUMENT_FILE`, and `MAISTER_PLAN_REVIEW_FILE` names
+            are rejected because the host derives them from opaque objects.
         preArgs:
           type: array
           maxItems: 32
@@ -2040,6 +2079,7 @@ components:
     SendPromptResponse:
       type: object
       required: [stopReason]
+      additionalProperties: false
       properties:
         stopReason: { $ref: "#/components/schemas/SendPromptStopReason" }
         meta:
@@ -2050,6 +2090,16 @@ components:
             ACP `_meta` passthrough (opaque object provided by the
             adapter; shape is provider-specific). May be `null` or
             omitted when the adapter sent no `_meta`.
+        runtimeObjects:
+          type: array
+          maxItems: 32
+          description: |
+            Metadata for predeclared output objects sealed after the ACP turn.
+            The list contains no private path or object content. It is recorded
+            in the terminal command receipt and mirrored by the canonical
+            terminal `session.command` event.
+          items:
+            $ref: "#/components/schemas/RuntimeObjectMetadata"
     PromptAccepted:
       type: object
       required: [commandId, state]
@@ -2162,7 +2212,11 @@ components:
         runId: { type: string, minLength: 1, maxLength: 128, description: Server-derived assignment run identity. }
         assignmentId: { type: string, format: uuid, description: Server-derived assignment identity. }
         assignmentEpoch: { type: integer, minimum: 1, maximum: 2147483647, description: Server-derived fence epoch. }
-        hostSessionId: { type: string, format: uuid, nullable: true, description: Host-derived ACP session identity when one exists. }
+        hostSessionId:
+          type: string
+          pattern: '^[A-Za-z0-9._-]{1,128}$'
+          nullable: true
+          description: Opaque host-derived ACP session identity when one exists; clients must not parse it.
         eventType:
           type: string
           enum: [session.created, session.line, session.update, session.permission_request, session.hook_trip, session.command, session.chat_turn, session.exited, session.crashed, usage.recorded, runtime_object.available, runtime_object.state]
@@ -2208,7 +2262,7 @@ components:
           required: [objectId, kind, logicalName, mimeType, sizeBytes, sha256, generation, retentionClass]
           properties:
             objectId: { type: string, format: uuid }
-            kind: { type: string, enum: [session_log, raw_transcript, cost_diagnostic, checkpoint, attachment, capability_profile, agent_memory_snapshot, node_result, evidence, generated_artifact, plan_review, diagnostic] }
+            kind: { type: string, enum: [session_log, raw_transcript, cost_diagnostic, checkpoint, attachment, capability_profile, capability_instructions, agent_memory_snapshot, node_result, evidence, generated_artifact, plan_review, diagnostic] }
             logicalName: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$", maxLength: 255 }
             mimeType: { type: string, maxLength: 255 }
             sizeBytes: { type: integer, minimum: 0, maximum: 26214400 }
@@ -2229,20 +2283,47 @@ components:
           required: [generation]
           properties:
             generation: { type: integer, minimum: 1 }
+    RuntimeObjectOutputBinding:
+      type: object
+      additionalProperties: false
+      required:
+        - objectId
+        - kind
+        - logicalName
+        - mimeType
+        - generation
+        - retentionClass
+        - envName
+      description: |
+        Server-derived declaration for one host-owned ACP output. The host
+        allocates a private path, injects it through the allow-listed `envName`,
+        and seals the object after the prompt. Duplicate object IDs or env names
+        in one session request are rejected before spawn.
+      properties:
+        objectId: { type: string, format: uuid }
+        kind: { type: string, enum: [session_log, raw_transcript, cost_diagnostic, checkpoint, attachment, capability_profile, capability_instructions, agent_memory_snapshot, node_result, evidence, generated_artifact, plan_review, diagnostic] }
+        logicalName: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$", maxLength: 255 }
+        mimeType: { type: string, minLength: 1, maxLength: 255 }
+        generation: { type: integer, minimum: 1 }
+        retentionClass: { type: string, enum: [run, delivery, ephemeral] }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        envName:
+          type: string
+          enum: [MAISTER_OUTPUT_FILE, MAISTER_PLAN_DOCUMENT_FILE, MAISTER_PLAN_REVIEW_FILE]
     RuntimeObjectMetadata:
       type: object
       additionalProperties: false
       required: [objectId, kind, logicalName, mimeType, sizeBytes, sha256, generation, retentionClass, state, createdAt, sealedAt, expiresAt, deletedAt]
       properties:
         objectId: { type: string, format: uuid }
-        kind: { type: string, enum: [session_log, raw_transcript, cost_diagnostic, checkpoint, attachment, capability_profile, agent_memory_snapshot, node_result, evidence, generated_artifact, plan_review, diagnostic] }
+        kind: { type: string, enum: [session_log, raw_transcript, cost_diagnostic, checkpoint, attachment, capability_profile, capability_instructions, agent_memory_snapshot, node_result, evidence, generated_artifact, plan_review, diagnostic] }
         logicalName: { type: string }
         mimeType: { type: string }
         sizeBytes: { type: integer, minimum: 0, nullable: true }
         sha256: { type: string, pattern: "^[a-f0-9]{64}$", nullable: true }
         generation: { type: integer, minimum: 1 }
         retentionClass: { type: string, enum: [run, delivery, ephemeral] }
-        state: { type: string, enum: [pending, available, deleting, deleted, corrupt] }
+        state: { type: string, enum: [pending, available, deleting, missing, deleted, expired, corrupt] }
         createdAt: { type: string, format: date-time }
         sealedAt: { type: string, format: date-time, nullable: true }
         expiresAt: { type: string, format: date-time, nullable: true }

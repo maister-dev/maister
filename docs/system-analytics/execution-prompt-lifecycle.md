@@ -58,7 +58,7 @@ sequenceDiagram
 
 - **PRM-01:** `session.prompt` is accepted only after the host durably records its Stage A receipt and accepted event.
 - **PRM-02:** Retry reuses command ID, logical operation key, and canonical request digest so ACP is never invoked twice.
-- **PRM-03:** Progress, terminal events, and queryable receipt—not HTTP lifetime—are lifecycle authority.
+- **PRM-03:** Progress and terminal events—not HTTP lifetime or a receipt alone—are lifecycle authority; the queryable receipt is agreeing evidence for reconciliation.
 - **PRM-04:** Every prompt command has one typed server-derived owner and idempotent terminal application across web restart.
 - **PRM-05:** A host restart finding an accepted command without a live turn terminalizes it as `turn_lost` without replaying prompt text.
 - **PRM-06:** Receipt and terminal event must agree on command, assignment, epoch, and outcome before owner mutation.
@@ -75,6 +75,7 @@ sequenceDiagram
 - **EDGE-PRM-02:** A restarted host with an accepted non-live turn writes `turn_lost` and lets manager recovery choose checkpoint/resume (`IT-PRM-05`).
 - **EDGE-PRM-03:** Disagreeing terminal receipt/event outcomes are quarantined as `prompt_terminal_conflict` and owner application stops (`IT-PRM-06`).
 - A duplicate input/cancel/checkpoint uses the existing receipt and fence, and a stale epoch returns typed fenced evidence rather than a new side effect.
+- **EDGE-PRM-04:** If checkpoint or release wins the race with terminal publication, an open prompt wait remains pending instead of locally fencing the accepted command. Receipt evidence alone does not settle it; the exact canonical terminal command event settles the historical command, after which an agreeing receipt makes the result queryable (`IT-PRM-06`).
 
 ## Linked artifacts
 

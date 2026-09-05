@@ -164,7 +164,12 @@ and owning test are green.
 - **EVT-04 — Ordering:** host order is `(streamId, sequence)` and manager/run
   order is `runSequence`; timestamps never determine state-transition order.
 - **EVT-05 — Fencing:** stale assignment epochs are retained as audit facts and
-  ACKable but receive no current-run sequence and cannot mutate current state.
+  ACKable but ordinarily receive no current-run sequence and cannot mutate
+  current state. The only exception is a late `session.command` terminal event
+  whose command ID, kind, run, host, assignment, and epoch exactly match an
+  already-accepted durable command: it may receive a run sequence and settle
+  only that historical command ledger entry, never current run/session, cost,
+  artifact, HITL, or prompt-owner state.
 - **EVT-06 — Gaps:** the manager persists later events as pending, ACKs only the
   contiguous prefix, requests the missing sequence, and fails explicitly when
   the replay floor has passed it.
@@ -289,9 +294,11 @@ and owning test are green.
 | `EDGE-EVT-04` | ACK arrives after host stream replacement/restart | Reject because supplied `streamId` is not current, `event_stream_mismatch`. | `IT-EVT-07-ACK-RACE` / T1.2 |
 | `EDGE-EVT-05` | invalid decimal sequence, overflow, future clock, or skew | Reject invalid sequence with `invalid_event_sequence`; accept valid timestamp as metadata without ordering authority and record skew metric. | `CT-EVT-05` / T0.3 and `IT-EVT-04-CLOCK` / T1.3 |
 | `EDGE-EVT-06` | unknown type/schema or redaction failure | Store only bounded spine/error metadata, never raw payload or its digest; `unsupported_event_schema` or `event_redaction_failed`. | `CT-EVT-08` / T0.3 and `IT-EVT-08-QUARANTINE` / T1.3 |
+| `EDGE-EVT-07` | release/checkpoint races an exact accepted command's terminal publication | Promote only a full command/fence identity match and settle only that historical command row; quarantine unrelated stale events. | `IT-EVT-05` / T1.3–T1.4 |
 | `EDGE-PRM-01` | 202 response or terminal ACK is lost | Reconcile by original command ID; no second ACP call. | `IT-PRM-02-ACK-LOSS` / T3.1–T3.2 |
 | `EDGE-PRM-02` | host restarts with accepted command and no live turn | Durable `turn_lost`; manager applies recovery policy. | `IT-PRM-05` / T3.1 |
 | `EDGE-PRM-03` | receipt and event terminal outcomes disagree | Quarantine and stop owner application, `prompt_terminal_conflict`. | `IT-PRM-06` / T1.4–T3.2 |
+| `EDGE-PRM-04` | terminal receipt is visible before its canonical event is projected | Validate the receipt but keep waiting; receipt alone cannot settle or fence the command, and the later agreeing event remains authoritative. | `IT-PRM-06` / T1.4–T3.2 |
 | `EDGE-OBJ-01` | traversal, symlink escape, or client-selected foreign binding | Reject without existence disclosure, `runtime_object_not_found` or `runtime_object_invalid`. | `IT-OBJ-02-PATH` / T3.4–T3.5 |
 | `EDGE-OBJ-02` | range is multi-range, malformed, or outside content | `416 runtime_object_range_unsatisfiable`; no full-body fallback. | `IT-OBJ-06` / T3.4 |
 | `EDGE-OBJ-03` | retry has different size/hash/MIME/generation | Preserve original object, `runtime_object_identity_conflict`. | `IT-OBJ-04-CONFLICT` / T3.4 |
@@ -673,8 +680,13 @@ observation order while each host stream order is preserved; it does not claim
 global occurrence-time order. Cross-host global order is deliberately
 undefined. An unknown type/schema stores only bounded quarantine spine/error
 metadata; it is not promoted or projected until a negotiated validator/redactor
-exists. A stale-epoch event is retained for audit and advances the host watermark, but
-cannot receive a current-run `run_sequence` or mutate current state.
+exists. A stale-epoch event is retained for audit and advances the host
+watermark, but cannot receive a current-run `run_sequence` or mutate current
+state. A late terminal `session.command` event may be promoted only when its
+full fence and identity match an accepted durable command; the projector may
+then settle that command record and nothing else. This closes checkpoint or
+release races without turning a receipt or arbitrary stale event into a second
+authority.
 
 ### D5. Gaps, duplicates, restart, poison, and retention
 
@@ -1551,7 +1563,9 @@ tests; `web/test-support/real-supervisor.ts`, `fake-execution-host.ts`
    separately so ACK loss is observable; retry absolute ACK idempotently.
 4. Validate current assignment server-side. A stale event advances the stream
    only as audited `stale_epoch`; it cannot mutate `runs`, `run_sessions`,
-   `node_attempts`, prompt continuation, HITL, cost, or artifacts.
+   `node_attempts`, prompt continuation, HITL, cost, or artifacts. Permit only
+   an exact late terminal `session.command` match against an already-accepted
+   durable command to receive ordering and settle that same command row.
 5. Detect boot changes and stream changes. Same stream/new boot is normal;
    unresolved old stream/new stream degrades the host and invokes explicit
    reconciliation.
@@ -1560,7 +1574,8 @@ tests; `web/test-support/real-supervisor.ts`, `fake-execution-host.ts`
 
 **RED → GREEN → REFACTOR:** RED — real Postgres + real supervisor tests fail
 without exactly-one insert under at-least-once delivery, ACK-loss replay,
-pending-gap hold/release, replay-floor failure, stale-epoch non-mutation,
+pending-gap hold/release, replay-floor failure, stale-epoch non-mutation plus
+the exact-command release-race exception,
 stream/boot reconciliation, and durable restart cursors. Contend a host event
 and a manager event for the same run to prove unique contiguous `run_sequence`;
 use a current-epoch positive control next to every stale-epoch denial. GREEN —
@@ -2346,7 +2361,7 @@ silently alternate between file and canonical authority.
 | Both upgraded after B3 gate | The complete capability set admits new runs as `canonical_events_v1`; already-active legacy runs stay legacy. Each manager branch reads only the authority named by the immutable run mode. |
 | Active run during deployment | Never flip mode. Let it finish/drain on compatible binaries. If it fails, recover under the same mode before B4. |
 | Historical completed run | Import event/transcript/cost/object metadata deterministically; record complete/missing/failed. Historical UI reads canonical projections only after its import is complete. |
-| Duplicate/late/reordered event | Unique constraints deduplicate. Later event waits behind a gap. A late event for a superseded epoch is audited but cannot project. |
+| Duplicate/late/reordered event | Unique constraints deduplicate. Later event waits behind a gap. A late superseded-epoch event is audited without projection, except that an exact terminal `session.command` match may settle only its already-accepted historical command row. |
 | Missing replay event | Manager keeps ACK at last contiguous. If host can replay, fill and proceed. If below replay floor/state lost, degrade host and fail/recovery-mark affected active run explicitly. |
 | Network partition | Host retains bounded unacknowledged outbox; manager retry/reconnect owns recovery. At bound, host backpressures command admission; no dropped events. |
 | Host restart | Same state directory retains identity, stream, sequence, receipts, objects, and outbox; boot ID changes. Accepted prompt without a live ACP turn terminalizes `turn_lost`. |
@@ -2420,7 +2435,7 @@ retesting its internals.
 | EVT-02 | host AsyncAPI; SQLite outbox | atomic append, T1.1 | `IT-EVT-02 commit before publish`; publish before transaction |
 | EVT-03 | event unique constraints | ingest conflict classifier, T0.4/T1.3 | `IT-EVT-03 at-least-once exactly one`; remove either unique |
 | EVT-04 | decimal sequence schemas; run counter | host allocator/run-row lock, T1.1/T1.3 | `IT-EVT-04 ordered above MAX_SAFE_INTEGER`; use JSON number/remove lock |
-| EVT-05 | stale disposition; assignment FK | ingest/projector fences, T1.3/T2.1 | `IT-EVT-05 stale audit no mutation`; remove epoch predicate |
+| EVT-05 | stale disposition; assignment/command FKs | ingest/projector fences, T1.3/T2.1 | `IT-EVT-05 stale audit no mutation and exact-command release race`; remove epoch or exact-command predicate |
 | EVT-06 | replay/ACK errors; gap columns | stream consumer, T1.2/T1.3 | `IT-EVT-06 gap hold fill floor`; advance ACK over gap |
 | EVT-07 | SSE/ACK contracts; stream cursors | host/manager recovery, T1.1–T1.3 | `IT-EVT-07 restart from watermark`; use process cursor |
 | EVT-08 | negotiated payload schemas/errors | host/manager redactors, T0.3/T1.1/T1.3 | `CT-EVT-08 schema/redaction quarantine`; persist raw unknown payload |
@@ -2428,6 +2443,7 @@ retesting its internals.
 | EVT-10 | consumer table | projector CAS/poison, T1.4 | `IT-EVT-10 cursor and poison isolation`; advance poisoned cursor |
 | EVT-11 | web-runs AsyncAPI | browser-safe mapper/query, T2.2 | `IT-EVT-11 exclusive authorized replay`; make inclusive/bypass membership |
 | EVT-12 | ADR/retention analytics | ACK prune, no compactor, T1.1/T4.4 | `IT-EVT-12 retention and ACK grace`; prune unacked/early row |
+| EDGE-EVT-07 | event-plane analytics; command/assignment FKs | exact historical command fence, T1.3/T1.4 | `IT-EVT-05 exact-command release race`; remove full-identity match or allow non-command projection |
 | PRM-01 | async prompt OpenAPI/AsyncAPI | supervisor admission, T3.1 | `IT-PRM-01 durable before 202`; return before receipt/event commit |
 | PRM-02 | command idempotency contract/index | receipt duplicate join, T3.1 | `IT-PRM-02 one ACP call`; bypass invariant comparison |
 | PRM-03 | prompt lifecycle analytics | async host + drivers, T3.1/T3.3 | `IT-PRM-03 disconnect independent`; cancel on HTTP close |
@@ -2440,6 +2456,7 @@ retesting its internals.
 | PRM-10 | fenced receipt/event schemas | pre-ACP fence, T3.1 | `IT-PRM-10 stale prompt fenced`; move fence after ACP |
 | PRM-11 | `PromptHandle` type/query contract | DB-backed handle, T3.2 | `IT-PRM-11 fresh process resolves`; require original Promise |
 | PRM-12 | ADR retention rule | command prune query, T3.2/T4.4 | `IT-PRM-12 prune eligibility`; omit ACK/apply/run/grace predicate |
+| EDGE-PRM-04 | prompt lifecycle analytics; receipt event ID | receipt/event reconciler, T1.4/T3.2 | `IT-PRM-06 receipt-before-projection waits`; settle from receipt or locally fence before event |
 | OBJ-01 | runtime-object OpenAPI; locator schema | catalog/transport, T3.4/T3.5 | `CT-OBJ-01 no path property`; add path to wire/catalog |
 | OBJ-02 | web payload OpenAPI | server-derived authorization, T3.5 | `IT-OBJ-02 cross-run substitution hidden`; trust client host/object binding |
 | OBJ-03 | command kinds/checks | Stage A deliverer/receipts, T3.4 | `IT-OBJ-03 reserve upload delete reuse ledger`; bypass command ID |

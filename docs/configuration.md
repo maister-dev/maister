@@ -603,13 +603,13 @@ For compatibility, omitted or empty `flow_roles[]` does not enforce existing
 role annotations in older Flow packages. New projects that use role-owned
 queues should declare the registry explicitly.
 
-For scratch runs, the web tier owns scoped materialization. V1 writes
-`profile.json` and `instructions.md` into the run workspace/runtime area,
-persists the profile snapshot, then calls the supervisor with
-`capabilityProfilePath` and constrained `adapterLaunch.env` pointing at those
-files. The supervisor does not read `maister.yaml` capability policy and does
-not decide trust. Adapter-specific MCP config, settings files, and skill loader
-wiring are designed follow-up work.
+For scratch and Flow runs, the web tier owns scoped materialization. It writes
+and persists the profile snapshot, publishes the profile as a checksummed
+`capability_profile` and `capability_instructions` runtime objects, then calls
+the supervisor with only their opaque object IDs. The execution host resolves the private
+path for the ACP child. The supervisor does not read `maister.yaml` capability
+policy and does not decide trust. Adapter-specific MCP config, settings files,
+and skill-loader wiring remain separate work.
 
 For a fresh per-node AI session, the Flow runner uses the same materializer. For
 a long-living ACP session, those files are session-wide: every AI node inside
@@ -1319,7 +1319,7 @@ control-plane decision.
 ## Stage B execution-host data plane (Implemented — ADR-167)
 
 Stage B deliberately introduces **no operator setting**. The fixed negotiated
-limits (`1 MiB` event envelope, `500` replay batch, `512 MiB` runtime object)
+limits (`1 MiB` event envelope, `500` replay batch, `25 MiB` runtime object)
 are published by the supervisor's read-only `/capabilities` document and
 validated by the web tier. The default one-host launch needs neither relay,
 object store, host enrollment, nor a web runtime-data mount. Canonical mode is

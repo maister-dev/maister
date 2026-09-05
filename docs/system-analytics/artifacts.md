@@ -1,24 +1,23 @@
 # Typed artifacts and evidence graph
 
-> **Status: Implemented, as of 2026-06-02.** The artifact model, validity
-> FSM, runner-inline recording, the ADR-022 projector, the read-only API routes,
-> and the evidence-graph explorer all shipped across Phases 1–8 and are reconciled
-> as-built here (Phase 9, T9.1). Tags below tagged `(Designed)` refer to
-> later scope (capability enforcement of `visibility`/`retention`) and remain
-> unbuilt.
+> **Status: Implemented.** The artifact model, validity FSM, runner-inline and
+> canonical-event projection, opaque execution-object payload route, and
+> evidence-graph explorer are reconciled here. Repository/worktree locators
+> remain the Stage C boundary.
 
 ## Purpose
 
 This domain covers how Flow runs produce, track, and gate on **typed evidence**:
-structured metadata records (`artifact_instances`) pointing at payloads on
-disk, in git, or inline in the DB. Artifacts make the evidence behind a run
+structured metadata records (`artifact_instances`) pointing at manager-owned
+inline data, repository/git data, or host-owned opaque runtime objects.
+Artifacts make the evidence behind a run
 visible and queryable without re-reading the worktree. The review-approval path
 is blocked until all required evidence is present and `current`. The
 evidence-graph explorer in the run-detail UI renders the full provenance chain
 from task input through node attempts to artifacts, gates, and the review
 decision.
 
-Domain boundary: the artifact write paths (runner-inline + ADR-022 projector),
+Domain boundary: the artifact write paths (runner-inline + canonical projector),
 the validity lifecycle, the read-only evidence API, and the review-refusal
 mechanism. The **promotion artifact** is in scope here as a *recorded
 output* (Implemented) — the flow-merge / PR promotion *control flow* lives in
@@ -26,7 +25,7 @@ output* (Implemented) — the flow-merge / PR promotion *control flow* lives in
 external ingestion beyond the external operations API, capability enforcement
 (`visibility`/`retention` — Designed).
 
-**Stage B transition (Designed):** a host-produced payload may use the opaque
+**Stage B runtime-object boundary (Implemented):** a host-produced payload uses the opaque
 `execution-object` locator described by [execution-runtime-objects.md](execution-runtime-objects.md);
 its bytes remain host-owned and path-free at the manager boundary. Git-range,
 worktree, inline, gate-verdict, HITL, and manager-owned evaluation evidence
@@ -48,12 +47,13 @@ Locked decisions: [ADR-037](../decisions.md#adr-037-typed-artifact-model)
 ## Domain entities
 
 - **`artifact_instances`** — the queryable evidence index (Implemented). One row
-  per artifact occurrence. Payloads are NOT stored in Postgres — they live on
-  disk (run dir), in the worktree, or in git. See
+  per artifact occurrence. Bodies may be inline manager data, worktree/git
+  data, or a host-owned `execution-object`; raw runtime bytes are not stored in
+  Postgres. See
   [`../db/artifacts-domain.md`](../db/artifacts-domain.md).
-- **`artifact_projection_cursors`** — per-run replay cursor for the ADR-022
-  projector (Implemented). One row per run (`scope = "run"`). See
-  [`../db/artifacts-domain.md`](../db/artifacts-domain.md).
+- **`execution_event_consumers`** — durable per-run cursor/poison state for the
+  canonical artifact projector. The legacy path-bearing
+  `artifact_projection_cursors` table was removed after import proof.
 - **Artifact kind** — one of the closed catalog:
   `diff | log | test_report | lint_report | ai_judgment | human_note |
   commit_set | checkpoint | preview | generic_file`, plus
@@ -75,8 +75,9 @@ Locked decisions: [ADR-037](../decisions.md#adr-037-typed-artifact-model)
   only).
 - **Artifact validity** — `current | stale | superseded | failed | skipped`.
   See state machine below.
-- **Locator** — typed discriminated jsonb written server-side only. Six shapes:
-  `git-range`, `git-log`, `file`, `gate-verdict`, `hitl-response`, `inline`.
+- **Locator** — typed discriminated jsonb written server-side only. Seven shapes:
+  `git-range`, `git-log`, `file`, `gate-verdict`, `hitl-response`, `inline`,
+  `execution-object`.
 - **Producer** — who wrote the row: `runner | projector | takeover | gate |
   human`. The `gate` producer also records a `test_report` artifact when an
   `external_check` gate report is ingested via the external operations API, surfacing
@@ -172,7 +173,7 @@ sequenceDiagram
         DB-->>R: PRECONDITION — node fails before action
     end
     R->>R: action runs (agent / cli / check / judge)
-    R->>AS: record output.produces[] (deterministic PK)
+    R->>AS: record output.produces[] (deterministic PK or execution-object locator)
     AS->>DB: upsert artifact_instances (onConflictDoUpdate)
     alt required output missing
         R->>DB: node Failed(PRECONDITION) before finish
@@ -180,47 +181,40 @@ sequenceDiagram
         R->>AS: supersedePrior(runId, nodeId, artifactDefId, newId)
         AS->>DB: set prior validity=superseded, superseded_by_id=newId
     end
-    R->>AS: recordDefaultArtifacts (log path, diff git-range,\nguard metrics, human/form answer)
+    R->>AS: recordDefaultArtifacts (diff git-range, guard metrics, human/form answer)
     AS->>DB: upsert default artifact_instances
 ```
 
-### Projector replay (event-stream evidence)
+### Canonical projector replay (event-stream evidence)
 
-The ADR-022 projector derives tool-call activity `log` and `preview` URLs from
-the run-scoped `run.events.jsonl`. It runs as a PULL at runner sync points and
-at startup.
-
-**Phase-0 re-confirmation correction (ADR-038):** The events log is
-`.maister/<projectSlug>/runs/<runId>/run.events.jsonl` (one file per run,
-shared across all steps/sessions). `monotonicId` is run-global, strictly
-increasing across the whole file. The projector cursor (`artifact_projection_cursors`)
-is one row per run (`scope = "run"`), not per step.
+The artifact projector derives tool-call activity `log` and `preview` records
+from manager-owned `execution_events`. It runs at runner sync points and at
+startup through the shared durable projector primitive.
 
 ```mermaid
 sequenceDiagram
     participant PR as Projector
-    participant FS as run.events.jsonl
     participant DB as Postgres
 
-    PR->>DB: read cursor last_monotonic_id for run
-    PR->>FS: read events with monotonicId > last_monotonic_id
+    PR->>DB: claim execution_event_consumers cursor
+    DB-->>PR: execution_events after canonical run_sequence
     loop each event
         alt session.update / session.permission_request
-            PR->>PR: derive log or preview artifact\n(PK = proj:runId:monotonicId)
-        else unknown / unparseable shape
-            PR->>PR: skip event (WARN log)\ncursor still advances past it
+            PR->>PR: derive log or preview artifact\n(PK = proj:runId:event:eventId)
+        else known non-deriving shape
+            PR->>PR: no artifact
         end
     end
-    Note over PR,DB: ONE TRANSACTION (two-phase ordering)
+    Note over PR,DB: ONE TRANSACTION per event
     PR->>DB: upsert derived artifact_instances
-    PR->>DB: advance last_monotonic_id to highest processed
+    PR->>DB: advance last_run_sequence
     Note over PR: crash before commit → replay from last committed cursor
 ```
 
-Attribution: `event.sessionId` is joined to `node_attempts.acp_session_id`.
-Events matching a known attempt → `node_attempt_id` is set. Unmatched events
-are stored with `node_attempt_id NULL` (run-level) and are NOT retroactively
-re-attributed.
+Attribution uses the event's validated `payload.nodeAttemptId` and proves that
+the attempt belongs to the same run. Missing attribution yields a run-level
+artifact; invalid cross-run attribution poisons only this projector cursor and
+does not compromise accepted event storage.
 
 ### Downstream staleness on rework / takeover return
 

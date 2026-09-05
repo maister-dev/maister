@@ -635,8 +635,8 @@ expensive context loads lazily only when a card is expanded.
   a read-only, project-scoped (`readBoard`) DTO
   `{ lastAgentMessage, gates[], diff, progress }`: `gates` + `progress` from
   `getRunNodeStatuses` (the current node attempt's gates + a done/total count);
-  `lastAgentMessage` from the trailing coalesced `agent_message_chunk` in the
-  run's `run.events.jsonl`; `diff` from `prepareDiffSummary` over the run's raw
+  `lastAgentMessage` from the manager-owned `run_messages` projection of
+  canonical execution events; `diff` from `prepareDiffSummary` over the run's raw
   git diff. Any field that cannot be read degrades to `null` (the card stays
   answerable); the route never 500s for a missing peek.
 
@@ -646,12 +646,11 @@ sequenceDiagram
     participant C as HitlCard browser
     participant R as inbox-context route
     participant DB as Postgres
-    participant FS as run.events.jsonl
+    participant FS as Repository/worktree filesystem
 
     U->>C: expand a card
     C->>R: GET inbox-context (readBoard on run.projectId)
-    R->>DB: getRunNodeStatuses -> gates + progress
-    R->>FS: tail -> last agent_message_chunk
+    R->>DB: statuses + projected last agent message
     R->>R: prepareDiffSummary(raw git diff) -> files + and -
     R-->>C: lastAgentMessage, gates, diff, progress (partial-null on miss)
     C-->>U: expanded decision context
@@ -1320,4 +1319,3 @@ lock. Gate chat remains attached to the parent and never resolves a child.
   `web/app/api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond/route.ts`,
   `mcp/src/tools.ts`.
 - SDD: [`../../.ai-factory/specs/feature-user-access-tokens.md`](../../.ai-factory/specs/feature-user-access-tokens.md).
-

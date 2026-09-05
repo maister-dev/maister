@@ -90,7 +90,9 @@ Detailed code structure, conventions, HeroUI patterns: **`web/CLAUDE.md`**.
 - **IPC Next.js ↔ supervisor**: HTTP+SSE through `web/lib/execution-host/`
   (Implemented — ADR-166: durable host identity, per-run epoch-fenced
   assignments, enveloped command ledger, opaque adopted-workspace handles);
-  same host, shared filesystem.
+  the supported single-host deployment still shares repository/worktree
+  material until Stage C, but the Stage B event and runtime-data plane is
+  path-free (ADR-167).
 - **Flow plugins**: git repos pinned by tag (`v1.2.3`); installed system-wide
   to `~/.maister/flows/<id>@<tag>/` and symlinked into each consuming
   project's `.maister/<slug>/flows/`.
@@ -151,13 +153,14 @@ epoch inside their existing CAS claim. `POST /workspaces/adopt` is the only
 path-bearing route; session routes take the opaque `executionWorkspaceId`.
 → `docs/system-analytics/execution-hosts.md`.
 
-### 2. SSE pipe-to-disk
+### 2. Durable execution-host event and runtime-data plane
 
-Supervisor writes raw step output to
-`.maister/<project-slug>/runs/<run-id>/<step-id>.log` and appends structured
-session events to `run.events.jsonl`. Next.js Route Handler
-(`/api/runs/[id]/stream`) tails `run.events.jsonl`, so reconnect via
-`lastEventId` works without replaying from memory.
+The supervisor keeps raw step output and runtime bytes as host-private files.
+It commits redacted, sequence-numbered events to its SQLite outbox; the manager
+ingests them idempotently into Postgres and serves browser replay from
+`execution_events`. Runtime content crosses typed opaque-object APIs with
+manager-owned metadata. Web code must never tail `run.events.jsonl`, read a
+host runtime path, or use filesystem polling as a state-transition mechanism.
 
 ### 3. Typed error taxonomy (`lib/errors.ts`)
 

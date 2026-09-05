@@ -736,7 +736,7 @@ Logging requirements:
 The run-detail page surfaces *what the coding agent is doing*, per node, instead
 of node-status text and a single aggregate token count.
 
-- **Per-node agent transcript (jsonl-sourced, shared with scratch).** One
+- **Per-node agent transcript (canonical-event-sourced, shared with scratch).** One
   generalized, persisted transcript mechanism backs both scratch and flow. The
   scratch `scratch_messages` table is generalized to `run_messages`
   (run-kind-agnostic, nullable `node_attempt_id` FK → `node_attempts.id`, unique
@@ -744,10 +744,10 @@ of node-status text and a single aggregate token count.
   keeps its `(run_id, sequence)` invariant). The same `interpretSessionUpdate`
   classifier + payload encoders coalesce the stream for both surfaces (assistant
   text chunks merge into one message; a `tool_call` + its `tool_call_update`s
-  merge by `toolCallId`; usage collapses to one row). Scratch keeps its live
-  supervisor-stream consumer; flow uses a **reconcile-on-read projector**
-  (`projectRunTranscript`) that tails the durable `run.events.jsonl` (ADR §2),
-  attributing each `session.update` to a node via the supervisor-stamped
+  merge by `toolCallId`; usage collapses to one row). Both scratch and flow use
+  the manager-owned `execution_events` stream and the idempotent
+  `run_transcript` projection consumer, attributing each `session.update` to a
+  node via the supervisor-stamped
   `nodeAttemptId` (T-B0) and upserting `run_messages` per node attempt
   (idempotent; same pattern as cost + artifact projection). The run-detail
   center renders the active node's transcript expanded by default, refetching on
@@ -801,7 +801,7 @@ sequenceDiagram
     actor U as Operator
     participant W as Web tier
     participant DB as Postgres
-    participant FS as Filesystem
+    participant FS as Repository/worktree filesystem
     participant SV as Supervisor
     participant A as Adapter
 
@@ -820,13 +820,14 @@ sequenceDiagram
     SV-->>W: 201 sessionId
     loop step execution
         A-->>SV: stdout JSONL lines
-        SV->>FS: append {stepId}.log + cost.jsonl
-        SV-->>W: append run.events.jsonl
-        W-->>U: UI updates live
+        SV->>SV: append private host log/object bytes
+        SV-->>W: deliver durable event envelope
+        W->>DB: ingest once + advance projections
+        W-->>U: replay canonical run SSE
     end
     A->>A: exit 0
-    SV-->>W: SSE session.exited
-    W->>DB: runs.status=Review
+    SV-->>W: deliver session.exited
+    W->>DB: project runs.status=Review
     U->>W: GET /api/runs/[id]/diff
     W-->>U: prepared run diff DTO
     U->>W: POST /api/runs/[id]/promote
@@ -864,7 +865,7 @@ sequenceDiagram
     participant R as Runner
     participant W as Web route
     participant DB as Postgres
-    participant FS as Filesystem
+    participant DB as Postgres
     actor U as Operator
 
     A-->>SV: session.permission_request or form/human ask
@@ -948,17 +949,17 @@ sequenceDiagram
     actor U as Composer
 
     A-->>SV: available_commands_update (verbatim names)
-    SV-->>W: append run.events.jsonl (no rewrite)
-    W->>FS: persist latest snapshot per session (last-write-wins)
+    SV-->>W: deliver canonical session.update (verbatim names)
+    W->>DB: ingest event + project latest snapshot (last-write-wins)
     U->>W: GET /api/scratch-runs/[runId]/commands
     W-->>U: [{ name, description, hint? }] as emitted
 ```
 
 Two invariants bind this to the existing run stream:
 
-1. **Reconnect is unaffected.** SSE `lastEventId` replay over
-   `run.events.jsonl` still works; persisting the snapshot adds run stream state
-   and does not change the monotonic event sequence.
+1. **Reconnect is durable.** SSE `lastEventId` replay reads the canonical
+   manager-owned sequence in `execution_events`; persisting the snapshot adds
+   read-model state and does not change that monotonic sequence.
 2. **Fan-out is preserved.** The event must **no longer surface as transcript
    noise**, and every other `sessionUpdate` consumer must keep working with the
    event now captured (fan-out audit across both former discard sites).
@@ -1043,16 +1044,12 @@ already-inserted run) — never an orphan worktree or live ACP session.
 - Every state transition is persisted to `runs` BEFORE the UI reflects
   it; UI never derives status from supervisor in-memory state.
 - **(Implemented)** SSE stream from web tier
-  (`GET /api/runs/[runId]/stream`) tails a single durable per-run
-  log at `.maister/<slug>/runs/<runId>/run.events.jsonl` that the
-  supervisor appends to in lockstep with its own SSE channel.
-  `Last-Event-ID` (or `?lastEventId=` fallback) replays from the
-  durable file across step boundaries, supervisor restarts, and
-  consecutive sessions of the same run. The supervisor seeds
-  `record.monotonicId` from the tail of the run log on every spawn
-  so the per-run event sequence stays strictly increasing across
-  sessions. The bridge never replays from in-memory ring state on
-  the web side.
+  (`GET /api/runs/[runId]/stream`) replays manager-owned
+  `execution_events`, ordered by the canonical per-run `runSequence`.
+  `Last-Event-ID` (or `?lastEventId=` fallback) survives step boundaries,
+  web or supervisor restarts, and consecutive sessions of the same run. The
+  execution host resumes delivery from its durable acknowledgement watermark;
+  neither the browser nor the web tier reads host runtime files.
 - **(Designed, FR-A1…A3)** The supervisor MUST persist the **latest**
   `available_commands_update` snapshot per session (last-write-wins) and
   forward command names **verbatim** (no `$`/`/`/`mcp:` rewriting); the

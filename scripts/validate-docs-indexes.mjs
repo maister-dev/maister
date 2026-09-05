@@ -136,7 +136,7 @@ export function validateStageBAnalytics(analyticsRoot) {
     : "";
   for (const id of allIds) {
     const row = new RegExp(
-      `^\\| ${escapedRegex(id)} \\| [^|]+ \\| [^|]+ \\| ([^|]+) \\| [^|]+ \\|$`,
+      `^\\|\\s*${escapedRegex(id)}\\s*\\|[^|]+\\|[^|]+\\|([^|]+)\\|[^|]+\\|\\s*$`,
       "m",
     ).exec(traceability);
     if (!row || row[1].trim().length === 0) {

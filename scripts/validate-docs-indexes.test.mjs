@@ -75,6 +75,28 @@ test("accepts a complete, indexed Stage B specification fixture", async () => {
   });
 });
 
+test("accepts aligned Markdown traceability tables", async () => {
+  await withFixture(async (root) => {
+    const cutover = join(
+      root,
+      "system-analytics",
+      "execution-data-cutover.md",
+    );
+    const current = await readFile(cutover, "utf8");
+    const aligned = current.replaceAll(
+      "| EVT-01 | contract | enforcement | IT-EVT-01 | Designed |",
+      "| EVT-01      | contract | enforcement | IT-EVT-01 | Designed |",
+    );
+
+    await writeFile(cutover, aligned);
+
+    assert.deepEqual(
+      validateStageBAnalytics(join(root, "system-analytics")),
+      [],
+    );
+  });
+});
+
 test("rejects missing R5 sections and excess expectation bullets", async () => {
   await withFixture(async (root) => {
     const analytics = join(root, "system-analytics");

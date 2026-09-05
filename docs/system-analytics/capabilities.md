@@ -39,11 +39,13 @@ It owns four things: (1) the **project capability registry** —
 the ACP session spawns, plus MCP servers delivered over ACP
 `newSession params.mcpServers` carrying env-var **names only** — never a secret
 VALUE on disk or the wire (ADR-044); and (4) the conservative, spike-gated flip of
-`ENFORCEABILITY_BY_AGENT` cells from `instructed` to `enforced`. Scope is the
-`web/` tier and the on-disk worktree only — the supervisor resolves
+`ENFORCEABILITY_BY_AGENT` cells from `instructed` to `enforced`. Scope spans
+manager-owned policy resolution and host-private materialization — the supervisor resolves
 `StartSessionRequest.mcpServers` env names → values from its own `process.env` at
-spawn (it also still accepts the non-secret `capabilityProfilePath` +
-`adapterLaunch` paths). Out of scope and
+spawn. The manager uploads the non-secret profile as a runtime object and sends
+their opaque `capabilityProfileObjectId` and
+`capabilityInstructionsObjectId`; it never sends a host filesystem path.
+`adapterLaunch` remains a typed launch description. Out of scope and
 deferred to **Phase 2**: a capability marketplace, sandboxing of untrusted import
 sources, cross-project capability promotion, codex enforced mapping
 (`config.toml` / `--sandbox`), and a Flow capability-designer UI.
@@ -182,7 +184,7 @@ sequenceDiagram
     participant R as graph runner
     participant Res as resolveCapabilityProfile
     participant Map as agent-map
-    participant FS as worktree (.maister/capabilities/<runId>/<nodeAttemptId>)
+    participant FS as manager materialization workspace
     participant L as node_attempts ledger
     participant S as supervisor
     R->>Res: resolve(node.settings, agent, run-start catalog snapshot)
@@ -192,7 +194,8 @@ sequenceDiagram
     R->>FS: atomic write worktree .claude/settings.local.json (tools to allow, permissionMode to defaultMode)
     Note over R,L: db.transaction: setMaterializationPlan (write-once) + markNodeRunning
     R->>L: materialization_plan written
-    R->>S: POST /sessions (capabilityProfilePath + mcpServers by env-var NAME)
+    R->>S: POST /sessions (capability object IDs + mcpServers by env-var NAME)
+    S->>S: resolve both object IDs to host-private paths
     Note over S: newSession params.mcpServers — supervisor resolves env names to process.env values
     S-->>R: session/update stream
     Note over R,FS: on scope end (success/fail/checkpoint/abandon): rm node dir, record cleanup
