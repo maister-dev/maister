@@ -11,6 +11,7 @@ import { MaisterError } from "@/lib/errors";
 import { projectExecutionEvents } from "@/lib/execution-host/events/projector";
 import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
 import { projectTranscriptEvent } from "@/lib/execution-host/events/transcript-projector";
+import { prepareTranscriptContent } from "@/lib/execution-host/events/session-content";
 
 const { runMessages, runs } = schema;
 
@@ -39,6 +40,7 @@ async function projectCanonicalRunTranscript(
     runId,
     projector: {
       consumerName: CANONICAL_PROJECTION_CONSUMERS.transcript,
+      prepare: prepareTranscriptContent,
       project: async (tx, event) => {
         if (await projectTranscriptEvent(tx, event)) {
           changed += 1;

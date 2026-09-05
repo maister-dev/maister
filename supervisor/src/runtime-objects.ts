@@ -4,7 +4,16 @@ import type {
   RuntimeObjectOutputBinding,
 } from "./types";
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  renameSync,
+  writeSync,
+  unlinkSync,
+} from "node:fs";
 import {
   lstat,
   mkdir,
@@ -17,6 +26,7 @@ import {
 import { resolve } from "node:path";
 
 import { SupervisorError } from "./types";
+import { encodeSessionContent } from "./session-content-json";
 
 export const MAX_RUNTIME_OBJECT_BYTES = 26_214_400;
 
@@ -98,6 +108,96 @@ export class RuntimeObjectRegistry {
     private readonly root: string,
     private readonly now: () => Date = () => new Date(),
   ) {}
+
+  /** Publishes a bounded producer segment before its synchronous SQLite event. */
+  captureSessionContent(input: {
+    runId: string;
+    assignmentId: string;
+    assignmentEpoch: number;
+    hostSessionId: string;
+    payload: Record<string, unknown>;
+  }): RuntimeObjectPublicMetadata {
+    const objectId = randomUUID();
+    const privatePath = objectPath(this.root, objectId, 1);
+    const temporary = `${privatePath}.tmp`;
+    const timestamp = this.now().toISOString();
+    const hash = createHash("sha256");
+    let sizeBytes = 0;
+
+    mkdirSync(this.root, { recursive: true, mode: 0o700 });
+    const descriptor = openSync(temporary, "wx", 0o600);
+
+    try {
+      for (const chunk of encodeSessionContent(input.payload)) {
+        if (sizeBytes + chunk.byteLength > 2_097_152) {
+          throw new SupervisorError(
+            "ACP_PROTOCOL",
+            "session output segment exceeds its byte limit",
+            {
+              details: { reason: "required_output_incomplete" },
+            },
+          );
+        }
+        let written = 0;
+
+        while (written < chunk.byteLength) {
+          const count = writeSync(
+            descriptor,
+            chunk,
+            written,
+            chunk.byteLength - written,
+          );
+
+          if (count === 0)
+            throw new SupervisorError(
+              "EXECUTOR_UNAVAILABLE",
+              "session content storage made no progress",
+              { details: { reason: "required_output_incomplete" } },
+            );
+          written += count;
+        }
+        hash.update(chunk);
+        sizeBytes += chunk.byteLength;
+      }
+      fsyncSync(descriptor);
+    } catch (error) {
+      unlinkSync(temporary);
+      throw error;
+    } finally {
+      closeSync(descriptor);
+    }
+    renameSync(temporary, privatePath);
+    const directory = openSync(this.root, "r");
+
+    try {
+      fsyncSync(directory);
+    } finally {
+      closeSync(directory);
+    }
+    this.state.insertRuntimeObject({
+      id: objectId,
+      runId: input.runId,
+      assignmentId: input.assignmentId,
+      assignmentEpoch: input.assignmentEpoch,
+      hostSessionId: input.hostSessionId,
+      kind: "raw_transcript",
+      logicalName: "session-content.json",
+      mimeType: "application/json",
+      sizeBytes,
+      sha256: hash.digest("hex"),
+      generation: 1,
+      retentionClass: "run",
+      state: "available",
+      privatePath,
+      createdAt: timestamp,
+      sealedAt: timestamp,
+      expiresAt: null,
+      deletedAt: null,
+      lastError: null,
+    });
+
+    return publicMetadata(requireObject(this.state, objectId));
+  }
 
   async reserve(input: {
     runId: string;

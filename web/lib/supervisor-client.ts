@@ -1417,6 +1417,7 @@ async function runtimeObjectBinaryResponse(input: {
   headers?: Record<string, string>;
   bytes?: Uint8Array;
   timeoutMs?: number | null;
+  signal?: AbortSignal;
   ctx: string;
 }): Promise<BinaryReply> {
   if (
@@ -1438,7 +1439,7 @@ async function runtimeObjectBinaryResponse(input: {
       headers: input.headers,
       body: input.bytes,
       cache: "no-store",
-      signal: controller.signal,
+      signal: combineSignals(input.signal, controller.signal),
     });
   } catch {
     throw invalidBinaryRequest(input.ctx);
@@ -1566,7 +1567,7 @@ export async function uploadRuntimeObject(input: {
 
 export async function getRuntimeObjectContent(
   objectId: string,
-  opts: { range?: { start: number; end?: number } } = {},
+  opts: { range?: { start: number; end?: number }; signal?: AbortSignal } = {},
 ): Promise<{
   bytes: Uint8Array;
   contentRange: string | null;
@@ -1583,7 +1584,7 @@ export async function getRuntimeObjectContent(
 
 export async function openRuntimeObjectContent(
   objectId: string,
-  opts: { range?: { start: number; end?: number } } = {},
+  opts: { range?: { start: number; end?: number }; signal?: AbortSignal } = {},
 ): Promise<{
   body: ReadableStream<Uint8Array>;
   contentLength: number | null;
@@ -1599,6 +1600,7 @@ export async function openRuntimeObjectContent(
     headers: range ? { range } : undefined,
     timeoutMs: ADMIN_READ_TIMEOUT_MS,
     ctx: "getRuntimeObjectContent",
+    signal: opts.signal,
   });
 
   if (!response.ok) {

@@ -2,6 +2,54 @@ import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
+/** Exact host-owned session payload; the reference event is availability evidence. */
+export const SessionContentReferenceSchema = z
+  .object({
+    schema: z.literal("maister.session-content.v2"),
+    commandId: z.string().uuid(),
+    hostSessionId: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/),
+    source: z.enum(["raw_stdout", "session_update", "terminal_output"]),
+    firstFrame: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    frameCount: z.literal(1),
+    objectId: z.string().uuid(),
+    kind: z.literal("raw_transcript"),
+    logicalName: z.literal("session-content.json"),
+    mimeType: z.literal("application/json"),
+    generation: z.number().int().min(1).max(2_147_483_647),
+    sizeBytes: z.number().int().min(0).max(2_097_152),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    retentionClass: z.literal("run"),
+    state: z.literal("available"),
+    sealedAt: z.string().datetime({ offset: true }),
+    expiresAt: z.null(),
+  })
+  .strict();
+
+export type SessionContentReference = z.infer<
+  typeof SessionContentReferenceSchema
+>;
+
+const SessionContentPayloadSchema = z
+  .object({
+    sourceMonotonicId: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    sessionName: z.string().min(1).max(128),
+    nodeAttemptId: z.string().uuid().optional(),
+    contentRef: SessionContentReferenceSchema,
+  })
+  .strict();
+
+export function sessionContentSource(
+  eventType: string,
+): SessionContentReference["source"] {
+  if (eventType === "session.line") return "raw_stdout";
+  if (
+    ["session.command", "session.exited", "session.crashed"].includes(eventType)
+  )
+    return "terminal_output";
+
+  return "session_update";
+}
+
 export const MAX_RUNTIME_EVENT_BYTES = 1_048_576;
 export const MAX_RUNTIME_EVENT_DEPTH = 16;
 export const MAX_RUNTIME_EVENT_KEYS = 256;
@@ -46,6 +94,7 @@ export const RUNTIME_EVENT_PAYLOAD_SCHEMAS = [
   "maister.usage.recorded.v1",
   "maister.runtime-object.available.v1",
   "maister.runtime-object.state.v1",
+  "maister.session.content.v2",
 ] as const;
 
 const EVENT_SCHEMA_PAIRS = new Map(
@@ -83,11 +132,31 @@ export const RuntimeEventEnvelopeSchema = z
   })
   .strict()
   .superRefine((value, context) => {
-    if (EVENT_SCHEMA_PAIRS.get(value.eventType) !== value.payloadSchema) {
+    if (value.payloadSchema === "maister.session.content.v2") {
+      const parsed = SessionContentPayloadSchema.safeParse(value.payload);
+
+      if (
+        !value.eventType.startsWith("session.") ||
+        !parsed.success ||
+        parsed.data.contentRef.hostSessionId !== value.hostSessionId ||
+        parsed.data.contentRef.firstFrame !== parsed.data.sourceMonotonicId ||
+        parsed.data.contentRef.source !== sessionContentSource(value.eventType)
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["payload"],
+          message:
+            "session content reference has an invalid payload or source binding",
+        });
+      }
+    } else if (
+      value.payload.contentRef !== undefined ||
+      EVENT_SCHEMA_PAIRS.get(value.eventType) !== value.payloadSchema
+    ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["payloadSchema"],
-        message: "payloadSchema does not match eventType",
+        message: "payloadSchema does not match eventType or referenced content",
       });
     }
     try {
@@ -303,7 +372,10 @@ export function buildRuntimeEventEnvelope(input: {
     hostSessionId: input.draft.hostSessionId,
     eventType: input.draft.eventType,
     occurredAt: input.draft.occurredAt,
-    payloadSchema: payloadSchemaForRuntimeEvent(input.draft.eventType),
+    payloadSchema:
+      payload.contentRef === undefined
+        ? payloadSchemaForRuntimeEvent(input.draft.eventType)
+        : "maister.session.content.v2",
     payload,
   };
   const parsed = RuntimeEventEnvelopeSchema.parse(envelope);
@@ -343,6 +415,9 @@ export function deterministicRuntimeEventId(input: {
   const name = `urn:maister:execution-event:host:${encodeURIComponent(input.hostKey)}:stream:${encodeURIComponent(input.streamId)}:sequence:${encodeURIComponent(input.sequence)}`;
 
   return uuidFromSha1(
-    createHash("sha1").update(namespace).update(name, "utf8").digest(),
+    createHash("sha1")
+      .update(namespace.toString("hex"), "hex")
+      .update(name, "utf8")
+      .digest(),
   );
 }

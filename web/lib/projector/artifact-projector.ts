@@ -16,6 +16,7 @@ import {
   type ExecutionEventProjector,
 } from "@/lib/execution-host/events/projector";
 import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
+import { prepareArtifactContent } from "@/lib/execution-host/events/session-content";
 import * as schemaModule from "@/lib/db/schema";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches the store/ledger idiom).
@@ -26,6 +27,7 @@ type Db = any;
 
 export const canonicalArtifactProjector: ExecutionEventProjector = {
   consumerName: CANONICAL_PROJECTION_CONSUMERS.artifact,
+  prepare: prepareArtifactContent,
   project: projectCanonicalArtifactEvent,
 };
 

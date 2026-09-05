@@ -2193,6 +2193,55 @@ components:
       pattern: "^(0|[1-9][0-9]{0,18})$"
       maxLength: 19
       description: Canonical non-negative signed-BIGINT decimal. It is a JSON string, never a number; maximum `9223372036854775807`.
+    SessionContentReference:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          schema,
+          commandId,
+          hostSessionId,
+          source,
+          firstFrame,
+          frameCount,
+          objectId,
+          kind,
+          logicalName,
+          mimeType,
+          generation,
+          sizeBytes,
+          sha256,
+          retentionClass,
+          state,
+          sealedAt,
+          expiresAt,
+        ]
+      description: |
+        Exact host-owned UTF-8 session payload JSON. This reference-bearing
+        session event is also the sealed object's availability evidence.
+        Trusted consumers verify the envelope fence, generation, length and
+        actual bytes before decoding outside their domain transaction.
+        Browser content reads require readRepoFiles; metadata grants do not
+        authorize reconstruction. A lost object never means an empty result.
+      properties:
+        schema: { type: string, enum: [maister.session-content.v2] }
+        commandId: { type: string, format: uuid }
+        hostSessionId: { type: string, pattern: "^[A-Za-z0-9._-]{1,128}$" }
+        source:
+          { type: string, enum: [raw_stdout, session_update, terminal_output] }
+        firstFrame: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        frameCount: { type: integer, enum: [1] }
+        objectId: { type: string, format: uuid }
+        kind: { type: string, enum: [raw_transcript] }
+        logicalName: { type: string, enum: [session-content.json] }
+        mimeType: { type: string, enum: [application/json] }
+        generation: { type: integer, minimum: 1, maximum: 2147483647 }
+        sizeBytes: { type: integer, minimum: 0, maximum: 2097152 }
+        sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+        retentionClass: { type: string, enum: [run] }
+        state: { type: string, enum: [available] }
+        sealedAt: { type: string, format: date-time }
+        expiresAt: { nullable: true, enum: [null] }
     RuntimeEventEnvelope:
       type: object
       additionalProperties: false
@@ -2223,8 +2272,12 @@ components:
         occurredAt: { type: string, format: date-time, description: "Host occurrence metadata, never an ordering authority." }
         payloadSchema:
           type: string
-          enum: [maister.session.created.v1, maister.session.line.v1, maister.session.update.v1, maister.session.permission-request.v1, maister.session.hook-trip.v1, maister.session.command.v1, maister.session.chat-turn.v1, maister.session.exited.v1, maister.session.crashed.v1, maister.usage.recorded.v1, maister.runtime-object.available.v1, maister.runtime-object.state.v1]
-        payload: { type: object, additionalProperties: true }
+          enum: [maister.session.created.v1, maister.session.line.v1, maister.session.update.v1, maister.session.permission-request.v1, maister.session.hook-trip.v1, maister.session.command.v1, maister.session.chat-turn.v1, maister.session.exited.v1, maister.session.crashed.v1, maister.usage.recorded.v1, maister.runtime-object.available.v1, maister.runtime-object.state.v1, maister.session.content.v2]
+        payload:
+          type: object
+          additionalProperties: true
+          properties:
+            contentRef: { $ref: "#/components/schemas/SessionContentReference" }
     RuntimeEventAck:
       type: object
       additionalProperties: false
@@ -2378,6 +2431,9 @@ components:
         - event_redaction_failed
         - event_payload_oversize
         - event_outbox_backpressure
+        - runtime_output_buffer_capacity
+        - runtime_output_frame_too_large
+        - required_output_incomplete
         - runtime_object_missing
         - runtime_object_range_invalid
         - runtime_object_integrity_mismatch
@@ -2409,6 +2465,26 @@ components:
         the web-tier `MaisterError.details`.
       properties:
         reason: { $ref: "#/components/schemas/ReasonToken" }
+        outputFailure:
+          type: string
+          enum:
+            [
+              producer_retained_limit,
+              producer_chunk_limit,
+              producer_frame_limit,
+              producer_spool_incomplete,
+              producer_frame_incomplete,
+              producer_output_storage,
+              producer_json_complexity,
+              producer_frame_invalid,
+              producer_permission_limit,
+              producer_permission_invalid,
+              producer_permission_failed,
+              producer_response_failed,
+              producer_update_invalid,
+              producer_method_unsupported,
+              producer_output_incomplete,
+            ]
         rule: { $ref: "#/components/schemas/WorkspaceRule" }
         field:
           type: string

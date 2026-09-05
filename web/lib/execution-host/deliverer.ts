@@ -612,6 +612,7 @@ function promptFailureFromCommand(row: ExecutionCommand): MaisterError {
 
   return new MaisterError(code, message, {
     details: {
+      ...nestedDetails,
       ...(reason ? { reason } : {}),
       commandId: row.id,
     },

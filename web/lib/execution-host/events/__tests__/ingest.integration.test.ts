@@ -787,7 +787,7 @@ describe("runtime event ingestion", () => {
     ]);
   });
 
-  it("projects host-owned runtime object metadata once without reading a runtime path", async () => {
+  it("promotes a pending runtime-object intent when availability arrives before the ACK", async () => {
     const objectRunId = randomUUID();
     const objectAssignmentId = randomUUID();
     const objectId = randomUUID();
@@ -803,6 +803,13 @@ describe("runtime event ingestion", () => {
          (id, run_id, execution_host_id, epoch, state, placement_reason)
        values ($1, $2, $3, 1, 'active', 'launch')`,
       [objectAssignmentId, objectRunId, hostId],
+    );
+    await testDatabase.pool.query(
+      `insert into execution_runtime_objects
+       (id, run_id, execution_host_id, execution_assignment_id, assignment_epoch,
+        kind, logical_name, mime_type, generation, retention_class, state)
+       values ($1, $2, $3, $4, 1, 'evidence', 'verification.json', 'application/json', 1, 'run', 'pending')`,
+      [objectId, objectRunId, hostId, objectAssignmentId],
     );
     await ingestRuntimeEvent({
       db: testDatabase.db,

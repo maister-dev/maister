@@ -7,6 +7,7 @@ import { isDeepStrictEqual } from "node:util";
 import { and, eq } from "drizzle-orm";
 
 import { CANONICAL_PROJECTION_CONSUMERS } from "./projection-consumers";
+import { preparePromptContent } from "./session-content";
 import {
   ExecutionEventProjectionError,
   projectExecutionEvents,
@@ -238,6 +239,7 @@ async function projectPromptCommand(
 }
 
 export const canonicalPromptProjector: ExecutionEventProjector = {
+  prepare: preparePromptContent,
   consumerName: CANONICAL_PROJECTION_CONSUMERS.prompt,
   project: projectPromptCommand,
   afterCommit: (events) => {

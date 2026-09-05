@@ -10,7 +10,7 @@ import {
   getRuntimeObjectForRun,
   openRuntimeObjectContent,
 } from "@/lib/execution-host/runtime-objects";
-import { authorizeRuntimeObjectActor } from "@/lib/execution-host/runtime-object-access";
+import { authorizeRuntimeObjectContentActor } from "@/lib/execution-host/runtime-object-access";
 import { parseSingleByteRange } from "@/lib/http/single-byte-range";
 
 type RouteParams = { params: Promise<{ runId: string; objectId: string }> };
@@ -79,7 +79,7 @@ export async function GET(
     if (!loaded) {
       return NextResponse.json({ message: "not found" }, { status: 404 });
     }
-    await authorizeRuntimeObjectActor(loaded, sessionUser.id);
+    await authorizeRuntimeObjectContentActor(loaded, sessionUser.id);
     const range = parseSingleByteRange(request.headers.get("range"), {
       syntax: "runtime object Range must use a single byte range",
       bounds: "runtime object Range is invalid",

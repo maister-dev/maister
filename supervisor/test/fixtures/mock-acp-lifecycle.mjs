@@ -100,13 +100,70 @@ class LifecycleAgent {
   }
 
   async prompt(params) {
+    // Exercise real ACP framing without putting megabyte arguments in argv.
+    const fixtureText = params.prompt.find(
+      (block) => block.type === "text",
+    )?.text;
+    if (fixtureText?.startsWith("fixture-output:")) {
+      const spec = JSON.parse(fixtureText.slice("fixture-output:".length));
+      if (spec.frameBytes) {
+        const notification = {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: params.sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "" },
+            },
+          },
+        };
+        const overhead = Buffer.byteLength(JSON.stringify(notification) + "\n");
+        const available = spec.frameBytes - overhead;
+        notification.params.update.content.text = spec.escaped
+          ? "é" + "\\".repeat(Math.floor((available - 2) / 2)) + "x".repeat((available - 2) % 2)
+          : "x".repeat(available);
+        await new Promise((resolve, reject) =>
+          process.stdout.write(JSON.stringify(notification) + "\n", (error) =>
+            error ? reject(error) : resolve(),
+          ),
+        );
+        return { stopReason: "end_turn" };
+      }
+      const glyph = spec.multibyte ? "é" : "x";
+      const text =
+        glyph.repeat(Math.floor(spec.bytes / Buffer.byteLength(glyph))) +
+        "x".repeat(spec.bytes % Buffer.byteLength(glyph));
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: spec.tool
+          ? {
+              sessionUpdate: "tool_call",
+              toolCallId: "large-tool",
+              title: "fixture output",
+              kind: "read",
+              status: "completed",
+              content: [{ type: "content", content: { type: "text", text } }],
+            }
+          : {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text },
+            },
+      });
+      return { stopReason: "end_turn" };
+    }
     for (const output of outputWrites) {
       const outputPath = process.env[output.envName];
 
       if (!outputPath) {
-        throw new Error(`missing required output environment ${output.envName}`);
+        throw new Error(
+          `missing required output environment ${output.envName}`,
+        );
       }
-      await writeFile(outputPath, output.content, { encoding: "utf8", mode: 0o600 });
+      await writeFile(outputPath, output.content, {
+        encoding: "utf8",
+        mode: 0o600,
+      });
     }
 
     for (let i = 0; i < lines; i += 1) {

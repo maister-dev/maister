@@ -67,7 +67,7 @@ export async function bootHost(
   const app = Fastify({ logger: false });
   const workspaceRoots = opts.workspaceRoots ?? [await realpath(runtimeRoot)];
   const spawnOverrides: SpawnOverrides = opts.spawnOverrides ?? {
-    binary: "node",
+    binary: process.execPath,
     preArgs: [
       join(FIXTURES_DIR, opts.fixture ?? "mock-acp-lifecycle.mjs"),
       ...(opts.fixtureArgs ?? []),
@@ -133,6 +133,11 @@ export async function bootHost(
         }
       }
       await Promise.all(exits);
+      await Promise.all(
+        registry
+          .list()
+          .map((record) => record.outputTerminal ?? record.outputDrained),
+      );
       await app.close();
       registry.clear("test-shutdown");
       if (ownsHostState) hostState.close();

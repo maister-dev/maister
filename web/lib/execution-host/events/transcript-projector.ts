@@ -10,6 +10,7 @@ import { and, desc, eq, isNull, sql } from "drizzle-orm";
 
 import { CANONICAL_PROJECTION_CONSUMERS } from "./projection-consumers";
 import { ExecutionEventProjectionError } from "./projector";
+import { prepareTranscriptContent } from "./session-content";
 
 import {
   nodeAttempts,
@@ -34,6 +35,7 @@ const RESET_EVENTS = new Set([
 
 export const canonicalTranscriptProjector: ExecutionEventProjector = {
   consumerName: CANONICAL_PROJECTION_CONSUMERS.transcript,
+  prepare: prepareTranscriptContent,
   project: async (tx, event) => {
     await projectTranscriptEvent(tx, event);
   },

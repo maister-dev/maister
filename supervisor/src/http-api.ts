@@ -18,6 +18,7 @@ import { delimiter, dirname, join } from "node:path";
 import { z, ZodError, type ZodType, type ZodTypeDef } from "zod";
 
 import { createAcpConnection, sendPromptOnConnection } from "./acp-client";
+import { retainedOutputBudget } from "./bounded-acp-stream";
 import {
   adapterSmokeCachePath,
   readAdapterSmokeCache,
@@ -506,10 +507,15 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       "supervisor-startup-recovered-accepted-prompts",
     );
   }
-  const runtimeEvents = new RuntimeEventPublisher(hostState, logger);
   const runtimeObjects = new RuntimeObjectRegistry(
     hostState,
     join(hostState.stateDirReal ?? runtimeRoot, "runtime-objects"),
+  );
+  const runtimeEvents = new RuntimeEventPublisher(
+    hostState,
+    logger,
+    undefined,
+    runtimeObjects,
   );
   const workspaces = new WorkspaceRegistry({
     state: hostState,
@@ -912,7 +918,11 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     const { entry, sessionId, parsed } = input;
     const body = parsed.payload;
 
-    if (entry.record.status !== "live") {
+    if (
+      entry.record.status !== "live" ||
+      entry.child.exitCode !== null ||
+      entry.child.signalCode !== null
+    ) {
       throw new SupervisorError("PRECONDITION", "session not live");
     }
     if (!entry.connection || !entry.acpSessionId) {
@@ -944,11 +954,13 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     });
 
     entry.record.stepId = body.stepId;
+    entry.record.activePromptCommandId = parsed.envelope.command.id;
     if (body.nodeAttemptId) entry.record.nodeAttemptId = body.nodeAttemptId;
     else delete entry.record.nodeAttemptId;
 
     const chatHitlId = parseGateChatHitlId(body.stepId);
     let chatBuf = "";
+    const chatBudget = retainedOutputBudget();
     const chatListener = (event: SessionEvent): void => {
       if (event.type !== "session.update") return;
       const update = event.update as {
@@ -961,6 +973,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         update.content?.type === "text" &&
         typeof update.content.text === "string"
       ) {
+        chatBudget.reserve(update.content.text.length * 2);
         chatBuf += update.content.text;
       }
     };
@@ -996,28 +1009,44 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         logger,
       );
     } catch (error) {
+      chatBudget.release();
       throwIfFenced(entry, parsed.envelope);
+      if (entry.record.outputFailure) {
+        throw new SupervisorError(
+          entry.record.outputFailure.code,
+          entry.record.outputFailure.message,
+          { details: entry.record.outputFailure.details },
+        );
+      }
       throw error;
     } finally {
       entry.record.readOnlyTurn = false;
       entry.record.cancelRequested = false;
       if (chatHitlId) entry.emitter.off(SESSION_EVENT_CHANNEL, chatListener);
     }
-    throwIfFenced(entry, parsed.envelope);
-    if (chatHitlId) {
-      entry.record.monotonicId += 1;
-      entry.emitter.emit(SESSION_EVENT_CHANNEL, {
-        type: "session.chat_turn",
-        sessionId,
-        monotonicId: entry.record.monotonicId,
-        hitlRequestId: chatHitlId,
-        role: "agent",
-        body: chatBuf,
-      } satisfies SessionEvent);
-    }
-    if (entry.record.reapOnEndTurn && response.stopReason === "end_turn") {
-      entry.intentionalShutdown = true;
-      entry.child.kill("SIGTERM");
+    try {
+      throwIfFenced(entry, parsed.envelope);
+      if (entry.record.outputFailure) {
+        throw new SupervisorError(
+          entry.record.outputFailure.code,
+          entry.record.outputFailure.message,
+          { details: entry.record.outputFailure.details },
+        );
+      }
+      if (chatHitlId) {
+        entry.record.monotonicId += 1;
+        entry.emitter.emit(SESSION_EVENT_CHANNEL, {
+          type: "session.chat_turn",
+          sessionId,
+          monotonicId: entry.record.monotonicId,
+          hitlRequestId: chatHitlId,
+          role: "agent",
+          body: chatBuf,
+        } satisfies SessionEvent);
+      }
+    } finally {
+      chatBuf = "";
+      chatBudget.release();
     }
     logger.info(
       {
@@ -1047,12 +1076,16 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       );
       sealedRuntimeObjects.push(metadata);
     }
+    if (entry.record.reapOnEndTurn && response.stopReason === "end_turn") {
+      entry.intentionalShutdown = true;
+      entry.child.kill("SIGTERM");
+    }
 
     return {
       status: 200,
       body: {
         stopReason: response.stopReason,
-        meta: response._meta,
+        ...(response._meta === undefined ? {} : { meta: response._meta }),
         ...(sealedRuntimeObjects.length > 0
           ? { runtimeObjects: sealedRuntimeObjects }
           : {}),

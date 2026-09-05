@@ -2,7 +2,6 @@
 
 **Status:** Implemented canonical Postgres event authority; **Designed** output-pressure and autonomous projection corrections (AB-01–04). Existing outbox/replay code does not yet satisfy every expectation below.
 
-
 ## Purpose
 
 Define the durable, transport-neutral event plane between an execution host and
@@ -56,6 +55,60 @@ The local-direct SSE adapter uses `Last-Event-ID` as an exclusive decimal host
 cursor and binds every ACK to `streamId`. A future trusted relay may implement
 the same event-source and ACK contracts; it may not change event ownership or
 ordering semantics.
+
+## Referenced session content (Implemented, S1.2)
+
+The bounded segment path is qualified on Node 24.15 and 24.19. Real manager
+readback covers exact frame/text/tool boundaries and historical assignment
+release. A 20-producer heap-profile gate exercises escaped maximum-size frames,
+gate-chat capacity and producer-local failure, then verifies complete buffer
+release. The full S1 release still requires saturated-outbox wallets and
+compatibility/deployment qualification; complete durable owner output is S2.
+
+A session payload that cannot be represented exactly within the canonical
+metadata limits uses `contentRef` instead of inline content. The event type and
+v1 envelope stay unchanged; the payload version is `maister.session.content.v2`.
+Old managers reject that unknown version before ACK. The payload is closed:
+`sourceMonotonicId`, `sessionName`, optional `nodeAttemptId` and `contentRef`.
+The reference is a closed `maister.session-content.v2` descriptor containing
+`commandId`, `hostSessionId`, `source`, `firstFrame`, `frameCount`
+and ordinary sealed runtime-object metadata (`objectId`, generation, size,
+SHA-256, kind, logical name, MIME, retention, state and seal/expiry timestamps).
+The envelope supplies the run, host and assignment fence. This same event is
+the object's availability evidence; a separate availability event is not
+required. The referenced UTF-8 JSON contains the complete original session
+payload, without truncation or redaction. It is limited to 2 MiB (a 1-MiB raw
+JSON line can require additional escaping in its containing JSON string).
+The host writes an exclusive private inode, fsyncs and renames it before
+committing the reference. A failed capture cannot produce a successful empty
+payload. Current prompt identity, or the creating command outside a prompt,
+binds each segment; these segments do not replace command-terminal output.
+`firstFrame` equals the source monotonic ID and `frameCount` is one. `source`
+is `raw_stdout` for a line, `terminal_output` for command/session terminal
+content and `session_update` for other session events. Ordered multi-frame
+pressure segments require a separately validated format before activation.
+
+The output pool accounts for accumulated gate-chat text at its UTF-16 storage
+size before concatenation (at most 2 MiB per producer and within the shared
+10-MiB pool). Capacity failure produces `required_output_incomplete` with
+`outputFailure=producer_retained_limit`; it cannot manufacture a successful
+empty reply. Already committed chunks remain readable. S2 supplies the durable
+command-wide output continuation. Permission dispatch retains its decoder
+permit through asynchronous guard evaluation; only the bounded RPC identity
+remains pending across HITL. IDs are at most 128 UTF-8 bytes, with at most 32
+pending permission replies per producer.
+
+Metadata subscriptions expose the reference. Trusted projection/owner readers
+and content-authorized session/browser readers verify the run/fence, catalogue
+generation, length and actual byte digest before decoding. Accepted historical
+content can materialize its catalogue row after assignment release by joining
+the exact source command and original assignment; this grants no current owner
+mutation authority. Preparation happens
+outside domain projection transactions, within a bounded quantum; the domain
+write and cursor still commit together. Unavailable content is retryable and
+cannot advance the cursor. Full raw payloads never enter the canonical event
+table or a general metadata DTO. A browser read of reconstructed output uses
+the same repository-content permission as the corresponding object download.
 
 ## Durable bounded projection and reconciliation workers
 

@@ -41,6 +41,11 @@ export class ExecutionEventProjectionError extends Error {
 export type ExecutionEventProjector = {
   consumerName: string;
   project: (tx: Db, event: ExecutionEvent) => Promise<void>;
+  prepare?: (
+    db: Db,
+    event: ExecutionEvent,
+    signal: AbortSignal,
+  ) => Promise<ExecutionEvent>;
   // A process-local wake is allowed only after both the event projection and
   // durable cursor advance commit. It is an optimization: readers still query
   // Postgres after a missed wake.
@@ -207,6 +212,46 @@ export async function claimNextExecutionProjection(input: {
   });
 }
 
+/** Select byte lengths before bodies, including the referenced representation. */
+async function readProjectionEvents(
+  tx: Db,
+  runId: string,
+  after: bigint | null,
+  limit: number,
+): Promise<ExecutionEvent[]> {
+  const candidates = await tx
+    .select({
+      id: executionEvents.id,
+      bytes: sql<number>`COALESCE(CASE WHEN (${executionEvents.payload}->'contentRef'->>'sizeBytes') ~ '^[0-9]{1,7}$' THEN (${executionEvents.payload}->'contentRef'->>'sizeBytes')::integer END, ${executionEvents.payloadBytes}, octet_length(${executionEvents.payload}::text), 0)`,
+    })
+    .from(executionEvents)
+    .where(
+      and(
+        eq(executionEvents.runId, runId),
+        gt(executionEvents.runSequence, after ?? -1n),
+        eq(executionEvents.ingestDisposition, "accepted"),
+      ),
+    )
+    .orderBy(executionEvents.runSequence)
+    .limit(limit);
+  let bytes = 0;
+  const ids: string[] = [];
+
+  for (const candidate of candidates) {
+    if (ids.length > 0 && bytes + candidate.bytes > 1_048_576) break;
+    ids.push(candidate.id);
+    bytes += candidate.bytes;
+  }
+
+  return ids.length === 0
+    ? []
+    : tx
+        .select()
+        .from(executionEvents)
+        .where(inArray(executionEvents.id, ids))
+        .orderBy(executionEvents.runSequence);
+}
+
 // Every projector owns only its `(consumerName, runId)` cursor. The handler is
 // deliberately database-only and runs inside the same transaction as cursor
 // advancement, so a retry can never advance a view past a failed event.
@@ -260,155 +305,156 @@ export async function applyClaimedExecutionProjection(input: {
     );
   }
 
-  const transactionResult = await projectionTransaction(
-    input.db,
-    async (tx) => {
-      const now = await projectionClock(tx, input.now);
-      const consumers = await tx
-        .select()
-        .from(executionEventConsumers)
-        .where(
-          and(
-            eq(
-              executionEventConsumers.consumerName,
-              input.projector.consumerName,
-            ),
-            eq(executionEventConsumers.runId, input.runId),
-          ),
-        )
-        .for("update")
-        .limit(1);
-      const consumer = consumers[0];
+  const prepare = async (): Promise<ExecutionEvent[] | null> => {
+    if (!input.projector.prepare) return null;
+    const events = await projectionTransaction(input.db, (tx) =>
+      readProjectionEvents(tx, input.runId, claim.lastRunSequence, batchSize),
+    );
+    const prepared: ExecutionEvent[] = [];
+    const deadline = AbortSignal.timeout(8_000);
 
-      if (!consumer)
+    for (const event of events) {
+      failedEventId = event.id;
+      failedSequence = event.runSequence;
+      if (deadline.aborted)
         throw new MaisterError(
-          "ACP_PROTOCOL",
-          "execution event consumer row disappeared",
+          "EXECUTOR_UNAVAILABLE",
+          "session content preparation deadline expired",
         );
-      if (
-        consumer.claimOwner !== owner ||
-        consumer.lastRunSequence !== claim.lastRunSequence ||
-        consumer.claimExpiresAt === null ||
-        consumer.claimExpiresAt <= now
-      ) {
-        return {
-          summary: deferredSummary(consumer),
-          projectedEvents: [] as ExecutionEvent[],
-        };
-      }
+      prepared.push(await input.projector.prepare(input.db, event, deadline));
+    }
 
-      // Read sizes before payloads so a batch of maximum-sized legal events
-      // does not allocate 100 MiB before applying the one-MiB quantum bound.
-      const candidates = await tx
-        .select({
-          id: executionEvents.id,
-          bytes: sql<number>`COALESCE(${executionEvents.payloadBytes}, octet_length(${executionEvents.payload}::text), 0)`,
-        })
-        .from(executionEvents)
-        .where(
-          and(
-            eq(executionEvents.runId, input.runId),
-            gt(executionEvents.runSequence, consumer.lastRunSequence ?? -1n),
-            eq(executionEvents.ingestDisposition, "accepted"),
-          ),
-        )
-        .orderBy(executionEvents.runSequence)
-        .limit(batchSize);
-      let payloadBytes = 0;
-      const ids: string[] = [];
+    return prepared;
+  };
 
-      for (const candidate of candidates) {
-        if (ids.length > 0 && payloadBytes + candidate.bytes > 1_048_576) break;
-        ids.push(candidate.id);
-        payloadBytes += candidate.bytes;
-      }
-      const events =
-        ids.length === 0
-          ? []
-          : await tx
-              .select()
-              .from(executionEvents)
-              .where(inArray(executionEvents.id, ids))
-              .orderBy(executionEvents.runSequence);
-      let last = consumer.lastRunSequence;
-      let projected = 0;
-      const projectedEvents: ExecutionEvent[] = [];
-      const softDeadline = performance.now() + 1_000;
+  const transactionResult = await prepare()
+    .then((preparedEvents) =>
+      projectionTransaction(input.db, async (tx) => {
+        const now = await projectionClock(tx, input.now);
+        const consumers = await tx
+          .select()
+          .from(executionEventConsumers)
+          .where(
+            and(
+              eq(
+                executionEventConsumers.consumerName,
+                input.projector.consumerName,
+              ),
+              eq(executionEventConsumers.runId, input.runId),
+            ),
+          )
+          .for("update")
+          .limit(1);
+        const consumer = consumers[0];
 
-      for (const event of events) {
-        if (projected > 0 && performance.now() >= softDeadline) break;
-        if (event.runSequence === null) {
+        if (!consumer)
           throw new MaisterError(
             "ACP_PROTOCOL",
-            "accepted execution event has no run sequence",
+            "execution event consumer row disappeared",
           );
+        if (
+          consumer.claimOwner !== owner ||
+          consumer.lastRunSequence !== claim.lastRunSequence ||
+          consumer.claimExpiresAt === null ||
+          consumer.claimExpiresAt <= now
+        ) {
+          return {
+            summary: deferredSummary(consumer),
+            projectedEvents: [] as ExecutionEvent[],
+          };
         }
-        failedEventId = event.id;
-        failedSequence = event.runSequence;
-        try {
-          await input.projector.project(tx, event);
-        } catch (error) {
-          failure = error;
-          throw error;
+
+        const events =
+          preparedEvents ??
+          (await readProjectionEvents(
+            tx,
+            input.runId,
+            consumer.lastRunSequence,
+            batchSize,
+          ));
+        let last = consumer.lastRunSequence;
+        let projected = 0;
+        const projectedEvents: ExecutionEvent[] = [];
+        const softDeadline = performance.now() + 1_000;
+
+        for (const event of events) {
+          if (projected > 0 && performance.now() >= softDeadline) break;
+          if (event.runSequence === null) {
+            throw new MaisterError(
+              "ACP_PROTOCOL",
+              "accepted execution event has no run sequence",
+            );
+          }
+          failedEventId = event.id;
+          failedSequence = event.runSequence;
+          try {
+            await input.projector.project(tx, event);
+          } catch (error) {
+            failure = error;
+            throw error;
+          }
+          last = event.runSequence;
+          projected += 1;
+          projectedEvents.push(event);
         }
-        last = event.runSequence;
-        projected += 1;
-        projectedEvents.push(event);
-      }
-      await tx
-        .update(executionEventConsumers)
-        .set({
-          lastRunSequence: last,
-          state: "ready",
-          attempts: 0,
-          nextRetryAt: null,
-          poisonEventId: null,
-          lastError: null,
-          claimOwner: null,
-          claimExpiresAt: null,
-          lastServedAt: sql`clock_timestamp()`,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(
-              executionEventConsumers.consumerName,
-              input.projector.consumerName,
+        await tx
+          .update(executionEventConsumers)
+          .set({
+            lastRunSequence: last,
+            state: "ready",
+            attempts: 0,
+            nextRetryAt: null,
+            poisonEventId: null,
+            lastError: null,
+            claimOwner: null,
+            claimExpiresAt: null,
+            lastServedAt: sql`clock_timestamp()`,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(
+                executionEventConsumers.consumerName,
+                input.projector.consumerName,
+              ),
+              eq(executionEventConsumers.runId, input.runId),
+              eq(executionEventConsumers.claimOwner, owner),
+              sql`${executionEventConsumers.lastRunSequence} is not distinct from ${claim.lastRunSequence}`,
             ),
-            eq(executionEventConsumers.runId, input.runId),
-            eq(executionEventConsumers.claimOwner, owner),
-            sql`${executionEventConsumers.lastRunSequence} is not distinct from ${claim.lastRunSequence}`,
-          ),
-        );
+          );
 
-      return {
-        summary: {
-          projected,
-          deferred: false,
-          poisoned: false,
-          lastRunSequence: last?.toString() ?? null,
-        },
-        projectedEvents,
-      };
-    },
-  ).catch(async (error: unknown) => {
-    if (error instanceof MaisterError && error.code === "EXECUTOR_UNAVAILABLE")
-      throw error;
-    if (!failedEventId || failedSequence === null) throw error;
-    const summary = await recordProjectionFailure({
-      db: input.db,
-      runId: input.runId,
-      consumerName: input.projector.consumerName,
-      eventId: failedEventId,
-      eventSequence: failedSequence,
-      startingCursor: claim.lastRunSequence,
-      owner,
-      error: failure ?? error,
-      now: input.now,
+        return {
+          summary: {
+            projected,
+            deferred: false,
+            poisoned: false,
+            lastRunSequence: last?.toString() ?? null,
+          },
+          projectedEvents,
+        };
+      }),
+    )
+    .catch(async (error: unknown) => {
+      if (
+        error instanceof MaisterError &&
+        error.code === "EXECUTOR_UNAVAILABLE"
+      )
+        throw error;
+      if (!failedEventId || failedSequence === null) throw error;
+      const summary = await recordProjectionFailure({
+        db: input.db,
+        runId: input.runId,
+        consumerName: input.projector.consumerName,
+        eventId: failedEventId,
+        eventSequence: failedSequence,
+        startingCursor: claim.lastRunSequence,
+        owner,
+        error: failure ?? error,
+        now: input.now,
+      });
+
+      return { summary, projectedEvents: [] as ExecutionEvent[] };
     });
-
-    return { summary, projectedEvents: [] as ExecutionEvent[] };
-  });
 
   if (transactionResult.projectedEvents.length > 0) {
     input.projector.afterCommit?.(transactionResult.projectedEvents);

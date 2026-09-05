@@ -4,6 +4,8 @@ import type { Db } from "@/lib/execution-host/db";
 
 import { and, desc, eq } from "drizzle-orm";
 
+import { SessionContentReferenceSchema } from "../runtime-events";
+
 import { CANONICAL_PROJECTION_CONSUMERS } from "./projection-consumers";
 import {
   ExecutionEventProjectionError,
@@ -178,8 +180,6 @@ async function projectAvailable(tx: Db, event: ExecutionEvent): Promise<void> {
       existing.kind === kind &&
       existing.logicalName === logicalName &&
       existing.mimeType === mimeType &&
-      existing.sizeBytes === BigInt(sizeBytes) &&
-      existing.sha256 === checksum &&
       existing.generation === generation &&
       existing.retentionClass === retentionClass &&
       existing.expiresAt?.getTime() === expiresAt?.getTime();
@@ -198,6 +198,8 @@ async function projectAvailable(tx: Db, event: ExecutionEvent): Promise<void> {
     const receiptReconciled =
       sameBinding &&
       existing.state === "available" &&
+      existing.sizeBytes === BigInt(sizeBytes) &&
+      existing.sha256 === checksum &&
       existing.sourceEventId === null &&
       existing.deletedAt === null &&
       existing.lastError === null;
@@ -285,6 +287,58 @@ async function projectAvailable(tx: Db, event: ExecutionEvent): Promise<void> {
   });
 }
 
+async function assertContentCommandFence(
+  tx: Db,
+  event: ExecutionEvent,
+  commandId: string,
+): Promise<void> {
+  if (
+    event.source !== "host" ||
+    event.ingestDisposition !== "accepted" ||
+    !event.executionHostId ||
+    !event.executionAssignmentId ||
+    event.assignmentEpoch === null
+  ) {
+    throw permanent("session content requires accepted host evidence");
+  }
+  const [command] = await tx
+    .select({
+      kind: executionCommands.kind,
+      targetSessionId: executionCommands.targetSessionId,
+    })
+    .from(executionCommands)
+    .innerJoin(
+      executionAssignments,
+      eq(executionAssignments.id, executionCommands.executionAssignmentId),
+    )
+    .where(
+      and(
+        eq(executionCommands.id, commandId),
+        eq(executionCommands.runId, event.runId),
+        eq(
+          executionCommands.executionAssignmentId,
+          event.executionAssignmentId,
+        ),
+        eq(executionCommands.executionHostId, event.executionHostId),
+        eq(executionCommands.assignmentEpoch, event.assignmentEpoch),
+        eq(executionAssignments.runId, event.runId),
+        eq(executionAssignments.executionHostId, event.executionHostId),
+        eq(executionAssignments.epoch, event.assignmentEpoch),
+      ),
+    )
+    .limit(1);
+
+  if (
+    !command ||
+    (command.kind !== "session.create" &&
+      command.targetSessionId !== event.hostSessionId)
+  ) {
+    throw permanent(
+      "session content has no matching source command and assignment",
+    );
+  }
+}
+
 async function projectState(tx: Db, event: ExecutionEvent): Promise<void> {
   if (
     !event.executionHostId ||
@@ -340,10 +394,30 @@ async function projectState(tx: Db, event: ExecutionEvent): Promise<void> {
     .where(eq(executionRuntimeObjects.id, objectId));
 }
 
-async function projectRuntimeObject(
+export async function projectRuntimeObject(
   tx: Db,
   event: ExecutionEvent,
 ): Promise<void> {
+  if (event.payload?.contentRef !== undefined) {
+    const reference = SessionContentReferenceSchema.safeParse(
+      event.payload.contentRef,
+    );
+
+    if (
+      !reference.success ||
+      reference.data.hostSessionId !== event.hostSessionId
+    ) {
+      throw permanent(
+        "session content reference has invalid object or session identity",
+      );
+    }
+    // Historical catalogue evidence does not acquire current domain authority.
+    // Accepted output remains reconstructible after its assignment is released.
+    await assertContentCommandFence(tx, event, reference.data.commandId);
+    await projectAvailable(tx, { ...event, payload: reference.data });
+
+    return;
+  }
   if (
     event.eventType !== "runtime_object.available" &&
     event.eventType !== "runtime_object.state"

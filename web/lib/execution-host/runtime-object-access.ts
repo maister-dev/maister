@@ -34,3 +34,16 @@ export async function authorizeRuntimeObjectActor(
     });
   }
 }
+
+/** Repository-derived bytes require a content grant in addition to metadata access. */
+export async function authorizeRuntimeObjectContentActor(
+  loaded: RuntimeObjectWithRun,
+  userId: string,
+): Promise<void> {
+  if (loaded.projectId) {
+    await requireProjectAction(loaded.projectId, "readRepoFiles");
+
+    return;
+  }
+  await authorizeRuntimeObjectActor(loaded, userId);
+}

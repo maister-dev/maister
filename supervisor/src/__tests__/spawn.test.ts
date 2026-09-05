@@ -44,7 +44,7 @@ function request(): StartSessionRequest {
 
 describe("spawnSession", () => {
   it("emits bounded session-line events for host-outbox publication", async () => {
-    const { child, emitter, record } = await spawnSession({
+    const { child, emitter, record, acpStdoutTap } = await spawnSession({
       sessionId: "session-1",
       request: request(),
       createdBy: CREATED_BY,
@@ -55,7 +55,7 @@ describe("spawnSession", () => {
         stepId: "step-1",
       }),
       logger,
-      binaryOverride: "node",
+      binaryOverride: process.execPath,
       preArgs: [FIXTURE_PATH, "--lines", "3"],
     });
     const events: SessionEvent[] = [];
@@ -63,6 +63,7 @@ describe("spawnSession", () => {
     emitter.on(SESSION_EVENT_CHANNEL, (event: SessionEvent) =>
       events.push(event),
     );
+    acpStdoutTap.resume();
 
     await new Promise<void>((resolvePromise) =>
       child.once("exit", resolvePromise),
@@ -80,16 +81,17 @@ describe("spawnSession", () => {
       runId: "run-no-events-file",
       stepId: "step-1",
     });
-    const { child } = await spawnSession({
+    const { child, acpStdoutTap } = await spawnSession({
       sessionId: "session-no-events-file",
       request: request(),
       createdBy: CREATED_BY,
       workspace,
       logger,
-      binaryOverride: "node",
+      binaryOverride: process.execPath,
       preArgs: [FIXTURE_PATH, "--lines", "0"],
     });
 
+    acpStdoutTap.resume();
     await new Promise<void>((resolvePromise) =>
       child.once("exit", resolvePromise),
     );

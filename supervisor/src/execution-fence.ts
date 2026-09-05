@@ -158,16 +158,22 @@ export function waitForChildExit(
   entry: RegistryEntry,
   timeoutMs: number,
 ): Promise<boolean> {
-  if (entry.child.exitCode !== null || entry.child.signalCode !== null) {
-    return Promise.resolve(true);
-  }
-
   return new Promise<boolean>((resolveP) => {
-    const timer = setTimeout(() => resolveP(false), timeoutMs);
-
-    entry.child.once("exit", () => {
+    const finish = (exited: boolean): void => {
       clearTimeout(timer);
-      resolveP(true);
-    });
+      entry.child.off("exit", onExit);
+      resolveP(exited);
+    };
+    const onExit = (): void => {
+      void Promise.resolve(entry.record.outputTerminal).then(
+        () => finish(true),
+        () => finish(false),
+      );
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+
+    if (entry.child.exitCode !== null || entry.child.signalCode !== null)
+      onExit();
+    else entry.child.once("exit", onExit);
   });
 }

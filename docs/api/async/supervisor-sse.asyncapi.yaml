@@ -72,6 +72,7 @@ channels:
       message:
         oneOf:
           - $ref: "#/components/messages/SessionLine"
+          - $ref: "#/components/messages/SessionContent"
           - $ref: "#/components/messages/SessionUpdate"
           - $ref: "#/components/messages/SessionPermissionRequest"
           - $ref: "#/components/messages/SessionExited"
@@ -81,6 +82,21 @@ channels:
           - $ref: "#/components/messages/SessionCommand"
 components:
   messages:
+    SessionContent:
+      name: session.content
+      title: Sealed session content reference
+      summary: The original event type and an opaque content reference replace a large or sensitive inline session payload in the metadata stream. Content readers verify identity and bytes through the runtime-object content route with its content permission.
+      contentType: application/json
+      payload:
+        type: object
+        additionalProperties: false
+        required: [type, sessionId, monotonicId, eventType, contentRef]
+        properties:
+          type: { type: string, const: session.content }
+          sessionId: { type: string }
+          monotonicId: { type: integer, minimum: 0 }
+          eventType: { type: string }
+          contentRef: { $ref: "#/components/schemas/SessionContentReference" }
     SessionLine:
       name: session.line
       title: Child stdout line
@@ -281,6 +297,55 @@ components:
       contentType: application/json
       payload: { $ref: "#/components/schemas/SessionHookTripEvent" }
   schemas:
+    SessionContentReference:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          schema,
+          commandId,
+          hostSessionId,
+          source,
+          firstFrame,
+          frameCount,
+          objectId,
+          kind,
+          logicalName,
+          mimeType,
+          generation,
+          sizeBytes,
+          sha256,
+          retentionClass,
+          state,
+          sealedAt,
+          expiresAt,
+        ]
+      description: |
+        Exact host-owned UTF-8 session payload JSON. This reference-bearing
+        session event is also the sealed object's availability evidence.
+        Trusted consumers verify the envelope fence, generation, length and
+        actual bytes before decoding outside their domain transaction.
+        Browser content reads require readRepoFiles; metadata grants do not
+        authorize reconstruction. A lost object never means an empty result.
+      properties:
+        schema: { type: string, enum: [maister.session-content.v2] }
+        commandId: { type: string, format: uuid }
+        hostSessionId: { type: string, pattern: "^[A-Za-z0-9._-]{1,128}$" }
+        source:
+          { type: string, enum: [raw_stdout, session_update, terminal_output] }
+        firstFrame: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        frameCount: { type: integer, enum: [1] }
+        objectId: { type: string, format: uuid }
+        kind: { type: string, enum: [raw_transcript] }
+        logicalName: { type: string, enum: [session-content.json] }
+        mimeType: { type: string, enum: [application/json] }
+        generation: { type: integer, minimum: 1, maximum: 2147483647 }
+        sizeBytes: { type: integer, minimum: 0, maximum: 2097152 }
+        sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+        retentionClass: { type: string, enum: [run] }
+        state: { type: string, enum: [available] }
+        sealedAt: { type: string, format: date-time }
+        expiresAt: { nullable: true, enum: [null] }
     EventBase:
       type: object
       required: [type, sessionId, monotonicId]

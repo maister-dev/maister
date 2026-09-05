@@ -17,6 +17,34 @@ function fixture(name: string): unknown {
 }
 
 describe("execution-host runtime event wire boundary", () => {
+  it("requires the version and exact binding of a referenced session payload", () => {
+    const content = RuntimeEventEnvelopeSchema.parse(
+      fixture("envelope.content-v2.valid.json"),
+    );
+
+    expect(
+      RuntimeEventEnvelopeSchema.safeParse({
+        ...content,
+        payloadSchema: "maister.session.update.v1",
+      }).success,
+    ).toBe(false);
+    expect(
+      RuntimeEventEnvelopeSchema.safeParse({
+        ...content,
+        hostSessionId: "another-session",
+      }).success,
+    ).toBe(false);
+    expect(
+      RuntimeEventEnvelopeSchema.safeParse({
+        ...content,
+        payload: { ...content.payload, sourceMonotonicId: 43 },
+      }).success,
+    ).toBe(false);
+    expect(
+      RuntimeEventEnvelopeSchema.safeParse({ ...content, payload: {} }).success,
+    ).toBe(false);
+  });
+
   it("accepts the shared open-payload positive fixture", () => {
     expect(
       RuntimeEventEnvelopeSchema.safeParse(fixture("envelope.valid.json"))

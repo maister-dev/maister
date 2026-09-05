@@ -17,7 +17,7 @@ vi.mock("@/lib/authz", () => ({
   httpStatusForAuthz: (code: string) =>
     code === "UNAUTHENTICATED" ? 401 : code === "UNAUTHORIZED" ? 403 : null,
   requireActiveSession: vi.fn(async () => ({ id: "user-1" })),
-  requireProjectAction: vi.fn(async () => ({ role: "viewer" })),
+  requireProjectAction: vi.fn(async () => ({ role: "member" })),
 }));
 
 vi.mock("@/lib/execution-host/runtime-objects", () => ({
@@ -57,7 +57,7 @@ beforeEach(() => {
   vi.mocked(requireActiveSession).mockResolvedValue({ id: "user-1" } as never);
   vi.mocked(requireProjectAction).mockReset();
   vi.mocked(requireProjectAction).mockResolvedValue({
-    role: "viewer",
+    role: "member",
   } as never);
   vi.mocked(getRuntimeObjectForRun).mockReset();
   vi.mocked(getRuntimeObjectForRun).mockResolvedValue(loadedObject() as never);
@@ -87,7 +87,10 @@ describe("GET /api/runs/[runId]/runtime-objects/[objectId]/content", () => {
     expect(response.headers.get("content-digest")).toBe("sha-256=:abc=:");
     expect(response.headers.get("etag")).toBe('"abc"');
     expect(await response.text()).toBe("owned");
-    expect(requireProjectAction).toHaveBeenCalledWith("project-1", "readBoard");
+    expect(requireProjectAction).toHaveBeenCalledWith(
+      "project-1",
+      "readRepoFiles",
+    );
     expect(openRuntimeObjectContent).toHaveBeenCalledWith({
       db: {},
       runId: RUN_ID,
@@ -104,6 +107,24 @@ describe("GET /api/runs/[runId]/runtime-objects/[objectId]/content", () => {
       code: "PRECONDITION",
       message: "runtime object Range must use a single byte range",
     });
+    expect(openRuntimeObjectContent).not.toHaveBeenCalled();
+  });
+
+  it("does not let a metadata-only viewer reconstruct private session content", async () => {
+    vi.mocked(requireProjectAction).mockImplementationOnce(
+      async (_projectId, action) => {
+        if (action === "readRepoFiles")
+          throw new MaisterError(
+            "UNAUTHORIZED",
+            "repository content permission is required",
+          );
+
+        return { role: "viewer" } as never;
+      },
+    );
+    const response = await invoke();
+
+    expect(response.status).toBe(403);
     expect(openRuntimeObjectContent).not.toHaveBeenCalled();
   });
 

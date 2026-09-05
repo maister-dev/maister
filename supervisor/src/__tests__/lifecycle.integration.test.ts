@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { waitForChildExit } from "../execution-fence";
 import { SupervisorDiagnosticsResponseSchema } from "../types";
 
 import {
@@ -154,6 +155,44 @@ afterEach(async () => {
 });
 
 describe("supervisor lifecycle integration", () => {
+  it("keeps exit and checkpoint acknowledgment behind the captured-output barrier", async () => {
+    const host = await bootFor(["--hang", "--lines", "0"]);
+    const sessionId = await createSession(host);
+    const entry = host.registry.get(sessionId)!;
+    const captured = entry.record.outputDrained;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    entry.record.outputDrained = Promise.all([captured, gate]).then(() => {});
+    const exited = once(entry.child, "exit");
+
+    entry.child.kill("SIGTERM");
+    try {
+      await exited;
+      await captured;
+      expect(
+        host.registry
+          .snapshotEvents(sessionId)
+          .some(
+            (event) =>
+              event.type === "session.exited" ||
+              event.type === "session.crashed",
+          ),
+      ).toBe(false);
+      expect(await waitForChildExit(entry, 20)).toBe(false);
+    } finally {
+      release();
+    }
+    await entry.record.outputTerminal;
+    expect(await waitForChildExit(entry, 1000)).toBe(true);
+    expect(host.registry.snapshotEvents(sessionId).at(-1)?.type).toBe(
+      "session.crashed",
+    );
+    expect(entry.record.terminalPublished).toBe(true);
+  });
+
   it("GET /health reports readiness and session status counts", async () => {
     const host = await bootFor(["--hang"]);
     const { url, registry } = host;

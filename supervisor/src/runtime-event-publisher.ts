@@ -1,10 +1,20 @@
 import type { Logger } from "pino";
 import type { CostRecord } from "./cost";
 import type { AppendRuntimeEventInput, HostState } from "./host-state";
-import type { RuntimeObjectPublicMetadata } from "./runtime-objects";
+import type {
+  RuntimeObjectPublicMetadata,
+  RuntimeObjectRegistry,
+} from "./runtime-objects";
 import type { SessionEvent, SessionRecord } from "./types";
 
-import { type RuntimeEventType } from "./runtime-events";
+import {
+  assertRuntimeEventPayloadSafe,
+  SessionContentReferenceSchema,
+  sessionContentSource,
+  type SessionContentReference,
+  type RuntimeEventType,
+} from "./runtime-events";
+import { SupervisorError } from "./types";
 
 const TERMINAL_EVENT_TYPES = new Set<RuntimeEventType>([
   "session.exited",
@@ -31,7 +41,8 @@ function sessionEventPayload(
 
 function isTerminalSessionEvent(event: SessionEvent): boolean {
   return (
-    TERMINAL_EVENT_TYPES.has(event.type) ||
+    (event.type !== "session.content" &&
+      TERMINAL_EVENT_TYPES.has(event.type)) ||
     (event.type === "session.command" && event.phase === "completed")
   );
 }
@@ -54,11 +65,16 @@ function assignmentForRecord(record: SessionRecord): {
 
 export class RuntimeEventPublisher {
   private readonly logger: Logger;
+  private readonly contentReferences = new WeakMap<
+    SessionEvent,
+    SessionContentReference
+  >();
 
   constructor(
     private readonly state: HostState,
     logger: Logger,
     private readonly now: () => Date = () => new Date(),
+    private readonly objects?: RuntimeObjectRegistry,
   ) {
     this.logger = logger.child({ component: "runtime-event-publisher" });
   }
@@ -67,7 +83,61 @@ export class RuntimeEventPublisher {
     record: SessionRecord,
     event: SessionEvent,
   ): AppendRuntimeEventInput {
+    if (event.type === "session.content") {
+      throw new SupervisorError(
+        "ACP_PROTOCOL",
+        "a content hint cannot be republished as a producer event",
+      );
+    }
     const assignment = assignmentForRecord(record);
+    const original = sessionEventPayload(record, event);
+    let payload = original;
+
+    try {
+      assertRuntimeEventPayloadSafe(original);
+    } catch {
+      // Preserve opaque content exactly instead of feeding it to a redactor
+      // that can alter tool output, paths, or required structured results.
+      if (!this.objects) {
+        throw new SupervisorError(
+          "ACP_PROTOCOL",
+          "session output requires a runtime object registry",
+          {
+            details: { reason: "required_output_incomplete" },
+          },
+        );
+      }
+      const metadata = this.objects.captureSessionContent({
+        runId: record.runId,
+        ...assignment,
+        hostSessionId: record.sessionId,
+        payload: original,
+      });
+      const sealed = Object.fromEntries(
+        Object.entries(metadata).filter(
+          ([key]) => key !== "createdAt" && key !== "deletedAt",
+        ),
+      );
+      const contentRef = SessionContentReferenceSchema.parse({
+        ...sealed,
+        schema: "maister.session-content.v2",
+        source: sessionContentSource(event.type),
+        firstFrame: event.monotonicId,
+        frameCount: 1,
+        commandId: record.activePromptCommandId ?? record.createdByCommandId,
+        hostSessionId: record.sessionId,
+      });
+
+      this.contentReferences.set(event, contentRef);
+      payload = {
+        sourceMonotonicId: event.monotonicId,
+        sessionName: record.sessionName,
+        ...(record.nodeAttemptId
+          ? { nodeAttemptId: record.nodeAttemptId }
+          : {}),
+        contentRef,
+      };
+    }
 
     return {
       draft: {
@@ -77,10 +147,16 @@ export class RuntimeEventPublisher {
         hostSessionId: record.sessionId,
         eventType: event.type,
         occurredAt: this.now().toISOString(),
-        payload: sessionEventPayload(record, event),
+        payload,
       },
       terminal: isTerminalSessionEvent(event),
     };
+  }
+
+  sessionContentReference(
+    event: SessionEvent,
+  ): SessionContentReference | undefined {
+    return this.contentReferences.get(event);
   }
 
   runtimeObjectInput(input: {
@@ -127,10 +203,12 @@ export class RuntimeEventPublisher {
     };
   }
 
-  publishSessionEvent(record: SessionRecord, event: SessionEvent): void {
-    const persisted = this.state.appendRuntimeEvent(
-      this.sessionEventInput(record, event),
-    );
+  publishSessionEvent(
+    record: SessionRecord,
+    event: SessionEvent,
+  ): SessionContentReference | null {
+    const input = this.sessionEventInput(record, event);
+    const persisted = this.state.appendRuntimeEvent(input);
 
     this.logger.debug(
       {
@@ -144,6 +222,11 @@ export class RuntimeEventPublisher {
       },
       "runtime-event-appended",
     );
+    const reference = input.draft.payload.contentRef;
+
+    return reference === undefined
+      ? null
+      : SessionContentReferenceSchema.parse(reference);
   }
 
   publishSessionCreated(record: SessionRecord): void {

@@ -9,6 +9,7 @@ import type {
 import { and, asc, eq, gt } from "drizzle-orm";
 
 import { runEventWakeBus } from "./run-wake";
+import { prepareSessionContent } from "./session-content";
 
 import { executionEvents } from "@/lib/db/schema";
 
@@ -291,12 +292,7 @@ export async function* streamCanonicalSessionEvents(input: {
   while (true) {
     const queryStartedAfterAbort = input.signal?.aborted ?? false;
     const rows = await input.db
-      .select({
-        eventType: executionEvents.eventType,
-        hostSessionId: executionEvents.hostSessionId,
-        payload: executionEvents.payload,
-        runSequence: executionEvents.runSequence,
-      })
+      .select()
       .from(executionEvents)
       .where(
         and(
@@ -312,7 +308,12 @@ export async function* streamCanonicalSessionEvents(input: {
     for (const row of rows) {
       if (row.runSequence === null) continue;
       after = row.runSequence;
-      const event = supervisorEventFromCanonicalRow(row);
+      const prepared = await prepareSessionContent(
+        input.db,
+        row,
+        AbortSignal.timeout(8_000),
+      );
+      const event = supervisorEventFromCanonicalRow(prepared);
 
       if (!event) continue;
       yield event;

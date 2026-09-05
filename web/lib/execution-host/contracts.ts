@@ -214,11 +214,11 @@ export interface ExecutionHostTransport {
   getRuntimeObject(objectId: string): Promise<RuntimeObjectMetadata | null>;
   getRuntimeObjectContent(
     objectId: string,
-    opts?: { range?: { start: number; end?: number } },
+    opts?: { range?: { start: number; end?: number }; signal?: AbortSignal },
   ): Promise<RuntimeObjectContent>;
   openRuntimeObjectContent(
     objectId: string,
-    opts?: { range?: { start: number; end?: number } },
+    opts?: { range?: { start: number; end?: number }; signal?: AbortSignal },
   ): Promise<RuntimeObjectContentStream>;
   reserveRuntimeObject(
     envelope: CommandEnvelope<ReserveRuntimeObjectPayload>,

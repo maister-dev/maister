@@ -1,3 +1,5 @@
+import type { SessionContentReference } from "./runtime-events";
+
 import { z } from "zod";
 
 const EXECUTOR_AGENTS = [
@@ -569,6 +571,9 @@ export const REASON_TOKENS = [
   "runtime_object_range_invalid",
   "runtime_object_integrity_mismatch",
   "runtime_object_too_large",
+  "runtime_output_buffer_capacity",
+  "runtime_output_frame_too_large",
+  "required_output_incomplete",
 ] as const;
 
 export type ReasonToken = (typeof REASON_TOKENS)[number];
@@ -590,6 +595,22 @@ export type WorkspaceRule = (typeof WORKSPACE_RULES)[number];
 
 export type SupervisorErrorDetails = {
   reason?: ReasonToken;
+  outputFailure?:
+    | "producer_retained_limit"
+    | "producer_chunk_limit"
+    | "producer_frame_limit"
+    | "producer_spool_incomplete"
+    | "producer_frame_incomplete"
+    | "producer_output_storage"
+    | "producer_json_complexity"
+    | "producer_frame_invalid"
+    | "producer_permission_limit"
+    | "producer_permission_invalid"
+    | "producer_permission_failed"
+    | "producer_response_failed"
+    | "producer_update_invalid"
+    | "producer_method_unsupported"
+    | "producer_output_incomplete";
   rule?: WorkspaceRule;
   // `legacy_field`: the refused pre-ADR-166 path field, by name.
   field?: string;
@@ -947,6 +968,12 @@ export type SessionRecord = {
   assignmentId: string;
   assignmentEpoch: number;
   createdByCommandId: string;
+  activePromptCommandId?: string;
+  outputDrained?: Promise<void>;
+  outputTerminal?: Promise<void>;
+  terminalPublished?: boolean;
+  outputFailure?: SupervisorErrorBody;
+  abortOutput?: (error: SupervisorError) => void;
   // ADR-166: set when a command with a HIGHER assignment epoch evicted this
   // session; its pending prompt answers 409 FENCED instead of a stop reason.
   fencedByEpoch?: number;
@@ -1079,6 +1106,13 @@ export type PermissionOptionDescriptor = {
 };
 
 export type SessionEvent =
+  | {
+      type: "session.content";
+      sessionId: string;
+      monotonicId: number;
+      eventType: string;
+      contentRef: SessionContentReference;
+    }
   | {
       type: "session.line";
       sessionId: string;

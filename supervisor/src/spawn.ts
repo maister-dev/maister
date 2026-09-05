@@ -1,13 +1,14 @@
 import type { Logger } from "pino";
 import type { WorkspaceResolution } from "./workspace-registry";
+import type { Readable } from "node:stream";
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import { PassThrough } from "node:stream";
 
+import { captureAcpFrames, reserveOutputProducer } from "./bounded-acp-stream";
 import { SESSION_EVENT_CHANNEL } from "./registry";
 import {
   type ContextMount,
@@ -18,8 +19,6 @@ import {
 } from "./types";
 import { getAdapterRuntime, resolveAdapterBinary } from "./adapter-registry";
 import { effectiveStartSessionRequest } from "./runner-provisioner";
-
-const MAX_LINE_BYTES = 1024 * 1024;
 
 type RuntimeObjectEnvName =
   | "MAISTER_OUTPUT_FILE"
@@ -58,7 +57,7 @@ export type SpawnSessionResult = {
   record: SessionRecord;
   logPath: string;
   logStream: WriteStream;
-  acpStdoutTap: PassThrough;
+  acpStdoutTap: Readable;
 };
 
 // The request fields the child environment is layered from. The model-catalog
@@ -124,7 +123,6 @@ export async function spawnSession(
   const { logPath } = workspace;
 
   await mkdir(dirname(logPath), { recursive: true });
-  const logStream = createWriteStream(logPath, { flags: "a" });
   const seedMonotonicId = 0;
   // M42 (ADR-114): a single-session run omits sessionName → "default".
   const sessionName = request.sessionName ?? "default";
@@ -191,6 +189,26 @@ export async function spawnSession(
     "spawn",
   );
 
+  const releaseOutputProducer = reserveOutputProducer();
+  let logStream: WriteStream;
+
+  try {
+    logStream = createWriteStream(logPath, { flags: "a", mode: 0o600 });
+    await once(logStream, "open");
+  } catch (error) {
+    releaseOutputProducer();
+    throw new SupervisorError(
+      "EXECUTOR_UNAVAILABLE",
+      "session output log could not be opened",
+      {
+        cause: error,
+        details: {
+          reason: "required_output_incomplete",
+          outputFailure: "producer_output_storage",
+        },
+      },
+    );
+  }
   const child = spawn(binary, args, {
     cwd: workspace.cwd,
     env: childEnv,
@@ -201,6 +219,7 @@ export async function spawnSession(
     const onError = (err: Error) => {
       child.off("spawn", onSpawn);
       logStream.end();
+      releaseOutputProducer();
       logger.warn(
         {
           sessionId,
@@ -228,6 +247,7 @@ export async function spawnSession(
 
   if (pid === undefined) {
     logStream.end();
+    releaseOutputProducer();
     throw new SupervisorError("SPAWN", "child has no pid after spawn");
   }
 
@@ -286,58 +306,58 @@ export async function spawnSession(
     emitter.emit(SESSION_EVENT_CHANNEL, event);
   };
 
-  let buffer = "";
+  if (!child.stdout) {
+    releaseOutputProducer();
+    child.kill("SIGKILL");
+    throw new SupervisorError("SPAWN", "child has no stdout for ACP");
+  }
+  let drained: () => void = () => {};
 
-  const acpStdoutTap = new PassThrough();
-
-  acpStdoutTap.setMaxListeners(0);
-
-  child.stdout?.setEncoding("utf8");
-  child.stdout?.on("data", (chunk: string) => {
-    logStream.write(chunk);
-    acpStdoutTap.write(chunk);
-    buffer += chunk;
-
-    if (buffer.length > MAX_LINE_BYTES) {
-      logger.warn(
-        { sessionId, len: buffer.length, cap: MAX_LINE_BYTES },
-        "line-buffer-overflow",
-      );
-      record.monotonicId += 1;
-      lineEmitter(record.monotonicId, buffer.slice(0, MAX_LINE_BYTES));
-      buffer = "";
-
-      return;
-    }
-
-    let nl = buffer.indexOf("\n");
-
-    while (nl !== -1) {
-      const line = buffer.slice(0, nl);
-
-      buffer = buffer.slice(nl + 1);
+  record.outputDrained = new Promise<void>((resolve) => {
+    drained = resolve;
+  });
+  record.abortOutput = (error) => {
+    if (record.outputFailure) return;
+    record.outputFailure = {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+    };
+    logger.error(
+      {
+        sessionId,
+        commandId: record.activePromptCommandId,
+        reason: error.details?.reason,
+        outputFailure: error.details?.outputFailure,
+      },
+      "producer-output-incomplete",
+    );
+    child.kill("SIGKILL");
+    child.stdout?.destroy();
+  };
+  const acpStdoutTap = captureAcpFrames({
+    source: child.stdout,
+    directory: dirname(logPath),
+    log: logStream,
+    onLine(line) {
       record.monotonicId += 1;
       lineEmitter(record.monotonicId, line);
       logger.debug(
-        { sessionId, monotonicId: record.monotonicId, len: line.length },
-        "stdout-line",
+        {
+          sessionId,
+          monotonicId: record.monotonicId,
+          bytes: Buffer.byteLength(line),
+        },
+        "stdout-frame-captured",
       );
-      nl = buffer.indexOf("\n");
-    }
-  });
-
-  child.stdout?.on("end", () => {
-    if (buffer.length > 0) {
-      record.monotonicId += 1;
-      lineEmitter(record.monotonicId, buffer);
-      buffer = "";
-    }
-    acpStdoutTap.end();
-    logStream.end();
-  });
-
-  child.stdout?.on("error", (err) => {
-    logger.warn({ sessionId, err: err.message }, "stdout-error");
+    },
+    onFailure(error) {
+      record.abortOutput?.(error);
+    },
+    onDrained() {
+      releaseOutputProducer();
+      drained();
+    },
   });
 
   return {

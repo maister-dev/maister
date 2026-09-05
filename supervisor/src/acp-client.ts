@@ -3,17 +3,13 @@ import type {
   Readable as NodeReadable,
   Writable as NodeWritable,
 } from "node:stream";
-import type {
-  ReadableStream as NodeReadableStream,
-  WritableStream as NodeWritableStream,
-} from "node:stream/web";
 import type { Logger } from "pino";
 
 import { randomUUID } from "node:crypto";
-import { Readable, Writable } from "node:stream";
 
 import * as acp from "@agentclientprotocol/sdk";
 
+import { boundedAcpStream, type BoundedAcpClient } from "./bounded-acp-stream";
 import {
   clientCapabilitiesForAdapter,
   getAdapterRuntime,
@@ -340,17 +336,6 @@ export async function createAcpConnection(
     args.pendingPermissions ?? defaultPendingPermissions;
   const handshakeTimeoutMs = resolveAcpHandshakeTimeoutMs();
 
-  const writable = Writable.toWeb(
-    stdin,
-  ) as unknown as NodeWritableStream<Uint8Array>;
-  const readable = Readable.toWeb(
-    stdoutSource,
-  ) as unknown as NodeReadableStream<Uint8Array>;
-  const stream = acp.ndJsonStream(
-    writable as unknown as Parameters<typeof acp.ndJsonStream>[0],
-    readable as unknown as Parameters<typeof acp.ndJsonStream>[1],
-  );
-
   // ADR-108 (M40): emit a session.hook_trip stamped with the rule's frozen
   // lifecycle/disposition. The web tier escalates on `halt`; `deny` is
   // record-only there. `toolCall` is the pre_tool_call call (null for no_progress).
@@ -376,7 +361,7 @@ export async function createAcpConnection(
     emitter.emit(SESSION_EVENT_CHANNEL, event);
   };
 
-  const clientImpl: acp.Client = {
+  const clientImpl: BoundedAcpClient = {
     async sessionUpdate(params) {
       record.monotonicId += 1;
       const event: SessionEvent = {
@@ -498,164 +483,297 @@ export async function createAcpConnection(
       }
     },
 
-    async requestPermission(params) {
-      const tc = (params.toolCall ?? {}) as ToolCallLike;
-      const requestId = randomUUID();
-      const options: ReadonlyArray<PermissionOptionDescriptor> =
-        params.options.map((o) => ({
-          optionId: o.optionId,
-          kind: o.kind,
-          name: o.name,
-        }));
+    async requestPermission(params, onPrepared?: () => void) {
+      try {
+        const tc = (params.toolCall ?? {}) as ToolCallLike;
+        const requestId = randomUUID();
+        const options: ReadonlyArray<PermissionOptionDescriptor> =
+          params.options.map((o) => ({
+            optionId: o.optionId,
+            kind: o.kind,
+            name: o.name,
+          }));
 
-      // M34 (ADR-090 L1): a read-only SESSION arbitrates every request
-      // inline — read-safe kinds approved, everything else denied (the
-      // session is headless; no HITL inbox exists for it). Decided BEFORE
-      // the SSE emit and the pending-permission registration.
-      const sessionDecision = resolveReadOnlySessionDecision(
-        record.readOnlySession,
-        tc,
-        options,
-      );
-
-      if (sessionDecision) {
-        logger.info(
-          {
-            sessionId,
-            toolKind: tc.kind,
-            decision: sessionDecision.decision,
-            optionId: sessionDecision.option?.optionId ?? null,
-          },
-          "[read-only-session] permission arbitrated inline (L1)",
+        // M34 (ADR-090 L1): a read-only SESSION arbitrates every request
+        // inline — read-safe kinds approved, everything else denied (the
+        // session is headless; no HITL inbox exists for it). Decided BEFORE
+        // the SSE emit and the pending-permission registration.
+        const sessionDecision = resolveReadOnlySessionDecision(
+          record.readOnlySession,
+          tc,
+          options,
         );
 
-        if (sessionDecision.option) {
-          return {
-            outcome: {
-              outcome: "selected",
-              optionId: sessionDecision.option.optionId,
+        if (sessionDecision) {
+          logger.info(
+            {
+              sessionId,
+              toolKind: tc.kind,
+              decision: sessionDecision.decision,
+              optionId: sessionDecision.option?.optionId ?? null,
             },
-          };
-        }
+            "[read-only-session] permission arbitrated inline (L1)",
+          );
 
-        return { outcome: { outcome: "cancelled" } };
-      }
+          if (sessionDecision.option) {
+            return {
+              outcome: {
+                outcome: "selected",
+                optionId: sessionDecision.option.optionId,
+              },
+            };
+          }
 
-      // M30 (ADR-078 L2): a mutating tool on a read-only gate-chat turn is
-      // auto-rejected BEFORE the SSE emit and the pending-permission
-      // registration — no session.permission_request event fires and no web
-      // hitl row is created. No-op under permissive runner policies
-      // (--dangerously-skip-permissions never calls this) — hence L3.
-      const autoReject = resolveReadOnlyAutoReject(
-        record.readOnlyTurn,
-        tc,
-        options,
-      );
-
-      if (autoReject) {
-        logger.info(
-          {
-            sessionId,
-            toolKind: tc.kind,
-            optionId: autoReject.optionId,
-          },
-          "[neutrality] read-only turn — mutating tool auto-rejected (L2)",
-        );
-
-        return {
-          outcome: { outcome: "selected", optionId: autoReject.optionId },
-        };
-      }
-
-      // ADR-108 (M40): the universal guardrail interceptor — runs after the
-      // read-only layers (L1/L2) and BEFORE B1 auto-approve, so a deny/halt
-      // resolves before the tool runs AND cannot be bypassed by auto-approve.
-      // (Every `unattended` run is permissions=auto_approve — the exact runs the
-      // two-tier default arms guardrails for; placing this after B1 would silently
-      // no-op path_guard + repetition on them. See ADR-108 / SDD §5.) No-op when
-      // the session carries no hooksConfig (byte-identical to a pre-hook run).
-      if (record.hooksConfig) {
-        // A prior repetition/no_progress halt fired → cancel every further tool
-        // call until the web tier checkpoints (the supervisor never self-kills).
-        if (record.hookHalted) {
           return { outcome: { outcome: "cancelled" } };
         }
 
-        // Rule 1 — repetition (halt): N consecutive identical tool-call
-        // signatures. Runs BEFORE path_guard so a denied (out-of-lane) write
-        // still feeds the breaker — path_guard is deny-and-continue and makes no
-        // progress on its own, so a repeated denied write would otherwise loop
-        // forever (the original interceptor returned cancelled before this tick).
-        if (record.hooksConfig.repetition) {
-          const sig = toolCallSignature(params.toolCall);
-          const tick = repetitionTick(
+        // M30 (ADR-078 L2): a mutating tool on a read-only gate-chat turn is
+        // auto-rejected BEFORE the SSE emit and the pending-permission
+        // registration — no session.permission_request event fires and no web
+        // hitl row is created. No-op under permissive runner policies
+        // (--dangerously-skip-permissions never calls this) — hence L3.
+        const autoReject = resolveReadOnlyAutoReject(
+          record.readOnlyTurn,
+          tc,
+          options,
+        );
+
+        if (autoReject) {
+          logger.info(
             {
-              lastToolCallSig: record.lastToolCallSig,
-              repeatCount: record.repeatCount ?? 0,
+              sessionId,
+              toolKind: tc.kind,
+              optionId: autoReject.optionId,
             },
-            sig,
-            record.hooksConfig.repetition.max,
+            "[neutrality] read-only turn — mutating tool auto-rejected (L2)",
           );
 
-          record.lastToolCallSig = tick.lastToolCallSig;
-          record.repeatCount = tick.repeatCount;
+          return {
+            outcome: { outcome: "selected", optionId: autoReject.optionId },
+          };
+        }
 
-          if (tick.tripped) {
-            record.hookHalted = true;
-            emitHookTrip("repetition", params.toolCall);
-            logger.info(
+        // ADR-108 (M40): the universal guardrail interceptor — runs after the
+        // read-only layers (L1/L2) and BEFORE B1 auto-approve, so a deny/halt
+        // resolves before the tool runs AND cannot be bypassed by auto-approve.
+        // (Every `unattended` run is permissions=auto_approve — the exact runs the
+        // two-tier default arms guardrails for; placing this after B1 would silently
+        // no-op path_guard + repetition on them. See ADR-108 / SDD §5.) No-op when
+        // the session carries no hooksConfig (byte-identical to a pre-hook run).
+        if (record.hooksConfig) {
+          // A prior repetition/no_progress halt fired → cancel every further tool
+          // call until the web tier checkpoints (the supervisor never self-kills).
+          if (record.hookHalted) {
+            return { outcome: { outcome: "cancelled" } };
+          }
+
+          // Rule 1 — repetition (halt): N consecutive identical tool-call
+          // signatures. Runs BEFORE path_guard so a denied (out-of-lane) write
+          // still feeds the breaker — path_guard is deny-and-continue and makes no
+          // progress on its own, so a repeated denied write would otherwise loop
+          // forever (the original interceptor returned cancelled before this tick).
+          if (record.hooksConfig.repetition) {
+            const sig = toolCallSignature(params.toolCall);
+            const tick = repetitionTick(
               {
-                sessionId,
-                toolKind: tc.kind,
-                repeatCount: tick.repeatCount,
-                max: record.hooksConfig.repetition.max,
+                lastToolCallSig: record.lastToolCallSig,
+                repeatCount: record.repeatCount ?? 0,
               },
-              "[guardrail] repetition halt",
+              sig,
+              record.hooksConfig.repetition.max,
+            );
+
+            record.lastToolCallSig = tick.lastToolCallSig;
+            record.repeatCount = tick.repeatCount;
+
+            if (tick.tripped) {
+              record.hookHalted = true;
+              emitHookTrip("repetition", params.toolCall);
+              logger.info(
+                {
+                  sessionId,
+                  toolKind: tc.kind,
+                  repeatCount: tick.repeatCount,
+                  max: record.hooksConfig.repetition.max,
+                },
+                "[guardrail] repetition halt",
+              );
+
+              return { outcome: { outcome: "cancelled" } };
+            }
+          }
+
+          // Rule 2 — path_guard (deny-and-continue): a write outside the lane is
+          // denied inline; the run continues. Repeated denials are caught by the
+          // liveness breakers — repetition (above) for identical writes, no_progress
+          // (below, in this branch) for varied ones.
+          const pathDecision = resolvePathGuardDecision({
+            pathGuard: record.hooksConfig.pathGuard,
+            toolCall: tc,
+            worktreePath,
+          });
+
+          if (pathDecision?.decision === "deny") {
+            if (
+              pathDecision.reason === "kind_only_fallback" &&
+              !record.hookFallbackWarned
+            ) {
+              record.hookFallbackWarned = true;
+              logger.warn(
+                { sessionId, toolKind: tc.kind, adapter: args.adapter },
+                "[guardrail] path_guard kind-only fallback — adapter omits toolCall.locations; write-kind calls denied",
+              );
+            }
+
+            // A denied write makes no progress and (for a permission-only call)
+            // fires no session.update turn, so the post_turn no_progress watchdog
+            // never sees it. Count it here as a non-progress turn so a stream of
+            // denied writes — including VARIED ones repetition cannot match — trips
+            // no_progress instead of looping forever.
+            if (record.hooksConfig.noProgress) {
+              const tick = noProgressTick(
+                { turnsSinceProgress: record.turnsSinceProgress ?? 0 },
+                false,
+                record.hooksConfig.noProgress.maxTurns,
+              );
+
+              record.turnsSinceProgress = tick.turnsSinceProgress;
+
+              if (tick.tripped) {
+                record.hookHalted = true;
+                emitHookTrip("no_progress", null);
+
+                for (const requestId of pendingPermissions.requestIds(
+                  sessionId,
+                )) {
+                  pendingPermissions.cancel(
+                    sessionId,
+                    requestId,
+                    "hook_trip:no_progress",
+                  );
+                }
+
+                logger.info(
+                  {
+                    sessionId,
+                    toolKind: tc.kind,
+                    turnsSinceProgress: tick.turnsSinceProgress,
+                    maxTurns: record.hooksConfig.noProgress.maxTurns,
+                  },
+                  "[guardrail] no_progress halt (denied write)",
+                );
+
+                return { outcome: { outcome: "cancelled" } };
+              }
+            }
+
+            emitHookTrip("path_guard", params.toolCall);
+            logger.info(
+              { sessionId, toolKind: tc.kind, reason: pathDecision.reason },
+              "[guardrail] path_guard deny (run continues)",
             );
 
             return { outcome: { outcome: "cancelled" } };
           }
         }
 
-        // Rule 2 — path_guard (deny-and-continue): a write outside the lane is
-        // denied inline; the run continues. Repeated denials are caught by the
-        // liveness breakers — repetition (above) for identical writes, no_progress
-        // (below, in this branch) for varied ones.
-        const pathDecision = resolvePathGuardDecision({
-          pathGuard: record.hooksConfig.pathGuard,
-          toolCall: tc,
-          worktreePath,
-        });
+        // ADR-157 (L2): read-only sibling-repo context mounts. UNCONDITIONAL
+        // whenever the session declares mounts — deliberately NOT opt-in through
+        // settings.hooks, because the read-only contract is the mount's whole
+        // point. Placed AFTER the M40 interceptor so a denied write still feeds the
+        // repetition / no_progress liveness breakers, and BEFORE capability_guard +
+        // B1 so auto-approve can never bypass it. Deny shape mirrors path_guard:
+        // the tool call is cancelled and the run continues.
+        if (record.contextMounts && record.contextMounts.length > 0) {
+          const mountDecision = await resolveContextMountDecision({
+            mounts: record.contextMounts,
+            toolCall: tc,
+          });
 
-        if (pathDecision?.decision === "deny") {
-          if (
-            pathDecision.reason === "kind_only_fallback" &&
-            !record.hookFallbackWarned
-          ) {
-            record.hookFallbackWarned = true;
+          if (mountDecision.decision === "deny") {
             logger.warn(
-              { sessionId, toolKind: tc.kind, adapter: args.adapter },
-              "[guardrail] path_guard kind-only fallback — adapter omits toolCall.locations; write-kind calls denied",
+              {
+                sessionId,
+                toolKind: tc.kind,
+                mountSlug: mountDecision.mount.slug,
+                mountPath: mountDecision.mount.path,
+                path: mountDecision.path,
+              },
+              "[context-mount] write denied — sibling-repo mount is read-only (L2)",
             );
+
+            return { outcome: { outcome: "cancelled" } };
           }
 
-          // A denied write makes no progress and (for a permission-only call)
-          // fires no session.update turn, so the post_turn no_progress watchdog
-          // never sees it. Count it here as a non-progress turn so a stream of
-          // denied writes — including VARIED ones repetition cannot match — trips
-          // no_progress instead of looping forever.
-          if (record.hooksConfig.noProgress) {
-            const tick = noProgressTick(
-              { turnsSinceProgress: record.turnsSinceProgress ?? 0 },
-              false,
-              record.hooksConfig.noProgress.maxTurns,
+          if (
+            mountDecision.decision === "unverifiable" &&
+            !record.contextMountFallbackWarned
+          ) {
+            record.contextMountFallbackWarned = true;
+            logger.warn(
+              { sessionId, toolKind: tc.kind, adapter: args.adapter },
+              "[context-mount] adapter omits toolCall.locations — write-class calls cannot be matched against mount roots (L3 dirty check backstops)",
             );
+          }
+        }
 
-            record.turnsSinceProgress = tick.turnsSinceProgress;
+        // ADR-130: capability_guard — enforce strict tools/mcps by tool identity.
+        // Runs AFTER path_guard and BEFORE B1 so an out-of-profile call is denied even
+        // on unattended/auto-approve sessions. Armed only when the session carries a
+        // derived enforcementProfile. In-profile → auto-allow inline (zero HITL);
+        // out-of-profile → deny-and-continue; Nth consecutive deny → halt.
+        if (record.enforcementProfile) {
+          // A prior halt (capability_guard or M40) fired → cancel every further call
+          // (mirrors the M40 hooksConfig hookHalted short-circuit, for a session that
+          // carries an enforcementProfile but no hooksConfig).
+          if (record.hookHalted) {
+            return { outcome: { outcome: "cancelled" } };
+          }
 
-            if (tick.tripped) {
+          // D5 sentinel bookkeeping: this call reached the always-ask seam, so it
+          // is no longer an un-arbitrated pending write (clears any streamed id).
+          if (tc.toolCallId) {
+            record.capabilityPendingWriteIds?.delete(tc.toolCallId);
+          }
+
+          let decision;
+
+          try {
+            decision = resolveCapabilityGuardDecision(
+              record.enforcementProfile,
+              tc,
+            );
+          } catch (err) {
+            // Deferred-release invariant: a throw in evaluation falls through to a
+            // logged deny (never an unresolved RPC).
+            logger.warn(
+              {
+                sessionId,
+                err: err instanceof Error ? err.message : String(err),
+              },
+              "[guardrail] capability_guard evaluation threw — deny (fail-closed)",
+            );
+            decision = {
+              decision: "deny" as const,
+              reason: "capability_guard: evaluation error (fail-closed)",
+              governedClass: "tools" as const,
+            };
+          }
+
+          if (decision.decision === "deny") {
+            const identity = extractToolIdentity(tc);
+
+            record.capabilityDenyCount = (record.capabilityDenyCount ?? 0) + 1;
+
+            // Nth consecutive out-of-profile deny → halt (mirror no_progress): cancel
+            // every pending deferred, reset the counter, emit an explicit `halt`.
+            if (
+              record.capabilityDenyCount >=
+              record.enforcementProfile.escalationThreshold
+            ) {
               record.hookHalted = true;
-              emitHookTrip("no_progress", null);
+              record.capabilityDenyCount = 0;
+              emitHookTrip("capability_guard", params.toolCall, "halt");
 
               for (const requestId of pendingPermissions.requestIds(
                 sessionId,
@@ -663,253 +781,145 @@ export async function createAcpConnection(
                 pendingPermissions.cancel(
                   sessionId,
                   requestId,
-                  "hook_trip:no_progress",
+                  "hook_trip:capability_guard",
                 );
               }
 
               logger.info(
                 {
                   sessionId,
-                  toolKind: tc.kind,
-                  turnsSinceProgress: tick.turnsSinceProgress,
-                  maxTurns: record.hooksConfig.noProgress.maxTurns,
+                  toolIdentity: identity.name,
+                  governedClass: decision.governedClass,
+                  threshold: record.enforcementProfile.escalationThreshold,
                 },
-                "[guardrail] no_progress halt (denied write)",
+                "[guardrail] capability_guard halt (Nth consecutive deny)",
               );
 
               return { outcome: { outcome: "cancelled" } };
             }
-          }
 
-          emitHookTrip("path_guard", params.toolCall);
-          logger.info(
-            { sessionId, toolKind: tc.kind, reason: pathDecision.reason },
-            "[guardrail] path_guard deny (run continues)",
-          );
-
-          return { outcome: { outcome: "cancelled" } };
-        }
-      }
-
-      // ADR-157 (L2): read-only sibling-repo context mounts. UNCONDITIONAL
-      // whenever the session declares mounts — deliberately NOT opt-in through
-      // settings.hooks, because the read-only contract is the mount's whole
-      // point. Placed AFTER the M40 interceptor so a denied write still feeds the
-      // repetition / no_progress liveness breakers, and BEFORE capability_guard +
-      // B1 so auto-approve can never bypass it. Deny shape mirrors path_guard:
-      // the tool call is cancelled and the run continues.
-      if (record.contextMounts && record.contextMounts.length > 0) {
-        const mountDecision = await resolveContextMountDecision({
-          mounts: record.contextMounts,
-          toolCall: tc,
-        });
-
-        if (mountDecision.decision === "deny") {
-          logger.warn(
-            {
-              sessionId,
-              toolKind: tc.kind,
-              mountSlug: mountDecision.mount.slug,
-              mountPath: mountDecision.mount.path,
-              path: mountDecision.path,
-            },
-            "[context-mount] write denied — sibling-repo mount is read-only (L2)",
-          );
-
-          return { outcome: { outcome: "cancelled" } };
-        }
-
-        if (
-          mountDecision.decision === "unverifiable" &&
-          !record.contextMountFallbackWarned
-        ) {
-          record.contextMountFallbackWarned = true;
-          logger.warn(
-            { sessionId, toolKind: tc.kind, adapter: args.adapter },
-            "[context-mount] adapter omits toolCall.locations — write-class calls cannot be matched against mount roots (L3 dirty check backstops)",
-          );
-        }
-      }
-
-      // ADR-130: capability_guard — enforce strict tools/mcps by tool identity.
-      // Runs AFTER path_guard and BEFORE B1 so an out-of-profile call is denied even
-      // on unattended/auto-approve sessions. Armed only when the session carries a
-      // derived enforcementProfile. In-profile → auto-allow inline (zero HITL);
-      // out-of-profile → deny-and-continue; Nth consecutive deny → halt.
-      if (record.enforcementProfile) {
-        // A prior halt (capability_guard or M40) fired → cancel every further call
-        // (mirrors the M40 hooksConfig hookHalted short-circuit, for a session that
-        // carries an enforcementProfile but no hooksConfig).
-        if (record.hookHalted) {
-          return { outcome: { outcome: "cancelled" } };
-        }
-
-        // D5 sentinel bookkeeping: this call reached the always-ask seam, so it
-        // is no longer an un-arbitrated pending write (clears any streamed id).
-        if (tc.toolCallId) {
-          record.capabilityPendingWriteIds?.delete(tc.toolCallId);
-        }
-
-        let decision;
-
-        try {
-          decision = resolveCapabilityGuardDecision(
-            record.enforcementProfile,
-            tc,
-          );
-        } catch (err) {
-          // Deferred-release invariant: a throw in evaluation falls through to a
-          // logged deny (never an unresolved RPC).
-          logger.warn(
-            {
-              sessionId,
-              err: err instanceof Error ? err.message : String(err),
-            },
-            "[guardrail] capability_guard evaluation threw — deny (fail-closed)",
-          );
-          decision = {
-            decision: "deny" as const,
-            reason: "capability_guard: evaluation error (fail-closed)",
-            governedClass: "tools" as const,
-          };
-        }
-
-        if (decision.decision === "deny") {
-          const identity = extractToolIdentity(tc);
-
-          record.capabilityDenyCount = (record.capabilityDenyCount ?? 0) + 1;
-
-          // Nth consecutive out-of-profile deny → halt (mirror no_progress): cancel
-          // every pending deferred, reset the counter, emit an explicit `halt`.
-          if (
-            record.capabilityDenyCount >=
-            record.enforcementProfile.escalationThreshold
-          ) {
-            record.hookHalted = true;
-            record.capabilityDenyCount = 0;
-            emitHookTrip("capability_guard", params.toolCall, "halt");
-
-            for (const requestId of pendingPermissions.requestIds(sessionId)) {
-              pendingPermissions.cancel(
-                sessionId,
-                requestId,
-                "hook_trip:capability_guard",
-              );
-            }
-
-            logger.info(
+            emitHookTrip("capability_guard", params.toolCall, "deny");
+            logger.debug(
               {
                 sessionId,
                 toolIdentity: identity.name,
+                kind: tc.kind,
                 governedClass: decision.governedClass,
-                threshold: record.enforcementProfile.escalationThreshold,
+                decision: "deny",
+                reason: decision.reason,
+                denyCount: record.capabilityDenyCount,
               },
-              "[guardrail] capability_guard halt (Nth consecutive deny)",
+              "[guardrail] capability_guard deny (run continues)",
             );
 
             return { outcome: { outcome: "cancelled" } };
           }
 
-          emitHookTrip("capability_guard", params.toolCall, "deny");
-          logger.debug(
-            {
-              sessionId,
-              toolIdentity: identity.name,
-              kind: tc.kind,
-              governedClass: decision.governedClass,
-              decision: "deny",
-              reason: decision.reason,
-              denyCount: record.capabilityDenyCount,
-            },
-            "[guardrail] capability_guard deny (run continues)",
-          );
+          if (decision.decision === "allow") {
+            // In-profile → the supervisor is the permission authority: auto-allow
+            // inline (zero added HITL) and reset the consecutive-deny counter.
+            record.capabilityDenyCount = 0;
 
-          return { outcome: { outcome: "cancelled" } };
+            const allowOption = resolveAutoApproveOption(options);
+
+            if (allowOption) {
+              logger.debug(
+                { sessionId, toolIdentity: extractToolIdentity(tc).name },
+                "[guardrail] capability_guard allow (in-profile)",
+              );
+
+              return {
+                outcome: {
+                  outcome: "selected",
+                  optionId: allowOption.optionId,
+                },
+              };
+            }
+            // No allow-shaped option → fall through to HITL (defensive).
+          }
+          // pass_through (no strict class governs this call) → fall through unchanged.
         }
 
-        if (decision.decision === "allow") {
-          // In-profile → the supervisor is the permission authority: auto-allow
-          // inline (zero added HITL) and reset the consecutive-deny counter.
-          record.capabilityDenyCount = 0;
+        // B1 (execution-policy permissions=auto_approve, L3): a session launched
+        // with autoApprovePermissions auto-selects the allow option inline — BELOW
+        // the read-only layers AND the guardrail interceptor (L1 / L2 / guardrails
+        // always win above). No allow-shaped option → fall through to the HITL
+        // deferred (never blind-approve or cancel).
+        if (record.autoApprovePermissions === true) {
+          const autoApprove = resolveAutoApproveOption(options);
 
-          const allowOption = resolveAutoApproveOption(options);
-
-          if (allowOption) {
-            logger.debug(
-              { sessionId, toolIdentity: extractToolIdentity(tc).name },
-              "[guardrail] capability_guard allow (in-profile)",
+          if (autoApprove) {
+            logger.info(
+              { sessionId, toolKind: tc.kind, optionId: autoApprove.optionId },
+              "[perm.auto] permission auto-approved (L3)",
             );
 
             return {
-              outcome: {
-                outcome: "selected",
-                optionId: allowOption.optionId,
-              },
+              outcome: { outcome: "selected", optionId: autoApprove.optionId },
             };
           }
-          // No allow-shaped option → fall through to HITL (defensive).
         }
-        // pass_through (no strict class governs this call) → fall through unchanged.
-      }
 
-      // B1 (execution-policy permissions=auto_approve, L3): a session launched
-      // with autoApprovePermissions auto-selects the allow option inline — BELOW
-      // the read-only layers AND the guardrail interceptor (L1 / L2 / guardrails
-      // always win above). No allow-shaped option → fall through to the HITL
-      // deferred (never blind-approve or cancel).
-      if (record.autoApprovePermissions === true) {
-        const autoApprove = resolveAutoApproveOption(options);
-
-        if (autoApprove) {
-          logger.info(
-            { sessionId, toolKind: tc.kind, optionId: autoApprove.optionId },
-            "[perm.auto] permission auto-approved (L3)",
-          );
-
-          return {
-            outcome: { outcome: "selected", optionId: autoApprove.optionId },
-          };
-        }
-      }
-
-      record.monotonicId += 1;
-      const event: SessionEvent = {
-        type: "session.permission_request",
-        sessionId,
-        monotonicId: record.monotonicId,
-        requestId,
-        options,
-        toolCall: params.toolCall,
-      };
-
-      emitter.emit(SESSION_EVENT_CHANNEL, event);
-      logger.info(
-        {
+        record.monotonicId += 1;
+        const event: SessionEvent = {
+          type: "session.permission_request",
           sessionId,
+          monotonicId: record.monotonicId,
           requestId,
-          optionsCount: options.length,
-          toolCallSummary: {
-            id: tc.toolCallId,
-            kind: tc.kind,
-            title: tc.title,
-          },
-        },
-        "permission-request emitted",
-      );
+          options,
+          toolCall: params.toolCall,
+        };
 
-      const outcome = await new Promise<AcpPermissionOutcome>(
-        (resolve, reject) => {
+        emitter.emit(SESSION_EVENT_CHANNEL, event);
+        logger.info(
+          {
+            sessionId,
+            requestId,
+            optionsCount: options.length,
+            toolCallSummary: {
+              id: tc.toolCallId,
+              kind: tc.kind,
+              title: tc.title,
+            },
+          },
+          "permission-request emitted",
+        );
+
+        return new Promise<AcpPermissionOutcome>((resolve, reject) => {
           pendingPermissions.register(sessionId, requestId, {
             resolve,
             reject,
           });
-        },
-      );
-
-      return { outcome };
+        }).then((outcome) => ({ outcome }));
+      } finally {
+        onPrepared?.();
+      }
     },
   };
 
+  const stream = boundedAcpStream({
+    source: stdoutSource,
+    stdin,
+    client: clientImpl,
+    onFailure(error) {
+      record.abortOutput?.(error);
+      record.outputFailure = {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+      };
+      logger.error(
+        {
+          sessionId,
+          commandId: record.activePromptCommandId,
+          reason: error.details?.reason,
+        },
+        "producer-acp-failed",
+      );
+      stdoutSource.destroy(error);
+      stdin.destroy();
+    },
+  });
   const connection = new acp.ClientSideConnection(() => clientImpl, stream);
 
   logger.info({ sessionId }, "acp connection-init");

@@ -233,9 +233,22 @@ describe("projectRunTranscript", () => {
     });
 
     await writeEvents(slug, runId, lines);
-    await projectRunTranscript(runId, { client: db });
-    await projectRunTranscript(runId, { client: db });
-    await projectRunTranscript(runId, { client: db });
+    await expect
+      .poll(
+        async () => {
+          await projectRunTranscript(runId, { client: db });
+          const [cursor] = await db
+            .select({
+              last: fullSchema.executionEventConsumers.lastRunSequence,
+            })
+            .from(fullSchema.executionEventConsumers)
+            .where(eq(fullSchema.executionEventConsumers.runId, runId));
+
+          return cursor?.last;
+        },
+        { timeout: 15_000 },
+      )
+      .toBe(220n);
     const actual = await getRunNodeTranscript(runId, "implement", {
       client: db,
     });

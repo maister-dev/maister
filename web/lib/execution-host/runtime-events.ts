@@ -1,5 +1,53 @@
 import { z } from "zod";
 
+/** Exact host-owned session payload; the reference event is availability evidence. */
+export const SessionContentReferenceSchema = z
+  .object({
+    schema: z.literal("maister.session-content.v2"),
+    commandId: z.string().uuid(),
+    hostSessionId: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/),
+    source: z.enum(["raw_stdout", "session_update", "terminal_output"]),
+    firstFrame: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    frameCount: z.literal(1),
+    objectId: z.string().uuid(),
+    kind: z.literal("raw_transcript"),
+    logicalName: z.literal("session-content.json"),
+    mimeType: z.literal("application/json"),
+    generation: z.number().int().min(1).max(2_147_483_647),
+    sizeBytes: z.number().int().min(0).max(2_097_152),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    retentionClass: z.literal("run"),
+    state: z.literal("available"),
+    sealedAt: z.string().datetime({ offset: true }),
+    expiresAt: z.null(),
+  })
+  .strict();
+
+export type SessionContentReference = z.infer<
+  typeof SessionContentReferenceSchema
+>;
+
+const SessionContentPayloadSchema = z
+  .object({
+    sourceMonotonicId: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    sessionName: z.string().min(1).max(128),
+    nodeAttemptId: z.string().uuid().optional(),
+    contentRef: SessionContentReferenceSchema,
+  })
+  .strict();
+
+export function sessionContentSource(
+  eventType: string,
+): SessionContentReference["source"] {
+  if (eventType === "session.line") return "raw_stdout";
+  if (
+    ["session.command", "session.exited", "session.crashed"].includes(eventType)
+  )
+    return "terminal_output";
+
+  return "session_update";
+}
+
 // Stage B's web-side copy of the transport boundary. It intentionally shares
 // JSON fixtures, not a runtime package, with the supervisor so remote adapters
 // cannot gain an implicit import dependency on the local control plane.
@@ -31,6 +79,7 @@ export const RUNTIME_EVENT_PAYLOAD_SCHEMAS = [
   "maister.usage.recorded.v1",
   "maister.runtime-object.available.v1",
   "maister.runtime-object.state.v1",
+  "maister.session.content.v2",
 ] as const;
 
 const SEQUENCE = /^(0|[1-9][0-9]{0,18})$/;
@@ -123,7 +172,10 @@ function assertJsonValue(
     return;
   }
   if (typeof value === "string") {
-    if (encodedByteLength(value) > MAX_RUNTIME_EVENT_STRING_BYTES) {
+    if (
+      new TextEncoder().encode(value).byteLength >
+      MAX_RUNTIME_EVENT_STRING_BYTES
+    ) {
       throw new Error("runtime event payload string exceeds maximum bytes");
     }
 
@@ -222,14 +274,35 @@ export const RuntimeEventEnvelopeSchema = z
   })
   .strict()
   .superRefine((value, context) => {
-    if (EVENT_SCHEMA_PAIRS.get(value.eventType) !== value.payloadSchema) {
+    if (value.payloadSchema === "maister.session.content.v2") {
+      const parsed = SessionContentPayloadSchema.safeParse(value.payload);
+
+      if (
+        !value.eventType.startsWith("session.") ||
+        !parsed.success ||
+        parsed.data.contentRef.hostSessionId !== value.hostSessionId ||
+        parsed.data.contentRef.firstFrame !== parsed.data.sourceMonotonicId ||
+        parsed.data.contentRef.source !== sessionContentSource(value.eventType)
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["payload"],
+          message:
+            "session content reference has an invalid payload or source binding",
+        });
+      }
+    } else if (
+      value.payload.contentRef !== undefined ||
+      EVENT_SCHEMA_PAIRS.get(value.eventType) !== value.payloadSchema
+    ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["payloadSchema"],
-        message: "payloadSchema does not match eventType",
+        message: "payloadSchema does not match eventType or referenced content",
       });
     }
     try {
+      assertJsonValue(value.payload, 0);
       assertRuntimeEventPayloadSafe(value.payload);
     } catch (error) {
       context.addIssue({
