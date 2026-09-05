@@ -126,6 +126,16 @@ export class RuntimeEventPublisher {
         ...assignment,
         hostSessionId: record.sessionId,
         payload: original,
+        funding:
+          funding.partition === "control"
+            ? { kind: "wallet", walletId: funding.walletId }
+            : funding.partition === "regular" && funding.reservationId
+              ? {
+                  kind: "frame",
+                  walletId: record.createdByCommandId,
+                  reservationId: funding.reservationId,
+                }
+              : { kind: "producer", walletId: record.createdByCommandId },
       });
       const sealed = Object.fromEntries(
         Object.entries(metadata).filter(
@@ -229,6 +239,7 @@ export class RuntimeEventPublisher {
       hostSessionId: record.sessionId,
       descriptor: segment.descriptor,
       sizeBytes: segment.sizeBytes,
+      funding: { kind: "wallet", walletId: record.createdByCommandId },
     });
     const input = this.runtimeObjectInput({
       runId: record.runId,

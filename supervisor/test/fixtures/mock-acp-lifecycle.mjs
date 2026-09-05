@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { open, writeFile } from "node:fs/promises";
 import { Readable, Writable } from "node:stream";
 
 import * as acp from "@agentclientprotocol/sdk";
@@ -16,6 +16,7 @@ let hangPermission = false;
 let exitDelayMs = 0;
 let emitUsage = false;
 const outputWrites = [];
+const sizedOutputWrites = [];
 
 for (let i = 0; i < args.length; i += 1) {
   const arg = args[i];
@@ -40,6 +41,8 @@ for (let i = 0; i < args.length; i += 1) {
     emitUsage = true;
   } else if (arg === "--write-env") {
     outputWrites.push({ envName: args[++i], content: args[++i] });
+  } else if (arg === "--write-env-bytes") {
+    sizedOutputWrites.push({ envName: args[++i], sizeBytes: Number(args[++i]) });
   }
 }
 
@@ -166,6 +169,26 @@ class LifecycleAgent {
         encoding: "utf8",
         mode: 0o600,
       });
+    }
+
+    for (const output of sizedOutputWrites) {
+      const outputPath = process.env[output.envName];
+
+      if (!outputPath || !Number.isSafeInteger(output.sizeBytes) || output.sizeBytes < 0)
+        throw new Error("invalid bounded output fixture configuration");
+      const handle = await open(outputPath, "w", 0o600);
+      const bytes = Buffer.alloc(65536, 120);
+
+      try {
+        for (let offset = 0; offset < output.sizeBytes;) {
+          const result = await handle.write(bytes, 0, Math.min(bytes.length, output.sizeBytes - offset));
+
+          if (result.bytesWritten === 0) throw new Error("fixture output write made no progress");
+          offset += result.bytesWritten;
+        }
+      } finally {
+        await handle.close();
+      }
     }
 
     for (let i = 0; i < lines; i += 1) {

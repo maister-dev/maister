@@ -294,7 +294,16 @@ describe("Stage B durable host event outbox", () => {
   );
 
   it("reserves all maximum producer wallets before acceptance and preserves other producers' credits", () => {
-    const state = openHostState({ inMemory: true });
+    // Isolate event-wallet exhaustion from the independently enforced file quota.
+    const state = openHostState({
+      inMemory: true,
+      limits: validateRuntimeLimits({
+        ...DEFAULT_RUNTIME_LIMITS,
+        objectLowBytes: 32 * 1024 ** 3,
+        objectSoftBytes: 36 * 1024 ** 3,
+        objectMaxBytes: 40 * 1024 ** 3,
+      }),
+    });
     const receipts = Array.from({ length: 20 }, () => createReceipt());
 
     try {
@@ -470,6 +479,11 @@ describe("Stage B durable host event outbox", () => {
       db.exec(`UPDATE runtime_event_outbox SET acknowledged_at = (
           SELECT a.acknowledged_at FROM runtime_event_ack_ranges a WHERE a.stream_id = runtime_event_outbox.stream_id
             AND a.first_sort_key <= runtime_event_outbox.sequence_sort_key AND a.through_sort_key >= runtime_event_outbox.sequence_sort_key);
+        DROP TRIGGER runtime_file_wallet_close;
+        DROP TABLE runtime_frame_file_credits;
+        DROP TABLE runtime_files;
+        DROP TABLE runtime_file_wallets;
+        DROP TABLE runtime_file_budget;
         DROP TRIGGER runtime_event_budget_insert; DROP TRIGGER runtime_event_budget_delete_v8;
         DROP TABLE runtime_event_ack_ranges; DROP TABLE runtime_event_budget;
         DROP TABLE runtime_event_frames; DROP TABLE runtime_event_teardowns;

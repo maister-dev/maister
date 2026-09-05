@@ -285,7 +285,12 @@ describe("AT-02 physical runtime storage", () => {
         db.exec(`UPDATE runtime_event_outbox SET acknowledged_at = (
           SELECT a.acknowledged_at FROM runtime_event_ack_ranges a WHERE a.stream_id = runtime_event_outbox.stream_id
             AND a.first_sort_key <= runtime_event_outbox.sequence_sort_key AND a.through_sort_key >= runtime_event_outbox.sequence_sort_key);
-          DROP TRIGGER runtime_event_budget_delete_v8;
+          DROP TRIGGER runtime_file_wallet_close;
+        DROP TABLE runtime_frame_file_credits;
+        DROP TABLE runtime_files;
+        DROP TABLE runtime_file_wallets;
+        DROP TABLE runtime_file_budget;
+        DROP TRIGGER runtime_event_budget_delete_v8;
           DROP TABLE runtime_event_ack_ranges;
           ${OUTBOX_BUDGET_SCHEMA}
           PRAGMA user_version = 7;`);

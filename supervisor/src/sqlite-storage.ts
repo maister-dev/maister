@@ -90,9 +90,16 @@ function storageFailureSignature(
 
     if (
       typeof failure.code === "string" &&
-      ["ENOSPC", "EDQUOT", "EIO", "EROFS", "EMFILE", "ENFILE"].includes(
-        failure.code,
-      )
+      [
+        "ENOSPC",
+        "EDQUOT",
+        "EIO",
+        "EROFS",
+        "EMFILE",
+        "ENFILE",
+        "EACCES",
+        "ENOTDIR",
+      ].includes(failure.code)
     )
       return { reason: "runtime_storage_unavailable", code: failure.code };
     // SQLite extended result codes retain their primary result in the low byte.

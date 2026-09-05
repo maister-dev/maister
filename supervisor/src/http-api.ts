@@ -246,7 +246,10 @@ function countSessionsByStatus(
 
 function runtimeEventSupervisorError(error: unknown): SupervisorError {
   if (error instanceof HostRuntimeEventError) {
-    if (error.reason === "runtime_storage_unavailable")
+    if (
+      error.reason === "runtime_storage_unavailable" ||
+      error.reason === "runtime_storage_pressure"
+    )
       return new SupervisorError("EXECUTOR_UNAVAILABLE", error.message, {
         details: { reason: error.reason },
       });
@@ -739,7 +742,13 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           });
         }
 
-        return args.execute();
+        try {
+          return await args.execute();
+        } catch (error) {
+          if (error instanceof HostRuntimeEventError)
+            throw runtimeEventSupervisorError(error);
+          throw error;
+        }
       },
     });
 
@@ -1947,6 +1956,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
               assignmentId: parsed.envelope.fence.assignmentId,
               assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
               hostSessionId: sessionId,
+              walletId: parsed.envelope.command.id,
               binding,
             });
 

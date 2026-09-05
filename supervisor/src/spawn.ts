@@ -10,6 +10,8 @@ import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import { prepareProducerFiles, type ProducerFiles } from "./producer-files";
+import { HostRuntimeEventError } from "./host-runtime-errors";
 import { producerPressure } from "./producer-pressure";
 import { captureAcpFrames, reserveOutputProducer } from "./bounded-acp-stream";
 import { SESSION_EVENT_CHANNEL } from "./registry";
@@ -196,12 +198,23 @@ export async function spawnSession(
 
   const releaseOutputProducer = reserveOutputProducer();
   let logStream: WriteStream;
+  let producerFiles: ProducerFiles | undefined;
 
   try {
+    if (opts.hostState)
+      producerFiles = prepareProducerFiles({
+        state: opts.hostState,
+        walletId: opts.createdBy.commandId,
+        sessionId,
+        logPath,
+      });
     logStream = createWriteStream(logPath, { flags: "wx", mode: 0o600 });
     await once(logStream, "open");
   } catch (error) {
+    opts.hostState?.reportRuntimeStorageFailure(error);
+    producerFiles?.abandonUnstarted();
     releaseOutputProducer();
+    if (error instanceof HostRuntimeEventError) throw error;
     throw new SupervisorError(
       "EXECUTOR_UNAVAILABLE",
       "session output log could not be opened",
@@ -224,6 +237,7 @@ export async function spawnSession(
     const onError = (err: Error) => {
       child.off("spawn", onSpawn);
       logStream.end();
+      producerFiles?.abandonUnstarted();
       releaseOutputProducer();
       logger.warn(
         {
@@ -252,6 +266,7 @@ export async function spawnSession(
 
   if (pid === undefined) {
     logStream.end();
+    producerFiles?.abandonUnstarted();
     releaseOutputProducer();
     throw new SupervisorError("SPAWN", "child has no pid after spawn");
   }
@@ -330,7 +345,7 @@ export async function spawnSession(
     drained = resolve;
   });
   const pressure = opts.hostState
-    ? producerPressure(opts.hostState, record)
+    ? producerPressure(opts.hostState, record, producerFiles)
     : undefined;
 
   record.stopOutputForTeardown = () => {
@@ -363,6 +378,10 @@ export async function spawnSession(
     onStorageFailure: opts.hostState?.reportRuntimeStorageFailure,
     storageAvailable: opts.hostState?.runtimeStorageAvailable,
     beforeFrame: pressure?.beforeFrame,
+    beforeWrite: pressure?.beforeWrite,
+    spoolPath: producerFiles?.spoolPath,
+    onSpoolBytes: producerFiles?.recordSpoolBytes,
+    onLogBytes: producerFiles?.recordLogBytes,
     shouldDrain: pressure?.shouldDrain,
     onSegment: opts.runtimeEventPublisher
       ? (segment) =>
@@ -386,8 +405,12 @@ export async function spawnSession(
       record.abortOutput?.(error);
     },
     onDrained() {
-      releaseOutputProducer();
-      drained();
+      try {
+        producerFiles?.finish();
+      } finally {
+        releaseOutputProducer();
+        drained();
+      }
     },
   });
 

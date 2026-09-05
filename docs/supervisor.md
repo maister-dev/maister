@@ -749,7 +749,20 @@ latches `GET /health` to `503 EXECUTOR_UNAVAILABLE` with
 files remain for repair. The host does not publish a successful terminal event
 when its commit failed. A fresh process must successfully open the repaired
 store before admissions resume.
-The file carries a `PRAGMA user_version` (currently 8)
+Version 9 adds `runtime_file_budget`, `runtime_file_wallets`, `runtime_files`
+and `runtime_frame_file_credits`. Create admission reserves capture/teardown
+and declared-output capacity in the receipt transaction. Logs, frame spools,
+producer references and uploads reserve before writing; available uploads
+reconcile their charge to actual bytes. A serialized writer token prevents
+concurrent uploads or deletion of an active upload from releasing its capacity.
+Startup inventories known files, interrupted object copies and logs from both
+active and released workspace handles, using bounded pages and directory
+buffers. Unknown files remain preserved and charged; a reservation overrun
+refuses startup. File pressure shares producer pause/wake and credited teardown
+with event pressure. ACK alone releases no file capacity. Size limits and the
+remaining immutable-output sealing work are described in the canonical
+[resource budget](configuration.md#a-b-stabilization-resource-budget-designed).
+The file carries a `PRAGMA user_version` (currently 9)
 that gates in-place migrations at open: a version-0 store (inline
 `UNIQUE (run_id, real_path)`, which blocked re-adoption after a release) is
 rebuilt under the partial index with every row kept; a fresh store starts at

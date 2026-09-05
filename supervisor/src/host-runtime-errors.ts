@@ -1,6 +1,7 @@
 export class HostRuntimeEventError extends Error {
   readonly reason:
     | "runtime_storage_unavailable"
+    | "runtime_storage_pressure"
     | "command_in_progress"
     | "command_invariant_conflict"
     | "event_outbox_soft_limit"

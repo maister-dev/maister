@@ -1,4 +1,4 @@
-import type { FrameAdmission } from "./producer-pressure";
+import type { FrameAdmission, LogWriteAdmission } from "./producer-pressure";
 import type {
   AnyMessage,
   Client,
@@ -245,7 +245,11 @@ export function captureAcpFrames(input: {
   onDrained: () => void;
   onStorageFailure?: (error: unknown) => void;
   storageAvailable?: () => boolean;
-  beforeFrame?: () => Promise<FrameAdmission>;
+  beforeFrame?: (frameBytes: number) => Promise<FrameAdmission>;
+  beforeWrite?: (bytes: number) => Promise<LogWriteAdmission>;
+  spoolPath?: string;
+  onSpoolBytes?: (bytes: number) => void;
+  onLogBytes?: (bytes: number) => void;
   shouldDrain?: () => boolean;
   onSegment?: (segment: CapturedStdoutSegment) => void;
 }): NodeReadable {
@@ -254,7 +258,9 @@ export function captureAcpFrames(input: {
     input.onFailure(incomplete("producer_output_storage"));
   });
   async function* frames(): AsyncGenerator<Buffer> {
-    const temporary = join(input.directory, `.acp-frame-${randomUUID()}.tmp`);
+    const temporary =
+      input.spoolPath ??
+      join(input.directory, `.acp-frame-${randomUUID()}.tmp`);
     let spool: FileHandle | null = null;
     let length = 0;
     let firstLogByteOffset = 0;
@@ -287,11 +293,15 @@ export function captureAcpFrames(input: {
           const end = newline === -1 ? chunk.byteLength : newline + 1;
           const part = chunk.subarray(offset, end);
 
+          if (input.shouldDrain?.()) draining = true;
           if (
             length + part.byteLength >
             (draining ? 2_097_152 : MAX_ACP_FRAME_BYTES)
           )
             throw incomplete("producer_frame_limit");
+          const writeAdmission = await input.beforeWrite?.(part.byteLength);
+
+          if (writeAdmission?.kind === "drain") draining = true;
           let written = 0;
 
           while (written < part.byteLength) {
@@ -306,16 +316,18 @@ export function captureAcpFrames(input: {
               throw incomplete("producer_output_storage");
             written += result.bytesWritten;
           }
-          await writeChunk(input.log, part);
           length += part.byteLength;
-          offset = end;
           trailingFrameBytes += part.byteLength;
+          input.onSpoolBytes?.(length);
+          await writeChunk(input.log, part);
+          input.onLogBytes?.(part.byteLength);
+          offset = end;
           if (newline === -1) continue;
           completeFrames += 1;
           trailingFrameBytes = 0;
           if (draining) continue;
           const admission = input.beforeFrame
-            ? await input.beforeFrame()
+            ? await input.beforeFrame(length)
             : undefined;
 
           if (admission?.kind === "drain") {
@@ -341,6 +353,7 @@ export function captureAcpFrames(input: {
           length = 0;
           completeFrames = 0;
           await spool.truncate(0);
+          input.onSpoolBytes?.(0);
         }
       }
       if (length !== 0 && input.shouldDrain?.()) draining = true;
@@ -351,6 +364,7 @@ export function captureAcpFrames(input: {
       if (length !== 0) throw incomplete("producer_frame_incomplete");
     } catch (error) {
       input.onStorageFailure?.(error);
+      draining = length > 0;
       // Even an over-budget or truncated drain preserves its captured prefix
       // before the typed failure and terminal barrier become observable.
       let failure =
@@ -381,6 +395,9 @@ export function captureAcpFrames(input: {
         input.log.end();
         try {
           await flushed;
+        } catch (error) {
+          input.onStorageFailure?.(error);
+          throw error;
         } finally {
           input.onDrained();
         }

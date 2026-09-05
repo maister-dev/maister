@@ -2437,6 +2437,7 @@ components:
         - event_payload_oversize
         - event_outbox_backpressure
         - runtime_storage_unavailable
+        - runtime_storage_pressure
         - runtime_output_buffer_capacity
         - runtime_output_frame_too_large
         - required_output_incomplete

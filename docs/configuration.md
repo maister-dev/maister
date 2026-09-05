@@ -1347,6 +1347,7 @@ This table supersedes inconsistent budget descriptions for this work. Binary uni
 | Durable receipt body | 2 MiB serialized JSON | Bound a single receipt mutation; larger semantic output uses an immutable reference. Oversized legacy receipts require bounded migration before pruning. |
 | SQLite physical storage | 2 GiB host-state high-water; bounded WAL checkpoints at 64 MiB target, checked with SQLite page/WAL counters | Separate physical overhead from 528 MiB event payload quota; size includes receipts/indexes. Target checkpoint size is not a guaranteed hard limit while readers pin WAL. Refuse effects/pause before physical high-water; close bounded readers and checkpoint without deleting evidence. |
 | Host runtime byte quota | 10 GiB hard / 8 GiB soft / 6 GiB resume-low; require ≥1 GiB filesystem free headroom | Separate host objects/raw spools from outbox. Finite host storage cannot promise unlimited output/outage retention; pressure pauses production or produces explicit incomplete-output terminal failure. Never GC required evidence for space. |
+| Producer file reservation (Implemented S1.3) | 8 MiB plus 50 MiB per declared output binding | Before spawn reserve a 2-MiB frame spool, 2-MiB teardown log growth and two 2-MiB preservation objects. Each declared output reserves its 25-MiB pending file plus a 25-MiB immutable sealing copy. File capacity can limit concurrency before the event-wallet limit. |
 | Ordinary manager uploads | 25 MiB/object, 100 MiB/command batch | Preserve normal upload contract. Historical import uses bounded chunks, not this whole-file cap. |
 | Read response/range | One range, ≤8 MiB; ≤2 concurrent verification scans, 64 KiB streaming hash buffer each; response spool ≤16 MiB total | Bounded memory/disk; large logs remain accessible through successive ranges. No implicit full-response fallback. |
 | Projection | 2 concurrent claims; 100 events/1 MiB/~1 s quantum; 5 s transaction; 30 s lease; ≤1 s idle wake | Fair work and lease arithmetic from the [projection worker contract](system-analytics/execution-event-plane.md#durable-bounded-projection-and-reconciliation-workers). |
@@ -1354,6 +1355,20 @@ This table supersedes inconsistent budget descriptions for this work. Binary uni
 | GC | 100 examined rows/quantum, due-keyset cursor advanced for every examined item; 30 s operation lease, 10 s renewal when needed | Protected first pages cannot starve later rows; remote deletes occur outside DB lock. |
 
 **Physical-capacity qualification:** logical SQLite quotas are not exact on-disk caps. Measure max envelope/index/receipt footprint and WAL behavior at configured producer concurrency. Before promising a physical maximum, account for the worst already-admitted burst and filesystem free-space guard; refuse configurations whose hard limits plus reserved in-flight storage exceed the host budget. Disk-full/fdatasync failure can prevent any final record: mark host unavailable, stop affected producers, retain all existing bytes/receipts, fail readiness and require storage repair; do not claim durable terminal evidence was committed when it was not.
+
+The file budget uses charged capacity (written bytes plus outstanding file and
+producer reservations), independently of event ACKs. An ordinary upload reserves
+both its declared object size and its temporary copy before content is accepted.
+Normal raw-log growth reserves before each bounded write. Committed deletion,
+confirmed truncation and sealed-object size reconciliation return capacity;
+required evidence is never deleted to make space. Failed storage writes retain
+conservative charges and unfinished files. A restart inventories existing
+host-private files before admission; unknown or oversized retained files cannot
+be treated as free space. New effects pause at soft pressure and resume below
+low. The hard bound governs host-managed writes and declared output reservations;
+agent-produced output must be validated before sealing and cannot be called
+verified solely from its declaration. Pending agent outputs retain both halves of
+the reservation until immutable sealing and writer retirement are qualified in S3.
 
 The current S1.3 SQLite guard measures the database, WAL and shared-memory
 files, SQLite page/free-page counters and filesystem free bytes before runtime
