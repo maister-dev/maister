@@ -23,7 +23,7 @@ two long-running Node processes:
   integration: `cli` nodes and requirement probes run through `bash`, Flow
   and capability installs create symlinks, and `MAISTER_WORKSPACE_ROOTS` is
   colon-separated, so a native Windows host is not supported.
-- **Node 24** (per the locked container target — `nvm use 24` if you use nvm)
+- **Node >=24.15.0 <25** (`nvm install 24.19.0` and `nvm use 24.19.0` for the qualified current patch)
 - **pnpm 11** (package manager — `npm install -g pnpm` if missing)
 - **git** with `git worktree` support (any modern version)
 - **pre-commit** (one-time `pre-commit install` writes the git hook)
@@ -554,7 +554,7 @@ mAIster/
 ## Common pitfalls
 
 - **Wrong Node version** — Next.js 16 + React 19 require recent Node.
-  `nvm use 24` if you have it; otherwise install Node 24.
+  `nvm use 24.19.0` if installed; otherwise install a supported Node 24 patch (minimum 24.15.0).
 - **`npm install` instead of `pnpm install`** — the project is pnpm-only.
   An npm lockfile will diverge from the pnpm one and break CI later.
 - **Editing `app/about`, `app/blog`, `app/docs`, `app/pricing`** — those are

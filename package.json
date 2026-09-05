@@ -19,7 +19,9 @@
     "site:dev": "pnpm --filter @maister/site dev",
     "site:build": "pnpm --filter @maister/site build",
     "site-docs:dev": "pnpm --filter @maister/site-docs dev",
-    "site-docs:validate": "pnpm --filter @maister/site-docs validate"
+    "site-docs:validate": "pnpm --filter @maister/site-docs validate",
+    "runtime:check": "node scripts/check-runtime.mjs",
+    "test:runtime": "node --test scripts/runtime-contract.test.mjs"
   },
   "devDependencies": {
     "@apidevtools/swagger-parser": "10.1.1",
@@ -27,5 +29,8 @@
     "jsdom": "^25.0.1",
     "mermaid": "^11.4.1",
     "yaml": "^2.9.0"
+  },
+  "engines": {
+    "node": ">=24.15.0 <25"
   }
 }

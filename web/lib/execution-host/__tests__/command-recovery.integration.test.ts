@@ -31,6 +31,12 @@ import {
 import { OPEN_COMMANDS_PAGE_SIZE } from "@/lib/execution-host/commands";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
+import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
+import {
+  startProjectionWorker,
+  type ProjectionWorker,
+} from "@/lib/execution-host/events/projection-worker";
+import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
 import {
   publishRuntimeObject,
   readRuntimeObjectContent,
@@ -61,6 +67,7 @@ let restoreUrl: () => void = () => {};
 let hosts: ExecutionHosts;
 let project: { id: string; slug: string; repoPath: string };
 let hostId: string;
+let projectionWorker: ProjectionWorker;
 
 const CREATE_PAYLOAD = {
   stepId: "s1",
@@ -176,10 +183,16 @@ beforeAll(async () => {
   });
 
   hostId = probe.host.id;
+  projectionWorker = startProjectionWorker({
+    db,
+    projectors: canonicalProjectors,
+  });
 }, 180_000);
 
 afterAll(async () => {
   restoreUrl();
+  await stopRuntimeEventConsumers();
+  await projectionWorker?.stop();
   await sup?.kill();
   await testDatabase?.stop();
 });
@@ -302,19 +315,7 @@ describe("execution-command recovery (real supervisor)", () => {
     const created = await client.createSession(CREATE_PAYLOAD);
     const beforeHealth = await hosts.local().health();
 
-    // Feed `commandSignals` like a real SSE consumer would.
-    const consumer = (async () => {
-      try {
-        for await (const event of hosts
-          .local()
-          .streamSession(created.hostSessionId)) {
-          // Signals are published by the admin stream itself.
-          void event;
-        }
-      } catch {
-        /* the stream dies with the host */
-      }
-    })();
+    // Durable prompt recovery must work without a process-local SSE subscriber.
     const handle = await client.prompt(created.hostSessionId, {
       stepId: "s1",
       prompt: "hang",
@@ -334,11 +335,12 @@ describe("execution-command recovery (real supervisor)", () => {
     );
 
     // The live driver observes the loss through its own receipt lookup.
-    await expect(client.waitForPrompt(handle)).rejects.toSatisfy(
+    await expect(
+      client.waitForPrompt(handle, { signal: AbortSignal.timeout(15_000) }),
+    ).rejects.toSatisfy(
       (err: unknown) =>
         isMaisterError(err) && err.details?.reason === "turn_lost",
     );
-    await consumer;
 
     // Recovery on a fresh process sees the same row still `accepted`: the
     // host's receipt is `accepted` with no in-flight execution.

@@ -8,12 +8,13 @@
     "dev:clean": "pnpm clean && next dev",
     "clean": "node scripts/clean-next-artifacts.mjs",
     "build": "pnpm clean && next build",
-    "start": "next start",
+    "start": "node --import tsx server.ts",
     "lint": "eslint --fix",
     "typecheck": "tsc --noEmit",
     "test": "pnpm test:unit && pnpm test:integration",
     "test:unit": "vitest run --project unit --passWithNoTests",
     "test:integration": "vitest run --project integration --passWithNoTests",
+    "test:integration:ab": "node ../scripts/run-stage-ab-tests.mjs web",
     "test:watch": "vitest --project unit",
     "test:e2e": "tsx e2e/run.ts",
     "test:e2e:live": "tsx e2e/run.ts --config playwright.live.config.ts",
@@ -136,5 +137,8 @@
     "tsx": "^4.22.3",
     "typescript": "5.6.3",
     "vitest": "^2.1.9"
+  },
+  "engines": {
+    "node": ">=24.15.0 <25"
   }
 }

@@ -19,6 +19,7 @@ import {
 } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
+import { isApplicationStopping } from "@/lib/server-lifecycle";
 
 const RETENTION_BATCH_SIZE = 100;
 
@@ -152,6 +153,7 @@ export async function sweepExpiredRuntimeObjects(
     .limit(limit);
 
   for (const candidate of candidates) {
+    if (isApplicationStopping()) break;
     summary.scanned += 1;
     if (await hasDurableReference(db, candidate)) {
       summary.referenced += 1;
@@ -242,36 +244,46 @@ export async function sweepExpiredRuntimeObjects(
   return summary;
 }
 
-type RetentionTimerState = { handle: NodeJS.Timeout | null };
+type RetentionTimerState = {
+  handle: NodeJS.Timeout | null;
+  active: Promise<void> | null;
+};
 const RETENTION_TIMER_KEY = Symbol.for("maister.runtime-object-retention.v1");
 
 function timerState(): RetentionTimerState {
   const global = globalThis as unknown as Record<symbol, RetentionTimerState>;
 
-  global[RETENTION_TIMER_KEY] ??= { handle: null };
+  global[RETENTION_TIMER_KEY] ??= { handle: null, active: null };
 
   return global[RETENTION_TIMER_KEY];
 }
 
 export function startRuntimeObjectRetentionTimer(): void {
+  if (isApplicationStopping()) return;
   const state = timerState();
 
   if (state.handle) return;
   state.handle = setInterval(() => {
-    void sweepExpiredRuntimeObjects().catch((error: unknown) => {
-      defaultLog.error(
-        { error: safeError(error) },
-        "runtime-object-retention-sweep-failed",
-      );
-    });
+    if (state.active) return;
+    state.active = sweepExpiredRuntimeObjects()
+      .then(() => {})
+      .catch((error: unknown) => {
+        defaultLog.error(
+          { error: safeError(error) },
+          "runtime-object-retention-sweep-failed",
+        );
+      })
+      .finally(() => {
+        state.active = null;
+      });
   }, RUNTIME_OBJECT_RETENTION_INTERVAL_MS);
   state.handle.unref?.();
 }
 
-export function stopRuntimeObjectRetentionTimer(): void {
+export async function stopRuntimeObjectRetentionTimer(): Promise<void> {
   const state = timerState();
 
-  if (!state.handle) return;
-  clearInterval(state.handle);
+  if (state.handle) clearInterval(state.handle);
   state.handle = null;
+  await state.active;
 }

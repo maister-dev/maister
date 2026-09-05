@@ -5,13 +5,15 @@ import type { ExecutionEventProjector } from "./projector";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq, gt, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import {
   applyClaimedExecutionProjection,
   claimNextExecutionProjection,
+  releaseExecutionProjectionClaim,
 } from "./projector";
+import { projectionLimitsFromEnv } from "./projection-limits";
 import { runEventWakeBus } from "./run-wake";
 import { projectionTransaction } from "./projection-transaction";
 
@@ -97,6 +99,7 @@ export function startProjectionWorker(input: {
   db: Db;
   projectors: readonly ExecutionEventProjector[];
 }): ProjectionWorker {
+  const limits = projectionLimitsFromEnv();
   const registry = new Map(
     input.projectors.map((projector) => [projector.consumerName, projector]),
   );
@@ -153,6 +156,7 @@ export function startProjectionWorker(input: {
           db: input.db,
           consumerNames,
           owner: `${workerId}:${slot}`,
+          limits,
         });
 
         if (!claim) {
@@ -163,18 +167,7 @@ export function startProjectionWorker(input: {
         // Shutdown may race the short claim transaction. Release only this
         // token; never clear another process's replacement lease.
         if (controller.signal.aborted) {
-          await input.db
-            .update(executionEventConsumers)
-            .set({ claimOwner: null, claimExpiresAt: null })
-            .where(
-              and(
-                eq(executionEventConsumers.consumerName, claim.consumerName),
-                eq(executionEventConsumers.runId, claim.runId),
-                claim.claimOwner === null
-                  ? isNull(executionEventConsumers.claimOwner)
-                  : eq(executionEventConsumers.claimOwner, claim.claimOwner),
-              ),
-            );
+          await releaseExecutionProjectionClaim(input.db, claim);
           break;
         }
         const projector = registry.get(claim.consumerName);
@@ -189,6 +182,8 @@ export function startProjectionWorker(input: {
           runId: claim.runId,
           projector,
           claim,
+          limits,
+          signal: controller.signal,
         });
 
         failures.delete(slot);
@@ -210,10 +205,15 @@ export function startProjectionWorker(input: {
   };
 
   logger.info(
-    { workerId, consumers: consumerNames, concurrency: 2 },
+    { workerId, consumers: consumerNames, ...limits },
     "projection-worker-started",
   );
-  const finished = Promise.all([backfill(), serve("0"), serve("1")]);
+  const finished = Promise.all([
+    backfill(),
+    ...Array.from({ length: limits.concurrency }, (_, index) =>
+      serve(String(index)),
+    ),
+  ]);
 
   return {
     health: async () => {

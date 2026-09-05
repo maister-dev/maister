@@ -16,9 +16,11 @@ import { CANONICAL_PROJECTION_CONSUMERS } from "../projection-consumers";
 import { ingestRuntimeEvent } from "../ingest";
 import {
   ExecutionEventProjectionError,
+  claimNextExecutionProjection,
   projectExecutionEvents,
   rearmExecutionProjection,
 } from "../projector";
+import { projectionLimitsFromEnv } from "../projection-limits";
 
 import {
   startMainPostgresTestDb,
@@ -98,6 +100,103 @@ async function waitForCursor(
   );
 }
 
+it("shutdown aborts preparation, releases its claim and preserves retry state", async () => {
+  const runId = await seedRun(1);
+  const consumerName = `shutdown-${randomUUID()}`;
+  let prepared: () => void = () => {};
+  const preparationStarted = new Promise<void>((resolve) => {
+    prepared = resolve;
+  });
+  const worker = startProjectionWorker({
+    db: database.db,
+    projectors: [
+      {
+        ...effectProjector(consumerName),
+        prepare: async (_db, event, signal) => {
+          prepared();
+          await delay(60_000, undefined, { signal });
+
+          return event;
+        },
+      },
+    ],
+  });
+
+  try {
+    await preparationStarted;
+    const startedAt = performance.now();
+
+    await worker.stop();
+    expect(performance.now() - startedAt).toBeLessThan(2_000);
+    const result = await database.pool.query<{
+      claim_owner: string | null;
+      last_run_sequence: string | null;
+      state: string;
+      attempts: number;
+    }>(
+      `SELECT claim_owner, last_run_sequence, state, attempts FROM execution_event_consumers WHERE consumer_name = $1 AND run_id = $2`,
+      [consumerName, runId],
+    );
+
+    expect(result.rows).toEqual([
+      {
+        claim_owner: null,
+        last_run_sequence: null,
+        state: "ready",
+        attempts: 0,
+      },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          `SELECT * FROM projection_worker_effects WHERE consumer_name = $1`,
+          [consumerName],
+        )
+      ).rows,
+    ).toHaveLength(0);
+  } finally {
+    await worker.stop();
+  }
+}, 15_000);
+
+it("shutdown retains a claim when PostgreSQL cleanup cannot be confirmed", async () => {
+  const runId = await seedRun(1);
+  const consumerName = `shutdown-connection-${randomUUID()}`;
+  const controller = new AbortController();
+
+  await expect(
+    projectExecutionEvents({
+      db: database.db,
+      runId,
+      signal: controller.signal,
+      projector: {
+        consumerName,
+        project: async (tx) => {
+          const result = await tx.execute<{ pid: number }>(
+            sql`SELECT pg_backend_pid() AS pid`,
+          );
+
+          await database.pool.query("SELECT pg_terminate_backend($1)", [
+            result.rows[0].pid,
+          ]);
+          controller.abort();
+          await tx.execute(sql`SELECT 1`);
+        },
+      },
+    }),
+  ).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
+  const state = await database.pool.query<{
+    claimed: boolean;
+    attempts: number;
+    state: string;
+  }>(
+    "SELECT claim_owner IS NOT NULL AS claimed, attempts, state FROM execution_event_consumers WHERE consumer_name = $1 AND run_id = $2",
+    [consumerName, runId],
+  );
+
+  expect(state.rows).toEqual([{ claimed: true, attempts: 0, state: "ready" }]);
+});
+
 async function startProductionWorker(): Promise<{
   child: ChildProcess;
   exited: Promise<number | null>;
@@ -150,6 +249,92 @@ async function startProductionWorker(): Promise<{
 }
 
 describe("autonomous canonical projection worker", () => {
+  it("uses configured byte/row quanta and DB-clock lease, then restores defaults after the env is removed", async () => {
+    const env = {
+      MAISTER_PROJECTION_CONCURRENCY: "1",
+      MAISTER_PROJECTION_BATCH_ROWS: "2",
+      MAISTER_PROJECTION_BATCH_BYTES: "30",
+      MAISTER_PROJECTION_LEASE_MS: "60000",
+    };
+    const previous = Object.fromEntries(
+      Object.keys(env).map((key) => [key, process.env[key]]),
+    );
+    const runId = await seedRun(6);
+    const consumerName = `configured-${randomUUID()}`;
+    const projector = effectProjector(consumerName);
+
+    try {
+      Object.assign(process.env, env);
+      const limits = projectionLimitsFromEnv();
+
+      expect(limits).toEqual({
+        concurrency: 1,
+        batchRows: 2,
+        batchBytes: 30,
+        leaseMs: 60000,
+      });
+      await database.pool.query(
+        "INSERT INTO execution_event_consumers (consumer_name, run_id) VALUES ($1, $2)",
+        [consumerName, runId],
+      );
+      const claim = await claimNextExecutionProjection({
+        db: database.db,
+        consumerNames: [consumerName],
+        owner: "configured",
+      });
+      const ttl = await database.pool.query<{ ttl: number }>(
+        "SELECT extract(epoch FROM (claim_expires_at - clock_timestamp()))::float8 AS ttl FROM execution_event_consumers WHERE consumer_name = $1 AND run_id = $2",
+        [consumerName, runId],
+      );
+
+      expect(claim?.runId).toBe(runId);
+      expect(ttl.rows[0]!.ttl).toBeGreaterThan(55);
+      expect(ttl.rows[0]!.ttl).toBeLessThanOrEqual(60);
+      await database.pool.query(
+        "UPDATE execution_event_consumers SET claim_owner = NULL, claim_expires_at = NULL WHERE consumer_name = $1 AND run_id = $2",
+        [consumerName, runId],
+      );
+      const first = await projectExecutionEvents({
+        db: database.db,
+        runId,
+        projector,
+      });
+
+      expect(first.projected).toBe(1);
+      for (const key of Object.keys(env)) delete process.env[key];
+      const rest = await projectExecutionEvents({
+        db: database.db,
+        runId,
+        projector,
+      });
+
+      expect(rest.projected).toBe(5);
+      Object.assign(process.env, env);
+      const nextRun = await seedRun(3);
+
+      expect(
+        (
+          await projectExecutionEvents({
+            db: database.db,
+            runId: nextRun,
+            projector,
+          })
+        ).projected,
+      ).toBe(1);
+      expect(() =>
+        projectionLimitsFromEnv({ MAISTER_PROJECTION_CONCURRENCY: "3" }),
+      ).toThrow(/MAISTER_PROJECTION_CONCURRENCY/);
+      expect(() =>
+        projectionLimitsFromEnv({ MAISTER_PROJECTION_LEASE_MS: "5000" }),
+      ).toThrow(/MAISTER_PROJECTION_LEASE_MS/);
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
   it("AT-03: seeds every run released by another run's stream gap", async () => {
     const firstRun = await seedRun(0);
     const secondRun = await seedRun(0);

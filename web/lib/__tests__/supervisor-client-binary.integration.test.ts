@@ -1,13 +1,31 @@
+import { rm } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { createServer, type RequestListener, type Server } from "node:http";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  adoptWorkspace,
+  type WireEnvelope,
+  type WireCommandFence,
   getRuntimeObjectContent,
   openRuntimeObjectContent,
   uploadRuntimeObject,
+  reserveRuntimeObject,
 } from "@/lib/supervisor-client";
+import { startRealSupervisor } from "@/test-support/real-supervisor";
+
+function envelope<T>(
+  kind: string,
+  fence: WireCommandFence,
+  payload: T,
+): WireEnvelope<T> {
+  return {
+    command: { id: randomUUID(), kind, issuedAt: new Date().toISOString() },
+    fence,
+    payload,
+  };
+}
 
 const servers: Server[] = [];
 const originalUrl = process.env.MAISTER_SUPERVISOR_URL;
@@ -40,6 +58,69 @@ afterEach(async () => {
 });
 
 describe("runtime-object binary HTTP transport (AT-17)", () => {
+  it("reserves, uploads and reads exact full/range bytes through the real supervisor HTTP and SQLite registry", async () => {
+    const host = await startRealSupervisor();
+    const health = (await fetch(`${host.url}/health`).then((response) =>
+      response.json(),
+    )) as { host: { hostKey: string } };
+    const fence = {
+      hostKey: health.host.hostKey,
+      runId: randomUUID(),
+      assignmentId: randomUUID(),
+      assignmentEpoch: 1,
+    };
+    const bytes = new Uint8Array([0, 255, 195, 169, 10, 32]);
+    const objectId = randomUUID();
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+
+    try {
+      process.env.MAISTER_SUPERVISOR_URL = host.url;
+      await adoptWorkspace(
+        envelope("workspace.adopt", fence, {
+          runId: fence.runId,
+          projectSlug: "binary-test",
+          kind: "directory",
+          path: host.runtimeRoot,
+        }),
+      );
+      const reserved = await reserveRuntimeObject(
+        envelope("runtime_object.reserve", fence, {
+          objectId,
+          kind: "capability_instructions",
+          logicalName: "binary.md",
+          mimeType: "application/octet-stream",
+          sizeBytes: bytes.byteLength,
+          sha256,
+          generation: 1,
+          retentionClass: "run",
+        }),
+      );
+
+      expect(reserved.state).toBe("pending");
+      const uploaded = await uploadRuntimeObject({
+        objectId,
+        bytes,
+        envelope: envelope("runtime_object.upload", fence, {
+          generation: 1,
+          sizeBytes: bytes.byteLength,
+          sha256,
+        }),
+      });
+
+      expect(uploaded.state).toBe("available");
+      expect((await getRuntimeObjectContent(objectId)).bytes).toEqual(bytes);
+      const range = await getRuntimeObjectContent(objectId, {
+        range: { start: 2, end: 4 },
+      });
+
+      expect(range.bytes).toEqual(bytes.slice(2, 5));
+      expect(range.contentRange).toBe("bytes 2-4/6");
+    } finally {
+      await host.stop();
+      await rm(host.runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
   it.each(["length", "digest", "header"] as const)(
     "refuses invalid %s before sending any request",
     async (invalid) => {

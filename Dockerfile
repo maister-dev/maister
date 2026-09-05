@@ -3,7 +3,7 @@
 # Workspace: monorepo (pnpm) with `web/` (Next.js) and `supervisor/` (ACP daemon).
 # Build stages: builder → development → production.
 
-ARG NODE_VERSION=24-bookworm-slim
+ARG NODE_VERSION=24.19.0-bookworm-slim@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df
 ARG PNPM_VERSION=11.3.0
 ARG UV_VERSION=0.11.16
 ARG PYTHON_VERSION=3.12
@@ -24,6 +24,7 @@ RUN apt-get update \
       ca-certificates \
       curl \
       git \
+      procps \
       build-essential \
       tini \
  && rm -rf /var/lib/apt/lists/* \
@@ -36,20 +37,28 @@ WORKDIR /app
 
 # ---------- builder: full monorepo deps + web production build ----------
 FROM base AS builder
-COPY pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY web/package.json ./web/
 COPY supervisor/package.json ./supervisor/
+COPY mcp/package.json ./mcp/
+COPY site/package.json ./site/
+COPY site-docs/package.json ./site-docs/
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 COPY web/ ./web/
 COPY supervisor/ ./supervisor/
+COPY runtime/ ./runtime/
+COPY scripts/ ./scripts/
 RUN pnpm --filter maister-web build
 
 # ---------- development: hot reload via pnpm dev / supervisor dev ----------
 FROM base AS development
-COPY pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY web/package.json ./web/
 COPY supervisor/package.json ./supervisor/
+COPY mcp/package.json ./mcp/
+COPY site/package.json ./site/
+COPY site-docs/package.json ./site-docs/
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 ENV NODE_ENV=development
@@ -73,7 +82,7 @@ RUN groupadd --system --gid 1001 app \
 COPY --from=builder --chown=app:app /app /app
 
 USER app
-WORKDIR /app
+WORKDIR /app/web
 EXPOSE 3000 7777
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["pnpm", "--filter", "maister-web", "start"]
+CMD ["node", "--import", "tsx", "server.ts"]

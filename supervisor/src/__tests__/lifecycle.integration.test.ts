@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { waitForChildExit } from "../execution-fence";
 import { SupervisorDiagnosticsResponseSchema } from "../types";
+import { stopRegisteredSessions } from "../shutdown";
 
 import {
   bootHost,
@@ -16,6 +17,7 @@ import {
   envelope,
   fenceFor,
   postJson,
+  silentLogger,
   type BootedHost,
 } from "./_fixtures/boot-host";
 
@@ -155,6 +157,19 @@ afterEach(async () => {
 });
 
 describe("supervisor lifecycle integration", () => {
+  it("shutdown escalates a TERM-resistant child and awaits durable terminal output", async () => {
+    const host = await bootFor(["--exit-delay-ms", "60000"]);
+    const sessionId = await createSession(host);
+    const entry = host.registry.get(sessionId)!;
+
+    await stopRegisteredSessions(host.registry, silentLogger, 50);
+    expect(entry.child.signalCode).toBe("SIGKILL");
+    expect(entry.record.terminalPublished).toBe(true);
+    expect(entry.record.outputTerminal).toBeDefined();
+    await entry.record.outputDrained;
+    await entry.record.outputTerminal;
+    expect(() => process.kill(entry.record.pid, 0)).toThrow();
+  });
   it("keeps exit and checkpoint acknowledgment behind the captured-output barrier", async () => {
     const host = await bootFor(["--hang", "--lines", "0"]);
     const sessionId = await createSession(host);
@@ -521,7 +536,7 @@ describe("supervisor lifecycle integration", () => {
 
   it("logs do NOT contain the sentinel ANTHROPIC_AUTH_TOKEN value", async () => {
     const sentinel = "sk-test-redact-sentinel";
-    const host = await bootFor(["--lines", "2"]);
+    const host = await bootFor(["--lines", "2", "--hang"]);
     const { url } = host;
     const sessionId = await createSession(host, {
       executorEnv: { ANTHROPIC_AUTH_TOKEN: sentinel },

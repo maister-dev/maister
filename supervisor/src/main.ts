@@ -1,8 +1,12 @@
 import type { HostState } from "./host-state";
 import type { RegisterRoutesOptions } from "./http-api";
 
+import { createHash } from "node:crypto";
+
 import Fastify, { type FastifyInstance } from "fastify";
 import pino, { type Logger } from "pino";
+
+import { assertSupportedNode } from "../../runtime/node-version";
 
 import { startHeartbeatWatcher } from "./heartbeat";
 import {
@@ -17,6 +21,8 @@ import { registerRoutes } from "./http-api";
 import { createDefaultModelSourceRegistry } from "./model-catalog/sources";
 import { pendingPermissions } from "./pending-permissions";
 import { SessionRegistry } from "./registry";
+import { stopRegisteredSessions } from "./shutdown";
+import { runtimeLimitsFromEnv } from "./runtime-limits";
 import { runtimeRoot } from "./runtime-root";
 import { resolveWorkspaceRoots } from "./workspace-roots";
 
@@ -29,9 +35,12 @@ function envInt(name: string, fallback: number): number {
 
   if (!raw) return fallback;
 
-  const parsed = Number.parseInt(raw, 10);
+  const parsed = Number(raw);
 
-  return Number.isFinite(parsed) ? parsed : fallback;
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(parsed) || parsed < 1)
+    throw new RangeError(`${name} must be a positive safe integer`);
+
+  return parsed;
 }
 
 export function buildRegisterRoutesOptions(deps: {
@@ -67,12 +76,14 @@ export function bootExecutionHost(deps: {
   logger: Logger;
   env?: NodeJS.ProcessEnv;
 }): HostState {
+  assertSupportedNode(process.versions.node);
   const env = deps.env ?? process.env;
   const stateDir = hostStateDirFromEnv(deps.runtimeRoot, env);
 
   try {
     return openHostState({
       stateDir,
+      limits: runtimeLimitsFromEnv(env),
       pinnedKey: env.MAISTER_EXECUTION_HOST_KEY,
       logger: deps.logger,
     });
@@ -128,6 +139,17 @@ export async function start(): Promise<void> {
   const registry = new SessionRegistry(logger);
   const app = Fastify({ logger: loggerConfig });
   const hostState = bootExecutionHost({ runtimeRoot: root, logger });
+
+  logger.info(
+    {
+      node: process.versions.node,
+      configHash: createHash("sha256")
+        .update(JSON.stringify(hostState.limits))
+        .digest("hex"),
+      limits: hostState.limits,
+    },
+    "runtime-config-accepted",
+  );
   const workspaceRoots = await resolveWorkspaceRoots({
     runtimeRoot: root,
     logger,
@@ -156,7 +178,10 @@ export async function start(): Promise<void> {
   await app.listen({ port, host: "0.0.0.0" });
   logger.info({ port, host: "0.0.0.0" }, "supervisor-listening");
 
-  const shutdown = async (signal: NodeJS.Signals) => {
+  let shuttingDown = false;
+  const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     const startedAt = Date.now();
     const liveSessions = registry.size();
     const pendingPermissionsCount = pendingPermissions.totalSize();
@@ -169,74 +194,48 @@ export async function start(): Promise<void> {
     stopReceiptPruner();
     stopRuntimeEventPruner();
 
-    registry.forEach((entry) => {
-      if (entry.record.status !== "live") return;
+    const deadline = setTimeout(
+      () => {
+        // An unconfirmed drain leaves durable receipts for startup recovery.
+        logger.fatal({}, "shutdown-deadline");
+        process.exit(1);
+      },
+      shutdownGraceMs + killGraceMs + 5_000,
+    );
+    const closeConnections = setTimeout(
+      () => app.server.closeAllConnections(),
+      1_000,
+    );
 
-      pendingPermissions.purgeSession(entry.record.sessionId);
-      registry.markIntentionalShutdown(entry.record.sessionId);
-      entry.child.kill("SIGTERM");
-    });
-
-    const deadline = startedAt + shutdownGraceMs;
-
-    while (Date.now() < deadline) {
-      let anyLive = false;
-
-      registry.forEach((entry) => {
-        if (entry.record.status === "live") anyLive = true;
-      });
-
-      if (!anyLive) break;
-      await sleep(100);
+    try {
+      // Fastify stops admission before the first await. Concurrent accepted
+      // handlers finish before the final registry snapshot is drained.
+      await Promise.all([
+        app.close(),
+        stopRegisteredSessions(registry, logger, shutdownGraceMs),
+      ]);
+      await stopRegisteredSessions(registry, logger, 1);
+      registry.clear("shutdown");
+      hostState.close();
+      logger.info({ elapsedMs: Date.now() - startedAt }, "shutdown-done");
+      await new Promise<void>((resolve, reject) =>
+        logger.flush((error) => (error ? reject(error) : resolve())),
+      );
+      clearTimeout(closeConnections);
+      clearTimeout(deadline);
+      process.exit(0);
+    } catch (error) {
+      logger.fatal({ err: error }, "shutdown-failed");
+      process.exit(1);
     }
-
-    registry.forEach((entry) => {
-      if (entry.record.status === "live") {
-        logger.warn({ sessionId: entry.record.sessionId }, "shutdown-sigkill");
-        entry.child.kill("SIGKILL");
-      }
-    });
-
-    await waitForNoLiveSessions(registry, killGraceMs);
-
-    await app.close();
-
-    // No child callback may reach the durable publisher after its SQLite
-    // store closes. Any process that ignored SIGKILL is about to be reaped by
-    // process exit, so detach the registry boundary before closing host state.
-    registry.clear("shutdown");
-    hostState.close();
-    logger.info({ elapsedMs: Date.now() - startedAt }, "shutdown-done");
-    await new Promise<void>((r) => logger.flush(() => r()));
-    process.exit(0);
   };
 
-  process.once("SIGTERM", () => {
+  process.on("SIGTERM", () => {
     void shutdown("SIGTERM");
   });
-  process.once("SIGINT", () => {
+  process.on("SIGINT", () => {
     void shutdown("SIGINT");
   });
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-async function waitForNoLiveSessions(
-  registry: SessionRegistry,
-  timeoutMs: number,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    const hasLive = registry
-      .list()
-      .some((session) => session.status === "live");
-
-    if (!hasLive) return;
-    await sleep(25);
-  }
 }
 
 // Guard the auto-start so tests can import buildRegisterRoutesOptions without

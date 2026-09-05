@@ -4,6 +4,7 @@ import type { ExecutionHostTransport } from "@/lib/execution-host/contracts";
 import type { Db } from "@/lib/execution-host/db";
 
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { and, eq, isNull, lt, or } from "drizzle-orm";
 import pino, { type Logger } from "pino";
@@ -13,6 +14,7 @@ import { runEventWakeBus } from "./run-wake";
 
 import { MaisterError } from "@/lib/errors";
 import { executionEventStreams } from "@/lib/db/schema";
+import { isApplicationStopping } from "@/lib/server-lifecycle";
 
 const CLAIM_LEASE_MS = 30_000;
 const RECONNECT_MIN_MS = 250;
@@ -359,6 +361,11 @@ export function startRuntimeEventConsumer(input: {
   transport: ExecutionHostTransport;
   logger?: Logger;
 }): () => void {
+  if (isApplicationStopping())
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "event consumer is shutting down",
+    );
   const existing = consumers.get(input.executionHostId);
 
   if (existing) return () => existing.controller.abort();
@@ -393,11 +400,14 @@ export function startRuntimeEventConsumer(input: {
         delayMs = Math.min(delayMs * 2, RECONNECT_MAX_MS);
       }
       if (!controller.signal.aborted) {
-        await new Promise<void>((resolve) => {
-          const handle = setTimeout(resolve, delayMs);
-
-          handle.unref();
-        });
+        try {
+          await delay(delayMs, undefined, {
+            signal: controller.signal,
+            ref: false,
+          });
+        } catch (error) {
+          if (!controller.signal.aborted) throw error;
+        }
       }
     }
   })().finally(() => {
@@ -414,4 +424,12 @@ export function startRuntimeEventConsumer(input: {
 export function resetRuntimeEventConsumersForTests(): void {
   for (const consumer of consumers.values()) consumer.controller.abort();
   consumers.clear();
+}
+
+/** Abort stream/body and retry waits, then await every owned consumer loop. */
+export async function stopRuntimeEventConsumers(): Promise<void> {
+  const active = [...consumers.values()];
+
+  for (const consumer of active) consumer.controller.abort();
+  await Promise.all(active.map((consumer) => consumer.promise));
 }

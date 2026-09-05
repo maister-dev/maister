@@ -50,6 +50,29 @@ async function registerSession(
   },
 ): Promise<void> {
   const emitter = new EventEmitter();
+  const createdByCommandId = "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f";
+  const assignmentId = "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d";
+
+  if (opts.status === "live") {
+    booted!.hostState.reserveProducerReceipt(
+      {
+        commandId: createdByCommandId,
+        runId: `run-${sessionId}`,
+        kind: "session.create",
+        assignmentId,
+        epoch: 1,
+        hostSessionId: sessionId,
+        requestDigest: null,
+        eventId: null,
+        phase: "accepted",
+        httpStatus: 202,
+        body: {},
+        receivedAt: new Date().toISOString(),
+        completedAt: null,
+      },
+      0,
+    );
+  }
 
   registry.register(
     {
@@ -65,9 +88,9 @@ async function registerSession(
       logPath: join(runtimeRoot, "log"),
       worktreePath: join(runtimeRoot, "wt"),
       executionWorkspaceId: "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c",
-      assignmentId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d",
+      assignmentId,
       assignmentEpoch: 1,
-      createdByCommandId: "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f",
+      createdByCommandId,
       monotonicId: 1,
     },
     makeFakeChild(),

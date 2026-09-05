@@ -11,14 +11,18 @@ Wants=network-online.target maister-supervisor.service
 Type=simple
 User=maister
 Group=maister
-WorkingDirectory=/opt/maister
+WorkingDirectory=/opt/maister/web
 EnvironmentFile=/etc/maister/maister.env
 Environment=PATH=/usr/local/bin:/usr/bin:/bin:/opt/maister/node_modules/.bin:/opt/maister/web/node_modules/.bin
-# next start serves the prebuilt .next on :3000 (override with PORT=). Front it
+# Execute Node directly so SIGTERM reaches its drain handler.
+# The application server serves prebuilt .next on :3000 (override with PORT=). Front it
 # with the reverse proxy in deploy/maister-web.nginx.conf for TLS.
-ExecStart=/usr/bin/env pnpm --filter maister-web start
+ExecStart=/usr/bin/env node --import tsx server.ts
 Restart=always
 RestartSec=3
+# The server drains HTTP (5s), workers and PostgreSQL within 25s; failures exit 1.
+KillSignal=SIGTERM
+TimeoutStopSec=30
 NoNewPrivileges=true
 
 [Install]

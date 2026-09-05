@@ -8,6 +8,10 @@ import { performance } from "node:perf_hooks";
 import { and, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  projectionLimitsFromEnv,
+  type ProjectionLimits,
+} from "./projection-limits";
 import { projectionTransaction } from "./projection-transaction";
 import { runEventWakeBus } from "./run-wake";
 
@@ -18,7 +22,6 @@ import {
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
-const CLAIM_LEASE_MS = 30_000;
 const MAX_TRANSIENT_ATTEMPTS = 5;
 const logger = pino({
   name: "execution-event-projector",
@@ -132,7 +135,9 @@ async function claimConsumer(input: {
       .update(executionEventConsumers)
       .set({
         claimOwner: input.owner,
-        claimExpiresAt: new Date(now.getTime() + CLAIM_LEASE_MS),
+        claimExpiresAt: new Date(
+          now.getTime() + projectionLimitsFromEnv().leaseMs,
+        ),
       })
       .where(
         and(
@@ -165,8 +170,10 @@ export async function claimNextExecutionProjection(input: {
   db: Db;
   consumerNames: readonly string[];
   owner: string;
+  limits?: ProjectionLimits;
 }): Promise<ExecutionEventClaim | null> {
   if (input.consumerNames.length === 0) return null;
+  const limits = input.limits ?? projectionLimitsFromEnv();
 
   return projectionTransaction(input.db, async (tx) => {
     const [candidate] = await tx
@@ -197,7 +204,7 @@ export async function claimNextExecutionProjection(input: {
       .update(executionEventConsumers)
       .set({
         claimOwner: `${input.owner}:${randomUUID()}`,
-        claimExpiresAt: sql`clock_timestamp() + interval '30 seconds'`,
+        claimExpiresAt: sql`clock_timestamp() + ${limits.leaseMs} * interval '1 millisecond'`,
         lastServedAt: sql`clock_timestamp()`,
       })
       .where(
@@ -218,6 +225,7 @@ async function readProjectionEvents(
   runId: string,
   after: bigint | null,
   limit: number,
+  byteLimit: number,
 ): Promise<ExecutionEvent[]> {
   const candidates = await tx
     .select({
@@ -238,7 +246,7 @@ async function readProjectionEvents(
   const ids: string[] = [];
 
   for (const candidate of candidates) {
-    if (ids.length > 0 && bytes + candidate.bytes > 1_048_576) break;
+    if (ids.length > 0 && bytes + candidate.bytes > byteLimit) break;
     ids.push(candidate.id);
     bytes += candidate.bytes;
   }
@@ -262,6 +270,8 @@ export async function projectExecutionEvents(input: {
   owner?: string;
   now?: Date;
   batchSize?: number;
+  limits?: ProjectionLimits;
+  signal?: AbortSignal;
 }): Promise<ExecutionEventProjectorSummary> {
   // A worker label is reusable; a claim token never is.
   const owner = `${input.owner ?? "execution-event-projector"}:${randomUUID()}`;
@@ -286,10 +296,16 @@ export async function applyClaimedExecutionProjection(input: {
   claim: ExecutionEventClaim;
   now?: Date;
   batchSize?: number;
+  limits?: ProjectionLimits;
+  signal?: AbortSignal;
 }): Promise<ExecutionEventProjectorSummary> {
   const owner = input.claim.claimOwner;
   const claim = input.claim;
-  const batchSize = Math.min(Math.max(input.batchSize ?? 100, 1), 100);
+  const limits = input.limits ?? projectionLimitsFromEnv();
+  const batchSize = Math.min(
+    Math.max(input.batchSize ?? limits.batchRows, 1),
+    limits.batchRows,
+  );
   let failedEventId: string | null = null;
   let failedSequence: bigint | null = null;
   let failure: unknown = null;
@@ -308,10 +324,18 @@ export async function applyClaimedExecutionProjection(input: {
   const prepare = async (): Promise<ExecutionEvent[] | null> => {
     if (!input.projector.prepare) return null;
     const events = await projectionTransaction(input.db, (tx) =>
-      readProjectionEvents(tx, input.runId, claim.lastRunSequence, batchSize),
+      readProjectionEvents(
+        tx,
+        input.runId,
+        claim.lastRunSequence,
+        batchSize,
+        limits.batchBytes,
+      ),
     );
     const prepared: ExecutionEvent[] = [];
-    const deadline = AbortSignal.timeout(8_000);
+    const deadline = input.signal
+      ? AbortSignal.any([AbortSignal.timeout(8_000), input.signal])
+      : AbortSignal.timeout(8_000);
 
     for (const event of events) {
       failedEventId = event.id;
@@ -330,6 +354,7 @@ export async function applyClaimedExecutionProjection(input: {
   const transactionResult = await prepare()
     .then((preparedEvents) =>
       projectionTransaction(input.db, async (tx) => {
+        input.signal?.throwIfAborted();
         const now = await projectionClock(tx, input.now);
         const consumers = await tx
           .select()
@@ -371,6 +396,7 @@ export async function applyClaimedExecutionProjection(input: {
             input.runId,
             consumer.lastRunSequence,
             batchSize,
+            limits.batchBytes,
           ));
         let last = consumer.lastRunSequence;
         let projected = 0;
@@ -435,11 +461,20 @@ export async function applyClaimedExecutionProjection(input: {
       }),
     )
     .catch(async (error: unknown) => {
+      // An unconfirmed DB cleanup retains its lease even during shutdown.
       if (
         error instanceof MaisterError &&
         error.code === "EXECUTOR_UNAVAILABLE"
       )
         throw error;
+      if (input.signal?.aborted) {
+        await releaseExecutionProjectionClaim(input.db, claim);
+
+        return {
+          summary: deferredSummary(claim),
+          projectedEvents: [] as ExecutionEvent[],
+        };
+      }
       if (!failedEventId || failedSequence === null) throw error;
       const summary = await recordProjectionFailure({
         db: input.db,
@@ -461,6 +496,27 @@ export async function applyClaimedExecutionProjection(input: {
   }
 
   return transactionResult.summary;
+}
+
+/** Shutdown releases only the exact owned token and cursor in a bounded transaction. */
+export async function releaseExecutionProjectionClaim(
+  db: Db,
+  claim: ExecutionEventClaim,
+): Promise<void> {
+  if (!claim.claimOwner) return;
+  await projectionTransaction(db, async (tx) => {
+    await tx
+      .update(executionEventConsumers)
+      .set({ claimOwner: null, claimExpiresAt: null })
+      .where(
+        and(
+          eq(executionEventConsumers.consumerName, claim.consumerName),
+          eq(executionEventConsumers.runId, claim.runId),
+          eq(executionEventConsumers.claimOwner, claim.claimOwner!),
+          sql`${executionEventConsumers.lastRunSequence} is not distinct from ${claim.lastRunSequence}`,
+        ),
+      );
+  });
 }
 
 async function recordProjectionFailure(input: {

@@ -12,6 +12,7 @@ import { CANONICAL_PROJECTION_CONSUMERS } from "./projection-consumers";
 
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
+import { isApplicationStopping } from "@/lib/server-lifecycle";
 import { canonicalArtifactProjector } from "@/lib/projector/artifact-projector";
 import { canonicalCostProjector } from "@/lib/runs/cost-rollups";
 
@@ -29,6 +30,11 @@ declare global {
 }
 
 export function startCanonicalProjectionWorker(): ProjectionWorker {
+  if (isApplicationStopping())
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "projection service is shutting down",
+    );
   const registered = new Set(
     canonicalProjectors.map((projector) => projector.consumerName),
   );

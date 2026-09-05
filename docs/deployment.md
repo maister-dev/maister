@@ -18,7 +18,7 @@ this guide does not restate them.
 
 ```
             ┌─────────────── VPS (single host) ───────────────┐
- client ──TLS──▶ nginx :443 ──▶ web (next start) :3000  [systemd: maister-web]
+ client ──TLS──▶ nginx :443 ──▶ web (application server) :3000  [systemd: maister-web]
             │                          │ HTTP+SSE                │
             │                          ▼                         │
             │                 supervisor :7777  [systemd: maister-supervisor]
@@ -36,7 +36,7 @@ exposed publicly. Only `:443` (and `:22`) face the internet.
 ## 1. Prerequisites
 
 - **OS**: any modern Linux with systemd.
-- **Node 24** ([ADR-015](decisions.md#adr-015-pnpm-workspace-node-24)) installed system-wide (e.g. NodeSource), then `corepack enable` to provide `pnpm`.
+- **Node >=24.15.0 <25** (qualified patches: 24.15.0 and 24.19.0; [ADR-015](decisions.md#adr-015-pnpm-workspace-node-24)) installed system-wide (e.g. NodeSource), then `corepack enable` to provide `pnpm`.
 - **git** and **Docker** (Docker only runs Postgres here).
 - **Agent adapters** ship as workspace dependencies — `pnpm install` provides `claude-agent-acp` and `codex-acp` under `node_modules/.bin`. **No `gh` or other provider CLI is required for core operation** (clone, worktree, `local_merge` promotion). **Optional (Implemented, [ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)):** the `gh` CLI, when present and authed, enables auto-token for `github.com` HTTPS clones — best-effort, never required. **Exception (Implemented — ADR-049):** `pull_request` promotion runs in the web tier and needs, per the run's provider, `gh`/`glab` on `PATH` (github/gitlab) **or** `GITEA_TOKEN`/`GITVERSE_TOKEN` in the web-tier env (gitea/gitverse), **plus** a git push credential helper. The **default compose does not provision** these — it is a host-operator concern ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)). `local_merge` promotion needs none of them. See [`configuration.md`](configuration.md) for the per-provider table.
 - A dedicated unprivileged user **`maister`** that owns the checkout, the agent credentials (`~/.claude`, `~/.codex`), and the git credentials.
