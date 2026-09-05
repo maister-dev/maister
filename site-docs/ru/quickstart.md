@@ -19,15 +19,34 @@ description: "Запустите MAIster локально, войдите, по�
 
 ## 1. Установите MAIster
 
+Одна команда клонирует репозиторий в `./maister`, устанавливает зависимости,
+создаёт файлы окружения со сгенерированным `AUTH_SECRET`, запускает Postgres в
+Docker, применяет миграции и собирает MCP-фасад:
+
 ```bash
-git clone https://github.com/maister-dev/maister.git
-cd mAIster
-pnpm install --frozen-lockfile
-cp .env.example .env
+curl -fsSL https://imaister.dev/quickstart.sh | bash
 ```
 
-Задайте в `.env` надёжный `AUTH_SECRET`. Токены провайдеров и данные входа
-агентов храните на хосте, а не в манифесте проекта.
+Скрипт лежит в репозитории:
+[`scripts/quickstart.sh`](https://github.com/maister-dev/maister/blob/master/scripts/quickstart.sh).
+Он не перезаписывает существующие файлы окружения, его можно запускать
+повторно. Чтобы использовать уже работающий Postgres, экспортируйте `DB_URL`
+перед командой; в этой базе должно быть доступно расширение pgvector.
+
+Те же шаги вручную:
+
+```bash
+git clone https://github.com/maister-dev/maister.git
+cd maister
+pnpm install --frozen-lockfile
+cp .env.example .env
+cp web/.env.sample web/.env.local
+cp supervisor/.env.sample supervisor/.env
+```
+
+Задайте в `web/.env.local` надёжный `AUTH_SECRET` (его генерирует
+`openssl rand -base64 33`). Токены провайдеров и данные входа агентов храните
+на хосте, а не в манифесте проекта.
 
 ## 2. Подготовьте кодирующего агента
 
@@ -47,18 +66,28 @@ pnpm --filter @maister/supervisor exec codex-acp login
 
 ## 3. Запустите Postgres и подготовьте базу
 
+Скрипт быстрого старта уже сделал это. Вручную:
+
 ```bash
-docker compose up -d postgres
+docker compose up -d --wait postgres
 pnpm --filter maister-web db:migrate
 pnpm --filter maister-web db:migrate:brain
-pnpm --filter maister-web db:seed
+pnpm --filter @maister/mcp build
 ```
 
 Для миграции Brain нужен Postgres с pgvector из Compose-файла репозитория.
+Миграции создают первого администратора.
 
 ## 4. Запустите MAIster
 
-Выполните команды в разных терминалах:
+Одна команда запускает супервизор на порту 7777 и веб-приложение на порту 3000;
+вывод каждого процесса помечен его именем:
+
+```bash
+pnpm dev
+```
+
+Чтобы запускать их в разных терминалах:
 
 ```bash
 pnpm --filter @maister/supervisor dev
@@ -68,8 +97,8 @@ pnpm --filter @maister/supervisor dev
 pnpm --filter maister-web dev
 ```
 
-Откройте `http://localhost:3000/login` и войдите с данными администратора из
-`.env`, использованными при seed.
+Откройте `http://localhost:3000/login` и войдите как `admin@maister.local` с
+паролем `maister-admin`. При первом входе MAIster попросит задать новый пароль.
 
 ## 5. Зарегистрируйте кодирующего агента
 

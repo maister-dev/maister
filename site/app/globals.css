@@ -2332,6 +2332,11 @@ h2 em {
     padding: 12px 12px 12px 16px;
   }
 
+  .install-command code {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
   .install-copy {
     grid-column: 1 / -1;
   }

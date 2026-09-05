@@ -53,11 +53,18 @@ git --version
 ## Install
 
 ```bash
-git clone <repo-url> mAIster
-cd mAIster
+git clone https://github.com/maister-dev/maister.git
+cd maister
 pre-commit install                # one-time: writes .git/hooks/pre-commit
 pnpm install --frozen-lockfile    # from repo root — installs both workspaces
 ```
+
+[`scripts/quickstart.sh`](../scripts/quickstart.sh) performs the install,
+env-file, Postgres, migration, and MCP-build steps of this page in one go
+(`./scripts/quickstart.sh` from a checkout, or
+`curl -fsSL https://imaister.dev/quickstart.sh | bash` from an empty
+directory). It never overwrites an existing env file and is safe to repeat; the
+`pre-commit` hook and the dev seed stay manual.
 
 The lockfile (`pnpm-lock.yaml` at the repo root) is committed —
 `pnpm install --frozen-lockfile` reproduces the exact dependency tree
@@ -101,6 +108,9 @@ pnpm --filter @maister/supervisor dev    # http://localhost:7777
 
 # Terminal 2: web (Next.js dev server)
 pnpm --filter maister-web dev            # http://localhost:3000
+
+# Or both in one terminal, output prefixed per package
+pnpm dev
 ```
 
 Only Postgres is containerized; `web` and `supervisor` run on the host (they
@@ -276,7 +286,8 @@ repository cwd or `MAISTER_REPOS_ROOT`.
 
 ## Authentication setup
 
-MAIster requires `AUTH_SECRET` to start. Generate one and add it to `.env`:
+MAIster requires `AUTH_SECRET` to start. Generate one and add it to
+`web/.env.local` (the quickstart script does this for you):
 
 ```bash
 openssl rand -base64 33   # paste the output as AUTH_SECRET=
@@ -284,8 +295,8 @@ openssl rand -base64 33   # paste the output as AUTH_SECRET=
 
 The seed script (`pnpm db:seed`) creates the initial admin user. Defaults
 are `SEED_ADMIN_EMAIL=admin@maister.local` and
-`SEED_ADMIN_PASSWORD=maister-admin`. Override both in `.env` before any
-shared use:
+`SEED_ADMIN_PASSWORD=maister-admin`. Override both in `web/.env.local` before
+any shared use:
 
 ```env
 AUTH_SECRET=<generated>

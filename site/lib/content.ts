@@ -50,6 +50,7 @@ type LandingContent = {
       copied: string;
       hint: string;
       hintLink: string;
+      scriptLink: string;
     };
     rail: ReadonlyArray<{ label: string; value: string }>;
   };
@@ -245,11 +246,12 @@ const CONTENT = {
       secondary: "Read the docs",
       install: {
         label: "Run it on your own host",
-        command: "git clone https://github.com/maister-dev/maister.git",
+        command: "curl -fsSL https://imaister.dev/quickstart.sh | bash",
         copy: "Copy",
         copied: "Copied",
         hint: "Postgres in Docker, two host processes, first governed run in about ten minutes.",
         hintLink: "Follow the quickstart",
+        scriptLink: "Read the script",
       },
       rail: [
         {
@@ -700,11 +702,12 @@ const CONTENT = {
       secondary: "Документация",
       install: {
         label: "Запустите на своём узле",
-        command: "git clone https://github.com/maister-dev/maister.git",
+        command: "curl -fsSL https://imaister.dev/quickstart.sh | bash",
         copy: "Копировать",
         copied: "Скопировано",
         hint: "Postgres в Docker, два процесса на узле, первый управляемый запуск примерно через десять минут.",
         hintLink: "Открыть инструкцию",
+        scriptLink: "Посмотреть скрипт",
       },
       rail: [
         { label: "агенты", value: "Claude · Codex · Gemini · OpenCode · MiMo" },

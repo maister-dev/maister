@@ -27,7 +27,7 @@ MAIster is a pnpm monorepo. It requires Node 24, pnpm, Git, Docker, PostgreSQL
 
 ```bash
 git clone https://github.com/maister-dev/maister.git
-cd mAIster
+cd maister
 pnpm install --frozen-lockfile
 cp .env.example .env
 cp web/.env.sample web/.env.local

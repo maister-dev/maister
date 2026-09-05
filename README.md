@@ -50,38 +50,65 @@ communicate over HTTP and server-sent events. PostgreSQL is the durable control
 plane store; run workspaces use Git worktrees. External ACP adapters remain the
 agent runtimes.
 
-## Quick start for local development
+## Quick start
 
-Prerequisites: Node 24, pnpm, Git, Docker, and at least one supported ACP
-adapter. The commands below start PostgreSQL plus the two host processes.
+Prerequisites: Node 24, pnpm, Git, Docker with Compose, and a coding agent
+signed in on this host (Claude Code, Codex, Gemini CLI, OpenCode, or MiMo).
+Only Postgres runs in Docker; the web tier and the supervisor run on the host
+because they spawn agent CLIs and work on local git repositories.
 
-Authenticate the coding agent on the supervisor host and register a Ready ACP
-runner before launching a Run. See [Getting Started](docs/getting-started.md).
+One command clones the repository, installs dependencies, writes the env files
+with a generated `AUTH_SECRET`, starts Postgres, applies the migrations, and
+builds the MCP facade:
+
+```bash
+curl -fsSL https://imaister.dev/quickstart.sh | bash
+```
+
+The script is [`scripts/quickstart.sh`](scripts/quickstart.sh). Read it first if
+you prefer, then run `./scripts/quickstart.sh` from a checkout; it never
+overwrites an existing env file and is safe to repeat. Then start both host
+processes:
+
+```bash
+cd maister
+pnpm dev        # supervisor on :7777, web on :3000
+```
+
+Open `http://localhost:3000/login` and sign in as `admin@maister.local` with
+the password `maister-admin`; the first login asks for a new one. Before the
+first Run, register the signed-in agent under **Settings → ACP runners** and wait
+for **Ready**, then add a repository under **Projects → Add project**.
+
+<details>
+<summary>The same steps by hand</summary>
 
 ```bash
 git clone https://github.com/maister-dev/maister.git
-cd mAIster
+cd maister
 pnpm install --frozen-lockfile
 
 cp .env.example .env
 cp web/.env.sample web/.env.local
 cp supervisor/.env.sample supervisor/.env
-docker compose up -d postgres
 
 # Put the output in AUTH_SECRET in web/.env.local before starting the web tier.
 openssl rand -base64 33
 
+docker compose up -d --wait postgres
 pnpm --filter maister-web db:migrate
 pnpm --filter maister-web db:migrate:brain
-pnpm --filter maister-web db:seed
+pnpm --filter @maister/mcp build
 ```
 
-Then run these in separate terminals:
+Then run the two processes in separate terminals:
 
 ```bash
 pnpm --filter @maister/supervisor dev    # http://localhost:7777
 pnpm --filter maister-web dev            # http://localhost:3000
 ```
+
+</details>
 
 The complete setup, adapter requirements, database workflow, and first-run
 checks are in [Getting Started](docs/getting-started.md).

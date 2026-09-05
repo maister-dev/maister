@@ -19,6 +19,7 @@ import {
   GITHUB_PLUGINS_URL,
   GITHUB_PROFILE_URL,
   GITHUB_URL,
+  QUICKSTART_SCRIPT_URL,
   siteUrl,
   TELEGRAM_URL,
 } from "@/lib/site-config";
@@ -224,7 +225,11 @@ export default async function LandingPage({
               />
               <p className="hero-install-hint">
                 {content.hero.install.hint}{" "}
-                <a href={quickstart}>{content.hero.install.hintLink} →</a>
+                <a href={quickstart}>{content.hero.install.hintLink} →</a>{" "}
+                ·{" "}
+                <a href={QUICKSTART_SCRIPT_URL}>
+                  {content.hero.install.scriptLink} ↗
+                </a>
               </p>
             </div>
           </div>

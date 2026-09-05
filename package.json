@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "dev": "pnpm --parallel --filter @maister/supervisor --filter maister-web dev",
     "local:blast-maister-state": "node scripts/blast-maister-local-state.mjs",
     "test:local-reset": "node --test scripts/blast-maister-local-state.test.mjs",
     "validate:docs": "node scripts/validate-docs-mermaid.mjs && node scripts/validate-docs-adr-anchors.mjs && node scripts/validate-docs-links.mjs && node scripts/validate-docs-indexes.mjs && pnpm --filter maister-web db:erd --check",

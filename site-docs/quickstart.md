@@ -19,15 +19,34 @@ adapters and operate on local git repositories.
 
 ## 1. Install
 
+One command clones the repository into `./maister`, installs dependencies,
+writes the environment files with a generated `AUTH_SECRET`, starts Postgres in
+Docker, applies the migrations, and builds the MCP facade:
+
 ```bash
-git clone https://github.com/maister-dev/maister.git
-cd mAIster
-pnpm install --frozen-lockfile
-cp .env.example .env
+curl -fsSL https://imaister.dev/quickstart.sh | bash
 ```
 
-Set a strong `AUTH_SECRET` in `.env`. Keep provider tokens and agent credentials
-on the host; never add them to a project manifest.
+The script is
+[`scripts/quickstart.sh`](https://github.com/maister-dev/maister/blob/master/scripts/quickstart.sh)
+in the repository. It never overwrites an existing environment file and is safe
+to run again. To use a Postgres you already run, export `DB_URL` before the
+command; that database needs the pgvector extension.
+
+If you prefer to do the same by hand:
+
+```bash
+git clone https://github.com/maister-dev/maister.git
+cd maister
+pnpm install --frozen-lockfile
+cp .env.example .env
+cp web/.env.sample web/.env.local
+cp supervisor/.env.sample supervisor/.env
+```
+
+Set a strong `AUTH_SECRET` in `web/.env.local` (`openssl rand -base64 33`
+generates one). Keep provider tokens and agent credentials on the host; never
+add them to a project manifest.
 
 ## 2. Prepare a coding agent
 
@@ -47,19 +66,28 @@ environment references; never store them in a project manifest.
 
 ## 3. Start Postgres and prepare the database
 
+The quickstart script has already done this. By hand:
+
 ```bash
-docker compose up -d postgres
+docker compose up -d --wait postgres
 pnpm --filter maister-web db:migrate
 pnpm --filter maister-web db:migrate:brain
-pnpm --filter maister-web db:seed
+pnpm --filter @maister/mcp build
 ```
 
 The Brain migration requires the pgvector-enabled Postgres image from the
-repository's Compose file.
+repository's Compose file. The migrations create the first administrator.
 
 ## 4. Start MAIster
 
-Run these commands in separate terminals:
+One command starts the supervisor on port 7777 and the web application on port
+3000, with each process's output prefixed by its name:
+
+```bash
+pnpm dev
+```
+
+To run them in separate terminals instead:
 
 ```bash
 pnpm --filter @maister/supervisor dev
@@ -69,8 +97,9 @@ pnpm --filter @maister/supervisor dev
 pnpm --filter maister-web dev
 ```
 
-Open `http://localhost:3000/login`. Sign in with the seeded administrator
-credentials from `.env`.
+Open `http://localhost:3000/login` and sign in as `admin@maister.local` with
+the password `maister-admin`. MAIster asks for a new password on the first
+login.
 
 ## 5. Register the coding agent
 

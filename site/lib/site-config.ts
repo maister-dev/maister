@@ -16,3 +16,4 @@ export function siteUrl(): URL {
 
 export const GITHUB_PLUGINS_URL =
   "https://github.com/maister-dev/maister-plugins";
+export const QUICKSTART_SCRIPT_URL = `${GITHUB_URL}/blob/master/scripts/quickstart.sh`;

@@ -21,16 +21,26 @@
 ## Установка
 
 ```bash
-git clone <repo-url> mAIster
-cd mAIster
+git clone https://github.com/maister-dev/maister.git
+cd maister
 pre-commit install
 pnpm install --frozen-lockfile
 cp .env.example .env
+cp web/.env.sample web/.env.local
+cp supervisor/.env.sample supervisor/.env
 ```
 
-После копирования `.env.example` заполните переменные для базы, супервизора,
-секретов Auth.js и провайдеров моделей. Полный список описан в
-[Configuration](../configuration.md).
+Веб-процесс читает `web/.env.local`, супервизор — `supervisor/.env`, Docker
+Compose — корневой `.env`. Задайте `AUTH_SECRET` в `web/.env.local` и при
+необходимости переменные провайдеров моделей в `supervisor/.env`. Полный список
+описан в [Configuration](../configuration.md).
+
+Скрипт [`scripts/quickstart.sh`](../../scripts/quickstart.sh) выполняет
+установку, копирование файлов окружения, запуск Postgres, миграции и сборку
+MCP-фасада одной командой (`./scripts/quickstart.sh` из клона или
+`curl -fsSL https://imaister.dev/quickstart.sh | bash` из пустой директории).
+Существующие файлы окружения он не трогает, повторный запуск безопасен; хук
+`pre-commit` и seed для разработки остаются ручными шагами.
 
 ## База данных
 
@@ -60,6 +70,9 @@ pnpm --filter maister-web dev
 ```
 
 Веб-интерфейс поднимается на `http://localhost:3000`.
+
+Команда `pnpm dev` из корня репозитория запускает оба процесса в одном
+терминале; вывод каждого помечен именем пакета.
 
 ## Проверка
 
