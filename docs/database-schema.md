@@ -4053,7 +4053,8 @@ explicitly held for repair. They cannot be backfilled from redacted payloads.
 | Table / column | Type / initial value | Constraint and purpose |
 | --- | --- | --- |
 | `execution_commands.request_canonical_json` | `text`, nullable only before activation or for existing non-prompt commands | Immutable exact JCS UTF-8 request; `request_schema = maister.command.request.v2`, SHA-256 must match; private, excluded from DTOs/logs. |
-| `execution_commands.transport_state` | `text`, `not_sent` | CHECK `not_sent|dispatching|acknowledged|unknown|reconciliation_required`; no terminal command inference. |
+| `execution_commands.transport_state` | `text`, `not_sent` | CHECK `not_sent|dispatching|acknowledged|unknown|reconciliation_required`; implemented prompt delivery/recovery preserves open execution after unknown admission. |
+| `execution_commands.next_attempt_at` | Existing `timestamptz`, null | Prompt send backoff or receipt-read due/claim CAS token (30-second read claim, then 5-second delay). Terminal agreement clears it; outbound exhaustion does not stop evidence reads. |
 | `execution_commands.receipt_evidence` | `jsonb`, null | Normalized terminal receipt identity/outcome, independent of event order; conflicting replay quarantines without overwrite. Legacy receipt storage is implemented; strict v2 binding is the next increment. |
 | `execution_commands.terminal_event_id` | `text`, null | Exact canonical event ID, resolved against the same command/fence/target; event cannot be pruned while referenced. |
 | `execution_commands.terminal_evidence_sha256` | `text`, null | Lowercase 64-hex digest of the agreed versioned terminal identity. |

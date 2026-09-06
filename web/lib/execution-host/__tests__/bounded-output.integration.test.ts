@@ -3,6 +3,9 @@ import type { ExecutionHosts } from "@/lib/execution-host/client";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 
 import { randomUUID } from "node:crypto";
+import { fork, type ChildProcess } from "node:child_process";
+import path from "node:path";
+import { createServer, request as httpRequest } from "node:http";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
@@ -11,6 +14,12 @@ import { issueOwnedPrompt } from "../ledger";
 import { defaultTransport } from "../default-transport";
 import { startAsyncPrompt, waitForPromptCompletion } from "../deliverer";
 import { readPromptOutput } from "../prompt-output";
+import { rearmPromptAdmission } from "../commands";
+import { recoverExecutionCommands } from "../recovery";
+import {
+  stopRuntimeEventConsumers,
+  startRuntimeEventConsumer,
+} from "../events/consumer";
 
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
@@ -110,15 +119,11 @@ afterAll(async () => {
   await database?.stop();
 });
 
-async function startOwnedFixturePrompt(
+async function admitOwnedFixturePrompt(
   producer: Awaited<ReturnType<typeof createSession>>,
   prompt: string,
-): Promise<{
-  admitted: Awaited<ReturnType<typeof issueOwnedPrompt>>;
-  handle: { commandId: string };
-}> {
+): Promise<Awaited<ReturnType<typeof issueOwnedPrompt>>> {
   const db = database.db as unknown as Db;
-  const transport = defaultTransport();
 
   await database.db
     .update(runs)
@@ -176,6 +181,20 @@ async function startOwnedFixturePrompt(
       },
     }),
   });
+
+  return admitted;
+}
+
+async function startOwnedFixturePrompt(
+  producer: Awaited<ReturnType<typeof createSession>>,
+  prompt: string,
+): Promise<{
+  admitted: Awaited<ReturnType<typeof issueOwnedPrompt>>;
+  handle: { commandId: string };
+}> {
+  const db = database.db as unknown as Db;
+  const transport = defaultTransport();
+  const admitted = await admitOwnedFixturePrompt(producer, prompt);
   const handle = await startAsyncPrompt({
     db,
     command: admitted.row,
@@ -188,7 +207,374 @@ async function startOwnedFixturePrompt(
   return { admitted, handle };
 }
 
+function startPromptRecoveryProcess(
+  commandId: string,
+  hostId: string,
+): {
+  child: ChildProcess;
+  messages: Array<Record<string, unknown>>;
+  exited: Promise<number | null>;
+  output: () => string;
+} {
+  const child = fork(
+    path.resolve("test-support/prompt-recovery-process.ts"),
+    [commandId, hostId],
+    {
+      execArgv: [
+        "--import",
+        "tsx",
+        "--import",
+        path.resolve("scripts/_register-shim.mjs"),
+      ],
+      env: { ...process.env, DB_URL: database.databaseUrl },
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
+    },
+  );
+  const messages: Array<Record<string, unknown>> = [];
+  let output = "";
+  const record = (chunk: Buffer): void => {
+    output = (output + chunk.toString("utf8")).slice(-16_384);
+  };
+
+  child.stdout?.on("data", record);
+  child.stderr?.on("data", record);
+  child.on("message", (message: Record<string, unknown>) =>
+    messages.push(message),
+  );
+  const exited = new Promise<number | null>((resolve, reject) => {
+    child.once("exit", resolve);
+    child.once("error", reject);
+  });
+
+  return { child, messages, exited, output: () => output };
+}
+
 describe("AT-01 bounded output on the production supervisor", () => {
+  it.each(["reset", "stalled_body"] as const)(
+    "AT-07: %s ACK and blocked receipts past the outbound budget survive a web process restart",
+    async (fault) => {
+      const producer = await createSession(`unknown-admission-v2-${fault}`);
+      const admitted = await admitOwnedFixturePrompt(
+        producer,
+        'fixture-output:{"textBytes":1200}',
+      );
+      const db = database.db as unknown as Db;
+      const transport = defaultTransport();
+
+      await worker.stop();
+      await stopRuntimeEventConsumers();
+      const attempts: string[] = [];
+      const proxyErrors: Error[] = [];
+      let partitioned = true;
+      const processes: Array<ReturnType<typeof startPromptRecoveryProcess>> =
+        [];
+      const proxy = createServer((incoming, outgoing) => {
+        if (
+          partitioned &&
+          incoming.method === "GET" &&
+          incoming.url !== "/health"
+        ) {
+          incoming.socket.destroy();
+
+          return;
+        }
+        const isPrompt =
+          incoming.method === "POST" && incoming.url?.endsWith("/prompts");
+        const chunks: Uint8Array[] = [];
+
+        if (isPrompt)
+          incoming.on("data", (chunk: Buffer) =>
+            chunks.push(Uint8Array.from(chunk)),
+          );
+        const upstream = httpRequest(
+          new URL(incoming.url!, supervisor.url),
+          {
+            method: incoming.method,
+            headers: incoming.headers,
+          },
+          (response) => {
+            if (partitioned && isPrompt) {
+              response.resume();
+              response.once("end", () => {
+                attempts.push(Buffer.concat(chunks).toString("utf8"));
+                outgoing.destroy();
+              });
+            } else {
+              outgoing.writeHead(response.statusCode!, response.headers);
+              response.pipe(outgoing);
+            }
+          },
+        );
+
+        upstream.on("error", (error) => {
+          proxyErrors.push(error);
+          outgoing.destroy();
+        });
+        incoming.pipe(upstream);
+      });
+
+      await new Promise<void>((resolve) =>
+        proxy.listen(0, "127.0.0.1", resolve),
+      );
+      const address = proxy.address();
+
+      if (!address || typeof address === "string")
+        throw new Error("proxy did not bind a port");
+      const restoreProxy = useRealSupervisorUrl(
+        `http://127.0.0.1:${address.port}`,
+      );
+
+      try {
+        const handle = await startAsyncPrompt({
+          db,
+          command: admitted.row,
+          envelope: admitted.envelope,
+          start: (envelope) =>
+            transport.startPrompt(
+              producer.session.hostSessionId,
+              envelope as typeof admitted.envelope,
+              { timeoutMs: 500 },
+            ),
+          lookupReceipt: (id) => transport.getCommandReceipt(id),
+          sleep: async () => {},
+        });
+
+        expect(handle).toEqual({ commandId: admitted.row.id });
+        const [unknown] = await db
+          .select()
+          .from(executionCommands)
+          .where(eq(executionCommands.id, handle.commandId));
+
+        expect(unknown).toMatchObject({
+          state: "queued",
+          transportState: "reconciliation_required",
+          attempts: 3,
+          completedAt: null,
+          terminalEvidenceSha256: null,
+          lastError: null,
+        });
+        expect(unknown.nextAttemptAt).toBeInstanceOf(Date);
+        expect(attempts).toHaveLength(3);
+        expect(new Set(attempts).size).toBe(1);
+        expect(JSON.parse(attempts[0])).toEqual(admitted.envelope);
+        expect(proxyErrors).toEqual([]);
+        const firstRecovery = startPromptRecoveryProcess(
+          handle.commandId,
+          producer.client.host.id,
+        );
+
+        processes.push(firstRecovery);
+        await expect
+          .poll(() => firstRecovery.messages[0]?.state, {
+            timeout: 15_000,
+            message: firstRecovery.output(),
+          })
+          .toBe("pending");
+        expect(firstRecovery.messages[0]).toMatchObject({
+          commandId: handle.commandId,
+          transportState: "reconciliation_required",
+        });
+        firstRecovery.child.kill("SIGKILL");
+        await firstRecovery.exited;
+        partitioned = false;
+        const restarted = startPromptRecoveryProcess(
+          handle.commandId,
+          producer.client.host.id,
+        );
+
+        processes.push(restarted);
+        await expect
+          .poll(
+            () =>
+              restarted.messages.find(
+                (message) => message.state === "completed",
+              )?.result,
+            { timeout: 45_000, message: restarted.output() },
+          )
+          .toMatchObject({ stopReason: "end_turn" });
+        expect(await restarted.exited).toBe(0);
+        expect(attempts).toHaveLength(3);
+        startRuntimeEventConsumer({
+          db,
+          executionHostId: producer.client.host.id,
+          transport,
+        });
+        worker = startProjectionWorker({ db, projectors: canonicalProjectors });
+        const [settled] = await db
+          .select()
+          .from(executionCommands)
+          .where(eq(executionCommands.id, handle.commandId));
+
+        expect(settled).toMatchObject({
+          state: "succeeded",
+          transportState: "acknowledged",
+          attempts: 3,
+          applicationState: "pending",
+          completionAppliedAt: null,
+        });
+        const events = await db
+          .select()
+          .from(executionEvents)
+          .where(eq(executionEvents.runId, producer.runId));
+
+        expect(
+          events.filter(
+            (event) =>
+              event.eventType === "session.command" &&
+              event.payload?.commandId === handle.commandId &&
+              event.payload.phase === "accepted",
+          ),
+        ).toHaveLength(1);
+        expect(
+          events.filter(
+            (event) =>
+              event.eventType === "session.command" &&
+              event.payload?.commandId === handle.commandId &&
+              event.payload.phase === "completed",
+          ),
+        ).toHaveLength(1);
+        await producer.client.deleteSession(producer.session.hostSessionId);
+      } finally {
+        for (const process of processes) {
+          if (
+            process.child.exitCode === null &&
+            process.child.signalCode === null
+          )
+            process.child.kill("SIGKILL");
+          await process.exited;
+        }
+        restoreProxy();
+        proxy.closeAllConnections();
+        await new Promise<void>((resolve, reject) =>
+          proxy.close((error) => (error ? reject(error) : resolve())),
+        );
+      }
+    },
+    90_000,
+  );
+
+  it.each([1, 3])(
+    "AT-07: startup handles an unsent v2 prompt after dispatch claim %i with its frozen identity",
+    async (attempts) => {
+      const producer = await createSession(`unknown-before-send-${attempts}`);
+      const originalMeta = { original: "immutable recovery input" };
+      const admitted = await admitOwnedFixturePrompt(
+        producer,
+        `fixture-output:${JSON.stringify({ responseMeta: originalMeta })}`,
+      );
+      const db = database.db as unknown as Db;
+      const transport = defaultTransport();
+
+      // Crash after durable dispatch claim but before the transport writes bytes.
+      await db
+        .update(executionCommands)
+        .set({
+          state: "delivering",
+          attempts,
+          transportState: "dispatching",
+          deliveringSince: new Date(0),
+        })
+        .where(eq(executionCommands.id, admitted.row.id));
+      const recovered = await recoverExecutionCommands({ db, graceMs: 0 });
+
+      expect(recovered.errors).toEqual([]);
+      if (attempts === 3) {
+        expect(await transport.getCommandReceipt(admitted.row.id)).toBeNull();
+        const rearmed = await rearmPromptAdmission(db, {
+          commandId: admitted.row.id,
+          requestSha256: admitted.row.requestSha256!,
+          expectedAttempts: 3,
+          expectedMaxAttempts: 3,
+        });
+
+        expect(rearmed.changed).toBe(true);
+        expect(
+          (await recoverExecutionCommands({ db, graceMs: 0 })).errors,
+        ).toEqual([]);
+      } else expect(recovered.redelivered).toBeGreaterThanOrEqual(1);
+      await expect(
+        waitForPromptCompletion({
+          db,
+          handle: { commandId: admitted.row.id },
+          lookupReceipt: (id) => transport.getCommandReceipt(id),
+          signal: AbortSignal.timeout(15_000),
+        }),
+      ).resolves.toMatchObject({ stopReason: "end_turn" });
+      const output = await readPromptOutput({
+        db,
+        commandId: admitted.row.id,
+        signal: AbortSignal.timeout(15_000),
+      });
+
+      for await (const event of output.events)
+        expect(event.runId).toBe(producer.runId);
+      expect(output.response).toEqual({
+        stopReason: "end_turn",
+        _meta: originalMeta,
+      });
+      const [row] = await db
+        .select()
+        .from(executionCommands)
+        .where(eq(executionCommands.id, admitted.row.id));
+
+      expect(row).toMatchObject({
+        attempts: attempts + 1,
+        requestSha256: admitted.row.requestSha256,
+        requestCanonicalJson: admitted.row.requestCanonicalJson,
+        createdAt: admitted.row.createdAt,
+      });
+      await producer.client.deleteSession(producer.session.hostSessionId);
+    },
+  );
+
+  it("AT-07: delivery ignores a changed caller payload and verifies the stored v2 request again", async () => {
+    const producer = await createSession("unknown-frozen-retry");
+    const originalMeta = { original: "frozen delivery input" };
+    const admitted = await admitOwnedFixturePrompt(
+      producer,
+      `fixture-output:${JSON.stringify({ responseMeta: originalMeta })}`,
+    );
+    const db = database.db as unknown as Db;
+    const transport = defaultTransport();
+    const handle = await startAsyncPrompt({
+      db,
+      command: admitted.row,
+      envelope: {
+        ...admitted.envelope,
+        payload: { stepId: "output", prompt: "mutated after admission" },
+      },
+      start: (envelope) => {
+        expect(envelope).toEqual(admitted.envelope);
+
+        return transport.startPrompt(
+          producer.session.hostSessionId,
+          envelope as typeof admitted.envelope,
+        );
+      },
+      lookupReceipt: (id) => transport.getCommandReceipt(id),
+    });
+
+    await waitForPromptCompletion({
+      db,
+      handle,
+      lookupReceipt: (id) => transport.getCommandReceipt(id),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const output = await readPromptOutput({
+      db,
+      commandId: handle.commandId,
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    for await (const event of output.events)
+      expect(event.runId).toBe(producer.runId);
+    expect(output.response).toEqual({
+      stopReason: "end_turn",
+      _meta: originalMeta,
+    });
+    await producer.client.deleteSession(producer.session.hostSessionId);
+  });
+
   it("AT-06 v2: agrees on original private failure bytes after hydrating a canonical command content reference", async () => {
     const producer = await createSession("command-private-failure-v2");
     const { handle } = await startOwnedFixturePrompt(

@@ -64,8 +64,14 @@ export type {
 } from "./client";
 export { createExecutionHosts, executionHosts } from "./client";
 export { getPlatformDiagnostics, getPlatformStatus } from "./platform-status";
-export type { PromptHandle } from "./deliverer";
-export { COMMAND_POLICY, isFencedError, isUnknownOutcome } from "./deliverer";
+export type { PromptHandle, PromptQueryResult } from "./deliverer";
+export {
+  COMMAND_POLICY,
+  isFencedError,
+  isUnknownOutcome,
+  queryPrompt,
+} from "./deliverer";
+export { rearmPromptAdmission } from "./commands";
 export { buildEnvelope, fencedLocallyError } from "./ledger";
 export {
   getActiveAssignment,

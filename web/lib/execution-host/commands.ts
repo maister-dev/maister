@@ -1,15 +1,17 @@
 import type { Db } from "./db";
+import type { PgUpdateSetSource } from "drizzle-orm/pg-core";
 import type { CommandId, CommandKind, CommandState } from "./types";
 
 import { randomUUID } from "node:crypto";
 
-import { and, asc, eq, gt, inArray, lt, or } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import { redactPayload } from "./redact";
 import { OPEN_COMMAND_STATES, TERMINAL_COMMAND_STATES } from "./types";
 
 import { executionCommands, type ExecutionCommand } from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 
 const defaultLog = pino({
   name: "execution-host",
@@ -90,7 +92,7 @@ export async function casTransition(
   id: string,
   from: readonly CommandState[],
   attempts: number | null,
-  patch: Partial<typeof executionCommands.$inferInsert>,
+  patch: PgUpdateSetSource<typeof executionCommands>,
   opts: TransitionOptions = {},
 ): Promise<TransitionResult> {
   const now = opts.now ?? new Date();
@@ -162,6 +164,103 @@ export async function claimDelivering(
   );
 }
 
+/** Prompt transport has its own budget: exhaustion keeps the execution open.
+ * The CASE expressions preserve independently acknowledged canonical evidence.
+ */
+export async function recordUnknownPromptAdmission(
+  db: Db,
+  id: string,
+  attempts: number,
+  nextAttemptAt: Date,
+  transportState: "unknown" | "reconciliation_required",
+  opts: TransitionOptions = {},
+): Promise<TransitionResult> {
+  return casTransition(
+    db,
+    id,
+    [...OPEN_COMMAND_STATES],
+    attempts,
+    {
+      state: sql`CASE WHEN ${executionCommands.state} = 'accepted' THEN 'accepted' ELSE 'queued' END`,
+      transportState: sql`CASE WHEN ${executionCommands.transportState} = 'acknowledged' THEN 'acknowledged' ELSE ${transportState} END`,
+      nextAttemptAt,
+      deliveringSince: null,
+    },
+    opts,
+  );
+}
+
+/** An authorized repair opens one additional outbound budget for the same
+ * immutable operation. Attempts remain cumulative; concurrent/stale repair
+ * requests cannot reset the budget or rearm acknowledged evidence.
+ */
+export async function rearmPromptAdmission(
+  db: Db,
+  input: {
+    commandId: string;
+    requestSha256: string;
+    expectedAttempts: number;
+    expectedMaxAttempts: number;
+  },
+  opts: TransitionOptions = {},
+): Promise<TransitionResult> {
+  if (
+    !Number.isInteger(input.expectedAttempts) ||
+    input.expectedAttempts < 0 ||
+    !Number.isInteger(input.expectedMaxAttempts) ||
+    input.expectedMaxAttempts < 1 ||
+    input.expectedAttempts > input.expectedMaxAttempts ||
+    input.expectedMaxAttempts > 2_147_483_644
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "prompt rearm requires the observed delivery budget",
+    );
+  const at = opts.now ?? new Date();
+  const [row] = await db
+    .update(executionCommands)
+    .set({
+      state: "queued",
+      transportState: "unknown",
+      maxAttempts: input.expectedMaxAttempts + 3,
+      nextAttemptAt: at,
+      deliveringSince: null,
+      updatedAt: at,
+    })
+    .where(
+      and(
+        eq(executionCommands.id, input.commandId),
+        eq(executionCommands.kind, "session.prompt"),
+        eq(executionCommands.requestSchema, "maister.command.request.v2"),
+        eq(executionCommands.requestSha256, input.requestSha256),
+        eq(executionCommands.attempts, input.expectedAttempts),
+        eq(executionCommands.maxAttempts, input.expectedMaxAttempts),
+        eq(executionCommands.transportState, "reconciliation_required"),
+        eq(executionCommands.state, "queued"),
+        sql`${executionCommands.receiptEvidence} IS NULL AND ${executionCommands.terminalEventId} IS NULL
+      AND ${executionCommands.acceptedAt} IS NULL AND ${executionCommands.applicationError} IS NULL`,
+      ),
+    )
+    .returning();
+
+  (opts.logger ?? defaultLog).info(
+    {
+      commandId: input.commandId,
+      requestSha256: input.requestSha256,
+      expectedAttempts: input.expectedAttempts,
+      expectedMaxAttempts: input.expectedMaxAttempts,
+      changed: Boolean(row),
+      maxAttempts: row?.maxAttempts,
+    },
+    "prompt-admission-rearmed",
+  );
+
+  return {
+    changed: Boolean(row),
+    row: row ?? (await getCommand(db, input.commandId)),
+  };
+}
+
 // Recovery only: a `delivering` row the host never saw (no receipt) goes back
 // to `queued` with its attempt count intact, so the deliverer can claim it.
 export async function requeueDelivering(
@@ -194,7 +293,12 @@ export async function markAccepted(
     id,
     ["delivering"],
     attempts,
-    { state: "accepted", acceptedAt: now },
+    {
+      state: "accepted",
+      acceptedAt: now,
+      transportState: "acknowledged",
+      nextAttemptAt: null,
+    },
     { ...opts, now },
   );
 }

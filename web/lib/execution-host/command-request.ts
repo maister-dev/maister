@@ -178,6 +178,14 @@ export function readPromptRequest(
   return request;
 }
 
+/** Restore the branded transport envelope only after validating stored identity. */
+export function promptEnvelopeFromCommand(
+  row: ExecutionCommand,
+  hostKey: string,
+): CommandEnvelope<SendPromptInput> {
+  return readPromptRequest(row, hostKey) as CommandEnvelope<SendPromptInput>;
+}
+
 export function classifyCommandRequest(
   row: Pick<
     ExecutionCommand,

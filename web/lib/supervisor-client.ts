@@ -1159,47 +1159,55 @@ async function request<T>(spec: WireRequest): Promise<WireResponse<T>> {
   };
   let res: Response;
 
-  logger.debug({ url, method: spec.method, ctx: spec.ctx }, "wire-request");
-
   try {
-    res = spec.longLived
-      ? await fetchLongLivedSupervisor(url, init, spec.ctx)
-      : await fetch(url, { ...init, cache: "no-store" });
-  } catch (err) {
-    throw networkErrorToMaister(err, spec.ctx);
+    logger.debug({ url, method: spec.method, ctx: spec.ctx }, "wire-request");
+
+    try {
+      res = spec.longLived
+        ? await fetchLongLivedSupervisor(url, init, spec.ctx)
+        : await fetch(url, { ...init, cache: "no-store" });
+    } catch (err) {
+      throw networkErrorToMaister(err, spec.ctx);
+    }
+
+    const replayed = res.headers.get(COMMAND_REPLAYED_HEADER) === "true";
+
+    if (res.ok) {
+      if (res.status === 204) {
+        return { status: res.status, body: null as T, replayed };
+      }
+
+      try {
+        return { status: res.status, body: (await res.json()) as T, replayed };
+      } catch (error) {
+        // A truncated/timed-out success body may follow an already applied
+        // effect. Keep the original request unknown rather than guessing failure.
+        throw networkErrorToMaister(error, spec.ctx);
+      }
+    }
+
+    let errorBody: unknown = null;
+    let parsed = false;
+
+    try {
+      errorBody = await res.json();
+      parsed = true;
+    } catch {
+      /* non-JSON error body */
+    }
+
+    if (!parsed && res.status >= 500) {
+      throw unknownOutcomeError(
+        new Error(`supervisor ${res.status} (non-JSON body)`),
+        spec.ctx,
+        "non_json_5xx",
+      );
+    }
+
+    throw supervisorErrorToMaister(res.status, errorBody, spec.fallbackCode);
   } finally {
     if (timer) clearTimeout(timer);
   }
-
-  const replayed = res.headers.get(COMMAND_REPLAYED_HEADER) === "true";
-
-  if (res.ok) {
-    if (res.status === 204) {
-      return { status: res.status, body: null as T, replayed };
-    }
-
-    return { status: res.status, body: (await res.json()) as T, replayed };
-  }
-
-  let errorBody: unknown = null;
-  let parsed = false;
-
-  try {
-    errorBody = await res.json();
-    parsed = true;
-  } catch {
-    /* non-JSON error body */
-  }
-
-  if (!parsed && res.status >= 500) {
-    throw unknownOutcomeError(
-      new Error(`supervisor ${res.status} (non-JSON body)`),
-      spec.ctx,
-      "non_json_5xx",
-    );
-  }
-
-  throw supervisorErrorToMaister(res.status, errorBody, spec.fallbackCode);
 }
 
 function httpStatusOf(err: unknown): number | null {
@@ -1800,6 +1808,12 @@ export async function startPromptEnveloped(
     throw new MaisterError(
       "ACP_PROTOCOL",
       "supervisor returned an invalid asynchronous prompt acceptance",
+      {
+        details: {
+          reason: "prompt_admission_mismatch",
+          commandId: envelope.command.id,
+        },
+      },
     );
   }
 

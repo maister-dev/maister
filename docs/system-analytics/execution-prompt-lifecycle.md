@@ -1,6 +1,6 @@
 # Execution prompt lifecycle
 
-**Status:** Implemented short-lived admission, private v2 request/owner storage and shared canonical-event/receipt reconciliation. Request-bound receipt/event v2 and verified immutable command-output manifests are implemented on the explicit v2 development path. Production owner activation, durable owner application, unknown-outcome recovery, fencing and retirement remain **Designed** (AB-05–08/10).
+**Status:** Implemented short-lived admission, private v2 request/owner storage and shared canonical-event/receipt reconciliation. Request-bound receipt/event v2 and verified immutable command-output manifests are implemented on the explicit v2 development path. Unknown-admission reconciliation and frozen-request recovery are implemented. Production owner activation, durable owner application, fencing and retirement remain **Designed** (AB-05–08/10).
 
 
 ## Purpose
@@ -145,6 +145,40 @@ All producers of terminal evidence call **one reconciliation reducer**: live com
 Receipt contract v2 includes command ID/kind, host key, run ID, assignment ID/epoch, URL-selected session identity, request schema/digest, phase, original result/error/reference, terminal event identity/sequence. Derive receipt bindings from the stored receipt/fence/session, not the querying client's body. Receipt absence/failed reads are not failure evidence. A canonical terminal with temporarily unavailable receipt waits/retries; verified matching durable receipt evidence already stored in Postgres remains valid after host retirement. Genuine disagreement quarantines the command and blocks owner application without changing a valid terminal outcome to another value.
 
 Historical late evidence may settle the exactly matching old command. It must never update a successor's current session, cost, artifact association, node attempt, HITL, scratch dialog, gate reply or agent state. Maintain the narrow existing stale terminal exception; any extension for an already committed object intent must be explicit, generation-bound, historical-only and tested in S3.
+
+## Unknown admission and transport recovery
+
+`startAsyncPrompt` returns the original handle when ACK/receipt reads remain
+unavailable. It records `unknown`, then `reconciliation_required` when the
+outbound budget is exhausted; command state stays open and `last_error` is not
+filled with a guessed execution outcome. The initial budget is three sends of
+the same ID. V2 dispatch reparses and verifies the private frozen request on
+every attempt. A local `not_sent` preflight refusal can fail a first unsent
+operation; a later refusal cannot prove an earlier unknown send failed.
+
+`queryPrompt`, the waiter and startup/sweep use one reconciliation reader. It
+checks stored evidence before host I/O and uses `next_attempt_at` as a 30-second
+receipt-read claim token followed by a 5-second due delay. Competing queries
+cannot multiply reads; a stale completion cannot replace another claim.
+Canonical receipt/event evidence remains actionable regardless of outbound
+budget. The wire request deadline covers both headers and the response body,
+including a partial 202 ACK whose body never completes. Closed invalid receipt
+or admission evidence quarantines application with a bounded protocol cause.
+
+Startup can resend an unacknowledged v2 command only after a reachable missing
+receipt, within its remaining budget and while its original assignment is
+current. It reads the original stored target, ID, issue time and payload.
+Legacy requests without preserved bytes remain held for evidence reconciliation.
+A process death after the final dispatch claim also enters recoverable unknown
+state; it does not gain a fourth automatic attempt.
+
+The internal `rearmPromptAdmission` repair operation compares command ID,
+request digest, cumulative attempts and the observed maximum. One successful
+CAS opens three additional sends without resetting attempt history or request
+identity. Acknowledged, terminal, quarantined or stale repair requests cannot
+rearm. Its caller must hold the existing operator/domain repair authorization;
+this increment adds no public repair route. Receipt/event settlement still
+leaves owner application pending until the S2 owner adapters are activated.
 
 ## Prompt owner and recovery windows (Designed)
 

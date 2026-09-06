@@ -9,6 +9,7 @@ const args = process.argv.slice(2);
 let lines = 3;
 let exitCode = 0;
 let hang = false;
+let controlledExit = false;
 let hangInitialize = false;
 let hangNewSession = false;
 let hangPrompt = false;
@@ -26,6 +27,9 @@ for (let i = 0; i < args.length; i += 1) {
   } else if (arg === "--exit-code") {
     exitCode = Number.parseInt(args[++i], 10);
   } else if (arg === "--hang") {
+    hang = true;
+  } else if (arg === "--controlled-exit") {
+    controlledExit = true;
     hang = true;
   } else if (arg === "--hang-initialize") {
     hangInitialize = true;
@@ -261,5 +265,7 @@ new acp.AgentSideConnection(
 // eviction is awaited (nothing spawns beside a dying lower-epoch session).
 process.on("SIGTERM", () => setTimeout(() => process.exit(143), exitDelayMs));
 process.on("SIGINT", () => process.exit(130));
+// Lifecycle tests release this barrier only after prompt receipt completion.
+if (controlledExit) process.on("SIGUSR2", () => process.exit(exitCode));
 
 setInterval(() => {}, 1 << 30);

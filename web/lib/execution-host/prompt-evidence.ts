@@ -193,6 +193,23 @@ async function quarantine(
   return { disposition: "quarantined", command: row };
 }
 
+/** Invalid wire evidence is a durable application quarantine, never a guessed
+ * execution failure. The discriminator contains no untrusted response body.
+ */
+export async function quarantinePromptProtocol(
+  db: Db,
+  commandId: string,
+  source: "admission" | "receipt",
+): Promise<PromptEvidenceResult> {
+  const result = await db.transaction(async (tx) =>
+    quarantine(tx, await lockPrompt(tx, commandId), `${source}_protocol`),
+  );
+
+  commandSignals.wake(commandId);
+
+  return result;
+}
+
 async function receiptMatches(
   tx: Db,
   command: ExecutionCommand,

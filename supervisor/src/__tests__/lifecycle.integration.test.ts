@@ -410,12 +410,21 @@ describe("supervisor lifecycle integration", () => {
   });
 
   it("SSE stream emits N line events then session.exited (clean exit)", async () => {
-    const host = await bootFor(["--lines", "3", "--emit-usage"]);
+    const host = await bootFor([
+      "--controlled-exit",
+      "--lines",
+      "3",
+      "--emit-usage",
+    ]);
     const { url } = host;
     const sessionId = await createSession(host);
     const eventPromise = collectSSE(`${url}/sessions/${sessionId}/stream`);
 
     await sendPrompt(host, sessionId);
+    const entry = host.registry.get(sessionId);
+
+    expect(entry).toBeDefined();
+    entry!.child.kill("SIGUSR2");
 
     const events = await eventPromise;
     const lines = events.filter((e) => e.event === "session.update");
@@ -428,12 +437,22 @@ describe("supervisor lifecycle integration", () => {
   });
 
   it("session.crashed when fixture exits non-zero", async () => {
-    const host = await bootFor(["--lines", "1", "--exit-code", "1"]);
+    const host = await bootFor([
+      "--controlled-exit",
+      "--lines",
+      "1",
+      "--exit-code",
+      "1",
+    ]);
     const { url } = host;
     const sessionId = await createSession(host);
     const eventPromise = collectSSE(`${url}/sessions/${sessionId}/stream`);
 
     await sendPrompt(host, sessionId);
+    const entry = host.registry.get(sessionId);
+
+    expect(entry).toBeDefined();
+    entry!.child.kill("SIGUSR2");
 
     const events = await eventPromise;
     const crashed = events.find((e) => e.event === "session.crashed");

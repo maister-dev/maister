@@ -174,6 +174,7 @@ describe("runtime object transport", () => {
     const host = await bootHost({
       runtimeRoot: await tempRoot(),
       fixtureArgs: [
+        "--hang",
         "--write-env",
         "MAISTER_PLAN_DOCUMENT_FILE",
         plan,

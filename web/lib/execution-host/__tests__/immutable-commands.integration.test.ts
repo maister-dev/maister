@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
+import { rearmPromptAdmission } from "../commands";
 import { normalizeCommandReceiptV2 } from "../command-receipt";
 import { depositPromptReceipt } from "../prompt-evidence";
 import { ingestRuntimeEvent } from "../events/ingest";
@@ -276,6 +277,57 @@ it("refused request rolls back owner admission writes and persists no command", 
       )
     ).rows,
   ).toHaveLength(0);
+});
+
+it("rearms one additional budget under request and observed-attempt CAS without resetting history", async () => {
+  const fixture = await admissionFixture();
+  const admitted = await issueOwnedPrompt(db, {
+    assignment,
+    host,
+    targetSessionId: fixture.targetSessionId,
+    payload: {
+      stepId: "agent",
+      prompt: "same operation after authorized repair",
+    },
+    maxAttempts: 3,
+    admitOwner: async () => fixture,
+  });
+
+  await db
+    .update(executionCommands)
+    .set({ attempts: 3, transportState: "reconciliation_required" })
+    .where(eq(executionCommands.id, admitted.row.id));
+  const input = {
+    commandId: admitted.row.id,
+    requestSha256: admitted.row.requestSha256!,
+    expectedAttempts: 3,
+    expectedMaxAttempts: 3,
+  };
+
+  expect(
+    (
+      await rearmPromptAdmission(db, {
+        ...input,
+        requestSha256: "0".repeat(64),
+      })
+    ).changed,
+  ).toBe(false);
+  const results = await Promise.all([
+    rearmPromptAdmission(db, input),
+    rearmPromptAdmission(db, input),
+  ]);
+
+  expect(results.filter((result) => result.changed)).toHaveLength(1);
+  expect(results.find((result) => result.changed)?.row).toMatchObject({
+    id: admitted.row.id,
+    attempts: 3,
+    maxAttempts: 6,
+    state: "queued",
+    transportState: "unknown",
+    requestCanonicalJson: admitted.row.requestCanonicalJson,
+    requestSha256: admitted.row.requestSha256,
+  });
+  expect((await rearmPromptAdmission(db, input)).changed).toBe(false);
 });
 
 it("database refuses request, owner and routing mutation after v2 admission", async () => {

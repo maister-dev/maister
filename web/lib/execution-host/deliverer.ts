@@ -8,6 +8,8 @@ import pino, { type Logger } from "pino";
 
 import {
   claimDelivering,
+  casTransition,
+  recordUnknownPromptAdmission,
   failRetryable,
   getCommand,
   markAccepted,
@@ -16,9 +18,19 @@ import {
   markSucceeded,
 } from "./commands";
 import { UNKNOWN_OUTCOME_DETAIL } from "./contracts";
+import {
+  COMMAND_REQUEST_SCHEMA,
+  promptEnvelopeFromCommand,
+} from "./command-request";
+import {
+  classifyPromptTransportFailure,
+  isPromptProtocolConflict,
+} from "./prompt-transport";
+import { reconcilePromptCommand } from "./prompt-reconciliation";
 import { commandSignals } from "./signals";
 import {
   depositPromptReceipt,
+  quarantinePromptProtocol,
   reconcileStoredPromptEvidence,
   promptEvidenceConflict,
 } from "./prompt-evidence";
@@ -159,6 +171,8 @@ async function lookupReceiptUntilReachable(
       return await lookup(commandId);
     } catch (err) {
       last = err;
+      if (classifyPromptTransportFailure(err).disposition !== "retry")
+        throw err;
       if (attempt < RECEIPT_LOOKUP_ATTEMPTS) {
         await sleep(backoffMs(RECEIPT_LOOKUP_BACKOFF_MS, attempt));
       }
@@ -406,55 +420,88 @@ export async function startAsyncPrompt(
   const now = opts.now ?? (() => new Date());
   const commandId = opts.command.id;
   const policy = COMMAND_POLICY["session.prompt"];
-  let attempts = opts.command.attempts;
+  let current = await getCommand(opts.db, commandId);
 
   for (;;) {
-    const claimed = await claimDelivering(opts.db, commandId, attempts, {
-      logger,
-      now: now(),
-    });
-
-    if (!claimed.changed) {
+    if (!current || current.kind !== "session.prompt")
+      throw new MaisterError(
+        "PRECONDITION",
+        "prompt command is not available",
+        {
+          details: { reason: "prompt_command_missing", commandId },
+        },
+      );
+    if (current.applicationError?.reason === "prompt_terminal_conflict")
+      throw promptEvidenceConflict(commandId);
+    if (
+      current.state !== "queued" ||
+      current.transportState === "acknowledged" ||
+      current.transportState === "reconciliation_required" ||
+      current.attempts >= current.maxAttempts
+    )
       return { commandId };
-    }
-    attempts = claimed.row?.attempts ?? attempts + 1;
+    // Reparse the frozen request on every dispatch; caller payload is never a
+    // replay source for v2 commands, including a retry after process restart.
+    const envelope =
+      current.requestSchema === COMMAND_REQUEST_SCHEMA
+        ? promptEnvelopeFromCommand(current, opts.envelope.fence.hostKey)
+        : opts.envelope;
+    const claimed = await casTransition(
+      opts.db,
+      commandId,
+      ["queued"],
+      current.attempts,
+      {
+        state: "delivering",
+        attempts: current.attempts + 1,
+        deliveringSince: now(),
+        nextAttemptAt: null,
+        transportState: "dispatching",
+      },
+      { logger, now: now() },
+    );
+
+    if (!claimed.changed || !claimed.row) return { commandId };
+    const attempts = claimed.row.attempts;
+    let failure: ReturnType<typeof classifyPromptTransportFailure>;
 
     try {
-      const accepted = await opts.start(opts.envelope);
+      const accepted = await opts.start(envelope);
 
-      if (accepted.commandId !== commandId || accepted.state !== "accepted") {
+      if (accepted.commandId !== commandId || accepted.state !== "accepted")
         throw new MaisterError(
           "ACP_PROTOCOL",
           "execution host returned a mismatched prompt admission",
-          { details: { reason: "prompt_admission_mismatch", commandId } },
+          {
+            details: { reason: "prompt_admission_mismatch", commandId },
+          },
         );
-      }
-      await markAccepted(opts.db, commandId, attempts, { logger, now: now() });
-      commandSignals.wake(commandId);
-      logger.info(
-        { commandId, commandKind: "session.prompt", attempt: attempts },
-        "prompt-command-accepted",
-      );
-
-      return { commandId };
     } catch (error) {
-      if (!isUnknownOutcome(error)) {
-        const domainError = isMaisterError(error)
-          ? error
-          : new MaisterError("ACP_PROTOCOL", String(error));
-
-        await (isFencedError(domainError) ? markFenced : markFailed)(
+      failure = classifyPromptTransportFailure(error);
+      // A later preflight refusal says nothing about an earlier unknown send.
+      if (
+        failure.disposition === "not_sent" &&
+        current.attempts === 0 &&
+        current.transportState === "not_sent"
+      ) {
+        await markFailed(
           opts.db,
           commandId,
           attempts,
-          errorRecord(domainError),
+          {
+            code: "PRECONDITION",
+            message: "prompt request was refused before dispatch",
+            details: {
+              transport: "not_sent",
+              reason: "transport_request_invalid",
+            },
+          },
           { logger, now: now() },
         );
         commandSignals.wake(commandId);
-        throw domainError;
+        throw error;
       }
-
-      let receipt: CommandReceipt | null;
+      let receipt: CommandReceipt | null = null;
 
       try {
         receipt = await lookupReceiptUntilReachable(
@@ -463,43 +510,17 @@ export async function startAsyncPrompt(
           sleep,
         );
       } catch (lookupError) {
-        if (attempts >= policy.maxAttempts) {
-          const unavailable = new MaisterError(
-            "EXECUTOR_UNAVAILABLE",
-            `prompt ${commandId} stayed unreachable while reconciling admission`,
-            {
-              cause: lookupError,
-              details: { reason: "receipt_lookup_failed", commandId },
-            },
-          );
+        const cause = classifyPromptTransportFailure(lookupError);
 
-          await markFailed(
-            opts.db,
-            commandId,
-            attempts,
-            errorRecord(unavailable),
-            {
-              logger,
-              now: now(),
-            },
-          );
-          commandSignals.wake(commandId);
-          throw unavailable;
+        if (isPromptProtocolConflict(lookupError)) {
+          await quarantinePromptProtocol(opts.db, commandId, "receipt");
+          throw promptEvidenceConflict(commandId);
         }
-        await failRetryable(
-          opts.db,
-          commandId,
-          attempts,
-          errorRecord(lookupError),
-          {
-            nextAttemptAt: new Date(
-              now().getTime() + backoffMs(policy.backoffBaseMs, attempts),
-            ),
-          },
-          { logger, now: now() },
+        if (cause.disposition !== "retry") failure = cause;
+        logger.warn(
+          { commandId, attempt: attempts, ...cause },
+          "prompt-admission-receipt-unavailable",
         );
-        await sleep(backoffMs(policy.backoffBaseMs, attempts));
-        continue;
       }
       if (receipt) {
         const evidence = await depositPromptReceipt(
@@ -519,38 +540,59 @@ export async function startAsyncPrompt(
           commandId,
           AbortSignal.timeout(30_000),
         );
-        commandSignals.wake(commandId);
 
         return { commandId };
       }
-      if (attempts >= policy.maxAttempts) {
-        const exhausted = new MaisterError(
-          "EXECUTOR_UNAVAILABLE",
-          `prompt ${commandId} exhausted its delivery budget`,
-          { details: { reason: "delivery_budget_exhausted", commandId } },
-        );
-
-        await markFailed(opts.db, commandId, attempts, errorRecord(exhausted), {
-          logger,
-          now: now(),
-        });
-        commandSignals.wake(commandId);
-        throw exhausted;
+      if (isPromptProtocolConflict(error)) {
+        await quarantinePromptProtocol(opts.db, commandId, "admission");
+        throw promptEvidenceConflict(commandId);
       }
-      await failRetryable(
+      const exhausted =
+        attempts >= current.maxAttempts || failure.disposition !== "retry";
+      const delayMs = exhausted
+        ? 5_000
+        : backoffMs(policy.backoffBaseMs, attempts);
+      const transition = await recordUnknownPromptAdmission(
         opts.db,
         commandId,
         attempts,
-        errorRecord(error),
-        {
-          nextAttemptAt: new Date(
-            now().getTime() + backoffMs(policy.backoffBaseMs, attempts),
-          ),
-        },
+        new Date(now().getTime() + delayMs),
+        exhausted ? "reconciliation_required" : "unknown",
         { logger, now: now() },
       );
-      await sleep(backoffMs(policy.backoffBaseMs, attempts));
+
+      commandSignals.wake(commandId);
+      logger.warn(
+        {
+          commandId,
+          attempt: attempts,
+          ...failure,
+          exhausted,
+          nextAttemptAt: transition.row?.nextAttemptAt,
+          transportState: transition.row?.transportState,
+        },
+        "prompt-admission-unknown",
+      );
+      if (
+        exhausted ||
+        !transition.changed ||
+        transition.row?.state !== "queued"
+      )
+        return { commandId };
+      await sleep(delayMs);
+      current = await getCommand(opts.db, commandId);
+      continue;
     }
+    // DB failure after a valid ACK must escape as storage failure, never be
+    // classified as a remote refusal or overwrite an already accepted command.
+    await markAccepted(opts.db, commandId, attempts, { logger, now: now() });
+    commandSignals.wake(commandId);
+    logger.info(
+      { commandId, commandKind: "session.prompt", attempt: attempts },
+      "prompt-command-accepted",
+    );
+
+    return { commandId };
   }
 }
 
@@ -634,68 +676,68 @@ async function waitForCommandWake(
   });
 }
 
-export async function waitForPromptCompletion(input: {
+export type PromptQueryOptions = {
   db: Db;
   handle: PromptHandle;
   signal?: AbortSignal;
-  assignmentIsCurrent?: () => Promise<boolean>;
   lookupReceipt?: (commandId: string) => Promise<CommandReceipt | null>;
+  now?: () => Date;
   logger?: Logger;
-}): Promise<PromptResult> {
-  const logger = input.logger ?? defaultLog;
+};
 
+export type PromptQueryResult =
+  | { commandId: string; state: "succeeded"; result: PromptResult }
+  | {
+      commandId: string;
+      state: "pending";
+      transportState: ExecutionCommand["transportState"];
+      nextReconcileAt: string | null;
+    };
+
+/** Bounded query over the same evidence path as waits and startup recovery.
+ * Private request/owner fields never leave this query result.
+ */
+export async function queryPrompt(
+  input: PromptQueryOptions,
+): Promise<PromptQueryResult> {
+  const evidence = await reconcilePromptCommand({
+    db: input.db,
+    commandId: input.handle.commandId,
+    signal: input.signal,
+    lookupReceipt: input.lookupReceipt,
+    logger: input.logger,
+    now: input.now,
+  });
+
+  if (evidence.disposition === "quarantined")
+    throw promptEvidenceConflict(input.handle.commandId);
+  if (evidence.disposition === "settled") {
+    if (evidence.command.state === "succeeded")
+      return {
+        commandId: input.handle.commandId,
+        state: "succeeded",
+        result: promptResultFromCommand(evidence.command),
+      };
+    throw promptFailureFromCommand(evidence.command);
+  }
+
+  return {
+    commandId: input.handle.commandId,
+    state: "pending",
+    transportState: evidence.command.transportState,
+    nextReconcileAt: evidence.command.nextAttemptAt?.toISOString() ?? null,
+  };
+}
+
+export async function waitForPromptCompletion(
+  input: PromptQueryOptions & {
+    assignmentIsCurrent?: () => Promise<boolean>;
+  },
+): Promise<PromptResult> {
   for (;;) {
-    const row = await getCommand(input.db, input.handle.commandId);
+    const result = await queryPrompt(input);
 
-    if (!row || row.kind !== "session.prompt") {
-      throw new MaisterError(
-        "PRECONDITION",
-        "prompt command is not available",
-        {
-          details: {
-            reason: "prompt_command_missing",
-            commandId: input.handle.commandId,
-          },
-        },
-      );
-    }
-    if (row.applicationError?.reason === "prompt_terminal_conflict")
-      throw promptEvidenceConflict(row.id);
-    if (!row.receiptEvidence && input.lookupReceipt) {
-      let receipt: CommandReceipt | null = null;
-
-      try {
-        receipt = await input.lookupReceipt(row.id);
-      } catch (error) {
-        logger.warn(
-          {
-            commandId: row.id,
-            code: isMaisterError(error) ? error.code : "receipt_lookup_failed",
-          },
-          "prompt-terminal-receipt-unavailable",
-        );
-      }
-      if (receipt) {
-        const deposited = await depositPromptReceipt(input.db, row.id, receipt);
-
-        if (deposited.disposition === "quarantined")
-          throw promptEvidenceConflict(row.id);
-      }
-    }
-    const evidence = await reconcileStoredPromptEvidence(
-      input.db,
-      row.id,
-      input.signal ?? AbortSignal.timeout(30_000),
-    );
-
-    if (evidence.disposition === "quarantined")
-      throw promptEvidenceConflict(row.id);
-    if (evidence.disposition === "settled") {
-      if (evidence.command.state === "succeeded")
-        return promptResultFromCommand(evidence.command);
-
-      throw promptFailureFromCommand(evidence.command);
-    }
-    await waitForCommandWake(row.id, input.signal);
+    if (result.state === "succeeded") return result.result;
+    await waitForCommandWake(input.handle.commandId, input.signal);
   }
 }

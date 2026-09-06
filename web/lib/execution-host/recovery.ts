@@ -10,6 +10,8 @@ import pino, { type Logger } from "pino";
 import { setAssignmentWorkspace } from "./assignments";
 import {
   loadOpenCommands,
+  casTransition,
+  recordUnknownPromptAdmission,
   markFailed,
   markFenced,
   markSucceeded,
@@ -19,15 +21,18 @@ import {
   type OpenCommandsCursor,
 } from "./commands";
 import { applyCreateAck } from "./create-ack";
-import { deliverCommand } from "./deliverer";
+import { deliverCommand, startAsyncPrompt } from "./deliverer";
+import {
+  COMMAND_REQUEST_SCHEMA,
+  promptEnvelopeFromCommand,
+} from "./command-request";
+import { classifyPromptTransportFailure } from "./prompt-transport";
+import { reconcilePromptCommand } from "./prompt-reconciliation";
 import { getHostById, STALE_ASSIGNMENT_RUN_STATUSES } from "./hosts";
 import { buildEnvelope } from "./ledger";
 import { defaultTransport } from "./default-transport";
 import { reportLegacyActiveRuns } from "./legacy";
-import {
-  depositPromptReceipt,
-  reconcileStoredPromptEvidence,
-} from "./prompt-evidence";
+import { reconcileStoredPromptEvidence } from "./prompt-evidence";
 import {
   DELIVERING_IN_FLIGHT_GRACE_MS,
   EXECUTION_COMMAND_RETENTION_DAYS,
@@ -331,6 +336,16 @@ export async function recoverExecutionCommands(
     const host = await hostFor(row.executionHostId);
 
     if (!host) {
+      if (row.kind === "session.prompt") {
+        await reconcileStoredPromptEvidence(
+          db,
+          row.id,
+          AbortSignal.timeout(30_000),
+        );
+        summary.skippedInFlight += 1;
+
+        return;
+      }
       await orphan(db, row, "ORPHANED", at, logger);
       summary.orphaned += 1;
 
@@ -382,15 +397,101 @@ export async function recoverExecutionCommands(
     };
 
     if (row.kind === "session.prompt") {
-      const receipt = await transport.getCommandReceipt(row.id);
-
-      if (receipt) await depositPromptReceipt(db, row.id, receipt);
-      const evidence = await reconcileStoredPromptEvidence(
+      const evidence = await reconcilePromptCommand({
         db,
-        row.id,
-        AbortSignal.timeout(30_000),
-      );
+        commandId: row.id,
+        lookupReceipt: (id) => transport.getCommandReceipt(id),
+        now,
+        logger,
+      });
 
+      if (
+        evidence.disposition === "waiting" &&
+        evidence.command.state !== "accepted" &&
+        evidence.command.transportState !== "acknowledged" &&
+        (evidence.receiptRead === "unavailable" ||
+          (evidence.receiptRead === "missing" &&
+            evidence.command.attempts >= evidence.command.maxAttempts))
+      ) {
+        await recordUnknownPromptAdmission(
+          db,
+          row.id,
+          evidence.command.attempts,
+          evidence.command.nextAttemptAt ?? new Date(at.getTime() + 5_000),
+          evidence.command.attempts >= evidence.command.maxAttempts
+            ? "reconciliation_required"
+            : "unknown",
+          { logger, now: at },
+        );
+        summary.skippedInFlight += 1;
+
+        return;
+      }
+
+      // Only a reachable missing receipt permits replay, and only from the
+      // exact immutable v2 request while its original assignment is current.
+      const pending = evidence.command;
+
+      if (
+        evidence.disposition === "waiting" &&
+        evidence.receiptRead === "missing" &&
+        pending.requestSchema === COMMAND_REQUEST_SCHEMA &&
+        pending.transportState !== "reconciliation_required" &&
+        pending.transportState !== "acknowledged" &&
+        pending.attempts < pending.maxAttempts &&
+        pending.state !== "accepted"
+      ) {
+        const [assignment] = await db
+          .select({ id: executionAssignments.id })
+          .from(executionAssignments)
+          .innerJoin(
+            runs,
+            eq(runs.executionAssignmentId, executionAssignments.id),
+          )
+          .where(
+            and(
+              eq(executionAssignments.id, pending.executionAssignmentId),
+              eq(executionAssignments.state, "active"),
+              eq(executionAssignments.epoch, pending.assignmentEpoch),
+              eq(runs.id, pending.runId),
+            ),
+          )
+          .limit(1);
+
+        if (assignment) {
+          const envelope = promptEnvelopeFromCommand(pending, host.hostKey);
+          const queued =
+            pending.state === "delivering"
+              ? await casTransition(
+                  db,
+                  pending.id,
+                  ["delivering"],
+                  pending.attempts,
+                  { state: "queued", deliveringSince: null },
+                  { logger, now: at },
+                )
+              : { changed: true, row: pending };
+
+          if (queued.changed && queued.row) {
+            await startAsyncPrompt({
+              db,
+              command: queued.row,
+              envelope,
+              start: (original) =>
+                transport.startPrompt(
+                  envelope.target!.hostSessionId,
+                  original as typeof envelope,
+                ),
+              lookupReceipt: (id) => transport.getCommandReceipt(id),
+              logger,
+              now,
+            });
+            summary.redelivered += 1;
+
+            return;
+          }
+        }
+      }
       if (evidence.disposition === "settled") {
         const details = evidence.command.lastError?.details;
 
@@ -451,7 +552,12 @@ export async function recoverExecutionCommands(
       try {
         await recoverRow(row);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message =
+          row.kind === "session.prompt"
+            ? classifyPromptTransportFailure(err).causeCode
+            : err instanceof Error
+              ? err.message
+              : String(err);
 
         summary.errors.push(`${row.kind} ${row.id}: ${message}`);
         logger.error(
