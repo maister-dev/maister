@@ -141,11 +141,30 @@ vi.mock("@/lib/runs/active-run-session", async (importOriginal) => ({
         }
       : null;
   }),
-  persistRunSessionAcpSessionId: vi.fn(
-    async (_db: unknown, runId: string, _name: string, acp: string) => {
-      const run = dbState.tables.runs.find((r) => r.id === runId);
+}));
 
-      if (run) run.acpSessionId = acp;
+// The fixture stores its logical binding on the run. The create ACK below
+// updates it; post-create writes must assert the exact acknowledged binding.
+vi.mock("@/lib/execution-host/session-binding", () => ({
+  assertCurrentSessionBinding: vi.fn(
+    async (
+      _db: unknown,
+      input: {
+        runId: string;
+        sessionName: string;
+        assignmentId: string;
+        hostSessionId: string;
+        acpSessionId: string;
+      },
+    ) => {
+      const run = dbState.tables.runs.find((r) => r.id === input.runId);
+
+      expect(input.sessionName).toBe("default");
+      expect(run).toMatchObject({
+        executionAssignmentId: input.assignmentId,
+        hostSessionId: input.hostSessionId,
+        acpSessionId: input.acpSessionId,
+      });
     },
   ),
 }));
@@ -196,8 +215,30 @@ vi.mock("@/lib/execution-host", async () => {
   // its admin surface until the module mock exports it itself.
   const hosts = {
     ...mock.executionHosts,
+    forRun: async (runId: string) => {
+      const client = await mock.executionHosts.forRun(runId);
+
+      return {
+        ...client,
+        createSession: async (payload: unknown) => {
+          const result = await client.createSession(payload);
+          const run = dbState.tables.runs.find((r) => r.id === runId);
+
+          if (!run) throw new Error("create ACK fixture has no run");
+          if (!("acpSessionId" in result))
+            throw new Error("create ACK fixture has no ACP handle");
+          Object.assign(run, {
+            executionAssignmentId: client.assignment.id,
+            hostSessionId: result.sessionId,
+            acpSessionId: result.acpSessionId,
+          });
+
+          return result;
+        },
+      };
+    },
     executionFor: async (runId: string) => ({
-      client: await mock.executionHosts.forRun(runId),
+      client: await hosts.forRun(runId),
       admin: mock.executionHosts.local(),
     }),
   };

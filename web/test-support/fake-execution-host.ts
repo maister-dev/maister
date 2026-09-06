@@ -454,22 +454,20 @@ export function createFakeExecutionHost(
     const eventId = randomUUID();
 
     canonicalEventTail = canonicalEventTail.then(async () => {
+      // The real host commits the terminal receipt and its event pointer before
+      // exposing the event. A manager projector may read the receipt in the sink.
+      if (event.type === "session.command" && event.phase === "completed") {
+        const receipt = receipts.get(event.commandId);
+
+        if (receipt && receipt.phase !== "accepted")
+          receipts.set(event.commandId, { ...receipt, eventId });
+      }
       await canonicalEventSink?.({
         envelope,
         sessionId,
         event: { ...event, sessionId },
         eventId,
       });
-
-      if (event.type !== "session.command" || event.phase !== "completed") {
-        return;
-      }
-
-      const receipt = receipts.get(event.commandId);
-
-      if (!receipt || receipt.phase === "accepted") return;
-
-      receipts.set(event.commandId, { ...receipt, eventId });
     });
 
     return canonicalEventTail;

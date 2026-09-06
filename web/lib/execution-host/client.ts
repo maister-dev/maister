@@ -28,6 +28,7 @@ import type {
   InputPayload,
   WorkspaceRecord,
 } from "./contracts";
+import type { SessionBindingDisposition } from "./session-binding";
 import type { PromptHandle } from "./deliverer";
 import type {
   CommandEnvelope,
@@ -235,7 +236,10 @@ export function createExecutionHosts(
 
     type ImmediateOptions<TResult> = {
       targetSessionId?: string;
-      onAck?: (tx: Db, result: TResult) => Promise<void>;
+      onAck?: (
+        tx: Db,
+        result: TResult,
+      ) => Promise<void | SessionBindingDisposition>;
       resultSummary?: (result: TResult) => Record<string, unknown> | null;
     };
 

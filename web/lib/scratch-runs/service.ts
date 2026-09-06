@@ -26,6 +26,7 @@ import path from "node:path";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { assertCurrentSessionBinding } from "@/lib/execution-host/session-binding";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { ensureLocalPackageGitExclude } from "@/lib/local-packages/git";
 import { assertHoldsLock } from "@/lib/local-packages/lock";
@@ -35,10 +36,7 @@ import {
   resolveRunner,
   type RunnerCatalogEntry,
 } from "@/lib/acp-runners/resolve";
-import {
-  loadActiveRunSession,
-  persistRunSessionAcpSessionId,
-} from "@/lib/runs/active-run-session";
+import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import {
   mergeRunnerAdapterLaunch,
   runnerExecutorInput,
@@ -1140,12 +1138,13 @@ export async function* launchScratchRunStaged(
         ? "Running"
         : "WaitingForUser";
 
-      await persistRunSessionAcpSessionId(
-        tx,
+      await assertCurrentSessionBinding(tx, {
         runId,
-        "default",
-        session.acpSessionId,
-      );
+        sessionName: "default",
+        assignmentId: client.assignment.id,
+        hostSessionId: session.sessionId,
+        acpSessionId: session.acpSessionId,
+      });
       await tx
         .update(scratchRuns)
         .set({
@@ -1756,12 +1755,13 @@ export async function* launchLocalPackageAssistantStaged(
         ? "Running"
         : "WaitingForUser";
 
-      await persistRunSessionAcpSessionId(
-        tx,
+      await assertCurrentSessionBinding(tx, {
         runId,
-        "default",
-        session.acpSessionId,
-      );
+        sessionName: "default",
+        assignmentId: client.assignment.id,
+        hostSessionId: session.sessionId,
+        acpSessionId: session.acpSessionId,
+      });
       await tx
         .update(scratchRuns)
         .set({

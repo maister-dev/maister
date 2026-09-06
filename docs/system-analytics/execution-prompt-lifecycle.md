@@ -1,6 +1,6 @@
 # Execution prompt lifecycle
 
-**Status:** Implemented short-lived admission, private v2 request/owner storage and shared canonical-event/receipt reconciliation. Request-bound receipt/event v2 and verified immutable command-output manifests are implemented on the explicit v2 development path. Unknown-admission reconciliation and frozen-request recovery are implemented. Production owner activation, durable owner application, fencing and retirement remain **Designed** (AB-05–08/10).
+**Status:** Implemented short-lived admission, private v2 request/owner storage and shared canonical-event/receipt reconciliation. Request-bound receipt/event v2 and verified immutable command-output manifests are implemented on the explicit v2 development path. Unknown-admission reconciliation, frozen-request recovery and create/ACP binding fences are implemented. Production owner activation, durable owner application and retirement remain **Designed** (AB-05–07/10).
 
 
 ## Purpose
@@ -179,6 +179,30 @@ identity. Acknowledged, terminal, quarantined or stale repair requests cannot
 rearm. Its caller must hold the existing operator/domain repair authorization;
 this increment adds no public repair route. Receipt/event settlement still
 leaves owner application pending until the S2 owner adapters are activated.
+
+## Session create and ACP binding fences (Implemented)
+
+Live create ACKs, recovered create receipts and canonical `session.created`
+projection use `applyCreateAck`. It locks the run, its current active assignment,
+logical session and any known host incarnation in that order. An obsolete
+assignment or incarnation returns `stale` without changing the successor's
+session/ACP IDs or node-attempt binding. The original command can still retain
+its successful receipt; a live caller receives `CONFLICT` with
+`reason=assignment_fenced` after that historical result commits.
+
+Post-create scratch state writes assert the same assignment and exact persisted
+host/ACP binding inside their transaction. Agent and sync callers use the binding
+already committed by the ACK. Independent ACP setters are removed. When a new
+assignment installs its current binding, earlier created/active/checkpointed
+incarnations lose their projection slot with `state=lost` and
+`reason=assignment_superseded`; their identities and evidence remain retained.
+This transition records lost binding authority and does not claim a host exit.
+
+AT-08 holds a real supervisor create ACK while a successor assignment becomes
+active, reconciles the old receipt before releasing the held ACK, and rejects
+the delayed callback. It checks that both old command evidence and the new
+session/ACP binding survive. Prompt-owner state application has its separate
+generation checks in the following contract.
 
 ## Prompt owner and recovery windows (Designed)
 

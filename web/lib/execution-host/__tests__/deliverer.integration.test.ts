@@ -20,6 +20,9 @@ import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer"
 import { isMaisterError } from "@/lib/errors";
 import { mintAssignment } from "@/lib/execution-host/assignments";
 import { createExecutionHosts } from "@/lib/execution-host/client";
+import { assertCurrentSessionBinding } from "@/lib/execution-host/session-binding";
+import { recoverExecutionCommands } from "@/lib/execution-host/recovery";
+import { defaultTransport } from "@/lib/execution-host/default-transport";
 import { listCommandsForRun } from "@/lib/execution-host/commands";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
@@ -107,6 +110,173 @@ afterAll(async () => {
 });
 
 describe("bound client over the real wire", () => {
+  it("AT-08: a delayed create ACK cannot replace the successor assignment's session binding", async () => {
+    const runId = await seedFlowRun("late-create-ack");
+    const nodeAttemptId = randomUUID();
+
+    await db.insert(fullSchema.nodeAttempts).values({
+      id: nodeAttemptId,
+      runId,
+      nodeId: CREATE_PAYLOAD.stepId,
+      nodeType: "ai_coding",
+      status: "Running",
+    });
+    const payload = { ...CREATE_PAYLOAD, nodeAttemptId };
+    const transport = defaultTransport();
+    let releaseAck: () => void = () => {};
+    let announceAck: () => void = () => {};
+    const ackHeld = new Promise<void>((resolve) => {
+      announceAck = resolve;
+    });
+    const ackRelease = new Promise<void>((resolve) => {
+      releaseAck = resolve;
+    });
+    const delayed = createExecutionHosts({
+      db,
+      transport: {
+        ...transport,
+        async createSession(envelope, options) {
+          const result = await transport.createSession(envelope, options);
+
+          announceAck();
+          await ackRelease;
+
+          return result;
+        },
+      },
+    });
+    const original = await delayed.forRun(runId, { reason: "launch" });
+    const pending = original.createSession(payload);
+
+    try {
+      await Promise.race([ackHeld, pending]);
+      await expect
+        .poll(
+          async () => {
+            const [incarnation] = await db
+              .select()
+              .from(fullSchema.runSessionIncarnations)
+              .where(eq(fullSchema.runSessionIncarnations.runId, runId));
+
+            return incarnation?.state;
+          },
+          { timeout: 15_000 },
+        )
+        .toBe("active");
+      const successorAssignment = await db.transaction((tx) =>
+        mintAssignment(tx, {
+          runId,
+          hostId: original.host.id,
+          reason: "resume",
+        }),
+      );
+      const successor = await hosts.forAssignment(successorAssignment);
+      const created = await successor.createSession(payload);
+
+      await expect
+        .poll(
+          async () => {
+            const [incarnation] = await db
+              .select()
+              .from(fullSchema.runSessionIncarnations)
+              .where(
+                eq(
+                  fullSchema.runSessionIncarnations.hostSessionId,
+                  created.sessionId,
+                ),
+              );
+
+            return incarnation?.state;
+          },
+          { timeout: 15_000 },
+        )
+        .toBe("active");
+
+      const recovery = await recoverExecutionCommands({ db, graceMs: 0 });
+
+      expect(recovery.errors).toEqual([]);
+      const beforeLiveAck = await listCommandsForRun(db, runId);
+
+      expect(
+        beforeLiveAck.find(
+          (command) =>
+            command.kind === "session.create" &&
+            command.executionAssignmentId === original.assignment.id,
+        )?.state,
+      ).toBe("succeeded");
+      await expect(
+        db.transaction((tx) =>
+          assertCurrentSessionBinding(tx, {
+            runId,
+            sessionName: "default",
+            assignmentId: original.assignment.id,
+            hostSessionId: "late-callback",
+            acpSessionId: "late-acp",
+          }),
+        ),
+      ).rejects.toMatchObject({
+        code: "CONFLICT",
+        details: { reason: "assignment_fenced" },
+      });
+      await expect(
+        db.transaction((tx) =>
+          assertCurrentSessionBinding(tx, {
+            runId,
+            sessionName: "default",
+            assignmentId: successorAssignment.id,
+            hostSessionId: created.sessionId,
+            acpSessionId: created.acpSessionId,
+          }),
+        ),
+      ).resolves.toBeUndefined();
+      releaseAck();
+      await expect(pending).rejects.toMatchObject({
+        code: "CONFLICT",
+        details: { reason: "assignment_fenced" },
+      });
+      const [bound] = await db
+        .select()
+        .from(fullSchema.runSessions)
+        .where(eq(fullSchema.runSessions.runId, runId));
+
+      expect(bound).toMatchObject({
+        executionAssignmentId: successorAssignment.id,
+        hostSessionId: created.sessionId,
+        acpSessionId: created.acpSessionId,
+      });
+      const [attempt] = await db
+        .select()
+        .from(fullSchema.nodeAttempts)
+        .where(eq(fullSchema.nodeAttempts.id, nodeAttemptId));
+      const [run] = await db
+        .select()
+        .from(fullSchema.runs)
+        .where(eq(fullSchema.runs.id, runId));
+
+      expect(attempt).toMatchObject({
+        executionAssignmentId: successorAssignment.id,
+        status: "Running",
+      });
+      expect(run).toMatchObject({
+        executionAssignmentId: successorAssignment.id,
+        status: "Running",
+      });
+      const commands = await listCommandsForRun(db, runId);
+      const historical = commands.find(
+        (command) =>
+          command.kind === "session.create" &&
+          command.executionAssignmentId === original.assignment.id,
+      );
+
+      expect(historical).toMatchObject({ state: "succeeded" });
+      expect(historical?.result?.sessionId).not.toBe(created.sessionId);
+      await successor.deleteSession(created.sessionId);
+    } finally {
+      releaseAck();
+      await pending.catch(() => undefined);
+    }
+  });
+
   it("D1: create / prompt / input / cancel / checkpoint / delete through the real supervisor", async () => {
     const runId = await seedFlowRun("d1");
     const client = await hosts.forRun(runId, { reason: "launch" });

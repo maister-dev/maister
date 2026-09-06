@@ -3393,7 +3393,7 @@ export async function runGraph(
 
       // M42 (ADR-114) / ADR-166 E-EH-07: the per-session resume handle lives on
       // the node's run_sessions row, written by the `session.create` ACK
-      // transaction (`persistRunSessionHostBinding`) — never by a late
+      // transaction (`applyCreateAck`) — never by a late
       // post-prompt update. Only the in-memory mirror is refreshed here.
       if (result.acpSessionId && nodeSession) {
         nodeSession.acpSessionId = result.acpSessionId;

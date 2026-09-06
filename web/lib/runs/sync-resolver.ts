@@ -20,10 +20,7 @@ import {
 } from "@/lib/execution-host";
 
 // FIXME(any): dual drizzle-orm peer-dep variants — mirror sync-target.ts.
-const { hitlRequests, runs, runSessions } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { hitlRequests, runs } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): the injected db seam is a Drizzle client OR a Testcontainers pg
 // client; both expose select/insert/update/transaction.
@@ -239,38 +236,6 @@ export async function runResolverSession(args: {
   });
   const created = await client.createSession(args.input);
   const sessionId = created.sessionId;
-
-  // Persist the ACP handle onto the resolver's `run_sessions` row. The row is
-  // inserted in the CAS tx BEFORE the session exists, so it starts null — and
-  // nothing ever wrote it, which made reconcile's whole W2 arm unreachable:
-  // `activeRunSessionsFor` resolves `liveSession` from this column, so a live
-  // resolver always looked session-less. Worse than merely null — that helper
-  // lets a LATER row replace an incumbent only when the incumbent lacks a
-  // handle, so the handle-less resolver row loses to the run's OLD flow session
-  // and W2 would tear THAT session down instead.
-  //
-  // Fails closed under the module's deferred-release contract: an unpersisted
-  // handle means a crash leaves an agent process nothing can find or kill, which
-  // is strictly worse than not resolving at all.
-  try {
-    await args.db
-      .update(runSessions)
-      .set({ acpSessionId: created.acpSessionId, updatedAt: new Date() })
-      .where(
-        and(
-          eq(runSessions.runId, args.runId),
-          eq(runSessions.sessionName, args.input.sessionName),
-        ),
-      );
-  } catch (err) {
-    await client.deleteSession(sessionId).catch(() => undefined);
-    throw new MaisterError(
-      "CRASH",
-      `sync resolver could not persist its acp session handle: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-  }
 
   // ADR-141: mark this run as owned by a LIVE in-process resolver
   // driver — the skip-vs-abort discriminant for the periodic reconcile sweep.

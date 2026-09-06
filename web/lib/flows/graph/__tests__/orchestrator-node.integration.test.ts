@@ -68,17 +68,24 @@ vi.mock("@/lib/flows/runner-agent", async (importOriginal) => ({
       // ADR-166: the create ack (inside the real step) persists the host
       // binding; the scripted step emulates that write so the retained
       // resume handle is observable after the park.
-      const { persistRunSessionHostBinding } = await import(
-        "@/lib/runs/active-run-session"
+      const { applyCreateAck } = await import(
+        "@/lib/execution-host/create-ack"
+      );
+      const db = ctx.db as import("@/lib/execution-host/db").Db;
+      const disposition = await db.transaction((tx) =>
+        applyCreateAck(tx, {
+          runId: ctx.runId,
+          sessionName: "default",
+          nodeAttemptId: null,
+          assignmentId: execution.client.assignment.id,
+          result: {
+            sessionId: "sup-coordinator-1",
+            acpSessionId: "acp-coordinator-1",
+          },
+        }),
       );
 
-      await persistRunSessionHostBinding(ctx.db as never, {
-        runId: ctx.runId,
-        sessionName: "default",
-        hostSessionId: "sup-coordinator-1",
-        acpSessionId: "acp-coordinator-1",
-        executionAssignmentId: execution.client.assignment.id,
-      });
+      expect(disposition).toBe("applied");
 
       return {
         ok: true,

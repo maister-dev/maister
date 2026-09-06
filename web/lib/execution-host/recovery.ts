@@ -151,7 +151,7 @@ async function foldReceipt(
         };
 
         if (typeof body.sessionId === "string") {
-          await applyCreateAck(txDb, {
+          const bindingDisposition = await applyCreateAck(txDb, {
             runId: row.runId,
             sessionName:
               typeof payload.sessionName === "string"
@@ -170,6 +170,16 @@ async function foldReceipt(
                   : null,
             },
           });
+
+          logger.info(
+            {
+              commandId: row.id,
+              runId: row.runId,
+              assignmentId: row.executionAssignmentId,
+              bindingDisposition,
+            },
+            "create-receipt-binding-reconciled",
+          );
         }
       }
       if (row.kind === "workspace.adopt") {

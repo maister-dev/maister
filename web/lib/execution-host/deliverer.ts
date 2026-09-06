@@ -1,4 +1,5 @@
 import type { Db } from "./db";
+import type { SessionBindingDisposition } from "./session-binding";
 import type { ExecutionCommand } from "@/lib/db/schema";
 import type { PromptAccepted, PromptResult } from "@/lib/supervisor-client";
 import type { CommandReceipt } from "./contracts";
@@ -28,6 +29,7 @@ import {
 } from "./prompt-transport";
 import { reconcilePromptCommand } from "./prompt-reconciliation";
 import { commandSignals } from "./signals";
+import { staleSessionBinding } from "./session-binding";
 import {
   depositPromptReceipt,
   quarantinePromptProtocol,
@@ -188,7 +190,10 @@ export type DeliverOptions<TResult> = {
   envelope: CommandEnvelope<unknown>;
   send: (envelope: CommandEnvelope<unknown>) => Promise<TResult>;
   // Result-derived domain writes commit in the SAME tx as the ack (E-EH-07).
-  onAck?: (tx: Db, result: TResult) => Promise<void>;
+  onAck?: (
+    tx: Db,
+    result: TResult,
+  ) => Promise<void | SessionBindingDisposition>;
   resultSummary?: (result: TResult) => Record<string, unknown> | null;
   logger?: Logger;
   sleep?: (ms: number) => Promise<void>;
@@ -365,7 +370,7 @@ export async function deliverCommand<TResult>(
 
     const latencyMs = Date.now() - startedAt;
 
-    await opts.db.transaction(async (tx) => {
+    const bindingDisposition = await opts.db.transaction(async (tx) => {
       await markSucceeded(
         tx as unknown as Db,
         opts.command.id,
@@ -373,8 +378,25 @@ export async function deliverCommand<TResult>(
         summarize(result, opts.resultSummary),
         { logger, now: now() },
       );
-      await opts.onAck?.(tx as unknown as Db, result);
+
+      return opts.onAck?.(tx as unknown as Db, result);
     });
+
+    if (bindingDisposition === "stale") {
+      logger.info(
+        {
+          commandId: opts.command.id,
+          runId: opts.command.runId,
+          assignmentId: opts.command.executionAssignmentId,
+          outcome: "historical",
+        },
+        "command-ack-binding-stale",
+      );
+      throw staleSessionBinding(
+        opts.command.runId,
+        opts.command.executionAssignmentId,
+      );
+    }
 
     logger.info(
       {

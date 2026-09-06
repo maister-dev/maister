@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
+import { assertCurrentSessionBinding } from "@/lib/execution-host/session-binding";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import {
   mergeRunnerAdapterLaunch,
@@ -28,10 +29,7 @@ import {
   sendScratchPromptAndProjectEvents,
 } from "@/lib/scratch-runs/events";
 import { scratchStepId } from "@/lib/scratch-runs/launch";
-import {
-  loadActiveRunSession,
-  persistRunSessionAcpSessionId,
-} from "@/lib/runs/active-run-session";
+import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import {
   assertLocalPackageAssistantActor,
   completeScratchPromptTurn,
@@ -498,12 +496,13 @@ export async function POST(
     const now = new Date();
 
     await db.transaction(async (tx: Db) => {
-      await persistRunSessionAcpSessionId(
-        tx,
+      await assertCurrentSessionBinding(tx, {
         runId,
-        "default",
-        session.acpSessionId,
-      );
+        sessionName: "default",
+        assignmentId: claimed.id,
+        hostSessionId: session.sessionId,
+        acpSessionId: session.acpSessionId,
+      });
       await tx
         .update(scratchRuns)
         .set({

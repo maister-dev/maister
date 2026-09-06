@@ -90,10 +90,7 @@ import {
 } from "@/lib/instance-config";
 import { admitDelegatedChild } from "@/lib/orchestrator/admission";
 import { removeOwnedPlainAgentDirectory } from "@/lib/gc/plain-agent-directory-gc";
-import {
-  loadActiveRunSession,
-  persistRunSessionAcpSessionId,
-} from "@/lib/runs/active-run-session";
+import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { applyDefaultBudgetForUnattended } from "@/lib/runs/budget-default";
 import {
   permissionsFromSnapshot,
@@ -2228,13 +2225,6 @@ async function startConsensusRunnerDraftSession(args: {
         : {}),
     });
 
-    await persistRunSessionAcpSessionId(
-      args.db,
-      runId,
-      "default",
-      session.acpSessionId,
-    );
-
     queueMicrotask(() => {
       void consumeAgentSession({
         db: args.db,
@@ -2863,7 +2853,7 @@ export async function finalizeAgentRun(
 // not terminal). A genuine failure/crash still goes through finalizeAgentRun.
 export async function parkPersistentAgent(
   runId: string,
-  opts: { db?: Db; acpSessionId?: string | null } = {},
+  opts: { db?: Db } = {},
 ): Promise<{ parked: boolean }> {
   const _db = opts.db ?? getDb();
 
@@ -2891,18 +2881,6 @@ export async function parkPersistentAgent(
         tx as unknown as ExecutionDb,
         runId,
         "parked",
-      );
-    }
-
-    // M42 (ADR-114): the resume handle lives on `run_sessions`, not a dropped
-    // runs column — refresh the active session's handle if a newer turn produced
-    // one.
-    if (rows.length > 0 && opts.acpSessionId) {
-      await persistRunSessionAcpSessionId(
-        tx,
-        runId,
-        "default",
-        opts.acpSessionId,
       );
     }
 
@@ -3744,13 +3722,6 @@ export async function startAgentSession(
         permissionsFromSnapshot(run.executionPolicy ?? null) === "auto_approve",
       ...(run.acpSessionId ? { resumeSessionId: run.acpSessionId } : {}),
     });
-
-    await persistRunSessionAcpSessionId(
-      _db,
-      runId,
-      "default",
-      session.acpSessionId,
-    );
 
     queueMicrotask(() => {
       void consumeAgentSession({

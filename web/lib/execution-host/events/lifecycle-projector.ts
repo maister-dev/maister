@@ -6,6 +6,12 @@ import { randomUUID } from "node:crypto";
 
 import { and, eq } from "drizzle-orm";
 
+import {
+  lockCurrentSessionAssignment,
+  lockLogicalRunSession,
+} from "../session-binding";
+import { applyCreateAck } from "../create-ack";
+
 import { CANONICAL_PROJECTION_CONSUMERS } from "./projection-consumers";
 import {
   ExecutionEventProjectionError,
@@ -15,10 +21,8 @@ import {
 } from "./projector";
 
 import {
-  executionAssignments,
   executionEvents,
   runSessionIncarnations,
-  runSessions,
   runs,
   type ExecutionEvent,
 } from "@/lib/db/schema";
@@ -44,29 +48,15 @@ async function currentCanonicalAssignment(
   ) {
     throw permanent("canonical lifecycle event is missing an assignment fence");
   }
-  const runRows = await tx
-    .select({ executionDataPlaneMode: runs.executionDataPlaneMode })
-    .from(runs)
-    .where(eq(runs.id, event.runId))
-    .limit(1);
+  const assignment = await lockCurrentSessionAssignment(tx, {
+    runId: event.runId,
+    assignmentId: event.executionAssignmentId,
+  });
 
-  if (!runRows[0])
-    throw permanent("canonical lifecycle event references a missing run");
-  const assignment = await tx
-    .select({ id: executionAssignments.id })
-    .from(executionAssignments)
-    .where(
-      and(
-        eq(executionAssignments.id, event.executionAssignmentId),
-        eq(executionAssignments.runId, event.runId),
-        eq(executionAssignments.executionHostId, event.executionHostId),
-        eq(executionAssignments.epoch, event.assignmentEpoch),
-        eq(executionAssignments.state, "active"),
-      ),
-    )
-    .limit(1);
-
-  return Boolean(assignment[0]);
+  return (
+    assignment?.executionHostId === event.executionHostId &&
+    assignment.epoch === event.assignmentEpoch
+  );
 }
 
 function sessionName(payload: Record<string, unknown> | null): string {
@@ -94,7 +84,8 @@ async function projectCreated(tx: Db, event: ExecutionEvent): Promise<void> {
   if (
     !event.executionHostId ||
     !event.executionAssignmentId ||
-    !event.hostSessionId
+    !event.hostSessionId ||
+    event.assignmentEpoch === null
   ) {
     throw permanent("session.created event is missing host/session identity");
   }
@@ -103,28 +94,21 @@ async function projectCreated(tx: Db, event: ExecutionEvent): Promise<void> {
     typeof event.payload?.acpSessionId === "string"
       ? event.payload.acpSessionId
       : null;
-  const sessions = await tx
-    .select()
-    .from(runSessions)
-    .where(
-      and(
-        eq(runSessions.runId, event.runId),
-        eq(runSessions.sessionName, name),
-      ),
-    )
-    .for("update")
-    .limit(1);
-  let session = sessions[0];
+  const disposition = await applyCreateAck(tx, {
+    runId: event.runId,
+    sessionName: name,
+    assignmentId: event.executionAssignmentId,
+    nodeAttemptId: null,
+    result: { sessionId: event.hostSessionId, acpSessionId },
+  });
 
-  if (!session) {
-    const inserted = await tx
-      .insert(runSessions)
-      .values({ id: randomUUID(), runId: event.runId, sessionName: name })
-      .returning();
+  if (disposition === "stale") return;
+  const session = await lockLogicalRunSession(tx, {
+    runId: event.runId,
+    sessionName: name,
+  });
 
-    session = inserted[0];
-  }
-  if (!session) throw permanent("run session insert did not return a row");
+  if (!session) throw permanent("applied session binding has no logical row");
 
   const existing = await tx
     .select()
@@ -175,15 +159,6 @@ async function projectCreated(tx: Db, event: ExecutionEvent): Promise<void> {
 
   if (!created)
     throw permanent("run session incarnation insert did not return a row");
-  await tx
-    .update(runSessions)
-    .set({
-      executionAssignmentId: event.executionAssignmentId,
-      hostSessionId: event.hostSessionId,
-      ...(acpSessionId ? { acpSessionId } : {}),
-      updatedAt: event.receivedAt,
-    })
-    .where(eq(runSessions.id, session.id));
   await bindEventToIncarnation(tx, event, created.id);
 }
 

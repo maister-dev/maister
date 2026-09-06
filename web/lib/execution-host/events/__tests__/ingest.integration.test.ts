@@ -65,6 +65,10 @@ beforeAll(async () => {
     [assignmentId, runId, hostId],
   );
   await testDatabase.pool.query(
+    `update runs set execution_assignment_id = $1 where id = $2`,
+    [assignmentId, runId],
+  );
+  await testDatabase.pool.query(
     `insert into execution_assignments
        (id, run_id, execution_host_id, epoch, state, placement_reason, ended_at, released_reason)
      values ($1, $2, $3, 2, 'released', 'recover', now(), 'test_stale_epoch')`,
@@ -540,6 +544,10 @@ describe("runtime event ingestion", () => {
          (id, run_id, execution_host_id, epoch, state, placement_reason)
        values ($1, $2, $3, 1, 'active', 'launch')`,
       [promptAssignmentId, promptRunId, hostId],
+    );
+    await testDatabase.pool.query(
+      `update runs set execution_assignment_id = $1 where id = $2`,
+      [promptAssignmentId, promptRunId],
     );
     await testDatabase.pool.query(
       `insert into execution_commands
