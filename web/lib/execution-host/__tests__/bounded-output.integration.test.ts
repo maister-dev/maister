@@ -6,13 +6,31 @@ import { randomUUID } from "node:crypto";
 import { fork, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import { createServer, request as httpRequest } from "node:http";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
 
 import { issueOwnedPrompt } from "../ledger";
 import { defaultTransport } from "../default-transport";
-import { startAsyncPrompt, waitForPromptCompletion } from "../deliverer";
+import {
+  queryPrompt,
+  startAsyncPrompt,
+  waitForPromptCompletion,
+} from "../deliverer";
+import {
+  createPromptOwnerRegistry,
+  definePromptOwnerAdapter,
+  PromptOwnerInvariantError,
+} from "../prompt-owners";
+import {
+  applyClaimedPromptOwner,
+  claimPromptOwner,
+  releasePromptOwnerClaim,
+} from "../prompt-owner-application";
+import { startPromptOwnerWorker } from "../prompt-owner-recovery";
 import { readPromptOutput } from "../prompt-output";
 import { rearmPromptAdmission } from "../commands";
 import { recoverExecutionCommands } from "../recovery";
@@ -21,6 +39,7 @@ import {
   startRuntimeEventConsumer,
 } from "../events/consumer";
 
+import * as fullSchema from "@/lib/db/schema";
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
@@ -207,6 +226,24 @@ async function startOwnedFixturePrompt(
   return { admitted, handle };
 }
 
+async function settledOwnerFixture(name: string) {
+  const producer = await createSession(name);
+  const db = database.db as unknown as Db;
+  const { handle } = await startOwnedFixturePrompt(
+    producer,
+    'fixture-output:{"bytes":65537}',
+  );
+
+  await waitForPromptCompletion({
+    db,
+    handle,
+    signal: AbortSignal.timeout(15_000),
+    lookupReceipt: (id) => defaultTransport().getCommandReceipt(id),
+  });
+
+  return { db, producer, handle };
+}
+
 function startPromptRecoveryProcess(
   commandId: string,
   hostId: string,
@@ -250,6 +287,514 @@ function startPromptRecoveryProcess(
 }
 
 describe("AT-01 bounded output on the production supervisor", () => {
+  it("S2.5: query applies verified owner output and its marker exactly once", async () => {
+    const producer = await createSession("owner-application");
+    const db = database.db as unknown as Db;
+    const originalMeta = { result: { proof: "owner application output" } };
+    const { handle } = await startOwnedFixturePrompt(
+      producer,
+      `fixture-output:${JSON.stringify({ bytes: 65537, responseMeta: originalMeta })}`,
+    );
+
+    await waitForPromptCompletion({
+      db,
+      handle,
+      signal: AbortSignal.timeout(15_000),
+      lookupReceipt: (id) => defaultTransport().getCommandReceipt(id),
+    });
+    let applications = 0;
+    // This exercises the dispatch transaction seam. The complete production
+    // owner-entrypoint matrix belongs to the domain adapter scenarios.
+    const owners = createPromptOwnerRegistry([
+      definePromptOwnerAdapter(
+        "agent_turn",
+        async ({ owner, command, outcome }) => {
+          expect(owner.ref.variant).toBe("initial");
+          if (outcome.state !== "succeeded")
+            throw new Error("fixture requires successful output");
+          expect(outcome.response._meta).toEqual(originalMeta);
+          let events = 0;
+
+          for await (const event of outcome.events) {
+            expect(event.payload?.sourceCommandId).toBe(command.id);
+            events += 1;
+          }
+          expect(events).toBeGreaterThan(0);
+
+          return {
+            apply: async (tx) => {
+              await tx
+                .select()
+                .from(runs)
+                .where(eq(runs.id, owner.ref.runId))
+                .for("update");
+              await tx.insert(runMessages).values({
+                id: `${command.id}:owner-application`,
+                runId: owner.ref.runId,
+                sequence: 1_000_000,
+                role: "assistant",
+                content: JSON.stringify(outcome.response._meta),
+              });
+              applications += 1;
+
+              return "applied";
+            },
+          };
+        },
+      ),
+    ]);
+    const query = { db, handle, owners, signal: AbortSignal.timeout(15_000) };
+
+    await queryPrompt(query);
+    await queryPrompt(query);
+    const [command] = await db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.id, handle.commandId));
+    const messages = await db
+      .select()
+      .from(runMessages)
+      .where(eq(runMessages.id, `${handle.commandId}:owner-application`));
+
+    expect(command.applicationState).toBe("applied");
+    expect(command.completionAppliedAt).not.toBeNull();
+    expect(applications).toBe(1);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toBe(JSON.stringify(originalMeta));
+    await producer.client.deleteSession(producer.session.hostSessionId);
+  });
+
+  it("S2.5: rolls back domain writes and recovers an expired claim with two workers", async () => {
+    const { db, producer, handle } =
+      await settledOwnerFixture("owner-rollback");
+    let failApply = true;
+    const messageId = `${handle.commandId}:rollback`;
+    const owners = createPromptOwnerRegistry([
+      definePromptOwnerAdapter("agent_turn", async ({ outcome, owner }) => {
+        if (outcome.state !== "succeeded")
+          throw new Error("fixture requires success");
+        for await (const event of outcome.events)
+          expect(event.runId).toBe(owner.ref.runId);
+
+        return {
+          apply: async (tx) => {
+            await tx.insert(runMessages).values({
+              id: messageId,
+              runId: owner.ref.runId,
+              sequence: 1_000_000,
+              role: "assistant",
+              content: "applied once",
+            });
+            if (failApply) {
+              failApply = false;
+              throw new Error("owner transaction rollback fixture");
+            }
+
+            return "applied";
+          },
+        };
+      }),
+    ]);
+
+    expect(await queryPrompt({ db, handle, owners })).toMatchObject({
+      state: "pending",
+    });
+    const [failed] = await db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.id, handle.commandId));
+
+    expect(failed).toMatchObject({
+      state: "succeeded",
+      applicationState: "pending",
+      applicationAttempts: 1,
+      completionAppliedAt: null,
+    });
+    expect(
+      await db.select().from(runMessages).where(eq(runMessages.id, messageId)),
+    ).toHaveLength(0);
+    await db
+      .update(executionCommands)
+      .set({
+        applicationNextRetryAt: sql`clock_timestamp() - interval '1 second'`,
+      })
+      .where(eq(executionCommands.id, handle.commandId));
+    const abandoned = await claimPromptOwner({
+      db,
+      owners,
+      commandId: handle.commandId,
+    });
+
+    expect(abandoned).not.toBeNull();
+    await db
+      .update(executionCommands)
+      .set({
+        applicationClaimExpiresAt: sql`clock_timestamp() - interval '1 second'`,
+      })
+      .where(eq(executionCommands.id, handle.commandId));
+    const first = startPromptOwnerWorker({ db, owners });
+    const second = startPromptOwnerWorker({ db, owners });
+
+    try {
+      await expect
+        .poll(
+          async () => {
+            const [command] = await db
+              .select()
+              .from(executionCommands)
+              .where(eq(executionCommands.id, handle.commandId));
+
+            return command.applicationState;
+          },
+          { timeout: 15_000 },
+        )
+        .toBe("applied");
+    } finally {
+      await Promise.all([first.stop(), second.stop()]);
+    }
+    const [completed] = await db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.id, handle.commandId));
+
+    expect(completed.completionAppliedAt).not.toBeNull();
+    expect(completed.applicationAttempts).toBe(1);
+    expect(completed.terminalEvidenceSha256).toBe(
+      failed.terminalEvidenceSha256,
+    );
+    expect(
+      await db.select().from(runMessages).where(eq(runMessages.id, messageId)),
+    ).toHaveLength(1);
+    expect(
+      await db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, producer.runId),
+            eq(executionCommands.kind, "session.prompt"),
+          ),
+        ),
+    ).toHaveLength(1);
+    await producer.client.deleteSession(producer.session.hostSessionId);
+  });
+
+  it.each(["commit", "failure"] as const)(
+    "S2.5: a stale %s cannot overwrite a successor application",
+    async (lateOutcome) => {
+      const { db, producer, handle } = await settledOwnerFixture(
+        `owner-stale-${lateOutcome}`,
+      );
+      let release: () => void = () => {};
+      let announce: () => void = () => {};
+      const held = new Promise<void>((resolve) => {
+        announce = resolve;
+      });
+      const barrier = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let preparations = 0;
+      const messageId = `${handle.commandId}:stale`;
+      const owners = createPromptOwnerRegistry([
+        definePromptOwnerAdapter("agent_turn", async ({ outcome, owner }) => {
+          if (outcome.state !== "succeeded")
+            throw new Error("fixture requires success");
+          for await (const event of outcome.events)
+            expect(event.runId).toBe(owner.ref.runId);
+          const generation = ++preparations;
+
+          if (generation === 1) {
+            announce();
+            await barrier;
+          }
+
+          return {
+            apply: async (tx) => {
+              await tx
+                .insert(runMessages)
+                .values({
+                  id: messageId,
+                  runId: owner.ref.runId,
+                  sequence: 1_000_000,
+                  role: "assistant",
+                  content: String(generation),
+                })
+                .onConflictDoUpdate({
+                  target: runMessages.id,
+                  set: { content: String(generation) },
+                });
+              if (generation === 1 && lateOutcome === "failure")
+                throw new PromptOwnerInvariantError("late_failure_fixture");
+
+              return "applied";
+            },
+          };
+        }),
+      ]);
+      const claim = await claimPromptOwner({
+        db,
+        owners,
+        commandId: handle.commandId,
+      });
+
+      if (!claim) throw new Error("fixture requires a claimed owner");
+      const old = applyClaimedPromptOwner({
+        db,
+        owners,
+        claim,
+        signal: AbortSignal.timeout(15_000),
+      });
+
+      try {
+        await Promise.race([held, old]);
+        await db
+          .update(executionCommands)
+          .set({
+            applicationClaimExpiresAt: sql`clock_timestamp() - interval '1 second'`,
+          })
+          .where(eq(executionCommands.id, handle.commandId));
+        expect(await queryPrompt({ db, handle, owners })).toMatchObject({
+          state: "succeeded",
+        });
+        release();
+        expect(await old).toBe("deferred");
+        const [command] = await db
+          .select()
+          .from(executionCommands)
+          .where(eq(executionCommands.id, handle.commandId));
+        const [message] = await db
+          .select()
+          .from(runMessages)
+          .where(eq(runMessages.id, messageId));
+
+        expect(message.content).toBe("2");
+        expect(command).toMatchObject({
+          applicationState: "applied",
+          applicationError: null,
+          applicationAttempts: 0,
+        });
+        expect(command.completionAppliedAt).not.toBeNull();
+      } finally {
+        release();
+        await old;
+        await producer.client.deleteSession(producer.session.hostSessionId);
+      }
+    },
+  );
+
+  it("S2.5: refuses owner application after only a prefix of verified output", async () => {
+    const { db, producer, handle } = await settledOwnerFixture(
+      "owner-output-prefix",
+    );
+    let applied = false;
+    const owners = createPromptOwnerRegistry([
+      definePromptOwnerAdapter("agent_turn", async ({ outcome }) => {
+        if (outcome.state !== "succeeded")
+          throw new Error("fixture requires success");
+        for await (const event of outcome.events) {
+          expect(event).toBeDefined();
+          break;
+        }
+
+        return {
+          apply: async () => {
+            applied = true;
+
+            return "applied";
+          },
+        };
+      }),
+    ]);
+
+    await expect(queryPrompt({ db, handle, owners })).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "prompt_owner_poisoned" },
+    });
+    const [command] = await db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.id, handle.commandId));
+
+    expect(applied).toBe(false);
+    expect(command).toMatchObject({
+      state: "succeeded",
+      applicationState: "poisoned",
+      completionAppliedAt: null,
+    });
+    await producer.client.deleteSession(producer.session.hostSessionId);
+  });
+
+  it("S2.5: renews preparation and releases only its claim on worker shutdown", async () => {
+    const { db, producer, handle } = await settledOwnerFixture("owner-renewal");
+    let preparing = false;
+    const owners = createPromptOwnerRegistry([
+      definePromptOwnerAdapter("agent_turn", async ({ outcome, signal }) => {
+        if (outcome.state !== "succeeded")
+          throw new Error("fixture requires success");
+        for await (const event of outcome.events)
+          expect(event.runId).toBe(producer.runId);
+        preparing = true;
+        await delay(60_000, undefined, { signal });
+        throw new Error("preparation fixture was not aborted");
+      }),
+    ]);
+    const recovering = startPromptOwnerWorker({ db, owners });
+
+    try {
+      await expect.poll(() => preparing, { timeout: 15_000 }).toBe(true);
+      const [claimed] = await db
+        .select()
+        .from(executionCommands)
+        .where(eq(executionCommands.id, handle.commandId));
+      const initialExpiry = claimed.applicationClaimExpiresAt!.getTime();
+
+      await expect
+        .poll(
+          async () => {
+            const [renewed] = await db
+              .select()
+              .from(executionCommands)
+              .where(eq(executionCommands.id, handle.commandId));
+
+            return renewed.applicationClaimExpiresAt!.getTime();
+          },
+          { timeout: 15_000 },
+        )
+        .toBeGreaterThan(initialExpiry);
+    } finally {
+      await recovering.stop();
+    }
+    const [released] = await db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.id, handle.commandId));
+
+    expect(released).toMatchObject({
+      applicationState: "pending",
+      applicationClaimOwner: null,
+      applicationClaimExpiresAt: null,
+      applicationAttempts: 0,
+      completionAppliedAt: null,
+    });
+    expect(recovering.health()).toEqual({ state: "stopped", reason: null });
+    // Preserve the fixture's result but remove it from later worker fixtures.
+    const finisher = createPromptOwnerRegistry([
+      definePromptOwnerAdapter("agent_turn", async ({ outcome }) => {
+        if (outcome.state === "succeeded")
+          for await (const event of outcome.events)
+            expect(event.runId).toBe(producer.runId);
+
+        return { apply: async () => "superseded" };
+      }),
+    ]);
+
+    await expect(
+      queryPrompt({ db, handle, owners: finisher }),
+    ).rejects.toMatchObject({ details: { reason: "prompt_owner_superseded" } });
+    await producer.client.deleteSession(producer.session.hostSessionId);
+  });
+
+  it("S2.5: an unconfirmed shutdown release preserves the claim and reports failure", async () => {
+    const { db, producer, handle } = await settledOwnerFixture(
+      "owner-shutdown-failure",
+    );
+    const pool = new Pool({ connectionString: database.databaseUrl, max: 2 });
+    const workerDb = drizzle(pool, { schema: fullSchema });
+    let preparing = false;
+    const owners = createPromptOwnerRegistry([
+      definePromptOwnerAdapter("agent_turn", async ({ outcome, signal }) => {
+        if (outcome.state !== "succeeded")
+          throw new Error("fixture requires success");
+        for await (const event of outcome.events)
+          expect(event.runId).toBe(producer.runId);
+        preparing = true;
+        await delay(60_000, undefined, { signal });
+        throw new Error("preparation fixture was not aborted");
+      }),
+    ]);
+    const recovering = startPromptOwnerWorker({ db: workerDb, owners });
+
+    try {
+      await expect.poll(() => preparing, { timeout: 15_000 }).toBe(true);
+      await pool.end();
+      await expect(recovering.stop()).rejects.toThrow("pool after calling end");
+      const [retained] = await db
+        .select()
+        .from(executionCommands)
+        .where(eq(executionCommands.id, handle.commandId));
+
+      expect(retained.applicationState).toBe("applying");
+      expect(retained.applicationClaimOwner).not.toBeNull();
+      expect(retained.completionAppliedAt).toBeNull();
+      expect(recovering.health().state).toBe("degraded");
+      await releasePromptOwnerClaim(db, {
+        command: retained,
+        token: retained.applicationClaimOwner!,
+      });
+    } finally {
+      await recovering.stop().catch(() => undefined);
+      if (!pool.ended) await pool.end();
+      await producer.client.deleteSession(producer.session.hostSessionId);
+    }
+  });
+
+  it("S2.5: unavailable output storage keeps owner application retryable without consuming failure attempts", async () => {
+    const { db, producer, handle } = await settledOwnerFixture(
+      "owner-storage-unavailable",
+    );
+    const proxy = createServer((incoming) => incoming.socket.destroy());
+
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+    const address = proxy.address();
+
+    if (!address || typeof address === "string")
+      throw new Error("fixture requires a TCP proxy");
+    const restore = useRealSupervisorUrl(`http://127.0.0.1:${address.port}`);
+    const owners = createPromptOwnerRegistry([
+      definePromptOwnerAdapter("agent_turn", async ({ outcome }) => {
+        if (outcome.state === "succeeded")
+          for await (const event of outcome.events)
+            expect(event.runId).toBe(producer.runId);
+
+        return { apply: async () => "applied" };
+      }),
+    ]);
+
+    try {
+      await expect(queryPrompt({ db, handle, owners })).rejects.toMatchObject({
+        code: "EXECUTOR_UNAVAILABLE",
+      });
+      const [waiting] = await db
+        .select()
+        .from(executionCommands)
+        .where(eq(executionCommands.id, handle.commandId));
+
+      expect(waiting).toMatchObject({
+        state: "succeeded",
+        applicationState: "pending",
+        applicationAttempts: 0,
+        applicationClaimOwner: null,
+        completionAppliedAt: null,
+      });
+    } finally {
+      restore();
+      await new Promise<void>((resolve, reject) =>
+        proxy.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+    expect(await queryPrompt({ db, handle, owners })).toMatchObject({
+      state: "succeeded",
+    });
+    const [completed] = await db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.id, handle.commandId));
+
+    expect(completed.applicationState).toBe("applied");
+    expect(completed.applicationAttempts).toBe(0);
+    await producer.client.deleteSession(producer.session.hostSessionId);
+  });
+
   it.each(["reset", "stalled_body"] as const)(
     "AT-07: %s ACK and blocked receipts past the outbound budget survive a web process restart",
     async (fault) => {

@@ -4043,8 +4043,9 @@ adapters are wired and legacy rows are classified. Migration 0141 adds
 `receipt_evidence`, `terminal_event_id` and `terminal_evidence_sha256`, checks
 receipt identity, and protects recorded evidence and agreed results with a
 trigger. The terminal event FK restricts deletion. The shared reducer currently
-stores normalized legacy receipts; request-bound receipt v2, retirement and
-object additions remain designed. The
+stores normalized legacy receipts and strict request-bound v2 evidence. The
+registered owner engine uses the existing application claim/marker fields;
+production owner activation, retirement and object additions remain designed. The
 [command reducer and recovery windows](system-analytics/execution-prompt-lifecycle.md)
 define transition authority. New prompt rows activate only after every owner
 adapter supports the contract and existing accepted/unknown rows are drained or
@@ -4055,13 +4056,13 @@ explicitly held for repair. They cannot be backfilled from redacted payloads.
 | `execution_commands.request_canonical_json` | `text`, nullable only before activation or for existing non-prompt commands | Immutable exact JCS UTF-8 request; `request_schema = maister.command.request.v2`, SHA-256 must match; private, excluded from DTOs/logs. |
 | `execution_commands.transport_state` | `text`, `not_sent` | CHECK `not_sent|dispatching|acknowledged|unknown|reconciliation_required`; implemented prompt delivery/recovery preserves open execution after unknown admission. |
 | `execution_commands.next_attempt_at` | Existing `timestamptz`, null | Prompt send backoff or receipt-read due/claim CAS token (30-second read claim, then 5-second delay). Terminal agreement clears it; outbound exhaustion does not stop evidence reads. |
-| `execution_commands.receipt_evidence` | `jsonb`, null | Normalized terminal receipt identity/outcome, independent of event order; conflicting replay quarantines without overwrite. Legacy receipt storage is implemented; strict v2 binding is the next increment. |
+| `execution_commands.receipt_evidence` | `jsonb`, null | Normalized terminal receipt identity/outcome, independent of event order; conflicting replay quarantines without overwrite. Legacy and strict request-bound v2 storage are implemented. |
 | `execution_commands.terminal_event_id` | `text`, null | Exact canonical event ID, resolved against the same command/fence/target; event cannot be pruned while referenced. |
 | `execution_commands.terminal_evidence_sha256` | `text`, null | Lowercase 64-hex digest of the agreed versioned terminal identity. |
 | `execution_commands.application_state` | `text`, `pending` | CHECK `pending|applying|applied|superseded|poisoned`; `applied` iff `completion_applied_at` nonnull. Non-prompt rows have no application obligation. |
 | `execution_commands.application_claim_owner` | `text`, null | Unique claim token; populated exactly with lease expiry while applying. |
-| `execution_commands.application_claim_expires_at` | `timestamptz`, null | DB-clock claim deadline, checked with token in every application/failure CAS. |
-| `execution_commands.application_attempts` | `integer`, 0 | Nonnegative; transient failure advances attempts and next retry without changing command terminal evidence. |
+| `execution_commands.application_claim_expires_at` | `timestamptz`, null | DB-clock 30-second owner lease, renewed every 10 seconds during output preparation; application/failure CAS checks the token and unexpired deadline. |
+| `execution_commands.application_attempts` | `integer`, 0 | Nonnegative failure count; transient failure advances attempts and next retry without changing command terminal evidence. Claim/renewal, shutdown and service unavailability do not consume attempts. |
 | `execution_commands.application_next_retry_at` | `timestamptz`, null | Indexed due selection; poison has no automatic retry deadline. |
 | `execution_commands.application_error` | `jsonb`, null | Closed safe reason/phase/cause fields, bounded; no arbitrary provider text. |
 | `execution_commands.retirement_state` | `text`, `retained` | CHECK `retained|eligible|host_confirmed|tombstone`; eligible requires terminal evidence, owner disposition and run/delivery/ACK/grace predicates. |

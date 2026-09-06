@@ -258,7 +258,15 @@ export async function readPromptOutput(input: {
   const transport = defaultTransport();
   const health = await transport.health();
 
-  if (health.kind !== "ready" || health.identity?.hostKey !== host.hostKey)
+  if (health.kind !== "ready")
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "command output host is not ready",
+      {
+        details: { reason: "prompt_output_host_unavailable" },
+      },
+    );
+  if (health.identity?.hostKey !== host.hostKey)
     throw incomplete("host_identity");
   const manifest = parseCommandOutputManifestV2(
     await readObjectJson(transport, reference, signal),

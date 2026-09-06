@@ -29,6 +29,7 @@ import type {
   WorkspaceRecord,
 } from "./contracts";
 import type { SessionBindingDisposition } from "./session-binding";
+import type { PromptOwnerRegistry } from "./prompt-owners";
 import type { PromptHandle } from "./deliverer";
 import type {
   CommandEnvelope,
@@ -214,6 +215,7 @@ export type ExecutionHosts = {
 
 export type ExecutionHostsDeps = {
   db?: Db;
+  owners?: PromptOwnerRegistry;
   transport?: ExecutionHostTransport;
   logger?: Logger;
   now?: () => Date;
@@ -495,6 +497,7 @@ export function createExecutionHosts(
         const result = await waitForPromptCompletion({
           db,
           handle,
+          owners: deps.owners,
           signal: opts?.signal,
           assignmentIsCurrent: async () => {
             const rows = await db

@@ -1,6 +1,6 @@
 # Execution prompt lifecycle
 
-**Status:** Implemented short-lived admission, private v2 request/owner storage and shared canonical-event/receipt reconciliation. Request-bound receipt/event v2 and verified immutable command-output manifests are implemented on the explicit v2 development path. Unknown-admission reconciliation, frozen-request recovery and create/ACP binding fences are implemented. Production owner activation, durable owner application and retirement remain **Designed** (AB-05–07/10).
+**Status:** Implemented short-lived admission, private v2 request/owner storage and shared canonical-event/receipt reconciliation. Request-bound receipt/event v2 and verified immutable command-output manifests are implemented on the explicit v2 development path. Unknown-admission reconciliation, frozen-request recovery, create/ACP binding fences and the registered owner application engine are implemented. Production domain-owner adapters, global activation and retirement remain **Designed** (AB-05–07/10).
 
 
 ## Purpose
@@ -205,6 +205,46 @@ session/ACP binding survive. Prompt-owner state application has its separate
 generation checks in the following contract.
 
 ## Prompt owner and recovery windows (Designed)
+
+### Registered owner application engine (Implemented)
+
+Application modules construct a typed `PromptOwnerRegistry` and pass it to
+`createExecutionHosts` and `startPromptOwnerWorker`. Query/wait and the worker
+use the same application path. The default production registry remains inactive
+until the following domain adapters and their restart scenarios are complete;
+the engine tests do not substitute for that owner matrix.
+
+The worker selects due terminal request-v2 commands from `execution_commands`
+with `FOR UPDATE SKIP LOCKED`. Each free slot commits a unique claim before
+preparation. The 30-second owner lease renews every 10 seconds while output is
+read in bounded pages. No additional workflow or result queue is created.
+Normal due ordering and retry deadlines let other commands make progress.
+
+Preparation verifies the original request-bound response, manifest and entire
+event span. Adapters must exhaust the output iterator; a prefix cannot produce
+an applicable result. Their DB-only callback locks the domain authority in its
+existing order, rechecks its current generation and persists the result and
+any successor readiness. The final command marker compares claim token, source
+digest, terminal digest and unexpired lease in that same five-second bounded
+transaction. A lost marker CAS rolls back all domain writes, including a late
+callback after another worker has already applied the command.
+
+Successful application sets `application_state=applied` and
+`completion_applied_at` together. Explicit supersession retains the historical
+outcome without marking it applied. Transient application failures roll back
+and retry after 1, 2, 4 and 8 seconds; the fifth failure poisons application.
+Invariant failures poison immediately. Host/DB unavailability leaves the owner
+retryable without consuming failure attempts. The canonical command outcome is
+unchanged by every application disposition. A registered live waiter remains
+pending until application succeeds, and surfaces typed poison/supersession
+instead of returning an uncommitted domain result.
+
+Shutdown aborts preparation, drains renewal and DB work, and releases only the
+worker's own claim. Failure to confirm that release makes shutdown fail and
+retains the durable claim for expiry/recovery. Wake signals are advisory;
+restart selects the same durable commands without a process-local result.
+
+### Domain adapters (Designed)
 
 Persist the reference before remote dispatch in the same transaction as the owner admission. Use discriminated subvariants under the existing owner families where possible; widen the checked family only if necessary. Resolve references from authoritative rows. A Flow owner always references existing `node_attempts`, `gate_results` or consensus ledger rows; never create another Flow attempt ledger.
 

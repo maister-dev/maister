@@ -128,6 +128,20 @@ export type {
 } from "./recovery";
 export { commandSignals } from "./signals";
 export {
+  createPromptOwnerRegistry,
+  definePromptOwnerAdapter,
+  PromptOwnerInvariantError,
+} from "./prompt-owners";
+export type {
+  PreparedPromptOwner,
+  PromptOwnerAdapter,
+  PromptOwnerDisposition,
+  PromptOwnerOutcome,
+  PromptOwnerRegistry,
+} from "./prompt-owners";
+export { startPromptOwnerWorker } from "./prompt-owner-recovery";
+export type { PromptOwnerWorker } from "./prompt-owner-recovery";
+export {
   claimRuntimeEventStream,
   consumeRuntimeEventStreamOnce,
   recordConfirmedRuntimeEventAck,

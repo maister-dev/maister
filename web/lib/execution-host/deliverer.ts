@@ -1,5 +1,6 @@
 import type { Db } from "./db";
 import type { SessionBindingDisposition } from "./session-binding";
+import type { PromptOwnerRegistry } from "./prompt-owners";
 import type { ExecutionCommand } from "@/lib/db/schema";
 import type { PromptAccepted, PromptResult } from "@/lib/supervisor-client";
 import type { CommandReceipt } from "./contracts";
@@ -30,6 +31,7 @@ import {
 import { reconcilePromptCommand } from "./prompt-reconciliation";
 import { commandSignals } from "./signals";
 import { staleSessionBinding } from "./session-binding";
+import { applyPromptOwner } from "./prompt-owner-application";
 import {
   depositPromptReceipt,
   quarantinePromptProtocol,
@@ -701,6 +703,7 @@ async function waitForCommandWake(
 export type PromptQueryOptions = {
   db: Db;
   handle: PromptHandle;
+  owners?: PromptOwnerRegistry;
   signal?: AbortSignal;
   lookupReceipt?: (commandId: string) => Promise<CommandReceipt | null>;
   now?: () => Date;
@@ -734,6 +737,50 @@ export async function queryPrompt(
   if (evidence.disposition === "quarantined")
     throw promptEvidenceConflict(input.handle.commandId);
   if (evidence.disposition === "settled") {
+    if (
+      input.owners &&
+      evidence.command.ownerKind &&
+      input.owners.has(evidence.command.ownerKind)
+    ) {
+      await applyPromptOwner({
+        db: input.db,
+        owners: input.owners,
+        commandId: input.handle.commandId,
+        signal: input.signal ?? new AbortController().signal,
+      });
+      const application = await getCommand(input.db, input.handle.commandId);
+
+      if (!application)
+        throw new MaisterError(
+          "PRECONDITION",
+          "prompt command disappeared during owner application",
+        );
+      if (
+        application.applicationState === "poisoned" ||
+        application.applicationState === "superseded"
+      )
+        throw new MaisterError(
+          "CONFLICT",
+          "prompt owner cannot apply this command",
+          {
+            details: {
+              reason:
+                application.applicationState === "poisoned"
+                  ? "prompt_owner_poisoned"
+                  : "prompt_owner_superseded",
+              commandId: application.id,
+            },
+          },
+        );
+      if (application.applicationState !== "applied")
+        return {
+          commandId: application.id,
+          state: "pending",
+          transportState: application.transportState,
+          nextReconcileAt:
+            application.applicationNextRetryAt?.toISOString() ?? null,
+        };
+    }
     if (evidence.command.state === "succeeded")
       return {
         commandId: input.handle.commandId,
