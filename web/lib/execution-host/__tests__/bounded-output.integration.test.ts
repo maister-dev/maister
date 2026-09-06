@@ -33,6 +33,8 @@ import {
 import { startPromptOwnerWorker } from "../prompt-owner-recovery";
 import { readPromptOutput } from "../prompt-output";
 import { rearmPromptAdmission } from "../commands";
+import { applyCreateAck } from "../create-ack";
+import { canonicalLifecycleProjector } from "../events/lifecycle-projector";
 import { recoverExecutionCommands } from "../recovery";
 import {
   stopRuntimeEventConsumers,
@@ -45,8 +47,10 @@ import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import {
   executionEvents,
+  executionEventConsumers,
   executionCommands,
   runSessionIncarnations,
+  runSessions,
   runs,
   executionRuntimeObjects,
   runMessages,
@@ -86,7 +90,7 @@ let worker: ProjectionWorker;
 let project: Awaited<ReturnType<typeof seedProjectRow>>;
 let restoreUrl: () => void = () => {};
 
-async function createSession(name: string) {
+async function createRunClient(name: string) {
   const runId = await seedRun(database.db, {
     projectId: project.id,
     status: "Running",
@@ -105,6 +109,12 @@ async function createSession(name: string) {
     parentRepoPath: project.repoPath,
   });
   const client = await hosts.forRun(runId, { reason: "launch" });
+
+  return { runId, client };
+}
+
+async function createSession(name: string) {
+  const { runId, client } = await createRunClient(name);
   const session = await client.createSession({
     stepId: "output",
     executor: { agent: "claude", model: "mock" },
@@ -287,6 +297,190 @@ function startPromptRecoveryProcess(
 }
 
 describe("AT-01 bounded output on the production supervisor", () => {
+  it("failed-create-lifecycle: an initial refused resume records only a binding-free logical session", async () => {
+    const producer = await createRunClient("failed-initial-create");
+
+    await expect(
+      producer.client.createSession({
+        stepId: "output",
+        executor: { agent: "claude", model: "mock" },
+        resumeSessionId: "uninitialized-resume-handle",
+      }),
+    ).rejects.toMatchObject({ code: "CHECKPOINT" });
+    await expect
+      .poll(
+        async () => {
+          const [incarnation] = await database.db
+            .select()
+            .from(runSessionIncarnations)
+            .where(eq(runSessionIncarnations.runId, producer.runId));
+
+          return incarnation?.state;
+        },
+        { timeout: 5_000 },
+      )
+      .toBe("exited");
+    const [logical] = await database.db
+      .select()
+      .from(runSessions)
+      .where(eq(runSessions.runId, producer.runId));
+
+    expect(logical).toMatchObject({
+      sessionName: "default",
+      acpSessionId: null,
+      hostSessionId: null,
+      executionAssignmentId: null,
+    });
+  }, 20_000);
+
+  it("failed-create-lifecycle: a refused resume cannot poison the next native incarnation", async () => {
+    const producer = await createSession("failed-create-lifecycle");
+
+    await producer.client.deleteSession(producer.session.sessionId);
+    await expect
+      .poll(
+        async () => {
+          const [incarnation] = await database.db
+            .select()
+            .from(runSessionIncarnations)
+            .where(
+              eq(
+                runSessionIncarnations.hostSessionId,
+                producer.session.sessionId,
+              ),
+            );
+
+          return incarnation?.state;
+        },
+        { timeout: 5_000 },
+      )
+      .toBe("exited");
+    await expect(
+      producer.client.createSession({
+        stepId: "output",
+        executor: { agent: "claude", model: "mock" },
+        resumeSessionId: producer.session.acpSessionId!,
+      }),
+    ).rejects.toMatchObject({ code: "CHECKPOINT" });
+    const next = await producer.client.createSession({
+      stepId: "output",
+      executor: { agent: "claude", model: "mock" },
+    });
+
+    try {
+      await expect
+        .poll(
+          async () => {
+            const [incarnation] = await database.db
+              .select()
+              .from(runSessionIncarnations)
+              .where(eq(runSessionIncarnations.hostSessionId, next.sessionId));
+
+            return incarnation?.state;
+          },
+          { timeout: 5_000 },
+        )
+        .toBe("active");
+      const incarnations = await database.db
+        .select()
+        .from(runSessionIncarnations)
+        .where(eq(runSessionIncarnations.runId, producer.runId));
+
+      expect(incarnations).toHaveLength(3);
+      const failed = incarnations.find(
+        (incarnation) =>
+          incarnation.hostSessionId !== producer.session.sessionId &&
+          incarnation.hostSessionId !== next.sessionId,
+      );
+
+      expect(failed).toMatchObject({
+        state: "exited",
+        acpSessionId: null,
+        activatedAt: null,
+        endedAt: expect.any(Date),
+        terminalReason: {
+          createdByCommandId: expect.any(String),
+          sessionName: "default",
+          acpSessionId: null,
+        },
+      });
+      const [failedCreate] = await database.db
+        .select()
+        .from(executionCommands)
+        .where(
+          eq(
+            executionCommands.id,
+            failed!.terminalReason!.createdByCommandId as string,
+          ),
+        );
+
+      expect(failedCreate).toMatchObject({
+        runId: producer.runId,
+        kind: "session.create",
+        state: "failed",
+        payload: { sessionName: "default" },
+      });
+      const terminalEvents = await database.db
+        .select()
+        .from(executionEvents)
+        .where(eq(executionEvents.runSessionIncarnationId, failed!.id));
+
+      expect(
+        terminalEvents.some((event) => event.eventType === "session.exited"),
+      ).toBe(true);
+      const terminal = terminalEvents.find(
+        (event) => event.eventType === "session.exited",
+      )!;
+
+      for (const payload of [
+        { ...terminal.payload, createdByCommandId: null },
+        { ...terminal.payload, createdByCommandId: randomUUID() },
+        { ...terminal.payload, sessionName: "another-logical-session" },
+      ]) {
+        await expect(
+          database.db.transaction((tx) =>
+            canonicalLifecycleProjector.project(tx as unknown as Db, {
+              ...terminal,
+              hostSessionId: randomUUID(),
+              payload,
+            }),
+          ),
+        ).rejects.toMatchObject({ permanent: true });
+      }
+      expect(
+        await applyCreateAck(database.db as unknown as Db, {
+          runId: producer.runId,
+          sessionName: "default",
+          assignmentId: failedCreate.executionAssignmentId,
+          nodeAttemptId: null,
+          result: {
+            sessionId: failed!.hostSessionId,
+            acpSessionId: "late-dead-handle",
+          },
+        }),
+      ).toBe("stale");
+      const [current] = await database.db
+        .select()
+        .from(runSessions)
+        .where(eq(runSessions.runId, producer.runId));
+
+      expect(current).toMatchObject({
+        hostSessionId: next.sessionId,
+        acpSessionId: next.acpSessionId,
+      });
+      const consumers = await database.db
+        .select()
+        .from(executionEventConsumers)
+        .where(eq(executionEventConsumers.runId, producer.runId));
+
+      expect(consumers.every((consumer) => consumer.state !== "poisoned")).toBe(
+        true,
+      );
+    } finally {
+      await producer.client.deleteSession(next.sessionId);
+    }
+  }, 20_000);
+
   it("S2.5: query applies verified owner output and its marker exactly once", async () => {
     const producer = await createSession("owner-application");
     const db = database.db as unknown as Db;

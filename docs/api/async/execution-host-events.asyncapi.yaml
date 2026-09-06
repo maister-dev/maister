@@ -198,6 +198,15 @@ components:
           properties:
             sourceCommandId: { type: string, format: uuid }
             contentRef: { $ref: "#/components/schemas/SessionContentReference" }
+            createdByCommandId:
+              type: string
+              description: Host-derived session.create command on terminal events; qualifies historical incarnation creation after failed ACP initialization.
+            sessionName:
+              type: string
+              description: Host-derived logical session name; must match the creator command.
+            acpSessionId:
+              type: [string, 'null']
+              description: Terminal resume handle; null when ACP initialization never completed.
             stdoutSegment: { $ref: "#/components/schemas/StdoutSegmentMetadata" }
           additionalProperties: true
           description: Open JSON only after a known eventType/payloadSchema validator and deterministic redactor accepts it.

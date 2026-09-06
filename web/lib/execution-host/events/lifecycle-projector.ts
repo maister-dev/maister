@@ -21,10 +21,13 @@ import {
 } from "./projector";
 
 import {
+  executionCommands,
   executionEvents,
   runSessionIncarnations,
+  runSessions,
   runs,
   type ExecutionEvent,
+  type RunSessionIncarnation,
 } from "@/lib/db/schema";
 
 export const canonicalLifecycleProjector: ExecutionEventProjector = {
@@ -63,7 +66,7 @@ function sessionName(payload: Record<string, unknown> | null): string {
   const value = payload?.sessionName;
 
   if (typeof value !== "string" || value.length === 0) {
-    throw permanent("session.created event is missing sessionName");
+    throw permanent("session lifecycle event is missing sessionName");
   }
 
   return value;
@@ -162,6 +165,103 @@ async function projectCreated(tx: Db, event: ExecutionEvent): Promise<void> {
   await bindEventToIncarnation(tx, event, created.id);
 }
 
+/** A process can exit before ACP initialization publishes session.created.
+ * Preserve that incarnation using the exact creator command without granting
+ * it authority over the current logical session binding.
+ */
+async function recordUninitializedTerminal(
+  tx: Db,
+  event: ExecutionEvent,
+): Promise<RunSessionIncarnation> {
+  const creatorId = event.payload?.createdByCommandId;
+
+  if (
+    !event.executionHostId ||
+    !event.executionAssignmentId ||
+    !event.hostSessionId ||
+    event.assignmentEpoch === null ||
+    typeof creatorId !== "string" ||
+    creatorId.length === 0
+  ) {
+    throw permanent("terminal session event has no matching creator identity");
+  }
+  const name = sessionName(event.payload);
+  const [creator] = await tx
+    .select({ payload: executionCommands.payload })
+    .from(executionCommands)
+    .where(
+      and(
+        eq(executionCommands.id, creatorId),
+        eq(executionCommands.kind, "session.create"),
+        eq(executionCommands.runId, event.runId),
+        eq(executionCommands.executionHostId, event.executionHostId),
+        eq(
+          executionCommands.executionAssignmentId,
+          event.executionAssignmentId,
+        ),
+        eq(executionCommands.assignmentEpoch, event.assignmentEpoch),
+      ),
+    )
+    .limit(1);
+
+  if (!creator || creator.payload.sessionName !== name) {
+    throw permanent(
+      "terminal session creator does not match its run/session fence",
+    );
+  }
+  if (event.payload?.reason === "checkpoint") {
+    throw permanent(
+      "checkpoint terminal event requires an initialized incarnation",
+    );
+  }
+  const acpSessionId = event.payload?.acpSessionId;
+
+  if (acpSessionId !== null && typeof acpSessionId !== "string") {
+    throw permanent(
+      "terminal session creator evidence is missing its ACP handle field",
+    );
+  }
+  const existingSession = await lockLogicalRunSession(tx, {
+    runId: event.runId,
+    sessionName: name,
+  });
+  const sessionId = existingSession?.id ?? randomUUID();
+
+  if (!existingSession) {
+    await tx.insert(runSessions).values({
+      id: sessionId,
+      runId: event.runId,
+      sessionName: name,
+      createdAt: event.occurredAt,
+      updatedAt: event.occurredAt,
+    });
+  }
+  const [incarnation] = await tx
+    .insert(runSessionIncarnations)
+    .values({
+      id: randomUUID(),
+      runSessionId: sessionId,
+      runId: event.runId,
+      executionAssignmentId: event.executionAssignmentId,
+      assignmentEpoch: event.assignmentEpoch,
+      executionHostId: event.executionHostId,
+      hostSessionId: event.hostSessionId,
+      hostBootId: event.hostBootId,
+      acpSessionId,
+      state: event.eventType === "session.crashed" ? "crashed" : "exited",
+      origin: "native",
+      createdAt: event.occurredAt,
+      endedAt: event.occurredAt,
+      terminalReason: event.payload,
+    })
+    .returning();
+
+  if (!incarnation)
+    throw permanent("terminal incarnation insert did not return a row");
+
+  return incarnation;
+}
+
 async function projectTerminal(tx: Db, event: ExecutionEvent): Promise<void> {
   if (!event.executionHostId || !event.hostSessionId) {
     throw permanent("terminal session event is missing host session identity");
@@ -177,9 +277,9 @@ async function projectTerminal(tx: Db, event: ExecutionEvent): Promise<void> {
     )
     .for("update")
     .limit(1);
-  const incarnation = rows[0];
+  const incarnation = rows[0] ?? (await recordUninitializedTerminal(tx, event));
 
-  if (!incarnation || incarnation.runId !== event.runId) {
+  if (incarnation.runId !== event.runId) {
     throw permanent("terminal session event has no matching incarnation");
   }
   const checkpointed =

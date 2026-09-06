@@ -47,6 +47,13 @@ function sessionEventPayload(
     sessionName: record.sessionName,
     ...(record.nodeAttemptId ? { nodeAttemptId: record.nodeAttemptId } : {}),
     ...payload,
+    ...(event.type === "session.exited" || event.type === "session.crashed"
+      ? {
+          createdByCommandId: record.createdByCommandId,
+          sessionName: record.sessionName,
+          acpSessionId: record.acpSessionId ?? null,
+        }
+      : {}),
   } as Record<string, unknown>;
 }
 
