@@ -30,8 +30,14 @@ import type {
 } from "@/lib/supervisor-client";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { PlatformStatus } from "@/types/platform-status";
+import type {
+  ImmutableObjectReference,
+  CommandTerminalEvidenceV2,
+} from "../../runtime/command-evidence";
 
 import { createHash, randomUUID } from "node:crypto";
+
+import { canonicalCommandJson } from "../../runtime/command-json";
 
 import {
   isMaisterError,
@@ -46,6 +52,8 @@ import {
   type HostAdminClient,
 } from "@/lib/execution-host/client";
 import { UNKNOWN_OUTCOME_DETAIL } from "@/lib/execution-host/contracts";
+import { normalizeCommandReceiptV2 } from "@/lib/execution-host/command-receipt";
+import { storePromptRequest } from "@/lib/execution-host/command-request";
 import { buildEnvelope } from "@/lib/execution-host/ledger";
 import {
   primeResolverForTests,
@@ -74,6 +82,16 @@ import {
 // The production transport has no synchronous prompt operation after B4. This
 // fake-only helper remains so older scripted-turn tests can model a terminal
 // ACP turn without exposing that wire capability to domain code.
+type FakeCanonicalEvent =
+  | SupervisorEvent
+  | {
+      type: "session.created";
+      sessionId: string;
+      monotonicId: number;
+      sessionName: string;
+      acpSessionId: string;
+    };
+
 export type FakeTransport = ExecutionHostTransport & {
   sendPrompt(
     sessionId: string,
@@ -168,11 +186,13 @@ export type FakeExecutionHost = {
     sink: (input: {
       envelope: CommandEnvelope<unknown>;
       sessionId: string;
-      event: SupervisorEvent;
+      event: FakeCanonicalEvent;
       eventId: string;
     }) => Promise<void>,
   ): void;
   waitForCanonicalEvents(): Promise<void>;
+  publishPromptReceipt(receipt: CommandReceipt): void;
+  sealPromptJson(runId: string, value: unknown): ImmutableObjectReference;
   writeRuntimeOutput(objectId: string, bytes: Uint8Array): void;
   // A host restart: new bootId, every live session is gone (the registry is
   // empty), fences + receipts + handles survive, an in-flight turn is lost
@@ -399,6 +419,7 @@ export function createFakeExecutionHost(
   const sessions = new Map<string, FakeSession>();
   const workspaces = new Map<string, WorkspaceRecord & { path: string }>();
   const receipts = new Map<string, CommandReceipt>();
+  const publishedPromptReceipts = new Map<string, CommandReceipt>();
   const runtimeObjects = new Map<
     string,
     { metadata: RuntimeObjectMetadata; bytes: Uint8Array | null; runId: string }
@@ -433,7 +454,7 @@ export function createFakeExecutionHost(
     | ((input: {
         envelope: CommandEnvelope<unknown>;
         sessionId: string;
-        event: SupervisorEvent;
+        event: FakeCanonicalEvent;
         eventId: string;
       }) => Promise<void>)
     | null = null;
@@ -447,7 +468,7 @@ export function createFakeExecutionHost(
   const publishCanonical = (
     envelope: CommandEnvelope<unknown>,
     sessionId: string,
-    event: SupervisorEvent,
+    event: FakeCanonicalEvent,
   ): Promise<void> => {
     if (!canonicalEventSink) return Promise.resolve();
 
@@ -957,7 +978,27 @@ export function createFakeExecutionHost(
     async getCommandReceipt(commandId) {
       await record("getCommandReceipt", null, [commandId]);
       loseAdminResponse("getCommandReceipt");
+      const published = publishedPromptReceipts.get(commandId);
+
+      if (published) return published;
       const stored = receipts.get(commandId);
+
+      // A canonical terminal receipt is visible only with its event pointer.
+      // The scripted ACP result may finish before the queued event publication.
+      if (
+        canonicalEventSink &&
+        stored?.kind === "session.prompt" &&
+        stored.phase !== "accepted" &&
+        stored.eventId === null
+      )
+        return {
+          ...stored,
+          phase: "accepted",
+          body: {},
+          httpStatus: 202,
+          completedAt: null,
+          inflight: true,
+        };
 
       return stored
         ? { ...stored, inflight: stored.inflight || inflight.has(commandId) }
@@ -1374,6 +1415,13 @@ export function createFakeExecutionHost(
           };
 
           sessions.set(session.sessionId, session);
+          await publishCanonical(envelope, session.sessionId, {
+            type: "session.created",
+            sessionId: session.sessionId,
+            monotonicId: ++monotonicId,
+            sessionName: session.sessionName ?? "default",
+            acpSessionId: session.acpSessionId,
+          });
 
           return {
             status: 201,
@@ -1808,6 +1856,40 @@ export function createFakeExecutionHost(
         }
       }
     },
+    publishPromptReceipt(receipt) {
+      publishedPromptReceipts.set(receipt.commandId, receipt);
+    },
+    sealPromptJson(runId, value) {
+      const bytes = Uint8Array.from(
+        Buffer.from(canonicalCommandJson(value), "utf8"),
+      );
+      const reference = {
+        objectId: randomUUID(),
+        generation: 1,
+        sizeBytes: bytes.byteLength,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      };
+      const now = new Date().toISOString();
+
+      runtimeObjects.set(reference.objectId, {
+        runId,
+        bytes,
+        metadata: {
+          ...reference,
+          kind: "diagnostic",
+          logicalName: "command-output.json",
+          mimeType: "application/json",
+          retentionClass: "run",
+          state: "available",
+          createdAt: now,
+          sealedAt: now,
+          expiresAt: null,
+          deletedAt: null,
+        },
+      });
+
+      return reference;
+    },
     writeRuntimeOutput(objectId, bytes) {
       runtimeOutputWrites.set(objectId, Uint8Array.from(bytes));
     },
@@ -2010,6 +2092,11 @@ export async function fakeExecutionHosts(
     ]),
   );
 
+  const acceptedPrompts = new Map<
+    string,
+    { sequence: string; receivedAt: string }
+  >();
+
   fake.setCanonicalEventSink(
     async ({ envelope, sessionId, event, eventId }) => {
       if (canonicalStreamState.bootId !== fake.identity.bootId) {
@@ -2018,7 +2105,7 @@ export async function fakeExecutionHosts(
         canonicalStreamState.nextSequence = 0n;
       }
       const eventType = event.type;
-      const payloadSchema = payloadSchemas.get(eventType);
+      let payloadSchema = payloadSchemas.get(eventType);
 
       if (!payloadSchema) {
         throw new Error(
@@ -2030,13 +2117,131 @@ export async function fakeExecutionHosts(
           ([key]) => !["type", "sessionId", "monotonicId"].includes(key),
         ),
       );
-      const payload = redactRuntimeEventPayload({
-        sourceMonotonicId: event.monotonicId,
-        ...eventPayload,
-      });
+      const session = fake.sessions.get(sessionId);
+      const wireV2 = envelope.requestVersion === 2;
+      let payload: Record<string, unknown> = wireV2
+        ? {
+            sourceMonotonicId: event.monotonicId,
+            sourceCommandId: envelope.command.id,
+            sessionName: session?.sessionName ?? "default",
+            ...(session?.nodeAttemptId
+              ? { nodeAttemptId: session.nodeAttemptId }
+              : {}),
+            ...eventPayload,
+          }
+        : redactRuntimeEventPayload({
+            sourceMonotonicId: event.monotonicId,
+            ...eventPayload,
+          });
       const currentSequence = canonicalStreamState.nextSequence;
 
       canonicalStreamState.nextSequence += 1n;
+      if (wireV2 && event.type === "session.command") {
+        const request = storePromptRequest({
+          envelope: envelope as CommandEnvelope<SendPromptInput>,
+          targetSessionId: sessionId,
+        });
+        const position = {
+          eventId,
+          streamId: canonicalStreamState.streamId,
+          sequence: currentSequence.toString(),
+        };
+
+        if (event.phase === "accepted")
+          acceptedPrompts.set(envelope.command.id, {
+            sequence: position.sequence,
+            receivedAt: new Date().toISOString(),
+          });
+        const accepted = acceptedPrompts.get(envelope.command.id);
+
+        if (!accepted) throw new Error("fake prompt has no accepted event");
+        let terminal: CommandTerminalEvidenceV2 | null = null;
+
+        if (event.phase === "completed") {
+          let result: Record<string, unknown> | null = event.result ?? null;
+
+          if (event.status === "succeeded" && result) {
+            const response = fake.sealPromptJson(envelope.fence.runId, {
+              schema: "maister.command-response.v2",
+              commandId: envelope.command.id,
+              hostSessionId: sessionId,
+              requestSha256: request.requestSha256,
+              response: result,
+            });
+            const manifest = {
+              schema: "maister.command-output.v2",
+              commandId: envelope.command.id,
+              ...envelope.fence,
+              hostSessionId: sessionId,
+              requestSha256: request.requestSha256,
+              streamId: position.streamId,
+              acceptedSequence: accepted.sequence,
+              terminalSequence: position.sequence,
+              response,
+            };
+            const output = fake.sealPromptJson(envelope.fence.runId, manifest);
+
+            result = {
+              stopReason: result.stopReason,
+              ...(result.runtimeObjects
+                ? { runtimeObjects: result.runtimeObjects }
+                : {}),
+              output: {
+                ...output,
+                commandId: envelope.command.id,
+                hostSessionId: sessionId,
+                acceptedSequence: accepted.sequence,
+                terminalSequence: position.sequence,
+              },
+            };
+          }
+          terminal = {
+            outcomeVersion: 2,
+            status: event.status ?? "failed",
+            ...position,
+            result,
+            error: event.error ?? null,
+          };
+        }
+        payloadSchema = "maister.session.command.v2";
+        payload = {
+          sourceMonotonicId: event.monotonicId,
+          sessionName: session?.sessionName ?? "default",
+          ...(session?.nodeAttemptId
+            ? { nodeAttemptId: session.nodeAttemptId }
+            : {}),
+          commandId: envelope.command.id,
+          kind: "session.prompt",
+          phase: event.phase,
+          sourceCommandId: envelope.command.id,
+          requestSchema: request.requestSchema,
+          requestSha256: request.requestSha256,
+          terminal,
+        };
+        fake.publishPromptReceipt(
+          normalizeCommandReceiptV2({
+            receiptVersion: 2,
+            commandId: envelope.command.id,
+            kind: "session.prompt",
+            ...envelope.fence,
+            hostSessionId: sessionId,
+            requestSchema: request.requestSchema,
+            requestSha256: request.requestSha256,
+            phase: !terminal
+              ? "accepted"
+              : terminal.status === "succeeded"
+                ? "completed"
+                : "rejected",
+            httpStatus: !terminal
+              ? 202
+              : terminal.status === "succeeded"
+                ? 200
+                : 409,
+            receivedAt: accepted.receivedAt,
+            terminal,
+          }),
+        );
+      }
       await ingestRuntimeEvent({
         db,
         executionHostId: hostId,

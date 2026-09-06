@@ -143,23 +143,33 @@ class LifecycleAgent {
       const glyph = spec.multibyte ? "é" : "x";
       const text =
         glyph.repeat(Math.floor(spec.bytes / Buffer.byteLength(glyph))) +
-        "x".repeat(spec.bytes % Buffer.byteLength(glyph));
-      await this.connection.sessionUpdate({
-        sessionId: params.sessionId,
-        update: spec.tool
-          ? {
-              sessionUpdate: "tool_call",
-              toolCallId: "large-tool",
-              title: "fixture output",
-              kind: "read",
-              status: "completed",
-              content: [{ type: "content", content: { type: "text", text } }],
-            }
-          : {
-              sessionUpdate: "agent_message_chunk",
-              content: { type: "text", text },
-            },
-      });
+        "x".repeat(spec.bytes % Buffer.byteLength(glyph)) +
+        (spec.text ?? "");
+      const chunks =
+        spec.chunkSize && !spec.tool
+          ? Array.from(
+              { length: Math.ceil(text.length / spec.chunkSize) },
+              (_, index) => text.slice(index * spec.chunkSize, (index + 1) * spec.chunkSize),
+            )
+          : [text];
+      for (const chunk of chunks) {
+        await this.connection.sessionUpdate({
+          sessionId: params.sessionId,
+          update: spec.tool
+            ? {
+                sessionUpdate: "tool_call",
+                toolCallId: "large-tool",
+                title: "fixture output",
+                kind: "read",
+                status: "completed",
+                content: [{ type: "content", content: { type: "text", text: chunk } }],
+              }
+            : {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: chunk },
+              },
+        });
+      }
       return { stopReason: "end_turn", ...(spec.responseMeta ? { _meta: spec.responseMeta } : {}) };
     }
     for (const output of outputWrites) {

@@ -13,6 +13,14 @@ import { eq, and, isNull, isNotNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { renderStrict } from "./templating";
+import {
+  admitGatePrompt,
+  FlowPromptContinuationPending,
+  gatePromptOperationKey,
+  waitForGateApplication,
+  waitForPromptIncarnation,
+  type GatePromptOwner,
+} from "./graph/prompt-owner";
 
 import { normalizeCapabilityTokens } from "@/lib/capabilities/token-normalizer";
 import { appendCapped } from "@/lib/flows/capped-text";
@@ -24,6 +32,7 @@ import {
 import { getDb } from "@/lib/db/client";
 import {
   executionAssignments,
+  executionCommands,
   hitlRequests,
   nodeAttempts,
   runs,
@@ -49,6 +58,7 @@ import {
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { escalateHookTrip } from "@/lib/runs/hook-trip";
 import { haltRuleFromEvent } from "@/lib/runs/hook-trip-rule";
+import { staleSessionBinding } from "@/lib/execution-host/session-binding";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 const log = pino({
@@ -78,6 +88,7 @@ export type RunAgentStepCtx = {
   runId: string;
   stepId: string;
   nodeAttemptId?: string;
+  gatePromptOwner?: GatePromptOwner;
   worktreePath: string;
   // ADR-166: the caller's once-per-driver-generation binding, resolved lazily
   // at the first agent dispatch (so a mocked step never binds and a failed
@@ -811,6 +822,50 @@ const RESUME_READONLY_LIFT =
   "Note: any earlier read-only review-chat instructions no longer apply — " +
   "this is a rework turn and workspace edits are expected.\n\n";
 
+async function reattachGatePrompt(
+  ctx: RunAgentStepCtx,
+  owner: GatePromptOwner,
+  execution?: AgentExecution,
+): Promise<StepResult | null> {
+  const db = ctx.db ?? getDb();
+  const [existing] = await db
+    .select()
+    .from(executionCommands)
+    .where(
+      and(
+        eq(executionCommands.runId, ctx.runId),
+        eq(executionCommands.kind, "session.prompt"),
+        eq(
+          executionCommands.logicalOperationKey,
+          gatePromptOperationKey(owner),
+        ),
+      ),
+    )
+    .limit(1);
+
+  if (!existing) return null;
+  const bound =
+    execution ??
+    (ctx.bindExecution
+      ? await ctx.bindExecution()
+      : await bindExecution(createExecutionHosts({ db }), ctx.runId));
+
+  if (existing.executionAssignmentId !== bound.client.assignment.id)
+    throw staleSessionBinding(ctx.runId, existing.executionAssignmentId);
+  await waitForGateApplication(db, bound.client, existing.id);
+  log.info(
+    {
+      runId: ctx.runId,
+      nodeAttemptId: owner.nodeAttemptId,
+      evaluationId: owner.evaluationId,
+      commandId: existing.id,
+    },
+    "gate-prompt-reattached",
+  );
+
+  return { ok: true, stdout: "", vars: {}, durationMs: 0 };
+}
+
 export async function runAgentStep(
   step: AgentStepLike,
   ctx: RunAgentStepCtx,
@@ -821,6 +876,16 @@ export async function runAgentStep(
     sessionFallback?: boolean;
   }
 > {
+  // Existing immutable requests do not depend on today's template or context.
+  if (ctx.gatePromptOwner) {
+    const completed = await reattachGatePrompt(
+      ctx,
+      ctx.gatePromptOwner,
+      execution,
+    );
+
+    if (completed) return completed;
+  }
   let promptTemplate = step.prompt;
 
   // M34 (ADR-089): a catalog-agent binding substitutes the inline prompt —
@@ -901,7 +966,7 @@ export async function runAgentStep(
   // Capture the resolved prompt for this attempt before dispatch so it stays
   // visible even if the step later crashes or stalls. Best-effort: audit data,
   // a failed write must never block dispatch.
-  if (ctx.nodeAttemptId) {
+  if (ctx.nodeAttemptId && !ctx.gatePromptOwner) {
     try {
       // Write-once per attempt: a NeedsInput resume can re-enter the node with
       // the same nodeAttemptId; preserve the first dispatch's prompt instead of
@@ -970,6 +1035,7 @@ async function runNewSession(
   let consumer: EventConsumer | null = null;
   let sessionFallback = false;
   let fenced = false;
+  let continuationPending = false;
 
   try {
     const capabilityBundle =
@@ -1042,15 +1108,44 @@ async function runNewSession(
     let promptResult: PromptResult;
 
     try {
-      const handle = await client.prompt(session.hostSessionId, {
-        stepId: ctx.stepId,
-        nodeAttemptId: ctx.nodeAttemptId,
-        prompt: resolvedPrompt,
-      });
+      const hostSessionId = session.hostSessionId;
+      const gateOwner = ctx.gatePromptOwner;
+
+      if (gateOwner)
+        await waitForPromptIncarnation(
+          ctx.db ?? getDb(),
+          client,
+          hostSessionId,
+        );
+      const handle = await client.prompt(
+        hostSessionId,
+        {
+          stepId: ctx.stepId,
+          nodeAttemptId: ctx.nodeAttemptId,
+          prompt: resolvedPrompt,
+        },
+        gateOwner
+          ? {
+              admitOwner: (tx) =>
+                admitGatePrompt(tx, client, hostSessionId, gateOwner),
+            }
+          : undefined,
+      );
 
       try {
-        promptResult = await client.waitForPrompt(handle);
+        if (gateOwner) {
+          await waitForGateApplication(
+            ctx.db ?? getDb(),
+            client,
+            handle.commandId,
+          );
+          // The gate caller reads the applied verdict, including host failure.
+          promptResult = { stopReason: "end_turn", meta: null };
+        } else {
+          promptResult = await client.waitForPrompt(handle);
+        }
       } catch (err) {
+        if (err instanceof FlowPromptContinuationPending) throw err;
         // A checkpoint (keep-alive sweep, budget park, node interrupt) tears
         // the adapter down mid-turn; the host then answers the in-flight turn
         // with a failure ("ACP connection closed") that is NOT the step's — the
@@ -1227,6 +1322,10 @@ async function runNewSession(
       sessionFallback,
     };
   } catch (err) {
+    if (err instanceof FlowPromptContinuationPending) {
+      continuationPending = true;
+      throw err;
+    }
     // ADR-166 E-EH-11 (driver yield rule): `assignment_fenced` means a newer
     // driver generation owns this run — this incarnation must write no run,
     // ledger, HITL, or scratch state, and must not even tear the session down
@@ -1257,7 +1356,7 @@ async function runNewSession(
     }
     throw err;
   } finally {
-    if (session && !fenced) {
+    if (session && !fenced && !continuationPending) {
       await client
         .deleteSession(session.hostSessionId)
         .catch((err) =>

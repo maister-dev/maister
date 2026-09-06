@@ -62,6 +62,7 @@ import {
   type BrainAmbientEntry,
 } from "./run-context";
 import { runNodeGates } from "./gates-exec";
+import { FlowPromptContinuationPending } from "./prompt-owner";
 import { validateNodeStructuredOutput } from "./node-output";
 import {
   appendNodeAttempt,
@@ -4910,6 +4911,14 @@ export async function runGraph(
       );
     }
   } catch (err) {
+    if (err instanceof FlowPromptContinuationPending || isFencedError(err)) {
+      log2.warn(
+        isMaisterError(err) ? { code: err.code, details: err.details } : {},
+        "driver-yielded awaiting durable prompt continuation",
+      );
+
+      return;
+    }
     const e = isMaisterError(err)
       ? err
       : new MaisterError("CRASH", asError(err).message, {

@@ -244,7 +244,24 @@ worker's own claim. Failure to confirm that release makes shutdown fail and
 retains the durable claim for expiry/recovery. Wake signals are advisory;
 restart selects the same durable commands without a process-local result.
 
-### Domain adapters (Designed)
+### Flow gate adapter (Implemented)
+
+Skill and AI gate dispatch persist an evaluation-specific owner with the exact
+node attempt, assignment and session incarnation. The caller and owner worker
+decode the complete verified command output through the same gate adapter;
+the existing gate transition and command application marker commit together.
+The stored evidence preview is bounded independently of verdict extraction.
+Re-entry consumes the same evaluation and command before rendering a new
+prompt. A superseding assignment cannot reuse the old result as its own.
+
+A failed application leaves the evaluation running and preserves the host
+session. The Flow driver yields with `flow_prompt_continuation_pending`; it
+does not convert an unavailable result into a failed check. The generic worker
+can recover the gate application after process death. Autonomous resumption of
+the parent graph and its action/cursor is still pending in S2.6, so gate
+application alone does not establish complete Flow restart recovery.
+
+### Remaining domain adapters (Designed)
 
 Persist the reference before remote dispatch in the same transaction as the owner admission. Use discriminated subvariants under the existing owner families where possible; widen the checked family only if necessary. Resolve references from authoritative rows. A Flow owner always references existing `node_attempts`, `gate_results` or consensus ledger rows; never create another Flow attempt ledger.
 

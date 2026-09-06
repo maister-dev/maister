@@ -39,16 +39,23 @@ import {
   isEffectivelyBlockingGate,
   isPolicySkippedGate,
 } from "./readiness-core";
-import { extractBalancedJsonObjects } from "./json-extract";
+import {
+  FlowPromptContinuationPending,
+  getOrCreateGateEvaluation,
+} from "./prompt-owner";
 
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { isFencedError } from "@/lib/execution-host";
+import { gateResults } from "@/lib/db/schema";
+import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import {
   checksFromSnapshot,
   type CheckStrictness,
 } from "@/lib/runs/execution-policy";
+
+export { calibrateVerdict, isPassVerdict, parseVerdict } from "./gate-verdict";
 
 const log = pino({
   name: "flow-gates-exec",
@@ -83,133 +90,12 @@ export type GateRunResult = {
   verdict?: GateVerdict;
 };
 
-const PASS_VERDICTS = new Set([
-  "pass",
-  "passed",
-  "approve",
-  "approved",
-  "ok",
-  "success",
-  "succeeded",
-  "ready",
-]);
-
 function summarize(s: string | null | undefined): string {
   if (!s) return "";
 
   return s.length <= VERDICT_EVIDENCE_CAP
     ? s
     : s.slice(0, VERDICT_EVIDENCE_CAP);
-}
-
-// Tolerant structured-verdict parser for ai_judgment / skill_check output:
-// find the LAST brace-balanced JSON object in the agent's text that carries a
-// string `verdict` (handles nested objects). Returns null when none is found
-// (caller records a `failed` gate with the raw prose as evidence — never a
-// thrown domain code, ADR-028).
-export function parseVerdict(output: string): GateVerdict | null {
-  const candidates = extractBalancedJsonObjects(output);
-
-  for (let i = candidates.length - 1; i >= 0; i--) {
-    try {
-      const obj = JSON.parse(candidates[i]) as Record<string, unknown>;
-
-      if (obj && typeof obj === "object" && typeof obj.verdict === "string") {
-        return {
-          verdict: obj.verdict,
-          confidence:
-            typeof obj.confidence === "number" ? obj.confidence : undefined,
-          reasons: Array.isArray(obj.reasons)
-            ? obj.reasons.map((r) => String(r))
-            : undefined,
-          recommendedAction:
-            typeof obj.recommendedAction === "string"
-              ? obj.recommendedAction
-              : undefined,
-        };
-      }
-    } catch {
-      // not valid JSON — keep scanning earlier candidates
-    }
-  }
-
-  return null;
-}
-
-export function isPassVerdict(verdict: string): boolean {
-  return PASS_VERDICTS.has(verdict.trim().toLowerCase());
-}
-
-// Applies the effective calibration policy to a parsed PASS verdict.
-// Only call when isPassVerdict(parsed.verdict) is true.
-// Returns { pass: true } with no calibration when no threshold is configured
-// (legacy pass). When a threshold is set, returns the deterministic outcome
-// and attaches the calibration sub-object so the caller can persist it.
-export function calibrateVerdict(
-  parsed: GateVerdict,
-  calibration:
-    | { confidence_min?: number; allow_missing_confidence?: boolean }
-    | undefined,
-): { pass: boolean; calibration?: GateVerdict["calibration"] } {
-  if (calibration?.confidence_min === undefined) {
-    // No threshold configured — legacy pass, no calibration recorded.
-    return { pass: true };
-  }
-
-  const confidenceMin = calibration.confidence_min;
-  const rawVerdict = parsed.verdict!;
-
-  if (typeof parsed.confidence === "number") {
-    // Agent-emitted confidence MUST lie in the documented 0..1 domain. A
-    // malformed value (NaN, ±Infinity, <0, >1) is fail-closed as
-    // `invalid_confidence` — it must NEVER clear the threshold (e.g. `2 >= 0.8`)
-    // and must NOT be rescued by allow_missing_confidence (it is present, just
-    // out of range). config-side confidence_min is already bounded by zod
-    // (config.schema.ts z.number().min(0).max(1)); this guards the untrusted side.
-    if (
-      !Number.isFinite(parsed.confidence) ||
-      parsed.confidence < 0 ||
-      parsed.confidence > 1
-    ) {
-      return {
-        pass: false,
-        calibration: {
-          confidenceMin,
-          rawVerdict,
-          outcome: "invalid_confidence",
-        },
-      };
-    }
-
-    if (parsed.confidence >= confidenceMin) {
-      return {
-        pass: true,
-        calibration: { confidenceMin, rawVerdict, outcome: "above_threshold" },
-      };
-    }
-
-    return {
-      pass: false,
-      calibration: { confidenceMin, rawVerdict, outcome: "below_threshold" },
-    };
-  }
-
-  // Confidence absent.
-  if (calibration.allow_missing_confidence === true) {
-    return {
-      pass: true,
-      calibration: {
-        confidenceMin,
-        rawVerdict,
-        outcome: "missing_confidence_allowed",
-      },
-    };
-  }
-
-  return {
-    pass: false,
-    calibration: { confidenceMin, rawVerdict, outcome: "no_confidence" },
-  };
 }
 
 // Run one node's `pre_finish.gates` in declared order, writing a gate_results
@@ -239,16 +125,23 @@ export async function runNodeGates(
 
   for (const gate of node.gates) {
     const verdictSink: { verdict?: GateVerdict } = {};
-    const status = await runOneGate(
-      gate,
-      node,
-      nodeAttemptId,
-      loaded,
-      context,
-      ctx,
-      checks,
-      verdictSink,
-    );
+    let status: Awaited<ReturnType<typeof runOneGate>>;
+
+    try {
+      status = await runOneGate(
+        gate,
+        node,
+        nodeAttemptId,
+        loaded,
+        context,
+        ctx,
+        checks,
+        verdictSink,
+      );
+    } catch (error) {
+      if (isFencedError(error)) return { ok: false, fenced: true };
+      throw error;
+    }
 
     if (status === "fenced") return { ok: false, fenced: true };
 
@@ -363,7 +256,12 @@ async function runGateStepGuarded<T>(
   try {
     return await run();
   } catch (err) {
-    if (!isMaisterError(err) || isFencedError(err)) throw err;
+    if (
+      !isMaisterError(err) ||
+      isFencedError(err) ||
+      err instanceof FlowPromptContinuationPending
+    )
+      throw err;
 
     await markGateFailed(
       gateResultId,
@@ -485,7 +383,23 @@ async function runOneGate(
 
     case "ai_judgment":
     case "skill_check": {
-      const { id } = await createGateResult({ ...base, status: "running" });
+      const evaluation = await getOrCreateGateEvaluation(ctx.db, {
+        runId: loaded.run.id,
+        nodeAttemptId,
+        gate,
+      });
+      const { id } = evaluation;
+
+      if (["passed", "failed", "overridden"].includes(evaluation.status)) {
+        if (
+          evaluation.verdict &&
+          evaluation.verdict.verdict !== "unparseable" &&
+          verdictSink
+        )
+          verdictSink.verdict = evaluation.verdict;
+
+        return evaluation.status === "failed" ? "failed" : "passed";
+      }
       // skill_check runs a slash command (best-effort, no capability scoping —
       // TODO(M14)); ai_judgment runs a free prompt. Both default to a fresh
       // session for an isolated verdict (~$0.28 cache-creation cost, M0).
@@ -517,6 +431,13 @@ async function runOneGate(
           { id: gate.id, type: "agent", mode: "new-session", prompt },
           {
             ...common,
+            nodeAttemptId,
+            gatePromptOwner: {
+              variant: gate.kind === "skill_check" ? "gate_skill" : "gate_ai",
+              nodeAttemptId,
+              gateId: gate.id,
+              evaluationId: id,
+            },
             bindExecution: ctx.bindExecution,
             // Thread the caller's db — runner-agent's event-consumer seam must
             // never fall back to env getDb() (a different connection).
@@ -538,70 +459,25 @@ async function runOneGate(
       // The `running` row stays as-is: a superseded driver records no verdict.
       if (res.fenced) return "fenced";
 
-      const verdict = parseVerdict(res.stdout ?? "");
+      const [applied] = await ctx.db
+        .select()
+        .from(gateResults)
+        .where(eq(gateResults.id, id))
+        .limit(1);
 
-      if (!verdict) {
-        // Unparseable verdict is a `failed` gate with raw prose as evidence —
-        // NOT a thrown MaisterError code (ADR-008 closed union / ADR-028).
-        await markGateFailed(
-          id,
-          { verdict: "unparseable", reasons: [summarize(res.stdout)] },
-          ctx.db,
-        );
+      if (
+        !applied ||
+        (applied.status !== "passed" && applied.status !== "failed")
+      )
+        throw new PromptOwnerInvariantError("gate_result_not_applied");
+      if (
+        applied.verdict &&
+        applied.verdict.verdict !== "unparseable" &&
+        verdictSink
+      )
+        verdictSink.verdict = applied.verdict;
 
-        return "failed";
-      }
-
-      // M38 (ADR-103): surface the parsed verdict (pass OR fail, with confidence)
-      // so a `decide:{from:verdict}` node can route on it even when calibration
-      // would otherwise have failed the gate.
-      if (verdictSink) verdictSink.verdict = verdict;
-
-      // M38 (ADR-103): under `decide:{from:verdict}` the gate is ROUTING-INPUT —
-      // producing a parseable verdict IS success. Record it `passed` (the verdict
-      // value is retained in gate_results.verdict for routing + audit) so it never
-      // hard-fails the node finish OR blocks review-readiness; the decide table
-      // owns the approve/review/rework decision. confidence_min calibration is
-      // irrelevant here — the `when` predicates do the thresholding.
-      if (node.decide?.from === "verdict") {
-        await markGatePassed(id, verdict, ctx.db);
-
-        return "passed";
-      }
-
-      if (isPassVerdict(verdict.verdict ?? "")) {
-        const cal = calibrateVerdict(verdict, gate.calibration);
-
-        if (cal.calibration?.outcome === "invalid_confidence") {
-          log.warn(
-            {
-              runId: loaded.run.id,
-              nodeId: node.id,
-              gateId: gate.id,
-              confidence: verdict.confidence,
-            },
-            "gate verdict confidence outside 0..1 domain — failing closed (invalid_confidence)",
-          );
-        }
-
-        const verdictToStore = cal.calibration
-          ? { ...verdict, calibration: cal.calibration }
-          : verdict;
-
-        if (cal.pass) {
-          await markGatePassed(id, verdictToStore, ctx.db);
-
-          return "passed";
-        }
-
-        await markGateFailed(id, verdictToStore, ctx.db);
-
-        return "failed";
-      }
-
-      await markGateFailed(id, verdict, ctx.db);
-
-      return "failed";
+      return applied.status;
     }
 
     case "artifact_required": {

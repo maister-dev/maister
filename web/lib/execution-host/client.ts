@@ -59,7 +59,12 @@ import {
   startAsyncPrompt,
   waitForPromptCompletion,
 } from "./deliverer";
-import { issueCommand, type IssuedCommand } from "./ledger";
+import {
+  issueCommand,
+  issueOwnedPrompt,
+  type IssuedCommand,
+  type PromptOwnerAdmission,
+} from "./ledger";
 import { ensureAssignment } from "./placement";
 import { hostForAssignment } from "./resolver";
 import { commandSignals } from "./signals";
@@ -116,11 +121,14 @@ export interface BoundClient {
   prompt(
     sessionId: HostSessionId | string,
     input: SendPromptInput,
-    opts?: { signal?: AbortSignal },
+    opts?: {
+      signal?: AbortSignal;
+      admitOwner?: (tx: Db) => Promise<PromptOwnerAdmission>;
+    },
   ): Promise<PromptHandle>;
   waitForPrompt(
     handle: PromptHandle,
-    opts?: { signal?: AbortSignal },
+    opts?: { signal?: AbortSignal; owners?: PromptOwnerRegistry },
   ): Promise<PromptResult>;
   deliverInput(
     sessionId: HostSessionId | string,
@@ -464,18 +472,26 @@ export function createExecutionHosts(
           );
         }
       },
-      async prompt(sessionId, input, _opts) {
+      async prompt(sessionId, input, opts) {
         const policy = COMMAND_POLICY["session.prompt"];
-        const { row, envelope } = await issueCommand(db, {
+        const commandInput = {
           assignment: current,
           host,
-          kind: "session.prompt",
           payload: input,
           maxAttempts: policy.maxAttempts,
-          driverless: policy.driverless,
           targetSessionId: sessionId,
           logger,
-        });
+        };
+        const { row, envelope } = opts?.admitOwner
+          ? await issueOwnedPrompt(db, {
+              ...commandInput,
+              admitOwner: opts.admitOwner,
+            })
+          : await issueCommand(db, {
+              ...commandInput,
+              kind: "session.prompt",
+              driverless: policy.driverless,
+            });
 
         return startAsyncPrompt({
           db,
@@ -497,7 +513,7 @@ export function createExecutionHosts(
         const result = await waitForPromptCompletion({
           db,
           handle,
-          owners: deps.owners,
+          owners: opts?.owners ?? deps.owners,
           signal: opts?.signal,
           assignmentIsCurrent: async () => {
             const rows = await db
