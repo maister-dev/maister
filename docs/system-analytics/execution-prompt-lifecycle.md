@@ -293,8 +293,14 @@ CLI/check actions before gates also snapshot their result and file output.
 Owned-prompt graphs acquire `runs.flow_driver_token` with a renewable 30-second
 lease. Every traversal transaction checks its active assignment and lease,
 including a final check before commit; global host consumers and other runs
-retain their independent database handles. The bounded continuation worker
-re-enters the same driver from durable attempt/cursor state even after command
+retain their independent database handles. CLI/check actions and command-check
+gates in these leased graphs receive the driver cancellation signal. Cancellation
+before dispatch prevents spawn; cancellation during execution immediately kills
+the detached process group, including SIGTERM-resistant descendants, then yields
+without closing domain state. Ordinary CLI timeouts retain their cleanup grace.
+The persisted 500-visit ceiling applies to fresh admission; recovery can finish an
+already admitted 500th visit but cannot append visit 501.
+The bounded continuation worker re-enters the same driver from durable attempt/cursor state even after command
 application is complete. Node closure and its selected cursor commit together with
 `node_attempts.finish_continuation`. Rework retains comments and session policy;
 retry retains its bounded decision across process death. Recovery also closes the exact completed prompt's source
@@ -306,9 +312,9 @@ failed nodes, rework context and the retry budget. Orchestrator park releases it
 assignment; the capacity-checked child-wake claim stores `action_resume` and
 advances the exact attempt ordinal before another prompt. Live wake, a crash
 after that claim and deferred capacity recovery are covered. Permission resume,
-released-source result handoff and pre-prompt session-create recovery remain
-S2.6 work. The
-global owner/continuation worker activation remains S2.12.
+released-source result handoff and gate permission recovery remain S2.6 work.
+Pre-prompt creation uses the durable intent described above. Global
+owner/continuation worker activation remains S2.12.
 
 In-flight node permissions retain the exact source command, attempt/ordinal,
 assignment and incarnation in the HITL schema. The leased driver can reattach

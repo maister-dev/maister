@@ -1512,6 +1512,9 @@ async function executeNodeAction(
           // ADR-154: node actions get MAISTER_FLOW_DIR (packaged-script
           // execution); gates/probes deliberately do not.
           flowInstallPath: loaded.flowInstallPath,
+          ...(ctx.flowDriverClaim && ctx.signal
+            ? { driver: { claim: ctx.flowDriverClaim, signal: ctx.signal } }
+            : {}),
         },
       );
     case "ai_coding":
@@ -2787,13 +2790,6 @@ export async function runGraph(
 
       const totalExecutions = attempts.length;
 
-      if (totalExecutions >= HARD_NODE_EXECUTION_CEILING) {
-        throw new MaisterError(
-          "CONFIG",
-          `graph exceeded hard node-execution ceiling (${HARD_NODE_EXECUTION_CEILING}) for run ${runId}`,
-        );
-      }
-
       // Count persisted attempts for this node; the initial run is attempt 1,
       // so maxLoops reworks → maxLoops + 1 total attempts allowed.
       const nodeAttemptCount = attempts.filter(
@@ -2867,6 +2863,17 @@ export async function runGraph(
       const reusesCurrentAttempt =
         (claimedTakeoverAttemptId !== null && node.id === resumeNodeId) ||
         resumingThisNode;
+
+      // An admitted visit already contributes to the persisted ceiling.
+      if (
+        !reusesCurrentAttempt &&
+        totalExecutions >= HARD_NODE_EXECUTION_CEILING
+      ) {
+        throw new MaisterError(
+          "CONFIG",
+          `graph exceeded hard node-execution ceiling (${HARD_NODE_EXECUTION_CEILING}) for run ${runId}`,
+        );
+      }
 
       // rework.maxLoops bounds STARTING a fresh visit of a rework-capable node
       // (initial visit + maxLoops reworks = maxLoops + 1 total). The bound must

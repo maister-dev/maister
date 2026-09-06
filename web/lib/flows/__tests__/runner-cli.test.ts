@@ -50,6 +50,35 @@ const ctxBase = (overrides: Partial<FlowContext> = {}): FlowContext => ({
 });
 
 describe("runCliStep", () => {
+  it("does not spawn after its Flow driver signal was aborted", async () => {
+    const controller = new AbortController();
+
+    controller.abort();
+    await expect(
+      runCliStep(
+        { id: "cancelled", type: "cli", command: "touch forbidden-spawn.txt" },
+        {
+          runtimeRoot: workDir,
+          projectSlug: "demo",
+          runId: "r1",
+          stepId: "cancelled",
+          worktreePath,
+          context: ctxBase(),
+          driver: {
+            signal: controller.signal,
+            claim: { runId: "r1", assignmentId: "a1", token: "driver-token" },
+          },
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "flow_driver_claim_lost" },
+    });
+    await expect(
+      readFile(join(worktreePath, "forbidden-spawn.txt")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("succeeds when bash command exits 0 and captures stdout", async () => {
     const result = await runCliStep(
       { id: "echo", type: "cli", command: "echo hello" },

@@ -358,7 +358,15 @@ async function runOneGate(
       // `gate.command` back to `string | undefined`.
       const command = gate.command;
       const res = await runGateStepGuarded(id, ctx.db, () =>
-        runCliStep({ id: gate.id, type: "cli", command }, common),
+        runCliStep(
+          { id: gate.id, type: "cli", command },
+          {
+            ...common,
+            ...(ctx.flowDriverClaim && ctx.signal
+              ? { driver: { claim: ctx.flowDriverClaim, signal: ctx.signal } }
+              : {}),
+          },
+        ),
       );
 
       if (res === null) return "failed";

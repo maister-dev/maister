@@ -264,6 +264,282 @@ async function killAtDatabaseWrite(input: {
 }
 
 describe("Flow prompt owners through the production graph driver", () => {
+  it.each(["node", "gate"] as const)(
+    "owner-flow-cli: %s loses its assignment and kills its entire process group without closing domain state",
+    async (origin) => {
+      const command = `trap '' TERM; (trap '' TERM; sleep 300) >/dev/null 2>&1 & printf '%s %s\n' "$$" "$!" > driver-cli-pids.txt; wait`;
+      const seeded = await seedOwnerFlow([
+        {
+          id: "work",
+          type: "cli",
+          action: { command: origin === "node" ? command : "true" },
+          ...(origin === "gate"
+            ? {
+                pre_finish: {
+                  gates: [
+                    {
+                      id: "check",
+                      kind: "command_check" as const,
+                      mode: "blocking" as const,
+                      command,
+                    },
+                  ],
+                },
+              }
+            : {}),
+          transitions: { success: "after" },
+        },
+        {
+          id: "after",
+          type: "ai_coding",
+          action: {
+            prompt: 'fixture-output:{"bytes":0,"text":"must not run"}',
+          },
+          transitions: { success: "done" },
+        },
+      ]);
+      const driver = startDriver(seeded.runId);
+      let pids: number[] = [];
+
+      try {
+        await expect
+          .poll(
+            async () => {
+              try {
+                pids = (
+                  await readFile(
+                    `${seeded.worktreePath}/driver-cli-pids.txt`,
+                    "utf8",
+                  )
+                )
+                  .trim()
+                  .split(" ")
+                  .map(Number);
+
+                return pids.length;
+              } catch (error) {
+                if ((error as NodeJS.ErrnoException).code === "ENOENT")
+                  return 0;
+                throw error;
+              }
+            },
+            { timeout: 30_000 },
+          )
+          .toBe(2);
+        expect(pids.every((pid) => Number.isInteger(pid) && pid > 0)).toBe(
+          true,
+        );
+        const [before] = await database.db
+          .select()
+          .from(nodeAttempts)
+          .where(eq(nodeAttempts.runId, seeded.runId));
+        const [runBefore] = await database.db
+          .select()
+          .from(runs)
+          .where(eq(runs.id, seeded.runId));
+
+        expect(runBefore.flowDriverToken).not.toBeNull();
+        const [assignment] = await database.db
+          .select()
+          .from(executionAssignments)
+          .where(eq(executionAssignments.id, runBefore.executionAssignmentId!));
+        const successor = await database.db.transaction((tx) =>
+          mintAssignment(tx as unknown as Db, {
+            runId: seeded.runId,
+            hostId: assignment.executionHostId,
+            reason: "recover",
+          }),
+        );
+
+        await expect
+          .poll(() => driver.child.exitCode, { timeout: 20_000 })
+          .toBe(0);
+        await expect
+          .poll(
+            () =>
+              pids.every((pid) => {
+                try {
+                  process.kill(pid, 0);
+
+                  return false;
+                } catch (error) {
+                  if ((error as NodeJS.ErrnoException).code === "ESRCH")
+                    return true;
+                  throw error;
+                }
+              }),
+            { timeout: 3_000 },
+          )
+          .toBe(true);
+        const [after] = await database.db
+          .select()
+          .from(nodeAttempts)
+          .where(eq(nodeAttempts.id, before.id));
+        const [runAfter] = await database.db
+          .select()
+          .from(runs)
+          .where(eq(runs.id, seeded.runId));
+
+        expect(after).toMatchObject({
+          status: before.status,
+          endedAt: before.endedAt,
+          finishContinuation: before.finishContinuation,
+          executionAssignmentId: before.executionAssignmentId,
+        });
+        expect(runAfter).toMatchObject({
+          status: "Running",
+          executionAssignmentId: successor.id,
+        });
+        if (origin === "gate") {
+          const gates = await database.db
+            .select()
+            .from(gateResults)
+            .where(eq(gateResults.runId, seeded.runId));
+
+          expect(gates).toHaveLength(1);
+          expect(gates[0].status).toBe("running");
+        }
+      } finally {
+        if (pids[0]) {
+          try {
+            process.kill(-pids[0], "SIGKILL");
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+          }
+        }
+        if (driver.child.exitCode === null && driver.child.signalCode === null)
+          driver.child.kill("SIGKILL");
+        await driver.exited;
+        await database.db
+          .update(runs)
+          .set({ status: "Failed" })
+          .where(eq(runs.id, seeded.runId));
+      }
+    },
+    65_000,
+  );
+
+  it.each(["finish", "next_visit"] as const)(
+    "owner-flow-ceiling: recovers visit 500 before %s without admitting visit 501",
+    async (outcome) => {
+      const seeded = await seedOwnerFlow([
+        {
+          id: "work",
+          type: "ai_coding",
+          action: { prompt: 'fixture-output:{"bytes":0,"text":"last visit"}' },
+          transitions: { success: outcome === "finish" ? "done" : "after" },
+        },
+        ...(outcome === "next_visit"
+          ? [
+              {
+                id: "after",
+                type: "cli" as const,
+                action: { command: "touch forbidden-visit.txt" },
+                transitions: { success: "done" },
+              },
+            ]
+          : []),
+      ]);
+
+      await killAtDatabaseWrite({
+        table: "execution_commands",
+        event: "UPDATE",
+        predicate: `NEW.run_id = '${seeded.runId}' AND NEW.kind = 'session.create' AND NEW.state = 'succeeded'`,
+        launch: () => startDriver(seeded.runId),
+      });
+      // Reconstruct the preceding 499 visits after death, so the fresh driver
+      // still starts with its ordinary empty-ledger admission contract.
+      await database.db
+        .update(nodeAttempts)
+        .set({ attempt: 500 })
+        .where(eq(nodeAttempts.runId, seeded.runId));
+      const historyStart = Date.now() - 600_000;
+
+      await database.db.insert(nodeAttempts).values(
+        Array.from({ length: 499 }, (_, index) => ({
+          id: randomUUID(),
+          runId: seeded.runId,
+          nodeId: "work",
+          nodeType: "ai_coding" as const,
+          attempt: index + 1,
+          status: "Succeeded" as const,
+          startedAt: new Date(historyStart + index),
+          endedAt: new Date(historyStart + index),
+        })),
+      );
+      const [original] = await database.db
+        .select()
+        .from(nodeAttempts)
+        .where(
+          and(
+            eq(nodeAttempts.runId, seeded.runId),
+            eq(nodeAttempts.attempt, 500),
+          ),
+        );
+
+      expect(original.status).toBe("Running");
+      const continuation = startFlowContinuationWorker({
+        db: database.db as unknown as Db,
+        runtimeRoot: supervisor.runtimeRoot,
+      });
+
+      try {
+        await expect
+          .poll(
+            async () => {
+              const [run] = await database.db
+                .select()
+                .from(runs)
+                .where(eq(runs.id, seeded.runId));
+
+              return run.status;
+            },
+            { timeout: 60_000 },
+          )
+          .not.toBe("Running");
+        const [run] = await database.db
+          .select()
+          .from(runs)
+          .where(eq(runs.id, seeded.runId));
+        const attempts = await database.db
+          .select()
+          .from(nodeAttempts)
+          .where(eq(nodeAttempts.runId, seeded.runId));
+        const commands = await database.db
+          .select()
+          .from(executionCommands)
+          .where(eq(executionCommands.runId, seeded.runId));
+
+        expect(attempts).toHaveLength(500);
+        expect(
+          attempts.find((attempt) => attempt.id === original.id),
+        ).toMatchObject({
+          status: "Succeeded",
+          actionPromptOrdinal: 0,
+          finishContinuation: {
+            targetNodeId: outcome === "finish" ? null : "after",
+          },
+        });
+        expect(run.status).toBe(outcome === "finish" ? "Review" : "Failed");
+        expect(
+          commands.filter((command) => command.kind === "session.create"),
+        ).toHaveLength(1);
+        const prompts = commands.filter(
+          (command) => command.kind === "session.prompt",
+        );
+
+        expect(prompts).toHaveLength(1);
+        expect(prompts[0].completionAppliedAt).not.toBeNull();
+        await expect(
+          readFile(`${seeded.worktreePath}/forbidden-visit.txt`),
+        ).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        await continuation.stop();
+      }
+    },
+    100_000,
+  );
+
   it.each(["resume", "workspace"] as const)(
     "owner-flow-create: definitive %s refusal persists one replacement",
     async (refusal) => {

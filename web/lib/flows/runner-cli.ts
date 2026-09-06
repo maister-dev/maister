@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { FlowContext, StepResult } from "./types";
+import type { FlowDriverClaim } from "./graph/driver-claim";
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir } from "node:fs/promises";
@@ -11,6 +12,7 @@ import pino from "pino";
 
 import { childProcessEnv } from "./child-env";
 import { cliOutputFilePath } from "./graph/node-output";
+import { FlowDriverClaimLost } from "./graph/driver-claim";
 import { renderStrict } from "./templating";
 
 const log = pino({
@@ -73,6 +75,7 @@ function execDetachedGroup(opts: {
   cwd: string;
   timeoutMs: number;
   env?: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
 }): Promise<DetachedExecResult> {
   return new Promise((resolve) => {
     const child = spawn("bash", ["-c", opts.command], {
@@ -89,6 +92,7 @@ function execDetachedGroup(opts: {
     let bufferedBytes = 0;
     let timedOut = false;
     let overflowed = false;
+    let driverAborted = false;
     let spawnError: Error | undefined;
     let escalation: NodeJS.Timeout | undefined;
 
@@ -131,18 +135,30 @@ function execDetachedGroup(opts: {
       );
     }, opts.timeoutMs);
 
+    const onDriverAbort = (): void => {
+      driverAborted = true;
+      clearTimeout(killTimer);
+      if (escalation !== undefined) clearTimeout(escalation);
+      // Lost ownership cannot grant a grace period for further side effects.
+      killProcessGroup(child, "SIGKILL");
+    };
+
+    opts.signal?.addEventListener("abort", onDriverAbort, { once: true });
+    if (opts.signal?.aborted) onDriverAbort();
+
     child.on("error", (err) => {
       spawnError = err;
     });
 
     child.on("close", (code) => {
+      opts.signal?.removeEventListener("abort", onDriverAbort);
       clearTimeout(killTimer);
       if (escalation !== undefined) clearTimeout(escalation);
       // A timed-out group may still hold members that ignored the TERM or
       // that bash orphaned by exiting first — sweep them before reporting.
-      if (timedOut) killProcessGroup(child, "SIGKILL");
+      if (timedOut || driverAborted) killProcessGroup(child, "SIGKILL");
 
-      const aborted = timedOut || overflowed;
+      const aborted = timedOut || overflowed || driverAborted;
 
       stdoutText += stdoutDecoder.end();
       stderrText += stderrDecoder.end();
@@ -174,6 +190,7 @@ export type RunCliStepCtx = {
   worktreePath: string;
   context: FlowContext;
   timeoutMs?: number;
+  driver?: Readonly<{ claim: FlowDriverClaim; signal: AbortSignal }>;
   // M26 P1 (ADR-063): set only when the node declares `output.result` — arms
   // the MAISTER_OUTPUT_FILE transport with the per-attempt filename. Absent =
   // no transport provisioning (no MAISTER_OUTPUT_FILE in the child env).
@@ -191,10 +208,24 @@ function previewCommand(s: string): string {
   return `${s.slice(0, COMMAND_PREVIEW_LEN)}…`;
 }
 
+function assertCliDriver(ctx: RunCliStepCtx): void {
+  if (!ctx.driver?.signal.aborted) return;
+  log.warn(
+    {
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+      assignmentId: ctx.driver.claim.assignmentId,
+    },
+    "cli driver yielded after cancellation",
+  );
+  throw new FlowDriverClaimLost(ctx.driver.claim);
+}
+
 export async function runCliStep(
   step: CliStepLike,
   ctx: RunCliStepCtx,
 ): Promise<StepResult> {
+  assertCliDriver(ctx);
   const requestedTimeoutMs = ctx.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const timeoutMs = Math.min(requestedTimeoutMs, maxTimeoutMs());
 
@@ -262,16 +293,20 @@ export async function runCliStep(
       : {}),
   };
 
+  assertCliDriver(ctx);
   const { stdout, stderr, exitCode, aborted } = await execDetachedGroup({
     command: resolved,
     cwd: ctx.worktreePath,
     timeoutMs,
+    signal: ctx.driver?.signal,
     // ADR-153: allow-listed env only — flow commands never see web-tier
     // secrets. Serves cli/check nodes AND command_check gates (gates-exec).
     env: childProcessEnv(
       Object.keys(extraEnv).length > 0 ? extraEnv : undefined,
     ),
   });
+
+  assertCliDriver(ctx);
 
   const durationMs = Date.now() - startedAt;
   const ok = !aborted && exitCode === 0;
