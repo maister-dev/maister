@@ -28,7 +28,7 @@ import { compileManifest } from "@/lib/flows/graph/compile";
 import { buildContext } from "@/lib/flows/context";
 import { runNodeGates } from "@/lib/flows/graph/gates-exec";
 import { flowPromptOwners } from "@/lib/flows/graph/prompt-owner";
-import { assertNodePermissionDelivery } from "@/lib/flows/graph/node-permission";
+import { assertFlowPermissionDelivery } from "@/lib/flows/graph/prompt-permission";
 import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
 import { runFlow } from "@/lib/flows/runner";
@@ -47,6 +47,10 @@ import { MaisterError } from "@/lib/errors";
 import { mintAssignment } from "@/lib/execution-host/assignments";
 import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
 import { startProjectionWorker } from "@/lib/execution-host/events/projection-worker";
+import {
+  startRuntimeEventConsumer,
+  stopRuntimeEventConsumers,
+} from "@/lib/execution-host/events/consumer";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { seedGraphRun } from "@/test-support/graph-run-seed";
@@ -82,6 +86,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
+  await stopRuntimeEventConsumers();
   restoreUrl();
   await worker?.stop();
   await supervisor?.kill();
@@ -1013,28 +1018,71 @@ describe("Flow prompt owners through the production graph driver", () => {
   }, 80_000);
 
   it.each([
-    "before_hitl",
-    "after_hitl",
-    "before_delivery",
-    "before_delivery_ack",
-    "delivery_refused",
-    "persistence_failure",
-    "lost_response",
-    "concurrent_response",
-  ] as const)(
-    "owner-flow-permission-live: %s retains the original turn and permission",
-    async (window) => {
-      const seeded = await seedOwnerFlow([
-        {
-          id: "work",
-          type: "ai_coding",
-          action: {
-            prompt:
-              'fixture-output:{"bytes":0,"permission":true,"text":"permission recovered"}',
-          },
-          transitions: { success: "done" },
-        },
-      ]);
+    ...(
+      [
+        "before_hitl",
+        "after_hitl",
+        "before_delivery",
+        "before_delivery_ack",
+        "delivery_refused",
+        "persistence_failure",
+        "lost_response",
+        "concurrent_response",
+      ] as const
+    ).map((window) => ({ ownerKind: "node" as const, window })),
+    ...(["ai_judgment", "skill_check"] as const).flatMap((ownerKind) =>
+      (
+        [
+          "before_hitl",
+          "after_hitl",
+          "before_delivery_ack",
+          "lost_response",
+        ] as const
+      ).map((window) => ({ ownerKind, window })),
+    ),
+  ])(
+    "owner-flow-permission-live: $ownerKind $window retains the original turn and permission",
+    async ({ ownerKind, window }) => {
+      const gatePermissionPrompt = `fixture-output:${JSON.stringify({
+        bytes: 0,
+        permission: true,
+        text: '{"verdict":"pass","confidence":0.95,"reasons":["permission recovered"]}',
+      })}`;
+      const seeded =
+        ownerKind === "node"
+          ? await seedOwnerFlow([
+              {
+                id: "work",
+                type: "ai_coding",
+                action: {
+                  prompt:
+                    'fixture-output:{"bytes":0,"permission":true,"text":"permission recovered"}',
+                },
+                transitions: { success: "done" },
+              },
+            ])
+          : await seedOwnerFlow([
+              {
+                id: "work",
+                type: "cli",
+                action: {
+                  command: "printf 'work\\n' >> gate-permission-parent.txt",
+                },
+                pre_finish: {
+                  gates: [
+                    {
+                      id: "review",
+                      kind: ownerKind,
+                      mode: "blocking",
+                      ...(ownerKind === "skill_check"
+                        ? { command: gatePermissionPrompt }
+                        : { prompt: gatePermissionPrompt }),
+                    },
+                  ],
+                },
+                transitions: { success: "done" },
+              },
+            ]);
       const userId = randomUUID();
 
       await database.db
@@ -1122,6 +1170,64 @@ describe("Flow prompt owners through the production graph driver", () => {
             ),
         });
       }
+      if (window === "before_delivery_ack") {
+        // Recover canonical evidence independently of the killed graph driver.
+        // Its old event-stream claim must expire before the new reader takes over.
+        startRuntimeEventConsumer({
+          db: database.db as unknown as Db,
+          executionHostId: original.executionHostId,
+          transport: defaultTransport(),
+        });
+        // Apply the action/verdict before input ACK without advancing the graph.
+        const application = startPromptOwnerWorker({
+          db: database.db as unknown as Db,
+          owners: flowPromptOwners,
+        });
+
+        try {
+          await expect
+            .poll(
+              async () => {
+                const [command] = await database.db
+                  .select()
+                  .from(executionCommands)
+                  .where(eq(executionCommands.id, original.id));
+
+                return command.applicationState;
+              },
+              { timeout: 45_000 },
+            )
+            .toBe("applied");
+          const [waitingRun] = await database.db
+            .select()
+            .from(runs)
+            .where(eq(runs.id, seeded.runId));
+          const [waitingHitl] = await database.db
+            .select()
+            .from(hitlRequests)
+            .where(eq(hitlRequests.runId, seeded.runId));
+
+          expect(waitingRun.status).toBe("NeedsInput");
+          expect(waitingHitl.respondedAt).toBeNull();
+          if (ownerKind !== "node") {
+            const [appliedGate] = await database.db
+              .select()
+              .from(gateResults)
+              .where(eq(gateResults.runId, seeded.runId));
+
+            expect(appliedGate.status).toBe("passed");
+          } else {
+            const [appliedNode] = await database.db
+              .select()
+              .from(nodeAttempts)
+              .where(eq(nodeAttempts.runId, seeded.runId));
+
+            expect(appliedNode.actionCompletion?.commandId).toBe(original.id);
+          }
+        } finally {
+          await application.stop();
+        }
+      }
       const continuation = startFlowContinuationWorker({
         db: database.db as unknown as Db,
         runtimeRoot: supervisor.runtimeRoot,
@@ -1146,7 +1252,17 @@ describe("Flow prompt owners through the production graph driver", () => {
               commandId: original.id,
               nodeAttemptId: (original.ownerRef as { nodeAttemptId: string })
                 .nodeAttemptId,
-              promptOrdinal: 0,
+              ...(ownerKind === "node"
+                ? { promptOrdinal: 0 }
+                : {
+                    variant:
+                      ownerKind === "skill_check" ? "gate_skill" : "gate_ai",
+                    promptOrdinal: 0,
+                    gateId: "review",
+                    evaluationId: (
+                      original.ownerRef as { evaluationId: string }
+                    ).evaluationId,
+                  }),
               assignmentId: original.executionAssignmentId,
               incarnationId: (original.ownerRef as { incarnationId: string })
                 .incarnationId,
@@ -1160,15 +1276,54 @@ describe("Flow prompt owners through the production graph driver", () => {
           flowPrompt: Record<string, unknown>;
         };
 
+        if (ownerKind === "ai_judgment" && window === "before_hitl") {
+          const [evaluation] = await database.db
+            .select()
+            .from(gateResults)
+            .where(eq(gateResults.runId, seeded.runId));
+          const rollback = new Error("rollback the later-evaluation fixture");
+
+          await expect(
+            database.db.transaction(async (tx) => {
+              await tx.insert(gateResults).values({
+                ...evaluation,
+                id: randomUUID(),
+                createdAt: new Date(evaluation.createdAt.getTime() + 1),
+              });
+              await expect(
+                assertFlowPermissionDelivery(
+                  tx as unknown as Db,
+                  permissionSchema,
+                ),
+              ).rejects.toMatchObject({
+                code: "CONFLICT",
+                details: {
+                  reason: "prompt_owner_invariant",
+                  causeCode: "permission_evaluation_generation",
+                },
+              });
+              throw rollback;
+            }),
+          ).rejects.toBe(rollback);
+        }
         for (const changed of [
-          { promptOrdinal: 1 },
+          ...(ownerKind === "node"
+            ? [{ promptOrdinal: 1 }]
+            : [
+                { evaluationId: randomUUID() },
+                { gateId: "another-gate" },
+                {
+                  variant:
+                    ownerKind === "skill_check" ? "gate_ai" : "gate_skill",
+                },
+              ]),
           { nodeAttemptId: randomUUID() },
           { incarnationId: randomUUID() },
           { assignmentId: randomUUID() },
         ]) {
           await expect(
             database.db.transaction((tx) =>
-              assertNodePermissionDelivery(tx as unknown as Db, {
+              assertFlowPermissionDelivery(tx as unknown as Db, {
                 ...permissionSchema,
                 flowPrompt: { ...permissionSchema.flowPrompt, ...changed },
               }),
@@ -1315,6 +1470,24 @@ describe("Flow prompt owners through the production graph driver", () => {
           actionPromptOrdinal: 0,
           actionResume: null,
         });
+        if (ownerKind !== "node") {
+          const evaluations = await database.db
+            .select()
+            .from(gateResults)
+            .where(eq(gateResults.runId, seeded.runId));
+
+          expect(evaluations).toHaveLength(1);
+          expect(evaluations[0]).toMatchObject({
+            id: (original.ownerRef as { evaluationId: string }).evaluationId,
+            status: "passed",
+          });
+          expect(
+            await readFile(
+              `${seeded.worktreePath}/gate-permission-parent.txt`,
+              "utf8",
+            ),
+          ).toBe("work\n");
+        }
         const hitls = await database.db
           .select()
           .from(hitlRequests)

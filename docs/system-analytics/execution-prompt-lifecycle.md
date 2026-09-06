@@ -311,18 +311,26 @@ without another accepted node prompt. Additional real-process cases preserve
 failed nodes, rework context and the retry budget. Orchestrator park releases its
 assignment; the capacity-checked child-wake claim stores `action_resume` and
 advances the exact attempt ordinal before another prompt. Live wake, a crash
-after that claim and deferred capacity recovery are covered. Permission resume,
-released-source result handoff and gate permission recovery remain S2.6 work.
+after that claim and deferred capacity recovery are covered. Checkpointed
+permission resume and released-source result handoff remain S2.6 work.
 Pre-prompt creation uses the durable intent described above. Global
 owner/continuation worker activation remains S2.12.
 
-In-flight node permissions retain the exact source command, attempt/ordinal,
-assignment and incarnation in the HITL schema. The leased driver can reattach
+In-flight node and AI/skill gate permissions retain the exact source command,
+attempt/ordinal, assignment and incarnation in the HITL schema. The existing
+node source shape is unchanged; the closed gate variant adds its kind, gate ID
+and evaluation ID. Delivery requires that exact latest evaluation. The leased
+driver can reattach
 that turn while the run remains `NeedsInput`; it does not authorize another
 prompt or advance the cursor. Replayed command/request pairs reuse their HITL
 row. Delivery intent stores the original input command and complete selection
-before dispatch, so a lost ACK replays that same command. Confirmed input,
-delivery audit, HITL completion and the graph wake commit together. A definitive
+before dispatch, so a lost ACK replays that same command. Re-entry directly
+reconciles already admitted inputs before waiting for prompt application. This
+also covers an applied action or gate verdict whose permission ACK was lost:
+the result may be stored while `NeedsInput`, but session cleanup and graph
+advancement wait for permission delivery. Gate recovery reuses the parent action
+snapshot and original evaluation. Confirmed input, delivery audit, HITL completion
+and the graph wake commit together. A definitive
 503 can be retried by an operator with a fresh delivery; automatic recovery
 does not grant that decision. Persistence failure releases the driver wait to
 the durable continuation, which replays the request and completes the original

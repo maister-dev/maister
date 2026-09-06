@@ -121,7 +121,7 @@ export async function getOrCreateGateEvaluation(
     if (
       !run ||
       run.runKind !== "flow" ||
-      run.status !== "Running" ||
+      !["Running", "NeedsInput"].includes(run.status) ||
       !attempt ||
       attempt.runId !== input.runId ||
       run.currentStepId !== attempt.nodeId ||
@@ -176,8 +176,13 @@ export async function getOrCreateGateEvaluation(
       )
         throw staleSessionBinding(run.id, command.assignmentId);
 
+      if (run.status === "NeedsInput" && !command)
+        throw new PromptOwnerInvariantError("gate_permission_command_missing");
+
       return { ...existing, ...(command ? { commandId: command.id } : {}) };
     }
+    if (run.status !== "Running")
+      throw new PromptOwnerInvariantError("gate_permission_new_evaluation");
     const { id } = await createGateResult({
       runId: input.runId,
       nodeAttemptId: input.nodeAttemptId,
@@ -434,7 +439,7 @@ export const flowPromptOwnerAdapter = definePromptOwnerAdapter(
         if (!currentAttempt || !evaluation) return "superseded";
         if (
           run?.runKind !== "flow" ||
-          run.status !== "Running" ||
+          !["Running", "NeedsInput"].includes(run.status) ||
           run.currentStepId !== currentAttempt.nodeId ||
           run.flowRevisionId !== loaded.run.flowRevisionId ||
           currentAttempt.runId !== ref.runId ||

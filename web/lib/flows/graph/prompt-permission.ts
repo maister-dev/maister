@@ -4,17 +4,20 @@ import type { Db } from "@/lib/execution-host/db";
 import type { BoundClient, SupervisorEvent } from "@/lib/execution-host";
 import type { PreparedInput } from "@/lib/execution-host/client";
 import type { NodePromptOwner } from "./node-prompt-owner";
+import type { GatePromptOwner } from "./prompt-owner";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 
 import { nodePromptOperationKey } from "./node-prompt-owner";
+import { gatePromptOperationKey } from "./prompt-owner";
 import { lockFlowPromptOwner } from "./prompt-owner-authority";
 
 import {
   executionCommands,
+  gateResults,
   hitlRequests,
   nodeAttempts,
   runs,
@@ -27,7 +30,7 @@ import {
 } from "@/lib/assignments/service";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
-const sourceSchema = z
+const nodeSourceSchema = z
   .object({
     version: z.literal(1),
     commandId: z.string().min(1),
@@ -37,6 +40,17 @@ const sourceSchema = z
     incarnationId: z.string().min(1),
   })
   .strict();
+
+const gateSourceSchema = nodeSourceSchema
+  .extend({
+    variant: z.enum(["gate_ai", "gate_skill"]),
+    gateId: z.string().min(1),
+    evaluationId: z.string().min(1),
+  })
+  .strict();
+const sourceSchema = z.union([nodeSourceSchema, gateSourceSchema]);
+
+export type FlowPermissionOwner = NodePromptOwner | GatePromptOwner;
 
 type PermissionSource = z.infer<typeof sourceSchema>;
 type PermissionEvent = Extract<
@@ -65,7 +79,7 @@ const deliveryIntentSchema = z
   })
   .strict();
 
-export async function prepareNodePermissionInput(
+export async function prepareFlowPermissionInput(
   tx: Db,
   client: BoundClient,
   hitlRequestId: string,
@@ -77,7 +91,7 @@ export async function prepareNodePermissionInput(
   const schema = parseOwnedPermission(hitl?.schema);
 
   if (!hitl || !schema) return null;
-  await assertNodePermissionDelivery(tx, schema);
+  await assertFlowPermissionDelivery(tx, schema);
   const response = hitl.response as Record<string, unknown> | null;
 
   if (typeof response?.optionId !== "string")
@@ -133,7 +147,7 @@ export async function prepareNodePermissionInput(
  * command. Unknown outcomes keep their original identity; background replay
  * never grants itself this new delivery decision.
  */
-export async function prepareNodePermissionResponse(
+export async function prepareFlowPermissionResponse(
   tx: Db,
   client: BoundClient,
   hitlRequestId: string,
@@ -146,7 +160,7 @@ export async function prepareNodePermissionResponse(
   const response = hitl?.response as Record<string, unknown> | null;
 
   if (hitl && schema && response?._delivery !== undefined) {
-    await assertNodePermissionDelivery(tx, schema);
+    await assertFlowPermissionDelivery(tx, schema);
     const parsed = deliveryIntentSchema.safeParse(response._delivery);
 
     if (!parsed.success)
@@ -196,7 +210,7 @@ export async function prepareNodePermissionResponse(
     }
   }
 
-  return prepareNodePermissionInput(tx, client, hitlRequestId);
+  return prepareFlowPermissionInput(tx, client, hitlRequestId);
 }
 
 function parseOwnedPermission(
@@ -236,6 +250,46 @@ export function openNodePromptExists(): SQL {
   )`;
 }
 
+export function openGatePromptExists(): SQL {
+  return sql`exists (
+    select 1 from node_attempts permission_attempt
+    join gate_results permission_gate on permission_gate.node_attempt_id = permission_attempt.id
+      and permission_gate.run_id = permission_attempt.run_id
+    join execution_commands permission_prompt on permission_prompt.run_id = permission_attempt.run_id
+      and permission_prompt.owner_ref->>'nodeAttemptId' = permission_attempt.id
+      and permission_prompt.owner_ref->>'evaluationId' = permission_gate.id
+      and permission_prompt.owner_ref->>'gateId' = permission_gate.gate_id
+    where permission_attempt.run_id = ${runs.id}
+      and permission_attempt.node_id = ${runs.currentStepId}
+      and permission_attempt.execution_assignment_id = ${runs.executionAssignmentId}
+      and permission_attempt.status in ('Running', 'Succeeded')
+      and permission_attempt.finish_continuation is null
+      and permission_prompt.execution_assignment_id = ${runs.executionAssignmentId}
+      and permission_prompt.kind = 'session.prompt'
+      and permission_prompt.owner_kind = 'flow_node_attempt'
+      and ((permission_prompt.owner_ref->>'variant' = 'gate_ai' and permission_gate.kind = 'ai_judgment')
+        or (permission_prompt.owner_ref->>'variant' = 'gate_skill' and permission_gate.kind = 'skill_check'))
+      and permission_gate.status in ('running', 'passed', 'failed')
+      and not exists (
+        select 1 from gate_results newer_gate
+        where newer_gate.run_id = permission_gate.run_id
+          and newer_gate.node_attempt_id = permission_gate.node_attempt_id
+          and newer_gate.gate_id = permission_gate.gate_id
+          and (newer_gate.created_at, newer_gate.id) > (permission_gate.created_at, permission_gate.id)
+      )
+      and (permission_gate.status = 'running' or exists (
+        select 1 from hitl_requests permission_hitl
+        where permission_hitl.run_id = ${runs.id} and permission_hitl.kind = 'permission'
+          and permission_hitl.schema->'flowPrompt'->>'commandId' = permission_prompt.id
+          and permission_hitl.responded_at is null
+      ))
+  )`;
+}
+
+export function openFlowPromptExists(): SQL {
+  return sql`(${openNodePromptExists()} or ${openGatePromptExists()})`;
+}
+
 export async function hasOpenNodePrompt(
   db: Db,
   runId: string,
@@ -246,6 +300,39 @@ export async function hasOpenNodePrompt(
     .where(and(eq(runs.id, runId), openNodePromptExists()));
 
   return run !== undefined;
+}
+
+export async function hasOpenGatePrompt(
+  db: Db,
+  runId: string,
+): Promise<boolean> {
+  const [run] = await db
+    .select({ id: runs.id })
+    .from(runs)
+    .where(and(eq(runs.id, runId), openGatePromptExists()));
+
+  return run !== undefined;
+}
+
+export async function hasPendingFlowPermission(
+  db: Db,
+  runId: string,
+  commandId: string,
+): Promise<boolean> {
+  const [pending] = await db
+    .select({ id: hitlRequests.id })
+    .from(hitlRequests)
+    .where(
+      and(
+        eq(hitlRequests.runId, runId),
+        eq(hitlRequests.kind, "permission"),
+        sql`${hitlRequests.schema}->'flowPrompt'->>'commandId' = ${commandId}`,
+        isNull(hitlRequests.respondedAt),
+      ),
+    )
+    .limit(1);
+
+  return pending !== undefined;
 }
 
 /** A permission belongs to one accepted turn. A run/step match alone cannot
@@ -268,7 +355,16 @@ async function lockPermissionSource(
     command.ownerKind !== "flow_node_attempt" ||
     !ref ||
     !("nodeAttemptId" in ref) ||
-    ref.variant !== "node" ||
+    !("promptOrdinal" in ref) ||
+    (ref.variant !== "node" &&
+      ref.variant !== "gate_ai" &&
+      ref.variant !== "gate_skill") ||
+    ("variant" in source
+      ? ref.variant !== source.variant ||
+        !("evaluationId" in ref) ||
+        ref.evaluationId !== source.evaluationId ||
+        ref.gateId !== source.gateId
+      : ref.variant !== "node") ||
     ref.nodeAttemptId !== source.nodeAttemptId ||
     ref.promptOrdinal !== source.promptOrdinal ||
     ref.assignmentId !== source.assignmentId ||
@@ -292,15 +388,42 @@ async function lockPermissionSource(
     !["Running", "NeedsInput"].includes(row.run.status) ||
     row.run.currentStepId !== row.attempt.nodeId ||
     row.attempt.executionAssignmentId !== source.assignmentId ||
+    row.attempt.finishContinuation !== null
+  )
+    throw new PromptOwnerInvariantError("permission_attempt_generation");
+  if ("variant" in source) {
+    const [evaluation] = await tx
+      .select()
+      .from(gateResults)
+      .where(
+        and(
+          eq(gateResults.runId, command.runId),
+          eq(gateResults.nodeAttemptId, source.nodeAttemptId),
+          eq(gateResults.gateId, source.gateId),
+        ),
+      )
+      .orderBy(desc(gateResults.createdAt), desc(gateResults.id))
+      .limit(1)
+      .for("update");
+
+    if (
+      !["Running", "Succeeded"].includes(row.attempt.status) ||
+      !evaluation ||
+      evaluation.id !== source.evaluationId ||
+      evaluation.kind !==
+        (source.variant === "gate_skill" ? "skill_check" : "ai_judgment") ||
+      !["running", "passed", "failed"].includes(evaluation.status)
+    )
+      throw new PromptOwnerInvariantError("permission_evaluation_generation");
+  } else if (
     !["Running", "NeedsInput"].includes(row.attempt.status) ||
     row.attempt.actionPromptOrdinal !== source.promptOrdinal ||
-    row.attempt.endedAt !== null ||
-    row.attempt.finishContinuation !== null
+    row.attempt.endedAt !== null
   )
     throw new PromptOwnerInvariantError("permission_attempt_generation");
 }
 
-export async function assertNodePermissionDelivery(
+export async function assertFlowPermissionDelivery(
   tx: Db,
   schema: unknown,
 ): Promise<void> {
@@ -313,7 +436,7 @@ export async function assertNodePermissionDelivery(
 /** Called inside the session.input ACK transaction, after respondedAt. The
  * exact delivery identity and the graph wake commit with the command receipt.
  */
-export async function completeNodePermissionDelivery(
+export async function completeFlowPermissionDelivery(
   tx: Db,
   hitlRequestId: string,
   deliveryCommandId: string,
@@ -340,7 +463,7 @@ export async function completeNodePermissionDelivery(
     priorAudit.requestId === schema.requestId
   )
     return;
-  await assertNodePermissionDelivery(tx, schema);
+  await assertFlowPermissionDelivery(tx, schema);
   const source = schema.flowPrompt;
   const [delivery] = await tx
     .select()
@@ -405,10 +528,10 @@ export async function completeNodePermissionDelivery(
       );
 }
 
-export async function handleNodePermission(input: {
+export async function handleFlowPermission(input: {
   db: Db;
   client: BoundClient;
-  owner: NodePromptOwner;
+  owner: FlowPermissionOwner;
   hostSessionId: string;
   stepId: string;
   event: PermissionEvent;
@@ -425,7 +548,9 @@ export async function handleNodePermission(input: {
           eq(executionCommands.runId, runId),
           eq(
             executionCommands.logicalOperationKey,
-            nodePromptOperationKey(owner),
+            owner.variant === "node"
+              ? nodePromptOperationKey(owner)
+              : gatePromptOperationKey(owner),
           ),
         ),
       );
@@ -437,9 +562,16 @@ export async function handleNodePermission(input: {
       version: 1,
       commandId: command.id,
       nodeAttemptId: owner.nodeAttemptId,
-      promptOrdinal: owner.promptOrdinal,
+      promptOrdinal: owner.variant === "node" ? owner.promptOrdinal : 0,
       assignmentId: client.assignment.id,
       incarnationId: ref.incarnationId,
+      ...(owner.variant === "node"
+        ? {}
+        : {
+            variant: owner.variant,
+            gateId: owner.gateId,
+            evaluationId: owner.evaluationId,
+          }),
     };
 
     await lockPermissionSource(tx, source, hostSessionId);
@@ -520,7 +652,7 @@ export async function handleNodePermission(input: {
     if (!optionId) return null;
     if (!event.options.some((option) => option.optionId === optionId))
       throw new PromptOwnerInvariantError("permission_replay_option");
-    const delivery = await prepareNodePermissionInput(
+    const delivery = await prepareFlowPermissionInput(
       tx,
       client,
       hitlRequestId,
@@ -533,6 +665,21 @@ export async function handleNodePermission(input: {
   });
 
   if (!prepared) return;
+  await deliverPreparedFlowPermission(db, runId, prepared);
+}
+
+type PreparedFlowPermissionDelivery = Readonly<{
+  delivery: PreparedInput;
+  hitlRequestId: string;
+  optionId: string;
+  projectId: string;
+}>;
+
+async function deliverPreparedFlowPermission(
+  db: Db,
+  runId: string,
+  prepared: PreparedFlowPermissionDelivery,
+): Promise<void> {
   await prepared.delivery.deliver({
     onAck: async (tx) => {
       const stamped = await tx
@@ -546,7 +693,7 @@ export async function handleNodePermission(input: {
         )
         .returning({ id: hitlRequests.id });
 
-      await completeNodePermissionDelivery(
+      await completeFlowPermissionDelivery(
         tx,
         prepared.hitlRequestId,
         prepared.delivery.commandId,
@@ -574,4 +721,82 @@ export async function handleNodePermission(input: {
       deliveryCommandId: prepared.delivery.commandId,
     },
   });
+}
+
+/** A completed prompt may return before its replay stream starts. Reconcile
+ * already admitted inputs directly so that fast return cannot starve delivery.
+ * Responses without an admitted command still wait for the permission event.
+ */
+export async function replayAdmittedFlowPermissionInputs(
+  db: Db,
+  client: BoundClient,
+  commandId: string,
+): Promise<void> {
+  const runId = client.assignment.runId;
+  const candidates = await db
+    .select({ id: hitlRequests.id })
+    .from(hitlRequests)
+    .where(
+      and(
+        eq(hitlRequests.runId, runId),
+        eq(hitlRequests.kind, "permission"),
+        sql`${hitlRequests.schema}->'flowPrompt'->>'commandId' = ${commandId}`,
+        sql`${hitlRequests.response}->'_delivery' IS NOT NULL`,
+        isNull(hitlRequests.respondedAt),
+      ),
+    );
+
+  for (const candidate of candidates) {
+    const prepared = await db.transaction(
+      async (tx): Promise<PreparedFlowPermissionDelivery | null> => {
+        const [source] = await tx
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.id, candidate.id));
+
+        if (!source || source.respondedAt) return null;
+        // Acquire run/assignment authority before any HITL row lock, matching
+        // concurrent user responses and the input ACK transaction.
+        await assertFlowPermissionDelivery(tx, source.schema);
+        const [current] = await tx
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.id, candidate.id))
+          .for("update");
+        const response = current?.response as Record<string, unknown> | null;
+
+        if (
+          !current ||
+          current.respondedAt ||
+          response?._delivery === undefined
+        )
+          return null;
+        if (typeof response.optionId !== "string")
+          throw new PromptOwnerInvariantError("permission_choice_missing");
+        const delivery = await prepareFlowPermissionInput(
+          tx,
+          client,
+          current.id,
+        );
+        const [run] = await tx
+          .select({ projectId: runs.projectId })
+          .from(runs)
+          .where(eq(runs.id, runId));
+
+        if (!delivery || !run?.projectId)
+          throw new PromptOwnerInvariantError(
+            "permission_delivery_intent_missing",
+          );
+
+        return {
+          delivery,
+          hitlRequestId: current.id,
+          optionId: response.optionId,
+          projectId: run.projectId,
+        };
+      },
+    );
+
+    if (prepared) await deliverPreparedFlowPermission(db, runId, prepared);
+  }
 }

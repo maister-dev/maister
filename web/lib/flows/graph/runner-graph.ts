@@ -68,7 +68,7 @@ import { isFlowDriverClaimLost } from "./driver-claim";
 import { persistLocalActionCompletion } from "./action-completion";
 import { persistFinishContinuation } from "./finish-continuation";
 import { closeAppliedFlowPromptSession } from "./prompt-session-cleanup";
-import { hasOpenNodePrompt } from "./node-permission";
+import { hasOpenGatePrompt, hasOpenNodePrompt } from "./prompt-permission";
 import { validateNodeStructuredOutput } from "./node-output";
 import {
   appendNodeAttempt,
@@ -2228,10 +2228,15 @@ export async function runGraph(
     loaded.manifest.compat?.engine_min ?? "0.0.0",
     "1.2.0",
   );
-  const isInFlightPermissionContinuation =
+  const isInFlightNodePermissionContinuation =
     Boolean(opts.driver) &&
     loaded.run.status === "NeedsInput" &&
     (await hasOpenNodePrompt(db, runId));
+  const isInFlightPermissionContinuation =
+    isInFlightNodePermissionContinuation ||
+    (Boolean(opts.driver) &&
+      loaded.run.status === "NeedsInput" &&
+      (await hasOpenGatePrompt(db, runId)));
   const isNeedsInputResume =
     !isInFlightPermissionContinuation &&
     loaded.run.status === "NeedsInput" &&
@@ -2853,7 +2858,7 @@ export async function runGraph(
         );
 
       const completedAction =
-        resumingThisNode && !isInFlightPermissionContinuation
+        resumingThisNode && !isInFlightNodePermissionContinuation
           ? lastForNode?.actionCompletion
           : null;
 

@@ -14,11 +14,16 @@ import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 
-import { bindExecution, runAgentStep } from "../runner-agent";
+import {
+  bindExecution,
+  reattachGatePrompt,
+  runAgentStep,
+} from "../runner-agent";
 import { runCliStep } from "../runner-cli";
 
 import { isFlowDriverClaimLost } from "./driver-claim";
 import { closeAppliedFlowPromptSession } from "./prompt-session-cleanup";
+import { hasPendingFlowPermission } from "./prompt-permission";
 import {
   failStaleArtifactsForDef,
   getCurrentArtifact,
@@ -415,11 +420,40 @@ async function runOneGate(
                   loaded.run.id,
                 ));
 
-          await closeAppliedFlowPromptSession(
-            ctx.db,
-            execution.client,
-            evaluation.commandId,
-          );
+          if (
+            await hasPendingFlowPermission(
+              ctx.db,
+              loaded.run.id,
+              evaluation.commandId,
+            )
+          ) {
+            const reattached = await reattachGatePrompt(
+              {
+                db: ctx.db,
+                runId: loaded.run.id,
+                stepId: gate.id,
+                signal: ctx.signal,
+              },
+              {
+                variant: gate.kind === "skill_check" ? "gate_skill" : "gate_ai",
+                nodeAttemptId,
+                gateId: gate.id,
+                evaluationId: id,
+              },
+              execution,
+            );
+
+            if (!reattached)
+              throw new PromptOwnerInvariantError(
+                "gate_permission_command_missing",
+              );
+          } else {
+            await closeAppliedFlowPromptSession(
+              ctx.db,
+              execution.client,
+              evaluation.commandId,
+            );
+          }
         }
         if (
           evaluation.verdict &&
@@ -433,11 +467,8 @@ async function runOneGate(
       // skill_check runs a slash command (best-effort, no capability scoping —
       // TODO(M14)); ai_judgment runs a free prompt. Both default to a fresh
       // session for an isolated verdict (~$0.28 cache-creation cost, M0).
-      // M11a scopes gate agents as isolated new-session verdict turns expected
-      // to end_turn — they do NOT pause for HITL. If HITL-capable gate agents
-      // land later, branch on res.errorCode (STEP_CHECKPOINTED / NeedsInput)
-      // here instead of treating partial stdout as an unparseable verdict.
-      // TODO(post-M11a): handle gate-agent HITL/checkpoint.
+      // In-flight permissions retain this evaluation and command; only the
+      // applied full verdict may close the gate after delivery is resolved.
       const prompt =
         gate.kind === "skill_check"
           ? (gate.command ?? (gate.skill ? `/${gate.skill}` : ""))

@@ -58,10 +58,10 @@ import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
 import { runFlow } from "@/lib/flows/runner";
 import {
-  assertNodePermissionDelivery,
-  completeNodePermissionDelivery,
-  prepareNodePermissionResponse,
-} from "@/lib/flows/graph/node-permission";
+  assertFlowPermissionDelivery,
+  completeFlowPermissionDelivery,
+  prepareFlowPermissionResponse,
+} from "@/lib/flows/graph/prompt-permission";
 import {
   assertReviewFeedbackPresent,
   buildReviewFeedbackPreview,
@@ -896,11 +896,11 @@ async function handlePermissionResponse(
     // no live session to address — its resume re-issues the intent instead.
     const prepareDelivery = async () => {
       if (lockedRun.status !== "NeedsInput") return null;
-      await assertNodePermissionDelivery(tx, lockedHitl.schema ?? {});
+      await assertFlowPermissionDelivery(tx, lockedHitl.schema ?? {});
       const deliverySchema = lockedHitl.schema as typeof schema;
       const client = await args.executionHosts.forRun(runId);
       const prepared =
-        (await prepareNodePermissionResponse(tx, client, hitlRequestId)) ??
+        (await prepareFlowPermissionResponse(tx, client, hitlRequestId)) ??
         (await client.prepareInput(tx, deliverySchema.supervisorSessionId, {
           kind: "permission",
           action: "select",
@@ -1305,7 +1305,7 @@ async function handlePermissionResponse(
           )
           .returning({ id: hitlRequests.id });
 
-        await completeNodePermissionDelivery(
+        await completeFlowPermissionDelivery(
           tx,
           hitlRequestId,
           prepared.commandId,

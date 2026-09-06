@@ -38,7 +38,12 @@ import {
   type FlowDriverClaim,
 } from "./graph/driver-claim";
 import { closeAppliedFlowPromptSession } from "./graph/prompt-session-cleanup";
-import { handleNodePermission } from "./graph/node-permission";
+import {
+  handleFlowPermission,
+  hasPendingFlowPermission,
+  replayAdmittedFlowPermissionInputs,
+  type FlowPermissionOwner,
+} from "./graph/prompt-permission";
 
 import { normalizeCapabilityTokens } from "@/lib/capabilities/token-normalizer";
 import { appendCapped } from "@/lib/flows/capped-text";
@@ -236,7 +241,7 @@ type PermissionContext = {
   supervisorSessionId: string;
   cancelPermission: PermissionCanceller;
   deliverPermission: PermissionDeliverer;
-  ownedNode?: { owner: NodePromptOwner; client: BoundClient };
+  ownedPrompt?: { owner: FlowPermissionOwner; client: BoundClient };
 };
 
 // M8 T11 / D9: look for a prior hitl_requests row where the operator
@@ -358,11 +363,11 @@ async function handlePermissionRequest(
   ev: Extract<SupervisorEvent, { type: "session.permission_request" }>,
   pctx: PermissionContext,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
-  if (pctx.ownedNode) {
-    await handleNodePermission({
+  if (pctx.ownedPrompt) {
+    await handleFlowPermission({
       db: pctx.db,
-      client: pctx.ownedNode.client,
-      owner: pctx.ownedNode.owner,
+      client: pctx.ownedPrompt.client,
+      owner: pctx.ownedPrompt.owner,
       hostSessionId: pctx.supervisorSessionId,
       stepId: pctx.stepId,
       event: ev,
@@ -787,7 +792,7 @@ function startEventConsumer(
           if (
             pendingPermissionRequestId &&
             permissionCtx &&
-            !permissionCtx.ownedNode
+            !permissionCtx.ownedPrompt
           ) {
             const requestId = pendingPermissionRequestId;
 
@@ -960,6 +965,22 @@ async function waitForNodeApplication(
   }
 }
 
+async function replayPermissionInputsForContinuation(
+  db: Db,
+  client: BoundClient,
+  commandId: string,
+): Promise<void> {
+  log.debug(
+    { runId: client.assignment.runId, commandId },
+    "owned-permission-input-replay",
+  );
+  try {
+    await replayAdmittedFlowPermissionInputs(db, client, commandId);
+  } catch (cause) {
+    throw new FlowPromptContinuationPending(commandId, cause);
+  }
+}
+
 async function reattachNodePrompt(
   ctx: RunAgentStepCtx,
   owner: NodePromptOwner,
@@ -983,6 +1004,7 @@ async function reattachNodePrompt(
     throw staleSessionBinding(ctx.runId, existing.executionAssignmentId);
   if (!existing.targetSessionId)
     throw new PromptOwnerInvariantError("node_permission_session_missing");
+  await replayPermissionInputsForContinuation(db, bound.client, existing.id);
   const consumer = startEventConsumer(existing.targetSessionId, bound, {
     db,
     runId: ctx.runId,
@@ -990,7 +1012,7 @@ async function reattachNodePrompt(
     supervisorSessionId: existing.targetSessionId,
     cancelPermission: permissionCancellerFor(bound.client),
     deliverPermission: permissionDelivererFor(bound.client),
-    ownedNode: { owner, client: bound.client },
+    ownedPrompt: { owner, client: bound.client },
   });
   let result: StepResult;
 
@@ -1020,8 +1042,29 @@ async function reattachNodePrompt(
   return result;
 }
 
-async function reattachGatePrompt(
-  ctx: RunAgentStepCtx,
+async function assertGatePermissionSettled(
+  db: Db,
+  runId: string,
+  commandId: string,
+): Promise<void> {
+  const [run] = await db
+    .select({ status: runs.status })
+    .from(runs)
+    .where(eq(runs.id, runId));
+  const pending = await hasPendingFlowPermission(db, runId, commandId);
+
+  if (run?.status !== "Running" || pending)
+    throw new FlowPromptContinuationPending(
+      commandId,
+      new PromptOwnerInvariantError("gate_permission_pending"),
+    );
+}
+
+export async function reattachGatePrompt(
+  ctx: Pick<
+    RunAgentStepCtx,
+    "db" | "runId" | "stepId" | "bindExecution" | "signal"
+  >,
   owner: GatePromptOwner,
   execution?: AgentExecution,
 ): Promise<StepResult | null> {
@@ -1041,7 +1084,39 @@ async function reattachGatePrompt(
 
   if (existing.executionAssignmentId !== bound.client.assignment.id)
     throw staleSessionBinding(ctx.runId, existing.executionAssignmentId);
-  await waitForGateApplication(db, bound.client, existing.id, ctx.signal);
+  if (!existing.targetSessionId)
+    throw new PromptOwnerInvariantError("gate_permission_session_missing");
+  await replayPermissionInputsForContinuation(db, bound.client, existing.id);
+  const consumer = startEventConsumer(existing.targetSessionId, bound, {
+    db,
+    runId: ctx.runId,
+    stepId: ctx.stepId,
+    supervisorSessionId: existing.targetSessionId,
+    cancelPermission: permissionCancellerFor(bound.client),
+    deliverPermission: permissionDelivererFor(bound.client),
+    ownedPrompt: { owner, client: bound.client },
+  });
+
+  try {
+    await waitForGateApplication(
+      db,
+      bound.client,
+      existing.id,
+      AbortSignal.any([
+        consumer.failureSignal,
+        ...(ctx.signal ? [ctx.signal] : []),
+      ]),
+    );
+  } finally {
+    consumer.abort.abort();
+    await consumer.done;
+  }
+  if (consumer.permissionPersistFailure())
+    throw new FlowPromptContinuationPending(
+      existing.id,
+      new PromptOwnerInvariantError("gate_permission_pending"),
+    );
+  await assertGatePermissionSettled(db, ctx.runId, existing.id);
   await closeAppliedFlowPromptSession(db, bound.client, existing.id);
   log.info(
     {
@@ -1330,8 +1405,8 @@ async function runNewSession(
       supervisorSessionId: session.hostSessionId,
       cancelPermission: permissionCancellerFor(client),
       deliverPermission: permissionDelivererFor(client),
-      ...(ctx.promptOwner?.variant === "node"
-        ? { ownedNode: { owner: ctx.promptOwner, client } }
+      ...(ctx.promptOwner
+        ? { ownedPrompt: { owner: ctx.promptOwner, client } }
         : {}),
     });
 
@@ -1418,7 +1493,15 @@ async function runNewSession(
             ctx.db ?? getDb(),
             client,
             handle.commandId,
-            ctx.signal,
+            AbortSignal.any([
+              consumer.failureSignal,
+              ...(ctx.signal ? [ctx.signal] : []),
+            ]),
+          );
+          await assertGatePermissionSettled(
+            ctx.db ?? getDb(),
+            ctx.runId,
+            handle.commandId,
           );
           // The gate caller reads the applied verdict, including host failure.
           promptResult = { stopReason: "end_turn", meta: null };
