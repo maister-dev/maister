@@ -18,6 +18,11 @@ const cancelPermissionSpy = vi.fn();
 const deleteSessionSpy = vi.fn();
 
 vi.mock("@/lib/supervisor-client", () => ({}));
+vi.mock("@/lib/assignments/service", () => ({
+  completeHitlAssignmentFromCurrentActor: async () => {
+    throw new Error("pre-owner resume fixture entered owned result handoff");
+  },
+}));
 
 // These pre-owner fixtures do not model the durable Flow resume ledger.
 vi.mock("@/lib/flows/graph/permission-resume", async (importOriginal) => ({

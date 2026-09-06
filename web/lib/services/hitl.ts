@@ -1147,18 +1147,18 @@ async function handlePermissionResponse(
           runId,
           hitlRequestId,
           branch: "idle",
-          phase: "resume-spawned",
+          phase: "resume-authorized",
           newSupervisorSessionId: r.newSupervisorSessionId,
           driveId,
           latencyMs: Date.now() - startedAt,
         },
-        "permission stored; resume spawned + driver scheduled — auto-deliver async",
+        "permission resume authorized; driver scheduled",
       );
 
       return NextResponse.json(
         {
           ok: true,
-          runStatus: "NeedsInput",
+          runStatus: r.runStatus,
           state: "resume-in-progress",
         },
         { status: 202 },

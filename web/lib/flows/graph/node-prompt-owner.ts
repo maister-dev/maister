@@ -171,6 +171,68 @@ export async function prepareNodePrompt(input: {
 
   if (!incarnation)
     throw new PromptOwnerInvariantError("node_owner_incarnation_missing");
+  const completion = await decodeNodePromptCompletion({
+    commandId: command.id,
+    promptOrdinal: ref.promptOrdinal,
+    acpSessionId: incarnation.acpSessionId,
+    outcome,
+  });
+
+  return {
+    apply: async (tx) => {
+      if (!(await lockFlowPromptOwner(tx, ref, command.targetSessionId)))
+        return "superseded";
+      const [run] = await tx.select().from(runs).where(eq(runs.id, ref.runId));
+      const [attempt] = await tx
+        .select()
+        .from(nodeAttempts)
+        .where(eq(nodeAttempts.id, ref.nodeAttemptId))
+        .for("update");
+
+      if (
+        !attempt ||
+        run?.runKind !== "flow" ||
+        !["Running", "NeedsInput"].includes(run.status) ||
+        run.flowRevisionId !== originalRun.flowRevisionId ||
+        !["ai_coding", "judge", "orchestrator"].includes(attempt.nodeType) ||
+        run.currentStepId !== attempt.nodeId ||
+        attempt.runId !== ref.runId ||
+        attempt.executionAssignmentId !== ref.assignmentId ||
+        !["Running", "NeedsInput"].includes(attempt.status) ||
+        attempt.actionPromptOrdinal !== ref.promptOrdinal ||
+        attempt.actionCompletion !== null
+      )
+        return "superseded";
+      await tx
+        .update(nodeAttempts)
+        .set({ actionCompletion: completion })
+        .where(eq(nodeAttempts.id, attempt.id));
+      log.info(
+        {
+          runId: ref.runId,
+          nodeAttemptId: ref.nodeAttemptId,
+          commandId: command.id,
+          promptOrdinal: ref.promptOrdinal,
+          ok: completion.result.ok,
+        },
+        "node-action-output-applied",
+      );
+
+      return "applied";
+    },
+  };
+}
+
+/** Exhaust the verified event stream before returning the action snapshot.
+ * Historical handoff uses this decoder without invoking the old owner apply.
+ */
+export async function decodeNodePromptCompletion(input: {
+  commandId: string;
+  promptOrdinal: number;
+  acpSessionId: string | null;
+  outcome: PromptOwnerOutcome;
+}): Promise<FlowActionCompletion> {
+  const { outcome } = input;
   const maxBytes = nodeOutputMaxBytes();
   let stdout = "";
   let sentinel = emptySentinelOutput();
@@ -210,63 +272,18 @@ export async function prepareNodePrompt(input: {
 
   if (!ok && !isMaisterErrorCode(errorCode))
     throw new PromptOwnerInvariantError("node_terminal_error_code");
-  const completion: FlowActionCompletion = {
+
+  return {
     version: 1,
-    commandId: command.id,
-    promptOrdinal: ref.promptOrdinal,
+    commandId: input.commandId,
+    promptOrdinal: input.promptOrdinal,
     result: {
       ok,
       stdout,
       vars: {},
-      ...(incarnation.acpSessionId
-        ? { acpSessionId: incarnation.acpSessionId }
-        : {}),
+      ...(input.acpSessionId ? { acpSessionId: input.acpSessionId } : {}),
       ...(!ok && isMaisterErrorCode(errorCode) ? { errorCode } : {}),
     },
     originalOutput: finishSentinelOutput(sentinel, maxBytes),
-  };
-
-  return {
-    apply: async (tx) => {
-      if (!(await lockFlowPromptOwner(tx, ref, command.targetSessionId)))
-        return "superseded";
-      const [run] = await tx.select().from(runs).where(eq(runs.id, ref.runId));
-      const [attempt] = await tx
-        .select()
-        .from(nodeAttempts)
-        .where(eq(nodeAttempts.id, ref.nodeAttemptId))
-        .for("update");
-
-      if (
-        !attempt ||
-        run?.runKind !== "flow" ||
-        !["Running", "NeedsInput"].includes(run.status) ||
-        run.flowRevisionId !== originalRun.flowRevisionId ||
-        !["ai_coding", "judge", "orchestrator"].includes(attempt.nodeType) ||
-        run.currentStepId !== attempt.nodeId ||
-        attempt.runId !== ref.runId ||
-        attempt.executionAssignmentId !== ref.assignmentId ||
-        !["Running", "NeedsInput"].includes(attempt.status) ||
-        attempt.actionPromptOrdinal !== ref.promptOrdinal ||
-        attempt.actionCompletion !== null
-      )
-        return "superseded";
-      await tx
-        .update(nodeAttempts)
-        .set({ actionCompletion: completion })
-        .where(eq(nodeAttempts.id, attempt.id));
-      log.info(
-        {
-          runId: ref.runId,
-          nodeAttemptId: ref.nodeAttemptId,
-          commandId: command.id,
-          promptOrdinal: ref.promptOrdinal,
-          ok,
-        },
-        "node-action-output-applied",
-      );
-
-      return "applied";
-    },
   };
 }

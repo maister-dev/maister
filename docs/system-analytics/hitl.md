@@ -1104,15 +1104,47 @@ on the locked `runs.status` read inside the atomic-claim transaction:
 
 ### Two-phase commit on the idle branch
 
+#### Owned graph permission recovery
+
+For owned graph node prompts, `resumeRun` reads any original input receipt and
+full prompt output before taking the scheduler/capacity lock. The claim then
+locks and rechecks the exact HITL, stored choice, attempt, source command and
+assignments. A choice changed after the read invalidates the claim.
+
+- Without an admitted input, the claim keeps the existing attempt, advances
+  its prompt ordinal, and persists `action_resume.kind = permission`. HTTP 202
+  precedes session creation; the leased graph driver restores the ACP handle,
+  starts the authorized prompt and delivers the saved choice against the
+  matching reissued permission. The original HITL ID and the resume audit
+  fields above are preserved.
+- With a confirmed successful original input and completed original prompt,
+  `action_resume.kind = permission_result` binds that input, source incarnation
+  and successful `session.checkpoint` command to the new assignment. The claim
+  retains the original ordinal and full action snapshot, marks the HITL and
+  human assignment responded, and makes the run Running atomically. The leased
+  graph reducer processes the existing output, gates and cursor without another
+  ACP prompt. The HITL audit retains the original delivery/source identities and
+  adds `resultHandoffAssignmentId`; it does not claim a reissued request.
+- Missing or non-completed input receipts and incomplete output are retryable
+  refusals before the capacity claim. A lost ACK alone never authorizes a new
+  prompt. The old prompt owner remains fenced after release. A checkpoint event
+  arriving after that release need not update the live incarnation projection;
+  cleanup validates the exact acknowledged checkpoint command before skipping
+  the historical session.
+
+Repeated or gate permission checkpoints remain outside this implemented node
+path. The table below describes the pre-owner resume path retained during the
+Stage B migration.
+
 | Phase | Layer                                   | DB write                                                                                                                                        | Side-effect                                                       |
 | ----- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
 | 1     | web route                               | atomic-claim: `UPDATE hitl_requests SET response=:intent WHERE id=:id AND respondedAt IS NULL` (FOR UPDATE)                                  | none                                                              |
 | 2     | web route → `resumeRun(runId)`          | inside `markResumed`: `UPDATE runs SET status='NeedsInput', keepalive_until=now+N, checkpoint_at=null WHERE id=:id AND status='NeedsInputIdle'` | `POST /sessions` to supervisor with `resumeSessionId`             |
 | 3     | runner-agent permission_request handler | `UPDATE hitl_requests SET respondedAt=now(), response=<merged>`                                                                                 | `POST /sessions/:id/input` to supervisor with the new `requestId` |
 
-The route NEVER awaits Phase 3 — it returns 202 immediately after
-Phase 2's 201 from the supervisor. Phase 3 happens asynchronously
-within the runner-agent's event loop over the next 5-60 s.
+In the pre-owner path, the route returns 202 after Phase 2's 201 from the
+supervisor and does not await Phase 3. Owned graph resumes use the durable
+authorization described above and do not require synchronous session creation.
 
 ### Idempotency guards (idle branch)
 

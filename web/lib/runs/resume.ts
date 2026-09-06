@@ -11,7 +11,10 @@ import {
 
 import { getDb } from "@/lib/db/client";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
-import { hasNodePermissionResume } from "@/lib/flows/graph/permission-resume";
+import {
+  hasNodePermissionResume,
+  prepareNodePermissionResult,
+} from "@/lib/flows/graph/permission-resume";
 import * as schemaModule from "@/lib/db/schema";
 import {
   isMaisterError,
@@ -48,6 +51,7 @@ const log = pino({
 export type ResumeRunResult =
   | {
       ok: true;
+      runStatus: "NeedsInput" | "Running";
       // Owned Flow creates its session under the graph driver lease.
       newSupervisorSessionId: string | null;
       acpSessionId: string;
@@ -229,6 +233,46 @@ export async function resumeRun(
     };
   }
 
+  let permissionResult: Awaited<ReturnType<typeof prepareNodePermissionResult>>;
+
+  try {
+    permissionResult = await prepareNodePermissionResult(
+      db,
+      runId,
+      hosts.transport,
+    );
+  } catch (error) {
+    if (
+      !isMaisterError(error) ||
+      !["EXECUTOR_UNAVAILABLE", "PRECONDITION"].includes(error.code)
+    )
+      throw error;
+    log.warn(
+      { runId, code: error.code },
+      "permission result evidence unavailable; no resume claim taken",
+    );
+
+    return {
+      ok: false,
+      code: "EXECUTOR_UNAVAILABLE",
+      retryable: true,
+      message: error.message,
+    };
+  }
+  if (permissionResult?.kind === "pending") {
+    log.warn(
+      { runId, reason: permissionResult.reason },
+      "permission result evidence pending; no resume claim taken",
+    );
+
+    return {
+      ok: false,
+      code: "EXECUTOR_UNAVAILABLE",
+      retryable: true,
+      message: "Original permission delivery evidence is not yet complete",
+    };
+  }
+
   // ADR-121 (T14, G4): cap-gate the resume claim atomically. Under the scheduler
   // advisory lock, count the flow pool; if it is at cap, DEFER — stamp
   // `resume_requested_at` (the C3 FIFO key) and return QUEUED instead of claiming
@@ -264,6 +308,7 @@ export async function resumeRun(
       const result = await markResumed(runId, {
         db: tx,
         placement: { host: placementHost, transport: hosts.transport },
+        ...(permissionResult ? { permissionResult } : {}),
         ...(opts.recordSuccessAudit
           ? { recordSuccessAudit: opts.recordSuccessAudit }
           : {}),
@@ -310,6 +355,7 @@ export async function resumeRun(
 
     return {
       ok: true,
+      runStatus: permissionResult ? "Running" : "NeedsInput",
       newSupervisorSessionId: null,
       acpSessionId: runRow.acpSessionId,
       assignmentId,
@@ -356,6 +402,7 @@ export async function resumeRun(
 
     return {
       ok: true,
+      runStatus: "NeedsInput",
       newSupervisorSessionId: result.sessionId,
       acpSessionId: result.acpSessionId,
       assignmentId,

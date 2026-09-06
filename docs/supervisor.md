@@ -623,6 +623,14 @@ against the new requestId; the original `hitl_requests` row's
 `respondedAt` is set with audit
 `{originalRequestId, reissuedRequestId, deliveredViaResume: true}`.
 
+An owned graph node can also resume without creating an ACP session: when an
+input was delivered but its web ACK was lost, the capacity claim can hand the
+verified original result to the next assignment. The original prompt ordinal
+is retained. Exact input receipt, full prompt output and the acknowledged
+checkpoint of the source session are required; the old owner remains fenced.
+See [owned graph permission recovery](system-analytics/hitl.md#owned-graph-permission-recovery)
+for the claim and audit boundaries.
+
 Each respawn costs ~$0.28 of `cache_creation_input_tokens` per the ACP
 spike findings — keep-alive is the cost lever, not just UX. Resumed sessions'
 canonical `usage.recorded` events carry resume attribution for ops.

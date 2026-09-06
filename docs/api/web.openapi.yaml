@@ -7262,11 +7262,13 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "202":
           description: |
-            M8 idle-branch: claim succeeded and `resumeRun` spawned a
-            fresh supervisor session. Returns 202
-            `{ ok: true, runStatus: "NeedsInput", state: "resume-in-progress" }`.
-            Auto-delivery against the new requestId happens asynchronously
-            inside the runner-agent (typically 5-60 s). Subsequent
+            Idle-branch: a capacity claim authorizes resume. Owned graph node
+            permission resumes return before their leased session creation.
+            A confirmed original-input/result handoff instead retains the
+            original prompt and returns `runStatus: "Running"`; no new ACP
+            prompt is created. A new permission turn returns `NeedsInput`,
+            with delivery against its reissued request happening asynchronously.
+            A cap-deferred claim may return `NeedsInputIdle`. Subsequent
             same-payload retries while `respondedAt IS NULL` keep
             returning 202; after auto-delivery completes the retries
             return 200 idempotent. For ADR-137 Plan-review final answers, the
@@ -7281,7 +7283,7 @@ paths:
                 required: [ok, state]
                 properties:
                   ok: { type: boolean, enum: [true] }
-                  runStatus: { type: string, enum: ["NeedsInput"] }
+                  runStatus: { type: string, enum: ["NeedsInput", "NeedsInputIdle", "Running"] }
                   state:
                     type: string
                     enum: [resume-in-progress, rework-scheduled, resume-queued, delivery-in-progress]

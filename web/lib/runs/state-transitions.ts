@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
+import type { PreparedPermissionResult } from "@/lib/flows/graph/permission-resume";
 import type {
   ExecutionHostTransport,
   PlacementReason,
@@ -22,7 +23,10 @@ import { mintPlacement, releaseAssignmentForRun } from "@/lib/execution-host";
 import { gcAgeDays } from "@/lib/instance-config";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { authorizeOrchestratorActionResume } from "@/lib/flows/graph/action-resume";
-import { authorizeNodePermissionResume } from "@/lib/flows/graph/permission-resume";
+import {
+  authorizeNodePermissionResume,
+  authorizeNodePermissionResult,
+} from "@/lib/flows/graph/permission-resume";
 import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -242,7 +246,9 @@ export async function markCheckpointedFromExit(
 // fresh live session for diagnostics.
 export async function markResumed(
   runId: string,
-  opts: StateTransitionOptions = {},
+  opts: StateTransitionOptions & {
+    permissionResult?: PreparedPermissionResult;
+  } = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
 
@@ -270,7 +276,15 @@ export async function markResumed(
       // The resume is a new driver generation: mint inside the claim.
       const assignment = await mintForClaim(tx, runId, "resume", opts);
 
-      if (assignment) await authorizeNodePermissionResume(tx, assignment);
+      if (assignment) {
+        if (opts.permissionResult)
+          await authorizeNodePermissionResult(
+            tx,
+            assignment,
+            opts.permissionResult,
+          );
+        else await authorizeNodePermissionResume(tx, assignment);
+      }
       await opts.recordSuccessAudit?.(tx);
 
       log.info(

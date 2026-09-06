@@ -31,6 +31,15 @@ export type FlowActionResume = ActionResumeIdentity &
         sourceRequestId: string;
         optionId: string;
       }>
+    | Readonly<{
+        kind: "permission_result";
+        hitlRequestId: string;
+        sourceRequestId: string;
+        optionId: string;
+        inputCommandId: string;
+        checkpointCommandId: string;
+        sourceIncarnationId: string;
+      }>
   );
 
 /** Advance only inside the normal, capacity-checked WaitingOnChildren claim.
