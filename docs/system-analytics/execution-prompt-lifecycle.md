@@ -293,7 +293,11 @@ CLI/check actions before gates also snapshot their result and file output.
 Owned-prompt graphs acquire `runs.flow_driver_token` with a renewable 30-second
 lease. Every traversal transaction checks its active assignment and lease,
 including a final check before commit; global host consumers and other runs
-retain their independent database handles. CLI/check actions and command-check
+retain their independent database handles. Owned prompt admission repeats the
+lease check after its immutable INSERT: holding the run lock cannot authorize
+a new command after expiry. Real node and AI/skill gate cases verify rollback
+at that boundary, followed by one successful continuation by the next driver.
+CLI/check actions and command-check
 gates in these leased graphs receive the driver cancellation signal. Cancellation
 before dispatch prevents spawn; cancellation during execution immediately kills
 the detached process group, including SIGTERM-resistant descendants, then yields

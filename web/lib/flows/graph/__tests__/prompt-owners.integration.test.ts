@@ -269,6 +269,156 @@ async function killAtDatabaseWrite(input: {
 }
 
 describe("Flow prompt owners through the production graph driver", () => {
+  it.each(["node", "ai_judgment", "skill_check"] as const)(
+    "owner-flow-admission: %s rolls back an INSERT blocked past the driver lease",
+    async (origin) => {
+      const seeded =
+        origin === "node"
+          ? await seedOwnerFlow([
+              {
+                id: "work",
+                type: "ai_coding",
+                action: {
+                  prompt:
+                    'fixture-output:{"bytes":0,"text":"must not dispatch"}',
+                },
+                transitions: { success: "done" },
+              },
+            ])
+          : await seedGate(origin);
+      const trigger = `admission_expiry_${randomUUID().replaceAll("-", "")}`;
+      const lockKey = Math.floor(Math.random() * 2_000_000_000) + 1;
+      let driver: ReturnType<typeof startDriver> | undefined;
+      let continuation:
+        | ReturnType<typeof startFlowContinuationWorker>
+        | undefined;
+
+      await database.pool.query(
+        `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.run_id = '${seeded.runId}' AND NEW.kind = 'session.prompt' THEN PERFORM pg_advisory_xact_lock(260910, ${lockKey}); PERFORM pg_sleep(greatest(0, extract(epoch from flow_driver_lease_expires_at - clock_timestamp())) + 0.15) FROM runs WHERE id = NEW.run_id; END IF; RETURN NEW; END $$`,
+      );
+      await database.pool.query(
+        `CREATE TRIGGER ${trigger} BEFORE INSERT ON execution_commands FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
+      );
+      try {
+        driver = startDriver(seeded.runId);
+        await expect
+          .poll(
+            async () => {
+              if (driver?.child.exitCode !== null)
+                throw new Error(driver?.output());
+              const blocked = await database.pool.query(
+                "SELECT count(*)::int AS count FROM pg_locks WHERE locktype = 'advisory' AND classid = 260910 AND objid = $1 AND granted",
+                [lockKey],
+              );
+
+              return blocked.rows[0].count as number;
+            },
+            { timeout: 30_000, interval: 25 },
+          )
+          .toBe(1);
+        // Suspend renewal without killing the owner. PostgreSQL finishes the
+        // blocked INSERT after the real lease expires, before JS can commit.
+        driver.child.kill("SIGSTOP");
+        await database.pool.query(
+          "SELECT pg_sleep(greatest(0, extract(epoch from flow_driver_lease_expires_at - clock_timestamp())) + 0.25) FROM runs WHERE id = $1",
+          [seeded.runId],
+        );
+        driver.child.kill("SIGCONT");
+        await expect
+          .poll(() => driver?.child.exitCode, { timeout: 20_000 })
+          .toBe(0);
+        const commands = await database.db
+          .select()
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, seeded.runId),
+              eq(executionCommands.kind, "session.prompt"),
+            ),
+          );
+
+        expect(commands).toHaveLength(0);
+        const [run] = await database.db
+          .select()
+          .from(runs)
+          .where(eq(runs.id, seeded.runId));
+        const attempts = await database.db
+          .select()
+          .from(nodeAttempts)
+          .where(eq(nodeAttempts.runId, seeded.runId));
+
+        expect(run).toMatchObject({ status: "Running", currentStepId: "work" });
+        expect(attempts).toHaveLength(1);
+        expect(attempts[0]).toMatchObject({
+          status: "Running",
+          actionPromptOrdinal: 0,
+          finishContinuation: null,
+        });
+        if (origin === "node") {
+          expect(attempts[0].actionCompletion).toBeNull();
+        } else {
+          const evaluations = await database.db
+            .select()
+            .from(gateResults)
+            .where(eq(gateResults.runId, seeded.runId));
+
+          expect(evaluations).toHaveLength(1);
+          expect(evaluations[0].status).toBe("running");
+          expect(
+            await readFile(
+              `${seeded.worktreePath}/gate-parent-count.txt`,
+              "utf8",
+            ),
+          ).toBe("work\n");
+        }
+        await database.pool.query(
+          `DROP TRIGGER ${trigger} ON execution_commands`,
+        );
+        continuation = startFlowContinuationWorker({
+          db: database.db as unknown as Db,
+          runtimeRoot: supervisor.runtimeRoot,
+        });
+        await expect
+          .poll(
+            async () => {
+              const [resumed] = await database.db
+                .select({ status: runs.status })
+                .from(runs)
+                .where(eq(runs.id, seeded.runId));
+
+              return resumed.status;
+            },
+            { timeout: 45_000 },
+          )
+          .toBe("Review");
+        const accepted = await database.db
+          .select()
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, seeded.runId),
+              eq(executionCommands.kind, "session.prompt"),
+            ),
+          );
+
+        expect(accepted).toHaveLength(1);
+        expect(accepted[0]).toMatchObject({
+          state: "succeeded",
+          applicationState: "applied",
+        });
+      } finally {
+        await continuation?.stop();
+        driver?.child.kill("SIGCONT");
+        driver?.child.kill("SIGKILL");
+        await driver?.exited;
+        await database.pool.query(
+          `DROP TRIGGER IF EXISTS ${trigger} ON execution_commands`,
+        );
+        await database.pool.query(`DROP FUNCTION ${trigger}()`);
+      }
+    },
+    130_000,
+  );
   it.each(["node", "gate"] as const)(
     "owner-flow-cli: %s loses its assignment and kills its entire process group without closing domain state",
     async (origin) => {
