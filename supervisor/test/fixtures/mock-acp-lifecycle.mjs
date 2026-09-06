@@ -155,7 +155,7 @@ class LifecycleAgent {
               content: { type: "text", text },
             },
       });
-      return { stopReason: "end_turn" };
+      return { stopReason: "end_turn", ...(spec.responseMeta ? { _meta: spec.responseMeta } : {}) };
     }
     for (const output of outputWrites) {
       const outputPath = process.env[output.envName];

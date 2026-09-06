@@ -6,6 +6,11 @@ import type { CommandEnvelope, SupervisorErrorBody } from "./types";
 import { createHash } from "node:crypto";
 
 import {
+  parseCommandReceiptV2,
+  type CommandReceiptV2,
+  type ImmutableObjectReference,
+} from "../../runtime/command-evidence";
+import {
   canonicalCommandJson,
   CommandJsonError,
 } from "../../runtime/command-json";
@@ -26,6 +31,7 @@ import {
 export type CommandOutcome = {
   status: number;
   body: unknown;
+  responseReference?: ImmutableObjectReference;
 };
 
 export type ExecutedCommand = CommandOutcome & { replayed: boolean };
@@ -88,6 +94,8 @@ export class CommandReceipts {
   async execute(args: ExecuteCommandArgs): Promise<ExecutedCommand> {
     const { envelope } = args;
     const commandId = envelope.command.id;
+
+    assertRequestTarget(envelope, args.hostSessionId);
     const existing = this.state.getReceipt(commandId);
 
     if (existing) {
@@ -165,6 +173,8 @@ export class CommandReceipts {
   ): Promise<ExecutedCommand> {
     const { envelope } = args;
     const commandId = envelope.command.id;
+
+    assertRequestTarget(envelope, args.hostSessionId);
     const existing = this.state.getReceipt(commandId);
 
     if (existing)
@@ -214,6 +224,8 @@ export class CommandReceipts {
   }): Promise<ExecutedCommand> {
     const { envelope } = args;
     const commandId = envelope.command.id;
+
+    assertRequestTarget(envelope, args.hostSessionId);
     const existing = this.state.getReceipt(commandId);
 
     if (existing)
@@ -378,6 +390,7 @@ export class CommandReceipts {
       assignmentId: envelope.fence.assignmentId,
       epoch: envelope.fence.assignmentEpoch,
       hostSessionId: callbacks.hostSessionId ?? null,
+      requestVersion: prior?.requestVersion ?? envelope.requestVersion ?? 1,
       requestSchema: prior
         ? (prior.requestSchema ?? null)
         : "maister.command.request.v2",
@@ -438,13 +451,7 @@ export class CommandReceipts {
   }
 }
 
-// `inflight` is process memory next to the durable row: an `accepted` receipt
-// with `inflight:false` is the restart-mid-turn signature the web folds as
-// `turn_lost` without re-sending the command.
-export function receiptToResponse(
-  row: CommandReceiptRow,
-  inflight: boolean,
-): {
+type LegacyCommandReceipt = {
   commandId: string;
   runId: string;
   kind: string;
@@ -456,7 +463,52 @@ export function receiptToResponse(
   receivedAt: string;
   completedAt: string | null;
   inflight: boolean;
-} {
+};
+
+/** V2 evidence is formatted only from durable native fields. Legacy rows keep
+ * their original wire protocol until their owners are explicitly migrated.
+ */
+export function receiptToResponse(
+  row: CommandReceiptRow,
+  inflight: boolean,
+): LegacyCommandReceipt | CommandReceiptV2 {
+  if (row.requestVersion === 2) {
+    const failed = row.phase === "rejected";
+    const error = failed && isErrorBody(row.body) ? row.body : null;
+
+    return parseCommandReceiptV2({
+      receiptVersion: 2,
+      commandId: row.commandId,
+      kind: row.kind,
+      hostKey: row.hostKey,
+      runId: row.runId,
+      assignmentId: row.assignmentId,
+      assignmentEpoch: row.epoch,
+      hostSessionId: row.hostSessionId,
+      requestSchema: row.requestSchema,
+      requestSha256: row.requestDigest,
+      phase: row.phase,
+      httpStatus: row.httpStatus,
+      receivedAt: row.receivedAt,
+      terminal:
+        row.phase === "accepted"
+          ? null
+          : {
+              outcomeVersion: 2,
+              status: failed
+                ? error?.code === "FENCED"
+                  ? "fenced"
+                  : "failed"
+                : "succeeded",
+              eventId: row.eventId,
+              streamId: row.terminalStreamId,
+              sequence: row.terminalSequence,
+              result: failed ? null : row.body,
+              error,
+            },
+    });
+  }
+
   return {
     commandId: row.commandId,
     runId: row.runId,
@@ -473,6 +525,26 @@ export function receiptToResponse(
     completedAt: row.completedAt,
     inflight,
   };
+}
+
+function assertRequestTarget(
+  envelope: CommandEnvelope,
+  hostSessionId: string | undefined,
+): void {
+  if (
+    envelope.requestVersion === 2 &&
+    (envelope.command.kind !== "session.prompt" ||
+      !hostSessionId ||
+      envelope.target?.hostSessionId !== hostSessionId)
+  ) {
+    throw new SupervisorError(
+      "PRECONDITION",
+      "command target does not match its route",
+      {
+        details: { reason: "command_invariant_conflict" },
+      },
+    );
+  }
 }
 
 // Command IDs are idempotency keys, not permission to substitute a different
@@ -521,6 +593,7 @@ function assertReceiptInvariant(
           payload: envelope.payload,
         });
   const mismatch =
+    (existing.requestVersion ?? 1) !== (envelope.requestVersion ?? 1) ||
     existing.runId !== envelope.fence.runId ||
     existing.kind !== envelope.command.kind ||
     existing.epoch !== envelope.fence.assignmentEpoch ||

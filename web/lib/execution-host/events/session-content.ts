@@ -158,6 +158,7 @@ export async function prepareSessionContent(
 
     if (
       payload.sourceMonotonicId !== event.payload.sourceMonotonicId ||
+      payload.sourceCommandId !== event.payload.sourceCommandId ||
       payload.sessionName !== event.payload.sessionName ||
       payload.nodeAttemptId !== event.payload.nodeAttemptId ||
       payload.contentRef !== undefined

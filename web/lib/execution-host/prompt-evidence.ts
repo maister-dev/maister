@@ -13,12 +13,23 @@ import {
   canonicalCommandJson,
   CommandJsonError,
 } from "../../../runtime/command-json";
+import {
+  CommandEvidenceError,
+  parseCommandReceiptV2,
+} from "../../../runtime/command-evidence";
 
+import { COMMAND_REQUEST_SCHEMA, readPromptRequest } from "./command-request";
+import { normalizeCommandReceiptV2 } from "./command-receipt";
 import { casTransition, getCommand } from "./commands";
 import { commandSignals } from "./signals";
 import { preparePromptContent } from "./events/session-content";
 
-import { executionCommands, executionEvents } from "@/lib/db/schema";
+import {
+  executionCommands,
+  executionEvents,
+  executionHosts,
+  executionEventStreams,
+} from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
 const log = pino({
@@ -162,16 +173,45 @@ async function quarantine(
   return { disposition: "quarantined", command: row };
 }
 
-function receiptMatches(
+async function receiptMatches(
+  tx: Db,
   command: ExecutionCommand,
   receipt: CommandReceipt,
-): boolean {
-  return (
-    receipt.commandId === command.id &&
-    receipt.kind === command.kind &&
-    receipt.runId === command.runId &&
-    receipt.assignmentEpoch === command.assignmentEpoch
-  );
+): Promise<boolean> {
+  if (
+    receipt.commandId !== command.id ||
+    receipt.kind !== command.kind ||
+    receipt.runId !== command.runId ||
+    receipt.assignmentEpoch !== command.assignmentEpoch
+  )
+    return false;
+  if (command.requestSchema !== COMMAND_REQUEST_SCHEMA)
+    return receipt.evidenceV2 === undefined;
+  if (!receipt.evidenceV2) return false;
+  const [host] = await tx
+    .select({ hostKey: executionHosts.hostKey })
+    .from(executionHosts)
+    .where(eq(executionHosts.id, command.executionHostId))
+    .limit(1);
+
+  if (!host) return false;
+  try {
+    const evidence = parseCommandReceiptV2(receipt.evidenceV2);
+    const request = readPromptRequest(command, host.hostKey);
+
+    return (
+      evidence.hostKey === request.fence.hostKey &&
+      evidence.assignmentId === request.fence.assignmentId &&
+      evidence.hostSessionId === request.target.hostSessionId &&
+      evidence.requestSchema === command.requestSchema &&
+      evidence.requestSha256 === command.requestSha256 &&
+      sameJson(receipt, normalizeCommandReceiptV2(evidence))
+    );
+  } catch (error) {
+    if (error instanceof CommandEvidenceError || error instanceof MaisterError)
+      return false;
+    throw error;
+  }
 }
 
 function eventMatches(
@@ -212,6 +252,28 @@ async function reducePromptEvidence(
     command.receiptEvidence.eventId !== event.id
   )
     return quarantine(tx, command, "terminal_identity");
+  if (!(await receiptMatches(tx, command, command.receiptEvidence)))
+    return quarantine(tx, command, "receipt_binding");
+  const v2 = command.receiptEvidence.evidenceV2;
+
+  if (v2) {
+    const [stream] = event.eventStreamId
+      ? await tx
+          .select()
+          .from(executionEventStreams)
+          .where(eq(executionEventStreams.id, event.eventStreamId))
+          .limit(1)
+      : [];
+
+    if (
+      !stream ||
+      stream.executionHostId !== command.executionHostId ||
+      stream.streamId !== v2.terminal?.streamId ||
+      event.hostSequence?.toString() !== v2.terminal.sequence ||
+      event.payload?.sourceCommandId !== command.id
+    )
+      return quarantine(tx, command, "terminal_stream_binding");
+  }
   const outcome = outcomeFromEvent(event);
   const receiptOutcome = outcomeFromReceipt(command.receiptEvidence);
 
@@ -219,19 +281,34 @@ async function reducePromptEvidence(
     return quarantine(tx, command, "terminal_outcome");
   const digest = createHash("sha256")
     .update(
-      canonicalCommandJson({
-        outcomeVersion: 1,
-        commandId: command.id,
-        runId: command.runId,
-        executionHostId: command.executionHostId,
-        assignmentId: command.executionAssignmentId,
-        assignmentEpoch: command.assignmentEpoch,
-        hostSessionId: event.hostSessionId,
-        eventId: event.id,
-        streamId: event.eventStreamId,
-        sequence: event.hostSequence?.toString(),
-        ...outcome,
-      }),
+      canonicalCommandJson(
+        v2
+          ? {
+              commandId: v2.commandId,
+              kind: v2.kind,
+              hostKey: v2.hostKey,
+              runId: v2.runId,
+              assignmentId: v2.assignmentId,
+              assignmentEpoch: v2.assignmentEpoch,
+              hostSessionId: v2.hostSessionId,
+              requestSchema: v2.requestSchema,
+              requestSha256: v2.requestSha256,
+              ...v2.terminal,
+            }
+          : {
+              outcomeVersion: 1,
+              commandId: command.id,
+              runId: command.runId,
+              executionHostId: command.executionHostId,
+              assignmentId: command.executionAssignmentId,
+              assignmentEpoch: command.assignmentEpoch,
+              hostSessionId: event.hostSessionId,
+              eventId: event.id,
+              streamId: event.eventStreamId,
+              sequence: event.hostSequence?.toString(),
+              ...outcome,
+            },
+      ),
       "utf8",
     )
     .digest("hex");
@@ -328,7 +405,7 @@ export async function depositPromptReceipt(
   const result = await db.transaction(async (tx) => {
     const command = await lockPrompt(tx, commandId);
 
-    if (!receiptMatches(command, receipt))
+    if (!(await receiptMatches(tx, command, receipt)))
       return quarantine(tx, command, "receipt_binding");
     if (receipt.phase === "accepted") {
       await casTransition(tx, command.id, ["queued", "delivering"], null, {

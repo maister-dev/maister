@@ -47,6 +47,7 @@ export const StdoutSegmentMetadataSchema = z
 const SessionContentPayloadSchema = z
   .object({
     sourceMonotonicId: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    sourceCommandId: z.string().uuid().optional(),
     sessionName: z.string().min(1).max(128),
     nodeAttemptId: z.string().uuid().optional(),
     contentRef: SessionContentReferenceSchema,
@@ -321,6 +322,8 @@ export const RuntimeEventEnvelopeSchema = z
         !parsed.success ||
         parsed.data.contentRef.hostSessionId !== value.hostSessionId ||
         parsed.data.contentRef.firstFrame !== parsed.data.sourceMonotonicId ||
+        (parsed.data.sourceCommandId !== undefined &&
+          parsed.data.sourceCommandId !== parsed.data.contentRef.commandId) ||
         parsed.data.contentRef.source !== sessionContentSource(value.eventType)
       ) {
         context.addIssue({

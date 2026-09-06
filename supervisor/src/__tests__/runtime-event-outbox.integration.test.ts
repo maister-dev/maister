@@ -60,6 +60,40 @@ function eventDraft(
 }
 
 describe("Stage B durable host event outbox", () => {
+  it("retains an accepted v2 output span until terminal ACK and keeps its receipt for explicit retirement", () => {
+    let clock = new Date("2026-09-04T12:00:00.000Z");
+    const state = openHostState({ inMemory: true, now: () => clock });
+    const receipt: CommandReceiptRow = {
+      ...createReceipt(),
+      kind: "session.prompt",
+      requestVersion: 2,
+    };
+
+    try {
+      const accepted = state.putReceiptWithRuntimeEvent(
+        receipt,
+        eventDraft("session.command"),
+      );
+
+      state.ackRuntimeEvents(accepted.streamId, accepted.sequence);
+      clock = new Date("2026-09-07T12:00:00.000Z");
+      expect(state.pruneAcknowledgedRuntimeEvents(clock)).toBe(0);
+      const terminal = state.putReceiptWithRuntimeEvent(
+        { ...receipt, phase: "completed", completedAt: clock.toISOString() },
+        eventDraft("session.command"),
+      );
+
+      expect(state.pruneAcknowledgedRuntimeEvents(clock)).toBe(0);
+      state.ackRuntimeEvents(terminal.streamId, terminal.sequence);
+      clock = new Date("2026-09-10T12:00:00.000Z");
+      expect(state.pruneAcknowledgedRuntimeEvents(clock)).toBe(2);
+      expect(state.pruneReceipts(new Date("2030-01-01T00:00:00Z"))).toBe(0);
+      expect(state.getReceipt(receipt.commandId)?.requestVersion).toBe(2);
+    } finally {
+      state.close();
+    }
+  });
+
   it("never reopens a completed producer wallet after its terminal receipt has been pruned", () => {
     const state = openHostState({ inMemory: true });
     const receipt = createReceipt();
@@ -490,6 +524,7 @@ describe("Stage B durable host event outbox", () => {
         DROP TABLE runtime_event_wallets; DROP TABLE runtime_event_pressure;
         DROP INDEX command_receipts_pending_session;
         ALTER TABLE command_receipts DROP COLUMN request_schema;
+        ALTER TABLE command_receipts DROP COLUMN request_version;
         ALTER TABLE command_receipts DROP COLUMN host_key;
         ALTER TABLE command_receipts DROP COLUMN accepted_sequence;
         ALTER TABLE command_receipts DROP COLUMN terminal_stream_id;

@@ -83,7 +83,7 @@ export const RECEIPT_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 export const RECEIPT_PRUNE_INTERVAL_MS = 60 * 60 * 1_000;
 export const EXECUTION_HOST_PROTOCOL_VERSION = 1;
 // `PRAGMA user_version` of the state file; bumped with every migration below.
-export const HOST_STATE_SCHEMA_VERSION = 10;
+export const HOST_STATE_SCHEMA_VERSION = 11;
 const MAX_HOST_EVENT_SEQUENCE = (1n << 63n) - 1n;
 const HOST_EVENT_SEQUENCE_SORT_WIDTH = 20;
 
@@ -150,6 +150,7 @@ export type CommandReceiptRow = {
   hostSessionId: string | null;
   requestDigest: string | null;
   // Absent/null values identify a legacy receipt; never synthesize bindings.
+  requestVersion?: 1 | 2;
   requestSchema?: string | null;
   hostKey?: string | null;
   acceptedSequence?: string | null;
@@ -306,6 +307,7 @@ export type HostState = {
     admission?: ReceiptAdmission,
   ): HostRuntimeEventRow;
   getRuntimeEventStreamId(): string;
+  nextRuntimeEventPosition(): { streamId: string; sequence: string };
   runtimeEventsAfter(
     streamId: string,
     afterSequence: string | null,
@@ -394,6 +396,7 @@ CREATE TABLE IF NOT EXISTS command_receipts (
   host_session_id TEXT,
   request_digest TEXT,
   request_schema TEXT,
+  request_version INTEGER NOT NULL DEFAULT 1 CHECK (request_version IN (1, 2)),
   host_key TEXT,
   accepted_sequence TEXT,
   terminal_stream_id TEXT,
@@ -619,6 +622,13 @@ PRAGMA user_version = 10;
 COMMIT;
 `;
 
+const MIGRATE_V10_TO_V11 = `
+BEGIN IMMEDIATE;
+ALTER TABLE command_receipts ADD COLUMN request_version INTEGER NOT NULL DEFAULT 1 CHECK (request_version IN (1, 2));
+PRAGMA user_version = 11;
+COMMIT;
+`;
+
 function applySchema(db: DatabaseSync): void {
   const fresh =
     db
@@ -654,6 +664,7 @@ function applySchema(db: DatabaseSync): void {
   if (Number(user_version) < 8) db.exec(MIGRATE_V7_TO_V8);
   if (Number(user_version) < 9) db.exec(MIGRATE_V8_TO_V9);
   if (Number(user_version) < 10) db.exec(MIGRATE_V9_TO_V10);
+  if (Number(user_version) < 11) db.exec(MIGRATE_V10_TO_V11);
 }
 
 export function openHostState(opts: OpenHostStateOptions = {}): HostState {
@@ -937,7 +948,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     getReceipt(commandId) {
       const row = db
         .prepare(
-          `SELECT command_id, run_id, kind, assignment_id, epoch, host_session_id, request_digest, request_schema, host_key, accepted_sequence, terminal_stream_id, terminal_sequence, event_id, phase, http_status, body_json, received_at, completed_at
+          `SELECT command_id, run_id, kind, assignment_id, epoch, host_session_id, request_digest, request_schema, request_version, host_key, accepted_sequence, terminal_stream_id, terminal_sequence, event_id, phase, http_status, body_json, received_at, completed_at
            FROM command_receipts WHERE command_id = ?`,
         )
         .get(commandId) as
@@ -950,6 +961,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
             host_session_id: string | null;
             request_digest: string | null;
             request_schema: string | null;
+            request_version: 1 | 2;
             host_key: string | null;
             accepted_sequence: string | null;
             terminal_stream_id: string | null;
@@ -974,6 +986,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         hostSessionId: row.host_session_id,
         requestDigest: row.request_digest,
         requestSchema: row.request_schema,
+        requestVersion: row.request_version,
         hostKey: row.host_key,
         acceptedSequence: row.accepted_sequence,
         terminalStreamId: row.terminal_stream_id,
@@ -1091,6 +1104,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         host_session_id: string | null;
         request_digest: string | null;
         request_schema: string | null;
+        request_version: 1 | 2;
         host_key: string | null;
         accepted_sequence: string | null;
         received_at: string;
@@ -1112,7 +1126,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         const rows = db
           .prepare(
             `SELECT command_id, run_id, kind, assignment_id, epoch,
-            host_session_id, request_digest, request_schema, host_key, accepted_sequence, received_at FROM command_receipts
+            host_session_id, request_digest, request_schema, request_version, host_key, accepted_sequence, received_at FROM command_receipts
           WHERE phase = 'accepted' AND assignment_id IS NOT NULL AND (
             (kind = 'session.prompt' AND host_session_id IS NOT NULL) OR
             EXISTS (SELECT 1 FROM runtime_event_wallets w WHERE w.closed = 0 AND
@@ -1154,6 +1168,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
               row.host_session_id ?? wallet?.host_session_id ?? null,
             requestDigest: row.request_digest,
             requestSchema: row.request_schema,
+            requestVersion: row.request_version,
             hostKey: row.host_key,
             acceptedSequence: row.accepted_sequence,
             eventId: null,
@@ -1183,6 +1198,9 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
               eventType: "session.command",
               occurredAt: now().toISOString(),
               payload: {
+                ...(row.request_version === 2
+                  ? { sourceCommandId: row.command_id }
+                  : {}),
                 commandId: row.command_id,
                 kind: row.kind,
                 phase: "completed",
@@ -1230,7 +1248,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
           const row = db
             .prepare(
               `SELECT command_id, length(CAST(body_json AS BLOB)) AS bytes
-            FROM command_receipts WHERE received_at < ? AND phase <> 'accepted'
+            FROM command_receipts WHERE received_at < ? AND phase <> 'accepted' AND request_version = 1
             AND NOT EXISTS (SELECT 1 FROM runtime_event_wallets w WHERE w.wallet_id = command_receipts.command_id AND w.closed = 0)
             ORDER BY received_at, command_id LIMIT 1`,
             )
@@ -1474,6 +1492,11 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         }
       });
     },
+    nextRuntimeEventPosition() {
+      const stream = ensureRuntimeEventStream(db, now);
+
+      return { streamId: stream.stream_id, sequence: stream.next_sequence };
+    },
     getRuntimeEventStreamId() {
       return ensureRuntimeEventStream(db, now).stream_id;
     },
@@ -1643,6 +1666,18 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         db.exec("BEGIN IMMEDIATE");
         try {
           const stream = ensureRuntimeEventStream(db, now);
+          // An accepted v2 command owns its complete event span until the
+          // terminal event is ACKed. ACK alone does not retire the receipt.
+          const protectedSpan = db
+            .prepare(
+              `SELECT accepted_sequence AS sequence
+            FROM command_receipts WHERE request_version = 2 AND accepted_sequence IS NOT NULL
+            AND (terminal_sequence IS NULL OR CAST(terminal_sequence AS INTEGER) > CAST(? AS INTEGER))
+            ORDER BY length(accepted_sequence), accepted_sequence LIMIT 1`,
+            )
+            .get(stream.acknowledged_through ?? "-1") as
+            | { sequence: string }
+            | undefined;
           const candidates = db
             .prepare(
               `SELECT e.sequence, e.sequence_sort_key, e.encoded_bytes,
@@ -1661,6 +1696,8 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
 
           for (const row of candidates) {
             if (
+              (protectedSpan !== undefined &&
+                BigInt(row.sequence) >= BigInt(protectedSpan.sequence)) ||
               row.acknowledged_at === null ||
               row.acknowledged_at >= cutoff ||
               bytes + row.encoded_bytes > MAX_RUNTIME_EVENT_BYTES
@@ -1944,8 +1981,8 @@ function writeReceiptRow(db: DatabaseSync, row: CommandReceiptRow): void {
     );
   db.prepare(
     `INSERT INTO command_receipts
-       (command_id, run_id, kind, assignment_id, epoch, host_session_id, request_digest, request_schema, host_key, accepted_sequence, terminal_stream_id, terminal_sequence, event_id, phase, http_status, body_json, received_at, completed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (command_id, run_id, kind, assignment_id, epoch, host_session_id, request_digest, request_schema, request_version, host_key, accepted_sequence, terminal_stream_id, terminal_sequence, event_id, phase, http_status, body_json, received_at, completed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (command_id) DO UPDATE SET
        assignment_id = COALESCE(command_receipts.assignment_id, excluded.assignment_id),
        host_session_id = COALESCE(command_receipts.host_session_id, excluded.host_session_id),
@@ -1967,6 +2004,7 @@ function writeReceiptRow(db: DatabaseSync, row: CommandReceiptRow): void {
     row.hostSessionId,
     row.requestDigest,
     row.requestSchema ?? null,
+    row.requestVersion ?? 1,
     row.hostKey ?? null,
     row.acceptedSequence ?? null,
     row.terminalStreamId ?? null,

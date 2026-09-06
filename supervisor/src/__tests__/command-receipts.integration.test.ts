@@ -3,7 +3,7 @@ import type { SessionEvent } from "../types";
 import type { RuntimeEventEnvelope } from "../runtime-events";
 
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -15,8 +15,14 @@ import {
   HOST_STATE_FILE,
   HOST_STATE_SCHEMA_VERSION,
 } from "../host-state";
+import { commandRequestDigest } from "../command-receipts";
 import { SESSION_EVENT_CHANNEL } from "../registry";
 import { canonicalCommandJson } from "../../../runtime/command-json";
+import {
+  parseCommandReceiptV2,
+  parseCommandOutputReferenceV2,
+  parseCommandOutputManifestV2,
+} from "../../../runtime/command-evidence";
 
 import {
   adoptDirectory,
@@ -295,6 +301,7 @@ describe("command receipts", () => {
 
     legacy.exec(`BEGIN;
       ALTER TABLE command_receipts DROP COLUMN request_schema;
+        ALTER TABLE command_receipts DROP COLUMN request_version;
       ALTER TABLE command_receipts DROP COLUMN host_key;
       ALTER TABLE command_receipts DROP COLUMN accepted_sequence;
       ALTER TABLE command_receipts DROP COLUMN terminal_stream_id;
@@ -340,6 +347,147 @@ describe("command receipts", () => {
     } finally {
       inspected.close();
     }
+  });
+
+  it("AT-06 v2: accepted receipt survives duplicate reads, refuses retargeting/version changes and rejects a concurrent new turn", async () => {
+    const host = await bootHost({
+      runtimeRoot: await tempRoot(),
+      fixtureArgs: ["--hang", "--hang-prompt"],
+    });
+
+    booted.push(host);
+    const runId = `run-${randomUUID().slice(0, 8)}`;
+    const created = await postJson(
+      `${host.url}/sessions`,
+      await createEnvelope(host, { runId }),
+    );
+    const hostSessionId = created.body.sessionId as string;
+    const legacy = envelope("session.prompt", fenceFor(host, runId), {
+      stepId: "pending",
+      prompt: "original input",
+    });
+    const request = { ...legacy, requestVersion: 2, target: { hostSessionId } };
+    const route = `${host.url}/sessions/${hostSessionId}/prompts`;
+
+    expect((await postJson(route, request)).status).toBe(202);
+    const read = async () =>
+      parseCommandReceiptV2(
+        await (
+          await fetch(`${host.url}/commands/${request.command.id}`)
+        ).json(),
+      );
+    const accepted = await read();
+
+    expect(accepted).toMatchObject({
+      receiptVersion: 2,
+      phase: "accepted",
+      terminal: null,
+      hostSessionId,
+    });
+    expect((await postJson(route, request)).status).toBe(202);
+    expect(await read()).toEqual(accepted);
+    expect((await postJson(route, legacy)).body.details.reason).toBe(
+      "command_invariant_conflict",
+    );
+    expect(
+      (
+        await postJson(route, {
+          ...request,
+          target: { hostSessionId: randomUUID() },
+        })
+      ).body.details.reason,
+    ).toBe("command_invariant_conflict");
+    const next = {
+      ...request,
+      command: { ...request.command, id: randomUUID() },
+    };
+
+    expect((await postJson(route, next)).body.details.reason).toBe(
+      "command_in_progress",
+    );
+    expect(host.hostState.getReceipt(next.command.id)).toBeNull();
+    expect(await read()).toEqual(accepted);
+  });
+
+  it("AT-06 v2: publishes a request-bound receipt and immutable original output manifest", async () => {
+    const host = await bootHost({
+      runtimeRoot: await tempRoot(),
+      fixtureArgs: ["--hang"],
+    });
+
+    booted.push(host);
+    const runId = `run-${randomUUID().slice(0, 8)}`;
+    const created = await postJson(
+      `${host.url}/sessions`,
+      await createEnvelope(host, { runId }),
+    );
+    const hostSessionId = created.body.sessionId as string;
+    const request = {
+      ...envelope("session.prompt", fenceFor(host, runId), {
+        stepId: "v2-output",
+        prompt: "original output",
+      }),
+      requestVersion: 2,
+      target: { hostSessionId },
+    };
+    const admitted = await postJson(
+      `${host.url}/sessions/${hostSessionId}/prompts`,
+      request,
+    );
+
+    expect(admitted.status).toBe(202);
+    await waitFor(
+      () =>
+        host.hostState.getReceipt(request.command.id)?.phase === "completed",
+    );
+    expect(host.hostState.getReceipt(request.command.id)).toMatchObject({
+      phase: "completed",
+    });
+    const response = await fetch(`${host.url}/commands/${request.command.id}`);
+    const json: unknown = await response.json();
+    const receipt = parseCommandReceiptV2(json);
+    const output = parseCommandOutputReferenceV2(
+      receipt.terminal?.result?.output,
+    );
+    const stored = host.hostState.getRuntimeObject(output.objectId);
+
+    expect(stored).not.toBeNull();
+    if (!stored) throw new Error("output manifest object is missing");
+    const bytes = await readFile(stored.privatePath);
+    const manifest = parseCommandOutputManifestV2(
+      JSON.parse(bytes.toString("utf8")),
+    );
+
+    expect(bytes.byteLength).toBe(output.sizeBytes);
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+      output.sha256,
+    );
+    expect(manifest).toMatchObject({
+      commandId: request.command.id,
+      hostSessionId,
+      requestSha256: receipt.requestSha256,
+      acceptedSequence: output.acceptedSequence,
+      terminalSequence: receipt.terminal?.sequence,
+      streamId: receipt.terminal?.streamId,
+    });
+    const original = host.hostState.getRuntimeObject(
+      manifest.response.objectId,
+    );
+
+    if (!original)
+      throw new Error("original command response object is missing");
+    const originalBytes = await readFile(original.privatePath);
+
+    expect(createHash("sha256").update(originalBytes).digest("hex")).toBe(
+      manifest.response.sha256,
+    );
+    expect(JSON.parse(originalBytes.toString("utf8"))).toMatchObject({
+      schema: "maister.command-response.v2",
+      commandId: request.command.id,
+      hostSessionId,
+      requestSha256: receipt.requestSha256,
+      response: { stopReason: "end_turn" },
+    });
   });
 
   it("R2b: asynchronous prompt admission returns only after the accepted receipt/event and terminalizes later", async () => {
@@ -431,72 +579,117 @@ describe("command receipts", () => {
     expect(second.hostState.getReceipt(commandId)?.phase).toBe("accepted");
   });
 
-  it("R3b: supervisor startup terminalizes a proven async prompt receipt and appends turn_lost", async () => {
-    const root = await tempRoot();
-    const stateDir = join(root, ".maister", "execution-host");
-    const first = await bootHost({
-      runtimeRoot: root,
-      stateDir,
-      fixtureArgs: ["--hang"],
-    });
-    const runId = `run-${randomUUID().slice(0, 8)}`;
-    const create = await createEnvelope(first, { runId });
-    const created = await postJson(`${first.url}/sessions`, create);
-    const commandId = randomUUID();
-    const assignmentId = create.fence.assignmentId;
+  it.each([1, 2] as const)(
+    "R3b: supervisor startup terminalizes a proven v%i async prompt receipt and appends turn_lost",
+    async (requestVersion) => {
+      const root = await tempRoot();
+      const stateDir = join(root, ".maister", "execution-host");
+      const first = await bootHost({
+        runtimeRoot: root,
+        stateDir,
+        fixtureArgs: ["--hang"],
+      });
+      const runId = `run-${randomUUID().slice(0, 8)}`;
+      const create = await createEnvelope(first, { runId });
+      const created = await postJson(`${first.url}/sessions`, create);
+      const commandId = randomUUID();
+      const assignmentId = create.fence.assignmentId;
 
-    first.hostState.putReceipt({
-      commandId,
-      runId,
-      kind: "session.prompt",
-      assignmentId,
-      epoch: 1,
-      hostSessionId: created.body.sessionId as string,
-      requestDigest: null,
-      eventId: null,
-      phase: "accepted",
-      httpStatus: 202,
-      body: { commandId, state: "accepted" },
-      receivedAt: new Date().toISOString(),
-      completedAt: null,
-    });
-    await first.stop();
-
-    const second = await bootHost({
-      runtimeRoot: root,
-      stateDir,
-      fixtureArgs: ["--hang"],
-    });
-
-    booted.push(second);
-    const receipt = second.hostState.getReceipt(commandId);
-    const events = second.hostState.runtimeEventsAfter(
-      second.hostState.getRuntimeEventStreamId(),
-      null,
-    );
-    const event = events.find(
-      (candidate) => candidate.eventId === receipt?.eventId,
-    );
-
-    expect(receipt).toMatchObject({
-      phase: "rejected",
-      httpStatus: 409,
-      body: { details: { reason: "turn_lost", runId } },
-    });
-    expect(event?.envelope).toMatchObject({
-      runId,
-      assignmentId,
-      hostSessionId: created.body.sessionId,
-      eventType: "session.command",
-      payload: {
+      const request = envelope(
+        "session.prompt",
+        create.fence,
+        { stepId: "lost", prompt: "original lost turn" },
         commandId,
-        kind: "session.prompt",
-        phase: "completed",
-        status: "failed",
-        error: { details: { reason: "turn_lost", runId } },
-      },
-    });
-  });
+      );
+      const hostSessionId = created.body.sessionId as string;
+
+      first.hostState.putReceiptWithRuntimeEvent(
+        {
+          commandId,
+          runId,
+          kind: "session.prompt",
+          assignmentId,
+          epoch: 1,
+          hostSessionId: created.body.sessionId as string,
+          requestVersion,
+          requestSchema: "maister.command.request.v2",
+          hostKey: first.hostState.hostKey,
+          requestDigest: commandRequestDigest(request, hostSessionId),
+          eventId: null,
+          phase: "accepted",
+          httpStatus: 202,
+          body: { commandId, state: "accepted" },
+          receivedAt: new Date().toISOString(),
+          completedAt: null,
+        },
+        {
+          terminal: false,
+          draft: {
+            runId,
+            assignmentId,
+            assignmentEpoch: 1,
+            hostSessionId,
+            eventType: "session.command",
+            occurredAt: new Date().toISOString(),
+            payload: { commandId, kind: "session.prompt", phase: "accepted" },
+          },
+        },
+      );
+      await first.stop();
+
+      const second = await bootHost({
+        runtimeRoot: root,
+        stateDir,
+        fixtureArgs: ["--hang"],
+      });
+
+      booted.push(second);
+      const receipt = second.hostState.getReceipt(commandId);
+      const events = second.hostState.runtimeEventsAfter(
+        second.hostState.getRuntimeEventStreamId(),
+        null,
+      );
+      const event = events.find(
+        (candidate) => candidate.eventId === receipt?.eventId,
+      );
+
+      if (requestVersion === 2) {
+        const publicReceipt = parseCommandReceiptV2(
+          await (await fetch(`${second.url}/commands/${commandId}`)).json(),
+        );
+
+        expect(publicReceipt).toMatchObject({
+          receiptVersion: 2,
+          requestSha256: commandRequestDigest(request, hostSessionId),
+          terminal: {
+            status: "failed",
+            error: { details: { reason: "turn_lost", runId } },
+          },
+        });
+        expect(event?.envelope).toMatchObject({
+          payload: { sourceCommandId: commandId },
+        });
+      }
+      expect(receipt).toMatchObject({
+        phase: "rejected",
+        httpStatus: 409,
+        body: { details: { reason: "turn_lost", runId } },
+      });
+      expect(event?.envelope).toMatchObject({
+        runId,
+        assignmentId,
+        hostSessionId: created.body.sessionId,
+        eventType: "session.command",
+        payload: {
+          commandId,
+          kind: "session.prompt",
+          phase: "completed",
+          status: "failed",
+          error: { details: { reason: "turn_lost", runId } },
+        },
+      });
+    },
+  );
 
   it("R4: GET /commands/:id returns the receipt fields; unknown is 404", async () => {
     const host = await bootHost({

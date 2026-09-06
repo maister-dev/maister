@@ -350,7 +350,12 @@ export async function issueOwnedPrompt(
 
       return {
         row: existing,
-        envelope: { ...envelope, payload: frozen.payload },
+        envelope: {
+          ...envelope,
+          requestVersion: 2,
+          target: frozen.target,
+          payload: frozen.payload,
+        },
       };
     }
     const [row] = await tx
@@ -386,6 +391,14 @@ export async function issueOwnedPrompt(
       "owned-prompt-admitted",
     );
 
-    return { row, envelope: { ...envelope, payload: frozen.payload } };
+    return {
+      row,
+      envelope: {
+        ...envelope,
+        requestVersion: 2,
+        target: frozen.target,
+        payload: frozen.payload,
+      },
+    };
   });
 }

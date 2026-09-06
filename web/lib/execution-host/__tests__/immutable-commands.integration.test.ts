@@ -7,6 +7,8 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
+import { normalizeCommandReceiptV2 } from "../command-receipt";
+import { depositPromptReceipt } from "../prompt-evidence";
 import { mintAssignment } from "../assignments";
 import { issueOwnedPrompt } from "../ledger";
 import { classifyCommandRequest, readPromptRequest } from "../command-request";
@@ -165,6 +167,68 @@ it("concurrent same-key admission keeps one command and the original request byt
     details: { reason: "command_invariant_conflict" },
   });
 });
+
+it.each([
+  "requestSha256",
+  "hostKey",
+  "assignmentId",
+  "hostSessionId",
+  "legacy",
+] as const)(
+  "v2 admission quarantines receipt with mismatched %s before changing command state",
+  async (field) => {
+    const fixture = await admissionFixture();
+    const admitted = await issueOwnedPrompt(db, {
+      assignment,
+      host,
+      targetSessionId: fixture.targetSessionId,
+      payload: { stepId: "agent", prompt: "private immutable input" },
+      maxAttempts: 3,
+      admitOwner: async () => fixture,
+    });
+    const valid = normalizeCommandReceiptV2({
+      receiptVersion: 2,
+      commandId: admitted.row.id,
+      kind: "session.prompt",
+      hostKey: host.hostKey,
+      runId,
+      assignmentId,
+      assignmentEpoch: assignment.epoch,
+      hostSessionId: fixture.targetSessionId,
+      requestSchema: admitted.row.requestSchema,
+      requestSha256: admitted.row.requestSha256,
+      phase: "accepted",
+      httpStatus: 202,
+      receivedAt: new Date().toISOString(),
+      terminal: null,
+    });
+    const { evidenceV2, ...legacy } = valid;
+    const corrupted =
+      field === "legacy"
+        ? legacy
+        : normalizeCommandReceiptV2({
+            ...evidenceV2,
+            [field]:
+              field === "requestSha256"
+                ? "a".repeat(64)
+                : field === "hostKey"
+                  ? "eh_different_host"
+                  : randomUUID(),
+          });
+    const result = await depositPromptReceipt(db, admitted.row.id, corrupted);
+
+    expect(result).toMatchObject({
+      disposition: "quarantined",
+      command: {
+        state: "queued",
+        receiptEvidence: null,
+        terminalEvidenceSha256: null,
+        applicationState: "poisoned",
+        applicationError: { causeCode: "receipt_binding" },
+      },
+    });
+  },
+);
 
 it("refused request rolls back owner admission writes and persists no command", async () => {
   const fixture = await admissionFixture();

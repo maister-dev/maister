@@ -381,6 +381,7 @@ describe("AT-02 physical runtime storage", () => {
           DROP TABLE runtime_event_ack_ranges;
           ${OUTBOX_BUDGET_SCHEMA}
         ALTER TABLE command_receipts DROP COLUMN request_schema;
+        ALTER TABLE command_receipts DROP COLUMN request_version;
         ALTER TABLE command_receipts DROP COLUMN host_key;
         ALTER TABLE command_receipts DROP COLUMN accepted_sequence;
         ALTER TABLE command_receipts DROP COLUMN terminal_stream_id;

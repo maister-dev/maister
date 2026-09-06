@@ -77,8 +77,13 @@ a new host read. Host request replay also checks the stored URL-selected target;
 a legacy receipt with no target cannot attach to a newly created session.
 Host SQLite v10 additionally stores the JCS v2 request digest, original host
 key and accepted/terminal stream positions, preserving null metadata on legacy
-upgrade. The public receipt v2 response and full command-output manifests remain
-the next S2.2 increment; legacy receipt agreement is not v2 activation.
+upgrade. SQLite v11 separately records the public wire version; legacy rows
+keep version 1. The S2.2 development path accepts explicit request-v2 envelopes,
+returns strict public receipt v2, and seals original ACP responses with immutable
+command-output range manifests. The internal Web reader checks original bytes,
+routing and retained contiguous event spans without using message projections.
+Command-event payload v2 and owner activation remain in progress; this path is
+not the S2 activation gate.
 
 Keep `execution_commands.payload` as the existing allowlisted diagnostic projection. Add a **server-private** immutable `request_canonical_json` TEXT on the same ledger, with version and SHA-256. Store the exact JCS UTF-8 string for `{requestVersion, command:{id,kind,issuedAt}, fence, target:{hostSessionId}, payload}`; include every effect-affecting field, array order and frozen content/object references. Normalize optional fields once before storage. `issuedAt` and all generated IDs are created once and reused; no clock/random input during retry. Parsed request → strict schema → digest comparison precedes every dispatch. The host uses the same digest schema, including the URL target (not only envelope payload), before replaying a receipt.
 
@@ -89,6 +94,37 @@ For new prompts, owner reference, logical operation key, request schema/digest/b
 Add only operational reconciliation fields to this ledger: transport disposition, terminal evidence identity, application disposition/lease/backoff, retirement eligibility. Use typed CHECKs and scoped indexes. Exact physical column names are frozen in S0 before generation. This does not duplicate node/run workflow state.
 
 Terminal result/error identity is a versioned canonical value, preserving nested `{code,message,details}` without flattening or string-based classification. Full semantic output is a command-bound immutable host object/manifest `{objectId,generation,sizeBytes,sha256,commandId,hostSessionId,acceptedSequence,terminalSequence}`. Terminal event/receipt contain matching bounded references; owner replay reads and verifies original bytes. Redacted event snippets and `stopReason` alone cannot reconstruct structured results, gate replies or consensus output.
+
+The command-output v2 manifest is a closed, bounded JSON object. It contains
+`schema: maister.command-output.v2`, command/run/host/session/assignment identity,
+`requestSha256`, the host `streamId`, `acceptedSequence`, `terminalSequence`, and
+an immutable `response` reference (`objectId`, generation, byte size, SHA-256).
+The separately sealed response preserves the original ACP prompt response,
+including opaque `_meta`, with its command/session/request binding. Capture it
+before asynchronous post-turn work can retain the decoder's response object.
+The terminal event carries the bounded stop reason, output-manifest reference
+and sealed runtime-object metadata; it does not embed opaque response metadata.
+
+For v2 turns, semantic session events carry `sourceCommandId` in their original
+payload (also inside a content object when referenced). The manifest addresses
+the complete original span strictly after its accepted position and before its
+terminal position, filtered by exact stream, run, host, assignment, session and
+source command. A reader first verifies the manifest and response bytes against
+the declared hashes/bindings and proves contiguous ingestion through terminal.
+It then pages the preserved canonical events and verifies each original content
+reference before reconstructing owner output. A missing position, object,
+source binding or digest is incomplete evidence, never an empty successful
+result. Historical reads cannot change a successor's session or domain state.
+Only one new prompt may own a host session at a time; same-ID duplicates join,
+and the active source command is released after durable terminal publication.
+
+The referenced event span and original content objects remain held through
+pending command/owner application. Host replay pruning must retain a v2
+accepted command's event prefix until terminal acknowledgement; manager event
+and object retirement must honor the manifest through the S2.11 eligibility
+protocol. A process restart never replaces the manifest with current messages,
+current session output or a redacted diagnostic projection. These manifest and
+retention rules are designed until their S2/S3 owning gates pass.
 
 The evidence and application states are separate:
 

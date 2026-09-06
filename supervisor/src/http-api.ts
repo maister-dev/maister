@@ -1,3 +1,4 @@
+import type { ImmutableObjectReference } from "../../runtime/command-evidence";
 import type { ReceiptAdmission } from "./outbox-budget";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type * as acp from "@agentclientprotocol/sdk";
@@ -904,11 +905,82 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       expectedRunId: entry.record.runId,
       logger: fenceLog,
     });
+
+    if (
+      entry.record.activePromptCommandId &&
+      entry.record.activePromptCommandId !== envelope.command.id &&
+      (envelope.requestVersion === 2 ||
+        receipts.lookup(entry.record.activePromptCommandId)?.requestVersion ===
+          2) &&
+      !receipts.lookup(envelope.command.id)
+    ) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "session already has an active prompt",
+        {
+          details: { reason: "command_in_progress" },
+        },
+      );
+    }
     const outcome = await receipts.executeAsync({
       envelope,
       hostSessionId: entry.record.sessionId,
       persistReceipt: (transition) => {
         const status = commandStatus(transition.outcome);
+        let receiptBody = transition.outcome.body;
+
+        if (
+          envelope.requestVersion === 2 &&
+          transition.phase === "completed" &&
+          status === "succeeded"
+        ) {
+          const accepted = hostState.getReceipt(envelope.command.id);
+          const response = transition.outcome.responseReference;
+
+          if (
+            !accepted?.acceptedSequence ||
+            !accepted.requestDigest ||
+            !response
+          ) {
+            throw new SupervisorError(
+              "ACP_PROTOCOL",
+              "command output evidence is incomplete",
+              {
+                details: { reason: "required_output_incomplete" },
+              },
+            );
+          }
+          const position = hostState.nextRuntimeEventPosition();
+          const manifest = {
+            schema: "maister.command-output.v2" as const,
+            commandId: envelope.command.id,
+            ...envelope.fence,
+            hostSessionId: entry.record.sessionId,
+            requestSha256: accepted.requestDigest,
+            streamId: position.streamId,
+            acceptedSequence: accepted.acceptedSequence,
+            terminalSequence: position.sequence,
+            response,
+          };
+          const output = runtimeObjects.captureCommandOutput({
+            manifest,
+            funding: {
+              kind: "wallet",
+              walletId: entry.record.createdByCommandId,
+            },
+          });
+
+          receiptBody = {
+            ...(receiptBody as Record<string, unknown>),
+            output: {
+              ...output,
+              commandId: envelope.command.id,
+              hostSessionId: entry.record.sessionId,
+              acceptedSequence: accepted.acceptedSequence,
+              terminalSequence: position.sequence,
+            },
+          };
+        }
         const event = createCommandEvent(entry, {
           type: "session.command",
           commandId: envelope.command.id,
@@ -919,10 +991,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
             : status === "succeeded"
               ? {
                   status,
-                  result: (transition.outcome.body ?? {}) as Record<
-                    string,
-                    unknown
-                  >,
+                  result: (receiptBody ?? {}) as Record<string, unknown>,
                 }
               : {
                   status,
@@ -931,7 +1000,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         });
 
         hostState.putReceiptWithRuntimeEvent(
-          transition.row,
+          { ...transition.row, body: receiptBody },
           runtimeEvents.sessionEventInput(entry.record, event),
           transition.admission,
         );
@@ -945,7 +1014,16 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
             `canonical command event was not persisted for ${envelope.command.id}`,
           );
         }
+        if (transition.phase === "accepted") {
+          entry.record.activePromptCommandId = envelope.command.id;
+        }
         emitCommandEvent(entry, event, true);
+        if (
+          transition.phase !== "accepted" &&
+          entry.record.activePromptCommandId === envelope.command.id
+        ) {
+          delete entry.record.activePromptCommandId;
+        }
       },
       run: async () => {
         if (fence.advanced) {
@@ -1059,6 +1137,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     }
 
     let response: Awaited<ReturnType<typeof sendPromptOnConnection>>;
+    let responseReference: ImmutableObjectReference | undefined;
 
     try {
       response = await sendPromptOnConnection(
@@ -1074,6 +1153,33 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         },
         logger,
       );
+      if (parsed.envelope.requestVersion === 2) {
+        const accepted = hostState.getReceipt(parsed.envelope.command.id);
+
+        if (!accepted?.requestDigest) {
+          throw new SupervisorError(
+            "ACP_PROTOCOL",
+            "accepted command request digest is missing",
+            {
+              details: { reason: "required_output_incomplete" },
+            },
+          );
+        }
+        // Capture before the decoder releases this response continuation. Large
+        // opaque metadata must not survive across asynchronous sealing work.
+        responseReference = runtimeObjects.captureCommandResponse({
+          ...parsed.envelope.fence,
+          hostSessionId: sessionId,
+          commandId: parsed.envelope.command.id,
+          requestSha256: accepted.requestDigest,
+          response,
+          funding: {
+            kind: "producer",
+            walletId: entry.record.createdByCommandId,
+          },
+        });
+        response = { stopReason: response.stopReason };
+      }
     } catch (error) {
       chatBudget.release();
       throwIfFenced(entry, parsed.envelope);
@@ -1150,6 +1256,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
     return {
       status: 200,
+      ...(responseReference ? { responseReference } : {}),
       body: {
         stopReason: response.stopReason,
         ...(response._meta === undefined ? {} : { meta: response._meta }),

@@ -545,7 +545,10 @@ paths:
           description: The receipt.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/CommandReceipt" }
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/CommandReceipt" }
+                  - { $ref: "#/components/schemas/CommandReceiptV2" }
               examples:
                 completedPrompt:
                   value:
@@ -729,6 +732,10 @@ paths:
         `202`. The ACP turn settles later as a terminal `session.command` event
         and receipt. A lost acknowledgement is recovered by the original
         command id; duplicate delivery never starts a second ACP turn.
+        Explicit requestVersion 2 additionally binds target.hostSessionId to
+        the URL and returns CommandReceiptV2 from the receipt read. A command
+        cannot change wire version on replay. Production owner activation is
+        held until the S2 gate; legacy callers retain the original wire shape.
       operationId: acceptSessionPrompt
       parameters:
         - $ref: "#/components/parameters/SessionId"
@@ -736,7 +743,10 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/PromptCommand" }
+            schema:
+              oneOf:
+                - { $ref: "#/components/schemas/PromptCommand" }
+                - { $ref: "#/components/schemas/ImmutablePromptRequestV2" }
             examples:
               enveloped:
                 value:
@@ -3103,6 +3113,41 @@ components:
         Immutable full semantic output. Sequence strings are signed-BIGINT-safe;
         command, session, generation and both sequence bounds must agree with
         canonical evidence. Required bytes cannot be replaced by a redacted snippet.
+    CommandOutputManifestV2:
+      x-implementation-status: Designed
+      type: object
+      additionalProperties: false
+      required: [schema, commandId, hostKey, runId, assignmentId, assignmentEpoch, hostSessionId, requestSha256, streamId, acceptedSequence, terminalSequence, response]
+      properties:
+        schema: { type: string, enum: [maister.command-output.v2] }
+        commandId: { type: string, format: uuid }
+        hostKey: { type: string, pattern: '^[A-Za-z0-9_-]{8,64}$' }
+        runId: { type: string, minLength: 1, maxLength: 128 }
+        assignmentId: { type: string, format: uuid }
+        assignmentEpoch: { type: integer, minimum: 1, maximum: 2147483647 }
+        hostSessionId: { type: string, minLength: 1, maxLength: 128 }
+        requestSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        streamId: { type: string, format: uuid }
+        acceptedSequence: { type: string, pattern: '^(0|[1-9][0-9]{0,18})$', maxLength: 19 }
+        terminalSequence: { type: string, pattern: '^(0|[1-9][0-9]{0,18})$', maxLength: 19 }
+        response:
+          type: object
+          additionalProperties: false
+          required: [objectId, generation, sizeBytes, sha256]
+          properties:
+            objectId: { type: string, format: uuid }
+            generation: { type: integer, minimum: 1, maximum: 2147483647 }
+            sizeBytes: { type: integer, minimum: 0, maximum: 9007199254740991 }
+            sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+      description: |
+        Immutable JSON manifest, at most 2 MiB, addressing the original
+        command-attributed event span and a separately sealed original ACP
+        response (including opaque _meta). Response bytes repeat command,
+        session and request binding. Require acceptedSequence < terminalSequence,
+        signed-BIGINT-safe bounds and contiguous ingestion through terminal.
+        Reconstruct semantic output only from matching sourceCommandId events
+        in this exact fenced session span and verified original content objects.
+        Retain the span and objects through owner application and retirement.
     CommandTerminalEvidenceV2:
       x-implementation-status: Designed
       type: object

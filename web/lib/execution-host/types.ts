@@ -1,3 +1,10 @@
+import {
+  COMMAND_KINDS,
+  type CommandKind,
+} from "../../../runtime/command-kinds";
+
+export { COMMAND_KINDS, type CommandKind };
+
 // Execution-host contract vocabulary (ADR-166). Pure constants + branded ids:
 // no node:* imports, no DB, no env — `lib/db/schema.ts` aliases these arrays
 // for its CHECK constraints, so the wire, the ledger, and the schema can never
@@ -29,21 +36,6 @@ export const PLACEMENT_REASONS = [
   "legacy_backfill",
 ] as const;
 export type PlacementReason = (typeof PLACEMENT_REASONS)[number];
-
-export const COMMAND_KINDS = [
-  "workspace.adopt",
-  "workspace.release",
-  "session.create",
-  "session.prompt",
-  "session.input",
-  "session.cancel",
-  "session.checkpoint",
-  "session.delete",
-  "runtime_object.reserve",
-  "runtime_object.upload",
-  "runtime_object.delete",
-] as const;
-export type CommandKind = (typeof COMMAND_KINDS)[number];
 
 export const RUNTIME_OBJECT_KINDS = [
   "session_log",
@@ -211,6 +203,8 @@ export type CommandFence = {
 };
 
 export type CommandEnvelope<TPayload = Record<string, unknown>> = {
+  requestVersion?: 2;
+  target?: { hostSessionId: string };
   command: { id: CommandId; kind: CommandKind; issuedAt: string };
   fence: CommandFence;
   payload: TPayload;

@@ -1,3 +1,7 @@
+import type {
+  ImmutableObjectReference,
+  CommandOutputManifestV2,
+} from "../../runtime/command-evidence";
 import type { RuntimeFileFunding } from "./runtime-file-budget";
 import type { HostRuntimeObjectRow, HostState } from "./host-state";
 import type {
@@ -133,6 +137,79 @@ export class RuntimeObjectRegistry {
       sizeBytes,
       chunks: () => encodeSessionContent(input.payload),
     });
+  }
+
+  captureCommandResponse(input: {
+    runId: string;
+    assignmentId: string;
+    assignmentEpoch: number;
+    hostSessionId: string;
+    commandId: string;
+    requestSha256: string;
+    response: unknown;
+    funding: RuntimeFileFunding;
+  }): ImmutableObjectReference {
+    return this.captureCommandJson({
+      ...input,
+      logicalName: "command-response.v2.json",
+      payload: {
+        schema: "maister.command-response.v2",
+        commandId: input.commandId,
+        hostSessionId: input.hostSessionId,
+        requestSha256: input.requestSha256,
+        response: input.response,
+      },
+    });
+  }
+
+  captureCommandOutput(input: {
+    manifest: CommandOutputManifestV2;
+    funding: RuntimeFileFunding;
+  }): ImmutableObjectReference {
+    return this.captureCommandJson({
+      ...input.manifest,
+      funding: input.funding,
+      logicalName: "command-output.v2.json",
+      payload: input.manifest,
+    });
+  }
+
+  private captureCommandJson(input: {
+    runId: string;
+    assignmentId: string;
+    assignmentEpoch: number;
+    hostSessionId: string;
+    funding: RuntimeFileFunding;
+    logicalName: string;
+    payload: Record<string, unknown>;
+  }): ImmutableObjectReference {
+    let sizeBytes = 0;
+
+    for (const chunk of encodeSessionContent(input.payload))
+      sizeBytes += chunk.byteLength;
+    const object = this.captureProducerBytes({
+      ...input,
+      mimeType: "application/json",
+      sizeBytes,
+      chunks: () => encodeSessionContent(input.payload),
+    });
+
+    if (object.sizeBytes === null || object.sha256 === null) {
+      throw new SupervisorError(
+        "ACP_PROTOCOL",
+        "command output object was not sealed",
+        {
+          details: { reason: "required_output_incomplete" },
+        },
+      );
+    }
+
+    return {
+      objectId: object.objectId,
+      generation: object.generation,
+      sizeBytes: object.sizeBytes,
+      sha256: object.sha256,
+    };
   }
 
   captureStdoutSegment(input: {

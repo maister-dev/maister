@@ -36,6 +36,9 @@ function sessionEventPayload(
 
   return {
     sourceMonotonicId: event.monotonicId,
+    ...(record.activePromptCommandId
+      ? { sourceCommandId: record.activePromptCommandId }
+      : {}),
     sessionName: record.sessionName,
     ...(record.nodeAttemptId ? { nodeAttemptId: record.nodeAttemptId } : {}),
     ...payload,
@@ -155,6 +158,9 @@ export class RuntimeEventPublisher {
       this.contentReferences.set(event, contentRef);
       payload = {
         sourceMonotonicId: event.monotonicId,
+        ...(record.activePromptCommandId
+          ? { sourceCommandId: record.activePromptCommandId }
+          : {}),
         sessionName: record.sessionName,
         ...(record.nodeAttemptId
           ? { nodeAttemptId: record.nodeAttemptId }

@@ -194,6 +194,7 @@ components:
         payload:
           type: object
           properties:
+            sourceCommandId: { type: string, format: uuid }
             contentRef: { $ref: "#/components/schemas/SessionContentReference" }
             stdoutSegment: { $ref: "#/components/schemas/StdoutSegmentMetadata" }
           additionalProperties: true
@@ -251,6 +252,7 @@ components:
       properties:
         sourceMonotonicId:
           { type: integer, minimum: 0, maximum: 9007199254740991 }
+        sourceCommandId: { type: string, format: uuid }
         sessionName: { type: string, minLength: 1, maxLength: 128 }
         nodeAttemptId: { type: string, format: uuid }
         contentRef: { $ref: "#/components/schemas/SessionContentReference" }
@@ -258,7 +260,9 @@ components:
         Activates as maister.session.content.v2 for session events only. Old
         managers reject the unknown payload version before ACK. The descriptor
         binds the exact original session payload to its command and source frame;
-        firstFrame equals sourceMonotonicId and frameCount is one. source is
+        firstFrame equals sourceMonotonicId and frameCount is one. When present,
+        sourceCommandId equals contentRef.commandId and the original payload
+        sourceCommandId. source is
         raw_stdout for session.line, terminal_output for session.command or
         session terminal, and session_update for other session events.
         Envelope binding derives ownership. No bytes, paths or full prompts

@@ -1,3 +1,4 @@
+import type { CommandReceiptV2 } from "../../../runtime/command-evidence";
 import type {
   CreateSessionInput,
   CreateSessionResult,
@@ -77,6 +78,7 @@ export type WorkspaceRecord = {
 };
 
 export type CommandReceipt = {
+  evidenceV2?: CommandReceiptV2;
   commandId: string;
   runId: string;
   kind: CommandKind;

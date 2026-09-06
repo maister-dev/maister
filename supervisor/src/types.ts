@@ -2,6 +2,8 @@ import type { SessionContentReference } from "./runtime-events";
 
 import { z } from "zod";
 
+import { COMMAND_KINDS } from "../../runtime/command-kinds";
+
 const EXECUTOR_AGENTS = [
   "claude",
   "codex",
@@ -406,19 +408,7 @@ export const HOST_KEY_SCHEMA = z
   .string()
   .regex(/^[A-Za-z0-9_-]{8,64}$/, "hostKey must match ^[A-Za-z0-9_-]{8,64}$");
 
-export const COMMAND_KINDS = [
-  "workspace.adopt",
-  "workspace.release",
-  "session.create",
-  "session.prompt",
-  "session.input",
-  "session.cancel",
-  "session.checkpoint",
-  "session.delete",
-  "runtime_object.reserve",
-  "runtime_object.upload",
-  "runtime_object.delete",
-] as const;
+export { COMMAND_KINDS };
 
 export const CommandKindSchema = z.enum(COMMAND_KINDS);
 export type CommandKind = z.infer<typeof CommandKindSchema>;
@@ -444,11 +434,27 @@ export const CommandHeaderSchema = z
 
 export const CommandEnvelopeSchema = z
   .object({
+    requestVersion: z.literal(2).optional(),
+    target: z
+      .object({ hostSessionId: z.string().min(1).max(128) })
+      .strict()
+      .optional(),
     command: CommandHeaderSchema,
     fence: FenceSchema,
     payload: z.record(z.string(), z.unknown()),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      (value.requestVersion === 2) !== (value.target !== undefined) ||
+      (value.requestVersion === 2 && value.command.kind !== "session.prompt")
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "request v2 requires a prompt target",
+      });
+    }
+  });
 
 export type CommandEnvelope = z.infer<typeof CommandEnvelopeSchema>;
 

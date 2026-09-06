@@ -2,14 +2,24 @@ import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionHosts } from "@/lib/execution-host/client";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 
+import { randomUUID } from "node:crypto";
+
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
+
+import { issueOwnedPrompt } from "../ledger";
+import { defaultTransport } from "../default-transport";
+import { startAsyncPrompt, waitForPromptCompletion } from "../deliverer";
+import { readPromptOutput } from "../prompt-output";
 
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import {
   executionEvents,
+  executionCommands,
+  runSessionIncarnations,
+  runs,
   executionRuntimeObjects,
   runMessages,
 } from "@/lib/db/schema";
@@ -98,6 +108,170 @@ afterAll(async () => {
 });
 
 describe("AT-01 bounded output on the production supervisor", () => {
+  it("AT-06 v2: reconstructs original command output from durable evidence after releasing its assignment", async () => {
+    const producer = await createSession("command-output-v2");
+    const db = database.db as unknown as Db;
+    const transport = defaultTransport();
+
+    await database.db
+      .update(runs)
+      .set({ runKind: "agent" })
+      .where(eq(runs.id, producer.runId));
+    await expect
+      .poll(
+        async () => {
+          const rows = await database.db
+            .select()
+            .from(runSessionIncarnations)
+            .where(
+              eq(
+                runSessionIncarnations.hostSessionId,
+                producer.session.hostSessionId,
+              ),
+            );
+
+          return rows[0]?.state;
+        },
+        { timeout: 15_000 },
+      )
+      .toBe("active");
+    const [incarnation] = await database.db
+      .select()
+      .from(runSessionIncarnations)
+      .where(
+        eq(
+          runSessionIncarnations.hostSessionId,
+          producer.session.hostSessionId,
+        ),
+      );
+    const turnId = randomUUID();
+    const originalMeta = {
+      result: {
+        decision: "accept",
+        details: { proof: "original opaque result" },
+      },
+    };
+    const admitted = await issueOwnedPrompt(db, {
+      assignment: producer.client.assignment,
+      host: producer.client.host,
+      targetSessionId: producer.session.hostSessionId,
+      payload: {
+        stepId: "output",
+        prompt: `fixture-output:${JSON.stringify({ bytes: 65537, tool: true, responseMeta: originalMeta })}`,
+      },
+      maxAttempts: 3,
+      admitOwner: async () => ({
+        logicalOperationKey: `agent_turn:initial:${turnId}:0`,
+        owner: {
+          kind: "agent_turn",
+          ref: {
+            version: 1,
+            variant: "initial",
+            runId: producer.runId,
+            runSessionId: incarnation.runSessionId,
+            incarnationId: incarnation.id,
+            assignmentId: producer.client.assignment.id,
+            assignmentEpoch: producer.client.assignment.epoch,
+            turnId,
+            promptOrdinal: 0,
+          },
+        },
+      }),
+    });
+    const handle = await startAsyncPrompt({
+      db,
+      command: admitted.row,
+      envelope: admitted.envelope,
+      start: () =>
+        transport.startPrompt(producer.session.hostSessionId, admitted.envelope),
+      lookupReceipt: (id) => transport.getCommandReceipt(id),
+    });
+
+    await expect(
+      waitForPromptCompletion({
+        db,
+        handle,
+        lookupReceipt: (id) => transport.getCommandReceipt(id),
+        signal: AbortSignal.timeout(15_000),
+      }),
+    ).resolves.toMatchObject({ stopReason: "end_turn" });
+    const [stored] = await database.db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.id, handle.commandId));
+
+    expect(stored.receiptEvidence?.evidenceV2?.requestSha256).toBe(
+      admitted.row.requestSha256,
+    );
+    expect(stored.result).not.toHaveProperty("meta");
+    await worker.stop();
+    try {
+      await database.db
+        .delete(runMessages)
+        .where(eq(runMessages.runId, producer.runId));
+      await releaseAssignmentForRun(
+        db,
+        producer.runId,
+        "historical-command-output",
+      );
+      const output = await readPromptOutput({
+        db,
+        commandId: handle.commandId,
+        signal: AbortSignal.timeout(15_000),
+      });
+      const payloads: unknown[] = [];
+
+      for await (const event of output.events) payloads.push(event.payload);
+      expect(output.response).toEqual({
+        stopReason: "end_turn",
+        _meta: originalMeta,
+      });
+      expect(payloads).toContainEqual(
+        expect.objectContaining({
+          sourceCommandId: handle.commandId,
+          update: expect.objectContaining({
+            toolCallId: "large-tool",
+            content: [
+              {
+                type: "content",
+                content: { type: "text", text: "x".repeat(65537) },
+              },
+            ],
+          }),
+        }),
+      );
+      // A retained frontier cannot stand in for the original event span.
+      const [update] = await database.db
+        .select()
+        .from(executionEvents)
+        .where(
+          and(
+            eq(executionEvents.runId, producer.runId),
+            eq(executionEvents.eventType, "session.update"),
+          ),
+        )
+        .limit(1);
+
+      await database.db
+        .delete(executionEvents)
+        .where(eq(executionEvents.id, update.id));
+      await expect(
+        readPromptOutput({
+          db,
+          commandId: handle.commandId,
+          signal: AbortSignal.timeout(15_000),
+        }),
+      ).rejects.toMatchObject({
+        details: {
+          reason: "required_output_incomplete",
+          causeCode: "event_span_gap",
+        },
+      });
+    } finally {
+      worker = startProjectionWorker({ db, projectors: canonicalProjectors });
+    }
+  });
+
   it("reconstructs accepted output after releasing the original assignment", async () => {
     const producer = await createSession("historical-reference");
     const handle = await producer.client.prompt(

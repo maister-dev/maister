@@ -21,6 +21,11 @@ import {
 } from "undici";
 import { z } from "zod";
 
+import {
+  parseCommandReceiptV2,
+  type CommandReceiptV2,
+} from "../../runtime/command-evidence";
+
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { contextMountsToWire } from "@/lib/context-mounts/types";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
@@ -1057,6 +1062,8 @@ export type WireCommandFence = {
 };
 
 export type WireEnvelope<TPayload = unknown> = {
+  requestVersion?: 2;
+  target?: { hostSessionId: string };
   command: { id: string; kind: string; issuedAt: string };
   fence: WireCommandFence;
   payload: TPayload;
@@ -1088,7 +1095,9 @@ export type WorkspaceRecordWire = {
   releasedAt: string | null;
 };
 
-export type CommandReceiptWire = {
+export type CommandReceiptWire = CommandReceiptV2 | LegacyCommandReceiptWire;
+
+export type LegacyCommandReceiptWire = {
   commandId: string;
   runId: string;
   kind: string;
@@ -1355,6 +1364,8 @@ export async function getCommandReceipt(
       fallbackCode: "PRECONDITION",
       timeoutMs: ADMIN_READ_TIMEOUT_MS,
     });
+
+    if ("receiptVersion" in res.body) return parseCommandReceiptV2(res.body);
 
     return { ...res.body, inflight: res.body.inflight === true };
   } catch (err) {

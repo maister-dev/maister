@@ -12,6 +12,7 @@ import type {
 } from "../contracts";
 import type { CommandEnvelope, CommandKind, WorkspaceKind } from "../types";
 
+import { normalizeCommandReceiptV2 } from "../command-receipt";
 import { asExecutionWorkspaceId } from "../types";
 import { RuntimeEventEnvelopeSchema } from "../runtime-events";
 
@@ -40,6 +41,8 @@ function toHostHealth(status: wire.PlatformStatus): HostHealth {
 }
 
 function toReceipt(receipt: wire.CommandReceiptWire): CommandReceipt {
+  if ("receiptVersion" in receipt) return normalizeCommandReceiptV2(receipt);
+
   return {
     ...receipt,
     kind: receipt.kind as CommandKind,
