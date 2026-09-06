@@ -4,7 +4,7 @@
 
 import type { KeyboardEvent, ReactElement } from "react";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { TOUR_IMAGE_HEIGHT, TOUR_IMAGE_WIDTH } from "@/lib/tour-assets";
 
@@ -25,6 +25,26 @@ type ProductTourProps = {
 export function ProductTour({ shots }: ProductTourProps): ReactElement {
   const [activeIndex, setActiveIndex] = useState(0);
   const active = shots[activeIndex] ?? shots[0];
+
+  useEffect(() => {
+    // Warm the cache for the other screens of the current theme once the page
+    // is idle, so a tab tap swaps the picture instead of waiting on a mobile
+    // network round-trip.
+    const key =
+      document.documentElement.dataset.theme === "dark" ? "darkSrc" : "lightSrc";
+    const warm = (): void => {
+      for (const shot of shots) new Image().src = shot[key];
+    };
+
+    if (typeof window.requestIdleCallback === "function") {
+      const handle = window.requestIdleCallback(warm);
+
+      return () => window.cancelIdleCallback(handle);
+    }
+    const timer = window.setTimeout(warm, 300);
+
+    return () => window.clearTimeout(timer);
+  }, [shots]);
 
   const onTabKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     const step =
@@ -70,7 +90,11 @@ export function ProductTour({ shots }: ProductTourProps): ReactElement {
         role="tabpanel"
       >
         <div className="tour-frame">
+          {/* Keyed by shot: mobile Firefox does not always repaint an <img>
+              whose src changed inside an overflow-hidden rounded frame, so
+              each tab gets a fresh element instead of a mutated one. */}
           <img
+            key={`${active.id}-light`}
             alt={active.alt}
             className="tour-img is-light"
             decoding="async"
@@ -80,6 +104,7 @@ export function ProductTour({ shots }: ProductTourProps): ReactElement {
           />
           {active.darkSrc !== active.lightSrc ? (
             <img
+              key={`${active.id}-dark`}
               alt={active.alt}
               className="tour-img is-dark"
               decoding="async"
