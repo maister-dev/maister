@@ -13,6 +13,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
+  domainEvents,
   executionAssignments,
   assignments,
   executionCommands,
@@ -22,6 +23,12 @@ import {
   runs,
   users,
 } from "@/lib/db/schema";
+import { buildOrchestratorResumeConsumer } from "@/lib/domain-events/orchestrator-resume";
+import { runFlow } from "@/lib/flows/runner";
+import {
+  markResumedFromWait,
+  rollbackResumeFromWait,
+} from "@/lib/runs/state-transitions";
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import {
   startRuntimeEventConsumer,
@@ -134,7 +141,7 @@ function openHostStateForFault(): DatabaseSync {
   return state;
 }
 
-async function seedPermissionFlow(): Promise<SeededGraphRun> {
+async function seedFixtureFlow(manifest: unknown): Promise<SeededGraphRun> {
   const name = randomUUID();
   const repoPath = await initRepo(`${supervisor.runtimeRoot}/repo-${name}`);
   const worktreePath = await addWorktree(
@@ -143,51 +150,322 @@ async function seedPermissionFlow(): Promise<SeededGraphRun> {
     `maister/${name}`,
   );
 
-  return await seedGraphRun(
-    database.db,
-    {
-      schemaVersion: 1,
-      name: "permission-resume",
-      nodes: [
-        {
-          id: "work",
-          type: "ai_coding",
-          action: { prompt: "Complete the pending tool and continue." },
-          pre_finish: {
-            gates: [
-              {
-                id: "check",
-                kind: "command_check",
-                mode: "blocking",
-                command: "true",
-              },
-            ],
-          },
-          transitions: { success: "after" },
+  return await seedGraphRun(database.db, manifest, {
+    repoPath,
+    flowRevision: true,
+    workspace: { worktreePath, parentRepoPath: repoPath },
+  });
+}
+
+async function seedPermissionFlow(): Promise<SeededGraphRun> {
+  return await seedFixtureFlow({
+    schemaVersion: 1,
+    name: "permission-resume",
+    nodes: [
+      {
+        id: "work",
+        type: "ai_coding",
+        action: { prompt: "Complete the pending tool and continue." },
+        pre_finish: {
+          gates: [
+            {
+              id: "check",
+              kind: "command_check",
+              mode: "blocking",
+              command: "true",
+            },
+          ],
         },
-        {
-          id: "after",
-          type: "cli",
-          action: {
-            command: "printf 'after\\n' >> permission-resume-after.txt",
-          },
-          transitions: { success: "done" },
+        transitions: { success: "after" },
+      },
+      {
+        id: "after",
+        type: "cli",
+        action: {
+          command: "printf 'after\\n' >> permission-resume-after.txt",
         },
-      ],
-    },
-    {
-      repoPath,
-      flowRevision: true,
-      workspace: { worktreePath, parentRepoPath: repoPath },
-    },
-  );
+        transitions: { success: "done" },
+      },
+    ],
+  });
+}
+
+async function seedPermissionOrchestrator(): Promise<SeededGraphRun> {
+  const parent = await seedFixtureFlow({
+    schemaVersion: 1,
+    engineMin: "1.6.0",
+    name: "permission-orchestrator",
+    nodes: [
+      {
+        id: "coordinate",
+        type: "orchestrator",
+        action: {
+          prompt: "Complete the pending tool and coordinate children.",
+        },
+        transitions: { success: "done" },
+      },
+    ],
+  });
+  const child = await seedFixtureFlow({
+    schemaVersion: 1,
+    name: "permission-child",
+    nodes: [
+      {
+        id: "child",
+        type: "cli",
+        action: { command: "true" },
+        transitions: { success: "done" },
+      },
+    ],
+  });
+
+  await db
+    .update(runs)
+    .set({ parentRunId: parent.runId })
+    .where(eq(runs.id, child.runId));
+
+  return parent;
+}
+
+async function wakePermissionOrchestrator(
+  parent: SeededGraphRun,
+): Promise<void> {
+  const [parked] = await db
+    .select()
+    .from(nodeAttempts)
+    .where(eq(nodeAttempts.runId, parent.runId));
+  const [child] = await db
+    .select()
+    .from(runs)
+    .where(eq(runs.parentRunId, parent.runId));
+  const hosts = createExecutionHosts({ db });
+
+  expect(parked.status).toBe("NeedsInput");
+  expect(parked.actionCompletion?.result.ok).toBe(true);
+  await runFlow(child.id, { db, runtimeRoot: supervisor.runtimeRoot });
+  const events = await db
+    .select()
+    .from(domainEvents)
+    .where(
+      and(
+        eq(domainEvents.runId, child.id),
+        eq(domainEvents.kind, "run.review"),
+      ),
+    );
+
+  expect(events).toHaveLength(1);
+  if (parked.actionResume?.kind === "permission_result") {
+    const [hitl] = await db
+      .select()
+      .from(hitlRequests)
+      .where(eq(hitlRequests.id, parked.actionResume.hitlRequestId));
+    const original = hitl.response as {
+      optionId: string;
+      _audit: Record<string, unknown>;
+    };
+
+    try {
+      await db
+        .update(hitlRequests)
+        .set({
+          response: {
+            ...original,
+            _audit: {
+              ...original._audit,
+              resultHandoffAssignmentId: randomUUID(),
+            },
+          },
+        })
+        .where(eq(hitlRequests.id, hitl.id));
+      await expect(
+        markResumedFromWait(parent.runId, { db }),
+      ).rejects.toMatchObject({
+        code: "CONFLICT",
+        details: { causeCode: "permission_result_source_generation" },
+      });
+      const [unchanged] = await db
+        .select()
+        .from(runs)
+        .where(eq(runs.id, parent.runId));
+
+      expect(unchanged).toMatchObject({
+        status: "WaitingOnChildren",
+        executionAssignmentId: parked.executionAssignmentId,
+      });
+    } finally {
+      await db
+        .update(hitlRequests)
+        .set({ response: hitl.response })
+        .where(eq(hitlRequests.id, hitl.id));
+    }
+  }
+  // The normal domain claim must retain the same turn through a pre-prompt
+  // spawn rollback before the child-event consumer retries it.
+  expect(await markResumedFromWait(parent.runId, { db })).toMatchObject({
+    ok: true,
+  });
+  const [claimed] = await db
+    .select()
+    .from(nodeAttempts)
+    .where(eq(nodeAttempts.id, parked.id));
+
+  expect(claimed.actionPromptOrdinal).toBe(parked.actionPromptOrdinal + 1);
+  expect(claimed.actionResume).toMatchObject({
+    kind: "orchestrator",
+    sourceCommandId: parked.actionCompletion!.commandId,
+  });
+  expect(await rollbackResumeFromWait(parent.runId, { db })).toMatchObject({
+    ok: true,
+  });
+  if (parked.actionResume?.kind === "permission_result") {
+    expect(claimed.actionResume).toMatchObject({
+      permissionResult: parked.actionResume,
+    });
+    if (
+      claimed.actionResume?.kind !== "orchestrator" ||
+      !claimed.actionResume.permissionResult
+    )
+      throw new Error("orchestrator claim lost its permission-result lineage");
+    const resume = claimed.actionResume;
+
+    try {
+      await db
+        .update(nodeAttempts)
+        .set({
+          actionResume: {
+            ...resume,
+            permissionResult: { ...resume.permissionResult!, optionId: "deny" },
+          },
+        })
+        .where(eq(nodeAttempts.id, parked.id));
+      await expect(
+        markResumedFromWait(parent.runId, { db }),
+      ).rejects.toMatchObject({
+        code: "CONFLICT",
+        details: { causeCode: "permission_result_source_generation" },
+      });
+    } finally {
+      await db
+        .update(nodeAttempts)
+        .set({ actionResume: resume })
+        .where(eq(nodeAttempts.id, parked.id));
+    }
+  }
+  const consumer = buildOrchestratorResumeConsumer({
+    db: database.db,
+    resumeFlow: (runId, options) =>
+      runFlow(runId, { ...options, runtimeRoot: supervisor.runtimeRoot }),
+  });
+  const waking = consumer.handle(events);
+
+  try {
+    await expect
+      .poll(
+        async () => {
+          const pending = await db
+            .select()
+            .from(hitlRequests)
+            .where(eq(hitlRequests.runId, parent.runId));
+
+          return pending.find((hitl) => hitl.respondedAt === null);
+        },
+        { timeout: 45_000 },
+      )
+      .toMatchObject({ respondedAt: null });
+    const pending = await db
+      .select()
+      .from(hitlRequests)
+      .where(eq(hitlRequests.runId, parent.runId));
+    const nextPermission = pending.find((hitl) => hitl.respondedAt === null)!;
+
+    // The prior choice cannot satisfy a fresh permission on the next turn.
+    expect(pending).toHaveLength(2);
+    const response = await respondToHitl(
+      {
+        runId: parent.runId,
+        hitlRequestId: nextPermission.id,
+        body: { optionId: "allow" },
+      },
+      {
+        kind: "user",
+        userId: "flow-permission-user",
+        label: "Permission test operator",
+        preauthorizedProjectId: parent.projectId,
+      },
+      { db, executionHosts: hosts },
+    );
+
+    expect(response.status).toBe(200);
+    await waking;
+    const [finished] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, parent.runId));
+    const attempts = await db
+      .select()
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, parent.runId));
+    const prompts = await db
+      .select()
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, parent.runId),
+          eq(executionCommands.kind, "session.prompt"),
+        ),
+      )
+      .orderBy(asc(executionCommands.assignmentEpoch));
+
+    expect(finished.status).toBe("Review");
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]).toMatchObject({
+      id: parked.id,
+      status: "Succeeded",
+      actionPromptOrdinal: claimed.actionPromptOrdinal,
+    });
+    expect(prompts).toHaveLength(claimed.actionPromptOrdinal + 1);
+    expect(prompts.at(-1)).toMatchObject({
+      ownerRef: {
+        variant: "node",
+        nodeAttemptId: parked.id,
+        promptOrdinal: claimed.actionPromptOrdinal,
+      },
+      state: "succeeded",
+      applicationState: "applied",
+    });
+    expect(
+      new Set(prompts.map((command) => command.logicalOperationKey)).size,
+    ).toBe(prompts.length);
+    await consumer.handle(events);
+    expect(
+      await db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, parent.runId),
+            eq(executionCommands.kind, "session.prompt"),
+          ),
+        ),
+    ).toHaveLength(prompts.length);
+  } finally {
+    await waking;
+  }
 }
 
 describe("Owned Flow checkpointed permission resume", () => {
-  it.each(["capacity claim", "claim SIGKILL", "resume refused"] as const)(
+  it.each([
+    "capacity claim",
+    "claim SIGKILL",
+    "resume refused",
+    "orchestrator",
+  ] as const)(
     "owner-flow-permission-resume: %s preserves the exact authorized turn",
     async (scenario) => {
-      const seeded = await seedPermissionFlow();
+      const seeded =
+        scenario === "orchestrator"
+          ? await seedPermissionOrchestrator()
+          : await seedPermissionFlow();
       const { worktreePath } = seeded;
       const driver = startProcess("flow-prompt-owner-process.ts", seeded.runId);
       let claimProcess: ReturnType<typeof startProcess> | undefined;
@@ -392,7 +670,20 @@ describe("Owned Flow checkpointed permission resume", () => {
             },
             { timeout: 60_000 },
           )
-          .toBe(scenario === "resume refused" ? "Failed" : "Review");
+          .toBe(
+            scenario === "resume refused"
+              ? "Failed"
+              : scenario === "orchestrator"
+                ? "WaitingOnChildren"
+                : "Review",
+          );
+        if (scenario === "orchestrator") {
+          await continuation.stop();
+          continuation = undefined;
+          await wakePermissionOrchestrator(seeded);
+
+          return;
+        }
         const prompts = await db
           .select()
           .from(executionCommands)
@@ -494,10 +785,13 @@ describe("Owned Flow checkpointed permission resume", () => {
     140_000,
   );
 
-  it.each(["capacity", "response"] as const)(
+  it.each(["capacity", "response", "orchestrator"] as const)(
     "owner-flow-source-handoff: %s reuses the original completed action after a lost input ACK",
     async (entrypoint) => {
-      const seeded = await seedPermissionFlow();
+      const seeded =
+        entrypoint === "orchestrator"
+          ? await seedPermissionOrchestrator()
+          : await seedPermissionFlow();
       const driver = startProcess("flow-prompt-owner-process.ts", seeded.runId);
       let responder: ReturnType<typeof startProcess> | undefined;
       let responseBody: unknown;
@@ -730,7 +1024,7 @@ describe("Owned Flow checkpointed permission resume", () => {
             .set({ response: pendingHitl.response })
             .where(eq(hitlRequests.id, hitl.id));
         }
-        if (entrypoint === "capacity") {
+        if (entrypoint !== "response") {
           expect(
             await resumeRun(seeded.runId, { db, executionHosts: hosts }),
           ).toMatchObject({ ok: true });
@@ -788,7 +1082,7 @@ describe("Owned Flow checkpointed permission resume", () => {
         expect(claimed.executionAssignmentId).not.toBe(
           source.executionAssignmentId,
         );
-        if (entrypoint === "capacity")
+        if (entrypoint !== "response")
           continuation = startFlowContinuationWorker({
             db,
             runtimeRoot: supervisor.runtimeRoot,
@@ -806,7 +1100,14 @@ describe("Owned Flow checkpointed permission resume", () => {
             },
             { timeout: 60_000 },
           )
-          .toBe("Review");
+          .toBe(entrypoint === "orchestrator" ? "WaitingOnChildren" : "Review");
+        if (entrypoint === "orchestrator") {
+          await continuation?.stop();
+          continuation = undefined;
+          await wakePermissionOrchestrator(seeded);
+
+          return;
+        }
         await expect
           .poll(
             async () => {

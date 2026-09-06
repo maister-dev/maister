@@ -319,6 +319,15 @@ after that claim and deferred capacity recovery are covered.
 Pre-prompt creation uses the durable intent described above. Global
 owner/continuation worker activation remains S2.12.
 
+An orchestrator child wake accepts a completed node or permission-resume owner
+only under the exact assignment that parked it. When that assignment consumed a
+`permission_result` handoff, the next authorization retains the full handoff as
+`permissionResult`: original input/checkpoint/incarnation, HITL choice and the
+receiving assignment. The original source remains checkpointed and fenced. A
+pre-prompt rollback preserves this lineage and the already admitted next ordinal;
+a repeated child event cannot create another turn. A fresh permission on the
+next turn requires its own response.
+
 Checkpointed node permission resumes without a prior admitted input use the
 capacity-checked idle-resume claim. It rebinds the exact source attempt and stores
 `action_resume.kind: permission`, the new ordinal, original ACP handle, HITL ID,
@@ -328,8 +337,9 @@ the reissued tool call and options. It remains `NeedsInput` until input delivery
 is acknowledged, then uses the normal action/gate/cursor reducer. Restart after
 the claim consumes that authorization. An unavailable resume handle fails the
 attempt and run without creating an empty replacement session. A stored input
-delivery must be classified before another turn can be authorized; historical
-input/result handoff and checkpointed gate resumes remain S2.6 work.
+delivery must be classified before another turn can be authorized. Confirmed
+input without a successful completed source and checkpointed gate resumes
+remain S2.6 work.
 
 In-flight node and AI/skill gate permissions retain the exact source command,
 attempt/ordinal, assignment and incarnation in the HITL schema. The existing

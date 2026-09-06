@@ -321,6 +321,10 @@ erDiagram
         timestamptz created_at "DEFAULT now()"
     }
     NODE_ATTEMPTS {
+        integer action_prompt_ordinal "0143: current admitted action generation"
+        jsonb action_completion "0143: verified output snapshot for the current ordinal"
+        jsonb finish_continuation "0144: selected edge, input context and retry decision"
+        jsonb action_resume "0145-0149: authorized turn or result handoff; orchestrator retains permissionResult lineage"
         text id PK
         text run_id FK
         text node_id "node id in compiled FlowGraph"
