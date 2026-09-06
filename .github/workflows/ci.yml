@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # This lane must prove build/unit safety without a Docker daemon. Database
-      # suites are intentionally confined to the labelled integration job.
+      # suites run in the separate integration and mandatory A/B jobs.
       DOCKER_HOST: tcp://127.0.0.1:1
     steps:
       - name: Checkout

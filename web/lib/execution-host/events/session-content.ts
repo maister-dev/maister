@@ -164,7 +164,7 @@ export async function prepareSessionContent(
     )
       throw corrupt();
 
-    return { ...event, payload };
+    return { ...event, payload, payloadBytes: reference.sizeBytes };
   } finally {
     if (!completed) await reader.cancel();
     reader.releaseLock();

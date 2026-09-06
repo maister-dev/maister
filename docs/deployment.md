@@ -257,13 +257,20 @@ sudo systemctl enable --now maister-web
 journalctl -u maister-supervisor -u maister-web -f      # pino logs land in journald
 ```
 
-Both units run as `maister`, `WorkingDirectory=/opt/maister`, and start through
-`pnpm` so `node_modules/.bin` (the agent adapters) is on `PATH`. They read
-**different** env files: `maister-web.service` reads the shared
+Both units run as `maister` and execute Node directly, from `/opt/maister/web`
+and `/opt/maister/supervisor` respectively. Their explicit `PATH` includes
+`node_modules/.bin` for the agent adapters. They read different env files:
+`maister-web.service` reads
 `/etc/maister/maister.env`; `maister-supervisor.service` reads its own
-`/opt/maister/supervisor/.env` (seed it from `supervisor/.env.sample`; keep
-`MAISTER_RUNTIME_ROOT` equal to the web unit's). Edit the unit `PATH=` / paths
-if your layout differs.
+`/opt/maister/supervisor/.env` (seed it from `supervisor/.env.sample`). Runtime
+data roots and host storage limits belong to the supervisor. Edit the unit
+`PATH=` / paths if your layout differs.
+
+The main process receives SIGTERM and drains its work before exiting. Both
+units use `KillMode=mixed`: systemd sends the initial signal to the main process
+and kills remaining children after exit or the 30-second stop deadline. This
+allows the supervisor to mark intentional shutdown and drain agent output
+before child termination. See the [systemd kill contract](https://github.com/systemd/systemd/blob/main/man/systemd.kill.xml).
 
 ## 8. Reverse proxy + TLS
 

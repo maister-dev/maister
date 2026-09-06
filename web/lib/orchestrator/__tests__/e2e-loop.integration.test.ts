@@ -53,6 +53,12 @@ import {
 } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
+import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
+import {
+  startProjectionWorker,
+  type ProjectionWorker,
+} from "@/lib/execution-host/events/projection-worker";
+import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
 import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
@@ -70,6 +76,7 @@ const schema = fullSchema as unknown as Record<string, any>;
 const execFileAsync = promisify(execFile);
 
 let testDatabase: StartedPostgresTestDb;
+let projectionWorker: ProjectionWorker;
 let pool: Pool;
 let db: NodePgDatabase;
 
@@ -173,9 +180,15 @@ beforeAll(async () => {
   // The REAL supervisor-client reads MAISTER_SUPERVISOR_URL on every call
   // (lib/supervisor-client.ts baseUrl()) — point it at the test server.
   process.env.MAISTER_SUPERVISOR_URL = supervisor.url;
+  projectionWorker = startProjectionWorker({
+    db: testDatabase.db,
+    projectors: canonicalProjectors,
+  });
 }, 180_000);
 
 afterAll(async () => {
+  await stopRuntimeEventConsumers();
+  await projectionWorker?.stop();
   const cleanupResults = await Promise.allSettled([
     supervisor?.stop(),
     testDatabase?.stop(),

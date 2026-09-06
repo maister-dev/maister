@@ -24,6 +24,93 @@ import {
 } from "./_fixtures/boot-host";
 
 describe("AT-02 physical runtime storage", () => {
+  it("preserves default-scale retained pressure and terminal capacity across restart", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "maister-default-capacity-"));
+    let state = openHostState({ stateDir });
+    const receipt: CommandReceiptRow = {
+      commandId: randomUUID(),
+      runId: "default-capacity",
+      kind: "session.create",
+      assignmentId: randomUUID(),
+      epoch: 1,
+      hostSessionId: randomUUID(),
+      requestDigest: "default-capacity",
+      eventId: null,
+      phase: "accepted",
+      httpStatus: 202,
+      body: {},
+      receivedAt: new Date().toISOString(),
+      completedAt: null,
+    };
+    const draft = {
+      runId: receipt.runId,
+      assignmentId: receipt.assignmentId!,
+      assignmentEpoch: 1,
+      hostSessionId: receipt.hostSessionId!,
+      occurredAt: receipt.receivedAt,
+    };
+    let lastSequence = "0";
+    let count = 0;
+
+    try {
+      state.reserveProducerReceipt(receipt, 3);
+      const line = "x".repeat(60 * 1024);
+
+      while (
+        state.runtimeEventOutboxStats().retainedBytes <
+        DEFAULT_RUNTIME_LIMITS.eventSoftBytes
+      ) {
+        const row = state.appendRuntimeEvent({
+          draft: { ...draft, eventType: "session.line", payload: { line } },
+        });
+
+        lastSequence = row.sequence;
+        count += 1;
+        expect(count).toBeLessThan(8_000);
+      }
+      const streamId = state.getRuntimeEventStreamId();
+      const retainedBytes = state.runtimeEventOutboxStats().retainedBytes;
+
+      expect(state.runtimeStorageSnapshot().totalBytes).toBeLessThan(
+        DEFAULT_RUNTIME_LIMITS.stateMaxBytes,
+      );
+      expect(() => state.assertCanAcceptMutatingCommand()).toThrow();
+      state.ackRuntimeEvents(streamId, lastSequence);
+      expect(state.runtimeEventOutboxStats().unacknowledgedCount).toBe(0);
+      expect(state.runtimeEventOutboxStats().retainedBytes).toBe(retainedBytes);
+      expect(() => state.assertCanAcceptMutatingCommand()).toThrow();
+      state.close();
+      state = openHostState({ stateDir });
+      expect(state.runtimeEventOutboxStats().retainedCount).toBe(count);
+      expect(state.pruneAcknowledgedRuntimeEvents(new Date())).toBe(0);
+      expect(() =>
+        state.reserveProducerReceipt(
+          { ...receipt, commandId: randomUUID() },
+          0,
+        ),
+      ).toThrow();
+      const terminal = state.appendRuntimeEvent({
+        draft: {
+          ...draft,
+          eventType: "session.exited",
+          payload: { exitCode: 0 },
+        },
+        terminal: true,
+        funding: { partition: "control", walletId: receipt.commandId },
+      });
+
+      expect(BigInt(terminal.sequence)).toBe(BigInt(lastSequence) + 1n);
+      expect(state.runtimeEventOutboxStats().retainedCount).toBe(count + 1);
+      expect(state.runtimeStorageAvailable()).toBe(true);
+      expect(state.runtimeStorageSnapshot().totalBytes).toBeLessThan(
+        DEFAULT_RUNTIME_LIMITS.stateMaxBytes,
+      );
+    } finally {
+      state.close();
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   it("bounds receipt write/prune WAL work and preserves the prior receipt on oversized replacement", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "maister-receipt-wal-"));
     const state = openHostState({ stateDir });

@@ -31,6 +31,8 @@ RestartSec=3
 # Restart reconstructs durable receipts/events; an in-memory ACP connection is
 # not restored by restarting the daemon.
 KillSignal=SIGTERM
+# Let the supervisor drain its agents before systemd kills remaining children.
+KillMode=mixed
 TimeoutStopSec=30
 NoNewPrivileges=true
 

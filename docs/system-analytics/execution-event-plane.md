@@ -1,6 +1,6 @@
 # Execution event plane
 
-**Status:** Implemented canonical Postgres event authority; **Designed** output-pressure and autonomous projection corrections (AB-01–04). Existing outbox/replay code does not yet satisfy every expectation below.
+**Status:** Implemented canonical Postgres authority, bounded referenced output, retained outbox/file accounting and autonomous projection (AB-01–04). The S1 release gate is in progress; durable command-owner reconciliation remains Designed in S2.
 
 ## Purpose
 
@@ -110,7 +110,7 @@ cannot advance the cursor. Full raw payloads never enter the canonical event
 table or a general metadata DTO. A browser read of reconstructed output uses
 the same repository-content permission as the corresponding object download.
 
-## Outbox partitions and producer pressure (S1.3 in progress)
+## Outbox partitions and producer pressure (Implemented)
 
 Logical admission and append accounting use the same transactional row/byte
 counters. ACKed rows continue to count until replay grace expires and pruning
@@ -150,25 +150,19 @@ prefix is retained even when draining exceeds its bound or ends mid-frame.
 The interrupted prompt fails with `required_output_incomplete`; raw preservation
 does not claim that skipped semantic callbacks completed successfully.
 
-The logical queue, pressured pipe, bounded replay and restart repairs have
-executed integration evidence. Physical SQLite/WAL high-water enforcement,
-aggregate object/spool disk quota, storage-failure readiness and full concurrent
-producer qualification remain open S1.3/S1.8 work. Their designed limits are
-not yet a qualified physical storage guarantee.
+SQLite admission measures DB/WAL/SHM size, page/free-page counters and disk free space. Pending object copies, logs, spools and producer/frame promises are durably charged before host-managed writes; startup inventories retained files before admission. Native storage failures latch unavailable readiness and preserve evidence. Host, pressure/restart, pinned-reader, maximum-output and 20-producer memory tests exercise these paths. Exact defaults and physical headroom arithmetic live in [configuration](../configuration.md#ab-stabilization-resource-budget-designed). These are application admission bounds; arbitrary same-UID agent writes are not an operating-system disk quota. Immutable sealing and retirement of agent output writers remain S3 work.
 
 ## Durable bounded projection and reconciliation workers
 
 Canonical projection scheduling is implemented: the complete six-consumer
 registry starts from web instrumentation, drains durable backlog with two
-slots, and resumes expired claims. Fifty integration cases pass on Node
-24.15 with real PostgreSQL, including a killed production worker process,
+slots, and resumes expired claims. Integration qualification uses Node
+24.15 and 24.19 with real PostgreSQL, including a killed production worker process,
 actual lease expiry, a terminal event after position 200, first-batch failure,
 stale failure recording, cumulative/blocked-query deadlines, connection loss,
-gap promotion across runs, paged backfill and cursor-bound rearm. Deployment
-shutdown wiring and the full S1 release qualification remain open; durable
-prompt-owner reconciliation below belongs to S2.
+gap promotion across runs, paged backfill and cursor-bound rearm. Production image/systemd shutdown stops admission, drains or rolls back owned work, preserves unconfirmed claims and closes database pools. S1 is qualified locally with the evidence tracked in the implementation plan; durable prompt-owner reconciliation below belongs to S2.
 
-Use `execution_event_consumers` and existing claim fields; add an indexed `last_served_at`/claim generation only where missing. Register prompt, lifecycle, runtime-object, transcript, artifact and cost projection responsibilities explicitly: wire every current canonical consumer into its owning worker or document and test its equivalent autonomous existing job. Do not assume fixing the three one-shot wrappers proves all read models.
+The worker uses `execution_event_consumers`, indexed `last_served_at` ordering and a unique token for each claim. Register prompt, lifecycle, runtime-object, transcript, artifact and cost projection responsibilities explicitly: wire every current canonical consumer into its owning worker or document and test its equivalent autonomous existing job. Do not assume fixing the three one-shot wrappers proves all read models.
 
 The transcript v2 consumer replays existing canonical history into the same
 message sequence keys while persisting only fixed-size coalescing pointers per
@@ -197,7 +191,7 @@ identifiers; it does not skip the event or advance the cursor.
 1. Ingest commits canonical rows and contiguous promotion in Postgres. In the same transaction, seed/wake consumer rows for **every distinct run promoted**, including runs released by filling another run's stream gap. ACK follows this commit, regardless of projector success. Duplicate ingest may hint; hints carry no authority.
 2. Boot/restart performs bounded keyset backfill of missing registered consumer/run rows from canonical events. Persist the scan cursor. Cursor initialization commits separately from first application; no unbounded all-runs boot transaction.
 3. Candidate predicate: registered consumer, nonpoison state, due `next_retry_at`, no live claim, and canonical accepted events beyond cursor. Order by `last_served_at NULLS FIRST`, due/creation time and stable run/consumer key. Claim with `FOR UPDATE SKIP LOCKED`; unique token and DB-clock expiry. Claim **at processing time**, up to two simultaneous workers; do not preclaim eight items then spend their leases waiting in a local queue.
-4. One quantum is ≤100 events, ≤1 MiB aggregate payload and ~1 s soft work time; allow one legal maximum-envelope event so byte limit cannot starve it. Each DB apply transaction has a 5 s hard budget enforced by a monotonic client deadline, remaining-budget per-query statement/lock timeouts and explicit in-flight query cancellation. PostgreSQL 16 statement_timeout alone is not a transaction deadline. On deadline/shutdown await rollback before reusing the connection; if cancellation/rollback cannot be confirmed, discard that connection, retain the durable claim and surface service failure. Set a bounded idle-in-transaction timeout as a server backstop. Never commit after the deadline; token/cursor fencing remains mandatory. Test multiple slow statements and a blocked statement, not only one fast apply. Apply pure/domain DB writes and cursor under the same transaction and matching claim token/cursor. No HTTP, file hashing, prompt wait or Git inside that transaction.
+4. One quantum is ≤100 events, ≤1 MiB aggregate payload (including hydrated reference content) and ~1 s soft work time; allow one legal maximum-envelope event so byte limit cannot starve it. Each DB apply transaction has a 5 s hard budget enforced by a monotonic client deadline, remaining-budget per-query statement/lock timeouts and explicit in-flight query cancellation. PostgreSQL 16 statement_timeout alone is not a transaction deadline. On deadline/shutdown await rollback before reusing the connection; if cancellation/rollback cannot be confirmed, discard that connection, retain the durable claim and surface service failure. Set a bounded idle-in-transaction timeout as a server backstop. Never commit after the deadline; token/cursor fencing remains mandatory. Test multiple slow statements and a blocked statement, not only one fast apply. Apply pure/domain DB writes and cursor under the same transaction and matching claim token/cursor. No HTTP, file hashing, prompt wait or Git inside that transaction.
 5. Commit claim first. Inside apply use an event/batch savepoint; rollback failing effects without losing the outer consumer record. Commit original sanitized error, event, attempts and retry/poison fields. If failure recording is separate, CAS exact claim generation and starting cursor, and require failure sequence > current cursor; stale recorder is a no-op.
 6. One quantum per pair then release claim/update `last_served_at`, yielding to other due pairs. Backlog remains due immediately. A 30 s lease exceeds the 5 s transaction budget; no external work runs under it. If an owner sub-operation needs longer, renew its separate 30 s lease at 10 s and fence every persistence boundary.
 7. Use postcommit wake hints plus an abortable due timer (at most 1 s idle latency, or next retry deadline) and durable candidate selection. This schedules already committed DB work; it does not poll the runtime filesystem or infer state from a timer. A completed SSE stream or a new event is never required.
@@ -210,15 +204,15 @@ Use the same scheduling primitives for command evidence reconciliation and owner
 ## Expectations
 
 - **EVT-01:** Postgres is canonical for browser and projector event reads, never supervisor memory or runtime files.
-- **EVT-02 (Designed correction):** The host commits each validated redacted event to SQLite before publication or terminal acknowledgement.
+- **EVT-02:** The host commits each validated redacted event to SQLite before publication or terminal acknowledgement.
 - **EVT-03:** At-least-once delivery creates one canonical event and conflicting ID or stream-position reuse is a typed protocol failure.
 - **EVT-04:** Host order is `(streamId, sequence)` and run order is manager-allocated `runSequence`, never occurrence timestamp.
 - **EVT-05:** A stale assignment epoch remains ACKable audit evidence but ordinarily has no current-run sequence or state mutation. Only an exact late terminal `session.command` match may receive ordering and settle its already-accepted historical command row; it cannot mutate current run/session, cost, artifact, HITL, or prompt-owner state.
 - **EVT-06:** A persisted gap blocks ACK/projection past the contiguous prefix and replays or fails explicitly at the replay floor.
-- **EVT-07 (Designed correction):** Host and manager restarts resume from durable outbox/watermark state, and lost ACKs cause harmless replay.
-- **EVT-08 (Designed correction):** Only negotiated type/schema pairs persist after deterministic redaction, and unsafe raw payloads are neither stored nor logged.
-- **EVT-09 (Designed correction):** Bounded outbox pressure rejects new mutating admissions before existing session events are lost.
-- **EVT-10 (Designed correction):** Each projector owns a durable per-run cursor and poison state independent of accepted ingest.
+- **EVT-07:** Host and manager restarts resume from durable outbox/watermark state, and lost ACKs cause harmless replay.
+- **EVT-08:** Only negotiated type/schema pairs persist after deterministic redaction, and unsafe raw payloads are neither stored nor logged.
+- **EVT-09:** Bounded outbox pressure rejects new mutating admissions before existing session events are lost.
+- **EVT-10:** Each projector owns a durable per-run cursor and poison state independent of accepted ingest.
 - **EVT-11:** Browser replay is authorized, exclusive-after-cursor, bounded, and sourced only from canonical user-safe rows.
 - **EVT-12:** Canonical events retain with the run while host outbox rows prune only after confirmed ACK and grace.
 

@@ -92,7 +92,7 @@ Extend `web/test-support/real-supervisor.ts` and add one real web-process harnes
 
 Fault synchronization uses explicit fixture barriers after host acceptance/before HTTP ACK, after canonical commit/before owner apply, after consumer claim/before failing apply, and after object seal/before catalog ACK. Tests release barriers or terminate the owned process group; elapsed sleeps never prove that a failure window was reached. Each invocation uses unique ports, database, private roots and an artifact directory outside the worktree.
 
-## A/B stabilization test lanes (Designed)
+## A/B stabilization test lanes
 
 S0 first writes complete requirements, route/message schemas, owner/refusal/recovery-window tables, state machines, schema constraints and primary acceptance mapping in the canonical docs. Mark missing behavior Designed, preserving accepted guarantees. No production implementation begins with unresolved required owner arms, a contradictory budget or an undefined destructive recovery window.
 
@@ -102,7 +102,7 @@ Test inventory and mutation intent:
 
 | Lane | Owner / runner | Planned file or existing suite to extend | Primary responsibility |
 | --- | --- | --- | --- |
-| Host output/pressure | E; supervisor Vitest `integration` | Existing `supervisor/src/__tests__/runtime-event-outbox.integration.test.ts`; new `runtime-output-pressure.integration.test.ts`; fixtures under `supervisor/test/fixtures/` | AT-01/02 with real ACP child, SQLite restart, actual bounded pipe behavior. |
+| Host output/pressure | E; supervisor Vitest `integration` | Existing `supervisor/src/__tests__/{runtime-event-outbox,runtime-event-pressure,runtime-storage,runtime-file-budget,output-memory}.integration.test.ts`; fixtures under `supervisor/test/fixtures/` | AT-01/02 with real ACP child, SQLite restart, actual bounded pipe behavior. |
 | Canonical worker | E; web Vitest `integration` + real PG | Existing `web/lib/execution-host/events/__tests__/ingest.integration.test.ts`; new `projection-worker.integration.test.ts` | AT-03/04 real scheduling/claim/apply, first cursor failure, two consumers/runs, restart without new event. |
 | Command reducer/transport | C/Q; web Vitest `integration` + real supervisor/PG | Existing `web/lib/execution-host/__tests__/{command-recovery,deliverer,lifecycle-regression}.integration.test.ts` | AT-06/07/08/10/17. Replace V3 receipt-only failure and keep V7b as minimum-runtime regression. |
 | Owner restart | C; web Vitest `integration` + real peer/PG | New `web/lib/execution-host/__tests__/prompt-owner-recovery.integration.test.ts`, split by domain only when setup/size requires; existing gate/consensus/agent/scratch/sync suites | AT-05 full variant matrix; run real owner entrypoints, not invented fixture-only dispatch functions. |
@@ -174,3 +174,5 @@ Baseline failures are tracked by exact test names/error signatures and environme
 - [`pg-container.integration.test.ts`](../../web/test-support/__tests__/pg-container.integration.test.ts)
 - [`run.test.ts`](../../web/e2e/__tests__/run.test.ts)
 - [feature specification](../../.ai-factory/specs/feature-unified-test-database-testcontainers.md)
+
+The mandatory S1 CI lane runs `test:integration:ab` in both application packages on Node 24.15.0 and 24.19.0. Its explicit suite inventory is `scripts/run-stage-ab-tests.mjs`; missing files, empty discovery, failed or skipped cases fail the lane. A separate mandatory image job builds the pinned Dockerfile, exercises real binary HTTP and runs `web/scripts/smoke-production-image.ts` through the default image ENTRYPOINT/CMD with a migrated PostgreSQL container. It verifies HTTP readiness, SIGTERM completion and no remaining web PostgreSQL sessions. The broader owner, import and browser/isolation lanes remain part of later stabilization increments.

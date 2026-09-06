@@ -115,12 +115,14 @@ export function startProjectionWorker(input: {
   const consumerNames = [...registry.keys()];
   const failures = new Map<string, string>();
   let stopped = false;
+  let shutdownFailure: { cause: unknown } | undefined;
 
   const serviceFailure = (slot: string, error: unknown): void => {
     const reason =
       error instanceof MaisterError ? error.code : "database_failure";
 
     failures.set(slot, reason);
+    if (controller.signal.aborted) shutdownFailure ??= { cause: error };
     logger.error({ workerId, slot, reason }, "projection-service-degraded");
   };
   const wait = (): Promise<void> =>
@@ -247,6 +249,7 @@ export function startProjectionWorker(input: {
     stop: async () => {
       controller.abort();
       await finished;
+      if (shutdownFailure) throw shutdownFailure.cause;
       stopped = true;
       logger.info({ workerId }, "projection-worker-stopped");
       await new Promise<void>((resolve, reject) => {

@@ -197,6 +197,96 @@ it("shutdown retains a claim when PostgreSQL cleanup cannot be confirmed", async
   expect(state.rows).toEqual([{ claimed: true, attempts: 0, state: "ready" }]);
 });
 
+it("worker shutdown reports unconfirmed database cleanup instead of a successful drain", async () => {
+  const runId = await seedRun(1);
+  const consumerName = `shutdown-worker-connection-${randomUUID()}`;
+  let releaseProject: () => void = () => {};
+  let enteredProject: (pid: number) => void = () => {};
+  const released = new Promise<void>((resolve) => {
+    releaseProject = resolve;
+  });
+  const entered = new Promise<number>((resolve) => {
+    enteredProject = resolve;
+  });
+  const worker = startProjectionWorker({
+    db: database.db,
+    projectors: [
+      {
+        consumerName,
+        project: async (tx, event) => {
+          if (event.runId !== runId) return;
+          const result = await tx.execute<{ pid: number }>(
+            sql`SELECT pg_backend_pid() AS pid`,
+          );
+
+          enteredProject(result.rows[0].pid);
+          await released;
+          await tx.execute(sql`SELECT 1`);
+        },
+      },
+    ],
+  });
+  let stopped: Promise<unknown> | undefined;
+
+  try {
+    const pid = await entered;
+
+    stopped = worker.stop().then(
+      () => null,
+      (error: unknown) => error,
+    );
+    await database.pool.query("SELECT pg_terminate_backend($1)", [pid]);
+    releaseProject();
+    expect(await stopped).toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
+    const state = await database.pool.query(
+      "SELECT claim_owner IS NOT NULL AS claimed, attempts, state FROM execution_event_consumers WHERE consumer_name = $1 AND run_id = $2",
+      [consumerName, runId],
+    );
+
+    expect(state.rows).toEqual([
+      { claimed: true, attempts: 0, state: "ready" },
+    ]);
+  } finally {
+    releaseProject();
+    await (stopped ?? worker.stop());
+  }
+}, 15_000);
+
+it("bounds hydrated content in a quantum even when reference envelopes are small", async () => {
+  const runId = await seedRun(3);
+  const consumerName = `hydrated-budget-${randomUUID()}`;
+  const projector: ExecutionEventProjector = {
+    ...effectProjector(consumerName),
+    prepare: async (_db, event) => ({
+      ...event,
+      payload: { text: "x".repeat(750_000) },
+      payloadBytes: 750_000,
+    }),
+  };
+
+  for (const cursor of ["0", "1", "2"]) {
+    const result = await projectExecutionEvents({
+      db: database.db,
+      runId,
+      projector,
+    });
+
+    expect(result).toMatchObject({
+      projected: 1,
+      lastRunSequence: cursor,
+      poisoned: false,
+    });
+  }
+  expect(
+    (
+      await database.pool.query(
+        "SELECT * FROM projection_worker_effects WHERE consumer_name = $1",
+        [consumerName],
+      )
+    ).rows,
+  ).toHaveLength(3);
+});
+
 async function startProductionWorker(): Promise<{
   child: ChildProcess;
   exited: Promise<number | null>;

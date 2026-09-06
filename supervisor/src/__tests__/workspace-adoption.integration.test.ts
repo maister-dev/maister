@@ -338,7 +338,7 @@ describe("workspace adoption", () => {
     expect(record.repoPath).toBe(l.repo);
     expect(record.confineRoot).toBeUndefined();
     expect(record.contextMounts).toEqual(mounts);
-    expect(record.logPath).toBe(join(runDir, "plan.log"));
+    expect(record.logPath).toBe(join(runDir, `${record.sessionId}.log`));
     expect(record.executionWorkspaceId).toBe(adopted.body.executionWorkspaceId);
     expect(record.runId).toBe(l.runId);
     expect(record.projectSlug).toBe("demo");

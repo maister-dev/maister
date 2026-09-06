@@ -25,6 +25,12 @@ import { asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
+import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
+import {
+  startProjectionWorker,
+  type ProjectionWorker,
+} from "@/lib/execution-host/events/projection-worker";
+import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
 import { MaisterError } from "@/lib/errors";
 import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
 import { createExecutionHosts } from "@/lib/execution-host/client";
@@ -59,6 +65,7 @@ import {
 const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
+let projectionWorker: ProjectionWorker;
 let db: Db;
 let sup: RealSupervisor;
 let restoreUrl: () => void = () => {};
@@ -304,10 +311,16 @@ beforeAll(async () => {
   // The responding actor's identity row references `users`.
   await db.insert(schema.users).values({ id: "u-1", email: "u-1@test.local" });
   hosts = createExecutionHosts({ db });
+  projectionWorker = startProjectionWorker({
+    db,
+    projectors: canonicalProjectors,
+  });
 }, 180_000);
 
 afterAll(async () => {
   restoreUrl();
+  await stopRuntimeEventConsumers();
+  await projectionWorker?.stop();
   await sup?.kill();
   await testDatabase?.stop();
 });

@@ -24,6 +24,12 @@ import pino, { type Logger } from "pino";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
+import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
+import {
+  startProjectionWorker,
+  type ProjectionWorker,
+} from "@/lib/execution-host/events/projection-worker";
+import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
 import { MaisterError } from "@/lib/errors";
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { setDefaultTransportForTests } from "@/lib/execution-host/default-transport";
@@ -53,6 +59,7 @@ import {
 const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
+let projectionWorker: ProjectionWorker;
 let db: Db;
 let sup: RealSupervisor;
 let restoreUrl: () => void = () => {};
@@ -203,11 +210,17 @@ beforeAll(async () => {
   resetRegistrarStateForTests();
   resetResolverForTests();
   resetLegacyBackfillStateForTests();
+  projectionWorker = startProjectionWorker({
+    db,
+    projectors: canonicalProjectors,
+  });
 }, 180_000);
 
 afterAll(async () => {
   setDefaultTransportForTests(null);
   restoreUrl();
+  await stopRuntimeEventConsumers();
+  await projectionWorker?.stop();
   await sup?.kill();
   await testDatabase?.stop();
 });

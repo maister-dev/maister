@@ -44,6 +44,8 @@ export class ExecutionEventProjectionError extends Error {
 export type ExecutionEventProjector = {
   consumerName: string;
   project: (tx: Db, event: ExecutionEvent) => Promise<void>;
+  // A hydrated event reports its loaded byte size in payloadBytes. This is an
+  // in-memory projection value; the canonical envelope is never rewritten.
   prepare?: (
     db: Db,
     event: ExecutionEvent,
@@ -333,11 +335,13 @@ export async function applyClaimedExecutionProjection(input: {
       ),
     );
     const prepared: ExecutionEvent[] = [];
+    let preparedBytes = 0;
     const deadline = input.signal
       ? AbortSignal.any([AbortSignal.timeout(8_000), input.signal])
       : AbortSignal.timeout(8_000);
 
     for (const event of events) {
+      if (prepared.length > 0 && preparedBytes >= limits.batchBytes) break;
       failedEventId = event.id;
       failedSequence = event.runSequence;
       if (deadline.aborted)
@@ -345,7 +349,18 @@ export async function applyClaimedExecutionProjection(input: {
           "EXECUTOR_UNAVAILABLE",
           "session content preparation deadline expired",
         );
-      prepared.push(await input.projector.prepare(input.db, event, deadline));
+      const hydrated = await input.projector.prepare(input.db, event, deadline);
+      const hydratedBytes =
+        hydrated.payloadBytes ??
+        Buffer.byteLength(JSON.stringify(hydrated.payload));
+
+      if (
+        prepared.length > 0 &&
+        preparedBytes + hydratedBytes > limits.batchBytes
+      )
+        break;
+      prepared.push(hydrated);
+      preparedBytes += hydratedBytes;
     }
 
     return prepared;
@@ -464,7 +479,8 @@ export async function applyClaimedExecutionProjection(input: {
       // An unconfirmed DB cleanup retains its lease even during shutdown.
       if (
         error instanceof MaisterError &&
-        error.code === "EXECUTOR_UNAVAILABLE"
+        error.code === "EXECUTOR_UNAVAILABLE" &&
+        error.details?.reason === "projection_transaction_cleanup_unconfirmed"
       )
         throw error;
       if (input.signal?.aborted) {
@@ -475,6 +491,11 @@ export async function applyClaimedExecutionProjection(input: {
           projectedEvents: [] as ExecutionEvent[],
         };
       }
+      if (
+        error instanceof MaisterError &&
+        error.code === "EXECUTOR_UNAVAILABLE"
+      )
+        throw error;
       if (!failedEventId || failedSequence === null) throw error;
       const summary = await recordProjectionFailure({
         db: input.db,

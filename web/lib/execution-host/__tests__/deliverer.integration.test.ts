@@ -11,6 +11,12 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
+import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
+import {
+  startProjectionWorker,
+  type ProjectionWorker,
+} from "@/lib/execution-host/events/projection-worker";
+import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
 import { isMaisterError } from "@/lib/errors";
 import { mintAssignment } from "@/lib/execution-host/assignments";
 import { createExecutionHosts } from "@/lib/execution-host/client";
@@ -37,6 +43,7 @@ import {
 const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
+let projectionWorker: ProjectionWorker;
 let db: Db;
 let sup: RealSupervisor;
 let restoreUrl: () => void = () => {};
@@ -85,10 +92,16 @@ beforeAll(async () => {
     repoPath: await initRepo(`${sup.runtimeRoot}/repo`),
   });
   hosts = createExecutionHosts({ db });
+  projectionWorker = startProjectionWorker({
+    db,
+    projectors: canonicalProjectors,
+  });
 }, 180_000);
 
 afterAll(async () => {
   restoreUrl();
+  await stopRuntimeEventConsumers();
+  await projectionWorker?.stop();
   await sup?.kill();
   await testDatabase?.stop();
 });
@@ -122,7 +135,13 @@ describe("bound client over the real wire", () => {
       prompt: "hello",
     });
 
-    expect((await client.waitForPrompt(handle)).stopReason).toBe("end_turn");
+    expect(
+      (
+        await client.waitForPrompt(handle, {
+          signal: AbortSignal.timeout(15_000),
+        })
+      ).stopReason,
+    ).toBe("end_turn");
 
     // Input: the lifecycle fixture never asks for a permission, so the only
     // input a live session can take is the cancel of an unknown request —

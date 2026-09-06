@@ -22,6 +22,7 @@ Restart=always
 RestartSec=3
 # The server drains HTTP (5s), workers and PostgreSQL within 25s; failures exit 1.
 KillSignal=SIGTERM
+KillMode=mixed
 TimeoutStopSec=30
 NoNewPrivileges=true
 

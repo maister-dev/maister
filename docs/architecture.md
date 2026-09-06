@@ -157,7 +157,7 @@ C4Component
     Container_Boundary(supervisor, "Supervisor daemon") {
         Component(main, "main.ts", "Node entrypoint", "Fastify boot, pino logger, graceful shutdown.")
         Component(http_api, "http-api.ts", "Fastify routes", "POST/DELETE /sessions, asynchronous POST /sessions/:id/prompts, host outbox replay/ACK, checkpoint, permission input.")
-        Component(spawn, "spawn.ts", "child_process.spawn dispatch", "Picks binary by agent, builds env, line-buffers stdout, writes step .log.")
+        Component(spawn, "spawn.ts", "child_process.spawn dispatch", "Picks binary by agent, builds env, byte-frames stdout, writes an exclusive incarnation .log.")
         Component(registry, "registry.ts", "In-memory Map", "Session records + per-session event ring buffer (1000 entries).")
         Component(heartbeat, "heartbeat.ts", "Lifecycle watcher", "exit/error -> session.exited/crashed; orphan-PID detection every interval.")
         Component(cost, "cost.ts", "Stream observer", "Lenient JSON parse, emits usage.recorded to the durable host outbox.")
@@ -186,7 +186,7 @@ C4Component
     Rel(model_catalog, child, "ACP probe: initialize + session/new + teardown", "stdio JSONL")
 
     Rel(spawn, child, "child_process.spawn", "stdio JSONL")
-    Rel(spawn, fs, "Append step .log", "createWriteStream")
+    Rel(spawn, fs, "Write incarnation .log", "createWriteStream")
 
     Rel(heartbeat, registry, "emit terminal event")
     Rel(cost, outbox, "usage.recorded")
@@ -203,7 +203,7 @@ C4Component
 | --------------------- | ------------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | `main`                | `supervisor/src/main.ts`                                      | Process entrypoint.                                    | Read env, build Fastify + pino, wire components, listen, graceful shutdown.                                                                                                                                                                       | `http-api`, `registry`, `heartbeat`.                                      |
 | `http-api`            | `supervisor/src/http-api.ts`                                  | HTTP surface.                                          | Session lifecycle routes, prompt route, permission input route, checkpoint route, SSE pipe with `Last-Event-ID` replay, error mapping.                                                                                                            | `spawn`, `registry`, `heartbeat`, `cost`, `pending-permissions`, `types`. |
-| `spawn`               | `supervisor/src/spawn.ts`                                     | Process launcher.                                      | Pick binary by `executor.agent`, merge env, line-buffer stdout, write `<stepId>.log`, emit `session.line` events. (Resume is NOT a spawn arg — it is the ACP `session/resume` call in `acp-client.ts`; the adapters ignore `--resume` on argv.)   | `registry` (channel constant), `types`.                                   |
+| `spawn`               | `supervisor/src/spawn.ts`                                     | Process launcher.                                      | Pick binary by `executor.agent`, merge env, byte-frame stdout, write exclusive `<hostSessionId>.log`, emit `session.line` events. (Resume is NOT a spawn arg — it is the ACP `session/resume` call in `acp-client.ts`; the adapters ignore `--resume` on argv.)   | `registry` (channel constant), `types`.                                   |
 | `registry`            | `supervisor/src/registry.ts`                                  | In-memory session table.                               | Register, get, list, subscribe, snapshotEvents (1000-entry ring), markIntentionalShutdown.                                                                                                                                                        | `types`.                                                                  |
 | `heartbeat`           | `supervisor/src/heartbeat.ts`                                 | Lifecycle watcher.                                     | exit/error → `session.exited`/`session.crashed`, orphan-PID polling via `process.kill(pid, 0)`.                                                                                                                                                   | `registry`, `types`.                                                      |
 | `cost`                | `supervisor/src/cost.ts`                                      | Cost accounting.                                       | Emits bounded `usage.recorded` facts into the durable host outbox.                                                                                                             | `registry` (channel constant), `runtime-event-publisher`.                 |
@@ -354,8 +354,8 @@ sequenceDiagram
     A->>LLM: Inference call
     LLM-->>A: Streamed response
     A-->>S: stdout JSONL (one line per ACP event)
-    S->>FS: Append {stepId}.log
-    S->>FS: Append private step.log and commit state.sqlite outbox event
+    S->>FS: Write exclusive {hostSessionId}.log
+    S->>FS: Append private incarnation log and commit state.sqlite outbox event
     S-->>W: manager consumes durable runtime-events / ACK
 
     Note over U,W: Browser streams GET /api/runs/{runId}/stream<br/>from manager Postgres events with Last-Event-ID

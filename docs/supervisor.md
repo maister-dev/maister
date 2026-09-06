@@ -37,7 +37,7 @@ resume behavior to this supervisor contract.
                                                 └──────────────────────────────────────┘
                                                                            │ stdout JSONL
                                                                            ▼
-                              private <step>.log (host diagnostics)
+                              private <hostSessionId>.log (host diagnostics)
                               state.sqlite outbox (durable host events)
 ```
 
@@ -118,7 +118,7 @@ Request payload (`envelope.payload`):
 ```jsonc
 {
   "executionWorkspaceId": "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c",
-  "stepId": "plan",                         // log file: <runId>/<stepId>.log
+  "stepId": "plan",                         // step attribution; log file: <runId>/<hostSessionId>.log
   "runner": {
     "version": 1,
     "runnerId": "claude-code-env-router",
@@ -893,7 +893,7 @@ Secrets MUST NEVER appear in:
 
 - SSE events visible to the browser
 - canonical event payloads (verified in the integration test with a sentinel token)
-- the step `.log` file (sentinel-test enforced)
+- the incarnation `.log` file (sentinel-test enforced)
 - the supervisor's own logs (env values are summarized as `hasEnv: true|false`, never echoed)
 
 **Env merge semantics for the spawned child:** platform runner launch uses typed
