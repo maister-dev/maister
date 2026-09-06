@@ -67,6 +67,7 @@ Git. Выберите файл, чтобы прочитать его, и нуж�
 
 ## Связанные страницы
 
+- [Источники пакетов и версии](/ru/guides/package-sources-and-versions)
 - [Flow Studio и ответвления пакетов](/ru/studio/flow-studio-and-packages)
 - [ИИ-помощник в Flow Studio](/ru/studio/ai-assistant)
 - [Проектные платформенные агенты](/ru/administration/project-platform-agents)

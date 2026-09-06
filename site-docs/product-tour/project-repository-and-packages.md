@@ -70,6 +70,7 @@ revision.
 
 ## Related pages
 
+- [Package sources and versions](/guides/package-sources-and-versions)
 - [Flow Studio and package forks](/studio/flow-studio-and-packages)
 - [AI assistant in Flow Studio](/studio/ai-assistant)
 - [Project platform agents](/administration/project-platform-agents)

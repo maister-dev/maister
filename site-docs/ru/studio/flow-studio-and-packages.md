@@ -106,6 +106,7 @@ request, если узел источника настроен. Основная
 
 ## Что дальше
 
+- [Источники пакетов и версии](/ru/guides/package-sources-and-versions)
 - [Виды узлов Flow](/ru/studio/node-types)
 - [ИИ-помощник в Flow Studio](/ru/studio/ai-assistant)
 - [Структурные результаты и контекст прогона](/ru/studio/structured-results-and-context)

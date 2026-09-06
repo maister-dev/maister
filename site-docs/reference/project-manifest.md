@@ -35,6 +35,23 @@ flows:
 `version` is a tag pin. Installation records the resolved commit, and an active
 Run stays on that revision even if the upstream tag later changes.
 
+## Package binding
+
+```yaml
+packages:
+  - id: my-flows
+    source: https://github.com/example/maister-packages
+    version: my-flows/v1.1.0
+    path: packages/my-flows
+```
+
+One `packages[]` entry attaches every Flow and capability bundle a package
+ships, pinned to one per-package tag of the form `<name>/vX.Y.Z`. `path` is the
+package directory inside a multi-package repository. MAIster writes this entry
+when a package is attached, upgraded, or rolled back in the UI, and installs
+and attaches the listed versions when a repository is registered. See
+[Package sources and versions](/guides/package-sources-and-versions).
+
 ## Promotion
 
 Use `local_merge` when MAIster should land changes into a local target branch.

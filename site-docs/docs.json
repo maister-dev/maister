@@ -106,6 +106,7 @@
             "group": "Guides",
             "pages": [
               "guides/register-a-project",
+              "guides/package-sources-and-versions",
               "guides/human-in-the-loop",
               "guides/review-and-promote",
               "guides/review-rework-and-takeover",
@@ -188,6 +189,7 @@
             "group": "Руководства",
             "pages": [
               "ru/guides/register-a-project",
+              "ru/guides/package-sources-and-versions",
               "ru/guides/human-in-the-loop",
               "ru/guides/review-and-promote",
               "ru/guides/review-rework-and-takeover",

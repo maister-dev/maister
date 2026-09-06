@@ -109,6 +109,7 @@ upstream default branch directly.
 
 ## Next steps
 
+- Register your own repository in [Package sources and versions](/guides/package-sources-and-versions).
 - Choose [Flow node types](/studio/node-types).
 - Use the [AI assistant in Flow Studio](/studio/ai-assistant).
 - Pass data with [structured results and Run context](/studio/structured-results-and-context).
