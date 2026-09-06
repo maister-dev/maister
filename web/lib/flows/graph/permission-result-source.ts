@@ -6,6 +6,8 @@ import type { FlowPermissionResultResume } from "./action-resume";
 
 import { eq } from "drizzle-orm";
 
+import { nodePermissionSourceSchema } from "./permission-source";
+
 import {
   executionAssignments,
   executionCommands,
@@ -29,7 +31,10 @@ export async function assertPermissionResultSource(
   const { command, resume, assignment } = input;
   const ref = command.ownerRef;
 
-  if (command.ownerKind !== "flow_node_attempt" || ref?.variant !== "node")
+  if (
+    command.ownerKind !== "flow_node_attempt" ||
+    (ref?.variant !== "node" && ref?.variant !== "permission_resume")
+  )
     throw new PromptOwnerInvariantError("permission_result_source_owner");
   const [prior] = await db
     .select()
@@ -51,6 +56,10 @@ export async function assertPermissionResultSource(
     .select()
     .from(executionCommands)
     .where(eq(executionCommands.id, resume.checkpointCommandId));
+  const source = nodePermissionSourceSchema.safeParse(
+    (hitl?.schema as { flowPrompt?: unknown } | null)?.flowPrompt,
+  );
+
   const receipt = inputCommand?.receiptEvidence;
   const response = hitl?.response as Readonly<{
     optionId?: string;
@@ -99,6 +108,16 @@ export async function assertPermissionResultSource(
     checkpoint.assignmentEpoch !== prior.epoch ||
     checkpoint.targetSessionId !== command.targetSessionId ||
     checkpoint.result?.sessionId !== command.targetSessionId ||
+    !source.success ||
+    source.data.commandId !== command.id ||
+    source.data.nodeAttemptId !== ref.nodeAttemptId ||
+    source.data.promptOrdinal !== ref.promptOrdinal ||
+    source.data.assignmentId !== prior.id ||
+    source.data.incarnationId !== incarnation.id ||
+    ("variant" in source.data
+      ? ref.variant !== "permission_resume" ||
+        ref.hitlRequestId !== source.data.hitlRequestId
+      : ref.variant !== "node") ||
     !hitl?.respondedAt ||
     hitl.runId !== assignment.runId ||
     response?.optionId !== resume.optionId ||

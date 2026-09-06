@@ -453,6 +453,57 @@ async function wakePermissionOrchestrator(
   }
 }
 
+async function interruptPermissionInputAcknowledgement(
+  hitlRequestId: string,
+): Promise<void> {
+  let responder: ReturnType<typeof startProcess> | undefined;
+  const lockKey = Math.floor(Math.random() * 2_000_000_000) + 1;
+  const trigger = `permission_ack_${randomUUID().replaceAll("-", "")}`;
+  const lock = await database.pool.connect();
+
+  try {
+    await lock.query("SELECT pg_advisory_lock(260912, $1)", [lockKey]);
+    await database.pool.query(
+      `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = '${hitlRequestId}' AND NEW.responded_at IS NOT NULL THEN PERFORM pg_advisory_xact_lock(260912, ${lockKey}); END IF; RETURN NEW; END $$`,
+    );
+    await database.pool.query(
+      `CREATE TRIGGER ${trigger} BEFORE UPDATE ON hitl_requests FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
+    );
+    responder = startProcess(
+      "flow-permission-response-process.ts",
+      hitlRequestId,
+      "flow-permission-user",
+    );
+    await expect
+      .poll(
+        async () => {
+          if (responder?.child.exitCode !== null)
+            throw new Error(responder?.output());
+          const waiting = await database.pool.query<{ count: number }>(
+            "SELECT count(*)::int AS count FROM pg_locks WHERE locktype = 'advisory' AND classid = 260912 AND objid = $1 AND NOT granted",
+            [lockKey],
+          );
+
+          return waiting.rows[0].count;
+        },
+        { timeout: 30_000, interval: 25 },
+      )
+      .toBe(1);
+    expect(responder.child.kill("SIGKILL")).toBe(true);
+    await responder.exited;
+    expect(responder.child.signalCode).toBe("SIGKILL");
+  } finally {
+    responder?.child.kill("SIGKILL");
+    await responder?.exited;
+    await lock.query("SELECT pg_advisory_unlock_all()");
+    lock.release();
+    await database.pool.query(
+      `DROP TRIGGER IF EXISTS ${trigger} ON hitl_requests`,
+    );
+    await database.pool.query(`DROP FUNCTION IF EXISTS ${trigger}()`);
+  }
+}
+
 describe("Owned Flow checkpointed permission resume", () => {
   it.each([
     "capacity claim",
@@ -793,7 +844,6 @@ describe("Owned Flow checkpointed permission resume", () => {
           ? await seedPermissionOrchestrator()
           : await seedPermissionFlow();
       const driver = startProcess("flow-prompt-owner-process.ts", seeded.runId);
-      let responder: ReturnType<typeof startProcess> | undefined;
       let responseBody: unknown;
       let continuation:
         | ReturnType<typeof startFlowContinuationWorker>
@@ -839,51 +889,7 @@ describe("Owned Flow checkpointed permission resume", () => {
           executionHostId: source.executionHostId,
           transport: hosts.transport,
         });
-        const lockKey = Math.floor(Math.random() * 2_000_000_000) + 1;
-        const trigger = `permission_ack_${randomUUID().replaceAll("-", "")}`;
-        const lock = await database.pool.connect();
-
-        try {
-          await lock.query("SELECT pg_advisory_lock(260912, $1)", [lockKey]);
-          await database.pool.query(
-            `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = '${hitl.id}' AND NEW.responded_at IS NOT NULL THEN PERFORM pg_advisory_xact_lock(260912, ${lockKey}); END IF; RETURN NEW; END $$`,
-          );
-          await database.pool.query(
-            `CREATE TRIGGER ${trigger} BEFORE UPDATE ON hitl_requests FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
-          );
-          responder = startProcess(
-            "flow-permission-response-process.ts",
-            hitl.id,
-            "flow-permission-user",
-          );
-          await expect
-            .poll(
-              async () => {
-                if (responder?.child.exitCode !== null)
-                  throw new Error(responder?.output());
-                const waiting = await database.pool.query<{ count: number }>(
-                  "SELECT count(*)::int AS count FROM pg_locks WHERE locktype = 'advisory' AND classid = 260912 AND objid = $1 AND NOT granted",
-                  [lockKey],
-                );
-
-                return waiting.rows[0].count;
-              },
-              { timeout: 30_000, interval: 25 },
-            )
-            .toBe(1);
-          expect(responder.child.kill("SIGKILL")).toBe(true);
-          await responder.exited;
-          expect(responder.child.signalCode).toBe("SIGKILL");
-        } finally {
-          responder?.child.kill("SIGKILL");
-          await responder?.exited;
-          await lock.query("SELECT pg_advisory_unlock_all()");
-          lock.release();
-          await database.pool.query(
-            `DROP TRIGGER IF EXISTS ${trigger} ON hitl_requests`,
-          );
-          await database.pool.query(`DROP FUNCTION IF EXISTS ${trigger}()`);
-        }
+        await interruptPermissionInputAcknowledgement(hitl.id);
         await expect
           .poll(() => driver.child.exitCode, { timeout: 45_000 })
           .toBe(0);
@@ -1174,10 +1180,316 @@ describe("Owned Flow checkpointed permission resume", () => {
         ).toBe("after\n");
       } finally {
         await continuation?.stop();
-        responder?.child.kill("SIGKILL");
-        await responder?.exited;
         driver.child.kill("SIGKILL");
         await driver.exited;
+      }
+    },
+    180_000,
+  );
+  it.each(["checkpoint", "completed-source"] as const)(
+    "owner-flow-repeated-permission: %s preserves the current resumed source",
+    async (scenario) => {
+      const seeded = await seedPermissionFlow();
+      const hosts = createExecutionHosts({ db });
+      const firstDriver = startProcess(
+        "flow-prompt-owner-process.ts",
+        seeded.runId,
+      );
+      let secondDriver: ReturnType<typeof startProcess> | undefined;
+      let finalDriver: ReturnType<typeof startProcess> | undefined;
+
+      try {
+        await expect
+          .poll(
+            async () => {
+              const [run] = await db
+                .select()
+                .from(runs)
+                .where(eq(runs.id, seeded.runId));
+
+              return run.status;
+            },
+            { timeout: 30_000 },
+          )
+          .toBe("NeedsInput");
+        const [firstHitl] = await db
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.runId, seeded.runId));
+        const [firstPrompt] = await db
+          .select()
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, seeded.runId),
+              eq(executionCommands.kind, "session.prompt"),
+            ),
+          );
+
+        startRuntimeEventConsumer({
+          db,
+          executionHostId: firstPrompt.executionHostId,
+          transport: hosts.transport,
+        });
+        await db
+          .update(runs)
+          .set({ keepaliveUntil: new Date(Date.now() - 1_000) })
+          .where(eq(runs.id, seeded.runId));
+        await runSweepTick({ db, executionHosts: hosts });
+        await expect
+          .poll(() => firstDriver.child.exitCode, { timeout: 30_000 })
+          .toBe(0);
+        await db
+          .update(hitlRequests)
+          .set({ response: { optionId: "allow" } })
+          .where(eq(hitlRequests.id, firstHitl.id));
+        expect(
+          await resumeRun(seeded.runId, { db, executionHosts: hosts }),
+        ).toMatchObject({ ok: true });
+        const [firstResume] = await db
+          .select()
+          .from(nodeAttempts)
+          .where(eq(nodeAttempts.runId, seeded.runId));
+        const journalFile = path.join(
+          journalPath,
+          `${firstResume.actionResume!.resumeSessionId}.json`,
+        );
+        const journal = JSON.parse(await readFile(journalFile, "utf8")) as {
+          pendingPermission: Record<string, unknown>;
+        };
+
+        await writeFile(
+          journalFile,
+          JSON.stringify({
+            ...journal,
+            pendingPermission: {
+              ...journal.pendingPermission,
+              nextPermission: {
+                toolCall: {
+                  toolCallId: "tc-2",
+                  title: "Second mock tool",
+                  kind: "execute",
+                },
+                options: [
+                  { optionId: "allow", kind: "allow_always", name: "Allow" },
+                  { optionId: "deny", kind: "reject_once", name: "Deny" },
+                ],
+              },
+            },
+          }),
+        );
+        secondDriver = startProcess(
+          "flow-prompt-owner-process.ts",
+          seeded.runId,
+        );
+        await expect
+          .poll(
+            async () => {
+              if (secondDriver?.child.exitCode !== null)
+                throw new Error(secondDriver?.output());
+              const permissions = await db
+                .select()
+                .from(hitlRequests)
+                .where(eq(hitlRequests.runId, seeded.runId));
+
+              return permissions.filter(
+                (hitl) => hitl.id !== firstHitl.id && hitl.respondedAt === null,
+              ).length;
+            },
+            { timeout: 45_000 },
+          )
+          .toBe(1);
+        const permissions = await db
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.runId, seeded.runId));
+        const secondHitl = permissions.find(
+          (hitl) => hitl.id !== firstHitl.id,
+        )!;
+        const source = (
+          secondHitl.schema as { flowPrompt: { commandId: string } }
+        ).flowPrompt;
+        const [resumedPrompt] = await db
+          .select()
+          .from(executionCommands)
+          .where(eq(executionCommands.id, source.commandId));
+
+        expect(permissions).toHaveLength(2);
+        expect(
+          permissions.find((hitl) => hitl.id === firstHitl.id)?.respondedAt,
+        ).toBeInstanceOf(Date);
+        expect(secondHitl.response).toBeNull();
+        expect(resumedPrompt.ownerRef).toMatchObject({
+          variant: "permission_resume",
+          hitlRequestId: firstHitl.id,
+          nodeAttemptId: firstResume.id,
+          promptOrdinal: 1,
+        });
+        if (scenario === "completed-source") {
+          await interruptPermissionInputAcknowledgement(secondHitl.id);
+          await expect
+            .poll(() => secondDriver?.child.exitCode, { timeout: 30_000 })
+            .toBe(0);
+          await expect
+            .poll(
+              async () => {
+                const [command] = await db
+                  .select()
+                  .from(executionCommands)
+                  .where(eq(executionCommands.id, resumedPrompt.id));
+
+                return command.state;
+              },
+              { timeout: 30_000 },
+            )
+            .toBe("succeeded");
+        }
+        await db
+          .update(runs)
+          .set({ keepaliveUntil: new Date(Date.now() - 1_000) })
+          .where(eq(runs.id, seeded.runId));
+        await runSweepTick({ db, executionHosts: hosts });
+        await expect
+          .poll(() => secondDriver?.child.exitCode, { timeout: 30_000 })
+          .toBe(0);
+        const [idle] = await db
+          .select()
+          .from(runs)
+          .where(eq(runs.id, seeded.runId));
+
+        expect(idle.status).toBe("NeedsInputIdle");
+        if (scenario === "checkpoint")
+          await db
+            .update(hitlRequests)
+            .set({ response: { optionId: "allow" } })
+            .where(eq(hitlRequests.id, secondHitl.id));
+        const originalSchema = secondHitl.schema as {
+          flowPrompt: Record<string, unknown>;
+        };
+
+        try {
+          await db
+            .update(hitlRequests)
+            .set({
+              schema: {
+                ...originalSchema,
+                flowPrompt: {
+                  ...originalSchema.flowPrompt,
+                  hitlRequestId: randomUUID(),
+                },
+              },
+            })
+            .where(eq(hitlRequests.id, secondHitl.id));
+          await expect(
+            resumeRun(seeded.runId, { db, executionHosts: hosts }),
+          ).rejects.toMatchObject({
+            code: "CONFLICT",
+            details: { causeCode: "permission_resume_generation" },
+          });
+          const [unchanged] = await db
+            .select()
+            .from(runs)
+            .where(eq(runs.id, seeded.runId));
+
+          expect(unchanged).toMatchObject({
+            status: "NeedsInputIdle",
+            executionAssignmentId: idle.executionAssignmentId,
+          });
+        } finally {
+          await db
+            .update(hitlRequests)
+            .set({ schema: secondHitl.schema })
+            .where(eq(hitlRequests.id, secondHitl.id));
+        }
+        expect(
+          await resumeRun(seeded.runId, { db, executionHosts: hosts }),
+        ).toMatchObject({ ok: true });
+        const [authorized] = await db
+          .select()
+          .from(nodeAttempts)
+          .where(eq(nodeAttempts.id, firstResume.id));
+
+        expect(authorized).toMatchObject({
+          actionPromptOrdinal: scenario === "checkpoint" ? 2 : 1,
+          actionResume: {
+            kind:
+              scenario === "checkpoint" ? "permission" : "permission_result",
+            sourceCommandId: resumedPrompt.id,
+            sourceAssignmentId: resumedPrompt.executionAssignmentId,
+            hitlRequestId: secondHitl.id,
+          },
+        });
+        finalDriver = startProcess(
+          "flow-prompt-owner-process.ts",
+          seeded.runId,
+        );
+        await expect
+          .poll(() => finalDriver?.child.exitCode, { timeout: 60_000 })
+          .toBe(0);
+        const [finished] = await db
+          .select()
+          .from(runs)
+          .where(eq(runs.id, seeded.runId));
+        const prompts = await db
+          .select()
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, seeded.runId),
+              eq(executionCommands.kind, "session.prompt"),
+            ),
+          )
+          .orderBy(asc(executionCommands.assignmentEpoch));
+        const attempts = await db
+          .select()
+          .from(nodeAttempts)
+          .where(
+            and(
+              eq(nodeAttempts.runId, seeded.runId),
+              eq(nodeAttempts.nodeId, "work"),
+            ),
+          );
+        const gates = await db
+          .select()
+          .from(gateResults)
+          .where(eq(gateResults.runId, seeded.runId));
+        const delivered = await db
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.runId, seeded.runId));
+
+        expect(finished.status).toBe("Review");
+        expect(prompts).toHaveLength(scenario === "checkpoint" ? 3 : 2);
+        expect(attempts).toHaveLength(1);
+        expect(attempts[0]).toMatchObject({
+          id: firstResume.id,
+          status: "Succeeded",
+          actionPromptOrdinal: authorized.actionPromptOrdinal,
+        });
+        expect(attempts[0].stdout).toContain(
+          scenario === "checkpoint"
+            ? "replayed permission outcome: selected allow"
+            : "second permission outcome: selected",
+        );
+        expect(gates).toHaveLength(1);
+        expect(gates[0].status).toBe("passed");
+        expect(delivered).toHaveLength(2);
+        expect(
+          delivered.every((hitl) => hitl.respondedAt instanceof Date),
+        ).toBe(true);
+        expect(
+          await readFile(
+            path.join(seeded.worktreePath, "permission-resume-after.txt"),
+            "utf8",
+          ),
+        ).toBe("after\n");
+      } finally {
+        finalDriver?.child.kill("SIGKILL");
+        await finalDriver?.exited;
+        secondDriver?.child.kill("SIGKILL");
+        await secondDriver?.exited;
+        firstDriver.child.kill("SIGKILL");
+        await firstDriver.exited;
       }
     },
     180_000,

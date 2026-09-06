@@ -339,7 +339,11 @@ the claim consumes that authorization. An unavailable resume handle fails the
 attempt and run without creating an empty replacement session. A stored input
 delivery must be classified before another turn can be authorized. Confirmed
 input without a successful completed source and checkpointed gate resumes
-remain S2.6 work.
+remain S2.6 work. A distinct permission emitted during a resumed prompt has its
+own HITL and choice. A later checkpoint matches that `permission_resume` source,
+including its prior HITL owner, and advances the same attempt once. Confirmed
+input and a completed resumed source use the same verified result handoff at
+its current ordinal; they do not dispatch a third prompt.
 
 In-flight node and AI/skill gate permissions retain the exact source command,
 attempt/ordinal, assignment and incarnation in the HITL schema. The existing

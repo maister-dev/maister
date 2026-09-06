@@ -76,7 +76,10 @@ async function assertCheckpointedPermissionResult(
 ): Promise<void> {
   const ref = command.ownerRef;
 
-  if (command.ownerKind !== "flow_node_attempt" || ref?.variant !== "node")
+  if (
+    command.ownerKind !== "flow_node_attempt" ||
+    (ref?.variant !== "node" && ref?.variant !== "permission_resume")
+  )
     throw new PromptOwnerInvariantError("permission_result_cleanup_source");
   const [binding] = await db
     .select({ attempt: nodeAttempts, run: runs })

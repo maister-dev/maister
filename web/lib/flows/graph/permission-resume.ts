@@ -21,6 +21,7 @@ import pino from "pino";
 
 import { canonicalCommandJson } from "../../../../runtime/command-json";
 
+import { nodePermissionSourceSchema } from "./permission-source";
 import { decodeNodePromptCompletion } from "./node-prompt-owner";
 
 import {
@@ -50,16 +51,7 @@ const sourceSchema = z.object({
   requestId: z.string().min(1),
   supervisorSessionId: z.string().min(1),
   options: z.array(z.object({ optionId: z.string().min(1) })),
-  flowPrompt: z
-    .object({
-      version: z.literal(1),
-      commandId: z.string().min(1),
-      nodeAttemptId: z.string().min(1),
-      promptOrdinal: z.number().int().nonnegative(),
-      assignmentId: z.string().min(1),
-      incarnationId: z.string().min(1),
-    })
-    .strict(),
+  flowPrompt: nodePermissionSourceSchema,
 });
 
 export type PreparedPermissionResult = Readonly<{
@@ -326,7 +318,11 @@ async function lockNodePermissionSource(
     command.runId !== run.id ||
     command.kind !== "session.prompt" ||
     command.ownerKind !== "flow_node_attempt" ||
-    ref?.variant !== "node" ||
+    (ref?.variant !== "node" && ref?.variant !== "permission_resume") ||
+    ("variant" in source.flowPrompt
+      ? ref.variant !== "permission_resume" ||
+        ref.hitlRequestId !== source.flowPrompt.hitlRequestId
+      : ref.variant !== "node") ||
     ref.nodeAttemptId !== attempt.id ||
     ref.promptOrdinal !== attempt.actionPromptOrdinal ||
     ref.assignmentId !== prior?.id ||

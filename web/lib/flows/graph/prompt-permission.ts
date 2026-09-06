@@ -13,6 +13,7 @@ import { z } from "zod";
 
 import { canonicalCommandJson } from "../../../../runtime/command-json";
 
+import { flowPermissionSourceSchema } from "./permission-source";
 import { nodePromptOperationKey } from "./node-prompt-owner";
 import { gatePromptOperationKey } from "./prompt-owner";
 import { lockFlowPromptOwner } from "./prompt-owner-authority";
@@ -33,46 +34,16 @@ import {
 } from "@/lib/assignments/service";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
-const nodeSourceSchema = z
-  .object({
-    version: z.literal(1),
-    commandId: z.string().min(1),
-    nodeAttemptId: z.string().min(1),
-    promptOrdinal: z.number().int().nonnegative(),
-    assignmentId: z.string().min(1),
-    incarnationId: z.string().min(1),
-  })
-  .strict();
-
-const gateSourceSchema = nodeSourceSchema
-  .extend({
-    variant: z.enum(["gate_ai", "gate_skill"]),
-    gateId: z.string().min(1),
-    evaluationId: z.string().min(1),
-  })
-  .strict();
-const resumedSourceSchema = nodeSourceSchema
-  .extend({
-    variant: z.literal("permission_resume"),
-    hitlRequestId: z.string().min(1),
-  })
-  .strict();
-const sourceSchema = z.union([
-  nodeSourceSchema,
-  gateSourceSchema,
-  resumedSourceSchema,
-]);
-
 export type FlowPermissionOwner = NodePromptOwner | GatePromptOwner;
 
-type PermissionSource = z.infer<typeof sourceSchema>;
+type PermissionSource = z.infer<typeof flowPermissionSourceSchema>;
 type PermissionEvent = Extract<
   SupervisorEvent,
   { type: "session.permission_request" }
 >;
 
 const permissionEnvelopeSchema = z.object({
-  flowPrompt: sourceSchema,
+  flowPrompt: flowPermissionSourceSchema,
   supervisorSessionId: z.string().min(1),
   requestId: z.string().min(1),
 });

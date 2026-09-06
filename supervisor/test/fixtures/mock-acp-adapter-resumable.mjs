@@ -189,6 +189,7 @@ class MockAgent {
     if (pendingReplay) {
       const toolCall = pendingReplay.toolCall;
       const options = pendingReplay.options;
+      const nextPermission = pendingReplay.nextPermission;
       // Clear in-memory marker BEFORE the await so a second prompt
       // doesn't double-replay if the first cancels again.
       pendingReplay = null;
@@ -218,10 +219,39 @@ class MockAgent {
             },
           },
         });
+        // A test may chain a distinct permission in this exact session journal.
+        // It must remain unanswered until the new HITL receives its own choice.
+        if (nextPermission) {
+          writeJournal(params.sessionId, {
+            acpSessionId: params.sessionId,
+            pendingPermission: nextPermission,
+          });
+          const nextResult = await this.connection.requestPermission({
+            sessionId: params.sessionId,
+            ...nextPermission,
+          });
+
+          if (nextResult?.outcome?.outcome === "selected")
+            writeJournal(params.sessionId, { acpSessionId: params.sessionId });
+          await this.connection.sessionUpdate({
+            sessionId: params.sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: {
+                type: "text",
+                text: `second permission outcome: ${nextResult?.outcome?.outcome}`,
+              },
+            },
+          });
+        }
       } else {
         writeJournal(params.sessionId, {
           acpSessionId: params.sessionId,
-          pendingPermission: { toolCall, options },
+          pendingPermission: {
+            toolCall,
+            options,
+            ...(nextPermission ? { nextPermission } : {}),
+          },
         });
         await this.connection.sessionUpdate({
           sessionId: params.sessionId,
@@ -295,7 +325,10 @@ const stream = acp.ndJsonStream(
   Readable.toWeb(process.stdin),
 );
 
-new acp.AgentSideConnection((connToAgent) => new MockAgent(connToAgent), stream);
+new acp.AgentSideConnection(
+  (connToAgent) => new MockAgent(connToAgent),
+  stream,
+);
 
 process.on("SIGTERM", () => process.exit(0));
 process.on("SIGINT", () => process.exit(0));
