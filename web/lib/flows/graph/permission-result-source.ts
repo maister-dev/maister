@@ -7,6 +7,7 @@ import type { FlowPermissionResultResume } from "./action-resume";
 import { eq } from "drizzle-orm";
 
 import { flowPermissionSourceSchema } from "./permission-source";
+import { isPermissionResultCommand } from "./permission-result-evidence";
 
 import {
   executionAssignments,
@@ -79,7 +80,7 @@ export async function assertPermissionResultSource(
   if (
     command.runId !== assignment.runId ||
     command.kind !== "session.prompt" ||
-    command.state !== "succeeded" ||
+    !isPermissionResultCommand(command) ||
     command.executionHostId !== assignment.executionHostId ||
     !prior ||
     prior.runId !== assignment.runId ||

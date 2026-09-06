@@ -99,8 +99,7 @@ async function assertCheckpointedPermissionResult(
     run.currentStepId !== attempt.nodeId ||
     attempt.status !== "Running" ||
     attempt.actionPromptOrdinal !== ref.promptOrdinal ||
-    attempt.actionCompletion?.commandId !== command.id ||
-    !attempt.actionCompletion.result.ok
+    attempt.actionCompletion?.commandId !== command.id
   )
     throw new PromptOwnerInvariantError("permission_result_cleanup_generation");
   await assertPermissionResultSource(db, {

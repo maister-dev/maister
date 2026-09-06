@@ -13,6 +13,7 @@ import type { ExecutionHostTransport } from "@/lib/execution-host/contracts";
 import type { FlowActionCompletion } from "./action-completion";
 import type { GatePromptCompletion } from "./gate-prompt-completion";
 import type { PreparedPermissionEvidence } from "./permission-result-evidence";
+import type { PromptOwnerOutcome } from "@/lib/execution-host/prompt-owners";
 
 import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
@@ -28,6 +29,7 @@ import { decodeGatePromptCompletion } from "./gate-prompt-completion";
 import {
   lockPermissionResultEvidence,
   completePermissionResultHandoff,
+  isPermissionResultCommand,
 } from "./permission-result-evidence";
 import {
   nodePermissionSourceSchema,
@@ -176,7 +178,7 @@ export async function prepareFlowPermissionResult(
   });
   const command = evidence.command;
 
-  if (evidence.disposition !== "settled" || command.state !== "succeeded")
+  if (evidence.disposition !== "settled" || !isPermissionResultCommand(command))
     return { kind: "pending", reason: "source_not_completed" };
   const [incarnation] = await db
     .select()
@@ -215,7 +217,13 @@ export async function prepareFlowPermissionResult(
     checkpoint.result?.sessionId !== source.data.supervisorSessionId
   )
     return { kind: "pending", reason: "source_checkpoint_pending" };
-  const output = await readPromptOutput({ db, commandId: command.id, signal });
+  const outcome: PromptOwnerOutcome =
+    command.state === "succeeded"
+      ? {
+          state: "succeeded",
+          ...(await readPromptOutput({ db, commandId: command.id, signal })),
+        }
+      : { state: "failed", error: command.lastError };
   const prepared: PreparedPermissionEvidence = {
     hitlRequestId: hitl.id,
     sourceJson: canonicalCommandJson(hitl.schema),
@@ -223,6 +231,7 @@ export async function prepareFlowPermissionResult(
     flowRevisionId: run.flowRevisionId,
     requestSha256: command.requestSha256,
     terminalEvidenceSha256: command.terminalEvidenceSha256,
+    sourceState: command.state,
     inputCommandId: input.id,
     checkpointCommandId: checkpoint.id,
     inputReceipt: receipt,
@@ -253,7 +262,7 @@ export async function prepareFlowPermissionResult(
     const completion = await decodeGatePromptCompletion({
       db,
       ref,
-      outcome: { state: "succeeded", ...output },
+      outcome,
     });
 
     signal.throwIfAborted();
@@ -274,12 +283,10 @@ export async function prepareFlowPermissionResult(
     commandId: command.id,
     promptOrdinal: source.data.flowPrompt.promptOrdinal,
     acpSessionId: incarnation.acpSessionId,
-    outcome: { state: "succeeded", ...output },
+    outcome,
   });
 
   signal.throwIfAborted();
-  if (!completion.result.ok)
-    return { kind: "pending", reason: "source_not_successful" };
 
   return { ...prepared, kind: "completed", domain: "node", completion };
 }
@@ -473,7 +480,6 @@ export async function authorizeNodePermissionResult(
   if (
     prepared.completion.commandId !== command.id ||
     prepared.completion.promptOrdinal !== attempt.actionPromptOrdinal ||
-    !prepared.completion.result.ok ||
     prepared.completion.result.acpSessionId !== incarnation.acpSessionId
   )
     throw new PromptOwnerInvariantError("permission_result_generation");

@@ -163,6 +163,35 @@ async function projectAvailable(tx: Db, event: ExecutionEvent): Promise<void> {
   if ((retentionClass === "ephemeral") !== Boolean(expiresAt)) {
     throw permanent("runtime object retention and expiry disagree");
   }
+  // Two consumers may hydrate the same content before either catalogues it.
+  // The insert serializes absence; a losing writer must validate the committed
+  // row below, including all immutable metadata, before accepting the replay.
+  const inserted = await tx
+    .insert(executionRuntimeObjects)
+    .values({
+      id: objectId,
+      runId: event.runId,
+      executionHostId: event.executionHostId,
+      executionAssignmentId: event.executionAssignmentId,
+      assignmentEpoch: event.assignmentEpoch,
+      kind: kind as (typeof RUNTIME_OBJECT_KINDS)[number],
+      logicalName,
+      mimeType,
+      sizeBytes: BigInt(sizeBytes),
+      sha256: checksum,
+      generation,
+      retentionClass:
+        retentionClass as (typeof RUNTIME_OBJECT_RETENTION_CLASSES)[number],
+      state: "available",
+      sourceEventId: event.id,
+      createdAt: event.occurredAt,
+      sealedAt,
+      expiresAt,
+    })
+    .onConflictDoNothing({ target: executionRuntimeObjects.id })
+    .returning({ id: executionRuntimeObjects.id });
+
+  if (inserted.length > 0) return;
   const rows = await tx
     .select()
     .from(executionRuntimeObjects)
@@ -265,26 +294,7 @@ async function projectAvailable(tx: Db, event: ExecutionEvent): Promise<void> {
 
     return;
   }
-  await tx.insert(executionRuntimeObjects).values({
-    id: objectId,
-    runId: event.runId,
-    executionHostId: event.executionHostId,
-    executionAssignmentId: event.executionAssignmentId,
-    assignmentEpoch: event.assignmentEpoch,
-    kind: kind as (typeof RUNTIME_OBJECT_KINDS)[number],
-    logicalName,
-    mimeType,
-    sizeBytes: BigInt(sizeBytes),
-    sha256: checksum,
-    generation,
-    retentionClass:
-      retentionClass as (typeof RUNTIME_OBJECT_RETENTION_CLASSES)[number],
-    state: "available",
-    sourceEventId: event.id,
-    createdAt: event.occurredAt,
-    sealedAt,
-    expiresAt,
-  });
+  throw permanent("runtime object catalogue row disappeared during projection");
 }
 
 async function assertContentCommandFence(

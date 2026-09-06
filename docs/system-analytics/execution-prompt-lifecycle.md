@@ -337,8 +337,8 @@ the reissued tool call and options. It remains `NeedsInput` until input delivery
 is acknowledged, then uses the normal action/gate/cursor reducer. Restart after
 the claim consumes that authorization. An unavailable resume handle fails the
 attempt and run without creating an empty replacement session. A stored input
-delivery must be classified before another turn can be authorized. Confirmed
-input without a successful completed source remains S2.6 work. A distinct
+delivery must be classified before another turn can be authorized. Confirmed input with an unverified source or an unclassified terminal error
+remains pending. A distinct
 permission emitted during a resumed prompt has its
 own HITL and choice. A later checkpoint matches that `permission_resume` source,
 including its prior HITL owner, and advances the same attempt once. Confirmed
@@ -368,6 +368,22 @@ them. It sends no new gate prompt and does not reopen the released source
 session. The source owner stays fenced; only the explicit receiving assignment
 may consume the historical result. Missing or merely accepted input receipts
 remain pending without a capacity claim.
+
+A succeeded source command can still have a non-`end_turn` ACP stop reason.
+Its verified output is decoded as the ordinary failed node result or gate
+verdict. An unexpected `cancelled` is mapped by the supervisor to a failed
+`ACP_PROTOCOL` command; that exact receipt/event-agreed error can also be
+handed off. The claim and later lineage reads require the original request and
+terminal digests and refuse terminal-conflict quarantine. Nodes retain
+`ok: false` with `ACP_PROTOCOL`; gates retain their failed verdict. The graph
+then uses its existing failure handling, without another prompt, successor
+action or parent replay. Fenced commands and other failed-command codes remain
+unclassified. Event ingestion acquires the run sequence lock before inserting
+its FK child, so a simultaneous idle-resume claim cannot deadlock while both
+transactions upgrade the same run row lock.
+Runtime-object projection atomically inserts a missing catalogue row; a
+concurrent loser locks and validates the committed row instead of failing on
+the primary key or accepting changed metadata.
 
 In-flight node and AI/skill gate permissions retain the exact source command,
 attempt/ordinal, assignment and incarnation in the HITL schema. The existing

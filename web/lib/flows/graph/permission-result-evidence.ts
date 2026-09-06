@@ -33,10 +33,37 @@ export type PreparedPermissionEvidence = Readonly<{
   flowRevisionId: string | null;
   requestSha256: string | null;
   terminalEvidenceSha256: string | null;
+  sourceState: "succeeded" | "failed";
   inputCommandId: string;
   checkpointCommandId: string;
   inputReceipt: CommandReceipt;
 }>;
+
+type PermissionResultCommand = ExecutionCommand &
+  (
+    | Readonly<{ state: "succeeded" }>
+    | Readonly<{
+        state: "failed";
+        lastError: NonNullable<ExecutionCommand["lastError"]>;
+      }>
+  );
+
+/** Only agreed terminal evidence can cross a released assignment. Protocol
+ * failure is an ordinary failed action/verdict; other failure semantics need
+ * their own disposition and must not become a replacement turn here.
+ */
+export function isPermissionResultCommand(
+  command: ExecutionCommand,
+): command is PermissionResultCommand {
+  return (
+    command.requestSha256 !== null &&
+    command.terminalEvidenceSha256 !== null &&
+    command.applicationError?.reason !== "prompt_terminal_conflict" &&
+    (command.state === "succeeded" ||
+      (command.state === "failed" &&
+        command.lastError?.code === "ACP_PROTOCOL"))
+  );
+}
 
 export type LockedPermissionResultContext = Readonly<{
   run: Run & { projectId: string };
@@ -78,7 +105,8 @@ export async function lockPermissionResultEvidence(
     prepared.flowRevisionId !== run.flowRevisionId ||
     prepared.requestSha256 !== command.requestSha256 ||
     prepared.terminalEvidenceSha256 !== command.terminalEvidenceSha256 ||
-    command.state !== "succeeded" ||
+    command.state !== prepared.sourceState ||
+    !isPermissionResultCommand(command) ||
     !checkpoint ||
     checkpoint.kind !== "session.checkpoint" ||
     checkpoint.runId !== run.id ||

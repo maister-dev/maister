@@ -669,10 +669,14 @@ export async function ingestRuntimeEvent(input: {
         };
       }
 
+      // Take the sequence allocator's lock before inserting its FK child.
+      // Otherwise an idle-resume CAS can hold NO KEY UPDATE while this insert
+      // holds KEY SHARE, and both then wait to upgrade the same run to UPDATE.
       const knownRun = await tx
         .select({ id: runs.id })
         .from(runs)
         .where(eq(runs.id, envelope.runId))
+        .for("update")
         .limit(1);
 
       if (!knownRun[0]) {
