@@ -86,6 +86,7 @@ type FakeCanonicalEvent =
   | SupervisorEvent
   | {
       type: "session.created";
+      createdByCommandId: string;
       sessionId: string;
       monotonicId: number;
       sessionName: string;
@@ -1417,6 +1418,7 @@ export function createFakeExecutionHost(
           sessions.set(session.sessionId, session);
           await publishCanonical(envelope, session.sessionId, {
             type: "session.created",
+            createdByCommandId: envelope.command.id,
             sessionId: session.sessionId,
             monotonicId: ++monotonicId,
             sessionName: session.sessionName ?? "default",
@@ -2502,6 +2504,12 @@ export function memoryBoundClient(args: {
 
         return attempt(await client.ensureWorkspace({ force: true }));
       }
+    },
+    async createOwnedSession() {
+      throw new MaisterError(
+        "PRECONDITION",
+        "durable create recovery requires the Postgres-backed execution client",
+      );
     },
     async prompt(sessionId, input, opts) {
       const env = envelope("session.prompt", input);

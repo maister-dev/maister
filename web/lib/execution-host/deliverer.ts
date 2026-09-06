@@ -282,6 +282,32 @@ export async function deliverCommand<TResult>(
       }
 
       if (isUnknownOutcome(err)) {
+        if (opts.command.createIntent) {
+          await casTransition(
+            opts.db,
+            opts.command.id,
+            ["delivering"],
+            attempts,
+            {
+              state: "queued",
+              deliveringSince: null,
+              lastError: errorRecord(err),
+              nextAttemptAt: new Date(
+                now().getTime() +
+                  Math.min(
+                    30_000,
+                    backoffMs(policy.backoffBaseMs, Math.min(attempts, 6)),
+                  ),
+              ),
+            },
+            { logger, now: now() },
+          );
+          logger.warn(
+            { commandId: opts.command.id, attempt: attempts, latencyMs },
+            "session-create-unknown-recoverable",
+          );
+          throw err;
+        }
         const failed = await failRetryable(
           opts.db,
           opts.command.id,
@@ -377,7 +403,7 @@ export async function deliverCommand<TResult>(
     const bindingDisposition = await opts.db.transaction(async (tx) => {
       // Permission intent/replay takes the run lock before its input row.
       // ACK application must use the same order when callers race a retry.
-      if (kind === "session.input")
+      if (kind === "session.input" || kind === "session.create")
         await tx
           .select({ id: runs.id })
           .from(runs)

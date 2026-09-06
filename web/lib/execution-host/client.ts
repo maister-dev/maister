@@ -38,6 +38,7 @@ import type {
   HostSessionId,
   PlacementReason,
 } from "./types";
+import type { FlowCreateOwner } from "./create-intent";
 
 import { and, eq } from "drizzle-orm";
 import pino, { type Logger } from "pino";
@@ -55,6 +56,11 @@ import {
   setAssignmentWorkspace,
 } from "./assignments";
 import { applyCreateAck } from "./create-ack";
+import { ensureSessionOutputIntents } from "./session-output-intents";
+import {
+  createOwnedSession,
+  type OwnedSessionOptions,
+} from "./owned-session-create";
 import { requeueDelivering } from "./commands";
 import {
   COMMAND_POLICY,
@@ -123,6 +129,18 @@ export interface BoundClient {
     payload: Omit<CreateSessionPayload, "executionWorkspaceId">,
     opts?: CreateSessionOptions,
   ): Promise<CreateSessionResult & { hostSessionId: HostSessionId }>;
+  createOwnedSession(
+    owner: FlowCreateOwner,
+    preparePayload: () => Promise<
+      Omit<CreateSessionPayload, "executionWorkspaceId">
+    >,
+    options?: OwnedSessionOptions,
+  ): Promise<
+    CreateSessionResult & {
+      hostSessionId: HostSessionId;
+      sessionFallback: boolean;
+    }
+  >;
   prompt(
     sessionId: HostSessionId | string,
     input: SendPromptInput,
@@ -380,62 +398,7 @@ export function createExecutionHosts(
         const sessionName =
           opts?.sessionName ?? payload.sessionName ?? "default";
         const attempt = async (executionWorkspaceId: ExecutionWorkspaceId) => {
-          if ((payload.outputObjects?.length ?? 0) > 0)
-            await db.transaction(async (tx) => {
-              for (const output of payload.outputObjects ?? []) {
-                const expiresAt = output.expiresAt
-                  ? new Date(output.expiresAt)
-                  : null;
-                const rows = await tx
-                  .select()
-                  .from(executionRuntimeObjects)
-                  .where(eq(executionRuntimeObjects.id, output.objectId))
-                  .for("update")
-                  .limit(1);
-                const existing = rows[0];
-
-                if (existing) {
-                  const sameBinding =
-                    existing.runId === current.runId &&
-                    existing.executionHostId === host.id &&
-                    existing.executionAssignmentId === current.id &&
-                    existing.assignmentEpoch === current.epoch &&
-                    existing.kind === output.kind &&
-                    existing.logicalName === output.logicalName &&
-                    existing.mimeType === output.mimeType &&
-                    existing.generation === output.generation &&
-                    existing.retentionClass === output.retentionClass &&
-                    existing.expiresAt?.getTime() === expiresAt?.getTime() &&
-                    (existing.state === "pending" ||
-                      existing.state === "available");
-
-                  if (!sameBinding) {
-                    throw new MaisterError(
-                      "CONFLICT",
-                      "runtime output object ID is already bound to different metadata",
-                      { details: { reason: "command_invariant_conflict" } },
-                    );
-                  }
-                  continue;
-                }
-                await tx.insert(executionRuntimeObjects).values({
-                  id: output.objectId,
-                  runId: current.runId,
-                  executionHostId: host.id,
-                  executionAssignmentId: current.id,
-                  assignmentEpoch: current.epoch,
-                  kind: output.kind,
-                  logicalName: output.logicalName,
-                  mimeType: output.mimeType,
-                  sizeBytes: null,
-                  sha256: null,
-                  generation: output.generation,
-                  retentionClass: output.retentionClass,
-                  state: "pending",
-                  expiresAt,
-                });
-              }
-            });
+          await ensureSessionOutputIntents(db, client, payload);
 
           return immediate<CreateSessionPayload, CreateSessionResult>(
             "session.create",
@@ -487,6 +450,17 @@ export function createExecutionHosts(
             await attempt(await client.ensureWorkspace({ force: true })),
           );
         }
+      },
+      createOwnedSession(owner, preparePayload, options) {
+        return createOwnedSession({
+          db,
+          client,
+          transport,
+          owner,
+          preparePayload,
+          options,
+          logger,
+        });
       },
       async prompt(sessionId, input, opts) {
         const policy = COMMAND_POLICY["session.prompt"];

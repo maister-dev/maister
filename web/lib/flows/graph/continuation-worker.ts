@@ -11,6 +11,7 @@ import {
   gt,
   isNotNull,
   isNull,
+  inArray,
   lte,
   or,
   sql,
@@ -24,6 +25,7 @@ import { openNodePromptExists } from "./node-permission";
 import {
   executionAssignments,
   executionCommands,
+  gateResults,
   nodeAttempts,
   runs,
 } from "@/lib/db/schema";
@@ -111,8 +113,19 @@ export function startFlowContinuationWorker(input: {
                               executionAssignments.id,
                             ),
                           ),
-                          eq(executionCommands.kind, "session.prompt"),
-                          eq(executionCommands.ownerKind, "flow_node_attempt"),
+                          or(
+                            and(
+                              eq(executionCommands.kind, "session.prompt"),
+                              eq(
+                                executionCommands.ownerKind,
+                                "flow_node_attempt",
+                              ),
+                            ),
+                            and(
+                              eq(executionCommands.kind, "session.create"),
+                              isNotNull(executionCommands.createIntent),
+                            ),
+                          ),
                         ),
                       ),
                   ),
@@ -128,8 +141,45 @@ export function startFlowContinuationWorker(input: {
                             nodeAttempts.executionAssignmentId,
                             executionAssignments.id,
                           ),
-                          isNotNull(nodeAttempts.actionResume),
-                          sql`${nodeAttempts.actionResume}->>'assignmentId' = ${executionAssignments.id}`,
+                          or(
+                            and(
+                              isNotNull(nodeAttempts.actionResume),
+                              sql`${nodeAttempts.actionResume}->>'assignmentId' = ${executionAssignments.id}`,
+                            ),
+                            and(
+                              isNull(nodeAttempts.finishContinuation),
+                              or(
+                                and(
+                                  eq(nodeAttempts.status, "Running"),
+                                  isNull(nodeAttempts.endedAt),
+                                  inArray(nodeAttempts.nodeType, [
+                                    "ai_coding",
+                                    "judge",
+                                    "orchestrator",
+                                  ]),
+                                ),
+                                exists(
+                                  tx
+                                    .select({ id: gateResults.id })
+                                    .from(gateResults)
+                                    .where(
+                                      and(
+                                        eq(
+                                          gateResults.nodeAttemptId,
+                                          nodeAttempts.id,
+                                        ),
+                                        eq(gateResults.runId, runs.id),
+                                        inArray(gateResults.kind, [
+                                          "ai_judgment",
+                                          "skill_check",
+                                        ]),
+                                        eq(gateResults.status, "running"),
+                                      ),
+                                    ),
+                                ),
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                   ),

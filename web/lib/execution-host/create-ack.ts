@@ -3,8 +3,9 @@ import type { SessionBindingDisposition } from "./session-binding";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 
+import { currentCreateCommand, createIntentError } from "./create-intent";
 import {
   lockCurrentSessionAssignment,
   lockLogicalRunSession,
@@ -13,6 +14,7 @@ import {
 
 import {
   nodeAttempts,
+  executionCommands,
   runSessionIncarnations,
   runSessions,
 } from "@/lib/db/schema";
@@ -24,6 +26,7 @@ import { MaisterError } from "@/lib/errors";
 export async function applyCreateAck(
   tx: Db,
   input: {
+    commandId?: string;
     runId: string;
     sessionName: string;
     assignmentId: string;
@@ -34,6 +37,40 @@ export async function applyCreateAck(
   const assignment = await lockCurrentSessionAssignment(tx, input);
 
   if (!assignment) return "stale";
+  if (input.commandId) {
+    const [command] = await tx
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.id, input.commandId));
+
+    if (
+      !command ||
+      command.kind !== "session.create" ||
+      command.runId !== input.runId ||
+      command.executionAssignmentId !== input.assignmentId ||
+      (command.payload.sessionName ?? "default") !== input.sessionName ||
+      (input.nodeAttemptId !== null &&
+        command.payload.nodeAttemptId !== input.nodeAttemptId)
+    )
+      throw createIntentError("create_ack_command");
+    if (!(await currentCreateCommand(tx, command))) return "stale";
+  } else {
+    const [owned] = await tx
+      .select({ id: executionCommands.id })
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, input.runId),
+          eq(executionCommands.executionAssignmentId, input.assignmentId),
+          eq(executionCommands.kind, "session.create"),
+          isNotNull(executionCommands.createIntent),
+          sql`${executionCommands.payload}->>'sessionName' = ${input.sessionName}`,
+        ),
+      )
+      .limit(1);
+
+    if (owned) return "stale";
+  }
   const session = await lockLogicalRunSession(tx, input);
   const [incarnation] = await tx
     .select()

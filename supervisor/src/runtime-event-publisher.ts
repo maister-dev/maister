@@ -427,6 +427,7 @@ export class RuntimeEventPublisher {
         eventType: "session.created",
         occurredAt: this.now().toISOString(),
         payload: {
+          createdByCommandId: record.createdByCommandId,
           adapter: record.adapter,
           sessionName: record.sessionName,
           acpSessionId: record.acpSessionId ?? null,

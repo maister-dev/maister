@@ -18,6 +18,8 @@ import {
   gateResults,
   hitlRequests,
   nodeAttempts,
+  runSessionIncarnations,
+  runSessions,
   runs,
   users,
 } from "@/lib/db/schema";
@@ -33,6 +35,12 @@ import { runFlow } from "@/lib/flows/runner";
 import { respondToHitl } from "@/lib/services/hitl";
 import { buildOrchestratorResumeConsumer } from "@/lib/domain-events/orchestrator-resume";
 import { createExecutionHosts } from "@/lib/execution-host/client";
+import {
+  readCreateIntent,
+  type FlowCreateOwner,
+} from "@/lib/execution-host/create-intent";
+import { applyCreateAck } from "@/lib/execution-host/create-ack";
+import { recoverExecutionCommands } from "@/lib/execution-host/recovery";
 import { defaultTransport } from "@/lib/execution-host/default-transport";
 import { UNKNOWN_OUTCOME_DETAIL } from "@/lib/execution-host/contracts";
 import { MaisterError } from "@/lib/errors";
@@ -256,6 +264,478 @@ async function killAtDatabaseWrite(input: {
 }
 
 describe("Flow prompt owners through the production graph driver", () => {
+  it.each(["resume", "workspace"] as const)(
+    "owner-flow-create: definitive %s refusal persists one replacement",
+    async (refusal) => {
+      const seeded = await seedOwnerFlow([
+        {
+          id: "work",
+          type: "ai_coding",
+          action: {
+            prompt: 'fixture-output:{"bytes":0,"text":"fresh session"}',
+          },
+          transitions: { success: "done" },
+        },
+      ]);
+
+      await killAtDatabaseWrite({
+        table: "execution_commands",
+        event: "UPDATE",
+        predicate: `NEW.run_id = '${seeded.runId}' AND NEW.kind = 'session.create' AND NEW.attempts = 1`,
+        launch: () => startDriver(seeded.runId),
+      });
+      const db = database.db as unknown as Db;
+      const [attempt] = await db
+        .select()
+        .from(nodeAttempts)
+        .where(eq(nodeAttempts.runId, seeded.runId));
+      const client = await createExecutionHosts({ db }).forAssignment({
+        id: attempt.executionAssignmentId!,
+      });
+      const [unissued] = await db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, seeded.runId),
+            eq(executionCommands.kind, "session.create"),
+          ),
+        );
+      const request = readCreateIntent(unissued, client.host.hostKey);
+
+      // Keep the original unsent generation as evidence; this fixture admits a
+      // separate turn to exercise the real adapter's definitive resume refusal.
+      await db
+        .update(nodeAttempts)
+        .set({ actionPromptOrdinal: 1 })
+        .where(eq(nodeAttempts.id, attempt.id));
+      const owner = {
+        variant: "node",
+        nodeAttemptId: attempt.id,
+        promptOrdinal: 1,
+      } as const;
+
+      if (refusal === "workspace")
+        await client.releaseWorkspace(
+          request.envelope.payload.executionWorkspaceId,
+        );
+      let prepared = 0;
+      const result = await client.createOwnedSession(owner, async () => {
+        prepared += 1;
+
+        return {
+          ...request.envelope.payload,
+          ...(refusal === "resume"
+            ? { resumeSessionId: "fixture-missing-session" }
+            : {}),
+        };
+      });
+
+      try {
+        expect(result.sessionFallback).toBe(refusal === "resume");
+        expect(prepared).toBe(1);
+        const replay = await client.createOwnedSession(owner, async () => {
+          throw new Error("replay must not rebuild the create request");
+        });
+
+        expect(replay).toEqual(result);
+        const creates = await db
+          .select()
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, seeded.runId),
+              eq(executionCommands.kind, "session.create"),
+            ),
+          );
+
+        expect(creates).toHaveLength(3);
+        expect(
+          creates.find((command) => command.id === unissued.id)?.state,
+        ).toBe(unissued.state);
+        const failed = creates.find((command) => command.state === "failed")!;
+        const succeeded = creates.find(
+          (command) => command.state === "succeeded",
+        )!;
+
+        expect(failed.lastError?.code).toBe(
+          refusal === "resume" ? "CHECKPOINT" : "PRECONDITION",
+        );
+        expect(succeeded.createIntent).toMatchObject({
+          generation: 1,
+          supersedesCommandId: failed.id,
+          sessionFallback: refusal === "resume",
+        });
+        expect(
+          readCreateIntent(succeeded, client.host.hostKey).envelope.payload
+            .resumeSessionId,
+        ).toBeUndefined();
+      } finally {
+        await client.deleteSession(result.sessionId);
+        await db
+          .update(runs)
+          .set({ status: "Failed" })
+          .where(eq(runs.id, seeded.runId));
+      }
+    },
+    50_000,
+  );
+
+  it.each([
+    ["node", "before_admission"],
+    ["node", "before_effect"],
+    ["node", "before_ack"],
+    ["gate", "before_effect"],
+    ["gate", "before_ack"],
+    ["gate", "before_admission"],
+  ] as const)(
+    "owner-flow-create: %s %s recovers the original create before prompt admission",
+    async (origin, window) => {
+      const seeded =
+        origin === "gate"
+          ? await seedGate("ai_judgment")
+          : await seedOwnerFlow([
+              {
+                id: "work",
+                type: "ai_coding",
+                action: {
+                  prompt: 'fixture-output:{"bytes":0,"text":"original action"}',
+                },
+                transitions: { success: "done" },
+              },
+            ]);
+
+      await killAtDatabaseWrite({
+        table: "execution_commands",
+        event: window === "before_admission" ? "INSERT" : "UPDATE",
+        predicate: `NEW.run_id = '${seeded.runId}' AND NEW.kind = 'session.create' AND ${window === "before_admission" ? "TRUE" : window === "before_effect" ? "NEW.attempts = 1" : "NEW.state = 'succeeded'"}`,
+        launch: () => startDriver(seeded.runId),
+      });
+      const [original] = await database.db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, seeded.runId),
+            eq(executionCommands.kind, "session.create"),
+          ),
+        );
+
+      if (window === "before_admission") expect(original).toBeUndefined();
+      else expect(original).toBeDefined();
+      if (window === "before_effect") {
+        const recovered = await recoverExecutionCommands({
+          db: database.db as unknown as Db,
+          graceMs: 0,
+        });
+
+        expect(recovered.errors).toEqual([]);
+        const [retained] = await database.db
+          .select()
+          .from(executionCommands)
+          .where(eq(executionCommands.id, original.id));
+
+        expect(retained).toMatchObject({
+          id: original.id,
+          state: original.state,
+          attempts: original.attempts,
+          createdAt: original.createdAt,
+          createIntent: original.createIntent,
+        });
+      }
+      const continuation = startFlowContinuationWorker({
+        db: database.db as unknown as Db,
+        runtimeRoot: supervisor.runtimeRoot,
+      });
+
+      try {
+        await expect
+          .poll(
+            async () => {
+              const [run] = await database.db
+                .select()
+                .from(runs)
+                .where(eq(runs.id, seeded.runId));
+
+              return run.status;
+            },
+            { timeout: 60_000 },
+          )
+          .toBe("Review");
+        const commands = await database.db
+          .select()
+          .from(executionCommands)
+          .where(eq(executionCommands.runId, seeded.runId));
+        const creates = commands.filter(
+          (command) => command.kind === "session.create",
+        );
+
+        expect(creates).toHaveLength(1);
+        expect(creates[0].state).toBe("succeeded");
+        if (original)
+          expect(creates[0]).toMatchObject({
+            id: original.id,
+            createdAt: original.createdAt,
+          });
+        const prompts = commands.filter(
+          (command) => command.kind === "session.prompt",
+        );
+
+        expect(prompts).toHaveLength(1);
+        expect(prompts[0].targetSessionId).toBe(creates[0].result?.sessionId);
+        expect(prompts[0].completionAppliedAt).not.toBeNull();
+        const attempts = await database.db
+          .select()
+          .from(nodeAttempts)
+          .where(eq(nodeAttempts.runId, seeded.runId));
+
+        expect(attempts).toHaveLength(1);
+        expect(attempts[0]).toMatchObject({
+          status: "Succeeded",
+          actionPromptOrdinal: 0,
+        });
+        if (origin === "gate") {
+          const gates = await database.db
+            .select()
+            .from(gateResults)
+            .where(eq(gateResults.runId, seeded.runId));
+
+          expect(gates).toHaveLength(1);
+          expect(gates[0].status).toBe("passed");
+          expect(
+            await readFile(
+              `${seeded.worktreePath}/gate-parent-count.txt`,
+              "utf8",
+            ),
+          ).toBe("work\n");
+        }
+      } finally {
+        await continuation.stop();
+      }
+    },
+    100_000,
+  );
+
+  it.each(["node", "gate"] as const)(
+    "owner-flow-create: %s rejects late create evidence after its owner generation changes",
+    async (origin) => {
+      const seeded =
+        origin === "gate"
+          ? await seedGate("ai_judgment")
+          : await seedOwnerFlow([
+              {
+                id: "work",
+                type: "ai_coding",
+                action: {
+                  prompt: 'fixture-output:{"bytes":0,"text":"current action"}',
+                },
+                transitions: { success: "done" },
+              },
+            ]);
+
+      await killAtDatabaseWrite({
+        table: "execution_commands",
+        event: "UPDATE",
+        predicate: `NEW.run_id = '${seeded.runId}' AND NEW.kind = 'session.create' AND NEW.attempts = 1`,
+        launch: () => startDriver(seeded.runId),
+      });
+      const db = database.db as unknown as Db;
+      const [original] = await db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, seeded.runId),
+            eq(executionCommands.kind, "session.create"),
+          ),
+        );
+      const client = await createExecutionHosts({ db }).forAssignment({
+        id: original.executionAssignmentId,
+      });
+      const request = readCreateIntent(original, client.host.hostKey);
+      const oldOwner = request.intent.owner;
+      let nextOwner: FlowCreateOwner;
+
+      if (oldOwner.variant === "node") {
+        nextOwner = { ...oldOwner, promptOrdinal: oldOwner.promptOrdinal + 1 };
+        await db
+          .update(nodeAttempts)
+          .set({ actionPromptOrdinal: nextOwner.promptOrdinal })
+          .where(eq(nodeAttempts.id, oldOwner.nodeAttemptId));
+      } else {
+        const [oldGate] = await db
+          .select()
+          .from(gateResults)
+          .where(eq(gateResults.id, oldOwner.evaluationId));
+
+        await db
+          .update(gateResults)
+          .set({ status: "stale" })
+          .where(eq(gateResults.id, oldGate.id));
+        const id = randomUUID();
+
+        await db
+          .insert(gateResults)
+          .values({ ...oldGate, id, createdAt: new Date() });
+        nextOwner = { ...oldOwner, evaluationId: id };
+      }
+      const successor = await client.createOwnedSession(
+        nextOwner,
+        async () => request.envelope.payload,
+      );
+      const oldResult = await defaultTransport().createSession(
+        request.envelope,
+      );
+
+      try {
+        await expect
+          .poll(
+            async () => {
+              const [incarnation] = await db
+                .select()
+                .from(runSessionIncarnations)
+                .where(
+                  eq(runSessionIncarnations.hostSessionId, oldResult.sessionId),
+                );
+
+              return incarnation?.state;
+            },
+            { timeout: 45_000 },
+          )
+          .toBe("lost");
+        const disposition = await db.transaction((tx) =>
+          applyCreateAck(tx, {
+            commandId: original.id,
+            runId: seeded.runId,
+            assignmentId: original.executionAssignmentId,
+            nodeAttemptId: oldOwner.nodeAttemptId,
+            sessionName: request.envelope.payload.sessionName ?? "default",
+            result: oldResult,
+          }),
+        );
+
+        expect(disposition).toBe("stale");
+        const recovery = await recoverExecutionCommands({ db, graceMs: 0 });
+
+        expect(recovery.errors).toEqual([]);
+        const [settled] = await db
+          .select()
+          .from(executionCommands)
+          .where(eq(executionCommands.id, original.id));
+
+        expect(settled).toMatchObject({
+          state: "succeeded",
+          result: oldResult,
+        });
+        const [binding] = await db
+          .select()
+          .from(runSessions)
+          .where(eq(runSessions.runId, seeded.runId));
+
+        expect(binding).toMatchObject({
+          hostSessionId: successor.sessionId,
+          acpSessionId: successor.acpSessionId,
+        });
+      } finally {
+        await client.deleteSession(oldResult.sessionId);
+        await client.deleteSession(successor.sessionId);
+        await db
+          .update(runs)
+          .set({ status: "Failed" })
+          .where(eq(runs.id, seeded.runId));
+      }
+    },
+    65_000,
+  );
+
+  it("owner-flow-create: unknown outcomes beyond the delivery budget keep one create", async () => {
+    const seeded = await seedOwnerFlow([
+      {
+        id: "work",
+        type: "ai_coding",
+        action: {
+          prompt:
+            'fixture-output:{"bytes":0,"text":"survived lost create replies"}',
+        },
+        transitions: { success: "done" },
+      },
+    ]);
+    const real = defaultTransport();
+    const sent: string[] = [];
+    const hosts = createExecutionHosts({
+      db: database.db as unknown as Db,
+      transport: {
+        ...real,
+        createSession: async (envelope, options) => {
+          sent.push(JSON.stringify(envelope));
+          const result = await real.createSession(envelope, options);
+
+          if (sent.length <= 4)
+            throw new MaisterError(
+              "EXECUTOR_UNAVAILABLE",
+              "injected loss after real create receipt",
+              { details: { transport: UNKNOWN_OUTCOME_DETAIL } },
+            );
+
+          return result;
+        },
+      },
+    });
+
+    await runFlow(seeded.runId, {
+      db: database.db,
+      runtimeRoot: supervisor.runtimeRoot,
+      executionHosts: hosts,
+    });
+    const [run] = await database.db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, seeded.runId));
+
+    expect(run.status).toBe("Running");
+    const continuation = startFlowContinuationWorker({
+      db: database.db as unknown as Db,
+      runtimeRoot: supervisor.runtimeRoot,
+      executionHosts: hosts,
+    });
+
+    try {
+      await expect
+        .poll(
+          async () => {
+            const [current] = await database.db
+              .select()
+              .from(runs)
+              .where(eq(runs.id, seeded.runId));
+
+            return current.status;
+          },
+          { timeout: 60_000 },
+        )
+        .toBe("Review");
+      const commands = await database.db
+        .select()
+        .from(executionCommands)
+        .where(eq(executionCommands.runId, seeded.runId));
+      const creates = commands.filter(
+        (command) => command.kind === "session.create",
+      );
+
+      expect(creates).toHaveLength(1);
+      expect(creates[0]).toMatchObject({
+        state: "succeeded",
+        attempts: 5,
+        maxAttempts: 3,
+      });
+      expect(new Set(sent).size).toBe(1);
+      expect(
+        commands.filter((command) => command.kind === "session.prompt"),
+      ).toHaveLength(1);
+    } finally {
+      await continuation.stop();
+    }
+  }, 80_000);
+
   it.each([
     "before_hitl",
     "after_hitl",

@@ -897,6 +897,7 @@ table execution_commands {
   kind text [not null]
   target_session_id text
   payload jsonb [not null, default: `{}`]
+  create_intent jsonb
   owner_kind text
   owner_ref jsonb
   logical_operation_key text
@@ -930,6 +931,8 @@ table execution_commands {
   indexes {
     (state, next_attempt_at) [name: 'execution_commands_open_idx']
     (run_id, created_at) [name: 'execution_commands_run_created_idx']
+    (run_id, execution_assignment_id, create_intent) [name: 'execution_commands_create_operation_uq', unique]
+
 
 
     terminal_event_id [name: 'execution_commands_terminal_event_idx']

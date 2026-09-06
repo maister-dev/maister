@@ -139,6 +139,12 @@ async function foldReceipt(
     await db.transaction(async (tx) => {
       const txDb = tx as unknown as Db;
 
+      if (row.kind === "session.create")
+        await tx
+          .select({ id: runs.id })
+          .from(runs)
+          .where(eq(runs.id, row.runId))
+          .for("update");
       await markSucceeded(txDb, row.id, null, receipt.body, { logger, now });
       if (row.kind === "session.create") {
         const payload = row.payload as {
@@ -152,6 +158,7 @@ async function foldReceipt(
 
         if (typeof body.sessionId === "string") {
           const bindingDisposition = await applyCreateAck(txDb, {
+            commandId: row.id,
             runId: row.runId,
             sessionName:
               typeof payload.sessionName === "string"
@@ -346,7 +353,12 @@ export async function recoverExecutionCommands(
     const host = await hostFor(row.executionHostId);
 
     if (!host) {
-      if (row.kind === "session.prompt") {
+      if (row.kind === "session.prompt" || row.createIntent) {
+        if (row.createIntent) {
+          summary.skippedInFlight += 1;
+
+          return;
+        }
         await reconcileStoredPromptEvidence(
           db,
           row.id,
@@ -514,6 +526,19 @@ export async function recoverExecutionCommands(
           summary.turnLost += 1;
         else summary.folded += 1;
       } else summary.skippedInFlight += 1;
+
+      return;
+    }
+
+    if (row.createIntent) {
+      // Only the leased Flow driver may re-send the private create request.
+      // Generic recovery may settle a receipt, never orphan a retained intent
+      // or reconstruct its payload from the diagnostic projection.
+      const receipt = await transport.getCommandReceipt(row.id);
+
+      if (receipt)
+        summary[await foldReceipt(db, row, receipt, at, logger)] += 1;
+      else summary.skippedInFlight += 1;
 
       return;
     }

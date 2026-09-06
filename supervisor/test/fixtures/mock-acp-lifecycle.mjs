@@ -84,7 +84,12 @@ class LifecycleAgent {
     return {};
   }
 
-  async resumeSession() {
+  async resumeSession(request) {
+    if (request.sessionId === "fixture-missing-session")
+      throw new acp.RequestError(
+        -32000,
+        "session not found: fixture-missing-session",
+      );
     return {};
   }
 

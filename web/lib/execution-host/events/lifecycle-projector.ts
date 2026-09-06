@@ -98,6 +98,9 @@ async function projectCreated(tx: Db, event: ExecutionEvent): Promise<void> {
       ? event.payload.acpSessionId
       : null;
   const disposition = await applyCreateAck(tx, {
+    ...(typeof event.payload?.createdByCommandId === "string"
+      ? { commandId: event.payload.createdByCommandId }
+      : {}),
     runId: event.runId,
     sessionName: name,
     assignmentId: event.executionAssignmentId,
@@ -105,13 +108,20 @@ async function projectCreated(tx: Db, event: ExecutionEvent): Promise<void> {
     result: { sessionId: event.hostSessionId, acpSessionId },
   });
 
-  if (disposition === "stale") return;
-  const session = await lockLogicalRunSession(tx, {
+  let session = await lockLogicalRunSession(tx, {
     runId: event.runId,
     sessionName: name,
   });
 
-  if (!session) throw permanent("applied session binding has no logical row");
+  if (!session && disposition === "stale") {
+    const [historical] = await tx
+      .insert(runSessions)
+      .values({ id: randomUUID(), runId: event.runId, sessionName: name })
+      .returning();
+
+    session = historical ?? null;
+  }
+  if (!session) throw permanent("created incarnation has no logical row");
 
   const existing = await tx
     .select()
@@ -152,10 +162,16 @@ async function projectCreated(tx: Db, event: ExecutionEvent): Promise<void> {
       hostSessionId: event.hostSessionId,
       hostBootId: event.hostBootId,
       acpSessionId,
-      state: "active",
+      state: disposition === "applied" ? "active" : "lost",
       origin: "native",
       createdAt: event.occurredAt,
-      activatedAt: event.occurredAt,
+      activatedAt: disposition === "applied" ? event.occurredAt : null,
+      ...(disposition === "stale"
+        ? {
+            endedAt: event.occurredAt,
+            terminalReason: { reason: "create_owner_superseded" },
+          }
+        : {}),
     })
     .returning();
   const created = inserted[0];

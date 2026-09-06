@@ -34,6 +34,7 @@ import type {
 import type { PromptOwnerReference } from "@/lib/execution-host/prompt-owner-contract";
 import type { CommandApplicationError } from "@/lib/execution-host/types";
 import type { CommandReceipt } from "@/lib/execution-host/contracts";
+import type { SessionCreateIntent } from "@/lib/execution-host/create-intent";
 import type { FlowActionCompletion } from "@/lib/flows/graph/action-completion";
 import type { FlowFinishContinuation } from "@/lib/flows/graph/finish-continuation";
 import type { FlowActionResume } from "@/lib/flows/graph/action-resume";
@@ -2247,6 +2248,8 @@ export const executionCommands = pgTable(
       .$type<Record<string, unknown>>()
       .notNull()
       .default({}),
+    // Private pre-prompt replay source, independent of prompt-owner fields.
+    createIntent: jsonb("create_intent").$type<SessionCreateIntent>(),
     // ADR-167 prompt continuation identity. The digest is over canonical
     // unredacted request bytes; payload remains the existing redacted view.
     ownerKind: text("owner_kind", {
@@ -2329,6 +2332,45 @@ export const executionCommands = pgTable(
     idxRunCreated: index("execution_commands_run_created_idx").on(
       t.runId,
       t.createdAt,
+    ),
+    uniqCreateOperation: uniqueIndex("execution_commands_create_operation_uq")
+      .on(
+        t.runId,
+        t.executionAssignmentId,
+        sql`(${t.createIntent}->>'operationKey')`,
+        sql`(${t.createIntent}->>'generation')`,
+      )
+      .where(sql`${t.createIntent} IS NOT NULL`),
+    createIntentCheck: check(
+      "execution_commands_create_intent_check",
+      sql`${t.createIntent} IS NULL OR (${t.kind} = 'session.create'
+        AND jsonb_typeof(${t.createIntent}) = 'object' AND ${t.createIntent}->'version' = '1'::jsonb
+        AND jsonb_typeof(${t.createIntent}->'owner') = 'object'
+        AND ${t.createIntent}->'owner'->>'variant' IN ('node', 'gate_ai', 'gate_skill')
+        AND jsonb_typeof(${t.createIntent}->'owner'->'nodeAttemptId') = 'string'
+        AND (${t.createIntent} - ARRAY['version','owner','operationKey','generation','supersedesCommandId','sessionFallback','requestCanonicalJson','requestSha256']) = '{}'::jsonb
+        AND jsonb_typeof(${t.createIntent}->'sessionFallback') = 'boolean'
+        AND CASE WHEN ${t.createIntent}->'owner'->>'variant' = 'node' THEN
+          ((${t.createIntent}->'owner') - ARRAY['variant','nodeAttemptId','promptOrdinal']) = '{}'::jsonb
+          AND (${t.createIntent}->'owner'->>'promptOrdinal') ~ '^(0|[1-9][0-9]*)$'
+          AND ${t.createIntent}->>'operationKey' = 'flow-create:node:' || (${t.createIntent}->'owner'->>'nodeAttemptId') || ':' || (${t.createIntent}->'owner'->>'promptOrdinal')
+        ELSE ((${t.createIntent}->'owner') - ARRAY['variant','nodeAttemptId','gateId','evaluationId']) = '{}'::jsonb
+          AND jsonb_typeof(${t.createIntent}->'owner'->'gateId') = 'string'
+          AND jsonb_typeof(${t.createIntent}->'owner'->'evaluationId') = 'string'
+          AND ${t.createIntent}->>'operationKey' = 'flow-create:' || (${t.createIntent}->'owner'->>'variant') || ':' || (${t.createIntent}->'owner'->>'evaluationId') END
+        AND length(${t.createIntent}->>'operationKey') BETWEEN 1 AND 256
+        AND (${t.createIntent}->>'generation') ~ '^(0|[1-9][0-9]*)$'
+        AND (${t.createIntent}->>'generation')::numeric <= 2147483647
+        AND ((${t.createIntent}->'generation' = '0'::jsonb AND ${t.createIntent}->'supersedesCommandId' = 'null'::jsonb)
+          OR (${t.createIntent}->>'generation')::numeric > 0 AND jsonb_typeof(${t.createIntent}->'supersedesCommandId') = 'string')
+        AND ${t.createIntent}->>'requestSha256' = encode(sha256(convert_to(${t.createIntent}->>'requestCanonicalJson', 'UTF8')), 'hex')
+        AND (${t.createIntent}->>'requestCanonicalJson')::jsonb->'command'->>'id' = ${t.id}
+        AND (${t.createIntent}->>'requestCanonicalJson')::jsonb->'command'->>'kind' = ${t.kind}
+        AND (${t.createIntent}->>'requestCanonicalJson')::jsonb->'fence'->>'runId' = ${t.runId}
+        AND (${t.createIntent}->>'requestCanonicalJson')::jsonb->'fence'->>'assignmentId' = ${t.executionAssignmentId}
+        AND (${t.createIntent}->>'requestCanonicalJson')::jsonb->'fence'->'assignmentEpoch' = to_jsonb(${t.assignmentEpoch})
+        AND (${t.createIntent}->>'requestCanonicalJson')::jsonb->'payload'->>'nodeAttemptId' = ${t.createIntent}->'owner'->>'nodeAttemptId'
+      ) IS TRUE`,
     ),
     terminalEvidenceCheck: check(
       "execution_commands_terminal_evidence_check",

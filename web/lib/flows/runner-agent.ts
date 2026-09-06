@@ -8,6 +8,7 @@ import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
 import type { SessionEnforcementProfile } from "./enforcement-profile";
 import type { HooksConfig } from "./hooks-config";
 import type { FlowContext, StepResult } from "./types";
+import type { CreateSessionPayload } from "@/lib/execution-host/contracts";
 
 import { randomUUID } from "node:crypto";
 
@@ -78,6 +79,7 @@ import { haltRuleFromEvent } from "@/lib/runs/hook-trip-rule";
 import { staleSessionBinding } from "@/lib/execution-host/session-binding";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
 import { isMaisterError } from "@/lib/errors";
+import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 const log = pino({
@@ -1229,62 +1231,96 @@ async function runNewSession(
   let nodeCompletion: StepResult | null = null;
 
   try {
-    const capabilityBundle =
-      ctx.capabilityProfilePath && ctx.capabilityInstructionsPath
-        ? await publishCapabilityBundle({
-            client,
-            runId: ctx.runId,
-            sourceId: ctx.nodeAttemptId ?? ctx.stepId,
-            profileLogicalName: `${ctx.stepId}-capability-profile.json`,
-            profilePath: ctx.capabilityProfilePath,
-            instructionsLogicalName: `${ctx.stepId}-capability-instructions.md`,
-            instructionsPath: ctx.capabilityInstructionsPath,
-          })
-        : undefined;
+    const prepareCreatePayload = async (): Promise<
+      Omit<CreateSessionPayload, "executionWorkspaceId">
+    > => {
+      const capabilityBundle =
+        ctx.capabilityProfilePath && ctx.capabilityInstructionsPath
+          ? await publishCapabilityBundle({
+              client,
+              runId: ctx.runId,
+              sourceId: ctx.nodeAttemptId ?? ctx.stepId,
+              profileLogicalName: `${ctx.stepId}-capability-profile.json`,
+              profilePath: ctx.capabilityProfilePath,
+              instructionsLogicalName: `${ctx.stepId}-capability-instructions.md`,
+              instructionsPath: ctx.capabilityInstructionsPath,
+            })
+          : undefined;
 
-    // ADR-166 D7: the handle form — the worktree, repo root, and context
-    // mounts are adopted ONCE per assignment (`runs.context_mounts` rides the
-    // adopt payload); the session body carries no path.
-    const createInput = {
-      stepId: ctx.stepId,
-      nodeAttemptId: ctx.nodeAttemptId,
-      sessionName: ctx.sessionName,
-      executor: executorToSupervisorInput(ctx.executor),
-      runner: ctx.runner,
-      capabilityProfileObjectId: capabilityBundle?.profileObjectId,
-      capabilityInstructionsObjectId: capabilityBundle?.instructionsObjectId,
-      outputObjects: ctx.outputObjects,
-      adapterLaunch: ctx.adapterLaunch,
-      mcpServers: ctx.mcpServers,
-      autoApprovePermissions: ctx.autoApprovePermissions,
-      hooksConfig: ctx.hooksConfig,
-      enforcementProfile: ctx.enforcementProfile,
+      // ADR-166 D7: the handle form — the worktree, repo root, and context
+      // mounts are adopted ONCE per assignment (`runs.context_mounts` rides the
+      // adopt payload); the session body carries no path.
+      return {
+        stepId: ctx.stepId,
+        nodeAttemptId: ctx.nodeAttemptId,
+        sessionName: ctx.sessionName,
+        executor: executorToSupervisorInput(ctx.executor),
+        runner: ctx.runner,
+        capabilityProfileObjectId: capabilityBundle?.profileObjectId,
+        capabilityInstructionsObjectId: capabilityBundle?.instructionsObjectId,
+        outputObjects: ctx.outputObjects,
+        adapterLaunch: ctx.adapterLaunch,
+        mcpServers: ctx.mcpServers,
+        autoApprovePermissions: ctx.autoApprovePermissions,
+        hooksConfig: ctx.hooksConfig,
+        enforcementProfile: ctx.enforcementProfile,
+      };
     };
 
-    if (ctx.resumeSessionId) {
-      // M30 (ADR-081): try the resume respawn first; a gone/unresumable
-      // session degrades OBSERVABLY to a fresh one (session_fallback).
-      try {
-        session = await client.createSession({
-          ...createInput,
-          resumeSessionId: ctx.resumeSessionId,
-        });
-      } catch (err) {
-        if (isFencedError(err)) throw err;
-        sessionFallback = true;
-        log.warn(
-          {
-            runId: ctx.runId,
-            stepId: ctx.stepId,
-            resumeSessionId: ctx.resumeSessionId,
-            err: (err as Error).message,
+    if (ctx.promptOwner) {
+      const created = await client.createOwnedSession(
+        ctx.promptOwner,
+        async () => ({
+          ...(await prepareCreatePayload()),
+          ...(ctx.resumeSessionId
+            ? { resumeSessionId: ctx.resumeSessionId }
+            : {}),
+        }),
+        {
+          assertCommit: async (tx) => {
+            if (!ctx.flowDriverClaim) return;
+            if (ctx.signal?.aborted)
+              throw new FlowDriverClaimLost(ctx.flowDriverClaim);
+            await assertFlowDriverClaim(tx, ctx.flowDriverClaim);
           },
-          "[session-policy] resume failed — falling back to a new session",
-        );
+        },
+      );
+
+      session = created;
+      sessionFallback = created.sessionFallback;
+    } else {
+      const createInput = await prepareCreatePayload();
+
+      if (ctx.resumeSessionId) {
+        // M30 (ADR-081): try the resume respawn first; a gone/unresumable
+        // session degrades OBSERVABLY to a fresh one (session_fallback).
+        try {
+          session = await client.createSession({
+            ...createInput,
+            resumeSessionId: ctx.resumeSessionId,
+          });
+        } catch (err) {
+          if (
+            isFencedError(err) ||
+            !isMaisterError(err) ||
+            err.code !== "CHECKPOINT"
+          )
+            throw err;
+          sessionFallback = true;
+          log.warn(
+            {
+              runId: ctx.runId,
+              stepId: ctx.stepId,
+              resumeSessionId: ctx.resumeSessionId,
+              err: (err as Error).message,
+            },
+            "[session-policy] resume failed — falling back to a new session",
+          );
+          session = await client.createSession(createInput);
+        }
+      } else {
         session = await client.createSession(createInput);
       }
-    } else {
-      session = await client.createSession(createInput);
     }
 
     consumer = startEventConsumer(session.hostSessionId, execution, {
@@ -1570,6 +1606,13 @@ async function runNewSession(
       sessionFallback,
     };
   } catch (err) {
+    if (err instanceof SessionCreatePending) {
+      continuationPending = true;
+      throw new FlowPromptContinuationPending(
+        String(err.details?.commandId),
+        err,
+      );
+    }
     if (err instanceof FlowPromptContinuationPending) {
       continuationPending = true;
       throw err;

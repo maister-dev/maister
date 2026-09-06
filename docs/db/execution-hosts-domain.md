@@ -82,7 +82,8 @@ erDiagram
         integer assignment_epoch "fence epoch snapshotted at issue"
         text kind "CHECK: workspace.adopt|workspace.release|session.create|session.prompt|session.input|session.cancel|session.checkpoint|session.delete"
         text target_session_id "nullable; host session id for session.* kinds"
-        jsonb payload "DEFAULT {}; per-kind ALLOW-list projection — ids, names, adapter/model, counts, has* flags; nothing else stored"
+        jsonb payload "DEFAULT {}; per-kind ALLOW-list diagnostic projection"
+        jsonb create_intent "0146: private original create envelope, digest, exact Flow owner and generation"
         text state "DEFAULT queued; CHECK: queued|delivering|accepted|succeeded|failed|fenced"
         integer attempts "DEFAULT 0; CAS predicate on every transition"
         integer max_attempts "per-kind unknown-outcome retry budget"
@@ -134,6 +135,7 @@ state = 'active'`: at most one active assignment per run (E-EH-02).
   `execution_assignments_active_shape_check` — `(state = 'active') =
 (ended_at IS NULL)`, so an `active` row can never carry `ended_at` and a
   terminal row always does.
+- `execution_commands_create_operation_uq` uniquely binds a Flow create operation/generation within its run and assignment. `execution_commands_create_intent_check` validates the command/fence binding and original request digest; prompt-owner fields remain independent.
 - `execution_commands_kind_check` (eight kinds),
   `execution_commands_state_check` (six states), and
   `execution_commands_terminal_shape_check` — `(state IN ('succeeded',

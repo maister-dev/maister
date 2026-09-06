@@ -10,6 +10,28 @@ owner application. A prompt is a durable command whose authoritative lifecycle
 is canonical event plus receipt; a local wait or HTTP response is an optional
 optimization and cannot decide a run transition.
 
+### Creation before prompt admission
+
+Flow node and AI/skill gate creation stores `execution_commands.create_intent`
+before transport. The private normalized envelope freezes workspace and runtime
+object handles, runner configuration, permission policy and launch inputs. Its
+node ordinal or gate evaluation key is independent of prompt-owner fields and
+has one command per assignment/create generation. Recovery reads that command
+before running the payload factory again; a manager restart does not authorize
+another session. The Flow continuation worker discovers these creates even
+when the first prompt does not exist yet, using the same traversal lease.
+
+The live ACK, recovered receipt and canonical `session.created` all check the
+creator command against the current node visit/evaluation and newest admitted
+create generation before binding. The host publishes `createdByCommandId` on
+created events. An unknown create outcome retains its original command and
+backs off for recovery; it cannot authorize a fresh session. The existing
+observable resume fallback requires a definitive CHECKPOINT refusal, while
+workspace readoption requires the host's explicit invalid-handle refusal.
+A replacement retains its predecessor command and increments the create
+generation without advancing the Flow prompt ordinal. Global continuation
+worker activation remains part of the S2.12 deployment gate.
+
 ## Domain entities
 
 - `execution_commands` remains the single command ledger and gains a typed

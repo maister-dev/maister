@@ -2301,7 +2301,7 @@ components:
             contentRef: { $ref: "#/components/schemas/SessionContentReference" }
             createdByCommandId:
               type: string
-              description: Host-derived session.create command on terminal events; qualifies historical incarnation creation after failed ACP initialization.
+              description: Host-derived session.create command on created and terminal events; identifies the exact create generation for binding and historical incarnation evidence.
             sessionName:
               type: string
               description: Host-derived logical session name; must match the creator command.
