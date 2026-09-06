@@ -16,6 +16,7 @@ let hangPrompt = false;
 let hangPermission = false;
 let exitDelayMs = 0;
 let emitUsage = false;
+let supportsResume = false;
 const outputWrites = [];
 const sizedOutputWrites = [];
 
@@ -43,6 +44,8 @@ for (let i = 0; i < args.length; i += 1) {
     exitDelayMs = Number.parseInt(args[++i], 10);
   } else if (arg === "--emit-usage") {
     emitUsage = true;
+  } else if (arg === "--supports-resume") {
+    supportsResume = true;
   } else if (arg === "--write-env") {
     outputWrites.push({ envName: args[++i], content: args[++i] });
   } else if (arg === "--write-env-bytes") {
@@ -64,7 +67,10 @@ class LifecycleAgent {
 
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
-      agentCapabilities: { promptCapabilities: {} },
+      agentCapabilities: {
+        promptCapabilities: {},
+        ...(supportsResume ? { sessionCapabilities: { resume: {} } } : {}),
+      },
     };
   }
 
@@ -111,8 +117,10 @@ class LifecycleAgent {
     const fixtureText = params.prompt.find(
       (block) => block.type === "text",
     )?.text;
-    if (fixtureText?.startsWith("fixture-output:")) {
-      const spec = JSON.parse(fixtureText.slice("fixture-output:".length));
+    const fixtureLine = fixtureText?.split("\n").find((line) => line.startsWith("fixture-output:"));
+    if (fixtureLine) {
+      // Flow nodes may surround the fixture line with resume and run context.
+      const spec = JSON.parse(fixtureLine.slice("fixture-output:".length));
       if (spec.failMessage) throw new acp.RequestError(-32603, spec.failMessage);
       if (spec.frameBytes) {
         const notification = {
@@ -170,6 +178,7 @@ class LifecycleAgent {
               },
         });
       }
+      if (spec.terminalDelayMs) await new Promise((resolve) => setTimeout(resolve, spec.terminalDelayMs));
       return { stopReason: "end_turn", ...(spec.responseMeta ? { _meta: spec.responseMeta } : {}) };
     }
     for (const output of outputWrites) {

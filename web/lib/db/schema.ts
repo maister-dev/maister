@@ -34,6 +34,9 @@ import type {
 import type { PromptOwnerReference } from "@/lib/execution-host/prompt-owner-contract";
 import type { CommandApplicationError } from "@/lib/execution-host/types";
 import type { CommandReceipt } from "@/lib/execution-host/contracts";
+import type { FlowActionCompletion } from "@/lib/flows/graph/action-completion";
+import type { FlowFinishContinuation } from "@/lib/flows/graph/finish-continuation";
+import type { FlowActionResume } from "@/lib/flows/graph/action-resume";
 
 import { sql } from "drizzle-orm";
 import {
@@ -1880,6 +1883,13 @@ export const runs = pgTable(
       withTimezone: true,
       mode: "date",
     }),
+    // Flow traversal coordination, separate from execution-host assignment and
+    // prompt application. Every continuation write checks this renewable token.
+    flowDriverToken: text("flow_driver_token"),
+    flowDriverLeaseExpiresAt: timestamp("flow_driver_lease_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
     // ADR-121 (G4): set when an idle run's HITL is answered and it awaits a slot;
     // the C3 admission FIFO key. Cleared when the run is admitted (status flips to
     // Running) so a re-idled run re-arms cleanly.
@@ -2024,6 +2034,13 @@ export const runs = pgTable(
       t.projectId,
       t.status,
     ),
+    flowDriverClaim: check(
+      "runs_flow_driver_claim_check",
+      sql`(${t.flowDriverToken} IS NULL AND ${t.flowDriverLeaseExpiresAt} IS NULL) OR (${t.runKind} = 'flow' AND ${t.flowDriverToken} IS NOT NULL AND ${t.flowDriverLeaseExpiresAt} IS NOT NULL)`,
+    ),
+    idxFlowDriverLease: index("runs_flow_driver_lease_idx")
+      .on(t.flowDriverLeaseExpiresAt, t.id)
+      .where(sql`${t.flowDriverToken} IS NOT NULL`),
     idxProjectStatusKind: index("runs_project_status_kind_idx").on(
       t.projectId,
       t.status,
@@ -5062,6 +5079,12 @@ export const nodeAttempts = pgTable(
     // retry_policy after a retryable failure (vs user/rework initiated).
     autoRetry: boolean("auto_retry").notNull().default(false),
     stdout: text("stdout"),
+    actionCompletion: jsonb("action_completion").$type<FlowActionCompletion>(),
+    actionPromptOrdinal: integer("action_prompt_ordinal").notNull().default(0),
+    actionResume: jsonb("action_resume").$type<FlowActionResume>(),
+    finishContinuation: jsonb(
+      "finish_continuation",
+    ).$type<FlowFinishContinuation>(),
     // The final Mustache-resolved prompt sent to an ai_coding/judge node,
     // captured at dispatch (migration 0053). Null for cli/check/human nodes and
     // for attempts created before the column shipped.
@@ -5125,6 +5148,22 @@ export const nodeAttempts = pgTable(
       t.runId,
       t.nodeId,
       t.attempt,
+    ),
+    actionPromptOrdinalCheck: check(
+      "node_attempts_action_prompt_ordinal_check",
+      sql`${t.actionPromptOrdinal} >= 0`,
+    ),
+    actionCompletionCheck: check(
+      "node_attempts_action_completion_check",
+      sql`${t.actionCompletion} IS NULL OR (jsonb_typeof(${t.actionCompletion}) = 'object' AND ${t.actionCompletion}->'version' = '1'::jsonb AND ${t.actionCompletion}->'promptOrdinal' = to_jsonb(${t.actionPromptOrdinal}) AND jsonb_typeof(${t.actionCompletion}->'result') = 'object' AND jsonb_typeof(${t.actionCompletion}->'result'->'ok') = 'boolean' AND jsonb_typeof(${t.actionCompletion}->'originalOutput') = 'object') IS TRUE`,
+    ),
+    finishContinuationCheck: check(
+      "node_attempts_finish_continuation_check",
+      sql`${t.finishContinuation} IS NULL OR (jsonb_typeof(${t.finishContinuation}) = 'object' AND ${t.finishContinuation}->'version' = '1'::jsonb AND jsonb_typeof(${t.finishContinuation}->'targetNodeId') IN ('string', 'null') AND jsonb_typeof(${t.finishContinuation}->'injectedVars') = 'object' AND (${t.finishContinuation}->'sessionPolicy' = 'null'::jsonb OR ${t.finishContinuation}->>'sessionPolicy' IN ('resume', 'new_session')) AND jsonb_typeof(${t.finishContinuation}->'autoRetry') = 'boolean') IS TRUE`,
+    ),
+    actionResumeCheck: check(
+      "node_attempts_action_resume_check",
+      sql`${t.actionResume} IS NULL OR (jsonb_typeof(${t.actionResume}) = 'object' AND ${t.actionResume}->'version' = '1'::jsonb AND ${t.actionResume}->>'kind' = 'orchestrator' AND jsonb_typeof(${t.actionResume}->'sourceCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceAssignmentId') = 'string' AND ${t.actionResume}->>'assignmentId' = ${t.executionAssignmentId} AND ${t.actionResume}->'promptOrdinal' = to_jsonb(${t.actionPromptOrdinal}) AND jsonb_typeof(${t.actionResume}->'resumeSessionId') = 'string') IS TRUE`,
     ),
     idxRun: index("node_attempts_run_idx").on(t.runId),
     idxAssignment: index("node_attempts_assignment_idx").on(

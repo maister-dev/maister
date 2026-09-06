@@ -3,6 +3,7 @@ import "server-only";
 import type { CapabilityAgent } from "@/lib/config.schema";
 import type { MaisterErrorCode } from "@/lib/errors";
 import type { TaskClarificationContext } from "@/lib/tasks/clarifications";
+import type { RawNodeOutputPayload } from "./graph/node-output";
 
 export type TemplateValue =
   | string
@@ -68,6 +69,7 @@ export type StepResult = {
   stdout: string;
   stderr?: string;
   vars: Record<string, unknown>;
+  originalOutput?: RawNodeOutputPayload;
   exitCode?: number;
   errorCode?: MaisterErrorCode;
   durationMs?: number;

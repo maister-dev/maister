@@ -13,6 +13,11 @@ import {
   validateNodeStructuredOutput,
   type ValidateNodeStructuredOutputArgs,
 } from "@/lib/flows/graph/node-output";
+import {
+  appendSentinelOutput,
+  emptySentinelOutput,
+  finishSentinelOutput,
+} from "@/lib/flows/graph/node-output-stream";
 
 const OPEN = "```json maister:output";
 const CLOSE = "```";
@@ -21,6 +26,86 @@ const MAX = 262_144;
 function block(content: string): string {
   return `${OPEN}\n${content}\n${CLOSE}`;
 }
+
+describe("streamed original node output", () => {
+  it.each([
+    "ordinary text",
+    block('{"value":"a😀é"}'),
+    `${block('{"first":true}')}\n${OPEN}\nunterminated`,
+    `${block('{"first":true}')}\n${block("invalid json")}`,
+    `${OPEN}\t\r\n{"value":1}\r\n${CLOSE} \t\r`,
+    `${OPEN}\n${CLOSE}`,
+    ` ${OPEN}\n{"not":"a block"}\n${CLOSE}`,
+  ])("matches the existing parser at every chunk boundary: %s", (text) => {
+    for (let boundary = 0; boundary <= text.length; boundary += 1) {
+      const initial = emptySentinelOutput();
+      const prefix = appendSentinelOutput(
+        initial,
+        text.slice(0, boundary),
+        MAX,
+      );
+      const complete = appendSentinelOutput(prefix, text.slice(boundary), MAX);
+
+      expect(finishSentinelOutput(complete, MAX)).toEqual(
+        extractSentinelBlock(text, MAX),
+      );
+      expect(initial).toEqual(emptySentinelOutput());
+    }
+  });
+
+  it("finds a tail result after megabytes of prose while retaining bounded state", () => {
+    const prefix = appendSentinelOutput(
+      emptySentinelOutput(),
+      "x".repeat(2_000_000),
+      64,
+    );
+    const complete = appendSentinelOutput(
+      prefix,
+      `\n${block('{"tail":true}')}`,
+      64,
+    );
+
+    expect(prefix.line).toBeNull();
+    expect(JSON.stringify(prefix).length).toBeLessThan(256);
+    expect(finishSentinelOutput(complete, 64)).toEqual({
+      kind: "value",
+      value: { tail: true },
+    });
+  });
+
+  it("rejects an oversized final payload instead of reusing the earlier success", () => {
+    const text = `${block('{"pass":true}')}\n${block(`{"value":"${"x".repeat(1000)}"}`)}`;
+    const result = finishSentinelOutput(
+      appendSentinelOutput(emptySentinelOutput(), text, 64),
+      64,
+    );
+
+    expect(result).toMatchObject({ kind: "invalid" });
+  });
+
+  it("enforces the exact UTF-8 payload limit across split surrogate pairs", () => {
+    const text = block('{"value":"😀😀"}');
+    let result = emptySentinelOutput();
+
+    for (const char of text.split(""))
+      result = appendSentinelOutput(result, char, 16);
+    expect(finishSentinelOutput(result, 16)).toEqual(
+      extractSentinelBlock(text, 16),
+    );
+    expect(finishSentinelOutput(result, 16)).toMatchObject({ kind: "invalid" });
+  });
+
+  it("recognizes long whitespace on a closing fence without retaining it", () => {
+    const text = `${OPEN}\n{"value":1}\n${CLOSE}${" ".repeat(10_000)}\r`;
+
+    expect(
+      finishSentinelOutput(
+        appendSentinelOutput(emptySentinelOutput(), text, 64),
+        64,
+      ),
+    ).toEqual({ kind: "value", value: { value: 1 } });
+  });
+});
 
 describe("extractSentinelBlock", () => {
   it("extracts a single properly-fenced block", () => {

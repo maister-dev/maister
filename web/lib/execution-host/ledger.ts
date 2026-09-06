@@ -201,6 +201,9 @@ export type { AssignmentId };
 export type PromptOwnerAdmission = Readonly<{
   owner: PromptOwner;
   logicalOperationKey: string;
+  /** DB-only authority check after the immutable request write, under the
+   * same locks. A lease may expire while a database statement is blocked. */
+  assertCommit?: () => Promise<void>;
 }>;
 
 function ownedPromptConflict(invariant: string): MaisterError {
@@ -348,6 +351,8 @@ export async function issueOwnedPrompt(
         "owned-prompt-reattached",
       );
 
+      await admission.assertCommit?.();
+
       return {
         row: existing,
         envelope: {
@@ -390,6 +395,8 @@ export async function issueOwnedPrompt(
       },
       "owned-prompt-admitted",
     );
+
+    await admission.assertCommit?.();
 
     return {
       row,

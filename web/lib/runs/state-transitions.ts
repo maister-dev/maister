@@ -21,6 +21,8 @@ import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { mintPlacement, releaseAssignmentForRun } from "@/lib/execution-host";
 import { gcAgeDays } from "@/lib/instance-config";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+import { authorizeOrchestratorActionResume } from "@/lib/flows/graph/action-resume";
+import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { hitlRequests, runs, workspaces, runSyncAttempts } =
@@ -39,7 +41,7 @@ export type StateTransitionResult =
   // D3) — the caller binds its execution to THAT row, never to "the run's
   // active assignment" resolved later.
   | { ok: true; assignment?: ExecutionAssignment }
-  | { ok: false; reason: "status-guard-mismatch" | "not-found" };
+  | { ok: false; reason: "status-guard-mismatch" | "not-found" | "capacity" };
 
 // ADR-141: a run that terminalizes MUST NOT strand a live branch-sync claim.
 // `run_sync_attempts` and the workspace lifecycle slot outlive `runs.status`, and
@@ -384,9 +386,24 @@ export async function markResumedFromWait(
 
   return await (db as { transaction: any }).transaction(
     async (tx: Db): Promise<StateTransitionResult> => {
+      await takeSchedulerLock(tx);
+      if ((await countLiveRuns(tx, "flow")) >= capForPool("flow")) {
+        const deferred = await tx
+          .update(runs)
+          .set({
+            resumeRequestedAt: sql`coalesce(${runs.resumeRequestedAt}, clock_timestamp())`,
+          })
+          .where(and(eq(runs.id, runId), eq(runs.status, "WaitingOnChildren")))
+          .returning({ id: runs.id });
+
+        return {
+          ok: false,
+          reason: deferred.length > 0 ? "capacity" : "status-guard-mismatch",
+        };
+      }
       const rows = await tx
         .update(runs)
-        .set({ status: "Running", checkpointAt: null })
+        .set({ status: "Running", checkpointAt: null, resumeRequestedAt: null })
         .where(and(eq(runs.id, runId), eq(runs.status, "WaitingOnChildren")))
         .returning({ id: runs.id });
 
@@ -402,6 +419,7 @@ export async function markResumedFromWait(
       // The woken coordinator is a new driver generation (ADR-166 D3).
       const assignment = await mintForClaim(tx, runId, "wait_resume", opts);
 
+      await authorizeOrchestratorActionResume(tx, assignment);
       await opts.recordSuccessAudit?.(tx);
 
       log.info(

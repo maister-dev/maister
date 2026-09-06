@@ -1,0 +1,4 @@
+ALTER TABLE "runs" ADD COLUMN "flow_driver_token" text;--> statement-breakpoint
+ALTER TABLE "runs" ADD COLUMN "flow_driver_lease_expires_at" timestamp with time zone;--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "runs_flow_driver_lease_idx" ON "runs" USING btree ("flow_driver_lease_expires_at","id") WHERE "runs"."flow_driver_token" IS NOT NULL;--> statement-breakpoint
+ALTER TABLE "runs" ADD CONSTRAINT "runs_flow_driver_claim_check" CHECK (("runs"."flow_driver_token" IS NULL AND "runs"."flow_driver_lease_expires_at" IS NULL) OR ("runs"."run_kind" = 'flow' AND "runs"."flow_driver_token" IS NOT NULL AND "runs"."flow_driver_lease_expires_at" IS NOT NULL));

@@ -376,16 +376,25 @@ it("upgrades legacy commands without fabricating requests or losing an applied m
   );
 
   try {
-    const legacyDb: Db = legacy.db;
     const projectId = await seedProject(legacy.db);
-    const legacyRunId = await seedRun(legacy.db, { projectId });
+    const legacyRunId = randomUUID();
     const legacyHostId = (await seedLocalHost(legacy.db)).id;
-    const legacyAssignment = await legacyDb.transaction((tx) =>
-      mintAssignment(tx, {
-        runId: legacyRunId,
-        hostId: legacyHostId,
-        reason: "launch",
-      }),
+    const legacyAssignmentId = randomUUID();
+
+    // Freeze the pre-0140 rows instead of invoking writers for today's schema.
+    await legacy.pool.query(
+      `INSERT INTO runs (id, project_id, run_kind, status, flow_version, flow_revision, execution_data_plane_mode)
+       VALUES ($1, $2, 'scratch', 'Running', 'scratch', 'manual', 'canonical_events_v1')`,
+      [legacyRunId, projectId],
+    );
+    await legacy.pool.query(
+      `INSERT INTO execution_assignments (id, run_id, execution_host_id, epoch, state, placement_reason)
+       VALUES ($1, $2, $3, 1, 'active', 'launch')`,
+      [legacyAssignmentId, legacyRunId, legacyHostId],
+    );
+    await legacy.pool.query(
+      "UPDATE runs SET execution_assignment_id = $1 WHERE id = $2",
+      [legacyAssignmentId, legacyRunId],
     );
     const commandId = randomUUID();
 
@@ -397,7 +406,7 @@ it("upgrades legacy commands without fabricating requests or losing an applied m
       VALUES ($1, $2, $3, $4, 1, 'session.prompt', 3, 'succeeded', now(), now(),
         'agent_turn', '{"legacyTurn":"original"}', 'legacy:original',
         'maister.command.request.v1', repeat('a', 64), '{"stepId":"original"}')`,
-      [commandId, legacyRunId, legacyAssignment.id, legacyHostId],
+      [commandId, legacyRunId, legacyAssignmentId, legacyHostId],
     );
     await applyMainMigration(legacy.db, "0140_immutable_command_requests");
     const result = await legacy.pool.query(

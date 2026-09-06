@@ -257,9 +257,36 @@ prompt. A superseding assignment cannot reuse the old result as its own.
 A failed application leaves the evaluation running and preserves the host
 session. The Flow driver yields with `flow_prompt_continuation_pending`; it
 does not convert an unavailable result into a failed check. The generic worker
-can recover the gate application after process death. Autonomous resumption of
-the parent graph and its action/cursor is still pending in S2.6, so gate
-application alone does not establish complete Flow restart recovery.
+can recover the gate application after process death. Gate application alone
+does not establish complete Flow restart recovery.
+
+### Flow action and graph continuation (Partial implementation)
+
+Node prompts admit the exact attempt and ordinal before dispatch. Their owner
+stores the bounded action result and original structured-output payload in
+`node_attempts.action_completion` atomically with the command application marker.
+Full-output extraction does not depend on the truncated stdout preview. Local
+CLI/check actions before gates also snapshot their result and file output.
+
+Owned-prompt graphs acquire `runs.flow_driver_token` with a renewable 30-second
+lease. Every traversal transaction checks its active assignment and lease,
+including a final check before commit; global host consumers and other runs
+retain their independent database handles. The bounded continuation worker
+re-enters the same driver from durable attempt/cursor state even after command
+application is complete. Node closure and its selected cursor commit together with
+`node_attempts.finish_continuation`. Rework retains comments and session policy;
+retry retains its bounded decision across process death. Recovery also closes the exact completed prompt's source
+session before admitting a successor session.
+
+Three real-process SIGKILL windows verify linear node/gate/successor recovery
+without another accepted node prompt. Additional real-process cases preserve
+failed nodes, rework context and the retry budget. Orchestrator park releases its
+assignment; the capacity-checked child-wake claim stores `action_resume` and
+advances the exact attempt ordinal before another prompt. Live wake, a crash
+after that claim and deferred capacity recovery are covered. Permission resume,
+released-source result handoff and pre-prompt session-create recovery remain
+S2.6 work. The
+global owner/continuation worker activation remains S2.12.
 
 ### Remaining domain adapters (Designed)
 

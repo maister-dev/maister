@@ -7,15 +7,18 @@ import type { AgentExecution } from "../runner-agent";
 import type { CompiledNode } from "./compile";
 import type { Db, LoadedRun } from "./runner-core";
 import type { RestrictionPathSet } from "./mutation-check";
+import type { FlowDriverClaim } from "./driver-claim";
 
 import { createHash } from "node:crypto";
 
 import { eq } from "drizzle-orm";
 import pino from "pino";
 
-import { runAgentStep } from "../runner-agent";
+import { bindExecution, runAgentStep } from "../runner-agent";
 import { runCliStep } from "../runner-cli";
 
+import { isFlowDriverClaimLost } from "./driver-claim";
+import { closeAppliedFlowPromptSession } from "./prompt-session-cleanup";
 import {
   failStaleArtifactsForDef,
   getCurrentArtifact,
@@ -46,7 +49,7 @@ import {
 
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
-import { isFencedError } from "@/lib/execution-host";
+import { createExecutionHosts, isFencedError } from "@/lib/execution-host";
 import { gateResults } from "@/lib/db/schema";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
@@ -69,6 +72,8 @@ export type GateRunContext = {
   worktreePath: string;
   execution?: AgentExecution;
   bindExecution?: () => Promise<AgentExecution>;
+  flowDriverClaim?: FlowDriverClaim;
+  signal?: AbortSignal;
   // M29 (ADR-074, D-C2): the node's resolved restriction path sets for
   // must_not_touch; undefined when the node declares no restrictions.
   restrictionPaths?: RestrictionPathSet[];
@@ -259,6 +264,7 @@ async function runGateStepGuarded<T>(
     if (
       !isMaisterError(err) ||
       isFencedError(err) ||
+      isFlowDriverClaimLost(err) ||
       err instanceof FlowPromptContinuationPending
     )
       throw err;
@@ -391,6 +397,22 @@ async function runOneGate(
       const { id } = evaluation;
 
       if (["passed", "failed", "overridden"].includes(evaluation.status)) {
+        if (evaluation.commandId && evaluation.status !== "overridden") {
+          const execution =
+            ctx.execution ??
+            (ctx.bindExecution
+              ? await ctx.bindExecution()
+              : await bindExecution(
+                  createExecutionHosts({ db: ctx.db }),
+                  loaded.run.id,
+                ));
+
+          await closeAppliedFlowPromptSession(
+            ctx.db,
+            execution.client,
+            evaluation.commandId,
+          );
+        }
         if (
           evaluation.verdict &&
           evaluation.verdict.verdict !== "unparseable" &&
@@ -432,7 +454,7 @@ async function runOneGate(
           {
             ...common,
             nodeAttemptId,
-            gatePromptOwner: {
+            promptOwner: {
               variant: gate.kind === "skill_check" ? "gate_skill" : "gate_ai",
               nodeAttemptId,
               gateId: gate.id,
@@ -442,6 +464,8 @@ async function runOneGate(
             // Thread the caller's db — runner-agent's event-consumer seam must
             // never fall back to env getDb() (a different connection).
             db: ctx.db,
+            flowDriverClaim: ctx.flowDriverClaim,
+            signal: ctx.signal,
             executor: {
               id: loaded.executor.id,
               agent: loaded.executor.agent,

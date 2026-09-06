@@ -3,7 +3,6 @@ import "server-only";
 import type { BoundClient } from "@/lib/execution-host/client";
 import type { Db } from "@/lib/execution-host/db";
 import type { PromptOwnerAdmission } from "@/lib/execution-host/ledger";
-import type { PromptOwner } from "@/lib/execution-host/prompt-owner-contract";
 import type { GateVerdict, GateResult } from "@/lib/db/schema";
 import type { GateDef } from "@/lib/config.schema";
 
@@ -19,6 +18,8 @@ import {
   isPassVerdict,
 } from "./gate-verdict";
 import { createGateResult, markGateFailed, markGatePassed } from "./gate-store";
+import { lockFlowPromptOwner } from "./prompt-owner-authority";
+import { prepareNodePrompt } from "./node-prompt-owner";
 
 import {
   gateResults,
@@ -68,9 +69,13 @@ export async function waitForGateApplication(
   db: Db,
   client: BoundClient,
   commandId: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   try {
-    await client.waitForPrompt({ commandId }, { owners: flowPromptOwners });
+    await client.waitForPrompt(
+      { commandId },
+      { owners: flowPromptOwners, signal },
+    );
   } catch (cause) {
     // A failed host turn can already have applied its failed gate verdict.
     // The caller consumes that domain row, never the transport exception.
@@ -88,7 +93,6 @@ export async function waitForGateApplication(
   }
 }
 
-type FlowOwnerRef = Extract<PromptOwner, { kind: "flow_node_attempt" }>["ref"];
 const log = pino({
   name: "flow-prompt-owner",
   level: process.env.LOG_LEVEL ?? "info",
@@ -100,7 +104,7 @@ const log = pino({
 export async function getOrCreateGateEvaluation(
   db: Db,
   input: { runId: string; nodeAttemptId: string; gate: GateDef },
-): Promise<GateResult> {
+): Promise<GateResult & { commandId?: string }> {
   return db.transaction(async (tx) => {
     const [run] = await tx
       .select()
@@ -141,7 +145,10 @@ export async function getOrCreateGateEvaluation(
       throw new PromptOwnerInvariantError("gate_evaluation_kind");
     if (existing && existing.status !== "stale") {
       const [command] = await tx
-        .select({ assignmentId: executionCommands.executionAssignmentId })
+        .select({
+          id: executionCommands.id,
+          assignmentId: executionCommands.executionAssignmentId,
+        })
         .from(executionCommands)
         .where(
           and(
@@ -169,7 +176,7 @@ export async function getOrCreateGateEvaluation(
       )
         throw staleSessionBinding(run.id, command.assignmentId);
 
-      return existing;
+      return { ...existing, ...(command ? { commandId: command.id } : {}) };
     }
     const { id } = await createGateResult({
       runId: input.runId,
@@ -322,43 +329,6 @@ export async function admitGatePrompt(
   };
 }
 
-async function lockFlowPromptOwner(
-  tx: Db,
-  ref: FlowOwnerRef,
-  targetSessionId: string | null,
-): Promise<boolean> {
-  const assignment = await lockCurrentSessionAssignment(tx, {
-    runId: ref.runId,
-    assignmentId: ref.assignmentId,
-  });
-
-  if (!assignment || assignment.epoch !== ref.assignmentEpoch) return false;
-  const [binding] = await tx
-    .select({ id: runSessionIncarnations.id })
-    .from(runSessions)
-    .innerJoin(
-      runSessionIncarnations,
-      eq(runSessionIncarnations.runSessionId, runSessions.id),
-    )
-    .where(
-      and(
-        eq(runSessions.id, ref.runSessionId),
-        eq(runSessions.runId, ref.runId),
-        eq(runSessions.executionAssignmentId, assignment.id),
-        eq(runSessionIncarnations.id, ref.incarnationId),
-        eq(runSessionIncarnations.executionAssignmentId, assignment.id),
-        eq(runSessionIncarnations.assignmentEpoch, assignment.epoch),
-        eq(runSessionIncarnations.executionHostId, assignment.executionHostId),
-        eq(runSessionIncarnations.hostSessionId, targetSessionId ?? ""),
-        eq(runSessions.hostSessionId, targetSessionId ?? ""),
-      ),
-    )
-    .for("update")
-    .limit(1);
-
-  return binding !== undefined;
-}
-
 /** Gate evidence is decoded outside the application transaction. The immutable
  * command retains the complete output; the domain stores its verdict once.
  */
@@ -366,6 +336,9 @@ export const flowPromptOwnerAdapter = definePromptOwnerAdapter(
   "flow_node_attempt",
   async ({ db, owner, command, outcome }) => {
     const ref = owner.ref;
+
+    if (ref.variant === "node")
+      return prepareNodePrompt({ db, ref, command, outcome });
 
     if (ref.variant !== "gate_ai" && ref.variant !== "gate_skill")
       throw new PromptOwnerInvariantError("flow_owner_variant_unimplemented");

@@ -347,9 +347,9 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
       executionHosts: hosts,
     });
 
-    // The park flip itself committed before the checkpoint; everything after
-    // the fenced command is the newer generation's.
-    expect((await getRun(runId)).status).toBe("WaitingOnChildren");
+    // The checkpoint fence is checked before publishing a park. The old
+    // driver cannot change status or record artifacts after losing authority.
+    expect((await getRun(runId)).status).toBe("Running");
     expect(checkpointedSessionIds(fake)).toEqual([COORDINATOR_HOST_SESSION_ID]);
     expect(releaseSlotSpy).not.toHaveBeenCalled();
     const artifacts = await db

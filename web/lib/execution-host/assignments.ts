@@ -215,7 +215,11 @@ export async function mintAssignment(
 
   await tx
     .update(runs)
-    .set({ executionAssignmentId: id })
+    .set({
+      executionAssignmentId: id,
+      flowDriverToken: null,
+      flowDriverLeaseExpiresAt: null,
+    })
     .where(eq(runs.id, input.runId));
 
   logger.info(

@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 import type { PoolClient, QueryConfig } from "pg";
+import type { PgTransactionConfig } from "drizzle-orm/pg-core";
 
 import { performance } from "node:perf_hooks";
 
@@ -116,6 +117,19 @@ async function acquireClient(pool: Pool): Promise<PoolClient> {
 export async function projectionTransaction<T>(
   db: Db,
   work: (tx: Db) => Promise<T>,
+  config?: PgTransactionConfig,
+): Promise<T> {
+  return boundedPostgresTransaction(db, (tx) => work(tx), config);
+}
+
+/** The query bridge preserves the caller's PostgreSQL row mode and parsers.
+ * It is valid only inside this bounded transaction and uses the same guarded
+ * connection as the Drizzle handle; it must not escape the callback.
+ */
+export async function boundedPostgresTransaction<T>(
+  db: Db,
+  work: (tx: Db, query: (...args: unknown[]) => Promise<unknown>) => Promise<T>,
+  config?: PgTransactionConfig,
 ): Promise<T> {
   if (!("$client" in db) || !(db.$client instanceof Pool)) {
     throw new MaisterError(
@@ -205,12 +219,25 @@ export async function projectionTransaction<T>(
     });
 
     operation = drizzle(guarded, { schema }).transaction(async (tx) => {
-      const result = await work(tx);
+      let callbackActive = true;
 
-      remaining();
+      try {
+        const result = await work(
+          tx,
+          async (...args: unknown[]): Promise<unknown> => {
+            if (!callbackActive) throw deadlineError();
 
-      return result;
-    });
+            return Reflect.apply(guarded.query, guarded, args);
+          },
+        );
+
+        remaining();
+
+        return result;
+      } finally {
+        callbackActive = false;
+      }
+    }, config);
 
     return await Promise.race([operation, timeout]);
   } finally {

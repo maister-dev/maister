@@ -1391,6 +1391,10 @@ table node_attempts {
   session_fallback boolean [not null, default: false]
   auto_retry boolean [not null, default: false]
   stdout text
+  action_completion jsonb
+  action_prompt_ordinal integer [not null, default: 0]
+  action_resume jsonb
+  finish_continuation jsonb
   resolved_prompt text
   rework_baseline integer
   vars jsonb [not null, default: `{}`]
@@ -1409,6 +1413,10 @@ table node_attempts {
 
   indexes {
     (run_id, node_id, attempt) [name: 'node_attempts_run_node_attempt_uq', unique]
+
+
+
+
     run_id [name: 'node_attempts_run_idx']
     execution_assignment_id [name: 'node_attempts_assignment_idx']
   }
@@ -1919,6 +1927,8 @@ table runs {
   started_at "timestamp with time zone" [not null, default: `now()`]
   ended_at "timestamp with time zone"
   resume_started_at "timestamp with time zone"
+  flow_driver_token text
+  flow_driver_lease_expires_at "timestamp with time zone"
   resume_requested_at "timestamp with time zone"
   queue_admitted_at "timestamp with time zone"
   resume_target_step_id text
@@ -1950,6 +1960,8 @@ table runs {
 
   indexes {
     (project_id, status) [name: 'runs_project_status_idx']
+
+    (flow_driver_lease_expires_at, id) [name: 'runs_flow_driver_lease_idx']
     (project_id, status, run_kind) [name: 'runs_project_status_kind_idx']
     task_id [name: 'runs_task_idx']
     (run_kind, task_id) [name: 'runs_kind_task_idx']
