@@ -12,7 +12,10 @@ import pino from "pino";
 
 import { nextKeepaliveAt } from "./keepalive-config";
 
-import { authorizeGatePermissionResume } from "@/lib/flows/graph/gate-permission-resume";
+import {
+  authorizeGatePermissionResume,
+  authorizeGatePermissionResult,
+} from "@/lib/flows/graph/gate-permission-resume";
 import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -278,7 +281,13 @@ export async function markResumed(
       const assignment = await mintForClaim(tx, runId, "resume", opts);
 
       if (assignment) {
-        if (opts.permissionResult)
+        if (opts.permissionResult?.domain === "gate")
+          await authorizeGatePermissionResult(
+            tx,
+            assignment,
+            opts.permissionResult,
+          );
+        else if (opts.permissionResult)
           await authorizeNodePermissionResult(
             tx,
             assignment,

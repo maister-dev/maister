@@ -21,6 +21,7 @@ import pino from "pino";
 import { runFlow } from "../runner";
 
 import { openFlowPromptExists } from "./prompt-permission";
+import { pendingGatePermissionResumeExists } from "./gate-permission-resume";
 
 import {
   executionAssignments,
@@ -99,6 +100,7 @@ export function startFlowContinuationWorker(input: {
                   lte(runs.flowDriverLeaseExpiresAt, sql`clock_timestamp()`),
                 ),
                 or(
+                  pendingGatePermissionResumeExists(),
                   exists(
                     tx
                       .select({ id: executionCommands.id })

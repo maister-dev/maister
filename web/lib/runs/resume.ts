@@ -13,7 +13,7 @@ import { getDb } from "@/lib/db/client";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import {
   hasFlowPermissionResume,
-  prepareNodePermissionResult,
+  prepareFlowPermissionResult,
 } from "@/lib/flows/graph/permission-resume";
 import * as schemaModule from "@/lib/db/schema";
 import {
@@ -233,10 +233,10 @@ export async function resumeRun(
     };
   }
 
-  let permissionResult: Awaited<ReturnType<typeof prepareNodePermissionResult>>;
+  let permissionResult: Awaited<ReturnType<typeof prepareFlowPermissionResult>>;
 
   try {
-    permissionResult = await prepareNodePermissionResult(
+    permissionResult = await prepareFlowPermissionResult(
       db,
       runId,
       hosts.transport,

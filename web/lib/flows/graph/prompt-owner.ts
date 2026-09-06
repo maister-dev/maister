@@ -3,20 +3,14 @@ import "server-only";
 import type { BoundClient } from "@/lib/execution-host/client";
 import type { Db } from "@/lib/execution-host/db";
 import type { PromptOwnerAdmission } from "@/lib/execution-host/ledger";
-import type { GateVerdict, GateResult } from "@/lib/db/schema";
+import type { GateResult } from "@/lib/db/schema";
 import type { GateDef } from "@/lib/config.schema";
 
 import { and, desc, eq } from "drizzle-orm";
 import pino from "pino";
 
-import { compileManifest } from "./compile";
-import { loadRun } from "./runner-core";
-import {
-  appendGateOutput,
-  emptyGateOutput,
-  calibrateVerdict,
-  isPassVerdict,
-} from "./gate-verdict";
+import { decodeGatePromptCompletion } from "./gate-prompt-completion";
+import { assertGatePermissionResult } from "./gate-permission-resume";
 import { createGateResult, markGateFailed, markGatePassed } from "./gate-store";
 import { lockFlowPromptOwner } from "./prompt-owner-authority";
 import { prepareNodePrompt } from "./node-prompt-owner";
@@ -145,6 +139,18 @@ export async function getOrCreateGateEvaluation(
     if (existing && existing.kind !== input.gate.kind)
       throw new PromptOwnerInvariantError("gate_evaluation_kind");
     if (existing && existing.status !== "stale") {
+      if (
+        existing.permissionResume?.kind === "permission_result" &&
+        existing.permissionResume.assignmentId === run.executionAssignmentId
+      ) {
+        await assertGatePermissionResult(
+          tx,
+          existing,
+          run.executionAssignmentId!,
+        );
+
+        return existing;
+      }
       const [command] = await tx
         .select({
           id: executionCommands.id,
@@ -362,72 +368,9 @@ export const flowPromptOwnerAdapter = definePromptOwnerAdapter(
 
     if (ref.variant !== "gate_ai" && ref.variant !== "gate_skill")
       throw new PromptOwnerInvariantError("flow_owner_variant_unimplemented");
-    const loaded = await loadRun(db, ref.runId);
-    const [attempt] = await db
-      .select()
-      .from(nodeAttempts)
-      .where(eq(nodeAttempts.id, ref.nodeAttemptId))
-      .limit(1);
-
-    if (!attempt || attempt.runId !== ref.runId)
-      throw new PromptOwnerInvariantError("gate_owner_attempt_missing");
-    const node = compileManifest(loaded.manifest).nodes.get(attempt.nodeId);
-    const gate = node?.gates.find((candidate) => candidate.id === ref.gateId);
-
-    if (
-      !node ||
-      !gate ||
-      gate.kind !==
-        (ref.variant === "gate_skill" ? "skill_check" : "ai_judgment")
-    )
-      throw new PromptOwnerInvariantError("gate_owner_definition_missing");
-
-    let output = emptyGateOutput();
-
-    if (outcome.state === "succeeded") {
-      for await (const event of outcome.events) {
-        const update = event.payload?.update;
-
-        if (
-          event.eventType !== "session.update" ||
-          typeof update !== "object" ||
-          update === null ||
-          !("sessionUpdate" in update) ||
-          update.sessionUpdate !== "agent_message_chunk" ||
-          !("content" in update)
-        )
-          continue;
-        const content = update.content;
-
-        if (
-          typeof content === "object" &&
-          content !== null &&
-          "type" in content &&
-          content.type === "text" &&
-          "text" in content &&
-          typeof content.text === "string"
-        )
-          output = appendGateOutput(output, content.text);
-      }
-    }
-    const parsed =
-      outcome.state === "succeeded" &&
-      outcome.response.stopReason === "end_turn"
-        ? output.verdict
-        : null;
-    let verdict: GateVerdict = parsed ?? {
-      verdict: "unparseable",
-      reasons: [output.evidence],
-    };
-    let passed = parsed !== null && node.decide?.from === "verdict";
-
-    if (parsed && !passed && isPassVerdict(parsed.verdict ?? "")) {
-      const calibrated = calibrateVerdict(parsed, gate.calibration);
-
-      passed = calibrated.pass;
-      if (calibrated.calibration)
-        verdict = { ...parsed, calibration: calibrated.calibration };
-    }
+    const completion = await decodeGatePromptCompletion({ db, ref, outcome });
+    const { verdict } = completion;
+    const passed = completion.status === "passed";
 
     return {
       apply: async (tx) => {
@@ -456,7 +399,7 @@ export const flowPromptOwnerAdapter = definePromptOwnerAdapter(
           run?.runKind !== "flow" ||
           !["Running", "NeedsInput"].includes(run.status) ||
           run.currentStepId !== currentAttempt.nodeId ||
-          run.flowRevisionId !== loaded.run.flowRevisionId ||
+          run.flowRevisionId !== completion.flowRevisionId ||
           currentAttempt.runId !== ref.runId ||
           currentAttempt.executionAssignmentId !== ref.assignmentId ||
           !["Running", "Succeeded"].includes(currentAttempt.status) ||
@@ -464,7 +407,7 @@ export const flowPromptOwnerAdapter = definePromptOwnerAdapter(
           evaluation.nodeAttemptId !== currentAttempt.id ||
           evaluation.gateId !== ref.gateId ||
           evaluation.promptOrdinal !== ref.promptOrdinal ||
-          evaluation.kind !== gate.kind ||
+          evaluation.kind !== completion.gateKind ||
           evaluation.status !== "running"
         )
           return "superseded";

@@ -338,8 +338,8 @@ is acknowledged, then uses the normal action/gate/cursor reducer. Restart after
 the claim consumes that authorization. An unavailable resume handle fails the
 attempt and run without creating an empty replacement session. A stored input
 delivery must be classified before another turn can be authorized. Confirmed
-input without a successful completed source and checkpointed gate resumes
-remain S2.6 work. A distinct permission emitted during a resumed prompt has its
+input without a successful completed source remains S2.6 work. A distinct
+permission emitted during a resumed prompt has its
 own HITL and choice. A later checkpoint matches that `permission_resume` source,
 including its prior HITL owner, and advances the same attempt once. Confirmed
 input and a completed resumed source use the same verified result handoff at
@@ -354,7 +354,20 @@ validate that digest and continue the gate without rerunning the parent action.
 The old action-turn authorization is cleared after this explicit handoff. Gate
 create, prompt admission, reissue and ACK check the current evaluation/assignment
 and ordinal. An unavailable resume handle fails without an empty replacement.
-Completed-source gate handoff remains a separate S2.6 requirement.
+
+If a gate input was delivered before checkpoint but its manager acknowledgement
+was lost, the original completed prompt can instead supply a result handoff.
+The preflight verifies its full request-bound output and uses the ordinary
+manifest-bound gate parser and calibration. The capacity claim rechecks that
+evidence, source request/choice, checkpoint receipt, flow revision and parent
+snapshot. It records `permission_resume.kind: permission_result` on the same
+evaluation at the same ordinal, with input/checkpoint/incarnation lineage and a
+digest of the verdict, and atomically acknowledges the original HITL. Graph
+reentry validates both the parent snapshot and transferred verdict before using
+them. It sends no new gate prompt and does not reopen the released source
+session. The source owner stays fenced; only the explicit receiving assignment
+may consume the historical result. Missing or merely accepted input receipts
+remain pending without a capacity claim.
 
 In-flight node and AI/skill gate permissions retain the exact source command,
 attempt/ordinal, assignment and incarnation in the HITL schema. The existing

@@ -25,10 +25,9 @@ vi.mock("@/lib/assignments/service", () => ({
 }));
 
 // These pre-owner fixtures do not model the durable Flow resume ledger.
-vi.mock("@/lib/flows/graph/permission-resume", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("@/lib/flows/graph/permission-resume")
-  >()),
+vi.mock("@/lib/flows/graph/permission-resume", () => ({
+  PERMISSION_RESUME_PROMPT:
+    "Resuming after operator response — please continue with the prior tool call.",
   hasFlowPermissionResume: async () => false,
 }));
 

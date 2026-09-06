@@ -1,7 +1,16 @@
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
-import type { ExecutionAssignment } from "@/lib/db/schema";
+import type {
+  ExecutionAssignment,
+  ExecutionCommand,
+  GateResult,
+  HitlRequest,
+  NodeAttempt,
+  Run,
+  RunSessionIncarnation,
+} from "@/lib/db/schema";
+import type { PreparedPermissionResult } from "./permission-resume";
 import type { FlowActionCompletion } from "./action-completion";
 
 import { createHash } from "node:crypto";
@@ -13,6 +22,11 @@ import pino from "pino";
 import { canonicalCommandJson } from "../../../../runtime/command-json";
 
 import { gatePermissionSourceSchema } from "./permission-source";
+import { assertPermissionResultSource } from "./permission-result-source";
+import {
+  lockPermissionResultEvidence,
+  completePermissionResultHandoff,
+} from "./permission-result-evidence";
 
 import {
   executionAssignments,
@@ -25,9 +39,8 @@ import {
 } from "@/lib/db/schema";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
 
-export type GatePermissionResume = Readonly<{
+type GatePermissionIdentity = Readonly<{
   version: 1;
-  kind: "permission";
   sourceCommandId: string;
   sourceAssignmentId: string;
   sourceIncarnationId: string;
@@ -40,6 +53,17 @@ export type GatePermissionResume = Readonly<{
   parentActionSha256: string;
 }>;
 
+export type GatePermissionResume = GatePermissionIdentity &
+  (
+    | Readonly<{ kind: "permission" }>
+    | Readonly<{
+        kind: "permission_result";
+        inputCommandId: string;
+        checkpointCommandId: string;
+        verdictSha256: string;
+      }>
+  );
+
 const sourceSchema = z.object({
   requestId: z.string().min(1),
   supervisorSessionId: z.string().min(1),
@@ -51,19 +75,33 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-function actionDigest(completion: FlowActionCompletion | null): string {
+export function gateParentActionDigest(
+  completion: FlowActionCompletion | null,
+): string {
   return createHash("sha256")
     .update(canonicalCommandJson(completion))
     .digest("hex");
 }
 
+type LockedGatePermissionSource = Readonly<{
+  run: Run & { projectId: string };
+  hitl: HitlRequest;
+  response: Record<string, unknown> & { optionId: string };
+  source: z.infer<typeof sourceSchema>;
+  command: ExecutionCommand;
+  prior: ExecutionAssignment;
+  attempt: NodeAttempt;
+  evaluation: GateResult;
+  incarnation: RunSessionIncarnation & { acpSessionId: string };
+}>;
+
 /** Only the normal capacity claim can advance a checkpointed gate turn. The
  * existing evaluation and parent action survive; no new node visit is minted.
  */
-export async function authorizeGatePermissionResume(
+async function lockGatePermissionSource(
   tx: Db,
   assignment: ExecutionAssignment,
-): Promise<boolean> {
+): Promise<LockedGatePermissionSource | null> {
   const candidates = await tx
     .select()
     .from(hitlRequests)
@@ -77,20 +115,15 @@ export async function authorizeGatePermissionResume(
     )
     .for("update");
 
-  if (candidates.length === 0) return false;
+  if (candidates.length === 0) return null;
   if (candidates.length !== 1)
     throw new PromptOwnerInvariantError("gate_permission_source_count");
   const hitl = candidates[0];
   const parsed = sourceSchema.safeParse(hitl.schema);
-  const response = hitl.response as {
-    optionId?: string;
-    _delivery?: unknown;
-  } | null;
+  const response = hitl.response as Record<string, unknown> | null;
 
   if (!parsed.success || typeof response?.optionId !== "string")
     throw new PromptOwnerInvariantError("gate_permission_source_shape");
-  if (response._delivery !== undefined)
-    throw new PromptOwnerInvariantError("gate_permission_input_unclassified");
   const source = parsed.data;
   const [run] = await tx
     .select()
@@ -133,6 +166,7 @@ export async function authorizeGatePermissionResume(
 
   if (
     run?.runKind !== "flow" ||
+    !run.projectId ||
     run.status !== "NeedsInput" ||
     run.executionAssignmentId !== assignment.id ||
     assignment.state !== "active" ||
@@ -184,6 +218,40 @@ export async function authorizeGatePermissionResume(
   )
     throw new PromptOwnerInvariantError("gate_permission_resume_generation");
 
+  return {
+    run: { ...run, projectId: run.projectId },
+    hitl,
+    response: { ...response, optionId: response.optionId },
+    source,
+    command,
+    prior,
+    attempt,
+    evaluation,
+    incarnation: { ...incarnation, acpSessionId: incarnation.acpSessionId },
+  };
+}
+
+export async function authorizeGatePermissionResume(
+  tx: Db,
+  assignment: ExecutionAssignment,
+): Promise<boolean> {
+  const context = await lockGatePermissionSource(tx, assignment);
+
+  if (!context) return false;
+  const {
+    run,
+    hitl,
+    response,
+    source,
+    command,
+    prior,
+    attempt,
+    evaluation,
+    incarnation,
+  } = context;
+
+  if (response._delivery !== undefined)
+    throw new PromptOwnerInvariantError("gate_permission_input_unclassified");
   const promptOrdinal = evaluation.promptOrdinal + 1;
 
   await tx
@@ -205,7 +273,7 @@ export async function authorizeGatePermissionResume(
         hitlRequestId: hitl.id,
         sourceRequestId: source.requestId,
         optionId: response.optionId,
-        parentActionSha256: actionDigest(attempt.actionCompletion),
+        parentActionSha256: gateParentActionDigest(attempt.actionCompletion),
       },
     })
     .where(eq(gateResults.id, evaluation.id));
@@ -228,6 +296,152 @@ export async function authorizeGatePermissionResume(
   );
 
   return true;
+}
+
+function verdictDigest(
+  evaluation: Pick<GateResult, "status" | "verdict">,
+): string {
+  return createHash("sha256")
+    .update(
+      canonicalCommandJson({
+        status: evaluation.status,
+        verdict: evaluation.verdict,
+      }),
+    )
+    .digest("hex");
+}
+
+/** Transfer the completed gate result while retaining its original ordinal.
+ * Only this explicit handoff may consume a released source under a new claim.
+ */
+export async function authorizeGatePermissionResult(
+  tx: Db,
+  assignment: ExecutionAssignment,
+  prepared: Extract<PreparedPermissionResult, { domain: "gate" }>,
+): Promise<void> {
+  const context = await lockGatePermissionSource(tx, assignment);
+
+  if (!context)
+    throw new PromptOwnerInvariantError(
+      "gate_permission_result_source_disappeared",
+    );
+  const {
+    run,
+    hitl,
+    response,
+    source,
+    command,
+    prior,
+    attempt,
+    evaluation,
+    incarnation,
+  } = context;
+
+  if (
+    prepared.parentActionSha256 !==
+      gateParentActionDigest(attempt.actionCompletion) ||
+    prepared.completion.flowRevisionId !== run.flowRevisionId ||
+    prepared.completion.gateKind !== evaluation.kind
+  )
+    throw new PromptOwnerInvariantError("gate_permission_result_generation");
+  const { input, checkpoint } = await lockPermissionResultEvidence(
+    tx,
+    context,
+    prepared,
+  );
+
+  await tx
+    .update(gateResults)
+    .set({
+      status: prepared.completion.status,
+      verdict: prepared.completion.verdict,
+      endedAt: new Date(),
+      permissionResume: {
+        version: 1,
+        kind: "permission_result",
+        sourceCommandId: command.id,
+        sourceAssignmentId: prior.id,
+        sourceIncarnationId: incarnation.id,
+        assignmentId: assignment.id,
+        promptOrdinal: evaluation.promptOrdinal,
+        resumeSessionId: incarnation.acpSessionId,
+        hitlRequestId: hitl.id,
+        sourceRequestId: source.requestId,
+        optionId: response.optionId,
+        parentActionSha256: prepared.parentActionSha256,
+        inputCommandId: input.id,
+        checkpointCommandId: checkpoint.id,
+        verdictSha256: verdictDigest(prepared.completion),
+      },
+    })
+    .where(eq(gateResults.id, evaluation.id));
+  await tx
+    .update(nodeAttempts)
+    .set({ executionAssignmentId: assignment.id, actionResume: null })
+    .where(eq(nodeAttempts.id, attempt.id));
+  await completePermissionResultHandoff(tx, context, prepared, assignment);
+  log.info(
+    {
+      runId: run.id,
+      nodeAttemptId: attempt.id,
+      evaluationId: evaluation.id,
+      sourceCommandId: command.id,
+      inputCommandId: input.id,
+      assignmentId: assignment.id,
+      promptOrdinal: evaluation.promptOrdinal,
+    },
+    "gate-permission-result-handoff-authorized",
+  );
+}
+
+/** Revalidate the retained historical lineage before a resumed graph consumes
+ * the transferred verdict. The original owner remains superseded.
+ */
+export async function assertGatePermissionResult(
+  db: Db,
+  evaluation: GateResult,
+  assignmentId: string,
+): Promise<void> {
+  const resume = evaluation.permissionResume;
+
+  if (resume?.kind !== "permission_result")
+    throw new PromptOwnerInvariantError("gate_permission_result_authorization");
+  const [command] = await db
+    .select()
+    .from(executionCommands)
+    .where(eq(executionCommands.id, resume.sourceCommandId));
+  const [assignment] = await db
+    .select()
+    .from(executionAssignments)
+    .where(eq(executionAssignments.id, assignmentId));
+  const [parent] = await db
+    .select()
+    .from(nodeAttempts)
+    .where(eq(nodeAttempts.id, evaluation.nodeAttemptId!));
+  const ref = command?.ownerRef;
+
+  if (
+    !command ||
+    !assignment ||
+    !parent ||
+    parent.executionAssignmentId !== assignmentId ||
+    resume.assignmentId !== assignmentId ||
+    resume.parentActionSha256 !==
+      gateParentActionDigest(parent.actionCompletion) ||
+    resume.verdictSha256 !== verdictDigest(evaluation) ||
+    !["passed", "failed"].includes(evaluation.status) ||
+    resume.promptOrdinal !== evaluation.promptOrdinal ||
+    (ref?.variant !== "gate_ai" && ref?.variant !== "gate_skill") ||
+    ref.evaluationId !== evaluation.id ||
+    ref.gateId !== evaluation.gateId ||
+    ref.nodeAttemptId !== parent.id ||
+    evaluation.runId !== assignment.runId ||
+    parent.runId !== assignment.runId ||
+    evaluation.kind !==
+      (ref.variant === "gate_skill" ? "skill_check" : "ai_judgment")
+  )
+    throw new PromptOwnerInvariantError("gate_permission_result_generation");
+  await assertPermissionResultSource(db, { command, assignment, resume });
 }
 
 export function pendingGatePermissionResumeExists(): SQL {
@@ -295,11 +509,15 @@ export async function loadGatePermissionContinuation(
     !resume ||
     attempt.executionAssignmentId !== input.assignmentId ||
     resume.promptOrdinal !== evaluation.promptOrdinal ||
-    resume.parentActionSha256 !== actionDigest(attempt.actionCompletion)
+    resume.parentActionSha256 !==
+      gateParentActionDigest(attempt.actionCompletion)
   )
     throw new PromptOwnerInvariantError(
       "gate_permission_parent_action_changed",
     );
+
+  if (resume.kind === "permission_result")
+    await assertGatePermissionResult(db, evaluation, input.assignmentId);
 
   return resume;
 }

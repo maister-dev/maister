@@ -111,17 +111,23 @@ export function parseVerdict(output: string): GateVerdict | null {
       const obj = JSON.parse(candidates[i]) as Record<string, unknown>;
 
       if (obj && typeof obj === "object" && typeof obj.verdict === "string") {
+        if (
+          typeof obj.confidence === "number" &&
+          !Number.isFinite(obj.confidence)
+        )
+          return null;
+
         return {
           verdict: obj.verdict,
-          confidence:
-            typeof obj.confidence === "number" ? obj.confidence : undefined,
-          reasons: Array.isArray(obj.reasons)
-            ? obj.reasons.map((r) => String(r))
-            : undefined,
-          recommendedAction:
-            typeof obj.recommendedAction === "string"
-              ? obj.recommendedAction
-              : undefined,
+          ...(typeof obj.confidence === "number"
+            ? { confidence: obj.confidence }
+            : {}),
+          ...(Array.isArray(obj.reasons)
+            ? { reasons: obj.reasons.map((reason) => String(reason)) }
+            : {}),
+          ...(typeof obj.recommendedAction === "string"
+            ? { recommendedAction: obj.recommendedAction }
+            : {}),
         };
       }
     } catch {

@@ -12,6 +12,7 @@ import { DatabaseSync } from "node:sqlite";
 import { and, asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { interruptPermissionInputAcknowledgement as interruptPermissionAck } from "@/test-support/permission-ack-fault";
 import {
   domainEvents,
   executionAssignments,
@@ -456,52 +457,16 @@ async function wakePermissionOrchestrator(
 async function interruptPermissionInputAcknowledgement(
   hitlRequestId: string,
 ): Promise<void> {
-  let responder: ReturnType<typeof startProcess> | undefined;
-  const lockKey = Math.floor(Math.random() * 2_000_000_000) + 1;
-  const trigger = `permission_ack_${randomUUID().replaceAll("-", "")}`;
-  const lock = await database.pool.connect();
-
-  try {
-    await lock.query("SELECT pg_advisory_lock(260912, $1)", [lockKey]);
-    await database.pool.query(
-      `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = '${hitlRequestId}' AND NEW.responded_at IS NOT NULL THEN PERFORM pg_advisory_xact_lock(260912, ${lockKey}); END IF; RETURN NEW; END $$`,
-    );
-    await database.pool.query(
-      `CREATE TRIGGER ${trigger} BEFORE UPDATE ON hitl_requests FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
-    );
-    responder = startProcess(
-      "flow-permission-response-process.ts",
-      hitlRequestId,
-      "flow-permission-user",
-    );
-    await expect
-      .poll(
-        async () => {
-          if (responder?.child.exitCode !== null)
-            throw new Error(responder?.output());
-          const waiting = await database.pool.query<{ count: number }>(
-            "SELECT count(*)::int AS count FROM pg_locks WHERE locktype = 'advisory' AND classid = 260912 AND objid = $1 AND NOT granted",
-            [lockKey],
-          );
-
-          return waiting.rows[0].count;
-        },
-        { timeout: 30_000, interval: 25 },
-      )
-      .toBe(1);
-    expect(responder.child.kill("SIGKILL")).toBe(true);
-    await responder.exited;
-    expect(responder.child.signalCode).toBe("SIGKILL");
-  } finally {
-    responder?.child.kill("SIGKILL");
-    await responder?.exited;
-    await lock.query("SELECT pg_advisory_unlock_all()");
-    lock.release();
-    await database.pool.query(
-      `DROP TRIGGER IF EXISTS ${trigger} ON hitl_requests`,
-    );
-    await database.pool.query(`DROP FUNCTION IF EXISTS ${trigger}()`);
-  }
+  await interruptPermissionAck({
+    database,
+    hitlRequestId,
+    startResponder: () =>
+      startProcess(
+        "flow-permission-response-process.ts",
+        hitlRequestId,
+        "flow-permission-user",
+      ),
+  });
 }
 
 describe("Owned Flow checkpointed permission resume", () => {
@@ -1207,6 +1172,13 @@ describe("Owned Flow checkpointed permission resume", () => {
                 .from(runs)
                 .where(eq(runs.id, seeded.runId));
 
+              if (
+                run.status !== "NeedsInput" &&
+                (firstDriver.child.exitCode !== null ||
+                  firstDriver.child.signalCode !== null)
+              )
+                throw new Error(firstDriver.output());
+
               return run.status;
             },
             { timeout: 30_000 },
@@ -1483,6 +1455,11 @@ describe("Owned Flow checkpointed permission resume", () => {
             "utf8",
           ),
         ).toBe("after\n");
+      } catch (error) {
+        throw new Error(
+          `Repeated permission driver failed [run=${seeded.runId}, exit=${firstDriver.child.exitCode}, signal=${firstDriver.child.signalCode}]: ${firstDriver.output()}`,
+          { cause: error },
+        );
       } finally {
         finalDriver?.child.kill("SIGKILL");
         await finalDriver?.exited;

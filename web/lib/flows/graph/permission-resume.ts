@@ -9,11 +9,10 @@ import type {
   Run,
   RunSessionIncarnation,
 } from "@/lib/db/schema";
-import type {
-  CommandReceipt,
-  ExecutionHostTransport,
-} from "@/lib/execution-host/contracts";
+import type { ExecutionHostTransport } from "@/lib/execution-host/contracts";
 import type { FlowActionCompletion } from "./action-completion";
+import type { GatePromptCompletion } from "./gate-prompt-completion";
+import type { PreparedPermissionEvidence } from "./permission-result-evidence";
 
 import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
@@ -21,8 +20,20 @@ import pino from "pino";
 
 import { canonicalCommandJson } from "../../../../runtime/command-json";
 
-import { pendingGatePermissionResumeExists } from "./gate-permission-resume";
-import { nodePermissionSourceSchema } from "./permission-source";
+import {
+  pendingGatePermissionResumeExists,
+  gateParentActionDigest,
+} from "./gate-permission-resume";
+import { decodeGatePromptCompletion } from "./gate-prompt-completion";
+import {
+  lockPermissionResultEvidence,
+  completePermissionResultHandoff,
+} from "./permission-result-evidence";
+import {
+  nodePermissionSourceSchema,
+  flowPermissionSourceSchema,
+  gatePermissionSourceSchema,
+} from "./permission-source";
 import { decodeNodePromptCompletion } from "./node-prompt-owner";
 
 import {
@@ -36,9 +47,6 @@ import {
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
 import { reconcilePromptCommand } from "@/lib/execution-host/prompt-reconciliation";
 import { readPromptOutput } from "@/lib/execution-host/prompt-output";
-import { markSucceeded } from "@/lib/execution-host/commands";
-import { emitWebhookEvent } from "@/lib/webhooks/outbox";
-import { completeHitlAssignmentFromCurrentActor } from "@/lib/assignments/service";
 
 export const PERMISSION_RESUME_PROMPT =
   "Resuming after operator response — please continue with the prior tool call.";
@@ -55,19 +63,20 @@ const sourceSchema = z.object({
   flowPrompt: nodePermissionSourceSchema,
 });
 
-export type PreparedPermissionResult = Readonly<{
-  kind: "completed";
-  hitlRequestId: string;
-  sourceJson: string;
-  responseJson: string;
-  flowRevisionId: string | null;
-  requestSha256: string | null;
-  terminalEvidenceSha256: string | null;
-  inputCommandId: string;
-  checkpointCommandId: string;
-  inputReceipt: CommandReceipt;
-  completion: FlowActionCompletion;
-}>;
+const flowSourceSchema = sourceSchema.extend({
+  flowPrompt: flowPermissionSourceSchema,
+});
+
+export type PreparedPermissionResult = PreparedPermissionEvidence &
+  Readonly<{ kind: "completed" }> &
+  (
+    | Readonly<{ domain: "node"; completion: FlowActionCompletion }>
+    | Readonly<{
+        domain: "gate";
+        completion: GatePromptCompletion;
+        parentActionSha256: string;
+      }>
+  );
 
 type PermissionResultPreflight =
   | PreparedPermissionResult
@@ -77,7 +86,7 @@ type PermissionResultPreflight =
 /** Historical input evidence and full output are read before capacity/run
  * locks. Missing evidence cannot authorize a replacement paid turn.
  */
-export async function prepareNodePermissionResult(
+export async function prepareFlowPermissionResult(
   db: Db,
   runId: string,
   transport: ExecutionHostTransport,
@@ -104,7 +113,7 @@ export async function prepareNodePermissionResult(
   const response = hitl.response as Record<string, unknown> | null;
 
   if (response?._delivery === undefined) return null;
-  const source = sourceSchema.safeParse(hitl.schema);
+  const source = flowSourceSchema.safeParse(hitl.schema);
   const delivery = z
     .object({ commandId: z.string().min(1) })
     .safeParse(response._delivery);
@@ -207,6 +216,60 @@ export async function prepareNodePermissionResult(
   )
     return { kind: "pending", reason: "source_checkpoint_pending" };
   const output = await readPromptOutput({ db, commandId: command.id, signal });
+  const prepared: PreparedPermissionEvidence = {
+    hitlRequestId: hitl.id,
+    sourceJson: canonicalCommandJson(hitl.schema),
+    responseJson: canonicalCommandJson(response),
+    flowRevisionId: run.flowRevisionId,
+    requestSha256: command.requestSha256,
+    terminalEvidenceSha256: command.terminalEvidenceSha256,
+    inputCommandId: input.id,
+    checkpointCommandId: checkpoint.id,
+    inputReceipt: receipt,
+  };
+  const gateSource = gatePermissionSourceSchema.safeParse(
+    source.data.flowPrompt,
+  );
+
+  if (gateSource.success) {
+    const ref = command.ownerRef;
+
+    if (
+      command.ownerKind !== "flow_node_attempt" ||
+      (ref?.variant !== "gate_ai" && ref?.variant !== "gate_skill")
+    )
+      throw new PromptOwnerInvariantError(
+        "gate_permission_result_source_owner",
+      );
+    const [parent] = await db
+      .select()
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.id, ref.nodeAttemptId));
+
+    if (!parent || parent.runId !== runId)
+      throw new PromptOwnerInvariantError(
+        "gate_permission_result_parent_missing",
+      );
+    const completion = await decodeGatePromptCompletion({
+      db,
+      ref,
+      outcome: { state: "succeeded", ...output },
+    });
+
+    signal.throwIfAborted();
+    if (completion.flowRevisionId !== run.flowRevisionId)
+      throw new PromptOwnerInvariantError(
+        "gate_permission_result_revision_changed",
+      );
+
+    return {
+      ...prepared,
+      kind: "completed",
+      domain: "gate",
+      completion,
+      parentActionSha256: gateParentActionDigest(parent.actionCompletion),
+    };
+  }
   const completion = await decodeNodePromptCompletion({
     commandId: command.id,
     promptOrdinal: source.data.flowPrompt.promptOrdinal,
@@ -218,19 +281,7 @@ export async function prepareNodePermissionResult(
   if (!completion.result.ok)
     return { kind: "pending", reason: "source_not_successful" };
 
-  return {
-    kind: "completed",
-    hitlRequestId: hitl.id,
-    sourceJson: canonicalCommandJson(hitl.schema),
-    responseJson: canonicalCommandJson(response),
-    flowRevisionId: run.flowRevisionId,
-    requestSha256: command.requestSha256,
-    terminalEvidenceSha256: command.terminalEvidenceSha256,
-    inputCommandId: input.id,
-    checkpointCommandId: checkpoint.id,
-    inputReceipt: receipt,
-    completion,
-  };
+  return { ...prepared, kind: "completed", domain: "node", completion };
 }
 
 type LockedPermissionSource = Readonly<{
@@ -410,7 +461,7 @@ export async function authorizeNodePermissionResume(
 export async function authorizeNodePermissionResult(
   tx: Db,
   assignment: ExecutionAssignment,
-  prepared: PreparedPermissionResult,
+  prepared: Extract<PreparedPermissionResult, { domain: "node" }>,
 ): Promise<void> {
   const context = await lockNodePermissionSource(tx, assignment);
 
@@ -418,95 +469,20 @@ export async function authorizeNodePermissionResult(
     throw new PromptOwnerInvariantError("permission_result_source_disappeared");
   const { run, hitl, response, source, command, prior, attempt, incarnation } =
     context;
-  const [input] = await tx
-    .select()
-    .from(executionCommands)
-    .where(eq(executionCommands.id, prepared.inputCommandId))
-    .for("update");
-  const [checkpoint] = await tx
-    .select()
-    .from(executionCommands)
-    .where(eq(executionCommands.id, prepared.checkpointCommandId))
-    .for("update");
-  const receipt = prepared.inputReceipt;
 
   if (
-    prepared.hitlRequestId !== hitl.id ||
-    prepared.sourceJson !== canonicalCommandJson(hitl.schema) ||
-    prepared.responseJson !== canonicalCommandJson(response) ||
-    prepared.flowRevisionId !== run.flowRevisionId ||
-    prepared.requestSha256 !== command.requestSha256 ||
-    prepared.terminalEvidenceSha256 !== command.terminalEvidenceSha256 ||
-    command.state !== "succeeded" ||
     prepared.completion.commandId !== command.id ||
     prepared.completion.promptOrdinal !== attempt.actionPromptOrdinal ||
     !prepared.completion.result.ok ||
-    prepared.completion.result.acpSessionId !== incarnation.acpSessionId ||
-    !checkpoint ||
-    checkpoint.kind !== "session.checkpoint" ||
-    checkpoint.runId !== run.id ||
-    checkpoint.executionAssignmentId !== prior.id ||
-    checkpoint.executionHostId !== prior.executionHostId ||
-    checkpoint.assignmentEpoch !== prior.epoch ||
-    checkpoint.targetSessionId !== source.supervisorSessionId ||
-    checkpoint.state !== "succeeded" ||
-    checkpoint.result?.sessionId !== source.supervisorSessionId ||
-    !input ||
-    input.kind !== "session.input" ||
-    input.runId !== run.id ||
-    input.executionAssignmentId !== prior.id ||
-    input.executionHostId !== prior.executionHostId ||
-    input.assignmentEpoch !== prior.epoch ||
-    input.targetSessionId !== source.supervisorSessionId ||
-    canonicalCommandJson(input.payload) !==
-      canonicalCommandJson({
-        kind: "permission",
-        action: "select",
-        requestId: source.requestId,
-        optionId: response.optionId,
-      }) ||
-    !["delivering", "accepted", "succeeded"].includes(input.state) ||
-    receipt.commandId !== input.id ||
-    receipt.runId !== run.id ||
-    receipt.kind !== input.kind ||
-    receipt.assignmentEpoch !== prior.epoch ||
-    receipt.phase !== "completed" ||
-    receipt.httpStatus !== 200 ||
-    receipt.body?.ok !== true ||
-    (input.receiptEvidence !== null &&
-      canonicalCommandJson(input.receiptEvidence) !==
-        canonicalCommandJson(receipt))
-  ) {
-    log.error(
-      {
-        runId: run.id,
-        sourceCommandId: command.id,
-        inputCommandId: input?.id,
-        incarnationState: incarnation.state,
-        inputState: input?.state,
-        sourceUnchanged:
-          prepared.sourceJson === canonicalCommandJson(hitl.schema),
-        responseUnchanged:
-          prepared.responseJson === canonicalCommandJson(response),
-        revisionUnchanged: prepared.flowRevisionId === run.flowRevisionId,
-        requestUnchanged: prepared.requestSha256 === command.requestSha256,
-        terminalUnchanged:
-          prepared.terminalEvidenceSha256 === command.terminalEvidenceSha256,
-        acpHandleUnchanged:
-          prepared.completion.result.acpSessionId === incarnation.acpSessionId,
-      },
-      "permission-result-handoff-rejected",
-    );
+    prepared.completion.result.acpSessionId !== incarnation.acpSessionId
+  )
     throw new PromptOwnerInvariantError("permission_result_generation");
-  }
-  const settled = await markSucceeded(tx, input.id, null, receipt.body);
+  const { input, checkpoint } = await lockPermissionResultEvidence(
+    tx,
+    context,
+    prepared,
+  );
 
-  if (!settled.changed && settled.row?.state !== "succeeded")
-    throw new PromptOwnerInvariantError("permission_result_input_settlement");
-  await tx
-    .update(executionCommands)
-    .set({ receiptEvidence: receipt })
-    .where(eq(executionCommands.id, input.id));
   await tx
     .update(nodeAttempts)
     .set({
@@ -529,43 +505,7 @@ export async function authorizeNodePermissionResult(
       },
     })
     .where(eq(nodeAttempts.id, attempt.id));
-  await tx
-    .update(hitlRequests)
-    .set({
-      respondedAt: new Date(),
-      response: {
-        ...response,
-        _audit: {
-          ...(typeof response._audit === "object" && response._audit !== null
-            ? response._audit
-            : {}),
-          deliveryCommandId: input.id,
-          sourceCommandId: command.id,
-          assignmentId: prior.id,
-          incarnationId: incarnation.id,
-          requestId: source.requestId,
-          resultHandoffAssignmentId: assignment.id,
-        },
-      },
-    })
-    .where(eq(hitlRequests.id, hitl.id));
-  await completeHitlAssignmentFromCurrentActor({
-    db: tx,
-    hitlRequestId: hitl.id,
-    eventKind: "responded",
-    payload: { optionId: response.optionId },
-  });
-  await tx
-    .update(runs)
-    .set({ status: "Running", keepaliveUntil: null, resumeRequestedAt: null })
-    .where(eq(runs.id, run.id));
-  await emitWebhookEvent({
-    db: tx,
-    type: "hitl.responded",
-    projectId: run.projectId,
-    runId: run.id,
-    data: { hitlRequestId: hitl.id, kind: "permission", via: "auto" },
-  });
+  await completePermissionResultHandoff(tx, context, prepared, assignment);
   log.info(
     {
       runId: run.id,
