@@ -24,7 +24,10 @@ import {
   runMessages,
 } from "@/lib/db/schema";
 import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
-import { prepareSessionContent } from "@/lib/execution-host/events/session-content";
+import {
+  prepareSessionContent,
+  preparePromptContent,
+} from "@/lib/execution-host/events/session-content";
 import { projectCanonicalRuntimeObjects } from "@/lib/execution-host/events/runtime-object-projector";
 import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
 import {
@@ -107,85 +110,142 @@ afterAll(async () => {
   await database?.stop();
 });
 
+async function startOwnedFixturePrompt(
+  producer: Awaited<ReturnType<typeof createSession>>,
+  prompt: string,
+): Promise<{
+  admitted: Awaited<ReturnType<typeof issueOwnedPrompt>>;
+  handle: { commandId: string };
+}> {
+  const db = database.db as unknown as Db;
+  const transport = defaultTransport();
+
+  await database.db
+    .update(runs)
+    .set({ runKind: "agent" })
+    .where(eq(runs.id, producer.runId));
+  await expect
+    .poll(
+      async () => {
+        const rows = await database.db
+          .select()
+          .from(runSessionIncarnations)
+          .where(
+            eq(
+              runSessionIncarnations.hostSessionId,
+              producer.session.hostSessionId,
+            ),
+          );
+
+        return rows[0]?.state;
+      },
+      { timeout: 15_000 },
+    )
+    .toBe("active");
+  const [incarnation] = await database.db
+    .select()
+    .from(runSessionIncarnations)
+    .where(
+      eq(runSessionIncarnations.hostSessionId, producer.session.hostSessionId),
+    );
+  const turnId = randomUUID();
+  const admitted = await issueOwnedPrompt(db, {
+    assignment: producer.client.assignment,
+    host: producer.client.host,
+    targetSessionId: producer.session.hostSessionId,
+    payload: {
+      stepId: "output",
+      prompt,
+    },
+    maxAttempts: 3,
+    admitOwner: async () => ({
+      logicalOperationKey: `agent_turn:initial:${turnId}:0`,
+      owner: {
+        kind: "agent_turn",
+        ref: {
+          version: 1,
+          variant: "initial",
+          runId: producer.runId,
+          runSessionId: incarnation.runSessionId,
+          incarnationId: incarnation.id,
+          assignmentId: producer.client.assignment.id,
+          assignmentEpoch: producer.client.assignment.epoch,
+          turnId,
+          promptOrdinal: 0,
+        },
+      },
+    }),
+  });
+  const handle = await startAsyncPrompt({
+    db,
+    command: admitted.row,
+    envelope: admitted.envelope,
+    start: () =>
+      transport.startPrompt(producer.session.hostSessionId, admitted.envelope),
+    lookupReceipt: (id) => transport.getCommandReceipt(id),
+  });
+
+  return { admitted, handle };
+}
+
 describe("AT-01 bounded output on the production supervisor", () => {
+  it("AT-06 v2: agrees on original private failure bytes after hydrating a canonical command content reference", async () => {
+    const producer = await createSession("command-private-failure-v2");
+    const { handle } = await startOwnedFixturePrompt(
+      producer,
+      'fixture-output:{"failMessage":"private failure at /private/original-output.json"}',
+    );
+    const db = database.db as unknown as Db;
+    const transport = defaultTransport();
+
+    await expect(
+      waitForPromptCompletion({
+        db,
+        handle,
+        lookupReceipt: (id) => transport.getCommandReceipt(id),
+        signal: AbortSignal.timeout(15_000),
+      }),
+    ).rejects.toMatchObject({ code: "ACP_PROTOCOL" });
+    const [command] = await database.db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.id, handle.commandId));
+    const [event] = await database.db
+      .select()
+      .from(executionEvents)
+      .where(eq(executionEvents.id, command.terminalEventId!));
+    const prepared = await preparePromptContent(
+      db,
+      event,
+      AbortSignal.timeout(15_000),
+    );
+
+    expect(command.state).toBe("failed");
+    expect(command.terminalEvidenceSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(event.payloadSchema).toBe("maister.session.content.v2");
+    expect(prepared.payloadSchema).toBe("maister.session.command.v2");
+    expect(prepared.payload?.terminal).toEqual(
+      command.receiptEvidence?.evidenceV2?.terminal,
+    );
+    expect(
+      command.receiptEvidence?.evidenceV2?.terminal?.error?.message,
+    ).toContain("/private/original-output.json");
+  });
+
   it("AT-06 v2: reconstructs original command output from durable evidence after releasing its assignment", async () => {
     const producer = await createSession("command-output-v2");
     const db = database.db as unknown as Db;
     const transport = defaultTransport();
-
-    await database.db
-      .update(runs)
-      .set({ runKind: "agent" })
-      .where(eq(runs.id, producer.runId));
-    await expect
-      .poll(
-        async () => {
-          const rows = await database.db
-            .select()
-            .from(runSessionIncarnations)
-            .where(
-              eq(
-                runSessionIncarnations.hostSessionId,
-                producer.session.hostSessionId,
-              ),
-            );
-
-          return rows[0]?.state;
-        },
-        { timeout: 15_000 },
-      )
-      .toBe("active");
-    const [incarnation] = await database.db
-      .select()
-      .from(runSessionIncarnations)
-      .where(
-        eq(
-          runSessionIncarnations.hostSessionId,
-          producer.session.hostSessionId,
-        ),
-      );
-    const turnId = randomUUID();
     const originalMeta = {
       result: {
         decision: "accept",
         details: { proof: "original opaque result" },
       },
     };
-    const admitted = await issueOwnedPrompt(db, {
-      assignment: producer.client.assignment,
-      host: producer.client.host,
-      targetSessionId: producer.session.hostSessionId,
-      payload: {
-        stepId: "output",
-        prompt: `fixture-output:${JSON.stringify({ bytes: 65537, tool: true, responseMeta: originalMeta })}`,
-      },
-      maxAttempts: 3,
-      admitOwner: async () => ({
-        logicalOperationKey: `agent_turn:initial:${turnId}:0`,
-        owner: {
-          kind: "agent_turn",
-          ref: {
-            version: 1,
-            variant: "initial",
-            runId: producer.runId,
-            runSessionId: incarnation.runSessionId,
-            incarnationId: incarnation.id,
-            assignmentId: producer.client.assignment.id,
-            assignmentEpoch: producer.client.assignment.epoch,
-            turnId,
-            promptOrdinal: 0,
-          },
-        },
-      }),
-    });
-    const handle = await startAsyncPrompt({
-      db,
-      command: admitted.row,
-      envelope: admitted.envelope,
-      start: () =>
-        transport.startPrompt(producer.session.hostSessionId, admitted.envelope),
-      lookupReceipt: (id) => transport.getCommandReceipt(id),
-    });
+    const { admitted, handle } = await startOwnedFixturePrompt(
+      producer,
+      `fixture-output:${JSON.stringify({ bytes: 65537, tool: true, responseMeta: originalMeta })}`,
+    );
 
     await expect(
       waitForPromptCompletion({

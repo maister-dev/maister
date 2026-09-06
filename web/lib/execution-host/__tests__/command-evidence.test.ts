@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   CommandEvidenceError,
   parseCommandOutputManifestV2,
+  parseCommandEventPayloadV2,
   parseCommandReceiptV2,
   type CommandOutputManifestV2,
   type CommandReceiptV2,
@@ -130,6 +131,46 @@ describe("receipt v2 stable wire data", () => {
         expect(String(error)).not.toContain("PRIVATE_SENTINEL");
       }
     }
+  });
+
+  it("binds canonical command evidence to its source, version and exact outer stream position", () => {
+    const payload = {
+      commandId,
+      kind: "session.prompt",
+      phase: "completed",
+      sourceCommandId: commandId,
+      requestSchema: receipt.requestSchema,
+      requestSha256: receipt.requestSha256,
+      terminal,
+    };
+    const position = {
+      eventId: terminal.eventId,
+      streamId: terminal.streamId,
+      sequence: terminal.sequence,
+      hostSessionId,
+    };
+
+    expect(parseCommandEventPayloadV2(payload, position)).toEqual(payload);
+    expect(
+      parseCommandEventPayloadV2(
+        { ...payload, phase: "accepted", terminal: null },
+        position,
+      ).terminal,
+    ).toBeNull();
+    for (const value of [
+      { ...payload, sourceCommandId: objectId },
+      { ...payload, requestSha256: "invalid" },
+      { ...payload, status: "succeeded" },
+      { ...payload, terminal: { ...terminal, eventId: objectId } },
+      { ...payload, terminal: { ...terminal, streamId: objectId } },
+    ]) {
+      expect(() => parseCommandEventPayloadV2(value, position)).toThrow(
+        CommandEvidenceError,
+      );
+    }
+    expect(() =>
+      parseCommandEventPayloadV2(payload, { ...position, sequence: "43" }),
+    ).toThrow(CommandEvidenceError);
   });
 
   it("round-trips the immutable stream manifest and rejects changed reference shapes", () => {

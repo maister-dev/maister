@@ -1,6 +1,6 @@
 # Execution prompt lifecycle
 
-**Status:** Implemented short-lived admission, private v2 request/owner storage and shared canonical-event/receipt reconciliation. Request-bound receipt v2, command-output manifests, durable owner application, unknown-outcome recovery, fencing and retention corrections remain **Designed** (AB-05–08/10).
+**Status:** Implemented short-lived admission, private v2 request/owner storage and shared canonical-event/receipt reconciliation. Request-bound receipt/event v2 and verified immutable command-output manifests are implemented on the explicit v2 development path. Production owner activation, durable owner application, unknown-outcome recovery, fencing and retirement remain **Designed** (AB-05–08/10).
 
 
 ## Purpose
@@ -53,7 +53,7 @@ sequenceDiagram
   O->>M: queryPrompt or waitPrompt after restart
 ```
 
-## Immutable requests, outcomes and command authority (Designed)
+## Immutable requests, outcomes and command authority
 
 The S2.1 storage/admission foundation is implemented but not yet active for
 production prompt callers. `issueOwnedPrompt` runs the domain's admission
@@ -82,8 +82,13 @@ keep version 1. The S2.2 development path accepts explicit request-v2 envelopes,
 returns strict public receipt v2, and seals original ACP responses with immutable
 command-output range manifests. The internal Web reader checks original bytes,
 routing and retained contiguous event spans without using message projections.
-Command-event payload v2 and owner activation remain in progress; this path is
-not the S2 activation gate.
+Canonical command payload v2 carries the same closed request binding and nested
+terminal value as receipt v2. Large or private values retain that original
+payload in a verified immutable content object. The common reducer validates
+the original event ID, host stream and sequence before comparing terminal
+evidence. Late v2 events must match the old command's request digest and target
+session; they cannot change the current assignment. Production owner activation
+remains pending S2.12; this development path is not the S2 activation gate.
 
 Keep `execution_commands.payload` as the existing allowlisted diagnostic projection. Add a **server-private** immutable `request_canonical_json` TEXT on the same ledger, with version and SHA-256. Store the exact JCS UTF-8 string for `{requestVersion, command:{id,kind,issuedAt}, fence, target:{hostSessionId}, payload}`; include every effect-affecting field, array order and frozen content/object references. Normalize optional fields once before storage. `issuedAt` and all generated IDs are created once and reused; no clock/random input during retry. Parsed request → strict schema → digest comparison precedes every dispatch. The host uses the same digest schema, including the URL target (not only envelope payload), before replaying a receipt.
 
@@ -123,8 +128,8 @@ pending command/owner application. Host replay pruning must retain a v2
 accepted command's event prefix until terminal acknowledgement; manager event
 and object retirement must honor the manifest through the S2.11 eligibility
 protocol. A process restart never replaces the manifest with current messages,
-current session output or a redacted diagnostic projection. These manifest and
-retention rules are designed until their S2/S3 owning gates pass.
+current session output or a redacted diagnostic projection. Manifest capture, verified reads and host prefix retention are implemented.
+Manager retirement eligibility and the full S2/S3 retention gate remain designed.
 
 The evidence and application states are separate:
 

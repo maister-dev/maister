@@ -97,7 +97,7 @@ async function preparePromptEvidence(
   if (
     prepared.eventType !== "session.command" ||
     prepared.payload?.kind !== "session.prompt" ||
-    prepared.payload.phase !== "completed" ||
+    prepared.payload.phase === "accepted" ||
     typeof commandId !== "string"
   )
     return prepared;

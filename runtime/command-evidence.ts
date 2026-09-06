@@ -352,13 +352,24 @@ export function parseCommandReceiptV2(value: unknown): CommandReceiptV2 {
     receipt.kind !== "session.prompt" || receipt.hostSessionId !== null,
     "prompt_target",
   );
-  if (receipt.phase === "accepted") {
-    requireValue(
-      receipt.terminal === null && receipt.httpStatus === 202,
-      "accepted_receipt",
-    );
+  requireValue(
+    receipt.phase === "accepted"
+      ? receipt.httpStatus === 202
+      : receipt.phase === "completed"
+        ? receipt.httpStatus >= 200 && receipt.httpStatus < 300
+        : receipt.httpStatus >= 400,
+    "receipt_phase_status",
+  );
+  validateTerminal(receipt);
 
-    return receipt as CommandReceiptV2;
+  return receipt as CommandReceiptV2;
+}
+
+function validateTerminal(receipt: Record<string, unknown>): void {
+  if (receipt.phase === "accepted") {
+    requireValue(receipt.terminal === null, "accepted_receipt");
+
+    return;
   }
   requireValue(
     receipt.phase === "completed" || receipt.phase === "rejected",
@@ -388,9 +399,7 @@ export function parseCommandReceiptV2(value: unknown): CommandReceiptV2 {
   );
   if (receipt.phase === "completed") {
     requireValue(
-      receipt.httpStatus < 400 &&
-        terminal.status === "succeeded" &&
-        terminal.error === null,
+      terminal.status === "succeeded" && terminal.error === null,
       "terminal_success",
     );
     const result = object(terminal.result, "terminal_result");
@@ -426,8 +435,7 @@ export function parseCommandReceiptV2(value: unknown): CommandReceiptV2 {
     }
   } else {
     requireValue(
-      receipt.httpStatus >= 400 &&
-        (terminal.status === "failed" || terminal.status === "fenced") &&
+      (terminal.status === "failed" || terminal.status === "fenced") &&
         terminal.result === null,
       "terminal_failure",
     );
@@ -448,6 +456,84 @@ export function parseCommandReceiptV2(value: unknown): CommandReceiptV2 {
       "terminal_error_status",
     );
   }
+}
 
-  return receipt as CommandReceiptV2;
+export type CommandEventPayloadV2 = Readonly<{
+  commandId: string;
+  kind: "session.prompt";
+  phase: "accepted" | "completed" | "rejected";
+  sourceCommandId: string;
+  requestSchema: "maister.command.request.v2";
+  requestSha256: string;
+  terminal: CommandTerminalEvidenceV2 | null;
+  sourceMonotonicId?: number;
+  sessionName?: string;
+  nodeAttemptId?: string;
+}>;
+
+export type CommandEventPosition = Readonly<{
+  eventId: string;
+  streamId: string;
+  sequence: string;
+  hostSessionId: string | null;
+}>;
+
+/** The canonical payload repeats its native position so it cannot be moved
+ * between stream slots while preserving apparently agreeing terminal bytes.
+ */
+export function parseCommandEventPayloadV2(
+  value: unknown,
+  position: CommandEventPosition,
+): CommandEventPayloadV2 {
+  validateJson(value);
+  const payload = object(value, "command_event");
+  const required = [
+    "commandId",
+    "kind",
+    "phase",
+    "sourceCommandId",
+    "requestSchema",
+    "requestSha256",
+    "terminal",
+  ];
+  const optional = ["sourceMonotonicId", "sessionName", "nodeAttemptId"];
+
+  requireValue(
+    required.every((key) => Object.hasOwn(payload, key)) &&
+      Object.keys(payload).every(
+        (key) => required.includes(key) || optional.includes(key),
+      ),
+    "command_event_keys",
+  );
+  requireValue(
+    uuid(payload.commandId) &&
+      payload.sourceCommandId === payload.commandId &&
+      payload.kind === "session.prompt" &&
+      payload.requestSchema === "maister.command.request.v2" &&
+      digest(payload.requestSha256) &&
+      text(position.hostSessionId, 128),
+    "command_event_identity",
+  );
+  if (Object.hasOwn(payload, "sourceMonotonicId"))
+    requireValue(
+      integer(payload.sourceMonotonicId, 0, Number.MAX_SAFE_INTEGER),
+      "command_event_frame",
+    );
+  if (Object.hasOwn(payload, "sessionName"))
+    requireValue(text(payload.sessionName, 128), "command_event_session");
+  if (Object.hasOwn(payload, "nodeAttemptId"))
+    requireValue(uuid(payload.nodeAttemptId), "command_event_attempt");
+  validateTerminal({ ...payload, hostSessionId: position.hostSessionId });
+  if (payload.terminal !== null) {
+    const terminal = payload.terminal as CommandTerminalEvidenceV2;
+
+    requireValue(
+      terminal.eventId === position.eventId &&
+        terminal.streamId === position.streamId &&
+        terminal.sequence === position.sequence,
+      "command_event_position",
+    );
+  }
+
+  return payload as CommandEventPayloadV2;
 }

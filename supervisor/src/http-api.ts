@@ -1001,7 +1001,10 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
         hostState.putReceiptWithRuntimeEvent(
           { ...transition.row, body: receiptBody },
-          runtimeEvents.sessionEventInput(entry.record, event),
+          runtimeEvents.commandReceiptEventInput(entry.record, event, {
+            ...transition.row,
+            body: receiptBody,
+          }),
           transition.admission,
         );
         commandEvents.set(transition.phase, event);

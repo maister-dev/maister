@@ -5,6 +5,12 @@ import type { ExecutionEvent } from "@/lib/db/schema";
 
 import { createHash } from "node:crypto";
 
+import { eq } from "drizzle-orm";
+
+import {
+  parseCommandEventPayloadV2,
+  CommandEvidenceError,
+} from "../../../../runtime/command-evidence";
 import {
   SessionContentReferenceSchema,
   sessionContentSource,
@@ -16,6 +22,7 @@ import { ExecutionEventProjectionError } from "./projector";
 import { projectionTransaction } from "./projection-transaction";
 import { projectRuntimeObject } from "./runtime-object-projector";
 
+import { executionEventStreams } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
 function corrupt(): ExecutionEventProjectionError {
@@ -165,7 +172,47 @@ export async function prepareSessionContent(
     )
       throw corrupt();
 
-    return { ...event, payload, payloadBytes: reference.sizeBytes };
+    if (reference.sourcePayloadSchema === "maister.session.command.v2") {
+      if (
+        payload.commandId !== event.payload.commandId ||
+        payload.kind !== event.payload.kind ||
+        payload.requestSchema !== event.payload.requestSchema ||
+        payload.requestSha256 !== event.payload.requestSha256
+      )
+        throw corrupt();
+      const [stream] = event.eventStreamId
+        ? await db
+            .select()
+            .from(executionEventStreams)
+            .where(eq(executionEventStreams.id, event.eventStreamId))
+            .limit(1)
+        : [];
+
+      if (
+        !stream ||
+        stream.executionHostId !== event.executionHostId ||
+        event.hostSequence === null
+      )
+        throw corrupt();
+      try {
+        parseCommandEventPayloadV2(payload, {
+          eventId: event.id,
+          streamId: stream.streamId,
+          sequence: event.hostSequence.toString(),
+          hostSessionId: event.hostSessionId,
+        });
+      } catch (error) {
+        if (error instanceof CommandEvidenceError) throw corrupt();
+        throw error;
+      }
+    }
+
+    return {
+      ...event,
+      payload,
+      payloadSchema: reference.sourcePayloadSchema ?? event.payloadSchema,
+      payloadBytes: reference.sizeBytes,
+    };
   } finally {
     if (!completed) await reader.cancel();
     reader.releaseLock();

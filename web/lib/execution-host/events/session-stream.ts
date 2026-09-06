@@ -63,6 +63,7 @@ function optionsField(
 
 type CanonicalSessionEventRow = {
   eventType: string;
+  payloadSchema: string;
   hostSessionId: string | null;
   payload: Record<string, unknown> | null;
   runSequence: bigint | null;
@@ -222,8 +223,19 @@ export function supervisorEventFromCanonicalRow(
     case "session.command": {
       const commandId = stringField(row.payload, "commandId");
       const kind = row.payload?.kind;
-      const phase = row.payload?.phase;
-      const status = row.payload?.status;
+      const isV2 = row.payloadSchema === "maister.session.command.v2";
+      const terminal =
+        isV2 &&
+        row.payload?.terminal &&
+        typeof row.payload.terminal === "object"
+          ? (row.payload.terminal as Record<string, unknown>)
+          : null;
+      const phase =
+        isV2 && row.payload?.phase === "rejected"
+          ? "completed"
+          : row.payload?.phase;
+      const status = isV2 ? terminal?.status : row.payload?.status;
+      const result = isV2 ? terminal?.result : row.payload?.result;
 
       if (
         commandId === null ||
@@ -239,7 +251,7 @@ export function supervisorEventFromCanonicalRow(
           status !== "fenced")
       )
         return null;
-      const error = row.payload?.error;
+      const error = isV2 ? (terminal?.error ?? undefined) : row.payload?.error;
 
       if (
         error !== undefined &&
@@ -255,10 +267,8 @@ export function supervisorEventFromCanonicalRow(
         kind,
         phase,
         ...(status ? { status } : {}),
-        ...(row.payload?.result &&
-        typeof row.payload.result === "object" &&
-        !Array.isArray(row.payload.result)
-          ? { result: row.payload.result as Record<string, unknown> }
+        ...(result && typeof result === "object" && !Array.isArray(result)
+          ? { result: result as Record<string, unknown> }
           : {}),
         ...(error
           ? {

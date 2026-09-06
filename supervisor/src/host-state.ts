@@ -10,6 +10,7 @@ import {
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import { commandReceiptPayloadV2 } from "./command-event";
 import {
   DEFAULT_RUNTIME_LIMITS,
   MAX_RECEIPT_BODY_BYTES,
@@ -1197,16 +1198,16 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
               hostSessionId: receipt.hostSessionId,
               eventType: "session.command",
               occurredAt: now().toISOString(),
-              payload: {
-                ...(row.request_version === 2
-                  ? { sourceCommandId: row.command_id }
-                  : {}),
-                commandId: row.command_id,
-                kind: row.kind,
-                phase: "completed",
-                status: "failed",
-                error: body,
-              },
+              payload:
+                row.request_version === 2
+                  ? commandReceiptPayloadV2(receipt, state)
+                  : {
+                      commandId: row.command_id,
+                      kind: row.kind,
+                      phase: "completed",
+                      status: "failed",
+                      error: body,
+                    },
             },
           });
           recoveredCount += 1;

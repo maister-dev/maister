@@ -1,9 +1,12 @@
 import { z } from "zod";
 
+import { parseCommandEventPayloadV2 } from "../../../runtime/command-evidence";
+
 /** Exact host-owned session payload; the reference event is availability evidence. */
 export const SessionContentReferenceSchema = z
   .object({
     schema: z.literal("maister.session-content.v2"),
+    sourcePayloadSchema: z.literal("maister.session.command.v2").optional(),
     commandId: z.string().uuid(),
     hostSessionId: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/),
     source: z.enum(["raw_stdout", "session_update", "terminal_output"]),
@@ -50,6 +53,13 @@ const SessionContentPayloadSchema = z
     sourceCommandId: z.string().uuid().optional(),
     sessionName: z.string().min(1).max(128),
     nodeAttemptId: z.string().uuid().optional(),
+    commandId: z.string().uuid().optional(),
+    kind: z.literal("session.prompt").optional(),
+    requestSchema: z.literal("maister.command.request.v2").optional(),
+    requestSha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
     contentRef: SessionContentReferenceSchema,
   })
   .strict();
@@ -98,6 +108,7 @@ export const RUNTIME_EVENT_PAYLOAD_SCHEMAS = [
   "maister.runtime-object.available.v1",
   "maister.runtime-object.state.v1",
   "maister.session.content.v2",
+  "maister.session.command.v2",
 ] as const;
 
 const SEQUENCE = /^(0|[1-9][0-9]{0,18})$/;
@@ -314,7 +325,19 @@ export const RuntimeEventEnvelopeSchema = z
         });
       }
     }
-    if (value.payloadSchema === "maister.session.content.v2") {
+    if (value.payloadSchema === "maister.session.command.v2") {
+      try {
+        if (value.eventType !== "session.command")
+          throw new Error("event type");
+        parseCommandEventPayloadV2(value.payload, value);
+      } catch {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["payload"],
+          message: "invalid command event v2 evidence",
+        });
+      }
+    } else if (value.payloadSchema === "maister.session.content.v2") {
       const parsed = SessionContentPayloadSchema.safeParse(value.payload);
 
       if (
@@ -324,6 +347,21 @@ export const RuntimeEventEnvelopeSchema = z
         parsed.data.contentRef.firstFrame !== parsed.data.sourceMonotonicId ||
         (parsed.data.sourceCommandId !== undefined &&
           parsed.data.sourceCommandId !== parsed.data.contentRef.commandId) ||
+        (parsed.data.contentRef.sourcePayloadSchema ===
+          "maister.session.command.v2" &&
+          (value.eventType !== "session.command" ||
+            parsed.data.commandId !== parsed.data.contentRef.commandId ||
+            parsed.data.sourceCommandId !== parsed.data.commandId ||
+            parsed.data.kind !== "session.prompt" ||
+            parsed.data.requestSchema !== "maister.command.request.v2" ||
+            parsed.data.requestSha256 === undefined)) ||
+        (parsed.data.contentRef.sourcePayloadSchema === undefined &&
+          [
+            parsed.data.commandId,
+            parsed.data.kind,
+            parsed.data.requestSchema,
+            parsed.data.requestSha256,
+          ].some((field) => field !== undefined)) ||
         parsed.data.contentRef.source !== sessionContentSource(value.eventType)
       ) {
         context.addIssue({

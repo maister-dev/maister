@@ -282,6 +282,7 @@ async function resolveAssignment(
         assignmentEpoch: input.envelope.assignmentEpoch,
         eventType: input.envelope.eventType,
         payload: input.envelope.payload,
+        hostSessionId: input.envelope.hostSessionId,
       })),
   };
 }
@@ -314,6 +315,7 @@ async function isBoundCommandEvent(
     executionHostId: string;
     assignmentId: string;
     assignmentEpoch: number;
+    hostSessionId: string | null;
     eventType: string;
     payload: Record<string, unknown> | null;
   },
@@ -322,7 +324,12 @@ async function isBoundCommandEvent(
 
   if (!identity) return false;
   const rows = await tx
-    .select({ kind: executionCommands.kind })
+    .select({
+      kind: executionCommands.kind,
+      requestSchema: executionCommands.requestSchema,
+      requestSha256: executionCommands.requestSha256,
+      targetSessionId: executionCommands.targetSessionId,
+    })
     .from(executionCommands)
     .where(
       and(
@@ -335,7 +342,17 @@ async function isBoundCommandEvent(
     )
     .limit(1);
 
-  return rows[0]?.kind === identity.kind;
+  const command = rows[0];
+
+  if (!command || command.kind !== identity.kind) return false;
+  if (command.requestSchema === "maister.command.request.v2")
+    return (
+      command.targetSessionId === input.hostSessionId &&
+      input.payload?.requestSchema === command.requestSchema &&
+      input.payload.requestSha256 === command.requestSha256
+    );
+
+  return true;
 }
 
 async function allocateRunSequence(tx: Db, runId: string): Promise<bigint> {
@@ -496,6 +513,7 @@ async function resolveStoredAssignment(
     assignmentEpoch: event.assignmentEpoch,
     eventType: event.eventType,
     payload: event.payload,
+    hostSessionId: event.hostSessionId,
   });
 }
 

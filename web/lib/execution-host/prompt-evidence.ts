@@ -16,6 +16,7 @@ import {
 import {
   CommandEvidenceError,
   parseCommandReceiptV2,
+  parseCommandEventPayloadV2,
 } from "../../../runtime/command-evidence";
 
 import { COMMAND_REQUEST_SCHEMA, readPromptRequest } from "./command-request";
@@ -56,6 +57,25 @@ function record(value: unknown): value is Record<string, unknown> {
 function outcomeFromEvent(event: ExecutionEvent): TerminalOutcome | null {
   const payload = event.payload;
 
+  if (event.payloadSchema === "maister.session.command.v2") {
+    const terminal = payload?.terminal;
+
+    if (!record(terminal)) return null;
+    if (
+      terminal.status === "succeeded" &&
+      record(terminal.result) &&
+      terminal.error === null
+    )
+      return { status: "succeeded", result: terminal.result, error: null };
+    if (
+      (terminal.status === "failed" || terminal.status === "fenced") &&
+      record(terminal.error) &&
+      terminal.result === null
+    )
+      return { status: terminal.status, result: null, error: terminal.error };
+
+    return null;
+  }
   if (!payload || payload.phase !== "completed") return null;
   if (payload.status === "succeeded") {
     if (
@@ -219,6 +239,10 @@ function eventMatches(
   event: ExecutionEvent,
 ): boolean {
   return (
+    (command.requestSchema !== COMMAND_REQUEST_SCHEMA ||
+      (event.payloadSchema === "maister.session.command.v2" &&
+        event.payload?.requestSchema === command.requestSchema &&
+        event.payload.requestSha256 === command.requestSha256)) &&
     event.source === "host" &&
     event.ingestDisposition === "accepted" &&
     event.eventType === "session.command" &&
@@ -273,6 +297,21 @@ async function reducePromptEvidence(
       event.payload?.sourceCommandId !== command.id
     )
       return quarantine(tx, command, "terminal_stream_binding");
+    try {
+      const payload = parseCommandEventPayloadV2(event.payload, {
+        eventId: event.id,
+        streamId: stream.streamId,
+        sequence: event.hostSequence!.toString(),
+        hostSessionId: event.hostSessionId,
+      });
+
+      if (!sameJson(payload.terminal, v2.terminal))
+        return quarantine(tx, command, "terminal_v2_agreement");
+    } catch (error) {
+      if (error instanceof CommandEvidenceError)
+        return quarantine(tx, command, "terminal_v2_shape");
+      throw error;
+    }
   }
   const outcome = outcomeFromEvent(event);
   const receiptOutcome = outcomeFromReceipt(command.receiptEvidence);

@@ -2,13 +2,18 @@ import type { EventFunding } from "./outbox-budget";
 import type { CapturedStdoutSegment } from "./bounded-acp-stream";
 import type { Logger } from "pino";
 import type { CostRecord } from "./cost";
-import type { AppendRuntimeEventInput, HostState } from "./host-state";
+import type {
+  AppendRuntimeEventInput,
+  HostState,
+  CommandReceiptRow,
+} from "./host-state";
 import type {
   RuntimeObjectPublicMetadata,
   RuntimeObjectRegistry,
 } from "./runtime-objects";
 import type { SessionEvent, SessionRecord } from "./types";
 
+import { commandReceiptPayloadV2 } from "./command-event";
 import { CONTROL_EVENT_MAX_BYTES } from "./runtime-limits";
 import {
   assertRuntimeEventPayloadSafe,
@@ -95,9 +100,42 @@ export class RuntimeEventPublisher {
         "a content hint cannot be republished as a producer event",
       );
     }
+
+    return this.sessionPayloadInput(
+      record,
+      event,
+      sessionEventPayload(record, event),
+    );
+  }
+
+  commandReceiptEventInput(
+    record: SessionRecord,
+    event: Extract<SessionEvent, { type: "session.command" }>,
+    receipt: CommandReceiptRow,
+  ): AppendRuntimeEventInput {
+    if (receipt.requestVersion !== 2)
+      return this.sessionEventInput(record, event);
+
+    return this.sessionPayloadInput(
+      record,
+      event,
+      commandReceiptPayloadV2(receipt, this.state, {
+        sourceMonotonicId: event.monotonicId,
+        sessionName: record.sessionName,
+        ...(record.nodeAttemptId
+          ? { nodeAttemptId: record.nodeAttemptId }
+          : {}),
+      }),
+    );
+  }
+
+  private sessionPayloadInput(
+    record: SessionRecord,
+    event: Exclude<SessionEvent, { type: "session.content" }>,
+    original: Record<string, unknown>,
+  ): AppendRuntimeEventInput {
     const assignment = assignmentForRecord(record);
     const funding = this.sessionFunding(record, event);
-    const original = sessionEventPayload(record, event);
     let payload = original;
 
     try {
@@ -147,6 +185,9 @@ export class RuntimeEventPublisher {
       );
       const contentRef = SessionContentReferenceSchema.parse({
         ...sealed,
+        ...(original.requestSchema === "maister.command.request.v2"
+          ? { sourcePayloadSchema: "maister.session.command.v2" }
+          : {}),
         schema: "maister.session-content.v2",
         source: sessionContentSource(event.type),
         firstFrame: event.monotonicId,
@@ -164,6 +205,14 @@ export class RuntimeEventPublisher {
         sessionName: record.sessionName,
         ...(record.nodeAttemptId
           ? { nodeAttemptId: record.nodeAttemptId }
+          : {}),
+        ...(original.requestSchema === "maister.command.request.v2"
+          ? {
+              commandId: original.commandId,
+              kind: "session.prompt",
+              requestSchema: original.requestSchema,
+              requestSha256: original.requestSha256,
+            }
           : {}),
         contentRef,
       };

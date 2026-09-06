@@ -2245,6 +2245,7 @@ components:
         authorize reconstruction. A lost object never means an empty result.
       properties:
         schema: { type: string, enum: [maister.session-content.v2] }
+        sourcePayloadSchema: { type: string, enum: [maister.session.command.v2] }
         commandId: { type: string, format: uuid }
         hostSessionId: { type: string, pattern: "^[A-Za-z0-9._-]{1,128}$" }
         source:
@@ -2292,7 +2293,7 @@ components:
         occurredAt: { type: string, format: date-time, description: "Host occurrence metadata, never an ordering authority." }
         payloadSchema:
           type: string
-          enum: [maister.session.created.v1, maister.session.line.v1, maister.session.update.v1, maister.session.permission-request.v1, maister.session.hook-trip.v1, maister.session.command.v1, maister.session.chat-turn.v1, maister.session.exited.v1, maister.session.crashed.v1, maister.usage.recorded.v1, maister.runtime-object.available.v1, maister.runtime-object.state.v1, maister.session.content.v2]
+          enum: [maister.session.created.v1, maister.session.line.v1, maister.session.update.v1, maister.session.permission-request.v1, maister.session.hook-trip.v1, maister.session.command.v1, maister.session.chat-turn.v1, maister.session.exited.v1, maister.session.crashed.v1, maister.usage.recorded.v1, maister.runtime-object.available.v1, maister.runtime-object.state.v1, maister.session.content.v2, maister.session.command.v2]
         payload:
           type: object
           additionalProperties: true

@@ -1,6 +1,5 @@
 // ADR-166 T2.2/T2.4 — receipts (R1–R8) and session.command events (S1–S4).
 import type { SessionEvent } from "../types";
-import type { RuntimeEventEnvelope } from "../runtime-events";
 
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, readFile } from "node:fs/promises";
@@ -10,6 +9,10 @@ import { DatabaseSync } from "node:sqlite";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  SessionContentReferenceSchema,
+  type RuntimeEventEnvelope,
+} from "../runtime-events";
 import {
   openHostState,
   HOST_STATE_FILE,
@@ -409,6 +412,79 @@ describe("command receipts", () => {
     expect(await read()).toEqual(accepted);
   });
 
+  it("AT-06 v2: preserves exact private nested rejection evidence in a command payload content object", async () => {
+    const host = await bootHost({
+      runtimeRoot: await tempRoot(),
+      fixtureArgs: ["--hang"],
+    });
+
+    booted.push(host);
+    const runId = `run-${randomUUID().slice(0, 8)}`;
+    const created = await postJson(
+      `${host.url}/sessions`,
+      await createEnvelope(host, { runId }),
+    );
+    const hostSessionId = created.body.sessionId as string;
+    const failure = {
+      code: "ACP_PROTOCOL" as const,
+      message: "required output is incomplete",
+      details: {
+        reason: "required_output_incomplete" as const,
+        original: { api_key: "opaque diagnostic value" },
+      },
+    };
+
+    host.registry.get(hostSessionId)!.record.outputFailure = failure;
+    const request = {
+      ...envelope("session.prompt", fenceFor(host, runId), {
+        stepId: "failure",
+        prompt: "original input",
+      }),
+      requestVersion: 2,
+      target: { hostSessionId },
+    };
+
+    expect(
+      (await postJson(`${host.url}/sessions/${hostSessionId}/prompts`, request))
+        .status,
+    ).toBe(202);
+    await waitFor(
+      () => host.hostState.getReceipt(request.command.id)?.phase === "rejected",
+    );
+    const receipt = parseCommandReceiptV2(
+      await (await fetch(`${host.url}/commands/${request.command.id}`)).json(),
+    );
+    const canonical = host.hostState
+      .runtimeEventsAfter(host.hostState.getRuntimeEventStreamId(), null)
+      .find((event) => event.eventId === receipt.terminal?.eventId)!;
+    const reference = SessionContentReferenceSchema.parse(
+      (canonical.envelope as RuntimeEventEnvelope).payload.contentRef,
+    );
+    const object = host.hostState.getRuntimeObject(reference.objectId)!;
+    const bytes = await readFile(object.privatePath);
+    const payload: unknown = JSON.parse(bytes.toString("utf8"));
+
+    expect(reference.sourcePayloadSchema).toBe("maister.session.command.v2");
+    expect(canonical.envelope).toMatchObject({
+      payloadSchema: "maister.session.content.v2",
+      payload: {
+        commandId: request.command.id,
+        kind: "session.prompt",
+        requestSchema: receipt.requestSchema,
+        requestSha256: receipt.requestSha256,
+      },
+    });
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+      reference.sha256,
+    );
+    expect(payload).toMatchObject({
+      requestSha256: receipt.requestSha256,
+      phase: "rejected",
+      terminal: receipt.terminal,
+    });
+    expect(receipt.terminal?.error).toEqual(failure);
+  });
+
   it("AT-06 v2: publishes a request-bound receipt and immutable original output manifest", async () => {
     const host = await bootHost({
       runtimeRoot: await tempRoot(),
@@ -446,6 +522,21 @@ describe("command receipts", () => {
     const response = await fetch(`${host.url}/commands/${request.command.id}`);
     const json: unknown = await response.json();
     const receipt = parseCommandReceiptV2(json);
+    const canonical = host.hostState
+      .runtimeEventsAfter(host.hostState.getRuntimeEventStreamId(), null)
+      .find((event) => event.eventId === receipt.terminal?.eventId);
+
+    expect(canonical?.envelope).toMatchObject({
+      payloadSchema: "maister.session.command.v2",
+      payload: {
+        commandId: request.command.id,
+        kind: "session.prompt",
+        phase: "completed",
+        requestSchema: receipt.requestSchema,
+        requestSha256: receipt.requestSha256,
+        terminal: receipt.terminal,
+      },
+    });
     const output = parseCommandOutputReferenceV2(
       receipt.terminal?.result?.output,
     );
@@ -680,13 +771,24 @@ describe("command receipts", () => {
         assignmentId,
         hostSessionId: created.body.sessionId,
         eventType: "session.command",
-        payload: {
-          commandId,
-          kind: "session.prompt",
-          phase: "completed",
-          status: "failed",
-          error: { details: { reason: "turn_lost", runId } },
-        },
+        payload:
+          requestVersion === 2
+            ? {
+                commandId,
+                kind: "session.prompt",
+                phase: "rejected",
+                terminal: {
+                  status: "failed",
+                  error: { details: { reason: "turn_lost", runId } },
+                },
+              }
+            : {
+                commandId,
+                kind: "session.prompt",
+                phase: "completed",
+                status: "failed",
+                error: { details: { reason: "turn_lost", runId } },
+              },
       });
     },
   );

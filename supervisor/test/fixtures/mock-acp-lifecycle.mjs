@@ -109,6 +109,7 @@ class LifecycleAgent {
     )?.text;
     if (fixtureText?.startsWith("fixture-output:")) {
       const spec = JSON.parse(fixtureText.slice("fixture-output:".length));
+      if (spec.failMessage) throw new acp.RequestError(-32603, spec.failMessage);
       if (spec.frameBytes) {
         const notification = {
           jsonrpc: "2.0",

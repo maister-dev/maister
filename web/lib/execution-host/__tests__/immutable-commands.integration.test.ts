@@ -9,12 +9,16 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 
 import { normalizeCommandReceiptV2 } from "../command-receipt";
 import { depositPromptReceipt } from "../prompt-evidence";
+import { ingestRuntimeEvent } from "../events/ingest";
+import { projectCanonicalPromptCommands } from "../events/prompt-projector";
+import { releaseAssignmentForRun } from "../assignments";
 import { mintAssignment } from "../assignments";
 import { issueOwnedPrompt } from "../ledger";
 import { classifyCommandRequest, readPromptRequest } from "../command-request";
 
 import {
   executionHosts,
+  executionCommands,
   runs,
   runSessions,
   runSessionIncarnations,
@@ -407,4 +411,199 @@ it("refuses a v2 prompt with a hash and owner but no immutable request", async (
       ],
     ),
   ).rejects.toMatchObject({ code: "23514" });
+});
+
+it("v2 receipt-first late evidence settles only its exact historical request and target", async () => {
+  const isolatedProjectId = await seedProject(database.db);
+  const isolatedRunId = await seedRun(database.db, {
+    projectId: isolatedProjectId,
+    runKind: "agent",
+    status: "Running",
+  });
+  const original = await db.transaction((tx) =>
+    mintAssignment(tx, { runId: isolatedRunId, hostId, reason: "launch" }),
+  );
+
+  await db
+    .update(runs)
+    .set({ executionAssignmentId: original.id })
+    .where(eq(runs.id, isolatedRunId));
+  const runSessionId = randomUUID();
+  const incarnationId = randomUUID();
+  const hostSessionId = randomUUID();
+  const turnId = randomUUID();
+
+  await db.insert(runSessions).values({
+    id: runSessionId,
+    runId: isolatedRunId,
+    sessionName: "default",
+    executionAssignmentId: original.id,
+    hostSessionId,
+  });
+  await db.insert(runSessionIncarnations).values({
+    id: incarnationId,
+    runSessionId,
+    runId: isolatedRunId,
+    executionAssignmentId: original.id,
+    assignmentEpoch: original.epoch,
+    executionHostId: hostId,
+    hostSessionId,
+    state: "active",
+    origin: "native",
+  });
+  const admitted = await issueOwnedPrompt(db, {
+    assignment: original,
+    host,
+    targetSessionId: hostSessionId,
+    payload: { stepId: "agent", prompt: "historical immutable request" },
+    maxAttempts: 3,
+    admitOwner: async () => ({
+      logicalOperationKey: `agent_turn:initial:${turnId}:0`,
+      owner: {
+        kind: "agent_turn",
+        ref: {
+          version: 1,
+          variant: "initial",
+          runId: isolatedRunId,
+          runSessionId,
+          incarnationId,
+          assignmentId: original.id,
+          assignmentEpoch: original.epoch,
+          turnId,
+          promptOrdinal: 0,
+        },
+      },
+    }),
+  });
+
+  await releaseAssignmentForRun(db, isolatedRunId, "historical-evidence-test");
+  const successor = await db.transaction((tx) =>
+    mintAssignment(tx, { runId: isolatedRunId, hostId, reason: "recover" }),
+  );
+
+  await db
+    .update(runs)
+    .set({ executionAssignmentId: successor.id })
+    .where(eq(runs.id, isolatedRunId));
+  const streamId = randomUUID();
+  const eventId = randomUUID();
+  const terminal = {
+    outcomeVersion: 2,
+    eventId,
+    streamId,
+    sequence: "3",
+    status: "failed",
+    result: null,
+    error: {
+      code: "PRECONDITION",
+      message: "original refusal",
+      details: { reason: "turn_lost", original: { generation: 1 } },
+    },
+  };
+  const receipt = normalizeCommandReceiptV2({
+    receiptVersion: 2,
+    commandId: admitted.row.id,
+    kind: "session.prompt",
+    hostKey: host.hostKey,
+    runId: isolatedRunId,
+    assignmentId: original.id,
+    assignmentEpoch: original.epoch,
+    hostSessionId,
+    requestSchema: admitted.row.requestSchema,
+    requestSha256: admitted.row.requestSha256,
+    phase: "rejected",
+    httpStatus: 409,
+    receivedAt: new Date().toISOString(),
+    terminal,
+  });
+  const pending = await depositPromptReceipt(db, admitted.row.id, receipt);
+
+  expect(pending).toMatchObject({
+    disposition: "waiting",
+    command: { state: "queued", terminalEvidenceSha256: null },
+  });
+  const base = {
+    envelopeVersion: 1,
+    hostKey: host.hostKey,
+    hostBootId: randomUUID(),
+    streamId,
+    runId: isolatedRunId,
+    assignmentId: original.id,
+    assignmentEpoch: original.epoch,
+    hostSessionId,
+    eventType: "session.command",
+    occurredAt: new Date().toISOString(),
+    payloadSchema: "maister.session.command.v2",
+  };
+  const payload = {
+    commandId: admitted.row.id,
+    kind: "session.prompt",
+    phase: "rejected",
+    sourceCommandId: admitted.row.id,
+    requestSchema: admitted.row.requestSchema,
+    requestSha256: admitted.row.requestSha256,
+    terminal,
+  };
+
+  expect(
+    await ingestRuntimeEvent({
+      db,
+      executionHostId: hostId,
+      envelope: {
+        ...base,
+        eventId: randomUUID(),
+        sequence: "0",
+        payload: { ...payload, phase: "accepted", terminal: null },
+      },
+    }),
+  ).toMatchObject({ disposition: "accepted" });
+  for (const [sequence, change] of [
+    ["1", { requestSha256: "f".repeat(64) }],
+    ["2", {}],
+  ] as const) {
+    const mismatchId = randomUUID();
+
+    expect(
+      await ingestRuntimeEvent({
+        db,
+        executionHostId: hostId,
+        envelope: {
+          ...base,
+          eventId: mismatchId,
+          sequence,
+          ...(sequence === "2" ? { hostSessionId: randomUUID() } : {}),
+          payload: {
+            ...payload,
+            ...change,
+            terminal: { ...terminal, eventId: mismatchId, sequence },
+          },
+        },
+      }),
+    ).toMatchObject({ disposition: "stale_epoch" });
+  }
+  expect(
+    await ingestRuntimeEvent({
+      db,
+      executionHostId: hostId,
+      envelope: { ...base, eventId, sequence: "3", payload },
+    }),
+  ).toMatchObject({ disposition: "accepted" });
+  await projectCanonicalPromptCommands({ db, runId: isolatedRunId });
+  const [command] = await db
+    .select()
+    .from(executionCommands)
+    .where(eq(executionCommands.id, admitted.row.id));
+  const [current] = await db
+    .select()
+    .from(runs)
+    .where(eq(runs.id, isolatedRunId));
+
+  expect(command).toMatchObject({
+    state: "failed",
+    lastError: terminal.error,
+    applicationState: "pending",
+    completionAppliedAt: null,
+  });
+  expect(command.terminalEvidenceSha256).toMatch(/^[a-f0-9]{64}$/);
+  expect(current.executionAssignmentId).toBe(successor.id);
 });
