@@ -30,6 +30,7 @@ import {
   lockPermissionResultEvidence,
   completePermissionResultHandoff,
   isPermissionResultCommand,
+  permissionResultPrecedesCheckpoint,
 } from "./permission-result-evidence";
 import {
   nodePermissionSourceSchema,
@@ -217,6 +218,8 @@ export async function prepareFlowPermissionResult(
     checkpoint.result?.sessionId !== source.data.supervisorSessionId
   )
     return { kind: "pending", reason: "source_checkpoint_pending" };
+  if (!(await permissionResultPrecedesCheckpoint(db, command, checkpoint)))
+    return { kind: "pending", reason: "source_checkpoint_order_unproven" };
   const outcome: PromptOwnerOutcome =
     command.state === "succeeded"
       ? {

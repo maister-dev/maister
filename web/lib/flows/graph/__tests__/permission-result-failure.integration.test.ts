@@ -13,6 +13,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   executionCommands,
+  executionEvents,
   gateResults,
   hitlRequests,
   nodeAttempts,
@@ -30,6 +31,7 @@ import { startProjectionWorker } from "@/lib/execution-host/events/projection-wo
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
+import { prepareFlowPermissionResult } from "@/lib/flows/graph/permission-resume";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { interruptPermissionInputAcknowledgement } from "@/test-support/permission-ack-fault";
 import { resumeRun } from "@/lib/runs/resume";
@@ -248,6 +250,161 @@ async function seedFailureFlow(owner: FailureOwner): Promise<SeededGraphRun> {
 }
 
 describe("Owned Flow completed-command failure handoff", () => {
+  it.each<FailureOwner>(["node", "ai_judgment", "skill_check"])(
+    "owner-flow-permission-checkpoint-interruption: %s does not apply teardown as failure",
+    async (owner) => {
+      await stopRuntimeEventConsumers();
+      supervisor = await supervisor.restart({
+        env: {
+          ...supervisor.options.env,
+          MOCK_ACP_STOP_REASON: "end_turn",
+          MOCK_ACP_HOLD_AFTER_PERMISSION: "1",
+        },
+      });
+      const seeded = await seedFailureFlow(owner);
+      const driver = startProcess("flow-prompt-owner-process.ts", seeded.runId);
+
+      try {
+        await expect
+          .poll(
+            async () => {
+              if (driver.child.exitCode !== null)
+                throw new Error(driver.output());
+              const [run] = await db
+                .select()
+                .from(runs)
+                .where(eq(runs.id, seeded.runId));
+
+              return run.status;
+            },
+            { timeout: 30_000 },
+          )
+          .toBe("NeedsInput");
+        const [source] = await db
+          .select()
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, seeded.runId),
+              eq(executionCommands.kind, "session.prompt"),
+            ),
+          );
+        const [hitl] = await db
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.runId, seeded.runId));
+        const hosts = createExecutionHosts({ db });
+
+        startRuntimeEventConsumer({
+          db,
+          executionHostId: source.executionHostId,
+          transport: hosts.transport,
+        });
+        await interruptPermissionInputAcknowledgement({
+          database,
+          hitlRequestId: hitl.id,
+          startResponder: () =>
+            startProcess(
+              "flow-permission-response-process.ts",
+              hitl.id,
+              "gate-permission-user",
+            ),
+        });
+        expect(
+          await hosts.transport.getCommandReceipt(source.id),
+        ).toMatchObject({
+          phase: "accepted",
+        });
+        await db
+          .update(runs)
+          .set({ keepaliveUntil: new Date(Date.now() - 1_000) })
+          .where(eq(runs.id, seeded.runId));
+        await runSweepTick({ db, executionHosts: hosts });
+        await expect
+          .poll(() => driver.child.exitCode, { timeout: 45_000 })
+          .toBe(0);
+        await expect
+          .poll(
+            async () => {
+              const [command] = await db
+                .select()
+                .from(executionCommands)
+                .where(eq(executionCommands.id, source.id));
+
+              return { state: command.state, error: command.lastError?.code };
+            },
+            { timeout: 30_000 },
+          )
+          .toEqual({ state: "failed", error: "ACP_PROTOCOL" });
+        const events = await db
+          .select()
+          .from(executionEvents)
+          .where(eq(executionEvents.runId, seeded.runId));
+        const accepted = events.find(
+          (event) =>
+            event.eventType === "session.command" &&
+            event.payload?.kind === "session.checkpoint" &&
+            event.payload.phase === "accepted",
+        );
+        const terminal = events.find(
+          (event) =>
+            event.payload?.commandId === source.id &&
+            event.payload.phase === "rejected",
+        );
+
+        expect(accepted?.eventStreamId).toBe(terminal?.eventStreamId);
+        expect(accepted?.hostSequence).toBeLessThan(terminal!.hostSequence!);
+        await expect(
+          resumeRun(seeded.runId, { db, executionHosts: hosts }),
+        ).resolves.toMatchObject({
+          ok: false,
+          code: "EXECUTOR_UNAVAILABLE",
+          retryable: true,
+        });
+        const [parked] = await db
+          .select()
+          .from(runs)
+          .where(eq(runs.id, seeded.runId));
+        const [parent] = await db
+          .select()
+          .from(nodeAttempts)
+          .where(eq(nodeAttempts.runId, seeded.runId));
+        const prompts = await db
+          .select()
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, seeded.runId),
+              eq(executionCommands.kind, "session.prompt"),
+            ),
+          );
+        const gates = await db
+          .select()
+          .from(gateResults)
+          .where(eq(gateResults.runId, seeded.runId));
+
+        expect(parked.status).toBe("NeedsInputIdle");
+        expect(parked.executionAssignmentId).toBe(source.executionAssignmentId);
+        expect(parent.actionResume).toBeNull();
+        expect(prompts).toHaveLength(1);
+        expect(gates.every((gate) => gate.permissionResume === null)).toBe(
+          true,
+        );
+      } catch (error) {
+        throw new Error(
+          `Checkpoint interruption failed for ${seeded.runId} (${owner}); child exit=${driver.child.exitCode}, signal=${driver.child.signalCode}\n${driver.output()}`,
+          { cause: error },
+        );
+      } finally {
+        if (driver.child.exitCode === null && driver.child.signalCode === null)
+          driver.child.kill("SIGKILL");
+        await driver.exited;
+        await stopRuntimeEventConsumers();
+      }
+    },
+    120_000,
+  );
+
   it.each<
     Readonly<{ owner: FailureOwner; stopReason: "cancelled" | "max_tokens" }>
   >([
@@ -258,10 +415,17 @@ describe("Owned Flow completed-command failure handoff", () => {
   ])(
     "owner-flow-permission-result-failure: $owner preserves $stopReason completion",
     async ({ owner, stopReason }) => {
-      if (supervisor.options.env?.MOCK_ACP_STOP_REASON !== stopReason) {
+      if (
+        supervisor.options.env?.MOCK_ACP_STOP_REASON !== stopReason ||
+        supervisor.options.env?.MOCK_ACP_HOLD_AFTER_PERMISSION === "1"
+      ) {
         await stopRuntimeEventConsumers();
         supervisor = await supervisor.restart({
-          env: { ...supervisor.options.env, MOCK_ACP_STOP_REASON: stopReason },
+          env: {
+            ...supervisor.options.env,
+            MOCK_ACP_STOP_REASON: stopReason,
+            MOCK_ACP_HOLD_AFTER_PERMISSION: "0",
+          },
         });
       }
       const seeded = await seedFailureFlow(owner);
@@ -368,6 +532,19 @@ describe("Owned Flow completed-command failure handoff", () => {
           .where(eq(runs.id, seeded.runId));
 
         expect(parked.status).toBe("NeedsInputIdle");
+        await expect
+          .poll(
+            async () =>
+              (
+                await prepareFlowPermissionResult(
+                  db,
+                  seeded.runId,
+                  hosts.transport,
+                )
+              )?.kind,
+            { timeout: 15_000 },
+          )
+          .toBe("completed");
         if (owner === "node" && stopReason === "max_tokens")
           await assertQuarantineDuringClaim(seeded.runId, source.id, hosts);
         expect(

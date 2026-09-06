@@ -374,7 +374,15 @@ Its verified output is decoded as the ordinary failed node result or gate
 verdict. An unexpected `cancelled` is mapped by the supervisor to a failed
 `ACP_PROTOCOL` command; that exact receipt/event-agreed error can also be
 handed off. The claim and later lineage reads require the original request and
-terminal digests and refuse terminal-conflict quarantine. Nodes retain
+terminal digests and refuse terminal-conflict quarantine. A result handoff also
+requires the agreed prompt terminal event to precede the exact checkpoint
+command's accepted event in the same host stream. Preflight, capacity claim and
+historical lineage reads verify the canonical command/assignment/session boundary
+and compare host sequence positions. Wall clocks and arrival order cannot prove
+this. An `ACP_PROTOCOL` failure caused by checkpoint teardown is interruption
+evidence; it stays pending without a result handoff or fresh prompt. Missing
+ordering evidence also stays pending. Explicit continuation of these interrupted
+confirmed-input turns remains part of the open S2.6 work. Nodes retain
 `ok: false` with `ACP_PROTOCOL`; gates retain their failed verdict. The graph
 then uses its existing failure handling, without another prompt, successor
 action or parent replay. Fenced commands and other failed-command codes remain

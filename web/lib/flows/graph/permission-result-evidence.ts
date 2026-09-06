@@ -10,12 +10,17 @@ import type {
 } from "@/lib/db/schema";
 import type { CommandReceipt } from "@/lib/execution-host/contracts";
 
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { canonicalCommandJson } from "../../../../runtime/command-json";
 
-import { executionCommands, hitlRequests, runs } from "@/lib/db/schema";
+import {
+  executionCommands,
+  executionEvents,
+  hitlRequests,
+  runs,
+} from "@/lib/db/schema";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
 import { markSucceeded } from "@/lib/execution-host/commands";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
@@ -62,6 +67,59 @@ export function isPermissionResultCommand(
     (command.state === "succeeded" ||
       (command.state === "failed" &&
         command.lastError?.code === "ACP_PROTOCOL"))
+  );
+}
+
+/** Teardown can fail the prompt itself. Only a terminal published before
+ * checkpoint admission proves an independently completed result. Compare
+ * durable host positions, never manager/host wall clocks or delivery order.
+ */
+export async function permissionResultPrecedesCheckpoint(
+  db: Db,
+  command: ExecutionCommand,
+  checkpoint: ExecutionCommand,
+): Promise<boolean> {
+  if (!command.terminalEventId || !command.targetSessionId) return false;
+  const boundary = and(
+    eq(executionEvents.source, "host"),
+    eq(executionEvents.runId, command.runId),
+    eq(executionEvents.executionHostId, command.executionHostId),
+    eq(executionEvents.executionAssignmentId, command.executionAssignmentId),
+    eq(executionEvents.assignmentEpoch, command.assignmentEpoch),
+    eq(executionEvents.hostSessionId, command.targetSessionId),
+    eq(executionEvents.eventType, "session.command"),
+    eq(executionEvents.ingestDisposition, "accepted"),
+  );
+  const [terminal] = await db
+    .select()
+    .from(executionEvents)
+    .where(and(boundary, eq(executionEvents.id, command.terminalEventId)));
+  const admissions = await db
+    .select()
+    .from(executionEvents)
+    .where(
+      and(
+        boundary,
+        sql`${executionEvents.payload}->>'commandId' = ${checkpoint.id}`,
+        sql`${executionEvents.payload}->>'kind' = 'session.checkpoint'`,
+        sql`${executionEvents.payload}->>'phase' = 'accepted'`,
+      ),
+    )
+    .limit(2);
+  const accepted = admissions[0];
+
+  return Boolean(
+    terminal &&
+      terminal.payload?.commandId === command.id &&
+      terminal.payload.kind === "session.prompt" &&
+      terminal.payload.phase ===
+        (command.state === "succeeded" ? "completed" : "rejected") &&
+      admissions.length === 1 &&
+      accepted.eventStreamId !== null &&
+      accepted.eventStreamId === terminal.eventStreamId &&
+      accepted.hostSequence !== null &&
+      terminal.hostSequence !== null &&
+      terminal.hostSequence < accepted.hostSequence,
   );
 }
 
@@ -161,6 +219,18 @@ export async function lockPermissionResultEvidence(
       "permission-result-handoff-rejected",
     );
     throw new PromptOwnerInvariantError("permission_result_generation");
+  }
+
+  if (!(await permissionResultPrecedesCheckpoint(tx, command, checkpoint))) {
+    log.warn(
+      {
+        runId: run.id,
+        commandId: command.id,
+        checkpointCommandId: checkpoint.id,
+      },
+      "permission-result-checkpoint-order-unproven",
+    );
+    throw new PromptOwnerInvariantError("permission_result_checkpoint_order");
   }
 
   return { input, checkpoint };

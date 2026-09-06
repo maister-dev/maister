@@ -7,7 +7,10 @@ import type { FlowPermissionResultResume } from "./action-resume";
 import { eq } from "drizzle-orm";
 
 import { flowPermissionSourceSchema } from "./permission-source";
-import { isPermissionResultCommand } from "./permission-result-evidence";
+import {
+  isPermissionResultCommand,
+  permissionResultPrecedesCheckpoint,
+} from "./permission-result-evidence";
 
 import {
   executionAssignments,
@@ -155,4 +158,6 @@ export async function assertPermissionResultSource(
     receipt.body?.ok !== true
   )
     throw new PromptOwnerInvariantError("permission_result_source_generation");
+  if (!(await permissionResultPrecedesCheckpoint(db, command, checkpoint)))
+    throw new PromptOwnerInvariantError("permission_result_checkpoint_order");
 }
