@@ -122,6 +122,18 @@ class LifecycleAgent {
       // Flow nodes may surround the fixture line with resume and run context.
       const spec = JSON.parse(fixtureLine.slice("fixture-output:".length));
       if (spec.failMessage) throw new acp.RequestError(-32603, spec.failMessage);
+      if (spec.permission) {
+        const decision = await this.connection.requestPermission({
+          sessionId: params.sessionId,
+          toolCall: { toolCallId: "owned-permission", title: "fixture write", kind: "edit", status: "pending" },
+          options: [
+            { optionId: "allow", kind: "allow_once", name: "Allow" },
+            { optionId: "deny", kind: "reject_once", name: "Deny" },
+          ],
+        });
+        if (decision.outcome.outcome !== "selected" || decision.outcome.optionId !== "allow")
+          throw new acp.RequestError(-32603, "fixture permission was not allowed");
+      }
       if (spec.frameBytes) {
         const notification = {
           jsonrpc: "2.0",

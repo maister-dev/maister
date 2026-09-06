@@ -288,6 +288,19 @@ released-source result handoff and pre-prompt session-create recovery remain
 S2.6 work. The
 global owner/continuation worker activation remains S2.12.
 
+In-flight node permissions retain the exact source command, attempt/ordinal,
+assignment and incarnation in the HITL schema. The leased driver can reattach
+that turn while the run remains `NeedsInput`; it does not authorize another
+prompt or advance the cursor. Replayed command/request pairs reuse their HITL
+row. Delivery intent stores the original input command and complete selection
+before dispatch, so a lost ACK replays that same command. Confirmed input,
+delivery audit, HITL completion and the graph wake commit together. A definitive
+503 can be retried by an operator with a fresh delivery; automatic recovery
+does not grant that decision. Persistence failure releases the driver wait to
+the durable continuation, which replays the request and completes the original
+supervisor deferred after delivery. A checkpointed turn under a replacement
+assignment still requires the separate permission-resume/handoff work above.
+
 ### Remaining domain adapters (Designed)
 
 Persist the reference before remote dispatch in the same transaction as the owner admission. Use discriminated subvariants under the existing owner families where possible; widen the checked family only if necessary. Resolve references from authoritative rows. A Flow owner always references existing `node_attempts`, `gate_results` or consensus ledger rows; never create another Flow attempt ledger.

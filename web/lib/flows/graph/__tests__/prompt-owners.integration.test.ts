@@ -16,19 +16,26 @@ import {
   domainEvents,
   executionAssignments,
   gateResults,
+  hitlRequests,
   nodeAttempts,
   runs,
+  users,
 } from "@/lib/db/schema";
 import { loadRun } from "@/lib/flows/graph/runner-core";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { buildContext } from "@/lib/flows/context";
 import { runNodeGates } from "@/lib/flows/graph/gates-exec";
 import { flowPromptOwners } from "@/lib/flows/graph/prompt-owner";
+import { assertNodePermissionDelivery } from "@/lib/flows/graph/node-permission";
 import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
 import { runFlow } from "@/lib/flows/runner";
+import { respondToHitl } from "@/lib/services/hitl";
 import { buildOrchestratorResumeConsumer } from "@/lib/domain-events/orchestrator-resume";
 import { createExecutionHosts } from "@/lib/execution-host/client";
+import { defaultTransport } from "@/lib/execution-host/default-transport";
+import { UNKNOWN_OUTCOME_DETAIL } from "@/lib/execution-host/contracts";
+import { MaisterError } from "@/lib/errors";
 import { mintAssignment } from "@/lib/execution-host/assignments";
 import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
 import { startProjectionWorker } from "@/lib/execution-host/events/projection-worker";
@@ -140,6 +147,7 @@ function startDriver(runId: string) {
 function startFixtureProcess(
   script: string,
   targetId: string,
+  additionalArgs: readonly string[] = [],
 ): {
   child: ChildProcess;
   exited: Promise<number | null>;
@@ -147,7 +155,7 @@ function startFixtureProcess(
 } {
   const child = fork(
     path.resolve("test-support", script),
-    [targetId, supervisor.runtimeRoot],
+    [targetId, supervisor.runtimeRoot, ...additionalArgs],
     {
       execArgv: [
         "--import",
@@ -185,6 +193,20 @@ async function killAtNodeAttemptWrite(
   predicate: string,
   launch: () => ReturnType<typeof startDriver>,
 ): Promise<void> {
+  await killAtDatabaseWrite({
+    table: "node_attempts",
+    event: "INSERT OR UPDATE",
+    predicate,
+    launch,
+  });
+}
+
+async function killAtDatabaseWrite(input: {
+  table: "node_attempts" | "hitl_requests" | "execution_commands";
+  event: "INSERT OR UPDATE" | "INSERT" | "UPDATE";
+  predicate: string;
+  launch: () => ReturnType<typeof startDriver>;
+}): Promise<void> {
   const trigger = `attempt_pause_${randomUUID().replaceAll("-", "")}`;
   const lockKey = Math.floor(Math.random() * 2_000_000_000) + 1;
   const lock = await database.pool.connect();
@@ -193,12 +215,12 @@ async function killAtNodeAttemptWrite(
   try {
     await lock.query("SELECT pg_advisory_lock(260908, $1)", [lockKey]);
     await database.pool.query(
-      `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF ${predicate} THEN PERFORM pg_advisory_xact_lock(260908, ${lockKey}); END IF; RETURN NEW; END $$`,
+      `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF ${input.predicate} THEN PERFORM pg_advisory_xact_lock(260908, ${lockKey}); END IF; RETURN NEW; END $$`,
     );
     await database.pool.query(
-      `CREATE TRIGGER ${trigger} BEFORE INSERT OR UPDATE ON node_attempts FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
+      `CREATE TRIGGER ${trigger} BEFORE ${input.event} ON ${input.table} FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
     );
-    driver = launch();
+    driver = input.launch();
     await expect
       .poll(
         async () => {
@@ -227,13 +249,369 @@ async function killAtNodeAttemptWrite(
     await lock.query("SELECT pg_advisory_unlock_all()");
     lock.release();
     await database.pool.query(
-      `DROP TRIGGER IF EXISTS ${trigger} ON node_attempts`,
+      `DROP TRIGGER IF EXISTS ${trigger} ON ${input.table}`,
     );
     await database.pool.query(`DROP FUNCTION IF EXISTS ${trigger}()`);
   }
 }
 
 describe("Flow prompt owners through the production graph driver", () => {
+  it.each([
+    "before_hitl",
+    "after_hitl",
+    "before_delivery",
+    "before_delivery_ack",
+    "delivery_refused",
+    "persistence_failure",
+    "lost_response",
+    "concurrent_response",
+  ] as const)(
+    "owner-flow-permission-live: %s retains the original turn and permission",
+    async (window) => {
+      const seeded = await seedOwnerFlow([
+        {
+          id: "work",
+          type: "ai_coding",
+          action: {
+            prompt:
+              'fixture-output:{"bytes":0,"permission":true,"text":"permission recovered"}',
+          },
+          transitions: { success: "done" },
+        },
+      ]);
+      const userId = randomUUID();
+
+      await database.db
+        .insert(users)
+        .values({ id: userId, email: `${userId}@example.test`, role: "admin" });
+      if (window === "persistence_failure") {
+        const trigger = `permission_failure_${randomUUID().replaceAll("-", "")}`;
+
+        await database.pool.query(
+          `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.run_id = '${seeded.runId}' THEN RAISE EXCEPTION 'permission persistence fixture failure'; END IF; RETURN NEW; END $$`,
+        );
+        await database.pool.query(
+          `CREATE TRIGGER ${trigger} BEFORE INSERT ON hitl_requests FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
+        );
+        const driver = startDriver(seeded.runId);
+
+        try {
+          await expect(driver.exited).resolves.toBe(0);
+          const [run] = await database.db
+            .select()
+            .from(runs)
+            .where(eq(runs.id, seeded.runId));
+
+          expect(run.status).toBe("Running");
+        } finally {
+          driver.child.kill("SIGKILL");
+          await driver.exited;
+          await database.pool.query(`DROP TRIGGER ${trigger} ON hitl_requests`);
+          await database.pool.query(`DROP FUNCTION ${trigger}()`);
+        }
+      } else if (window === "before_hitl") {
+        await killAtDatabaseWrite({
+          table: "hitl_requests",
+          event: "INSERT",
+          predicate: `NEW.run_id = '${seeded.runId}'`,
+          launch: () => startDriver(seeded.runId),
+        });
+      } else {
+        const driver = startDriver(seeded.runId);
+
+        try {
+          await expect
+            .poll(
+              async () => {
+                const [run] = await database.db
+                  .select()
+                  .from(runs)
+                  .where(eq(runs.id, seeded.runId));
+
+                return run?.status;
+              },
+              { timeout: 20_000 },
+            )
+            .toBe("NeedsInput");
+        } finally {
+          driver.child.kill("SIGKILL");
+          await driver.exited;
+        }
+      }
+      const [original] = await database.db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, seeded.runId),
+            eq(executionCommands.kind, "session.prompt"),
+          ),
+        );
+
+      if (window === "before_delivery" || window === "before_delivery_ack") {
+        const [hitl] = await database.db
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.runId, seeded.runId));
+
+        await killAtDatabaseWrite({
+          table: "execution_commands",
+          event: "UPDATE",
+          predicate: `NEW.run_id = '${seeded.runId}' AND NEW.kind = 'session.input' AND ${window === "before_delivery" ? "NEW.attempts = 1" : "NEW.state = 'succeeded'"}`,
+          launch: () =>
+            startFixtureProcess(
+              "flow-permission-response-process.ts",
+              hitl.id,
+              [userId],
+            ),
+        });
+      }
+      const continuation = startFlowContinuationWorker({
+        db: database.db as unknown as Db,
+        runtimeRoot: supervisor.runtimeRoot,
+      });
+
+      try {
+        await expect
+          .poll(
+            async () => {
+              const [hitl] = await database.db
+                .select()
+                .from(hitlRequests)
+                .where(eq(hitlRequests.runId, seeded.runId));
+
+              return hitl?.schema;
+            },
+            { timeout: 55_000 },
+          )
+          .toMatchObject({
+            flowPrompt: {
+              version: 1,
+              commandId: original.id,
+              nodeAttemptId: (original.ownerRef as { nodeAttemptId: string })
+                .nodeAttemptId,
+              promptOrdinal: 0,
+              assignmentId: original.executionAssignmentId,
+              incarnationId: (original.ownerRef as { incarnationId: string })
+                .incarnationId,
+            },
+          });
+        const [hitl] = await database.db
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.runId, seeded.runId));
+        const permissionSchema = hitl.schema as {
+          flowPrompt: Record<string, unknown>;
+        };
+
+        for (const changed of [
+          { promptOrdinal: 1 },
+          { nodeAttemptId: randomUUID() },
+          { incarnationId: randomUUID() },
+          { assignmentId: randomUUID() },
+        ]) {
+          await expect(
+            database.db.transaction((tx) =>
+              assertNodePermissionDelivery(tx as unknown as Db, {
+                ...permissionSchema,
+                flowPrompt: { ...permissionSchema.flowPrompt, ...changed },
+              }),
+            ),
+          ).rejects.toMatchObject({ code: "CONFLICT" });
+        }
+        if (window === "delivery_refused") {
+          const transport = defaultTransport();
+          const refused = await respondToHitl(
+            {
+              runId: seeded.runId,
+              hitlRequestId: hitl.id,
+              body: { optionId: "allow" },
+            },
+            {
+              kind: "user",
+              userId,
+              label: "Permission qualification",
+              preauthorizedProjectId: seeded.projectId,
+            },
+            {
+              db: database.db,
+              executionHosts: createExecutionHosts({
+                db: database.db as unknown as Db,
+                transport: {
+                  ...transport,
+                  deliverInput: async () => {
+                    throw new MaisterError(
+                      "EXECUTOR_UNAVAILABLE",
+                      "qualification refusal before input dispatch",
+                      { details: { httpStatus: 503 } },
+                    );
+                  },
+                },
+              }),
+            },
+          );
+
+          expect(refused.status).toBe(503);
+        }
+        if (window !== "before_delivery" && window !== "before_delivery_ack") {
+          const transport = defaultTransport();
+          let responseLost = false;
+          const responseHosts = createExecutionHosts({
+            db: database.db as unknown as Db,
+            ...(window === "lost_response"
+              ? {
+                  transport: {
+                    ...transport,
+                    deliverInput: async (
+                      ...args: Parameters<typeof transport.deliverInput>
+                    ) => {
+                      const result = await transport.deliverInput(...args);
+
+                      if (!responseLost) {
+                        responseLost = true;
+                        throw new MaisterError(
+                          "EXECUTOR_UNAVAILABLE",
+                          "qualification lost input response",
+                          { details: { transport: UNKNOWN_OUTCOME_DETAIL } },
+                        );
+                      }
+
+                      return result;
+                    },
+                  },
+                }
+              : {}),
+          });
+          const respond = () =>
+            respondToHitl(
+              {
+                runId: seeded.runId,
+                hitlRequestId: hitl.id,
+                body: { optionId: "allow" },
+              },
+              {
+                kind: "user",
+                userId,
+                label: "Permission qualification",
+                preauthorizedProjectId: seeded.projectId,
+              },
+              {
+                db: database.db,
+                executionHosts: responseHosts,
+              },
+            );
+
+          if (window === "concurrent_response") {
+            const replies = await Promise.allSettled([respond(), respond()]);
+
+            expect(
+              replies.some(
+                (reply) =>
+                  reply.status === "fulfilled" && reply.value.status === 200,
+              ),
+            ).toBe(true);
+            for (const reply of replies) {
+              if (reply.status === "fulfilled")
+                expect([200, 202]).toContain(reply.value.status);
+              else expect(reply.reason).toMatchObject({ code: "CONFLICT" });
+            }
+          }
+          const response = await respond();
+
+          expect(response.status).toBe(200);
+        }
+        await expect
+          .poll(
+            async () => {
+              const [run] = await database.db
+                .select()
+                .from(runs)
+                .where(eq(runs.id, seeded.runId));
+
+              return run?.status;
+            },
+            { timeout: 55_000 },
+          )
+          .toBe("Review");
+        const prompts = await database.db
+          .select()
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, seeded.runId),
+              eq(executionCommands.kind, "session.prompt"),
+            ),
+          );
+
+        expect(prompts).toHaveLength(1);
+        expect(prompts[0]).toMatchObject({
+          id: original.id,
+          applicationState: "applied",
+        });
+        const attempts = await database.db
+          .select()
+          .from(nodeAttempts)
+          .where(eq(nodeAttempts.runId, seeded.runId));
+
+        expect(attempts).toHaveLength(1);
+        expect(attempts[0]).toMatchObject({
+          status: "Succeeded",
+          actionPromptOrdinal: 0,
+          actionResume: null,
+        });
+        const hitls = await database.db
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.runId, seeded.runId));
+
+        expect(hitls).toHaveLength(1);
+        expect(hitls[0].respondedAt).toBeInstanceOf(Date);
+        const inputs = await database.db
+          .select()
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, seeded.runId),
+              eq(executionCommands.kind, "session.input"),
+            ),
+          );
+
+        expect(inputs).toHaveLength(window === "delivery_refused" ? 2 : 1);
+        const deliveredInput = inputs.find(
+          (command) => command.state === "succeeded",
+        )!;
+
+        expect(deliveredInput).toBeDefined();
+        if (window === "delivery_refused")
+          expect(
+            inputs.filter((command) => command.state === "failed"),
+          ).toHaveLength(1);
+        expect(hitls[0].response).toMatchObject({
+          optionId: "allow",
+          _delivery: {
+            commandId: deliveredInput.id,
+            hostSessionId: original.targetSessionId,
+            payload: {
+              kind: "permission",
+              action: "select",
+              optionId: "allow",
+            },
+          },
+          _audit: {
+            deliveryCommandId: deliveredInput.id,
+            sourceCommandId: original.id,
+            assignmentId: original.executionAssignmentId,
+            incarnationId: (original.ownerRef as { incarnationId: string })
+              .incarnationId,
+          },
+        });
+      } finally {
+        await continuation.stop();
+      }
+    },
+    140_000,
+  );
+
   it("owner-flow-rework: SIGKILL retains the selected target, comments and attempt budget", async () => {
     const seeded = await seedOwnerFlow(
       [

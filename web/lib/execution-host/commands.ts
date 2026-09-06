@@ -261,8 +261,9 @@ export async function rearmPromptAdmission(
   };
 }
 
-// Recovery only: a `delivering` row the host never saw (no receipt) goes back
-// to `queued` with its attempt count intact, so the deliverer can claim it.
+// Recovery preserves the attempt count. A proven admission miss may requeue;
+// permission replay also may requeue after verifying the complete persisted
+// selection, since the host deduplicates that exact request under its old ID.
 export async function requeueDelivering(
   db: Db,
   id: string,

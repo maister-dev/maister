@@ -7,6 +7,7 @@ import type { CommandReceipt } from "./contracts";
 import type { CommandEnvelope, CommandKind } from "./types";
 
 import pino, { type Logger } from "pino";
+import { eq } from "drizzle-orm";
 
 import {
   claimDelivering,
@@ -40,6 +41,7 @@ import {
 } from "./prompt-evidence";
 
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { runs } from "@/lib/db/schema";
 
 const defaultLog = pino({
   name: "execution-host",
@@ -373,13 +375,37 @@ export async function deliverCommand<TResult>(
     const latencyMs = Date.now() - startedAt;
 
     const bindingDisposition = await opts.db.transaction(async (tx) => {
-      await markSucceeded(
+      // Permission intent/replay takes the run lock before its input row.
+      // ACK application must use the same order when callers race a retry.
+      if (kind === "session.input")
+        await tx
+          .select({ id: runs.id })
+          .from(runs)
+          .where(eq(runs.id, opts.command.runId))
+          .for("update");
+      const acknowledged = await markSucceeded(
         tx as unknown as Db,
         opts.command.id,
         attempts,
         summarize(result, opts.resultSummary),
         { logger, now: now() },
       );
+
+      if (
+        kind === "session.input" &&
+        !acknowledged.changed &&
+        acknowledged.row?.state !== "succeeded"
+      )
+        throw new MaisterError(
+          "CONFLICT",
+          "permission ACK no longer owns its delivery attempt",
+          {
+            details: {
+              reason: "permission_ack_superseded",
+              commandId: opts.command.id,
+            },
+          },
+        );
 
       return opts.onAck?.(tx as unknown as Db, result);
     });

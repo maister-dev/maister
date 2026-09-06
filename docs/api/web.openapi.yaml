@@ -6927,6 +6927,13 @@ paths:
           `respondedAt`. Conflicting optionId on retry → 409. Same
           optionId on retry → idempotent 200. Supervisor 404 racing a
           concurrent winner → 200 (no `runs.status = Failed`).
+          Owned Flow node permissions derive their exact command, attempt,
+          ordinal, assignment and incarnation from `schema.flowPrompt`.
+          The server stores `_delivery` with the original input command and
+          complete selection before dispatch; process recovery replays that
+          command. Input success, delivery audit, `respondedAt` and the graph
+          wake commit together. The request body still accepts only the
+          declared choice; clients cannot supply either authority descriptor.
         - **form / human**: schema validation runs first (NEEDS_INPUT 422
           on failure). Then a row-level claim stores `response`. Only
           after the claim succeeds does the route write
@@ -7069,9 +7076,12 @@ paths:
         from the body. `provide-resolution` requires bounded non-empty
         `response.resolution`; free-form resolution text is not logged.
 
-        On every success path the body returns `runStatus: "NeedsInput"`
-        — the runner (not this route) is the single owner of the
-        `NeedsInput → Running` transition.
+        Successful live permission delivery returns `state: "delivered"`.
+        For an owned node prompt, the exact input ACK transaction also wakes
+        the run from `NeedsInput` when that turn has no unanswered permission.
+        Other resume responses may return `runStatus: "NeedsInput"` while
+        the runner processes their stored intent. Observe subsequent run
+        status changes through the run stream.
       operationId: respondHitl
       parameters:
         - name: runId
@@ -7209,7 +7219,7 @@ paths:
                       in the implementation DTO.
                   state:
                     type: string
-                    enum: [awaiting-decisions]
+                    enum: [awaiting-decisions, delivered]
                   remainingDecisionCount:
                     type: integer
                     minimum: 0
@@ -7261,7 +7271,9 @@ paths:
             returning 202; after auto-delivery completes the retries
             return 200 idempotent. For ADR-137 Plan-review final answers, the
             graph-only claim returns `rework-scheduled` or `resume-queued` and
-            never calls `resumeRun`.
+            never calls `resumeRun`. A concurrent replay of the same permission
+            input returns `state: "delivery-in-progress"` while its winning
+            delivery is pending; it does not cancel the pending permission.
           content:
             application/json:
               schema:
@@ -7272,7 +7284,7 @@ paths:
                   runStatus: { type: string, enum: ["NeedsInput"] }
                   state:
                     type: string
-                    enum: [resume-in-progress, rework-scheduled, resume-queued]
+                    enum: [resume-in-progress, rework-scheduled, resume-queued, delivery-in-progress]
                   remainingDecisionCount:
                     type: integer
                     minimum: 0

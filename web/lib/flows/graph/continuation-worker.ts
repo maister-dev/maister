@@ -19,6 +19,8 @@ import pino from "pino";
 
 import { runFlow } from "../runner";
 
+import { openNodePromptExists } from "./node-permission";
+
 import {
   executionAssignments,
   executionCommands,
@@ -75,7 +77,13 @@ export function startFlowContinuationWorker(input: {
                 eq(runs.runKind, "flow"),
                 or(
                   and(
-                    eq(runs.status, "Running"),
+                    or(
+                      eq(runs.status, "Running"),
+                      and(
+                        eq(runs.status, "NeedsInput"),
+                        openNodePromptExists(),
+                      ),
+                    ),
                     eq(executionAssignments.state, "active"),
                   ),
                   and(

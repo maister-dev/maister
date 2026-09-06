@@ -37,6 +37,7 @@ import {
   type FlowDriverClaim,
 } from "./graph/driver-claim";
 import { closeAppliedFlowPromptSession } from "./graph/prompt-session-cleanup";
+import { handleNodePermission } from "./graph/node-permission";
 
 import { normalizeCapabilityTokens } from "@/lib/capabilities/token-normalizer";
 import { appendCapped } from "@/lib/flows/capped-text";
@@ -76,6 +77,7 @@ import { escalateHookTrip } from "@/lib/runs/hook-trip";
 import { haltRuleFromEvent } from "@/lib/runs/hook-trip-rule";
 import { staleSessionBinding } from "@/lib/execution-host/session-binding";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
+import { isMaisterError } from "@/lib/errors";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 const log = pino({
@@ -232,6 +234,7 @@ type PermissionContext = {
   supervisorSessionId: string;
   cancelPermission: PermissionCanceller;
   deliverPermission: PermissionDeliverer;
+  ownedNode?: { owner: NodePromptOwner; client: BoundClient };
 };
 
 // M8 T11 / D9: look for a prior hitl_requests row where the operator
@@ -353,6 +356,19 @@ async function handlePermissionRequest(
   ev: Extract<SupervisorEvent, { type: "session.permission_request" }>,
   pctx: PermissionContext,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (pctx.ownedNode) {
+    await handleNodePermission({
+      db: pctx.db,
+      client: pctx.ownedNode.client,
+      owner: pctx.ownedNode.owner,
+      hostSessionId: pctx.supervisorSessionId,
+      stepId: pctx.stepId,
+      event: ev,
+      prompt: synthesizePermissionPrompt(ev.toolCall),
+    });
+
+    return { ok: true };
+  }
   const auto = await tryAutoDeliverStoredIntent(ev, pctx);
 
   if (auto.delivered) {
@@ -621,6 +637,7 @@ async function transitionBackToRunning(
 
 type EventConsumer = {
   abort: AbortController;
+  failureSignal: AbortSignal;
   done: Promise<void>;
   snapshot: () => string;
   reset: () => void;
@@ -664,6 +681,7 @@ function startEventConsumer(
   permissionCtx?: PermissionContext,
 ): EventConsumer {
   const abort = new AbortController();
+  const failure = new AbortController();
   let buf = "";
   let pendingPermissionRequestId: string | null = null;
   let persistFailure: { reason: string } | null = null;
@@ -738,15 +756,37 @@ function startEventConsumer(
         if (ev.type === "session.permission_request" && permissionCtx) {
           pendingPermissionRequestId = ev.requestId;
           pendingWork.push(
-            handlePermissionRequest(ev, permissionCtx).then((outcome) => {
-              if (!outcome.ok && !persistFailure) {
-                persistFailure = { reason: outcome.reason };
-              }
-            }),
+            handlePermissionRequest(ev, permissionCtx).then(
+              (outcome) => {
+                if (!outcome.ok && !persistFailure) {
+                  persistFailure = { reason: outcome.reason };
+                }
+              },
+              (error: unknown) => {
+                persistFailure = {
+                  reason: isMaisterError(error)
+                    ? error.code
+                    : "permission_handler_failed",
+                };
+                log.error(
+                  {
+                    runId: permissionCtx.runId,
+                    requestId: ev.requestId,
+                    reason: persistFailure.reason,
+                  },
+                  "owned-permission-handler-failed",
+                );
+                failure.abort(error);
+              },
+            ),
           );
         }
         if (ev.type === "session.update") {
-          if (pendingPermissionRequestId && permissionCtx) {
+          if (
+            pendingPermissionRequestId &&
+            permissionCtx &&
+            !permissionCtx.ownedNode
+          ) {
             const requestId = pendingPermissionRequestId;
 
             pendingWork.push(
@@ -805,6 +845,7 @@ function startEventConsumer(
 
   return {
     abort,
+    failureSignal: failure.signal,
     done,
     snapshot: () => buf,
     reset: () => {
@@ -938,14 +979,39 @@ async function reattachNodePrompt(
 
   if (existing.executionAssignmentId !== bound.client.assignment.id)
     throw staleSessionBinding(ctx.runId, existing.executionAssignmentId);
-
-  const result = await waitForNodeApplication(
+  if (!existing.targetSessionId)
+    throw new PromptOwnerInvariantError("node_permission_session_missing");
+  const consumer = startEventConsumer(existing.targetSessionId, bound, {
     db,
-    bound.client,
-    existing.id,
-    owner,
-    ctx.signal,
-  );
+    runId: ctx.runId,
+    stepId: ctx.stepId,
+    supervisorSessionId: existing.targetSessionId,
+    cancelPermission: permissionCancellerFor(bound.client),
+    deliverPermission: permissionDelivererFor(bound.client),
+    ownedNode: { owner, client: bound.client },
+  });
+  let result: StepResult;
+
+  try {
+    result = await waitForNodeApplication(
+      db,
+      bound.client,
+      existing.id,
+      owner,
+      AbortSignal.any([
+        consumer.failureSignal,
+        ...(ctx.signal ? [ctx.signal] : []),
+      ]),
+    );
+  } finally {
+    consumer.abort.abort();
+    await consumer.done;
+  }
+  if (consumer.permissionPersistFailure())
+    throw new FlowPromptContinuationPending(
+      existing.id,
+      new PromptOwnerInvariantError("node_permission_pending"),
+    );
 
   await closeAppliedFlowPromptSession(db, bound.client, existing.id);
 
@@ -1228,6 +1294,9 @@ async function runNewSession(
       supervisorSessionId: session.hostSessionId,
       cancelPermission: permissionCancellerFor(client),
       deliverPermission: permissionDelivererFor(client),
+      ...(ctx.promptOwner?.variant === "node"
+        ? { ownedNode: { owner: ctx.promptOwner, client } }
+        : {}),
     });
 
     let promptResult: PromptResult;
@@ -1297,8 +1366,16 @@ async function runNewSession(
             client,
             handle.commandId,
             promptOwner,
-            ctx.signal,
+            AbortSignal.any([
+              consumer.failureSignal,
+              ...(ctx.signal ? [ctx.signal] : []),
+            ]),
           );
+          if (consumer.failureSignal.aborted)
+            throw new FlowPromptContinuationPending(
+              handle.commandId,
+              consumer.failureSignal.reason,
+            );
           promptResult = { stopReason: "end_turn", meta: null };
         } else if (promptOwner) {
           await waitForGateApplication(

@@ -2932,6 +2932,18 @@ body schema (`{ optionId?, response? }`) is unchanged — no new top-level body
 field. See [`api/web.openapi.yaml`](api/web.openapi.yaml) and
 [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md).
 
+Owned Flow node permissions additionally store server-derived
+`schema.flowPrompt = { version: 1, commandId, nodeAttemptId, promptOrdinal,
+assignmentId, incarnationId }`. The original command/request pair identifies
+the HITL across driver restart. A selected answer retains
+`response._delivery = { commandId, hostSessionId, payload: { kind: "permission",
+action: "select", requestId, optionId } }` in the input admission transaction.
+The ACK transaction writes `respondedAt` and `_audit` fields
+`deliveryCommandId`, `sourceCommandId`, `assignmentId`, `incarnationId`,
+`requestId`; an explicit retry of a definitive 503 also retains
+`previousDeliveryCommandId`. These JSON fields add no table or migration and
+are never accepted as caller-supplied delivery authority.
+
 `kind=permission` is binary approve/deny (delivered via ACP
 `session/request_permission`). `kind=form` is a structured payload defined
 by `schema` (see [Configuration](configuration.md) §form_schema versioning).

@@ -42,6 +42,8 @@ import type {
 import { and, eq } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
+import { canonicalCommandJson } from "../../../runtime/command-json";
+
 import {
   ensureWorkspaceAdopted,
   isReadoptableWorkspaceError,
@@ -53,6 +55,7 @@ import {
   setAssignmentWorkspace,
 } from "./assignments";
 import { applyCreateAck } from "./create-ack";
+import { requeueDelivering } from "./commands";
 import {
   COMMAND_POLICY,
   deliverCommand,
@@ -61,6 +64,7 @@ import {
 } from "./deliverer";
 import {
   issueCommand,
+  buildEnvelope,
   issueOwnedPrompt,
   type IssuedCommand,
   type PromptOwnerAdmission,
@@ -76,6 +80,7 @@ import { MaisterError } from "@/lib/errors";
 import { getDb } from "@/lib/db/client";
 import {
   executionAssignments,
+  executionCommands,
   executionRuntimeObjects,
   runs,
 } from "@/lib/db/schema";
@@ -138,6 +143,17 @@ export interface BoundClient {
     tx: Db,
     sessionId: HostSessionId | string,
     payload: InputPayload,
+  ): Promise<PreparedInput>;
+  reattachPermissionInput(
+    tx: Db,
+    commandId: string,
+    sessionId: string,
+    payload: {
+      kind: "permission";
+      action: "select";
+      requestId: string;
+      optionId: string;
+    },
   ): Promise<PreparedInput>;
   // The host's session records for THIS run (any status); callers pick the
   // live one for the node they act on.
@@ -609,6 +625,104 @@ export function createExecutionHosts(
 
         return {
           commandId: issued.row.id,
+          payload,
+          deliver: (opts) =>
+            deliver<InputPayload, InputDeliveryResult>(
+              issued,
+              (env) =>
+                transport.deliverInput(
+                  sessionId,
+                  env,
+                  timeoutFor("session.input"),
+                ),
+              { targetSessionId: sessionId, onAck: opts?.onAck },
+            ),
+        };
+      },
+      async reattachPermissionInput(tx, commandId, sessionId, payload) {
+        const [original] = await tx
+          .select()
+          .from(executionCommands)
+          .where(eq(executionCommands.id, commandId))
+          .for("update");
+
+        if (
+          !original ||
+          original.kind !== "session.input" ||
+          original.runId !== current.runId ||
+          original.executionAssignmentId !== current.id ||
+          original.assignmentEpoch !== current.epoch ||
+          original.executionHostId !== host.id ||
+          original.targetSessionId !== sessionId ||
+          canonicalCommandJson(original.payload) !==
+            canonicalCommandJson(payload)
+        )
+          throw new MaisterError(
+            "CONFLICT",
+            "permission replay does not match its stored delivery",
+            { details: { reason: "permission_delivery_identity", commandId } },
+          );
+        if (original.state === "succeeded") {
+          if (original.result?.ok !== true)
+            throw new MaisterError(
+              "CONFLICT",
+              "permission receipt has no successful delivery result",
+            );
+
+          return {
+            commandId,
+            payload,
+            deliver: async (opts) => {
+              const result: InputDeliveryResult = { ok: true, replayed: true };
+
+              await db.transaction(async (ackTx) => {
+                await opts?.onAck?.(ackTx, result);
+              });
+
+              return result;
+            },
+          };
+        }
+        if (original.state !== "queued" && original.state !== "delivering")
+          throw new MaisterError(
+            "CONFLICT",
+            "permission delivery requires an explicit retry decision",
+            {
+              details: {
+                reason: "permission_delivery_terminal",
+                commandId,
+                state: original.state,
+              },
+            },
+          );
+        // A permission selection carries its complete persisted request. The
+        // host deduplicates the same ID even if the lost delivery did arrive.
+        const row =
+          original.state === "delivering"
+            ? (await requeueDelivering(tx, commandId, { logger })).row
+            : original;
+
+        if (!row)
+          throw new MaisterError(
+            "CONFLICT",
+            "permission delivery disappeared during reattachment",
+          );
+        const issued: IssuedCommand<InputPayload> = {
+          row,
+          envelope: buildEnvelope({
+            commandId,
+            kind: "session.input",
+            hostKey: host.hostKey,
+            assignmentId: current.id,
+            assignmentEpoch: current.epoch,
+            runId: current.runId,
+            payload,
+            issuedAt: original.createdAt,
+          }),
+        };
+
+        return {
+          commandId,
           payload,
           deliver: (opts) =>
             deliver<InputPayload, InputDeliveryResult>(

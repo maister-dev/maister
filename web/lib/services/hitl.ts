@@ -58,6 +58,11 @@ import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
 import { runFlow } from "@/lib/flows/runner";
 import {
+  assertNodePermissionDelivery,
+  completeNodePermissionDelivery,
+  prepareNodePermissionResponse,
+} from "@/lib/flows/graph/node-permission";
+import {
   assertReviewFeedbackPresent,
   buildReviewFeedbackPreview,
 } from "@/lib/review-comments/feedback-packet";
@@ -850,11 +855,12 @@ async function handlePermissionResponse(
   // "another request already finished — return 200 idempotently".
 
   const claim: PermissionClaim = await db.transaction(async (tx: any) => {
-    const lockedHitl = await lockHitlRow(tx, hitlRequestId);
     const lockedRunRows = await tx
       .select()
       .from(runs)
-      .where(eq(runs.id, runId));
+      .where(eq(runs.id, runId))
+      .for("update");
+    const lockedHitl = await lockHitlRow(tx, hitlRequestId);
     const lockedRun = lockedRunRows[0];
 
     if (!lockedHitl || !lockedRun) {
@@ -890,17 +896,17 @@ async function handlePermissionResponse(
     // no live session to address — its resume re-issues the intent instead.
     const prepareDelivery = async () => {
       if (lockedRun.status !== "NeedsInput") return null;
+      await assertNodePermissionDelivery(tx, lockedHitl.schema ?? {});
+      const deliverySchema = lockedHitl.schema as typeof schema;
       const client = await args.executionHosts.forRun(runId);
-      const prepared = await client.prepareInput(
-        tx,
-        schema.supervisorSessionId,
-        {
+      const prepared =
+        (await prepareNodePermissionResponse(tx, client, hitlRequestId)) ??
+        (await client.prepareInput(tx, deliverySchema.supervisorSessionId, {
           kind: "permission",
           action: "select",
-          requestId: schema.requestId,
+          requestId: deliverySchema.requestId,
           optionId,
-        },
-      );
+        }));
 
       return { client, prepared };
     };
@@ -1277,12 +1283,18 @@ async function handlePermissionResponse(
     await prepared.deliver({
       onAck: async (tx: any, delivery) => {
         delivered = true;
+        const currentHitl = await lockHitlRow(tx, hitlRequestId);
         const stamped = await tx
           .update(hitlRequests)
           .set({
             respondedAt: new Date(),
             ...(delivery.replayed
-              ? { response: withDeliveryReplayed(hitlRow.response, optionId) }
+              ? {
+                  response: withDeliveryReplayed(
+                    currentHitl?.response,
+                    optionId,
+                  ),
+                }
               : {}),
           })
           .where(
@@ -1293,6 +1305,11 @@ async function handlePermissionResponse(
           )
           .returning({ id: hitlRequests.id });
 
+        await completeNodePermissionDelivery(
+          tx,
+          hitlRequestId,
+          prepared.commandId,
+        );
         await markScratchPermissionDelivered(tx, runRow, runId);
         await markSyncResolverPermissionDelivered(tx, runId);
         await completeResponseAssignment(tx, assignmentClaim, { optionId });
@@ -1326,10 +1343,7 @@ async function handlePermissionResponse(
       "permission delivered",
     );
 
-    return NextResponse.json(
-      { ok: true, runStatus: "NeedsInput" },
-      { status: 200 },
-    );
+    return NextResponse.json({ ok: true, state: "delivered" }, { status: 200 });
   } catch (err) {
     // ADR-166 driver yield rule: a fenced delivery means another driver
     // generation owns this run (a resume raced the response) — write nothing,
@@ -1349,6 +1363,33 @@ async function handlePermissionResponse(
       );
 
       throw err;
+    }
+
+    if (
+      isMaisterError(err) &&
+      err.code === "CONFLICT" &&
+      err.details?.commandId === prepared.commandId &&
+      (err.details.reason === "permission_ack_superseded" ||
+        err.details.reason === "command_not_claimable")
+    ) {
+      // A competing delivery of this exact command still owns the deferred.
+      // Losing its delivery CAS cannot authorize a cancellation command.
+      const [current] = await db
+        .select({ respondedAt: hitlRequests.respondedAt })
+        .from(hitlRequests)
+        .where(eq(hitlRequests.id, hitlRequestId));
+      const completed =
+        current?.respondedAt !== null && current?.respondedAt !== undefined;
+
+      log.info(
+        { runId, hitlRequestId, commandId: prepared.commandId, completed },
+        "permission-delivery-rejoined",
+      );
+
+      return NextResponse.json(
+        { ok: true, state: completed ? "delivered" : "delivery-in-progress" },
+        { status: completed ? 200 : 202 },
+      );
     }
 
     if (isMaisterError(err) && err.code === "HITL_TIMEOUT") {

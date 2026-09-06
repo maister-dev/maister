@@ -68,6 +68,7 @@ import { isFlowDriverClaimLost } from "./driver-claim";
 import { persistLocalActionCompletion } from "./action-completion";
 import { persistFinishContinuation } from "./finish-continuation";
 import { closeAppliedFlowPromptSession } from "./prompt-session-cleanup";
+import { hasOpenNodePrompt } from "./node-permission";
 import { validateNodeStructuredOutput } from "./node-output";
 import {
   appendNodeAttempt,
@@ -2224,8 +2225,14 @@ export async function runGraph(
     loaded.manifest.compat?.engine_min ?? "0.0.0",
     "1.2.0",
   );
+  const isInFlightPermissionContinuation =
+    Boolean(opts.driver) &&
+    loaded.run.status === "NeedsInput" &&
+    (await hasOpenNodePrompt(db, runId));
   const isNeedsInputResume =
-    loaded.run.status === "NeedsInput" && loaded.run.currentStepId !== null;
+    !isInFlightPermissionContinuation &&
+    loaded.run.status === "NeedsInput" &&
+    loaded.run.currentStepId !== null;
   const isExternallyCompletedResume =
     isNeedsInputResume &&
     opts.completedResume?.targetStepId === loaded.run.currentStepId;
@@ -2849,9 +2856,10 @@ export async function runGraph(
           lastForNode?.executionAssignmentId ?? opts.driver.claim.assignmentId,
         );
 
-      const completedAction = resumingThisNode
-        ? lastForNode?.actionCompletion
-        : null;
+      const completedAction =
+        resumingThisNode && !isInFlightPermissionContinuation
+          ? lastForNode?.actionCompletion
+          : null;
 
       // A reuse iteration re-enters the CURRENT visit: its attempt row already
       // exists (NeedsInput or completed-action resume) or was appended by the

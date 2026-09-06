@@ -2553,6 +2553,12 @@ export function memoryBoundClient(args: {
         },
       };
     },
+    async reattachPermissionInput() {
+      throw new MaisterError(
+        "PRECONDITION",
+        "durable permission replay requires the Postgres-backed test client",
+      );
+    },
     async sessionsForRun() {
       const runId = current.runId;
 
