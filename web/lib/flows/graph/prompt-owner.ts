@@ -46,6 +46,7 @@ export type GatePromptOwner = Readonly<{
   nodeAttemptId: string;
   gateId: string;
   evaluationId: string;
+  promptOrdinal: number;
 }>;
 
 /** A persisted command still owns the work. Only its application worker may
@@ -62,7 +63,7 @@ export class FlowPromptContinuationPending extends MaisterError {
 }
 
 export function gatePromptOperationKey(owner: GatePromptOwner): string {
-  return `flow_node_attempt:${owner.variant}:${owner.evaluationId}:0`;
+  return `flow_node_attempt:${owner.variant}:${owner.evaluationId}:${owner.promptOrdinal}`;
 }
 
 export async function waitForGateApplication(
@@ -161,6 +162,7 @@ export async function getOrCreateGateEvaluation(
                 nodeAttemptId: attempt.id,
                 gateId: existing.gateId,
                 evaluationId: existing.id,
+                promptOrdinal: existing.promptOrdinal,
               }),
             ),
           ),
@@ -176,7 +178,11 @@ export async function getOrCreateGateEvaluation(
       )
         throw staleSessionBinding(run.id, command.assignmentId);
 
-      if (run.status === "NeedsInput" && !command)
+      if (
+        run.status === "NeedsInput" &&
+        !command &&
+        existing.permissionResume?.assignmentId !== run.executionAssignmentId
+      )
         throw new PromptOwnerInvariantError("gate_permission_command_missing");
 
       return { ...existing, ...(command ? { commandId: command.id } : {}) };
@@ -278,7 +284,12 @@ export async function admitGatePrompt(
 
   if (
     run?.runKind !== "flow" ||
-    run.status !== "Running" ||
+    !(
+      run.status === "Running" ||
+      (run.status === "NeedsInput" &&
+        evaluation?.permissionResume?.assignmentId === assignment.id &&
+        evaluation.permissionResume.promptOrdinal === owner.promptOrdinal)
+    ) ||
     !attempt ||
     attempt.runId !== runId ||
     attempt.executionAssignmentId !== assignment.id ||
@@ -288,6 +299,10 @@ export async function admitGatePrompt(
     evaluation.runId !== runId ||
     evaluation.nodeAttemptId !== attempt.id ||
     evaluation.gateId !== owner.gateId ||
+    evaluation.promptOrdinal !== owner.promptOrdinal ||
+    (owner.promptOrdinal > 0 &&
+      (evaluation.permissionResume?.assignmentId !== assignment.id ||
+        evaluation.permissionResume.promptOrdinal !== owner.promptOrdinal)) ||
     evaluation.kind !==
       (owner.variant === "gate_skill" ? "skill_check" : "ai_judgment") ||
     evaluation.status !== "running"
@@ -327,7 +342,7 @@ export async function admitGatePrompt(
         incarnationId: binding.incarnation.id,
         assignmentId: assignment.id,
         assignmentEpoch: assignment.epoch,
-        promptOrdinal: 0,
+        promptOrdinal: owner.promptOrdinal,
       },
     },
     logicalOperationKey: gatePromptOperationKey(owner),
@@ -448,6 +463,7 @@ export const flowPromptOwnerAdapter = definePromptOwnerAdapter(
           evaluation.runId !== ref.runId ||
           evaluation.nodeAttemptId !== currentAttempt.id ||
           evaluation.gateId !== ref.gateId ||
+          evaluation.promptOrdinal !== ref.promptOrdinal ||
           evaluation.kind !== gate.kind ||
           evaluation.status !== "running"
         )

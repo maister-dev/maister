@@ -217,7 +217,8 @@ export async function lockCreateOwner(
     run.runKind !== "flow" ||
     !(
       run.status === "Running" ||
-      (run.status === "NeedsInput" && permissionResume)
+      (run.status === "NeedsInput" &&
+        (permissionResume || input.owner.variant !== "node"))
     ) ||
     !attempt ||
     attempt.runId !== run.id ||
@@ -252,6 +253,8 @@ export async function lockCreateOwner(
   return (
     evaluation?.id === input.owner.evaluationId &&
     evaluation.status === "running" &&
+    (run.status === "Running" ||
+      evaluation.permissionResume?.assignmentId === input.assignmentId) &&
     evaluation.kind ===
       (input.owner.variant === "gate_ai" ? "ai_judgment" : "skill_check")
   );

@@ -21,6 +21,7 @@ import pino from "pino";
 
 import { canonicalCommandJson } from "../../../../runtime/command-json";
 
+import { pendingGatePermissionResumeExists } from "./gate-permission-resume";
 import { nodePermissionSourceSchema } from "./permission-source";
 import { decodeNodePromptCompletion } from "./node-prompt-owner";
 
@@ -595,14 +596,19 @@ export function pendingNodePermissionResumeExists(): SQL {
   )`;
 }
 
-export async function hasNodePermissionResume(
+export async function hasFlowPermissionResume(
   db: Db,
   runId: string,
 ): Promise<boolean> {
   const [row] = await db
     .select({ id: runs.id })
     .from(runs)
-    .where(and(eq(runs.id, runId), pendingNodePermissionResumeExists()));
+    .where(
+      and(
+        eq(runs.id, runId),
+        sql`(${pendingNodePermissionResumeExists()} or ${pendingGatePermissionResumeExists()})`,
+      ),
+    );
 
   return row !== undefined;
 }

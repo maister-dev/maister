@@ -12,7 +12,7 @@ import {
 import { getDb } from "@/lib/db/client";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import {
-  hasNodePermissionResume,
+  hasFlowPermissionResume,
   prepareNodePermissionResult,
 } from "@/lib/flows/graph/permission-resume";
 import * as schemaModule from "@/lib/db/schema";
@@ -350,7 +350,7 @@ export async function resumeRun(
 
   const assignmentId = claim.assignment?.id ?? null;
 
-  if (await hasNodePermissionResume(db, runId)) {
+  if (await hasFlowPermissionResume(db, runId)) {
     log.info({ runId, assignmentId }, "owned permission resume authorized");
 
     return {

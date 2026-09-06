@@ -70,6 +70,7 @@ import { isFlowDriverClaimLost } from "./driver-claim";
 import { persistLocalActionCompletion } from "./action-completion";
 import { persistFinishContinuation } from "./finish-continuation";
 import { closeAppliedFlowPromptSession } from "./prompt-session-cleanup";
+import { loadGatePermissionContinuation } from "./gate-permission-resume";
 import { hasOpenGatePrompt, hasOpenNodePrompt } from "./prompt-permission";
 import { validateNodeStructuredOutput } from "./node-output";
 import {
@@ -2317,6 +2318,17 @@ export async function runGraph(
   const priorAttempts = opts.driver
     ? await getNodeAttemptsForRun(runId, db)
     : [];
+  const gateParentAttempt = priorAttempts.findLast(
+    (attempt) => attempt.nodeId === loaded.run.currentStepId,
+  );
+  const gatePermissionContinuation =
+    opts.driver && gateParentAttempt
+      ? await loadGatePermissionContinuation(db, {
+          runId,
+          assignmentId: opts.driver.claim.assignmentId,
+          nodeAttemptId: gateParentAttempt.id,
+        })
+      : null;
   const isDurableContinuation =
     Boolean(opts.driver) &&
     !isNeedsInputResume &&
@@ -2829,8 +2841,10 @@ export async function runGraph(
       }
 
       const reusesCompletedAttempt =
-        pendingCompletedResumeNodeId === node.id &&
-        lastForNode?.status === "Succeeded";
+        lastForNode?.status === "Succeeded" &&
+        (pendingCompletedResumeNodeId === node.id ||
+          (pendingDurableResumeNodeId === node.id &&
+            gatePermissionContinuation !== null));
 
       // Consume the marker before continuing. A later rework visit to this
       // node is a real fresh execution, never another completion handoff.
@@ -3394,7 +3408,11 @@ export async function runGraph(
       let result: NodeResult;
 
       if (completedAction) {
-        if (completedAction.commandId)
+        const inheritedGateAction =
+          gatePermissionContinuation !== null &&
+          nodeAttemptId === gateParentAttempt?.id;
+
+        if (completedAction.commandId && !inheritedGateAction)
           await closeAppliedFlowPromptSession(
             db,
             (await ensureExecution()).client,
@@ -3404,7 +3422,7 @@ export async function runGraph(
           ...completedAction.result,
           originalOutput: completedAction.originalOutput,
         };
-        if (node.nodeType === "orchestrator")
+        if (node.nodeType === "orchestrator" && !inheritedGateAction)
           result = await runOrchestratorStep(result, db, runId, log2);
         log2.info(
           {

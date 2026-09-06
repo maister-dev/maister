@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 // Owned continuation is qualified with real Postgres in the Flow suite.
 vi.mock("@/lib/flows/graph/permission-resume", () => ({
-  hasNodePermissionResume: async () => false,
+  hasFlowPermissionResume: async () => false,
 }));
 
 // Stub schema tags so the driver's `schemaModule as ...` cast yields

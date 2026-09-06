@@ -175,6 +175,8 @@ class MockAgent {
   async prompt(params) {
     const text = extractText(params.prompt);
     const session = this.sessions.get(params.sessionId);
+    const completionText = readJournal(params.sessionId)?.completionText;
+    let permissionSelected = false;
 
     if (session) session.prompts += 1;
 
@@ -205,6 +207,8 @@ class MockAgent {
       });
       const outcome = result?.outcome;
 
+      permissionSelected = outcome?.outcome === "selected";
+
       if (outcome?.outcome === "selected") {
         writeJournal(params.sessionId, {
           acpSessionId: params.sessionId,
@@ -231,7 +235,8 @@ class MockAgent {
             ...nextPermission,
           });
 
-          if (nextResult?.outcome?.outcome === "selected")
+          permissionSelected = nextResult?.outcome?.outcome === "selected";
+          if (permissionSelected)
             writeJournal(params.sessionId, { acpSessionId: params.sessionId });
           await this.connection.sessionUpdate({
             sessionId: params.sessionId,
@@ -290,6 +295,8 @@ class MockAgent {
       });
       const outcome = result?.outcome;
 
+      permissionSelected = outcome?.outcome === "selected";
+
       if (outcome?.outcome === "selected") {
         writeJournal(params.sessionId, { acpSessionId: params.sessionId });
         await this.connection.sessionUpdate({
@@ -314,6 +321,16 @@ class MockAgent {
           },
         });
       }
+    }
+
+    if (permissionSelected && typeof completionText === "string") {
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: completionText },
+        },
+      });
     }
 
     return { stopReason: STOP_REASON };

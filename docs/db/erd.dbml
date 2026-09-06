@@ -1250,6 +1250,8 @@ table gate_results {
   kind text [not null]
   mode text [not null, default: 'blocking']
   status text [not null, default: 'pending']
+  prompt_ordinal integer [not null, default: 0]
+  permission_resume jsonb
   verdict jsonb
   input_artifact_refs jsonb
   output_artifact_ref text
@@ -1259,6 +1261,8 @@ table gate_results {
   ended_at "timestamp with time zone"
 
   indexes {
+
+
     run_id [name: 'gate_results_run_idx']
     node_attempt_id [name: 'gate_results_node_attempt_idx']
   }

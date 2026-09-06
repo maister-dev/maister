@@ -33,7 +33,7 @@ import { isReadoptableWorkspaceError } from "./adoption";
 import { staleSessionBinding } from "./session-binding";
 import { asHostSessionId } from "./types";
 
-import { executionCommands, nodeAttempts } from "@/lib/db/schema";
+import { executionCommands, gateResults, nodeAttempts } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { isMaisterErrorCode } from "@/lib/errors-core";
 
@@ -131,9 +131,18 @@ export async function createOwnedSession(input: {
           .from(nodeAttempts)
           .where(eq(nodeAttempts.id, owner.nodeAttemptId));
 
+        const [evaluation] =
+          owner.variant !== "node"
+            ? await db
+                .select({ resume: gateResults.permissionResume })
+                .from(gateResults)
+                .where(eq(gateResults.id, owner.evaluationId))
+            : [];
+
         if (
-          attempt?.resume?.kind === "permission" &&
-          attempt.resume.assignmentId === authority.assignmentId
+          (attempt?.resume?.kind === "permission" &&
+            attempt.resume.assignmentId === authority.assignmentId) ||
+          evaluation?.resume?.assignmentId === authority.assignmentId
         )
           throw failure;
         const { resumeSessionId, ...fresh } = envelope.payload;

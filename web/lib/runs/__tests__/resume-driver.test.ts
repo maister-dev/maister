@@ -29,7 +29,7 @@ vi.mock("@/lib/flows/graph/permission-resume", async (importOriginal) => ({
   ...(await importOriginal<
     typeof import("@/lib/flows/graph/permission-resume")
   >()),
-  hasNodePermissionResume: async () => false,
+  hasFlowPermissionResume: async () => false,
 }));
 
 // ADR-166: the resumed-session driver talks to the host through the client

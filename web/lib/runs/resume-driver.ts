@@ -11,7 +11,7 @@ import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { MaisterError } from "@/lib/errors";
 import {
-  hasNodePermissionResume,
+  hasFlowPermissionResume,
   PERMISSION_RESUME_PROMPT,
 } from "@/lib/flows/graph/permission-resume";
 import { runFlow } from "@/lib/flows/runner";
@@ -310,7 +310,7 @@ export async function runResumedSession(
   const db = opts.db ?? getDb();
   const { runId, supervisorSessionId, acpSessionId, stepId } = opts;
 
-  if (await hasNodePermissionResume(db, runId)) {
+  if (await hasFlowPermissionResume(db, runId)) {
     const currentAssignmentId = await activeAssignmentIdOf(db, runId);
 
     if (opts.assignmentId && opts.assignmentId !== currentAssignmentId) return;
@@ -752,7 +752,7 @@ export function scheduleResumedSessionDrive(
       try {
         const db = opts.db ?? getDb();
 
-        if (await hasNodePermissionResume(db, opts.runId)) {
+        if (await hasFlowPermissionResume(db, opts.runId)) {
           log.warn(
             { runId: opts.runId, driveId },
             "owned permission resume awaits graph recovery",

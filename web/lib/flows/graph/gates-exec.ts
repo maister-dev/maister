@@ -439,6 +439,7 @@ async function runOneGate(
                 nodeAttemptId,
                 gateId: gate.id,
                 evaluationId: id,
+                promptOrdinal: evaluation.promptOrdinal,
               },
               execution,
             );
@@ -498,7 +499,9 @@ async function runOneGate(
               nodeAttemptId,
               gateId: gate.id,
               evaluationId: id,
+              promptOrdinal: evaluation.promptOrdinal,
             },
+            resumeSessionId: evaluation.permissionResume?.resumeSessionId,
             bindExecution: ctx.bindExecution,
             // Thread the caller's db — runner-agent's event-consumer seam must
             // never fall back to env getDb() (a different connection).

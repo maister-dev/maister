@@ -345,6 +345,17 @@ including its prior HITL owner, and advances the same attempt once. Confirmed
 input and a completed resumed source use the same verified result handoff at
 its current ordinal; they do not dispatch a third prompt.
 
+Checkpointed AI/skill gate permissions with no admitted input retain their exact
+evaluation. The capacity claim advances `gate_results.prompt_ordinal` and stores
+`permission_resume`, including the source request/choice and retained ACP handle.
+It inherits the parent action through its recorded digest and rebinds the same
+attempt; the parent action ordinal/result stay unchanged. Resumed graph reads
+validate that digest and continue the gate without rerunning the parent action.
+The old action-turn authorization is cleared after this explicit handoff. Gate
+create, prompt admission, reissue and ACK check the current evaluation/assignment
+and ordinal. An unavailable resume handle fails without an empty replacement.
+Completed-source gate handoff remains a separate S2.6 requirement.
+
 In-flight node and AI/skill gate permissions retain the exact source command,
 attempt/ordinal, assignment and incarnation in the HITL schema. The existing
 node source shape is unchanged; the closed gate variant adds its kind, gate ID

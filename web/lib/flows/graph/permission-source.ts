@@ -11,7 +11,7 @@ const nodeSourceSchema = z
   })
   .strict();
 
-const gateSourceSchema = nodeSourceSchema
+export const gatePermissionSourceSchema = nodeSourceSchema
   .extend({
     variant: z.enum(["gate_ai", "gate_skill"]),
     gateId: z.string().min(1),
@@ -27,7 +27,7 @@ const resumedSourceSchema = nodeSourceSchema
 
 export const flowPermissionSourceSchema = z.union([
   nodeSourceSchema,
-  gateSourceSchema,
+  gatePermissionSourceSchema,
   resumedSourceSchema,
 ]);
 

@@ -359,6 +359,8 @@ erDiagram
     }
 
     GATE_RESULTS {
+        integer prompt_ordinal "0150: initial 0; advances only at the gate permission capacity claim"
+        jsonb permission_resume "0150: source/current authority, ACP handle, HITL choice and parent-action digest"
         text id PK
         text run_id FK
         text node_attempt_id FK

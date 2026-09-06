@@ -1216,7 +1216,10 @@ export async function runAgentStep(
   }
 
   const actionPrompt =
-    ctx.promptOwner?.variant === "permission_resume"
+    ctx.promptOwner?.variant === "permission_resume" ||
+    ((ctx.promptOwner?.variant === "gate_ai" ||
+      ctx.promptOwner?.variant === "gate_skill") &&
+      ctx.promptOwner.promptOrdinal > 0)
       ? PERMISSION_RESUME_PROMPT
       : normalized.text;
   const resolvedPrompt = ctx.resumeSessionId
@@ -1358,7 +1361,14 @@ async function runNewSession(
               nodeAttemptId: ctx.promptOwner.nodeAttemptId,
               promptOrdinal: ctx.promptOwner.promptOrdinal,
             }
-          : ctx.promptOwner,
+          : ctx.promptOwner.variant === "node"
+            ? ctx.promptOwner
+            : {
+                variant: ctx.promptOwner.variant,
+                nodeAttemptId: ctx.promptOwner.nodeAttemptId,
+                gateId: ctx.promptOwner.gateId,
+                evaluationId: ctx.promptOwner.evaluationId,
+              },
         async () => ({
           ...(await prepareCreatePayload()),
           ...(ctx.resumeSessionId

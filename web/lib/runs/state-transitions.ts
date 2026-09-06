@@ -12,6 +12,7 @@ import pino from "pino";
 
 import { nextKeepaliveAt } from "./keepalive-config";
 
+import { authorizeGatePermissionResume } from "@/lib/flows/graph/gate-permission-resume";
 import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -283,7 +284,8 @@ export async function markResumed(
             assignment,
             opts.permissionResult,
           );
-        else await authorizeNodePermissionResume(tx, assignment);
+        else if (!(await authorizeGatePermissionResume(tx, assignment)))
+          await authorizeNodePermissionResume(tx, assignment);
       }
       await opts.recordSuccessAudit?.(tx);
 

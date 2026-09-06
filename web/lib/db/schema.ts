@@ -1,3 +1,4 @@
+import type { GatePermissionResume } from "@/lib/flows/graph/gate-permission-resume";
 import type {
   DeliveryPolicy,
   StoredDeliveryPolicy,
@@ -5328,6 +5329,8 @@ export const gateResults = pgTable(
     })
       .notNull()
       .default("pending"),
+    promptOrdinal: integer("prompt_ordinal").notNull().default(0),
+    permissionResume: jsonb("permission_resume").$type<GatePermissionResume>(),
     verdict: jsonb("verdict").$type<GateVerdict>(),
     inputArtifactRefs: jsonb("input_artifact_refs").$type<string[]>(),
     outputArtifactRef: text("output_artifact_ref"),
@@ -5339,6 +5342,14 @@ export const gateResults = pgTable(
     endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
   },
   (t) => ({
+    promptOrdinalCheck: check(
+      "gate_results_prompt_ordinal_check",
+      sql`${t.promptOrdinal} >= 0`,
+    ),
+    permissionResumeCheck: check(
+      "gate_results_permission_resume_check",
+      sql`(${t.permissionResume} IS NULL AND ${t.promptOrdinal} = 0) OR (jsonb_typeof(${t.permissionResume}) = 'object' AND ${t.permissionResume}->'version' = '1'::jsonb AND ${t.permissionResume}->>'kind' = 'permission' AND ${t.kind} IN ('ai_judgment', 'skill_check') AND ${t.promptOrdinal} > 0 AND ${t.permissionResume}->'promptOrdinal' = to_jsonb(${t.promptOrdinal}) AND ${t.permissionResume}->>'parentActionSha256' ~ '^[a-f0-9]{64}$' AND jsonb_typeof(${t.permissionResume}->'sourceCommandId') = 'string' AND jsonb_typeof(${t.permissionResume}->'sourceAssignmentId') = 'string' AND jsonb_typeof(${t.permissionResume}->'sourceIncarnationId') = 'string' AND jsonb_typeof(${t.permissionResume}->'assignmentId') = 'string' AND jsonb_typeof(${t.permissionResume}->'resumeSessionId') = 'string' AND jsonb_typeof(${t.permissionResume}->'hitlRequestId') = 'string' AND jsonb_typeof(${t.permissionResume}->'sourceRequestId') = 'string' AND jsonb_typeof(${t.permissionResume}->'optionId') = 'string') IS TRUE`,
+    ),
     idxRun: index("gate_results_run_idx").on(t.runId),
     idxNodeAttempt: index("gate_results_node_attempt_idx").on(t.nodeAttemptId),
   }),
