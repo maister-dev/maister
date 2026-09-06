@@ -315,10 +315,21 @@ without another accepted node prompt. Additional real-process cases preserve
 failed nodes, rework context and the retry budget. Orchestrator park releases its
 assignment; the capacity-checked child-wake claim stores `action_resume` and
 advances the exact attempt ordinal before another prompt. Live wake, a crash
-after that claim and deferred capacity recovery are covered. Checkpointed
-permission resume and released-source result handoff remain S2.6 work.
+after that claim and deferred capacity recovery are covered.
 Pre-prompt creation uses the durable intent described above. Global
 owner/continuation worker activation remains S2.12.
+
+Checkpointed node permission resumes without a prior admitted input use the
+capacity-checked idle-resume claim. It rebinds the exact source attempt and stores
+`action_resume.kind: permission`, the new ordinal, original ACP handle, HITL ID,
+request ID and selected option before dispatch. The leased graph driver admits
+the `permission_resume` command and reuses the original HITL only after validating
+the reissued tool call and options. It remains `NeedsInput` until input delivery
+is acknowledged, then uses the normal action/gate/cursor reducer. Restart after
+the claim consumes that authorization. An unavailable resume handle fails the
+attempt and run without creating an empty replacement session. A stored input
+delivery must be classified before another turn can be authorized; historical
+input/result handoff and checkpointed gate resumes remain S2.6 work.
 
 In-flight node and AI/skill gate permissions retain the exact source command,
 attempt/ordinal, assignment and incarnation in the HITL schema. The existing

@@ -15,6 +15,7 @@ import { randomUUID } from "node:crypto";
 import { eq, and, isNull, isNotNull, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { PERMISSION_RESUME_PROMPT } from "./graph/permission-resume";
 import { renderStrict } from "./templating";
 import {
   admitNodePrompt,
@@ -1144,7 +1145,8 @@ export async function runAgentStep(
   // Existing immutable requests do not depend on today's template or context.
   if (ctx.promptOwner) {
     const completed =
-      ctx.promptOwner.variant === "node"
+      ctx.promptOwner.variant === "node" ||
+      ctx.promptOwner.variant === "permission_resume"
         ? await reattachNodePrompt(ctx, ctx.promptOwner, execution)
         : await reattachGatePrompt(ctx, ctx.promptOwner, execution);
 
@@ -1213,9 +1215,13 @@ export async function runAgentStep(
     );
   }
 
+  const actionPrompt =
+    ctx.promptOwner?.variant === "permission_resume"
+      ? PERMISSION_RESUME_PROMPT
+      : normalized.text;
   const resolvedPrompt = ctx.resumeSessionId
-    ? RESUME_READONLY_LIFT + normalized.text
-    : normalized.text;
+    ? RESUME_READONLY_LIFT + actionPrompt
+    : actionPrompt;
 
   log.info(
     {
@@ -1232,7 +1238,9 @@ export async function runAgentStep(
   // a failed write must never block dispatch.
   if (
     ctx.nodeAttemptId &&
-    (!ctx.promptOwner || ctx.promptOwner.variant === "node")
+    (!ctx.promptOwner ||
+      ctx.promptOwner.variant === "node" ||
+      ctx.promptOwner.variant === "permission_resume")
   ) {
     try {
       // Write-once per attempt: a NeedsInput resume can re-enter the node with
@@ -1344,7 +1352,13 @@ async function runNewSession(
 
     if (ctx.promptOwner) {
       const created = await client.createOwnedSession(
-        ctx.promptOwner,
+        ctx.promptOwner.variant === "permission_resume"
+          ? {
+              variant: "node",
+              nodeAttemptId: ctx.promptOwner.nodeAttemptId,
+              promptOrdinal: ctx.promptOwner.promptOrdinal,
+            }
+          : ctx.promptOwner,
         async () => ({
           ...(await prepareCreatePayload()),
           ...(ctx.resumeSessionId
@@ -1438,7 +1452,8 @@ async function runNewSession(
                   await assertFlowDriverClaim(tx, ctx.flowDriverClaim);
                 }
                 const admission =
-                  promptOwner.variant === "node"
+                  promptOwner.variant === "node" ||
+                  promptOwner.variant === "permission_resume"
                     ? await admitNodePrompt(
                         tx,
                         client,
@@ -1471,7 +1486,10 @@ async function runNewSession(
       );
 
       try {
-        if (promptOwner?.variant === "node") {
+        if (
+          promptOwner?.variant === "node" ||
+          promptOwner?.variant === "permission_resume"
+        ) {
           nodeCompletion = await waitForNodeApplication(
             ctx.db ?? getDb(),
             client,

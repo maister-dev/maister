@@ -205,11 +205,20 @@ export async function lockCreateOwner(
     .from(nodeAttempts)
     .where(eq(nodeAttempts.id, input.owner.nodeAttemptId))
     .for("update");
+  const resume = attempt?.actionResume;
+  const permissionResume =
+    input.owner.variant === "node" &&
+    resume?.kind === "permission" &&
+    resume.assignmentId === input.assignmentId &&
+    resume.promptOrdinal === input.owner.promptOrdinal;
 
   if (
     !run ||
     run.runKind !== "flow" ||
-    run.status !== "Running" ||
+    !(
+      run.status === "Running" ||
+      (run.status === "NeedsInput" && permissionResume)
+    ) ||
     !attempt ||
     attempt.runId !== run.id ||
     attempt.executionAssignmentId !== input.assignmentId ||

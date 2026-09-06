@@ -13,15 +13,25 @@ import {
 } from "@/lib/db/schema";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
 
-export type FlowActionResume = Readonly<{
+type ActionResumeIdentity = Readonly<{
   version: 1;
-  kind: "orchestrator";
   sourceCommandId: string;
   sourceAssignmentId: string;
   assignmentId: string;
   promptOrdinal: number;
   resumeSessionId: string;
 }>;
+
+export type FlowActionResume = ActionResumeIdentity &
+  (
+    | Readonly<{ kind: "orchestrator" }>
+    | Readonly<{
+        kind: "permission";
+        hitlRequestId: string;
+        sourceRequestId: string;
+        optionId: string;
+      }>
+  );
 
 /** Advance only inside the normal, capacity-checked WaitingOnChildren claim.
  * A process restart reads this authorization; it cannot create one. A spawn

@@ -11,9 +11,12 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 
+import { canonicalCommandJson } from "../../../../runtime/command-json";
+
 import { nodePromptOperationKey } from "./node-prompt-owner";
 import { gatePromptOperationKey } from "./prompt-owner";
 import { lockFlowPromptOwner } from "./prompt-owner-authority";
+import { pendingNodePermissionResumeExists } from "./permission-resume";
 
 import {
   executionCommands,
@@ -48,7 +51,17 @@ const gateSourceSchema = nodeSourceSchema
     evaluationId: z.string().min(1),
   })
   .strict();
-const sourceSchema = z.union([nodeSourceSchema, gateSourceSchema]);
+const resumedSourceSchema = nodeSourceSchema
+  .extend({
+    variant: z.literal("permission_resume"),
+    hitlRequestId: z.string().min(1),
+  })
+  .strict();
+const sourceSchema = z.union([
+  nodeSourceSchema,
+  gateSourceSchema,
+  resumedSourceSchema,
+]);
 
 export type FlowPermissionOwner = NodePromptOwner | GatePromptOwner;
 
@@ -240,7 +253,7 @@ export function openNodePromptExists(): SQL {
       and permission_prompt.execution_assignment_id = ${runs.executionAssignmentId}
       and permission_prompt.kind = 'session.prompt'
       and permission_prompt.owner_kind = 'flow_node_attempt'
-      and permission_prompt.owner_ref->>'variant' = 'node'
+      and permission_prompt.owner_ref->>'variant' in ('node', 'permission_resume')
       and (permission_attempt.action_completion is null or exists (
         select 1 from hitl_requests permission_hitl
         where permission_hitl.run_id = ${runs.id} and permission_hitl.kind = 'permission'
@@ -287,7 +300,7 @@ export function openGatePromptExists(): SQL {
 }
 
 export function openFlowPromptExists(): SQL {
-  return sql`(${openNodePromptExists()} or ${openGatePromptExists()})`;
+  return sql`(${openNodePromptExists()} or ${openGatePromptExists()} or ${pendingNodePermissionResumeExists()})`;
 }
 
 export async function hasOpenNodePrompt(
@@ -297,7 +310,12 @@ export async function hasOpenNodePrompt(
   const [run] = await db
     .select({ id: runs.id })
     .from(runs)
-    .where(and(eq(runs.id, runId), openNodePromptExists()));
+    .where(
+      and(
+        eq(runs.id, runId),
+        sql`(${openNodePromptExists()} or ${pendingNodePermissionResumeExists()})`,
+      ),
+    );
 
   return run !== undefined;
 }
@@ -357,13 +375,17 @@ async function lockPermissionSource(
     !("nodeAttemptId" in ref) ||
     !("promptOrdinal" in ref) ||
     (ref.variant !== "node" &&
+      ref.variant !== "permission_resume" &&
       ref.variant !== "gate_ai" &&
       ref.variant !== "gate_skill") ||
     ("variant" in source
-      ? ref.variant !== source.variant ||
-        !("evaluationId" in ref) ||
-        ref.evaluationId !== source.evaluationId ||
-        ref.gateId !== source.gateId
+      ? source.variant === "permission_resume"
+        ? ref.variant !== "permission_resume" ||
+          ref.hitlRequestId !== source.hitlRequestId
+        : ref.variant !== source.variant ||
+          !("evaluationId" in ref) ||
+          ref.evaluationId !== source.evaluationId ||
+          ref.gateId !== source.gateId
       : ref.variant !== "node") ||
     ref.nodeAttemptId !== source.nodeAttemptId ||
     ref.promptOrdinal !== source.promptOrdinal ||
@@ -391,7 +413,7 @@ async function lockPermissionSource(
     row.attempt.finishContinuation !== null
   )
     throw new PromptOwnerInvariantError("permission_attempt_generation");
-  if ("variant" in source) {
+  if ("evaluationId" in source) {
     const [evaluation] = await tx
       .select()
       .from(gateResults)
@@ -484,6 +506,38 @@ export async function completeFlowPermissionDelivery(
     delivery.payload.optionId !== response.optionId
   )
     throw new PromptOwnerInvariantError("permission_delivery_identity");
+  let resumeAudit:
+    | {
+        originalRequestId: string;
+        reissuedRequestId: string;
+        deliveredViaResume: true;
+      }
+    | undefined;
+
+  if (
+    "variant" in source &&
+    source.variant === "permission_resume" &&
+    source.hitlRequestId === hitl.id
+  ) {
+    const [attempt] = await tx
+      .select({ resume: nodeAttempts.actionResume })
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.id, source.nodeAttemptId));
+    const resume = attempt?.resume;
+
+    if (
+      resume?.kind !== "permission" ||
+      resume.hitlRequestId !== hitl.id ||
+      resume.assignmentId !== source.assignmentId ||
+      resume.promptOrdinal !== source.promptOrdinal
+    )
+      throw new PromptOwnerInvariantError("permission_resume_audit_source");
+    resumeAudit = {
+      originalRequestId: resume.sourceRequestId,
+      reissuedRequestId: schema.requestId,
+      deliveredViaResume: true,
+    };
+  }
   await tx
     .update(hitlRequests)
     .set({
@@ -498,6 +552,7 @@ export async function completeFlowPermissionDelivery(
           assignmentId: source.assignmentId,
           incarnationId: source.incarnationId,
           requestId: schema.requestId,
+          ...resumeAudit,
         },
       },
     })
@@ -548,7 +603,7 @@ export async function handleFlowPermission(input: {
           eq(executionCommands.runId, runId),
           eq(
             executionCommands.logicalOperationKey,
-            owner.variant === "node"
+            owner.variant === "node" || owner.variant === "permission_resume"
               ? nodePromptOperationKey(owner)
               : gatePromptOperationKey(owner),
           ),
@@ -562,11 +617,19 @@ export async function handleFlowPermission(input: {
       version: 1,
       commandId: command.id,
       nodeAttemptId: owner.nodeAttemptId,
-      promptOrdinal: owner.variant === "node" ? owner.promptOrdinal : 0,
+      promptOrdinal:
+        owner.variant === "node" || owner.variant === "permission_resume"
+          ? owner.promptOrdinal
+          : 0,
       assignmentId: client.assignment.id,
       incarnationId: ref.incarnationId,
-      ...(owner.variant === "node"
-        ? {}
+      ...(owner.variant === "node" || owner.variant === "permission_resume"
+        ? ref.variant === "permission_resume"
+          ? {
+              variant: "permission_resume" as const,
+              hitlRequestId: ref.hitlRequestId,
+            }
+          : {}
         : {
             variant: owner.variant,
             gateId: owner.gateId,
@@ -575,6 +638,60 @@ export async function handleFlowPermission(input: {
     };
 
     await lockPermissionSource(tx, source, hostSessionId);
+    if (ref.variant === "permission_resume") {
+      const [attempt] = await tx
+        .select()
+        .from(nodeAttempts)
+        .where(eq(nodeAttempts.id, owner.nodeAttemptId));
+      const resume = attempt?.actionResume;
+      const [original] = await tx
+        .select()
+        .from(hitlRequests)
+        .where(eq(hitlRequests.id, ref.hitlRequestId))
+        .for("update");
+      const originalSource = parseOwnedPermission(original?.schema);
+      const response = original?.response as Record<string, unknown> | null;
+
+      if (
+        !resume ||
+        resume.kind !== "permission" ||
+        resume.assignmentId !== client.assignment.id ||
+        resume.promptOrdinal !== ref.promptOrdinal ||
+        resume.hitlRequestId !== ref.hitlRequestId ||
+        !original ||
+        original.runId !== runId ||
+        !originalSource ||
+        response?.optionId !== resume.optionId
+      )
+        throw new PromptOwnerInvariantError("permission_reissue_authority");
+      if (originalSource.flowPrompt.commandId === resume.sourceCommandId) {
+        const originalSchema = original.schema as Record<string, unknown>;
+
+        if (
+          original.respondedAt ||
+          response._delivery !== undefined ||
+          originalSource.requestId !== resume.sourceRequestId ||
+          originalSource.flowPrompt.assignmentId !==
+            resume.sourceAssignmentId ||
+          canonicalCommandJson(originalSchema.toolCall) !==
+            canonicalCommandJson(event.toolCall) ||
+          canonicalCommandJson(originalSchema.options) !==
+            canonicalCommandJson(event.options)
+        )
+          throw new PromptOwnerInvariantError("permission_reissue_source");
+        await tx
+          .update(hitlRequests)
+          .set({
+            schema: {
+              ...originalSchema,
+              requestId: event.requestId,
+              supervisorSessionId: hostSessionId,
+              flowPrompt: source,
+            },
+          })
+          .where(eq(hitlRequests.id, original.id));
+      }
+    }
     const [existing] = await tx
       .select()
       .from(hitlRequests)

@@ -4,6 +4,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+// Owned continuation is qualified with real Postgres in the Flow suite.
+vi.mock("@/lib/flows/graph/permission-resume", () => ({
+  hasNodePermissionResume: async () => false,
+}));
+
 // Stub schema tags so the driver's `schemaModule as ...` cast yields
 // values our fake `select(...).from(table)` chain can dispatch on.
 const TABLE_HITL = { _t: "hitl_requests" } as const;

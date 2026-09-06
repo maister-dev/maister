@@ -7,6 +7,7 @@ import type {
 import type {
   ArtifactInstance,
   MaterializationPlan,
+  NodeAttempt,
   Run as RunRow,
   ScratchAdapterLaunch,
 } from "@/lib/db/schema";
@@ -36,6 +37,7 @@ import {
   isNotNull,
   isNull,
   notInArray,
+  or,
 } from "drizzle-orm";
 import pino from "pino";
 
@@ -1525,16 +1527,20 @@ async function executeNodeAction(
     // the maister MCP facade via the run-bound token appended at the
     // materialization seam.
     case "orchestrator": {
-      const [actionAttempt]: Array<{ actionPromptOrdinal: number }> =
-        await ctx.db
-          .select({ actionPromptOrdinal: nodeAttempts.actionPromptOrdinal })
-          .from(nodeAttempts)
-          .where(
-            and(
-              eq(nodeAttempts.id, ctx.nodeAttemptId),
-              eq(nodeAttempts.runId, loaded.run.id),
-            ),
-          );
+      const [actionAttempt]: Array<
+        Pick<NodeAttempt, "actionPromptOrdinal" | "actionResume">
+      > = await ctx.db
+        .select({
+          actionPromptOrdinal: nodeAttempts.actionPromptOrdinal,
+          actionResume: nodeAttempts.actionResume,
+        })
+        .from(nodeAttempts)
+        .where(
+          and(
+            eq(nodeAttempts.id, ctx.nodeAttemptId),
+            eq(nodeAttempts.runId, loaded.run.id),
+          ),
+        );
 
       if (!actionAttempt)
         throw new MaisterError(
@@ -1657,9 +1663,14 @@ async function executeNodeAction(
             flowDriverClaim: ctx.flowDriverClaim,
             signal: ctx.signal,
             promptOwner: {
-              variant: "node",
               nodeAttemptId: ctx.nodeAttemptId,
               promptOrdinal: actionAttempt.actionPromptOrdinal,
+              ...(actionAttempt.actionResume?.kind === "permission"
+                ? {
+                    variant: "permission_resume" as const,
+                    hitlRequestId: actionAttempt.actionResume.hitlRequestId,
+                  }
+                : { variant: "node" as const }),
             },
             // M34 (ADR-089): catalog-agent binding (ai_coding only).
             agentBinding:
@@ -2960,7 +2971,7 @@ export async function runGraph(
         // runAgentStep respawns via session/resume (a gone/unresumable session
         // degrades OBSERVABLY to a fresh one + sessionFallback).
         if (
-          lastForNode.actionResume?.kind === "orchestrator" &&
+          lastForNode.actionResume &&
           lastForNode.actionResume.assignmentId ===
             opts.driver?.claim.assignmentId &&
           lastForNode.actionResume.promptOrdinal ===
@@ -5196,18 +5207,28 @@ export async function runGraph(
   }
 
   const endedAt = new Date();
+  // A resumed permission stays NeedsInput until input delivery. Definitive
+  // create/prompt failure must still close that exact leased generation.
+  const failureStatus = or(
+    eq(runs.status, "Running"),
+    isInFlightPermissionContinuation && opts.driver
+      ? and(
+          eq(runs.status, "NeedsInput"),
+          eq(runs.executionAssignmentId, opts.driver.claim.assignmentId),
+          eq(runs.currentStepId, resumeNodeId ?? ""),
+        )
+      : undefined,
+  );
 
-  // CAS on `status="Running"`: by this point the NeedsInput / checkpoint paths
-  // returned early, so the run is still `Running` UNLESS a concurrent abandon /
-  // takeover / reconcile-crash moved it off-status. Guard the terminal write so
-  // that operator action wins instead of being clobbered back to Failed/Review
-  // (#ledger-clobber / #split-brain).
+  // Ordinary completion requires Running; failed owned permissions also admit
+  // the exact NeedsInput generation above. Concurrent abandon, takeover,
+  // checkpoint or reconciliation retains its state.
   if (failed && runErrorCode === "CRASH") {
     await db.transaction(async (tx: Db) => {
       const rows = await tx
         .update(runs)
         .set({ status: "Crashed", endedAt, currentStepId: null })
-        .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+        .where(and(eq(runs.id, runId), failureStatus))
         .returning({
           projectId: runs.projectId,
           taskId: runs.taskId,
@@ -5254,7 +5275,7 @@ export async function runGraph(
       const rows = await tx
         .update(runs)
         .set({ status: "Failed", endedAt, currentStepId: null })
-        .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+        .where(and(eq(runs.id, runId), failureStatus))
         .returning({
           projectId: runs.projectId,
           taskId: runs.taskId,

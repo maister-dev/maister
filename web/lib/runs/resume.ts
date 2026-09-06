@@ -11,6 +11,7 @@ import {
 
 import { getDb } from "@/lib/db/client";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
+import { hasNodePermissionResume } from "@/lib/flows/graph/permission-resume";
 import * as schemaModule from "@/lib/db/schema";
 import {
   isMaisterError,
@@ -47,7 +48,8 @@ const log = pino({
 export type ResumeRunResult =
   | {
       ok: true;
-      newSupervisorSessionId: string;
+      // Owned Flow creates its session under the graph driver lease.
+      newSupervisorSessionId: string | null;
       acpSessionId: string;
       // ADR-166: the `resume` generation the claim minted — the resumed-session
       // driver binds to THIS row, so a later re-entry fences it structurally.
@@ -302,6 +304,17 @@ export async function resumeRun(
   }
 
   const assignmentId = claim.assignment?.id ?? null;
+
+  if (await hasNodePermissionResume(db, runId)) {
+    log.info({ runId, assignmentId }, "owned permission resume authorized");
+
+    return {
+      ok: true,
+      newSupervisorSessionId: null,
+      acpSessionId: runRow.acpSessionId,
+      assignmentId,
+    };
+  }
 
   try {
     // Bound to the generation the claim just minted — never "the run's active

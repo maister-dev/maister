@@ -19,6 +19,14 @@ const deleteSessionSpy = vi.fn();
 
 vi.mock("@/lib/supervisor-client", () => ({}));
 
+// These pre-owner fixtures do not model the durable Flow resume ledger.
+vi.mock("@/lib/flows/graph/permission-resume", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/lib/flows/graph/permission-resume")
+  >()),
+  hasNodePermissionResume: async () => false,
+}));
+
 // ADR-166: the resumed-session driver talks to the host through the client
 // bound to the run's assignment (prompt / input / delete) and the host-scoped
 // admin stream. The fake client routes each call to the existing spies with

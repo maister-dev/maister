@@ -342,7 +342,7 @@ export const flowPromptOwnerAdapter = definePromptOwnerAdapter(
   async ({ db, owner, command, outcome }) => {
     const ref = owner.ref;
 
-    if (ref.variant === "node")
+    if (ref.variant === "node" || ref.variant === "permission_resume")
       return prepareNodePrompt({ db, ref, command, outcome });
 
     if (ref.variant !== "gate_ai" && ref.variant !== "gate_skill")

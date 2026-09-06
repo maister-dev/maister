@@ -37,10 +37,16 @@ import { isMaisterErrorCode } from "@/lib/errors-core";
 import { nodeOutputMaxBytes } from "@/lib/instance-config";
 
 export type NodePromptOwner = Readonly<{
-  variant: "node";
   nodeAttemptId: string;
   promptOrdinal: number;
-}>;
+}> &
+  (
+    | Readonly<{ variant: "node" }>
+    | Readonly<{
+        variant: "permission_resume";
+        hitlRequestId: string;
+      }>
+  );
 
 const log = pino({
   name: "flow-node-prompt-owner",
@@ -48,7 +54,7 @@ const log = pino({
 });
 
 export function nodePromptOperationKey(owner: NodePromptOwner): string {
-  return `flow_node_attempt:node:${owner.nodeAttemptId}:${owner.promptOrdinal}`;
+  return `flow_node_attempt:${owner.variant}:${owner.nodeAttemptId}:${owner.promptOrdinal}`;
 }
 
 export async function admitNodePrompt(
@@ -70,10 +76,20 @@ export async function admitNodePrompt(
     .from(nodeAttempts)
     .where(eq(nodeAttempts.id, owner.nodeAttemptId))
     .for("update");
+  const resume = attempt?.actionResume;
+  const permissionResume =
+    resume?.kind === "permission" &&
+    resume.assignmentId === assignment.id &&
+    resume.promptOrdinal === owner.promptOrdinal
+      ? resume
+      : null;
 
   if (
     run?.runKind !== "flow" ||
-    run.status !== "Running" ||
+    !(
+      run.status === "Running" ||
+      (run.status === "NeedsInput" && permissionResume)
+    ) ||
     !attempt ||
     attempt.runId !== runId ||
     attempt.executionAssignmentId !== assignment.id ||
@@ -81,7 +97,10 @@ export async function admitNodePrompt(
     attempt.status !== "Running" ||
     run.currentStepId !== attempt.nodeId ||
     attempt.actionPromptOrdinal !== owner.promptOrdinal ||
-    attempt.actionCompletion !== null
+    attempt.actionCompletion !== null ||
+    (owner.variant === "permission_resume"
+      ? permissionResume?.hitlRequestId !== owner.hitlRequestId
+      : permissionResume !== null)
   )
     throw new PromptOwnerInvariantError("node_admission_generation");
   const [binding] = await tx
@@ -112,7 +131,14 @@ export async function admitNodePrompt(
       kind: "flow_node_attempt",
       ref: {
         version: 1,
-        ...owner,
+        nodeAttemptId: owner.nodeAttemptId,
+        promptOrdinal: owner.promptOrdinal,
+        ...(permissionResume
+          ? {
+              variant: "permission_resume" as const,
+              hitlRequestId: permissionResume.hitlRequestId,
+            }
+          : { variant: "node" as const }),
         runId,
         runSessionId: binding.session.id,
         incarnationId: binding.incarnation.id,
@@ -126,7 +152,7 @@ export async function admitNodePrompt(
 
 export async function prepareNodePrompt(input: {
   db: Db;
-  ref: Extract<FlowOwnerRef, { variant: "node" }>;
+  ref: Extract<FlowOwnerRef, { variant: "node" | "permission_resume" }>;
   command: Readonly<ExecutionCommand>;
   outcome: PromptOwnerOutcome;
 }): Promise<PreparedPromptOwner> {

@@ -133,6 +133,9 @@ class MockAgent {
     this.sessions.set(params.sessionId, { prompts: 0 });
     const journal = readJournal(params.sessionId);
 
+    // Integration tests can revoke this exact persisted resume handle.
+    if (journal?.rejectResume)
+      throw new acp.RequestError(-32001, "session resume handle not found");
     if (journal && journal.pendingPermission) {
       pendingReplay = journal.pendingPermission;
     }

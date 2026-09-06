@@ -7,6 +7,7 @@ import pino from "pino";
 import { scheduleResumedSessionDrive } from "./resume-driver";
 import { rollbackResumedRun } from "./state-transitions";
 
+import { hasNodePermissionResume } from "@/lib/flows/graph/permission-resume";
 import { getDb } from "@/lib/db/client";
 import { loadActiveRunSessionsByRunId } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
@@ -245,6 +246,19 @@ export async function runResumeRecoverySweep(
   let skipped = 0;
 
   await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (cand) => {
+    if (await hasNodePermissionResume(db, cand.runId)) {
+      scheduleDriver({
+        runId: cand.runId,
+        supervisorSessionId: null,
+        acpSessionId: cand.acpSessionId,
+        stepId: cand.stepId,
+        db,
+        executionHosts: hosts,
+      });
+      rescheduled += 1;
+
+      return;
+    }
     const live = sessionLoad.map.get(cand.acpSessionId);
 
     if (live) {

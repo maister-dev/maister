@@ -424,7 +424,19 @@ describe("Stage A lifecycle regression (real supervisor)", () => {
     expect(commands.filter((c) => c.kind === "workspace.adopt")).toHaveLength(
       1,
     );
-    const creates = commands.filter((c) => c.kind === "session.create");
+    // HTTP 202 commits the capacity claim; the leased Flow driver creates
+    // the resumed session asynchronously from the persisted authorization.
+    const creates = await waitFor(
+      async () => {
+        const rows = (await commandsOf(runId)).filter(
+          (c) => c.kind === "session.create",
+        );
+
+        return rows.length === 2 ? rows : null;
+      },
+      "the owned resumed create",
+      { runId },
+    );
 
     expect(creates).toHaveLength(2);
     expect(creates[1].assignmentEpoch).toBe(2);

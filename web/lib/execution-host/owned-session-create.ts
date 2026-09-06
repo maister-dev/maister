@@ -33,7 +33,7 @@ import { isReadoptableWorkspaceError } from "./adoption";
 import { staleSessionBinding } from "./session-binding";
 import { asHostSessionId } from "./types";
 
-import { executionCommands } from "@/lib/db/schema";
+import { executionCommands, nodeAttempts } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { isMaisterErrorCode } from "@/lib/errors-core";
 
@@ -126,6 +126,16 @@ export async function createOwnedSession(input: {
         envelope.payload.resumeSessionId &&
         intent.generation < 2
       ) {
+        const [attempt] = await db
+          .select({ resume: nodeAttempts.actionResume })
+          .from(nodeAttempts)
+          .where(eq(nodeAttempts.id, owner.nodeAttemptId));
+
+        if (
+          attempt?.resume?.kind === "permission" &&
+          attempt.resume.assignmentId === authority.assignmentId
+        )
+          throw failure;
         const { resumeSessionId, ...fresh } = envelope.payload;
 
         void resumeSessionId;

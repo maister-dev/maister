@@ -22,6 +22,7 @@ import { mintPlacement, releaseAssignmentForRun } from "@/lib/execution-host";
 import { gcAgeDays } from "@/lib/instance-config";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { authorizeOrchestratorActionResume } from "@/lib/flows/graph/action-resume";
+import { authorizeNodePermissionResume } from "@/lib/flows/graph/permission-resume";
 import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -269,6 +270,7 @@ export async function markResumed(
       // The resume is a new driver generation: mint inside the claim.
       const assignment = await mintForClaim(tx, runId, "resume", opts);
 
+      if (assignment) await authorizeNodePermissionResume(tx, assignment);
       await opts.recordSuccessAudit?.(tx);
 
       log.info(

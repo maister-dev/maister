@@ -1002,6 +1002,13 @@
       "when": 1788684681273,
       "tag": "0146_flow_session_create_intents",
       "breakpoints": true
+    },
+    {
+      "idx": 147,
+      "version": "7",
+      "when": 1788693511810,
+      "tag": "0147_flow_permission_resumes",
+      "breakpoints": true
     }
   ]
 }

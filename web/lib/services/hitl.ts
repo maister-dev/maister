@@ -446,6 +446,7 @@ async function scheduleBudgetBreachResume(args: {
     if (r.ok) {
       scheduleResumedSessionDrive({
         runId,
+        db,
         supervisorSessionId: r.newSupervisorSessionId,
         acpSessionId: r.acpSessionId,
         stepId,
@@ -1133,6 +1134,7 @@ async function handlePermissionResponse(
       // or auto-delivered the stored intent.
       const driveId = scheduleResumedSessionDrive({
         runId,
+        db,
         supervisorSessionId: r.newSupervisorSessionId,
         acpSessionId: r.acpSessionId,
         stepId: hitlRow.stepId,
