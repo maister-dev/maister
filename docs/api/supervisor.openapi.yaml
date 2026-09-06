@@ -526,9 +526,14 @@ paths:
         (`accepted` for a prompt whose turn is in flight, `completed` with the
         stored response body, `rejected` with the stored error body) and the
         HTTP status that was — or will be — returned. The web tier reads it
-        exactly once after an unknown-outcome transport failure on an accepted
-        prompt, and during startup recovery of `delivering` / `accepted`
-        ledger rows. Receipts are pruned on a 7-day TTL at boot and hourly.
+        after unknown-outcome transport failures, during canonical prompt
+        preparation, and during recovery of open ledger rows. A terminal prompt
+        receipt is persisted in Postgres and must agree with its exact canonical
+        event before settling the command. Nested errors remain intact. Verified
+        agreement can be read without another host request. Legacy host receipts
+        with no target identity cannot replay against a new session. Receipts
+        are still pruned on a 7-day TTL at boot and hourly; state-aware retirement
+        and receipt v2 remain designed.
       operationId: getCommandReceipt
       parameters:
         - name: commandId

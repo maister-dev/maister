@@ -83,7 +83,7 @@ export const RECEIPT_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 export const RECEIPT_PRUNE_INTERVAL_MS = 60 * 60 * 1_000;
 export const EXECUTION_HOST_PROTOCOL_VERSION = 1;
 // `PRAGMA user_version` of the state file; bumped with every migration below.
-export const HOST_STATE_SCHEMA_VERSION = 9;
+export const HOST_STATE_SCHEMA_VERSION = 10;
 const MAX_HOST_EVENT_SEQUENCE = (1n << 63n) - 1n;
 const HOST_EVENT_SEQUENCE_SORT_WIDTH = 20;
 
@@ -149,6 +149,12 @@ export type CommandReceiptRow = {
   epoch: number;
   hostSessionId: string | null;
   requestDigest: string | null;
+  // Absent/null values identify a legacy receipt; never synthesize bindings.
+  requestSchema?: string | null;
+  hostKey?: string | null;
+  acceptedSequence?: string | null;
+  terminalStreamId?: string | null;
+  terminalSequence?: string | null;
   eventId: string | null;
   phase: ReceiptPhase;
   httpStatus: number;
@@ -387,6 +393,11 @@ CREATE TABLE IF NOT EXISTS command_receipts (
   epoch INTEGER NOT NULL,
   host_session_id TEXT,
   request_digest TEXT,
+  request_schema TEXT,
+  host_key TEXT,
+  accepted_sequence TEXT,
+  terminal_stream_id TEXT,
+  terminal_sequence TEXT,
   event_id TEXT,
   phase TEXT NOT NULL,
   http_status INTEGER NOT NULL,
@@ -597,6 +608,17 @@ PRAGMA user_version = 9;
 COMMIT;
 `;
 
+const MIGRATE_V9_TO_V10 = `
+BEGIN IMMEDIATE;
+ALTER TABLE command_receipts ADD COLUMN request_schema TEXT;
+ALTER TABLE command_receipts ADD COLUMN host_key TEXT;
+ALTER TABLE command_receipts ADD COLUMN accepted_sequence TEXT;
+ALTER TABLE command_receipts ADD COLUMN terminal_stream_id TEXT;
+ALTER TABLE command_receipts ADD COLUMN terminal_sequence TEXT;
+PRAGMA user_version = 10;
+COMMIT;
+`;
+
 function applySchema(db: DatabaseSync): void {
   const fresh =
     db
@@ -631,6 +653,7 @@ function applySchema(db: DatabaseSync): void {
   if (Number(user_version) < 7) db.exec(MIGRATE_V6_TO_V7);
   if (Number(user_version) < 8) db.exec(MIGRATE_V7_TO_V8);
   if (Number(user_version) < 9) db.exec(MIGRATE_V8_TO_V9);
+  if (Number(user_version) < 10) db.exec(MIGRATE_V9_TO_V10);
 }
 
 export function openHostState(opts: OpenHostStateOptions = {}): HostState {
@@ -914,7 +937,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     getReceipt(commandId) {
       const row = db
         .prepare(
-          `SELECT command_id, run_id, kind, assignment_id, epoch, host_session_id, request_digest, event_id, phase, http_status, body_json, received_at, completed_at
+          `SELECT command_id, run_id, kind, assignment_id, epoch, host_session_id, request_digest, request_schema, host_key, accepted_sequence, terminal_stream_id, terminal_sequence, event_id, phase, http_status, body_json, received_at, completed_at
            FROM command_receipts WHERE command_id = ?`,
         )
         .get(commandId) as
@@ -926,6 +949,11 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
             epoch: number;
             host_session_id: string | null;
             request_digest: string | null;
+            request_schema: string | null;
+            host_key: string | null;
+            accepted_sequence: string | null;
+            terminal_stream_id: string | null;
+            terminal_sequence: string | null;
             event_id: string | null;
             phase: ReceiptPhase;
             http_status: number;
@@ -945,6 +973,11 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         epoch: Number(row.epoch),
         hostSessionId: row.host_session_id,
         requestDigest: row.request_digest,
+        requestSchema: row.request_schema,
+        hostKey: row.host_key,
+        acceptedSequence: row.accepted_sequence,
+        terminalStreamId: row.terminal_stream_id,
+        terminalSequence: row.terminal_sequence,
         eventId: row.event_id,
         phase: row.phase,
         httpStatus: Number(row.http_status),
@@ -1057,6 +1090,9 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         epoch: number;
         host_session_id: string | null;
         request_digest: string | null;
+        request_schema: string | null;
+        host_key: string | null;
+        accepted_sequence: string | null;
         received_at: string;
       };
       type LostWallet = {
@@ -1076,7 +1112,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         const rows = db
           .prepare(
             `SELECT command_id, run_id, kind, assignment_id, epoch,
-            host_session_id, request_digest, received_at FROM command_receipts
+            host_session_id, request_digest, request_schema, host_key, accepted_sequence, received_at FROM command_receipts
           WHERE phase = 'accepted' AND assignment_id IS NOT NULL AND (
             (kind = 'session.prompt' AND host_session_id IS NOT NULL) OR
             EXISTS (SELECT 1 FROM runtime_event_wallets w WHERE w.closed = 0 AND
@@ -1117,6 +1153,9 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
             hostSessionId:
               row.host_session_id ?? wallet?.host_session_id ?? null,
             requestDigest: row.request_digest,
+            requestSchema: row.request_schema,
+            hostKey: row.host_key,
+            acceptedSequence: row.accepted_sequence,
             eventId: null,
             phase: "rejected",
             httpStatus: 409,
@@ -1412,7 +1451,16 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
             input: eventInput,
           });
 
-          writeReceiptRow(db, { ...receipt, eventId: event.eventId });
+          writeReceiptRow(db, {
+            ...receipt,
+            eventId: event.eventId,
+            ...(receipt.phase === "accepted"
+              ? { acceptedSequence: event.sequence }
+              : {
+                  terminalStreamId: event.streamId,
+                  terminalSequence: event.sequence,
+                }),
+          });
           settleReceiptBudget(db, receipt);
 
           db.exec("COMMIT");
@@ -1896,12 +1944,15 @@ function writeReceiptRow(db: DatabaseSync, row: CommandReceiptRow): void {
     );
   db.prepare(
     `INSERT INTO command_receipts
-       (command_id, run_id, kind, assignment_id, epoch, host_session_id, request_digest, event_id, phase, http_status, body_json, received_at, completed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (command_id, run_id, kind, assignment_id, epoch, host_session_id, request_digest, request_schema, host_key, accepted_sequence, terminal_stream_id, terminal_sequence, event_id, phase, http_status, body_json, received_at, completed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (command_id) DO UPDATE SET
        assignment_id = COALESCE(command_receipts.assignment_id, excluded.assignment_id),
        host_session_id = COALESCE(command_receipts.host_session_id, excluded.host_session_id),
        request_digest = COALESCE(command_receipts.request_digest, excluded.request_digest),
+       accepted_sequence = COALESCE(command_receipts.accepted_sequence, excluded.accepted_sequence),
+       terminal_stream_id = COALESCE(command_receipts.terminal_stream_id, excluded.terminal_stream_id),
+       terminal_sequence = COALESCE(command_receipts.terminal_sequence, excluded.terminal_sequence),
        event_id = excluded.event_id,
        phase = excluded.phase,
        http_status = excluded.http_status,
@@ -1915,6 +1966,11 @@ function writeReceiptRow(db: DatabaseSync, row: CommandReceiptRow): void {
     row.epoch,
     row.hostSessionId,
     row.requestDigest,
+    row.requestSchema ?? null,
+    row.hostKey ?? null,
+    row.acceptedSequence ?? null,
+    row.terminalStreamId ?? null,
+    row.terminalSequence ?? null,
     row.eventId,
     row.phase,
     row.httpStatus,

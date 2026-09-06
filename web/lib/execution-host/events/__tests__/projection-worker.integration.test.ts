@@ -22,6 +22,7 @@ import {
 } from "../projector";
 import { projectionLimitsFromEnv } from "../projection-limits";
 
+import { depositPromptReceipt } from "@/lib/execution-host/prompt-evidence";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -620,6 +621,7 @@ describe("autonomous canonical projection worker", () => {
     const hostId = randomUUID();
     const assignmentId = randomUUID();
     const commandId = randomUUID();
+    const terminalEventId = randomUUID();
     const hostKey = `eh_${randomUUID().replaceAll("-", "")}`;
 
     await database.pool.query(
@@ -654,7 +656,7 @@ describe("autonomous canonical projection worker", () => {
       executionHostId: hostId,
       envelope: {
         envelopeVersion: 1,
-        eventId: randomUUID(),
+        eventId: terminalEventId,
         hostKey,
         hostBootId: randomUUID(),
         streamId: randomUUID(),
@@ -674,6 +676,19 @@ describe("autonomous canonical projection worker", () => {
           result: { stopReason: "end_turn", meta: null },
         },
       },
+    });
+    await depositPromptReceipt(database.db, commandId, {
+      commandId,
+      runId,
+      kind: "session.prompt",
+      assignmentEpoch: 1,
+      phase: "completed",
+      httpStatus: 200,
+      body: { stopReason: "end_turn", meta: null },
+      eventId: terminalEventId,
+      receivedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      inflight: false,
     });
     await database.pool
       .query(`CREATE FUNCTION slow_projection_state() RETURNS trigger LANGUAGE plpgsql AS $$

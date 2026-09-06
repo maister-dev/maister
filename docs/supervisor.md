@@ -762,7 +762,7 @@ refuses startup. File pressure shares producer pause/wake and credited teardown
 with event pressure. ACK alone releases no file capacity. Size limits and the
 remaining immutable-output sealing work are described in the canonical
 [resource budget](configuration.md#a-b-stabilization-resource-budget-designed).
-The file carries a `PRAGMA user_version` (currently 9)
+The file carries a `PRAGMA user_version` (currently 10)
 that gates in-place migrations at open: a version-0 store (inline
 `UNIQUE (run_id, real_path)`, which blocked re-adoption after a release) is
 rebuilt under the partial index with every row kept; a fresh store starts at
@@ -777,6 +777,13 @@ is lost, the host mints a new key (unless pinned) — the web registrar then
 retires the idle old row or refuses registration while the old row still owns
 non-terminal runs; fences restart at the first command; handles are
 re-adopted lazily. Cross-host ACP resume is out of scope.
+
+Version 10 adds nullable request-schema, host-key, accepted-sequence and terminal
+stream/sequence receipt bindings. New admissions hash the same JCS request v2
+value as the manager, including the URL-selected target. Legacy rows retain
+their original digest with null v2 metadata; reopen never fabricates missing
+request or sequence identity. The public receipt v2 response and immutable
+command-output manifest remain under implementation.
 
 ## Module layout
 

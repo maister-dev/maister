@@ -1,6 +1,6 @@
 # Execution prompt lifecycle
 
-**Status:** Implemented short-lived prompt admission and command/receipt substrate; **Designed** exact request persistence, durable owner application, unified terminal reconciliation, unknown-outcome recovery, fencing and retention corrections (AB-05–08/10).
+**Status:** Implemented short-lived admission, private v2 request/owner storage and shared canonical-event/receipt reconciliation. Request-bound receipt v2, command-output manifests, durable owner application, unknown-outcome recovery, fencing and retention corrections remain **Designed** (AB-05–08/10).
 
 
 ## Purpose
@@ -54,6 +54,31 @@ sequenceDiagram
 ```
 
 ## Immutable requests, outcomes and command authority (Designed)
+
+The S2.1 storage/admission foundation is implemented but not yet active for
+production prompt callers. `issueOwnedPrompt` runs the domain's admission
+callback and routing checks in one transaction, locks before looking up the
+namespaced logical key, and reuses the original ID/time and normalized request
+on a matching retry. Migration 0140 rejects incomplete v2 requests and changes
+to admitted identity. `readPromptRequest` verifies JCS bytes, SHA-256 and routing
+before returning the original request; legacy redacted/digest-only rows remain
+explicitly classified. Domain-specific callbacks and global activation are
+later S2 tasks.
+
+The shared `prompt-evidence` reducer is implemented for canonical prompt
+outcomes. The projector, admission reconciliation, recovery and waiter retain
+terminal receipt evidence and an exact canonical event pointer on the command
+row. Receipt-first and event-first delivery remain pending until both agree;
+nested result/error values are compared intact. Migration 0141 protects saved
+evidence and agreed outcomes from replacement and prevents deleting the
+referenced event. A disagreement records an application quarantine while
+preserving any valid terminal outcome. Verified evidence remains usable without
+a new host read. Host request replay also checks the stored URL-selected target;
+a legacy receipt with no target cannot attach to a newly created session.
+Host SQLite v10 additionally stores the JCS v2 request digest, original host
+key and accepted/terminal stream positions, preserving null metadata on legacy
+upgrade. The public receipt v2 response and full command-output manifests remain
+the next S2.2 increment; legacy receipt agreement is not v2 activation.
 
 Keep `execution_commands.payload` as the existing allowlisted diagnostic projection. Add a **server-private** immutable `request_canonical_json` TEXT on the same ledger, with version and SHA-256. Store the exact JCS UTF-8 string for `{requestVersion, command:{id,kind,issuedAt}, fence, target:{hostSessionId}, payload}`; include every effect-affecting field, array order and frozen content/object references. Normalize optional fields once before storage. `issuedAt` and all generated IDs are created once and reused; no clock/random input during retry. Parsed request → strict schema → digest comparison precedes every dispatch. The host uses the same digest schema, including the URL target (not only envelope payload), before replaying a receipt.
 
@@ -214,7 +239,7 @@ Deferred inventory must cover ACP permission promises, prompt wait subscriptions
 
 - **PRM-01:** `session.prompt` is accepted only after the host durably records its Stage A receipt and accepted event.
 - **PRM-02 (Designed correction):** Retry reuses command ID, logical operation key, and canonical request digest so ACP is never invoked twice.
-- **PRM-03 (Designed correction):** Progress and terminal events—not HTTP lifetime or a receipt alone—are lifecycle authority; the queryable receipt is agreeing evidence for reconciliation.
+- **PRM-03:** Progress and terminal events—not HTTP lifetime or a receipt alone—are lifecycle authority; the queryable receipt is agreeing evidence for reconciliation.
 - **PRM-04 (Designed correction):** Every prompt command has one typed server-derived owner and idempotent terminal application across web restart.
 - **PRM-05:** A host restart finding an accepted command without a live turn terminalizes it as `turn_lost` without replaying prompt text.
 - **PRM-06 (Designed correction):** Receipt and terminal event must agree on command, assignment, epoch, and outcome before owner mutation.

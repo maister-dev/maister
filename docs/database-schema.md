@@ -4032,8 +4032,19 @@ capability_ref_id)`, `project_flow_roles(project_id, role_ref)`,
 
 ## A/B stabilization persistence contract (Designed)
 
-These forward additions belong to the existing command/catalog/consumer ledgers;
-no SQL migration is changed or applied by the specification increment. The
+These forward additions belong to the existing command/catalog/consumer ledgers.
+S1 consumer state is implemented. Migration `0140_immutable_command_requests`
+adds the private request, transport and application fields below, a closed
+v2 owner/request CHECK, and a trigger protecting admitted request/owner/routing
+identity. Existing applied markers initialize application state without creating
+request bytes or hashes. The server-only `issueOwnedPrompt` admission API is
+available for the S2 owner adapters; production callers activate after all
+adapters are wired and legacy rows are classified. Migration 0141 adds
+`receipt_evidence`, `terminal_event_id` and `terminal_evidence_sha256`, checks
+receipt identity, and protects recorded evidence and agreed results with a
+trigger. The terminal event FK restricts deletion. The shared reducer currently
+stores normalized legacy receipts; request-bound receipt v2, retirement and
+object additions remain designed. The
 [command reducer and recovery windows](system-analytics/execution-prompt-lifecycle.md)
 define transition authority. New prompt rows activate only after every owner
 adapter supports the contract and existing accepted/unknown rows are drained or
@@ -4043,7 +4054,7 @@ explicitly held for repair. They cannot be backfilled from redacted payloads.
 | --- | --- | --- |
 | `execution_commands.request_canonical_json` | `text`, nullable only before activation or for existing non-prompt commands | Immutable exact JCS UTF-8 request; `request_schema = maister.command.request.v2`, SHA-256 must match; private, excluded from DTOs/logs. |
 | `execution_commands.transport_state` | `text`, `not_sent` | CHECK `not_sent|dispatching|acknowledged|unknown|reconciliation_required`; no terminal command inference. |
-| `execution_commands.receipt_evidence` | `jsonb`, null | Validated immutable v2 receipt identity/outcome, independent of event order; conflicting replay quarantines without overwrite. |
+| `execution_commands.receipt_evidence` | `jsonb`, null | Normalized terminal receipt identity/outcome, independent of event order; conflicting replay quarantines without overwrite. Legacy receipt storage is implemented; strict v2 binding is the next increment. |
 | `execution_commands.terminal_event_id` | `text`, null | Exact canonical event ID, resolved against the same command/fence/target; event cannot be pruned while referenced. |
 | `execution_commands.terminal_evidence_sha256` | `text`, null | Lowercase 64-hex digest of the agreed versioned terminal identity. |
 | `execution_commands.application_state` | `text`, `pending` | CHECK `pending|applying|applied|superseded|poisoned`; `applied` iff `completion_applied_at` nonnull. Non-prompt rows have no application obligation. |

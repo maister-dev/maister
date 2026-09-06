@@ -31,6 +31,9 @@ import type {
   EvaluationRecipeDefinition,
   EvaluationRunIdentitySnapshot,
 } from "@/lib/evaluations/types";
+import type { PromptOwnerReference } from "@/lib/execution-host/prompt-owner-contract";
+import type { CommandApplicationError } from "@/lib/execution-host/types";
+import type { CommandReceipt } from "@/lib/execution-host/contracts";
 
 import { sql } from "drizzle-orm";
 import {
@@ -54,10 +57,13 @@ import {
 
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { DOMAIN_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
+import { PROMPT_OWNER_SHAPES } from "@/lib/execution-host/prompt-owner-contract";
 import {
   ASSIGNMENT_STATES,
   COMMAND_KINDS,
   COMMAND_STATES,
+  COMMAND_APPLICATION_STATES,
+  COMMAND_TRANSPORT_STATES,
   EXECUTION_HOST_KINDS,
   EXECUTION_HOST_READINESS,
   OPEN_COMMAND_STATES,
@@ -2235,10 +2241,38 @@ export const executionCommands = pgTable(
         "sync_resolution",
       ],
     }),
-    ownerRef: jsonb("owner_ref").$type<Record<string, unknown>>(),
+    ownerRef: jsonb("owner_ref").$type<PromptOwnerReference>(),
     logicalOperationKey: text("logical_operation_key"),
     requestSchema: text("request_schema"),
     requestSha256: text("request_sha256"),
+    // Private immutable replay source. Never select into browser DTOs or logs.
+    requestCanonicalJson: text("request_canonical_json"),
+    receiptEvidence: jsonb("receipt_evidence").$type<CommandReceipt>(),
+    terminalEventId: text("terminal_event_id").references(
+      (): AnyPgColumn => executionEvents.id,
+      { onDelete: "restrict" },
+    ),
+    terminalEvidenceSha256: text("terminal_evidence_sha256"),
+    transportState: text("transport_state", { enum: COMMAND_TRANSPORT_STATES })
+      .notNull()
+      .default("not_sent"),
+    applicationState: text("application_state", {
+      enum: COMMAND_APPLICATION_STATES,
+    })
+      .notNull()
+      .default("pending"),
+    applicationClaimOwner: text("application_claim_owner"),
+    applicationClaimExpiresAt: timestamp("application_claim_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    applicationAttempts: integer("application_attempts").notNull().default(0),
+    applicationNextRetryAt: timestamp("application_next_retry_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    applicationError:
+      jsonb("application_error").$type<CommandApplicationError>(),
     completionAppliedAt: timestamp("completion_applied_at", {
       withTimezone: true,
       mode: "date",
@@ -2279,9 +2313,35 @@ export const executionCommands = pgTable(
       t.runId,
       t.createdAt,
     ),
+    terminalEvidenceCheck: check(
+      "execution_commands_terminal_evidence_check",
+      sql`${t.terminalEvidenceSha256} IS NULL OR (${t.terminalEvidenceSha256} ~ '^[a-f0-9]{64}$' AND ${t.terminalEventId} IS NOT NULL AND ${t.receiptEvidence} IS NOT NULL)`,
+    ),
+    receiptEvidenceCheck: check(
+      "execution_commands_receipt_evidence_check",
+      sql`${t.receiptEvidence} IS NULL OR (jsonb_typeof(${t.receiptEvidence}) = 'object' AND ${t.receiptEvidence}->>'commandId' = ${t.id} AND ${t.receiptEvidence}->>'runId' = ${t.runId} AND ${t.receiptEvidence}->>'kind' = ${t.kind} AND ${t.receiptEvidence}->>'assignmentEpoch' = ${t.assignmentEpoch}::text AND ${t.receiptEvidence}->>'phase' IN ('completed', 'rejected')) IS TRUE`,
+    ),
+    idxTerminalEvent: index("execution_commands_terminal_event_idx")
+      .on(t.terminalEventId)
+      .where(sql`${t.terminalEventId} IS NOT NULL`),
     idxAssignment: index("execution_commands_assignment_idx").on(
       t.executionAssignmentId,
     ),
+    idxReconciliation: index("execution_commands_reconciliation_idx")
+      .on(t.transportState, t.nextAttemptAt, t.id)
+      .where(
+        sql`${t.requestSchema} = 'maister.command.request.v2' AND ${t.transportState} IN ('unknown', 'reconciliation_required')`,
+      ),
+    idxApplication: index("execution_commands_application_idx")
+      .on(
+        t.applicationState,
+        t.applicationNextRetryAt,
+        t.applicationClaimExpiresAt,
+        t.id,
+      )
+      .where(
+        sql`${t.requestSchema} = 'maister.command.request.v2' AND ${t.kind} = 'session.prompt' AND ${t.applicationState} IN ('pending', 'applying')`,
+      ),
     uniqPromptLogicalOperation: uniqueIndex(
       "execution_commands_prompt_logical_operation_uq",
     )
@@ -2304,6 +2364,65 @@ export const executionCommands = pgTable(
     ownerShapeCheck: check(
       "execution_commands_owner_shape_check",
       sql`(${t.ownerKind} IS NULL AND ${t.ownerRef} IS NULL AND ${t.logicalOperationKey} IS NULL AND ${t.requestSchema} IS NULL AND ${t.requestSha256} IS NULL) OR (${t.ownerKind} IN ('flow_node_attempt', 'scratch_message', 'gate_chat', 'agent_turn', 'sync_resolution') AND jsonb_typeof(${t.ownerRef}) = 'object' AND ${t.logicalOperationKey} IS NOT NULL AND ${t.requestSchema} IS NOT NULL AND ${t.requestSha256} ~ '^[a-f0-9]{64}$')`,
+    ),
+    requestShapeCheck: check(
+      "execution_commands_request_v2_check",
+      sql`(((${t.requestSchema} IS DISTINCT FROM 'maister.command.request.v2') AND ${t.requestCanonicalJson} IS NULL) OR
+        (${t.requestSchema} = 'maister.command.request.v2' AND ${t.kind} = 'session.prompt'
+        AND ${t.requestCanonicalJson} IS NOT NULL AND ${t.targetSessionId} IS NOT NULL
+        AND ${t.ownerKind} IS NOT NULL AND ${t.ownerRef} IS NOT NULL
+        AND length(${t.logicalOperationKey}) BETWEEN 1 AND 256
+        AND ${t.requestSha256} = encode(sha256(convert_to(${t.requestCanonicalJson}, 'UTF8')), 'hex')
+        AND (${t.requestCanonicalJson}::jsonb->'requestVersion') = '2'::jsonb
+        AND (${t.requestCanonicalJson}::jsonb->'command'->>'id') = ${t.id}
+        AND (${t.requestCanonicalJson}::jsonb->'command'->>'kind') = ${t.kind}
+        AND (${t.requestCanonicalJson}::jsonb->'fence'->>'runId') = ${t.runId}
+        AND (${t.requestCanonicalJson}::jsonb->'fence'->>'assignmentId') = ${t.executionAssignmentId}
+        AND (${t.requestCanonicalJson}::jsonb->'fence'->'assignmentEpoch') = to_jsonb(${t.assignmentEpoch})
+        AND (${t.requestCanonicalJson}::jsonb->'target'->>'hostSessionId') = ${t.targetSessionId}
+        AND (${t.ownerRef}->>'runId') = ${t.runId}
+        AND (${t.ownerRef}->>'assignmentId') = ${t.executionAssignmentId}
+        AND (${t.ownerRef}->'assignmentEpoch') = to_jsonb(${t.assignmentEpoch})
+        AND (${t.ownerRef}->'version') = '1'::jsonb
+        AND (${sql.join(
+          PROMPT_OWNER_SHAPES.map(({ kind, variant, keys }) => {
+            const allowed = sql.raw(
+              `ARRAY[${keys.map((key) => `'${key}'`).join(",")}]::text[]`,
+            );
+            const fields = keys.map((key) => {
+              const name = sql.raw(`'${key}'`);
+
+              return [
+                "version",
+                "assignmentEpoch",
+                "promptOrdinal",
+                "round",
+              ].includes(key)
+                ? sql`CASE WHEN jsonb_typeof(${t.ownerRef}->${name}) = 'number' THEN (${t.ownerRef}->>${name})::numeric BETWEEN 0 AND 9007199254740991 AND (${t.ownerRef}->>${name}) ~ '^[0-9]+$' ELSE false END`
+                : sql`jsonb_typeof(${t.ownerRef}->${name}) = 'string' AND length(${t.ownerRef}->>${name}) BETWEEN 1 AND 128`;
+            });
+
+            return sql`(${t.ownerKind} = ${sql.raw(`'${kind}'`)} AND ${t.ownerRef}->>'variant' = ${sql.raw(`'${variant}'`)} AND ${t.ownerRef} ?& ${allowed} AND ${t.ownerRef} - ${allowed} = '{}'::jsonb AND ${sql.join(fields, sql` AND `)}${variant === "resolver" ? sql` AND ${t.ownerRef}->>'expectedPhase' = 'agent_running'` : sql``})`;
+          }),
+          sql` OR `,
+        )}))) IS TRUE`,
+    ),
+    transportStateCheck: check(
+      "execution_commands_transport_state_check",
+      inLiteralList(t.transportState, COMMAND_TRANSPORT_STATES),
+    ),
+    applicationStateCheck: check(
+      "execution_commands_application_state_check",
+      inLiteralList(t.applicationState, COMMAND_APPLICATION_STATES),
+    ),
+    applicationShapeCheck: check(
+      "execution_commands_application_shape_check",
+      sql`
+      (${t.applicationState} = 'applied') = (${t.completionAppliedAt} IS NOT NULL)
+      AND (${t.applicationState} = 'applying') = (${t.applicationClaimOwner} IS NOT NULL AND ${t.applicationClaimExpiresAt} IS NOT NULL)
+      AND (${t.applicationClaimOwner} IS NULL) = (${t.applicationClaimExpiresAt} IS NULL)
+      AND ${t.applicationAttempts} >= 0
+      AND (${t.applicationState} != 'poisoned' OR ${t.applicationNextRetryAt} IS NULL)`,
     ),
   }),
 );

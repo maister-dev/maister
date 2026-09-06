@@ -1,95 +1,32 @@
 import "server-only";
 
+import type { CommandReceipt } from "@/lib/execution-host/contracts";
 import type { Db } from "@/lib/execution-host/db";
-
-import { isDeepStrictEqual } from "node:util";
 
 import { and, eq } from "drizzle-orm";
 
 import { CANONICAL_PROJECTION_CONSUMERS } from "./projection-consumers";
 import { preparePromptContent } from "./session-content";
 import {
-  ExecutionEventProjectionError,
   projectExecutionEvents,
   type ExecutionEventProjectorSummary,
   type ExecutionEventProjector,
 } from "./projector";
+import { ExecutionEventProjectionError } from "./projector";
 
 import { commandSignals } from "@/lib/execution-host/signals";
+import { getCommand } from "@/lib/execution-host/commands";
+import { defaultTransport } from "@/lib/execution-host/default-transport";
 import {
-  markAccepted,
-  markFailed,
-  markFenced,
-  markSucceeded,
-} from "@/lib/execution-host/commands";
+  depositPromptReceipt,
+  recordPromptEvent,
+} from "@/lib/execution-host/prompt-evidence";
+import { isMaisterError } from "@/lib/errors";
 import {
   executionAssignments,
-  executionCommands,
   runs,
   type ExecutionEvent,
 } from "@/lib/db/schema";
-
-type PromptCommandPayload = {
-  commandId: string;
-  kind: "session.prompt";
-  phase: "accepted" | "completed";
-  status?: "succeeded" | "failed" | "fenced";
-  result?: Record<string, unknown>;
-  error?: Record<string, unknown>;
-};
-
-function projectionError(reason: string): ExecutionEventProjectionError {
-  return new ExecutionEventProjectionError(reason, true);
-}
-
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw projectionError(`session.command ${field} must be an object`);
-  }
-
-  return value as Record<string, unknown>;
-}
-
-function parsePromptCommandPayload(
-  payload: Record<string, unknown> | null,
-): PromptCommandPayload | null {
-  if (!payload) throw projectionError("session.command payload is missing");
-  if (payload.kind !== "session.prompt") return null;
-  if (typeof payload.commandId !== "string" || payload.commandId.length === 0) {
-    throw projectionError("session.prompt event is missing commandId");
-  }
-  if (payload.phase !== "accepted" && payload.phase !== "completed") {
-    throw projectionError("session.prompt event has an invalid phase");
-  }
-  if (
-    payload.status !== undefined &&
-    payload.status !== "succeeded" &&
-    payload.status !== "failed" &&
-    payload.status !== "fenced"
-  ) {
-    throw projectionError("session.prompt event has an invalid status");
-  }
-
-  return {
-    commandId: payload.commandId,
-    kind: "session.prompt",
-    phase: payload.phase,
-    ...(payload.status ? { status: payload.status } : {}),
-    ...(payload.result === undefined
-      ? {}
-      : { result: record(payload.result, "result") }),
-    ...(payload.error === undefined
-      ? {}
-      : { error: record(payload.error, "error") }),
-  };
-}
-
-function sameJson(
-  left: Record<string, unknown> | null,
-  right: Record<string, unknown> | null,
-): boolean {
-  return isDeepStrictEqual(left, right);
-}
 
 async function hasCanonicalCommandFence(
   tx: Db,
@@ -101,8 +38,9 @@ async function hasCanonicalCommandFence(
     !event.executionHostId ||
     event.assignmentEpoch === null
   ) {
-    throw projectionError(
+    throw new ExecutionEventProjectionError(
       "host session.command event is missing its assignment fence",
+      true,
     );
   }
   const runRows = await tx
@@ -113,7 +51,10 @@ async function hasCanonicalCommandFence(
   const run = runRows[0];
 
   if (!run)
-    throw projectionError("session.command event references a missing run");
+    throw new ExecutionEventProjectionError(
+      "session.command event references a missing run",
+      true,
+    );
 
   const assignments = await tx
     .select({ id: executionAssignments.id })
@@ -140,106 +81,47 @@ async function projectPromptCommand(
   event: ExecutionEvent,
 ): Promise<void> {
   if (event.eventType !== "session.command") return;
-  const payload = parsePromptCommandPayload(event.payload);
-
-  if (!payload) return;
+  if (event.payload?.kind !== "session.prompt") return;
   if (!(await hasCanonicalCommandFence(tx, event))) return;
+  await recordPromptEvent(tx, event);
+}
 
-  const commands = await tx
-    .select()
-    .from(executionCommands)
-    .where(eq(executionCommands.id, payload.commandId))
-    .for("update")
-    .limit(1);
-  const command = commands[0];
+async function preparePromptEvidence(
+  db: Db,
+  event: ExecutionEvent,
+  signal: AbortSignal,
+): Promise<ExecutionEvent> {
+  const prepared = await preparePromptContent(db, event, signal);
+  const commandId = prepared.payload?.commandId;
 
-  if (!command) {
-    throw projectionError(
-      `session.prompt event references unknown command ${payload.commandId}`,
-    );
-  }
   if (
-    command.runId !== event.runId ||
-    command.executionAssignmentId !== event.executionAssignmentId ||
-    command.executionHostId !== event.executionHostId ||
-    command.assignmentEpoch !== event.assignmentEpoch ||
-    command.kind !== "session.prompt"
-  ) {
-    throw projectionError(
-      `session.prompt command fence mismatch for ${payload.commandId}`,
-    );
+    prepared.eventType !== "session.command" ||
+    prepared.payload?.kind !== "session.prompt" ||
+    prepared.payload.phase !== "completed" ||
+    typeof commandId !== "string"
+  )
+    return prepared;
+  const command = await getCommand(db, commandId);
+
+  if (!command || command.receiptEvidence) return prepared;
+  let receipt: CommandReceipt | null;
+
+  try {
+    receipt = await defaultTransport().getCommandReceipt(commandId);
+  } catch (error) {
+    if (signal.aborted) throw error;
+    if (!isMaisterError(error) || error.code !== "EXECUTOR_UNAVAILABLE")
+      throw error;
+
+    return prepared;
   }
+  if (receipt) await depositPromptReceipt(db, commandId, receipt);
 
-  if (payload.phase === "accepted") {
-    if (
-      command.state === "succeeded" ||
-      command.state === "failed" ||
-      command.state === "fenced"
-    ) {
-      return;
-    }
-    await markAccepted(tx, command.id, null);
-
-    return;
-  }
-
-  if (!payload.status) {
-    throw projectionError(
-      `session.prompt terminal event has no status for ${command.id}`,
-    );
-  }
-  if (payload.status === "succeeded") {
-    const result = payload.result ?? null;
-
-    if (!result || typeof result.stopReason !== "string") {
-      throw projectionError(
-        `session.prompt success event has no stopReason for ${command.id}`,
-      );
-    }
-    if (command.state === "succeeded") {
-      if (!sameJson(command.result, result)) {
-        throw projectionError(`prompt_terminal_conflict for ${command.id}`);
-      }
-
-      return;
-    }
-    if (command.state === "failed" || command.state === "fenced") {
-      throw projectionError(`prompt_terminal_conflict for ${command.id}`);
-    }
-    await markSucceeded(tx, command.id, null, result);
-
-    return;
-  }
-
-  const error = payload.error ?? {
-    code: "ACP_PROTOCOL",
-    message: "prompt failed",
-  };
-  const target = payload.status === "fenced" ? "fenced" : "failed";
-
-  if (command.state === target) {
-    if (!sameJson(command.lastError, error)) {
-      throw projectionError(`prompt_terminal_conflict for ${command.id}`);
-    }
-
-    return;
-  }
-  if (
-    command.state === "succeeded" ||
-    command.state === "failed" ||
-    command.state === "fenced"
-  ) {
-    throw projectionError(`prompt_terminal_conflict for ${command.id}`);
-  }
-  if (target === "fenced") {
-    await markFenced(tx, command.id, null, error);
-  } else {
-    await markFailed(tx, command.id, null, error);
-  }
+  return prepared;
 }
 
 export const canonicalPromptProjector: ExecutionEventProjector = {
-  prepare: preparePromptContent,
+  prepare: preparePromptEvidence,
   consumerName: CANONICAL_PROJECTION_CONSUMERS.prompt,
   project: projectPromptCommand,
   afterCommit: (events) => {
@@ -252,8 +134,8 @@ export const canonicalPromptProjector: ExecutionEventProjector = {
   },
 };
 
-// The sole terminal authority for canonical prompt commands. The consumer
-// cursor, command transition, and conflict detection share one transaction;
+// The projector records canonical evidence through the shared reducer. The
+// cursor, evidence identity and any agreed transition share one transaction;
 // the post-commit wake carries no result payload and cannot be authoritative.
 export async function projectCanonicalPromptCommands(input: {
   db: Db;

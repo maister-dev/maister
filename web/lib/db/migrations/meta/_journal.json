@@ -953,6 +953,20 @@
       "when": 1788625964458,
       "tag": "0139_incremental_cost_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 140,
+      "version": "7",
+      "when": 1788654261290,
+      "tag": "0140_immutable_command_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 141,
+      "version": "7",
+      "when": 1788655927566,
+      "tag": "0141_prompt_terminal_evidence",
+      "breakpoints": true
     }
   ]
 }

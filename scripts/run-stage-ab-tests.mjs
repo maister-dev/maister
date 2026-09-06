@@ -16,7 +16,7 @@ const suites = {
   ].map((name) => `src/__tests__/${name}.integration.test.ts`),
   web: [
     "lib/__tests__/supervisor-client-binary.integration.test.ts",
-    ...["commands", "command-recovery", "deliverer", "lifecycle-regression", "bounded-output", "runtime-object-retention"]
+    ...["commands", "immutable-commands", "command-recovery", "deliverer", "lifecycle-regression", "bounded-output", "runtime-object-retention"]
       .map((name) => `lib/execution-host/__tests__/${name}.integration.test.ts`),
     ...["ingest", "projection-worker"]
       .map((name) => `lib/execution-host/events/__tests__/${name}.integration.test.ts`),

@@ -2,15 +2,21 @@
 import type { SessionEvent } from "../types";
 import type { RuntimeEventEnvelope } from "../runtime-events";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { openHostState } from "../host-state";
+import {
+  openHostState,
+  HOST_STATE_FILE,
+  HOST_STATE_SCHEMA_VERSION,
+} from "../host-state";
 import { SESSION_EVENT_CHANNEL } from "../registry";
+import { canonicalCommandJson } from "../../../runtime/command-json";
 
 import {
   adoptDirectory,
@@ -193,6 +199,149 @@ describe("command receipts", () => {
     expect(mismatched.body.details?.reason).toBe("command_invariant_conflict");
   });
 
+  it("AT-06: an identical envelope cannot replay a prompt against another URL-selected session", async () => {
+    const host = await bootHost({ runtimeRoot: await tempRoot() });
+
+    booted.push(host);
+    const runId = `run-${randomUUID().slice(0, 8)}`;
+    const first = await postJson(
+      `${host.url}/sessions`,
+      await createEnvelope(host, { runId }),
+    );
+    const second = await postJson(
+      `${host.url}/sessions`,
+      await createEnvelope(host, { runId }),
+    );
+    const request = envelope("session.prompt", fenceFor(host, runId), {
+      stepId: "identity",
+      prompt: "same request, different target",
+    });
+
+    await completePrompt(host, first.body.sessionId as string, request);
+    const replay = await postJson(
+      `${host.url}/sessions/${second.body.sessionId}/prompts`,
+      request,
+    );
+
+    expect(replay.status).toBe(409);
+    expect(replay.body.details?.reason).toBe("command_invariant_conflict");
+    expect(host.hostState.getReceipt(request.command.id)?.hostSessionId).toBe(
+      first.body.sessionId,
+    );
+  });
+
+  it("AT-06: a durable receipt preserves the exact request digest and terminal stream position through reopen", async () => {
+    const root = await tempRoot();
+    const stateDir = join(root, ".maister", "execution-host");
+    const host = await bootHost({ runtimeRoot: root, stateDir });
+
+    booted.push(host);
+    const runId = `run-${randomUUID().slice(0, 8)}`;
+    const created = await postJson(
+      `${host.url}/sessions`,
+      await createEnvelope(host, { runId }),
+    );
+    const hostSessionId = created.body.sessionId as string;
+    const request = envelope("session.prompt", fenceFor(host, runId), {
+      stepId: "digest",
+      prompt: "private original request",
+    });
+
+    await completePrompt(host, hostSessionId, request);
+    const expectedDigest = createHash("sha256")
+      .update(
+        canonicalCommandJson({
+          requestVersion: 2,
+          ...request,
+          target: { hostSessionId },
+        }),
+        "utf8",
+      )
+      .digest("hex");
+    const receipt = host.hostState.getReceipt(request.command.id);
+    const terminal = host.hostState
+      .runtimeEventsAfter(host.hostState.getRuntimeEventStreamId(), null)
+      .find((event) => event.eventId === receipt?.eventId);
+
+    expect(receipt).toMatchObject({
+      requestSchema: "maister.command.request.v2",
+      requestDigest: expectedDigest,
+      hostKey: host.hostState.hostKey,
+      hostSessionId,
+      assignmentId: request.fence.assignmentId,
+      terminalStreamId: terminal?.streamId,
+      terminalSequence: terminal?.sequence,
+      acceptedSequence: expect.stringMatching(/^[0-9]+$/),
+    });
+    await host.stop();
+    booted.pop();
+    const reopened = openHostState({ stateDir });
+
+    try {
+      expect(reopened.getReceipt(request.command.id)).toEqual(receipt);
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it("AT-06: a populated v9 receipt upgrades without inventing a v2 digest or terminal position", async () => {
+    const stateDir = join(await tempRoot(), "state");
+    const initial = openHostState({ stateDir });
+
+    initial.close();
+    const legacy = new DatabaseSync(join(stateDir, HOST_STATE_FILE));
+    const commandId = randomUUID();
+    const digest = "a".repeat(64);
+
+    legacy.exec(`BEGIN;
+      ALTER TABLE command_receipts DROP COLUMN request_schema;
+      ALTER TABLE command_receipts DROP COLUMN host_key;
+      ALTER TABLE command_receipts DROP COLUMN accepted_sequence;
+      ALTER TABLE command_receipts DROP COLUMN terminal_stream_id;
+      ALTER TABLE command_receipts DROP COLUMN terminal_sequence;
+      PRAGMA user_version = 9; COMMIT;`);
+    legacy
+      .prepare(
+        `INSERT INTO command_receipts
+      (command_id, run_id, kind, assignment_id, epoch, host_session_id, request_digest, event_id, phase, http_status, body_json, received_at, completed_at)
+      VALUES (?, 'legacy-run', 'session.prompt', ?, 1, 'legacy-session', ?, ?, 'completed', 200, ?, ?, ?)`,
+      )
+      .run(
+        commandId,
+        randomUUID(),
+        digest,
+        randomUUID(),
+        JSON.stringify({ stopReason: "end_turn", meta: { original: true } }),
+        new Date().toISOString(),
+        new Date().toISOString(),
+      );
+    legacy.close();
+    const upgraded = openHostState({ stateDir });
+
+    try {
+      expect(upgraded.getReceipt(commandId)).toMatchObject({
+        requestDigest: digest,
+        requestSchema: null,
+        hostKey: null,
+        acceptedSequence: null,
+        terminalStreamId: null,
+        terminalSequence: null,
+        body: { stopReason: "end_turn", meta: { original: true } },
+      });
+    } finally {
+      upgraded.close();
+    }
+    const inspected = new DatabaseSync(join(stateDir, HOST_STATE_FILE));
+
+    try {
+      expect(inspected.prepare("PRAGMA user_version").get()).toEqual({
+        user_version: HOST_STATE_SCHEMA_VERSION,
+      });
+    } finally {
+      inspected.close();
+    }
+  });
+
   it("R2b: asynchronous prompt admission returns only after the accepted receipt/event and terminalizes later", async () => {
     const host = await bootHost({ runtimeRoot: await tempRoot() });
 
@@ -227,7 +376,7 @@ describe("command receipts", () => {
     expect(terminal?.body).toMatchObject({ stopReason: "end_turn" });
   });
 
-  it("R3: after a restart between accepted and completion a duplicate prompt id is turn_lost", async () => {
+  it("R3: a legacy receipt without target identity cannot bind to a new session after restart", async () => {
     const root = await tempRoot();
     const stateDir = join(root, ".maister", "execution-host");
     const first = await bootHost({
@@ -278,8 +427,8 @@ describe("command receipts", () => {
     );
 
     expect(res.body.code).toBe("PRECONDITION");
-    expect(res.body.details.reason).toBe("turn_lost");
-    expect(second.hostState.getReceipt(commandId)?.phase).toBe("rejected");
+    expect(res.body.details.reason).toBe("command_invariant_conflict");
+    expect(second.hostState.getReceipt(commandId)?.phase).toBe("accepted");
   });
 
   it("R3b: supervisor startup terminalizes a proven async prompt receipt and appends turn_lost", async () => {

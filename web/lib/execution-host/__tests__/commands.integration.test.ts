@@ -2,6 +2,8 @@
 // projection and the CAS state machine.
 
 import type { Db } from "@/lib/execution-host/db";
+import type { ExecutionCommand, ExecutionEvent } from "@/lib/db/schema";
+import type { CommandReceipt } from "@/lib/execution-host/contracts";
 
 import { randomUUID } from "node:crypto";
 
@@ -27,6 +29,14 @@ import {
   waitForPromptCompletion,
 } from "@/lib/execution-host/deliverer";
 import { buildEnvelope } from "@/lib/execution-host/ledger";
+import { recoverExecutionCommands } from "@/lib/execution-host/recovery";
+import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
+import {
+  depositPromptReceipt,
+  recordPromptEvent,
+  reconcileStoredPromptEvidence,
+} from "@/lib/execution-host/prompt-evidence";
+import { ingestRuntimeEvent } from "@/lib/execution-host/events/ingest";
 import {
   seedLocalHost,
   seedProject,
@@ -43,6 +53,9 @@ let testDatabase: StartedPostgresTestDb;
 let db: Db;
 let projectId: string;
 let hostId: string;
+let hostKey: string;
+const terminalStreamId = randomUUID();
+let terminalSequence = 0;
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
@@ -50,7 +63,10 @@ beforeAll(async () => {
   });
   db = testDatabase.db as unknown as Db;
   projectId = await seedProject(testDatabase.db);
-  hostId = (await seedLocalHost(testDatabase.db)).id;
+  const host = await seedLocalHost(testDatabase.db);
+
+  hostId = host.id;
+  hostKey = host.hostKey;
 }, 180_000);
 
 afterAll(async () => {
@@ -64,6 +80,51 @@ async function seedAssignment() {
   );
 
   return { runId, assignment };
+}
+
+async function persistTerminalEvent(
+  command: ExecutionCommand,
+  receipt: CommandReceipt,
+): Promise<ExecutionEvent> {
+  await testDatabase.pool.query(
+    "update runs set execution_data_plane_mode = 'canonical_events_v1', execution_assignment_id = $2 where id = $1",
+    [command.runId, command.executionAssignmentId],
+  );
+  await ingestRuntimeEvent({
+    db,
+    executionHostId: hostId,
+    envelope: {
+      envelopeVersion: 1,
+      eventId: receipt.eventId!,
+      hostKey,
+      hostBootId: randomUUID(),
+      streamId: terminalStreamId,
+      sequence: String(terminalSequence++),
+      runId: command.runId,
+      assignmentId: command.executionAssignmentId,
+      assignmentEpoch: command.assignmentEpoch,
+      hostSessionId: command.targetSessionId ?? randomUUID(),
+      eventType: "session.command",
+      occurredAt: new Date().toISOString(),
+      payloadSchema: "maister.session.command.v1",
+      payload: {
+        commandId: command.id,
+        kind: "session.prompt",
+        phase: "completed",
+        ...(receipt.phase === "completed"
+          ? { status: "succeeded", result: receipt.body }
+          : { status: "failed", error: receipt.body }),
+      },
+    },
+  });
+  const [event] = await db
+    .select()
+    .from(fullSchema.executionEvents)
+    .where(eq(fullSchema.executionEvents.id, receipt.eventId!));
+
+  expect(event.ingestDisposition).toBe("accepted");
+
+  return event;
 }
 
 async function readCommand(id: string) {
@@ -479,6 +540,116 @@ describe("CAS transitions", () => {
 });
 
 describe("prompt receipt reconciliation", () => {
+  it.each(["completed", "rejected"] as const)(
+    "AT-06: recovery preserves %s receipt-first evidence without settling the prompt",
+    async (phase) => {
+      const { runId, assignment } = await seedAssignment();
+      const row = await insertCommand(db, {
+        runId,
+        assignmentId: assignment.id,
+        hostId,
+        assignmentEpoch: assignment.epoch,
+        kind: "session.prompt",
+        maxAttempts: 3,
+        targetSessionId: randomUUID(),
+        payload: { stepId: "receipt-first" },
+      });
+
+      await claimDelivering(db, row.id, 0);
+      await markAccepted(db, row.id, 1);
+      const body =
+        phase === "completed"
+          ? { stopReason: "end_turn" }
+          : {
+              code: "PRECONDITION",
+              message: "turn could not complete",
+              details: { reason: "turn_lost", context: { generation: 7 } },
+            };
+      const receipt = {
+        commandId: row.id,
+        runId,
+        kind: "session.prompt" as const,
+        assignmentEpoch: assignment.epoch,
+        phase,
+        httpStatus: phase === "completed" ? 200 : 409,
+        body,
+        receivedAt: row.createdAt.toISOString(),
+        completedAt: new Date().toISOString(),
+        eventId: randomUUID(),
+        inflight: false,
+      };
+
+      await recoverExecutionCommands({
+        db,
+        graceMs: 0,
+        transport: {
+          ...createLocalDirectTransport(),
+          getCommandReceipt: async (id) => (id === row.id ? receipt : null),
+        },
+      });
+
+      expect(await readCommand(row.id)).toMatchObject({
+        state: "accepted",
+        result: null,
+        lastError: null,
+      });
+      const event = await persistTerminalEvent(row, receipt);
+      const projected = await db.transaction((tx) =>
+        recordPromptEvent(tx, event),
+      );
+
+      expect(projected.disposition).toBe("settled");
+      expect(projected.command.terminalEventId).toBe(event.id);
+      expect(projected.command.terminalEvidenceSha256).toMatch(
+        /^[a-f0-9]{64}$/,
+      );
+      expect(projected.command.receiptEvidence?.body).toEqual(body);
+      expect(
+        phase === "completed"
+          ? projected.command.result
+          : projected.command.lastError,
+      ).toEqual(body);
+      const replays = await Promise.all(
+        [1, 2].map(() =>
+          reconcileStoredPromptEvidence(db, row.id, AbortSignal.timeout(1000)),
+        ),
+      );
+
+      expect(replays.map((replay) => replay.disposition)).toEqual([
+        "settled",
+        "settled",
+      ]);
+      const changedBody =
+        phase === "completed"
+          ? { stopReason: "cancelled" }
+          : {
+              ...body,
+              details: { reason: "turn_lost", context: { generation: 8 } },
+            };
+      const conflict = await depositPromptReceipt(db, row.id, {
+        ...receipt,
+        body: changedBody,
+      });
+
+      expect(conflict.disposition).toBe("quarantined");
+      expect(conflict.command.receiptEvidence?.body).toEqual(body);
+      expect(
+        phase === "completed"
+          ? conflict.command.result
+          : conflict.command.lastError,
+      ).toEqual(body);
+      await expect(
+        testDatabase.pool.query(
+          "update execution_commands set terminal_evidence_sha256 = null where id = $1",
+          [row.id],
+        ),
+      ).rejects.toMatchObject({
+        code: "23514",
+        constraint: "execution_commands_immutable_terminal_evidence",
+      });
+    },
+  );
+
   it("keeps a terminal admission receipt as evidence until its canonical event arrives", async () => {
     const { runId, assignment } = await seedAssignment();
     const row = await insertCommand(db, {
@@ -564,7 +735,7 @@ describe("prompt receipt reconciliation", () => {
       body: terminalBody,
       receivedAt: new Date().toISOString(),
       completedAt: new Date().toISOString(),
-      eventId: null,
+      eventId: randomUUID(),
       inflight: false,
     };
     const abort = new AbortController();
@@ -589,16 +760,16 @@ describe("prompt receipt reconciliation", () => {
       lastError: null,
     });
 
-    await markSucceeded(db, row.id, null, terminalBody);
-    const publishedReceipt = {
-      ...terminalReceipt,
-      eventId: randomUUID(),
-    };
+    const event = await persistTerminalEvent(row, terminalReceipt);
+
+    await db.transaction((tx) => recordPromptEvent(tx, event));
     const result = await waitForPromptCompletion({
       db,
       handle: { commandId: row.id },
       assignmentIsCurrent: async () => false,
-      lookupReceipt: async () => publishedReceipt,
+      lookupReceipt: async () => {
+        throw new Error("verified receipt must survive an unavailable host");
+      },
     });
 
     expect(result).toEqual(terminalBody);

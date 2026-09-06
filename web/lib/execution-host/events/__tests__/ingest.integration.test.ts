@@ -11,6 +11,7 @@ import {
   ExecutionEventProjectionError,
   projectExecutionEvents,
 } from "@/lib/execution-host/events/projector";
+import { depositPromptReceipt } from "@/lib/execution-host/prompt-evidence";
 import { projectCanonicalPromptCommands } from "@/lib/execution-host/events/prompt-projector";
 import { projectCanonicalSessionLifecycle } from "@/lib/execution-host/events/lifecycle-projector";
 import { projectCanonicalRuntimeObjects } from "@/lib/execution-host/events/runtime-object-projector";
@@ -565,6 +566,19 @@ describe("runtime event ingestion", () => {
       executionHostId: hostId,
       envelope: terminal,
     });
+    await depositPromptReceipt(testDatabase.db, commandId, {
+      commandId,
+      runId: promptRunId,
+      kind: "session.prompt",
+      assignmentEpoch: 1,
+      phase: "completed",
+      httpStatus: 200,
+      body: { stopReason: "end_turn", meta: null },
+      eventId: terminal.eventId as string,
+      receivedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      inflight: false,
+    });
     const projected = await projectCanonicalPromptCommands({
       db: testDatabase.db,
       runId: promptRunId,
@@ -740,6 +754,19 @@ describe("runtime event ingestion", () => {
     });
 
     expect(accepted).toMatchObject({ disposition: "accepted" });
+    await depositPromptReceipt(testDatabase.db, lateCommandId, {
+      commandId: lateCommandId,
+      runId: lateRunId,
+      kind: "session.prompt",
+      assignmentEpoch: 1,
+      phase: "completed",
+      httpStatus: 200,
+      body: terminal.payload.result,
+      eventId: terminal.eventId,
+      receivedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      inflight: false,
+    });
     await projectCanonicalPromptCommands({
       db: testDatabase.db,
       runId: lateRunId,

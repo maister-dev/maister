@@ -96,6 +96,26 @@ export const COMMAND_STATES = [
 ] as const;
 export type CommandState = (typeof COMMAND_STATES)[number];
 
+export const COMMAND_TRANSPORT_STATES = [
+  "not_sent",
+  "dispatching",
+  "acknowledged",
+  "unknown",
+  "reconciliation_required",
+] as const;
+export const COMMAND_APPLICATION_STATES = [
+  "pending",
+  "applying",
+  "applied",
+  "superseded",
+  "poisoned",
+] as const;
+export type CommandApplicationError = Readonly<{
+  reason: string;
+  phase: "prepare" | "apply" | "continuation";
+  causeCode?: string;
+}>;
+
 export const TERMINAL_COMMAND_STATES = [
   "succeeded",
   "failed",

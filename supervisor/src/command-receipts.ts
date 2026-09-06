@@ -5,6 +5,11 @@ import type { CommandEnvelope, SupervisorErrorBody } from "./types";
 
 import { createHash } from "node:crypto";
 
+import {
+  canonicalCommandJson,
+  CommandJsonError,
+} from "../../runtime/command-json";
+
 import { HostRuntimeEventError } from "./host-runtime-errors";
 import {
   errorBody,
@@ -86,7 +91,7 @@ export class CommandReceipts {
     const existing = this.state.getReceipt(commandId);
 
     if (existing) {
-      assertReceiptInvariant(existing, envelope);
+      assertReceiptInvariant(existing, envelope, args.hostSessionId);
     }
 
     if (existing && existing.phase !== "accepted") {
@@ -162,7 +167,8 @@ export class CommandReceipts {
     const commandId = envelope.command.id;
     const existing = this.state.getReceipt(commandId);
 
-    if (existing) assertReceiptInvariant(existing, envelope);
+    if (existing)
+      assertReceiptInvariant(existing, envelope, args.hostSessionId);
     if (existing && existing.phase !== "accepted") {
       return {
         status: existing.httpStatus,
@@ -210,7 +216,8 @@ export class CommandReceipts {
     const commandId = envelope.command.id;
     const existing = this.state.getReceipt(commandId);
 
-    if (existing) assertReceiptInvariant(existing, envelope);
+    if (existing)
+      assertReceiptInvariant(existing, envelope, args.hostSessionId);
 
     if (existing && existing.phase !== "accepted") {
       return {
@@ -363,6 +370,7 @@ export class CommandReceipts {
       run: () => Promise<CommandOutcome>;
     },
   ): void {
+    const prior = this.state.getReceipt(envelope.command.id);
     const row: CommandReceiptRow = {
       commandId: envelope.command.id,
       runId: envelope.fence.runId,
@@ -370,7 +378,13 @@ export class CommandReceipts {
       assignmentId: envelope.fence.assignmentId,
       epoch: envelope.fence.assignmentEpoch,
       hostSessionId: callbacks.hostSessionId ?? null,
-      requestDigest: commandRequestDigest(envelope),
+      requestSchema: prior
+        ? (prior.requestSchema ?? null)
+        : "maister.command.request.v2",
+      hostKey: prior ? (prior.hostKey ?? null) : this.state.hostKey,
+      requestDigest: prior
+        ? prior.requestDigest
+        : commandRequestDigest(envelope, callbacks.hostSessionId ?? null),
       eventId: null,
       phase,
       httpStatus: outcome.status,
@@ -464,27 +478,56 @@ export function receiptToResponse(
 // Command IDs are idempotency keys, not permission to substitute a different
 // request. The digest is over a stable, unredacted representation and never
 // leaves the host except through the manager command ledger's existing digest.
-export function commandRequestDigest(envelope: CommandEnvelope): string {
-  return createHash("sha256")
-    .update(
-      canonicalJson({
-        command: envelope.command,
-        fence: envelope.fence,
-        payload: envelope.payload,
-      }),
-    )
-    .digest("hex");
+export function commandRequestDigest(
+  envelope: CommandEnvelope,
+  hostSessionId: string | null,
+): string {
+  return requestDigest({
+    requestVersion: 2,
+    command: envelope.command,
+    fence: envelope.fence,
+    target: { hostSessionId },
+    payload: envelope.payload,
+  });
+}
+
+function requestDigest(value: unknown): string {
+  try {
+    return createHash("sha256")
+      .update(canonicalCommandJson(value), "utf8")
+      .digest("hex");
+  } catch (error) {
+    if (error instanceof CommandJsonError)
+      throw new SupervisorError(
+        "PRECONDITION",
+        "command request is not valid canonical JSON",
+        { details: { reason: "command_invariant_conflict" } },
+      );
+    throw error;
+  }
 }
 
 function assertReceiptInvariant(
   existing: CommandReceiptRow,
   envelope: CommandEnvelope,
+  hostSessionId: string | undefined,
 ): void {
-  const digest = commandRequestDigest(envelope);
+  const digest =
+    existing.requestSchema === "maister.command.request.v2"
+      ? commandRequestDigest(envelope, hostSessionId ?? null)
+      : requestDigest({
+          command: envelope.command,
+          fence: envelope.fence,
+          payload: envelope.payload,
+        });
   const mismatch =
     existing.runId !== envelope.fence.runId ||
     existing.kind !== envelope.command.kind ||
     existing.epoch !== envelope.fence.assignmentEpoch ||
+    (existing.hostKey != null && existing.hostKey !== envelope.fence.hostKey) ||
+    (existing.assignmentId !== null &&
+      existing.assignmentId !== envelope.fence.assignmentId) ||
+    existing.hostSessionId !== (hostSessionId ?? null) ||
     (existing.requestDigest !== null && existing.requestDigest !== digest);
 
   if (mismatch) {
@@ -494,33 +537,6 @@ function assertReceiptInvariant(
       { details: { reason: "command_invariant_conflict" } },
     );
   }
-}
-
-function canonicalJson(value: unknown): string {
-  if (
-    value === null ||
-    typeof value === "boolean" ||
-    typeof value === "number" ||
-    typeof value === "string"
-  ) {
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(",")}]`;
-  }
-  if (value && typeof value === "object") {
-    const object = value as Record<string, unknown>;
-
-    return `{${Object.keys(object)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`)
-      .join(",")}}`;
-  }
-
-  throw new SupervisorError(
-    "PRECONDITION",
-    "command request contains a non-JSON value",
-  );
 }
 
 export function isErrorBody(body: unknown): body is SupervisorErrorBody {

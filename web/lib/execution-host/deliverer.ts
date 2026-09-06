@@ -4,8 +4,6 @@ import type { PromptAccepted, PromptResult } from "@/lib/supervisor-client";
 import type { CommandReceipt } from "./contracts";
 import type { CommandEnvelope, CommandKind } from "./types";
 
-import { isDeepStrictEqual } from "node:util";
-
 import pino, { type Logger } from "pino";
 
 import {
@@ -19,6 +17,11 @@ import {
 } from "./commands";
 import { UNKNOWN_OUTCOME_DETAIL } from "./contracts";
 import { commandSignals } from "./signals";
+import {
+  depositPromptReceipt,
+  reconcileStoredPromptEvidence,
+  promptEvidenceConflict,
+} from "./prompt-evidence";
 
 import { isMaisterError, MaisterError } from "@/lib/errors";
 
@@ -125,9 +128,7 @@ function errorRecord(err: unknown): Record<string, unknown> {
     return {
       code: err.code,
       message: err.message,
-      ...(err.details?.reason !== undefined
-        ? { reason: err.details.reason }
-        : {}),
+      ...(err.details === undefined ? {} : { details: err.details }),
     };
   }
 
@@ -501,36 +502,23 @@ export async function startAsyncPrompt(
         continue;
       }
       if (receipt) {
-        if (!receiptMatchesPromptCommand(opts.command, receipt)) {
-          const mismatch = new MaisterError(
-            "ACP_PROTOCOL",
-            `prompt ${commandId} admission receipt identity does not match its durable command`,
-            {
-              details: {
-                reason: "prompt_receipt_identity_mismatch",
-                commandId,
-              },
-            },
-          );
+        const evidence = await depositPromptReceipt(
+          opts.db,
+          commandId,
+          receipt,
+        );
 
-          await markFailed(
-            opts.db,
-            commandId,
-            attempts,
-            errorRecord(mismatch),
-            { logger, now: now() },
-          );
-          commandSignals.wake(commandId);
-          throw mismatch;
-        }
-
-        // A terminal receipt is reconciliation evidence, not a second
-        // terminal writer. The canonical event projector alone settles the
-        // command, including after an admission acknowledgement is lost.
+        if (evidence.disposition === "quarantined")
+          throw promptEvidenceConflict(commandId);
         await markAccepted(opts.db, commandId, attempts, {
           logger,
           now: now(),
         });
+        await reconcileStoredPromptEvidence(
+          opts.db,
+          commandId,
+          AbortSignal.timeout(30_000),
+        );
         commandSignals.wake(commandId);
 
         return { commandId };
@@ -580,13 +568,6 @@ function promptResultFromCommand(row: ExecutionCommand): PromptResult {
   return result as PromptResult;
 }
 
-function sameJson(
-  left: Record<string, unknown> | null,
-  right: Record<string, unknown> | null,
-): boolean {
-  return isDeepStrictEqual(left, right);
-}
-
 function promptFailureFromCommand(row: ExecutionCommand): MaisterError {
   const error = row.lastError ?? {};
   const nestedDetails =
@@ -617,81 +598,6 @@ function promptFailureFromCommand(row: ExecutionCommand): MaisterError {
       commandId: row.id,
     },
   });
-}
-
-function receiptMatchesPromptCommand(
-  row: ExecutionCommand,
-  receipt: CommandReceipt,
-): boolean {
-  return (
-    receipt.commandId === row.id &&
-    receipt.runId === row.runId &&
-    receipt.kind === row.kind &&
-    receipt.assignmentEpoch === row.assignmentEpoch
-  );
-}
-
-function promptTerminalConflict(
-  row: ExecutionCommand,
-  receipt: CommandReceipt,
-  logger: Logger,
-  checks: {
-    identityAgrees: boolean;
-    phaseAgrees: boolean;
-    bodyAgrees: boolean;
-  },
-): MaisterError {
-  logger.error(
-    {
-      commandId: row.id,
-      eventState: row.state,
-      receiptPhase: receipt.phase,
-      receiptEventId: receipt.eventId,
-      ...checks,
-    },
-    "prompt-terminal-conflict",
-  );
-
-  return new MaisterError(
-    "CONFLICT",
-    `prompt ${row.id} terminal event and receipt disagree`,
-    {
-      details: {
-        reason: "prompt_terminal_conflict",
-        commandId: row.id,
-      },
-    },
-  );
-}
-
-function validateOpenPromptReceipt(input: {
-  row: ExecutionCommand;
-  receipt: CommandReceipt;
-  logger: Logger;
-}): void {
-  const { row, receipt, logger } = input;
-
-  if (receipt.phase === "accepted") return;
-
-  const identityAgrees = receiptMatchesPromptCommand(row, receipt);
-
-  if (!identityAgrees) {
-    throw promptTerminalConflict(row, receipt, logger, {
-      identityAgrees,
-      phaseAgrees: true,
-      bodyAgrees: true,
-    });
-  }
-
-  if (receipt.phase === "completed") {
-    if (typeof receipt.body.stopReason !== "string") {
-      throw new MaisterError(
-        "ACP_PROTOCOL",
-        `prompt ${row.id} receipt has no valid terminal result`,
-        { details: { reason: "prompt_result_invalid", commandId: row.id } },
-      );
-    }
-  }
 }
 
 async function waitForCommandWake(
@@ -753,75 +659,42 @@ export async function waitForPromptCompletion(input: {
         },
       );
     }
-    if (row.state === "fenced") {
-      throw promptFailureFromCommand(row);
-    }
-    let receipt: CommandReceipt | null = null;
+    if (row.applicationError?.reason === "prompt_terminal_conflict")
+      throw promptEvidenceConflict(row.id);
+    if (!row.receiptEvidence && input.lookupReceipt) {
+      let receipt: CommandReceipt | null = null;
 
-    if (input.lookupReceipt) {
       try {
         receipt = await input.lookupReceipt(row.id);
       } catch (error) {
         logger.warn(
           {
             commandId: row.id,
-            reason:
-              error instanceof Error ? error.message : "receipt_lookup_failed",
+            code: isMaisterError(error) ? error.code : "receipt_lookup_failed",
           },
           "prompt-terminal-receipt-unavailable",
         );
       }
+      if (receipt) {
+        const deposited = await depositPromptReceipt(input.db, row.id, receipt);
+
+        if (deposited.disposition === "quarantined")
+          throw promptEvidenceConflict(row.id);
+      }
     }
-    if (row.state === "succeeded" || row.state === "failed") {
-      if (!input.lookupReceipt) {
-        if (row.state === "succeeded") return promptResultFromCommand(row);
+    const evidence = await reconcileStoredPromptEvidence(
+      input.db,
+      row.id,
+      input.signal ?? AbortSignal.timeout(30_000),
+    );
 
-        throw promptFailureFromCommand(row);
-      }
+    if (evidence.disposition === "quarantined")
+      throw promptEvidenceConflict(row.id);
+    if (evidence.disposition === "settled") {
+      if (evidence.command.state === "succeeded")
+        return promptResultFromCommand(evidence.command);
 
-      if (!receipt || receipt.phase === "accepted") {
-        if (
-          receipt?.phase === "accepted" &&
-          !receipt.inflight &&
-          row.state === "failed" &&
-          row.lastError?.reason === "turn_lost"
-        ) {
-          throw promptFailureFromCommand(row);
-        }
-        await waitForCommandWake(row.id, input.signal);
-        continue;
-      }
-
-      const expectedPhase =
-        row.state === "succeeded" ? "completed" : "rejected";
-      const expectedBody =
-        row.state === "succeeded" ? row.result : row.lastError;
-      const identityAgrees = receiptMatchesPromptCommand(row, receipt);
-      const phaseAgrees = receipt.phase === expectedPhase;
-      const bodyAgrees = sameJson(receipt.body, expectedBody);
-      const agrees = identityAgrees && phaseAgrees && bodyAgrees;
-
-      if (!agrees) {
-        throw promptTerminalConflict(row, receipt, logger, {
-          identityAgrees,
-          phaseAgrees,
-          bodyAgrees,
-        });
-      }
-
-      if (row.state === "succeeded") return promptResultFromCommand(row);
-
-      throw promptFailureFromCommand(row);
-    }
-    if (receipt) validateOpenPromptReceipt({ row, receipt, logger });
-    if (input.assignmentIsCurrent && !(await input.assignmentIsCurrent())) {
-      // The host may have atomically committed the terminal receipt/event just
-      // before checkpoint released this assignment. Keep the old driver
-      // waiting for that durable outcome; locally fencing here would race the
-      // legitimate terminal event and poison its projector.
-      await waitForCommandWake(row.id, input.signal);
-
-      continue;
+      throw promptFailureFromCommand(evidence.command);
     }
     await waitForCommandWake(row.id, input.signal);
   }

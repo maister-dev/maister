@@ -902,6 +902,17 @@ table execution_commands {
   logical_operation_key text
   request_schema text
   request_sha256 text
+  request_canonical_json text
+  receipt_evidence jsonb
+  terminal_event_id text
+  terminal_evidence_sha256 text
+  transport_state text [not null, default: 'not_sent']
+  application_state text [not null, default: 'pending']
+  application_claim_owner text
+  application_claim_expires_at "timestamp with time zone"
+  application_attempts integer [not null, default: 0]
+  application_next_retry_at "timestamp with time zone"
+  application_error jsonb
   completion_applied_at "timestamp with time zone"
   state text [not null, default: 'queued']
   attempts integer [not null, default: 0]
@@ -919,8 +930,17 @@ table execution_commands {
   indexes {
     (state, next_attempt_at) [name: 'execution_commands_open_idx']
     (run_id, created_at) [name: 'execution_commands_run_created_idx']
+
+
+    terminal_event_id [name: 'execution_commands_terminal_event_idx']
     execution_assignment_id [name: 'execution_commands_assignment_idx']
+    (transport_state, next_attempt_at, id) [name: 'execution_commands_reconciliation_idx']
+    (application_state, application_next_retry_at, application_claim_expires_at, id) [name: 'execution_commands_application_idx']
     (run_id, logical_operation_key) [name: 'execution_commands_prompt_logical_operation_uq', unique]
+
+
+
+
 
 
 
@@ -2878,6 +2898,8 @@ ref execution_commands_run_id_runs_id_fk: execution_commands.run_id > runs.id [d
 ref execution_commands_execution_assignment_id_execution_assignments_id_fk: execution_commands.execution_assignment_id > execution_assignments.id [delete: cascade, update: no action]
 
 ref execution_commands_execution_host_id_execution_hosts_id_fk: execution_commands.execution_host_id > execution_hosts.id [delete: restrict, update: no action]
+
+ref execution_commands_terminal_event_id_execution_events_id_fk: execution_commands.terminal_event_id > execution_events.id [delete: restrict, update: no action]
 
 ref execution_data_plane_imports_run_id_runs_id_fk: execution_data_plane_imports.run_id > runs.id [delete: cascade, update: no action]
 

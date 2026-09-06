@@ -342,18 +342,18 @@ describe("execution-command recovery (real supervisor)", () => {
         isMaisterError(err) && err.details?.reason === "turn_lost",
     );
 
-    // Recovery on a fresh process sees the same row still `accepted`: the
-    // host's receipt is `accepted` with no in-flight execution.
-    await db
-      .update(schema.executionCommands)
-      .set({ state: "accepted", completedAt: null, lastError: null })
-      .where(eq(schema.executionCommands.id, handle.commandId));
-    const summary = await recoverExecutionCommands({ db, graceMs: 0 });
-
-    expect(summary.turnLost).toBe(1);
+    // Startup already committed a rejected receipt and canonical terminal.
+    // A second recovery pass preserves that exact nested error and evidence;
+    // it cannot reset a verified command to synthesize a second failure.
+    await recoverExecutionCommands({ db, graceMs: 0 });
     expect(await getCommand(db, handle.commandId)).toMatchObject({
       state: "failed",
-      lastError: { reason: "turn_lost" },
+      lastError: { code: "PRECONDITION", details: { reason: "turn_lost" } },
+      terminalEvidenceSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      receiptEvidence: {
+        phase: "rejected",
+        body: { details: { reason: "turn_lost" } },
+      },
     });
 
     // The existing reconcile classifies the run: Running, no live session,

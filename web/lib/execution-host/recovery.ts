@@ -25,6 +25,10 @@ import { buildEnvelope } from "./ledger";
 import { defaultTransport } from "./default-transport";
 import { reportLegacyActiveRuns } from "./legacy";
 import {
+  depositPromptReceipt,
+  reconcileStoredPromptEvidence,
+} from "./prompt-evidence";
+import {
   DELIVERING_IN_FLIGHT_GRACE_MS,
   EXECUTION_COMMAND_RETENTION_DAYS,
 } from "./types";
@@ -376,6 +380,32 @@ export async function recoverExecutionCommands(
       });
       summary.redelivered += 1;
     };
+
+    if (row.kind === "session.prompt") {
+      const receipt = await transport.getCommandReceipt(row.id);
+
+      if (receipt) await depositPromptReceipt(db, row.id, receipt);
+      const evidence = await reconcileStoredPromptEvidence(
+        db,
+        row.id,
+        AbortSignal.timeout(30_000),
+      );
+
+      if (evidence.disposition === "settled") {
+        const details = evidence.command.lastError?.details;
+
+        if (
+          details &&
+          typeof details === "object" &&
+          "reason" in details &&
+          details.reason === "turn_lost"
+        )
+          summary.turnLost += 1;
+        else summary.folded += 1;
+      } else summary.skippedInFlight += 1;
+
+      return;
+    }
 
     if (row.state === "queued") {
       await redeliver(row);
