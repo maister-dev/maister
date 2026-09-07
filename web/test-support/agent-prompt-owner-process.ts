@@ -1,7 +1,7 @@
 import { once } from "node:events";
 
 import { closeDb, getDb } from "@/lib/db/client";
-import { startAgentSession } from "@/lib/agents/launch";
+import { startAgentSession, sendAgentMessage } from "@/lib/agents/launch";
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
 import {
   startCanonicalProjectionWorker,
@@ -16,7 +16,14 @@ async function main(): Promise<void> {
 
   try {
     startCanonicalProjectionWorker();
-    await startAgentSession(runId, { db });
+    const message = process.argv[3];
+
+    if (message === undefined) await startAgentSession(runId, { db });
+    else
+      await sendAgentMessage(runId, message, {
+        db,
+        requestKey: process.argv[4],
+      });
     process.send?.({ state: "prompt_returned" });
     // The legacy stream consumer can still be applying after the prompt waiter
     // returns. Keep this real process alive until its parent finishes observing.

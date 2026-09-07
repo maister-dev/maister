@@ -142,10 +142,11 @@ Dropped from the prior scheduler-era shape (zero readers/writers existed): `agen
 singleton `agent_tick.dispatcher`), `desired_state` (`continuous` is the
 future Mγ stage).
 
-The `agent_turns` storage and admission helper are implemented; production
-message/resume/rework activation remains Designed. Its accepted input, binding
-and state constraints are defined in the
-[schema reference](../database-schema.md#agent_turns-implemented-storage-caller-activation-designed).
+The `agent_turns` storage and production message admission are implemented.
+Messages retain FIFO order across capacity claims and persistent parks; resume,
+rework and pre-create continuation wiring remains Designed. Its accepted input,
+binding and state constraints are defined in the
+[schema reference](../database-schema.md#agent_turns-implemented).
 
 ## Sibling-table alters (same migration)
 

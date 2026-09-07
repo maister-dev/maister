@@ -512,17 +512,36 @@ application, autonomous owner recovery, superseded source refusal and both
 failure outcomes. Removing the application-generation guard makes the stale
 source test fail by finalizing the successor. Persistent first-turn qualification
 also covers live parking and actual process death before completion or the park
-transaction. Resume, rework, messages and pre-prompt create recovery remain required below; this
+transaction. Resume, rework and pre-prompt create recovery remain required below; this
 increment does not enable the global owner worker.
 
-### Remaining domain adapters (Designed)
+### Agent messages (Implemented)
 
-`agents/turns.ts` and `agent_turns` provide the implemented admission storage
-for these remaining agent variants. Accepted messages retain their original
+`sendAgentMessage`, `agents/turns.ts` and `agent_turns` persist accepted messages with their original
 text and stable identity before any capacity or host operation. Same-key retries
-return the original input; conflicting reuse is refused. The storage helper does
-not yet replace the production message/resume/rework callers or enable their
-recovery worker. See the [schema contract](../database-schema.md#agent_turns-implemented-storage-caller-activation-designed).
+return the original input; conflicting reuse is refused. The optional API/MCP
+`requestKey` identifies input within one run; it is never a caller-supplied turn ID.
+The response includes `messageId`, `messageState` and the current run status.
+
+Claiming follows scheduler-lock, run-lock and turn-lock order. Earlier unfinished
+input or an unapplied owned prompt keeps a new message queued. A parked agent
+must reacquire agent-pool capacity and mint its next assignment in that claim.
+Scheduler C3 promotion performs the same transition on the parked host; dispatch
+checks its live identity outside the transaction. No two message prompts overlap.
+At each successful park, the oldest remaining queued input restores the durable
+resume request, so a multi-message queue continues after a lost scheduler hint.
+
+The immutable command binds the original turn ID, ordinal, assignment, logical
+session and incarnation. Restart reattaches that command before rebuilding a
+prompt or creating a session. Its message acknowledgment and the existing park
+or terminal transition commit with the command application marker. Superseded
+authority can settle only its old message. Qualification includes production
+launcher death before terminal evidence and before application, a full pool,
+distinct live inputs, same-key retry and queue draining after process death.
+The global recovery worker remains gated by S2.12. See the
+[schema contract](../database-schema.md#agent_turns-implemented).
+
+### Remaining domain adapters (Designed)
 
 Persist the reference before remote dispatch in the same transaction as the owner admission. Use discriminated subvariants under the existing owner families where possible; widen the checked family only if necessary. Resolve references from authoritative rows. A Flow owner always references existing `node_attempts`, `gate_results` or consensus ledger rows; never create another Flow attempt ledger.
 
@@ -531,7 +550,6 @@ Persist the reference before remote dispatch in the same transaction as the owne
 | Consensus verification: node attempt, round, verifier, target | `web/lib/flows/graph/consensus/runtime.ts:401–438`; consensus round/evaluation rows | Apply exactly the intended matrix cell, wake existing consensus reducer; same attempt ID alone is not unique enough. | `owner-consensus-verify` |
 | Consensus synthesis: attempt, round, synthesis generation | `web/lib/flows/graph/consensus/runtime.ts:658–697` | Apply synthesis result to its original round; never regenerate a prompt merely because the parent stack died. | `owner-consensus-synthesis` |
 | Agent resume/rework turn: run, durable turn generation, incarnation | `web/lib/agents/launch.ts`; runs, sessions, existing trigger/message records | Running/NeedsInput; parked NeedsInputIdle/WaitingOnChildren require their specific existing re-entry and capacity rules. Apply result/public-result contract and completion once, preserving launch snapshot. Initial turns are implemented above; their pre-prompt create recovery remains pending. | `owner-agent-resume`, `owner-agent-idle-message`, `owner-agent-rework` |
-| Agent live message: persisted message/turn ID and incarnation | `sendAgentMessage` and `consumeAgentSession` in agent launch | Do not attach two distinct messages to one command. Apply the exact reply/terminal result and acknowledgment for that message after restart. | `owner-agent-message` |
 | Consensus draft agent: child run + consensus round/participant generation | Agent session consumer/consensus draft path in `agents/launch.ts:3915–3921` | Record complete draft artifact and settle the existing child/result path; output lost from stack must not become an empty successful draft. | `owner-consensus-draft` |
 | Scratch launch/message/recovery: dialog message/turn ID and generation | `scratch-runs/{service,events,recovery,dialog}.ts` | Scratch dialog Running with run/session still live is a due continuation, not a reason to skip. Persist reply and WaitingForUser once; NeedsInput and idle retain the exact owner until checkpoint/resume disposition. | `owner-scratch-initial`, `owner-scratch-message`, `owner-scratch-recovery` |
 | Local-package/Studio assistant scratch: scratch turn plus postprocess action generation | `scratch-runs/service.ts` `postProcessFlowAssistantTurn`, local-package authority | Recover dialog completion and pending postprocessing independently. Revalidate local-package lock/session authority before existing publish/apply side effect; persist action intent/result idempotently. No new package behavior. | `owner-scratch-package-initial`, `owner-scratch-package-message`, `owner-scratch-package-lock-takeover` |

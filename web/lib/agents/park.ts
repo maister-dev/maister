@@ -2,10 +2,10 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
-import { runs } from "@/lib/db/schema";
+import { agentTurns, runs } from "@/lib/db/schema";
 import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
 import { releaseSlotOnIdle } from "@/lib/scheduler";
 
@@ -33,6 +33,8 @@ export async function applyPersistentAgentPark(
       status: "NeedsInputIdle",
       checkpointAt: new Date(),
       keepaliveUntil: null,
+      resumeRequestedAt: sql`(SELECT min(${agentTurns.createdAt}) FROM ${agentTurns}
+        WHERE ${agentTurns.runId} = ${runId} AND ${agentTurns.state} = 'queued')`,
     })
     .where(
       and(

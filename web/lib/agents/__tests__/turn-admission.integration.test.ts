@@ -1,4 +1,5 @@
 import type { Db } from "@/lib/execution-host/db";
+import type { ExecutionHost } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 
@@ -14,6 +15,7 @@ import {
   executionCommands,
 } from "@/lib/db/schema";
 import { acceptAgentMessage } from "@/lib/agents/turns";
+import { claimAgentMessage } from "@/lib/agents/turn-claim";
 import { mintAssignment } from "@/lib/execution-host/assignments";
 import { issueOwnedPrompt } from "@/lib/execution-host/ledger";
 import { seedLocalHost } from "@/test-support/execution-host-seed";
@@ -24,12 +26,19 @@ import {
 
 let database: StartedPostgresTestDb;
 let db: Db;
+let host: ExecutionHost;
 
 beforeAll(async () => {
   database = await startMainPostgresTestDb({
     databaseName: "agent_turn_admission",
   });
   db = database.db as unknown as Db;
+  const hostId = (await seedLocalHost(database.db)).id;
+
+  [host] = await db
+    .select()
+    .from(executionHosts)
+    .where(eq(executionHosts.id, hostId));
 }, 180_000);
 
 afterAll(async () => {
@@ -52,11 +61,104 @@ async function seedRun(): Promise<string> {
 }
 
 describe("Durable agent turn admission", () => {
+  it("concurrent capacity claims keep accepted input queued and reuse the winning generation", async () => {
+    const previousCap = process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+    const runIds = [await seedRun(), await seedRun()];
+
+    process.env.MAISTER_MAX_CONCURRENT_AGENTS = "1";
+    try {
+      for (const runId of runIds)
+        await db.insert(runSessions).values({
+          id: randomUUID(),
+          runId,
+          sessionName: "default",
+          acpSessionId: `acp-${runId}`,
+        });
+      const turns = await Promise.all(
+        runIds.map((runId) =>
+          acceptAgentMessage(db, runId, `original-${runId}`),
+        ),
+      );
+      const claims = await Promise.all(
+        turns.map((turn) => claimAgentMessage(db, turn.id, host)),
+      );
+      const winner = claims.find((claim) => claim.kind === "claimed");
+      const queued = claims.find((claim) => claim.kind === "queued");
+
+      expect(winner?.kind).toBe("claimed");
+      expect(queued).toMatchObject({
+        kind: "queued",
+        reason: "capacity",
+        turn: { state: "queued", executionAssignmentId: null, commandId: null },
+      });
+      if (!winner || !queued)
+        throw new Error("expected one claimed and one queued turn");
+      const repeated = await Promise.all(
+        Array.from({ length: 4 }, () =>
+          claimAgentMessage(db, winner.turn.id, host),
+        ),
+      );
+
+      expect(repeated.every((claim) => claim.kind === "claimed")).toBe(true);
+      expect(
+        new Set(repeated.map((claim) => claim.turn.executionAssignmentId)),
+      ).toEqual(new Set([winner.turn.executionAssignmentId]));
+      const [waitingRun] = await db
+        .select()
+        .from(runs)
+        .where(eq(runs.id, queued.turn.runId));
+
+      expect(waitingRun.status).toBe("NeedsInputIdle");
+      expect(waitingRun.resumeRequestedAt).not.toBeNull();
+      await db.delete(runs).where(eq(runs.id, winner.turn.runId));
+      const resumed = await claimAgentMessage(db, queued.turn.id, host);
+
+      expect(resumed).toMatchObject({
+        kind: "claimed",
+        turn: {
+          id: queued.turn.id,
+          prompt: queued.turn.prompt,
+          state: "claimed",
+        },
+      });
+    } finally {
+      for (const runId of runIds)
+        await db.delete(runs).where(eq(runs.id, runId));
+      if (previousCap === undefined)
+        delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+      else process.env.MAISTER_MAX_CONCURRENT_AGENTS = previousCap;
+    }
+  });
+
+  it("later input cannot overtake an earlier accepted turn", async () => {
+    const runId = await seedRun();
+
+    await db
+      .insert(runSessions)
+      .values({ id: randomUUID(), runId, sessionName: "default" });
+    const first = await acceptAgentMessage(db, runId, "first");
+    const next = await acceptAgentMessage(db, runId, "next");
+
+    expect(await claimAgentMessage(db, next.id, host)).toMatchObject({
+      kind: "queued",
+      reason: "prior_turn",
+    });
+    expect(await claimAgentMessage(db, first.id, host)).toMatchObject({
+      kind: "claimed",
+      turn: { id: first.id },
+    });
+    expect(await claimAgentMessage(db, next.id, host)).toMatchObject({
+      kind: "queued",
+      reason: "prior_turn",
+    });
+    await db.delete(runs).where(eq(runs.id, runId));
+  });
+
   it("binds one turn to its exact command and preserves the run cascade", async () => {
     const runId = await seedRun();
     const first = await acceptAgentMessage(db, runId, "first input");
     const next = await acceptAgentMessage(db, runId, "next input");
-    const hostId = (await seedLocalHost(database.db)).id;
+    const hostId = host.id;
     const assignment = await db.transaction((tx) =>
       mintAssignment(tx, { runId, hostId, reason: "resume" }),
     );
@@ -106,10 +208,6 @@ describe("Durable agent turn admission", () => {
       code: "23514",
       constraint: "agent_turns_binding_immutable",
     });
-    const [host] = await db
-      .select()
-      .from(executionHosts)
-      .where(eq(executionHosts.id, hostId));
     const operationKey = `agent_turn:persistent_message:${first.id}:${first.ordinal}`;
     const command = await issueOwnedPrompt(db, {
       assignment,

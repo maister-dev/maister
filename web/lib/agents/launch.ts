@@ -3,22 +3,26 @@ import "server-only";
 import type { ContextRepoDecl } from "@/lib/context-mounts/types";
 import type { RunResultContract } from "@/lib/run-results/types";
 import type { Db as ExecutionDb } from "@/lib/execution-host/db";
+import type { AgentTurn, Run, ExecutionAssignment } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import {
   admitInitialAgentPrompt,
+  admitAgentMessagePrompt,
   findInitialAgentPrompt,
   waitForAgentPrompt,
   agentSessionHasOwnedPrompt,
   AgentPromptContinuationPending,
 } from "./prompt-owner";
 import { applyPersistentAgentPark, afterPersistentAgentPark } from "./park";
+import { acceptAgentMessage } from "./turns";
+import { claimAgentMessage } from "./turn-claim";
 import {
   finalizeAgentRun as finalizeAgentRunPrepared,
   type AgentFinalizeOptions,
@@ -76,6 +80,9 @@ import {
   type AgentExecutionPolicyRecommendation,
   type DelegationSnapshot,
   type ExecutionHost,
+  agentTurns,
+  executionAssignments,
+  runSessionIncarnations,
 } from "@/lib/db/schema";
 import { agentMessageText } from "@/lib/run-transcript/agent-text";
 import { appendCapped } from "@/lib/flows/capped-text";
@@ -98,7 +105,6 @@ import {
   resolveSharedTreeWorkspaceForUpdate,
 } from "@/lib/runs/shared-tree";
 import {
-  claimAgentIdleResumeInTransaction,
   markReworkFromReview,
   type StateTransitionResult,
 } from "@/lib/runs/state-transitions";
@@ -2265,118 +2271,55 @@ export async function parkPersistentAgent(
 
 export type SendAgentMessageResult = {
   childRunId: string;
-  status: "Running";
+  messageId: string;
+  status: Run["status"];
+  messageState: AgentTurn["state"];
 };
 
-// M37 Phase 8 (ADR-099): re-message a persistent child agent. A parked child
-// (NeedsInputIdle) is woken — CAS NeedsInputIdle → Running, then
-// startAgentSession respawns + session/resumes (run.acpSessionId) and delivers
-// the override prompt as a fresh turn; the consume loop re-parks it on the next
-// clean end_turn. A live child (Running, mid-turn) gets the prompt delivered to
-// its already-attached session. Never exposes acp_session_id. Mirrors the HITL
-// idle-resume path's claim-then-startAgentSession mechanics.
+/** Acceptance persists before any capacity or host operation. */
 export async function sendAgentMessage(
   childRunId: string,
   prompt: string,
-  opts: {
-    db?: Db;
-    executionHosts?: ExecutionHosts;
-  } = {},
+  opts: { db?: Db; executionHosts?: ExecutionHosts; requestKey?: string } = {},
 ): Promise<SendAgentMessageResult> {
   const _db = opts.db ?? getDb();
   const hosts = opts.executionHosts ?? createExecutionHosts({ db: _db });
+  const turn = await acceptAgentMessage(_db, childRunId, prompt, {
+    requestKey: opts.requestKey,
+  });
+  const host = await localHost({ db: _db, transport: hosts.transport });
+  const claim = await claimAgentMessage(_db, turn.id, host);
 
-  const rows = await _db
-    .select({
-      status: runs.status,
-      runKind: runs.runKind,
-    })
-    .from(runs)
-    .where(eq(runs.id, childRunId));
-  const baseRun = rows[0];
-
-  if (!baseRun || baseRun.runKind !== "agent") {
-    throw new MaisterError(
-      "PRECONDITION",
-      `run ${childRunId} is not an agent run`,
-    );
-  }
-
-  // M42 (ADR-114): the agent run's resume handle is on its ACTIVE session.
-  const run = {
-    ...baseRun,
-    acpSessionId:
-      (await loadActiveRunSession(_db, childRunId))?.acpSessionId ?? null,
-  };
-
-  // Parked: claim NeedsInputIdle → Running (startAgentSession early-returns on
-  // any non-Running status), then respawn + resume + deliver the new prompt.
-  // Mirrors the agent-idle HITL resume CAS in lib/services/hitl.ts.
-  if (run.status === "NeedsInputIdle") {
-    // ADR-166 D3: the re-message is a new driver generation (`resume`) minted
-    // inside the same CAS claim; the local host resolves BEFORE the claim.
-    const placementHost = await localHost({
-      db: _db as unknown as ExecutionDb,
-      transport: hosts.transport,
-    });
-    const claim = await _db.transaction((tx: Db) =>
-      claimAgentIdleResumeInTransaction(tx, childRunId, {
-        placement: { host: placementHost, transport: hosts.transport },
-      }),
-    );
-
-    if (!claim.ok) {
-      throw new MaisterError(
-        "CONFLICT",
-        `child run ${childRunId} is being resumed concurrently`,
-      );
-    }
-
+  if (claim.kind === "claimed") {
     await startAgentSession(childRunId, {
       db: _db,
       executionHosts: hosts,
-      overridePrompt: prompt,
-      assignmentId: claim.assignment?.id ?? null,
+      agentTurnId: claim.turn.id,
+      assignmentId: claim.turn.executionAssignmentId,
     });
-
-    return { childRunId, status: "Running" };
   }
+  const [current]: Run[] = await _db
+    .select()
+    .from(runs)
+    .where(eq(runs.id, childRunId));
+  const [message]: AgentTurn[] = await _db
+    .select()
+    .from(agentTurns)
+    .where(eq(agentTurns.id, turn.id));
 
-  // Live: deliver the prompt to the running session (its consumer re-parks it).
-  if (run.status === "Running") {
-    if (!run.acpSessionId) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `child run ${childRunId} has no live session handle yet`,
-      );
-    }
-
-    const client = await hosts.forRun(childRunId);
-    const live = (await client.sessionsForRun()).find(
-      (s) => s.status === "live" && s.acpSessionId === run.acpSessionId,
+  if (!current || !message)
+    throw new MaisterError(
+      "PRECONDITION",
+      "agent message was removed before acknowledgment",
+      { details: { runId: childRunId, turnId: turn.id } },
     );
 
-    if (!live) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `child run ${childRunId} has no live supervisor session`,
-      );
-    }
-
-    const promptHandle = await client.prompt(live.sessionId, {
-      stepId: "agent",
-      prompt,
-    });
-
-    await client.waitForPrompt(promptHandle);
-
-    return { childRunId, status: "Running" };
-  }
-
-  throw new MaisterError(
-    "PRECONDITION",
-    `child run ${childRunId} is not re-messageable (status=${run.status})`,
-  );
+  return {
+    childRunId,
+    messageId: message.id,
+    status: current.status,
+    messageState: message.state,
+  };
 }
 
 // The rework claim + its driver generation, in the caller's transaction.
@@ -2699,6 +2642,7 @@ export async function startAgentSession(
     db?: Db;
     executionHosts?: ExecutionHosts;
     overridePrompt?: string;
+    agentTurnId?: string;
     // ADR-166: the generation the caller's claim minted. Absent (the launch
     // dispatch, a scheduler promotion), the run's active pointer is bound.
     assignmentId?: string | null;
@@ -2741,7 +2685,116 @@ export async function startAgentSession(
     return;
   }
 
-  if (assignmentId && opts.overridePrompt === undefined) {
+  let messageTurn: AgentTurn | undefined;
+
+  if (opts.agentTurnId) {
+    [messageTurn] = await _db
+      .select()
+      .from(agentTurns)
+      .where(
+        and(eq(agentTurns.id, opts.agentTurnId), eq(agentTurns.runId, runId)),
+      );
+    if (!messageTurn || messageTurn.executionAssignmentId !== assignmentId)
+      throw new MaisterError(
+        "CONFLICT",
+        "agent message no longer owns the launch assignment",
+        { details: { runId, turnId: opts.agentTurnId } },
+      );
+  } else if (assignmentId) {
+    [messageTurn] = await _db
+      .select()
+      .from(agentTurns)
+      .where(
+        and(
+          eq(agentTurns.runId, runId),
+          eq(agentTurns.executionAssignmentId, assignmentId),
+          inArray(agentTurns.state, ["claimed", "dispatched"]),
+        ),
+      )
+      .limit(1);
+    if (
+      !messageTurn &&
+      activeSession?.executionAssignmentId &&
+      activeSession.executionAssignmentId !== assignmentId
+    ) {
+      const [previous]: ExecutionAssignment[] = await _db
+        .select()
+        .from(executionAssignments)
+        .where(
+          eq(executionAssignments.id, activeSession.executionAssignmentId),
+        );
+
+      if (previous?.releasedReason === "parked") {
+        const [pending]: AgentTurn[] = await _db
+          .select()
+          .from(agentTurns)
+          .where(
+            and(eq(agentTurns.runId, runId), eq(agentTurns.state, "queued")),
+          )
+          .orderBy(asc(agentTurns.ordinal))
+          .limit(1);
+
+        if (pending) {
+          const placement = await localHost({
+            db: _db,
+            transport: hosts.transport,
+          });
+          const claim = await claimAgentMessage(_db, pending.id, placement);
+
+          if (claim.kind !== "claimed") return;
+          messageTurn = claim.turn;
+        }
+      }
+    }
+  }
+  const overridePrompt = messageTurn?.prompt ?? opts.overridePrompt;
+
+  if (messageTurn) {
+    const execution = await bindAgentExecution(hosts, runId, assignmentId);
+
+    if (messageTurn.commandId) {
+      await waitForAgentPrompt(_db, execution.client, messageTurn.commandId);
+
+      return;
+    }
+    const [live]: Array<{ hostSessionId: string }> = await _db
+      .select({ hostSessionId: runSessionIncarnations.hostSessionId })
+      .from(runSessionIncarnations)
+      .where(
+        and(
+          eq(
+            runSessionIncarnations.runSessionId,
+            messageTurn.runSessionId ?? "",
+          ),
+          eq(runSessionIncarnations.executionAssignmentId, assignmentId ?? ""),
+          eq(runSessionIncarnations.state, "active"),
+        ),
+      )
+      .limit(1);
+
+    if (live) {
+      const turnId = messageTurn.id;
+      const handle = await execution.client.prompt(
+        live.hostSessionId,
+        { stepId: "agent", prompt: messageTurn.prompt },
+        {
+          admitOwner: (tx) =>
+            admitAgentMessagePrompt(
+              tx,
+              execution.client,
+              live.hostSessionId,
+              turnId,
+            ),
+        },
+      );
+
+      await waitForAgentPrompt(_db, execution.client, handle.commandId);
+
+      return;
+    }
+  }
+
+  if (assignmentId && overridePrompt === undefined) {
     const existingPrompt = await findInitialAgentPrompt(
       _db,
       runId,
@@ -2938,7 +2991,7 @@ export async function startAgentSession(
       _db,
       run,
       project.slug as string,
-      opts.overridePrompt != null,
+      overridePrompt != null,
     );
     const basePrompt = await buildAgentPrompt(
       _db,
@@ -2947,7 +3000,7 @@ export async function startAgentSession(
       memoryText,
     );
     const prompt =
-      opts.overridePrompt ??
+      overridePrompt ??
       (draftPayload
         ? consensusAgentDraftPrompt(basePrompt, draftPayload)
         : basePrompt);
@@ -3107,9 +3160,9 @@ export async function startAgentSession(
     });
 
     const ownedInitial =
-      !draftPayload && opts.overridePrompt === undefined && !run.acpSessionId;
+      !draftPayload && overridePrompt === undefined && !run.acpSessionId;
 
-    if (ownedInitial)
+    if (ownedInitial || messageTurn)
       await waitForPromptIncarnation(_db, execution.client, session.sessionId);
     const promptHandle = await execution.client.prompt(
       session.sessionId,
@@ -3117,15 +3170,29 @@ export async function startAgentSession(
         stepId: "agent",
         prompt,
       },
-      ownedInitial
+      messageTurn
         ? {
             admitOwner: (tx) =>
-              admitInitialAgentPrompt(tx, execution.client, session.sessionId),
+              admitAgentMessagePrompt(
+                tx,
+                execution.client,
+                session.sessionId,
+                messageTurn.id,
+              ),
           }
-        : undefined,
+        : ownedInitial
+          ? {
+              admitOwner: (tx) =>
+                admitInitialAgentPrompt(
+                  tx,
+                  execution.client,
+                  session.sessionId,
+                ),
+            }
+          : undefined,
     );
 
-    if (ownedInitial)
+    if (ownedInitial || messageTurn)
       await waitForAgentPrompt(_db, execution.client, promptHandle.commandId);
     else await execution.client.waitForPrompt(promptHandle);
   } catch (err) {

@@ -20,7 +20,12 @@ import { getDb } from "@/lib/db/client";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
-import { markResumed } from "@/lib/runs/state-transitions";
+import {
+  claimAgentIdleResumeInTransaction,
+  markResumed,
+} from "@/lib/runs/state-transitions";
+import { getLatestAssignment } from "@/lib/execution-host/assignments";
+import { getHostById } from "@/lib/execution-host/hosts";
 import { SLOT_HOLDING_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import {
   clearC2Claim,
@@ -859,19 +864,31 @@ export async function promoteNextPending(
         let claimedProjectId: string | null = null;
 
         if (isAgent) {
-          const flipped: Array<{ projectId: string }> = await tx
-            .update(runs)
-            .set({
-              status: "Running",
-              resumeRequestedAt: null,
-              keepaliveUntil: null,
-              checkpointAt: null,
-            })
-            .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")))
-            .returning({ projectId: runs.projectId });
+          // Resume on the parked generation's host. Dispatch verifies its live
+          // identity outside this transaction; no consumer retains a tx handle.
+          const previous = await getLatestAssignment(tx, runId);
+          const host = previous
+            ? await getHostById(tx, previous.executionHostId)
+            : null;
 
-          if (flipped.length === 0) continue;
-          claimedProjectId = flipped[0].projectId;
+          if (!host || host.retiredAt || host.readiness !== "ready") {
+            throw new MaisterError(
+              "EXECUTOR_UNAVAILABLE",
+              "queued agent resume requires its registered execution host",
+              { details: { runId, assignmentId: previous?.id ?? null } },
+            );
+          }
+          const resumed = await claimAgentIdleResumeInTransaction(tx, runId, {
+            placement: { host },
+          });
+
+          if (!resumed.ok) continue;
+          const [claimed]: Array<{ projectId: string }> = await tx
+            .select({ projectId: runs.projectId })
+            .from(runs)
+            .where(eq(runs.id, runId));
+
+          claimedProjectId = claimed.projectId;
         } else {
           const resumed = await markResumed(runId, { db: tx });
 

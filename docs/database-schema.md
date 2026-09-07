@@ -2322,7 +2322,7 @@ Index: `scratch_runs_project_status_idx` on `(projectId, dialogStatus)` for
 active workspace lists. The primary key on `runId` covers detail joins from
 `runs`.
 
-## `agent_turns` (Implemented storage; caller activation Designed)
+## `agent_turns` (Implemented)
 
 Migration `0153_agent_turn_admission` stores accepted agent input before a
 capacity claim or host dispatch. `runs` remains the run state authority;
@@ -2349,8 +2349,10 @@ are restricted while retained by a turn.
 
 The persistence helper is qualified with concurrent retries, distinct input,
 terminal admission refusal, immutable source, exact command binding and run
-cascade. Production message/resume/rework wiring and capacity-safe recovery
-remain Designed; see [prompt lifecycle](system-analytics/execution-prompt-lifecycle.md).
+cascade. Production messages use the scheduler-cap claim, retain FIFO order
+across persistent parks and acknowledge the exact command atomically with the
+domain result. Resume/rework and pre-create continuation wiring remain Designed;
+see [prompt lifecycle](system-analytics/execution-prompt-lifecycle.md).
 
 ## `run_messages`
 

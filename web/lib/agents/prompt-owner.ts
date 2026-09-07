@@ -1,6 +1,9 @@
 import "server-only";
 
-import type { RunSessionIncarnation } from "@/lib/db/schema";
+import type {
+  RunSessionIncarnation,
+  ExecutionAssignment,
+} from "@/lib/db/schema";
 import type { Db } from "@/lib/execution-host/db";
 import type { BoundClient } from "@/lib/execution-host/client";
 import type { PromptOwnerAdmission } from "@/lib/execution-host/ledger";
@@ -19,6 +22,7 @@ import {
   runs,
   runSessions,
   runSessionIncarnations,
+  agentTurns,
 } from "@/lib/db/schema";
 import {
   lockCurrentSessionAssignment,
@@ -39,6 +43,7 @@ import { agentMessageText } from "@/lib/run-transcript/agent-text";
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { nodeOutputMaxBytes } from "@/lib/instance-config";
 import { MaisterError } from "@/lib/errors";
+import { readPromptRequest } from "@/lib/execution-host/command-request";
 
 const log = pino({
   name: "agent-prompt-owner",
@@ -49,17 +54,31 @@ type InitialAgentRef = Extract<
   Extract<PromptOwner, { kind: "agent_turn" }>["ref"],
   { variant: "initial" }
 >;
+type MessageAgentRef = Extract<
+  Extract<PromptOwner, { kind: "agent_turn" }>["ref"],
+  { variant: "live_message" | "persistent_message" }
+>;
+type AdmittedAgentRef = InitialAgentRef | MessageAgentRef;
+type AgentPromptSession = Pick<
+  InitialAgentRef,
+  | "version"
+  | "runId"
+  | "assignmentId"
+  | "assignmentEpoch"
+  | "runSessionId"
+  | "incarnationId"
+> &
+  Readonly<{ placementReason: ExecutionAssignment["placementReason"] }>;
 
 export function initialAgentPromptKey(assignmentId: string): string {
   return `agent_turn:initial:${assignmentId}:0`;
 }
 
-/** One first prompt belongs to the already persisted launch generation. */
-export async function admitInitialAgentPrompt(
+async function lockAgentPromptSession(
   tx: Db,
   client: BoundClient,
   hostSessionId: string,
-): Promise<PromptOwnerAdmission> {
+): Promise<AgentPromptSession> {
   const runId = client.assignment.runId;
   const assignment = await lockCurrentSessionAssignment(tx, {
     runId,
@@ -69,11 +88,7 @@ export async function admitInitialAgentPrompt(
   if (!assignment) throw staleSessionBinding(runId, client.assignment.id);
   const [run] = await tx.select().from(runs).where(eq(runs.id, runId));
 
-  if (
-    run?.runKind !== "agent" ||
-    run.status !== "Running" ||
-    !["launch", "legacy_backfill"].includes(assignment.placementReason)
-  )
+  if (run?.runKind !== "agent" || run.status !== "Running")
     throw new PromptOwnerInvariantError("agent_initial_admission_generation");
   const [binding] = await tx
     .select({ session: runSessions, incarnation: runSessionIncarnations })
@@ -101,33 +116,136 @@ export async function admitInitialAgentPrompt(
     throw new PromptOwnerInvariantError("agent_initial_admission_session");
 
   return {
-    owner: {
-      kind: "agent_turn",
-      ref: {
-        version: 1,
-        variant: "initial",
-        turnId: assignment.id,
-        promptOrdinal: 0,
-        runId,
-        assignmentId: assignment.id,
-        assignmentEpoch: assignment.epoch,
-        runSessionId: binding.session.id,
-        incarnationId: binding.incarnation.id,
-      },
-    },
-    logicalOperationKey: initialAgentPromptKey(assignment.id),
+    version: 1,
+    runId,
+    assignmentId: assignment.id,
+    assignmentEpoch: assignment.epoch,
+    runSessionId: binding.session.id,
+    incarnationId: binding.incarnation.id,
+    placementReason: assignment.placementReason,
   };
 }
 
-async function lockInitialAgentBinding(
+/** One first prompt belongs to the already persisted launch generation. */
+export async function admitInitialAgentPrompt(
   tx: Db,
-  ref: InitialAgentRef,
+  client: BoundClient,
+  hostSessionId: string,
+): Promise<PromptOwnerAdmission> {
+  const { placementReason, ...session } = await lockAgentPromptSession(
+    tx,
+    client,
+    hostSessionId,
+  );
+
+  if (!["launch", "legacy_backfill"].includes(placementReason))
+    throw new PromptOwnerInvariantError("agent_initial_admission_generation");
+
+  return {
+    owner: {
+      kind: "agent_turn",
+      ref: {
+        ...session,
+        variant: "initial",
+        turnId: session.assignmentId,
+        promptOrdinal: 0,
+      },
+    },
+    logicalOperationKey: initialAgentPromptKey(session.assignmentId),
+  };
+}
+
+export async function admitAgentMessagePrompt(
+  tx: Db,
+  client: BoundClient,
+  hostSessionId: string,
+  turnId: string,
+): Promise<PromptOwnerAdmission> {
+  const { placementReason, ...session } = await lockAgentPromptSession(
+    tx,
+    client,
+    hostSessionId,
+  );
+
+  void placementReason;
+  const [turn] = await tx
+    .select()
+    .from(agentTurns)
+    .where(eq(agentTurns.id, turnId))
+    .for("update");
+
+  if (
+    !turn ||
+    (turn.variant !== "live_message" &&
+      turn.variant !== "persistent_message") ||
+    !["claimed", "dispatched"].includes(turn.state) ||
+    turn.runId !== session.runId ||
+    turn.executionAssignmentId !== session.assignmentId ||
+    turn.assignmentEpoch !== session.assignmentEpoch ||
+    turn.runSessionId !== session.runSessionId
+  )
+    throw new PromptOwnerInvariantError("agent_message_admission_generation");
+  const logicalOperationKey = `agent_turn:${turn.variant}:${turn.id}:${turn.ordinal}`;
+
+  return {
+    owner: {
+      kind: "agent_turn",
+      ref: {
+        ...session,
+        variant: turn.variant,
+        turnId: turn.id,
+        messageId: turn.id,
+        promptOrdinal: turn.ordinal,
+      },
+    },
+    logicalOperationKey,
+    assertCommit: async () => {
+      const [command] = await tx
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, turn.runId),
+            eq(executionCommands.logicalOperationKey, logicalOperationKey),
+          ),
+        );
+
+      if (
+        !command ||
+        readPromptRequest(command, client.host.hostKey).payload.prompt !==
+          turn.prompt
+      )
+        throw new PromptOwnerInvariantError(
+          "agent_message_original_prompt_changed",
+        );
+      if (turn.commandId !== null && turn.commandId !== command.id)
+        throw new PromptOwnerInvariantError("agent_message_command_changed");
+      await tx
+        .update(agentTurns)
+        .set({
+          state: "dispatched",
+          commandId: command.id,
+          incarnationId: session.incarnationId,
+          updatedAt: new Date(),
+        })
+        .where(eq(agentTurns.id, turn.id));
+    },
+  };
+}
+
+async function lockAgentBinding(
+  tx: Db,
+  ref: AdmittedAgentRef,
   targetSessionId: string | null,
+  commandId: string,
 ): Promise<Readonly<{
   state: RunSessionIncarnation["state"];
   persistent: boolean;
 }> | null> {
-  if (ref.turnId !== ref.assignmentId || ref.promptOrdinal !== 0)
+  if (
+    ref.variant === "initial" &&
+    (ref.turnId !== ref.assignmentId || ref.promptOrdinal !== 0)
+  )
     throw new PromptOwnerInvariantError("agent_initial_turn_identity");
   const assignment = await lockCurrentSessionAssignment(tx, {
     runId: ref.runId,
@@ -135,8 +253,33 @@ async function lockInitialAgentBinding(
   });
 
   if (!assignment || assignment.epoch !== ref.assignmentEpoch) return null;
-  if (!["launch", "legacy_backfill"].includes(assignment.placementReason))
+  if (
+    ref.variant === "initial" &&
+    !["launch", "legacy_backfill"].includes(assignment.placementReason)
+  )
     return null;
+  if (ref.variant !== "initial") {
+    const [turn] = await tx
+      .select()
+      .from(agentTurns)
+      .where(eq(agentTurns.id, ref.turnId))
+      .for("update");
+
+    if (
+      ref.messageId !== ref.turnId ||
+      !turn ||
+      turn.state !== "dispatched" ||
+      turn.commandId !== commandId ||
+      turn.runId !== ref.runId ||
+      turn.variant !== ref.variant ||
+      turn.ordinal !== ref.promptOrdinal ||
+      turn.executionAssignmentId !== ref.assignmentId ||
+      turn.assignmentEpoch !== ref.assignmentEpoch ||
+      turn.runSessionId !== ref.runSessionId ||
+      turn.incarnationId !== ref.incarnationId
+    )
+      return null;
+  }
   const [run] = await tx.select().from(runs).where(eq(runs.id, ref.runId));
 
   if (
@@ -173,13 +316,14 @@ async function lockInitialAgentBinding(
   return binding ? { state: binding.state, persistent: run.persistent } : null;
 }
 
-async function lockInitialAgentOwner(
+async function lockAgentOwner(
   tx: Db,
-  ref: InitialAgentRef,
+  ref: AdmittedAgentRef,
   targetSessionId: string | null,
+  commandId: string,
   persistent: boolean,
 ): Promise<boolean> {
-  const binding = await lockInitialAgentBinding(tx, ref, targetSessionId);
+  const binding = await lockAgentBinding(tx, ref, targetSessionId, commandId);
 
   if (!binding || binding.persistent !== persistent) return false;
   if (binding.state === "active" || binding.state === "created")
@@ -191,13 +335,14 @@ async function lockInitialAgentOwner(
 /** Close only the completed turn's current process before workspace inspection.
  * The exact target and assignment fence also protect a concurrent replacement.
  */
-async function stopInitialAgentPromptSession(
+async function stopAgentPromptSession(
   db: Db,
-  ref: InitialAgentRef,
+  ref: AdmittedAgentRef,
   targetSessionId: string | null,
+  commandId: string,
 ): Promise<void> {
   const binding = await db.transaction((tx) =>
-    lockInitialAgentBinding(tx, ref, targetSessionId),
+    lockAgentBinding(tx, ref, targetSessionId, commandId),
   );
 
   if (binding?.state !== "active" && binding?.state !== "created") return;
@@ -218,12 +363,63 @@ async function stopInitialAgentPromptSession(
   );
 }
 
+async function acknowledgeAgentMessage(
+  tx: Db,
+  ref: MessageAgentRef,
+  commandId: string,
+): Promise<void> {
+  const [applied] = await tx
+    .update(agentTurns)
+    .set({ state: "applied", completedAt: new Date(), updatedAt: new Date() })
+    .where(
+      and(
+        eq(agentTurns.id, ref.turnId),
+        eq(agentTurns.runId, ref.runId),
+        eq(agentTurns.commandId, commandId),
+        eq(agentTurns.state, "dispatched"),
+      ),
+    )
+    .returning({ id: agentTurns.id });
+
+  if (!applied)
+    throw new PromptOwnerInvariantError("agent_message_acknowledgment_changed");
+}
+
+async function supersedeAgentMessage(
+  tx: Db,
+  ref: AdmittedAgentRef,
+  commandId: string,
+): Promise<"superseded"> {
+  if (ref.variant !== "initial")
+    await tx
+      .update(agentTurns)
+      .set({
+        state: "superseded",
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(agentTurns.id, ref.turnId),
+          eq(agentTurns.runId, ref.runId),
+          eq(agentTurns.commandId, commandId),
+          eq(agentTurns.state, "dispatched"),
+        ),
+      );
+
+  return "superseded";
+}
+
 export const agentPromptOwner = definePromptOwnerAdapter(
   "agent_turn",
   async ({ db, owner, command, outcome }) => {
     const ref = owner.ref;
 
-    if (ref.variant !== "initial")
+    if (
+      ref.variant !== "initial" &&
+      ref.variant !== "live_message" &&
+      ref.variant !== "persistent_message"
+    )
       throw new PromptOwnerInvariantError("agent_variant_not_implemented");
     const maxBytes = nodeOutputMaxBytes();
     let sentinel = emptySentinelOutput();
@@ -242,7 +438,12 @@ export const agentPromptOwner = definePromptOwnerAdapter(
       outcome.response.stopReason === "end_turn";
 
     if (outcome.state !== "fenced")
-      await stopInitialAgentPromptSession(db, ref, command.targetSessionId);
+      await stopAgentPromptSession(
+        db,
+        ref,
+        command.targetSessionId,
+        command.id,
+      );
     const [run] = await db
       .select({ persistent: runs.persistent })
       .from(runs)
@@ -255,17 +456,20 @@ export const agentPromptOwner = definePromptOwnerAdapter(
       return {
         apply: async (tx) => {
           if (
-            !(await lockInitialAgentOwner(
+            !(await lockAgentOwner(
               tx,
               ref,
               command.targetSessionId,
+              command.id,
               persistent,
             ))
           )
-            return "superseded";
+            return supersedeAgentMessage(tx, ref, command.id);
           application = await applyPersistentAgentPark(tx, ref.runId);
           if (!application.parked)
             throw new PromptOwnerDeferred("agent_park_pending");
+          if (ref.variant !== "initial")
+            await acknowledgeAgentMessage(tx, ref, command.id);
 
           return "applied";
         },
@@ -287,17 +491,20 @@ export const agentPromptOwner = definePromptOwnerAdapter(
       apply: async (tx) => {
         if (
           outcome.state === "fenced" ||
-          !(await lockInitialAgentOwner(
+          !(await lockAgentOwner(
             tx,
             ref,
             command.targetSessionId,
+            command.id,
             persistent,
           ))
         )
-          return "superseded";
+          return supersedeAgentMessage(tx, ref, command.id);
         application = await prepared.apply(tx);
         if (!application.finalized)
           throw new PromptOwnerDeferred("agent_finalization_pending");
+        if (ref.variant !== "initial")
+          await acknowledgeAgentMessage(tx, ref, command.id);
         log.info(
           {
             runId: ref.runId,

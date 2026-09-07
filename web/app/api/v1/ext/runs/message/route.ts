@@ -28,7 +28,8 @@ const bodySchema = z
       .regex(/^[A-Za-z0-9._-]+$/)
       .optional(),
     childRunId: z.string().min(1).optional(),
-    prompt: z.string().min(1),
+    prompt: z.string().min(1).max(1_000_000),
+    requestKey: z.string().min(1).max(128).optional(),
   })
   .strict()
   .refine((b) => b.addressableKey !== undefined || b.childRunId !== undefined, {
@@ -168,12 +169,12 @@ export async function POST(
       }
 
       try {
-        const result = await sendAgentMessage(child.id, body.prompt, { db });
+        const result = await sendAgentMessage(child.id, body.prompt, {
+          db,
+          requestKey: body.requestKey,
+        });
 
-        return NextResponse.json(
-          { childRunId: result.childRunId, status: result.status },
-          { status: 200 },
-        );
+        return NextResponse.json(result, { status: 200 });
       } catch (err) {
         if (isMaisterError(err)) {
           return NextResponse.json(

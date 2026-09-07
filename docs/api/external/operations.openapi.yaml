@@ -1930,14 +1930,20 @@ paths:
   /api/v1/ext/runs/message:
     post:
       tags: [runs]
-      summary: (M37 — Implemented) Re-message a persistent swarm child
+      summary: (Implemented) Re-message a persistent swarm child
       description: |
-        (M37 — Implemented, ADR-099.) Scope `runs:delegate`. Sends a follow-up
+        (Implemented, ADR-099.) Scope `runs:delegate`. Accepts a follow-up
         prompt to a PERSISTENT addressable child in the calling orchestrator's
         run-tree. Backs the `run_message` delegation tool. If the child is parked
         between turns it is respawned and resumed with prior context
-        (`session/resume`); if it is live the prompt is delivered to the running
-        session. The child re-parks on its next `end_turn`.
+        (`session/resume`); an available live session receives the new prompt.
+        Input is persisted before dispatch or the capacity claim. A busy turn
+        or full agent pool leaves the message queued in original acceptance order.
+        The child re-parks on its next `end_turn`. `messageState` distinguishes
+        queued acceptance from applied completion. Reusing `requestKey` within
+        the child run returns the same accepted message for identical input;
+        different input under that key is a conflict. Omitting the key accepts
+        a distinct message on every invocation.
 
         **Identifiers (trust contour).** The `projectId` and the **caller**
         `runId` are derived SERVER-SIDE from the orchestrator's `agent:<id>`
@@ -1977,22 +1983,35 @@ paths:
                 prompt:
                   type: string
                   minLength: 1
+                  maxLength: 1000000
                   description: Free-text follow-up prompt delivered to the child.
+                requestKey:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  description: Optional retry key scoped to this child run; reuse only for identical input.
       responses:
         "200":
-          description: Message delivered; the child's row state is returned.
+          description: Message accepted; its durable identity, application state and current child run status are returned.
           content:
             application/json:
               schema:
                 type: object
-                required: [childRunId, status]
+                required: [childRunId, messageId, status, messageState]
                 properties:
                   childRunId:
                     type: string
                     format: uuid
+                  messageId:
+                    type: string
+                    format: uuid
+                    description: Server-generated durable agent turn identity.
+                  messageState:
+                    type: string
+                    enum: [queued, claimed, dispatched, applied, superseded]
                   status:
                     type: string
-                    description: The child's run status after delivery (e.g. `Running`).
+                    description: The current child run status, including `NeedsInputIdle` while queued at capacity or parked after completion.
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":

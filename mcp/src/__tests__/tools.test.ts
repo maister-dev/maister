@@ -672,27 +672,35 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     expect(parsedBody(init)).toEqual({ childRunId: "child-1" });
   });
 
-  it("run_message → POST /api/v1/ext/runs/message with only defined keys", async () => {
-    mockOnce({ childRunId: "child-1", status: "Running" }, 200);
+  it.each([undefined, "retry-message-1"])(
+    "run_message → POST /api/v1/ext/runs/message with request key %s",
+    async (requestKey) => {
+      mockOnce({ childRunId: "child-1", status: "Running" }, 200);
 
-    await dispatchTool({
-      name: "run_message",
-      args: { addressableKey: "reviewer", prompt: "re-review the diff" },
-      ctx: httpCtx,
-      baseUrl: BASE_URL,
-    });
+      await dispatchTool({
+        name: "run_message",
+        args: {
+          addressableKey: "reviewer",
+          prompt: "re-review the diff",
+          ...(requestKey === undefined ? {} : { requestKey }),
+        },
+        ctx: httpCtx,
+        baseUrl: BASE_URL,
+      });
 
-    const { url, init } = lastRequest();
+      const { url, init } = lastRequest();
 
-    expect(init.method).toBe("POST");
-    expect(url).toBe(`${BASE_URL}/api/v1/ext/runs/message`);
-    expect(headerAuth(init)).toBe(AUTH);
-    // childRunId omitted (undefined) — only defined keys ride.
-    expect(parsedBody(init)).toEqual({
-      addressableKey: "reviewer",
-      prompt: "re-review the diff",
-    });
-  });
+      expect(init.method).toBe("POST");
+      expect(url).toBe(`${BASE_URL}/api/v1/ext/runs/message`);
+      expect(headerAuth(init)).toBe(AUTH);
+      // childRunId omitted (undefined) — only defined keys ride.
+      expect(parsedBody(init)).toEqual({
+        addressableKey: "reviewer",
+        prompt: "re-review the diff",
+        ...(requestKey === undefined ? {} : { requestKey }),
+      });
+    },
+  );
 
   it("run_promote → POST /api/v1/ext/runs/promote", async () => {
     mockOnce({ childRunId: "child-1", status: "Done" }, 200);

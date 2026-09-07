@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -24,6 +24,7 @@ import {
   executionCommands,
   domainEvents,
   executionAssignments,
+  agentTurns,
 } from "@/lib/db/schema";
 import { agentPromptOwners } from "@/lib/agents/prompt-owner";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
@@ -39,6 +40,7 @@ import { canonicalProjectors } from "@/lib/execution-host/events/projection-runt
 import { startProjectionWorker } from "@/lib/execution-host/events/projection-worker";
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
 import { initRepo } from "@/test-support/git-fixture";
+import { promoteNextPending } from "@/lib/scheduler";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -220,14 +222,21 @@ async function seedAgent(input: {
   return runId;
 }
 
-function startDriver(runId: string): {
+function startDriver(
+  runId: string,
+  message?: string,
+  requestKey?: string,
+): {
   child: ChildProcess;
   exited: Promise<number | null>;
   output: () => string;
+  returned: () => boolean;
 } {
   const child = fork(
     path.resolve("test-support/agent-prompt-owner-process.ts"),
-    [runId],
+    message === undefined
+      ? [runId]
+      : [runId, message, ...(requestKey ? [requestKey] : [])],
     {
       execArgv: [
         "--import",
@@ -240,6 +249,17 @@ function startDriver(runId: string): {
     },
   );
   let output = "";
+  let returned = false;
+
+  child.on("message", (value: unknown) => {
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "state" in value &&
+      value.state === "prompt_returned"
+    )
+      returned = true;
+  });
   const record = (chunk: Buffer): void => {
     output = (output + chunk.toString("utf8")).slice(-16_384);
   };
@@ -253,7 +273,7 @@ function startDriver(runId: string): {
 
   drivers.push(child);
 
-  return { child, exited, output: () => output };
+  return { child, exited, output: () => output, returned: () => returned };
 }
 
 async function expectCompleted(
@@ -322,7 +342,10 @@ async function expectCompleted(
   expect(events.filter((event) => event.kind === "run.done")).toHaveLength(1);
 }
 
-async function killAtTerminalWrite(runId: string): Promise<void> {
+async function killAtTerminalWrite(
+  runId: string,
+  message?: string,
+): Promise<void> {
   const trigger = `agent_pause_${randomUUID().replaceAll("-", "")}`;
   const lockKey = Math.floor(Math.random() * 2_000_000_000) + 1;
   const lock = await database.pool.connect();
@@ -336,7 +359,7 @@ async function killAtTerminalWrite(runId: string): Promise<void> {
     await database.pool.query(
       `CREATE TRIGGER ${trigger} BEFORE UPDATE ON runs FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
     );
-    driver = startDriver(runId);
+    driver = startDriver(runId, message);
     await expect
       .poll(
         async () => {
@@ -370,6 +393,318 @@ async function killAtTerminalWrite(runId: string): Promise<void> {
 }
 
 describe("Agent owned prompts through the production launcher", () => {
+  it("owner-agent-live-message drains distinct queued inputs once after the original launcher dies", async () => {
+    const runId = await seedAgent({
+      bytes: 0,
+      persistent: true,
+      terminalDelayMs: 15_000,
+    });
+    const original = startDriver(runId);
+
+    await expect
+      .poll(
+        async () => {
+          const [command] = await db
+            .select()
+            .from(executionCommands)
+            .where(
+              and(
+                eq(executionCommands.runId, runId),
+                eq(executionCommands.kind, "session.prompt"),
+              ),
+            );
+
+          return command?.state;
+        },
+        { timeout: 30_000, interval: 25 },
+      )
+      .toBe("accepted");
+    const prompts = [
+      'fixture-output:{"bytes":0,"text":"first queued reply"}',
+      'fixture-output:{"bytes":0,"text":"second queued reply"}',
+    ];
+
+    for (const [index, prompt] of prompts.entries()) {
+      const sender = startDriver(runId, prompt, `message-${index}`);
+
+      await expect
+        .poll(sender.returned, { timeout: 10_000, interval: 25 })
+        .toBe(true);
+    }
+    const retry = startDriver(runId, prompts[0], "message-0");
+
+    await expect
+      .poll(retry.returned, { timeout: 10_000, interval: 25 })
+      .toBe(true);
+    const queued = await db
+      .select()
+      .from(agentTurns)
+      .where(eq(agentTurns.runId, runId))
+      .orderBy(asc(agentTurns.ordinal));
+
+    expect(
+      queued.map((turn) => ({
+        prompt: turn.prompt,
+        state: turn.state,
+        variant: turn.variant,
+      })),
+    ).toEqual(
+      prompts.map((prompt) => ({
+        prompt,
+        state: "queued",
+        variant: "live_message",
+      })),
+    );
+    original.child.kill("SIGKILL");
+    await original.exited;
+    startDriver(runId);
+    await expect
+      .poll(
+        async () => {
+          const turns = await db
+            .select()
+            .from(agentTurns)
+            .where(eq(agentTurns.runId, runId))
+            .orderBy(asc(agentTurns.ordinal));
+
+          return turns.map((turn) => turn.state);
+        },
+        { timeout: 65_000, interval: 50 },
+      )
+      .toEqual(["applied", "applied"]);
+    const commands = await db
+      .select()
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, runId),
+          eq(executionCommands.kind, "session.prompt"),
+        ),
+      )
+      .orderBy(asc(executionCommands.createdAt));
+
+    expect(commands).toHaveLength(3);
+    expect(
+      commands.every((command) => command.applicationState === "applied"),
+    ).toBe(true);
+    expect(
+      commands
+        .slice(1)
+        .map((command) =>
+          command.ownerRef && "turnId" in command.ownerRef
+            ? command.ownerRef.turnId
+            : null,
+        ),
+    ).toEqual(queued.map((turn) => turn.id));
+    const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+
+    expect(run).toMatchObject({
+      status: "NeedsInputIdle",
+      resumeRequestedAt: null,
+    });
+  }, 110_000);
+
+  it.each(["live", "before_terminal", "before_apply"] as const)(
+    "owner-agent-idle-message applies the original accepted message after %s",
+    async (window) => {
+      const runId = await seedAgent({ bytes: 0, persistent: true });
+
+      startDriver(runId);
+      await expect
+        .poll(
+          async () => {
+            const [run] = await db
+              .select()
+              .from(runs)
+              .where(eq(runs.id, runId));
+
+            return run.status;
+          },
+          { timeout: 30_000, interval: 50 },
+        )
+        .toBe("NeedsInputIdle");
+      const message = `fixture-output:${JSON.stringify({ bytes: 0, text: "original follow-up answer", terminalDelayMs: window === "before_terminal" ? 3_000 : 0 })}`;
+
+      if (window === "before_apply") await killAtTerminalWrite(runId, message);
+      else {
+        const delivery = startDriver(runId, message);
+
+        if (window === "before_terminal") {
+          await expect
+            .poll(
+              async () => {
+                const [turn] = await db
+                  .select()
+                  .from(agentTurns)
+                  .where(eq(agentTurns.runId, runId));
+
+                if (!turn?.commandId) return null;
+                const [command] = await db
+                  .select()
+                  .from(executionCommands)
+                  .where(eq(executionCommands.id, turn.commandId));
+
+                return command?.state;
+              },
+              { timeout: 30_000, interval: 25 },
+            )
+            .toBe("accepted");
+          delivery.child.kill("SIGKILL");
+          await delivery.exited;
+        }
+      }
+      if (window !== "live") startDriver(runId);
+      await expect
+        .poll(
+          async () => {
+            const [turn] = await db
+              .select()
+              .from(agentTurns)
+              .where(eq(agentTurns.runId, runId));
+
+            return turn?.state;
+          },
+          { timeout: 50_000, interval: 50 },
+        )
+        .toBe("applied");
+      const [turn] = await db
+        .select()
+        .from(agentTurns)
+        .where(eq(agentTurns.runId, runId));
+      const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+      const commands = await db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, runId),
+            eq(executionCommands.kind, "session.prompt"),
+          ),
+        );
+      const command = commands.find((item) => item.id === turn.commandId);
+
+      expect(run.status).toBe("NeedsInputIdle");
+      expect(turn).toMatchObject({
+        prompt: message,
+        variant: "persistent_message",
+        state: "applied",
+      });
+      expect(turn.completedAt).not.toBeNull();
+      expect(commands).toHaveLength(2);
+      expect(command).toMatchObject({
+        ownerKind: "agent_turn",
+        applicationState: "applied",
+        ownerRef: {
+          turnId: turn.id,
+          messageId: turn.id,
+          promptOrdinal: turn.ordinal,
+        },
+      });
+      expect(command?.completionAppliedAt).not.toBeNull();
+      expect(
+        await db.select().from(runResults).where(eq(runResults.runId, runId)),
+      ).toHaveLength(0);
+    },
+    110_000,
+  );
+
+  it("owner-agent-idle-message retains accepted input while the agent pool is full", async () => {
+    const previousCap = process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+
+    process.env.MAISTER_MAX_CONCURRENT_AGENTS = "1";
+    try {
+      const runId = await seedAgent({ bytes: 0, persistent: true });
+
+      startDriver(runId);
+      await expect
+        .poll(
+          async () => {
+            const [run] = await db
+              .select()
+              .from(runs)
+              .where(eq(runs.id, runId));
+
+            return run.status;
+          },
+          { timeout: 30_000, interval: 50 },
+        )
+        .toBe("NeedsInputIdle");
+      const occupyingRunId = await seedAgent({ bytes: 0 });
+      const message =
+        'fixture-output:{"bytes":0,"text":"queued original input"}';
+      const delivery = startDriver(runId, message);
+
+      await expect
+        .poll(delivery.returned, { timeout: 30_000, interval: 50 })
+        .toBe(true);
+      const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+
+      expect(run.status).toBe("NeedsInputIdle");
+      expect(run.resumeRequestedAt).not.toBeNull();
+      const turns = await db
+        .select()
+        .from(agentTurns)
+        .where(eq(agentTurns.runId, runId));
+
+      expect(turns).toHaveLength(1);
+      expect(turns[0]).toMatchObject({
+        state: "queued",
+        prompt: message,
+        commandId: null,
+        executionAssignmentId: null,
+      });
+      const commands = await db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, runId),
+            eq(executionCommands.kind, "session.prompt"),
+          ),
+        );
+
+      expect(commands).toHaveLength(1);
+      await db.delete(runs).where(eq(runs.id, occupyingRunId));
+      let resumedDriver: ReturnType<typeof startDriver> | undefined;
+      const promoted = await promoteNextPending({
+        db,
+        pool: "agent",
+        startAgentRun: (id) => {
+          resumedDriver = startDriver(id);
+        },
+      });
+
+      expect(promoted.promotedRunId).toBe(runId);
+      await expect
+        .poll(() => resumedDriver?.returned(), {
+          timeout: 30_000,
+          interval: 50,
+        })
+        .toBe(true);
+      const [applied] = await db
+        .select()
+        .from(agentTurns)
+        .where(eq(agentTurns.id, turns[0].id));
+
+      expect(applied).toMatchObject({ state: "applied", prompt: message });
+      const promptCommands = await db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, runId),
+            eq(executionCommands.kind, "session.prompt"),
+          ),
+        );
+
+      expect(promptCommands).toHaveLength(2);
+    } finally {
+      if (previousCap === undefined)
+        delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+      else process.env.MAISTER_MAX_CONCURRENT_AGENTS = previousCap;
+    }
+  }, 80_000);
+
   it.each(["live", "before_terminal", "before_apply"] as const)(
     "owner-agent-persistent-first parks the original turn after %s",
     async (window) => {
