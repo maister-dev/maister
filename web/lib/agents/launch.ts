@@ -18,6 +18,7 @@ import {
   agentSessionHasOwnedPrompt,
   AgentPromptContinuationPending,
 } from "./prompt-owner";
+import { applyPersistentAgentPark, afterPersistentAgentPark } from "./park";
 import {
   finalizeAgentRun as finalizeAgentRunPrepared,
   type AgentFinalizeOptions,
@@ -101,14 +102,13 @@ import {
   markReworkFromReview,
   type StateTransitionResult,
 } from "@/lib/runs/state-transitions";
-import { releaseSlotOnIdle, tryStartRun } from "@/lib/scheduler";
+import { tryStartRun } from "@/lib/scheduler";
 import {
   createExecutionHosts,
   executionHosts,
   isFencedError,
   localHost,
   mintPlacement,
-  releaseAssignmentForRun,
   type BoundClient,
   type ExecutionHosts,
   type HostAdminClient,
@@ -2247,57 +2247,20 @@ export async function parkPersistentAgent(
 ): Promise<{ parked: boolean }> {
   const _db = opts.db ?? getDb();
 
-  const parked: boolean = await _db.transaction(async (tx: Db) => {
-    const rows = await tx
-      .update(runs)
-      .set({
-        status: "NeedsInputIdle",
-        checkpointAt: new Date(),
-        keepaliveUntil: null,
-      })
-      .where(
-        and(
-          eq(runs.id, runId),
-          eq(runs.runKind, "agent"),
-          eq(runs.status, "Running"),
-        ),
-      )
-      .returning({ id: runs.id });
+  const application = await _db.transaction((tx: ExecutionDb) =>
+    applyPersistentAgentPark(tx, runId),
+  );
 
-    if (rows.length > 0) {
-      // ADR-166 D7: a parked agent's driver generation ended with the turn;
-      // the next re-message mints a fresh `resume` generation.
-      await releaseAssignmentForRun(
-        tx as unknown as ExecutionDb,
-        runId,
-        "parked",
+  await afterPersistentAgentPark(_db, runId, application).catch(
+    (error: unknown) => {
+      log.warn(
+        { runId, errorType: error instanceof Error ? error.name : "unknown" },
+        "agent park promotion deferred to scheduler",
       );
-    }
+    },
+  );
 
-    return rows.length > 0;
-  });
-
-  if (!parked) {
-    log.warn(
-      { runId, from: "Running", to: "NeedsInputIdle" },
-      "parkPersistentAgent: status-guard mismatch — concurrent transition won",
-    );
-
-    return { parked: false };
-  }
-
-  // Free the agent-pool slot the parked member no longer needs (mirrors the
-  // NeedsInputIdle checkpoint path) and promote any queued agent run.
-  await releaseSlotOnIdle({ runId, db: _db }).catch((err: unknown) => {
-    log.warn(
-      { runId, err: err instanceof Error ? err.message : String(err) },
-      "parkPersistentAgent: releaseSlotOnIdle failed",
-    );
-  });
-
-  log.info({ runId }, "persistent agent parked on clean end_turn");
-
-  return { parked: true };
+  return { parked: application.parked };
 }
 
 export type SendAgentMessageResult = {
@@ -3144,10 +3107,7 @@ export async function startAgentSession(
     });
 
     const ownedInitial =
-      !baseRun.persistent &&
-      !draftPayload &&
-      opts.overridePrompt === undefined &&
-      !run.acpSessionId;
+      !draftPayload && opts.overridePrompt === undefined && !run.acpSessionId;
 
     if (ownedInitial)
       await waitForPromptIncarnation(_db, execution.client, session.sessionId);

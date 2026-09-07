@@ -108,6 +108,7 @@ async function seedAgent(input: {
   terminalDelayMs?: number;
   stopReason?: string;
   failMessage?: string;
+  persistent?: boolean;
 }): Promise<string> {
   const runId = randomUUID();
   const projectId = randomUUID();
@@ -198,6 +199,8 @@ async function seedAgent(input: {
     flowRevision: "manual",
     resultContract: contract,
     triggerSource: "manual",
+    persistent: input.persistent ?? false,
+    addressableKey: input.persistent ? "researcher" : null,
   });
   await db.insert(runSessions).values({
     id: randomUUID(),
@@ -328,7 +331,7 @@ async function killAtTerminalWrite(runId: string): Promise<void> {
   try {
     await lock.query("SELECT pg_advisory_lock(260909, $1)", [lockKey]);
     await database.pool.query(
-      `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = '${runId}' AND NEW.status IN ('Done', 'Failed', 'Crashed', 'Review') THEN PERFORM pg_advisory_xact_lock(260909, ${lockKey}); END IF; RETURN NEW; END $$`,
+      `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = '${runId}' AND NEW.status IN ('Done', 'Failed', 'Crashed', 'Review', 'NeedsInputIdle') THEN PERFORM pg_advisory_xact_lock(260909, ${lockKey}); END IF; RETURN NEW; END $$`,
     );
     await database.pool.query(
       `CREATE TRIGGER ${trigger} BEFORE UPDATE ON runs FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
@@ -367,6 +370,116 @@ async function killAtTerminalWrite(runId: string): Promise<void> {
 }
 
 describe("Agent owned prompts through the production launcher", () => {
+  it.each(["live", "before_terminal", "before_apply"] as const)(
+    "owner-agent-persistent-first parks the original turn after %s",
+    async (window) => {
+      const runId = await seedAgent({
+        bytes: 0,
+        persistent: true,
+        terminalDelayMs: window === "before_terminal" ? 3_000 : 0,
+      });
+
+      if (window === "before_apply") await killAtTerminalWrite(runId);
+      else {
+        const driver = startDriver(runId);
+
+        if (window === "before_terminal") {
+          await expect
+            .poll(
+              async () => {
+                const [command] = await db
+                  .select()
+                  .from(executionCommands)
+                  .where(
+                    and(
+                      eq(executionCommands.runId, runId),
+                      eq(executionCommands.kind, "session.prompt"),
+                    ),
+                  );
+
+                return command?.state;
+              },
+              { timeout: 30_000, interval: 25 },
+            )
+            .toBe("accepted");
+          driver.child.kill("SIGKILL");
+          await driver.exited;
+        }
+      }
+      const ownerWorker = startPromptOwnerWorker({
+        db,
+        owners: agentPromptOwners,
+      });
+
+      try {
+        await expect
+          .poll(
+            async () => {
+              const [run] = await db
+                .select()
+                .from(runs)
+                .where(eq(runs.id, runId));
+
+              return run.status;
+            },
+            { timeout: 50_000, interval: 50 },
+          )
+          .toBe("NeedsInputIdle");
+        const [session] = await db
+          .select()
+          .from(runSessions)
+          .where(eq(runSessions.runId, runId));
+        const commands = await db
+          .select()
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, runId),
+              eq(executionCommands.kind, "session.prompt"),
+            ),
+          );
+
+        expect(session.acpSessionId).toEqual(expect.any(String));
+        expect(commands).toHaveLength(1);
+        expect(commands[0]).toMatchObject({
+          ownerKind: "agent_turn",
+          applicationState: "applied",
+        });
+        expect(commands[0].completionAppliedAt).not.toBeNull();
+        expect(
+          await db.select().from(runResults).where(eq(runResults.runId, runId)),
+        ).toHaveLength(0);
+        expect(
+          await db
+            .select()
+            .from(domainEvents)
+            .where(eq(domainEvents.runId, runId)),
+        ).toHaveLength(0);
+        const [assignment] = await db
+          .select()
+          .from(executionAssignments)
+          .where(eq(executionAssignments.runId, runId));
+
+        expect(assignment).toMatchObject({
+          state: "released",
+          releasedReason: "parked",
+        });
+        const sessions = await createExecutionHosts({ db })
+          .local()
+          .listSessions();
+
+        expect(
+          sessions.filter(
+            (item) => item.runId === runId && item.status === "live",
+          ),
+        ).toHaveLength(0);
+      } finally {
+        await ownerWorker.stop();
+      }
+    },
+    100_000,
+  );
+
   it("owner-agent-initial retains original result beyond the preview limit", async () => {
     const runId = await seedAgent({ bytes: 1_999_983 });
     const driver = startDriver(runId);
@@ -515,6 +628,16 @@ describe("Agent owned prompts through the production launcher", () => {
     {
       name: "adapter request failure",
       failMessage: "fixture adapter rejected the original prompt",
+    },
+    {
+      name: "persistent non-end-turn response",
+      persistent: true,
+      stopReason: "max_tokens",
+    },
+    {
+      name: "persistent adapter request failure",
+      persistent: true,
+      failMessage: "fixture adapter rejected the persistent prompt",
     },
   ])(
     "owner-agent-initial settles $name and stops its exact session",

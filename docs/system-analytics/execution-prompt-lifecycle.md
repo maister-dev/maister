@@ -473,9 +473,9 @@ suites (39/39). The first-turn adapter below additionally rechecks the exact
 turn, assignment and session before application. Other agent variants and
 global worker activation remain Designed below.
 
-### Initial agent turn (Implemented for nonpersistent launches)
+### Initial agent turn (Implemented)
 
-The first nonpersistent agent turn uses its persisted launch assignment as
+The first agent turn uses its persisted launch assignment as
 `turnId`, prompt ordinal zero, and its exact logical session and incarnation.
 Admission waits for canonical session projection and records one immutable
 owned prompt. Launcher re-entry finds that command before rebuilding the prompt
@@ -496,12 +496,23 @@ together. A superseded or checkpointed incarnation cannot finalize a successor.
 Cleanup runs after commit under the existing terminal-generation check and GC
 backstops.
 
+A persistent agent's successful `end_turn` uses `agents/park.ts` instead of
+terminal finalization. The same owner transaction parks it in `NeedsInputIdle`,
+sets its checkpoint, retains the ACP resume handle and releases its assignment
+with the command marker. It publishes no terminal public result or terminal
+event. The exact process is closed before the slot is released. Failed ACP
+completion still uses ordinary failed finalization. Post-commit pool promotion
+checks the committed park generation; the existing agent scheduler tick
+independently retries queued work if that hint is lost. The public
+`parkPersistentAgent` entrypoint delegates to this same DB transition.
+
 Qualification uses real Postgres, the production launcher and ACP supervisor:
 large-output extraction, actual launcher process death before completion or DB
 application, autonomous owner recovery, superseded source refusal and both
 failure outcomes. Removing the application-generation guard makes the stale
-source test fail by finalizing the successor. Persistent first turns, resume,
-rework, messages and pre-prompt create recovery remain required below; this
+source test fail by finalizing the successor. Persistent first-turn qualification
+also covers live parking and actual process death before completion or the park
+transaction. Resume, rework, messages and pre-prompt create recovery remain required below; this
 increment does not enable the global owner worker.
 
 ### Remaining domain adapters (Designed)
@@ -512,7 +523,7 @@ Persist the reference before remote dispatch in the same transaction as the owne
 | --- | --- | --- | --- |
 | Consensus verification: node attempt, round, verifier, target | `web/lib/flows/graph/consensus/runtime.ts:401–438`; consensus round/evaluation rows | Apply exactly the intended matrix cell, wake existing consensus reducer; same attempt ID alone is not unique enough. | `owner-consensus-verify` |
 | Consensus synthesis: attempt, round, synthesis generation | `web/lib/flows/graph/consensus/runtime.ts:658–697` | Apply synthesis result to its original round; never regenerate a prompt merely because the parent stack died. | `owner-consensus-synthesis` |
-| Agent persistent first/resume/rework turn: run, durable turn generation, incarnation | `web/lib/agents/launch.ts`; runs, sessions, existing trigger/message records | Running/NeedsInput; parked NeedsInputIdle/WaitingOnChildren require their specific existing re-entry and capacity rules. Apply result/public-result contract and completion once, preserving launch snapshot. Nonpersistent initial turns are implemented above; their pre-prompt create recovery remains pending. | `owner-agent-persistent-first`, `owner-agent-resume`, `owner-agent-idle-message`, `owner-agent-rework` |
+| Agent resume/rework turn: run, durable turn generation, incarnation | `web/lib/agents/launch.ts`; runs, sessions, existing trigger/message records | Running/NeedsInput; parked NeedsInputIdle/WaitingOnChildren require their specific existing re-entry and capacity rules. Apply result/public-result contract and completion once, preserving launch snapshot. Initial turns are implemented above; their pre-prompt create recovery remains pending. | `owner-agent-resume`, `owner-agent-idle-message`, `owner-agent-rework` |
 | Agent live message: persisted message/turn ID and incarnation | `sendAgentMessage` and `consumeAgentSession` in agent launch | Do not attach two distinct messages to one command. Apply the exact reply/terminal result and acknowledgment for that message after restart. | `owner-agent-message` |
 | Consensus draft agent: child run + consensus round/participant generation | Agent session consumer/consensus draft path in `agents/launch.ts:3915–3921` | Record complete draft artifact and settle the existing child/result path; output lost from stack must not become an empty successful draft. | `owner-consensus-draft` |
 | Scratch launch/message/recovery: dialog message/turn ID and generation | `scratch-runs/{service,events,recovery,dialog}.ts` | Scratch dialog Running with run/session still live is a due continuation, not a reason to skip. Persist reply and WaitingForUser once; NeedsInput and idle retain the exact owner until checkpoint/resume disposition. | `owner-scratch-initial`, `owner-scratch-message`, `owner-scratch-recovery` |

@@ -6,11 +6,13 @@ import type { BoundClient } from "@/lib/execution-host/client";
 import type { PromptOwnerAdmission } from "@/lib/execution-host/ledger";
 import type { PromptOwner } from "@/lib/execution-host/prompt-owner-contract";
 import type { AgentFinalizationApplication } from "./finalization";
+import type { AgentParkApplication } from "./park";
 
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
 import { prepareAgentRunFinalization } from "./finalization";
+import { applyPersistentAgentPark, afterPersistentAgentPark } from "./park";
 
 import {
   executionCommands,
@@ -69,7 +71,6 @@ export async function admitInitialAgentPrompt(
 
   if (
     run?.runKind !== "agent" ||
-    run.persistent ||
     run.status !== "Running" ||
     !["launch", "legacy_backfill"].includes(assignment.placementReason)
   )
@@ -122,7 +123,10 @@ async function lockInitialAgentBinding(
   tx: Db,
   ref: InitialAgentRef,
   targetSessionId: string | null,
-): Promise<RunSessionIncarnation["state"] | null> {
+): Promise<Readonly<{
+  state: RunSessionIncarnation["state"];
+  persistent: boolean;
+}> | null> {
   if (ref.turnId !== ref.assignmentId || ref.promptOrdinal !== 0)
     throw new PromptOwnerInvariantError("agent_initial_turn_identity");
   const assignment = await lockCurrentSessionAssignment(tx, {
@@ -137,7 +141,6 @@ async function lockInitialAgentBinding(
 
   if (
     run?.runKind !== "agent" ||
-    run.persistent ||
     !["Running", "NeedsInput"].includes(run.status)
   )
     return null;
@@ -167,20 +170,22 @@ async function lockInitialAgentBinding(
     .for("update")
     .limit(1);
 
-  return binding?.state ?? null;
+  return binding ? { state: binding.state, persistent: run.persistent } : null;
 }
 
 async function lockInitialAgentOwner(
   tx: Db,
   ref: InitialAgentRef,
   targetSessionId: string | null,
+  persistent: boolean,
 ): Promise<boolean> {
-  const state = await lockInitialAgentBinding(tx, ref, targetSessionId);
+  const binding = await lockInitialAgentBinding(tx, ref, targetSessionId);
 
-  if (state === "active" || state === "created")
+  if (!binding || binding.persistent !== persistent) return false;
+  if (binding.state === "active" || binding.state === "created")
     throw new PromptOwnerDeferred("agent_session_teardown_pending");
 
-  return state === "exited" || state === "crashed";
+  return binding.state === "exited" || binding.state === "crashed";
 }
 
 /** Close only the completed turn's current process before workspace inspection.
@@ -191,11 +196,11 @@ async function stopInitialAgentPromptSession(
   ref: InitialAgentRef,
   targetSessionId: string | null,
 ): Promise<void> {
-  const state = await db.transaction((tx) =>
+  const binding = await db.transaction((tx) =>
     lockInitialAgentBinding(tx, ref, targetSessionId),
   );
 
-  if (state !== "active" && state !== "created") return;
+  if (binding?.state !== "active" && binding?.state !== "created") return;
   if (!targetSessionId)
     throw new PromptOwnerInvariantError("agent_cleanup_session_missing");
   const client = await createExecutionHosts({ db }).forAssignment({
@@ -238,6 +243,35 @@ export const agentPromptOwner = definePromptOwnerAdapter(
 
     if (outcome.state !== "fenced")
       await stopInitialAgentPromptSession(db, ref, command.targetSessionId);
+    const [run] = await db
+      .select({ persistent: runs.persistent })
+      .from(runs)
+      .where(eq(runs.id, ref.runId));
+    const persistent = run?.persistent ?? false;
+
+    if (persistent && succeeded) {
+      let application: AgentParkApplication = { parked: false };
+
+      return {
+        apply: async (tx) => {
+          if (
+            !(await lockInitialAgentOwner(
+              tx,
+              ref,
+              command.targetSessionId,
+              persistent,
+            ))
+          )
+            return "superseded";
+          application = await applyPersistentAgentPark(tx, ref.runId);
+          if (!application.parked)
+            throw new PromptOwnerDeferred("agent_park_pending");
+
+          return "applied";
+        },
+        afterCommit: () => afterPersistentAgentPark(db, ref.runId, application),
+      };
+    }
     const prepared = await prepareAgentRunFinalization(
       ref.runId,
       succeeded ? "Done" : "Failed",
@@ -253,7 +287,12 @@ export const agentPromptOwner = definePromptOwnerAdapter(
       apply: async (tx) => {
         if (
           outcome.state === "fenced" ||
-          !(await lockInitialAgentOwner(tx, ref, command.targetSessionId))
+          !(await lockInitialAgentOwner(
+            tx,
+            ref,
+            command.targetSessionId,
+            persistent,
+          ))
         )
           return "superseded";
         application = await prepared.apply(tx);
