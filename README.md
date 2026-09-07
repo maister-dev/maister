@@ -124,6 +124,45 @@ process/container isolation, OIDC/SSO/MFA and organization administration,
 automated backup/restore drills, notification routing, and broader end-to-end
 qualification. See the [Product View](docs/PRODUCT_VIEW.md) for current scope.
 
+## Coding agents
+
+MAIster drives coding agents through the
+[Agent Client Protocol (ACP)](https://agentclientprotocol.com) and its
+vendor-neutral [SDK](https://github.com/agentclientprotocol/agent-client-protocol).
+The supervisor spawns one adapter process per session and enforces
+capabilities at that boundary.
+
+| Agent                                                     | ACP adapter                                                                 | Status                                          |
+| --------------------------------------------------------- | --------------------------------------------------------------------------- | ----------------------------------------------- |
+| [Claude Code](https://claude.com/product/claude-code)     | [claude-agent-acp](https://github.com/agentclientprotocol/claude-agent-acp) | Ready by default                                |
+| [Codex](https://github.com/openai/codex)                  | [codex-acp](https://github.com/agentclientprotocol/codex-acp)               | Ready by default                                |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | built in (`gemini --acp`)                                                   | Gated by adapter diagnostics and smoke evidence |
+| [OpenCode](https://github.com/anomalyco/opencode)         | built in (`opencode acp`)                                                   | Gated by adapter diagnostics and smoke evidence |
+| [MiMo Code](https://github.com/XiaomiMiMo/MiMo-Code)      | built in (`mimo acp`)                                                       | Gated by adapter diagnostics and smoke evidence |
+
+Agents run with the authentication configured on the execution host, including
+subscription-backed sessions. API providers such as Anthropic, OpenAI, and
+Anthropic-compatible gateways are runner configuration, with secrets referenced
+by environment variable name only.
+
+## Packages and the methods behind them
+
+Ready-made Flow packages live in
+[maister-plugins](https://github.com/maister-dev/maister-plugins). Each package
+is pinned by its own git tag and installs from **Settings → Package sources**.
+
+| Package                                                                         | Built on                                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `aif`                                                                           | [AI Factory](https://github.com/lee-to/ai-factory): spec-driven delivery Flows (dev, bugfix, evolve, roadmap, init, loop, qa) with the vendored skills and agents                                                   |
+| `pstack`                                                                        | [pstack](https://github.com/cursor/plugins/tree/main/pstack): evidence-first engineering Flows with typed result profiles and an Evaluation Method                                                                  |
+| `superpowers`                                                                   | [Superpowers](https://github.com/obra/superpowers): governed Flows with structured design, verification, and review handoffs                                                                                        |
+| `openspec`                                                                      | [OpenSpec](https://github.com/Fission-AI/OpenSpec): spec-driven change Flows with typed change and review handoffs                                                                                                  |
+| `spec-kit`                                                                      | [Spec Kit](https://github.com/github/spec-kit): Spec-Driven Development Flows                                                                                                                                       |
+| `bmad-bmm`                                                                      | [BMAD Method](https://github.com/bmad-code-org/BMAD-METHOD): planning and build Flows, upstream skills, and platform agents                                                                                         |
+| `bmad-tea`                                                                      | [BMAD Test Architect](https://github.com/bmad-code-org/bmad-method-test-architecture-enterprise): quality Flows and the Murat agent                                                                                 |
+| `bmad-cis`                                                                      | [BMAD Creative Intelligence Suite](https://github.com/bmad-code-org/bmad-module-creative-intelligence-suite): a governed discovery Flow and creative agents                                                         |
+| `core`, `core-java`, `core-react`, `core-pg`, `core-skill-authoring`, `env-e2e` | First-party MAIster packages: triage, Project Brain, and evaluation agents; stack skills for Java, React, and PostgreSQL; skill authoring; an ephemeral docker-compose end-to-end environment as readiness evidence |
+
 ## Documentation
 
 | Start here                                          | What it answers                                  |
@@ -135,9 +174,11 @@ qualification. See the [Product View](docs/PRODUCT_VIEW.md) for current scope.
 | [System analytics](docs/system-analytics/README.md) | Domain behavior and state machines               |
 | [API contracts](docs/api/)                          | Web, supervisor, external API, and event schemas |
 
-The repository deliberately keeps its AI-assisted engineering record in
+MAIster is built with [AI Factory](https://github.com/lee-to/ai-factory), and
+the repository deliberately keeps that engineering record in
 [`.ai-factory/`](.ai-factory/): implementation plans, reviews, and the reasoning
-that shaped the current architecture.
+that shaped the current architecture. The same method ships as the `aif`
+package above.
 
 ## Contributing and security
 
