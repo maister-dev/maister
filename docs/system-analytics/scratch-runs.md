@@ -175,6 +175,12 @@ stateDiagram-v2
 | `Starting` | `Running` | `Running` | Setup, worktree, session, or first prompt is in flight. |
 | `Running` | `Running` | `Running` | A prompt is actively running in the supervisor session. |
 | `WaitingForUser` | `Running` | `WaitingForUser` | Session is live and idle between dialog turns. |
+
+A project scratch turn's `Running -> WaitingForUser` transition is applied by
+that turn's own prompt owner, inside the command application transaction (see
+[prompt lifecycle](execution-prompt-lifecycle.md#project-scratch-dialog-turn-implemented)),
+so the next message is admitted exactly when the previous result is durable and
+a dead web process cannot strand the dialog in `Running`.
 | `NeedsInput` | `NeedsInput` | `NeedsInput` | ACP permission or HITL input is waiting for the operator. |
 | n/a | `NeedsInputIdle` | `NeedsInputIdle` | Shared idle checkpoint state; scratch resumes through recovery/HITL paths. |
 | n/a | `HumanWorking` | `HumanWorking` | Manual takeover state from the shared run lifecycle. |

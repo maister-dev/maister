@@ -755,6 +755,30 @@ and consensus driver. Agent S2.8 qualification covers live permissions and
 checkpointed/idle turns; it does not synthesize an agent wait state from the
 shared run-status enum.
 
+### Project scratch dialog turn (Implemented)
+
+A scratch dialog turn is owned by the identity that already exists before
+dispatch: the launch assignment (ordinal zero) for the initial prompt, and the
+accepted `run_messages` transcript row (its id and sequence) for a user message.
+The logical operation key is `scratch_message:<variant>:<turn>:<ordinal>`, so
+two distinct messages can never share one command and a re-entering caller
+adopts the existing one.
+
+Admission takes the run and `scratch_runs` row locks in their existing order and
+refuses unless the run is a Running scratch run whose dialog status is
+`Starting` or `Running`, the referenced transcript row carries the same
+sequence, and the current assignment has an active incarnation for the target
+session. Owned prompts wait for that incarnation exactly as Flow and agent turns
+do, because the create ACK projects it asynchronously.
+
+The turn's own application performs the existing `WaitingForUser` transition —
+the dialog status and the run status together — inside the command application
+transaction, so the next message is admitted exactly when the previous turn's
+result is durable. A superseded assignment, a replaced incarnation or a run that
+is no longer a Running scratch run settles the historical outcome without
+touching the dialog. Local-package assistant turns and their postprocess action
+keep the pre-owner stack completion until their own increment.
+
 ### Remaining domain adapters (Designed)
 
 Persist the reference before remote dispatch in the same transaction as the owner admission. Use discriminated subvariants under the existing owner families where possible; widen the checked family only if necessary. Resolve references from authoritative rows. A Flow owner always references existing `node_attempts`, `gate_results` or consensus ledger rows; never create another Flow attempt ledger.

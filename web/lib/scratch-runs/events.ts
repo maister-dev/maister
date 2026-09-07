@@ -7,6 +7,14 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  admitScratchPrompt,
+  waitForScratchPrompt,
+  type ScratchPromptOwner,
+} from "./prompt-owner";
+
+import { waitForPromptIncarnation } from "@/lib/execution-host/prompt-incarnation";
+
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { nextScratchMessageSequence } from "@/lib/scratch-runs/messages";
@@ -730,6 +738,9 @@ export async function sendScratchPromptAndProjectEvents(args: {
   contentBlocks?: PromptContentBlock[];
   db?: DbClientLike;
   execution?: ScratchExecution;
+  // S2.9: the durable dialog turn that owns this prompt's application. Absent
+  // callers keep the pre-owner stack completion until their arm lands.
+  owner?: ScratchPromptOwner;
   // Optional cancel forwarded to the supervisor prompt fetch (staged assistant
   // launch passes its request signal); a disconnect aborts the in-flight turn.
   signal?: AbortSignal;
@@ -748,6 +759,12 @@ export async function sendScratchPromptAndProjectEvents(args: {
   let promptResult: PromptResult;
 
   try {
+    const owner = args.owner;
+
+    // The create ACK projects the incarnation asynchronously; an owned prompt
+    // must admit against the live binding, exactly like Flow and agent turns.
+    if (owner)
+      await waitForPromptIncarnation(db, execution.client, args.sessionId);
     const handle = await execution.client.prompt(
       args.sessionId,
       {
@@ -755,12 +772,30 @@ export async function sendScratchPromptAndProjectEvents(args: {
         prompt: args.prompt,
         contentBlocks: args.contentBlocks,
       },
-      { signal: args.signal },
+      {
+        signal: args.signal,
+        ...(owner
+          ? {
+              admitOwner: (tx: DbClientLike) =>
+                admitScratchPrompt(tx, execution.client, args.sessionId, owner),
+            }
+          : {}),
+      },
     );
 
-    promptResult = await execution.client.waitForPrompt(handle, {
-      signal: args.signal,
-    });
+    if (owner) {
+      await waitForScratchPrompt(
+        db,
+        execution.client,
+        handle.commandId,
+        args.signal,
+      );
+      promptResult = { stopReason: "end_turn", meta: null };
+    } else {
+      promptResult = await execution.client.waitForPrompt(handle, {
+        signal: args.signal,
+      });
+    }
   } finally {
     consumer.abort.abort();
     await consumer.done;

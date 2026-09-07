@@ -85,6 +85,10 @@ import {
   sendScratchPromptAndProjectEvents,
 } from "@/lib/scratch-runs/events";
 import {
+  applyScratchPromptCompletion,
+  readScratchDialogStatus,
+} from "@/lib/scratch-runs/turn-completion";
+import {
   decoratePromptForPlanMode,
   deriveScratchBranchName,
   planModeToWorkMode,
@@ -103,7 +107,6 @@ import {
 import { cleanupLocalPackageAssistantMaterialization } from "@/lib/scratch-runs/local-package-materialization";
 import {
   assertScratchCanAcceptUserMessage,
-  dialogStatusAfterPromptCompletion,
   dialogStatusAfterSupervisorStop,
   isTerminalScratchDialogStatus,
   runStatusForDialogStatus,
@@ -723,53 +726,9 @@ export async function completeScratchPromptTurn(args: {
 }): Promise<ScratchDialogStatus> {
   const db = args.db ?? getDb();
 
-  return db.transaction(async (tx: Db) => {
-    await lockRunRows(tx, args.runId);
-
-    const rows = await tx
-      .select()
-      .from(scratchRuns)
-      .where(eq(scratchRuns.runId, args.runId));
-    const scratch = rows[0];
-
-    if (!scratch) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `scratch metadata not found: ${args.runId}`,
-      );
-    }
-
-    const nextStatus = dialogStatusAfterPromptCompletion(
-      scratch.dialogStatus as ScratchDialogStatus,
-    );
-
-    if (nextStatus === scratch.dialogStatus) {
-      log.info(
-        { runId: args.runId, dialogStatus: nextStatus },
-        "scratch prompt completion preserved event-derived status",
-      );
-
-      return nextStatus;
-    }
-
-    const now = new Date();
-
-    await tx
-      .update(scratchRuns)
-      .set({ dialogStatus: nextStatus, updatedAt: now })
-      .where(eq(scratchRuns.runId, args.runId));
-    await tx
-      .update(runs)
-      .set({ status: runStatusForDialogStatus(nextStatus) })
-      .where(eq(runs.id, args.runId));
-
-    log.info(
-      { runId: args.runId, previousStatus: scratch.dialogStatus, nextStatus },
-      "scratch prompt completion transitioned idle",
-    );
-
-    return nextStatus;
-  });
+  return db.transaction((tx: Db) =>
+    applyScratchPromptCompletion(tx, args.runId),
+  );
 }
 
 // Phase 6 (FR-F1/F2): the staged launch. Runs every precondition up to the
@@ -1209,8 +1168,9 @@ export async function* launchScratchRunStaged(
         ...uploadedAttachments,
       ]),
       execution: { client, admin },
+      owner: { variant: "initial" },
     });
-    const dialogStatus = await completeScratchPromptTurn({ db, runId });
+    const dialogStatus = await readScratchDialogStatus(db, runId);
 
     log.info(
       {
@@ -2215,11 +2175,13 @@ export async function sendScratchUserMessage(args: {
         ...appended.uploadedAttachments,
       ]),
       execution: appended.execution,
+      owner: {
+        variant: "message",
+        messageId: appended.messageId,
+        sequence: appended.sequence,
+      },
     });
-    const dialogStatus = await completeScratchPromptTurn({
-      db,
-      runId: args.runId,
-    });
+    const dialogStatus = await readScratchDialogStatus(db, args.runId);
 
     return messageResponse({
       messageId: appended.messageId,
