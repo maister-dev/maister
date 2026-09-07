@@ -2322,6 +2322,36 @@ Index: `scratch_runs_project_status_idx` on `(projectId, dialogStatus)` for
 active workspace lists. The primary key on `runId` covers detail joins from
 `runs`.
 
+## `agent_turns` (Implemented storage; caller activation Designed)
+
+Migration `0153_agent_turn_admission` stores accepted agent input before a
+capacity claim or host dispatch. `runs` remains the run state authority;
+`run_messages` remains the canonical transcript projection. Turn admission
+uses the run lock to allocate an ordinal and retain the original input.
+
+| Columns | Contract |
+| --- | --- |
+| `id`, `run_id`, `ordinal` | Server-generated ID, owning agent run and immutable run-local order. |
+| `variant`, `logical_key`, `prompt` | Immutable operation kind, same-run retry key and original input; prompts are private server data and never logged. |
+| `state` | `queued` → `claimed` → `dispatched` → `applied`; any unfinished state may become `superseded`. |
+| `execution_assignment_id`, `assignment_epoch`, `run_session_id` | All null while queued; fixed together on claim and checked against the owning run. |
+| `incarnation_id`, `command_id` | Fixed together at prompt admission; the command must match the exact turn, variant, ordinal, assignment and incarnation. |
+| `created_at`, `updated_at`, `completed_at` | UTC timestamps; terminal turn state requires `completed_at`, which cannot be rewritten. |
+
+Unique `(run_id, logical_key)` makes retrying the same accepted input return its
+existing turn; different text under the same key is a conflict. Unique
+`(run_id, ordinal)` preserves distinct message order. A partial unique index
+permits at most one claimed/dispatched turn per run, and `command_id` is unique.
+The due index covers unfinished turns. Postgres guards reject source/binding
+rewrites, phase regression and cross-run bindings. Run deletion cascades to its
+turns; individual referenced assignments, sessions, incarnations and commands
+are restricted while retained by a turn.
+
+The persistence helper is qualified with concurrent retries, distinct input,
+terminal admission refusal, immutable source, exact command binding and run
+cascade. Production message/resume/rework wiring and capacity-safe recovery
+remain Designed; see [prompt lifecycle](system-analytics/execution-prompt-lifecycle.md).
+
 ## `run_messages`
 
 Generalized from `scratch_messages` (migration `0085`) into a run-kind-agnostic

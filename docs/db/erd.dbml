@@ -94,6 +94,34 @@ table agent_schedules {
   }
 }
 
+table agent_turns {
+  id text [pk, not null]
+  run_id text [not null]
+  ordinal integer [not null]
+  variant text [not null]
+  logical_key text [not null]
+  prompt text [not null]
+  state text [not null, default: 'queued']
+  execution_assignment_id text
+  assignment_epoch integer
+  run_session_id text
+  incarnation_id text
+  command_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+  completed_at "timestamp with time zone"
+
+  indexes {
+    (run_id, ordinal) [name: 'agent_turns_run_ordinal_uq', unique]
+    (run_id, logical_key) [name: 'agent_turns_run_logical_key_uq', unique]
+    command_id [name: 'agent_turns_command_uq', unique]
+    run_id [name: 'agent_turns_active_run_uq', unique]
+    (state, created_at, run_id) [name: 'agent_turns_due_idx']
+
+
+  }
+}
+
 table agents {
   id text [pk, not null]
   package_name text [not null]
@@ -2719,6 +2747,16 @@ ref agent_project_links_runner_override_id_platform_acp_runners_id_fk: agent_pro
 ref agent_schedules_agent_id_agents_id_fk: agent_schedules.agent_id > agents.id [delete: cascade, update: no action]
 
 ref agent_schedules_project_id_projects_id_fk: agent_schedules.project_id > projects.id [delete: cascade, update: no action]
+
+ref agent_turns_run_id_runs_id_fk: agent_turns.run_id > runs.id [delete: cascade, update: no action]
+
+ref agent_turns_execution_assignment_id_execution_assignments_id_fk: agent_turns.execution_assignment_id > execution_assignments.id [delete: restrict, update: no action]
+
+ref agent_turns_run_session_id_run_sessions_id_fk: agent_turns.run_session_id > run_sessions.id [delete: restrict, update: no action]
+
+ref agent_turns_incarnation_id_run_session_incarnations_id_fk: agent_turns.incarnation_id > run_session_incarnations.id [delete: restrict, update: no action]
+
+ref agent_turns_command_id_execution_commands_id_fk: agent_turns.command_id > execution_commands.id [delete: restrict, update: no action]
 
 ref agents_runner_id_platform_acp_runners_id_fk: agents.runner_id > platform_acp_runners.id [delete: set null, update: no action]
 

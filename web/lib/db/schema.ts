@@ -3819,6 +3819,97 @@ export const runSessions = pgTable(
 
 export type RunSession = typeof runSessions.$inferSelect;
 
+// Accepted agent input outlives its submitting process and capacity wait.
+// Transcript rows remain the canonical ACP projection, not dispatch authority.
+export const agentTurns = pgTable(
+  "agent_turns",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    ordinal: integer("ordinal").notNull(),
+    variant: text("variant", {
+      enum: [
+        "initial",
+        "resume",
+        "rework",
+        "live_message",
+        "persistent_message",
+      ],
+    }).notNull(),
+    logicalKey: text("logical_key").notNull(),
+    prompt: text("prompt").notNull(),
+    state: text("state", {
+      enum: ["queued", "claimed", "dispatched", "applied", "superseded"],
+    })
+      .notNull()
+      .default("queued"),
+    executionAssignmentId: text("execution_assignment_id").references(
+      () => executionAssignments.id,
+      { onDelete: "restrict" },
+    ),
+    assignmentEpoch: integer("assignment_epoch"),
+    runSessionId: text("run_session_id").references(() => runSessions.id, {
+      onDelete: "restrict",
+    }),
+    incarnationId: text("incarnation_id").references(
+      () => runSessionIncarnations.id,
+      { onDelete: "restrict" },
+    ),
+    commandId: text("command_id").references(() => executionCommands.id, {
+      onDelete: "restrict",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    completedAt: timestamp("completed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+  },
+  (t) => ({
+    ordinalUnique: unique("agent_turns_run_ordinal_uq").on(t.runId, t.ordinal),
+    logicalKeyUnique: unique("agent_turns_run_logical_key_uq").on(
+      t.runId,
+      t.logicalKey,
+    ),
+    commandUnique: unique("agent_turns_command_uq").on(t.commandId),
+    activeUnique: uniqueIndex("agent_turns_active_run_uq")
+      .on(t.runId)
+      .where(sql`${t.state} IN ('claimed', 'dispatched')`),
+    dueIndex: index("agent_turns_due_idx")
+      .on(t.state, t.createdAt, t.runId)
+      .where(sql`${t.state} IN ('queued', 'claimed', 'dispatched')`),
+    sourceCheck: check(
+      "agent_turns_source_check",
+      sql`${t.ordinal} >= 0
+      AND ${t.variant} IN ('initial', 'resume', 'rework', 'live_message', 'persistent_message')
+      AND length(${t.logicalKey}) BETWEEN 1 AND 256 AND length(${t.prompt}) BETWEEN 1 AND 1000000`,
+    ),
+    stateCheck: check(
+      "agent_turns_state_check",
+      sql`${t.state} IN ('queued', 'claimed', 'dispatched', 'applied', 'superseded')
+      AND ((${t.completedAt} IS NOT NULL) = (${t.state} IN ('applied', 'superseded')))
+      AND ((num_nonnulls(${t.executionAssignmentId}, ${t.assignmentEpoch}, ${t.runSessionId}) = 0)
+        OR (num_nonnulls(${t.executionAssignmentId}, ${t.assignmentEpoch}, ${t.runSessionId}) = 3 AND ${t.assignmentEpoch} > 0))
+      AND num_nonnulls(${t.incarnationId}, ${t.commandId}) IN (0, 2)
+      AND (${t.commandId} IS NULL OR ${t.executionAssignmentId} IS NOT NULL)
+      AND (${t.state} = 'superseded'
+        OR (${t.state} = 'queued' AND ${t.executionAssignmentId} IS NULL AND ${t.commandId} IS NULL)
+        OR (${t.state} = 'claimed' AND ${t.executionAssignmentId} IS NOT NULL AND ${t.commandId} IS NULL)
+        OR (${t.state} IN ('dispatched', 'applied') AND ${t.executionAssignmentId} IS NOT NULL AND ${t.commandId} IS NOT NULL))`,
+    ),
+  }),
+);
+
+export type AgentTurn = typeof agentTurns.$inferSelect;
+
 // ADR-167 canonical execution event plane. These tables deliberately do not
 // reuse domain_events: host stream order and acknowledgement retention are a
 // separate protocol concern.

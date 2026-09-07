@@ -517,6 +517,13 @@ increment does not enable the global owner worker.
 
 ### Remaining domain adapters (Designed)
 
+`agents/turns.ts` and `agent_turns` provide the implemented admission storage
+for these remaining agent variants. Accepted messages retain their original
+text and stable identity before any capacity or host operation. Same-key retries
+return the original input; conflicting reuse is refused. The storage helper does
+not yet replace the production message/resume/rework callers or enable their
+recovery worker. See the [schema contract](../database-schema.md#agent_turns-implemented-storage-caller-activation-designed).
+
 Persist the reference before remote dispatch in the same transaction as the owner admission. Use discriminated subvariants under the existing owner families where possible; widen the checked family only if necessary. Resolve references from authoritative rows. A Flow owner always references existing `node_attempts`, `gate_results` or consensus ledger rows; never create another Flow attempt ledger.
 
 | Owner variant and key inputs | Current callers / durable authority to reuse | Recovery window and terminal application | Primary AT-05 case |
