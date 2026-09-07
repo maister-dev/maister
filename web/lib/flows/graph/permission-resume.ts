@@ -35,6 +35,7 @@ import { decodeNodePromptCompletion } from "./node-prompt-owner";
 
 import {
   isPermissionResultCommand,
+  isPermissionCheckpointInterruption,
   permissionCheckpointOrder,
 } from "@/lib/execution-host/permission-handoff-evidence";
 import {
@@ -237,7 +238,7 @@ export async function prepareFlowPermissionResult(
 
   if (
     order === "unproven" ||
-    (order === "interrupted" && command.state !== "failed")
+    (order === "interrupted" && !isPermissionCheckpointInterruption(command))
   )
     return { kind: "pending", reason: "source_checkpoint_order_unproven" };
   const outcome: PromptOwnerOutcome =

@@ -19,6 +19,7 @@ import { executionCommands, hitlRequests, runs } from "@/lib/db/schema";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
 import {
   isPermissionResultCommand,
+  isPermissionCheckpointInterruption,
   permissionCheckpointOrder,
   permissionResultPrecedesCheckpoint,
 } from "@/lib/execution-host/permission-handoff-evidence";
@@ -181,7 +182,7 @@ export async function lockPermissionContinuationEvidence(
   const evidence = await lockPermissionInputEvidence(tx, context, prepared);
 
   if (
-    context.command.state !== "failed" ||
+    !isPermissionCheckpointInterruption(context.command) ||
     (await permissionCheckpointOrder(
       tx,
       context.command,

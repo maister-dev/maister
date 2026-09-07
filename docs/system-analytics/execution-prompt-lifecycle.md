@@ -373,14 +373,17 @@ A succeeded source command can still have a non-`end_turn` ACP stop reason.
 Its verified output is decoded as the ordinary failed node result or gate
 verdict. An unexpected `cancelled` is mapped by the supervisor to a failed
 `ACP_PROTOCOL` command; that exact receipt/event-agreed error can also be
-handed off. The claim and later lineage reads require the original request and
+handed off. An adapter's agreed `EXECUTOR_UNAVAILABLE` rejection before checkpoint
+acceptance uses the same failed-result handoff and preserves its original code.
+The claim and later lineage reads require the original request and
 terminal digests and refuse terminal-conflict quarantine. A result handoff also
 requires the agreed prompt terminal event to precede the exact checkpoint
 command's accepted event in the same host stream. Preflight, capacity claim and
 historical lineage reads verify the canonical command/assignment/session boundary
 and compare host sequence positions. Wall clocks and arrival order cannot prove
 this. Missing ordering evidence stays pending. For a completed source, nodes retain
-`ok: false` with `ACP_PROTOCOL`; gates retain their failed verdict. The graph
+`ok: false` with the original error code (`ACP_PROTOCOL` for a non-`end_turn`
+response); gates retain their failed verdict. The graph
 then uses its existing failure handling, without another prompt, successor
 action or parent replay. Fenced commands and other failed-command codes remain
 unclassified. Event ingestion acquires the run sequence lock before inserting

@@ -16,9 +16,9 @@ type PermissionResultCommand = ExecutionCommand &
       }>
   );
 
-/** Only agreed terminal evidence can cross a released assignment. Protocol
- * failure is an ordinary failed action/verdict; other failure semantics need
- * their own disposition and must not become a replacement turn here.
+/** Only agreed terminal evidence can cross a released assignment. Protocol and
+ * adapter-unavailable failures retain their ordinary action/verdict semantics.
+ * A terminal code alone does not authorize an interrupted-turn continuation.
  */
 export function isPermissionResultCommand(
   command: ExecutionCommand,
@@ -29,7 +29,18 @@ export function isPermissionResultCommand(
     command.applicationError?.reason !== "prompt_terminal_conflict" &&
     (command.state === "succeeded" ||
       (command.state === "failed" &&
-        command.lastError?.code === "ACP_PROTOCOL"))
+        (command.lastError?.code === "ACP_PROTOCOL" ||
+          command.lastError?.code === "EXECUTOR_UNAVAILABLE")))
+  );
+}
+
+export function isPermissionCheckpointInterruption(
+  command: ExecutionCommand,
+): boolean {
+  return (
+    isPermissionResultCommand(command) &&
+    command.state === "failed" &&
+    command.lastError?.code === "ACP_PROTOCOL"
   );
 }
 

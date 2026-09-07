@@ -25,6 +25,7 @@
 //   MOCK_ACP_STOP_REASON      stopReason returned from prompt(). Default "end_turn".
 //   MOCK_ACP_REQUEST_PERMISSION  "1" → call requestPermission on first prompt.
 //   MOCK_ACP_HOLD_AFTER_PERMISSION  "1" → retain the selected turn until teardown.
+//   MOCK_ACP_FAIL_AFTER_PERMISSION  ACP request error after a selected permission.
 
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -37,6 +38,7 @@ const STOP_REASON = process.env.MOCK_ACP_STOP_REASON ?? "end_turn";
 const REQUEST_PERMISSION = process.env.MOCK_ACP_REQUEST_PERMISSION === "1";
 const HOLD_AFTER_PERMISSION =
   process.env.MOCK_ACP_HOLD_AFTER_PERMISSION === "1";
+const FAIL_AFTER_PERMISSION = process.env.MOCK_ACP_FAIL_AFTER_PERMISSION;
 const STATE_DIR = process.env.MOCK_ACP_STATE_DIR ?? null;
 
 function log(level, payload) {
@@ -342,6 +344,10 @@ class MockAgent {
 
     if (permissionSelected && HOLD_AFTER_PERMISSION && !session?.resumed) {
       await new Promise(() => {});
+    }
+
+    if (permissionSelected && FAIL_AFTER_PERMISSION) {
+      throw new acp.RequestError(-32001, FAIL_AFTER_PERMISSION);
     }
 
     return { stopReason: STOP_REASON };

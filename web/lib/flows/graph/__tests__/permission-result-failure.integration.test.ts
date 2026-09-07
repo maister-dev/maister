@@ -658,17 +658,35 @@ describe("Owned Flow completed-command failure handoff", () => {
   );
 
   it.each<
-    Readonly<{ owner: FailureOwner; stopReason: "cancelled" | "max_tokens" }>
+    Readonly<{
+      owner: FailureOwner;
+      completion: "cancelled" | "max_tokens" | "executor_unavailable";
+    }>
   >([
-    { owner: "node", stopReason: "max_tokens" },
-    { owner: "node", stopReason: "cancelled" },
-    { owner: "ai_judgment", stopReason: "cancelled" },
-    { owner: "skill_check", stopReason: "cancelled" },
+    { owner: "node", completion: "max_tokens" },
+    { owner: "node", completion: "cancelled" },
+    { owner: "ai_judgment", completion: "cancelled" },
+    { owner: "skill_check", completion: "cancelled" },
+    { owner: "node", completion: "executor_unavailable" },
+    { owner: "ai_judgment", completion: "executor_unavailable" },
+    { owner: "skill_check", completion: "executor_unavailable" },
   ])(
-    "owner-flow-permission-result-failure: $owner preserves $stopReason completion",
-    async ({ owner, stopReason }) => {
+    "owner-flow-permission-result-failure: $owner preserves $completion completion",
+    async ({ owner, completion }) => {
+      const stopReason =
+        completion === "executor_unavailable" ? "end_turn" : completion;
+      const failure =
+        completion === "executor_unavailable"
+          ? "adapter authentication unavailable"
+          : "";
+      const errorCode =
+        completion === "executor_unavailable"
+          ? "EXECUTOR_UNAVAILABLE"
+          : "ACP_PROTOCOL";
+
       if (
         supervisor.options.env?.MOCK_ACP_STOP_REASON !== stopReason ||
+        supervisor.options.env?.MOCK_ACP_FAIL_AFTER_PERMISSION !== failure ||
         supervisor.options.env?.MOCK_ACP_HOLD_AFTER_PERMISSION === "1"
       ) {
         await stopRuntimeEventConsumers();
@@ -676,6 +694,7 @@ describe("Owned Flow completed-command failure handoff", () => {
           env: {
             ...supervisor.options.env,
             MOCK_ACP_STOP_REASON: stopReason,
+            MOCK_ACP_FAIL_AFTER_PERMISSION: failure,
             MOCK_ACP_HOLD_AFTER_PERMISSION: "0",
           },
         });
@@ -751,15 +770,15 @@ describe("Owned Flow completed-command failure handoff", () => {
             },
             { timeout: 45_000 },
           )
-          .toBe(stopReason === "cancelled" ? "failed" : "succeeded");
+          .toBe(completion === "max_tokens" ? "succeeded" : "failed");
         const sourceReceipt = await hosts.transport.getCommandReceipt(
           source.id,
         );
 
         expect(sourceReceipt).toMatchObject(
-          stopReason === "cancelled"
-            ? { phase: "rejected", body: { code: "ACP_PROTOCOL" } }
-            : { phase: "completed", body: { stopReason } },
+          completion === "max_tokens"
+            ? { phase: "completed", body: { stopReason } }
+            : { phase: "rejected", body: { code: errorCode } },
         );
         const [pending] = await db
           .select()
@@ -822,7 +841,7 @@ describe("Owned Flow completed-command failure handoff", () => {
           expect(handoff.actionCompletion).toMatchObject({
             commandId: source.id,
             promptOrdinal: 0,
-            result: { ok: false, errorCode: "ACP_PROTOCOL" },
+            result: { ok: false, errorCode },
           });
           expect(handoff.actionResume).toMatchObject({
             kind: "permission_result",
