@@ -76,6 +76,10 @@ import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { claimAgentIdleResumeInTransaction } from "@/lib/runs/state-transitions";
 import { revokeAgentRunTokensForRun } from "@/lib/agents/tokens";
 import {
+  prepareAgentPermissionResponse,
+  completeAgentPermissionDelivery,
+} from "@/lib/agents/permission";
+import {
   assertBudgetBreachOptionAvailable,
   budgetBreachClaimRef,
   budgetMeterToPolicyField,
@@ -906,6 +910,7 @@ async function handlePermissionResponse(
       const client = await args.executionHosts.forRun(runId);
       const prepared =
         (await prepareFlowPermissionResponse(tx, client, hitlRequestId)) ??
+        (await prepareAgentPermissionResponse(tx, client, hitlRequestId)) ??
         (await client.prepareInput(tx, deliverySchema.supervisorSessionId, {
           kind: "permission",
           action: "select",
@@ -1318,6 +1323,11 @@ async function handlePermissionResponse(
           .returning({ id: hitlRequests.id });
 
         await completeFlowPermissionDelivery(
+          tx,
+          hitlRequestId,
+          prepared.commandId,
+        );
+        await completeAgentPermissionDelivery(
           tx,
           hitlRequestId,
           prepared.commandId,

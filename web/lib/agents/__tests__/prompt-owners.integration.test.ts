@@ -25,10 +25,13 @@ import {
   domainEvents,
   executionAssignments,
   agentTurns,
+  hitlRequests,
+  users,
+  workspaces,
 } from "@/lib/db/schema";
 import { agentPromptOwners } from "@/lib/agents/prompt-owner";
 import { reworkChildRun } from "@/lib/agents/launch";
-import { claimAgentResumeSlot } from "@/lib/services/hitl";
+import { claimAgentResumeSlot, respondToHitl } from "@/lib/services/hitl";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
 import { testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { createExecutionHosts } from "@/lib/execution-host/client";
@@ -41,7 +44,10 @@ import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
 import { startProjectionWorker } from "@/lib/execution-host/events/projection-worker";
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
-import { initRepo } from "@/test-support/git-fixture";
+import { initRepo, git } from "@/test-support/git-fixture";
+import { addWorktree } from "@/lib/worktree";
+import { agentWorkdirPath } from "@/lib/agents/workspace-paths";
+import { interruptPermissionInputAcknowledgement } from "@/test-support/permission-ack-fault";
 import { promoteNextPending } from "@/lib/scheduler";
 import {
   startMainPostgresTestDb,
@@ -78,6 +84,10 @@ beforeAll(async () => {
     databaseName: "agent_prompt_owners",
   });
   db = database.db as unknown as Db;
+  await db.insert(users).values({
+    id: "agent-permission-user",
+    email: "agent-permission@test.local",
+  });
   supervisor = await startRealSupervisor({
     fixtureArgs: ["--hang", "--lines", "0", "--supports-resume"],
   });
@@ -113,6 +123,7 @@ async function seedAgent(input: {
   stopReason?: string;
   failMessage?: string;
   persistent?: boolean;
+  permission?: boolean;
 }): Promise<string> {
   const runId = randomUUID();
   const projectId = randomUUID();
@@ -134,7 +145,7 @@ async function seedAgent(input: {
   await mkdir(path.dirname(sourcePath), { recursive: true });
   await writeFile(
     sourcePath,
-    `---\nname: Researcher\ndescription: d\nworkspace: none\nmode: session\nplatform_mcp: false\ntriggers:\n  - manual\nrisk_tier: read_only\n---\n${prompt}\n`,
+    `---\nname: Researcher\ndescription: d\nworkspace: ${input.permission ? "worktree" : "none"}\nmode: session\nplatform_mcp: false\ntriggers:\n  - manual\nrisk_tier: read_only\n---\n${prompt}\n`,
   );
   await db.insert(projects).values({
     id: projectId,
@@ -169,7 +180,7 @@ async function seedAgent(input: {
     origin: "git",
     name: "Researcher",
     description: "d",
-    workspace: "none",
+    workspace: input.permission ? "worktree" : "none",
     mode: "session",
     triggers: ["manual"],
     riskTier: "read_only",
@@ -197,7 +208,7 @@ async function seedAgent(input: {
     projectId,
     runKind: "agent",
     agentId,
-    agentWorkspace: "none",
+    agentWorkspace: input.permission ? "worktree" : "none",
     status: "Running",
     flowVersion: "agent",
     flowRevision: "manual",
@@ -206,6 +217,38 @@ async function seedAgent(input: {
     persistent: input.persistent ?? false,
     addressableKey: input.persistent ? "researcher" : null,
   });
+  if (input.permission) {
+    const worktreePath = agentWorkdirPath(`p-${runId}`, runId);
+    const branch = `maister/permission-${runId}`;
+    const baseCommit = await git(repoPath, "rev-parse", "HEAD");
+
+    await addWorktree({
+      projectRepoPath: repoPath,
+      worktreePath,
+      branch,
+      startPoint: "main",
+      provenance: {
+        version: 2,
+        runId,
+        parentRepoPath: repoPath,
+        projectId,
+        branch,
+        workspaceKind: "agent",
+        createdAt: new Date().toISOString(),
+      },
+    });
+    await db.insert(workspaces).values({
+      id: randomUUID(),
+      runId,
+      projectId,
+      branch,
+      worktreePath,
+      parentRepoPath: repoPath,
+      baseBranch: "main",
+      targetBranch: "main",
+      baseCommit,
+    });
+  }
   await db.insert(runSessions).values({
     id: randomUUID(),
     runId,
@@ -229,14 +272,9 @@ function startDriver(
   message?: string,
   requestKey?: string,
   operation?: "rework",
-): {
-  child: ChildProcess;
-  exited: Promise<number | null>;
-  output: () => string;
-  returned: () => boolean;
-} {
-  const child = fork(
-    path.resolve("test-support/agent-prompt-owner-process.ts"),
+): ReturnType<typeof startFixture> {
+  return startFixture(
+    "agent-prompt-owner-process.ts",
     message === undefined
       ? [runId]
       : [
@@ -248,17 +286,28 @@ function startDriver(
               ? [requestKey]
               : []),
         ],
-    {
-      execArgv: [
-        "--import",
-        "tsx",
-        "--import",
-        path.resolve("scripts/_register-shim.mjs"),
-      ],
-      env: { ...process.env, DB_URL: database.databaseUrl },
-      stdio: ["ignore", "pipe", "pipe", "ipc"],
-    },
   );
+}
+
+function startFixture(
+  file: string,
+  args: string[],
+): {
+  child: ChildProcess;
+  exited: Promise<number | null>;
+  output: () => string;
+  returned: () => boolean;
+} {
+  const child = fork(path.resolve("test-support", file), args, {
+    execArgv: [
+      "--import",
+      "tsx",
+      "--import",
+      path.resolve("scripts/_register-shim.mjs"),
+    ],
+    env: { ...process.env, DB_URL: database.databaseUrl },
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
+  });
   let output = "";
   let returned = false;
 
@@ -405,6 +454,155 @@ async function killAtTerminalWrite(
 }
 
 describe("Agent owned prompts through the production launcher", () => {
+  it.each(["live", "launcher_restart", "input_ack_restart"] as const)(
+    "owner-agent-permission retains its exact source through %s",
+    async (window) => {
+      const runId = await seedAgent({ bytes: 0, permission: true });
+      const driver = startDriver(runId);
+
+      await expect
+        .poll(
+          async () => {
+            const requests = await db
+              .select()
+              .from(hitlRequests)
+              .where(eq(hitlRequests.runId, runId));
+
+            if (requests.length === 0 && driver.returned())
+              throw new Error(driver.output());
+
+            return requests.length;
+          },
+          { timeout: 30_000, interval: 25 },
+        )
+        .toBe(1);
+      const [hitl] = await db
+        .select()
+        .from(hitlRequests)
+        .where(eq(hitlRequests.runId, runId));
+      const [turn] = await db
+        .select()
+        .from(agentTurns)
+        .where(eq(agentTurns.runId, runId));
+
+      expect(hitl.schema).toMatchObject({
+        agentPrompt: {
+          version: 1,
+          commandId: turn.commandId,
+          turnId: turn.id,
+          promptOrdinal: turn.ordinal,
+          assignmentId: turn.executionAssignmentId,
+          incarnationId: turn.incarnationId,
+        },
+      });
+      if (window === "input_ack_restart") {
+        await interruptPermissionInputAcknowledgement({
+          database,
+          hitlRequestId: hitl.id,
+          startResponder: () =>
+            startFixture("flow-permission-response-process.ts", [
+              hitl.id,
+              "unused",
+              "agent-permission-user",
+            ]),
+        });
+        const [pending] = await db
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.id, hitl.id));
+        const [paused] = await db.select().from(runs).where(eq(runs.id, runId));
+
+        expect(pending.respondedAt).toBeNull();
+        expect(paused.status).toBe("NeedsInput");
+      }
+      if (window !== "live") {
+        driver.child.kill("SIGKILL");
+        await driver.exited;
+        const resumed = startDriver(runId);
+
+        await expect
+          .poll(
+            () => resumed.output().includes("agent-owned-session-observing"),
+            {
+              timeout: 15_000,
+              interval: 25,
+            },
+          )
+          .toBe(true);
+      }
+      if (window !== "input_ack_restart") {
+        const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+        const response = await respondToHitl(
+          { runId, hitlRequestId: hitl.id, body: { optionId: "allow" } },
+          {
+            kind: "user",
+            userId: "agent-permission-user",
+            label: "Agent permission qualification",
+            preauthorizedProjectId: run.projectId!,
+          },
+          { db },
+        );
+
+        expect(response.status).toBe(200);
+      }
+      await expect
+        .poll(
+          async () => {
+            const [current] = await db
+              .select()
+              .from(runs)
+              .where(eq(runs.id, runId));
+
+            return current.status;
+          },
+          { timeout: 35_000, interval: 50 },
+        )
+        .toBe("Review");
+      const requests = await db
+        .select()
+        .from(hitlRequests)
+        .where(eq(hitlRequests.runId, runId));
+
+      expect(requests).toHaveLength(1);
+      expect(requests[0].respondedAt).not.toBeNull();
+      expect(requests[0].response).toMatchObject({
+        _delivery: { commandId: expect.any(String) },
+        _audit: { sourceCommandId: turn.commandId },
+      });
+      const prompts = await db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, runId),
+            eq(executionCommands.kind, "session.prompt"),
+          ),
+        );
+
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0].applicationState).toBe("applied");
+      const inputs = await db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, runId),
+            eq(executionCommands.kind, "session.input"),
+          ),
+        );
+
+      expect(inputs).toHaveLength(1);
+      expect(inputs[0].state).toBe("succeeded");
+      const [result] = await db
+        .select()
+        .from(runResults)
+        .where(eq(runResults.runId, runId));
+
+      expect(result.value).toEqual({ summary: "original answer" });
+    },
+    90_000,
+  );
+
   it.each(["live", "before_terminal", "before_apply"] as const)(
     "owner-agent-rework retains its requested result after %s",
     async (window) => {

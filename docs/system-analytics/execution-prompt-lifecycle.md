@@ -588,13 +588,21 @@ resolution occurs before the response claim transaction, using its database and
 transport. Qualification covers live execution, both launcher-death windows,
 capacity refusal and queued-message promotion.
 
-### Agent checkpoint permission handoff (Designed)
+### Agent live permission ownership (Implemented)
 
 An agent permission request retains its exact original command, turn, ordinal,
 assignment and incarnation in the HITL schema. Replayed notifications address
 that same request. Input admission freezes the delivery command in the response;
 an unknown delivery reattaches that command instead of repeating the decision.
 Its ACK and response marker verify the original generation under the run lock.
+Re-entry observes the same canonical session while the run is `NeedsInput`.
+Replayed events recover the original delivery ACK; they do not reuse a stored
+choice against an unrelated request. Prompt application waits for an accepted
+input ACK instead of releasing the run while that transaction is unfinished.
+Live execution, launcher restart and actual responder death before the ACK
+commit preserve one prompt, one input command and the original public result.
+
+### Agent checkpoint permission handoff (Designed)
 
 An idle resume first reconciles that original prompt, input and checkpoint.
 The ordinary scheduler/run claim may then retain a typed handoff in the existing

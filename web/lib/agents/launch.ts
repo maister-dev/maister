@@ -25,6 +25,10 @@ import { claimAgentMessage } from "./turn-claim";
 import { admitAgentGenerationTurn } from "./generation-turn";
 import { settleAgentCreateFailure } from "./create-failure";
 import {
+  recordOwnedAgentPermission,
+  replayAgentPermissionDelivery,
+} from "./permission";
+import {
   finalizeAgentRun as finalizeAgentRunPrepared,
   type AgentFinalizeOptions,
   type AgentTerminalOutcome,
@@ -86,6 +90,7 @@ import {
   agentTurns,
   runResults,
   executionAssignments,
+  executionCommands,
   runSessionIncarnations,
 } from "@/lib/db/schema";
 import { agentMessageText } from "@/lib/run-transcript/agent-text";
@@ -2691,6 +2696,30 @@ async function dispatchStoredAgentTurn(
   turn: AgentTurn,
   sessionId: string,
 ): Promise<void> {
+  observeOwnedAgentSession(db, execution, turn, sessionId);
+  await waitForPromptIncarnation(db, execution.client, sessionId);
+  const handle = await execution.client.prompt(
+    sessionId,
+    { stepId: "agent", prompt: turn.prompt },
+    {
+      admitOwner: (tx) =>
+        admitAgentTurnPrompt(tx, execution.client, sessionId, turn.id),
+    },
+  );
+
+  await waitForAgentPrompt(db, execution.client, handle.commandId);
+}
+
+function observeOwnedAgentSession(
+  db: ExecutionDb,
+  execution: AgentExecution,
+  turn: AgentTurn,
+  sessionId: string,
+): void {
+  log.info(
+    { runId: turn.runId, turnId: turn.id, sessionId },
+    "agent-owned-session-observing",
+  );
   queueMicrotask(() => {
     void consumeAgentSession({
       db,
@@ -2708,17 +2737,6 @@ async function dispatchStoredAgentTurn(
       );
     });
   });
-  await waitForPromptIncarnation(db, execution.client, sessionId);
-  const handle = await execution.client.prompt(
-    sessionId,
-    { stepId: "agent", prompt: turn.prompt },
-    {
-      admitOwner: (tx) =>
-        admitAgentTurnPrompt(tx, execution.client, sessionId, turn.id),
-    },
-  );
-
-  await waitForAgentPrompt(db, execution.client, handle.commandId);
 }
 
 // Drives one standalone agent session end-to-end: spawn (resume-aware),
@@ -2766,10 +2784,10 @@ export async function startAgentSession(
     runnerResolutionTier: activeSession?.runnerResolutionTier ?? null,
   };
 
-  if (run.status !== "Running") {
+  if (!["Running", "NeedsInput"].includes(run.status)) {
     log.warn(
       { runId, status: run.status },
-      "startAgentSession skipped — run is not Running",
+      "startAgentSession skipped — run is not awaiting live agent work",
     );
 
     return;
@@ -2843,10 +2861,23 @@ export async function startAgentSession(
     const execution = await bindAgentExecution(hosts, runId, assignmentId);
 
     if (agentTurn.commandId) {
+      const [command] = await _db
+        .select()
+        .from(executionCommands)
+        .where(eq(executionCommands.id, agentTurn.commandId));
+
+      if (command?.targetSessionId)
+        observeOwnedAgentSession(
+          _db,
+          execution,
+          agentTurn,
+          command.targetSessionId,
+        );
       await waitForAgentPrompt(_db, execution.client, agentTurn.commandId);
 
       return;
     }
+    if (run.status !== "Running") return;
     const createOwner = {
       variant: "agent" as const,
       turnId: agentTurn.id,
@@ -2927,6 +2958,7 @@ export async function startAgentSession(
     }
   }
 
+  if (run.status !== "Running") return;
   if (assignmentId && overridePrompt === undefined) {
     const existingPrompt = await findInitialAgentPrompt(
       _db,
@@ -3418,14 +3450,33 @@ export async function consumeAgentSession(args: {
           // The permission was answered (the session is active again);
           // the runner owns NeedsInput → Running for agent runs too.
           sawPermissionRequest = false;
-          await args.db
-            .update(runs)
-            .set({ status: "Running", keepaliveUntil: null })
-            .where(and(eq(runs.id, args.runId), eq(runs.status, "NeedsInput")));
+          if (
+            !(await agentSessionHasOwnedPrompt(
+              args.db,
+              args.runId,
+              args.sessionId,
+            ))
+          )
+            await args.db
+              .update(runs)
+              .set({ status: "Running", keepaliveUntil: null })
+              .where(
+                and(eq(runs.id, args.runId), eq(runs.status, "NeedsInput")),
+              );
         }
         break;
       }
       case "session.permission_request": {
+        if (
+          await replayAgentPermissionDelivery(
+            args.db,
+            args.execution.client,
+            event,
+          )
+        ) {
+          sawPermissionRequest = false;
+          break;
+        }
         const autoDelivered = await tryAutoDeliverAgentPermission({
           db: args.db,
           execution: args.execution,
@@ -3439,6 +3490,14 @@ export async function consumeAgentSession(args: {
           break;
         }
         sawPermissionRequest = true;
+        if (
+          await recordOwnedAgentPermission(
+            args.db,
+            args.execution.client,
+            event,
+          )
+        )
+          break;
         await recordAgentPermissionRequest({
           db: args.db,
           runId: args.runId,
@@ -3653,6 +3712,12 @@ async function findStoredAgentPermissionIntent(
     );
 
   for (const row of rows) {
+    if (
+      row.schema &&
+      typeof row.schema === "object" &&
+      "agentPrompt" in row.schema
+    )
+      continue;
     const optionId = (row.response as { optionId?: unknown } | null)?.optionId;
 
     if (typeof optionId !== "string" || optionId.length === 0) continue;

@@ -16,6 +16,7 @@ import pino from "pino";
 
 import { prepareAgentRunFinalization } from "./finalization";
 import { applyPersistentAgentPark, afterPersistentAgentPark } from "./park";
+import { requireAgentPermissionCompletion } from "./permission";
 
 import {
   executionCommands,
@@ -467,6 +468,7 @@ export const agentPromptOwner = definePromptOwnerAdapter(
       outcome.state === "succeeded" &&
       outcome.response.stopReason === "end_turn";
 
+    await requireAgentPermissionCompletion(db, command);
     if (outcome.state !== "fenced")
       await stopAgentPromptSession(
         db,
