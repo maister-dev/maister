@@ -11,6 +11,11 @@ import type { PromptOwnerAdmission } from "@/lib/execution-host/ledger";
 import type { PromptOwner } from "@/lib/execution-host/prompt-owner-contract";
 import type { AgentFinalizationApplication } from "./finalization";
 import type { AgentParkApplication } from "./park";
+import type {
+  PreparedPromptOwner,
+  PromptOwnerAdapter,
+  PromptOwnerRegistry,
+} from "@/lib/execution-host/prompt-owners";
 
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
@@ -573,6 +578,43 @@ export const agentPromptOwner = definePromptOwnerAdapter(
 );
 
 export const agentPromptOwners = createPromptOwnerRegistry([agentPromptOwner]);
+
+export type ConsensusDraftPromptPreparation = Omit<
+  Parameters<PromptOwnerAdapter["prepare"]>[0],
+  "owner"
+> &
+  Readonly<{
+    owner: {
+      kind: "agent_turn";
+      ref: Extract<
+        Extract<PromptOwner, { kind: "agent_turn" }>["ref"],
+        { variant: "consensus_draft" }
+      >;
+    };
+  }>;
+
+/** S2.7 supplies the draft's parent/round fence and artifact+child transaction.
+ * The common command layer verifies and fully consumes original output before
+ * application; ordinary agent turns retain their existing adapter unchanged.
+ */
+export function createAgentPromptOwners(input: {
+  prepareConsensusDraft: (
+    context: ConsensusDraftPromptPreparation,
+  ) => Promise<PreparedPromptOwner>;
+}): PromptOwnerRegistry {
+  return createPromptOwnerRegistry([
+    definePromptOwnerAdapter("agent_turn", (context) => {
+      const ref = context.owner.ref;
+
+      return ref.variant === "consensus_draft"
+        ? input.prepareConsensusDraft({
+            ...context,
+            owner: { kind: "agent_turn", ref },
+          })
+        : agentPromptOwner.prepare(context);
+    }),
+  ]);
+}
 
 export class AgentPromptContinuationPending extends MaisterError {
   constructor(commandId: string, cause: unknown) {

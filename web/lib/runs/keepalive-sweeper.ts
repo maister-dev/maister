@@ -31,7 +31,7 @@ import {
 import { getDb } from "@/lib/db/client";
 import { loadActiveRunSessionsByRunId } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
-import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
+import { RUN_SYNC_TERMINAL_PHASES, agentTurns } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { compileManifest } from "@/lib/flows/graph/compile";
@@ -72,6 +72,11 @@ import {
   type SupervisorSessionRecord,
 } from "@/lib/execution-host";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+import { captureAgentPauseSource } from "@/lib/execution-host/agent-pause-source";
+import {
+  isAgentPermissionPause,
+  supersedeAgentPausePermissions,
+} from "@/lib/execution-host/agent-pause-permissions";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { hitlRequests, nodeAttempts, projects, runs, runSyncAttempts } =
@@ -1470,7 +1475,10 @@ async function boundLiveSession(
 } | null> {
   try {
     const client = await hosts.forRun(candidate.id, { teardown: true });
-    const live = await liveSessionFor(client, candidate.currentStepId);
+    const live = await liveSessionFor(
+      client,
+      candidate.runKind === "agent" ? "agent" : candidate.currentStepId,
+    );
 
     return { client, live };
   } catch (err) {
@@ -1512,6 +1520,30 @@ async function actBudgetEscalate(
 
   if (!bound) return false;
   const { client, live } = bound;
+  const ownedSource = live
+    ? await db.transaction((tx: Db) =>
+        captureAgentPauseSource(tx, {
+          runId: candidate.id,
+          assignmentId: client.assignment.id,
+          sessionId: live.sessionId,
+        }),
+      )
+    : null;
+
+  if (candidate.runKind === "agent" && !ownedSource) {
+    const [admitted] = await db
+      .select({ id: agentTurns.id })
+      .from(agentTurns)
+      .where(
+        and(
+          eq(agentTurns.runId, candidate.id),
+          eq(agentTurns.executionAssignmentId, client.assignment.id),
+        ),
+      )
+      .limit(1);
+
+    if (admitted) return false;
+  }
 
   if (live) {
     try {
@@ -1533,6 +1565,7 @@ async function actBudgetEscalate(
 
         return false;
       }
+      if (ownedSource) throw err;
       log.warn(
         {
           runId: candidate.id,
@@ -1579,6 +1612,13 @@ async function actBudgetEscalate(
 
   try {
     paused = await db.transaction(async (tx: Db) => {
+      const source = live
+        ? await captureAgentPauseSource(tx, {
+            runId: candidate.id,
+            assignmentId: client.assignment.id,
+            sessionId: live.sessionId,
+          })
+        : null;
       const upd = await tx
         .update(runs)
         .set({
@@ -1600,7 +1640,22 @@ async function actBudgetEscalate(
         // A) — CAS on the EXACT observed status. A parked WaitingOnChildren root
         // has no → NeedsInput resume route, so it must never be paused here even
         // defensively.
-        .where(and(eq(runs.id, candidate.id), eq(runs.status, "Running")))
+        .where(
+          and(
+            eq(runs.id, candidate.id),
+            eq(
+              runs.status,
+              source &&
+                (await isAgentPermissionPause(
+                  tx,
+                  candidate.id,
+                  source.agentPrompt.commandId,
+                ))
+                ? "NeedsInput"
+                : "Running",
+            ),
+          ),
+        )
         .returning({ id: runs.id, projectId: runs.projectId });
 
       if (upd.length === 0) return false;
@@ -1620,9 +1675,10 @@ async function actBudgetEscalate(
         runId: candidate.id,
         stepId,
         kind: "budget_breach",
-        schema,
+        schema: { ...schema, ...source },
         prompt,
       });
+      if (source) await supersedeAgentPausePermissions(tx, hitlRequestId);
 
       // Route the breach to a human + fire the escalation outbox events, all in
       // the SAME tx as the pause (ADR-086 exactly-once — a post-commit emit could

@@ -2300,7 +2300,12 @@ export type SendAgentMessageResult = {
 export async function sendAgentMessage(
   childRunId: string,
   prompt: string,
-  opts: { db?: Db; executionHosts?: ExecutionHosts; requestKey?: string } = {},
+  opts: {
+    db?: Db;
+    executionHosts?: ExecutionHosts;
+    requestKey?: string;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<SendAgentMessageResult> {
   const _db = opts.db ?? getDb();
   const hosts = opts.executionHosts ?? createExecutionHosts({ db: _db });
@@ -2316,6 +2321,7 @@ export async function sendAgentMessage(
       executionHosts: hosts,
       agentTurnId: claim.turn.id,
       assignmentId: claim.turn.executionAssignmentId,
+      signal: opts.signal,
     });
   }
   const [current]: Run[] = await _db
@@ -3694,6 +3700,7 @@ export async function consumeAgentSession(args: {
               runId: args.runId,
               stepId: "agent",
               supervisorSessionId: args.sessionId,
+              assignmentId: args.execution.client.assignment.id,
               rule: haltRule,
               toolCall: event.toolCall,
               runKind: "agent",

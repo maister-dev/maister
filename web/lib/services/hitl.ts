@@ -75,7 +75,10 @@ import {
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { claimAgentIdleResumeInTransaction } from "@/lib/runs/state-transitions";
 import { revokeAgentRunTokensForRun } from "@/lib/agents/tokens";
-import { reconcileAgentPermissionResume } from "@/lib/agents/permission-resume";
+import {
+  reconcileAgentPermissionResume,
+  readAgentPermissionResume,
+} from "@/lib/agents/permission-resume";
 import {
   prepareAgentPermissionResponse,
   completeAgentPermissionDelivery,
@@ -299,7 +302,7 @@ export async function claimAgentResumeSlot(
     .from(runs)
     .where(eq(runs.id, runId));
 
-  if (current?.status === "NeedsInputIdle")
+  if (current?.status === "NeedsInputIdle" || current?.status === "NeedsInput")
     await reconcileAgentPermissionResume(db, runId, hosts.transport);
 
   return db.transaction(async (tx: any): Promise<AgentResumeClaim> => {
@@ -314,12 +317,39 @@ export async function claimAgentResumeSlot(
         executionAssignmentId: runs.executionAssignmentId,
       })
       .from(runs)
-      .where(eq(runs.id, runId));
+      .where(eq(runs.id, runId))
+      .for("update");
 
     if (!cur) return { outcome: "noop" };
 
     // NeedsInput holds the slot — flip directly, no cap gate needed.
     if (cur.status === "NeedsInput") {
+      const handoff = await readAgentPermissionResume(tx, runId);
+
+      if (handoff?.kind === "pending") {
+        await tx
+          .update(runs)
+          .set({
+            resumeRequestedAt: sql`coalesce(${runs.resumeRequestedAt}, clock_timestamp())`,
+          })
+          .where(eq(runs.id, runId));
+
+        return { outcome: "queued" };
+      }
+      if (handoff?.kind === "ready" && handoff.source.pause) {
+        await tx
+          .update(runs)
+          .set({ status: "NeedsInputIdle", checkpointAt: new Date() })
+          .where(eq(runs.id, runId));
+        await releaseAssignmentForRun(tx, runId, "checkpointed");
+        const claim = await claimAgentIdleResumeInTransaction(tx, runId, {
+          placement: { host: placementHost },
+        });
+
+        return claim.ok
+          ? { outcome: "claimed", assignmentId: claim.assignment?.id ?? null }
+          : { outcome: "noop" };
+      }
       const flipped = await tx
         .update(runs)
         .set({ status: "Running", keepaliveUntil: null, checkpointAt: null })
@@ -885,6 +915,11 @@ async function handlePermissionResponse(
     if (!lockedHitl || !lockedRun) {
       throw new MaisterError("PRECONDITION", "row vanished mid-transaction");
     }
+    if (lockedHitl.supersededAt)
+      throw new MaisterError(
+        "CONFLICT",
+        "permission was superseded by a checkpoint pause",
+      );
     if (TERMINAL_RUN_STATUS.has(lockedRun.status)) {
       throw new MaisterError(
         "CONFLICT",
@@ -4186,6 +4221,11 @@ async function handleBudgetBreachResponse(args: {
   }
 
   const outcome = await db.transaction(async (tx: any) => {
+    await tx
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.id, runId))
+      .for("update");
     const locked = await lockHitlRow(tx, hitlRequestId);
 
     if (!locked) {
@@ -4766,6 +4806,11 @@ async function handleHookTripResponse(args: {
   const isAgent = runRow.runKind === "agent";
 
   const outcome = await db.transaction(async (tx: any) => {
+    await tx
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.id, runId))
+      .for("update");
     const locked = await lockHitlRow(tx, hitlRequestId);
 
     if (!locked) {
@@ -4775,6 +4820,11 @@ async function handleHookTripResponse(args: {
       );
     }
     if (locked.respondedAt) {
+      if (locked.response?.optionId && locked.response.optionId !== decision)
+        throw new MaisterError(
+          "CONFLICT",
+          "hook_trip already has a different decision",
+        );
       const [r] = await tx
         .select({ status: runs.status })
         .from(runs)
@@ -4788,7 +4838,7 @@ async function handleHookTripResponse(args: {
 
     await tx
       .update(hitlRequests)
-      .set({ respondedAt: new Date() })
+      .set({ respondedAt: new Date(), response: { optionId: decision } })
       .where(eq(hitlRequests.id, hitlRequestId));
 
     if (decision === "abort") {

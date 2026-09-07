@@ -134,7 +134,8 @@ export function startAgentContinuationWorker(input: {
                           .where(
                             and(
                               eq(hitlRequests.runId, runs.id),
-                              sql`${hitlRequests.respondedAt} IS NULL`,
+                              sql`${hitlRequests.supersededAt} IS NULL`,
+                              sql`${hitlRequests.response}->'_agentResume' IS NULL`,
                               sql`${hitlRequests.schema}->'agentPrompt' IS NOT NULL`,
                               sql`jsonb_typeof(${hitlRequests.response}->'optionId') = 'string'`,
                             ),
@@ -172,7 +173,25 @@ export function startAgentContinuationWorker(input: {
           continue;
         }
         cursor = candidate.id;
-        if (candidate.status === "NeedsInputIdle") {
+        const [pause] =
+          candidate.status === "NeedsInput"
+            ? await input.db
+                .select({ id: hitlRequests.id })
+                .from(hitlRequests)
+                .where(
+                  and(
+                    eq(hitlRequests.runId, candidate.id),
+                    inArray(hitlRequests.kind, ["hook_trip", "budget_breach"]),
+                    isNotNull(hitlRequests.respondedAt),
+                    sql`${hitlRequests.schema}->'agentPrompt' IS NOT NULL`,
+                    sql`${hitlRequests.response}->'_agentResume' IS NULL`,
+                    sql`${hitlRequests.response}->>'optionId' IN ('resume', 'raise')`,
+                  ),
+                )
+                .limit(1)
+            : [];
+
+        if (candidate.status === "NeedsInputIdle" || pause) {
           const claim = await claimAgentResumeSlot(
             input.db,
             candidate.id,

@@ -32,6 +32,7 @@ async function main(): Promise<void> {
       await sendAgentMessage(runId, message, {
         db,
         requestKey: process.argv[4],
+        signal: controller.signal,
       });
     process.send?.({ state: "prompt_returned" });
     // The legacy stream consumer can still be applying after the prompt waiter

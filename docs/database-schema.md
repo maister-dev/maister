@@ -3025,9 +3025,9 @@ round-trip.
 
 `agent_question` extends `hitl_requests` without changing legacy Flow HITL.
 It alone may have a non-null `task_id`, an `activation_state` of
-`pending_termination | active | failed`, and supersession metadata. A CHECK
-requires `task_id` and activation state for this kind, preserves null additions
-for every legacy kind, and permits at most one of
+`pending_termination | active | failed`. A CHECK
+requires `task_id` and activation state for this kind, preserves those null additions
+for every other kind, and permits at most one of
 `superseded_by_hitl_request_id` and `superseded_by_run_id`. `responded_at` is
 set only by a winning human answer.
 
@@ -3039,6 +3039,17 @@ request IDs, plus partial indexes for active Inbox rows and answered context
 reads. Its source IDs deliberately have no cascading foreign keys to the source
 run/HITL rows, so clarification history survives source cleanup; task deletion
 remains the owning lifecycle.
+
+### Agent permission supersession (Implemented — migration `0155`)
+
+A source-bound agent `permission` may retain `superseded_at` and
+`superseded_by_hitl_request_id` while `responded_at` remains null. The trigger
+requires a same-run hook/budget pause with the exact original command, turn,
+ordinal, assignment, incarnation and host session. It rejects source rewrites
+and reactivation after supersession. All other non-question HITL kinds retain
+null supersession fields. The private pause handoff lives in the existing JSONB
+schema/response; its contract is defined in
+[the prompt lifecycle](system-analytics/execution-prompt-lifecycle.md#agent-hook-and-budget-checkpoint-handoffs-implemented).
 
 ### Plan-review decision extension (Implemented — ADR-137, migration `0100`)
 

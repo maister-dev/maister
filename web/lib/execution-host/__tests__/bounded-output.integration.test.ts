@@ -25,6 +25,7 @@ import {
   definePromptOwnerAdapter,
   PromptOwnerInvariantError,
   PromptOwnerDeferred,
+  preparePromptOwner,
 } from "../prompt-owners";
 import {
   applyClaimedPromptOwner,
@@ -43,6 +44,12 @@ import {
 } from "../events/consumer";
 
 import * as fullSchema from "@/lib/db/schema";
+import {
+  agentPromptOwners,
+  createAgentPromptOwners,
+} from "@/lib/agents/prompt-owner";
+import { agentMessageText } from "@/lib/run-transcript/agent-text";
+import { waitForPromptIncarnation } from "@/lib/execution-host/prompt-incarnation";
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
@@ -556,6 +563,126 @@ describe("AT-01 bounded output on the production supervisor", () => {
     expect(applications).toBe(1);
     expect(messages).toHaveLength(1);
     expect(messages[0].content).toBe(JSON.stringify(originalMeta));
+    await producer.client.deleteSession(producer.session.hostSessionId);
+  });
+
+  it("S2.8: draft adapter extension receives complete original output and applies once", async () => {
+    const producer = await createSession("agent-draft-adapter");
+    const db = database.db as unknown as Db;
+
+    await db
+      .update(runs)
+      .set({ runKind: "agent" })
+      .where(eq(runs.id, producer.runId));
+    await waitForPromptIncarnation(
+      db,
+      producer.client,
+      producer.session.hostSessionId,
+    );
+    const [incarnation] = await db
+      .select()
+      .from(runSessionIncarnations)
+      .where(
+        eq(
+          runSessionIncarnations.hostSessionId,
+          producer.session.hostSessionId,
+        ),
+      );
+    const turnId = randomUUID();
+    const ref = {
+      version: 1 as const,
+      variant: "consensus_draft" as const,
+      runId: producer.runId,
+      runSessionId: incarnation.runSessionId,
+      incarnationId: incarnation.id,
+      assignmentId: producer.client.assignment.id,
+      assignmentEpoch: producer.client.assignment.epoch,
+      turnId,
+      promptOrdinal: 0,
+      nodeAttemptId: randomUUID(),
+      round: 2,
+      participantId: "participant-original",
+    };
+    const expected = "é".repeat(32_769) + "original draft tail";
+    const handle = await producer.client.prompt(
+      producer.session.hostSessionId,
+      {
+        stepId: "output",
+        prompt:
+          'fixture-output:{"bytes":65538,"multibyte":true,"text":"original draft tail"}',
+      },
+      {
+        admitOwner: async () => ({
+          owner: { kind: "agent_turn", ref },
+          logicalOperationKey: `agent_turn:consensus_draft:${turnId}:0`,
+        }),
+      },
+    );
+
+    await producer.client.waitForPrompt(handle, {
+      signal: AbortSignal.timeout(15_000),
+    });
+    const [command] = await db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.id, handle.commandId));
+
+    // The default registry stays closed until S2.7 supplies its domain adapter.
+    await expect(
+      preparePromptOwner({
+        db,
+        command,
+        registry: agentPromptOwners,
+        signal: AbortSignal.timeout(15_000),
+      }),
+    ).rejects.toMatchObject({
+      details: { causeCode: "agent_variant_not_implemented" },
+    });
+    const owners = createAgentPromptOwners({
+      prepareConsensusDraft: async ({ owner, outcome, command: original }) => {
+        expect(owner.ref).toEqual(ref);
+        if (outcome.state !== "succeeded")
+          throw new Error("fixture requires successful draft");
+        let text = "";
+
+        for await (const event of outcome.events) {
+          expect(event.payload?.sourceCommandId).toBe(original.id);
+          if (event.eventType === "session.update")
+            text += agentMessageText(event.payload?.update) ?? "";
+        }
+        expect(text).toBe(expected);
+
+        return {
+          apply: async (tx) => {
+            await tx.insert(runMessages).values({
+              id: `${original.id}:draft-adapter`,
+              runId: owner.ref.runId,
+              sequence: 1_000_000,
+              role: "assistant",
+              content: text,
+            });
+
+            return "applied";
+          },
+        };
+      },
+    });
+
+    await queryPrompt({ db, handle, owners });
+    await queryPrompt({ db, handle, owners });
+    const messages = await db
+      .select()
+      .from(runMessages)
+      .where(eq(runMessages.id, `${command.id}:draft-adapter`));
+    const [applied] = await db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.id, command.id));
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toBe(expected);
+    expect(applied.applicationState).toBe("applied");
+    expect(applied.completionAppliedAt).not.toBeNull();
     await producer.client.deleteSession(producer.session.hostSessionId);
   });
 

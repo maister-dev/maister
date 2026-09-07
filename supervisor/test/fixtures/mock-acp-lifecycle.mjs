@@ -60,6 +60,7 @@ function never() {
 class LifecycleAgent {
   constructor(connection) {
     this.connection = connection;
+    this.resumed = false;
   }
 
   async initialize() {
@@ -81,6 +82,7 @@ class LifecycleAgent {
   }
 
   async loadSession() {
+    this.resumed = true;
     return {};
   }
 
@@ -90,6 +92,7 @@ class LifecycleAgent {
         -32000,
         "session not found: fixture-missing-session",
       );
+    this.resumed = true;
     return {};
   }
 
@@ -127,16 +130,27 @@ class LifecycleAgent {
       // Flow nodes may surround the fixture line with resume and run context.
       const spec = JSON.parse(fixtureLine.slice("fixture-output:".length));
       if (spec.failMessage) throw new acp.RequestError(-32603, spec.failMessage);
-      if (spec.permission) {
-        const decision = await this.connection.requestPermission({
+      if (spec.usageTokens) {
+        await this.connection.sessionUpdate({
           sessionId: params.sessionId,
-          toolCall: { toolCallId: "owned-permission", title: "fixture write", kind: "edit", status: "pending" },
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "" },
+            model: "claude-sonnet-4-6",
+            usage: { input_tokens: spec.usageTokens, output_tokens: 0 },
+          },
+        });
+      }
+      if (spec.permission && (!spec.hookTrip || !this.resumed || spec.permissionOnResume)) {
+        const decisions = await Promise.all(Array.from({ length: spec.parallelPermission && !this.resumed ? 2 : 1 }, (_, index) => this.connection.requestPermission({
+          sessionId: params.sessionId,
+          toolCall: { toolCallId: `owned-permission-${index}`, title: "fixture write", kind: "edit", status: "pending" },
           options: [
             { optionId: "allow", kind: "allow_once", name: "Allow" },
             { optionId: "deny", kind: "reject_once", name: "Deny" },
           ],
-        });
-        if (decision.outcome.outcome !== "selected" || decision.outcome.optionId !== "allow")
+        })));
+        if (decisions.some((decision) => decision.outcome.outcome !== "selected" || decision.outcome.optionId !== "allow"))
           throw new acp.RequestError(-32603, "fixture permission was not allowed");
       }
       if (spec.frameBytes) {
@@ -196,7 +210,11 @@ class LifecycleAgent {
         });
       }
       if (spec.terminalDelayMs) await new Promise((resolve) => setTimeout(resolve, spec.terminalDelayMs));
-      return { stopReason: spec.stopReason ?? "end_turn", ...(spec.responseMeta ? { _meta: spec.responseMeta } : {}) };
+      return {
+        stopReason: spec.stopReason ?? "end_turn",
+        ...(spec.usageTokens ? { usage: { input_tokens: spec.usageTokens, output_tokens: 0 } } : {}),
+        ...(spec.responseMeta ? { _meta: spec.responseMeta } : {}),
+      };
     }
     for (const output of outputWrites) {
       const outputPath = process.env[output.envName];

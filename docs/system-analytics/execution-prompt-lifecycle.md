@@ -642,20 +642,54 @@ stopping that wait never cancels the durable command. Original result handoffs
 read the original command directly, retaining its original runtime-object
 assignment instead of rebinding those objects to the resume assignment.
 
-### Remaining domain adapters (Designed)
+### Agent hook and budget checkpoint handoffs (Implemented)
 
-For an agent hook or budget pause, the HITL creation transaction must retain
-the exact original `agentPrompt` source and host session. An accepted `resume`
-or `raise` decision is retained with its response marker. Its checkpoint handoff
-also binds the decision digest, so an answered older pause cannot grant a later
-turn. A held-slot pause uses a new assignment after confirmed checkpoint while
-retaining the existing capacity reservation; an idle pause uses the normal cap
-claim. Both consume completed original evidence or a proven interrupted turn,
-without rebuilding input from the current catalog. A fresh ACP permission on
-that resumed turn requires its own choice. Unanswered permissions cancelled by
-the pause must be explicitly superseded with their assignment disposition.
-This hook/budget path remains unqualified work; the implemented permission
-handoff does not cover it.
+The pause transaction retains the exact original `agentPrompt` source and host
+session. Accepted `resume` and `raise` decisions persist with their response
+markers. The ordinary resume claim extends `_agentResume` with a `pause` proof:
+its kind, decision SHA-256 and nullable canonical halt event ID. Dispatch and
+application recheck the same decision and source. An unanswered pause remains
+blocked even when a stale response callback asks the run to resume.
+
+A held-slot pause mints a new assignment after confirmed checkpoint in the same
+transaction that retains its capacity reservation. An idle pause uses the normal
+cap claim. The worker discovers accepted decisions in either state and re-enters
+those claims after process death. Completed original evidence is applied without
+another ACP prompt; a proven interruption admits a new turn with the original
+input. A hook halt must be inside that exact prompt's canonical accepted-to-terminal
+interval and match the recorded rule. This proves cancellation even when the
+guardrail stopped the adapter before the Web checkpoint. A fresh ACP permission
+on the resumed turn requires its own choice.
+
+Migration `0155` permits source-bound agent permission supersession by its same-run
+hook/budget pause. The transaction keeps `responded_at` null, closes the old human
+assignment as superseded, and rejects late input delivery or acknowledgment.
+The database checks the original command and pause identity and prevents source
+rewrites or reactivation. Other HITL kinds keep their existing constraints.
+Replayed notifications retain the cancelled request as history.
+
+### Consensus draft adapter interface (Implemented; S2.7 integration pending)
+
+`agents/prompt-owner.ts` exports `createAgentPromptOwners` and the typed
+`ConsensusDraftPromptPreparation` context. The factory routes only the closed
+`consensus_draft` variant to its supplied preparation callback; ordinary agent
+turns retain their existing adapter. The callback receives the immutable command,
+the exact child/turn/assignment/incarnation and round/participant reference, and
+the verified original output iterator. It returns the common DB-only application
+and optional post-commit hint. The command layer requires complete output
+consumption before committing the domain application and command marker.
+
+The default registry refuses drafts until S2.7 supplies the parent/round fence,
+artifact/child application and durable admission/re-entry. This interface alone
+does not change the existing consensus launcher or qualify consensus recovery.
+
+The current agent launcher has no `WaitingOnChildren` producer or agent wait
+resume claim. Actual child-wait continuations belong to the Flow orchestrator
+and consensus driver. Agent S2.8 qualification covers live permissions and
+checkpointed/idle turns; it does not synthesize an agent wait state from the
+shared run-status enum.
+
+### Remaining domain adapters (Designed)
 
 Persist the reference before remote dispatch in the same transaction as the owner admission. Use discriminated subvariants under the existing owner families where possible; widen the checked family only if necessary. Resolve references from authoritative rows. A Flow owner always references existing `node_attempts`, `gate_results` or consensus ledger rows; never create another Flow attempt ledger.
 
@@ -663,7 +697,6 @@ Persist the reference before remote dispatch in the same transaction as the owne
 | --- | --- | --- | --- |
 | Consensus verification: node attempt, round, verifier, target | `web/lib/flows/graph/consensus/runtime.ts:401–438`; consensus round/evaluation rows | Apply exactly the intended matrix cell, wake existing consensus reducer; same attempt ID alone is not unique enough. | `owner-consensus-verify` |
 | Consensus synthesis: attempt, round, synthesis generation | `web/lib/flows/graph/consensus/runtime.ts:658–697` | Apply synthesis result to its original round; never regenerate a prompt merely because the parent stack died. | `owner-consensus-synthesis` |
-| Agent checkpoint/wait handoff: original turn, current assignment, source proof | `web/lib/agents/launch.ts`; runs, sessions, existing trigger/message records | NeedsInputIdle/WaitingOnChildren require their specific existing re-entry and capacity rules. Apply the original result once after explicit handoff, preserving its launch snapshot. Completed-turn resume and initial/rework/message creation are implemented above. | `owner-agent-resume` |
 | Consensus draft agent: child run + consensus round/participant generation | Agent session consumer/consensus draft path in `agents/launch.ts:3915–3921` | Record complete draft artifact and settle the existing child/result path; output lost from stack must not become an empty successful draft. | `owner-consensus-draft` |
 | Scratch launch/message/recovery: dialog message/turn ID and generation | `scratch-runs/{service,events,recovery,dialog}.ts` | Scratch dialog Running with run/session still live is a due continuation, not a reason to skip. Persist reply and WaitingForUser once; NeedsInput and idle retain the exact owner until checkpoint/resume disposition. | `owner-scratch-initial`, `owner-scratch-message`, `owner-scratch-recovery` |
 | Local-package/Studio assistant scratch: scratch turn plus postprocess action generation | `scratch-runs/service.ts` `postProcessFlowAssistantTurn`, local-package authority | Recover dialog completion and pending postprocessing independently. Revalidate local-package lock/session authority before existing publish/apply side effect; persist action intent/result idempotently. No new package behavior. | `owner-scratch-package-initial`, `owner-scratch-package-message`, `owner-scratch-package-lock-takeover` |
@@ -694,7 +727,7 @@ status must be classified exhaustively before activation.
 | `NeedsInput` | A, pending permission disposition checked | A | A | A, pending gate turn | A, pending permission checked |
 | `NeedsInputIdle` | P, graph resume-cap claim | P, agent resume-cap claim | P, scratch recovery claim | P, gate resume-cap claim | P, sync recovery claim |
 | `HumanWorking` | H | H | H | H, finish required restore/cleanup only | H |
-| `WaitingOnChildren` | P, existing child-completion/wait-resume gate | P, existing agent wait-resume gate | R | R | R |
+| `WaitingOnChildren` | P, existing child-completion/wait-resume gate | R, no current agent producer/claim | R | R | R |
 | `Review` | H | P only for an explicitly admitted persistent/message or recovery generation | P only through scratch/package admission | H | P, retained lifecycle operation claim |
 | `Crashed` | H until explicit recovery claim | H until explicit recovery claim | H until explicit recovery claim | H, restore cleanup only | H, existing guarded cleanup/forward settlement only |
 | `Done` | H | H | H | H | H |

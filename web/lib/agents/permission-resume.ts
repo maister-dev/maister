@@ -10,7 +10,7 @@ import type {
   Readiness,
 } from "@/lib/execution-host/agent-permission-handoff";
 
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, or, sql } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -37,6 +37,7 @@ import { lockCurrentSessionAssignment } from "@/lib/execution-host/session-bindi
 import { agentPermissionEnvelopeSchema } from "@/lib/execution-host/agent-permission-source";
 import {
   agentPermissionResumeSchema,
+  agentCheckpointEnvelopeSchema,
   checkInput,
   checkInputReceipt,
   readCheckpointSource,
@@ -60,8 +61,32 @@ async function pendingPermission(
     .where(
       and(
         eq(hitlRequests.runId, runId),
-        eq(hitlRequests.kind, "permission"),
-        isNull(hitlRequests.respondedAt),
+        or(
+          and(
+            eq(hitlRequests.kind, "permission"),
+            isNull(hitlRequests.respondedAt),
+          ),
+          and(
+            sql`${hitlRequests.response}->'_agentResume' IS NULL`,
+            or(
+              and(
+                eq(hitlRequests.kind, "hook_trip"),
+                or(
+                  isNull(hitlRequests.respondedAt),
+                  sql`${hitlRequests.response}->>'optionId' = 'resume'`,
+                ),
+              ),
+              and(
+                eq(hitlRequests.kind, "budget_breach"),
+                or(
+                  isNull(hitlRequests.respondedAt),
+                  sql`${hitlRequests.response}->>'optionId' = 'raise'`,
+                ),
+              ),
+            ),
+          ),
+        ),
+        isNull(hitlRequests.supersededAt),
         sql`${hitlRequests.schema}->'agentPrompt' IS NOT NULL`,
       ),
     )
@@ -92,7 +117,7 @@ export async function reconcileAgentPermissionResume(
   const hitl = await pendingPermission(db, runId);
 
   if (!hitl) return;
-  const parsed = agentPermissionEnvelopeSchema.safeParse(hitl.schema);
+  const parsed = agentCheckpointEnvelopeSchema.safeParse(hitl.schema);
 
   if (!parsed.success)
     throw new PromptOwnerInvariantError("agent_permission_resume_source_shape");
@@ -110,6 +135,8 @@ export async function reconcileAgentPermissionResume(
   const delivery = response._delivery as Record<string, unknown> | undefined;
 
   if (delivery === undefined) return;
+  if (source.kind !== "permission")
+    throw new PromptOwnerInvariantError("agent_pause_unexpected_input");
   if (!delivery || typeof delivery.commandId !== "string")
     throw new PromptOwnerInvariantError("agent_permission_delivery_intent");
   const [input] = await db
@@ -190,7 +217,9 @@ export async function authorizeAgentPermissionResume(
     assignment.placementReason !== "resume" ||
     assignment.executionHostId !== source.prior.executionHostId ||
     assignment.epoch <= source.prior.epoch ||
-    source.turn.state !== "dispatched"
+    source.turn.state !== "dispatched" ||
+    source.prior.state !== "released" ||
+    source.prior.releasedReason !== "checkpointed"
   )
     throw new PromptOwnerInvariantError("agent_permission_resume_generation");
   let turn = source.turn;
@@ -223,6 +252,7 @@ export async function authorizeAgentPermissionResume(
     inputCommandId: source.input?.id ?? null,
     resumeSessionId: source.incarnation.acpSessionId,
     optionId: source.response.optionId,
+    ...(source.pause ? { pause: source.pause } : {}),
   };
 
   await tx
@@ -234,7 +264,7 @@ export async function authorizeAgentPermissionResume(
         : {}),
     })
     .where(eq(hitlRequests.id, source.hitl.id));
-  if (source.kind === "result" || source.input) {
+  if (!source.pause && (source.kind === "result" || source.input)) {
     await completeAgentPermissionOrigin(tx, source.hitl.id);
     await recordAgentPermissionAcknowledgement(tx, source.hitl.id);
   }
@@ -404,7 +434,7 @@ export async function deliverResumedAgentPermission(
       throw new PromptOwnerInvariantError(
         "agent_permission_resume_grant_shape",
       );
-    if (grant.data.inputCommandId !== null) return null;
+    if (grant.data.inputCommandId !== null || grant.data.pause) return null;
     const [turn] = await tx
       .select()
       .from(agentTurns)

@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -31,10 +31,16 @@ import {
 } from "@/lib/db/schema";
 import { startAgentContinuationWorker } from "@/lib/agents/continuation-worker";
 import { lockAgentPermissionResult } from "@/lib/agents/permission-resume";
+import {
+  agentPermissionResumeSchema,
+  assertAgentPermissionResumeSource,
+} from "@/lib/execution-host/agent-permission-handoff";
 import { agentPromptOwners } from "@/lib/agents/prompt-owner";
 import { reworkChildRun } from "@/lib/agents/launch";
 import { claimAgentResumeSlot, respondToHitl } from "@/lib/services/hitl";
 import { markCheckpointed } from "@/lib/runs/state-transitions";
+import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
+import { queryRunTokens } from "@/lib/runs/cost-rollups";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
 import { testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { createExecutionHosts } from "@/lib/execution-host/client";
@@ -67,6 +73,7 @@ let supervisor: RealSupervisor;
 let worker: ProjectionWorker;
 let restoreUrl: () => void = () => {};
 const oldWorktreesRoot = process.env.MAISTER_WORKTREES_ROOT;
+const oldRuntimeRoot = process.env.MAISTER_RUNTIME_ROOT;
 const drivers: ChildProcess[] = [];
 const contract: RunResultContract = {
   kind: "agent_profile",
@@ -99,6 +106,10 @@ beforeAll(async () => {
     supervisor.runtimeRoot,
     "worktrees",
   );
+  process.env.MAISTER_RUNTIME_ROOT = path.join(
+    supervisor.runtimeRoot,
+    "manager",
+  );
   resetRegistrarStateForTests();
   resetResolverForTests();
   worker = startProjectionWorker({ db, projectors: canonicalProjectors });
@@ -116,6 +127,8 @@ afterAll(async () => {
   restoreUrl();
   if (oldWorktreesRoot === undefined) delete process.env.MAISTER_WORKTREES_ROOT;
   else process.env.MAISTER_WORKTREES_ROOT = oldWorktreesRoot;
+  if (oldRuntimeRoot === undefined) delete process.env.MAISTER_RUNTIME_ROOT;
+  else process.env.MAISTER_RUNTIME_ROOT = oldRuntimeRoot;
   await supervisor?.kill();
   await database?.stop();
 });
@@ -152,6 +165,10 @@ async function seedAgent(input: {
   failMessage?: string;
   persistent?: boolean;
   permission?: boolean;
+  hookTrip?: boolean;
+  usageTokens?: number;
+  parallelPermission?: boolean;
+  permissionOnResume?: boolean;
 }): Promise<string> {
   const runId = randomUUID();
   const projectId = randomUUID();
@@ -173,7 +190,7 @@ async function seedAgent(input: {
   await mkdir(path.dirname(sourcePath), { recursive: true });
   await writeFile(
     sourcePath,
-    `---\nname: Researcher\ndescription: d\nworkspace: ${input.permission ? "worktree" : "none"}\nmode: session\nplatform_mcp: false\ntriggers:\n  - manual\nrisk_tier: read_only\n---\n${prompt}\n`,
+    `---\nname: Researcher\ndescription: d\nworkspace: ${input.permission ? "worktree" : "none"}\nmode: session\nplatform_mcp: false\ntriggers:\n  - manual\nrisk_tier: read_only\n${input.hookTrip ? `hooks:\n  repetition:\n    max: ${input.parallelPermission ? 2 : 1}\n` : ""}---\n${prompt}\n`,
   );
   await db.insert(projects).values({
     id: projectId,
@@ -435,6 +452,18 @@ async function killAtTerminalWrite(
   message?: string,
   operation?: "rework",
 ): Promise<void> {
+  await interruptAgentStatusWrite(
+    runId,
+    ["Done", "Failed", "Crashed", "Review", "NeedsInputIdle"],
+    () => startDriver(runId, message, undefined, operation),
+  );
+}
+
+async function interruptAgentStatusWrite(
+  runId: string,
+  statuses: string[],
+  start: () => ReturnType<typeof startFixture>,
+): Promise<void> {
   const trigger = `agent_pause_${randomUUID().replaceAll("-", "")}`;
   const lockKey = Math.floor(Math.random() * 2_000_000_000) + 1;
   const lock = await database.pool.connect();
@@ -443,12 +472,12 @@ async function killAtTerminalWrite(
   try {
     await lock.query("SELECT pg_advisory_lock(260909, $1)", [lockKey]);
     await database.pool.query(
-      `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = '${runId}' AND NEW.status IN ('Done', 'Failed', 'Crashed', 'Review', 'NeedsInputIdle') THEN PERFORM pg_advisory_xact_lock(260909, ${lockKey}); END IF; RETURN NEW; END $$`,
+      `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = '${runId}' AND NEW.status IN (${statuses.map((status) => `'${status.replaceAll("'", "''")}'`).join(",")}) AND (NEW.status <> 'NeedsInputIdle' OR OLD.status = 'Running') THEN PERFORM pg_advisory_xact_lock(260909, ${lockKey}); END IF; RETURN NEW; END $$`,
     );
     await database.pool.query(
       `CREATE TRIGGER ${trigger} BEFORE UPDATE ON runs FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
     );
-    driver = startDriver(runId, message, undefined, operation);
+    driver = start();
     await expect
       .poll(
         async () => {
@@ -461,7 +490,7 @@ async function killAtTerminalWrite(
 
           return waiting.rows[0].count as number;
         },
-        { timeout: 30_000, interval: 25 },
+        { timeout: 45_000, interval: 25 },
       )
       .toBe(1);
     driver.child.kill("SIGKILL");
@@ -481,7 +510,515 @@ async function killAtTerminalWrite(
   }
 }
 
+async function assertPauseGrantRefusals(hitlId: string): Promise<void> {
+  const [hitl] = await db
+    .select()
+    .from(hitlRequests)
+    .where(eq(hitlRequests.id, hitlId));
+  const response = hitl.response as Record<string, unknown>;
+  const grant = agentPermissionResumeSchema.parse(response._agentResume);
+  const [assignment] = await db
+    .select()
+    .from(executionAssignments)
+    .where(eq(executionAssignments.id, grant.assignmentId));
+
+  expect(grant.pause).toBeDefined();
+  await assertAgentPermissionResumeSource(db, hitl, assignment);
+  for (const pause of [
+    { ...grant.pause, decisionSha256: "0".repeat(64) },
+    { ...grant.pause, haltEventId: randomUUID() },
+    {
+      ...grant.pause,
+      kind: grant.pause?.kind === "hook_trip" ? "budget_breach" : "hook_trip",
+    },
+  ]) {
+    await expect(
+      assertAgentPermissionResumeSource(
+        db,
+        {
+          ...hitl,
+          response: { ...response, _agentResume: { ...grant, pause } },
+        },
+        assignment,
+      ),
+    ).rejects.toMatchObject({
+      details: { causeCode: "agent_permission_resume_grant_identity" },
+    });
+  }
+  await expect(
+    assertAgentPermissionResumeSource(
+      db,
+      {
+        ...hitl,
+        response: { ...response, newLimit: 99_999 },
+      },
+      assignment,
+    ),
+  ).rejects.toMatchObject({
+    details: { causeCode: "agent_permission_resume_grant_identity" },
+  });
+}
+
 describe("Agent owned prompts through the production launcher", () => {
+  it.each(
+    (["escalate", "terminate_restorable"] as const).flatMap((mode) =>
+      (
+        [
+          "live",
+          "after_response",
+          "before_terminal",
+          "before_application",
+        ] as const
+      ).map((window) => ({ mode, window })),
+    ),
+  )(
+    "owner-agent-budget $mode resumes its exact interrupted source: $window",
+    async ({ mode, window }) => {
+      const runId = await seedAgent({
+        bytes: 0,
+        usageTokens: 500,
+        persistent: true,
+      });
+
+      const launcher = startDriver(runId);
+
+      await expect
+        .poll(
+          async () =>
+            (await db.select().from(runs).where(eq(runs.id, runId)))[0].status,
+          { timeout: 15_000, interval: 50 },
+        )
+        .toBe("NeedsInputIdle");
+      await db
+        .update(runs)
+        .set({
+          executionPolicy: {
+            preset: "supervised",
+            overrides: {
+              budget: { run: { maxTokens: 500 } },
+              onBudgetBreach: mode,
+            },
+          },
+        })
+        .where(eq(runs.id, runId));
+      await expect
+        .poll(() => queryRunTokens(runId, { client: db }), {
+          timeout: 30_000,
+          interval: 50,
+        })
+        .toBe(500);
+      const messenger = startDriver(
+        runId,
+        'fixture-output:{"bytes":0,"terminalDelayMs":12000,"text":"original budget continuation"}',
+      );
+
+      await expect
+        .poll(
+          async () =>
+            (
+              await db
+                .select()
+                .from(agentTurns)
+                .where(
+                  and(
+                    eq(agentTurns.runId, runId),
+                    eq(agentTurns.state, "dispatched"),
+                  ),
+                )
+            ).length,
+          { timeout: 15_000, interval: 50 },
+        )
+        .toBe(1);
+      await expect
+        .poll(
+          async () =>
+            (
+              await db
+                .select({ id: executionCommands.id })
+                .from(executionCommands)
+                .innerJoin(
+                  agentTurns,
+                  eq(agentTurns.commandId, executionCommands.id),
+                )
+                .where(
+                  and(
+                    eq(agentTurns.runId, runId),
+                    eq(agentTurns.state, "dispatched"),
+                    eq(executionCommands.state, "accepted"),
+                  ),
+                )
+            ).length,
+          { timeout: 15_000, interval: 50 },
+        )
+        .toBe(1);
+      await runSweepTick({ db });
+      const [hitl] = await db
+        .select()
+        .from(hitlRequests)
+        .where(
+          and(
+            eq(hitlRequests.runId, runId),
+            eq(hitlRequests.kind, "budget_breach"),
+          ),
+        );
+      const [source] = await db
+        .select()
+        .from(agentTurns)
+        .where(
+          and(eq(agentTurns.runId, runId), eq(agentTurns.state, "dispatched")),
+        );
+
+      expect(hitl?.schema).toMatchObject({
+        agentPrompt: { commandId: source.commandId, turnId: source.id },
+      });
+      const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+
+      expect(run.status).toBe(
+        mode === "escalate" ? "NeedsInput" : "NeedsInputIdle",
+      );
+      if (window !== "live") {
+        for (const process of [launcher, messenger]) {
+          if (
+            process.child.exitCode === null &&
+            process.child.signalCode === null
+          )
+            process.child.kill("SIGKILL");
+          await process.exited;
+        }
+        const start = (): ReturnType<typeof startFixture> =>
+          startFixture("agent-pause-response-process.ts", [hitl.id]);
+
+        if (window === "after_response" || window === "before_application") {
+          await interruptAgentStatusWrite(
+            runId,
+            [window === "after_response" ? "Running" : "NeedsInputIdle"],
+            start,
+          );
+        } else {
+          const responder = start();
+
+          await expect
+            .poll(
+              async () =>
+                (
+                  await db
+                    .select()
+                    .from(agentTurns)
+                    .where(
+                      and(
+                        eq(agentTurns.runId, runId),
+                        eq(agentTurns.variant, "resume"),
+                        eq(agentTurns.state, "dispatched"),
+                      ),
+                    )
+                ).length,
+              { timeout: 45_000, interval: 25 },
+            )
+            .toBe(1);
+          responder.child.kill("SIGKILL");
+          await responder.exited;
+        }
+      } else {
+        expect(
+          await respondToHitl(
+            {
+              runId,
+              hitlRequestId: hitl.id,
+              body: { optionId: "raise", response: { newLimit: 10_000 } },
+            },
+            {
+              kind: "user",
+              userId: "agent-permission-user",
+              label: "Agent budget qualification",
+              preauthorizedProjectId: run.projectId!,
+            },
+            { db },
+          ),
+        ).toMatchObject({ status: 202 });
+      }
+      const continuation = startAgentContinuationWorker({ db });
+
+      try {
+        await expect
+          .poll(
+            async () =>
+              (
+                await db
+                  .select()
+                  .from(agentTurns)
+                  .where(
+                    and(
+                      eq(agentTurns.runId, runId),
+                      eq(agentTurns.variant, "resume"),
+                      eq(agentTurns.state, "applied"),
+                    ),
+                  )
+              ).length,
+            { timeout: 60_000, interval: 100 },
+          )
+          .toBe(1);
+        const turns = await db
+          .select()
+          .from(agentTurns)
+          .where(eq(agentTurns.runId, runId))
+          .orderBy(asc(agentTurns.ordinal));
+
+        expect(turns).toHaveLength(3);
+        expect(turns[1].state).toBe("superseded");
+        expect(turns[2]).toMatchObject({
+          variant: "resume",
+          state: "applied",
+          prompt: source.prompt,
+        });
+        expect(
+          (await db.select().from(runs).where(eq(runs.id, runId)))[0].status,
+        ).toBe("NeedsInputIdle");
+        await assertPauseGrantRefusals(hitl.id);
+      } finally {
+        await continuation.stop();
+      }
+    },
+    120_000,
+  );
+
+  it.each([
+    "live",
+    "after_response",
+    "before_terminal",
+    "before_application",
+    "parallel_permission",
+    "fresh_permission",
+  ] as const)(
+    "owner-agent-hook resumes its exact interrupted source: %s",
+    async (window) => {
+      const runId = await seedAgent({
+        bytes: 0,
+        permission: true,
+        hookTrip: true,
+        parallelPermission:
+          window === "parallel_permission" || window === "fresh_permission",
+        permissionOnResume: window === "fresh_permission",
+        terminalDelayMs: window === "before_terminal" ? 5_000 : 0,
+      });
+      const launcher = startDriver(runId);
+
+      await expect
+        .poll(
+          async () => {
+            if (launcher.returned()) throw new Error(launcher.output());
+
+            return (
+              await db
+                .select()
+                .from(hitlRequests)
+                .where(
+                  and(
+                    eq(hitlRequests.runId, runId),
+                    eq(hitlRequests.kind, "hook_trip"),
+                  ),
+                )
+            ).length;
+          },
+          { timeout: 30_000, interval: 50 },
+        )
+        .toBe(1);
+      const [hitl] = await db
+        .select()
+        .from(hitlRequests)
+        .where(
+          and(
+            eq(hitlRequests.runId, runId),
+            eq(hitlRequests.kind, "hook_trip"),
+          ),
+        );
+      const [source] = await db
+        .select()
+        .from(agentTurns)
+        .where(eq(agentTurns.runId, runId));
+
+      expect(hitl.schema).toMatchObject({
+        agentPrompt: { commandId: source.commandId, turnId: source.id },
+      });
+      const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+
+      if (
+        window === "live" ||
+        window === "parallel_permission" ||
+        window === "fresh_permission"
+      ) {
+        expect(await claimAgentResumeSlot(db, runId)).toEqual({
+          outcome: "queued",
+        });
+      }
+      if (window === "parallel_permission" || window === "fresh_permission") {
+        const [cancelled] = await db
+          .select()
+          .from(hitlRequests)
+          .where(
+            and(
+              eq(hitlRequests.runId, runId),
+              eq(hitlRequests.kind, "permission"),
+            ),
+          );
+
+        expect(cancelled).toMatchObject({
+          respondedAt: null,
+          supersededByHitlRequestId: hitl.id,
+        });
+        expect(cancelled.supersededAt).not.toBeNull();
+        await expect(
+          database.pool.query(
+            "UPDATE hitl_requests SET superseded_by_hitl_request_id = $1 WHERE id = $2",
+            [randomUUID(), cancelled.id],
+          ),
+        ).rejects.toMatchObject({
+          code: "23514",
+          constraint: "hitl_requests_agent_pause_permission_source",
+        });
+        await expect(
+          respondToHitl(
+            { runId, hitlRequestId: cancelled.id, body: { optionId: "allow" } },
+            {
+              kind: "user",
+              userId: "agent-permission-user",
+              label: "Late cancelled input",
+              preauthorizedProjectId: run.projectId!,
+            },
+            { db },
+          ),
+        ).rejects.toMatchObject({ code: "CONFLICT" });
+      }
+      if (
+        window !== "live" &&
+        window !== "parallel_permission" &&
+        window !== "fresh_permission"
+      ) {
+        launcher.child.kill("SIGKILL");
+        await launcher.exited;
+        const start = (): ReturnType<typeof startFixture> =>
+          startFixture("agent-pause-response-process.ts", [hitl.id]);
+
+        if (window === "after_response" || window === "before_application") {
+          await interruptAgentStatusWrite(
+            runId,
+            [window === "after_response" ? "Running" : "Review"],
+            start,
+          );
+        } else {
+          const responder = start();
+
+          await expect
+            .poll(
+              async () =>
+                (
+                  await db
+                    .select()
+                    .from(agentTurns)
+                    .where(
+                      and(
+                        eq(agentTurns.runId, runId),
+                        eq(agentTurns.variant, "resume"),
+                        eq(agentTurns.state, "dispatched"),
+                      ),
+                    )
+                ).length,
+              { timeout: 45_000, interval: 25 },
+            )
+            .toBe(1);
+          responder.child.kill("SIGKILL");
+          await responder.exited;
+        }
+      } else {
+        expect(
+          await respondToHitl(
+            { runId, hitlRequestId: hitl.id, body: { optionId: "resume" } },
+            {
+              kind: "user",
+              userId: "agent-permission-user",
+              label: "Agent hook qualification",
+              preauthorizedProjectId: run.projectId!,
+            },
+            { db },
+          ),
+        ).toMatchObject({ status: 202 });
+      }
+      const continuation = startAgentContinuationWorker({ db });
+
+      try {
+        if (window === "fresh_permission") {
+          const freshPermissions = () =>
+            db
+              .select()
+              .from(hitlRequests)
+              .where(
+                and(
+                  eq(hitlRequests.runId, runId),
+                  eq(hitlRequests.kind, "permission"),
+                  isNull(hitlRequests.supersededAt),
+                ),
+              );
+
+          await expect
+            .poll(async () => (await freshPermissions()).length, {
+              timeout: 30_000,
+              interval: 50,
+            })
+            .toBe(1);
+          const [fresh] = await freshPermissions();
+
+          expect(fresh.respondedAt).toBeNull();
+          expect(fresh.response).toBeNull();
+          expect(fresh.schema).not.toMatchObject({
+            agentPrompt: { commandId: source.commandId },
+          });
+          expect(
+            await respondToHitl(
+              { runId, hitlRequestId: fresh.id, body: { optionId: "allow" } },
+              {
+                kind: "user",
+                userId: "agent-permission-user",
+                label: "Fresh permission after pause",
+                preauthorizedProjectId: run.projectId!,
+              },
+              { db },
+            ),
+          ).toMatchObject({ status: 200 });
+        }
+        await expect
+          .poll(
+            async () =>
+              (await db.select().from(runs).where(eq(runs.id, runId)))[0]
+                .status,
+            { timeout: 60_000, interval: 100 },
+          )
+          .toBe("Review");
+        const turns = await db
+          .select()
+          .from(agentTurns)
+          .where(eq(agentTurns.runId, runId))
+          .orderBy(asc(agentTurns.ordinal));
+
+        expect(turns).toHaveLength(2);
+        expect(turns[0].state).toBe("superseded");
+        expect(turns[1]).toMatchObject({
+          variant: "resume",
+          state: "applied",
+          prompt: source.prompt,
+        });
+        const [result] = await db
+          .select()
+          .from(runResults)
+          .where(eq(runResults.runId, runId));
+
+        expect(result.value).toEqual({ summary: "original answer" });
+        await assertPauseGrantRefusals(hitl.id);
+      } finally {
+        await continuation.stop();
+      }
+    },
+    120_000,
+  );
+
   it("owner-agent-worker starts an admitted run before its first turn exists", async () => {
     const runId = await seedAgent({ bytes: 0 });
 

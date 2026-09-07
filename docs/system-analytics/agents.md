@@ -73,7 +73,7 @@ not restated here).
   assignment/session/command binding. The shared prompt owner applies retained
   output and acknowledges a turn with the existing finalization or park
   transition. Initial, message, rework, completed-turn resume and checkpointed
-  permission paths use this boundary; global continuation-worker activation is
+  permission, hook and budget pause paths use this boundary; global continuation-worker activation is
   held until the S2 gate. See the owning
   [prompt lifecycle contract](execution-prompt-lifecycle.md#agent-checkpoint-permission-handoff-implemented)
   for source proofs, checkpoint handoffs and failure handling.

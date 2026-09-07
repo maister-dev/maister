@@ -27,6 +27,8 @@ import {
   PromptOwnerInvariantError,
 } from "@/lib/execution-host/prompt-owners";
 import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
+import { findAgentPromptHalt } from "@/lib/execution-host/agent-pause-source";
+import { supersedeAgentPausePermissions } from "@/lib/execution-host/agent-pause-permissions";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { completeHitlAssignmentFromCurrentActor } from "@/lib/assignments/service";
 import {
@@ -249,6 +251,19 @@ export async function recordOwnedAgentPermissionInTransaction(
     },
     prompt: "Agent requests a tool permission",
   });
+  const [pause] = await tx
+    .select()
+    .from(hitlRequests)
+    .where(
+      and(
+        eq(hitlRequests.runId, assignment.runId),
+        sql`${hitlRequests.kind} IN ('hook_trip', 'budget_breach')`,
+        sql`${hitlRequests.schema}->'agentPrompt'->>'commandId' = ${turn.commandId}`,
+      ),
+    )
+    .limit(1);
+
+  if (pause) await supersedeAgentPausePermissions(tx, pause.id);
   await tx
     .update(runs)
     .set({ status: "NeedsInput", keepaliveUntil: nextKeepaliveAt() })
@@ -273,7 +288,7 @@ export async function prepareAgentPermissionResponse(
     .where(eq(hitlRequests.id, hitlRequestId));
   const source = parseAgentPermission(hitl?.schema);
 
-  if (!hitl || !source || hitl.respondedAt) return null;
+  if (!hitl || !source || hitl.respondedAt || hitl.supersededAt) return null;
   const command = await lockAgentPermissionSource(
     tx,
     source.agentPrompt,
@@ -348,6 +363,8 @@ export async function completeAgentPermissionDelivery(
   const source = parseAgentPermission(hitl?.schema);
 
   if (!hitl || !source) return;
+  if (hitl.supersededAt)
+    throw new PromptOwnerInvariantError("agent_permission_ack_superseded");
   const prior = hitl.response as Record<string, unknown> | null;
   const audit = prior?._audit as Record<string, unknown> | undefined;
 
@@ -552,7 +569,7 @@ export async function replayAgentPermissionDelivery(
     .limit(1);
 
   if (!hitl) return false;
-  if (hitl.respondedAt) return true;
+  if (hitl.respondedAt || hitl.supersededAt) return true;
   const response = hitl.response as Record<string, unknown> | null;
 
   if (response?._delivery === undefined) return false;
@@ -614,13 +631,13 @@ export async function requireAgentPermissionCompletion(
         eq(hitlRequests.runId, command.runId),
         eq(hitlRequests.kind, "permission"),
         isNull(hitlRequests.respondedAt),
+        isNull(hitlRequests.supersededAt),
         sql`${hitlRequests.schema}->'agentPrompt'->>'commandId' = ${command.id}`,
       ),
     )
     .limit(1);
 
-  if (!pending) return;
-  const response = pending.response as Record<string, unknown> | null;
+  const response = pending?.response as Record<string, unknown> | null;
   const [checkpoint] = await db
     .select({ id: executionCommands.id })
     .from(executionCommands)
@@ -640,7 +657,8 @@ export async function requireAgentPermissionCompletion(
   if (
     response?._delivery !== undefined ||
     checkpoint ||
-    run.status === "NeedsInputIdle"
+    (pending && run.status === "NeedsInputIdle") ||
+    (await findAgentPromptHalt(db, command))
   )
     throw new PromptOwnerDeferred("agent_permission_completion_pending");
 }

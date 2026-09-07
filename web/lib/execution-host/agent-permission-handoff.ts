@@ -9,12 +9,18 @@ import type {
   RunSessionIncarnation,
 } from "@/lib/db/schema";
 
+import { createHash } from "node:crypto";
+
 import { and, asc, desc, eq, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { canonicalCommandJson } from "../../../runtime/command-json";
 
 import { agentPermissionEnvelopeSchema } from "./agent-permission-source";
+import {
+  agentPauseEnvelopeSchema,
+  findAgentPromptHalt,
+} from "./agent-pause-source";
 import {
   isPermissionResultCommand,
   isPermissionCheckpointInterruption,
@@ -33,6 +39,20 @@ import {
 
 const id = z.string().min(1);
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
+const pauseProofSchema = z
+  .object({
+    kind: z.enum(["hook_trip", "budget_breach"]),
+    decisionSha256: digest,
+    haltEventId: id.nullable(),
+  })
+  .strict();
+
+export const agentCheckpointEnvelopeSchema = z.union([
+  agentPermissionEnvelopeSchema.extend({
+    kind: z.literal("permission").default("permission"),
+  }),
+  agentPauseEnvelopeSchema,
+]);
 
 export const agentPermissionResumeSchema = z
   .object({
@@ -47,6 +67,7 @@ export const agentPermissionResumeSchema = z
     inputCommandId: id.nullable(),
     resumeSessionId: id,
     optionId: id,
+    pause: pauseProofSchema.optional(),
     reissuedHitlRequestId: id.optional(),
     applied: z.literal(true).optional(),
   })
@@ -63,6 +84,7 @@ export type Source = Readonly<{
   checkpoint: ExecutionCommand;
   input: ExecutionCommand | null;
   kind: "result" | "continue" | "rejected";
+  pause?: z.infer<typeof pauseProofSchema>;
 }>;
 export type Readiness =
   | Readonly<{ kind: "pending"; reason: string }>
@@ -119,7 +141,7 @@ export async function readCheckpointSource(
   db: Db,
   hitl: HitlRequest,
 ): Promise<Exclude<Readiness, null>> {
-  const parsed = agentPermissionEnvelopeSchema.safeParse(hitl.schema);
+  const parsed = agentCheckpointEnvelopeSchema.safeParse(hitl.schema);
   const response = hitl.response as Record<string, unknown> | null;
 
   if (!parsed.success)
@@ -128,7 +150,15 @@ export async function readCheckpointSource(
     return { kind: "pending", reason: "choice_missing" };
   const source = parsed.data;
 
-  if (!source.options.some((option) => option.optionId === response.optionId))
+  const isPause = source.kind !== "permission";
+
+  if (
+    source.kind !== hitl.kind ||
+    (isPause
+      ? !hitl.respondedAt ||
+        response.optionId !== (source.kind === "hook_trip" ? "resume" : "raise")
+      : !source.options.some((option) => option.optionId === response.optionId))
+  )
     throw new PromptOwnerInvariantError("agent_permission_resume_choice");
   const [command] = await db
     .select()
@@ -185,7 +215,10 @@ export async function readCheckpointSource(
     incarnation.runSessionId !== ref.runSessionId
   )
     throw new PromptOwnerInvariantError("agent_permission_checkpoint_source");
-  if (prior.state !== "released" || prior.releasedReason !== "checkpointed")
+  if (
+    !(prior.state === "released" && prior.releasedReason === "checkpointed") &&
+    !(isPause && prior.state === "active")
+  )
     return { kind: "pending", reason: "assignment_not_checkpointed" };
   if (!isPermissionResultCommand(command))
     return { kind: "pending", reason: "source_not_settled" };
@@ -218,9 +251,33 @@ export async function readCheckpointSource(
 
   if (order === "unproven")
     return { kind: "pending", reason: "checkpoint_order_unproven" };
+  const halt =
+    source.kind === "hook_trip" ? await findAgentPromptHalt(db, command) : null;
+
+  if (
+    source.kind === "hook_trip" &&
+    (!halt || halt.rule !== (hitl.schema as Record<string, unknown>).rule)
+  )
+    return { kind: "pending", reason: "hook_halt_unproven" };
+  const decision = Object.fromEntries(
+    Object.entries(response).filter(
+      ([key]) => key !== "_agentResume" && key !== "_audit",
+    ),
+  );
+  const pause = isPause
+    ? {
+        kind: source.kind,
+        decisionSha256: createHash("sha256")
+          .update(canonicalCommandJson(decision))
+          .digest("hex"),
+        haltEventId: halt?.id ?? null,
+      }
+    : undefined;
   let input: ExecutionCommand | null = null;
 
   if (response._delivery !== undefined) {
+    if (source.kind !== "permission")
+      throw new PromptOwnerInvariantError("agent_pause_unexpected_input");
     const delivery = response._delivery as Record<string, unknown>;
 
     if (!delivery || typeof delivery.commandId !== "string")
@@ -265,11 +322,12 @@ export async function readCheckpointSource(
       incarnation: { ...incarnation, acpSessionId: incarnation.acpSessionId },
       checkpoint,
       input,
+      ...(pause ? { pause } : {}),
       kind:
         input?.receiptEvidence &&
         isRejectedPermissionInputReceipt(input.receiptEvidence)
           ? "rejected"
-          : order === "after_checkpoint" &&
+          : (order === "after_checkpoint" || halt !== null) &&
               isPermissionCheckpointInterruption(command)
             ? "continue"
             : "result",
@@ -312,7 +370,11 @@ export async function assertAgentPermissionResumeSource(
     grant.checkpointCommandId !== source.checkpoint.id ||
     grant.inputCommandId !== (source.input?.id ?? null) ||
     grant.resumeSessionId !== source.incarnation.acpSessionId ||
-    grant.optionId !== source.response.optionId
+    grant.optionId !== source.response.optionId ||
+    source.prior.state !== "released" ||
+    source.prior.releasedReason !== "checkpointed" ||
+    canonicalCommandJson(grant.pause ?? null) !==
+      canonicalCommandJson(source.pause ?? null)
   )
     throw new PromptOwnerInvariantError(
       "agent_permission_resume_grant_identity",

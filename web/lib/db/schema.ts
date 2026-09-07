@@ -6006,6 +6006,13 @@ export const hitlRequests = pgTable(
             )
           )
         )
+      ) OR (
+        ${t.kind} = 'permission'
+        AND ${t.supersededAt} IS NOT NULL
+        AND ${t.supersededByHitlRequestId} IS NOT NULL
+        AND ${t.supersededByRunId} IS NULL
+        AND ${t.respondedAt} IS NULL
+        AND coalesce(${t.schema}->'agentPrompt'->>'version', '') = '1'
       )`,
     ),
     agentQuestionActivationStateCheck: check(
