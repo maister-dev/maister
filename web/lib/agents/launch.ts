@@ -1,7 +1,6 @@
 import "server-only";
 
 import type { ContextRepoDecl } from "@/lib/context-mounts/types";
-import type { ResultStatus } from "@/lib/run-results/types";
 import type { RunResultContract } from "@/lib/run-results/types";
 import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 
@@ -9,8 +8,20 @@ import { randomUUID } from "node:crypto";
 import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import pino from "pino";
+
+import {
+  finalizeAgentRun as finalizeAgentRunPrepared,
+  type AgentFinalizeOptions,
+  type AgentTerminalOutcome,
+  type AgentFinalStatus,
+} from "./finalization";
+import {
+  agentReadOnlyWorkdirPath,
+  agentWorkdirPath,
+  sharedAgentWorktreePath,
+} from "./workspace-paths";
 
 import {
   mergeRunnerAdapterLaunch,
@@ -33,13 +44,7 @@ import {
   type AgentCapabilityProfile,
   type ParsedAgentDefinition,
 } from "@/lib/agents/definition";
-import {
-  checkRepoReadDirt,
-  loadAgentWorkspaceContext,
-  materializeAgentReadOnlySettings,
-  quarantineAgentInTx,
-  restoreAgentMaterialization,
-} from "@/lib/agents/dirty-watchdog";
+import { materializeAgentReadOnlySettings } from "@/lib/agents/dirty-watchdog";
 import {
   resolveEffectiveAgentDefinition,
   type EffectiveAgentDefinition,
@@ -47,20 +52,12 @@ import {
 import { resolveFacadeLaunch } from "@/lib/agents/facade-launch";
 import { readAgentMemory } from "@/lib/agents/memory-store";
 import { prepareContextMounts } from "@/lib/context-mounts/launch";
-import { releaseRunContextMounts } from "@/lib/context-mounts/terminal";
 import { atomicWriteText } from "@/lib/atomic";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { runtimeRoot } from "@/lib/runtime-root";
 import { hookEnvDefaults, resolveHooksConfig } from "@/lib/flows/hooks-config";
 import { resolveAgentExecutionPolicy } from "@/lib/agents/execution-policy";
-import {
-  issueAgentRunToken,
-  revokeAgentRunTokensForRun,
-} from "@/lib/agents/tokens";
-import {
-  cancelActiveAssignmentsForRun,
-  systemCloseActiveAssignmentsForRun,
-} from "@/lib/assignments/service";
+import { issueAgentRunToken } from "@/lib/agents/tokens";
 import { type AgentMcpServer } from "@/lib/capabilities/agent-map";
 import { materializeAdapterCapabilityHome } from "@/lib/capabilities/adapter-home";
 import { getDb } from "@/lib/db/client";
@@ -71,25 +68,12 @@ import {
   type DelegationSnapshot,
   type ExecutionHost,
 } from "@/lib/db/schema";
-import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { appendCapped } from "@/lib/flows/capped-text";
-import { decideAgentResult } from "@/lib/run-results/agent-result";
-import { engineArtifactManifest } from "@/lib/run-results/artifact-manifest";
-import {
-  publishRunResult,
-  recordInvalidRunResult,
-} from "@/lib/run-results/ledger";
-import { type RunReviewCause } from "@/lib/domain-events/taxonomy";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 import { cancelOpenAgentQuestionsForTaskInTransaction } from "@/lib/services/agent-question";
 import { resolveAgentChainDepth } from "@/lib/agents/chain-depth";
-import {
-  gcAgeDays,
-  maxAgentChainDepth,
-  worktreesRoot,
-} from "@/lib/instance-config";
+import { maxAgentChainDepth } from "@/lib/instance-config";
 import { admitDelegatedChild } from "@/lib/orchestrator/admission";
-import { removeOwnedPlainAgentDirectory } from "@/lib/gc/plain-agent-directory-gc";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { applyDefaultBudgetForUnattended } from "@/lib/runs/budget-default";
 import {
@@ -108,11 +92,7 @@ import {
   markReworkFromReview,
   type StateTransitionResult,
 } from "@/lib/runs/state-transitions";
-import {
-  promoteNextPending,
-  releaseSlotOnIdle,
-  tryStartRun,
-} from "@/lib/scheduler";
+import { releaseSlotOnIdle, tryStartRun } from "@/lib/scheduler";
 import {
   createExecutionHosts,
   executionHosts,
@@ -143,6 +123,12 @@ import {
   readWorktreeProvenanceMetadata,
 } from "@/lib/worktree-provenance";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
+
+export {
+  agentReadOnlyWorkdirPath,
+  agentWorkdirPath,
+  sharedAgentWorktreePath,
+} from "./workspace-paths";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
@@ -624,21 +610,6 @@ export async function resolveAgentLaunchRuntime(
   return { ...ctx, resolution };
 }
 
-export function agentWorkdirPath(projectSlug: string, runId: string): string {
-  return path.join(worktreesRoot(), projectSlug, runId);
-}
-
-// M37 Phase 10 (ADR-099): the SHARED worktree for an orchestrator tree —
-// keyed by the tree root, so every shared-mode child of the same rootRunId
-// resolves to one tree. Deterministic from rootRunId, so the 2nd shared child
-// recomputes the same path and reuses the tree the 1st allocated.
-export function sharedAgentWorktreePath(
-  projectSlug: string,
-  rootRunId: string,
-): string {
-  return path.join(worktreesRoot(), projectSlug, "agents", rootRunId);
-}
-
 function branchSafeSegment(value: string): string {
   return value.replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "");
 }
@@ -651,24 +622,6 @@ export function agentWorktreeBranchName(input: {
   const safeAgentId = branchSafeSegment(input.agentId);
 
   return `${input.prefix}agent-${safeAgentId}-${input.runId.slice(0, 8)}`;
-}
-
-// ADR-090 rework (workspace_ref): the EPHEMERAL read-only checkout for a
-// repo_read run pinned to a trigger-derived ref. Deterministic from the run
-// id — the terminal choke point derives it back without any schema state.
-export function agentReadOnlyWorkdirPath(
-  projectSlug: string,
-  runId: string,
-): string {
-  return path.join(worktreesRoot(), projectSlug, `${runId}-ro`);
-}
-
-async function pathIsDirectory(p: string): Promise<boolean> {
-  try {
-    return (await stat(p)).isDirectory();
-  } catch {
-    return false;
-  }
 }
 
 // Resolve `workspace_ref` to a committish (v1, owner decision 8):
@@ -2275,574 +2228,13 @@ async function startConsensusRunnerDraftSession(args: {
   }
 }
 
-type AgentTerminalOutcome = "Done" | "Failed" | "Crashed" | "Abandoned";
-type AgentFinalStatus = AgentTerminalOutcome | "Review";
-
-type AgentAssignmentClose =
-  | {
-      kind: "user";
-      actorId: string;
-      eventKind?: "cancelled" | "superseded" | "system_closed";
-      reason?: string;
-    }
-  | {
-      kind: "system";
-      reason: string;
-    };
-
-type AgentFinalizeOptions = {
-  db?: Db;
-  reason?: string;
-  closeOpenHitl?: boolean;
-  closeAssignments?: AgentAssignmentClose;
-  // ADR-165 (T5.4): the completing turn's agent text, from which the public
-  // result sentinel is extracted. Absent on every non-session caller (an
-  // explicit stop, a reconcile), which reads as "no result was emitted".
-  finalText?: string;
-};
-
-const TERMINAL_CAS_SOURCE: Record<AgentTerminalOutcome, string[]> = {
-  Done: ["Running", "NeedsInput"],
-  Failed: ["Running", "NeedsInput"],
-  // Crashed also admits a checkpointed (NeedsInputIdle) or reviewing agent
-  // child: the reconcile sweep crashes an orphan of a dead coordinator in ANY
-  // paused/reviewing status (per-status orphan recovery), and it does so via
-  // this choke point so token revocation, HITL close and the agent-pool
-  // promote still run. Pending is deliberately absent — a never-started orphan
-  // is abandoned, not crashed.
-  Crashed: ["Running", "NeedsInput", "NeedsInputIdle", "Review"],
-  Abandoned: [
-    "Pending",
-    "Running",
-    "NeedsInput",
-    "NeedsInputIdle",
-    "Review",
-    "Crashed",
-  ],
-};
-
-const DOMAIN_KIND_BY_OUTCOME: Record<
-  AgentTerminalOutcome,
-  "run.done" | "run.failed" | "run.crashed" | "run.abandoned"
-> = {
-  Done: "run.done",
-  Failed: "run.failed",
-  Crashed: "run.crashed",
-  Abandoned: "run.abandoned",
-};
-
-const WEBHOOK_TYPE_BY_STATUS: Record<
-  AgentFinalStatus,
-  "run.review" | "run.done" | "run.failed" | "run.crashed" | "run.abandoned"
-> = {
-  Review: "run.review",
-  Done: "run.done",
-  Failed: "run.failed",
-  Crashed: "run.crashed",
-  Abandoned: "run.abandoned",
-};
-
-function finalStatusForCleanAgentExit(hasWorkspace: boolean): AgentFinalStatus {
-  return hasWorkspace ? "Review" : "Done";
-}
-
-function shouldReleaseAgentMaterialization(
-  status: AgentFinalStatus,
-  workspace: "none" | "repo_read" | "worktree",
-): boolean {
-  if (status === "Review") return false;
-
-  // A worktree-backed crash is resumable through the workspace/session
-  // recovery flow. The other workspace modes have no recovery workspace and
-  // must release before their terminal cleanup can remove their cwd.
-  return status !== "Crashed" || workspace !== "worktree";
-}
-
-// The terminal choke point for agent runs (ADR-090 sequencing rule): the
-// dirty-watchdog (Phase 4) and the token revoke run BEFORE/WITHIN the
-// status-flip transaction; nothing writes the run row after the flip.
+/** Preserve the launch module's legacy DB seam; terminal work lives in the typed adapter. */
 export async function finalizeAgentRun(
   runId: string,
   outcome: AgentTerminalOutcome,
-  opts: AgentFinalizeOptions = {},
+  opts: Omit<AgentFinalizeOptions, "db"> & { db?: Db } = {},
 ): Promise<{ finalized: boolean; status?: AgentFinalStatus }> {
-  const _db = opts.db ?? getDb();
-
-  // Set inside the transaction when the run used an ephemeral workspace_ref
-  // checkout — removed AFTER the commit (fs cleanup must never roll back the
-  // terminal flip; a failure leaves a stale dir the next spawn recreates).
-  let ephemeralCleanup: { repoPath: string; worktreePath: string } | null =
-    null;
-  let materializationCleanup: {
-    cwd: string;
-    workspace: "none" | "repo_read" | "worktree";
-  } | null = null;
-
-  const finalizeResult = await _db.transaction(async (tx: Db) => {
-    // M37 (ADR-102): read the shared-tree axes up front for the finalize
-    // branch below. The CAS gates on status.
-    const preRows = await tx
-      .select({
-        workspaceMode: runs.workspaceMode,
-        agentWorkspace: runs.agentWorkspace,
-        rootRunId: runs.rootRunId,
-        // ADR-165: the launch-time public-result contract. The finalizer reads
-        // ONLY this snapshot — never the parent's revision again.
-        resultContract: runs.resultContract,
-      })
-      .from(runs)
-      .where(eq(runs.id, runId))
-      .for("update");
-    const pendingHumanAskRows = await tx
-      .select({ id: hitlRequests.id })
-      .from(hitlRequests)
-      .where(
-        and(
-          eq(hitlRequests.runId, runId),
-          eq(hitlRequests.kind, "agent_question"),
-          eq(hitlRequests.activationState, "pending_termination"),
-          isNull(hitlRequests.respondedAt),
-          isNull(hitlRequests.supersededAt),
-        ),
-      )
-      .limit(1);
-
-    if (pendingHumanAskRows[0]) {
-      log.info(
-        {
-          runId,
-          outcome,
-          hitlRequestId: pendingHumanAskRows[0].id,
-        },
-        "agent finalization deferred to pending human-ask activation",
-      );
-
-      return false;
-    }
-
-    // M37 (ADR-102): a shared writable-worktree child finalizes to Review even
-    // when it owns no `workspaces` row (a reuser child — the allocator owns the
-    // UNIQUE worktree_path). The shared tree is one branch = one diff, reviewed and
-    // promoted once; a shared writable child is NEVER auto-Done on a clean exit.
-    const isSharedWritableExit =
-      preRows[0]?.workspaceMode === "shared" &&
-      preRows[0]?.agentWorkspace === "worktree";
-
-    const workspaceRows = await tx
-      .select({ id: workspaces.id, worktreePath: workspaces.worktreePath })
-      .from(workspaces)
-      .where(eq(workspaces.runId, runId));
-    const status =
-      outcome === "Done"
-        ? isSharedWritableExit
-          ? "Review"
-          : finalStatusForCleanAgentExit(workspaceRows.length > 0)
-        : outcome;
-
-    if (outcome === "Done") {
-      log.debug(
-        {
-          runId,
-          workspaceMode: preRows[0]?.workspaceMode ?? null,
-          agentWorkspace: preRows[0]?.agentWorkspace ?? null,
-          hasWorkspace: workspaceRows.length > 0,
-          status,
-        },
-        "agent clean-exit final status",
-      );
-    }
-
-    // ADR-165 (T5.4 / D10): the public-result decision, taken BEFORE the CAS so
-    // a result failure can turn a clean exit into `Failed`. `Failed` / `Crashed`
-    // / `Abandoned` outcomes never publish — the run did not finish, so whatever
-    // text it produced is not an answer.
-    const resultContract = (preRows[0]?.resultContract ??
-      null) as RunResultContract | null;
-    const resultDecision =
-      outcome === "Done" && resultContract
-        ? decideAgentResult({
-            contract: resultContract,
-            finalText: opts.finalText,
-          })
-        : { kind: "none" as const };
-    const effectiveStatus =
-      resultDecision.kind === "invalid" ? "Failed" : status;
-    const endedAt = new Date();
-
-    // M42 (ADR-114): the agent run's session resume handle lives on its
-    // `run_sessions` row (sole source of truth) — a delegated child reaching
-    // Review keeps it for run_rework session/resume; a terminal run is never
-    // resumed (status-gated), so no run-level marker reset is needed here.
-    const rows = await tx
-      .update(runs)
-      .set({
-        status: effectiveStatus,
-        endedAt,
-        currentStepId: null,
-      })
-      .where(
-        and(
-          eq(runs.id, runId),
-          eq(runs.runKind, "agent"),
-          inArray(runs.status, TERMINAL_CAS_SOURCE[outcome]),
-        ),
-      )
-      .returning({
-        projectId: runs.projectId,
-        taskId: runs.taskId,
-        agentId: runs.agentId,
-        agentWorkspace: runs.agentWorkspace,
-        parentRunId: runs.parentRunId,
-      });
-    const row = rows[0];
-
-    if (!row) return false;
-
-    // ADR-166 D7: the terminal status ends the run's driver generation (a
-    // Review child re-enters through a NEW generation on rework/re-message).
-    await releaseAssignmentForRun(
-      tx as unknown as ExecutionDb,
-      runId,
-      "run_terminal",
-    );
-
-    // ADR-165 (D9/W3): the result row commits in THIS transaction — the same one
-    // that flips the status and emits the wake — so a woken parent's
-    // `run_collect` can never observe a settle without its result.
-    let resultStatus: ResultStatus | null = null;
-
-    if (resultDecision.kind === "valid") {
-      await publishRunResult(tx, {
-        runId,
-        value: resultDecision.value,
-        valueBytes: resultDecision.valueBytes,
-        contract: resultContract as RunResultContract,
-        producerKind: "agent_session",
-        producerRef: "session:default",
-        artifactManifest: await engineArtifactManifest(tx, runId),
-      });
-      resultStatus = "valid";
-    } else if (resultDecision.kind === "invalid") {
-      await recordInvalidRunResult(tx, {
-        runId,
-        contract: resultContract as RunResultContract,
-        reason: resultDecision.reason,
-        producerKind: "agent_session",
-        producerRef: "session:default",
-      });
-      resultStatus = "unavailable";
-      log.warn(
-        {
-          runId,
-          outcome,
-          resultStatus,
-          reasonClass: resultDecision.reason,
-        },
-        "[run-result.agent] public result rejected — finalizing Failed",
-      );
-    } else if (resultDecision.kind === "absent") {
-      resultStatus = "absent";
-    }
-
-    if (effectiveStatus === "Abandoned") {
-      const scheduledRemovalAt = new Date(
-        endedAt.getTime() + gcAgeDays() * 86_400_000,
-      );
-
-      await tx
-        .update(workspaces)
-        .set({ scheduledRemovalAt })
-        .where(eq(workspaces.runId, runId));
-    }
-
-    // Cleanup cwd derives from immutable run/workspace/project provenance, not
-    // the mutable catalog agent row. Agent deletion is ON DELETE SET NULL and
-    // runner-backed consensus drafts intentionally have no agent id; both still
-    // own L2/package materialization that must release after the terminal flip.
-    const wsCtx = row.agentId
-      ? await loadAgentWorkspaceContext(tx, row.agentId, row.projectId)
-      : null;
-    const projectRows = row.projectId
-      ? await tx
-          .select({ slug: projects.slug, repoPath: projects.repoPath })
-          .from(projects)
-          .where(eq(projects.id, row.projectId))
-      : [];
-    const project = projectRows[0] ?? null;
-    // Persisted agent_workspace is authoritative. The live agent definition is
-    // only a compatibility fallback for historical rows that predate the run
-    // snapshot and still have an agent row.
-    const ranAs = row.agentWorkspace ?? wsCtx?.workspace;
-
-    if (project && ranAs === "repo_read") {
-      // workspace_ref runs leave a deterministic `-ro` checkout: when it
-      // exists, the L3 target IS that ephemeral dir (the parent checkout was
-      // never the session cwd).
-      const ephemeralPath = agentReadOnlyWorkdirPath(project.slug, runId);
-      const usedEphemeral = await pathIsDirectory(ephemeralPath);
-      const l3Target = usedEphemeral ? ephemeralPath : project.repoPath;
-
-      if (shouldReleaseAgentMaterialization(effectiveStatus, ranAs)) {
-        materializationCleanup = { cwd: l3Target, workspace: ranAs };
-      }
-
-      // ADR-090 L3 is agent-specific: only a live catalog agent can be
-      // quarantined. Its read-only porcelain inspection remains inside the
-      // transaction, while all filesystem release stays post-commit.
-      if (wsCtx && row.agentId) {
-        const verdict = await checkRepoReadDirt(l3Target, runId);
-
-        if (verdict.kind !== "clean") {
-          const violation =
-            verdict.kind === "dirty"
-              ? verdict.porcelain.slice(0, 512)
-              : `watchdog indeterminate: ${verdict.error.slice(0, 512)}`;
-
-          await quarantineAgentInTx({
-            tx,
-            agentId: row.agentId,
-            runId,
-            projectId: row.projectId,
-            taskId: row.taskId,
-            reason: `repo_read workspace contract failed for ${l3Target}: ${violation}`,
-          });
-        }
-      }
-
-      if (usedEphemeral) {
-        ephemeralCleanup = {
-          repoPath: project.repoPath,
-          worktreePath: ephemeralPath,
-        };
-      }
-    } else if (project && ranAs === "none") {
-      if (shouldReleaseAgentMaterialization(status, ranAs)) {
-        materializationCleanup = {
-          cwd: agentWorkdirPath(project.slug, runId),
-          workspace: ranAs,
-        };
-      }
-    } else if (project && ranAs === "worktree") {
-      const worktreePath =
-        workspaceRows[0]?.worktreePath ??
-        (preRows[0]?.workspaceMode === "shared" && preRows[0]?.rootRunId
-          ? sharedAgentWorktreePath(project.slug, preRows[0].rootRunId)
-          : agentWorkdirPath(project.slug, runId));
-
-      if (shouldReleaseAgentMaterialization(status, ranAs)) {
-        materializationCleanup = { cwd: worktreePath, workspace: ranAs };
-      }
-    }
-
-    await revokeAgentRunTokensForRun(runId, tx);
-
-    if (opts.closeOpenHitl) {
-      await tx
-        .update(hitlRequests)
-        .set({ respondedAt: endedAt })
-        .where(
-          and(eq(hitlRequests.runId, runId), isNull(hitlRequests.respondedAt)),
-        );
-    }
-
-    if (opts.closeAssignments?.kind === "user") {
-      await cancelActiveAssignmentsForRun({
-        db: tx,
-        runId,
-        actorId: opts.closeAssignments.actorId,
-        eventKind: opts.closeAssignments.eventKind,
-        reason: opts.closeAssignments.reason,
-      });
-    } else if (opts.closeAssignments?.kind === "system") {
-      await systemCloseActiveAssignmentsForRun({
-        db: tx,
-        runId,
-        reason: opts.closeAssignments.reason,
-      });
-    }
-
-    await emitWebhookEvent({
-      db: tx,
-      type: WEBHOOK_TYPE_BY_STATUS[effectiveStatus],
-      projectId: row.projectId,
-      runId,
-      data: {
-        kind: "agent",
-        agentId: row.agentId,
-        ...(effectiveStatus === "Review" ? { source: "agent" } : {}),
-        ...(opts.reason && effectiveStatus !== "Review"
-          ? { reason: opts.reason }
-          : {}),
-      },
-    });
-
-    // M37 (ADR-098/097): a DELEGATED child reaching Review emits `run.review` so
-    // the parked coordinator wakes to promote/rework the diff (and as-plan
-    // auto-promote fires). A top-level Review (no parent) emits nothing — there is
-    // no orchestrator to route to. Terminal outcomes emit their terminal kind.
-    if (effectiveStatus === "Review") {
-      if (row.parentRunId) {
-        await emitDomainEvent({
-          db: tx,
-          kind: "run.review",
-          projectId: row.projectId,
-          taskId: row.taskId,
-          runId,
-          actor: { type: "agent", id: row.agentId },
-          parentRunId: row.parentRunId,
-          payload: {
-            runKind: "agent",
-            agentId: row.agentId,
-            status: effectiveStatus,
-            // Codex review F1: the same cause field the flow emit helper
-            // writes — a clean agent exit IS a completion and stays
-            // auto-promotable.
-            cause: "agent_exit" satisfies RunReviewCause,
-            // ADR-165 (Q10-A): additive, omitted when the run carries no
-            // contract — an omitted value is honestly absent.
-            ...(resultStatus ? { resultStatus } : {}),
-          },
-        });
-      }
-    } else {
-      await emitDomainEvent({
-        db: tx,
-        // ADR-165: a result-caused failure emits `run.failed`, not the clean
-        // exit's `run.done` — the outcome the coordinator must react to is the
-        // FAILURE, and a `run.done` here would wake it into believing the child
-        // succeeded.
-        kind:
-          resultDecision.kind === "invalid"
-            ? "run.failed"
-            : DOMAIN_KIND_BY_OUTCOME[outcome],
-        projectId: row.projectId,
-        taskId: row.taskId,
-        runId,
-        actor: { type: "agent", id: row.agentId },
-        parentRunId: row.parentRunId,
-        payload: {
-          runKind: "agent",
-          agentId: row.agentId,
-          status: effectiveStatus,
-          ...(opts.reason ? { reason: opts.reason } : {}),
-          ...(resultDecision.kind === "invalid"
-            ? {
-                reason:
-                  resultDecision.reason === "result_missing"
-                    ? "result_missing"
-                    : "result_invalid",
-              }
-            : {}),
-          ...(resultStatus ? { resultStatus } : {}),
-        },
-      });
-    }
-
-    return { finalized: true as const, status: effectiveStatus };
-  });
-
-  if (finalizeResult !== false) {
-    let materializationReleaseFailedFor: string | null = null;
-
-    if (materializationCleanup) {
-      const cleanup = materializationCleanup as {
-        cwd: string;
-        workspace: "none" | "repo_read" | "worktree";
-      };
-
-      await restoreAgentMaterialization(cleanup.cwd, runId).catch(
-        (err: unknown) => {
-          materializationReleaseFailedFor = cleanup.cwd;
-          log.error(
-            {
-              runId,
-              workspace: cleanup.workspace,
-              errorType: err instanceof Error ? err.name : "unknown",
-            },
-            "post-commit agent materialization release failed",
-          );
-        },
-      );
-    }
-
-    log.info(
-      { runId, outcome, status: finalizeResult.status, reason: opts.reason },
-      "agent run finalized",
-    );
-
-    if (ephemeralCleanup) {
-      const cleanup = ephemeralCleanup as {
-        repoPath: string;
-        worktreePath: string;
-      };
-
-      if (materializationReleaseFailedFor === cleanup.worktreePath) {
-        log.warn(
-          { runId, workspace: "repo_read" },
-          "ephemeral checkout retained because materialization release must be retried",
-        );
-      } else {
-        await removeWorktree({
-          projectRepoPath: cleanup.repoPath,
-          worktreePath: cleanup.worktreePath,
-          force: true,
-        }).catch((err: unknown) => {
-          log.warn(
-            {
-              runId,
-              errorType: err instanceof Error ? err.name : "unknown",
-            },
-            "ephemeral checkout removal failed — next spawn recreates it",
-          );
-        });
-      }
-    }
-
-    const plainAgentCleanup = materializationCleanup as {
-      cwd: string;
-      workspace: "none" | "repo_read" | "worktree";
-    } | null;
-
-    if (
-      plainAgentCleanup?.workspace === "none" &&
-      materializationReleaseFailedFor !== plainAgentCleanup.cwd
-    ) {
-      await removeOwnedPlainAgentDirectory({
-        root: worktreesRoot(),
-        directoryPath: plainAgentCleanup.cwd,
-      }).catch((err: unknown) => {
-        log.warn(
-          {
-            runId,
-            errorType: err instanceof Error ? err.name : "unknown",
-          },
-          "plain agent directory removal failed and will retry during GC",
-        );
-      });
-    }
-
-    // ADR-157 (T32): release this run's read-only sibling mounts from the SAME
-    // post-commit choke that releases the ephemeral `-ro` checkout. Reads the
-    // launch snapshot off `runs.context_mounts` and is status-gated inside, so a
-    // clean-exit `Review` (shared writable tree) keeps its mounts for the rework.
-    await releaseRunContextMounts({ runId, db: _db }).catch((err: unknown) => {
-      log.warn(
-        { runId, err: err instanceof Error ? err.message : String(err) },
-        "context mount release failed — left to the GC backstop",
-      );
-    });
-
-    await promoteNextPending({ db: _db, pool: "agent" }).catch(
-      (err: unknown) => {
-        log.error(
-          { runId, err: err instanceof Error ? err.message : String(err) },
-          "agent slot promote failed",
-        );
-      },
-    );
-  }
-
-  return finalizeResult !== false ? finalizeResult : { finalized: false };
+  return finalizeAgentRunPrepared(runId, outcome, opts);
 }
 
 // M37 Phase 8 (ADR-099): a persistent swarm member PARKS on a clean end_turn

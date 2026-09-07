@@ -445,6 +445,29 @@ the durable continuation, which replays the request and completes the original
 supervisor deferred after delivery. A checkpointed turn under a replacement
 assignment uses the persisted permission-resume/handoff authorization above.
 
+### Agent finalization boundary (Implemented preparation)
+
+`web/lib/agents/finalization.ts` separates terminal preparation, DB application
+and cleanup. `prepareAgentRunFinalization` requires a pooled connection. It
+reads the launch-time public-result contract and workspace provenance and
+performs read-only workspace inspection before the application transaction.
+`apply(tx)` locks the run and rechecks that provenance, then commits its
+ordinary status, result, assignment release, token revocation and terminal
+notifications together. A pending human-ask activation defers finalization.
+Concurrent finalizers have one status-CAS winner; an outer rollback also rolls
+back the result and notifications.
+
+`afterCommit` verifies the committed terminal generation before releasing
+materialization, directories and context mounts or promoting the agent pool.
+Existing GC backstops retain cleanup retry ownership. The public
+`launch.ts:finalizeAgentRun` entrypoint uses this same implementation.
+Qualification covers outer rollback with real managed files, refusal of a
+transaction connection, changed contract provenance and concurrent finalizers,
+alongside the existing result, dirty-workspace, shared-tree and persistent-park
+suites (39/39). The agent command adapter must additionally recheck the exact
+turn, assignment and session before application; durable turn/message recovery
+and its worker activation remain Designed below.
+
 ### Remaining domain adapters (Designed)
 
 Persist the reference before remote dispatch in the same transaction as the owner admission. Use discriminated subvariants under the existing owner families where possible; widen the checked family only if necessary. Resolve references from authoritative rows. A Flow owner always references existing `node_attempts`, `gate_results` or consensus ledger rows; never create another Flow attempt ledger.
