@@ -6,6 +6,7 @@ import type {
 } from "@/lib/db/schema";
 import type { Db } from "@/lib/execution-host/db";
 import type { BoundClient } from "@/lib/execution-host/client";
+import type { ExecutionHostTransport } from "@/lib/execution-host/contracts";
 import type { PromptOwnerAdmission } from "@/lib/execution-host/ledger";
 import type { PromptOwner } from "@/lib/execution-host/prompt-owner-contract";
 import type { AgentFinalizationApplication } from "./finalization";
@@ -17,6 +18,11 @@ import pino from "pino";
 import { prepareAgentRunFinalization } from "./finalization";
 import { applyPersistentAgentPark, afterPersistentAgentPark } from "./park";
 import { requireAgentPermissionCompletion } from "./permission";
+import {
+  assertAgentResumeTurn,
+  lockAgentPermissionResult,
+  acknowledgeAgentPermissionResult,
+} from "./permission-resume";
 
 import {
   executionCommands,
@@ -45,6 +51,7 @@ import { createExecutionHosts } from "@/lib/execution-host/client";
 import { nodeOutputMaxBytes } from "@/lib/instance-config";
 import { MaisterError } from "@/lib/errors";
 import { readPromptRequest } from "@/lib/execution-host/command-request";
+import { waitForPromptCompletion } from "@/lib/execution-host/deliverer";
 
 const log = pino({
   name: "agent-prompt-owner",
@@ -207,6 +214,7 @@ export async function admitAgentTurnPrompt(
     turn.runSessionId !== session.runSessionId
   )
     throw new PromptOwnerInvariantError("agent_message_admission_generation");
+  await assertAgentResumeTurn(tx, turn, client.assignment);
   if (
     turn.variant === "initial" &&
     (turn.id !== session.assignmentId || turn.ordinal !== 0)
@@ -276,6 +284,15 @@ async function lockAgentBinding(
     (ref.turnId !== ref.assignmentId || ref.promptOrdinal !== 0)
   )
     throw new PromptOwnerInvariantError("agent_initial_turn_identity");
+  const historical = await lockAgentPermissionResult(tx, ref.runId, commandId);
+
+  if (historical) return historical;
+  const [sourceCommand] = await tx
+    .select()
+    .from(executionCommands)
+    .where(eq(executionCommands.id, commandId));
+
+  if (sourceCommand) await requireAgentPermissionCompletion(tx, sourceCommand);
   const assignment = await lockCurrentSessionAssignment(tx, {
     runId: ref.runId,
     assignmentId: ref.assignmentId,
@@ -309,6 +326,7 @@ async function lockAgentBinding(
           turn.incarnationId !== ref.incarnationId))
     )
       return null;
+    if (turn) await assertAgentResumeTurn(tx, turn, assignment);
   }
   const [run] = await tx.select().from(runs).where(eq(runs.id, ref.runId));
 
@@ -413,6 +431,7 @@ async function acknowledgeAgentMessage(
 
   if (!applied && ref.variant !== "initial")
     throw new PromptOwnerInvariantError("agent_message_acknowledgment_changed");
+  await acknowledgeAgentPermissionResult(tx, ref.runId, commandId);
 }
 
 async function supersedeAgentMessage(
@@ -569,9 +588,38 @@ export async function waitForAgentPrompt(
   db: Db,
   client: BoundClient,
   commandId: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  await awaitAgentApplication(db, commandId, () =>
+    client.waitForPrompt({ commandId }, { owners: agentPromptOwners, signal }),
+  );
+}
+
+/** Historical evidence retains its original assignment, including its objects. */
+export async function waitForHistoricalAgentPrompt(
+  db: Db,
+  transport: ExecutionHostTransport,
+  commandId: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  await awaitAgentApplication(db, commandId, () =>
+    waitForPromptCompletion({
+      db,
+      handle: { commandId },
+      owners: agentPromptOwners,
+      lookupReceipt: (id) => transport.getCommandReceipt(id),
+      signal,
+    }),
+  );
+}
+
+async function awaitAgentApplication(
+  db: Db,
+  commandId: string,
+  wait: () => Promise<unknown>,
 ): Promise<void> {
   try {
-    await client.waitForPrompt({ commandId }, { owners: agentPromptOwners });
+    await wait();
   } catch (cause) {
     try {
       const [command] = await db

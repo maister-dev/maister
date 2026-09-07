@@ -9,7 +9,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { and, asc, eq, inArray } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import {
   agents,
@@ -29,9 +29,12 @@ import {
   users,
   workspaces,
 } from "@/lib/db/schema";
+import { startAgentContinuationWorker } from "@/lib/agents/continuation-worker";
+import { lockAgentPermissionResult } from "@/lib/agents/permission-resume";
 import { agentPromptOwners } from "@/lib/agents/prompt-owner";
 import { reworkChildRun } from "@/lib/agents/launch";
 import { claimAgentResumeSlot, respondToHitl } from "@/lib/services/hitl";
+import { markCheckpointed } from "@/lib/runs/state-transitions";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
 import { testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { createExecutionHosts } from "@/lib/execution-host/client";
@@ -116,6 +119,31 @@ afterAll(async () => {
   await supervisor?.kill();
   await database?.stop();
 });
+
+afterEach(async () => {
+  // Each completed launcher owns background consumers and a DB pool. Release
+  // them between scenarios instead of accumulating dozens of live workers.
+  for (const child of drivers) {
+    if (child.exitCode !== null || child.signalCode !== null) continue;
+    const exited = new Promise<void>((resolve) =>
+      child.once("exit", () => resolve()),
+    );
+
+    if (child.connected) child.send({ state: "stop" });
+    try {
+      await expect
+        .poll(() => child.exitCode !== null || child.signalCode !== null, {
+          timeout: 10_000,
+          interval: 50,
+        })
+        .toBe(true);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null)
+        child.kill("SIGKILL");
+      await exited;
+    }
+  }
+}, 30_000);
 
 async function seedAgent(input: {
   bytes: number;
@@ -454,6 +482,445 @@ async function killAtTerminalWrite(
 }
 
 describe("Agent owned prompts through the production launcher", () => {
+  it("owner-agent-checkpoint-rejected settles a definitive input rejection without a resume slot", async () => {
+    const runId = await seedAgent({ bytes: 0, permission: true });
+    const launcher = startDriver(runId);
+
+    await expect
+      .poll(
+        async () =>
+          (
+            await db
+              .select()
+              .from(hitlRequests)
+              .where(eq(hitlRequests.runId, runId))
+          ).length,
+        { timeout: 60_000, interval: 50 },
+      )
+      .toBe(1);
+    const [hitl] = await db
+      .select()
+      .from(hitlRequests)
+      .where(eq(hitlRequests.runId, runId));
+    const [source] = await db
+      .select()
+      .from(agentTurns)
+      .where(eq(agentTurns.runId, runId));
+    const hosts = createExecutionHosts({ db });
+    const client = await hosts.forRun(runId);
+    const [session] = await db
+      .select()
+      .from(runSessions)
+      .where(eq(runSessions.runId, runId));
+
+    launcher.child.kill("SIGKILL");
+    await launcher.exited;
+    await client.deliverInput(session.hostSessionId!, {
+      kind: "permission",
+      action: "cancel",
+      requestId: (hitl.schema as { requestId: string }).requestId,
+      reason: "operator-cancelled",
+    });
+    await interruptPermissionInputAcknowledgement({
+      database,
+      hitlRequestId: hitl.id,
+      startResponder: () =>
+        startFixture("flow-permission-response-process.ts", [
+          hitl.id,
+          "unused",
+          "agent-permission-user",
+        ]),
+    });
+    const [pending] = await db
+      .select()
+      .from(hitlRequests)
+      .where(eq(hitlRequests.id, hitl.id));
+    const delivery = pending.response as { _delivery: { commandId: string } };
+
+    expect(
+      await hosts.transport.getCommandReceipt(delivery._delivery.commandId),
+    ).toMatchObject({
+      phase: "rejected",
+      httpStatus: 410,
+      body: { code: "HITL_TIMEOUT" },
+    });
+    await client.checkpoint(session.hostSessionId!);
+    expect((await markCheckpointed(runId, { db })).ok).toBe(true);
+    const continuation = startAgentContinuationWorker({ db });
+
+    try {
+      await expect
+        .poll(
+          async () =>
+            (await db.select().from(runs).where(eq(runs.id, runId)))[0].status,
+          { timeout: 60_000, interval: 100 },
+        )
+        .toBe("Failed");
+      expect(await claimAgentResumeSlot(db, runId, hosts)).toEqual({
+        outcome: "noop",
+      });
+      const assignments = await db
+        .select()
+        .from(executionAssignments)
+        .where(eq(executionAssignments.runId, runId));
+
+      expect(assignments).toHaveLength(1);
+      const [finished] = await db
+        .select()
+        .from(agentTurns)
+        .where(eq(agentTurns.id, source.id));
+
+      expect(finished.state).toBe("superseded");
+      const [input] = await db
+        .select()
+        .from(executionCommands)
+        .where(eq(executionCommands.id, delivery._delivery.commandId));
+
+      expect(input.state).toBe("failed");
+      const [responded] = await db
+        .select()
+        .from(hitlRequests)
+        .where(eq(hitlRequests.id, hitl.id));
+
+      expect(responded.response).toMatchObject({
+        optionId: "allow",
+        _audit: { errorCode: "HITL_TIMEOUT" },
+      });
+      expect(responded.respondedAt).not.toBeNull();
+      expect(
+        await db.select().from(runResults).where(eq(runResults.runId, runId)),
+      ).toHaveLength(0);
+      expect(
+        await db
+          .select()
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, runId),
+              eq(executionCommands.kind, "session.prompt"),
+            ),
+          ),
+      ).toHaveLength(1);
+    } finally {
+      await continuation.stop();
+    }
+  }, 120_000);
+  it.each(["live", "before_apply"] as const)(
+    "owner-agent-checkpoint-result retains the completed original through %s",
+    async (window) => {
+      const runId = await seedAgent({ bytes: 0, permission: true });
+      const launcher = startDriver(runId);
+
+      await expect
+        .poll(
+          async () => {
+            const rows = await db
+              .select()
+              .from(hitlRequests)
+              .where(eq(hitlRequests.runId, runId));
+
+            return rows.length;
+          },
+          { timeout: 60_000, interval: 50 },
+        )
+        .toBe(1);
+      const [hitl] = await db
+        .select()
+        .from(hitlRequests)
+        .where(eq(hitlRequests.runId, runId));
+      const [source] = await db
+        .select()
+        .from(agentTurns)
+        .where(eq(agentTurns.runId, runId));
+
+      launcher.child.kill("SIGKILL");
+      await launcher.exited;
+      await interruptPermissionInputAcknowledgement({
+        database,
+        hitlRequestId: hitl.id,
+        startResponder: () =>
+          startFixture("flow-permission-response-process.ts", [
+            hitl.id,
+            "unused",
+            "agent-permission-user",
+          ]),
+      });
+      const hosts = createExecutionHosts({ db });
+
+      await expect
+        .poll(
+          async () =>
+            (await hosts.transport.getCommandReceipt(source.commandId!))?.phase,
+          { timeout: 30_000, interval: 50 },
+        )
+        .toBe("completed");
+      const client = await hosts.forRun(runId);
+      const [session] = await db
+        .select()
+        .from(runSessions)
+        .where(eq(runSessions.runId, runId));
+
+      await client.checkpoint(session.hostSessionId!);
+      expect((await markCheckpointed(runId, { db })).ok).toBe(true);
+      await expect
+        .poll(
+          async () => (await claimAgentResumeSlot(db, runId, hosts)).outcome,
+          { timeout: 60_000, interval: 100 },
+        )
+        .toBe("claimed");
+      const [claimed] = await db
+        .select()
+        .from(hitlRequests)
+        .where(eq(hitlRequests.id, hitl.id));
+
+      expect(claimed.response).toMatchObject({
+        _agentResume: {
+          kind: "result",
+          sourceCommandId: source.commandId,
+          turnId: source.id,
+        },
+      });
+      if (window === "live") {
+        const response = claimed.response as Record<string, unknown>;
+        const grant = response._agentResume as Record<string, unknown>;
+
+        try {
+          for (const [key, value] of Object.entries({
+            sourceRequestSha256: "0".repeat(64),
+            sourceTerminalEvidenceSha256: "0".repeat(64),
+            checkpointCommandId: "wrong-checkpoint",
+            inputCommandId: "wrong-input",
+            resumeSessionId: "wrong-acp-session",
+            optionId: "wrong-choice",
+          })) {
+            await db
+              .update(hitlRequests)
+              .set({
+                response: {
+                  ...response,
+                  _agentResume: { ...grant, [key]: value },
+                },
+              })
+              .where(eq(hitlRequests.id, hitl.id));
+            await expect(
+              db.transaction((tx) =>
+                lockAgentPermissionResult(tx, runId, source.commandId!),
+              ),
+            ).rejects.toMatchObject({
+              details: {
+                reason: "prompt_owner_invariant",
+                causeCode: "agent_permission_resume_grant_identity",
+              },
+            });
+          }
+        } finally {
+          await db
+            .update(hitlRequests)
+            .set({ response })
+            .where(eq(hitlRequests.id, hitl.id));
+        }
+      }
+      if (window === "before_apply") await killAtTerminalWrite(runId);
+      const resumed = startDriver(runId);
+
+      await expect
+        .poll(
+          async () => {
+            const [run] = await db
+              .select()
+              .from(runs)
+              .where(eq(runs.id, runId));
+
+            if (resumed.returned() && run.status !== "Review")
+              throw new Error(resumed.output());
+
+            return run.status;
+          },
+          { timeout: 60_000, interval: 100 },
+        )
+        .toBe("Review");
+      const turns = await db
+        .select()
+        .from(agentTurns)
+        .where(eq(agentTurns.runId, runId));
+
+      expect(turns).toHaveLength(1);
+      expect(turns[0]).toMatchObject({
+        id: source.id,
+        state: "applied",
+        prompt: source.prompt,
+      });
+      const commands = await db
+        .select()
+        .from(executionCommands)
+        .where(eq(executionCommands.runId, runId));
+
+      expect(
+        commands.filter((command) => command.kind === "session.create"),
+      ).toHaveLength(1);
+      expect(
+        commands.filter((command) => command.kind === "session.prompt"),
+      ).toHaveLength(1);
+      expect(
+        commands.find((command) => command.id === source.commandId)
+          ?.applicationState,
+      ).toBe("applied");
+      const [result] = await db
+        .select()
+        .from(runResults)
+        .where(eq(runResults.runId, runId));
+
+      expect(result.value).toEqual({ summary: "original answer" });
+      const [completed] = await db
+        .select()
+        .from(hitlRequests)
+        .where(eq(hitlRequests.id, hitl.id));
+
+      expect(completed.respondedAt).not.toBeNull();
+      expect(completed.response).toMatchObject({
+        _agentResume: { applied: true },
+      });
+    },
+    180_000,
+  );
+  it("owner-agent-checkpoint resumes an unanswered original permission under an explicit grant", async () => {
+    const runId = await seedAgent({ bytes: 0, permission: true });
+    const driver = startDriver(runId);
+
+    await expect
+      .poll(
+        async () => {
+          const rows = await db
+            .select()
+            .from(hitlRequests)
+            .where(eq(hitlRequests.runId, runId));
+
+          return rows.length;
+        },
+        { timeout: 30_000, interval: 25 },
+      )
+      .toBe(1);
+    const [hitl] = await db
+      .select()
+      .from(hitlRequests)
+      .where(eq(hitlRequests.runId, runId));
+    const [source] = await db
+      .select()
+      .from(agentTurns)
+      .where(eq(agentTurns.runId, runId));
+
+    driver.child.kill("SIGKILL");
+    await driver.exited;
+    const hosts = createExecutionHosts({ db });
+    const client = await hosts.forRun(runId);
+    const [session] = await db
+      .select()
+      .from(runSessions)
+      .where(eq(runSessions.runId, runId));
+
+    await client.checkpoint(session.hostSessionId!);
+    expect((await markCheckpointed(runId, { db })).ok).toBe(true);
+    const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+    const response = await respondToHitl(
+      { runId, hitlRequestId: hitl.id, body: { optionId: "allow" } },
+      {
+        kind: "user",
+        userId: "agent-permission-user",
+        label: "Agent checkpoint qualification",
+        preauthorizedProjectId: run.projectId!,
+      },
+      { db },
+    );
+
+    expect(response.status).toBe(202);
+    const [beforeWorker] = await db
+      .select()
+      .from(hitlRequests)
+      .where(eq(hitlRequests.id, hitl.id));
+
+    if (
+      !(beforeWorker.response as Record<string, unknown> | null)?._agentResume
+    )
+      expect(await response.json()).toMatchObject({
+        runStatus: "NeedsInputIdle",
+      });
+    const continuation = startAgentContinuationWorker({ db });
+
+    try {
+      await expect
+        .poll(
+          async () => {
+            const [row] = await db
+              .select()
+              .from(hitlRequests)
+              .where(eq(hitlRequests.id, hitl.id));
+
+            return (row.response as Record<string, unknown> | null)
+              ?._agentResume;
+          },
+          { timeout: 60_000, interval: 100 },
+        )
+        .toBeDefined();
+      const [claimed] = await db
+        .select()
+        .from(hitlRequests)
+        .where(eq(hitlRequests.id, hitl.id));
+
+      expect(claimed.response).toMatchObject({
+        _agentResume: {
+          version: 1,
+          kind: "continue",
+          sourceCommandId: source.commandId,
+          assignmentId: expect.any(String),
+          turnId: expect.any(String),
+        },
+      });
+      await expect
+        .poll(
+          async () => {
+            const [current] = await db
+              .select()
+              .from(runs)
+              .where(eq(runs.id, runId));
+
+            return current.status;
+          },
+          { timeout: 45_000, interval: 50 },
+        )
+        .toBe("Review");
+      const turns = await db
+        .select()
+        .from(agentTurns)
+        .where(eq(agentTurns.runId, runId))
+        .orderBy(asc(agentTurns.ordinal));
+
+      expect(turns).toHaveLength(2);
+      expect(turns[0].state).toBe("superseded");
+      expect(turns[1]).toMatchObject({
+        variant: "resume",
+        state: "applied",
+        prompt: source.prompt,
+      });
+      const requests = await db
+        .select()
+        .from(hitlRequests)
+        .where(eq(hitlRequests.runId, runId));
+
+      expect(requests).toHaveLength(2);
+      expect(requests.every((request) => request.respondedAt !== null)).toBe(
+        true,
+      );
+      const [result] = await db
+        .select()
+        .from(runResults)
+        .where(eq(runResults.runId, runId));
+
+      expect(result.value).toEqual({ summary: "original answer" });
+    } finally {
+      await continuation.stop();
+    }
+  }, 90_000);
+
   it.each(["live", "launcher_restart", "input_ack_restart"] as const)(
     "owner-agent-permission retains its exact source through %s",
     async (window) => {

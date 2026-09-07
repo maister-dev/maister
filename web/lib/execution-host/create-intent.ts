@@ -14,6 +14,10 @@ import { canonicalCommandJson } from "../../../runtime/command-json";
 
 import { lockCurrentSessionAssignment } from "./session-binding";
 import { redactPayload } from "./redact";
+import {
+  assertAgentResumeTurn,
+  assertAgentResumeCreateRequest,
+} from "./agent-permission-handoff";
 
 import {
   executionCommands,
@@ -231,15 +235,18 @@ export async function lockCreateOwner(
       .where(eq(agentTurns.id, input.owner.turnId))
       .for("update");
 
-    return (
+    const current =
       run?.runKind === "agent" &&
       run.status === "Running" &&
       turn?.runId === run.id &&
       turn.ordinal === input.owner.promptOrdinal &&
       turn.executionAssignmentId === assignment.id &&
       turn.assignmentEpoch === assignment.epoch &&
-      (turn.state === "claimed" || turn.state === "dispatched")
-    );
+      (turn.state === "claimed" || turn.state === "dispatched");
+
+    if (current) await assertAgentResumeTurn(tx, turn, assignment);
+
+    return current;
   }
   const [attempt] = await tx
     .select()
@@ -322,6 +329,8 @@ export async function currentCreateCommand(
   };
 
   if (!(await lockCreateOwner(tx, input))) return false;
+  if (input.owner.variant === "agent")
+    await assertAgentResumeCreateRequest(tx, input.owner.turnId, row.payload);
 
   return (await latestOwnedCreate(tx, input))?.id === row.id;
 }

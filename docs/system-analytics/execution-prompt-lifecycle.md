@@ -602,7 +602,7 @@ input ACK instead of releasing the run while that transaction is unfinished.
 Live execution, launcher restart and actual responder death before the ACK
 commit preserve one prompt, one input command and the original public result.
 
-### Agent checkpoint permission handoff (Designed)
+### Agent checkpoint permission handoff (Implemented)
 
 An idle resume first reconciles that original prompt, input and checkpoint.
 The ordinary scheduler/run claim may then retain a typed handoff in the existing
@@ -619,8 +619,40 @@ the exact handoff and the command in one transaction. An interrupted source is
 superseded when its new turn is admitted; the saved choice may answer only the
 permission reissued by that explicitly granted resume. A different current
 assignment, cancelled run or unrelated request cannot consume the handoff.
+The reissued ACP request has its own command-bound HITL row, linked to the
+original accepted choice. Both response markers commit with that delivery ACK.
+This retains a valid current source for another checkpoint or ACK loss during
+the resumed turn; a replay of the same request reuses its row and input command.
+
+An exact rejected input receipt (`410 HITL_TIMEOUT`), agreed original prompt
+terminal and confirmed checkpoint permit a source-checked parked failure. The
+ordinary agent finalizer performs that failure with the response audit and turn
+closure in one transaction, without reclaiming a slot or sending another prompt.
+The same source proof protects owned-create admission and ACK, prompt admission
+and result application; a create must use the granted original ACP resume handle.
+
+The agent continuation worker (Designed; activation held for S2.12) scans
+accepted turns and saved idle choices in run-ID order. It re-enters the same
+capacity claim after delayed receipt/canonical evidence, even without another
+user request or host event. A bounded prompt wait lets other runs progress;
+stopping that wait never cancels the durable command. Original result handoffs
+read the original command directly, retaining its original runtime-object
+assignment instead of rebinding those objects to the resume assignment.
 
 ### Remaining domain adapters (Designed)
+
+For an agent hook or budget pause, the HITL creation transaction must retain
+the exact original `agentPrompt` source and host session. An accepted `resume`
+or `raise` decision is retained with its response marker. Its checkpoint handoff
+also binds the decision digest, so an answered older pause cannot grant a later
+turn. A held-slot pause uses a new assignment after confirmed checkpoint while
+retaining the existing capacity reservation; an idle pause uses the normal cap
+claim. Both consume completed original evidence or a proven interrupted turn,
+without rebuilding input from the current catalog. A fresh ACP permission on
+that resumed turn requires its own choice. Unanswered permissions cancelled by
+the pause must be explicitly superseded with their assignment disposition.
+This hook/budget path and autonomous admission before the first retained turn
+remain unqualified work; the implemented permission handoff does not cover them.
 
 Persist the reference before remote dispatch in the same transaction as the owner admission. Use discriminated subvariants under the existing owner families where possible; widen the checked family only if necessary. Resolve references from authoritative rows. A Flow owner always references existing `node_attempts`, `gate_results` or consensus ledger rows; never create another Flow attempt ledger.
 

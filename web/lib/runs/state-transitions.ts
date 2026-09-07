@@ -35,6 +35,10 @@ import {
 } from "@/lib/flows/graph/permission-resume";
 import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
 import { admitCompletedAgentResume } from "@/lib/agents/resume";
+import {
+  readAgentPermissionResume,
+  authorizeAgentPermissionResume,
+} from "@/lib/agents/permission-resume";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { hitlRequests, runs, workspaces, runSyncAttempts } =
@@ -53,7 +57,14 @@ export type StateTransitionResult =
   // D3) — the caller binds its execution to THAT row, never to "the run's
   // active assignment" resolved later.
   | { ok: true; assignment?: ExecutionAssignment }
-  | { ok: false; reason: "status-guard-mismatch" | "not-found" | "capacity" };
+  | {
+      ok: false;
+      reason:
+        | "status-guard-mismatch"
+        | "not-found"
+        | "capacity"
+        | "pending-evidence";
+    };
 
 // ADR-141: a run that terminalizes MUST NOT strand a live branch-sync claim.
 // `run_sync_attempts` and the workspace lifecycle slot outlive `runs.status`, and
@@ -336,6 +347,27 @@ export async function claimAgentIdleResumeInTransaction(
   runId: string,
   opts: Pick<StateTransitionOptions, "placement" | "recordSuccessAudit"> = {},
 ): Promise<StateTransitionResult> {
+  await tx
+    .select({ id: runs.id })
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .for("update");
+  const permission = await readAgentPermissionResume(tx, runId);
+
+  if (permission?.kind === "pending") {
+    await tx
+      .update(runs)
+      .set({
+        resumeRequestedAt: sql`coalesce(${runs.resumeRequestedAt}, clock_timestamp())`,
+      })
+      .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")));
+    log.info(
+      { runId, reason: permission.reason },
+      "agent-resume-awaits-checkpoint-evidence",
+    );
+
+    return { ok: false, reason: "pending-evidence" };
+  }
   const rows = await tx
     .update(runs)
     .set({
@@ -358,6 +390,7 @@ export async function claimAgentIdleResumeInTransaction(
 
   const assignment = await mintForClaim(tx, runId, "resume", opts);
 
+  await authorizeAgentPermissionResume(tx, assignment);
   await admitCompletedAgentResume(tx, assignment);
   await opts.recordSuccessAudit?.(tx);
 

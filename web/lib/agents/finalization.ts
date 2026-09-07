@@ -250,6 +250,28 @@ export async function prepareAgentRunFinalization(
   outcome: AgentTerminalOutcome,
   opts: AgentFinalizeOptions = {},
 ): Promise<PreparedAgentFinalization> {
+  return prepareAgentFinalization(
+    runId,
+    outcome,
+    opts,
+    TERMINAL_CAS_SOURCE[outcome],
+  );
+}
+
+/** A proven checkpointed input rejection has no live slot to reclaim. */
+export async function prepareCheckpointedAgentFailure(
+  runId: string,
+  opts: AgentFinalizeOptions,
+): Promise<PreparedAgentFinalization> {
+  return prepareAgentFinalization(runId, "Failed", opts, ["NeedsInputIdle"]);
+}
+
+async function prepareAgentFinalization(
+  runId: string,
+  outcome: AgentTerminalOutcome,
+  opts: AgentFinalizeOptions,
+  sourceStatuses: Run["status"][],
+): Promise<PreparedAgentFinalization> {
   const _db = opts.db ?? getDb();
 
   if (is(_db, NodePgTransaction))
@@ -455,7 +477,7 @@ export async function prepareAgentRunFinalization(
         and(
           eq(runs.id, runId),
           eq(runs.runKind, "agent"),
-          inArray(runs.status, TERMINAL_CAS_SOURCE[outcome]),
+          inArray(runs.status, sourceStatuses),
         ),
       )
       .returning({

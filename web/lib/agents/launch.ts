@@ -16,6 +16,7 @@ import {
   admitAgentTurnPrompt,
   findInitialAgentPrompt,
   waitForAgentPrompt,
+  waitForHistoricalAgentPrompt,
   agentSessionHasOwnedPrompt,
   AgentPromptContinuationPending,
 } from "./prompt-owner";
@@ -24,6 +25,11 @@ import { acceptAgentMessage } from "./turns";
 import { claimAgentMessage } from "./turn-claim";
 import { admitAgentGenerationTurn } from "./generation-turn";
 import { settleAgentCreateFailure } from "./create-failure";
+import {
+  assertAgentResumeTurn,
+  findAgentPermissionResult,
+  deliverResumedAgentPermission,
+} from "./permission-resume";
 import {
   recordOwnedAgentPermission,
   replayAgentPermissionDelivery,
@@ -2695,8 +2701,10 @@ async function dispatchStoredAgentTurn(
   execution: AgentExecution,
   turn: AgentTurn,
   sessionId: string,
+  signal?: AbortSignal,
 ): Promise<void> {
-  observeOwnedAgentSession(db, execution, turn, sessionId);
+  signal?.throwIfAborted();
+  observeOwnedAgentSession(db, execution, turn, sessionId, signal);
   await waitForPromptIncarnation(db, execution.client, sessionId);
   const handle = await execution.client.prompt(
     sessionId,
@@ -2707,7 +2715,7 @@ async function dispatchStoredAgentTurn(
     },
   );
 
-  await waitForAgentPrompt(db, execution.client, handle.commandId);
+  await waitForAgentPrompt(db, execution.client, handle.commandId, signal);
 }
 
 function observeOwnedAgentSession(
@@ -2715,6 +2723,7 @@ function observeOwnedAgentSession(
   execution: AgentExecution,
   turn: AgentTurn,
   sessionId: string,
+  signal?: AbortSignal,
 ): void {
   log.info(
     { runId: turn.runId, turnId: turn.id, sessionId },
@@ -2726,7 +2735,9 @@ function observeOwnedAgentSession(
       execution,
       runId: turn.runId,
       sessionId,
+      signal,
     }).catch((error: unknown) => {
+      if (signal?.aborted) return;
       log.error(
         {
           runId: turn.runId,
@@ -2751,11 +2762,13 @@ export async function startAgentSession(
     executionHosts?: ExecutionHosts;
     overridePrompt?: string;
     agentTurnId?: string;
+    signal?: AbortSignal;
     // ADR-166: the generation the caller's claim minted. Absent (the launch
     // dispatch, a scheduler promotion), the run's active pointer is bound.
     assignmentId?: string | null;
   } = {},
 ): Promise<void> {
+  opts.signal?.throwIfAborted();
   const _db = opts.db ?? getDb();
   const hosts = opts.executionHosts ?? createExecutionHosts({ db: _db });
 
@@ -2795,6 +2808,24 @@ export async function startAgentSession(
 
   let agentTurn: AgentTurn | undefined;
 
+  if (assignmentId) {
+    const historical = await findAgentPermissionResult(
+      _db,
+      runId,
+      assignmentId,
+    );
+
+    if (historical) {
+      await waitForHistoricalAgentPrompt(
+        _db,
+        hosts.transport,
+        historical,
+        opts.signal,
+      );
+
+      return;
+    }
+  }
   if (opts.agentTurnId) {
     [agentTurn] = await _db
       .select()
@@ -2860,6 +2891,7 @@ export async function startAgentSession(
   if (agentTurn) {
     const execution = await bindAgentExecution(hosts, runId, assignmentId);
 
+    await assertAgentResumeTurn(_db, agentTurn, execution.client.assignment);
     if (agentTurn.commandId) {
       const [command] = await _db
         .select()
@@ -2872,8 +2904,14 @@ export async function startAgentSession(
           execution,
           agentTurn,
           command.targetSessionId,
+          opts.signal,
         );
-      await waitForAgentPrompt(_db, execution.client, agentTurn.commandId);
+      await waitForAgentPrompt(
+        _db,
+        execution.client,
+        agentTurn.commandId,
+        opts.signal,
+      );
 
       return;
     }
@@ -2913,6 +2951,7 @@ export async function startAgentSession(
           execution,
           agentTurn,
           session.sessionId,
+          opts.signal,
         );
       } catch (error) {
         if (
@@ -2952,6 +2991,7 @@ export async function startAgentSession(
         execution,
         agentTurn,
         live.hostSessionId,
+        opts.signal,
       );
 
       return;
@@ -2969,7 +3009,12 @@ export async function startAgentSession(
     if (existingPrompt) {
       const execution = await bindAgentExecution(hosts, runId, assignmentId);
 
-      await waitForAgentPrompt(_db, execution.client, existingPrompt);
+      await waitForAgentPrompt(
+        _db,
+        execution.client,
+        existingPrompt,
+        opts.signal,
+      );
 
       return;
     }
@@ -3338,6 +3383,7 @@ export async function startAgentSession(
         execution,
         agentTurn,
         session.sessionId,
+        opts.signal,
       );
 
       return;
@@ -3411,6 +3457,7 @@ export async function consumeAgentSession(args: {
   execution: AgentExecution;
   runId: string;
   sessionId: string;
+  signal?: AbortSignal;
 }): Promise<void> {
   let sawPermissionRequest = false;
   const draftPayload = await loadConsensusDraftPayload(args.db, args.runId);
@@ -3421,9 +3468,9 @@ export async function consumeAgentSession(args: {
   // answer — the contract is "the block that ends the completing turn".
   let finalText = "";
 
-  for await (const event of args.execution.admin.streamSession(
-    args.sessionId,
-  )) {
+  for await (const event of args.execution.admin.streamSession(args.sessionId, {
+    signal: args.signal,
+  })) {
     switch (event.type) {
       case "session.update": {
         if (draftPayload) {
@@ -3469,6 +3516,16 @@ export async function consumeAgentSession(args: {
       case "session.permission_request": {
         if (
           await replayAgentPermissionDelivery(
+            args.db,
+            args.execution.client,
+            event,
+          )
+        ) {
+          sawPermissionRequest = false;
+          break;
+        }
+        if (
+          await deliverResumedAgentPermission(
             args.db,
             args.execution.client,
             event,

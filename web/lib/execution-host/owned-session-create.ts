@@ -12,6 +12,7 @@ import type { Logger } from "pino";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 
+import { assertAgentResumeCreateRequest } from "./agent-permission-handoff";
 import {
   createIntentError,
   latestOwnedCreate,
@@ -185,6 +186,8 @@ export async function createOwnedSession(input: {
 
       original = await db.transaction(async (tx) => {
         await assertOwner(tx);
+        if (owner.variant === "agent")
+          await assertAgentResumeCreateRequest(tx, owner.turnId, normalized);
         const existing = await latestOwnedCreate(tx, authority);
 
         if (existing && existing.id !== predecessor?.id) return existing;

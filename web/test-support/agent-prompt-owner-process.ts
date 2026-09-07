@@ -17,12 +17,15 @@ async function main(): Promise<void> {
 
   if (!runId) throw new Error("run ID is required");
   const db = getDb();
+  const controller = new AbortController();
+  const shutdown = once(process, "message").then(() => controller.abort());
 
   try {
     startCanonicalProjectionWorker();
     const message = process.argv[3];
 
-    if (message === undefined) await startAgentSession(runId, { db });
+    if (message === undefined)
+      await startAgentSession(runId, { db, signal: controller.signal });
     else if (process.argv[5] === "rework")
       await reworkChildRun(runId, message, { db });
     else
@@ -33,7 +36,7 @@ async function main(): Promise<void> {
     process.send?.({ state: "prompt_returned" });
     // The legacy stream consumer can still be applying after the prompt waiter
     // returns. Keep this real process alive until its parent finishes observing.
-    await once(process, "message");
+    await shutdown;
   } finally {
     await stopRuntimeEventConsumers();
     await stopCanonicalProjectionWorker();

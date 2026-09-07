@@ -75,6 +75,7 @@ import {
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { claimAgentIdleResumeInTransaction } from "@/lib/runs/state-transitions";
 import { revokeAgentRunTokensForRun } from "@/lib/agents/tokens";
+import { reconcileAgentPermissionResume } from "@/lib/agents/permission-resume";
 import {
   prepareAgentPermissionResponse,
   completeAgentPermissionDelivery,
@@ -289,8 +290,17 @@ export type AgentResumeClaim =
 export async function claimAgentResumeSlot(
   db: any,
   runId: string,
+  executionHosts?: ExecutionHosts,
 ): Promise<AgentResumeClaim> {
-  const placementHost = await localHost({ db });
+  const hosts = executionHosts ?? createExecutionHosts({ db });
+  const placementHost = await localHost({ db, transport: hosts.transport });
+  const [current] = await db
+    .select({ status: runs.status })
+    .from(runs)
+    .where(eq(runs.id, runId));
+
+  if (current?.status === "NeedsInputIdle")
+    await reconcileAgentPermissionResume(db, runId, hosts.transport);
 
   return db.transaction(async (tx: any): Promise<AgentResumeClaim> => {
     await takeSchedulerLock(tx);
@@ -1002,6 +1012,11 @@ async function handlePermissionResponse(
   // requestId once the resumed session re-issues the permission.
   if (claim.runStatus === "NeedsInputIdle") {
     if (runRow.runKind === "agent") {
+      await reconcileAgentPermissionResume(
+        db,
+        runId,
+        args.executionHosts.transport,
+      );
       const placementHost = await localHost({
         db,
         transport: args.executionHosts.transport,
@@ -1038,19 +1053,22 @@ async function handlePermissionResponse(
 
         return claim.ok
           ? { assignmentId: claim.assignment?.id ?? null }
-          : (false as const);
+          : claim.reason === "pending-evidence"
+            ? ("pending" as const)
+            : (false as const);
       });
 
-      if (claimed === "queued") {
+      if (claimed === "queued" || claimed === "pending") {
         log.info(
           {
             runId,
             hitlRequestId,
             branch: "agent-idle",
             phase: "resume-queued",
+            reason: claimed === "queued" ? "capacity" : "source-evidence",
             latencyMs: Date.now() - startedAt,
           },
-          "permission stored; agent pool at cap — resume queued for the next free slot",
+          "permission stored; agent resume awaits its normal claim",
         );
 
         return NextResponse.json(

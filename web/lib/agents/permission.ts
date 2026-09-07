@@ -28,28 +28,19 @@ import {
 } from "@/lib/execution-host/prompt-owners";
 import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+import { completeHitlAssignmentFromCurrentActor } from "@/lib/assignments/service";
+import {
+  agentPermissionSourceSchema,
+  agentPermissionEnvelopeSchema,
+} from "@/lib/execution-host/agent-permission-source";
+export {
+  agentPermissionSourceSchema,
+  agentPermissionEnvelopeSchema,
+} from "@/lib/execution-host/agent-permission-source";
 
 const log = pino({
   name: "agent-permission",
   level: process.env.LOG_LEVEL ?? "info",
-});
-
-export const agentPermissionSourceSchema = z
-  .object({
-    version: z.literal(1),
-    commandId: z.string().min(1),
-    turnId: z.string().min(1),
-    promptOrdinal: z.number().int().nonnegative(),
-    assignmentId: z.string().min(1),
-    incarnationId: z.string().min(1),
-  })
-  .strict();
-
-export const agentPermissionEnvelopeSchema = z.object({
-  requestId: z.string().min(1),
-  supervisorSessionId: z.string().min(1),
-  options: z.array(z.object({ optionId: z.string().min(1) })),
-  agentPrompt: agentPermissionSourceSchema,
 });
 
 const deliverySchema = z
@@ -64,6 +55,15 @@ const deliverySchema = z
         optionId: z.string().min(1),
       })
       .strict(),
+  })
+  .strict();
+
+const resumeOriginSchema = z
+  .object({
+    hitlRequestId: z.string().min(1),
+    assignmentId: z.string().min(1),
+    turnId: z.string().min(1),
+    sourceCommandId: z.string().min(1),
   })
   .strict();
 
@@ -170,87 +170,95 @@ export async function recordOwnedAgentPermission(
   client: BoundClient,
   event: PermissionEvent,
 ): Promise<boolean> {
-  return db.transaction(async (tx) => {
-    const assignment = await lockCurrentSessionAssignment(tx, {
-      runId: client.assignment.runId,
-      assignmentId: client.assignment.id,
-    });
+  return db.transaction((tx) =>
+    recordOwnedAgentPermissionInTransaction(tx, client, event),
+  );
+}
 
-    if (!assignment) return true;
-    const [turn] = await tx
-      .select()
-      .from(agentTurns)
-      .where(
-        and(
-          eq(agentTurns.runId, assignment.runId),
-          eq(agentTurns.executionAssignmentId, assignment.id),
-          eq(agentTurns.state, "dispatched"),
-        ),
-      );
+export async function recordOwnedAgentPermissionInTransaction(
+  tx: Db,
+  client: BoundClient,
+  event: PermissionEvent,
+): Promise<boolean> {
+  const assignment = await lockCurrentSessionAssignment(tx, {
+    runId: client.assignment.runId,
+    assignmentId: client.assignment.id,
+  });
 
-    if (!turn?.commandId || !turn.incarnationId) return false;
-    const source: AgentPermissionSource = {
-      version: 1,
-      commandId: turn.commandId,
-      turnId: turn.id,
-      promptOrdinal: turn.ordinal,
-      assignmentId: assignment.id,
-      incarnationId: turn.incarnationId,
-    };
-
-    await lockAgentPermissionSource(tx, source, event.sessionId);
-    const [existing] = await tx
-      .select()
-      .from(hitlRequests)
-      .where(
-        and(
-          eq(hitlRequests.runId, assignment.runId),
-          eq(hitlRequests.kind, "permission"),
-          sql`${hitlRequests.schema}->'agentPrompt'->>'commandId' = ${turn.commandId}`,
-          sql`${hitlRequests.schema}->>'requestId' = ${event.requestId}`,
-        ),
-      );
-
-    if (existing) {
-      const retained = parseAgentPermission(existing.schema);
-
-      if (
-        !retained ||
-        canonicalCommandJson(retained.agentPrompt) !==
-          canonicalCommandJson(source) ||
-        retained.supervisorSessionId !== event.sessionId
-      )
-        throw new PromptOwnerInvariantError("agent_permission_replay_identity");
-
-      return true;
-    }
-    const id = randomUUID();
-
-    await tx.insert(hitlRequests).values({
-      id,
-      runId: assignment.runId,
-      stepId: "agent",
-      kind: "permission",
-      schema: {
-        requestId: event.requestId,
-        options: event.options,
-        toolCall: event.toolCall,
-        supervisorSessionId: event.sessionId,
-        agentPrompt: source,
-      },
-      prompt: "Agent requests a tool permission",
-    });
-    await tx
-      .update(runs)
-      .set({ status: "NeedsInput", keepaliveUntil: nextKeepaliveAt() })
-      .where(and(eq(runs.id, assignment.runId), eq(runs.status, "Running")));
-    log.info(
-      { runId: assignment.runId, commandId: turn.commandId, hitlRequestId: id },
-      "agent-owned-permission-recorded",
+  if (!assignment) return true;
+  const [turn] = await tx
+    .select()
+    .from(agentTurns)
+    .where(
+      and(
+        eq(agentTurns.runId, assignment.runId),
+        eq(agentTurns.executionAssignmentId, assignment.id),
+        eq(agentTurns.state, "dispatched"),
+      ),
     );
 
+  if (!turn?.commandId || !turn.incarnationId) return false;
+  const source: AgentPermissionSource = {
+    version: 1,
+    commandId: turn.commandId,
+    turnId: turn.id,
+    promptOrdinal: turn.ordinal,
+    assignmentId: assignment.id,
+    incarnationId: turn.incarnationId,
+  };
+
+  await lockAgentPermissionSource(tx, source, event.sessionId);
+  const [existing] = await tx
+    .select()
+    .from(hitlRequests)
+    .where(
+      and(
+        eq(hitlRequests.runId, assignment.runId),
+        eq(hitlRequests.kind, "permission"),
+        sql`${hitlRequests.schema}->'agentPrompt'->>'commandId' = ${turn.commandId}`,
+        sql`${hitlRequests.schema}->>'requestId' = ${event.requestId}`,
+      ),
+    );
+
+  if (existing) {
+    const retained = parseAgentPermission(existing.schema);
+
+    if (
+      !retained ||
+      canonicalCommandJson(retained.agentPrompt) !==
+        canonicalCommandJson(source) ||
+      retained.supervisorSessionId !== event.sessionId
+    )
+      throw new PromptOwnerInvariantError("agent_permission_replay_identity");
+
     return true;
+  }
+  const id = randomUUID();
+
+  await tx.insert(hitlRequests).values({
+    id,
+    runId: assignment.runId,
+    stepId: "agent",
+    kind: "permission",
+    schema: {
+      requestId: event.requestId,
+      options: event.options,
+      toolCall: event.toolCall,
+      supervisorSessionId: event.sessionId,
+      agentPrompt: source,
+    },
+    prompt: "Agent requests a tool permission",
   });
+  await tx
+    .update(runs)
+    .set({ status: "NeedsInput", keepaliveUntil: nextKeepaliveAt() })
+    .where(and(eq(runs.id, assignment.runId), eq(runs.status, "Running")));
+  log.info(
+    { runId: assignment.runId, commandId: turn.commandId, hitlRequestId: id },
+    "agent-owned-permission-recorded",
+  );
+
+  return true;
 }
 
 /** A retried response reattaches its frozen delivery, including ACK loss. */
@@ -406,6 +414,119 @@ export async function completeAgentPermissionDelivery(
     { runId: hitl.runId, hitlRequestId, deliveryCommandId },
     "agent-owned-permission-delivered",
   );
+  await completeAgentPermissionOrigin(tx, hitl.id);
+  await completeHitlAssignmentFromCurrentActor({
+    db: tx,
+    hitlRequestId: hitl.id,
+    eventKind: "responded",
+    payload: { deliveryCommandId },
+  });
+}
+
+/** A reissued request consumes one accepted choice through an explicit link.
+ * Its ACK also closes any checkpointed ancestors in the same transaction.
+ */
+export async function completeAgentPermissionOrigin(
+  tx: Db,
+  hitlRequestId: string,
+  ancestors: ReadonlySet<string> = new Set(),
+): Promise<void> {
+  if (ancestors.has(hitlRequestId) || ancestors.size >= 64)
+    throw new PromptOwnerInvariantError("agent_permission_origin_cycle");
+  const [child] = await tx
+    .select()
+    .from(hitlRequests)
+    .where(eq(hitlRequests.id, hitlRequestId));
+  const response = child?.response as Record<string, unknown> | null;
+
+  if (response?._agentResumeOrigin === undefined) return;
+  const origin = resumeOriginSchema.safeParse(response._agentResumeOrigin);
+  const source = parseAgentPermission(child?.schema);
+
+  if (!origin.success || !child?.respondedAt || !source)
+    throw new PromptOwnerInvariantError("agent_permission_origin_shape");
+  const [parent] = await tx
+    .select()
+    .from(hitlRequests)
+    .where(eq(hitlRequests.id, origin.data.hitlRequestId))
+    .for("update");
+  const parentSource = parseAgentPermission(parent?.schema);
+  const priorResponse = parent?.response as Record<string, unknown> | null;
+  const grant = priorResponse?._agentResume as
+    | Record<string, unknown>
+    | undefined;
+
+  if (
+    !parent ||
+    !parentSource ||
+    parent.runId !== child.runId ||
+    source.agentPrompt.assignmentId !== origin.data.assignmentId ||
+    source.agentPrompt.turnId !== origin.data.turnId ||
+    grant?.kind !== "continue" ||
+    grant.assignmentId !== origin.data.assignmentId ||
+    grant.turnId !== origin.data.turnId ||
+    grant.sourceCommandId !== origin.data.sourceCommandId ||
+    parentSource.agentPrompt.commandId !== origin.data.sourceCommandId ||
+    grant.reissuedHitlRequestId !== child.id ||
+    grant.inputCommandId !== null ||
+    grant.optionId !== response.optionId ||
+    priorResponse?.optionId !== response.optionId
+  )
+    throw new PromptOwnerInvariantError("agent_permission_origin_identity");
+  if (parent.respondedAt) return;
+  await tx
+    .update(hitlRequests)
+    .set({
+      respondedAt: new Date(),
+      response: {
+        ...priorResponse,
+        _audit: {
+          originalRequestId: parentSource.requestId,
+          reissuedRequestId: source.requestId,
+          reissuedHitlRequestId: child.id,
+          deliveredViaAgentResume: true,
+        },
+      },
+    })
+    .where(eq(hitlRequests.id, parent.id));
+  await recordAgentPermissionAcknowledgement(tx, parent.id);
+  await completeAgentPermissionOrigin(
+    tx,
+    parent.id,
+    new Set([...ancestors, child.id]),
+  );
+}
+
+/** Called only by the transaction that first stamps the response marker. */
+export async function recordAgentPermissionAcknowledgement(
+  tx: Db,
+  hitlRequestId: string,
+): Promise<void> {
+  const [hitl] = await tx
+    .select()
+    .from(hitlRequests)
+    .where(eq(hitlRequests.id, hitlRequestId));
+
+  if (!hitl?.respondedAt)
+    throw new PromptOwnerInvariantError("agent_permission_ack_missing");
+  await completeHitlAssignmentFromCurrentActor({
+    db: tx,
+    hitlRequestId,
+    eventKind: "responded",
+  });
+  const [run] = await tx
+    .select({ projectId: runs.projectId })
+    .from(runs)
+    .where(eq(runs.id, hitl.runId));
+
+  if (run?.projectId)
+    await emitWebhookEvent({
+      db: tx,
+      type: "hitl.responded",
+      projectId: run.projectId,
+      runId: hitl.runId,
+      data: { hitlRequestId, kind: "permission", via: "auto" },
+    });
 }
 
 /** Replayed canonical permission events recover the original input ACK. They
