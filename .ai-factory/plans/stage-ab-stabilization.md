@@ -1,7 +1,7 @@
 # Implementation Plan: Stage A/B stabilization
 
 Branch at planning: `feature/stage-b-durable-execution-host-data-plane`.
-Created: 2026-09-05. Status: **Implementation in progress; S1 qualified locally; S2 partially implemented; S3–S5 pending**.
+Created: 2026-09-05. Status: **Implementation in progress; S0–S1 qualified; S2.1–S2.8 complete; S2.7 complete; S2.9 partially complete (project scratch, recovery and the package action journal done, the two local-package assistant turns refused with a stated harness blocker); S2.10–S2.12, S3, S4 and S5 pending**.
 Implementation base: the audited Stage B tip, followed by revalidation against the then-current local `main`.
 
 ## Settings
@@ -15,6 +15,8 @@ Implementation base: the audited Stage B tip, followed by revalidation against t
 - Original planning-turn boundary (implementation is now authorized): planning wrote only this file. Preserve the existing A/B plans and the user's untracked review directory. No production edits, test implementation, migrations, branch switching, pull, commit, or execution of the implementation during planning. Pass this explicit plan path to implementation; the existing branch-derived Stage B plan is historical input, not the task list for this work.
 
 ## Execution progress
+
+S5.4 documentation audit started (evidence-gathering plus two verified corrections; the full audit still runs at its gate). Read-only revalidation of the earlier preparation is appended to `final-doc-audit-prep.md`: the supervisor HTTP surface is 21 routes as built; the literal `MAISTER_*` reader scan now finds 74 distinct keys against 63 assigned in `.env.example`, with the 35-key difference captured as key names only in `s5-env-readers.txt`/`s5-env-template.txt` and no values read or retained. Two claims that are wrong today were corrected now rather than deferred: `AGENTS.md` described `compose.yml` as "app + supervisor + postgres" when the file is Postgres-only and says so in its own header, and both `native-hook-materializer.ts` and `guardrail-hooks.md` claimed the guard-script path override supports split-host topologies, which ADR-023 does not permit before Stage C. The remaining audit surface — architecture prose and diagrams, database/API/event schemas, component responsibilities and connectivity, deployment wiring, and the classification of the 35 unassigned environment keys — stays open for S5.4.
 
 S2.9 scratch recovery arm qualified; the assistant turn arm is refused with a stated reason. A recovery prompt now owns its own `scratch_recover` generation at ordinal zero and admits only under that placement reason, so it can never adopt the launch turn's identity; the existing placement suite's recover case asserts the owned command, its `recovery` reference and its applied state, and passes 5/5 (`s2-9-recovery.json`). All 44 scratch integration cases pass without skips (`s2-9-final.json`). Wiring the two local-package assistant turns to owners was implemented and then REVERTED: that suite mocks `@/lib/supervisor-client` wholesale, so no canonical lifecycle event ever projects the session incarnation an owned prompt must admit against, and all 13 of its turn-driving cases failed `prompt_incarnation_pending`. Qualifying those two turns needs a real event plane in that suite — a harness increment, not a wiring change — so they keep the pre-owner stack completion and S2.9 stays unchecked with exactly that gap named. Their postprocess action is already durable through the `0157` journal.
 

@@ -346,7 +346,8 @@ resumes through the same agent-permission-HITL path that already drives it.
   untouched and reclaim removes it with the file (no second write, no extra
   cleanup). The hook runs a SHIPPED repo-local guard script
   (`web/scripts/native-path-guard.mjs`) via `node` (resolved relative to the web
-  cwd, `MAISTER_HOOK_GUARD_SCRIPT`-overridable for split-host) — NOT written into
+  cwd, `MAISTER_HOOK_GUARD_SCRIPT`-overridable, though the adapter still executes
+  it from the same filesystem — ADR-023; split-host is Stage C) — NOT written into
   the worktree, so it needs no `WORKTREE_EXCLUDE_PATTERNS` entry or cleanup;
   `allowedPaths` ride the exec-form `args` (no shell). It covers **only
   `path_guard`**; `repetition` and `no_progress` stay supervisor-only (they need

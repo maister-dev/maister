@@ -60,7 +60,7 @@ mAIster/
 ├── pnpm-workspace.yaml         # Monorepo: web + supervisor + site + site-docs
 ├── pnpm-lock.yaml              # Frozen lockfile (root)
 ├── Dockerfile                  # Single image; web/supervisor selected via command:
-├── compose.yml                 # Base: app + supervisor + postgres
+├── compose.yml                 # Postgres only; web + supervisor run on the host
 ├── compose.production.yml      # Prod hardening: read_only, cap_drop, tmpfs
 ├── docs/                       # Product & engineering documentation
 │   ├── VISION.md

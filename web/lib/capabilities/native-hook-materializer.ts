@@ -82,8 +82,9 @@ export function resolveNativeHookMaterializer(
 }
 
 // Absolute path to the shipped native path-guard script (run via `node`). Resolved
-// relative to the web app cwd; overridable for split-host topologies where the
-// supervisor runs the adapter on a different machine.
+// relative to the web app cwd and overridable, but the spawned adapter still
+// executes it from the SAME filesystem (ADR-023) — a path override alone does
+// not make a split-host topology work; that is Stage C.
 export function nativeGuardScriptPath(): string {
   return (
     process.env.MAISTER_HOOK_GUARD_SCRIPT ??
