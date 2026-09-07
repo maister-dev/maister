@@ -34,6 +34,7 @@ import {
   authorizeNodePermissionContinuation,
 } from "@/lib/flows/graph/permission-resume";
 import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
+import { admitCompletedAgentResume } from "@/lib/agents/resume";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { hitlRequests, runs, workspaces, runSyncAttempts } =
@@ -357,6 +358,7 @@ export async function claimAgentIdleResumeInTransaction(
 
   const assignment = await mintForClaim(tx, runId, "resume", opts);
 
+  await admitCompletedAgentResume(tx, assignment);
   await opts.recordSuccessAudit?.(tx);
 
   log.info(

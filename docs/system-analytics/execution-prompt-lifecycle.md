@@ -576,7 +576,41 @@ current run status, which may already reflect completion.
 
 Qualification covers live completion, actual launcher death before terminal
 evidence and before application, stale prior-result visibility, and capacity
-refusal. Resume and historical permission/wait handoffs remain pending below.
+refusal. Historical permission/wait handoffs remain pending below.
+
+### Agent completed-turn resume (Implemented)
+
+The capacity-approved idle claim stores a new `resume` turn with the last applied
+turn's original input in the same transaction as its new assignment. Queued
+messages retain priority and their own identities. The standard owned create,
+prompt and application path then handles live completion and Web restart. Host
+resolution occurs before the response claim transaction, using its database and
+transport. Qualification covers live execution, both launcher-death windows,
+capacity refusal and queued-message promotion.
+
+### Agent checkpoint permission handoff (Designed)
+
+An agent permission request retains its exact original command, turn, ordinal,
+assignment and incarnation in the HITL schema. Replayed notifications address
+that same request. Input admission freezes the delivery command in the response;
+an unknown delivery reattaches that command instead of repeating the decision.
+Its ACK and response marker verify the original generation under the run lock.
+
+An idle resume first reconciles that original prompt, input and checkpoint.
+The ordinary scheduler/run claim may then retain a typed handoff in the existing
+HITL response, binding the original source to the newly admitted assignment.
+A verified completed result crosses that explicit grant without another ACP
+prompt. Only a proven checkpoint interruption authorizes a new resume turn.
+Source request/terminal digests, checkpoint identity and host event order are
+rechecked during application. Missing or unknown proof retains pending work.
+Historical evidence cannot itself grant permission to mutate the successor.
+
+The original command and agent turn stay pending while the checkpointed request
+awaits its normal re-entry. Result application acknowledges the original turn,
+the exact handoff and the command in one transaction. An interrupted source is
+superseded when its new turn is admitted; the saved choice may answer only the
+permission reissued by that explicitly granted resume. A different current
+assignment, cancelled run or unrelated request cannot consume the handoff.
 
 ### Remaining domain adapters (Designed)
 
@@ -586,7 +620,7 @@ Persist the reference before remote dispatch in the same transaction as the owne
 | --- | --- | --- | --- |
 | Consensus verification: node attempt, round, verifier, target | `web/lib/flows/graph/consensus/runtime.ts:401–438`; consensus round/evaluation rows | Apply exactly the intended matrix cell, wake existing consensus reducer; same attempt ID alone is not unique enough. | `owner-consensus-verify` |
 | Consensus synthesis: attempt, round, synthesis generation | `web/lib/flows/graph/consensus/runtime.ts:658–697` | Apply synthesis result to its original round; never regenerate a prompt merely because the parent stack died. | `owner-consensus-synthesis` |
-| Agent resume turn: run, durable turn generation, incarnation | `web/lib/agents/launch.ts`; runs, sessions, existing trigger/message records | Running/NeedsInput; parked NeedsInputIdle/WaitingOnChildren require their specific existing re-entry and capacity rules. Apply result/public-result contract and completion once, preserving launch snapshot. Initial/rework turns and pre-prompt create recovery are implemented above. | `owner-agent-resume` |
+| Agent checkpoint/wait handoff: original turn, current assignment, source proof | `web/lib/agents/launch.ts`; runs, sessions, existing trigger/message records | NeedsInputIdle/WaitingOnChildren require their specific existing re-entry and capacity rules. Apply the original result once after explicit handoff, preserving its launch snapshot. Completed-turn resume and initial/rework/message creation are implemented above. | `owner-agent-resume` |
 | Consensus draft agent: child run + consensus round/participant generation | Agent session consumer/consensus draft path in `agents/launch.ts:3915–3921` | Record complete draft artifact and settle the existing child/result path; output lost from stack must not become an empty successful draft. | `owner-consensus-draft` |
 | Scratch launch/message/recovery: dialog message/turn ID and generation | `scratch-runs/{service,events,recovery,dialog}.ts` | Scratch dialog Running with run/session still live is a due continuation, not a reason to skip. Persist reply and WaitingForUser once; NeedsInput and idle retain the exact owner until checkpoint/resume disposition. | `owner-scratch-initial`, `owner-scratch-message`, `owner-scratch-recovery` |
 | Local-package/Studio assistant scratch: scratch turn plus postprocess action generation | `scratch-runs/service.ts` `postProcessFlowAssistantTurn`, local-package authority | Recover dialog completion and pending postprocessing independently. Revalidate local-package lock/session authority before existing publish/apply side effect; persist action intent/result idempotently. No new package behavior. | `owner-scratch-package-initial`, `owner-scratch-package-message`, `owner-scratch-package-lock-takeover` |

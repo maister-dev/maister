@@ -28,6 +28,7 @@ import {
 } from "@/lib/db/schema";
 import { agentPromptOwners } from "@/lib/agents/prompt-owner";
 import { reworkChildRun } from "@/lib/agents/launch";
+import { claimAgentResumeSlot } from "@/lib/services/hitl";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
 import { testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { createExecutionHosts } from "@/lib/execution-host/client";
@@ -837,6 +838,106 @@ describe("Agent owned prompts through the production launcher", () => {
       resumeRequestedAt: null,
     });
   }, 110_000);
+
+  it.each(["live", "before_terminal", "before_apply"] as const)(
+    "owner-agent-resume retains the completed turn input after %s",
+    async (window) => {
+      const runId = await seedAgent({
+        bytes: 0,
+        persistent: true,
+        terminalDelayMs: window === "before_terminal" ? 3_000 : 0,
+      });
+      const initial = startDriver(runId);
+
+      await expect
+        .poll(initial.returned, { timeout: 30_000, interval: 50 })
+        .toBe(true);
+      const [source] = await db
+        .select()
+        .from(agentTurns)
+        .where(eq(agentTurns.runId, runId));
+
+      expect(source.state).toBe("applied");
+      const claim = await claimAgentResumeSlot(db, runId);
+
+      expect(claim.outcome).toBe("claimed");
+      const [turn] = await db
+        .select()
+        .from(agentTurns)
+        .where(
+          and(eq(agentTurns.runId, runId), eq(agentTurns.variant, "resume")),
+        );
+
+      expect(turn).toMatchObject({
+        state: "claimed",
+        prompt: source.prompt,
+      });
+      expect(turn.executionAssignmentId).not.toBe(source.executionAssignmentId);
+      if (window === "before_apply") await killAtTerminalWrite(runId);
+      else {
+        const driver = startDriver(runId);
+
+        if (window === "before_terminal") {
+          await expect
+            .poll(
+              async () => {
+                const [command] = await db
+                  .select()
+                  .from(executionCommands)
+                  .where(
+                    and(
+                      eq(executionCommands.runId, runId),
+                      eq(executionCommands.kind, "session.prompt"),
+                      eq(
+                        executionCommands.executionAssignmentId,
+                        turn.executionAssignmentId!,
+                      ),
+                    ),
+                  );
+
+                return command?.state;
+              },
+              { timeout: 30_000, interval: 25 },
+            )
+            .toBe("accepted");
+          driver.child.kill("SIGKILL");
+          await driver.exited;
+        }
+      }
+      if (window !== "live") startDriver(runId);
+      await expect
+        .poll(
+          async () => {
+            const [current] = await db
+              .select()
+              .from(agentTurns)
+              .where(eq(agentTurns.id, turn.id));
+
+            return current.state;
+          },
+          { timeout: 50_000, interval: 50 },
+        )
+        .toBe("applied");
+      const commands = await db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, runId),
+            eq(executionCommands.kind, "session.prompt"),
+          ),
+        );
+
+      expect(commands).toHaveLength(2);
+      expect(
+        commands.every((command) => command.applicationState === "applied"),
+      ).toBe(true);
+      const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+
+      expect(run.status).toBe("NeedsInputIdle");
+    },
+    90_000,
+  );
 
   it.each(["live", "before_terminal", "before_apply"] as const)(
     "owner-agent-idle-message applies the original accepted message after %s",

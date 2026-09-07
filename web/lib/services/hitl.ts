@@ -286,6 +286,8 @@ export async function claimAgentResumeSlot(
   db: any,
   runId: string,
 ): Promise<AgentResumeClaim> {
+  const placementHost = await localHost({ db });
+
   return db.transaction(async (tx: any): Promise<AgentResumeClaim> => {
     await takeSchedulerLock(tx);
 
@@ -328,7 +330,9 @@ export async function claimAgentResumeSlot(
 
       // ADR-166 D3: the idle wake is a new driver generation, minted inside
       // this claim.
-      const claim = await claimAgentIdleResumeInTransaction(tx, runId);
+      const claim = await claimAgentIdleResumeInTransaction(tx, runId, {
+        placement: { host: placementHost },
+      });
 
       return claim.ok
         ? { outcome: "claimed", assignmentId: claim.assignment?.id ?? null }
@@ -993,6 +997,11 @@ async function handlePermissionResponse(
   // requestId once the resumed session re-issues the permission.
   if (claim.runStatus === "NeedsInputIdle") {
     if (runRow.runKind === "agent") {
+      const placementHost = await localHost({
+        db,
+        transport: args.executionHosts.transport,
+      });
+
       // ADR-121 (T14, G4): cap-gate the agent idle-resume claim atomically (closes
       // the D2 over-cap bypass on the agent pool too). Under the scheduler lock,
       // count the agent pool; if at cap, DEFER — stamp resume_requested_at (the C3
@@ -1016,6 +1025,7 @@ async function handlePermissionResponse(
         // ADR-166 D3: the idle wake is a new driver generation, minted inside
         // this claim; startAgentSession binds to it.
         const claim = await claimAgentIdleResumeInTransaction(tx, runId, {
+          placement: { host: placementHost },
           recordSuccessAudit: async (t: any) => {
             await args.recordSuccessAudit?.(t, 202);
           },
