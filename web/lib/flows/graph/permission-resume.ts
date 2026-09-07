@@ -240,13 +240,10 @@ export async function prepareFlowPermissionResult(
     return { kind: "pending", reason: "source_checkpoint_pending" };
   const order = await permissionCheckpointOrder(db, command, checkpoint);
 
-  if (
-    order === "unproven" ||
-    (!rejected &&
-      order === "interrupted" &&
-      !isPermissionCheckpointInterruption(command))
-  )
+  if (order === "unproven")
     return { kind: "pending", reason: "source_checkpoint_order_unproven" };
+  const interrupted =
+    order === "after_checkpoint" && isPermissionCheckpointInterruption(command);
   const prepared: PreparedPermissionEvidence = {
     hitlRequestId: hitl.id,
     sourceJson: canonicalCommandJson(hitl.schema),
@@ -305,7 +302,7 @@ export async function prepareFlowPermissionResult(
       throw new PromptOwnerInvariantError(
         "gate_permission_result_parent_missing",
       );
-    if (order === "interrupted")
+    if (interrupted)
       return {
         ...prepared,
         kind: "interrupted",
@@ -332,8 +329,7 @@ export async function prepareFlowPermissionResult(
       parentActionSha256: gateParentActionDigest(parent.actionCompletion),
     };
   }
-  if (order === "interrupted")
-    return { ...prepared, kind: "interrupted", domain: "node" };
+  if (interrupted) return { ...prepared, kind: "interrupted", domain: "node" };
   const completion = await decodeNodePromptCompletion({
     commandId: command.id,
     promptOrdinal: source.data.flowPrompt.promptOrdinal,

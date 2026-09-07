@@ -540,7 +540,9 @@ describe("Owned Flow completed-command failure handoff", () => {
         | "ordinary"
         | "claim SIGKILL"
         | "fresh permission"
-        | "refused handle";
+        | "refused handle"
+        | "completion during checkpoint"
+        | "failure during checkpoint";
     }>
   >([
     { owner: "node", window: "ordinary" },
@@ -550,15 +552,31 @@ describe("Owned Flow completed-command failure handoff", () => {
     { owner: "node", window: "fresh permission" },
     { owner: "skill_check", window: "fresh permission" },
     { owner: "node", window: "refused handle" },
+    { owner: "node", window: "completion during checkpoint" },
+    { owner: "ai_judgment", window: "completion during checkpoint" },
+    { owner: "skill_check", window: "completion during checkpoint" },
+    { owner: "node", window: "failure during checkpoint" },
+    { owner: "ai_judgment", window: "failure during checkpoint" },
+    { owner: "skill_check", window: "failure during checkpoint" },
   ])(
     "owner-flow-permission-checkpoint-interruption: $owner continues across $window",
     async ({ owner, window }) => {
+      const completesDuringCheckpoint =
+        window === "completion during checkpoint";
+      const failsDuringCheckpoint = window === "failure during checkpoint";
+      const terminalDuringCheckpoint =
+        completesDuringCheckpoint || failsDuringCheckpoint;
+
       await stopRuntimeEventConsumers();
       supervisor = await supervisor.restart({
         env: {
           ...supervisor.options.env,
           MOCK_ACP_STOP_REASON: "end_turn",
           MOCK_ACP_HOLD_AFTER_PERMISSION: "1",
+          MOCK_ACP_COMPLETE_ON_CHECKPOINT: terminalDuringCheckpoint ? "1" : "0",
+          MOCK_ACP_FAIL_AFTER_PERMISSION: failsDuringCheckpoint
+            ? "adapter authentication unavailable"
+            : "",
         },
       });
       const seeded = await seedFailureFlow(owner);
@@ -663,7 +681,16 @@ describe("Owned Flow completed-command failure handoff", () => {
             },
             { timeout: 30_000 },
           )
-          .toEqual({ state: "failed", error: "ACP_PROTOCOL" });
+          .toEqual(
+            completesDuringCheckpoint
+              ? { state: "succeeded", error: undefined }
+              : {
+                  state: "failed",
+                  error: failsDuringCheckpoint
+                    ? "EXECUTOR_UNAVAILABLE"
+                    : "ACP_PROTOCOL",
+                },
+          );
         const events = await db
           .select()
           .from(executionEvents)
@@ -677,7 +704,8 @@ describe("Owned Flow completed-command failure handoff", () => {
         const terminal = events.find(
           (event) =>
             event.payload?.commandId === source.id &&
-            event.payload.phase === "rejected",
+            event.payload.phase ===
+              (completesDuringCheckpoint ? "completed" : "rejected"),
         );
 
         expect(accepted?.eventStreamId).toBe(terminal?.eventStreamId);
@@ -736,13 +764,17 @@ describe("Owned Flow completed-command failure handoff", () => {
         );
         if (owner === "node")
           expect(parent.actionResume).toMatchObject({
-            kind: "permission_continue",
-            promptOrdinal: 1,
+            kind: terminalDuringCheckpoint
+              ? "permission_result"
+              : "permission_continue",
+            promptOrdinal: terminalDuringCheckpoint ? 0 : 1,
           });
         else
           expect(gates[0].permissionResume).toMatchObject({
-            kind: "permission_continue",
-            promptOrdinal: 1,
+            kind: terminalDuringCheckpoint
+              ? "permission_result"
+              : "permission_continue",
+            promptOrdinal: terminalDuringCheckpoint ? 0 : 1,
           });
         expect(prompts).toHaveLength(1);
         if (
@@ -864,7 +896,11 @@ describe("Owned Flow completed-command failure handoff", () => {
             },
             { timeout: 60_000 },
           )
-          .toBe(window === "refused handle" ? "Failed" : "Review");
+          .toBe(
+            window === "refused handle" || failsDuringCheckpoint
+              ? "Failed"
+              : "Review",
+          );
         await continuation.stop();
         continuation = undefined;
         const finalPrompts = await db
@@ -881,10 +917,12 @@ describe("Owned Flow completed-command failure handoff", () => {
           .from(hitlRequests)
           .where(eq(hitlRequests.runId, seeded.runId));
 
-        expect(finalPrompts).toHaveLength(window === "refused handle" ? 1 : 2);
+        expect(finalPrompts).toHaveLength(
+          window === "refused handle" || terminalDuringCheckpoint ? 1 : 2,
+        );
         expect(finalHitls).toHaveLength(window === "fresh permission" ? 2 : 1);
         expect(finalHitls.every((row) => row.respondedAt !== null)).toBe(true);
-        if (window === "refused handle") {
+        if (window === "refused handle" || failsDuringCheckpoint) {
           const creates = await db
             .select()
             .from(executionCommands)
@@ -895,13 +933,21 @@ describe("Owned Flow completed-command failure handoff", () => {
               ),
             );
 
-          expect(creates).toHaveLength(2);
+          expect(creates).toHaveLength(window === "refused handle" ? 2 : 1);
           expect(
             creates.filter((command) => command.state === "failed"),
-          ).toHaveLength(1);
+          ).toHaveLength(window === "refused handle" ? 1 : 0);
           await expect(
             access(path.join(seeded.worktreePath, "failure-successor.txt")),
           ).rejects.toMatchObject({ code: "ENOENT" });
+
+          if (owner !== "node")
+            expect(
+              await readFile(
+                path.join(seeded.worktreePath, "failure-parent.txt"),
+                "utf8",
+              ),
+            ).toBe("work\n");
 
           return;
         }

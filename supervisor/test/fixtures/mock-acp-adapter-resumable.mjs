@@ -26,6 +26,7 @@
 //   MOCK_ACP_REQUEST_PERMISSION  "1" → call requestPermission on first prompt.
 //   MOCK_ACP_HOLD_AFTER_PERMISSION  "1" → retain the selected turn until teardown.
 //   MOCK_ACP_FAIL_AFTER_PERMISSION  ACP request error after a selected permission.
+//   MOCK_ACP_COMPLETE_ON_CHECKPOINT "1" → finish the held turn during teardown.
 
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -39,6 +40,8 @@ const REQUEST_PERMISSION = process.env.MOCK_ACP_REQUEST_PERMISSION === "1";
 const HOLD_AFTER_PERMISSION =
   process.env.MOCK_ACP_HOLD_AFTER_PERMISSION === "1";
 const FAIL_AFTER_PERMISSION = process.env.MOCK_ACP_FAIL_AFTER_PERMISSION;
+const COMPLETE_ON_CHECKPOINT =
+  process.env.MOCK_ACP_COMPLETE_ON_CHECKPOINT === "1";
 const STATE_DIR = process.env.MOCK_ACP_STATE_DIR ?? null;
 
 function log(level, payload) {
@@ -96,6 +99,7 @@ function extractText(blocks) {
 // cleared after the replay round-trip completes (selected) or is re-issued
 // (cancelled-again).
 let pendingReplay = null;
+let finishHeldPrompt = null;
 
 class MockAgent {
   constructor(connection) {
@@ -180,7 +184,7 @@ class MockAgent {
   async prompt(params) {
     const text = extractText(params.prompt);
     const session = this.sessions.get(params.sessionId);
-    const completionText = readJournal(params.sessionId)?.completionText;
+    let completionText = readJournal(params.sessionId)?.completionText;
     let permissionSelected = HOLD_AFTER_PERMISSION && session?.resumed === true;
 
     if (session) session.prompts += 1;
@@ -332,6 +336,14 @@ class MockAgent {
       }
     }
 
+    if (permissionSelected && HOLD_AFTER_PERMISSION && !session?.resumed) {
+      await new Promise((resolve) => {
+        finishHeldPrompt = resolve;
+      });
+      finishHeldPrompt = null;
+      completionText = readJournal(params.sessionId)?.completionText;
+    }
+
     if (permissionSelected && typeof completionText === "string") {
       await this.connection.sessionUpdate({
         sessionId: params.sessionId,
@@ -340,10 +352,6 @@ class MockAgent {
           content: { type: "text", text: completionText },
         },
       });
-    }
-
-    if (permissionSelected && HOLD_AFTER_PERMISSION && !session?.resumed) {
-      await new Promise(() => {});
     }
 
     if (permissionSelected && FAIL_AFTER_PERMISSION) {
@@ -364,7 +372,11 @@ new acp.AgentSideConnection(
   stream,
 );
 
-process.on("SIGTERM", () => process.exit(0));
+process.on("SIGTERM", () => {
+  if (!COMPLETE_ON_CHECKPOINT || !finishHeldPrompt) process.exit(0);
+  finishHeldPrompt();
+  setTimeout(() => process.exit(0), 100);
+});
 process.on("SIGINT", () => process.exit(0));
 
 setInterval(() => {}, 1 << 30);

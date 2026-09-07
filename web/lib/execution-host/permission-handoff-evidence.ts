@@ -56,15 +56,15 @@ export function isPermissionCheckpointInterruption(
   );
 }
 
-/** Teardown can fail the prompt itself. Only a terminal published before
- * checkpoint admission proves an independently completed result. Compare
- * durable host positions, never manager/host wall clocks or delivery order.
+/** Teardown can itself cause a protocol failure. Compare durable host positions
+ * to distinguish that interruption from an earlier failure. A complete response
+ * or explicit adapter error retains its result even during checkpoint teardown.
  */
 export async function permissionCheckpointOrder(
   db: Db,
   command: ExecutionCommand,
   checkpoint: ExecutionCommand,
-): Promise<"completed" | "interrupted" | "unproven"> {
+): Promise<"before_checkpoint" | "after_checkpoint" | "unproven"> {
   if (!command.terminalEventId || !command.targetSessionId) return "unproven";
   const boundary = and(
     eq(executionEvents.source, "host"),
@@ -111,16 +111,21 @@ export async function permissionCheckpointOrder(
     return "unproven";
 
   return terminal.hostSequence! < accepted.hostSequence!
-    ? "completed"
-    : "interrupted";
+    ? "before_checkpoint"
+    : "after_checkpoint";
 }
 
-export async function permissionResultPrecedesCheckpoint(
+export async function isPermissionResultHandoff(
   db: Db,
   command: ExecutionCommand,
   checkpoint: ExecutionCommand,
 ): Promise<boolean> {
+  const order = await permissionCheckpointOrder(db, command, checkpoint);
+
   return (
-    (await permissionCheckpointOrder(db, command, checkpoint)) === "completed"
+    isPermissionResultCommand(command) &&
+    (order === "before_checkpoint" ||
+      (order === "after_checkpoint" &&
+        !isPermissionCheckpointInterruption(command)))
   );
 }

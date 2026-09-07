@@ -22,7 +22,7 @@ import {
   isPermissionCheckpointInterruption,
   isRejectedPermissionInputReceipt,
   permissionCheckpointOrder,
-  permissionResultPrecedesCheckpoint,
+  isPermissionResultHandoff,
 } from "@/lib/execution-host/permission-handoff-evidence";
 import { markSucceeded } from "@/lib/execution-host/commands";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
@@ -197,7 +197,7 @@ export async function lockPermissionResultEvidence(
   const { run, command } = context;
   const { checkpoint } = evidence;
 
-  if (!(await permissionResultPrecedesCheckpoint(tx, command, checkpoint))) {
+  if (!(await isPermissionResultHandoff(tx, command, checkpoint))) {
     log.warn(
       {
         runId: run.id,
@@ -227,7 +227,7 @@ export async function lockPermissionContinuationEvidence(
       tx,
       context.command,
       evidence.checkpoint,
-    )) !== "interrupted"
+    )) !== "after_checkpoint"
   )
     throw new PromptOwnerInvariantError("permission_continue_checkpoint_order");
 

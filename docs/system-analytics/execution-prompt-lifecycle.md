@@ -282,7 +282,7 @@ does not convert an unavailable result into a failed check. The generic worker
 can recover the gate application after process death. Gate application alone
 does not establish complete Flow restart recovery.
 
-### Flow action and graph continuation (Partial implementation)
+### Flow action and graph continuation (Implemented)
 
 Node prompts admit the exact attempt and ordinal before dispatch. Their owner
 stores the bounded action result and original structured-output payload in
@@ -373,15 +373,16 @@ A succeeded source command can still have a non-`end_turn` ACP stop reason.
 Its verified output is decoded as the ordinary failed node result or gate
 verdict. An unexpected `cancelled` is mapped by the supervisor to a failed
 `ACP_PROTOCOL` command; that exact receipt/event-agreed error can also be
-handed off. An adapter's agreed `EXECUTOR_UNAVAILABLE` rejection before checkpoint
-acceptance uses the same failed-result handoff and preserves its original code.
+handed off. An adapter's agreed `EXECUTOR_UNAVAILABLE` rejection uses the same
+failed-result handoff and preserves its original code.
 The claim and later lineage reads require the original request and
-terminal digests and refuse terminal-conflict quarantine. A result handoff also
-requires the agreed prompt terminal event to precede the exact checkpoint
-command's accepted event in the same host stream. Preflight, capacity claim and
+terminal digests and refuse terminal-conflict quarantine. Preflight, capacity claim and
 historical lineage reads verify the canonical command/assignment/session boundary
 and compare host sequence positions. Wall clocks and arrival order cannot prove
-this. Missing ordering evidence stays pending. For a completed source, nodes retain
+this. An agreed response or explicit adapter-unavailable error remains a completed
+result even if its terminal event follows checkpoint acceptance. Only a protocol
+failure in that later position follows the interruption path below. Missing
+ordering evidence stays pending. For a completed failed source, nodes retain
 `ok: false` with the original error code (`ACP_PROTOCOL` for a non-`end_turn`
 response); gates retain their failed verdict. The graph
 then uses its existing failure handling, without another prompt, successor
@@ -405,8 +406,8 @@ reuses the persisted ordinal; the resumed prompt asks to continue the prior
 work, and the original accepted prompt remains historical. The old permission
 choice is never redelivered. A later permission creates a new HITL requiring
 its own answer, even for an identical tool/options payload. A refused ACP handle
-fails without creating an empty session. Other interrupted error codes remain
-part of the open S2.6 work.
+fails without creating an empty session. Fenced sources and unclassified failure
+envelopes cannot authorize a new turn or a result handoff.
 
 An original input receipt rejected with HTTP 410 and `HITL_TIMEOUT` records a
 delivery that did not resolve its deferred. After the exact source prompt is
@@ -442,7 +443,7 @@ and the graph wake commit together. A definitive
 does not grant that decision. Persistence failure releases the driver wait to
 the durable continuation, which replays the request and completes the original
 supervisor deferred after delivery. A checkpointed turn under a replacement
-assignment still requires the separate permission-resume/handoff work above.
+assignment uses the persisted permission-resume/handoff authorization above.
 
 ### Remaining domain adapters (Designed)
 
@@ -450,9 +451,6 @@ Persist the reference before remote dispatch in the same transaction as the owne
 
 | Owner variant and key inputs | Current callers / durable authority to reuse | Recovery window and terminal application | Primary AT-05 case |
 | --- | --- | --- | --- |
-| Flow agent/judge/orchestrator node: attempt ID, session incarnation, prompt ordinal | `web/lib/flows/runner-agent.ts`, `flows/graph/runner-graph.ts`, `runs/resume-driver.ts`; `node_attempts` + run cursor | Active attempt while Running/NeedsInput; parked NeedsInputIdle remains attached until explicit resumed new command. Apply output/vars/decision, cursor transition and durable successor-readiness intent atomically via the existing graph reducer; its autonomous recovery schedules the existing driver even if the prompt application marker is already complete. | `owner-flow-node` |
-| Flow permission resume: exact node attempt, HITL request, resume operation and incarnation | `web/lib/runs/resume-driver.ts:522–527`; stored HITL intent and node attempt | Ordinary restart reattaches its existing action command. Only an actual persisted checkpoint/resume decision creates a new prompt. Preserve exact attempt and permission-delivery evidence; never select an arbitrary open attempt after completion. | `owner-flow-permission-resume`, `owner-flow-restart-no-resume`, `owner-flow-orchestrator-wait` |
-| Skill/AI gate: gate result ID, evaluation generation, attempt and gate key | `web/lib/flows/graph/gates-exec.ts:488–535`; `gate_results` | Resume unfinished evaluation even where caller supplied no nodeAttemptId. Persist verdict/evidence and gate completion under generation; do not rerun a paid check. | `owner-gate-skill`, `owner-gate-ai` |
 | Consensus verification: node attempt, round, verifier, target | `web/lib/flows/graph/consensus/runtime.ts:401–438`; consensus round/evaluation rows | Apply exactly the intended matrix cell, wake existing consensus reducer; same attempt ID alone is not unique enough. | `owner-consensus-verify` |
 | Consensus synthesis: attempt, round, synthesis generation | `web/lib/flows/graph/consensus/runtime.ts:658–697` | Apply synthesis result to its original round; never regenerate a prompt merely because the parent stack died. | `owner-consensus-synthesis` |
 | Agent initial/resume/rework turn: run, durable turn generation, incarnation | `web/lib/agents/launch.ts`; runs, sessions, existing trigger/message records | Running/NeedsInput; parked NeedsInputIdle/WaitingOnChildren require their specific existing re-entry and capacity rules. Apply result/public-result contract and completion once, preserving launch snapshot. | `owner-agent-initial`, `owner-agent-persistent-first`, `owner-agent-resume`, `owner-agent-idle-message`, `owner-agent-rework` |
