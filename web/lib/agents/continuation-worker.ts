@@ -11,6 +11,7 @@ import {
   gt,
   inArray,
   isNotNull,
+  notExists,
   or,
   sql,
 } from "drizzle-orm";
@@ -19,7 +20,12 @@ import pino from "pino";
 import { startAgentSession } from "./launch";
 import { AgentPromptContinuationPending } from "./prompt-owner";
 
-import { agentTurns, hitlRequests, runs } from "@/lib/db/schema";
+import {
+  agentTurns,
+  executionAssignments,
+  hitlRequests,
+  runs,
+} from "@/lib/db/schema";
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { projectionTransaction } from "@/lib/execution-host/events/projection-transaction";
 import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
@@ -69,6 +75,33 @@ export function startAgentContinuationWorker(input: {
                 eq(runs.runKind, "agent"),
                 cursor ? gt(runs.id, cursor) : undefined,
                 or(
+                  and(
+                    eq(runs.status, "Running"),
+                    notExists(
+                      tx
+                        .select({ id: agentTurns.id })
+                        .from(agentTurns)
+                        .where(eq(agentTurns.runId, runs.id)),
+                    ),
+                    exists(
+                      tx
+                        .select({ id: executionAssignments.id })
+                        .from(executionAssignments)
+                        .where(
+                          and(
+                            eq(
+                              executionAssignments.id,
+                              runs.executionAssignmentId,
+                            ),
+                            eq(executionAssignments.state, "active"),
+                            inArray(executionAssignments.placementReason, [
+                              "launch",
+                              "legacy_backfill",
+                            ]),
+                          ),
+                        ),
+                    ),
+                  ),
                   and(
                     inArray(runs.status, ["Running", "NeedsInput"]),
                     exists(

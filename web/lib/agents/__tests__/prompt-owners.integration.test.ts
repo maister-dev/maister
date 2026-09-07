@@ -482,6 +482,54 @@ async function killAtTerminalWrite(
 }
 
 describe("Agent owned prompts through the production launcher", () => {
+  it("owner-agent-worker starts an admitted run before its first turn exists", async () => {
+    const runId = await seedAgent({ bytes: 0 });
+
+    expect(
+      await db.select().from(agentTurns).where(eq(agentTurns.runId, runId)),
+    ).toHaveLength(0);
+    const workers = [
+      startAgentContinuationWorker({ db }),
+      startAgentContinuationWorker({ db }),
+    ];
+
+    try {
+      await expect
+        .poll(
+          async () =>
+            (await db.select().from(runs).where(eq(runs.id, runId)))[0].status,
+          { timeout: 15_000, interval: 100 },
+        )
+        .toBe("Done");
+      const turns = await db
+        .select()
+        .from(agentTurns)
+        .where(eq(agentTurns.runId, runId));
+
+      expect(turns).toHaveLength(1);
+      expect(turns[0].state).toBe("applied");
+      const commands = await db
+        .select()
+        .from(executionCommands)
+        .where(eq(executionCommands.runId, runId));
+
+      expect(
+        commands.filter((command) => command.kind === "session.create"),
+      ).toHaveLength(1);
+      expect(
+        commands.filter((command) => command.kind === "session.prompt"),
+      ).toHaveLength(1);
+      const [result] = await db
+        .select()
+        .from(runResults)
+        .where(eq(runResults.runId, runId));
+
+      expect(result.value).toEqual({ summary: "original answer" });
+    } finally {
+      await Promise.all(workers.map((worker) => worker.stop()));
+    }
+  }, 45_000);
+
   it("owner-agent-checkpoint-rejected settles a definitive input rejection without a resume slot", async () => {
     const runId = await seedAgent({ bytes: 0, permission: true });
     const launcher = startDriver(runId);

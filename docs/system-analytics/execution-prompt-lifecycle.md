@@ -631,8 +631,11 @@ closure in one transaction, without reclaiming a slot or sending another prompt.
 The same source proof protects owned-create admission and ACK, prompt admission
 and result application; a create must use the granted original ACP resume handle.
 
-The agent continuation worker (Designed; activation held for S2.12) scans
-accepted turns and saved idle choices in run-ID order. It re-enters the same
+The agent continuation worker (Implemented for the qualified paths above;
+activation held for S2.12) scans accepted turns and saved idle choices in run-ID
+order. It also discovers a Running launch assignment before its first turn is
+retained, and enters the ordinary original-input/create admission. Concurrent
+workers converge on one turn, create and prompt. It re-enters the same
 capacity claim after delayed receipt/canonical evidence, even without another
 user request or host event. A bounded prompt wait lets other runs progress;
 stopping that wait never cancels the durable command. Original result handoffs
@@ -651,8 +654,8 @@ claim. Both consume completed original evidence or a proven interrupted turn,
 without rebuilding input from the current catalog. A fresh ACP permission on
 that resumed turn requires its own choice. Unanswered permissions cancelled by
 the pause must be explicitly superseded with their assignment disposition.
-This hook/budget path and autonomous admission before the first retained turn
-remain unqualified work; the implemented permission handoff does not cover them.
+This hook/budget path remains unqualified work; the implemented permission
+handoff does not cover it.
 
 Persist the reference before remote dispatch in the same transaction as the owner admission. Use discriminated subvariants under the existing owner families where possible; widen the checked family only if necessary. Resolve references from authoritative rows. A Flow owner always references existing `node_attempts`, `gate_results` or consensus ledger rows; never create another Flow attempt ledger.
 
