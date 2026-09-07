@@ -143,8 +143,9 @@ singleton `agent_tick.dispatcher`), `desired_state` (`continuous` is the
 future Mγ stage).
 
 The `agent_turns` storage and production message admission are implemented.
-Messages retain FIFO order across capacity claims and persistent parks; resume,
-rework and pre-create continuation wiring remains Designed. Its accepted input,
+Messages retain FIFO order across capacity claims and persistent parks. Initial
+turns retain their input before owned creation; resume/rework wiring remains
+Designed. Its accepted input,
 binding and state constraints are defined in the
 [schema reference](../database-schema.md#agent_turns-implemented).
 

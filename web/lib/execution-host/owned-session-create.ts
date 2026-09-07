@@ -5,7 +5,7 @@ import type { BoundClient } from "./client";
 import type { CreateSessionPayload, ExecutionHostTransport } from "./contracts";
 import type { CreateSessionResult } from "@/lib/supervisor-client";
 import type { ExecutionCommand } from "@/lib/db/schema";
-import type { FlowCreateOwner } from "./create-intent";
+import type { SessionCreateOwner } from "./create-intent";
 import type { HostSessionId } from "./types";
 import type { Logger } from "pino";
 
@@ -81,7 +81,7 @@ export async function createOwnedSession(input: {
   db: Db;
   client: BoundClient;
   transport: ExecutionHostTransport;
-  owner: FlowCreateOwner;
+  owner: SessionCreateOwner;
   preparePayload: () => Promise<
     Omit<CreateSessionPayload, "executionWorkspaceId">
   >;
@@ -123,6 +123,7 @@ export async function createOwnedSession(input: {
         throw new SessionCreatePending(original.id, failure);
       if (
         failure.code === "CHECKPOINT" &&
+        owner.variant !== "agent" &&
         envelope.payload.resumeSessionId &&
         intent.generation < 2
       ) {
@@ -233,7 +234,7 @@ export async function createOwnedSession(input: {
         commandId: current.id,
         runId: current.runId,
         assignmentId: current.executionAssignmentId,
-        nodeAttemptId: owner.nodeAttemptId,
+        nodeAttemptId: owner.variant === "agent" ? null : owner.nodeAttemptId,
         sessionName: envelope.payload.sessionName ?? "default",
         result,
       });

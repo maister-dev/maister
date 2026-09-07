@@ -13,8 +13,7 @@ import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import {
-  admitInitialAgentPrompt,
-  admitAgentMessagePrompt,
+  admitAgentTurnPrompt,
   findInitialAgentPrompt,
   waitForAgentPrompt,
   agentSessionHasOwnedPrompt,
@@ -23,6 +22,8 @@ import {
 import { applyPersistentAgentPark, afterPersistentAgentPark } from "./park";
 import { acceptAgentMessage } from "./turns";
 import { claimAgentMessage } from "./turn-claim";
+import { admitAgentGenerationTurn } from "./generation-turn";
+import { settleAgentCreateFailure } from "./create-failure";
 import {
   finalizeAgentRun as finalizeAgentRunPrepared,
   type AgentFinalizeOptions,
@@ -36,6 +37,8 @@ import {
 } from "./workspace-paths";
 
 import { waitForPromptIncarnation } from "@/lib/execution-host/prompt-incarnation";
+import { latestOwnedCreate } from "@/lib/execution-host/create-intent";
+import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import {
   mergeRunnerAdapterLaunch,
   runnerExecutorInput,
@@ -2631,6 +2634,42 @@ export function agentFacadeMcpServer(
   };
 }
 
+async function dispatchStoredAgentTurn(
+  db: ExecutionDb,
+  execution: AgentExecution,
+  turn: AgentTurn,
+  sessionId: string,
+): Promise<void> {
+  queueMicrotask(() => {
+    void consumeAgentSession({
+      db,
+      execution,
+      runId: turn.runId,
+      sessionId,
+    }).catch((error: unknown) => {
+      log.error(
+        {
+          runId: turn.runId,
+          turnId: turn.id,
+          errorType: error instanceof Error ? error.name : "unknown",
+        },
+        "agent session consumer failed",
+      );
+    });
+  });
+  await waitForPromptIncarnation(db, execution.client, sessionId);
+  const handle = await execution.client.prompt(
+    sessionId,
+    { stepId: "agent", prompt: turn.prompt },
+    {
+      admitOwner: (tx) =>
+        admitAgentTurnPrompt(tx, execution.client, sessionId, turn.id),
+    },
+  );
+
+  await waitForAgentPrompt(db, execution.client, handle.commandId);
+}
+
 // Drives one standalone agent session end-to-end: spawn (resume-aware),
 // prompt, then consume supervisor events until a terminal transition.
 export async function startAgentSession(
@@ -2685,23 +2724,23 @@ export async function startAgentSession(
     return;
   }
 
-  let messageTurn: AgentTurn | undefined;
+  let agentTurn: AgentTurn | undefined;
 
   if (opts.agentTurnId) {
-    [messageTurn] = await _db
+    [agentTurn] = await _db
       .select()
       .from(agentTurns)
       .where(
         and(eq(agentTurns.id, opts.agentTurnId), eq(agentTurns.runId, runId)),
       );
-    if (!messageTurn || messageTurn.executionAssignmentId !== assignmentId)
+    if (!agentTurn || agentTurn.executionAssignmentId !== assignmentId)
       throw new MaisterError(
         "CONFLICT",
         "agent message no longer owns the launch assignment",
         { details: { runId, turnId: opts.agentTurnId } },
       );
   } else if (assignmentId) {
-    [messageTurn] = await _db
+    [agentTurn] = await _db
       .select()
       .from(agentTurns)
       .where(
@@ -2713,7 +2752,7 @@ export async function startAgentSession(
       )
       .limit(1);
     if (
-      !messageTurn &&
+      !agentTurn &&
       activeSession?.executionAssignmentId &&
       activeSession.executionAssignmentId !== assignmentId
     ) {
@@ -2742,18 +2781,74 @@ export async function startAgentSession(
           const claim = await claimAgentMessage(_db, pending.id, placement);
 
           if (claim.kind !== "claimed") return;
-          messageTurn = claim.turn;
+          agentTurn = claim.turn;
         }
       }
     }
   }
-  const overridePrompt = messageTurn?.prompt ?? opts.overridePrompt;
+  const overridePrompt = agentTurn?.prompt ?? opts.overridePrompt;
 
-  if (messageTurn) {
+  if (agentTurn) {
     const execution = await bindAgentExecution(hosts, runId, assignmentId);
 
-    if (messageTurn.commandId) {
-      await waitForAgentPrompt(_db, execution.client, messageTurn.commandId);
+    if (agentTurn.commandId) {
+      await waitForAgentPrompt(_db, execution.client, agentTurn.commandId);
+
+      return;
+    }
+    const createOwner = {
+      variant: "agent" as const,
+      turnId: agentTurn.id,
+      promptOrdinal: agentTurn.ordinal,
+    };
+    const originalCreate = await latestOwnedCreate(_db, {
+      runId,
+      assignmentId: execution.client.assignment.id,
+      owner: createOwner,
+    });
+
+    if (originalCreate) {
+      try {
+        const session = await execution.client.createOwnedSession(
+          createOwner,
+          async () => {
+            throw new MaisterError(
+              "CONFLICT",
+              "retained agent creation lost its original request",
+              {
+                details: {
+                  runId,
+                  turnId: createOwner.turnId,
+                  commandId: originalCreate.id,
+                },
+              },
+            );
+          },
+        );
+
+        await dispatchStoredAgentTurn(
+          _db,
+          execution,
+          agentTurn,
+          session.sessionId,
+        );
+      } catch (error) {
+        if (
+          isFencedError(error) ||
+          error instanceof SessionCreatePending ||
+          error instanceof AgentPromptContinuationPending
+        ) {
+          log.warn(
+            { runId, turnId: agentTurn.id, commandId: originalCreate.id },
+            "agent create continuation retained for recovery",
+          );
+
+          return;
+        }
+        if (await settleAgentCreateFailure(_db, execution.client, agentTurn))
+          return;
+        throw error;
+      }
 
       return;
     }
@@ -2762,10 +2857,7 @@ export async function startAgentSession(
       .from(runSessionIncarnations)
       .where(
         and(
-          eq(
-            runSessionIncarnations.runSessionId,
-            messageTurn.runSessionId ?? "",
-          ),
+          eq(runSessionIncarnations.runSessionId, agentTurn.runSessionId ?? ""),
           eq(runSessionIncarnations.executionAssignmentId, assignmentId ?? ""),
           eq(runSessionIncarnations.state, "active"),
         ),
@@ -2773,22 +2865,12 @@ export async function startAgentSession(
       .limit(1);
 
     if (live) {
-      const turnId = messageTurn.id;
-      const handle = await execution.client.prompt(
+      await dispatchStoredAgentTurn(
+        _db,
+        execution,
+        agentTurn,
         live.hostSessionId,
-        { stepId: "agent", prompt: messageTurn.prompt },
-        {
-          admitOwner: (tx) =>
-            admitAgentMessagePrompt(
-              tx,
-              execution.client,
-              live.hostSessionId,
-              turnId,
-            ),
-        },
       );
-
-      await waitForAgentPrompt(_db, execution.client, handle.commandId);
 
       return;
     }
@@ -3114,7 +3196,19 @@ export async function startAgentSession(
     // ADR-166: the create is handle-form — the workspace (and its context
     // mounts, snapshotted on the run above) is adopted by the bound client.
     const execution = await bindAgentExecution(hosts, runId, assignmentId);
-    const session = await execution.client.createSession({
+    const ownedInitial =
+      !draftPayload && overridePrompt === undefined && !run.acpSessionId;
+
+    if (ownedInitial)
+      agentTurn = await _db.transaction((tx: ExecutionDb) =>
+        admitAgentGenerationTurn(tx, {
+          runId,
+          assignmentId: execution.client.assignment.id,
+          variant: "initial",
+          prompt,
+        }),
+      );
+    const createPayload = {
       stepId: "agent",
       executor: runnerExecutorInput(snapshot),
       runner: runnerSupervisorInput({ snapshot }),
@@ -3143,7 +3237,28 @@ export async function startAgentSession(
       autoApprovePermissions:
         permissionsFromSnapshot(run.executionPolicy ?? null) === "auto_approve",
       ...(run.acpSessionId ? { resumeSessionId: run.acpSessionId } : {}),
-    });
+    };
+    const session = agentTurn
+      ? await execution.client.createOwnedSession(
+          {
+            variant: "agent",
+            turnId: agentTurn.id,
+            promptOrdinal: agentTurn.ordinal,
+          },
+          async () => createPayload,
+        )
+      : await execution.client.createSession(createPayload);
+
+    if (agentTurn) {
+      await dispatchStoredAgentTurn(
+        _db,
+        execution,
+        agentTurn,
+        session.sessionId,
+      );
+
+      return;
+    }
 
     queueMicrotask(() => {
       void consumeAgentSession({
@@ -3159,42 +3274,12 @@ export async function startAgentSession(
       });
     });
 
-    const ownedInitial =
-      !draftPayload && overridePrompt === undefined && !run.acpSessionId;
+    const promptHandle = await execution.client.prompt(session.sessionId, {
+      stepId: "agent",
+      prompt,
+    });
 
-    if (ownedInitial || messageTurn)
-      await waitForPromptIncarnation(_db, execution.client, session.sessionId);
-    const promptHandle = await execution.client.prompt(
-      session.sessionId,
-      {
-        stepId: "agent",
-        prompt,
-      },
-      messageTurn
-        ? {
-            admitOwner: (tx) =>
-              admitAgentMessagePrompt(
-                tx,
-                execution.client,
-                session.sessionId,
-                messageTurn.id,
-              ),
-          }
-        : ownedInitial
-          ? {
-              admitOwner: (tx) =>
-                admitInitialAgentPrompt(
-                  tx,
-                  execution.client,
-                  session.sessionId,
-                ),
-            }
-          : undefined,
-    );
-
-    if (ownedInitial || messageTurn)
-      await waitForAgentPrompt(_db, execution.client, promptHandle.commandId);
-    else await execution.client.waitForPrompt(promptHandle);
+    await execution.client.waitForPrompt(promptHandle);
   } catch (err) {
     if (isFencedError(err)) {
       // ADR-166: a newer driver generation owns the run — yield without
@@ -3203,7 +3288,10 @@ export async function startAgentSession(
 
       return;
     }
-    if (err instanceof AgentPromptContinuationPending) {
+    if (
+      err instanceof AgentPromptContinuationPending ||
+      err instanceof SessionCreatePending
+    ) {
       log.warn(
         { runId, commandId: err.details?.commandId },
         "agent prompt retained for owner recovery",
@@ -3221,6 +3309,13 @@ export async function startAgentSession(
       },
       "agent session spawn/prompt failed",
     );
+    if (agentTurn) {
+      const execution = await bindAgentExecution(hosts, runId, assignmentId);
+
+      if (await settleAgentCreateFailure(_db, execution.client, agentTurn))
+        return;
+      throw err;
+    }
     await finalizeAgentRun(runId, "Failed", {
       db: _db,
       reason: err instanceof Error ? err.message : String(err),

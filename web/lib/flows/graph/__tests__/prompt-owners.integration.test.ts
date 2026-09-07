@@ -985,6 +985,9 @@ describe("Flow prompt owners through the production graph driver", () => {
       });
       const request = readCreateIntent(original, client.host.hostKey);
       const oldOwner = request.intent.owner;
+
+      if (oldOwner.variant === "agent")
+        throw new Error("expected a Flow create owner");
       let nextOwner: FlowCreateOwner;
 
       if (oldOwner.variant === "node") {

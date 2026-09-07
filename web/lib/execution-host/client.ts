@@ -38,7 +38,7 @@ import type {
   HostSessionId,
   PlacementReason,
 } from "./types";
-import type { FlowCreateOwner } from "./create-intent";
+import type { SessionCreateOwner } from "./create-intent";
 
 import { and, eq } from "drizzle-orm";
 import pino, { type Logger } from "pino";
@@ -130,7 +130,7 @@ export interface BoundClient {
     opts?: CreateSessionOptions,
   ): Promise<CreateSessionResult & { hostSessionId: HostSessionId }>;
   createOwnedSession(
-    owner: FlowCreateOwner,
+    owner: SessionCreateOwner,
     preparePayload: () => Promise<
       Omit<CreateSessionPayload, "executionWorkspaceId">
     >,

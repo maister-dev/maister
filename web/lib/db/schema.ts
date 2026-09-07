@@ -2347,10 +2347,16 @@ export const executionCommands = pgTable(
       sql`${t.createIntent} IS NULL OR (${t.kind} = 'session.create'
         AND jsonb_typeof(${t.createIntent}) = 'object' AND ${t.createIntent}->'version' = '1'::jsonb
         AND jsonb_typeof(${t.createIntent}->'owner') = 'object'
-        AND ${t.createIntent}->'owner'->>'variant' IN ('node', 'gate_ai', 'gate_skill')
-        AND jsonb_typeof(${t.createIntent}->'owner'->'nodeAttemptId') = 'string'
+        AND ${t.createIntent}->'owner'->>'variant' IN ('node', 'gate_ai', 'gate_skill', 'agent')
         AND (${t.createIntent} - ARRAY['version','owner','operationKey','generation','supersedesCommandId','sessionFallback','requestCanonicalJson','requestSha256']) = '{}'::jsonb
         AND jsonb_typeof(${t.createIntent}->'sessionFallback') = 'boolean'
+        AND CASE WHEN ${t.createIntent}->'owner'->>'variant' = 'agent' THEN
+          ((${t.createIntent}->'owner') - ARRAY['variant','turnId','promptOrdinal']) = '{}'::jsonb
+          AND jsonb_typeof(${t.createIntent}->'owner'->'turnId') = 'string'
+          AND length(${t.createIntent}->'owner'->>'turnId') BETWEEN 1 AND 128
+          AND (${t.createIntent}->'owner'->>'promptOrdinal') ~ '^(0|[1-9][0-9]*)$'
+          AND ${t.createIntent}->>'operationKey' = 'agent-create:' || (${t.createIntent}->'owner'->>'turnId') || ':' || (${t.createIntent}->'owner'->>'promptOrdinal')
+        ELSE jsonb_typeof(${t.createIntent}->'owner'->'nodeAttemptId') = 'string'
         AND CASE WHEN ${t.createIntent}->'owner'->>'variant' = 'node' THEN
           ((${t.createIntent}->'owner') - ARRAY['variant','nodeAttemptId','promptOrdinal']) = '{}'::jsonb
           AND (${t.createIntent}->'owner'->>'promptOrdinal') ~ '^(0|[1-9][0-9]*)$'
@@ -2358,7 +2364,7 @@ export const executionCommands = pgTable(
         ELSE ((${t.createIntent}->'owner') - ARRAY['variant','nodeAttemptId','gateId','evaluationId']) = '{}'::jsonb
           AND jsonb_typeof(${t.createIntent}->'owner'->'gateId') = 'string'
           AND jsonb_typeof(${t.createIntent}->'owner'->'evaluationId') = 'string'
-          AND ${t.createIntent}->>'operationKey' = 'flow-create:' || (${t.createIntent}->'owner'->>'variant') || ':' || (${t.createIntent}->'owner'->>'evaluationId') END
+          AND ${t.createIntent}->>'operationKey' = 'flow-create:' || (${t.createIntent}->'owner'->>'variant') || ':' || (${t.createIntent}->'owner'->>'evaluationId') END END
         AND length(${t.createIntent}->>'operationKey') BETWEEN 1 AND 256
         AND (${t.createIntent}->>'generation') ~ '^(0|[1-9][0-9]*)$'
         AND (${t.createIntent}->>'generation')::numeric <= 2147483647
@@ -2370,7 +2376,9 @@ export const executionCommands = pgTable(
         AND (${t.createIntent}->>'requestCanonicalJson')::jsonb->'fence'->>'runId' = ${t.runId}
         AND (${t.createIntent}->>'requestCanonicalJson')::jsonb->'fence'->>'assignmentId' = ${t.executionAssignmentId}
         AND (${t.createIntent}->>'requestCanonicalJson')::jsonb->'fence'->'assignmentEpoch' = to_jsonb(${t.assignmentEpoch})
-        AND (${t.createIntent}->>'requestCanonicalJson')::jsonb->'payload'->>'nodeAttemptId' = ${t.createIntent}->'owner'->>'nodeAttemptId'
+        AND CASE WHEN ${t.createIntent}->'owner'->>'variant' = 'agent' THEN
+          NOT ((${t.createIntent}->>'requestCanonicalJson')::jsonb->'payload' ? 'nodeAttemptId')
+        ELSE (${t.createIntent}->>'requestCanonicalJson')::jsonb->'payload'->>'nodeAttemptId' = ${t.createIntent}->'owner'->>'nodeAttemptId' END
       ) IS TRUE`,
     ),
     terminalEvidenceCheck: check(

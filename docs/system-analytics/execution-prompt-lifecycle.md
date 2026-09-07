@@ -1,6 +1,6 @@
 # Execution prompt lifecycle
 
-**Status:** Implemented short-lived admission, private v2 request/owner storage and shared canonical-event/receipt reconciliation. Request-bound receipt/event v2 and verified immutable command-output manifests are implemented on the explicit v2 development path. Unknown-admission reconciliation, frozen-request recovery, create/ACP binding fences and the registered owner application engine are implemented. Production domain-owner adapters, global activation and retirement remain **Designed** (AB-05–07/10).
+**Status:** Implemented short-lived admission, private v2 request/owner storage and shared canonical-event/receipt reconciliation. Request-bound receipt/event v2 and verified immutable command-output manifests are implemented on the explicit v2 development path. Unknown-admission reconciliation, frozen-request recovery, create/ACP binding fences and the registered owner application engine are implemented. Flow node/gate and agent initial/message adapters are implemented. Remaining domain adapters, global activation and retirement remain **Designed** (AB-05–07/10).
 
 
 ## Purpose
@@ -512,8 +512,30 @@ application, autonomous owner recovery, superseded source refusal and both
 failure outcomes. Removing the application-generation guard makes the stale
 source test fail by finalizing the successor. Persistent first-turn qualification
 also covers live parking and actual process death before completion or the park
-transaction. Resume, rework and pre-prompt create recovery remain required below; this
+transaction. Resume and rework remain required below; this
 increment does not enable the global owner worker.
+
+### Agent session creation (Implemented)
+
+Initial turns persist their original prompt in `agent_turns` before creating the
+ACP session, using the launch assignment ID and ordinal zero. Message turns keep
+their already accepted ID and ordinal. The private owned-create intent binds
+that turn and stores the original canonical create request and digest. Migration
+`0154_agent_owned_create` extends the existing checked create-intent union; Flow
+creation retains its existing authority and behavior.
+
+Re-entry loads the retained turn/create before reading current agent definitions,
+reissuing credentials or materializing a new prompt. It reuses one create command
+and one prompt even if Web dies before create ACK or before prompt admission.
+The ACK checks current run/assignment/turn authority before updating session
+bindings. Agent resume refuses an unavailable ACP handle without the Flow-specific
+fresh-session fallback. A definitive create refusal atomically finalizes the run
+as Failed and supersedes its un-dispatched turn; restart repeats that settlement
+after a lost transaction. Unknown admission remains recoverable.
+
+Qualification uses real ACP creation and SIGKILL at both DB boundaries, changes
+the agent definition before restart, and checks the original result. An actual
+ACP resume refusal is covered live and with process death before failure commit.
 
 ### Agent messages (Implemented)
 
@@ -549,7 +571,7 @@ Persist the reference before remote dispatch in the same transaction as the owne
 | --- | --- | --- | --- |
 | Consensus verification: node attempt, round, verifier, target | `web/lib/flows/graph/consensus/runtime.ts:401–438`; consensus round/evaluation rows | Apply exactly the intended matrix cell, wake existing consensus reducer; same attempt ID alone is not unique enough. | `owner-consensus-verify` |
 | Consensus synthesis: attempt, round, synthesis generation | `web/lib/flows/graph/consensus/runtime.ts:658–697` | Apply synthesis result to its original round; never regenerate a prompt merely because the parent stack died. | `owner-consensus-synthesis` |
-| Agent resume/rework turn: run, durable turn generation, incarnation | `web/lib/agents/launch.ts`; runs, sessions, existing trigger/message records | Running/NeedsInput; parked NeedsInputIdle/WaitingOnChildren require their specific existing re-entry and capacity rules. Apply result/public-result contract and completion once, preserving launch snapshot. Initial turns are implemented above; their pre-prompt create recovery remains pending. | `owner-agent-resume`, `owner-agent-idle-message`, `owner-agent-rework` |
+| Agent resume/rework turn: run, durable turn generation, incarnation | `web/lib/agents/launch.ts`; runs, sessions, existing trigger/message records | Running/NeedsInput; parked NeedsInputIdle/WaitingOnChildren require their specific existing re-entry and capacity rules. Apply result/public-result contract and completion once, preserving launch snapshot. Initial turns and their pre-prompt create recovery are implemented above. | `owner-agent-resume`, `owner-agent-rework` |
 | Consensus draft agent: child run + consensus round/participant generation | Agent session consumer/consensus draft path in `agents/launch.ts:3915–3921` | Record complete draft artifact and settle the existing child/result path; output lost from stack must not become an empty successful draft. | `owner-consensus-draft` |
 | Scratch launch/message/recovery: dialog message/turn ID and generation | `scratch-runs/{service,events,recovery,dialog}.ts` | Scratch dialog Running with run/session still live is a due continuation, not a reason to skip. Persist reply and WaitingForUser once; NeedsInput and idle retain the exact owner until checkpoint/resume disposition. | `owner-scratch-initial`, `owner-scratch-message`, `owner-scratch-recovery` |
 | Local-package/Studio assistant scratch: scratch turn plus postprocess action generation | `scratch-runs/service.ts` `postProcessFlowAssistantTurn`, local-package authority | Recover dialog completion and pending postprocessing independently. Revalidate local-package lock/session authority before existing publish/apply side effect; persist action intent/result idempotently. No new package behavior. | `owner-scratch-package-initial`, `owner-scratch-package-message`, `owner-scratch-package-lock-takeover` |

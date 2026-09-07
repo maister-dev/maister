@@ -5,10 +5,10 @@ import type { ProjectionWorker } from "@/lib/execution-host/events/projection-wo
 
 import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -393,6 +393,182 @@ async function killAtTerminalWrite(
 }
 
 describe("Agent owned prompts through the production launcher", () => {
+  it.each(["live", "before_apply"] as const)(
+    "owner-agent-message settles a failed retained create after %s",
+    async (window) => {
+      const runId = await seedAgent({ bytes: 0, persistent: true });
+
+      startDriver(runId);
+      await expect
+        .poll(
+          async () => {
+            const [run] = await db
+              .select()
+              .from(runs)
+              .where(eq(runs.id, runId));
+
+            return run.status;
+          },
+          { timeout: 30_000, interval: 50 },
+        )
+        .toBe("NeedsInputIdle");
+      await db
+        .update(runSessions)
+        .set({ acpSessionId: "fixture-missing-session" })
+        .where(eq(runSessions.runId, runId));
+      const prompt = 'fixture-output:{"bytes":0,"text":"must never dispatch"}';
+
+      if (window === "before_apply") {
+        await killAtTerminalWrite(runId, prompt);
+        startDriver(runId);
+      } else startDriver(runId, prompt);
+      await expect
+        .poll(
+          async () => {
+            const [run] = await db
+              .select()
+              .from(runs)
+              .where(eq(runs.id, runId));
+
+            return run.status;
+          },
+          { timeout: 30_000, interval: 50 },
+        )
+        .toBe("Failed");
+      const [turn] = await db
+        .select()
+        .from(agentTurns)
+        .where(
+          and(
+            eq(agentTurns.runId, runId),
+            eq(agentTurns.variant, "persistent_message"),
+          ),
+        );
+
+      expect(turn).toMatchObject({
+        prompt,
+        state: "superseded",
+        commandId: null,
+      });
+      const creates = await db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, runId),
+            eq(executionCommands.kind, "session.create"),
+          ),
+        );
+
+      expect(creates).toHaveLength(2);
+      expect(
+        creates.filter((command) => command.state === "failed"),
+      ).toHaveLength(1);
+      expect(
+        creates.every(
+          (command) => command.createIntent?.sessionFallback === false,
+        ),
+      ).toBe(true);
+      const prompts = await db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, runId),
+            eq(executionCommands.kind, "session.prompt"),
+          ),
+        );
+
+      expect(prompts).toHaveLength(1);
+    },
+    90_000,
+  );
+
+  it.each(["before_create_ack", "before_prompt"] as const)(
+    "owner-agent-initial preserves its create and original input after %s",
+    async (window) => {
+      const runId = await seedAgent({ bytes: 0 });
+      const trigger = `agent_create_pause_${randomUUID().replaceAll("-", "")}`;
+      const lockKey = Math.floor(Math.random() * 2_000_000_000) + 1;
+      const lock = await database.pool.connect();
+      const table =
+        window === "before_create_ack" ? "run_sessions" : "execution_commands";
+      const operation = window === "before_create_ack" ? "UPDATE" : "INSERT";
+      const predicate =
+        window === "before_create_ack"
+          ? "NEW.host_session_id IS NOT NULL"
+          : "NEW.kind = 'session.prompt'";
+      let driver: ReturnType<typeof startDriver> | undefined;
+
+      try {
+        await lock.query("SELECT pg_advisory_lock(260910, $1)", [lockKey]);
+        await database.pool.query(
+          `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.run_id = '${runId}' AND ${predicate} THEN PERFORM pg_advisory_xact_lock(260910, ${lockKey}); END IF; RETURN NEW; END $$`,
+        );
+        await database.pool.query(
+          `CREATE TRIGGER ${trigger} BEFORE ${operation} ON ${table} FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
+        );
+        driver = startDriver(runId);
+        await expect
+          .poll(
+            async () => {
+              if (driver?.child.exitCode !== null)
+                throw new Error(driver?.output());
+              const waiting = await database.pool.query(
+                "SELECT count(*)::int AS count FROM pg_locks WHERE locktype = 'advisory' AND classid = 260910 AND objid = $1 AND NOT granted",
+                [lockKey],
+              );
+
+              return waiting.rows[0].count as number;
+            },
+            { timeout: 30_000, interval: 25 },
+          )
+          .toBeGreaterThan(0);
+        driver.child.kill("SIGKILL");
+        await driver.exited;
+      } finally {
+        if (driver?.child.exitCode === null && driver.child.signalCode === null)
+          driver.child.kill("SIGKILL");
+        await driver?.exited;
+        await lock.query("SELECT pg_advisory_unlock_all()");
+        lock.release();
+        await database.pool.query(
+          `DROP TRIGGER IF EXISTS ${trigger} ON ${table}`,
+        );
+        await database.pool.query(`DROP FUNCTION IF EXISTS ${trigger}()`);
+      }
+      const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+      const [agent] = await db
+        .select()
+        .from(agents)
+        .where(eq(agents.id, run.agentId!));
+      const source = await readFile(agent.sourcePath, "utf8");
+
+      await writeFile(
+        agent.sourcePath,
+        source.replace("original answer", "changed answer"),
+      );
+      const restarted = startDriver(runId);
+
+      await expectCompleted(runId, restarted);
+      const creates = await db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, runId),
+            eq(executionCommands.kind, "session.create"),
+          ),
+        );
+
+      expect(creates).toHaveLength(1);
+      expect(creates[0].createIntent).toMatchObject({
+        owner: { variant: "agent" },
+      });
+    },
+    90_000,
+  );
+
   it("owner-agent-live-message drains distinct queued inputs once after the original launcher dies", async () => {
     const runId = await seedAgent({
       bytes: 0,
@@ -439,7 +615,12 @@ describe("Agent owned prompts through the production launcher", () => {
     const queued = await db
       .select()
       .from(agentTurns)
-      .where(eq(agentTurns.runId, runId))
+      .where(
+        and(
+          eq(agentTurns.runId, runId),
+          inArray(agentTurns.variant, ["live_message", "persistent_message"]),
+        ),
+      )
       .orderBy(asc(agentTurns.ordinal));
 
     expect(
@@ -464,7 +645,15 @@ describe("Agent owned prompts through the production launcher", () => {
           const turns = await db
             .select()
             .from(agentTurns)
-            .where(eq(agentTurns.runId, runId))
+            .where(
+              and(
+                eq(agentTurns.runId, runId),
+                inArray(agentTurns.variant, [
+                  "live_message",
+                  "persistent_message",
+                ]),
+              ),
+            )
             .orderBy(asc(agentTurns.ordinal));
 
           return turns.map((turn) => turn.state);
@@ -536,7 +725,15 @@ describe("Agent owned prompts through the production launcher", () => {
                 const [turn] = await db
                   .select()
                   .from(agentTurns)
-                  .where(eq(agentTurns.runId, runId));
+                  .where(
+                    and(
+                      eq(agentTurns.runId, runId),
+                      inArray(agentTurns.variant, [
+                        "live_message",
+                        "persistent_message",
+                      ]),
+                    ),
+                  );
 
                 if (!turn?.commandId) return null;
                 const [command] = await db
@@ -560,7 +757,15 @@ describe("Agent owned prompts through the production launcher", () => {
             const [turn] = await db
               .select()
               .from(agentTurns)
-              .where(eq(agentTurns.runId, runId));
+              .where(
+                and(
+                  eq(agentTurns.runId, runId),
+                  inArray(agentTurns.variant, [
+                    "live_message",
+                    "persistent_message",
+                  ]),
+                ),
+              );
 
             return turn?.state;
           },
@@ -570,7 +775,12 @@ describe("Agent owned prompts through the production launcher", () => {
       const [turn] = await db
         .select()
         .from(agentTurns)
-        .where(eq(agentTurns.runId, runId));
+        .where(
+          and(
+            eq(agentTurns.runId, runId),
+            inArray(agentTurns.variant, ["live_message", "persistent_message"]),
+          ),
+        );
       const [run] = await db.select().from(runs).where(eq(runs.id, runId));
       const commands = await db
         .select()
@@ -644,7 +854,12 @@ describe("Agent owned prompts through the production launcher", () => {
       const turns = await db
         .select()
         .from(agentTurns)
-        .where(eq(agentTurns.runId, runId));
+        .where(
+          and(
+            eq(agentTurns.runId, runId),
+            inArray(agentTurns.variant, ["live_message", "persistent_message"]),
+          ),
+        );
 
       expect(turns).toHaveLength(1);
       expect(turns[0]).toMatchObject({

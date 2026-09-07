@@ -20,6 +20,7 @@ import {
   gateResults,
   nodeAttempts,
   runs,
+  agentTurns,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
@@ -55,10 +56,22 @@ export const FlowCreateOwnerSchema = z.discriminatedUnion("variant", [
     .strict(),
 ]);
 export type FlowCreateOwner = z.infer<typeof FlowCreateOwnerSchema>;
+const SessionCreateOwnerSchema = z.discriminatedUnion("variant", [
+  ...FlowCreateOwnerSchema.options,
+  z
+    .object({
+      variant: z.literal("agent"),
+      turnId: id,
+      promptOrdinal: z.number().int().nonnegative(),
+    })
+    .strict(),
+]);
+
+export type SessionCreateOwner = z.infer<typeof SessionCreateOwnerSchema>;
 const CreateIntentSchema = z
   .object({
     version: z.literal(1),
-    owner: FlowCreateOwnerSchema,
+    owner: SessionCreateOwnerSchema,
     operationKey: z.string().min(1).max(256),
     generation: z.number().int().nonnegative(),
     supersedesCommandId: id.nullable(),
@@ -80,14 +93,17 @@ export function createIntentError(invariant: string): MaisterError {
   );
 }
 
-export function createOperationKey(owner: FlowCreateOwner): string {
+export function createOperationKey(owner: SessionCreateOwner): string {
+  if (owner.variant === "agent")
+    return `agent-create:${owner.turnId}:${owner.promptOrdinal}`;
+
   return owner.variant === "node"
     ? `flow-create:node:${owner.nodeAttemptId}:${owner.promptOrdinal}`
     : `flow-create:${owner.variant}:${owner.evaluationId}`;
 }
 
 export function storeCreateIntent(input: {
-  owner: FlowCreateOwner;
+  owner: SessionCreateOwner;
   generation: number;
   supersedesCommandId: string | null;
   sessionFallback: boolean;
@@ -155,7 +171,8 @@ export function readCreateIntent(
     envelope.fence.hostKey !== hostKey ||
     envelope.fence.assignmentId !== row.executionAssignmentId ||
     envelope.fence.assignmentEpoch !== row.assignmentEpoch ||
-    envelope.payload?.nodeAttemptId !== intent.owner.nodeAttemptId ||
+    (envelope.payload?.nodeAttemptId ?? null) !==
+      (intent.owner.variant === "agent" ? null : intent.owner.nodeAttemptId) ||
     canonicalCommandJson(redactPayload("session.create", envelope.payload)) !==
       canonicalCommandJson(row.payload)
   )
@@ -169,7 +186,7 @@ export async function latestOwnedCreate(
   input: {
     runId: string;
     assignmentId: string;
-    owner: FlowCreateOwner;
+    owner: SessionCreateOwner;
   },
 ): Promise<ExecutionCommand | undefined> {
   const [row] = await tx
@@ -199,13 +216,31 @@ export async function lockCreateOwner(
   input: {
     runId: string;
     assignmentId: string;
-    owner: FlowCreateOwner;
+    owner: SessionCreateOwner;
   },
 ): Promise<boolean> {
   const assignment = await lockCurrentSessionAssignment(tx, input);
 
   if (!assignment) return false;
   const [run] = await tx.select().from(runs).where(eq(runs.id, input.runId));
+
+  if (input.owner.variant === "agent") {
+    const [turn] = await tx
+      .select()
+      .from(agentTurns)
+      .where(eq(agentTurns.id, input.owner.turnId))
+      .for("update");
+
+    return (
+      run?.runKind === "agent" &&
+      run.status === "Running" &&
+      turn?.runId === run.id &&
+      turn.ordinal === input.owner.promptOrdinal &&
+      turn.executionAssignmentId === assignment.id &&
+      turn.assignmentEpoch === assignment.epoch &&
+      (turn.state === "claimed" || turn.state === "dispatched")
+    );
+  }
   const [attempt] = await tx
     .select()
     .from(nodeAttempts)
