@@ -34,6 +34,8 @@ export async function postProcessFlowAssistantTurn(args: {
   db: Db;
   localPackage: LocalPackage;
   runId: string;
+  /** The turn's server-minted action id, also carried by its prompt owner. */
+  actionId?: string;
   lockGeneration: string;
   assertCanApply: () => Promise<void>;
 }): Promise<FlowActionResultPayload | null> {
@@ -71,7 +73,7 @@ export async function postProcessFlowAssistantTurn(args: {
       await tx
         .insert(flowAssistantActions)
         .values({
-          id: randomUUID(),
+          id: args.actionId ?? randomUUID(),
           runId: args.runId,
           localPackageId: args.localPackage.id,
           lockGeneration: args.lockGeneration,

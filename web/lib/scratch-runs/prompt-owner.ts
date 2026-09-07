@@ -43,14 +43,28 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+type PackageTurn = Readonly<{
+  localPackageId: string;
+  postprocessActionId: string;
+  lockGeneration: string;
+}>;
+
 export type ScratchPromptOwner =
   | Readonly<{ variant: "initial" }>
-  | Readonly<{ variant: "message"; messageId: string; sequence: number }>;
+  | Readonly<{ variant: "recovery" }>
+  | Readonly<{ variant: "message"; messageId: string; sequence: number }>
+  | (Readonly<{ variant: "package_initial" }> & PackageTurn)
+  | (Readonly<{
+      variant: "package_message";
+      messageId: string;
+      sequence: number;
+    }> &
+      PackageTurn);
 
-type ScratchOwnerRef = Extract<
-  Extract<PromptOwner, { kind: "scratch_message" }>["ref"],
-  { variant: "initial" | "message" }
->;
+type ScratchOwnerRef = Extract<PromptOwner, { kind: "scratch_message" }>["ref"];
+
+const launchVariants = ["initial", "package_initial"];
+const recoveryVariants = ["recovery", "package_recovery"];
 
 /** A launch turn belongs to its placement generation; a user message belongs to
  * the durable transcript row that was accepted before dispatch. */
@@ -58,9 +72,19 @@ function scratchTurnIdentity(
   owner: ScratchPromptOwner,
   assignmentId: string,
 ): Readonly<{ turnId: string; promptOrdinal: number }> {
-  return owner.variant === "initial"
-    ? { turnId: assignmentId, promptOrdinal: 0 }
-    : { turnId: owner.messageId, promptOrdinal: owner.sequence };
+  return "messageId" in owner
+    ? { turnId: owner.messageId, promptOrdinal: owner.sequence }
+    : { turnId: assignmentId, promptOrdinal: 0 };
+}
+
+function packageFields(owner: ScratchPromptOwner): PackageTurn | null {
+  return "localPackageId" in owner
+    ? {
+        localPackageId: owner.localPackageId,
+        postprocessActionId: owner.postprocessActionId,
+        lockGeneration: owner.lockGeneration,
+      }
+    : null;
 }
 
 export function scratchPromptOperationKey(
@@ -92,14 +116,23 @@ export async function admitScratchPrompt(
     .from(scratchRuns)
     .where(eq(scratchRuns.runId, runId));
 
+  const pkg = packageFields(owner);
+
   if (
     run?.runKind !== "scratch" ||
     run.status !== "Running" ||
     !scratch ||
-    !["Starting", "Running"].includes(scratch.dialogStatus)
+    !["Starting", "Running"].includes(scratch.dialogStatus) ||
+    (pkg !== null && scratch.localPackageId !== pkg.localPackageId) ||
+    (launchVariants.includes(owner.variant) &&
+      !["launch", "legacy_backfill"].includes(assignment.placementReason)) ||
+    (recoveryVariants.includes(owner.variant) &&
+      !["scratch_recover", "recover", "resume"].includes(
+        assignment.placementReason,
+      ))
   )
     throw new PromptOwnerInvariantError("scratch_admission_generation");
-  if (owner.variant === "message") {
+  if ("messageId" in owner) {
     const [message] = await tx
       .select({ id: runMessages.id, sequence: runMessages.sequence })
       .from(runMessages)
@@ -132,23 +165,34 @@ export async function admitScratchPrompt(
     throw new PromptOwnerInvariantError("scratch_admission_incarnation");
   const identity = scratchTurnIdentity(owner, assignment.id);
 
+  const common = {
+    version: 1 as const,
+    ...identity,
+    runId,
+    scratchRunId: runId,
+    runSessionId: binding.session.id,
+    incarnationId: binding.incarnation.id,
+    assignmentId: assignment.id,
+    assignmentEpoch: assignment.epoch,
+  };
+  // The owner reference is a CLOSED shape (its keys drive the database check),
+  // so each variant is built explicitly — never spread from the caller input.
+  const ref: ScratchOwnerRef =
+    owner.variant === "package_message"
+      ? {
+          ...common,
+          ...(pkg as PackageTurn),
+          variant: "package_message",
+          messageId: owner.messageId,
+        }
+      : owner.variant === "package_initial"
+        ? { ...common, ...(pkg as PackageTurn), variant: "package_initial" }
+        : owner.variant === "message"
+          ? { ...common, variant: "message", messageId: owner.messageId }
+          : { ...common, variant: owner.variant };
+
   return {
-    owner: {
-      kind: "scratch_message",
-      ref: {
-        version: 1,
-        ...identity,
-        ...(owner.variant === "initial"
-          ? { variant: "initial" as const }
-          : { variant: "message" as const, messageId: owner.messageId }),
-        runId,
-        scratchRunId: runId,
-        runSessionId: binding.session.id,
-        incarnationId: binding.incarnation.id,
-        assignmentId: assignment.id,
-        assignmentEpoch: assignment.epoch,
-      },
-    },
+    owner: { kind: "scratch_message", ref },
     logicalOperationKey: scratchPromptOperationKey(owner, assignment.id),
   };
 }
@@ -225,14 +269,9 @@ export async function prepareScratchPrompt(input: {
 
 export const scratchPromptOwners: PromptOwnerRegistry =
   createPromptOwnerRegistry([
-    definePromptOwnerAdapter("scratch_message", async (context) => {
-      const ref = context.owner.ref;
-
-      if (ref.variant !== "initial" && ref.variant !== "message")
-        throw new PromptOwnerInvariantError("scratch_variant_not_implemented");
-
-      return prepareScratchPrompt({ ...context, ref });
-    }),
+    definePromptOwnerAdapter("scratch_message", async (context) =>
+      prepareScratchPrompt({ ...context, ref: context.owner.ref }),
+    ),
   ]);
 
 export class ScratchPromptContinuationPending extends MaisterError {

@@ -372,6 +372,31 @@ describe("scratch run placement (ADR-166 Q1–Q3)", () => {
     // The handle is copied forward across generations: no second adoption.
     expect(fake.callsOf("adoptWorkspace")).toHaveLength(1);
 
+    // S2.9: the recovery turn is owned by its own recover generation, so its
+    // WaitingForUser transition is applied from that turn's durable command.
+    const [recoverCommand] = await db
+      .select({
+        ownerKind: schema.executionCommands.ownerKind,
+        ownerRef: schema.executionCommands.ownerRef,
+        applicationState: schema.executionCommands.applicationState,
+      })
+      .from(schema.executionCommands)
+      .where(
+        and(
+          eq(schema.executionCommands.runId, runId),
+          eq(schema.executionCommands.kind, "session.prompt"),
+          eq(schema.executionCommands.assignmentEpoch, 2),
+        ),
+      );
+
+    expect(recoverCommand?.ownerKind).toBe("scratch_message");
+    expect(recoverCommand?.ownerRef).toMatchObject({
+      variant: "recovery",
+      scratchRunId: runId,
+      promptOrdinal: 0,
+    });
+    expect(recoverCommand?.applicationState).toBe("applied");
+
     expect(await assignmentRows(runId)).toEqual([
       expect.objectContaining({ epoch: 1, state: "released" }),
       {

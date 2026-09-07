@@ -1759,6 +1759,10 @@ export async function* launchLocalPackageAssistantStaged(
       { runId },
     );
 
+    // S2.9: one server-minted action id identifies the turn's postprocess in
+    // the durable action journal. The assistant turn's own prompt ownership
+    // needs a real event plane in its suite and stays a separate increment.
+    const postprocessActionId = randomUUID();
     const promptResult = await sendScratchPromptAndProjectEvents({
       runId,
       sessionId: session.sessionId,
@@ -1771,6 +1775,7 @@ export async function* launchLocalPackageAssistantStaged(
       db,
       localPackage: pkg,
       runId,
+      actionId: postprocessActionId,
       lockGeneration: args.body.sessionId,
       assertCanApply: () => assertHoldsLock(pkg.id, args.body.sessionId, db),
     });
@@ -2291,6 +2296,7 @@ export async function sendLocalPackageAssistantMessage(args: {
       appended.capabilityAgent,
       { runId: args.runId },
     );
+    const postprocessActionId = randomUUID();
     const promptResult = await sendScratchPromptAndProjectEvents({
       runId: args.runId,
       sessionId: appended.hostSessionId,
@@ -2306,6 +2312,7 @@ export async function sendLocalPackageAssistantMessage(args: {
       db,
       localPackage: pkg,
       runId: args.runId,
+      actionId: postprocessActionId,
       lockGeneration: args.body.sessionId,
       assertCanApply: () => assertHoldsLock(pkg.id, args.body.sessionId, db),
     });

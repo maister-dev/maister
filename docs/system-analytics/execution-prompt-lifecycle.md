@@ -778,6 +778,10 @@ result is durable. A superseded assignment, a replaced incarnation or a run that
 is no longer a Running scratch run settles the historical outcome without
 touching the dialog.
 
+A recovery turn belongs to its own `scratch_recover` generation at ordinal zero
+and admits only under that placement reason, so a recover can never adopt the
+launch turn's identity.
+
 A local-package assistant turn additionally postprocesses one structured action,
 and extracting that action SANITIZES the assistant message — so without durable
 intent, a process that died before the package apply lost the action outright.
@@ -787,8 +791,10 @@ and carries the edit-lock generation that authorized it. Applying settles the
 row forward exactly once under a CAS out of `pending`, and the result message is
 written only by the settling caller. A pending action whose lock generation no
 longer matches is settled `skipped` and never edits the package. The assistant
-turn's own prompt ownership stays on the pre-owner stack completion until its
-increment.
+turn's own prompt ownership is still Designed: its suite mocks the supervisor
+transport wholesale, so no canonical lifecycle event projects the incarnation an
+owned prompt must admit against, and qualifying it needs a real event plane in
+that suite rather than a wiring change.
 
 ### Remaining domain adapters (Designed)
 

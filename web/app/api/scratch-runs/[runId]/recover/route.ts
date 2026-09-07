@@ -32,9 +32,9 @@ import { scratchStepId } from "@/lib/scratch-runs/launch";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import {
   assertLocalPackageAssistantActor,
-  completeScratchPromptTurn,
   markScratchCrashed,
 } from "@/lib/scratch-runs/service";
+import { readScratchDialogStatus } from "@/lib/scratch-runs/turn-completion";
 import {
   createExecutionHosts,
   isFencedError,
@@ -522,9 +522,10 @@ export async function POST(
         stepId: scratchStepId(),
         prompt: normalizeScratchPrompt(body.prompt, executor.agent, { runId }),
         execution,
+        owner: { variant: "recovery" },
       });
 
-      const dialogStatus = await completeScratchPromptTurn({ db, runId });
+      const dialogStatus = await readScratchDialogStatus(db as never, runId);
 
       return NextResponse.json(
         {
