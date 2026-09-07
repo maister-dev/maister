@@ -84,6 +84,7 @@ import {
   type DelegationSnapshot,
   type ExecutionHost,
   agentTurns,
+  runResults,
   executionAssignments,
   runSessionIncarnations,
 } from "@/lib/db/schema";
@@ -111,7 +112,12 @@ import {
   markReworkFromReview,
   type StateTransitionResult,
 } from "@/lib/runs/state-transitions";
-import { tryStartRun } from "@/lib/scheduler";
+import {
+  tryStartRun,
+  takeSchedulerLock,
+  countLiveRuns,
+  capForPool,
+} from "@/lib/scheduler";
 import {
   createExecutionHosts,
   executionHosts,
@@ -2330,6 +2336,7 @@ async function claimReworkGeneration(
   tx: Db,
   childRunId: string,
   placementHost: ExecutionHost,
+  prompt: string,
 ): Promise<StateTransitionResult> {
   const flip = await markReworkFromReview(childRunId, { db: tx });
 
@@ -2340,13 +2347,45 @@ async function claimReworkGeneration(
     reason: "rework_return",
     host: placementHost,
   });
+  const turn = await admitAgentGenerationTurn(tx, {
+    runId: childRunId,
+    assignmentId: assignment.id,
+    variant: "rework",
+    prompt,
+  });
+
+  await tx
+    .update(runResults)
+    .set({ validity: "stale" })
+    .where(
+      and(eq(runResults.runId, childRunId), eq(runResults.validity, "valid")),
+    );
+  log.info(
+    { runId: childRunId, turnId: turn.id, assignmentId: assignment.id },
+    "agent rework admitted",
+  );
 
   return { ok: true, assignment };
 }
 
+async function claimAgentReworkCapacity(
+  tx: ExecutionDb,
+  runId: string,
+): Promise<void> {
+  await takeSchedulerLock(tx);
+  if ((await countLiveRuns(tx, "agent")) >= capForPool("agent"))
+    throw new MaisterError(
+      "CONFLICT",
+      "agent pool is full; retry rework when a slot is available",
+      {
+        details: { reason: "agent_pool_full", runId },
+      },
+    );
+}
+
 export type ReworkChildRunResult = {
   childRunId: string;
-  status: "Running";
+  status: Run["status"];
 };
 
 // FOR UPDATE load of an OWN (non-shared) child's `workspaces` row promotion_state —
@@ -2431,6 +2470,7 @@ export async function reworkChildRun(
 
   if (run.workspaceMode === "shared" && run.agentWorkspace === "worktree") {
     claim = await _db.transaction(async (tx: Db) => {
+      await claimAgentReworkCapacity(tx, childRunId);
       const ws = await resolveSharedTreeWorkspaceForUpdate(tx, run);
 
       if (ws.promotionState === "claiming" || ws.promotionState === "done") {
@@ -2448,10 +2488,11 @@ export async function reworkChildRun(
         );
       }
 
-      return claimReworkGeneration(tx, childRunId, placementHost);
+      return claimReworkGeneration(tx, childRunId, placementHost, prompt);
     });
   } else {
     claim = await _db.transaction(async (tx: Db) => {
+      await claimAgentReworkCapacity(tx, childRunId);
       const ws = await loadOwnWorkspacePromotionStateForUpdate(tx, childRunId);
 
       if (
@@ -2468,7 +2509,7 @@ export async function reworkChildRun(
         );
       }
 
-      return claimReworkGeneration(tx, childRunId, placementHost);
+      return claimReworkGeneration(tx, childRunId, placementHost, prompt);
     });
   }
 
@@ -2482,11 +2523,21 @@ export async function reworkChildRun(
   await startAgentSession(childRunId, {
     db: _db,
     executionHosts: hosts,
-    overridePrompt: prompt,
     assignmentId: claim.assignment?.id ?? null,
   });
+  const [current]: Array<{ status: Run["status"] }> = await _db
+    .select({ status: runs.status })
+    .from(runs)
+    .where(eq(runs.id, childRunId));
 
-  return { childRunId, status: "Running" };
+  if (!current)
+    throw new MaisterError(
+      "PRECONDITION",
+      "agent run was removed before rework acknowledgment",
+      { details: { runId: childRunId } },
+    );
+
+  return { childRunId, status: current.status };
 }
 
 async function recordAgentPermissionRequest(args: {

@@ -144,7 +144,8 @@ future Mγ stage).
 
 The `agent_turns` storage and production message admission are implemented.
 Messages retain FIFO order across capacity claims and persistent parks. Initial
-turns retain their input before owned creation; resume/rework wiring remains
+turns retain their input before owned creation; rework input commits with its
+new assignment and invalidation of the prior public result. Resume wiring remains
 Designed. Its accepted input,
 binding and state constraints are defined in the
 [schema reference](../database-schema.md#agent_turns-implemented).

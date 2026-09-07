@@ -2352,7 +2352,8 @@ terminal admission refusal, immutable source, exact command binding and run
 cascade. Production messages use the scheduler-cap claim, retain FIFO order
 across persistent parks and acknowledge the exact command atomically with the
 domain result. Initial turns retain ordinal zero and the launch assignment ID
-before owned session creation. Resume/rework continuation wiring remains Designed;
+before owned session creation. Rework stores its input with the new assignment
+and stales the prior public result in that claim. Resume continuation wiring remains Designed;
 see [prompt lifecycle](system-analytics/execution-prompt-lifecycle.md).
 
 ## `run_messages`

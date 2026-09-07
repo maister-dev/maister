@@ -2134,6 +2134,12 @@ paths:
         against the child's existing worktree; it re-reviews on its next
         `end_turn`. Backs the `run_rework` delegation tool.
 
+        The scheduler capacity claim, new assignment and immutable original
+        rework prompt commit together. A full agent pool returns `CONFLICT`
+        without changing Review. The prior public result becomes stale at
+        admission; the original turn publishes its new revision once, including
+        after Web restart.
+
         **Identifiers (trust contour).** The `projectId` and the **parent**
         `runId` are derived SERVER-SIDE from the run-bound orchestrator token —
         NEVER body fields. `childRunId` MUST be a direct child of the bound
@@ -2175,9 +2181,10 @@ paths:
                   minLength: 1
                   description: |
                     Rework instruction delivered to the resumed child session.
+                  maxLength: 1000000
       responses:
         "200":
-          description: Child re-opened; it is now `Running`.
+          description: Rework admitted; the returned status is current and may already reflect completion.
           content:
             application/json:
               schema:
@@ -2189,7 +2196,7 @@ paths:
                     format: uuid
                   status:
                     type: string
-                    enum: [Running]
+                    enum: [Pending, Running, NeedsInput, NeedsInputIdle, HumanWorking, WaitingOnChildren, Review, Crashed, Done, Abandoned, Failed]
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":

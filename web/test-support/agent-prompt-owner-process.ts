@@ -1,7 +1,11 @@
 import { once } from "node:events";
 
 import { closeDb, getDb } from "@/lib/db/client";
-import { startAgentSession, sendAgentMessage } from "@/lib/agents/launch";
+import {
+  startAgentSession,
+  sendAgentMessage,
+  reworkChildRun,
+} from "@/lib/agents/launch";
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
 import {
   startCanonicalProjectionWorker,
@@ -19,6 +23,8 @@ async function main(): Promise<void> {
     const message = process.argv[3];
 
     if (message === undefined) await startAgentSession(runId, { db });
+    else if (process.argv[5] === "rework")
+      await reworkChildRun(runId, message, { db });
     else
       await sendAgentMessage(runId, message, {
         db,

@@ -494,12 +494,12 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   run_rework: {
     description:
-      "Re-open a reviewed delegated child of the calling orchestrator for another turn with a rework prompt. Agent children only — a flow child owns its own review/rework loop and is refused PRECONDITION (promote or cancel it instead). The child must be a direct child of the bound orchestrator run and currently in Review. It is respawned and resumed with prior context against its existing worktree, then re-reviews on its next end_turn. Returns { childRunId, status }.",
+      "Re-open a reviewed delegated child of the calling orchestrator for another turn with a rework prompt. Agent children only — a flow child owns its own review/rework loop and is refused PRECONDITION (promote or cancel it instead). The child must be a direct child of the bound orchestrator run and currently in Review. A full agent pool refuses the claim with CONFLICT. The accepted prompt is retained with its new assignment and survives Web restart. It resumes with prior context against its existing worktree, then re-reviews on its next end_turn. Returns { childRunId, status } with the current run status, which may already reflect completion.",
     inputSchema: {
       type: "object",
       properties: {
         childRunId: { type: "string" },
-        prompt: { type: "string", minLength: 1 },
+        prompt: { type: "string", minLength: 1, maxLength: 1_000_000 },
       },
       required: ["childRunId", "prompt"],
     },

@@ -27,6 +27,7 @@ import {
   agentTurns,
 } from "@/lib/db/schema";
 import { agentPromptOwners } from "@/lib/agents/prompt-owner";
+import { reworkChildRun } from "@/lib/agents/launch";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
 import { testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { createExecutionHosts } from "@/lib/execution-host/client";
@@ -226,6 +227,7 @@ function startDriver(
   runId: string,
   message?: string,
   requestKey?: string,
+  operation?: "rework",
 ): {
   child: ChildProcess;
   exited: Promise<number | null>;
@@ -236,7 +238,15 @@ function startDriver(
     path.resolve("test-support/agent-prompt-owner-process.ts"),
     message === undefined
       ? [runId]
-      : [runId, message, ...(requestKey ? [requestKey] : [])],
+      : [
+          runId,
+          message,
+          ...(operation
+            ? [requestKey ?? "", operation]
+            : requestKey
+              ? [requestKey]
+              : []),
+        ],
     {
       execArgv: [
         "--import",
@@ -345,6 +355,7 @@ async function expectCompleted(
 async function killAtTerminalWrite(
   runId: string,
   message?: string,
+  operation?: "rework",
 ): Promise<void> {
   const trigger = `agent_pause_${randomUUID().replaceAll("-", "")}`;
   const lockKey = Math.floor(Math.random() * 2_000_000_000) + 1;
@@ -359,7 +370,7 @@ async function killAtTerminalWrite(
     await database.pool.query(
       `CREATE TRIGGER ${trigger} BEFORE UPDATE ON runs FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
     );
-    driver = startDriver(runId, message);
+    driver = startDriver(runId, message, undefined, operation);
     await expect
       .poll(
         async () => {
@@ -393,6 +404,140 @@ async function killAtTerminalWrite(
 }
 
 describe("Agent owned prompts through the production launcher", () => {
+  it.each(["live", "before_terminal", "before_apply"] as const)(
+    "owner-agent-rework retains its requested result after %s",
+    async (window) => {
+      const runId = await seedAgent({ bytes: 0 });
+
+      await expectCompleted(runId, startDriver(runId));
+      await db.update(runs).set({ status: "Review" }).where(eq(runs.id, runId));
+      const prompt = `fixture-output:${JSON.stringify({ bytes: 0, terminalDelayMs: window === "before_terminal" ? 5_000 : 0, text: '\n```json maister:output\n{"summary":"reworked answer"}\n```' })}`;
+
+      if (window === "live")
+        expect(await reworkChildRun(runId, prompt, { db })).toMatchObject({
+          childRunId: runId,
+          status: "Done",
+        });
+      else if (window === "before_apply")
+        await killAtTerminalWrite(runId, prompt, "rework");
+      else {
+        const driver = startDriver(runId, prompt, undefined, "rework");
+
+        if (window === "before_terminal") {
+          await expect
+            .poll(
+              async () => {
+                const [command] = await db
+                  .select()
+                  .from(executionCommands)
+                  .where(
+                    and(
+                      eq(executionCommands.runId, runId),
+                      eq(executionCommands.kind, "session.prompt"),
+                      eq(executionCommands.state, "accepted"),
+                    ),
+                  );
+
+                return command?.ownerRef?.variant;
+              },
+              { timeout: 15_000, interval: 25 },
+            )
+            .toBe("rework");
+          const [prior] = await db
+            .select()
+            .from(runResults)
+            .where(eq(runResults.runId, runId));
+
+          expect(prior.validity).toBe("stale");
+          driver.child.kill("SIGKILL");
+          await driver.exited;
+        }
+      }
+      if (window !== "live") startDriver(runId);
+      await expect
+        .poll(
+          async () => {
+            const [turn] = await db
+              .select()
+              .from(agentTurns)
+              .where(
+                and(
+                  eq(agentTurns.runId, runId),
+                  eq(agentTurns.variant, "rework"),
+                ),
+              );
+
+            return turn?.state;
+          },
+          { timeout: 50_000, interval: 50 },
+        )
+        .toBe("applied");
+      const results = await db
+        .select()
+        .from(runResults)
+        .where(eq(runResults.runId, runId))
+        .orderBy(asc(runResults.revision));
+
+      expect(results).toHaveLength(2);
+      expect(results[0].validity).not.toBe("valid");
+      expect(results[1]).toMatchObject({
+        validity: "valid",
+        value: { summary: "reworked answer" },
+        schemaSha256: contract.sha256,
+      });
+      const prompts = await db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, runId),
+            eq(executionCommands.kind, "session.prompt"),
+          ),
+        );
+
+      expect(prompts).toHaveLength(2);
+      expect(
+        prompts.every((command) => command.applicationState === "applied"),
+      ).toBe(true);
+    },
+    120_000,
+  );
+
+  it("owner-agent-rework refuses admission while its agent pool is full", async () => {
+    const previousCap = process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+    const runId = await seedAgent({ bytes: 0 });
+
+    await expectCompleted(runId, startDriver(runId));
+    await db.update(runs).set({ status: "Review" }).where(eq(runs.id, runId));
+    const occupying = await seedAgent({ bytes: 0 });
+
+    process.env.MAISTER_MAX_CONCURRENT_AGENTS = "1";
+    try {
+      await expect(
+        reworkChildRun(runId, 'fixture-output:{"bytes":0}', { db }),
+      ).rejects.toMatchObject({
+        code: "CONFLICT",
+        details: { reason: "agent_pool_full" },
+      });
+      const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+
+      expect(run.status).toBe("Review");
+      expect(
+        await db
+          .select()
+          .from(agentTurns)
+          .where(
+            and(eq(agentTurns.runId, runId), eq(agentTurns.variant, "rework")),
+          ),
+      ).toHaveLength(0);
+    } finally {
+      await db.delete(runs).where(eq(runs.id, occupying));
+      if (previousCap === undefined)
+        delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+      else process.env.MAISTER_MAX_CONCURRENT_AGENTS = previousCap;
+    }
+  }, 60_000);
+
   it.each(["live", "before_apply"] as const)(
     "owner-agent-message settles a failed retained create after %s",
     async (window) => {

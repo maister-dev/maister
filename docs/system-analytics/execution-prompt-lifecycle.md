@@ -1,6 +1,6 @@
 # Execution prompt lifecycle
 
-**Status:** Implemented short-lived admission, private v2 request/owner storage and shared canonical-event/receipt reconciliation. Request-bound receipt/event v2 and verified immutable command-output manifests are implemented on the explicit v2 development path. Unknown-admission reconciliation, frozen-request recovery, create/ACP binding fences and the registered owner application engine are implemented. Flow node/gate and agent initial/message adapters are implemented. Remaining domain adapters, global activation and retirement remain **Designed** (AB-05–07/10).
+**Status:** Implemented short-lived admission, private v2 request/owner storage and shared canonical-event/receipt reconciliation. Request-bound receipt/event v2 and verified immutable command-output manifests are implemented on the explicit v2 development path. Unknown-admission reconciliation, frozen-request recovery, create/ACP binding fences and the registered owner application engine are implemented. Flow node/gate and agent initial/message/rework adapters are implemented. Remaining domain adapters, global activation and retirement remain **Designed** (AB-05–07/10).
 
 
 ## Purpose
@@ -512,7 +512,7 @@ application, autonomous owner recovery, superseded source refusal and both
 failure outcomes. Removing the application-generation guard makes the stale
 source test fail by finalizing the successor. Persistent first-turn qualification
 also covers live parking and actual process death before completion or the park
-transaction. Resume and rework remain required below; this
+transaction. Resume remains required below; this
 increment does not enable the global owner worker.
 
 ### Agent session creation (Implemented)
@@ -563,6 +563,21 @@ distinct live inputs, same-key retry and queue draining after process death.
 The global recovery worker remains gated by S2.12. See the
 [schema contract](../database-schema.md#agent_turns-implemented).
 
+### Agent rework (Implemented)
+
+`reworkChildRun` keeps the existing workspace promotion fence and takes the
+scheduler cap lock before claiming work. A full agent pool returns `CONFLICT`
+without changing Review or accepting input. A successful claim atomically
+mints its `rework_return` assignment, stales the prior public result and stores
+the original prompt in a distinct `agent_turns` row. The common create/prompt
+owner resumes that exact turn after Web restart and publishes one new result
+revision against the retained launch contract. The API/MCP response reports the
+current run status, which may already reflect completion.
+
+Qualification covers live completion, actual launcher death before terminal
+evidence and before application, stale prior-result visibility, and capacity
+refusal. Resume and historical permission/wait handoffs remain pending below.
+
 ### Remaining domain adapters (Designed)
 
 Persist the reference before remote dispatch in the same transaction as the owner admission. Use discriminated subvariants under the existing owner families where possible; widen the checked family only if necessary. Resolve references from authoritative rows. A Flow owner always references existing `node_attempts`, `gate_results` or consensus ledger rows; never create another Flow attempt ledger.
@@ -571,7 +586,7 @@ Persist the reference before remote dispatch in the same transaction as the owne
 | --- | --- | --- | --- |
 | Consensus verification: node attempt, round, verifier, target | `web/lib/flows/graph/consensus/runtime.ts:401–438`; consensus round/evaluation rows | Apply exactly the intended matrix cell, wake existing consensus reducer; same attempt ID alone is not unique enough. | `owner-consensus-verify` |
 | Consensus synthesis: attempt, round, synthesis generation | `web/lib/flows/graph/consensus/runtime.ts:658–697` | Apply synthesis result to its original round; never regenerate a prompt merely because the parent stack died. | `owner-consensus-synthesis` |
-| Agent resume/rework turn: run, durable turn generation, incarnation | `web/lib/agents/launch.ts`; runs, sessions, existing trigger/message records | Running/NeedsInput; parked NeedsInputIdle/WaitingOnChildren require their specific existing re-entry and capacity rules. Apply result/public-result contract and completion once, preserving launch snapshot. Initial turns and their pre-prompt create recovery are implemented above. | `owner-agent-resume`, `owner-agent-rework` |
+| Agent resume turn: run, durable turn generation, incarnation | `web/lib/agents/launch.ts`; runs, sessions, existing trigger/message records | Running/NeedsInput; parked NeedsInputIdle/WaitingOnChildren require their specific existing re-entry and capacity rules. Apply result/public-result contract and completion once, preserving launch snapshot. Initial/rework turns and pre-prompt create recovery are implemented above. | `owner-agent-resume` |
 | Consensus draft agent: child run + consensus round/participant generation | Agent session consumer/consensus draft path in `agents/launch.ts:3915–3921` | Record complete draft artifact and settle the existing child/result path; output lost from stack must not become an empty successful draft. | `owner-consensus-draft` |
 | Scratch launch/message/recovery: dialog message/turn ID and generation | `scratch-runs/{service,events,recovery,dialog}.ts` | Scratch dialog Running with run/session still live is a due continuation, not a reason to skip. Persist reply and WaitingForUser once; NeedsInput and idle retain the exact owner until checkpoint/resume disposition. | `owner-scratch-initial`, `owner-scratch-message`, `owner-scratch-recovery` |
 | Local-package/Studio assistant scratch: scratch turn plus postprocess action generation | `scratch-runs/service.ts` `postProcessFlowAssistantTurn`, local-package authority | Recover dialog completion and pending postprocessing independently. Revalidate local-package lock/session authority before existing publish/apply side effect; persist action intent/result idempotently. No new package behavior. | `owner-scratch-package-initial`, `owner-scratch-package-message`, `owner-scratch-package-lock-takeover` |

@@ -1760,7 +1760,10 @@ export function createFakeExecutionHost(
               { details: { httpStatus: 500 } },
             ),
           );
-          enqueue(sessionId, exitEvent(sessionId, "checkpoint"));
+          const event = exitEvent(sessionId, "checkpoint");
+
+          enqueue(sessionId, event);
+          await publishCanonical(envelope, sessionId, event);
           monotonicId += 1;
 
           return {
@@ -1800,7 +1803,10 @@ export function createFakeExecutionHost(
                 { details: { httpStatus: 500 } },
               ),
             );
-            enqueue(sessionId, exitEvent(sessionId, "intentional"));
+            const event = exitEvent(sessionId, "intentional");
+
+            enqueue(sessionId, event);
+            await publishCanonical(envelope, sessionId, event);
           }
 
           return { status: 204, body: { outcome: "terminated" } };

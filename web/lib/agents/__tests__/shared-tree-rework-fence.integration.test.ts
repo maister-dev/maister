@@ -33,7 +33,10 @@ import {
 
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { isMaisterError } from "@/lib/errors";
-import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
+import {
+  fakeExecutionHosts,
+  type FakeExecutionHost,
+} from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -50,33 +53,8 @@ vi.mock("@/lib/scheduler", async (importOriginal) => {
   };
 });
 
-// Supervisor seam: createSession is spied (case (a) asserts it is NOT called when
-// the rework is fenced); sendPrompt is a no-op; streamSession ends immediately so
-// the GREEN-case consumer detaches without a terminal flip.
-const createSessionSpy = vi.fn(
-  async (input: { runId: string; resumeSessionId?: string }) => ({
-    sessionId: `sup-${input.runId}`,
-    pid: 1,
-    acpSessionId: input.resumeSessionId ?? `acp-${input.runId}`,
-  }),
-);
-
-vi.mock("@/lib/supervisor-client", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/lib/supervisor-client")>();
-
-  return {
-    ...actual,
-    createSession: (input: unknown) => createSessionSpy(input as never),
-    sendPrompt: vi.fn(async () => ({ stopReason: "end_turn" as const })),
-    streamSession: async function* () {
-      return;
-    },
-    listSessions: vi.fn(async () => []),
-  };
-});
-
 let testDatabase: StartedPostgresTestDb;
+let fake: FakeExecutionHost;
 let pool: Pool;
 let db: NodePgDatabase;
 let cacheRoot: string;
@@ -96,7 +74,7 @@ beforeAll(async () => {
   pool = testDatabase.pool;
   db = testDatabase.db;
   // ADR-166: every launch places the run on the local execution host.
-  await fakeExecutionHosts(db);
+  ({ fake } = await fakeExecutionHosts(db));
 
   ({ launchAgentRun, reworkChildRun } = await import("@/lib/agents/launch"));
 }, 180_000);
@@ -112,8 +90,6 @@ let executorId: string;
 let repoPath: string;
 
 beforeEach(async () => {
-  createSessionSpy.mockClear();
-
   worktreesTmp = await mkdtemp(path.join(os.homedir(), ".maister-rework-wt-"));
   originalWorktreesRoot = process.env.MAISTER_WORKTREES_ROOT;
   process.env.MAISTER_WORKTREES_ROOT = worktreesTmp;
@@ -344,7 +320,7 @@ describe("F1 (ADR-102) — rework is fenced on the shared tree promotion_state",
 
     // A tree promote is in flight: the allocator workspace is 'claiming'.
     await setTreePromotionState(root, "claiming");
-    createSessionSpy.mockClear();
+    const priorCreates = fake.callsOf("createSession").length;
 
     await expect(
       reworkChildRun(reviewChild, "please redo it", { db }),
@@ -355,10 +331,10 @@ describe("F1 (ADR-102) — rework is fenced on the shared tree promotion_state",
     // The fence ran BEFORE the CAS + spawn: the child stays Review and NO fresh
     // supervisor session was created.
     expect(await runStatus(reviewChild)).toBe("Review");
-    expect(createSessionSpy).not.toHaveBeenCalled();
+    expect(fake.callsOf("createSession")).toHaveLength(priorCreates);
   });
 
-  it("allows the rework (Review→Running) when promotion_state is none", async () => {
+  it("applies the rework result when promotion_state is none", async () => {
     const agentId = await seedWorkerAgent();
     const root = await insertRoot();
     const reviewChild = await launchSharedReviewChild(agentId, root);
@@ -368,7 +344,13 @@ describe("F1 (ADR-102) — rework is fenced on the shared tree promotion_state",
 
     const result = await reworkChildRun(reviewChild, "please redo it", { db });
 
-    expect(result.status).toBe("Running");
-    expect(await runStatus(reviewChild)).toBe("Running");
+    expect(result.status).toBe("Review");
+    expect(await runStatus(reviewChild)).toBe("Review");
+    const turns = await pool.query(
+      `SELECT state FROM agent_turns WHERE run_id = $1 AND variant = 'rework'`,
+      [reviewChild],
+    );
+
+    expect(turns.rows).toEqual([{ state: "applied" }]);
   });
 });
