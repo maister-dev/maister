@@ -1666,7 +1666,8 @@ async function executeNodeAction(
             promptOwner: {
               nodeAttemptId: ctx.nodeAttemptId,
               promptOrdinal: actionAttempt.actionPromptOrdinal,
-              ...(actionAttempt.actionResume?.kind === "permission"
+              ...(actionAttempt.actionResume?.kind === "permission" ||
+              actionAttempt.actionResume?.kind === "permission_continue"
                 ? {
                     variant: "permission_resume" as const,
                     hitlRequestId: actionAttempt.actionResume.hitlRequestId,

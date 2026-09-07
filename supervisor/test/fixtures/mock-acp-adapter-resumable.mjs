@@ -133,7 +133,7 @@ class MockAgent {
   // recorded pending-permission for replay on the next prompt. MUST NOT replay
   // conversation history, per the ACP spec.
   async resumeSession(params) {
-    this.sessions.set(params.sessionId, { prompts: 0 });
+    this.sessions.set(params.sessionId, { prompts: 0, resumed: true });
     const journal = readJournal(params.sessionId);
 
     // Integration tests can revoke this exact persisted resume handle.
@@ -179,7 +179,7 @@ class MockAgent {
     const text = extractText(params.prompt);
     const session = this.sessions.get(params.sessionId);
     const completionText = readJournal(params.sessionId)?.completionText;
-    let permissionSelected = false;
+    let permissionSelected = HOLD_AFTER_PERMISSION && session?.resumed === true;
 
     if (session) session.prompts += 1;
 
@@ -272,7 +272,11 @@ class MockAgent {
           },
         });
       }
-    } else if (REQUEST_PERMISSION) {
+    } else if (
+      REQUEST_PERMISSION &&
+      (!(HOLD_AFTER_PERMISSION && session?.resumed) ||
+        readJournal(params.sessionId)?.requestFreshPermission)
+    ) {
       const toolCall = {
         toolCallId: "tc-1",
         title: "Mock tool",
@@ -336,7 +340,7 @@ class MockAgent {
       });
     }
 
-    if (permissionSelected && HOLD_AFTER_PERMISSION) {
+    if (permissionSelected && HOLD_AFTER_PERMISSION && !session?.resumed) {
       await new Promise(() => {});
     }
 

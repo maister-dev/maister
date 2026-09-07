@@ -40,6 +40,7 @@ import { startProjectionWorker } from "@/lib/execution-host/events/projection-wo
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
+import { prepareFlowPermissionResult } from "@/lib/flows/graph/permission-resume";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { resumeRun } from "@/lib/runs/resume";
 import { respondToHitl } from "@/lib/services/hitl";
@@ -953,6 +954,19 @@ describe("Owned Flow checkpointed permission resume", () => {
         expect(unclaimed.executionAssignmentId).toBe(
           parked.executionAssignmentId,
         );
+        await expect
+          .poll(
+            async () =>
+              (
+                await prepareFlowPermissionResult(
+                  db,
+                  seeded.runId,
+                  hosts.transport,
+                )
+              )?.kind,
+            { timeout: 15_000 },
+          )
+          .toBe("completed");
         const capLock = await database.pool.connect();
         let staleResume:
           | Promise<Awaited<ReturnType<typeof resumeRun>> | unknown>
@@ -1330,6 +1344,20 @@ describe("Owned Flow checkpointed permission resume", () => {
           .where(eq(runs.id, seeded.runId));
 
         expect(idle.status).toBe("NeedsInputIdle");
+        if (scenario === "completed-source")
+          await expect
+            .poll(
+              async () =>
+                (
+                  await prepareFlowPermissionResult(
+                    db,
+                    seeded.runId,
+                    hosts.transport,
+                  )
+                )?.kind,
+              { timeout: 15_000 },
+            )
+            .toBe("completed");
         if (scenario === "checkpoint")
           await db
             .update(hitlRequests)

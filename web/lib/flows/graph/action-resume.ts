@@ -5,8 +5,7 @@ import type { ExecutionAssignment } from "@/lib/db/schema";
 
 import { and, desc, eq, inArray } from "drizzle-orm";
 
-import { assertPermissionResultSource } from "./permission-result-source";
-
+import { assertPermissionHandoffSource } from "@/lib/execution-host/permission-handoff-source";
 import {
   executionAssignments,
   executionCommands,
@@ -35,8 +34,15 @@ export type FlowPermissionResultResume = ActionResumeIdentity &
     sourceIncarnationId: string;
   }>;
 
+export type FlowPermissionContinueResume = Omit<
+  FlowPermissionResultResume,
+  "kind"
+> &
+  Readonly<{ kind: "permission_continue" }>;
+
 export type FlowActionResume =
   | FlowPermissionResultResume
+  | FlowPermissionContinueResume
   | (ActionResumeIdentity &
       (
         | Readonly<{
@@ -196,7 +202,7 @@ export async function authorizeOrchestratorActionResume(
       throw new PromptOwnerInvariantError(
         "orchestrator_resume_handoff_generation",
       );
-    await assertPermissionResultSource(tx, {
+    await assertPermissionHandoffSource(tx, {
       command: source.command,
       resume: permissionResult,
       assignment: parkedAssignment,

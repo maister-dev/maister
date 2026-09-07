@@ -22,6 +22,10 @@ import {
   runs,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import {
+  assertNodePermissionContinuation,
+  assertGatePermissionContinuation,
+} from "@/lib/execution-host/permission-handoff-source";
 
 const id = z.string().min(1).max(128);
 
@@ -198,7 +202,9 @@ export async function lockCreateOwner(
     owner: FlowCreateOwner;
   },
 ): Promise<boolean> {
-  if (!(await lockCurrentSessionAssignment(tx, input))) return false;
+  const assignment = await lockCurrentSessionAssignment(tx, input);
+
+  if (!assignment) return false;
   const [run] = await tx.select().from(runs).where(eq(runs.id, input.runId));
   const [attempt] = await tx
     .select()
@@ -227,7 +233,9 @@ export async function lockCreateOwner(
     attempt.finishContinuation !== null
   )
     return false;
-  if (input.owner.variant === "node")
+  if (input.owner.variant === "node") {
+    await assertNodePermissionContinuation(tx, attempt, assignment);
+
     return (
       attempt.status === "Running" &&
       attempt.endedAt === null &&
@@ -235,6 +243,7 @@ export async function lockCreateOwner(
       attempt.actionPromptOrdinal === input.owner.promptOrdinal &&
       attempt.actionCompletion === null
     );
+  }
   if (!["Running", "Succeeded"].includes(attempt.status)) return false;
   const [evaluation] = await tx
     .select()
@@ -249,6 +258,9 @@ export async function lockCreateOwner(
     .orderBy(desc(gateResults.createdAt), desc(gateResults.id))
     .limit(1)
     .for("update");
+
+  if (evaluation?.permissionResume?.kind === "permission_continue")
+    await assertGatePermissionContinuation(tx, evaluation, assignment.id);
 
   return (
     evaluation?.id === input.owner.evaluationId &&

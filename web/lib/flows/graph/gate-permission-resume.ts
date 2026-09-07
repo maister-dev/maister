@@ -10,8 +10,10 @@ import type {
   Run,
   RunSessionIncarnation,
 } from "@/lib/db/schema";
-import type { PreparedPermissionResult } from "./permission-resume";
-import type { FlowActionCompletion } from "./action-completion";
+import type {
+  PreparedPermissionResult,
+  PreparedPermissionContinuation,
+} from "./permission-resume";
 
 import { createHash } from "node:crypto";
 
@@ -21,13 +23,18 @@ import pino from "pino";
 
 import { canonicalCommandJson } from "../../../../runtime/command-json";
 
-import { gatePermissionSourceSchema } from "./permission-source";
-import { assertPermissionResultSource } from "./permission-result-source";
 import {
   lockPermissionResultEvidence,
-  completePermissionResultHandoff,
+  completePermissionInputHandoff,
+  lockPermissionContinuationEvidence,
 } from "./permission-result-evidence";
 
+import { gatePermissionSourceSchema } from "@/lib/execution-host/flow-permission-source";
+import {
+  assertPermissionHandoffSource,
+  assertGatePermissionContinuation,
+  gateParentActionDigest,
+} from "@/lib/execution-host/permission-handoff-source";
 import {
   executionAssignments,
   executionCommands,
@@ -38,6 +45,8 @@ import {
   runs,
 } from "@/lib/db/schema";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
+
+export { gateParentActionDigest } from "@/lib/execution-host/permission-handoff-source";
 
 type GatePermissionIdentity = Readonly<{
   version: 1;
@@ -57,6 +66,11 @@ export type GatePermissionResume = GatePermissionIdentity &
   (
     | Readonly<{ kind: "permission" }>
     | Readonly<{
+        kind: "permission_continue";
+        inputCommandId: string;
+        checkpointCommandId: string;
+      }>
+    | Readonly<{
         kind: "permission_result";
         inputCommandId: string;
         checkpointCommandId: string;
@@ -74,14 +88,6 @@ const log = pino({
   name: "flow-gate-permission-resume",
   level: process.env.LOG_LEVEL ?? "info",
 });
-
-export function gateParentActionDigest(
-  completion: FlowActionCompletion | null,
-): string {
-  return createHash("sha256")
-    .update(canonicalCommandJson(completion))
-    .digest("hex");
-}
 
 type LockedGatePermissionSource = Readonly<{
   run: Run & { projectId: string };
@@ -379,7 +385,9 @@ export async function authorizeGatePermissionResult(
     .update(nodeAttempts)
     .set({ executionAssignmentId: assignment.id, actionResume: null })
     .where(eq(nodeAttempts.id, attempt.id));
-  await completePermissionResultHandoff(tx, context, prepared, assignment);
+  await completePermissionInputHandoff(tx, context, prepared, {
+    resultHandoffAssignmentId: assignment.id,
+  });
   log.info(
     {
       runId: run.id,
@@ -391,6 +399,86 @@ export async function authorizeGatePermissionResult(
       promptOrdinal: evaluation.promptOrdinal,
     },
     "gate-permission-result-handoff-authorized",
+  );
+}
+
+export async function authorizeGatePermissionContinuation(
+  tx: Db,
+  assignment: ExecutionAssignment,
+  prepared: Extract<PreparedPermissionContinuation, { domain: "gate" }>,
+): Promise<void> {
+  const context = await lockGatePermissionSource(tx, assignment);
+
+  if (!context)
+    throw new PromptOwnerInvariantError(
+      "gate_permission_continue_source_disappeared",
+    );
+  const {
+    run,
+    hitl,
+    response,
+    source,
+    command,
+    prior,
+    attempt,
+    evaluation,
+    incarnation,
+  } = context;
+
+  if (
+    prepared.parentActionSha256 !==
+    gateParentActionDigest(attempt.actionCompletion)
+  )
+    throw new PromptOwnerInvariantError("gate_permission_continue_generation");
+  const { input, checkpoint } = await lockPermissionContinuationEvidence(
+    tx,
+    context,
+    prepared,
+  );
+  const promptOrdinal = evaluation.promptOrdinal + 1;
+
+  await tx
+    .update(gateResults)
+    .set({
+      promptOrdinal,
+      status: "running",
+      verdict: null,
+      endedAt: null,
+      permissionResume: {
+        version: 1,
+        kind: "permission_continue",
+        sourceCommandId: command.id,
+        sourceAssignmentId: prior.id,
+        sourceIncarnationId: incarnation.id,
+        assignmentId: assignment.id,
+        promptOrdinal,
+        resumeSessionId: incarnation.acpSessionId,
+        hitlRequestId: hitl.id,
+        sourceRequestId: source.requestId,
+        optionId: response.optionId,
+        parentActionSha256: prepared.parentActionSha256,
+        inputCommandId: input.id,
+        checkpointCommandId: checkpoint.id,
+      },
+    })
+    .where(eq(gateResults.id, evaluation.id));
+  await tx
+    .update(nodeAttempts)
+    .set({ executionAssignmentId: assignment.id, actionResume: null })
+    .where(eq(nodeAttempts.id, attempt.id));
+  await completePermissionInputHandoff(tx, context, prepared, {
+    continuationAssignmentId: assignment.id,
+  });
+  log.info(
+    {
+      runId: run.id,
+      nodeAttemptId: attempt.id,
+      evaluationId: evaluation.id,
+      sourceCommandId: command.id,
+      assignmentId: assignment.id,
+      promptOrdinal,
+    },
+    "gate-permission-interrupted-turn-authorized",
   );
 }
 
@@ -441,7 +529,7 @@ export async function assertGatePermissionResult(
       (ref.variant === "gate_skill" ? "skill_check" : "ai_judgment")
   )
     throw new PromptOwnerInvariantError("gate_permission_result_generation");
-  await assertPermissionResultSource(db, { command, assignment, resume });
+  await assertPermissionHandoffSource(db, { command, assignment, resume });
 }
 
 export function pendingGatePermissionResumeExists(): SQL {
@@ -518,6 +606,8 @@ export async function loadGatePermissionContinuation(
 
   if (resume.kind === "permission_result")
     await assertGatePermissionResult(db, evaluation, input.assignmentId);
+  else if (resume.kind === "permission_continue")
+    await assertGatePermissionContinuation(db, evaluation, input.assignmentId);
 
   return resume;
 }

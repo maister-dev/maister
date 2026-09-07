@@ -28,17 +28,20 @@ import {
 import { decodeGatePromptCompletion } from "./gate-prompt-completion";
 import {
   lockPermissionResultEvidence,
-  completePermissionResultHandoff,
-  isPermissionResultCommand,
-  permissionResultPrecedesCheckpoint,
+  completePermissionInputHandoff,
+  lockPermissionContinuationEvidence,
 } from "./permission-result-evidence";
+import { decodeNodePromptCompletion } from "./node-prompt-owner";
+
+import {
+  isPermissionResultCommand,
+  permissionCheckpointOrder,
+} from "@/lib/execution-host/permission-handoff-evidence";
 import {
   nodePermissionSourceSchema,
   flowPermissionSourceSchema,
   gatePermissionSourceSchema,
-} from "./permission-source";
-import { decodeNodePromptCompletion } from "./node-prompt-owner";
-
+} from "@/lib/execution-host/flow-permission-source";
 import {
   executionAssignments,
   executionCommands,
@@ -81,8 +84,20 @@ export type PreparedPermissionResult = PreparedPermissionEvidence &
       }>
   );
 
+export type PreparedPermissionContinuation = PreparedPermissionEvidence &
+  Readonly<{ kind: "interrupted" }> &
+  (
+    | Readonly<{ domain: "node" }>
+    | Readonly<{ domain: "gate"; parentActionSha256: string }>
+  );
+
+export type PreparedPermissionHandoff =
+  | PreparedPermissionResult
+  | PreparedPermissionContinuation;
+
 type PermissionResultPreflight =
   | PreparedPermissionResult
+  | PreparedPermissionContinuation
   | Readonly<{ kind: "pending"; reason: string }>
   | null;
 
@@ -218,7 +233,12 @@ export async function prepareFlowPermissionResult(
     checkpoint.result?.sessionId !== source.data.supervisorSessionId
   )
     return { kind: "pending", reason: "source_checkpoint_pending" };
-  if (!(await permissionResultPrecedesCheckpoint(db, command, checkpoint)))
+  const order = await permissionCheckpointOrder(db, command, checkpoint);
+
+  if (
+    order === "unproven" ||
+    (order === "interrupted" && command.state !== "failed")
+  )
     return { kind: "pending", reason: "source_checkpoint_order_unproven" };
   const outcome: PromptOwnerOutcome =
     command.state === "succeeded"
@@ -262,6 +282,13 @@ export async function prepareFlowPermissionResult(
       throw new PromptOwnerInvariantError(
         "gate_permission_result_parent_missing",
       );
+    if (order === "interrupted")
+      return {
+        ...prepared,
+        kind: "interrupted",
+        domain: "gate",
+        parentActionSha256: gateParentActionDigest(parent.actionCompletion),
+      };
     const completion = await decodeGatePromptCompletion({
       db,
       ref,
@@ -282,6 +309,8 @@ export async function prepareFlowPermissionResult(
       parentActionSha256: gateParentActionDigest(parent.actionCompletion),
     };
   }
+  if (order === "interrupted")
+    return { ...prepared, kind: "interrupted", domain: "node" };
   const completion = await decodeNodePromptCompletion({
     commandId: command.id,
     promptOrdinal: source.data.flowPrompt.promptOrdinal,
@@ -514,7 +543,9 @@ export async function authorizeNodePermissionResult(
       },
     })
     .where(eq(nodeAttempts.id, attempt.id));
-  await completePermissionResultHandoff(tx, context, prepared, assignment);
+  await completePermissionInputHandoff(tx, context, prepared, {
+    resultHandoffAssignmentId: assignment.id,
+  });
   log.info(
     {
       runId: run.id,
@@ -529,6 +560,64 @@ export async function authorizeNodePermissionResult(
   );
 }
 
+export async function authorizeNodePermissionContinuation(
+  tx: Db,
+  assignment: ExecutionAssignment,
+  prepared: Extract<PreparedPermissionContinuation, { domain: "node" }>,
+): Promise<void> {
+  const context = await lockNodePermissionSource(tx, assignment);
+
+  if (!context)
+    throw new PromptOwnerInvariantError(
+      "permission_continue_source_disappeared",
+    );
+  const { command, prior, attempt, incarnation, hitl, source, response, run } =
+    context;
+  const { input, checkpoint } = await lockPermissionContinuationEvidence(
+    tx,
+    context,
+    prepared,
+  );
+  const promptOrdinal = attempt.actionPromptOrdinal + 1;
+
+  await tx
+    .update(nodeAttempts)
+    .set({
+      executionAssignmentId: assignment.id,
+      actionPromptOrdinal: promptOrdinal,
+      actionCompletion: null,
+      actionResume: {
+        version: 1,
+        kind: "permission_continue",
+        sourceCommandId: command.id,
+        sourceAssignmentId: prior.id,
+        assignmentId: assignment.id,
+        promptOrdinal,
+        resumeSessionId: incarnation.acpSessionId,
+        hitlRequestId: hitl.id,
+        sourceRequestId: source.requestId,
+        optionId: response.optionId,
+        inputCommandId: input.id,
+        checkpointCommandId: checkpoint.id,
+        sourceIncarnationId: incarnation.id,
+      },
+    })
+    .where(eq(nodeAttempts.id, attempt.id));
+  await completePermissionInputHandoff(tx, context, prepared, {
+    continuationAssignmentId: assignment.id,
+  });
+  log.info(
+    {
+      runId: run.id,
+      nodeAttemptId: attempt.id,
+      sourceCommandId: command.id,
+      assignmentId: assignment.id,
+      promptOrdinal,
+    },
+    "permission-interrupted-turn-authorized",
+  );
+}
+
 export function pendingNodePermissionResumeExists(): SQL {
   return sql`exists (
     select 1 from node_attempts resume_attempt
@@ -537,7 +626,7 @@ export function pendingNodePermissionResumeExists(): SQL {
       and resume_attempt.execution_assignment_id = ${runs.executionAssignmentId}
       and resume_attempt.status = 'Running' and resume_attempt.ended_at is null
       and resume_attempt.finish_continuation is null
-      and (resume_attempt.action_resume->>'kind' = 'permission'
+      and (resume_attempt.action_resume->>'kind' in ('permission', 'permission_continue')
         or (resume_attempt.action_resume->>'kind' = 'permission_result'
           and resume_attempt.action_completion is not null))
       and resume_attempt.action_resume->>'assignmentId' = ${runs.executionAssignmentId}

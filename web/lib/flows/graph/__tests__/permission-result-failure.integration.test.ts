@@ -4,7 +4,7 @@ import type { ProjectionWorker } from "@/lib/execution-host/events/projection-wo
 
 import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { access, mkdtemp, readFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -17,10 +17,12 @@ import {
   gateResults,
   hitlRequests,
   nodeAttempts,
+  runSessionIncarnations,
   runs,
   users,
 } from "@/lib/db/schema";
 import { createExecutionHosts } from "@/lib/execution-host/client";
+import { lockCreateOwner } from "@/lib/execution-host/create-intent";
 import { quarantinePromptProtocol } from "@/lib/execution-host/prompt-evidence";
 import {
   startRuntimeEventConsumer,
@@ -250,9 +252,26 @@ async function seedFailureFlow(owner: FailureOwner): Promise<SeededGraphRun> {
 }
 
 describe("Owned Flow completed-command failure handoff", () => {
-  it.each<FailureOwner>(["node", "ai_judgment", "skill_check"])(
-    "owner-flow-permission-checkpoint-interruption: %s does not apply teardown as failure",
-    async (owner) => {
+  it.each<
+    Readonly<{
+      owner: FailureOwner;
+      window:
+        | "ordinary"
+        | "claim SIGKILL"
+        | "fresh permission"
+        | "refused handle";
+    }>
+  >([
+    { owner: "node", window: "ordinary" },
+    { owner: "ai_judgment", window: "ordinary" },
+    { owner: "skill_check", window: "ordinary" },
+    { owner: "ai_judgment", window: "claim SIGKILL" },
+    { owner: "node", window: "fresh permission" },
+    { owner: "skill_check", window: "fresh permission" },
+    { owner: "node", window: "refused handle" },
+  ])(
+    "owner-flow-permission-checkpoint-interruption: $owner continues across $window",
+    async ({ owner, window }) => {
       await stopRuntimeEventConsumers();
       supervisor = await supervisor.restart({
         env: {
@@ -263,6 +282,11 @@ describe("Owned Flow completed-command failure handoff", () => {
       });
       const seeded = await seedFailureFlow(owner);
       const driver = startProcess("flow-prompt-owner-process.ts", seeded.runId);
+      let claimant: ReturnType<typeof startProcess> | undefined;
+      let responder: ReturnType<typeof startProcess> | undefined;
+      let continuation:
+        | ReturnType<typeof startFlowContinuationWorker>
+        | undefined;
 
       try {
         await expect
@@ -315,6 +339,29 @@ describe("Owned Flow completed-command failure handoff", () => {
         ).toMatchObject({
           phase: "accepted",
         });
+        const [incarnation] = await db
+          .select()
+          .from(runSessionIncarnations)
+          .where(
+            eq(runSessionIncarnations.hostSessionId, source.targetSessionId!),
+          );
+        const journalFile = path.join(
+          journalPath,
+          `${incarnation.acpSessionId}.json`,
+        );
+        const journal = JSON.parse(
+          await readFile(journalFile, "utf8"),
+        ) as Record<string, unknown>;
+
+        await writeFile(
+          journalFile,
+          JSON.stringify({
+            ...journal,
+            completionText: '{"verdict":"pass"}',
+            requestFreshPermission: window === "fresh permission",
+            rejectResume: window === "refused handle",
+          }),
+        );
         await db
           .update(runs)
           .set({ keepaliveUntil: new Date(Date.now() - 1_000) })
@@ -354,13 +401,32 @@ describe("Owned Flow completed-command failure handoff", () => {
 
         expect(accepted?.eventStreamId).toBe(terminal?.eventStreamId);
         expect(accepted?.hostSequence).toBeLessThan(terminal!.hostSequence!);
-        await expect(
-          resumeRun(seeded.runId, { db, executionHosts: hosts }),
-        ).resolves.toMatchObject({
-          ok: false,
-          code: "EXECUTOR_UNAVAILABLE",
-          retryable: true,
-        });
+        if (owner === "node" && window === "ordinary")
+          await assertQuarantineDuringClaim(seeded.runId, source.id, hosts);
+        if (window === "claim SIGKILL") {
+          claimant = startProcess(
+            "flow-permission-claim-process.ts",
+            seeded.runId,
+          );
+          let message: unknown;
+
+          claimant.child.on("message", (value: unknown) => {
+            message = value;
+          });
+          await expect
+            .poll(() => message, { timeout: 30_000 })
+            .toMatchObject({
+              state: "claimed",
+              result: { ok: true, newSupervisorSessionId: null },
+            });
+          expect(claimant.child.kill("SIGKILL")).toBe(true);
+          await claimant.exited;
+          expect(claimant.child.signalCode).toBe("SIGKILL");
+        } else {
+          await expect(
+            resumeRun(seeded.runId, { db, executionHosts: hosts }),
+          ).resolves.toMatchObject({ ok: true, runStatus: "Running" });
+        }
         const [parked] = await db
           .select()
           .from(runs)
@@ -383,19 +449,205 @@ describe("Owned Flow completed-command failure handoff", () => {
           .from(gateResults)
           .where(eq(gateResults.runId, seeded.runId));
 
-        expect(parked.status).toBe("NeedsInputIdle");
-        expect(parked.executionAssignmentId).toBe(source.executionAssignmentId);
-        expect(parent.actionResume).toBeNull();
-        expect(prompts).toHaveLength(1);
-        expect(gates.every((gate) => gate.permissionResume === null)).toBe(
-          true,
+        expect(parked.status).toBe("Running");
+        expect(parked.executionAssignmentId).not.toBe(
+          source.executionAssignmentId,
         );
+        if (owner === "node")
+          expect(parent.actionResume).toMatchObject({
+            kind: "permission_continue",
+            promptOrdinal: 1,
+          });
+        else
+          expect(gates[0].permissionResume).toMatchObject({
+            kind: "permission_continue",
+            promptOrdinal: 1,
+          });
+        expect(prompts).toHaveLength(1);
+        if (
+          window === "ordinary" &&
+          (owner === "node" || owner === "ai_judgment")
+        ) {
+          const nodeResume = parent.actionResume;
+          const gateResume = gates[0]?.permissionResume;
+
+          if (owner === "node") {
+            if (nodeResume?.kind !== "permission_continue")
+              throw new Error("Missing node continuation fixture");
+            await db
+              .update(nodeAttempts)
+              .set({
+                actionResume: {
+                  ...nodeResume,
+                  inputCommandId: nodeResume.checkpointCommandId,
+                },
+              })
+              .where(eq(nodeAttempts.id, parent.id));
+          } else {
+            if (gateResume?.kind !== "permission_continue")
+              throw new Error("Missing gate continuation fixture");
+            await db
+              .update(gateResults)
+              .set({
+                permissionResume: {
+                  ...gateResume,
+                  inputCommandId: gateResume.checkpointCommandId,
+                },
+              })
+              .where(eq(gateResults.id, gates[0].id));
+          }
+          try {
+            await expect(
+              db.transaction((tx) =>
+                lockCreateOwner(tx, {
+                  runId: seeded.runId,
+                  assignmentId: parked.executionAssignmentId!,
+                  owner:
+                    owner === "node"
+                      ? {
+                          variant: "node",
+                          nodeAttemptId: parent.id,
+                          promptOrdinal: 1,
+                        }
+                      : {
+                          variant: "gate_ai",
+                          nodeAttemptId: parent.id,
+                          gateId: gates[0].gateId,
+                          evaluationId: gates[0].id,
+                        },
+                }),
+              ),
+            ).rejects.toMatchObject({
+              code: "CONFLICT",
+              details: { causeCode: "permission_result_source_generation" },
+            });
+          } finally {
+            if (owner === "node")
+              await db
+                .update(nodeAttempts)
+                .set({ actionResume: nodeResume })
+                .where(eq(nodeAttempts.id, parent.id));
+            else
+              await db
+                .update(gateResults)
+                .set({ permissionResume: gateResume })
+                .where(eq(gateResults.id, gates[0].id));
+          }
+        }
+        continuation = startFlowContinuationWorker({
+          db,
+          runtimeRoot: supervisor.runtimeRoot,
+          executionHosts: hosts,
+        });
+        if (window === "fresh permission") {
+          await expect
+            .poll(
+              async () => {
+                const rows = await db
+                  .select()
+                  .from(hitlRequests)
+                  .where(eq(hitlRequests.runId, seeded.runId));
+
+                return rows.filter(
+                  (row) => row.id !== hitl.id && row.respondedAt === null,
+                ).length;
+              },
+              { timeout: 30_000 },
+            )
+            .toBe(1);
+          const rows = await db
+            .select()
+            .from(hitlRequests)
+            .where(eq(hitlRequests.runId, seeded.runId));
+          const fresh = rows.find((row) => row.id !== hitl.id)!;
+
+          expect(fresh.response).toBeNull();
+          responder = startProcess(
+            "flow-permission-response-process.ts",
+            fresh.id,
+            "gate-permission-user",
+          );
+          await expect
+            .poll(() => responder?.child.exitCode, { timeout: 30_000 })
+            .toBe(0);
+        }
+        await expect
+          .poll(
+            async () => {
+              const [run] = await db
+                .select()
+                .from(runs)
+                .where(eq(runs.id, seeded.runId));
+
+              return run.status;
+            },
+            { timeout: 60_000 },
+          )
+          .toBe(window === "refused handle" ? "Failed" : "Review");
+        await continuation.stop();
+        continuation = undefined;
+        const finalPrompts = await db
+          .select()
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, seeded.runId),
+              eq(executionCommands.kind, "session.prompt"),
+            ),
+          );
+        const finalHitls = await db
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.runId, seeded.runId));
+
+        expect(finalPrompts).toHaveLength(window === "refused handle" ? 1 : 2);
+        expect(finalHitls).toHaveLength(window === "fresh permission" ? 2 : 1);
+        expect(finalHitls.every((row) => row.respondedAt !== null)).toBe(true);
+        if (window === "refused handle") {
+          const creates = await db
+            .select()
+            .from(executionCommands)
+            .where(
+              and(
+                eq(executionCommands.runId, seeded.runId),
+                eq(executionCommands.kind, "session.create"),
+              ),
+            );
+
+          expect(creates).toHaveLength(2);
+          expect(
+            creates.filter((command) => command.state === "failed"),
+          ).toHaveLength(1);
+          await expect(
+            access(path.join(seeded.worktreePath, "failure-successor.txt")),
+          ).rejects.toMatchObject({ code: "ENOENT" });
+
+          return;
+        }
+        expect(
+          await readFile(
+            path.join(seeded.worktreePath, "failure-successor.txt"),
+            "utf8",
+          ),
+        ).toBe("after\n");
+        if (owner !== "node")
+          expect(
+            await readFile(
+              path.join(seeded.worktreePath, "failure-parent.txt"),
+              "utf8",
+            ),
+          ).toBe("work\n");
       } catch (error) {
         throw new Error(
           `Checkpoint interruption failed for ${seeded.runId} (${owner}); child exit=${driver.child.exitCode}, signal=${driver.child.signalCode}\n${driver.output()}`,
           { cause: error },
         );
       } finally {
+        await continuation?.stop();
+        claimant?.child.kill("SIGKILL");
+        responder?.child.kill("SIGKILL");
+        await claimant?.exited;
+        await responder?.exited;
         if (driver.child.exitCode === null && driver.child.signalCode === null)
           driver.child.kill("SIGKILL");
         await driver.exited;

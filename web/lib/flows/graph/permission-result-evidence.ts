@@ -10,18 +10,18 @@ import type {
 } from "@/lib/db/schema";
 import type { CommandReceipt } from "@/lib/execution-host/contracts";
 
-import { and, eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import pino from "pino";
 
 import { canonicalCommandJson } from "../../../../runtime/command-json";
 
-import {
-  executionCommands,
-  executionEvents,
-  hitlRequests,
-  runs,
-} from "@/lib/db/schema";
+import { executionCommands, hitlRequests, runs } from "@/lib/db/schema";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
+import {
+  isPermissionResultCommand,
+  permissionCheckpointOrder,
+  permissionResultPrecedesCheckpoint,
+} from "@/lib/execution-host/permission-handoff-evidence";
 import { markSucceeded } from "@/lib/execution-host/commands";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { completeHitlAssignmentFromCurrentActor } from "@/lib/assignments/service";
@@ -44,85 +44,6 @@ export type PreparedPermissionEvidence = Readonly<{
   inputReceipt: CommandReceipt;
 }>;
 
-type PermissionResultCommand = ExecutionCommand &
-  (
-    | Readonly<{ state: "succeeded" }>
-    | Readonly<{
-        state: "failed";
-        lastError: NonNullable<ExecutionCommand["lastError"]>;
-      }>
-  );
-
-/** Only agreed terminal evidence can cross a released assignment. Protocol
- * failure is an ordinary failed action/verdict; other failure semantics need
- * their own disposition and must not become a replacement turn here.
- */
-export function isPermissionResultCommand(
-  command: ExecutionCommand,
-): command is PermissionResultCommand {
-  return (
-    command.requestSha256 !== null &&
-    command.terminalEvidenceSha256 !== null &&
-    command.applicationError?.reason !== "prompt_terminal_conflict" &&
-    (command.state === "succeeded" ||
-      (command.state === "failed" &&
-        command.lastError?.code === "ACP_PROTOCOL"))
-  );
-}
-
-/** Teardown can fail the prompt itself. Only a terminal published before
- * checkpoint admission proves an independently completed result. Compare
- * durable host positions, never manager/host wall clocks or delivery order.
- */
-export async function permissionResultPrecedesCheckpoint(
-  db: Db,
-  command: ExecutionCommand,
-  checkpoint: ExecutionCommand,
-): Promise<boolean> {
-  if (!command.terminalEventId || !command.targetSessionId) return false;
-  const boundary = and(
-    eq(executionEvents.source, "host"),
-    eq(executionEvents.runId, command.runId),
-    eq(executionEvents.executionHostId, command.executionHostId),
-    eq(executionEvents.executionAssignmentId, command.executionAssignmentId),
-    eq(executionEvents.assignmentEpoch, command.assignmentEpoch),
-    eq(executionEvents.hostSessionId, command.targetSessionId),
-    eq(executionEvents.eventType, "session.command"),
-    eq(executionEvents.ingestDisposition, "accepted"),
-  );
-  const [terminal] = await db
-    .select()
-    .from(executionEvents)
-    .where(and(boundary, eq(executionEvents.id, command.terminalEventId)));
-  const admissions = await db
-    .select()
-    .from(executionEvents)
-    .where(
-      and(
-        boundary,
-        sql`${executionEvents.payload}->>'commandId' = ${checkpoint.id}`,
-        sql`${executionEvents.payload}->>'kind' = 'session.checkpoint'`,
-        sql`${executionEvents.payload}->>'phase' = 'accepted'`,
-      ),
-    )
-    .limit(2);
-  const accepted = admissions[0];
-
-  return Boolean(
-    terminal &&
-      terminal.payload?.commandId === command.id &&
-      terminal.payload.kind === "session.prompt" &&
-      terminal.payload.phase ===
-        (command.state === "succeeded" ? "completed" : "rejected") &&
-      admissions.length === 1 &&
-      accepted.eventStreamId !== null &&
-      accepted.eventStreamId === terminal.eventStreamId &&
-      accepted.hostSequence !== null &&
-      terminal.hostSequence !== null &&
-      terminal.hostSequence < accepted.hostSequence,
-  );
-}
-
 export type LockedPermissionResultContext = Readonly<{
   run: Run & { projectId: string };
   hitl: HitlRequest;
@@ -136,7 +57,7 @@ export type LockedPermissionResultContext = Readonly<{
 /** Recheck remote evidence under the receiving capacity claim, after the
  * domain has locked its exact source generation. No stale preflight can apply.
  */
-export async function lockPermissionResultEvidence(
+export async function lockPermissionInputEvidence(
   tx: Db,
   context: LockedPermissionResultContext,
   prepared: PreparedPermissionEvidence,
@@ -221,6 +142,20 @@ export async function lockPermissionResultEvidence(
     throw new PromptOwnerInvariantError("permission_result_generation");
   }
 
+  return { input, checkpoint };
+}
+
+export async function lockPermissionResultEvidence(
+  tx: Db,
+  context: LockedPermissionResultContext,
+  prepared: PreparedPermissionEvidence,
+): Promise<
+  Readonly<{ input: ExecutionCommand; checkpoint: ExecutionCommand }>
+> {
+  const evidence = await lockPermissionInputEvidence(tx, context, prepared);
+  const { run, command } = context;
+  const { checkpoint } = evidence;
+
   if (!(await permissionResultPrecedesCheckpoint(tx, command, checkpoint))) {
     log.warn(
       {
@@ -233,17 +168,41 @@ export async function lockPermissionResultEvidence(
     throw new PromptOwnerInvariantError("permission_result_checkpoint_order");
   }
 
-  return { input, checkpoint };
+  return evidence;
+}
+
+export async function lockPermissionContinuationEvidence(
+  tx: Db,
+  context: LockedPermissionResultContext,
+  prepared: PreparedPermissionEvidence,
+): Promise<
+  Readonly<{ input: ExecutionCommand; checkpoint: ExecutionCommand }>
+> {
+  const evidence = await lockPermissionInputEvidence(tx, context, prepared);
+
+  if (
+    context.command.state !== "failed" ||
+    (await permissionCheckpointOrder(
+      tx,
+      context.command,
+      evidence.checkpoint,
+    )) !== "interrupted"
+  )
+    throw new PromptOwnerInvariantError("permission_continue_checkpoint_order");
+
+  return evidence;
 }
 
 /** The receiving claim commits the original input, HITL and run state with
  * the domain result. The source assignment receives no new write authority.
  */
-export async function completePermissionResultHandoff(
+export async function completePermissionInputHandoff(
   tx: Db,
   context: LockedPermissionResultContext,
   prepared: PreparedPermissionEvidence,
-  assignment: ExecutionAssignment,
+  audit:
+    | Readonly<{ resultHandoffAssignmentId: string }>
+    | Readonly<{ continuationAssignmentId: string }>,
 ): Promise<void> {
   const { run, hitl, response, source, command, prior, incarnation } = context;
   const receipt = prepared.inputReceipt;
@@ -275,7 +234,7 @@ export async function completePermissionResultHandoff(
           assignmentId: prior.id,
           incarnationId: incarnation.id,
           requestId: source.requestId,
-          resultHandoffAssignmentId: assignment.id,
+          ...audit,
         },
       },
     })

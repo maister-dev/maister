@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
-import type { PreparedPermissionResult } from "@/lib/flows/graph/permission-resume";
+import type { PreparedPermissionHandoff } from "@/lib/flows/graph/permission-resume";
 import type {
   ExecutionHostTransport,
   PlacementReason,
@@ -15,6 +15,7 @@ import { nextKeepaliveAt } from "./keepalive-config";
 import {
   authorizeGatePermissionResume,
   authorizeGatePermissionResult,
+  authorizeGatePermissionContinuation,
 } from "@/lib/flows/graph/gate-permission-resume";
 import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
 import { getDb } from "@/lib/db/client";
@@ -30,6 +31,7 @@ import { authorizeOrchestratorActionResume } from "@/lib/flows/graph/action-resu
 import {
   authorizeNodePermissionResume,
   authorizeNodePermissionResult,
+  authorizeNodePermissionContinuation,
 } from "@/lib/flows/graph/permission-resume";
 import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
 
@@ -251,7 +253,7 @@ export async function markCheckpointedFromExit(
 export async function markResumed(
   runId: string,
   opts: StateTransitionOptions & {
-    permissionResult?: PreparedPermissionResult;
+    permissionResult?: PreparedPermissionHandoff;
   } = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
@@ -281,7 +283,20 @@ export async function markResumed(
       const assignment = await mintForClaim(tx, runId, "resume", opts);
 
       if (assignment) {
-        if (opts.permissionResult?.domain === "gate")
+        if (opts.permissionResult?.kind === "interrupted") {
+          if (opts.permissionResult.domain === "gate")
+            await authorizeGatePermissionContinuation(
+              tx,
+              assignment,
+              opts.permissionResult,
+            );
+          else
+            await authorizeNodePermissionContinuation(
+              tx,
+              assignment,
+              opts.permissionResult,
+            );
+        } else if (opts.permissionResult?.domain === "gate")
           await authorizeGatePermissionResult(
             tx,
             assignment,

@@ -379,10 +379,7 @@ requires the agreed prompt terminal event to precede the exact checkpoint
 command's accepted event in the same host stream. Preflight, capacity claim and
 historical lineage reads verify the canonical command/assignment/session boundary
 and compare host sequence positions. Wall clocks and arrival order cannot prove
-this. An `ACP_PROTOCOL` failure caused by checkpoint teardown is interruption
-evidence; it stays pending without a result handoff or fresh prompt. Missing
-ordering evidence also stays pending. Explicit continuation of these interrupted
-confirmed-input turns remains part of the open S2.6 work. Nodes retain
+this. Missing ordering evidence stays pending. For a completed source, nodes retain
 `ok: false` with `ACP_PROTOCOL`; gates retain their failed verdict. The graph
 then uses its existing failure handling, without another prompt, successor
 action or parent replay. Fenced commands and other failed-command codes remain
@@ -392,6 +389,21 @@ transactions upgrade the same run row lock.
 Runtime-object projection atomically inserts a missing catalogue row; a
 concurrent loser locks and validates the committed row instead of failing on
 the primary key or accepting changed metadata.
+
+A confirmed input followed by an agreed `ACP_PROTOCOL` failure after checkpoint
+acceptance has a separate continuation path (`0152`). Once the exact checkpoint
+has succeeded, the normal capacity claim records `permission_continue`, retains
+the original input/checkpoint/incarnation lineage and ACP handle, and advances
+the same attempt or gate evaluation by one prompt ordinal. It settles the
+original HITL/input and moves to Running atomically. A gate retains the parent
+action snapshot and digest. Creation, prompt admission, owner application and
+gate graph reentry revalidate this grant and its original evidence. Restart
+reuses the persisted ordinal; the resumed prompt asks to continue the prior
+work, and the original accepted prompt remains historical. The old permission
+choice is never redelivered. A later permission creates a new HITL requiring
+its own answer, even for an identical tool/options payload. A refused ACP handle
+fails without creating an empty session. Other interrupted error codes and
+authoritative no-effect input rejection remain part of the open S2.6 work.
 
 In-flight node and AI/skill gate permissions retain the exact source command,
 attempt/ordinal, assignment and incarnation in the HITL schema. The existing

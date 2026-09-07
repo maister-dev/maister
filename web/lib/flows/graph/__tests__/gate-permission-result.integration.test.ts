@@ -31,6 +31,7 @@ import { startProjectionWorker } from "@/lib/execution-host/events/projection-wo
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
+import { prepareFlowPermissionResult } from "@/lib/flows/graph/permission-resume";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { interruptPermissionInputAcknowledgement } from "@/test-support/permission-ack-fault";
 import { resumeRun } from "@/lib/runs/resume";
@@ -355,6 +356,19 @@ describe("Owned Flow completed gate permission result", () => {
           .where(eq(runs.id, seeded.runId));
 
         expect(idle.status).toBe("NeedsInputIdle");
+        await expect
+          .poll(
+            async () =>
+              (
+                await prepareFlowPermissionResult(
+                  db,
+                  seeded.runId,
+                  hosts.transport,
+                )
+              )?.kind,
+            { timeout: 15_000 },
+          )
+          .toBe("completed");
 
         if (window === "capacity claim") {
           const hostState = new DatabaseSync(

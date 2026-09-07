@@ -1,22 +1,37 @@
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
-import type { ExecutionAssignment, ExecutionCommand } from "@/lib/db/schema";
-import type { FlowPermissionResultResume } from "./action-resume";
+import type {
+  ExecutionAssignment,
+  ExecutionCommand,
+  NodeAttempt,
+  GateResult,
+} from "@/lib/db/schema";
+import type {
+  FlowPermissionResultResume,
+  FlowPermissionContinueResume,
+} from "@/lib/flows/graph/action-resume";
+import type { FlowActionCompletion } from "@/lib/flows/graph/action-completion";
+
+import { createHash } from "node:crypto";
 
 import { eq } from "drizzle-orm";
 
-import { flowPermissionSourceSchema } from "./permission-source";
+import { canonicalCommandJson } from "../../../runtime/command-json";
+
 import {
   isPermissionResultCommand,
   permissionResultPrecedesCheckpoint,
-} from "./permission-result-evidence";
+  permissionCheckpointOrder,
+} from "./permission-handoff-evidence";
 
+import { flowPermissionSourceSchema } from "@/lib/execution-host/flow-permission-source";
 import {
   executionAssignments,
   executionCommands,
   hitlRequests,
   runSessionIncarnations,
+  nodeAttempts,
 } from "@/lib/db/schema";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
 
@@ -24,11 +39,11 @@ import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
  * handoff. The receiving assignment may later park; this proof never grants
  * the original command permission to apply to a successor assignment.
  */
-export async function assertPermissionResultSource(
+export async function assertPermissionHandoffSource(
   db: Db,
   input: Readonly<{
     command: ExecutionCommand;
-    resume: FlowPermissionResultResume;
+    resume: FlowPermissionResultResume | FlowPermissionContinueResume;
     assignment: ExecutionAssignment;
   }>,
 ): Promise<void> {
@@ -72,6 +87,7 @@ export async function assertPermissionResultSource(
     optionId?: string;
     _audit?: Readonly<{
       resultHandoffAssignmentId?: string;
+      continuationAssignmentId?: string;
       deliveryCommandId?: string;
       sourceCommandId?: string;
       assignmentId?: string;
@@ -98,7 +114,8 @@ export async function assertPermissionResultSource(
     resume.assignmentId !== assignment.id ||
     resume.sourceAssignmentId !== prior.id ||
     resume.sourceCommandId !== command.id ||
-    resume.promptOrdinal !== ref.promptOrdinal ||
+    resume.promptOrdinal !==
+      ref.promptOrdinal + (resume.kind === "permission_continue" ? 1 : 0) ||
     !incarnation ||
     resume.sourceIncarnationId !== incarnation.id ||
     resume.resumeSessionId !== incarnation.acpSessionId ||
@@ -133,12 +150,14 @@ export async function assertPermissionResultSource(
     !hitl?.respondedAt ||
     hitl.runId !== assignment.runId ||
     response?.optionId !== resume.optionId ||
-    response._audit?.resultHandoffAssignmentId !== assignment.id ||
-    response._audit.deliveryCommandId !== resume.inputCommandId ||
-    response._audit.sourceCommandId !== command.id ||
-    response._audit.assignmentId !== prior.id ||
-    response._audit.incarnationId !== incarnation.id ||
-    response._audit.requestId !== resume.sourceRequestId ||
+    (resume.kind === "permission_result"
+      ? response._audit?.resultHandoffAssignmentId !== assignment.id
+      : response._audit?.continuationAssignmentId !== assignment.id) ||
+    response._audit?.deliveryCommandId !== resume.inputCommandId ||
+    response._audit?.sourceCommandId !== command.id ||
+    response._audit?.assignmentId !== prior.id ||
+    response._audit?.incarnationId !== incarnation.id ||
+    response._audit?.requestId !== resume.sourceRequestId ||
     !inputCommand ||
     inputCommand.kind !== "session.input" ||
     inputCommand.state !== "succeeded" ||
@@ -158,6 +177,95 @@ export async function assertPermissionResultSource(
     receipt.body?.ok !== true
   )
     throw new PromptOwnerInvariantError("permission_result_source_generation");
-  if (!(await permissionResultPrecedesCheckpoint(db, command, checkpoint)))
+  if (
+    resume.kind === "permission_continue"
+      ? command.state !== "failed" ||
+        (await permissionCheckpointOrder(db, command, checkpoint)) !==
+          "interrupted"
+      : !(await permissionResultPrecedesCheckpoint(db, command, checkpoint))
+  )
     throw new PromptOwnerInvariantError("permission_result_checkpoint_order");
+}
+
+/** A persisted continuation is checked again before creation/admission and
+ * application. Restart consumes the same grant; it cannot mint another turn.
+ */
+export async function assertNodePermissionContinuation(
+  db: Db,
+  attempt: NodeAttempt,
+  assignment: ExecutionAssignment,
+): Promise<void> {
+  const resume = attempt.actionResume;
+
+  if (resume?.kind !== "permission_continue") return;
+  const [command] = await db
+    .select()
+    .from(executionCommands)
+    .where(eq(executionCommands.id, resume.sourceCommandId));
+  const ref = command?.ownerRef;
+
+  if (
+    !command ||
+    (ref?.variant !== "node" && ref?.variant !== "permission_resume") ||
+    ref.nodeAttemptId !== attempt.id ||
+    attempt.runId !== assignment.runId ||
+    attempt.executionAssignmentId !== assignment.id ||
+    resume.promptOrdinal !== attempt.actionPromptOrdinal
+  )
+    throw new PromptOwnerInvariantError("permission_continue_generation");
+  await assertPermissionHandoffSource(db, { command, resume, assignment });
+}
+
+export function gateParentActionDigest(
+  completion: FlowActionCompletion | null,
+): string {
+  return createHash("sha256")
+    .update(canonicalCommandJson(completion))
+    .digest("hex");
+}
+
+export async function assertGatePermissionContinuation(
+  db: Db,
+  evaluation: GateResult,
+  assignmentId: string,
+): Promise<void> {
+  const resume = evaluation.permissionResume;
+
+  if (resume?.kind !== "permission_continue") return;
+  const [command] = await db
+    .select()
+    .from(executionCommands)
+    .where(eq(executionCommands.id, resume.sourceCommandId));
+  const [assignment] = await db
+    .select()
+    .from(executionAssignments)
+    .where(eq(executionAssignments.id, assignmentId));
+  const [parent] = evaluation.nodeAttemptId
+    ? await db
+        .select()
+        .from(nodeAttempts)
+        .where(eq(nodeAttempts.id, evaluation.nodeAttemptId))
+    : [];
+  const ref = command?.ownerRef;
+
+  if (
+    !command ||
+    !assignment ||
+    !parent ||
+    parent.executionAssignmentId !== assignment.id ||
+    evaluation.runId !== assignment.runId ||
+    parent.runId !== assignment.runId ||
+    resume.assignmentId !== assignment.id ||
+    resume.promptOrdinal !== evaluation.promptOrdinal ||
+    resume.parentActionSha256 !==
+      gateParentActionDigest(parent.actionCompletion) ||
+    (ref?.variant !== "gate_ai" && ref?.variant !== "gate_skill") ||
+    ref.nodeAttemptId !== parent.id ||
+    ref.evaluationId !== evaluation.id ||
+    ref.gateId !== evaluation.gateId ||
+    evaluation.kind !==
+      (ref.variant === "gate_ai" ? "ai_judgment" : "skill_check")
+  )
+    throw new PromptOwnerInvariantError("gate_permission_continue_generation");
+  await assertPermissionHandoffSource(db, { command, resume, assignment });
 }

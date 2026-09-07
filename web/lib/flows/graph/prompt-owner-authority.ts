@@ -5,7 +5,16 @@ import type { PromptOwner } from "@/lib/execution-host/prompt-owner-contract";
 
 import { and, eq } from "drizzle-orm";
 
-import { runSessionIncarnations, runSessions } from "@/lib/db/schema";
+import {
+  assertNodePermissionContinuation,
+  assertGatePermissionContinuation,
+} from "@/lib/execution-host/permission-handoff-source";
+import {
+  runSessionIncarnations,
+  runSessions,
+  nodeAttempts,
+  gateResults,
+} from "@/lib/db/schema";
 import { lockCurrentSessionAssignment } from "@/lib/execution-host/session-binding";
 
 export type FlowOwnerRef = Extract<
@@ -47,5 +56,24 @@ export async function lockFlowPromptOwner(
     .for("update")
     .limit(1);
 
-  return binding !== undefined;
+  if (!binding) return false;
+  if (ref.variant === "node" || ref.variant === "permission_resume") {
+    const [attempt] = await tx
+      .select()
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.id, ref.nodeAttemptId));
+
+    if (attempt)
+      await assertNodePermissionContinuation(tx, attempt, assignment);
+  } else if (ref.variant === "gate_ai" || ref.variant === "gate_skill") {
+    const [evaluation] = await tx
+      .select()
+      .from(gateResults)
+      .where(eq(gateResults.id, ref.evaluationId));
+
+    if (evaluation?.permissionResume?.kind === "permission_continue")
+      await assertGatePermissionContinuation(tx, evaluation, assignment.id);
+  }
+
+  return true;
 }

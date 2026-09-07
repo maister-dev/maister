@@ -6,8 +6,7 @@ import type { ExecutionCommand } from "@/lib/db/schema";
 
 import { and, eq } from "drizzle-orm";
 
-import { assertPermissionResultSource } from "./permission-result-source";
-
+import { assertPermissionHandoffSource } from "@/lib/execution-host/permission-handoff-source";
 import {
   executionCommands,
   nodeAttempts,
@@ -102,7 +101,7 @@ async function assertCheckpointedPermissionResult(
     attempt.actionCompletion?.commandId !== command.id
   )
     throw new PromptOwnerInvariantError("permission_result_cleanup_generation");
-  await assertPermissionResultSource(db, {
+  await assertPermissionHandoffSource(db, {
     command,
     resume,
     assignment: client.assignment,

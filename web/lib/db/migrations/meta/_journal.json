@@ -1037,6 +1037,13 @@
       "when": 1788725340229,
       "tag": "0151_flow_gate_permission_results",
       "breakpoints": true
+    },
+    {
+      "idx": 152,
+      "version": "7",
+      "when": 1788758930973,
+      "tag": "0152_flow_permission_continuations",
+      "breakpoints": true
     }
   ]
 }

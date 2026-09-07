@@ -21,6 +21,7 @@ import {
   finishSentinelOutput,
 } from "./node-output-stream";
 
+import { assertNodePermissionContinuation } from "@/lib/execution-host/permission-handoff-source";
 import {
   nodeAttempts,
   runSessionIncarnations,
@@ -78,7 +79,7 @@ export async function admitNodePrompt(
     .for("update");
   const resume = attempt?.actionResume;
   const permissionResume =
-    resume?.kind === "permission" &&
+    (resume?.kind === "permission" || resume?.kind === "permission_continue") &&
     resume.assignmentId === assignment.id &&
     resume.promptOrdinal === owner.promptOrdinal
       ? resume
@@ -103,6 +104,7 @@ export async function admitNodePrompt(
       : permissionResume !== null)
   )
     throw new PromptOwnerInvariantError("node_admission_generation");
+  await assertNodePermissionContinuation(tx, attempt, assignment);
   const [binding] = await tx
     .select({ session: runSessions, incarnation: runSessionIncarnations })
     .from(runSessions)

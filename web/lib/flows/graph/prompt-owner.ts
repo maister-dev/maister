@@ -15,6 +15,7 @@ import { createGateResult, markGateFailed, markGatePassed } from "./gate-store";
 import { lockFlowPromptOwner } from "./prompt-owner-authority";
 import { prepareNodePrompt } from "./node-prompt-owner";
 
+import { assertGatePermissionContinuation } from "@/lib/execution-host/permission-handoff-source";
 import {
   gateResults,
   executionCommands,
@@ -314,6 +315,8 @@ export async function admitGatePrompt(
     evaluation.status !== "running"
   )
     throw new PromptOwnerInvariantError("gate_admission_generation");
+  if (evaluation.permissionResume?.kind === "permission_continue")
+    await assertGatePermissionContinuation(tx, evaluation, assignment.id);
   const [binding] = await tx
     .select({ session: runSessions, incarnation: runSessionIncarnations })
     .from(runSessions)

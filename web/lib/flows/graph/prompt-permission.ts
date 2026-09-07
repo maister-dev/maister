@@ -16,12 +16,12 @@ import { z } from "zod";
 import { canonicalCommandJson } from "../../../../runtime/command-json";
 
 import { pendingGatePermissionResumeExists } from "./gate-permission-resume";
-import { flowPermissionSourceSchema } from "./permission-source";
 import { nodePromptOperationKey } from "./node-prompt-owner";
 import { gatePromptOperationKey } from "./prompt-owner";
 import { lockFlowPromptOwner } from "./prompt-owner-authority";
 import { pendingNodePermissionResumeExists } from "./permission-resume";
 
+import { flowPermissionSourceSchema } from "@/lib/execution-host/flow-permission-source";
 import {
   executionCommands,
   gateResults,
@@ -70,7 +70,7 @@ async function readPermissionResume(
   tx: Db,
   source: PermissionSource,
 ): Promise<
-  | Extract<FlowActionResume, { kind: "permission" }>
+  | Extract<FlowActionResume, { kind: "permission" | "permission_continue" }>
   | GatePermissionResume
   | null
 > {
@@ -81,7 +81,10 @@ async function readPermissionResume(
       .from(nodeAttempts)
       .where(eq(nodeAttempts.id, source.nodeAttemptId));
 
-    return attempt?.resume?.kind === "permission" ? attempt.resume : null;
+    return attempt?.resume?.kind === "permission" ||
+      attempt?.resume?.kind === "permission_continue"
+      ? attempt.resume
+      : null;
   }
   const [evaluation] = await tx
     .select({ resume: gateResults.permissionResume })
@@ -649,7 +652,8 @@ export async function handleFlowPermission(input: {
 
       if (
         !resume ||
-        resume.kind !== "permission" ||
+        (resume.kind !== "permission" &&
+          resume.kind !== "permission_continue") ||
         resume.assignmentId !== client.assignment.id ||
         resume.promptOrdinal !== ref.promptOrdinal ||
         resume.hitlRequestId !== originalHitlRequestId ||
@@ -661,7 +665,15 @@ export async function handleFlowPermission(input: {
         response?.optionId !== resume.optionId
       )
         throw new PromptOwnerInvariantError("permission_reissue_authority");
-      if (originalSource.flowPrompt.commandId === resume.sourceCommandId) {
+      if (resume.kind === "permission_continue") {
+        if (
+          !original.respondedAt ||
+          originalSource.flowPrompt.commandId !== resume.sourceCommandId
+        )
+          throw new PromptOwnerInvariantError("permission_continue_source");
+      } else if (
+        originalSource.flowPrompt.commandId === resume.sourceCommandId
+      ) {
         const originalSchema = original.schema as Record<string, unknown>;
 
         if (
