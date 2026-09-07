@@ -57,7 +57,7 @@ import { initRepo, git } from "@/test-support/git-fixture";
 import { addWorktree } from "@/lib/worktree";
 import { agentWorkdirPath } from "@/lib/agents/workspace-paths";
 import { interruptPermissionInputAcknowledgement } from "@/test-support/permission-ack-fault";
-import { promoteNextPending } from "@/lib/scheduler";
+import { countLiveRuns, promoteNextPending } from "@/lib/scheduler";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -2316,8 +2316,12 @@ describe("Agent owned prompts through the production launcher", () => {
 
   it("owner-agent-idle-message retains accepted input while the agent pool is full", async () => {
     const previousCap = process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+    // Earlier cases in this shared database leave slot-holding runs whose
+    // settlement timing depends on lease expiry, so "full" is pinned relative
+    // to the live count instead of an absolute 1 that residue can break.
+    const occupied = await countLiveRuns(db as never, "agent");
 
-    process.env.MAISTER_MAX_CONCURRENT_AGENTS = "1";
+    process.env.MAISTER_MAX_CONCURRENT_AGENTS = String(occupied + 1);
     try {
       const runId = await seedAgent({ bytes: 0, persistent: true });
 
