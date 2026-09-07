@@ -35,3 +35,10 @@ export const nodePermissionSourceSchema = z.union([
   nodeSourceSchema,
   resumedSourceSchema,
 ]);
+
+export const flowPermissionEnvelopeSchema = z.object({
+  requestId: z.string().min(1),
+  supervisorSessionId: z.string().min(1),
+  options: z.array(z.object({ optionId: z.string().min(1) })),
+  flowPrompt: flowPermissionSourceSchema,
+});

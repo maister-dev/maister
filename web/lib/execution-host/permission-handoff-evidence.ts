@@ -2,10 +2,22 @@ import "server-only";
 
 import type { Db } from "./db";
 import type { ExecutionCommand } from "@/lib/db/schema";
+import type { CommandReceipt } from "./contracts";
 
 import { and, eq, sql } from "drizzle-orm";
 
 import { executionEvents } from "@/lib/db/schema";
+
+export function isRejectedPermissionInputReceipt(
+  receipt: CommandReceipt,
+): boolean {
+  return (
+    receipt.kind === "session.input" &&
+    receipt.phase === "rejected" &&
+    receipt.httpStatus === 410 &&
+    receipt.body?.code === "HITL_TIMEOUT"
+  );
+}
 
 type PermissionResultCommand = ExecutionCommand &
   (

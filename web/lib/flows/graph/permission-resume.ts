@@ -36,11 +36,12 @@ import { decodeNodePromptCompletion } from "./node-prompt-owner";
 import {
   isPermissionResultCommand,
   isPermissionCheckpointInterruption,
+  isRejectedPermissionInputReceipt,
   permissionCheckpointOrder,
 } from "@/lib/execution-host/permission-handoff-evidence";
 import {
   nodePermissionSourceSchema,
-  flowPermissionSourceSchema,
+  flowPermissionEnvelopeSchema,
   gatePermissionSourceSchema,
 } from "@/lib/execution-host/flow-permission-source";
 import {
@@ -70,10 +71,6 @@ const sourceSchema = z.object({
   flowPrompt: nodePermissionSourceSchema,
 });
 
-const flowSourceSchema = sourceSchema.extend({
-  flowPrompt: flowPermissionSourceSchema,
-});
-
 export type PreparedPermissionResult = PreparedPermissionEvidence &
   Readonly<{ kind: "completed" }> &
   (
@@ -96,9 +93,13 @@ export type PreparedPermissionHandoff =
   | PreparedPermissionResult
   | PreparedPermissionContinuation;
 
+export type PreparedPermissionRejection = PreparedPermissionEvidence &
+  Readonly<{ kind: "rejected"; parentActionSha256: string }>;
+
 type PermissionResultPreflight =
   | PreparedPermissionResult
   | PreparedPermissionContinuation
+  | PreparedPermissionRejection
   | Readonly<{ kind: "pending"; reason: string }>
   | null;
 
@@ -132,7 +133,7 @@ export async function prepareFlowPermissionResult(
   const response = hitl.response as Record<string, unknown> | null;
 
   if (response?._delivery === undefined) return null;
-  const source = flowSourceSchema.safeParse(hitl.schema);
+  const source = flowPermissionEnvelopeSchema.safeParse(hitl.schema);
   const delivery = z
     .object({ commandId: z.string().min(1) })
     .safeParse(response._delivery);
@@ -180,10 +181,13 @@ export async function prepareFlowPermissionResult(
     receipt.assignmentEpoch !== input.assignmentEpoch
   )
     throw new PromptOwnerInvariantError("permission_result_receipt_identity");
+  const rejected = isRejectedPermissionInputReceipt(receipt);
+
   if (
-    receipt.phase !== "completed" ||
-    receipt.httpStatus !== 200 ||
-    receipt.body?.ok !== true
+    !rejected &&
+    (receipt.phase !== "completed" ||
+      receipt.httpStatus !== 200 ||
+      receipt.body?.ok !== true)
   )
     return { kind: "pending", reason: "input_not_confirmed" };
   const signal = AbortSignal.timeout(30_000);
@@ -238,16 +242,11 @@ export async function prepareFlowPermissionResult(
 
   if (
     order === "unproven" ||
-    (order === "interrupted" && !isPermissionCheckpointInterruption(command))
+    (!rejected &&
+      order === "interrupted" &&
+      !isPermissionCheckpointInterruption(command))
   )
     return { kind: "pending", reason: "source_checkpoint_order_unproven" };
-  const outcome: PromptOwnerOutcome =
-    command.state === "succeeded"
-      ? {
-          state: "succeeded",
-          ...(await readPromptOutput({ db, commandId: command.id, signal })),
-        }
-      : { state: "failed", error: command.lastError };
   const prepared: PreparedPermissionEvidence = {
     hitlRequestId: hitl.id,
     sourceJson: canonicalCommandJson(hitl.schema),
@@ -260,6 +259,29 @@ export async function prepareFlowPermissionResult(
     checkpointCommandId: checkpoint.id,
     inputReceipt: receipt,
   };
+
+  if (rejected) {
+    const [attempt] = await db
+      .select()
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.id, source.data.flowPrompt.nodeAttemptId));
+
+    if (!attempt || attempt.runId !== runId)
+      throw new PromptOwnerInvariantError("permission_rejection_attempt");
+
+    return {
+      ...prepared,
+      kind: "rejected",
+      parentActionSha256: gateParentActionDigest(attempt.actionCompletion),
+    };
+  }
+  const outcome: PromptOwnerOutcome =
+    command.state === "succeeded"
+      ? {
+          state: "succeeded",
+          ...(await readPromptOutput({ db, commandId: command.id, signal })),
+        }
+      : { state: "failed", error: command.lastError };
   const gateSource = gatePermissionSourceSchema.safeParse(
     source.data.flowPrompt,
   );

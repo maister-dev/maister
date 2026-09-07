@@ -15,6 +15,7 @@ import {
   hasFlowPermissionResume,
   prepareFlowPermissionResult,
 } from "@/lib/flows/graph/permission-resume";
+import { failCheckpointedFlowPermission } from "@/lib/flows/graph/permission-rejection";
 import * as schemaModule from "@/lib/db/schema";
 import {
   isMaisterError,
@@ -257,6 +258,17 @@ export async function resumeRun(
       code: "EXECUTOR_UNAVAILABLE",
       retryable: true,
       message: error.message,
+    };
+  }
+  if (permissionResult?.kind === "rejected") {
+    await failCheckpointedFlowPermission(db, runId, permissionResult);
+
+    return {
+      ok: false,
+      code: "HITL_TIMEOUT",
+      retryable: false,
+      message:
+        "The original permission delivery was rejected; the run has failed",
     };
   }
   if (permissionResult?.kind === "pending") {

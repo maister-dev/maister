@@ -405,8 +405,23 @@ reuses the persisted ordinal; the resumed prompt asks to continue the prior
 work, and the original accepted prompt remains historical. The old permission
 choice is never redelivered. A later permission creates a new HITL requiring
 its own answer, even for an identical tool/options payload. A refused ACP handle
-fails without creating an empty session. Other interrupted error codes and
-authoritative no-effect input rejection remain part of the open S2.6 work.
+fails without creating an empty session. Other interrupted error codes remain
+part of the open S2.6 work.
+
+An original input receipt rejected with HTTP 410 and `HITL_TIMEOUT` records a
+delivery that did not resolve its deferred. After the exact source prompt is
+terminal and checkpoint is acknowledged, the current parked Flow can settle
+that rejection as `Failed / HITL_TIMEOUT`, matching the live response policy.
+The transaction locks and rechecks the still-current run, original HITL and
+commands, released checkpoint assignment, incarnation and latest attempt/gate.
+It refuses a changed owner, response, revision, action snapshot or receipt.
+It records `rejectedDeliveryCommandId` and the error in the HITL audit, closes
+the pending human assignment, marks the node failed, and emits the existing
+terminal events atomically. The original action/verdict evidence is retained;
+an unfinished gate is closed without inventing a prompt result. This terminal
+decision allocates no execution capacity, assignment or ACP turn. Missing and
+accepted receipts, other rejections and unproven checkpoint evidence cannot
+cause this transition.
 
 In-flight node and AI/skill gate permissions retain the exact source command,
 attempt/ordinal, assignment and incarnation in the HITL schema. The existing

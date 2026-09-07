@@ -20,6 +20,7 @@ import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
 import {
   isPermissionResultCommand,
   isPermissionCheckpointInterruption,
+  isRejectedPermissionInputReceipt,
   permissionCheckpointOrder,
   permissionResultPrecedesCheckpoint,
 } from "@/lib/execution-host/permission-handoff-evidence";
@@ -58,7 +59,7 @@ export type LockedPermissionResultContext = Readonly<{
 /** Recheck remote evidence under the receiving capacity claim, after the
  * domain has locked its exact source generation. No stale preflight can apply.
  */
-export async function lockPermissionInputEvidence(
+async function lockPermissionEvidence(
   tx: Db,
   context: LockedPermissionResultContext,
   prepared: PreparedPermissionEvidence,
@@ -110,14 +111,10 @@ export async function lockPermissionInputEvidence(
         requestId: source.requestId,
         optionId: response.optionId,
       }) ||
-    !["delivering", "accepted", "succeeded"].includes(input.state) ||
     receipt.commandId !== input.id ||
     receipt.runId !== run.id ||
     receipt.kind !== input.kind ||
     receipt.assignmentEpoch !== prior.epoch ||
-    receipt.phase !== "completed" ||
-    receipt.httpStatus !== 200 ||
-    receipt.body?.ok !== true ||
     (input.receiptEvidence !== null &&
       canonicalCommandJson(input.receiptEvidence) !==
         canonicalCommandJson(receipt))
@@ -144,6 +141,49 @@ export async function lockPermissionInputEvidence(
   }
 
   return { input, checkpoint };
+}
+
+export async function lockPermissionInputEvidence(
+  tx: Db,
+  context: LockedPermissionResultContext,
+  prepared: PreparedPermissionEvidence,
+): Promise<
+  Readonly<{ input: ExecutionCommand; checkpoint: ExecutionCommand }>
+> {
+  const evidence = await lockPermissionEvidence(tx, context, prepared);
+  const receipt = prepared.inputReceipt;
+
+  if (
+    !["delivering", "accepted", "succeeded"].includes(evidence.input.state) ||
+    receipt.phase !== "completed" ||
+    receipt.httpStatus !== 200 ||
+    receipt.body?.ok !== true
+  )
+    throw new PromptOwnerInvariantError("permission_result_generation");
+
+  return evidence;
+}
+
+export async function lockRejectedPermissionInputEvidence(
+  tx: Db,
+  context: LockedPermissionResultContext,
+  prepared: PreparedPermissionEvidence,
+): Promise<
+  Readonly<{ input: ExecutionCommand; checkpoint: ExecutionCommand }>
+> {
+  const evidence = await lockPermissionEvidence(tx, context, prepared);
+  const { input, checkpoint } = evidence;
+
+  if (
+    !["delivering", "accepted", "failed"].includes(input.state) ||
+    (input.state === "failed" && input.lastError?.code !== "HITL_TIMEOUT") ||
+    !isRejectedPermissionInputReceipt(prepared.inputReceipt) ||
+    (await permissionCheckpointOrder(tx, context.command, checkpoint)) ===
+      "unproven"
+  )
+    throw new PromptOwnerInvariantError("permission_rejection_evidence");
+
+  return evidence;
 }
 
 export async function lockPermissionResultEvidence(

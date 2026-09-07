@@ -12,6 +12,9 @@ import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
+  assignments,
+  domainEvents,
+  executionAssignments,
   executionCommands,
   executionEvents,
   gateResults,
@@ -34,6 +37,7 @@ import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
 import { prepareFlowPermissionResult } from "@/lib/flows/graph/permission-resume";
+import { failCheckpointedFlowPermission } from "@/lib/flows/graph/permission-rejection";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { interruptPermissionInputAcknowledgement } from "@/test-support/permission-ack-fault";
 import { resumeRun } from "@/lib/runs/resume";
@@ -252,6 +256,283 @@ async function seedFailureFlow(owner: FailureOwner): Promise<SeededGraphRun> {
 }
 
 describe("Owned Flow completed-command failure handoff", () => {
+  it.each<FailureOwner>(["node", "ai_judgment", "skill_check"])(
+    "owner-flow-rejected-permission: %s settles the original no-effect receipt",
+    async (owner) => {
+      await stopRuntimeEventConsumers();
+      supervisor = await supervisor.restart({
+        env: {
+          ...supervisor.options.env,
+          MOCK_ACP_STOP_REASON: "end_turn",
+          MOCK_ACP_HOLD_AFTER_PERMISSION: "0",
+          MOCK_ACP_FAIL_AFTER_PERMISSION: "",
+        },
+      });
+      const seeded = await seedFailureFlow(owner);
+      const driver = startProcess("flow-prompt-owner-process.ts", seeded.runId);
+
+      try {
+        await expect
+          .poll(
+            async () => {
+              if (driver.child.exitCode !== null)
+                throw new Error(driver.output());
+              const [run] = await db
+                .select()
+                .from(runs)
+                .where(eq(runs.id, seeded.runId));
+
+              return run.status;
+            },
+            { timeout: 30_000 },
+          )
+          .toBe("NeedsInput");
+        const [source] = await db
+          .select()
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, seeded.runId),
+              eq(executionCommands.kind, "session.prompt"),
+            ),
+          );
+        const [hitl] = await db
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.runId, seeded.runId));
+        const schema = hitl.schema as { requestId: string };
+        const [assignment] = await db
+          .select()
+          .from(executionAssignments)
+          .where(eq(executionAssignments.id, source.executionAssignmentId));
+        const hosts = createExecutionHosts({ db });
+        const client = await hosts.forAssignment(assignment);
+
+        startRuntimeEventConsumer({
+          db,
+          executionHostId: source.executionHostId,
+          transport: hosts.transport,
+        });
+        await client.deliverInput(source.targetSessionId!, {
+          kind: "permission",
+          action: "cancel",
+          requestId: schema.requestId,
+          reason: "operator-cancelled",
+        });
+        await expect
+          .poll(() => driver.child.exitCode, { timeout: 30_000 })
+          .toBe(0);
+        await interruptPermissionInputAcknowledgement({
+          database,
+          hitlRequestId: hitl.id,
+          startResponder: () =>
+            startProcess(
+              "flow-permission-response-process.ts",
+              hitl.id,
+              "gate-permission-user",
+            ),
+        });
+        const [unsettled] = await db
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.id, hitl.id));
+        const delivery = unsettled.response as {
+          _delivery: { commandId: string };
+        };
+
+        expect(unsettled.respondedAt).toBeNull();
+        expect(
+          await hosts.transport.getCommandReceipt(delivery._delivery.commandId),
+        ).toMatchObject({
+          phase: "rejected",
+          httpStatus: 410,
+          body: { code: "HITL_TIMEOUT" },
+        });
+        await db
+          .update(runs)
+          .set({ keepaliveUntil: new Date(Date.now() - 1_000) })
+          .where(eq(runs.id, seeded.runId));
+        await runSweepTick({ db, executionHosts: hosts });
+        await expect
+          .poll(
+            async () =>
+              (
+                await prepareFlowPermissionResult(
+                  db,
+                  seeded.runId,
+                  hosts.transport,
+                )
+              )?.kind,
+            { timeout: 15_000 },
+          )
+          .toBe("rejected");
+        const prepared = await prepareFlowPermissionResult(
+          db,
+          seeded.runId,
+          hosts.transport,
+        );
+
+        if (prepared?.kind !== "rejected")
+          throw new Error("rejected input preflight is missing");
+        if (owner === "node") {
+          const rollback = new Error("rollback rejected permission settlement");
+
+          await expect(
+            db.transaction(async (tx) => {
+              await failCheckpointedFlowPermission(tx, seeded.runId, prepared);
+              throw rollback;
+            }),
+          ).rejects.toBe(rollback);
+          const [unchanged] = await db
+            .select()
+            .from(runs)
+            .where(eq(runs.id, seeded.runId));
+          const [pending] = await db
+            .select()
+            .from(hitlRequests)
+            .where(eq(hitlRequests.id, hitl.id));
+          const failedEvents = await db
+            .select()
+            .from(domainEvents)
+            .where(
+              and(
+                eq(domainEvents.runId, seeded.runId),
+                eq(domainEvents.kind, "run.failed"),
+              ),
+            );
+
+          expect(unchanged.status).toBe("NeedsInputIdle");
+          expect(pending.respondedAt).toBeNull();
+          expect(failedEvents).toHaveLength(0);
+          await expect(
+            failCheckpointedFlowPermission(db, seeded.runId, {
+              ...prepared,
+              inputCommandId: prepared.checkpointCommandId,
+            }),
+          ).rejects.toMatchObject({ code: "CONFLICT" });
+        }
+        if (owner === "ai_judgment") {
+          const [parent] = await db
+            .select()
+            .from(nodeAttempts)
+            .where(eq(nodeAttempts.runId, seeded.runId));
+          const original = parent.actionCompletion;
+
+          if (!original) throw new Error("parent action is missing");
+          try {
+            await db
+              .update(nodeAttempts)
+              .set({
+                actionCompletion: {
+                  ...original,
+                  result: {
+                    ...original.result,
+                    stdout: "changed parent action",
+                  },
+                },
+              })
+              .where(eq(nodeAttempts.id, parent.id));
+            await expect(
+              failCheckpointedFlowPermission(db, seeded.runId, prepared),
+            ).rejects.toMatchObject({
+              code: "CONFLICT",
+              details: { causeCode: "permission_rejection_source" },
+            });
+          } finally {
+            await db
+              .update(nodeAttempts)
+              .set({ actionCompletion: original })
+              .where(eq(nodeAttempts.id, parent.id));
+          }
+        }
+        expect(
+          await resumeRun(seeded.runId, { db, executionHosts: hosts }),
+        ).toMatchObject({
+          ok: false,
+          code: "HITL_TIMEOUT",
+          retryable: false,
+        });
+        const [finished] = await db
+          .select()
+          .from(runs)
+          .where(eq(runs.id, seeded.runId));
+        const [attempt] = await db
+          .select()
+          .from(nodeAttempts)
+          .where(eq(nodeAttempts.runId, seeded.runId));
+        const [settled] = await db
+          .select()
+          .from(hitlRequests)
+          .where(eq(hitlRequests.id, hitl.id));
+        const prompts = await db
+          .select()
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, seeded.runId),
+              eq(executionCommands.kind, "session.prompt"),
+            ),
+          );
+        const placements = await db
+          .select()
+          .from(executionAssignments)
+          .where(eq(executionAssignments.runId, seeded.runId));
+        const failedEvents = await db
+          .select()
+          .from(domainEvents)
+          .where(
+            and(
+              eq(domainEvents.runId, seeded.runId),
+              eq(domainEvents.kind, "run.failed"),
+            ),
+          );
+
+        expect(finished.status).toBe("Failed");
+        expect(attempt).toMatchObject({
+          status: "Failed",
+          errorCode: "HITL_TIMEOUT",
+          actionPromptOrdinal: 0,
+        });
+        expect(settled.respondedAt).not.toBeNull();
+        expect(settled.response).toMatchObject({
+          _audit: {
+            rejectedDeliveryCommandId: delivery._delivery.commandId,
+            errorCode: "HITL_TIMEOUT",
+          },
+        });
+        expect(prompts).toHaveLength(1);
+        expect(prompts[0].id).toBe(source.id);
+        expect(placements).toHaveLength(1);
+        expect(failedEvents).toHaveLength(1);
+        const remainingAssignments = await db
+          .select()
+          .from(assignments)
+          .where(eq(assignments.runId, seeded.runId));
+
+        expect(
+          remainingAssignments.filter(
+            (assignment) =>
+              assignment.status === "open" || assignment.status === "claimed",
+          ),
+        ).toHaveLength(0);
+        await expect(
+          access(path.join(seeded.worktreePath, "failure-successor.txt")),
+        ).rejects.toMatchObject({ code: "ENOENT" });
+      } catch (error) {
+        throw new Error(
+          `Rejected permission settlement failed for ${seeded.runId} (${owner}); ${driver.output()}`,
+          { cause: error },
+        );
+      } finally {
+        if (driver.child.exitCode === null && driver.child.signalCode === null)
+          driver.child.kill("SIGKILL");
+        await driver.exited;
+        await stopRuntimeEventConsumers();
+      }
+    },
+    120_000,
+  );
+
   it.each<
     Readonly<{
       owner: FailureOwner;
