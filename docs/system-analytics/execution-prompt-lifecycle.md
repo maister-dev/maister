@@ -668,7 +668,7 @@ The database checks the original command and pause identity and prevents source
 rewrites or reactivation. Other HITL kinds keep their existing constraints.
 Replayed notifications retain the cancelled request as history.
 
-### Consensus verifier matrix cell (Designed)
+### Consensus verifier matrix cell (Implemented)
 
 A consensus verification turn belongs to exactly one matrix cell: the node
 attempt, its round, the verifier participant and the target participant. The
@@ -691,7 +691,13 @@ present for that cell is an explicit supersession, never a second write. A
 failed, fenced or non-`end_turn` host outcome records the existing fail-closed
 verdict with its error code rather than a missing cell.
 
-### Consensus synthesis generation (Designed)
+The runtime reads its cell back from the ledger instead of the live stdout it
+used before. While that application is still pending it raises the typed
+`consensus_generation_pending` refusal, so an unavailable result never becomes a
+fail-closed disagreement. Postgres additionally freezes an admitted command's
+owner reference, so one cell's paid output cannot be re-pointed at its sibling.
+
+### Consensus synthesis generation (Implemented)
 
 Synthesis belongs to a node attempt, its round and the synthesis source that
 produced it (`consensus`, a picked draft, or a human resolution). Those three
@@ -701,12 +707,13 @@ synthesis command instead of regenerating a prompt because the parent stack
 died. Admission fences the same run/attempt/assignment/incarnation authority as
 the verifier and refuses once a synthesis artifact for that generation exists.
 
-Application commits the round-scoped synthesis output artifact, the current
-`consensus_plan` and `debate_log` artifacts, and the command application marker
-in one transaction. Empty or non-`end_turn` synthesis output records the
-generation's failure evidence instead of an empty plan; the node then fails on
-its existing `PRECONDITION` path. A superseding generation cannot overwrite an
-already applied synthesis.
+Application commits the round-scoped synthesis output artifact with the command
+application marker in one transaction; the node then publishes its existing
+current `consensus_plan` and `debate_log` from that applied output. Empty or
+non-`end_turn` synthesis output records the generation's failure evidence
+instead of an empty plan, and the node fails on its existing `PRECONDITION`
+path. A generation whose artifact already exists is refused at admission, so a
+re-entering driver adopts the applied output rather than paying again.
 
 ### Consensus draft agent turn (Implemented)
 

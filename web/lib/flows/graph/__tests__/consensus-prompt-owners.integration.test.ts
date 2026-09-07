@@ -13,13 +13,17 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   agentTurns,
   artifactInstances,
+  consensusRoundVerdicts,
+  domainEvents,
   executionCommands,
   flowRevisions,
   flows,
   nodeAttempts,
   runs,
 } from "@/lib/db/schema";
+import { buildOrchestratorResumeConsumer } from "@/lib/domain-events/orchestrator-resume";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
+import { flowPromptOwners } from "@/lib/flows/graph/prompt-owner";
 import { consensusDraftPromptOwners } from "@/lib/flows/graph/consensus/draft-prompt-owner";
 import { runFlow } from "@/lib/flows/runner";
 import { createExecutionHosts } from "@/lib/execution-host/client";
@@ -155,6 +159,44 @@ function drive(runId: string): Promise<unknown> {
     runtimeRoot: supervisor.runtimeRoot,
     executionHosts: createExecutionHosts({ db: database.db as unknown as Db }),
   });
+}
+
+/** Round 1 fans out real child agent runs. Wake the parent exactly the way the
+ * production domain-event dispatcher does once every draft is terminal. */
+async function settleDraftsAndResume(parentRunId: string): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const children = await database.db
+          .select({ status: runs.status })
+          .from(runs)
+          .where(eq(runs.parentRunId, parentRunId));
+
+        return children.length === 2 &&
+          children.every((child) => child.status === "Done")
+          ? children.length
+          : 0;
+      },
+      { timeout: 60_000, interval: 100 },
+    )
+    .toBe(2);
+  const events = await database.db
+    .select()
+    .from(domainEvents)
+    .where(eq(domainEvents.kind, "run.done"));
+  const consumer = buildOrchestratorResumeConsumer({
+    db: database.db,
+    resumeFlow: (runId, options) =>
+      runFlow(runId, {
+        ...options,
+        runtimeRoot: supervisor.runtimeRoot,
+        executionHosts: createExecutionHosts({
+          db: database.db as unknown as Db,
+        }),
+      }),
+  });
+
+  await consumer.handle(events);
 }
 
 function startFixtureProcess(targetId: string): {
@@ -404,5 +446,247 @@ describe("Consensus prompt owners through the production graph driver", () => {
         (command) => command.applicationState === "applied",
       ),
     ).toBe(true);
+  }, 180_000);
+  it("owner-consensus-verify: every matrix cell owns its own command", async () => {
+    const seeded = await seedConsensusFlow(consensusPrompt("agree"));
+
+    await drive(seeded.runId);
+    await settleDraftsAndResume(seeded.runId);
+    const [attempt] = await database.db
+      .select()
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, seeded.runId));
+    const verdicts = await database.db
+      .select()
+      .from(consensusRoundVerdicts)
+      .where(eq(consensusRoundVerdicts.nodeAttemptId, attempt.id));
+
+    expect(verdicts).toHaveLength(2);
+    const keys = new Set<string>();
+
+    for (const verdict of verdicts) {
+      expect(verdict.verdict).toBe("agree");
+      const [command] = await database.db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, seeded.runId),
+            eq(
+              executionCommands.logicalOperationKey,
+              `flow_node_attempt:consensus_verifier:${verdict.id}`,
+            ),
+          ),
+        );
+
+      expect(command?.ownerKind).toBe("flow_node_attempt");
+      expect(command?.ownerRef).toMatchObject({
+        variant: "consensus_verifier",
+        nodeAttemptId: attempt.id,
+        round: verdict.round,
+        verifierId: verdict.verifierKey,
+        targetId: verdict.targetKey,
+        verdictId: verdict.id,
+      });
+      expect(command?.applicationState).toBe("applied");
+      keys.add(`${verdict.verifierKey}:${verdict.targetKey}:${verdict.round}`);
+    }
+    // One paid verification per matrix cell, never a cross-applied twin.
+    expect(keys.size).toBe(2);
+    const owned = await database.db
+      .select({ ownerRef: executionCommands.ownerRef })
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, seeded.runId),
+          eq(executionCommands.ownerKind, "flow_node_attempt"),
+        ),
+      );
+
+    expect(
+      owned.filter(
+        (command) =>
+          (command.ownerRef as { variant?: string } | null)?.variant ===
+          "consensus_verifier",
+      ),
+    ).toHaveLength(2);
+  }, 180_000);
+  it("owner-consensus-synthesis: the plan comes from its own applied generation", async () => {
+    const seeded = await seedConsensusFlow(consensusPrompt("agree"));
+
+    await drive(seeded.runId);
+    await settleDraftsAndResume(seeded.runId);
+    const [attempt] = await database.db
+      .select()
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, seeded.runId));
+    const synthesisId = `run:${attempt.id}:consensus-synthesis:r1:consensus`;
+    const [synthesis] = await database.db
+      .select()
+      .from(artifactInstances)
+      .where(eq(artifactInstances.id, synthesisId));
+
+    expect(synthesis?.locator).toMatchObject({ kind: "inline" });
+    const planText = (synthesis.locator as { text: string }).text;
+
+    expect(planText.trim()).not.toBe("");
+    const [command] = await database.db
+      .select()
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, seeded.runId),
+          eq(
+            executionCommands.logicalOperationKey,
+            `flow_node_attempt:consensus_synthesis:${synthesisId}`,
+          ),
+        ),
+      );
+
+    expect(command?.ownerKind).toBe("flow_node_attempt");
+    expect(command?.ownerRef).toMatchObject({
+      variant: "consensus_synthesis",
+      nodeAttemptId: attempt.id,
+      round: 1,
+      synthesisId,
+    });
+    expect(command?.applicationState).toBe("applied");
+    // The node's published plan is exactly its own generation's output.
+    const [plan] = await database.db
+      .select()
+      .from(artifactInstances)
+      .where(eq(artifactInstances.id, `run:${attempt.id}:consensus_plan`));
+
+    expect((plan.locator as { text: string }).text).toBe(planText);
+    expect(attempt.status).toBe("Succeeded");
+  }, 180_000);
+  it("owner-consensus-verify: a recorded cell cannot be rewritten or re-applied", async () => {
+    const seeded = await seedConsensusFlow(consensusPrompt("disagree"));
+
+    await drive(seeded.runId);
+    await settleDraftsAndResume(seeded.runId);
+    const [attempt] = await database.db
+      .select()
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, seeded.runId));
+    const [run] = await database.db
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, seeded.runId));
+
+    // No consensus: the node escalates and both cells stay recorded.
+    expect(run.status).toBe("NeedsInput");
+    expect(attempt.status).toBe("NeedsInput");
+    const cells = await database.db
+      .select()
+      .from(consensusRoundVerdicts)
+      .where(eq(consensusRoundVerdicts.nodeAttemptId, attempt.id));
+
+    expect(cells).toHaveLength(2);
+    const victim = cells.find((cell) => cell.verifierKey === "qa")!;
+    const source = cells.find((cell) => cell.verifierKey === "architect")!;
+    const [command] = await database.db
+      .select()
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, seeded.runId),
+          eq(
+            executionCommands.logicalOperationKey,
+            `flow_node_attempt:consensus_verifier:${source.id}`,
+          ),
+        ),
+      );
+
+    // Layer 1: an admitted command's cell identity is immutable in Postgres, so
+    // one cell's paid output can never be re-pointed at its sibling.
+    await expect(
+      database.db
+        .update(executionCommands)
+        .set({
+          ownerRef: {
+            ...(command.ownerRef as Record<string, unknown>),
+            verifierId: victim.verifierKey,
+            targetId: victim.targetKey,
+            verdictId: victim.id,
+          } as NonNullable<typeof command.ownerRef>,
+        })
+        .where(eq(executionCommands.id, command.id)),
+    ).rejects.toThrow(/immutable/);
+    const original = {
+      applicationState: command.applicationState,
+      completionAppliedAt: command.completionAppliedAt,
+    };
+
+    try {
+      // Layer 2: put the owner back in its live window and re-arm application.
+      // Its own cell is already recorded, so the guard supersedes the replay
+      // instead of writing the round a second verdict.
+      await database.db
+        .update(runs)
+        .set({ status: "Running" })
+        .where(eq(runs.id, seeded.runId));
+      await database.db
+        .update(nodeAttempts)
+        .set({ status: "Running" })
+        .where(eq(nodeAttempts.id, attempt.id));
+      await database.db
+        .update(executionCommands)
+        .set({ applicationState: "pending", completionAppliedAt: null })
+        .where(eq(executionCommands.id, command.id));
+      const worker = startPromptOwnerWorker({
+        db: database.db as unknown as Db,
+        owners: flowPromptOwners,
+      });
+
+      try {
+        await expect
+          .poll(
+            async () => {
+              const [current] = await database.db
+                .select({
+                  applicationState: executionCommands.applicationState,
+                })
+                .from(executionCommands)
+                .where(eq(executionCommands.id, command.id));
+
+              return current.applicationState;
+            },
+            { timeout: 60_000, interval: 100 },
+          )
+          .toBe("superseded");
+      } finally {
+        await worker.stop();
+      }
+      const preserved = await database.db
+        .select()
+        .from(consensusRoundVerdicts)
+        .where(eq(consensusRoundVerdicts.nodeAttemptId, attempt.id));
+
+      expect(preserved).toHaveLength(2);
+      for (const cell of cells) {
+        const current = preserved.find((row) => row.id === cell.id);
+
+        expect(current).toMatchObject({
+          verifierKey: cell.verifierKey,
+          targetKey: cell.targetKey,
+          rawOutputArtifactId: cell.rawOutputArtifactId,
+          verdict: cell.verdict,
+        });
+      }
+    } finally {
+      await database.db
+        .update(executionCommands)
+        .set(original)
+        .where(eq(executionCommands.id, command.id));
+      await database.db
+        .update(runs)
+        .set({ status: run.status })
+        .where(eq(runs.id, seeded.runId));
+      await database.db
+        .update(nodeAttempts)
+        .set({ status: attempt.status })
+        .where(eq(nodeAttempts.id, attempt.id));
+    }
   }, 180_000);
 });

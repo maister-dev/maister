@@ -32,6 +32,18 @@ import {
   type GatePromptOwner,
 } from "./graph/prompt-owner";
 import {
+  admitConsensusPrompt,
+  type ConsensusPromptOwner,
+} from "./graph/consensus/prompt-owner";
+function isConsensusOwner(
+  owner: GatePromptOwner | NodePromptOwner | ConsensusPromptOwner,
+): owner is ConsensusPromptOwner {
+  return (
+    owner.variant === "consensus_verifier" ||
+    owner.variant === "consensus_synthesis"
+  );
+}
+import {
   assertFlowDriverClaim,
   assertFlowDriverCommit,
   FlowDriverClaimLost,
@@ -115,7 +127,7 @@ export type RunAgentStepCtx = {
   runId: string;
   stepId: string;
   nodeAttemptId?: string;
-  promptOwner?: GatePromptOwner | NodePromptOwner;
+  promptOwner?: GatePromptOwner | NodePromptOwner | ConsensusPromptOwner;
   flowDriverClaim?: FlowDriverClaim;
   signal?: AbortSignal;
   worktreePath: string;
@@ -1143,7 +1155,8 @@ export async function runAgentStep(
   }
 > {
   // Existing immutable requests do not depend on today's template or context.
-  if (ctx.promptOwner) {
+  // A consensus cell re-enters through its own logical operation key instead.
+  if (ctx.promptOwner && !isConsensusOwner(ctx.promptOwner)) {
     const completed =
       ctx.promptOwner.variant === "node" ||
       ctx.promptOwner.variant === "permission_resume"
@@ -1353,21 +1366,26 @@ async function runNewSession(
       };
     };
 
-    if (ctx.promptOwner) {
+    const createOwner =
+      ctx.promptOwner && isConsensusOwner(ctx.promptOwner)
+        ? undefined
+        : ctx.promptOwner;
+
+    if (createOwner) {
       const created = await client.createOwnedSession(
-        ctx.promptOwner.variant === "permission_resume"
+        createOwner.variant === "permission_resume"
           ? {
               variant: "node",
-              nodeAttemptId: ctx.promptOwner.nodeAttemptId,
-              promptOrdinal: ctx.promptOwner.promptOrdinal,
+              nodeAttemptId: createOwner.nodeAttemptId,
+              promptOrdinal: createOwner.promptOrdinal,
             }
-          : ctx.promptOwner.variant === "node"
-            ? ctx.promptOwner
+          : createOwner.variant === "node"
+            ? createOwner
             : {
-                variant: ctx.promptOwner.variant,
-                nodeAttemptId: ctx.promptOwner.nodeAttemptId,
-                gateId: ctx.promptOwner.gateId,
-                evaluationId: ctx.promptOwner.evaluationId,
+                variant: createOwner.variant,
+                nodeAttemptId: createOwner.nodeAttemptId,
+                gateId: createOwner.gateId,
+                evaluationId: createOwner.evaluationId,
               },
         async () => ({
           ...(await prepareCreatePayload()),
@@ -1429,7 +1447,7 @@ async function runNewSession(
       supervisorSessionId: session.hostSessionId,
       cancelPermission: permissionCancellerFor(client),
       deliverPermission: permissionDelivererFor(client),
-      ...(ctx.promptOwner
+      ...(ctx.promptOwner && !isConsensusOwner(ctx.promptOwner)
         ? { ownedPrompt: { owner: ctx.promptOwner, client } }
         : {}),
     });
@@ -1470,12 +1488,19 @@ async function runNewSession(
                         hostSessionId,
                         promptOwner,
                       )
-                    : await admitGatePrompt(
-                        tx,
-                        client,
-                        hostSessionId,
-                        promptOwner,
-                      );
+                    : isConsensusOwner(promptOwner)
+                      ? await admitConsensusPrompt(
+                          tx,
+                          client,
+                          hostSessionId,
+                          promptOwner,
+                        )
+                      : await admitGatePrompt(
+                          tx,
+                          client,
+                          hostSessionId,
+                          promptOwner,
+                        );
                 const claim = ctx.flowDriverClaim;
 
                 return {
@@ -1526,12 +1551,14 @@ async function runNewSession(
               ...(ctx.signal ? [ctx.signal] : []),
             ]),
           );
-          await assertGatePermissionSettled(
-            ctx.db ?? getDb(),
-            ctx.runId,
-            handle.commandId,
-          );
-          // The gate caller reads the applied verdict, including host failure.
+          if (!isConsensusOwner(promptOwner))
+            await assertGatePermissionSettled(
+              ctx.db ?? getDb(),
+              ctx.runId,
+              handle.commandId,
+            );
+          // The gate/consensus caller reads the applied domain row, including
+          // a host failure the owner already settled.
           promptResult = { stopReason: "end_turn", meta: null };
         } else {
           promptResult = await client.waitForPrompt(handle);

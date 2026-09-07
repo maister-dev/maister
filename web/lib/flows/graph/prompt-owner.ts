@@ -14,6 +14,7 @@ import { assertGatePermissionResult } from "./gate-permission-resume";
 import { createGateResult, markGateFailed, markGatePassed } from "./gate-store";
 import { lockFlowPromptOwner } from "./prompt-owner-authority";
 import { prepareNodePrompt } from "./node-prompt-owner";
+import { prepareConsensusPrompt } from "./consensus/prompt-owner";
 
 import { assertGatePermissionContinuation } from "@/lib/execution-host/permission-handoff-source";
 import {
@@ -320,6 +321,12 @@ export const flowPromptOwnerAdapter = definePromptOwnerAdapter(
 
     if (ref.variant === "node" || ref.variant === "permission_resume")
       return prepareNodePrompt({ db, ref, command, outcome });
+
+    if (
+      ref.variant === "consensus_verifier" ||
+      ref.variant === "consensus_synthesis"
+    )
+      return prepareConsensusPrompt({ db, ref, command, outcome });
 
     if (ref.variant !== "gate_ai" && ref.variant !== "gate_skill")
       throw new PromptOwnerInvariantError("flow_owner_variant_unimplemented");

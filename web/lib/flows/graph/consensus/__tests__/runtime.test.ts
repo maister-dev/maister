@@ -17,6 +17,8 @@ const latestConsensusRound = vi.hoisted(() => vi.fn());
 const loadConsensusDraftEvidence = vi.hoisted(() => vi.fn());
 const loadConsensusVerdicts = vi.hoisted(() => vi.fn());
 const recordConsensusVerdict = vi.hoisted(() => vi.fn());
+const loadConsensusVerdictCell = vi.hoisted(() => vi.fn());
+const loadConsensusSynthesis = vi.hoisted(() => vi.fn());
 const runAgentStep = vi.hoisted(() => vi.fn());
 const recordCurrentArtifact = vi.hoisted(() => vi.fn());
 const atomicWriteJson = vi.hoisted(() => vi.fn());
@@ -49,9 +51,19 @@ vi.mock("@/lib/flows/graph/consensus/ledger", async (importOriginal) => {
     ...actual,
     latestConsensusRound,
     loadConsensusDraftEvidence,
+    loadConsensusVerdictCell,
     loadConsensusVerdicts,
     recordConsensusVerdict,
   };
+});
+
+vi.mock("@/lib/flows/graph/consensus/prompt-owner", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/lib/flows/graph/consensus/prompt-owner")
+    >();
+
+  return { ...actual, loadConsensusSynthesis };
 });
 
 vi.mock("@/lib/flows/runner-agent", () => ({ runAgentStep }));
@@ -256,7 +268,7 @@ function input(overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   acquireConsensusAgentCapacity.mockResolvedValue(releaseCapacity);
   loadRunnerCatalog.mockResolvedValue([
     catalogRunner("claude", "claude"),
@@ -268,6 +280,10 @@ beforeEach(() => {
     platform: { defaultRunnerId: null },
   });
   loadConsensusVerdicts.mockResolvedValue([]);
+  // S2.7: a verification/synthesis turn is applied by its prompt owner; the
+  // runtime reads the applied row back instead of the live stdout.
+  loadConsensusVerdictCell.mockResolvedValue(null);
+  loadConsensusSynthesis.mockResolvedValue(null);
   atomicWriteJson.mockResolvedValue(undefined);
   createHitlAssignmentForRun.mockResolvedValue(undefined);
   emitWebhookEvent.mockResolvedValue(undefined);
@@ -304,22 +320,19 @@ describe("runConsensusNode", () => {
         '{"verdict":"disagree","axes":{"scope":false,"risk":true},"disagreements":[{"axis":"scope","claim":"scope mismatch","counter_evidence":"drafts differ"}]}',
       vars: {},
     });
-    recordConsensusVerdict.mockImplementation(async (args) => ({
-      verifierId: args.verifierId,
-      targetParticipantId: args.targetParticipantId,
-      round: args.round,
-      parseStatus: "parsed",
-      verdict: "disagree",
-      axes: { scope: false, risk: true },
-      disagreements: [
-        {
-          axis: "scope",
-          claim: "scope mismatch",
-          counterEvidence: "drafts differ",
-        },
-      ],
-      rawOutputArtifactId: "verdict-artifact",
-    }));
+    loadConsensusVerdictCell.mockImplementation(async (args) =>
+      verdict(args.verifierId, args.targetParticipantId, {
+        verdict: "disagree",
+        axes: { scope: false, risk: true },
+        disagreements: [
+          {
+            axis: "scope",
+            claim: "scope mismatch",
+            counterEvidence: "drafts differ",
+          },
+        ],
+      }),
+    );
 
     const result = await runConsensusNode(input());
 
@@ -353,12 +366,17 @@ describe("runConsensusNode", () => {
         '{"verdict":"disagree","axes":{"scope":false,"risk":true},"disagreements":[{"axis":"scope","claim":"scope mismatch","counter_evidence":"drafts differ"}]}',
       vars: {},
     });
-    recordConsensusVerdict.mockImplementation(async (args) =>
+    loadConsensusVerdictCell.mockImplementation(async (args) =>
       verdict(args.verifierId, args.targetParticipantId, {
-        parseStatus: args.result.parseStatus,
-        verdict: args.result.verdict,
-        axes: args.result.axes,
-        disagreements: args.result.disagreements,
+        verdict: "disagree",
+        axes: { scope: false, risk: true },
+        disagreements: [
+          {
+            axis: "scope",
+            claim: "scope mismatch",
+            counterEvidence: "drafts differ",
+          },
+        ],
       }),
     );
 
@@ -415,16 +433,12 @@ describe("runConsensusNode", () => {
         stdout: "Final consensus plan",
         vars: {},
       });
-    recordConsensusVerdict.mockImplementation(async (args) => ({
-      verifierId: args.verifierId,
-      targetParticipantId: args.targetParticipantId,
-      round: args.round,
-      parseStatus: "parsed",
-      verdict: "agree",
-      axes: { scope: true, risk: true },
-      disagreements: [],
-      rawOutputArtifactId: "verdict-artifact",
-    }));
+    loadConsensusVerdictCell.mockImplementation(async (args) =>
+      verdict(args.verifierId, args.targetParticipantId),
+    );
+    loadConsensusSynthesis
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue("Final consensus plan");
 
     const result = await runConsensusNode(input());
 
@@ -467,6 +481,9 @@ describe("runConsensusNode", () => {
       stdout: "Final cached-verdict plan",
       vars: {},
     });
+    loadConsensusSynthesis
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue("Final cached-verdict plan");
 
     const result = await runConsensusNode(input());
 
@@ -484,7 +501,7 @@ describe("runConsensusNode", () => {
       draft("architect", "Plan A"),
       draft("qa", "Plan B"),
     ]);
-    runAgentStep.mockRejectedValueOnce(new Error("spawn failed"));
+    runAgentStep.mockRejectedValue(new Error("spawn failed"));
     recordConsensusVerdict.mockImplementation(async (args) =>
       verdict(args.verifierId, args.targetParticipantId, {
         parseStatus: args.result.parseStatus,
@@ -549,12 +566,29 @@ describe("runConsensusNode", () => {
       draft("architect", "Plan A"),
       draft("qa", "Plan B"),
     ]);
+    launchConsensusDraftRuns.mockResolvedValue([
+      { participantId: "architect", runId: "child-1", status: "Running" },
+      { participantId: "qa", runId: "child-2", status: "Running" },
+    ]);
     runAgentStep.mockResolvedValue({
       ok: true,
       stdout:
         '{"verdict":"disagree","axes":{"scope":false,"risk":true},"disagreements":[{"axis":"scope","claim":"scope mismatch","counter_evidence":"drafts differ"}]}',
       vars: {},
     });
+    loadConsensusVerdictCell.mockImplementation(async (args) =>
+      verdict(args.verifierId, args.targetParticipantId, {
+        verdict: "disagree",
+        axes: { scope: false, risk: true },
+        disagreements: [
+          {
+            axis: "scope",
+            claim: "scope mismatch",
+            counterEvidence: "drafts differ",
+          },
+        ],
+      }),
+    );
     recordConsensusVerdict.mockImplementation(async (args) =>
       verdict(args.verifierId, args.targetParticipantId, {
         parseStatus: args.result.parseStatus,
@@ -600,14 +634,12 @@ describe("runConsensusNode", () => {
         stdout: "Final consensus plan",
         vars: {},
       });
-    recordConsensusVerdict.mockImplementation(async (args) =>
-      verdict(args.verifierId, args.targetParticipantId, {
-        parseStatus: args.result.parseStatus,
-        verdict: args.result.verdict,
-        axes: args.result.axes,
-        disagreements: args.result.disagreements,
-      }),
+    loadConsensusVerdictCell.mockImplementation(async (args) =>
+      verdict(args.verifierId, args.targetParticipantId),
     );
+    loadConsensusSynthesis
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue("Final consensus plan");
     recordCurrentArtifact
       .mockResolvedValueOnce({ id: "consensus_plan" })
       .mockRejectedValueOnce(new Error("artifact write failed"));
@@ -633,6 +665,9 @@ describe("runConsensusNode", () => {
       stdout: "Final manual consensus plan",
       vars: {},
     });
+    loadConsensusSynthesis
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue("Final manual consensus plan");
     recordCurrentArtifact
       .mockResolvedValueOnce({ id: "consensus_plan" })
       .mockRejectedValueOnce(new Error("artifact write failed"));
@@ -665,6 +700,9 @@ describe("runConsensusNode", () => {
       stdout: "Final manual consensus plan",
       vars: {},
     });
+    loadConsensusSynthesis
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue("Final manual consensus plan");
 
     try {
       const result = await runConsensusNode(
