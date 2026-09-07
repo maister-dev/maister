@@ -30,7 +30,10 @@ or the orchestrator delegation MCP toolset ([orchestrator.md](orchestrator.md)).
   runner resolution.
 - **Draft child run** (Implemented) — governed `run_kind = agent` child row with
   `parent_run_id`, `root_run_id`, `delegation_snapshot`, `runner_snapshot`, and
-  `launch_mode` populated by server code.
+  `launch_mode` populated by server code. Its draft prompt is one owned
+  `consensus_draft` agent turn, so the draft artifact and the child's completion
+  are applied from the durable command output rather than a live consumer stack
+  (see [prompt lifecycle](execution-prompt-lifecycle.md#consensus-draft-agent-turn-implemented)).
 - **Consensus round** (Implemented) — one draft fan-out plus one rotational
   cross-verification pass.
 - **Consensus verdict** (Implemented) — parsed verifier output for one
@@ -137,6 +140,9 @@ flowchart LR
   one idempotent verdict row per verifier-target pair.
 - Malformed verifier output MUST fail closed into a persisted disagree verdict,
   not throw away the node lifecycle.
+- A draft child MUST publish its artifact and settle only from its own verified
+  command output; an incomplete or empty draft turn MUST fail the child instead
+  of recording an empty successful draft.
 - The tally MUST be unanimous over every verifier verdict and every declared
   `material_axes` boolean.
 - No-consensus v1 MUST escalate through the existing HITL respond route with

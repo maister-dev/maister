@@ -668,7 +668,47 @@ The database checks the original command and pause identity and prevents source
 rewrites or reactivation. Other HITL kinds keep their existing constraints.
 Replayed notifications retain the cancelled request as history.
 
-### Consensus draft adapter interface (Implemented; S2.7 integration pending)
+### Consensus verifier matrix cell (Designed)
+
+A consensus verification turn belongs to exactly one matrix cell: the node
+attempt, its round, the verifier participant and the target participant. The
+owner reference carries all four plus the deterministic
+`consensus_round_verdicts` row id, so the same node attempt cannot cross-apply
+one cell's output into another round or target. The logical operation key is
+that same verdict row id, which makes re-entry select the existing command
+instead of paying for a second verification of the same cell.
+
+Admission runs under the current assignment, an active session incarnation and
+the consensus node attempt's row lock. It refuses unless the parent run is a
+Running Flow run positioned on that consensus node, the attempt is a Running
+`consensus` attempt owned by the current assignment, the reference's verdict id
+matches the cell's deterministic id, and no verdict row exists for the cell yet.
+
+Application decodes the complete verified output with the round's material axes
+from the run's own flow revision, then commits the raw-output artifact and the
+verdict row together with the command application marker. A verdict row already
+present for that cell is an explicit supersession, never a second write. A
+failed, fenced or non-`end_turn` host outcome records the existing fail-closed
+verdict with its error code rather than a missing cell.
+
+### Consensus synthesis generation (Designed)
+
+Synthesis belongs to a node attempt, its round and the synthesis source that
+produced it (`consensus`, a picked draft, or a human resolution). Those three
+form the deterministic synthesis id carried by the owner reference and used as
+the logical operation key, so a re-entering driver adopts the existing
+synthesis command instead of regenerating a prompt because the parent stack
+died. Admission fences the same run/attempt/assignment/incarnation authority as
+the verifier and refuses once a synthesis artifact for that generation exists.
+
+Application commits the round-scoped synthesis output artifact, the current
+`consensus_plan` and `debate_log` artifacts, and the command application marker
+in one transaction. Empty or non-`end_turn` synthesis output records the
+generation's failure evidence instead of an empty plan; the node then fails on
+its existing `PRECONDITION` path. A superseding generation cannot overwrite an
+already applied synthesis.
+
+### Consensus draft agent turn (Implemented)
 
 `agents/prompt-owner.ts` exports `createAgentPromptOwners` and the typed
 `ConsensusDraftPromptPreparation` context. The factory routes only the closed
@@ -679,9 +719,28 @@ the verified original output iterator. It returns the common DB-only application
 and optional post-commit hint. The command layer requires complete output
 consumption before committing the domain application and command marker.
 
-The default registry refuses drafts until S2.7 supplies the parent/round fence,
-artifact/child application and durable admission/re-entry. This interface alone
-does not change the existing consensus launcher or qualify consensus recovery.
+`flows/graph/consensus/draft-prompt-owner.ts` supplies that preparation and
+composes `consensusDraftPromptOwners`; the default agent registry still refuses
+drafts, so an ordinary agent turn can never enter the draft path.
+
+A draft child's accepted input is retained as one `consensus_draft` turn whose
+id is its launch assignment and whose ordinal is zero, exactly like an initial
+turn. Migration `0156` admits that variant. Both participant kinds — the
+`runner` slot session and the catalog-`agent` launch — create their session
+through the existing owned create intent and dispatch through the common stored
+turn, so the draft's create, prompt and completion share one durable identity.
+
+Admission fences the child's current assignment, its active incarnation and the
+claimed turn, and reads round/participant identity only from the child run's
+immutable `trigger_payload`; a rewritten payload cannot rebind a live turn. The
+same turn/command binding path as every other agent variant records the prompt.
+
+Application decodes the complete verified output, closes the draft session, and
+commits the draft artifact, the ordinary agent finalization and the turn
+acknowledgment in one transaction with the command application marker. A draft
+whose turn did not end with `end_turn`, or whose verified output is empty,
+finalizes `Failed` instead of publishing an empty successful draft — text that
+existed only on a dead consumer stack can never become a draft.
 
 The current agent launcher has no `WaitingOnChildren` producer or agent wait
 resume claim. Actual child-wait continuations belong to the Flow orchestrator

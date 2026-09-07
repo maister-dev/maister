@@ -1,6 +1,7 @@
 import "server-only";
 
 import type {
+  AgentTurn,
   RunSessionIncarnation,
   ExecutionAssignment,
 } from "@/lib/db/schema";
@@ -67,7 +68,7 @@ type InitialAgentRef = Extract<
   Extract<PromptOwner, { kind: "agent_turn" }>["ref"],
   { variant: "initial" }
 >;
-type AdmittedAgentRef = Extract<
+export type AdmittedAgentRef = Extract<
   Extract<PromptOwner, { kind: "agent_turn" }>["ref"],
   {
     variant:
@@ -75,10 +76,11 @@ type AdmittedAgentRef = Extract<
       | "resume"
       | "rework"
       | "live_message"
-      | "persistent_message";
+      | "persistent_message"
+      | "consensus_draft";
   }
 >;
-type AgentPromptSession = Pick<
+export type AgentPromptSession = Pick<
   InitialAgentRef,
   | "version"
   | "runId"
@@ -93,7 +95,7 @@ export function initialAgentPromptKey(assignmentId: string): string {
   return `agent_turn:initial:${assignmentId}:0`;
 }
 
-async function lockAgentPromptSession(
+export async function lockAgentPromptSession(
   tx: Db,
   client: BoundClient,
   hostSessionId: string,
@@ -174,6 +176,48 @@ export async function admitInitialAgentPrompt(
   };
 }
 
+/** One admitted turn owns exactly one command whose request still carries its
+ * immutable prompt. Every agent variant binds through this single path. */
+export async function bindAgentTurnCommand(
+  tx: Db,
+  input: Readonly<{
+    turn: Pick<AgentTurn, "id" | "runId" | "prompt" | "commandId">;
+    hostKey: string;
+    incarnationId: string;
+    logicalOperationKey: string;
+  }>,
+): Promise<void> {
+  const { turn } = input;
+  const [command] = await tx
+    .select()
+    .from(executionCommands)
+    .where(
+      and(
+        eq(executionCommands.runId, turn.runId),
+        eq(executionCommands.logicalOperationKey, input.logicalOperationKey),
+      ),
+    );
+
+  if (
+    !command ||
+    readPromptRequest(command, input.hostKey).payload.prompt !== turn.prompt
+  )
+    throw new PromptOwnerInvariantError(
+      "agent_message_original_prompt_changed",
+    );
+  if (turn.commandId !== null && turn.commandId !== command.id)
+    throw new PromptOwnerInvariantError("agent_message_command_changed");
+  await tx
+    .update(agentTurns)
+    .set({
+      state: "dispatched",
+      commandId: command.id,
+      incarnationId: input.incarnationId,
+      updatedAt: new Date(),
+    })
+    .where(eq(agentTurns.id, turn.id));
+}
+
 export async function admitAgentMessagePrompt(
   tx: Db,
   client: BoundClient,
@@ -229,8 +273,11 @@ export async function admitAgentTurnPrompt(
     turn.variant === "initial"
       ? initialAgentPromptKey(session.assignmentId)
       : `agent_turn:${turn.variant}:${turn.id}:${turn.ordinal}`;
+
+  if (turn.variant === "consensus_draft")
+    throw new PromptOwnerInvariantError("agent_message_variant");
   const source = { ...session, turnId: turn.id, promptOrdinal: turn.ordinal };
-  const ref: AdmittedAgentRef =
+  const ref: Exclude<AdmittedAgentRef, { variant: "consensus_draft" }> =
     turn.variant === "live_message" || turn.variant === "persistent_message"
       ? { ...source, variant: turn.variant, messageId: turn.id }
       : { ...source, variant: turn.variant };
@@ -241,37 +288,13 @@ export async function admitAgentTurnPrompt(
       ref,
     },
     logicalOperationKey,
-    assertCommit: async () => {
-      const [command] = await tx
-        .select()
-        .from(executionCommands)
-        .where(
-          and(
-            eq(executionCommands.runId, turn.runId),
-            eq(executionCommands.logicalOperationKey, logicalOperationKey),
-          ),
-        );
-
-      if (
-        !command ||
-        readPromptRequest(command, client.host.hostKey).payload.prompt !==
-          turn.prompt
-      )
-        throw new PromptOwnerInvariantError(
-          "agent_message_original_prompt_changed",
-        );
-      if (turn.commandId !== null && turn.commandId !== command.id)
-        throw new PromptOwnerInvariantError("agent_message_command_changed");
-      await tx
-        .update(agentTurns)
-        .set({
-          state: "dispatched",
-          commandId: command.id,
-          incarnationId: session.incarnationId,
-          updatedAt: new Date(),
-        })
-        .where(eq(agentTurns.id, turn.id));
-    },
+    assertCommit: () =>
+      bindAgentTurnCommand(tx, {
+        turn,
+        hostKey: client.host.hostKey,
+        incarnationId: session.incarnationId,
+        logicalOperationKey,
+      }),
   };
 }
 
@@ -369,7 +392,7 @@ async function lockAgentBinding(
   return binding ? { state: binding.state, persistent: run.persistent } : null;
 }
 
-async function lockAgentOwner(
+export async function lockAgentOwner(
   tx: Db,
   ref: AdmittedAgentRef,
   targetSessionId: string | null,
@@ -388,7 +411,7 @@ async function lockAgentOwner(
 /** Close only the completed turn's current process before workspace inspection.
  * The exact target and assignment fence also protect a concurrent replacement.
  */
-async function stopAgentPromptSession(
+export async function stopAgentPromptSession(
   db: Db,
   ref: AdmittedAgentRef,
   targetSessionId: string | null,
@@ -416,7 +439,7 @@ async function stopAgentPromptSession(
   );
 }
 
-async function acknowledgeAgentMessage(
+export async function acknowledgeAgentMessage(
   tx: Db,
   ref: AdmittedAgentRef,
   commandId: string,
@@ -439,7 +462,7 @@ async function acknowledgeAgentMessage(
   await acknowledgeAgentPermissionResult(tx, ref.runId, commandId);
 }
 
-async function supersedeAgentMessage(
+export async function supersedeAgentMessage(
   tx: Db,
   ref: AdmittedAgentRef,
   commandId: string,
@@ -655,7 +678,7 @@ export async function waitForHistoricalAgentPrompt(
   );
 }
 
-async function awaitAgentApplication(
+export async function awaitAgentApplication(
   db: Db,
   commandId: string,
   wait: () => Promise<unknown>,

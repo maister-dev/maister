@@ -13,8 +13,14 @@ import { lockCurrentSessionAssignment } from "@/lib/execution-host/session-bindi
 
 type GenerationVariant = Extract<
   AgentTurn["variant"],
-  "initial" | "resume" | "rework"
+  "initial" | "resume" | "rework" | "consensus_draft"
 >;
+
+/** A consensus draft child owns its whole run, exactly like an initial turn. */
+const runScopedVariants: readonly GenerationVariant[] = [
+  "initial",
+  "consensus_draft",
+];
 
 const placementReasons: Readonly<
   Record<GenerationVariant, readonly ExecutionAssignment["placementReason"][]>
@@ -22,6 +28,7 @@ const placementReasons: Readonly<
   initial: ["launch", "legacy_backfill"],
   resume: ["resume", "recover", "wait_resume"],
   rework: ["rework_return"],
+  consensus_draft: ["launch", "legacy_backfill"],
 };
 
 /** Retain generation-owned input in the caller's placement/admission transaction. */
@@ -109,9 +116,11 @@ export async function admitAgentGenerationTurn(
   const [turn] = await tx
     .insert(agentTurns)
     .values({
-      id: input.variant === "initial" ? assignment.id : randomUUID(),
+      id: runScopedVariants.includes(input.variant)
+        ? assignment.id
+        : randomUUID(),
       runId: input.runId,
-      ordinal: input.variant === "initial" ? 0 : sequence.ordinal,
+      ordinal: runScopedVariants.includes(input.variant) ? 0 : sequence.ordinal,
       variant: input.variant,
       logicalKey,
       prompt: input.prompt,

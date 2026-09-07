@@ -157,7 +157,10 @@ import {
   ensureWorktreeProvenance,
   readWorktreeProvenanceMetadata,
 } from "@/lib/worktree-provenance";
-import { recordArtifact } from "@/lib/flows/graph/artifact-store";
+import {
+  admitConsensusDraftPrompt,
+  waitForConsensusDraftPrompt,
+} from "@/lib/flows/graph/consensus/draft-prompt-owner";
 
 export {
   agentReadOnlyWorkdirPath,
@@ -190,7 +193,6 @@ const log = pino({
 });
 
 const COMMENT_THREAD_TAIL_LIMIT = 6;
-const CONSENSUS_DRAFT_OUTPUT_CAP_BYTES = 1024 * 1024;
 
 export type AgentTriggerSource =
   | "manual"
@@ -2103,65 +2105,6 @@ function consensusAgentDraftPrompt(
   return [basePrompt, consensusDraftPromptBlock(payload)].join("\n\n");
 }
 
-function appendCappedConsensusDraftOutput(
-  current: string,
-  chunk: string,
-): string {
-  const remaining = CONSENSUS_DRAFT_OUTPUT_CAP_BYTES - current.length;
-
-  if (remaining <= 0) return current;
-
-  return current + chunk.slice(0, remaining);
-}
-
-async function loadConsensusDraftPayload(
-  db: Db,
-  runId: string,
-): Promise<ConsensusDraftPayload | null> {
-  const rows = await db
-    .select({ triggerPayload: runs.triggerPayload })
-    .from(runs)
-    .where(eq(runs.id, runId));
-  const row = rows[0];
-
-  return row ? consensusDraftPayload(row) : null;
-}
-
-async function recordConsensusDraftArtifact(args: {
-  db: Db;
-  runId: string;
-  payload: ConsensusDraftPayload;
-  text: string;
-}): Promise<void> {
-  const text = args.text.slice(0, CONSENSUS_DRAFT_OUTPUT_CAP_BYTES);
-
-  if (text.trim().length === 0) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `consensus draft participant "${args.payload.participantId}" produced no text`,
-    );
-  }
-
-  await recordArtifact(
-    {
-      id: `run:${args.runId}:consensus-draft:${args.payload.nodeAttemptId}:${args.payload.participantId}:r${args.payload.round}`,
-      runId: args.runId,
-      nodeId: "consensus-draft",
-      artifactDefId: "default:consensus-draft",
-      kind: "human_note",
-      producer: "runner",
-      locator: {
-        kind: "inline",
-        text,
-      },
-      validity: "current",
-      visibility: "internal",
-      retention: "run",
-    },
-    args.db,
-  );
-}
-
 async function startConsensusRunnerDraftSession(args: {
   db: Db;
   hosts: ExecutionHosts;
@@ -2191,37 +2134,31 @@ async function startConsensusRunnerDraftSession(args: {
       runId,
       args.assignmentId,
     );
-    const session = await execution.client.createSession({
-      stepId: "agent",
-      executor: runnerExecutorInput(args.snapshot),
-      runner: runnerSupervisorInput({ snapshot: args.snapshot }),
-      adapterLaunch: mergeRunnerAdapterLaunch(args.snapshot),
-      readOnlySession: true,
-      ...(args.run.acpSessionId
-        ? { resumeSessionId: args.run.acpSessionId }
-        : {}),
-    });
-
-    queueMicrotask(() => {
-      void consumeAgentSession({
-        db: args.db,
-        execution,
+    // S2.7: the draft's accepted input, create and prompt belong to one durable
+    // turn, so a dead consumer stack can never lose the participant's answer.
+    const turn = await args.db.transaction((tx: ExecutionDb) =>
+      admitAgentGenerationTurn(tx, {
         runId,
-        sessionId: session.sessionId,
-      }).catch((err: unknown) => {
-        log.error(
-          { runId, err: err instanceof Error ? err.message : String(err) },
-          "consensus runner draft session consumer threw",
-        );
-      });
-    });
+        assignmentId: execution.client.assignment.id,
+        variant: "consensus_draft",
+        prompt: consensusDraftPromptBlock(args.payload),
+      }),
+    );
+    const session = await execution.client.createOwnedSession(
+      { variant: "agent", turnId: turn.id, promptOrdinal: turn.ordinal },
+      async () => ({
+        stepId: "agent",
+        executor: runnerExecutorInput(args.snapshot),
+        runner: runnerSupervisorInput({ snapshot: args.snapshot }),
+        adapterLaunch: mergeRunnerAdapterLaunch(args.snapshot),
+        readOnlySession: true,
+        ...(args.run.acpSessionId
+          ? { resumeSessionId: args.run.acpSessionId }
+          : {}),
+      }),
+    );
 
-    const promptHandle = await execution.client.prompt(session.sessionId, {
-      stepId: "agent",
-      prompt: consensusDraftPromptBlock(args.payload),
-    });
-
-    await execution.client.waitForPrompt(promptHandle);
+    await dispatchStoredAgentTurn(args.db, execution, turn, session.sessionId);
 
     log.info(
       {
@@ -2710,6 +2647,8 @@ async function dispatchStoredAgentTurn(
   signal?: AbortSignal,
 ): Promise<void> {
   signal?.throwIfAborted();
+  const draft = turn.variant === "consensus_draft";
+
   observeOwnedAgentSession(db, execution, turn, sessionId, signal);
   await waitForPromptIncarnation(db, execution.client, sessionId);
   const handle = await execution.client.prompt(
@@ -2717,11 +2656,18 @@ async function dispatchStoredAgentTurn(
     { stepId: "agent", prompt: turn.prompt },
     {
       admitOwner: (tx) =>
-        admitAgentTurnPrompt(tx, execution.client, sessionId, turn.id),
+        draft
+          ? admitConsensusDraftPrompt(tx, execution.client, sessionId, turn.id)
+          : admitAgentTurnPrompt(tx, execution.client, sessionId, turn.id),
     },
   );
 
-  await waitForAgentPrompt(db, execution.client, handle.commandId, signal);
+  await (draft ? waitForConsensusDraftPrompt : waitForAgentPrompt)(
+    db,
+    execution.client,
+    handle.commandId,
+    signal,
+  );
 }
 
 function observeOwnedAgentSession(
@@ -3330,15 +3276,19 @@ export async function startAgentSession(
     // ADR-166: the create is handle-form — the workspace (and its context
     // mounts, snapshotted on the run above) is adopted by the bound client.
     const execution = await bindAgentExecution(hosts, runId, assignmentId);
-    const ownedInitial =
-      !draftPayload && overridePrompt === undefined && !run.acpSessionId;
+    const ownedVariant =
+      overridePrompt === undefined && !run.acpSessionId
+        ? draftPayload
+          ? ("consensus_draft" as const)
+          : ("initial" as const)
+        : null;
 
-    if (ownedInitial)
+    if (ownedVariant)
       agentTurn = await _db.transaction((tx: ExecutionDb) =>
         admitAgentGenerationTurn(tx, {
           runId,
           assignmentId: execution.client.assignment.id,
-          variant: "initial",
+          variant: ownedVariant,
           prompt,
         }),
       );
@@ -3466,8 +3416,6 @@ export async function consumeAgentSession(args: {
   signal?: AbortSignal;
 }): Promise<void> {
   let sawPermissionRequest = false;
-  const draftPayload = await loadConsensusDraftPayload(args.db, args.runId);
-  let consensusDraftOutput = "";
   // ADR-165 (T5.3): the agent's own text, accumulated per PROMPT TURN. It is
   // reset when a new turn begins (a resume after a permission answer) so a
   // sentinel block from an EARLIER turn can never be read as this turn's final
@@ -3479,16 +3427,6 @@ export async function consumeAgentSession(args: {
   })) {
     switch (event.type) {
       case "session.update": {
-        if (draftPayload) {
-          const chunk = agentMessageText(event.update);
-
-          if (chunk) {
-            consensusDraftOutput = appendCappedConsensusDraftOutput(
-              consensusDraftOutput,
-              chunk,
-            );
-          }
-        }
         // ADR-165: the reset comes BEFORE the append. This update both ENDS the
         // permission wait and carries the first text of the NEW turn, so
         // appending first and clearing after would discard the very chunk that
@@ -3611,39 +3549,6 @@ export async function consumeAgentSession(args: {
 
           if (persistentRows[0]?.persistent === true) {
             await parkPersistentAgent(args.runId, { db: args.db });
-
-            return;
-          }
-        }
-
-        if (
-          draftPayload &&
-          event.exitCode === 0 &&
-          event.reason === undefined
-        ) {
-          try {
-            await recordConsensusDraftArtifact({
-              db: args.db,
-              runId: args.runId,
-              payload: draftPayload,
-              text: consensusDraftOutput,
-            });
-            log.info(
-              {
-                runId: args.runId,
-                participantId: draftPayload.participantId,
-                nodeId: draftPayload.nodeId,
-                nodeAttemptId: draftPayload.nodeAttemptId,
-                round: draftPayload.round,
-                outputLength: consensusDraftOutput.length,
-              },
-              "consensus draft output artifact recorded",
-            );
-          } catch (err) {
-            await finalizeAgentRun(args.runId, "Failed", {
-              db: args.db,
-              reason: err instanceof Error ? err.message : String(err),
-            });
 
             return;
           }

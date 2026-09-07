@@ -3846,6 +3846,7 @@ export const agentTurns = pgTable(
         "rework",
         "live_message",
         "persistent_message",
+        "consensus_draft",
       ],
     }).notNull(),
     logicalKey: text("logical_key").notNull(),
@@ -3897,7 +3898,7 @@ export const agentTurns = pgTable(
     sourceCheck: check(
       "agent_turns_source_check",
       sql`${t.ordinal} >= 0
-      AND ${t.variant} IN ('initial', 'resume', 'rework', 'live_message', 'persistent_message')
+      AND ${t.variant} IN ('initial', 'resume', 'rework', 'live_message', 'persistent_message', 'consensus_draft')
       AND length(${t.logicalKey}) BETWEEN 1 AND 256 AND length(${t.prompt}) BETWEEN 1 AND 1000000`,
     ),
     stateCheck: check(

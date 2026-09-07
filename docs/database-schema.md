@@ -2332,7 +2332,7 @@ uses the run lock to allocate an ordinal and retain the original input.
 | Columns | Contract |
 | --- | --- |
 | `id`, `run_id`, `ordinal` | Server-generated ID, owning agent run and immutable run-local order. |
-| `variant`, `logical_key`, `prompt` | Immutable operation kind, same-run retry key and original input; prompts are private server data and never logged. |
+| `variant`, `logical_key`, `prompt` | Immutable operation kind (`initial`, `resume`, `rework`, `live_message`, `persistent_message`, and `consensus_draft` since migration `0156_consensus_draft_turn`), same-run retry key and original input; prompts are private server data and never logged. |
 | `state` | `queued` → `claimed` → `dispatched` → `applied`; any unfinished state may become `superseded`. |
 | `execution_assignment_id`, `assignment_epoch`, `run_session_id` | All null while queued; fixed together on claim and checked against the owning run. |
 | `incarnation_id`, `command_id` | Fixed together at prompt admission; the command must match the exact turn, variant, ordinal, assignment and incarnation. |
@@ -2353,7 +2353,9 @@ cascade. Production messages use the scheduler-cap claim, retain FIFO order
 across persistent parks and acknowledge the exact command atomically with the
 domain result. Initial turns retain ordinal zero and the launch assignment ID
 before owned session creation. Rework stores its input with the new assignment
-and stales the prior public result in that claim. Resume continuation wiring remains Designed;
+and stales the prior public result in that claim. A `consensus_draft` turn is a
+consensus participant child's own run-scoped input and shares the initial turn's
+ordinal zero and launch-assignment identity. Resume continuation wiring remains Designed;
 see [prompt lifecycle](system-analytics/execution-prompt-lifecycle.md).
 
 ## `run_messages`
