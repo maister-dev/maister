@@ -13,9 +13,8 @@ import {
   type ScratchPromptOwner,
 } from "./prompt-owner";
 
-import { waitForPromptIncarnation } from "@/lib/execution-host/prompt-incarnation";
-
 import { getDb } from "@/lib/db/client";
+import { waitForPromptIncarnation } from "@/lib/execution-host/prompt-incarnation";
 import * as schemaModule from "@/lib/db/schema";
 import { nextScratchMessageSequence } from "@/lib/scratch-runs/messages";
 import { runStatusForDialogStatus } from "@/lib/scratch-runs/state";

@@ -752,7 +752,8 @@ async function synthesizeConsensus(
       synthesisId: owner.synthesisId,
     });
 
-    if (output === null) throw new ConsensusGenerationPending(owner.synthesisId);
+    if (output === null)
+      throw new ConsensusGenerationPending(owner.synthesisId);
     planText = capText(output);
   } finally {
     release();
