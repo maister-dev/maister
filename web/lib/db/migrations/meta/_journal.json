@@ -1072,6 +1072,13 @@
       "when": 1788794305666,
       "tag": "0156_consensus_draft_turn",
       "breakpoints": true
+    },
+    {
+      "idx": 157,
+      "version": "7",
+      "when": 1788810648777,
+      "tag": "0157_flow_assistant_actions",
+      "breakpoints": true
     }
   ]
 }

@@ -2358,6 +2358,25 @@ consensus participant child's own run-scoped input and shares the initial turn's
 ordinal zero and launch-assignment identity. Resume continuation wiring remains Designed;
 see [prompt lifecycle](system-analytics/execution-prompt-lifecycle.md).
 
+## `flow_assistant_actions` (Implemented)
+
+Migration `0157_flow_assistant_actions` retains a local-package assistant's
+parsed structured action as durable intent. Extraction sanitizes the assistant
+message, so the action row is written in that same transaction; a process that
+dies before the package apply recovers the action instead of losing it.
+
+| Columns | Contract |
+| --- | --- |
+| `id`, `run_id`, `local_package_id` | Server-generated ID and the owning assistant run and package. |
+| `lock_generation` | The edit-lock session that authorized the action; a takeover settles the row `skipped` instead of editing. |
+| `message_id` | The sanitized assistant message; unique, so one message can retain at most one action. |
+| `action`, `result` | The parsed action and the applied/rejected result payload; bodies are private server data and never logged. |
+| `state`, `created_at`, `completed_at` | `pending` becomes `applied`, `rejected` or `skipped`; a terminal state requires `completed_at`. |
+
+Settlement is a CAS out of `pending`, so a competing recovery pass yields and
+the package action is applied exactly once. Run deletion cascades; the retained
+message is restricted while an action references it.
+
 ## `run_messages`
 
 Generalized from `scratch_messages` (migration `0085`) into a run-kind-agnostic

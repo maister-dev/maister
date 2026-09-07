@@ -6649,6 +6649,58 @@ export type LocalPackageCreationState = {
   startedAt: string;
 };
 
+// S2.9 (ADR-167 D2): a local-package assistant turn extracts at most one
+// action, and extracting it SANITIZES the assistant message. The parsed action
+// therefore becomes durable intent in that same transaction, so a process that
+// dies before the package apply recovers the action instead of losing it, and a
+// re-entry can never apply an already settled one twice.
+export const flowAssistantActions = pgTable(
+  "flow_assistant_actions",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    localPackageId: text("local_package_id")
+      .notNull()
+      .references(() => localPackages.id, { onDelete: "cascade" }),
+    // The edit-lock session that authorized this action; a takeover changes it
+    // and a pending action is then settled `skipped`, never applied.
+    lockGeneration: text("lock_generation").notNull(),
+    messageId: text("message_id")
+      .notNull()
+      .references(() => runMessages.id, { onDelete: "restrict" }),
+    action: jsonb("action").$type<Record<string, unknown>>().notNull(),
+    state: text("state", {
+      enum: ["pending", "applied", "rejected", "skipped"],
+    })
+      .notNull()
+      .default("pending"),
+    result: jsonb("result").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    completedAt: timestamp("completed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+  },
+  (t) => ({
+    messageUnique: unique("flow_assistant_actions_message_uq").on(t.messageId),
+    dueIndex: index("flow_assistant_actions_due_idx")
+      .on(t.createdAt, t.runId)
+      .where(sql`${t.state} = 'pending'`),
+    stateCheck: check(
+      "flow_assistant_actions_state_check",
+      sql`${t.state} IN ('pending', 'applied', 'rejected', 'skipped')
+      AND ((${t.completedAt} IS NOT NULL) = (${t.state} <> 'pending'))
+      AND length(${t.lockGeneration}) BETWEEN 1 AND 128`,
+    ),
+  }),
+);
+
+export type FlowAssistantActionRow = typeof flowAssistantActions.$inferSelect;
+
 export type User = typeof users.$inferSelect;
 export type LocalPackage = typeof localPackages.$inferSelect;
 export type AccountStatus = User["accountStatus"];

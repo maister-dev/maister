@@ -1162,6 +1162,25 @@ table execution_runtime_objects {
   }
 }
 
+table flow_assistant_actions {
+  id text [pk, not null]
+  run_id text [not null]
+  local_package_id text [not null]
+  lock_generation text [not null]
+  message_id text [not null]
+  action jsonb [not null]
+  state text [not null, default: 'pending']
+  result jsonb
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  completed_at "timestamp with time zone"
+
+  indexes {
+    message_id [name: 'flow_assistant_actions_message_uq', unique]
+    (created_at, run_id) [name: 'flow_assistant_actions_due_idx']
+
+  }
+}
+
 table flow_revisions {
   id text [pk, not null]
   flow_ref_id text [not null]
@@ -2987,6 +3006,12 @@ ref execution_runtime_objects_execution_assignment_id_execution_assignments_id_f
 ref execution_runtime_objects_run_session_incarnation_id_run_session_incarnations_id_fk: execution_runtime_objects.run_session_incarnation_id > run_session_incarnations.id [delete: set null, update: no action]
 
 ref execution_runtime_objects_source_event_id_execution_events_id_fk: execution_runtime_objects.source_event_id > execution_events.id [delete: set null, update: no action]
+
+ref flow_assistant_actions_run_id_runs_id_fk: flow_assistant_actions.run_id > runs.id [delete: cascade, update: no action]
+
+ref flow_assistant_actions_local_package_id_local_packages_id_fk: flow_assistant_actions.local_package_id > local_packages.id [delete: cascade, update: no action]
+
+ref flow_assistant_actions_message_id_run_messages_id_fk: flow_assistant_actions.message_id > run_messages.id [delete: restrict, update: no action]
 
 ref flow_revisions_default_runner_id_platform_acp_runners_id_fk: flow_revisions.default_runner_id > platform_acp_runners.id [delete: set null, update: no action]
 

@@ -34,7 +34,8 @@ import {
 
 import * as schemaModule from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
-import { acquireLock } from "@/lib/local-packages/lock";
+import { acquireLock, assertHoldsLock } from "@/lib/local-packages/lock";
+import { settlePendingFlowAssistantActions } from "@/lib/studio/flow-assistant/turn";
 import { classifyRunReconcile, runReconcileSweep } from "@/lib/reconcile";
 import { assertRunScratchMetadataInvariant } from "@/lib/runs/run-kind-invariants";
 import { parseScratchMessageContent } from "@/lib/scratch-runs/transcript";
@@ -925,6 +926,150 @@ describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
       readFile(join(pkg.workingDir, "flows", "review", "flow.yaml"), "utf8"),
     ).resolves.toBe(updatedFlow);
   });
+});
+
+describe("flow assistant action journal (S2.9)", () => {
+  async function seedPendingAction(label: string) {
+    const pkg = await createLocalPackage({
+      name: `assistant-${label}-${randomUUID().slice(0, 8)}`,
+      createdBy: userId,
+      db: db as never,
+    });
+
+    streamAssistantText("no action in this turn");
+    const sessionId = await lockLocalPackage(pkg.id, `assistant-${label}`);
+    const launched = await launchLocalPackageAssistant({
+      body: { localPackageId: pkg.id, sessionId, prompt: "hello" },
+      userId,
+    });
+    const [message] = await db
+      .select({ id: scratchMessages.id })
+      .from(scratchMessages)
+      .where(
+        and(
+          eq(scratchMessages.runId, launched.runId),
+          eq(scratchMessages.role, "assistant"),
+        ),
+      );
+    const actionId = `act_${label}`;
+
+    // Exactly the evidence a process leaves when it dies after consuming the
+    // action block but before the package apply: a sanitized message plus a
+    // retained pending intent.
+    await db.insert(schema.flowAssistantActions).values({
+      id: randomUUID(),
+      runId: launched.runId,
+      localPackageId: pkg.id,
+      lockGeneration: sessionId,
+      messageId: message.id,
+      action: {
+        schemaVersion: FLOW_ASSISTANT_ACTION_SCHEMA_VERSION,
+        actionId,
+        summary: "Add recovered flow",
+        operations: [
+          {
+            op: "upsert_file",
+            path: `flows/${label}/flow.yaml`,
+            baseHash: null,
+            content: validFlowYaml(label),
+          },
+        ],
+      },
+    });
+
+    return { pkg, sessionId, runId: launched.runId, label };
+  }
+
+  it("owner-scratch-package-recovery: a retained action applies exactly once", async () => {
+    const seeded = await seedPendingAction("recovered");
+    const fresh = await getLocalPackage(seeded.pkg.id, db as never);
+
+    expect((await diffWorkingDir(fresh!)).changedCount).toBe(0);
+    const applied = await settlePendingFlowAssistantActions({
+      db: db as never,
+      localPackage: fresh!,
+      runId: seeded.runId,
+      lockGeneration: seeded.sessionId,
+      assertCanApply: () =>
+        assertHoldsLock(seeded.pkg.id, seeded.sessionId, db as never),
+    });
+
+    expect(applied?.status).toBe("applied");
+    const [row] = await db
+      .select()
+      .from(schema.flowAssistantActions)
+      .where(eq(schema.flowAssistantActions.runId, seeded.runId));
+
+    expect(row.state).toBe("applied");
+    const afterFirst = await diffWorkingDir(
+      (await getLocalPackage(seeded.pkg.id, db as never))!,
+    );
+
+    expect(
+      afterFirst.files.some((file) =>
+        file.path.endsWith("flows/recovered/flow.yaml"),
+      ),
+    ).toBe(true);
+
+    // A second recovery pass is a no-op: the settled intent is never re-applied.
+    expect(
+      await settlePendingFlowAssistantActions({
+        db: db as never,
+        localPackage: fresh!,
+        runId: seeded.runId,
+        lockGeneration: seeded.sessionId,
+        assertCanApply: () =>
+          assertHoldsLock(seeded.pkg.id, seeded.sessionId, db as never),
+      }),
+    ).toBeNull();
+    const results = await db
+      .select({ content: scratchMessages.content })
+      .from(scratchMessages)
+      .where(
+        and(
+          eq(scratchMessages.runId, seeded.runId),
+          eq(scratchMessages.role, "system"),
+        ),
+      );
+
+    expect(
+      results.filter(
+        (message) =>
+          parseScratchMessageContent("system", message.content).kind ===
+          "flow_action_result",
+      ),
+    ).toHaveLength(1);
+  }, 120_000);
+
+  it("owner-scratch-package-lock-takeover: a superseded generation never edits", async () => {
+    const seeded = await seedPendingAction("takeover");
+    const takeover = await lockLocalPackage(seeded.pkg.id, "assistant-newlock");
+    const fresh = await getLocalPackage(seeded.pkg.id, db as never);
+
+    expect(
+      await settlePendingFlowAssistantActions({
+        db: db as never,
+        localPackage: fresh!,
+        runId: seeded.runId,
+        lockGeneration: takeover,
+        assertCanApply: () =>
+          assertHoldsLock(seeded.pkg.id, takeover, db as never),
+      }),
+    ).toBeNull();
+    const [row] = await db
+      .select()
+      .from(schema.flowAssistantActions)
+      .where(eq(schema.flowAssistantActions.runId, seeded.runId));
+
+    expect(row.state).toBe("skipped");
+    expect(
+      (
+        await diffWorkingDir(
+          (await getLocalPackage(seeded.pkg.id, db as never))!,
+        )
+      ).changedCount,
+    ).toBe(0);
+  }, 120_000);
 });
 
 function streamAssistantText(text: string): void {

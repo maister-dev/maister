@@ -25,17 +25,25 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const { scratchMessages } = schema as unknown as Record<string, any>;
+const { flowAssistantActions, scratchMessages } = schema as unknown as Record<
+  string,
+  any
+>;
 
 export async function postProcessFlowAssistantTurn(args: {
   db: Db;
   localPackage: LocalPackage;
   runId: string;
+  lockGeneration: string;
   assertCanApply: () => Promise<void>;
 }): Promise<FlowActionResultPayload | null> {
+  // A pending action from an earlier, interrupted turn is settled before this
+  // turn's own message is read: extraction sanitizes the message, so without
+  // durable intent that action would be lost rather than replayed.
+  const recovered = await settlePendingFlowAssistantActions(args);
   const latest = await loadLatestAssistantMessage(args.db, args.runId);
 
-  if (!latest) return null;
+  if (!latest) return recovered;
 
   log.debug(
     {
@@ -49,12 +57,28 @@ export async function postProcessFlowAssistantTurn(args: {
 
   const parsed = parseAssistantActionBlocks(latest.content);
 
-  if (parsed.kind === "none") return null;
+  if (parsed.kind === "none") return recovered;
 
-  await updateAssistantMessage({
-    db: args.db,
-    messageId: latest.id,
-    content: visibleAssistantText(parsed.sanitizedText, parsed.kind),
+  // Sanitizing the message consumes the action. Retain it in the same
+  // transaction so a crash before the package apply keeps a recoverable intent.
+  await args.db.transaction(async (tx: Db) => {
+    await updateAssistantMessage({
+      db: tx,
+      messageId: latest.id,
+      content: visibleAssistantText(parsed.sanitizedText, parsed.kind),
+    });
+    if (parsed.kind === "parsed")
+      await tx
+        .insert(flowAssistantActions)
+        .values({
+          id: randomUUID(),
+          runId: args.runId,
+          localPackageId: args.localPackage.id,
+          lockGeneration: args.lockGeneration,
+          messageId: latest.id,
+          action: parsed.action,
+        })
+        .onConflictDoNothing({ target: flowAssistantActions.messageId });
   });
 
   if (parsed.kind === "malformed") {
@@ -89,13 +113,41 @@ export async function postProcessFlowAssistantTurn(args: {
     "flow assistant action extracted",
   );
 
+  const [intent] = await args.db
+    .select()
+    .from(flowAssistantActions)
+    .where(eq(flowAssistantActions.messageId, latest.id));
+
+  return applyJournalledAction({ ...args, intent });
+}
+
+/** Apply one retained intent and settle it forward exactly once. */
+async function applyJournalledAction(args: {
+  db: Db;
+  localPackage: LocalPackage;
+  runId: string;
+  assertCanApply: () => Promise<void>;
+  intent: {
+    id: string;
+    state: string;
+    action: Record<string, unknown>;
+  };
+}): Promise<FlowActionResultPayload | null> {
+  if (args.intent.state !== "pending") return null;
   const applyResult = await validateAndApplyFlowAssistantAction({
     localPackage: args.localPackage,
     runId: args.runId,
-    action: parsed.action,
+    action: args.intent.action as never,
     assertCanApply: args.assertCanApply,
   });
+  const settled = await settleAction({
+    db: args.db,
+    id: args.intent.id,
+    state: applyResult.ok ? "applied" : "rejected",
+    result: applyResult.result,
+  });
 
+  if (!settled) return null;
   await insertActionResultMessage({
     db: args.db,
     runId: args.runId,
@@ -103,6 +155,75 @@ export async function postProcessFlowAssistantTurn(args: {
   });
 
   return applyResult.result;
+}
+
+/** CAS out of `pending`; a competing settlement wins and this caller yields. */
+async function settleAction(args: {
+  db: Db;
+  id: string;
+  state: "applied" | "rejected" | "skipped";
+  result?: FlowActionResultPayload;
+}): Promise<boolean> {
+  const rows = await args.db
+    .update(flowAssistantActions)
+    .set({
+      state: args.state,
+      completedAt: new Date(),
+      ...(args.result ? { result: args.result } : {}),
+    })
+    .where(
+      and(
+        eq(flowAssistantActions.id, args.id),
+        eq(flowAssistantActions.state, "pending"),
+      ),
+    )
+    .returning({ id: flowAssistantActions.id });
+
+  return rows.length > 0;
+}
+
+/** An action authorized by a lock generation that no longer holds is settled
+ * `skipped`; the package is never edited by a superseded editor session. */
+export async function settlePendingFlowAssistantActions(args: {
+  db: Db;
+  localPackage: LocalPackage;
+  runId: string;
+  lockGeneration: string;
+  assertCanApply: () => Promise<void>;
+}): Promise<FlowActionResultPayload | null> {
+  const pending: Array<{
+    id: string;
+    state: string;
+    lockGeneration: string;
+    action: Record<string, unknown>;
+  }> = await args.db
+    .select()
+    .from(flowAssistantActions)
+    .where(
+      and(
+        eq(flowAssistantActions.runId, args.runId),
+        eq(flowAssistantActions.state, "pending"),
+      ),
+    );
+  let last: FlowActionResultPayload | null = null;
+
+  for (const intent of pending) {
+    if (intent.lockGeneration !== args.lockGeneration) {
+      await settleAction({ db: args.db, id: intent.id, state: "skipped" });
+      log.warn(
+        {
+          localPackageId: args.localPackage.id,
+          runId: args.runId,
+          actionId: intent.id,
+        },
+        "flow assistant action skipped by a newer lock generation",
+      );
+      continue;
+    }
+    last = (await applyJournalledAction({ ...args, intent })) ?? last;
+  }
+
+  return last;
 }
 
 async function loadLatestAssistantMessage(

@@ -776,8 +776,19 @@ the dialog status and the run status together — inside the command application
 transaction, so the next message is admitted exactly when the previous turn's
 result is durable. A superseded assignment, a replaced incarnation or a run that
 is no longer a Running scratch run settles the historical outcome without
-touching the dialog. Local-package assistant turns and their postprocess action
-keep the pre-owner stack completion until their own increment.
+touching the dialog.
+
+A local-package assistant turn additionally postprocesses one structured action,
+and extracting that action SANITIZES the assistant message — so without durable
+intent, a process that died before the package apply lost the action outright.
+Migration `0157` adds `flow_assistant_actions`: the parsed action is retained in
+the same transaction that sanitizes its message, keyed uniquely by that message,
+and carries the edit-lock generation that authorized it. Applying settles the
+row forward exactly once under a CAS out of `pending`, and the result message is
+written only by the settling caller. A pending action whose lock generation no
+longer matches is settled `skipped` and never edits the package. The assistant
+turn's own prompt ownership stays on the pre-owner stack completion until its
+increment.
 
 ### Remaining domain adapters (Designed)
 

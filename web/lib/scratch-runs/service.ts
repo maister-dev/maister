@@ -1771,6 +1771,7 @@ export async function* launchLocalPackageAssistantStaged(
       db,
       localPackage: pkg,
       runId,
+      lockGeneration: args.body.sessionId,
       assertCanApply: () => assertHoldsLock(pkg.id, args.body.sessionId, db),
     });
 
@@ -2305,6 +2306,7 @@ export async function sendLocalPackageAssistantMessage(args: {
       db,
       localPackage: pkg,
       runId: args.runId,
+      lockGeneration: args.body.sessionId,
       assertCanApply: () => assertHoldsLock(pkg.id, args.body.sessionId, db),
     });
 
