@@ -16,6 +16,8 @@ const suites = {
   ].map((name) => `src/__tests__/${name}.integration.test.ts`),
   web: [
     "lib/__tests__/supervisor-client-binary.integration.test.ts",
+    "lib/agents/__tests__/prompt-owners.integration.test.ts",
+    "lib/agents/__tests__/finalization-transaction.integration.test.ts",
     "lib/flows/graph/__tests__/prompt-owners.integration.test.ts",
     "lib/flows/graph/__tests__/permission-resume.integration.test.ts",
     "lib/flows/graph/__tests__/gate-permission-resume.integration.test.ts",

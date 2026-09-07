@@ -33,6 +33,7 @@ import {
   lockCurrentSessionAssignment,
   staleSessionBinding,
 } from "@/lib/execution-host/session-binding";
+import { agentMessageText } from "@/lib/run-transcript/agent-text";
 import { appendCapped } from "@/lib/flows/capped-text";
 import { isMaisterErrorCode } from "@/lib/errors-core";
 import { nodeOutputMaxBytes } from "@/lib/instance-config";
@@ -241,30 +242,12 @@ export async function decodeNodePromptCompletion(input: {
 
   if (outcome.state === "succeeded") {
     for await (const event of outcome.events) {
-      const update = event.payload?.update;
+      if (event.eventType !== "session.update") continue;
+      const text = agentMessageText(event.payload?.update);
 
-      if (
-        event.eventType !== "session.update" ||
-        typeof update !== "object" ||
-        update === null ||
-        !("sessionUpdate" in update) ||
-        update.sessionUpdate !== "agent_message_chunk" ||
-        !("content" in update)
-      )
-        continue;
-      const content = update.content;
-
-      if (
-        typeof content !== "object" ||
-        content === null ||
-        !("type" in content) ||
-        content.type !== "text" ||
-        !("text" in content) ||
-        typeof content.text !== "string"
-      )
-        continue;
-      stdout = appendCapped(stdout, content.text, 1_048_576);
-      sentinel = appendSentinelOutput(sentinel, content.text, maxBytes);
+      if (text === null) continue;
+      stdout = appendCapped(stdout, text, 1_048_576);
+      sentinel = appendSentinelOutput(sentinel, text, maxBytes);
     }
   }
   const ok =

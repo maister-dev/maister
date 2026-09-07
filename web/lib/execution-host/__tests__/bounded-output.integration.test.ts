@@ -24,6 +24,7 @@ import {
   createPromptOwnerRegistry,
   definePromptOwnerAdapter,
   PromptOwnerInvariantError,
+  PromptOwnerDeferred,
 } from "../prompt-owners";
 import {
   applyClaimedPromptOwner,
@@ -555,6 +556,82 @@ describe("AT-01 bounded output on the production supervisor", () => {
     expect(applications).toBe(1);
     expect(messages).toHaveLength(1);
     expect(messages[0].content).toBe(JSON.stringify(originalMeta));
+    await producer.client.deleteSession(producer.session.hostSessionId);
+  });
+
+  it("S2.8: domain deferral keeps the result pending without poisoning or running cleanup", async () => {
+    const { db, producer, handle } = await settledOwnerFixture(
+      "owner-domain-pending",
+    );
+
+    await db
+      .update(runs)
+      .set({ status: "NeedsInput" })
+      .where(eq(runs.id, producer.runId));
+    let cleanupCalls = 0;
+    const owners = createPromptOwnerRegistry([
+      definePromptOwnerAdapter("agent_turn", async ({ outcome, owner }) => {
+        if (outcome.state !== "succeeded")
+          throw new Error("fixture requires success");
+        for await (const event of outcome.events)
+          expect(event.runId).toBe(owner.ref.runId);
+
+        return {
+          apply: async (tx) => {
+            const [run] = await tx
+              .select({ status: runs.status })
+              .from(runs)
+              .where(eq(runs.id, producer.runId));
+
+            if (run.status === "NeedsInput")
+              throw new PromptOwnerDeferred("fixture_domain_pending");
+
+            return "applied";
+          },
+          afterCommit: async () => {
+            const [command] = await db
+              .select()
+              .from(executionCommands)
+              .where(eq(executionCommands.id, handle.commandId));
+
+            expect(command.applicationState).toBe("applied");
+            expect(command.completionAppliedAt).not.toBeNull();
+            cleanupCalls += 1;
+          },
+        };
+      }),
+    ]);
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      expect(await queryPrompt({ db, handle, owners })).toMatchObject({
+        state: "pending",
+      });
+      const [pending] = await db
+        .select()
+        .from(executionCommands)
+        .where(eq(executionCommands.id, handle.commandId));
+
+      expect(pending).toMatchObject({
+        applicationState: "pending",
+        applicationAttempts: 0,
+        completionAppliedAt: null,
+      });
+      expect(cleanupCalls).toBe(0);
+      await db
+        .update(executionCommands)
+        .set({ applicationNextRetryAt: new Date(0) })
+        .where(eq(executionCommands.id, handle.commandId));
+    }
+    await db
+      .update(runs)
+      .set({ status: "Running" })
+      .where(eq(runs.id, producer.runId));
+    expect(await queryPrompt({ db, handle, owners })).toMatchObject({
+      state: "succeeded",
+    });
+    expect(cleanupCalls).toBe(1);
+    await queryPrompt({ db, handle, owners });
+    expect(cleanupCalls).toBe(1);
     await producer.client.deleteSession(producer.session.hostSessionId);
   });
 

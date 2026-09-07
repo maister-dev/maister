@@ -12,6 +12,13 @@ import { and, desc, eq, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import {
+  admitInitialAgentPrompt,
+  findInitialAgentPrompt,
+  waitForAgentPrompt,
+  agentSessionHasOwnedPrompt,
+  AgentPromptContinuationPending,
+} from "./prompt-owner";
+import {
   finalizeAgentRun as finalizeAgentRunPrepared,
   type AgentFinalizeOptions,
   type AgentTerminalOutcome,
@@ -23,6 +30,7 @@ import {
   sharedAgentWorktreePath,
 } from "./workspace-paths";
 
+import { waitForPromptIncarnation } from "@/lib/execution-host/prompt-incarnation";
 import {
   mergeRunnerAdapterLaunch,
   runnerExecutorInput,
@@ -68,6 +76,7 @@ import {
   type DelegationSnapshot,
   type ExecutionHost,
 } from "@/lib/db/schema";
+import { agentMessageText } from "@/lib/run-transcript/agent-text";
 import { appendCapped } from "@/lib/flows/capped-text";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 import { cancelOpenAgentQuestionsForTaskInTransaction } from "@/lib/services/agent-question";
@@ -2079,17 +2088,6 @@ function appendCappedConsensusDraftOutput(
   return current + chunk.slice(0, remaining);
 }
 
-function consensusDraftUpdateText(update: unknown): string | null {
-  if (!isRecord(update)) return null;
-  if (update.sessionUpdate !== "agent_message_chunk") return null;
-
-  const content = update.content;
-
-  if (!isRecord(content) || content.type !== "text") return null;
-
-  return typeof content.text === "string" ? content.text : null;
-}
-
 async function loadConsensusDraftPayload(
   db: Db,
   runId: string,
@@ -2780,6 +2778,22 @@ export async function startAgentSession(
     return;
   }
 
+  if (assignmentId && opts.overridePrompt === undefined) {
+    const existingPrompt = await findInitialAgentPrompt(
+      _db,
+      runId,
+      assignmentId,
+    );
+
+    if (existingPrompt) {
+      const execution = await bindAgentExecution(hosts, runId, assignmentId);
+
+      await waitForAgentPrompt(_db, execution.client, existingPrompt);
+
+      return;
+    }
+  }
+
   const draftPayload = consensusDraftPayload(run);
   const projectRows = await _db
     .select()
@@ -3129,12 +3143,31 @@ export async function startAgentSession(
       });
     });
 
-    const promptHandle = await execution.client.prompt(session.sessionId, {
-      stepId: "agent",
-      prompt,
-    });
+    const ownedInitial =
+      !baseRun.persistent &&
+      !draftPayload &&
+      opts.overridePrompt === undefined &&
+      !run.acpSessionId;
 
-    await execution.client.waitForPrompt(promptHandle);
+    if (ownedInitial)
+      await waitForPromptIncarnation(_db, execution.client, session.sessionId);
+    const promptHandle = await execution.client.prompt(
+      session.sessionId,
+      {
+        stepId: "agent",
+        prompt,
+      },
+      ownedInitial
+        ? {
+            admitOwner: (tx) =>
+              admitInitialAgentPrompt(tx, execution.client, session.sessionId),
+          }
+        : undefined,
+    );
+
+    if (ownedInitial)
+      await waitForAgentPrompt(_db, execution.client, promptHandle.commandId);
+    else await execution.client.waitForPrompt(promptHandle);
   } catch (err) {
     if (isFencedError(err)) {
       // ADR-166: a newer driver generation owns the run — yield without
@@ -3143,8 +3176,22 @@ export async function startAgentSession(
 
       return;
     }
+    if (err instanceof AgentPromptContinuationPending) {
+      log.warn(
+        { runId, commandId: err.details?.commandId },
+        "agent prompt retained for owner recovery",
+      );
+
+      return;
+    }
     log.error(
-      { runId, err: err instanceof Error ? err.message : String(err) },
+      {
+        runId,
+        errorType: err instanceof Error ? err.name : "unknown",
+        code: err instanceof MaisterError ? err.code : undefined,
+        causeCode:
+          err instanceof MaisterError ? err.details?.causeCode : undefined,
+      },
       "agent session spawn/prompt failed",
     );
     await finalizeAgentRun(runId, "Failed", {
@@ -3175,7 +3222,7 @@ export async function consumeAgentSession(args: {
     switch (event.type) {
       case "session.update": {
         if (draftPayload) {
-          const chunk = consensusDraftUpdateText(event.update);
+          const chunk = agentMessageText(event.update);
 
           if (chunk) {
             consensusDraftOutput = appendCappedConsensusDraftOutput(
@@ -3190,7 +3237,7 @@ export async function consumeAgentSession(args: {
         // starts the turn we care about.
         if (sawPermissionRequest) finalText = "";
         {
-          const chunk = consensusDraftUpdateText(event.update);
+          const chunk = agentMessageText(event.update);
 
           if (chunk) finalText = appendCapped(finalText, chunk);
         }
@@ -3227,6 +3274,10 @@ export async function consumeAgentSession(args: {
         break;
       }
       case "session.exited": {
+        if (
+          await agentSessionHasOwnedPrompt(args.db, args.runId, args.sessionId)
+        )
+          return;
         // ADR-166 E-EH-11: the host evicted this session for a newer driver
         // generation — that generation owns the run; finalize nothing.
         if (event.reason === "fenced") {
@@ -3323,6 +3374,10 @@ export async function consumeAgentSession(args: {
         return;
       }
       case "session.crashed": {
+        if (
+          await agentSessionHasOwnedPrompt(args.db, args.runId, args.sessionId)
+        )
+          return;
         await finalizeAgentRun(args.runId, "Crashed", {
           db: args.db,
           reason: "supervisor reported session crash",

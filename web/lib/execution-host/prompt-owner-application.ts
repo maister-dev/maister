@@ -13,7 +13,11 @@ import pino from "pino";
 
 import { COMMAND_REQUEST_SCHEMA } from "./command-request";
 import { reconcilePromptCommand } from "./prompt-reconciliation";
-import { preparePromptOwner, PromptOwnerInvariantError } from "./prompt-owners";
+import {
+  preparePromptOwner,
+  PromptOwnerInvariantError,
+  PromptOwnerDeferred,
+} from "./prompt-owners";
 import { projectionTransaction } from "./events/projection-transaction";
 import { runEventWakeBus } from "./events/run-wake";
 import { commandSignals } from "./signals";
@@ -394,8 +398,44 @@ export async function applyClaimedPromptOwner(input: {
       "prompt-owner-applied",
     );
 
+    if (disposition === "applied" && prepared.afterCommit) {
+      await prepared.afterCommit().catch((error: unknown) => {
+        log.warn(
+          {
+            commandId: input.claim.command.id,
+            ownerKind: input.claim.command.ownerKind,
+            errorType: error instanceof Error ? error.name : "unknown",
+          },
+          "prompt-owner-cleanup-deferred-to-domain-backstop",
+        );
+      });
+    }
+
     return disposition;
   } catch (error) {
+    if (error instanceof PromptOwnerDeferred) {
+      await projectionTransaction(input.db, async (tx) => {
+        await tx
+          .update(executionCommands)
+          .set({
+            applicationState: "pending",
+            applicationClaimOwner: null,
+            applicationClaimExpiresAt: null,
+            applicationNextRetryAt: sql`clock_timestamp() + interval '1 second'`,
+            updatedAt: sql`clock_timestamp()`,
+          })
+          .where(claimPredicate(input.claim));
+      });
+      log.debug(
+        {
+          commandId: input.claim.command.id,
+          causeCode: error.details?.causeCode,
+        },
+        "prompt-owner-domain-pending",
+      );
+
+      return "deferred";
+    }
     if (serviceFailure(error)) {
       await releasePromptOwnerClaim(input.db, input.claim);
       throw error;

@@ -196,7 +196,7 @@ class LifecycleAgent {
         });
       }
       if (spec.terminalDelayMs) await new Promise((resolve) => setTimeout(resolve, spec.terminalDelayMs));
-      return { stopReason: "end_turn", ...(spec.responseMeta ? { _meta: spec.responseMeta } : {}) };
+      return { stopReason: spec.stopReason ?? "end_turn", ...(spec.responseMeta ? { _meta: spec.responseMeta } : {}) };
     }
     for (const output of outputWrites) {
       const outputPath = process.env[output.envName];

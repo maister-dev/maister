@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { RawNodeOutputPayload } from "@/lib/flows/graph/node-output";
 import type { Db } from "@/lib/execution-host/db";
 import type { Run, Workspace, Project } from "@/lib/db/schema";
 import type { RunResultContract, ResultStatus } from "@/lib/run-results/types";
@@ -36,7 +37,10 @@ import {
 import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
-import { decideAgentResult } from "@/lib/run-results/agent-result";
+import {
+  decideAgentResult,
+  decideAgentResultFromOutput,
+} from "@/lib/run-results/agent-result";
 import { engineArtifactManifest } from "@/lib/run-results/artifact-manifest";
 import {
   publishRunResult,
@@ -92,6 +96,8 @@ export type AgentFinalizeOptions = {
   // result sentinel is extracted. Absent on every non-session caller (an
   // explicit stop, a reconcile), which reads as "no result was emitted".
   finalText?: string;
+  /** Verified streaming output, independent of a bounded transcript preview. */
+  finalOutput?: RawNodeOutputPayload;
 };
 
 const TERMINAL_CAS_SOURCE: Record<AgentTerminalOutcome, Run["status"][]> = {
@@ -305,10 +311,15 @@ export async function prepareAgentRunFinalization(
   const resultContract = preparedRun.resultContract;
   const resultDecision =
     outcome === "Done" && resultContract
-      ? decideAgentResult({
-          contract: resultContract,
-          finalText: opts.finalText,
-        })
+      ? opts.finalOutput
+        ? decideAgentResultFromOutput({
+            contract: resultContract,
+            output: opts.finalOutput,
+          })
+        : decideAgentResult({
+            contract: resultContract,
+            finalText: opts.finalText,
+          })
       : { kind: "none" as const };
   const effectiveStatus = resultDecision.kind === "invalid" ? "Failed" : status;
 

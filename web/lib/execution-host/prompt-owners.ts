@@ -27,6 +27,9 @@ export type PreparedPromptOwner = Readonly<{
    * The application marker is committed by the caller in this transaction.
    */
   apply: (tx: Db) => Promise<PromptOwnerDisposition>;
+  /** Optional cleanup hint after commit. Durable domain/GC state must also
+   * recover this work if the process dies before the hint runs. */
+  afterCommit?: () => Promise<void>;
 }>;
 
 type Preparation<O extends PromptOwner> = Readonly<{
@@ -45,6 +48,16 @@ export type PromptOwnerRegistry = ReadonlyMap<
   PromptOwner["kind"],
   PromptOwnerAdapter
 >;
+
+/** A valid owner is awaiting another durable domain transition, not failing. */
+export class PromptOwnerDeferred extends MaisterError {
+  constructor(causeCode: string) {
+    super("PRECONDITION", "prompt owner awaits a durable domain transition", {
+      details: { reason: "prompt_owner_deferred", causeCode },
+    });
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
 
 export class PromptOwnerInvariantError extends MaisterError {
   constructor(causeCode: string) {
