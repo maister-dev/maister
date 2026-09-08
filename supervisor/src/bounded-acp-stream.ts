@@ -21,10 +21,13 @@ import { finished } from "node:stream/promises";
 import { ReadableStream, WritableStream } from "node:stream/web";
 import { setImmediate as nextTurn } from "node:timers/promises";
 
+// The SDK's `exports` map publishes no zod subpath (only the JSON schema), yet
+// these generated validators are exactly the inbound contract this producer
+// boundary enforces. A relative file import bypasses the exports map.
 import {
   zRequestPermissionRequest,
   zSessionNotification,
-} from "@agentclientprotocol/sdk/dist/schema/zod.gen.js";
+} from "../node_modules/@agentclientprotocol/sdk/dist/schema/zod.gen.js";
 
 import { SupervisorError, type SupervisorErrorDetails } from "./types";
 
@@ -539,12 +542,12 @@ export function boundedAcpStream(input: {
     return admission;
   }
 
-  function update(params: unknown): Promise<void> {
+  async function update(params: unknown): Promise<void> {
     const parsed = zSessionNotification.safeParse(params);
 
     if (!parsed.success) throw incomplete("producer_update_invalid");
 
-    return input.client.sessionUpdate(parsed.data);
+    await input.client.sessionUpdate(parsed.data);
   }
 
   const readable = new ReadableStream<AnyMessage>(
@@ -579,6 +582,14 @@ export function boundedAcpStream(input: {
               "id" in message
             ) {
               await permission(message.id, message.params);
+            } else if (message.method.startsWith("_")) {
+              // ACP extension traffic (codex-acp 1.x sends `_auth/status_update`
+              // right after initialize): hand it to the SDK, which ignores
+              // unknown ext notifications and answers unknown ext requests with
+              // method-not-found — it must not fail the producer.
+              controller.enqueue(message);
+
+              return;
             } else {
               throw incomplete("producer_method_unsupported");
             }

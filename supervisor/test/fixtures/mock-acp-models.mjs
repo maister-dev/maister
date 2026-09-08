@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // T2.1 fixture: a minimal ACP adapter that advertises a model list on
-// `session/new` (NewSessionResponse.models = SessionModelState). Used by the
+// `session/new` — as the ACP 1.x "model" config option AND the pre-1.0
+// `models` extension field, mirroring codex-acp. Used by the
 // model-catalog ACP-probe integration test. Modes (via MOCK_ACP_MODELS_MODE):
 //   "ok"               (default) — newSession returns availableModels.
 //   "reject-newsession"          — newSession throws (deferred-release test:
@@ -10,6 +11,9 @@
 //   "ignore-sigterm"             — newSession answers, but SIGTERM is swallowed
 //                                  (escalation test: the probe must SIGKILL so
 //                                  no orphaned child remains).
+//   "legacy-models"              — responses carry only the pre-1.0 `models`
+//                                  field, no "model" config option (the
+//                                  supervisor cannot apply → advisory).
 import { randomUUID } from "node:crypto";
 import { Readable, Writable } from "node:stream";
 
@@ -17,7 +21,27 @@ import * as acp from "@agentclientprotocol/sdk";
 
 const MODE = process.env.MOCK_ACP_MODELS_MODE ?? "ok";
 
+const MODEL_OPTIONS = [
+  { value: "glm-5.1", name: "GLM-5.1" },
+  { value: "glm-5", name: "GLM-5" },
+];
+
+function configOptions(currentValue) {
+  return [
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue,
+      options: MODEL_OPTIONS,
+    },
+  ];
+}
+
 class ModelsAgent {
+  currentModel = "glm-5.1";
+
   async initialize() {
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
@@ -41,6 +65,9 @@ class ModelsAgent {
 
     return {
       sessionId: `mock-${randomUUID()}`,
+      ...(MODE === "legacy-models"
+        ? {}
+        : { configOptions: configOptions(this.currentModel) }),
       models: {
         availableModels: [
           { modelId: "glm-5.1", name: "GLM-5.1" },
@@ -59,6 +86,9 @@ class ModelsAgent {
     // ResumeSessionResponse carries model state too — the resumed-session
     // application/harvest tests read it.
     return {
+      ...(MODE === "legacy-models"
+        ? {}
+        : { configOptions: configOptions(this.currentModel) }),
       models: {
         availableModels: [
           { modelId: "glm-5.1", name: "GLM-5.1" },
@@ -81,8 +111,11 @@ class ModelsAgent {
     return {};
   }
 
-  async setSessionConfigOption() {
-    return { configOptions: [] };
+  async setSessionConfigOption(params) {
+    if (params?.configId === "model" && typeof params.value === "string")
+      this.currentModel = params.value;
+
+    return { configOptions: configOptions(this.currentModel) };
   }
 
   async authenticate() {

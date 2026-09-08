@@ -1,5 +1,5 @@
 import type { Logger } from "pino";
-import type * as acp from "@agentclientprotocol/sdk";
+import type { SessionModelView } from "../session-models";
 import type { RunnerLaunch } from "../types";
 import type { ModelCatalogCache } from "./cache";
 
@@ -27,14 +27,15 @@ export function draftFromRunner(runner: RunnerLaunch): ModelCatalogDraft {
 // NEVER throw into the session flow (a harvest failure is swallowed at debug).
 export function harvestSessionModels(
   runner: RunnerLaunch | undefined,
-  models: acp.SessionModelState | null | undefined,
+  models: SessionModelView | null | undefined,
   cache: ModelCatalogCache,
   logger: Logger,
 ): void {
-  // Optional-chain the whole path: the wire is unvalidated (the ACP SDK has no
-  // response schema), so `models` may be malformed — a throw here would fail
-  // the session spawn.
-  if (!runner || !models?.availableModels?.length) return;
+  // Optional-chain the whole path: the view is read from the unvalidated wire
+  // (see session-models.ts), so a caller may still hand over a malformed
+  // object — a throw here would fail the session spawn.
+  if (!runner || !Array.isArray(models?.availableModels)) return;
+  if (models.availableModels.length === 0) return;
 
   try {
     const observed: ModelEntry[] = models.availableModels.map((m) => ({

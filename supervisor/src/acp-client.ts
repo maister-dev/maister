@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 
 import * as acp from "@agentclientprotocol/sdk";
 
+import { readSessionModels, type SessionModelView } from "./session-models";
 import { boundedAcpStream, type BoundedAcpClient } from "./bounded-acp-stream";
 import {
   clientCapabilitiesForAdapter,
@@ -1015,16 +1016,18 @@ export async function createAcpConnection(
         "acp resume-session",
       );
       record.acpSessionId = resumeSessionId;
+      const resumedModels = readSessionModels(resumeResp);
+
       harvestSessionModels(
         args.runner,
-        resumeResp.models,
+        resumedModels,
         modelCatalogCache,
         logger,
       );
       await applyAndVerifyModel({
         connection,
         runner: args.runner,
-        models: resumeResp.models,
+        models: resumedModels,
         acpSessionId: resumeSessionId,
         sessionId,
         record,
@@ -1063,16 +1066,13 @@ export async function createAcpConnection(
   );
 
   record.acpSessionId = newSessionResp.sessionId;
-  harvestSessionModels(
-    args.runner,
-    newSessionResp.models,
-    modelCatalogCache,
-    logger,
-  );
+  const sessionModels = readSessionModels(newSessionResp);
+
+  harvestSessionModels(args.runner, sessionModels, modelCatalogCache, logger);
   await applyAndVerifyModel({
     connection,
     runner: args.runner,
-    models: newSessionResp.models,
+    models: sessionModels,
     acpSessionId: newSessionResp.sessionId,
     sessionId,
     record,
@@ -1086,7 +1086,7 @@ export async function createAcpConnection(
 type ApplyModelArgs = {
   connection: acp.ClientSideConnection;
   runner: RunnerLaunch | undefined;
-  models: acp.SessionModelState | null | undefined;
+  models: SessionModelView;
   acpSessionId: string;
   sessionId: string;
   record: SessionRecord;
@@ -1096,7 +1096,8 @@ type ApplyModelArgs = {
 
 // ADR-076 model application + verification (T3.2/T3.3). claude is pinned ahead
 // of session/new via the settings.local.json channel (web tier), so here we
-// only verify it. codex is pinned via the ACP `unstable_setSessionModel` call.
+// only verify it. codex is pinned via the ACP `session/set_config_option` call
+// on the adapter's "model" select (ACP 1.x; the pre-1.0 setSessionModel is gone).
 // A residual mismatch is emitted as an ADVISORY `session.update` (a synthetic
 // payload variant, NOT a new event kind) and NEVER fails the run — env-router
 // slot-mapping legitimately reports a remapped name, and canonical
@@ -1113,7 +1114,7 @@ export async function applyAndVerifyModel(args: ApplyModelArgs): Promise<void> {
     emitter,
     logger,
   } = args;
-  const observed = models?.currentModelId;
+  const observed = models.currentModelId ?? undefined;
 
   // `!runner` narrows `runner` to non-undefined for the accesses below;
   // `!runner.model` is defensive (the schema enforces min(1)).
@@ -1135,25 +1136,33 @@ export async function applyAndVerifyModel(args: ApplyModelArgs): Promise<void> {
   if (channel === "settings_local" && !observed) return;
 
   if (channel === "set_session_model") {
-    try {
-      await connection.unstable_setSessionModel({
-        sessionId: acpSessionId,
-        modelId: configured,
-      });
-      logger.info(
-        { sessionId, configuredModel: configured, observedModelId: observed },
-        "model applied via setSessionModel",
-      );
+    if (models.configId) {
+      try {
+        await connection.setSessionConfigOption({
+          sessionId: acpSessionId,
+          configId: models.configId,
+          value: configured,
+        });
+        logger.info(
+          { sessionId, configuredModel: configured, observedModelId: observed },
+          "model applied via setSessionConfigOption",
+        );
 
-      return;
-    } catch (err) {
+        return;
+      } catch (err) {
+        logger.warn(
+          {
+            sessionId,
+            configuredModel: configured,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          "setSessionConfigOption failed; emitting advisory",
+        );
+      }
+    } else {
       logger.warn(
-        {
-          sessionId,
-          configuredModel: configured,
-          err: err instanceof Error ? err.message : String(err),
-        },
-        "setSessionModel failed; emitting advisory",
+        { sessionId, configuredModel: configured },
+        "adapter exposes no model config option; emitting advisory",
       );
     }
   }

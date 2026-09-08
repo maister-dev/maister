@@ -137,10 +137,12 @@ describe("T5.3 — configured model application + advisory", () => {
 
 // T3.2 resumed-session regression: every resume is a fresh adapter process, so
 // application + harvest must also run on the `session/resume` response. codex
-// pins via unstable_setSessionModel; the mock adapter does not implement it
-// (SDK answers methodNotFound), so the attempted apply on the RESUMED session
-// deterministically degrades to the advisory — observable proof the resume
-// path invoked applyAndVerifyModel with the resume response's model state.
+// pins via session/set_config_option on the adapter's "model" select: the mock
+// exposes that option by default (apply succeeds, no advisory), and in
+// `legacy-models` mode it carries only the pre-1.0 `models` field, so the
+// attempted apply on the RESUMED session deterministically degrades to the
+// advisory — observable proof the resume path invoked applyAndVerifyModel with
+// the resume response's model state.
 describe("T3.2 — resumed-session model application + harvest (codex)", () => {
   // Plain `openai` provider: `openai_compatible` is refused by
   // provisionRunnerLaunch before spawn (requires Codex profile
@@ -155,10 +157,10 @@ describe("T3.2 — resumed-session model application + harvest (codex)", () => {
     permissionPolicy: "default",
   };
 
-  it("applies the configured model and harvests models on session/resume (advisory is non-fatal)", async () => {
+  async function resumeCodex(): Promise<Awaited<ReturnType<typeof postJson>>> {
     if (!booted) throw new Error("not booted");
 
-    const res = await postJson(
+    return postJson(
       `${booted.url}/sessions`,
       await createEnvelope(
         booted,
@@ -170,6 +172,43 @@ describe("T3.2 — resumed-session model application + harvest (codex)", () => {
         },
       ),
     );
+  }
+
+  it("applies the configured model on session/resume without an advisory and harvests models", async () => {
+    if (!booted) throw new Error("not booted");
+
+    const res = await resumeCodex();
+
+    expect(res.status).toBe(201);
+    // Give the handshake a beat, then confirm the apply left no advisory.
+    await new Promise<void>((r) => setTimeout(r, 300));
+
+    const events = await readEvents(booted, "run-resume");
+
+    expect(advisoryOf(events)).toBeUndefined();
+    expect(events.find((e) => e.type === "session.crashed")).toBeUndefined();
+
+    // Passive harvest of the resume response's model option into the cache.
+    const harvested = modelCatalogCache.get(draftFromRunner(codexRunner));
+
+    expect(harvested?.models.map((m) => m.id).sort()).toEqual([
+      "glm-5",
+      "glm-5.1",
+    ]);
+    expect(harvested?.models[0]?.origins).toEqual(["agent_observed"]);
+    expect(harvested?.sources).toEqual([
+      { kind: "agent_observed", status: "ok", count: 2 },
+    ]);
+  });
+
+  it("degrades to the set_session_model advisory on resume when the adapter exposes no model option", async () => {
+    if (!booted) throw new Error("not booted");
+    await booted.stop();
+    await cleanupRuntimeRoot(booted.runtimeRoot);
+    process.env.MOCK_ACP_MODELS_MODE = "legacy-models";
+    booted = await boot();
+
+    const res = await resumeCodex();
 
     expect(res.status).toBe(201);
 
@@ -184,17 +223,5 @@ describe("T3.2 — resumed-session model application + harvest (codex)", () => {
       channel: "set_session_model",
     });
     expect(events.find((e) => e.type === "session.crashed")).toBeUndefined();
-
-    // Passive harvest of ResumeSessionResponse.models into the shared cache.
-    const harvested = modelCatalogCache.get(draftFromRunner(codexRunner));
-
-    expect(harvested?.models.map((m) => m.id).sort()).toEqual([
-      "glm-5",
-      "glm-5.1",
-    ]);
-    expect(harvested?.models[0]?.origins).toEqual(["agent_observed"]);
-    expect(harvested?.sources).toEqual([
-      { kind: "agent_observed", status: "ok", count: 2 },
-    ]);
   });
 });

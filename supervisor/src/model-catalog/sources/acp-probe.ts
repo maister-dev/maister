@@ -18,6 +18,7 @@ import {
 
 import * as acp from "@agentclientprotocol/sdk";
 
+import { readSessionModels, type LegacyModelInfo } from "../../session-models";
 import {
   clientCapabilitiesForAdapter,
   getAdapterRuntime,
@@ -136,7 +137,7 @@ export function createAcpProbeSource(opts: AcpProbeOptions = {}): ModelSource {
     childEnv: NodeJS.ProcessEnv,
     cwd: string,
     draft: ModelCatalogDraft,
-  ): Promise<acp.ModelInfo[]> {
+  ): Promise<LegacyModelInfo[]> {
     const child: ChildProcess = spawnImpl(binary, args, {
       cwd,
       env: childEnv,
@@ -178,7 +179,7 @@ export function createAcpProbeSource(opts: AcpProbeOptions = {}): ModelSource {
         });
         const resp = await connection.newSession({ cwd, mcpServers: [] });
 
-        return resp.models?.availableModels ?? [];
+        return readSessionModels(resp).availableModels;
       })();
 
       // On timeout the `probe` promise loses the race but keeps running; once

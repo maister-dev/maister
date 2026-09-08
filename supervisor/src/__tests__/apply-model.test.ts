@@ -1,7 +1,9 @@
-// T3.2/T3.3 — model application + verification. codex pins via setSessionModel;
+// T3.2/T3.3 — model application + verification. codex pins via the ACP 1.x
+// session/set_config_option call on the adapter's "model" select;
 // claude is verified only (settings channel); a residual mismatch emits an
 // advisory session.update and NEVER fails the run.
 import type * as acp from "@agentclientprotocol/sdk";
+import type { SessionModelView } from "../session-models";
 import type { RunnerLaunch, SessionEvent, SessionRecord } from "../types";
 
 import { EventEmitter } from "node:events";
@@ -71,13 +73,17 @@ function fakeConnection(
   setModel: ReturnType<typeof vi.fn>,
 ): acp.ClientSideConnection {
   return {
-    unstable_setSessionModel: setModel,
+    setSessionConfigOption: setModel,
   } as unknown as acp.ClientSideConnection;
 }
 
-const state = (currentModelId: string): acp.SessionModelState => ({
-  availableModels: [],
+const state = (
+  currentModelId: string | null,
+  configId: string | null = "model",
+): SessionModelView => ({
+  configId,
   currentModelId,
+  availableModels: [],
 });
 
 describe("applyAndVerifyModel", () => {
@@ -99,9 +105,33 @@ describe("applyAndVerifyModel", () => {
 
     expect(setModel).toHaveBeenCalledWith({
       sessionId: "acp-1",
-      modelId: "gpt-5-codex",
+      configId: "model",
+      value: "gpt-5-codex",
     });
     expect(events).toHaveLength(0);
+  });
+
+  it("codex mismatch without a model config option → advisory (channel set_session_model), no call", async () => {
+    const setModel = vi.fn();
+    const emitter = new EventEmitter();
+    const events = capture(emitter);
+
+    await applyAndVerifyModel({
+      connection: fakeConnection(setModel),
+      runner: runnerFor("codex", "gpt-5-codex"),
+      models: state("gpt-5", null),
+      acpSessionId: "acp-1",
+      sessionId: "s",
+      record: makeRecord(),
+      emitter,
+      logger: silent,
+    });
+
+    expect(setModel).not.toHaveBeenCalled();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      update: { sessionUpdate: "model_advisory", channel: "set_session_model" },
+    });
   });
 
   it("codex match → no setSessionModel, no advisory", async () => {
@@ -217,19 +247,21 @@ describe("applyAndVerifyModel", () => {
       logger: silent,
     };
 
-    await applyAndVerifyModel({ ...base, models: null });
+    await applyAndVerifyModel({ ...base, models: state(null) });
     await applyAndVerifyModel({ ...base, models: state("") });
     await applyAndVerifyModel({
       ...base,
       models: {
+        configId: "model",
         availableModels: [],
-      } as unknown as acp.SessionModelState,
+      } as unknown as SessionModelView,
     });
 
     expect(setModel).toHaveBeenCalledTimes(3);
     expect(setModel).toHaveBeenCalledWith({
       sessionId: "a",
-      modelId: "gpt-5-codex",
+      configId: "model",
+      value: "gpt-5-codex",
     });
     expect(events).toHaveLength(0);
   });
@@ -251,7 +283,7 @@ describe("applyAndVerifyModel", () => {
       logger: silent,
     };
 
-    await applyAndVerifyModel({ ...base, models: null });
+    await applyAndVerifyModel({ ...base, models: state(null) });
     await applyAndVerifyModel({ ...base, models: state("") });
 
     expect(setModel).not.toHaveBeenCalled();
@@ -294,8 +326,8 @@ describe("applyAndVerifyModel", () => {
     ]);
   });
 
-  // MiMo's ACP adapter implements session/set_model (proven by live smoke), so
-  // it pins via setSessionModel exactly like codex — no advisory on mismatch.
+  // MiMo's ACP adapter exposes a "model" config option (proven by live smoke),
+  // so it pins via set_config_option exactly like codex — no advisory on mismatch.
   it("MiMo mismatch → calls setSessionModel, emits NO advisory", async () => {
     const setModel = vi.fn().mockResolvedValue({});
     const emitter = new EventEmitter();
@@ -314,7 +346,8 @@ describe("applyAndVerifyModel", () => {
 
     expect(setModel).toHaveBeenCalledWith({
       sessionId: "acp-1",
-      modelId: "xiaomi/mimo-v2.5-pro",
+      configId: "model",
+      value: "xiaomi/mimo-v2.5-pro",
     });
     expect(events).toHaveLength(0);
   });

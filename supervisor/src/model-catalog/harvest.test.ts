@@ -2,8 +2,8 @@
 // carries model state populates the shared cache tagged agent_observed; a
 // response without models is a no-op; a harvest failure never throws into the
 // session path.
-import type * as acp from "@agentclientprotocol/sdk";
 import type { RunnerLaunch } from "../types";
+import type { SessionModelView } from "../session-models";
 
 import pino from "pino";
 import { describe, expect, it } from "vitest";
@@ -27,12 +27,13 @@ const runner: RunnerLaunch = {
   permissionPolicy: "default",
 };
 
-const modelState: acp.SessionModelState = {
+const modelState: SessionModelView = {
+  configId: null,
+  currentModelId: "glm-5.1",
   availableModels: [
     { modelId: "glm-5.1", name: "GLM-5.1" },
     { modelId: "glm-5", name: "GLM-5" },
   ],
-  currentModelId: "glm-5.1",
 };
 
 describe("harvestSessionModels", () => {
@@ -60,7 +61,7 @@ describe("harvestSessionModels", () => {
     harvestSessionModels(runner, null, cache, silent);
     harvestSessionModels(
       runner,
-      { availableModels: [], currentModelId: "" },
+      { configId: null, currentModelId: "", availableModels: [] },
       cache,
       silent,
     );
@@ -76,12 +77,17 @@ describe("harvestSessionModels", () => {
     const cache = new ModelCatalogCache();
 
     expect(() =>
-      harvestSessionModels(runner, {} as acp.SessionModelState, cache, silent),
+      harvestSessionModels(
+        runner,
+        {} as unknown as SessionModelView,
+        cache,
+        silent,
+      ),
     ).not.toThrow();
     expect(() =>
       harvestSessionModels(
         runner,
-        { availableModels: "glm-5.1" } as unknown as acp.SessionModelState,
+        { availableModels: "glm-5.1" } as unknown as SessionModelView,
         cache,
         silent,
       ),
@@ -124,8 +130,9 @@ describe("harvestSessionModels", () => {
     harvestSessionModels(
       runner,
       {
-        availableModels: [{ modelId: "glm-5.1", name: "GLM-5.1" }],
+        configId: null,
         currentModelId: "glm-5.1",
+        availableModels: [{ modelId: "glm-5.1", name: "GLM-5.1" }],
       },
       cache,
       silent,
