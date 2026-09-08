@@ -114,3 +114,24 @@ describe("CloneErrorBlock", () => {
     expect(html).toBe("");
   });
 });
+
+describe("CloneErrorBlock server response", () => {
+  // A bare-code refusal (CONFIG covers manifest, slug, body and runner
+  // references) states its reason only in the server message.
+  it("shows the server response for a non-clone refusal", () => {
+    const html = renderToStaticMarkup(
+      createElement(CloneErrorBlock, {
+        errorCode: "CONFIG",
+        cloneReason: undefined,
+        cloneDetail: undefined,
+        serverMessage:
+          'project.default_runner "claude-code" is not configured as a platform runner',
+        repoUrl: "",
+      }),
+    );
+
+    expect(html).toContain("errorConfig");
+    expect(html).toContain("errorServerResponse");
+    expect(html).toContain("is not configured as a platform runner");
+  });
+});

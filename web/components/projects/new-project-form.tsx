@@ -88,11 +88,13 @@ export function CloneErrorBlock({
   errorCode,
   cloneReason,
   cloneDetail,
+  serverMessage,
   repoUrl,
 }: {
   errorCode: ErrorCode | undefined;
   cloneReason: string | undefined;
   cloneDetail: string | undefined;
+  serverMessage?: string;
   repoUrl: string;
 }): ReactElement | null {
   const t = useTranslations("projects");
@@ -131,6 +133,18 @@ export function CloneErrorBlock({
           </pre>
         </details>
       ) : null}
+      {!cloneDetail && serverMessage ? (
+        // A bare-code refusal (CONFIG spans manifest, slug, body and runner
+        // references) states its actual reason only in the server message.
+        <details className="text-[11.5px] leading-[1.5] text-mute">
+          <summary className="cursor-pointer">
+            {t("errorServerResponse")}
+          </summary>
+          <pre className="mt-1 overflow-x-auto whitespace-pre-wrap rounded-md border border-line bg-paper p-2 font-mono text-[10.5px] text-ink-2">
+            {serverMessage}
+          </pre>
+        </details>
+      ) : null}
     </div>
   );
 }
@@ -151,6 +165,9 @@ export function NewProjectForm(): ReactElement {
   const [errorCode, setErrorCode] = useState<ErrorCode | undefined>(undefined);
   const [cloneReason, setCloneReason] = useState<string | undefined>(undefined);
   const [cloneDetail, setCloneDetail] = useState<string | undefined>(undefined);
+  const [serverMessage, setServerMessage] = useState<string | undefined>(
+    undefined,
+  );
   const [success, setSuccess] = useState<Success | undefined>(undefined);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -158,6 +175,7 @@ export function NewProjectForm(): ReactElement {
     setErrorCode(undefined);
     setCloneReason(undefined);
     setCloneDetail(undefined);
+    setServerMessage(undefined);
     setPending(true);
 
     try {
@@ -195,6 +213,7 @@ export function NewProjectForm(): ReactElement {
 
       const payload = (await res.json().catch(() => null)) as {
         code?: string;
+        message?: string;
         reason?: string;
         detail?: string;
       } | null;
@@ -203,6 +222,7 @@ export function NewProjectForm(): ReactElement {
       setErrorCode(code && code in ERROR_KEY ? (code as ErrorCode) : "CONFIG");
       setCloneReason(payload?.reason);
       setCloneDetail(payload?.detail);
+      setServerMessage(payload?.message);
     } catch {
       setErrorCode("CONFIG");
     } finally {
@@ -421,6 +441,7 @@ export function NewProjectForm(): ReactElement {
         cloneReason={cloneReason}
         errorCode={errorCode}
         repoUrl={repoUrl}
+        serverMessage={serverMessage}
       />
 
       <button
