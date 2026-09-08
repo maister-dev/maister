@@ -279,6 +279,14 @@ paths:
           required: false
           schema: { type: string, pattern: "^bytes=[0-9]+-[0-9]*$" }
           description: At most one inclusive byte range; multi-range is rejected.
+      description: |
+        (Implemented — AB-12) Both success responses carry the shared
+        safe-download policy: `Content-Type: application/octet-stream` (never
+        the reserved MIME), `Content-Disposition: attachment` with a sanitized
+        `filename` / RFC 8187 `filename*` from the logical name,
+        `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox;
+        default-src 'none'`, `Cache-Control: private, no-store`, plus
+        `Content-Digest`, `ETag` and `Accept-Ranges`.
       responses:
         "200": { description: Full bytes only for an object no larger than 8 MiB. }
         "206": { description: One byte range with `Content-Range`. }

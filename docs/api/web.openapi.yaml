@@ -6058,9 +6058,15 @@ paths:
         directory; `execution-object` locators resolve through the
         manager-owned object catalogue and typed host contract, never a web
         runtime path. Diff / log / git / inline output is served as
-        `text/plain`; gate-verdict / hitl-response payloads are served as
-        `application/json`. A locator outside its authorized binding is not
-        found (404), never served.
+        `text/plain; charset=utf-8`; gate-verdict / hitl-response payloads as
+        `application/json; charset=utf-8`; `execution-object` bytes as
+        `application/octet-stream`. (Implemented — AB-12) Every payload is a
+        `Content-Disposition: attachment` (sanitized `filename` + RFC 8187
+        `filename*`) under `X-Content-Type-Options: nosniff`,
+        `Content-Security-Policy: sandbox; default-src 'none'` and
+        `Cache-Control: private, no-store`; an object's catalogued MIME is never
+        reflected. A locator outside its authorized binding is not found (404),
+        never served.
       operationId: getRunArtifactPayload
       parameters:
         - name: runId
@@ -6167,11 +6173,19 @@ paths:
       tags: [runs]
       summary: Stage B — read authorized bounded runtime-object bytes
       description: |
-        Project runs require `readBoard`; projectless assistant runs require the
-        authenticated creator. The host is selected from the catalogue, never
+        Project runs require `readRepoFiles`; projectless assistant runs require
+        the authenticated creator. The host is selected from the catalogue, never
         a URL or request-body value. A full response is bounded to 8 MiB; larger
         objects require one valid inclusive byte range. Response headers include
         `Content-Digest`.
+
+        (Implemented — AB-12) The bytes are untrusted and are delivered under the
+        shared safe-download policy: `Content-Type: application/octet-stream`
+        (the catalogued MIME is never reflected), `Content-Disposition:
+        attachment` with a sanitized `filename` and an RFC 8187 `filename*`
+        derived from the object's logical name, `X-Content-Type-Options:
+        nosniff`, `Content-Security-Policy: sandbox; default-src 'none'` and
+        `Cache-Control: private, no-store`, on both 200 and 206.
       operationId: getRunRuntimeObjectContent
       parameters:
         - name: runId

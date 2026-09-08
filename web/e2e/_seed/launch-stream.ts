@@ -18,8 +18,9 @@ export type LaunchStreamResult = {
 // its staged progress labels — gets 200 plus a progress stream terminated by a
 // `scratch.launch_result` frame. The JSON `202 {runId,...}` shape is the
 // NON-stream path only, so a browser-driven launch must be read from here.
+// Accepts a page `Response` or an `APIResponse`: both expose `text()`.
 export async function readLaunchResult(
-  response: Response,
+  response: Pick<Response, "text">,
 ): Promise<LaunchStreamResult> {
   const frames = (await response.text())
     .split("\n\n")

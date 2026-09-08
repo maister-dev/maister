@@ -13,6 +13,7 @@ import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { openRuntimeObjectContent } from "@/lib/execution-host/runtime-objects";
 import { resolveArtifactContent } from "@/lib/flows/graph/artifact-content";
+import { safeDownloadHeaders } from "@/lib/http/safe-download";
 import { parseSingleByteRange } from "@/lib/http/single-byte-range";
 import { runtimeRoot } from "@/lib/instance-config";
 import { getRunDetail } from "@/lib/queries/run";
@@ -30,7 +31,18 @@ const log = pino({
 
 type RouteParams = { params: Promise<{ runId: string; artifactId: string }> };
 
-const TEXT_HEADERS = { "content-type": "text/plain; charset=utf-8" };
+// AB-12 (D5): every payload is a no-store attachment under nosniff and a
+// sandboxing CSP. Server-derived text/JSON keep their passive type; an
+// execution object's bytes are opaque, named by the catalogue's logical name.
+function artifactDownloadHeaders(
+  artifact: ArtifactInstance,
+  mediaClass: "text" | "json",
+): Readonly<Record<string, string>> {
+  return safeDownloadHeaders({
+    fileName: `${artifact.kind}-${artifact.id}.${mediaClass === "json" ? "json" : "txt"}`,
+    mediaClass,
+  });
+}
 
 function notFound(): NextResponse {
   return NextResponse.json(
@@ -159,10 +171,18 @@ export async function GET(
         }),
       });
       const headers = new Headers({
-        "content-type": object.mimeType,
+        ...safeDownloadHeaders({
+          fileName: object.logicalName,
+          mediaClass: "opaque",
+        }),
         "accept-ranges": "bytes",
         etag: `\"${object.sha256}\"`,
       });
+
+      log.debug(
+        { runId, artifactId, mediaClass: "opaque", policy: "attachment" },
+        "artifact payload served",
+      );
 
       if (content.contentLength !== null) {
         headers.set("content-length", String(content.contentLength));
@@ -196,9 +216,13 @@ export async function GET(
 
     switch (resolved.kind) {
       case "text":
-        return new NextResponse(resolved.text, { headers: TEXT_HEADERS });
+        return new NextResponse(resolved.text, {
+          headers: artifactDownloadHeaders(artifact, "text"),
+        });
       case "json":
-        return NextResponse.json(resolved.value);
+        return new NextResponse(JSON.stringify(resolved.value), {
+          headers: artifactDownloadHeaders(artifact, "json"),
+        });
       case "gone":
         return gone();
       case "notfound":

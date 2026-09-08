@@ -331,6 +331,14 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("application/json");
+    expect(res.headers.get("content-disposition")).toMatch(
+      /^attachment; filename="[A-Za-z0-9._-]+\.json"; filename\*=UTF-8''/,
+    );
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toBe(
+      "sandbox; default-src 'none'",
+    );
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
     expect(await res.json()).toEqual(response);
   });
 
@@ -341,7 +349,8 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
     vi.mocked(openRuntimeObjectContent).mockResolvedValue({
       object: {
         id: objectId,
-        mimeType: "text/plain",
+        logicalName: "plan.log",
+        mimeType: "text/html",
         sha256: "abc",
       },
       content: {
@@ -364,7 +373,18 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
     const res = await invokeGet("art-object");
 
     expect(res.status).toBe(206);
-    expect(res.headers.get("content-type")).toContain("text/plain");
+    // AT-12 (D5): the object's supplied MIME was `text/html`; the payload route
+    // exposes the same bytes as the content route and applies the same
+    // attachment policy — the earlier inline text/plain assumption is retired.
+    expect(res.headers.get("content-type")).toBe("application/octet-stream");
+    expect(res.headers.get("content-disposition")).toBe(
+      `attachment; filename="plan.log"; filename*=UTF-8''plan.log`,
+    );
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toBe(
+      "sandbox; default-src 'none'",
+    );
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
     expect(res.headers.get("content-range")).toBe(
       `bytes 0-${body.byteLength - 1}/${body.byteLength}`,
     );
@@ -403,7 +423,7 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
     const body = new TextEncoder().encode("owned");
 
     vi.mocked(openRuntimeObjectContent).mockResolvedValue({
-      object: { id: objectId, mimeType: "text/plain" },
+      object: { id: objectId, logicalName: "plan.log", mimeType: "text/plain" },
       content: {
         body: new ReadableStream<Uint8Array>({
           start(controller) {
@@ -446,6 +466,16 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/plain");
+    // AT-12 (D5): server-derived text keeps its passive type but is delivered
+    // as a no-store attachment under nosniff + a sandboxing CSP.
+    expect(res.headers.get("content-disposition")).toMatch(
+      /^attachment; filename="[A-Za-z0-9._-]+\.txt"; filename\*=UTF-8''/,
+    );
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toBe(
+      "sandbox; default-src 'none'",
+    );
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
     expect(await res.text()).toContain("diff --git");
     // F3: rendered against the stored immutable headRef, NOT the live branch.
     expect(diffRange).toHaveBeenCalledWith(

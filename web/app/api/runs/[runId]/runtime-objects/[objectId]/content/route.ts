@@ -1,6 +1,7 @@
 import "server-only";
 
 import { NextResponse } from "next/server";
+import pino from "pino";
 import { z } from "zod";
 
 import { httpStatusForAuthz, requireActiveSession } from "@/lib/authz";
@@ -11,13 +12,28 @@ import {
   openRuntimeObjectContent,
 } from "@/lib/execution-host/runtime-objects";
 import { authorizeRuntimeObjectContentActor } from "@/lib/execution-host/runtime-object-access";
+import { safeDownloadHeaders } from "@/lib/http/safe-download";
 import { parseSingleByteRange } from "@/lib/http/single-byte-range";
 
 type RouteParams = { params: Promise<{ runId: string; objectId: string }> };
 
-function errorResponse(error: unknown): NextResponse {
+const log = pino({
+  name: "api-run-runtime-object-content",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+
+function errorResponse(
+  error: unknown,
+  ids: { runId: string; objectId: string },
+): NextResponse {
   if (isMaisterError(error)) {
     const reason = error.details?.reason;
+
+    // Refusals are logged by identity and code only — never a name or header.
+    log.warn(
+      { ...ids, code: error.code, reason: reason ?? null },
+      "runtime object content refused",
+    );
 
     if (reason === "runtime_object_not_found") {
       return NextResponse.json({ message: "not found" }, { status: 404 });
@@ -66,9 +82,10 @@ export async function GET(
   request: Request,
   { params }: RouteParams,
 ): Promise<Response> {
+  const { runId, objectId } = await params;
+
   try {
     const sessionUser = await requireActiveSession();
-    const { runId, objectId } = await params;
 
     if (!z.string().uuid().safeParse(objectId).success) {
       return NextResponse.json({ message: "not found" }, { status: 404 });
@@ -90,8 +107,14 @@ export async function GET(
       objectId,
       range,
     });
+    // AB-12 (D5): the catalogued MIME is caller-supplied metadata, never a
+    // response type. Bytes leave as an opaque, non-sniffable, sandboxed,
+    // uncacheable attachment named after the manager's logical name.
     const headers = new Headers({
-      "content-type": object.mimeType,
+      ...safeDownloadHeaders({
+        fileName: object.logicalName,
+        mediaClass: "opaque",
+      }),
       "accept-ranges": "bytes",
       etag: `\"${object.sha256}\"`,
     });
@@ -104,11 +127,16 @@ export async function GET(
     if (content.contentRange)
       headers.set("content-range", content.contentRange);
 
+    log.debug(
+      { runId, objectId, mediaClass: "opaque", policy: "attachment" },
+      "runtime object content served",
+    );
+
     return new Response(content.body, {
       status: content.contentRange ? 206 : 200,
       headers,
     });
   } catch (error) {
-    return errorResponse(error);
+    return errorResponse(error, { runId, objectId });
   }
 }

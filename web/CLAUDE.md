@@ -320,7 +320,9 @@ add`, supervisor `POST /sessions` — body carries `taskId` and optional
 - `GET /api/runs/[id]/artifacts` (M12 — list the typed-artifact evidence index;
   optional `node`/`kind`/`validity` filters)
 - `GET /api/runs/[id]/artifacts/[artifactId]/payload` (M12 — raw payload per
-  locator; `text/plain` or `application/json`; path-confined to the run dir)
+  locator; `text/plain` or `application/json`, `execution-object` bytes as
+  `application/octet-stream`; always a sandboxed no-store attachment — AB-12;
+  path-confined to the run dir)
 - `GET /api/cron/gc` (Abandoned/Done worktrees + checkpointed sessions >7d,
   all projects)
 

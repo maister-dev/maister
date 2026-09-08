@@ -349,6 +349,108 @@ describe("runtime object transport", () => {
     ).toBe(413);
   });
 
+  it("resolves an uploaded attachment referenced by opaque id into the prompt the adapter receives", async () => {
+    // AB-12 browser lane (AT-12) RED finding: the prompt route's resolver call
+    // omitted `expectedKind`, so the registry compared the attachment's kind
+    // against `undefined` and refused every prompt carrying an upload.
+    const host = await bootHost({ runtimeRoot: await tempRoot() });
+
+    booted.push(host);
+    const runId = `run-${randomUUID().slice(0, 8)}`;
+    const assignmentId = randomUUID();
+    const fence = {
+      hostKey: host.hostState.hostKey,
+      assignmentId,
+      assignmentEpoch: 1,
+      runId,
+    };
+    const executionWorkspaceId = await adoptDirectory(host, fence);
+    const objectId = randomUUID();
+    const payload = Buffer.from("<html><script>1</script></html>", "utf8");
+    const checksum = createHash("sha256").update(payload).digest("hex");
+    const reserved = await postJson(
+      `${host.url}/runtime-objects`,
+      envelope("runtime_object.reserve", fence, {
+        objectId,
+        kind: "attachment",
+        logicalName: "scratch-upload-0123456789abcdef-evil.html",
+        mimeType: "text/html",
+        sizeBytes: payload.byteLength,
+        sha256: checksum,
+        generation: 1,
+        retentionClass: "run",
+      }),
+    );
+
+    expect(reserved.status).toBe(201);
+    const uploadCommandId = randomUUID();
+
+    host.hostState.putReceipt({
+      commandId: uploadCommandId,
+      runId,
+      kind: "runtime_object.upload",
+      assignmentId,
+      epoch: 1,
+      hostSessionId: objectId,
+      requestDigest: null,
+      eventId: null,
+      phase: "accepted",
+      httpStatus: 202,
+      body: {},
+      receivedAt: new Date().toISOString(),
+      completedAt: null,
+    });
+    const uploaded = await fetch(
+      `${host.url}/runtime-objects/${objectId}/content`,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-length": String(payload.byteLength),
+          "content-digest": `sha-256=:${Buffer.from(checksum, "hex").toString("base64")}:`,
+          "x-maister-command-id": uploadCommandId,
+          "x-maister-command-issued-at": new Date(0).toISOString(),
+          "x-maister-assignment-id": assignmentId,
+          "x-maister-assignment-epoch": "1",
+          "x-maister-object-generation": "1",
+          "x-maister-sha256": checksum,
+        },
+        body: payload,
+      },
+    );
+
+    expect(uploaded.status).toBe(200);
+    const created = await postJson(
+      `${host.url}/sessions`,
+      envelope("session.create", fence, {
+        executionWorkspaceId,
+        stepId: "scratch",
+        executor: { agent: "claude", model: "claude-sonnet-4-6" },
+      }),
+    );
+
+    expect(created.status).toBe(201);
+    const completed = await completePrompt(
+      host,
+      created.body.sessionId as string,
+      envelope("session.prompt", fence, {
+        stepId: "scratch",
+        prompt: "Summarize the attached file.",
+        contentBlocks: [
+          { type: "text", text: "Summarize the attached file." },
+          { type: "runtime_object", objectId, name: "evil.html" },
+        ],
+      }),
+    );
+
+    // Admission (202) then completion (200): the host resolved the opaque id
+    // itself. A refusal surfaces here as the admission status instead.
+    expect(completed.status).toBe(200);
+    // The resolved private path is handed to the ADAPTER only; nothing the
+    // manager can read carries it.
+    expect(JSON.stringify(completed.body)).not.toContain("file:");
+  });
+
   it("stores bytes only on the host while receipts, opaque metadata, events, and bounded reads stay fenced", async () => {
     const host = await bootHost({ runtimeRoot: await tempRoot() });
 
@@ -425,6 +527,8 @@ describe("runtime object transport", () => {
       `${host.url}/runtime-objects/${objectId}/content`,
       { method: "PUT", headers: uploadHeaders, body: payload },
     );
+    const full = await fetch(`${host.url}/runtime-objects/${objectId}/content`);
+    const fullBody = Buffer.from(await full.arrayBuffer());
     const ranged = await fetch(
       `${host.url}/runtime-objects/${objectId}/content`,
       {
@@ -483,6 +587,23 @@ describe("runtime object transport", () => {
       state: "available",
       sha256: checksum,
     });
+    expect(full.status).toBe(200);
+    expect(fullBody).toEqual(payload);
+    // AT-12 (D5): the host never labels bytes with the reserved MIME
+    // (`application/json` here); 200 and 206 both carry the attachment policy.
+    for (const response of [full, ranged]) {
+      expect(response.headers.get("content-type")).toBe(
+        "application/octet-stream",
+      );
+      expect(response.headers.get("content-disposition")).toBe(
+        `attachment; filename="verification.json"; filename*=UTF-8''verification.json`,
+      );
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(response.headers.get("content-security-policy")).toBe(
+        "sandbox; default-src 'none'",
+      );
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+    }
     expect(ranged.status).toBe(206);
     expect(ranged.headers.get("content-range")).toBe(
       `bytes 0-1/${payload.byteLength}`,

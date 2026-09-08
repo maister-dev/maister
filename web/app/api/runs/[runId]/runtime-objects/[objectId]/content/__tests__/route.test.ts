@@ -32,7 +32,8 @@ function loadedObject() {
     createdByUserId: "user-1",
     object: {
       id: OBJECT_ID,
-      mimeType: "text/plain",
+      logicalName: "scratch-upload-0123456789abcdef-evil.html",
+      mimeType: "text/html",
       sha256: "abc",
     },
   };
@@ -86,6 +87,19 @@ describe("GET /api/runs/[runId]/runtime-objects/[objectId]/content", () => {
     expect(response.headers.get("content-range")).toBe("bytes 1-5/8");
     expect(response.headers.get("content-digest")).toBe("sha-256=:abc=:");
     expect(response.headers.get("etag")).toBe('"abc"');
+    // AT-12 (D5): supplied MIME is never inline; the bytes are an opaque
+    // attachment under nosniff + a sandboxing CSP, and never cached.
+    expect(response.headers.get("content-type")).toBe(
+      "application/octet-stream",
+    );
+    expect(response.headers.get("content-disposition")).toBe(
+      `attachment; filename="scratch-upload-0123456789abcdef-evil.html"; filename*=UTF-8''scratch-upload-0123456789abcdef-evil.html`,
+    );
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("content-security-policy")).toBe(
+      "sandbox; default-src 'none'",
+    );
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(await response.text()).toBe("owned");
     expect(requireProjectAction).toHaveBeenCalledWith(
       "project-1",
@@ -97,6 +111,44 @@ describe("GET /api/runs/[runId]/runtime-objects/[objectId]/content", () => {
       objectId: OBJECT_ID,
       range: { start: 1, end: 5 },
     });
+  });
+
+  it("encodes a non-ASCII logical name without reflecting header-unsafe bytes", async () => {
+    const unsafeObject = {
+      ...loadedObject().object,
+      logicalName: 'отчёт "final"\r\n.svg',
+      mimeType: "image/svg+xml",
+    };
+
+    vi.mocked(getRuntimeObjectForRun).mockResolvedValueOnce({
+      ...loadedObject(),
+      object: unsafeObject,
+    } as never);
+    vi.mocked(openRuntimeObjectContent).mockResolvedValueOnce({
+      object: unsafeObject,
+      content: {
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("<svg/>"));
+            controller.close();
+          },
+        }),
+        contentLength: 6,
+        contentRange: null,
+        contentDigest: "sha-256=:abc=:",
+      },
+    } as never);
+
+    const response = await invoke();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe(
+      "application/octet-stream",
+    );
+    expect(response.headers.get("content-disposition")).toBe(
+      `attachment; filename="final.svg"; filename*=UTF-8''%D0%BE%D1%82%D1%87%D1%91%D1%82%20final.svg`,
+    );
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
   });
 
   it("returns 416 for a malformed range before contacting the host", async () => {

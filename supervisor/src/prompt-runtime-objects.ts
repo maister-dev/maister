@@ -1,6 +1,14 @@
 import type * as acp from "@agentclientprotocol/sdk";
+import type { ReserveRuntimeObjectPayload } from "./types";
 
 import { pathToFileURL } from "node:url";
+
+// The only object kind a prompt may reference by opaque id: a manager-side
+// upload published for that session. Output, evidence and capability objects
+// reach the adapter through their own env/materialization paths, never as a
+// prompt resource, so the registry is told the exact kind to expect.
+export const PROMPT_REFERENCE_KIND: ReserveRuntimeObjectPayload["kind"] =
+  "attachment";
 
 export type PromptRuntimeObjectBlock = {
   type: "runtime_object";
@@ -16,6 +24,7 @@ export type PromptObjectResolver = {
     runId: string;
     assignmentId: string;
     assignmentEpoch: number;
+    expectedKind: ReserveRuntimeObjectPayload["kind"];
   }): Promise<{ metadata: { mimeType: string }; path: string }>;
 };
 
@@ -48,6 +57,7 @@ export async function resolvePromptRuntimeObjects(input: {
         runId: input.runId,
         assignmentId: input.assignmentId,
         assignmentEpoch: input.assignmentEpoch,
+        expectedKind: PROMPT_REFERENCE_KIND,
       });
 
       return {

@@ -18,6 +18,7 @@
     "test:watch": "vitest --project unit",
     "test:e2e": "tsx e2e/run.ts",
     "test:e2e:live": "tsx e2e/run.ts --config playwright.live.config.ts",
+    "test:e2e:execution-ab": "tsx e2e/run.ts --config playwright.execution-ab.config.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --import ./scripts/_register-shim.mjs lib/db/migrate.ts",
     "db:migrate:brain": "tsx lib/db/migrate-brain.ts",

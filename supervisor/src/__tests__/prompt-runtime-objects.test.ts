@@ -30,12 +30,15 @@ describe("resolvePromptRuntimeObjects", () => {
       assignmentEpoch: 2,
     });
 
+    // The registry refuses any kind other than the one it is told to expect,
+    // so the resolver call must name the prompt-reference kind explicitly.
     expect(calls).toEqual([
       {
         objectId: "b7e5e032-6049-48b2-806f-e5db714a93cb",
         runId: "run-1",
         assignmentId: "a0f7f6c8-9f3b-471e-8e0d-74af1bf4c7a8",
         assignmentEpoch: 2,
+        expectedKind: "attachment",
       },
     ]);
     expect(blocks).toEqual([

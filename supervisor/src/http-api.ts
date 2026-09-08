@@ -19,6 +19,8 @@ import { delimiter, dirname, join } from "node:path";
 
 import { z, ZodError, type ZodType, type ZodTypeDef } from "zod";
 
+import { safeDownloadHeaders } from "../../runtime/safe-download";
+
 import { createAcpConnection, sendPromptOnConnection } from "./acp-client";
 import { retainedOutputBudget } from "./bounded-acp-stream";
 import {
@@ -1619,9 +1621,16 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           { details: { reason: "runtime_object_range_invalid" } },
         );
       }
+      // AB-12 (D5): never the reserved MIME — the bytes are untrusted and leave
+      // the host as an opaque attachment; the manager proxy repeats the policy.
       reply
+        .headers(
+          safeDownloadHeaders({
+            fileName: content.metadata.logicalName,
+            mediaClass: "opaque",
+          }),
+        )
         .header("Accept-Ranges", "bytes")
-        .header("Content-Type", content.metadata.mimeType)
         .header("Content-Length", String(total))
         .header("ETag", `\"${content.metadata.sha256}\"`)
         .header(
@@ -1652,8 +1661,13 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       );
     }
     reply
+      .headers(
+        safeDownloadHeaders({
+          fileName: content.metadata.logicalName,
+          mediaClass: "opaque",
+        }),
+      )
       .header("Accept-Ranges", "bytes")
-      .header("Content-Type", content.metadata.mimeType)
       .header("Content-Length", String(requestedLength))
       .header("ETag", `\"${content.metadata.sha256}\"`)
       .header(
