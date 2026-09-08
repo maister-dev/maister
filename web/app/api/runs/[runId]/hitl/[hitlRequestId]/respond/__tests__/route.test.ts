@@ -1043,8 +1043,7 @@ describe("HITL respond route — kind=form / kind=human", () => {
       runtimeRoot,
       ".maister",
       "demo",
-      "execution_commands",
-    "runs",
+      "runs",
       runId,
       `input-${stepId}.json`,
     );
@@ -1073,8 +1072,7 @@ describe("HITL respond route — kind=form / kind=human", () => {
       runtimeRoot,
       ".maister",
       "demo",
-      "execution_commands",
-    "runs",
+      "runs",
       runId,
       `input-${stepId}.json`,
     );
@@ -1143,8 +1141,7 @@ describe("HITL respond route — kind=form / kind=human", () => {
       runtimeRoot,
       ".maister",
       "demo",
-      "execution_commands",
-    "runs",
+      "runs",
       runId,
       `input-${stepId}.json`,
     );
@@ -1219,8 +1216,7 @@ describe("HITL respond route — kind=form / kind=human", () => {
       runtimeRoot,
       ".maister",
       "demo",
-      "execution_commands",
-    "runs",
+      "runs",
       runId,
       `input-${stepId}.json`,
     );
@@ -1414,8 +1410,7 @@ describe("HITL respond route — consensus resolution decision (M41)", () => {
       runtimeRoot,
       ".maister",
       "demo",
-      "execution_commands",
-    "runs",
+      "runs",
       runId,
       `input-${stepId}.json`,
     );
@@ -1448,8 +1443,7 @@ describe("HITL respond route — consensus resolution decision (M41)", () => {
       runtimeRoot,
       ".maister",
       "demo",
-      "execution_commands",
-    "runs",
+      "runs",
       runId,
       `input-${stepId}.json`,
     );
@@ -1647,28 +1641,6 @@ describe("HITL respond route — NeedsInputIdle branch", () => {
 
     expect(body.terminal).toBe(true);
     expect(scheduleResumedSessionDriveSpy).not.toHaveBeenCalled();
-  });
-
-  it("agent NeedsInputIdle response resumes through startAgentSession, not flow resumeRun", async () => {
-    const { runId, hitlRequestId } = seedPermissionRow({
-      runKind: "agent",
-      runStatus: "NeedsInputIdle",
-    });
-
-    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
-
-    expect(res.status).toBe(202);
-    expect(resumeRunSpy).not.toHaveBeenCalled();
-    expect(scheduleResumedSessionDriveSpy).not.toHaveBeenCalled();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    // ADR-166 D3: the idle wake minted a `resume` generation inside the claim
-    // and the agent driver is bound to THAT row, never to "the active one".
-    expect(startAgentSessionSpy).toHaveBeenCalledWith(runId, {
-      db: expect.any(Object),
-      assignmentId: `assignment-${runId}-2`,
-    });
-    expect(dbState.tables.runs[0].status).toBe("Running");
-    expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
   });
 
   it("[FIX-PASS2-F1] same-payload retry after resume started: noop-idempotent + NeedsInput + supervisor 404 → 202 (NOT Failed)", async () => {

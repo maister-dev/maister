@@ -38,13 +38,11 @@ type FakeDb = {
 const runId = "11111111-1111-4111-8111-111111111111";
 const projectId = "22222222-2222-4222-8222-222222222222";
 const state: {
-  scratchSelectCalls: number;
   scratchStatus: string;
   inserts: unknown[];
   updates: unknown[];
   runtimeRoot: string | null;
 } = {
-  scratchSelectCalls: 0,
   scratchStatus: "WaitingForUser",
   inserts: [],
   updates: [],
@@ -71,15 +69,12 @@ const fakeDb: FakeDb = {
           ];
         }
         if (name === "scratch_runs") {
-          state.scratchSelectCalls += 1;
-
+          // The row reflects the route's own writes (below) and the owner's
+          // flip emulated by the prompt stub — not a read-count schedule.
           return [
             {
               runId,
-              dialogStatus:
-                state.scratchSelectCalls === 2
-                  ? "Running"
-                  : state.scratchStatus,
+              dialogStatus: state.scratchStatus,
               supervisorSessionId: "supervisor-session-1",
             },
           ];
@@ -128,6 +123,11 @@ const fakeDb: FakeDb = {
     set: (values: unknown) => ({
       where: async () => {
         state.updates.push(values);
+        const patch = values as { dialogStatus?: string } | null;
+
+        if (patch && typeof patch.dialogStatus === "string") {
+          state.scratchStatus = patch.dialogStatus;
+        }
       },
     }),
   }),
@@ -199,7 +199,6 @@ let POST: (
 ) => Promise<Response>;
 
 beforeEach(async () => {
-  state.scratchSelectCalls = 0;
   state.scratchStatus = "WaitingForUser";
   state.inserts = [];
   state.updates = [];
@@ -210,8 +209,12 @@ beforeEach(async () => {
   mocks.requireProjectAction.mockResolvedValue({ role: "member" });
   mocks.runtimeRoot.mockReturnValue(state.runtimeRoot);
   mocks.sendPrompt.mockResolvedValue({ stopReason: "end_turn" });
-  mocks.sendScratchPromptAndProjectEvents.mockResolvedValue({
-    stopReason: "end_turn",
+  // S2.9: the dialog returns to WaitingForUser inside the owned prompt's
+  // application (part of sendScratchPromptAndProjectEvents), not in the route.
+  mocks.sendScratchPromptAndProjectEvents.mockImplementation(async () => {
+    state.scratchStatus = "WaitingForUser";
+
+    return { stopReason: "end_turn" };
   });
 
   ({ POST } = await import("../route"));

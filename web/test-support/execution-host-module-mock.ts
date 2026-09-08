@@ -363,6 +363,11 @@ export function legacyScratchApiToExecution(api: {
 
   return {
     client: {
+      // S2.9: prompt admission waits for the durable incarnation of this
+      // host/assignment pair; the legacy shape names both so a fake db can
+      // answer that query.
+      host: { id: "legacy-host" },
+      assignment: { id: "legacy-assignment", runId: "run-1", epoch: 1 },
       async prompt(sessionId: string, input: unknown, opts?: unknown) {
         const commandId = "cmd-legacy";
 

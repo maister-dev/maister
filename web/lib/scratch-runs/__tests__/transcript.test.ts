@@ -38,14 +38,28 @@ function makeFakeDb(rows: Row[]) {
       return {
         from() {
           return {
-            async where() {
-              if (selection && "supervisorEventId" in selection) {
-                return rows.map((row) => ({
-                  supervisorEventId: row.supervisorEventId ?? null,
-                }));
-              }
+            // S2.9: prompt admission first waits for the session incarnation
+            // (`select({state}).from(runSessionIncarnations)…limit(1)`).
+            where() {
+              const query = async () => {
+                if (selection && "state" in selection) {
+                  return [{ state: "active" }];
+                }
+                if (selection && "supervisorEventId" in selection) {
+                  return rows.map((row) => ({
+                    supervisorEventId: row.supervisorEventId ?? null,
+                  }));
+                }
 
-              return rows.map((row) => ({ sequence: row.sequence }));
+                return rows.map((row) => ({ sequence: row.sequence }));
+              };
+              const result = query() as Promise<unknown[]> & {
+                limit: () => Promise<unknown[]>;
+              };
+
+              result.limit = () => query();
+
+              return result;
             },
           };
         },

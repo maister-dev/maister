@@ -428,8 +428,14 @@ beforeEach(() => {
   vi.mocked(listSessions).mockClear();
   vi.mocked(listSessions).mockResolvedValue([]);
   vi.mocked(sendScratchPromptAndProjectEvents).mockClear();
-  vi.mocked(sendScratchPromptAndProjectEvents).mockResolvedValue({
-    stopReason: "end_turn",
+  // S2.9: the dialog returns to WaitingForUser inside the owned prompt's
+  // application (part of sendScratchPromptAndProjectEvents), not in the route.
+  vi.mocked(sendScratchPromptAndProjectEvents).mockImplementation(async () => {
+    for (const row of dbState.tables.scratch_runs) {
+      row.dialogStatus = "WaitingForUser";
+    }
+
+    return { stopReason: "end_turn" };
   });
   releaseAssignmentForRunSpy.mockClear();
 });

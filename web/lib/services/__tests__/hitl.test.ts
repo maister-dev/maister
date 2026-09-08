@@ -745,8 +745,7 @@ describe("respondToHitl service — kind=form / kind=human", () => {
       runtimeRoot,
       ".maister",
       "demo",
-      "execution_commands",
-    "runs",
+      "runs",
       runId,
       `input-${stepId}.json`,
     );
@@ -780,8 +779,7 @@ describe("respondToHitl service — kind=form / kind=human", () => {
       runtimeRoot,
       ".maister",
       "demo",
-      "execution_commands",
-    "runs",
+      "runs",
       runId,
       `input-${stepId}.json`,
     );

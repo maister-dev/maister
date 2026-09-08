@@ -275,6 +275,12 @@ describe("scratch event projection", () => {
       },
     };
     const db = {
+      // S2.9: the admission wait reads the session incarnation first.
+      select: () => ({
+        from: () => ({
+          where: () => ({ limit: async () => [{ state: "active" }] }),
+        }),
+      }),
       async transaction() {
         throw new Error("insert failed");
       },
@@ -301,14 +307,26 @@ describe("scratch event projection", () => {
     // scratch_messages_run_sequence_uq. Sequential projection must not.
     const rows: Array<{ runId: string; sequence: number }> = [];
     const db = {
-      select() {
+      select(selection?: Record<string, unknown>) {
         return {
           from() {
             return {
-              async where() {
-                await Promise.resolve();
+              where() {
+                const query = async () => {
+                  await Promise.resolve();
+                  if (selection && "state" in selection) {
+                    return [{ state: "active" }];
+                  }
 
-                return rows.map((row) => ({ sequence: row.sequence }));
+                  return rows.map((row) => ({ sequence: row.sequence }));
+                };
+                const result = query() as Promise<unknown[]> & {
+                  limit: () => Promise<unknown[]>;
+                };
+
+                result.limit = () => query();
+
+                return result;
               },
             };
           },

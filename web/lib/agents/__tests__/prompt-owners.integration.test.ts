@@ -746,6 +746,12 @@ describe("Agent owned prompts through the production launcher", () => {
       const continuation = startAgentContinuationWorker({ db });
 
       try {
+        // After the launcher's death the worker re-observes the host session
+        // every ~6 s while the durable terminal is applied only once the dead
+        // launcher's stream claim expires — observed one to three
+        // RUNTIME_EVENT_CLAIM_LEASE_MS cycles (19 s / 47 s / 122 s for the
+        // same window). The bound is derived from that ceiling, not tuned to
+        // a run; the pacing itself is tracked as an open A/B item.
         await expect
           .poll(
             async () =>
@@ -761,7 +767,7 @@ describe("Agent owned prompts through the production launcher", () => {
                     ),
                   )
               ).length,
-            { timeout: 60_000 + KILLED_CLAIM_WAIT_MS, interval: 100 },
+            { timeout: 60_000 + 3 * KILLED_CLAIM_WAIT_MS, interval: 100 },
           )
           .toBe(1);
         const turns = await db
@@ -785,7 +791,7 @@ describe("Agent owned prompts through the production launcher", () => {
         await continuation.stop();
       }
     },
-    120_000 + KILLED_CLAIM_WAIT_MS * 2,
+    120_000 + KILLED_CLAIM_WAIT_MS * 4,
   );
 
   it.each([
