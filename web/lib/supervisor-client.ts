@@ -1382,6 +1382,39 @@ export async function getCommandReceipt(
   }
 }
 
+// Structural twins of the `contracts.ts` retirement pair. This module is the
+// lower layer (contracts imports from it, never the reverse), so the shapes are
+// declared here and flow outward by assignability.
+export type CommandRetirementRequest = {
+  expectedRequestSha256: string | null;
+  expectedPhase: "completed" | "rejected";
+  assignmentEpoch: number;
+};
+
+export type CommandRetirementAck = {
+  commandId: string;
+  requestSha256: string | null;
+  phase: "completed" | "rejected";
+  retiredAt: string;
+  compacted: boolean;
+};
+
+export async function retireCommand(
+  commandId: string,
+  proof: CommandRetirementRequest,
+): Promise<CommandRetirementAck> {
+  const res = await request<CommandRetirementAck>({
+    method: "POST",
+    path: `/commands/${encodeURIComponent(commandId)}/retirement`,
+    body: proof,
+    ctx: "retireCommand",
+    fallbackCode: "PRECONDITION",
+    timeoutMs: ADMIN_READ_TIMEOUT_MS,
+  });
+
+  return res.body;
+}
+
 export async function getRuntimeObject(
   objectId: string,
 ): Promise<RuntimeObjectWireMetadata | null> {

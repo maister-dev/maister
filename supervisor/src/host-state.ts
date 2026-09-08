@@ -80,11 +80,39 @@ import {
 
 export const HOST_KEY_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
 export const HOST_STATE_FILE = "state.sqlite";
-export const RECEIPT_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
-export const RECEIPT_PRUNE_INTERVAL_MS = 60 * 60 * 1_000;
+// The compacted body of a retired receipt: disposition stays in `phase` /
+// `http_status`, so the tombstone needs no payload of its own.
+const RETIRED_RECEIPT_BODY = JSON.stringify({ retired: true });
+
+// Retired receipts are never deleted, so retention is bounded by a count that
+// refuses NEW admissions instead of silently forgetting a still-valid key.
+export const MAX_RETAINED_RECEIPTS = 500_000;
+
+export type CommandRetirementProof = {
+  expectedRequestSha256: string | null;
+  expectedPhase: "completed" | "rejected";
+  assignmentEpoch: number;
+};
+
+export type ReceiptRetirementOutcome =
+  | {
+      outcome: "retired" | "already_retired";
+      commandId: string;
+      requestSha256: string | null;
+      phase: "completed" | "rejected";
+      retiredAt: string;
+    }
+  | {
+      outcome:
+        | "missing"
+        | "not_terminal"
+        | "identity_mismatch"
+        | "terminal_event_unacked"
+        | "producer_open";
+    };
 export const EXECUTION_HOST_PROTOCOL_VERSION = 1;
 // `PRAGMA user_version` of the state file; bumped with every migration below.
-export const HOST_STATE_SCHEMA_VERSION = 11;
+export const HOST_STATE_SCHEMA_VERSION = 12;
 const MAX_HOST_EVENT_SEQUENCE = (1n << 63n) - 1n;
 const HOST_EVENT_SEQUENCE_SORT_WIDTH = 20;
 
@@ -281,7 +309,11 @@ export type HostState = {
   // prompt receipts retain their fence/session binding, so startup can make
   // the loss explicit through one durable terminal receipt/event pair.
   recoverAcceptedPromptReceipts(): number;
-  pruneReceipts(olderThan: Date): number;
+  retainedReceiptCount(): number;
+  retireReceipt(
+    commandId: string,
+    request: CommandRetirementProof,
+  ): ReceiptRetirementOutcome;
   findWorkspaceByRealPath(runId: string, realPath: string): WorkspaceRow | null;
   getWorkspace(id: string): WorkspaceRow | null;
   insertWorkspace(row: WorkspaceRow): void;
@@ -407,7 +439,8 @@ CREATE TABLE IF NOT EXISTS command_receipts (
   http_status INTEGER NOT NULL,
   body_json TEXT NOT NULL,
   received_at TEXT NOT NULL,
-  completed_at TEXT
+  completed_at TEXT,
+  retired_at TEXT
 );
 CREATE INDEX IF NOT EXISTS command_receipts_received_idx ON command_receipts (received_at);
 CREATE TABLE IF NOT EXISTS runtime_objects (
@@ -630,6 +663,13 @@ PRAGMA user_version = 11;
 COMMIT;
 `;
 
+const MIGRATE_V11_TO_V12 = `
+BEGIN IMMEDIATE;
+ALTER TABLE command_receipts ADD COLUMN retired_at TEXT;
+PRAGMA user_version = 12;
+COMMIT;
+`;
+
 function applySchema(db: DatabaseSync): void {
   const fresh =
     db
@@ -666,6 +706,7 @@ function applySchema(db: DatabaseSync): void {
   if (Number(user_version) < 9) db.exec(MIGRATE_V8_TO_V9);
   if (Number(user_version) < 10) db.exec(MIGRATE_V9_TO_V10);
   if (Number(user_version) < 11) db.exec(MIGRATE_V10_TO_V11);
+  if (Number(user_version) < 12) db.exec(MIGRATE_V11_TO_V12);
 }
 
 export function openHostState(opts: OpenHostStateOptions = {}): HostState {
@@ -1242,37 +1283,100 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
 
       return recoveredCount;
     },
-    pruneReceipts(olderThan) {
+    retainedReceiptCount() {
+      const row = db
+        .prepare("SELECT COUNT(*) AS n FROM command_receipts")
+        .get() as { n: number };
+
+      return Number(row.n);
+    },
+    // D6: the host's half of retirement. Age is NOT an input — every branch
+    // below is evidence this host holds, so the two sides must agree before
+    // either compacts. The receipt is compacted, never deleted: the tombstone
+    // is what lets a stale replay still be recognised.
+    retireReceipt(commandId, request) {
       return storage.write(() => {
         db.exec("BEGIN IMMEDIATE");
         try {
           const row = db
             .prepare(
-              `SELECT command_id, length(CAST(body_json AS BLOB)) AS bytes
-            FROM command_receipts WHERE received_at < ? AND phase <> 'accepted' AND request_version = 1
-            AND NOT EXISTS (SELECT 1 FROM runtime_event_wallets w WHERE w.wallet_id = command_receipts.command_id AND w.closed = 0)
-            ORDER BY received_at, command_id LIMIT 1`,
+              `SELECT command_id, phase, http_status, request_digest, request_version,
+              epoch, terminal_sequence, retired_at
+            FROM command_receipts WHERE command_id = ?`,
             )
-            .get(olderThan.toISOString()) as
-            | { command_id: string; bytes: number }
+            .get(commandId) as
+            | {
+                command_id: string;
+                phase: string;
+                http_status: number;
+                request_digest: string | null;
+                request_version: number;
+                epoch: number;
+                terminal_sequence: string | null;
+                retired_at: string | null;
+              }
             | undefined;
 
-          if (row && row.bytes > MAX_RECEIPT_BODY_BYTES)
-            throw new HostRuntimeEventError(
-              "stream_corrupt",
-              "oversized legacy receipt requires a bounded migration before pruning",
-            );
-          const count = row
-            ? Number(
-                db
-                  .prepare("DELETE FROM command_receipts WHERE command_id = ?")
-                  .run(row.command_id).changes,
-              )
-            : 0;
+          const refuse = (outcome: ReceiptRetirementOutcome["outcome"]) => {
+            db.exec("COMMIT");
 
+            return { outcome } as ReceiptRetirementOutcome;
+          };
+
+          if (!row) return refuse("missing");
+          if (row.phase === "accepted") return refuse("not_terminal");
+          // A null digest is "not asserted", not "matches anything": the
+          // manager only records a request digest for owned prompts, and the
+          // command id, epoch and phase are compared either way. A digest the
+          // manager DOES hold must agree.
+          if (
+            row.phase !== request.expectedPhase ||
+            row.epoch !== request.assignmentEpoch ||
+            (request.expectedRequestSha256 !== null &&
+              request.expectedRequestSha256 !== row.request_digest)
+          ) {
+            return refuse("identity_mismatch");
+          }
+
+          const openProducer = db
+            .prepare(
+              "SELECT 1 FROM runtime_event_wallets WHERE wallet_id = ? AND closed = 0",
+            )
+            .get(commandId);
+
+          if (openProducer) return refuse("producer_open");
+
+          if (row.request_version === 2) {
+            if (row.terminal_sequence === null)
+              return refuse("terminal_event_unacked");
+            const stream = ensureRuntimeEventStream(db, now);
+
+            if (
+              stream.acknowledged_through === null ||
+              BigInt(stream.acknowledged_through) <
+                BigInt(row.terminal_sequence)
+            ) {
+              return refuse("terminal_event_unacked");
+            }
+          }
+
+          const alreadyRetired = row.retired_at !== null;
+          const retiredAt = row.retired_at ?? now().toISOString();
+
+          if (!alreadyRetired) {
+            db.prepare(
+              "UPDATE command_receipts SET body_json = ?, retired_at = ? WHERE command_id = ?",
+            ).run(RETIRED_RECEIPT_BODY, retiredAt, commandId);
+          }
           db.exec("COMMIT");
 
-          return count;
+          return {
+            outcome: alreadyRetired ? "already_retired" : "retired",
+            commandId: row.command_id,
+            requestSha256: row.request_digest ?? null,
+            phase: row.phase as "completed" | "rejected",
+            retiredAt,
+          } as ReceiptRetirementOutcome;
         } catch (error) {
           if (db.isTransaction) db.exec("ROLLBACK");
           throw error;
@@ -1654,6 +1758,17 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     assertCanAcceptMutatingCommand() {
       assertPhysicalAdmission();
       assertOutboxAdmission(db, limits);
+      // Retirement compacts receipts but never drops the key, so the only
+      // honest response to unbounded retention is to stop admitting rather
+      // than to forget a key a retry may still legally use (D6).
+      const retained = state.retainedReceiptCount();
+
+      if (retained > MAX_RETAINED_RECEIPTS) {
+        throw new HostRuntimeEventError(
+          "event_outbox_hard_limit",
+          `retained command receipts (${retained}) exceed the retirement bound; drain retirement before admitting more commands`,
+        );
+      }
     },
     pruneAcknowledgedRuntimeEvents(olderThan) {
       return storage.write(() => {
@@ -1756,17 +1871,13 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     },
   };
 
-  const pruned = state.pruneReceipts(
-    new Date(now().getTime() - RECEIPT_TTL_MS),
-  );
-
   log?.info(
     {
       hostKey,
       bootId,
       stateDir: stateDir ?? ":memory:",
       pinned: Boolean(pinned),
-      prunedReceipts: pruned,
+      retainedReceipts: state.retainedReceiptCount(),
     },
     "execution-host-identity",
   );
@@ -2358,22 +2469,6 @@ function startBoundedPruner(input: {
     clearInterval(handle);
     if (immediate) clearImmediate(immediate);
   };
-}
-
-export function startReceiptPruner(
-  state: HostState,
-  logger: Logger,
-  now: () => Date = () => new Date(),
-): () => void {
-  return startBoundedPruner({
-    prune: () =>
-      state.pruneReceipts(new Date(now().getTime() - RECEIPT_TTL_MS)),
-    available: state.runtimeStorageAvailable,
-    reportFailure: state.reportRuntimeStorageFailure,
-    logger,
-    message: "command-receipts-pruned",
-    intervalMs: RECEIPT_PRUNE_INTERVAL_MS,
-  });
 }
 
 export function startRuntimeEventPruner(

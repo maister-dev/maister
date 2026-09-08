@@ -276,6 +276,16 @@ describe("Durable agent turn admission", () => {
         })
         .where(eq(agentTurns.id, first.id)),
     ).rejects.toMatchObject({ code: "23514" });
+    // The command is protected evidence, so the run cannot be hard-deleted
+    // around the retirement protocol (D6) — the cascade resumes only once the
+    // command is a tombstone.
+    await expect(
+      db.delete(runs).where(eq(runs.id, runId)),
+    ).rejects.toMatchObject({ code: "23514" });
+    await db
+      .update(executionCommands)
+      .set({ retiredAt: new Date() })
+      .where(eq(executionCommands.id, command.row.id));
     await db.delete(runs).where(eq(runs.id, runId));
     expect(
       await db.select().from(agentTurns).where(eq(agentTurns.runId, runId)),

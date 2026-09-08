@@ -2298,6 +2298,10 @@ export const executionCommands = pgTable(
       withTimezone: true,
       mode: "date",
     }),
+    // D6 tombstone marker. Set only after the host durably acknowledged the
+    // same retirement, so a NULL here always means the row is still protected
+    // evidence — including for the run-deletion guard.
+    retiredAt: timestamp("retired_at", { withTimezone: true, mode: "date" }),
     state: text("state", { enum: COMMAND_STATES }).notNull().default("queued"),
     attempts: integer("attempts").notNull().default(0),
     maxAttempts: integer("max_attempts").notNull(),
@@ -2334,6 +2338,13 @@ export const executionCommands = pgTable(
       t.runId,
       t.createdAt,
     ),
+    // The D6 retirement scan's keyset order. Partial on the un-retired
+    // terminal rows so a growing tombstone table never slows the scan.
+    idxRetirement: index("execution_commands_retirement_idx")
+      .on(t.completedAt, t.id)
+      .where(
+        sql`${t.retiredAt} IS NULL AND ${inLiteralList(t.state, TERMINAL_COMMAND_STATES)}`,
+      ),
     uniqCreateOperation: uniqueIndex("execution_commands_create_operation_uq")
       .on(
         t.runId,

@@ -93,6 +93,24 @@ export type CommandReceipt = {
   inflight: boolean;
 };
 
+// D6 retirement proof. Every field is evidence the host re-derives against its
+// own receipt — never a client assertion that enough time has passed.
+export type CommandRetirementRequest = {
+  expectedRequestSha256: string | null;
+  expectedPhase: "completed" | "rejected";
+  assignmentEpoch: number;
+};
+
+export type CommandRetirementAck = {
+  commandId: string;
+  requestSha256: string | null;
+  phase: "completed" | "rejected";
+  retiredAt: string;
+  // False on a replay of an already-retired command. The ack is otherwise
+  // identical, so a lost ack costs one repeated call and nothing else.
+  compacted: boolean;
+};
+
 export type DeleteSessionOutcome = "terminated" | "gone";
 
 // The `POST /sessions` payload: every path the host needs is derived from the
@@ -212,6 +230,10 @@ export interface ExecutionHostTransport {
     throughSequence: string;
   }): Promise<RuntimeEventAckResult>;
   getCommandReceipt(commandId: string): Promise<CommandReceipt | null>;
+  retireCommand(
+    commandId: string,
+    request: CommandRetirementRequest,
+  ): Promise<CommandRetirementAck>;
   getWorkspace(executionWorkspaceId: string): Promise<WorkspaceRecord | null>;
   getRuntimeObject(objectId: string): Promise<RuntimeObjectMetadata | null>;
   getRuntimeObjectContent(

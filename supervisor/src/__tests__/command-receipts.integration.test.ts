@@ -309,6 +309,7 @@ describe("command receipts", () => {
       ALTER TABLE command_receipts DROP COLUMN accepted_sequence;
       ALTER TABLE command_receipts DROP COLUMN terminal_stream_id;
       ALTER TABLE command_receipts DROP COLUMN terminal_sequence;
+      ALTER TABLE command_receipts DROP COLUMN retired_at;
       PRAGMA user_version = 9; COMMIT;`);
     legacy
       .prepare(
@@ -859,7 +860,7 @@ describe("command receipts", () => {
     expect(host.registry.size()).toBe(0);
   });
 
-  it("R6: receipts older than the TTL are pruned at open (clock injected)", async () => {
+  it("R6: reopening never reclaims a receipt by age — only the retirement handshake does", async () => {
     const root = await tempRoot();
     const stateDir = join(root, "s");
     const state = openHostState({ stateDir });
@@ -901,8 +902,19 @@ describe("command receipts", () => {
 
     const reopened = openHostState({ stateDir, now: () => new Date(now) });
 
-    expect(reopened.getReceipt(old)).toBeNull();
+    // Age carries no reclamation authority (D6): the 8-day-old receipt is
+    // still whole after a restart, and only the explicit handshake compacts it.
+    expect(reopened.getReceipt(old)).not.toBeNull();
     expect(reopened.getReceipt(fresh)).not.toBeNull();
+    expect(
+      reopened.retireReceipt(old, {
+        expectedRequestSha256: null,
+        expectedPhase: "completed",
+        assignmentEpoch: 1,
+      }).outcome,
+    ).toBe("retired");
+    expect(reopened.getReceipt(old)?.body).toEqual({ retired: true });
+    expect(reopened.getReceipt(fresh)?.body).toEqual({});
     reopened.close();
   });
 

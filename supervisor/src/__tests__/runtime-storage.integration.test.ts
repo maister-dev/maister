@@ -111,7 +111,7 @@ describe("AT-02 physical runtime storage", () => {
     }
   }, 120_000);
 
-  it("bounds receipt write/prune WAL work and preserves the prior receipt on oversized replacement", () => {
+  it("bounds receipt write/retire WAL work and preserves the prior receipt on oversized replacement", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "maister-receipt-wal-"));
     const state = openHostState({ stateDir });
     const observer = new DatabaseSync(join(stateDir, "state.sqlite"));
@@ -150,7 +150,13 @@ describe("AT-02 physical runtime storage", () => {
           JSON.stringify(state.getReceipt(receipt.commandId)!.body),
         ),
       ).toBe(MAX_RECEIPT_BODY_BYTES);
-      expect(state.pruneReceipts(new Date("2021-01-01T00:00:00.000Z"))).toBe(1);
+      expect(
+        state.retireReceipt(receipt.commandId, {
+          expectedRequestSha256: "receipt-footprint",
+          expectedPhase: "completed",
+          assignmentEpoch: 1,
+        }).outcome,
+      ).toBe("retired");
       expect(
         statSync(join(stateDir, "state.sqlite-wal")).size - written,
       ).toBeLessThan(SQLITE_WRITE_HEADROOM_BYTES);
@@ -386,6 +392,7 @@ describe("AT-02 physical runtime storage", () => {
         ALTER TABLE command_receipts DROP COLUMN accepted_sequence;
         ALTER TABLE command_receipts DROP COLUMN terminal_stream_id;
         ALTER TABLE command_receipts DROP COLUMN terminal_sequence;
+        ALTER TABLE command_receipts DROP COLUMN retired_at;
           PRAGMA user_version = 7;`);
       } finally {
         db.close();

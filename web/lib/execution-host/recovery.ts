@@ -3,6 +3,7 @@ import type { ExecutionCommand, ExecutionHost } from "@/lib/db/schema";
 import type { CommandReceipt, ExecutionHostTransport } from "./contracts";
 import type { CommandEnvelope, CommandKind } from "./types";
 import type { LegacyRunsSummary } from "./legacy";
+import type { CommandRetirementSummary } from "./retirement";
 
 import { and, eq, inArray, lt } from "drizzle-orm";
 import pino, { type Logger } from "pino";
@@ -16,7 +17,6 @@ import {
   markFenced,
   markSucceeded,
   OPEN_COMMANDS_PAGE_SIZE,
-  pruneTerminalCommands,
   requeueDelivering,
   type OpenCommandsCursor,
 } from "./commands";
@@ -32,11 +32,12 @@ import { getHostById, STALE_ASSIGNMENT_RUN_STATUSES } from "./hosts";
 import { buildEnvelope } from "./ledger";
 import { defaultTransport } from "./default-transport";
 import { reportLegacyActiveRuns } from "./legacy";
-import { reconcileStoredPromptEvidence } from "./prompt-evidence";
 import {
-  DELIVERING_IN_FLIGHT_GRACE_MS,
-  EXECUTION_COMMAND_RETENTION_DAYS,
-} from "./types";
+  reportUnreconciledCommands,
+  retireEligibleCommands,
+} from "./retirement";
+import { reconcileStoredPromptEvidence } from "./prompt-evidence";
+import { DELIVERING_IN_FLIGHT_GRACE_MS } from "./types";
 
 import {
   executionAssignments,
@@ -667,24 +668,11 @@ export async function releaseStaleAssignments(
   return released.length;
 }
 
-export async function pruneExecutionCommands(
-  opts: { db?: Db; now?: () => Date } = {},
-): Promise<number> {
-  const db = opts.db ?? getDb();
-  const now = (opts.now ?? (() => new Date()))();
-
-  return pruneTerminalCommands(
-    db,
-    new Date(
-      now.getTime() - EXECUTION_COMMAND_RETENTION_DAYS * 24 * 60 * 60 * 1000,
-    ),
-  );
-}
-
 export type ExecutionHostSweepSummary = {
   commands: ExecutionCommandRecoverySummary;
   assignmentsReleased: number;
-  commandsPruned: number;
+  commandRetirement: CommandRetirementSummary;
+  unreconciledCommands: number;
   // D9: pre-ADR-166 runs still executing without a placement, reported on
   // every pass until they leave the live statuses.
   legacy: LegacyRunsSummary;
@@ -704,10 +692,22 @@ export async function executionCommandReconcilePass(
     now: opts.now,
     logger: opts.logger,
   });
-  const commandsPruned = await pruneExecutionCommands({
-    db: opts.db,
-    now: opts.now,
+  const commandRetirement = await retireEligibleCommands({
+    ...(opts.db ? { db: opts.db } : {}),
+    ...(opts.now ? { now: opts.now() } : {}),
+    ...(opts.logger ? { logger: opts.logger } : {}),
+  });
+  const unreconciledCommands = await reportUnreconciledCommands({
+    ...(opts.db ? { db: opts.db } : {}),
+    ...(opts.now ? { now: opts.now() } : {}),
+    ...(opts.logger ? { logger: opts.logger } : {}),
   });
 
-  return { commands, assignmentsReleased, commandsPruned, legacy };
+  return {
+    commands,
+    assignmentsReleased,
+    commandRetirement,
+    unreconciledCommands,
+    legacy,
+  };
 }

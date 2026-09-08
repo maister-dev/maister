@@ -490,6 +490,16 @@ const sha256Schema = z
   .string()
   .regex(/^[a-f0-9]{64}$/, "sha256 must be lowercase hex");
 
+// D6 retirement proof. Strict: an unexpected field means the manager and host
+// disagree about the protocol, which must refuse rather than retire.
+export const CommandRetirementProofSchema = z
+  .object({
+    expectedRequestSha256: sha256Schema.nullable(),
+    expectedPhase: z.enum(["completed", "rejected"]),
+    assignmentEpoch: z.number().int().min(0),
+  })
+  .strict();
+
 export const ReserveRuntimeObjectPayloadSchema = z
   .object({
     objectId: runtimeObjectIdSchema,

@@ -1,6 +1,12 @@
 import type { Logger } from "pino";
 import type { ReceiptAdmission } from "./outbox-budget";
-import type { CommandReceiptRow, HostState, ReceiptPhase } from "./host-state";
+import type {
+  CommandReceiptRow,
+  CommandRetirementProof,
+  HostState,
+  ReceiptPhase,
+  ReceiptRetirementOutcome,
+} from "./host-state";
 import type { CommandEnvelope, SupervisorErrorBody } from "./types";
 
 import { createHash } from "node:crypto";
@@ -89,6 +95,22 @@ export class CommandReceipts {
     }
 
     return recovered;
+  }
+
+  // D6: eligibility is re-derived from this host's own receipt. The manager's
+  // proof is compared, never trusted.
+  retire(
+    commandId: string,
+    proof: CommandRetirementProof,
+  ): ReceiptRetirementOutcome {
+    const outcome = this.state.retireReceipt(commandId, proof);
+
+    this.logger.info(
+      { commandId, outcome: outcome.outcome, phase: proof.expectedPhase },
+      "command-retirement",
+    );
+
+    return outcome;
   }
 
   async execute(args: ExecuteCommandArgs): Promise<ExecutedCommand> {

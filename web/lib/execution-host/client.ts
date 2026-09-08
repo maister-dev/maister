@@ -18,6 +18,8 @@ import type {
   AdoptWorkspaceWire,
   CheckpointResult,
   CommandReceipt,
+  CommandRetirementAck,
+  CommandRetirementRequest,
   CreateSessionPayload,
   DeleteSessionOutcome,
   ExecutionHostTransport,
@@ -217,6 +219,13 @@ export interface HostAdminClient {
     opts?: { lastEventId?: number; signal?: AbortSignal },
   ): AsyncGenerator<SupervisorEvent, void, void>;
   getCommandReceipt(commandId: string): Promise<CommandReceipt | null>;
+  // D6: the host's half of retirement. Host-scoped and fenceless by design —
+  // the command's own epoch travels in the request as evidence, and the host
+  // re-derives eligibility from its receipt rather than trusting the caller.
+  retireCommand(
+    commandId: string,
+    request: CommandRetirementRequest,
+  ): Promise<CommandRetirementAck>;
   getWorkspace(
     executionWorkspaceId: ExecutionWorkspaceId | string,
   ): Promise<WorkspaceRecord | null>;
@@ -1043,6 +1052,9 @@ export function createExecutionHosts(
       },
       getCommandReceipt(commandId) {
         return transport.getCommandReceipt(commandId);
+      },
+      retireCommand(commandId, request) {
+        return transport.retireCommand(commandId, request);
       },
       getWorkspace(executionWorkspaceId) {
         return transport.getWorkspace(executionWorkspaceId);

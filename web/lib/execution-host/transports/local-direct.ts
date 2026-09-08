@@ -132,6 +132,9 @@ export function createLocalDirectTransport(): ExecutionHostTransport {
 
       return receipt ? toReceipt(receipt) : null;
     },
+    retireCommand(commandId, request) {
+      return wire.retireCommand(commandId, request);
+    },
     async getWorkspace(executionWorkspaceId) {
       const record = await wire.getWorkspace(executionWorkspaceId);
 

@@ -85,6 +85,7 @@ import {
   isSupervisorError,
   parseGateChatHitlId,
   SendPromptRequestSchema,
+  CommandRetirementProofSchema,
   ReserveRuntimeObjectPayloadSchema,
   RuntimeObjectUploadHeadersSchema,
   SESSION_COMMAND_KINDS,
@@ -525,6 +526,9 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   );
 
   app.addHook("onClose", async () => unsubscribeStorageFailure());
+  // D6 ordering invariant: `turn_lost` repair runs here, before the retirement
+  // route below exists, so no reclamation can precede it. Boot no longer prunes
+  // receipts at all — the only reclamation is that explicit handshake.
   const receipts = new CommandReceipts(hostState, logger);
   const recoveredPromptReceipts = receipts.recoverAcceptedPrompts();
 
@@ -1977,6 +1981,55 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       },
     });
   });
+
+  app.post<CommandIdParams>(
+    "/commands/:commandId/retirement",
+    async (req, reply) => {
+      const proof = CommandRetirementProofSchema.safeParse(req.body);
+
+      if (!proof.success) {
+        reply.status(400).send({
+          code: "PRECONDITION",
+          message: "invalid retirement proof",
+          details: { reason: "invalid_retirement_proof" },
+        });
+
+        return;
+      }
+
+      const outcome = receipts.retire(req.params.commandId, proof.data);
+
+      if (outcome.outcome === "missing") {
+        reply.status(404).send({
+          code: "PRECONDITION",
+          message: "no retained receipt for this command",
+          details: { reason: "retirement_evidence_missing" },
+        });
+
+        return;
+      }
+      if (
+        outcome.outcome !== "retired" &&
+        outcome.outcome !== "already_retired"
+      ) {
+        reply.status(409).send({
+          code: "CONFLICT",
+          message: "command is not eligible for retirement",
+          details: { reason: outcome.outcome },
+        });
+
+        return;
+      }
+
+      reply.status(200).send({
+        commandId: outcome.commandId,
+        requestSha256: outcome.requestSha256,
+        phase: outcome.phase,
+        retiredAt: outcome.retiredAt,
+        compacted: outcome.outcome === "retired",
+      });
+    },
+  );
 
   app.get<CommandIdParams>("/commands/:commandId", async (req, reply) => {
     const receipt = receipts.lookup(req.params.commandId);

@@ -118,10 +118,18 @@ export {
 export type { WorkspaceSpecInput } from "./adoption";
 export {
   executionCommandReconcilePass,
-  pruneExecutionCommands,
   recoverExecutionCommands,
   releaseStaleAssignments,
 } from "./recovery";
+export type {
+  CommandProtectedReason,
+  CommandRetirementSummary,
+} from "./retirement";
+export {
+  classifyCommandRetirement,
+  reportUnreconciledCommands,
+  retireEligibleCommands,
+} from "./retirement";
 export type {
   ExecutionCommandRecoverySummary,
   ExecutionHostSweepSummary,

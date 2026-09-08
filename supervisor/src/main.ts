@@ -14,7 +14,6 @@ import {
   HostStateUnwritableError,
   hostStateDirFromEnv,
   openHostState,
-  startReceiptPruner,
   startRuntimeEventPruner,
 } from "./host-state";
 import { registerRoutes } from "./http-api";
@@ -154,7 +153,6 @@ export async function start(): Promise<void> {
     runtimeRoot: root,
     logger,
   });
-  const stopReceiptPruner = startReceiptPruner(hostState, logger);
   const stopRuntimeEventPruner = startRuntimeEventPruner(hostState, logger);
 
   registerRoutes(
@@ -191,7 +189,6 @@ export async function start(): Promise<void> {
       "shutdown-start",
     );
     stopHeartbeat();
-    stopReceiptPruner();
     stopRuntimeEventPruner();
 
     const deadline = setTimeout(

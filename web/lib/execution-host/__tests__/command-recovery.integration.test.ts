@@ -24,10 +24,10 @@ import {
   listCommandsForRun,
 } from "@/lib/execution-host/commands";
 import {
-  pruneExecutionCommands,
   recoverExecutionCommands,
   releaseStaleAssignments,
 } from "@/lib/execution-host/recovery";
+import { retireEligibleCommands } from "@/lib/execution-host/retirement";
 import { OPEN_COMMANDS_PAGE_SIZE } from "@/lib/execution-host/commands";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
@@ -422,7 +422,7 @@ describe("execution-command recovery (real supervisor)", () => {
     }
   });
 
-  it("V6: prune deletes terminal rows older than 7 days only", async () => {
+  it("V6: age alone retires nothing — an 8-day-old terminal row with no owner disposition stays whole", async () => {
     const runId = await seedRun(testDatabase.db, { projectId: project.id });
     const assignment = await mint(runId);
     const insertTerminal = async (ageDays: number) => {
@@ -448,10 +448,13 @@ describe("execution-command recovery (real supervisor)", () => {
     const old = await insertTerminal(8);
     const recent = await insertTerminal(6);
 
-    const pruned = await pruneExecutionCommands({ db });
+    const summary = await retireEligibleCommands({ db, hosts });
 
-    expect(pruned).toBe(1);
-    expect(await getCommand(db, old)).toBeNull();
+    // The run is still live, so BOTH are protected by state, not by age; the
+    // scan still advanced past them.
+    expect(summary.retired).toBe(0);
+    expect(summary.reasons.run_retained).toBeGreaterThanOrEqual(2);
+    expect(await getCommand(db, old)).not.toBeNull();
     expect(await getCommand(db, recent)).not.toBeNull();
   });
 

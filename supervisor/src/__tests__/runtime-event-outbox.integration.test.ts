@@ -87,14 +87,22 @@ describe("Stage B durable host event outbox", () => {
       state.ackRuntimeEvents(terminal.streamId, terminal.sequence);
       clock = new Date("2026-09-10T12:00:00.000Z");
       expect(state.pruneAcknowledgedRuntimeEvents(clock)).toBe(2);
-      expect(state.pruneReceipts(new Date("2030-01-01T00:00:00Z"))).toBe(0);
+      expect(
+        state.retireReceipt(receipt.commandId, {
+          expectedRequestSha256: "digest",
+          expectedPhase: "completed",
+          assignmentEpoch: 1,
+        }).outcome,
+      ).toBe("retired");
+      // Retirement compacts; it never removes the key, so a stale replay of
+      // this command id is still recognisable after reclamation.
       expect(state.getReceipt(receipt.commandId)?.requestVersion).toBe(2);
     } finally {
       state.close();
     }
   });
 
-  it("never reopens a completed producer wallet after its terminal receipt has been pruned", () => {
+  it("never reopens a completed producer wallet after its terminal receipt has been retired", () => {
     const state = openHostState({ inMemory: true });
     const receipt = createReceipt();
 
@@ -106,12 +114,18 @@ describe("Stage B durable host event outbox", () => {
         completedAt: receipt.receivedAt,
       });
       state.closeProducerWallet(receipt.commandId);
-      state.pruneReceipts(new Date("2030-01-01T00:00:00Z"));
-      expect(state.getReceipt(receipt.commandId)).toBeNull();
-      expect(() => state.reserveProducerReceipt(receipt, 0)).toThrow(
-        /cannot admit another execution/,
-      );
-      expect(state.getReceipt(receipt.commandId)).toBeNull();
+      expect(
+        state.retireReceipt(receipt.commandId, {
+          expectedRequestSha256: "digest",
+          expectedPhase: "completed",
+          assignmentEpoch: 1,
+        }).outcome,
+      ).toBe("retired");
+      expect(state.getReceipt(receipt.commandId)?.phase).toBe("completed");
+      // Retirement compacts the body but keeps the key, so a re-issue under the
+      // same command id is a RECOGNISED replay: no second execution is admitted
+      // and the completed producer wallet is not reopened.
+      state.reserveProducerReceipt(receipt, 0);
       expect(state.runtimeEventOutboxStats().budget.reservedControlRows).toBe(
         0,
       );
@@ -529,6 +543,7 @@ describe("Stage B durable host event outbox", () => {
         ALTER TABLE command_receipts DROP COLUMN accepted_sequence;
         ALTER TABLE command_receipts DROP COLUMN terminal_stream_id;
         ALTER TABLE command_receipts DROP COLUMN terminal_sequence;
+        ALTER TABLE command_receipts DROP COLUMN retired_at;
         ALTER TABLE runtime_event_outbox DROP COLUMN budget_partition; PRAGMA user_version = 6;`);
       db.close();
       const upgraded = openHostState({ stateDir });

@@ -439,6 +439,7 @@ export function createFakeExecutionHost(
   const workspaces = new Map<string, WorkspaceRecord & { path: string }>();
   const receipts = new Map<string, CommandReceipt>();
   const publishedPromptReceipts = new Map<string, CommandReceipt>();
+  const retiredCommands = new Map<string, string>();
   const runtimeObjects = new Map<
     string,
     { metadata: RuntimeObjectMetadata; bytes: Uint8Array | null; runId: string }
@@ -1030,6 +1031,46 @@ export function createFakeExecutionHost(
       return stored
         ? { ...stored, inflight: stored.inflight || inflight.has(commandId) }
         : null;
+    },
+    // D6 retirement, host half. The fake models the checks it can make from its
+    // own receipt store; the terminal-event ACK rule is proven manager-side and
+    // against the real supervisor, and `host-parity` pins what is declared here.
+    async retireCommand(commandId, proof) {
+      await record("retireCommand", null, [commandId, proof]);
+      loseAdminResponse("retireCommand");
+      const stored = receipts.get(commandId);
+
+      if (!stored)
+        throw new MaisterError("PRECONDITION", "fake: unknown command", {
+          details: { reason: "retirement_evidence_missing", httpStatus: 404 },
+        });
+      if (stored.phase === "accepted")
+        throw new MaisterError("CONFLICT", "fake: command is not terminal", {
+          details: { reason: "not_terminal", httpStatus: 409 },
+        });
+      if (
+        stored.phase !== proof.expectedPhase ||
+        stored.assignmentEpoch !== proof.assignmentEpoch ||
+        (proof.expectedRequestSha256 !== null &&
+          stored.evidenceV2 !== undefined &&
+          proof.expectedRequestSha256 !== stored.evidenceV2.requestSha256)
+      )
+        throw new MaisterError("CONFLICT", "fake: retirement identity", {
+          details: { reason: "identity_mismatch", httpStatus: 409 },
+        });
+
+      const existing = retiredCommands.get(commandId);
+      const retiredAt = existing ?? new Date().toISOString();
+
+      if (!existing) retiredCommands.set(commandId, retiredAt);
+
+      return {
+        commandId,
+        requestSha256: proof.expectedRequestSha256,
+        phase: stored.phase,
+        retiredAt,
+        compacted: !existing,
+      };
     },
     async getWorkspace(id) {
       await record("getWorkspace", null, [id]);
@@ -2663,6 +2704,7 @@ export function memoryAdminClient(fake: FakeExecutionHost): HostAdminClient {
     streamSession: (sessionId, opts) =>
       fake.transport.streamSession(sessionId, opts),
     getCommandReceipt: (id) => fake.transport.getCommandReceipt(id),
+    retireCommand: (id, proof) => fake.transport.retireCommand(id, proof),
     getWorkspace: (id) => fake.transport.getWorkspace(id),
   };
 }
