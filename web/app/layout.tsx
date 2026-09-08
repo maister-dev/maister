@@ -40,8 +40,7 @@ export default async function RootLayout({
       suppressHydrationWarning
       className={clsx(fontSans.variable, fontMono.variable, theme)}
       lang={locale}
-      // @ts-ignore
-      style={{ "color-scheme": theme }}
+      style={{ colorScheme: theme }}
     >
       <head />
       <body className="min-h-screen bg-paper-warm font-sans text-body antialiased">
