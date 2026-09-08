@@ -66,12 +66,12 @@ Detailed code structure, conventions, HeroUI patterns: **`web/CLAUDE.md`**.
 - **UI**: HeroUI v3 (Tailwind4-based). No other component lib.
 - **i18n**: EN + RU from day one (REQUIRED per `web/CLAUDE.md`).
 - **Agent runtime**: ACP (Zed-spec, vendor-neutral
-  `@agentclientprotocol/sdk@0.22.1`) hosted by `supervisor/`.
+  `@agentclientprotocol/sdk@1.4.0`) hosted by `supervisor/`.
   Per-agent adapter binaries: `claude-agent-acp` (from
-  `@agentclientprotocol/claude-agent-acp@0.37.0`, wraps
-  `@anthropic-ai/claude-agent-sdk@0.3.146`) and `codex-acp` (from
-  `@agentclientprotocol/codex-acp@0.0.44`, bundles
-  `@openai/codex@^0.128.0`). Supervisor spawns one adapter process per
+  `@agentclientprotocol/claude-agent-acp@0.75.1`, wraps
+  `@anthropic-ai/claude-agent-sdk@0.3.257`) and `codex-acp` (from
+  `@agentclientprotocol/codex-acp@1.10.0`, bundles
+  `@openai/codex@^0.153.3`). Supervisor spawns one adapter process per
   active session via Node `child_process.spawn`. Permission HITL is
   resolved live. Checkpoint/resume is implemented: a fresh adapter process
   is spawned and the prior conversation is restored via the ACP
@@ -642,13 +642,16 @@ executors.
 
 ## ACP Spike Findings (Current Baseline)
 
-1. ✅ **ACP packages pinned**: `@agentclientprotocol/claude-agent-acp@0.37.0`
-   - `@agentclientprotocol/codex-acp@0.0.44` + `@agentclientprotocol/sdk@0.22.1`
-     (all Apache-2.0). Canonical npm org `@agentclientprotocol`,
+1. ✅ **ACP packages pinned**: `@agentclientprotocol/claude-agent-acp@0.75.1`
+   - `@agentclientprotocol/codex-acp@1.10.0` + `@agentclientprotocol/sdk@1.4.0`
+     (all Apache-2.0; bumped 2026-09-09 from 0.37.0 / 0.0.44 / 0.22.1 — SDK
+     1.x drops `unstable_setSessionModel` and the `models` response field in
+     favour of `configOptions` + `session/set_config_option`, see the ADR-076
+     amendment). Canonical npm org `@agentclientprotocol`,
      GitHub: `github.com/agentclientprotocol`. The `@zed-industries/*` name
      was deprecated — moved to vendor-neutral org. Both adapters ship a CLI
      binary (`claude-agent-acp`, `codex-acp`). Underlying SDK is
-     `@anthropic-ai/claude-agent-sdk@0.3.146` (NOT the `@anthropic-ai/claude-code`
+     `@anthropic-ai/claude-agent-sdk@0.3.257` (NOT the `@anthropic-ai/claude-code`
      CLI package).
 2. ✅ **Cross-process resume**. The M0 spike verified the raw CLI
    (`claude --session-id <uuid>` + `claude --resume <uuid>` returns prior
@@ -664,7 +667,7 @@ executors.
    creates an EMPTY session and orphans the conversation — the original bug.
    See `supervisor/src/acp-client.ts`.
 3. ✅ **Codex** has no native ACP, but `codex-acp` adapter (bundles its own
-   `@openai/codex@^0.128.0`) exposes the same wire protocol as
+   `@openai/codex@^0.153.3`) exposes the same wire protocol as
    `claude-agent-acp`. Supervisor `spawn.ts` dispatches on
    `executor.agent` to pick the right binary.
 4. ✅ **z.ai GLM works through environment configuration.** Set

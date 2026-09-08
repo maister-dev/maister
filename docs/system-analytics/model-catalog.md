@@ -51,9 +51,12 @@ resolve(draft, ctx): Promise<{ models: ModelEntry[]; status: SourceStatus }> }`.
 displayName? }] }]; resolvedAt; ttlSeconds }`. (Implemented)
 - **Application channel** — how the configured model is pinned: **claude** via the
   ADR-043 `settings.local.json { model, availableModels }` materialization;
-  **codex** via ACP `unstable_setSessionModel`. ADR-084 extends this to
-  adapter metadata: Gemini/OpenCode/MiMo may use `unstable_setSessionModel` only after
-  initialize capability smoke proves support; otherwise they emit advisory-only
+  **codex** via the ACP 1.x `session/set_config_option` call on the adapter's
+  "model" select (`configOptions`, category `model`; the pre-1.0
+  `unstable_setSessionModel` is gone from SDK 1.x — ADR-076 amendment,
+  2026-09-09). ADR-084 extends this to adapter metadata: Gemini/OpenCode/MiMo
+  may use the same call only after initialize capability smoke proves a "model"
+  option is exposed; otherwise they emit advisory-only
   status or a typed skipped reason. (Implemented for Claude/Codex; Designed for
   Gemini/OpenCode/MiMo)
 - **Model advisory** — a supervisor-synthesized `session.update` payload
@@ -197,17 +200,17 @@ sequenceDiagram
     Web->>Sup: upload profile and instructions, then POST opaque IDs
     Sup->>Sup: validate kinds and resolve host-private paths
     Sup->>Child: spawn, adapter reads settings.json model at startup
-    Child-->>Sup: models {currentModelId} (session/new or session/resume)
-    opt currentModelId reported and != runner.model
+    Child-->>Sup: configOptions[model] {currentValue} (+ legacy models) (session/new or session/resume)
+    opt currentValue reported and != runner.model
         Sup-->>Web: session.update {update.sessionUpdate = model_advisory}
     end
 
-    Note over Sup,Child: codex — setSessionModel channel
+    Note over Sup,Child: codex — set_config_option channel
     Sup->>Child: session/new or session/resume
-    Child-->>Sup: models {currentModelId?}
-    alt runner.model != currentModelId (or none reported)
-        Sup->>Child: unstable_setSessionModel(runner.model)
-        opt set call fails
+    Child-->>Sup: configOptions[model] {currentValue?}
+    alt runner.model != currentValue (or none reported)
+        Sup->>Child: session/set_config_option(model, runner.model)
+        opt no model option or set call fails
             Sup-->>Web: session.update {update.sessionUpdate = model_advisory}
         end
     else equal
@@ -272,11 +275,13 @@ NAMES)` — names, NEVER secret values; two drafts differing
   carry `{ model }` (+ an `availableModels` allowlist for
   `anthropic_compatible`) on EVERY claude session, not only when permission
   entries exist.
-- For a codex session the supervisor MUST call `unstable_setSessionModel(runner.model)`
-  after `session/new` AND after `session/resume` iff `runner.model !==
-currentModelId` (an absent `currentModelId` counts as different), and MUST NOT
-  call it when they are equal.
-- A claude-reported model mismatch or a failed codex `setSessionModel` call MUST
+- For a codex session the supervisor MUST call `session/set_config_option` on the
+  adapter's "model" select with `runner.model` after `session/new` AND after
+  `session/resume` iff `runner.model !==` that option's `currentValue` (an absent
+  value counts as different), MUST NOT call it when they are equal, and MUST
+  degrade to the advisory when the adapter exposes no "model" option. The
+  pre-1.0 `models` response field is read only as a fallback observation.
+- A claude-reported model mismatch or a failed codex `set_config_option` call MUST
   emit an advisory `session.update` (`sessionUpdate = "model_advisory"`) and MUST
   NEVER change `runs.status` (never `Failed`); `cost.jsonl` stays the
   billed-model ground truth.
@@ -287,7 +292,7 @@ currentModelId` (an absent `currentModelId` counts as different), and MUST NOT
   no model can be listed; the UI MUST render skipped/error reasons and MUST NOT
   show Claude/Codex fallback models for a different adapter. (Designed, ADR-084)
 - Gemini/OpenCode/MiMo model application MUST be driven by adapter metadata. A missing
-  or failing `unstable_setSessionModel` path emits `model_advisory` or a typed
+  "model" option or failing `set_config_option` path emits `model_advisory` or a typed
   skipped status; it MUST NOT silently mutate `runner.model`, change run status,
   or retry through another adapter's mechanism. (Designed, ADR-084)
 
