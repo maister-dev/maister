@@ -6,6 +6,11 @@ import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
+import {
+  admitSyncPrompt,
+  type SyncPromptOwner,
+  waitForSyncPrompt,
+} from "@/lib/runs/sync-prompt-owner";
 import { MaisterError } from "@/lib/errors";
 import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
 import {
@@ -228,6 +233,9 @@ export async function runResolverSession(args: {
   executionHosts?: ExecutionHosts;
   // ADR-166: the `sync_resolver` generation the claim minted.
   assignmentId?: string | null;
+  // S2.10: the sync claim this turn belongs to. The owner makes the ACP
+  // boundary durable so a restart continues the sync instead of re-prompting.
+  owner: SyncPromptOwner;
 }): Promise<{ sessionId: string; stopReason: PromptStopReason }> {
   const hosts = args.executionHosts ?? createExecutionHosts({ db: args.db });
   // Bound to the `sync_resolver` generation the claim minted.
@@ -261,15 +269,20 @@ export async function runResolverSession(args: {
     admin,
   });
 
-  let promptResult: PromptResult;
+  // Null when the owner already applied the successful advance: the attempt has
+  // left `agent_running` and this turn ended cleanly.
+  let promptResult: PromptResult | null;
 
   try {
-    const promptHandle = await client.prompt(sessionId, {
-      stepId: SYNC_STEP_ID,
-      prompt: args.prompt,
-    });
+    const promptHandle = await client.prompt(
+      sessionId,
+      { stepId: SYNC_STEP_ID, prompt: args.prompt },
+      {
+        admitOwner: (tx) => admitSyncPrompt(tx, client, sessionId, args.owner),
+      },
+    );
 
-    promptResult = await client.waitForPrompt(promptHandle);
+    promptResult = await waitForSyncPrompt(args.db, client, promptHandle);
   } catch (err) {
     consumer.abort.abort();
     await consumer.done.catch(() => undefined);
@@ -295,9 +308,13 @@ export async function runResolverSession(args: {
   }
 
   log.info(
-    { runId: args.runId, sessionId, stopReason: promptResult.stopReason },
+    {
+      runId: args.runId,
+      sessionId,
+      stopReason: promptResult?.stopReason ?? null,
+    },
     "sync resolver session ended",
   );
 
-  return { sessionId, stopReason: promptResult.stopReason };
+  return { sessionId, stopReason: promptResult?.stopReason ?? "end_turn" };
 }

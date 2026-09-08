@@ -1463,6 +1463,11 @@ async function driveSyncResolver(
       runnerTier,
       executionHosts: args.executionHosts,
       assignmentId,
+      owner: {
+        syncAttemptId: claim.attemptId,
+        operationAttemptId: claim.lifecycleAttemptId,
+        promptOrdinal: 0,
+      },
     });
   } catch (err) {
     // ADR-166 E-EH-11: a fenced resolver belongs to a superseded generation —

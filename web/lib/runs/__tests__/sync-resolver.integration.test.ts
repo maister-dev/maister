@@ -112,6 +112,7 @@ beforeAll(async () => {
   fake = createFakeExecutionHost();
   Object.assign(fake.transport, {
     createSession: async (env: {
+      command?: { id: string };
       payload: Record<string, unknown>;
       fence: {
         runId: string;
@@ -136,6 +137,22 @@ beforeAll(async () => {
         createdByCommandId: "supervisor-spy",
         status: "live",
       });
+      // This override replaces the fake's own createSession, so it owes the
+      // event plane the same `session.created` that method publishes. Without
+      // it no incarnation is projected and an OWNED resolver prompt cannot be
+      // admitted.
+      await fake.publishCanonical(
+        env as unknown as CommandEnvelope<unknown>,
+        result.sessionId,
+        {
+          type: "session.created",
+          createdByCommandId: env.command?.id ?? "supervisor-spy",
+          sessionId: result.sessionId,
+          monotonicId: fake.monotonic(),
+          sessionName: String(env.payload.sessionName ?? "sync-1"),
+          acpSessionId: result.acpSessionId,
+        },
+      );
 
       return result;
     },

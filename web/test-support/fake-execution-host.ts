@@ -416,6 +416,16 @@ const canonicalStreamStates = new WeakMap<
   CanonicalStreamState
 >();
 
+// A suite may re-register the same fake host while a prompt is IN FLIGHT (for
+// example to obtain a bound client for a HITL response mid-turn). The accepted
+// position of that prompt is per host, not per registration: keeping it in the
+// helper's closure silently dropped it, and the turn's terminal event could
+// then never be published because its accepted event appeared to be missing.
+const acceptedPromptPositions = new WeakMap<
+  FakeExecutionHost,
+  Map<string, { sequence: string; receivedAt: string }>
+>();
+
 export function createFakeExecutionHost(
   opts: { hostKey?: string; bootId?: string } = {},
 ): FakeExecutionHost {
@@ -2117,10 +2127,15 @@ export async function fakeExecutionHosts(
     ]),
   );
 
-  const acceptedPrompts = new Map<
-    string,
-    { sequence: string; receivedAt: string }
-  >();
+  let acceptedPrompts = acceptedPromptPositions.get(fake);
+
+  if (!acceptedPrompts) {
+    acceptedPrompts = new Map<
+      string,
+      { sequence: string; receivedAt: string }
+    >();
+    acceptedPromptPositions.set(fake, acceptedPrompts);
+  }
 
   fake.setCanonicalEventSink(
     async ({ envelope, sessionId, event, eventId }) => {
