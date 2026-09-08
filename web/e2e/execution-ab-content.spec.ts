@@ -375,6 +375,30 @@ test("C4: anonymous, non-member and foreign-run access to the object is refused"
 
   expect(outsiderRead.status()).toBe(403);
   expect(outsiderRead.headers()["content-disposition"]).toBeUndefined();
+
+  // The payload route over the same object carries the same grant.
+  const artifactId = `at12-outsider-${randomUUID()}`;
+
+  await withE2EDb((pool) =>
+    pool.query(
+      `INSERT INTO artifact_instances (id, run_id, kind, producer, locator, validity)
+       VALUES ($1, $2, 'generic_file', 'runner', $3::jsonb, 'current')`,
+      [
+        artifactId,
+        runId,
+        JSON.stringify({
+          kind: "execution-object",
+          objectId: objectIds.get("evil.html"),
+        }),
+      ],
+    ),
+  );
+  const outsiderPayload = await outsider.get(
+    `/api/runs/${runId}/artifacts/${artifactId}/payload`,
+  );
+
+  expect(outsiderPayload.status()).toBe(403);
+  expect(outsiderPayload.headers()["content-disposition"]).toBeUndefined();
   await outsider.dispose();
 
   // The same object id under another run the admin CAN read is not found:

@@ -6053,11 +6053,14 @@ paths:
       tags: [runs]
       summary: (M12) Fetch the raw payload for one artifact
       description: |
-        Requires project membership at `viewer` or above. Resolves the
-        artifact's locator. Legacy file locators are path-confined to the run
-        directory; `execution-object` locators resolve through the
-        manager-owned object catalogue and typed host contract, never a web
-        runtime path. Diff / log / git / inline output is served as
+        Requires project membership at `viewer` or above; an `execution-object`
+        locator additionally requires `readRepoFiles` (`member`), the same
+        grant as the direct runtime-object content route, because agent
+        session output can quote any file the agent read (M22 ADR-053: a viewer
+        cannot browse source). Resolves the artifact's locator. Legacy file
+        locators are path-confined to the run directory; `execution-object`
+        locators resolve through the manager-owned object catalogue and typed
+        host contract, never a web runtime path. Diff / log / git / inline output is served as
         `text/plain; charset=utf-8`; gate-verdict / hitl-response payloads as
         `application/json; charset=utf-8`; `execution-object` bytes as
         `application/octet-stream`. (Implemented — AB-12) Every payload is a

@@ -161,6 +161,11 @@ export async function GET(
     const locator = artifact.locator as ArtifactLocator;
 
     if (locator.kind === "execution-object") {
+      // An execution object is agent session output that can quote any file
+      // the agent read, so it carries the repository-content grant the direct
+      // content route requires (M22 ADR-053: a viewer cannot browse source).
+      // Diff/log/git/inline artifacts stay board evidence at `readBoard`.
+      await requireProjectAction(detail.projectId, "readRepoFiles");
       const { object, content } = await openRuntimeObjectContent({
         db: db as unknown as ExecutionHostDb,
         runId,

@@ -398,6 +398,39 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
     });
   });
 
+  it("execution-object locator requires the repository-content grant a viewer lacks", async () => {
+    // AB-12 follow-up: agent output can quote any file the agent read, so the
+    // payload route carries the same `readRepoFiles` grant as the direct
+    // content route. Board-level (`readBoard`) access alone is not enough.
+    vi.mocked(requireProjectAction).mockImplementation(
+      async (_projectId, action) => {
+        if (action === "readRepoFiles")
+          throw new MaisterError(
+            "UNAUTHORIZED",
+            "repository content permission is required",
+          );
+
+        return { role: "viewer" } as never;
+      },
+    );
+    seedArtifact({
+      id: "art-object-viewer",
+      locator: {
+        kind: "execution-object",
+        objectId: "d0b23d15-a3de-49e8-a73f-5e9e96c847cb",
+      },
+    });
+
+    const res = await invokeGet("art-object-viewer");
+
+    expect(res.status).toBe(403);
+    expect(openRuntimeObjectContent).not.toHaveBeenCalled();
+    expect(requireProjectAction).toHaveBeenCalledWith(
+      expect.any(String),
+      "readRepoFiles",
+    );
+  });
+
   it("execution-object locator rejects an invalid range without exposing host details", async () => {
     const objectId = "d0b23d15-a3de-49e8-a73f-5e9e96c847cb";
 
