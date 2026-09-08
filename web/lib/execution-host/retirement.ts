@@ -42,6 +42,7 @@ const RETAINED_RUN_STATUSES = [
 ] as const;
 
 export type CommandProtectedReason =
+  | "pre_activation_unowned"
   | "owner_unapplied"
   | "terminal_evidence_missing"
   | "terminal_event_unacked"
@@ -164,7 +165,10 @@ export function classifyCommandRetirement(
     return "replay_grace";
   }
   if (row.kind === "session.prompt") {
-    if (!row.ownerKind) return "owner_unapplied";
+    // S2.12 preserved these unreconstructed: no owner ever existed, so there is
+    // no obligation to discharge and no proof to retire against. They are a
+    // bounded historical set that stops growing at activation.
+    if (!row.ownerKind) return "pre_activation_unowned";
     if (
       row.applicationState !== "applied" &&
       row.applicationState !== "superseded"

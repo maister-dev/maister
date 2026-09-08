@@ -136,42 +136,62 @@ async function seedTerminalCommand(opts: {
   terminalEventId?: string | null;
   state?: "succeeded" | "failed" | "fenced";
 }) {
-  const row = await insertCommand(db, {
-    id: randomUUID(),
-    runId: opts.runId,
-    assignmentId: opts.assignmentId,
-    hostId: boundHostId ?? hostId,
-    assignmentEpoch: opts.assignmentEpoch,
-    kind: opts.kind ?? "session.cancel",
-    payload: {},
-    maxAttempts: 3,
-  });
+  // S2.12: a prompt row cannot be minted on the unowned path, so a prompt case
+  // is written with its owner identity from the start; the ledger's shape
+  // checks are real invariants and seeding around them would prove nothing.
+  const commandId = randomUUID();
+  const prompt = (opts.kind ?? "session.cancel") === "session.prompt";
+  const row = prompt
+    ? { id: commandId }
+    : await insertCommand(db, {
+        id: commandId,
+        runId: opts.runId,
+        assignmentId: opts.assignmentId,
+        hostId: boundHostId ?? hostId,
+        assignmentEpoch: opts.assignmentEpoch,
+        kind: "session.cancel",
+        payload: {},
+        maxAttempts: 3,
+      });
 
-  // The ledger's shape checks are real invariants, so an owned row is seeded
-  // with the whole owner identity rather than only the fields under test.
-  const owned = opts.ownerKind
-    ? {
-        ownerKind: opts.ownerKind,
-        ownerRef: {
-          variant: "flow_node",
-          runId: opts.runId,
-          assignmentId: opts.assignmentId,
-          assignmentEpoch: opts.assignmentEpoch,
-          nodeAttemptId: randomUUID(),
-          promptOrdinal: 0,
-        },
-        logicalOperationKey: `node:${randomUUID()}:0`,
-        requestSchema: "maister.command.request.v1",
-        requestSha256: "b".repeat(64),
-      }
-    : {};
+  if (prompt)
+    await db.insert(schema.executionCommands).values({
+      id: commandId,
+      runId: opts.runId,
+      executionAssignmentId: opts.assignmentId,
+      executionHostId: boundHostId ?? hostId,
+      assignmentEpoch: opts.assignmentEpoch,
+      kind: "session.prompt",
+      payload: {},
+      maxAttempts: 3,
+      ...(opts.ownerKind
+        ? {
+            ownerKind: opts.ownerKind,
+            ownerRef: {
+              version: 1,
+              variant: "node",
+              nodeAttemptId: randomUUID(),
+              promptOrdinal: 0,
+              runId: opts.runId,
+              runSessionId: randomUUID(),
+              incarnationId: randomUUID(),
+              assignmentId: opts.assignmentId,
+              assignmentEpoch: opts.assignmentEpoch,
+            },
+            logicalOperationKey: `flow_node_attempt:node:${commandId}:0`,
+            requestSchema: "maister.command.request.v1",
+            requestSha256: "b".repeat(64),
+          }
+        : {}),
+    });
 
+  // The owner identity above is already durable; the update below only moves
+  // the row into the terminal/aged state each case is actually about.
   await db
     .update(schema.executionCommands)
     .set({
       state: opts.state ?? "succeeded",
       completedAt: new Date(Date.now() - (opts.ageDays ?? 30) * DAY_MS),
-      ...owned,
       ...(opts.applicationState
         ? {
             applicationState: opts.applicationState,

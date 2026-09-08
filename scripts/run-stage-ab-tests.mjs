@@ -26,7 +26,13 @@ export const laneSuites = {
     "lib/flows/graph/__tests__/gate-permission-result.integration.test.ts",
     "lib/flows/graph/__tests__/permission-result-failure.integration.test.ts",
     "lib/flows/graph/__tests__/driver-claim.integration.test.ts",
-    ...["commands", "immutable-commands", "command-recovery", "deliverer", "lifecycle-regression", "bounded-output", "runtime-object-retention"]
+    "lib/scratch-runs/__tests__/prompt-owners.integration.test.ts",
+    "lib/scratch-runs/__tests__/local-package-assistant.integration.test.ts",
+    "lib/services/__tests__/gate-chat.integration.test.ts",
+    "lib/runs/__tests__/sync-resolver.integration.test.ts",
+    "lib/runs/__tests__/sync-recovery.integration.test.ts",
+    "lib/runs/__tests__/resume-recovery.integration.test.ts",
+    ...["commands", "immutable-commands", "command-recovery", "deliverer", "lifecycle-regression", "bounded-output", "runtime-object-retention", "command-retirement", "prompt-owner-activation"]
       .map((name) => `lib/execution-host/__tests__/${name}.integration.test.ts`),
     ...["ingest", "event-claim-lock", "projection-worker"]
       .map((name) => `lib/execution-host/events/__tests__/${name}.integration.test.ts`),

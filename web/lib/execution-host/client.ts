@@ -143,12 +143,15 @@ export interface BoundClient {
       sessionFallback: boolean;
     }
   >;
+  // ADR-167 S2.12: every prompt carries a durable owner. There is no unowned
+  // branch left — a continuation that cannot name its owner must refuse rather
+  // than start a turn nothing can finish after a restart.
   prompt(
     sessionId: HostSessionId | string,
     input: SendPromptInput,
-    opts?: {
+    opts: {
+      admitOwner: (tx: Db) => Promise<PromptOwnerAdmission>;
       signal?: AbortSignal;
-      admitOwner?: (tx: Db) => Promise<PromptOwnerAdmission>;
     },
   ): Promise<PromptHandle>;
   waitForPrompt(
@@ -296,9 +299,11 @@ export function createExecutionHosts(
       resultSummary?: (result: TResult) => Record<string, unknown> | null;
     };
 
+    // S2.12: `session.prompt` is deliberately not issuable here — a prompt is
+    // minted only by `issueOwnedPrompt`, which requires its owner.
     function issue<TPayload>(
       issueDb: Db,
-      kind: CommandKind,
+      kind: Exclude<CommandKind, "session.prompt">,
       payload: TPayload,
       targetSessionId: string | null,
     ) {
@@ -335,7 +340,7 @@ export function createExecutionHosts(
     }
 
     async function immediate<TPayload, TResult>(
-      kind: CommandKind,
+      kind: Exclude<CommandKind, "session.prompt">,
       payload: TPayload,
       send: (envelope: CommandEnvelope<TPayload>) => Promise<TResult>,
       opts: ImmediateOptions<TResult> = {},
@@ -481,16 +486,10 @@ export function createExecutionHosts(
           targetSessionId: sessionId,
           logger,
         };
-        const { row, envelope } = opts?.admitOwner
-          ? await issueOwnedPrompt(db, {
-              ...commandInput,
-              admitOwner: opts.admitOwner,
-            })
-          : await issueCommand(db, {
-              ...commandInput,
-              kind: "session.prompt",
-              driverless: policy.driverless,
-            });
+        const { row, envelope } = await issueOwnedPrompt(db, {
+          ...commandInput,
+          admitOwner: opts.admitOwner,
+        });
 
         return startAsyncPrompt({
           db,

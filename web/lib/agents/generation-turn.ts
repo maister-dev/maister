@@ -31,6 +31,18 @@ const placementReasons: Readonly<
   consensus_draft: ["launch", "legacy_backfill"],
 };
 
+/** The generation a placement admits when no claimed turn names one: a resume
+ * re-entry mints its assignment before the prompt, so the reason it minted for
+ * IS the turn's variant. An unmapped reason has no owner and must refuse. */
+export function resumeVariantFor(
+  placementReason: ExecutionAssignment["placementReason"],
+): Extract<GenerationVariant, "resume" | "rework"> | null {
+  if (placementReasons.rework.includes(placementReason)) return "rework";
+  if (placementReasons.resume.includes(placementReason)) return "resume";
+
+  return null;
+}
+
 /** Retain generation-owned input in the caller's placement/admission transaction. */
 export async function admitAgentGenerationTurn(
   tx: Db,

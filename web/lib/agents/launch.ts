@@ -23,7 +23,7 @@ import {
 import { applyPersistentAgentPark, afterPersistentAgentPark } from "./park";
 import { acceptAgentMessage } from "./turns";
 import { claimAgentMessage } from "./turn-claim";
-import { admitAgentGenerationTurn } from "./generation-turn";
+import { admitAgentGenerationTurn, resumeVariantFor } from "./generation-turn";
 import { settleAgentCreateFailure } from "./create-failure";
 import {
   assertAgentResumeTurn,
@@ -3276,14 +3276,31 @@ export async function startAgentSession(
     // ADR-166: the create is handle-form — the workspace (and its context
     // mounts, snapshotted on the run above) is adopted by the bound client.
     const execution = await bindAgentExecution(hosts, runId, assignmentId);
-    const ownedVariant =
-      overridePrompt === undefined && !run.acpSessionId
-        ? draftPayload
-          ? ("consensus_draft" as const)
-          : ("initial" as const)
-        : null;
 
-    if (ownedVariant)
+    // S2.12: a resume that reaches here resolved NO turn above, so its
+    // generation is named by the placement its claim minted. A turn resolved
+    // earlier keeps its identity — minting a second one here would strand the
+    // original queued and consume another pool slot.
+    if (!agentTurn) {
+      const ownedVariant =
+        overridePrompt === undefined && !run.acpSessionId
+          ? draftPayload
+            ? ("consensus_draft" as const)
+            : ("initial" as const)
+          : resumeVariantFor(execution.client.assignment.placementReason);
+
+      if (!ownedVariant)
+        throw new MaisterError(
+          "CONFLICT",
+          "agent prompt requires an owned generation",
+          {
+            details: {
+              runId,
+              reason: "unowned_agent_generation",
+              placementReason: execution.client.assignment.placementReason,
+            },
+          },
+        );
       agentTurn = await _db.transaction((tx: ExecutionDb) =>
         admitAgentGenerationTurn(tx, {
           runId,
@@ -3292,6 +3309,7 @@ export async function startAgentSession(
           prompt,
         }),
       );
+    }
     const createPayload = {
       stepId: "agent",
       executor: runnerExecutorInput(snapshot),
@@ -3358,13 +3376,6 @@ export async function startAgentSession(
         );
       });
     });
-
-    const promptHandle = await execution.client.prompt(session.sessionId, {
-      stepId: "agent",
-      prompt,
-    });
-
-    await execution.client.waitForPrompt(promptHandle);
   } catch (err) {
     if (isFencedError(err)) {
       // ADR-166: a newer driver generation owns the run — yield without

@@ -90,6 +90,7 @@ import {
   startRealSupervisor,
   useRealSupervisorUrl,
 } from "@/test-support/real-supervisor";
+import { seedNodePromptOwner } from "@/test-support/prompt-owner-fixture";
 
 let database: StartedPostgresTestDb;
 let supervisor: RealSupervisor;
@@ -1666,6 +1667,14 @@ describe("AT-01 bounded output on the production supervisor", () => {
     const handle = await producer.client.prompt(
       producer.session.hostSessionId,
       { stepId: "output", prompt: 'fixture-output:{"bytes":65537}' },
+      {
+        admitOwner: await seedNodePromptOwner(
+          database.db as unknown as Db,
+          producer.client,
+          producer.session.hostSessionId,
+          { stepId: "output" },
+        ),
+      },
     );
 
     await producer.client.waitForPrompt(handle, {
@@ -1722,6 +1731,14 @@ describe("AT-01 bounded output on the production supervisor", () => {
           stepId: "output",
           prompt: `fixture-output:${JSON.stringify({ bytes, tool: true })}`,
         },
+        {
+          admitOwner: await seedNodePromptOwner(
+            database.db as unknown as Db,
+            producer.client,
+            producer.session.hostSessionId,
+            { stepId: "output" },
+          ),
+        },
       );
 
       await expect(
@@ -1750,6 +1767,14 @@ describe("AT-01 bounded output on the production supervisor", () => {
     const handle = await producer.client.prompt(
       producer.session.hostSessionId,
       { stepId: "output", prompt: 'fixture-output:{"frameBytes":1048576}' },
+      {
+        admitOwner: await seedNodePromptOwner(
+          database.db as unknown as Db,
+          producer.client,
+          producer.session.hostSessionId,
+          { stepId: "output" },
+        ),
+      },
     );
 
     await expect(
@@ -1781,6 +1806,14 @@ describe("AT-01 bounded output on the production supervisor", () => {
     const handle = await producer.client.prompt(
       producer.session.hostSessionId,
       { stepId: "output", prompt: 'fixture-output:{"frameBytes":1048577}' },
+      {
+        admitOwner: await seedNodePromptOwner(
+          database.db as unknown as Db,
+          producer.client,
+          producer.session.hostSessionId,
+          { stepId: "output" },
+        ),
+      },
     );
 
     await expect(
@@ -1794,10 +1827,18 @@ describe("AT-01 bounded output on the production supervisor", () => {
         outputFailure: "producer_frame_limit",
       },
     });
-    const other = await sibling.client.prompt(sibling.session.hostSessionId, {
-      stepId: "output",
-      prompt: "sibling",
-    });
+    const other = await sibling.client.prompt(
+      sibling.session.hostSessionId,
+      { stepId: "output", prompt: "sibling" },
+      {
+        admitOwner: await seedNodePromptOwner(
+          database.db as unknown as Db,
+          sibling.client,
+          sibling.session.hostSessionId,
+          { stepId: "output" },
+        ),
+      },
+    );
 
     await expect(
       sibling.client.waitForPrompt(other, {
@@ -1815,6 +1856,14 @@ describe("AT-01 bounded output on the production supervisor", () => {
       {
         stepId: "output",
         prompt: 'fixture-output:{"bytes":65537,"multibyte":true}',
+      },
+      {
+        admitOwner: await seedNodePromptOwner(
+          database.db as unknown as Db,
+          producer.client,
+          producer.session.hostSessionId,
+          { stepId: "output" },
+        ),
       },
     );
 
@@ -1869,10 +1918,18 @@ describe("AT-01 bounded output on the production supervisor", () => {
         { timeout: 10_000 },
       )
       .toBe("é".repeat(32768) + "x");
-    const other = await sibling.client.prompt(sibling.session.hostSessionId, {
-      stepId: "output",
-      prompt: "sibling",
-    });
+    const other = await sibling.client.prompt(
+      sibling.session.hostSessionId,
+      { stepId: "output", prompt: "sibling" },
+      {
+        admitOwner: await seedNodePromptOwner(
+          database.db as unknown as Db,
+          sibling.client,
+          sibling.session.hostSessionId,
+          { stepId: "output" },
+        ),
+      },
+    );
 
     await expect(sibling.client.waitForPrompt(other)).resolves.toMatchObject({
       stopReason: "end_turn",

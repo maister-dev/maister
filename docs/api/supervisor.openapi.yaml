@@ -531,9 +531,10 @@ paths:
         receipt is persisted in Postgres and must agree with its exact canonical
         event before settling the command. Nested errors remain intact. Verified
         agreement can be read without another host request. Legacy host receipts
-        with no target identity cannot replay against a new session. Receipts
-        are still pruned on a 7-day TTL at boot and hourly; state-aware retirement
-        and receipt v2 remain designed.
+        with no target identity cannot replay against a new session. Receipts are
+        never reclaimed by age: the only reclamation is the state-aware
+        retirement handshake below, which compacts a receipt to a tombstone and
+        keeps its key.
       operationId: getCommandReceipt
       parameters:
         - name: commandId
@@ -563,7 +564,79 @@ paths:
                     completedAt: "2026-09-02T10:04:41.900Z"
                     eventId: "7a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"
         "404":
-          description: No receipt for that id (never received, or pruned).
+          description: No receipt for that id (never received).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /commands/{commandId}/retirement:
+    post:
+      tags: [execution-host]
+      summary: Retire a command's receipt evidence (Implemented — ADR-167 S2.11)
+      description: |
+        The host half of the D6 retirement handshake, over the existing trusted
+        local administrative transport. The body carries the manager's proof —
+        expected request digest, terminal phase and assignment epoch — and the
+        host re-derives eligibility from its OWN receipt: terminal phase, epoch,
+        digest agreement, no open producer wallet, and for a v2 request a
+        terminal sequence at or below the acknowledged frontier. A null
+        `expectedRequestSha256` asserts no digest (the manager records one only
+        for owned prompts); it never matches a digest the host holds. On success
+        the receipt is COMPACTED to a tombstone that keeps identity, digests and
+        disposition, so a stale replay is still recognised and no valid retry
+        loses idempotency. Idempotent: retiring an already-retired command
+        returns the same identity with `compacted: false`.
+      operationId: retireCommand
+      parameters:
+        - name: commandId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedRequestSha256, expectedPhase, assignmentEpoch]
+              properties:
+                expectedRequestSha256:
+                  type: string
+                  nullable: true
+                  pattern: "^[a-f0-9]{64}$"
+                expectedPhase: { type: string, enum: [completed, rejected] }
+                assignmentEpoch: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: The command is retired on this host.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  [commandId, requestSha256, phase, retiredAt, compacted]
+                properties:
+                  commandId: { type: string, format: uuid }
+                  requestSha256: { type: string, nullable: true }
+                  phase: { type: string, enum: [completed, rejected] }
+                  retiredAt: { type: string, format: date-time }
+                  compacted: { type: boolean }
+        "400":
+          description: The retirement proof is not a valid shape.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+        "404":
+          description: |
+            No retained receipt for that id — a typed reconciliation condition
+            (`retirement_evidence_missing`), not a licence to reclaim.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+        "409":
+          description: |
+            Not eligible on this host: `not_terminal`, `identity_mismatch`,
+            `terminal_event_unacked` or `producer_open`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }

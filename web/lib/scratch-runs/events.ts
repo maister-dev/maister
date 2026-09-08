@@ -739,7 +739,9 @@ export async function sendScratchPromptAndProjectEvents(args: {
   execution?: ScratchExecution;
   // S2.9: the durable dialog turn that owns this prompt's application. Absent
   // callers keep the pre-owner stack completion until their arm lands.
-  owner?: ScratchPromptOwner;
+  // S2.12: required — a scratch turn nothing owns cannot be finished after a
+  // restart, so there is no unowned prompt to send.
+  owner: ScratchPromptOwner;
   // Optional cancel forwarded to the supervisor prompt fetch (staged assistant
   // launch passes its request signal); a disconnect aborts the in-flight turn.
   signal?: AbortSignal;
@@ -762,8 +764,7 @@ export async function sendScratchPromptAndProjectEvents(args: {
 
     // The create ACK projects the incarnation asynchronously; an owned prompt
     // must admit against the live binding, exactly like Flow and agent turns.
-    if (owner)
-      await waitForPromptIncarnation(db, execution.client, args.sessionId);
+    await waitForPromptIncarnation(db, execution.client, args.sessionId);
     const handle = await execution.client.prompt(
       args.sessionId,
       {
@@ -773,28 +774,18 @@ export async function sendScratchPromptAndProjectEvents(args: {
       },
       {
         signal: args.signal,
-        ...(owner
-          ? {
-              admitOwner: (tx: DbClientLike) =>
-                admitScratchPrompt(tx, execution.client, args.sessionId, owner),
-            }
-          : {}),
+        admitOwner: (tx: DbClientLike) =>
+          admitScratchPrompt(tx, execution.client, args.sessionId, owner),
       },
     );
 
-    if (owner) {
-      await waitForScratchPrompt(
-        db,
-        execution.client,
-        handle.commandId,
-        args.signal,
-      );
-      promptResult = { stopReason: "end_turn", meta: null };
-    } else {
-      promptResult = await execution.client.waitForPrompt(handle, {
-        signal: args.signal,
-      });
-    }
+    await waitForScratchPrompt(
+      db,
+      execution.client,
+      handle.commandId,
+      args.signal,
+    );
+    promptResult = { stopReason: "end_turn", meta: null };
   } finally {
     consumer.abort.abort();
     await consumer.done;

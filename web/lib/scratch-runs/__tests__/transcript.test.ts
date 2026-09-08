@@ -120,6 +120,7 @@ async function project(updates: unknown[]): Promise<Row[]> {
     sessionId: "sup-1",
     stepId: "dialog",
     prompt: "go",
+    owner: { variant: "initial" },
     db: makeFakeDb(rows),
     execution: legacyScratchApiToExecution(makeApi(updates) as never),
   });
@@ -337,6 +338,7 @@ describe("scratch hook_trip notice (ADR-108 T3.3)", () => {
       sessionId: "sup-1",
       stepId: "dialog",
       prompt: "go",
+      owner: { variant: "initial" },
       db: makeFakeDb(rows) as never,
       execution: legacyScratchApiToExecution(
         makeRawApi([
@@ -395,6 +397,7 @@ describe("transcript coalescing", () => {
       sessionId: "sup-1",
       stepId: "dialog",
       prompt: "first",
+      owner: { variant: "initial" },
       db: makeFakeDb(rows),
       execution: legacyScratchApiToExecution(
         makeApi([
@@ -430,6 +433,7 @@ describe("transcript coalescing", () => {
       sessionId: "sup-1",
       stepId: "dialog",
       prompt: "follow-up",
+      owner: { variant: "initial" },
       db: makeFakeDb(rows),
       execution: legacyScratchApiToExecution(followUpApi as never),
     });

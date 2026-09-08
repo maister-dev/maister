@@ -41,6 +41,7 @@ import {
   fencedError,
   unknownOutcomeError,
 } from "@/test-support/fake-execution-host";
+import { seedNodePromptOwner } from "@/test-support/prompt-owner-fixture";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -368,10 +369,20 @@ describe("ledger + deliverer (fake transport)", () => {
       return { stopReason: "end_turn", meta: null };
     });
 
-    const handle = await client.prompt(created.hostSessionId, {
-      stepId: "s1",
-      prompt: "hi",
-    });
+    const handle = await client.prompt(
+      created.hostSessionId,
+      {
+        stepId: "s1",
+        prompt: "hi",
+      },
+      {
+        admitOwner: await seedNodePromptOwner(
+          db,
+          client,
+          created.hostSessionId,
+        ),
+      },
+    );
     const completion = client.waitForPrompt(handle);
 
     httpGate.resolve();
@@ -398,10 +409,20 @@ describe("ledger + deliverer (fake transport)", () => {
     fake.setPromptBehavior(async () => {
       return { stopReason: "end_turn", meta: null };
     });
-    const plain = await client.prompt(created.hostSessionId, {
-      stepId: "s1",
-      prompt: "again",
-    });
+    const plain = await client.prompt(
+      created.hostSessionId,
+      {
+        stepId: "s1",
+        prompt: "again",
+      },
+      {
+        admitOwner: await seedNodePromptOwner(
+          db,
+          client,
+          created.hostSessionId,
+        ),
+      },
+    );
 
     expect((await client.waitForPrompt(plain)).stopReason).toBe("end_turn");
     const plainRow = await untilState(plain.commandId, ["succeeded"]);
@@ -423,10 +444,20 @@ describe("ledger + deliverer (fake transport)", () => {
     });
     let r0 = receiptCalls();
     let p0 = promptCalls();
-    const a = await client.prompt(created.hostSessionId, {
-      stepId: "s1",
-      prompt: "a",
-    });
+    const a = await client.prompt(
+      created.hostSessionId,
+      {
+        stepId: "s1",
+        prompt: "a",
+      },
+      {
+        admitOwner: await seedNodePromptOwner(
+          db,
+          client,
+          created.hostSessionId,
+        ),
+      },
+    );
 
     expect((await client.waitForPrompt(a)).stopReason).toBe("end_turn");
     expect(receiptCalls() - r0).toBeGreaterThan(0);
@@ -442,10 +473,20 @@ describe("ledger + deliverer (fake transport)", () => {
     });
     r0 = receiptCalls();
     p0 = promptCalls();
-    const b = await client.prompt(created.hostSessionId, {
-      stepId: "s1",
-      prompt: "b",
-    });
+    const b = await client.prompt(
+      created.hostSessionId,
+      {
+        stepId: "s1",
+        prompt: "b",
+      },
+      {
+        admitOwner: await seedNodePromptOwner(
+          db,
+          client,
+          created.hostSessionId,
+        ),
+      },
+    );
 
     await expect(client.waitForPrompt(b)).rejects.toSatisfy(
       (err: unknown) =>
@@ -469,10 +510,20 @@ describe("ledger + deliverer (fake transport)", () => {
     });
     r0 = receiptCalls();
     p0 = promptCalls();
-    const c = await client.prompt(created.hostSessionId, {
-      stepId: "s1",
-      prompt: "c",
-    });
+    const c = await client.prompt(
+      created.hostSessionId,
+      {
+        stepId: "s1",
+        prompt: "c",
+      },
+      {
+        admitOwner: await seedNodePromptOwner(
+          db,
+          client,
+          created.hostSessionId,
+        ),
+      },
+    );
 
     await expect(client.waitForPrompt(c)).rejects.toSatisfy(
       (err: unknown) => isMaisterError(err) && err.code === "ACP_PROTOCOL",
@@ -492,10 +543,20 @@ describe("ledger + deliverer (fake transport)", () => {
     });
     r0 = receiptCalls();
     p0 = promptCalls();
-    const d = await client.prompt(created.hostSessionId, {
-      stepId: "s1",
-      prompt: "d",
-    });
+    const d = await client.prompt(
+      created.hostSessionId,
+      {
+        stepId: "s1",
+        prompt: "d",
+      },
+      {
+        admitOwner: await seedNodePromptOwner(
+          db,
+          client,
+          created.hostSessionId,
+        ),
+      },
+    );
 
     await vi.waitFor(() => expect(promptCalls() - p0).toBe(1));
     turnGate.resolve();
@@ -518,10 +579,20 @@ describe("ledger + deliverer (fake transport)", () => {
 
       return { stopReason: "end_turn", meta: null };
     });
-    const handle = await client.prompt(created.hostSessionId, {
-      stepId: "s1",
-      prompt: "l9",
-    });
+    const handle = await client.prompt(
+      created.hostSessionId,
+      {
+        stepId: "s1",
+        prompt: "l9",
+      },
+      {
+        admitOwner: await seedNodePromptOwner(
+          db,
+          client,
+          created.hostSessionId,
+        ),
+      },
+    );
 
     await expect(
       withTimeout(client.waitForPrompt(handle), 250),
@@ -549,10 +620,20 @@ describe("ledger + deliverer (fake transport)", () => {
       return { stopReason: "end_turn", meta: null };
     });
 
-    const handle = await client.prompt(created.hostSessionId, {
-      stepId: "canonical-prompt",
-      prompt: "accepted without a long-lived response",
-    });
+    const handle = await client.prompt(
+      created.hostSessionId,
+      {
+        stepId: "canonical-prompt",
+        prompt: "accepted without a long-lived response",
+      },
+      {
+        admitOwner: await seedNodePromptOwner(
+          db,
+          client,
+          created.hostSessionId,
+        ),
+      },
+    );
     const row = await getCommand(db, handle.commandId);
 
     expect(handle).toEqual({ commandId: handle.commandId });

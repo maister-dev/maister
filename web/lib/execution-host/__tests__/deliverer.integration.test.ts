@@ -42,6 +42,7 @@ import {
   startRealSupervisor,
   useRealSupervisorUrl,
 } from "@/test-support/real-supervisor";
+import { seedNodePromptOwner } from "@/test-support/prompt-owner-fixture";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
@@ -300,10 +301,20 @@ describe("bound client over the real wire", () => {
     );
     expect(sessionRow.acpSessionId).toBe(created.acpSessionId);
 
-    const handle = await client.prompt(created.hostSessionId, {
-      stepId: "s1",
-      prompt: "hello",
-    });
+    const handle = await client.prompt(
+      created.hostSessionId,
+      {
+        stepId: "s1",
+        prompt: "hello",
+      },
+      {
+        admitOwner: await seedNodePromptOwner(
+          db,
+          client,
+          created.hostSessionId,
+        ),
+      },
+    );
 
     expect(
       (

@@ -44,7 +44,9 @@ const defaultLog = pino({
 export type IssueCommandInput<TPayload> = {
   assignment: ExecutionAssignment;
   host: ExecutionHost;
-  kind: CommandKind;
+  // S2.12: mirrors `InsertCommandInput.kind` — the unowned issue path
+  // cannot mint a prompt; `issueOwnedPrompt` is the only one that can.
+  kind: Exclude<CommandKind, "session.prompt">;
   payload: TPayload;
   maxAttempts: number;
   targetSessionId?: string | null;

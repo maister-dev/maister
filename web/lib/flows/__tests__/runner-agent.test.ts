@@ -55,6 +55,13 @@ function makeCtx(
     projectSlug: "demo",
     runId: "run-1",
     stepId: "plan",
+    // S2.12: every node dispatch names its owner; these suites exercise the
+    // dispatch mechanics, so the ref is the minimum a real node carries.
+    promptOwner: {
+      variant: "node" as const,
+      nodeAttemptId: "attempt-1",
+      promptOrdinal: 0,
+    },
     worktreePath: "/tmp/wt",
     executor: { id: "e1", agent: "claude", model: "claude-sonnet-4-6" },
     context: baseFlowCtx,

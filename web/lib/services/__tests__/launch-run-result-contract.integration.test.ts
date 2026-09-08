@@ -192,6 +192,7 @@ beforeEach(async () => {
   for (const t of [
     "run_sessions",
     "workspaces",
+    "execution_commands",
     "runs",
     "task_relations",
     "tasks",

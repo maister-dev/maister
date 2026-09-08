@@ -24,7 +24,11 @@ export type InsertCommandInput = {
   assignmentId: string;
   hostId: string;
   assignmentEpoch: number;
-  kind: CommandKind;
+  // S2.12: a prompt row must carry an owner, so it cannot be minted on the
+  // unowned path at all. The type mirrors
+  // `execution_commands_prompt_owner_required` so the refusal is a compile
+  // error rather than a constraint violation at runtime.
+  kind: Exclude<CommandKind, "session.prompt">;
   targetSessionId?: string | null;
   payload: unknown;
   maxAttempts: number;

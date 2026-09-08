@@ -127,7 +127,9 @@ export type RunAgentStepCtx = {
   runId: string;
   stepId: string;
   nodeAttemptId?: string;
-  promptOwner?: GatePromptOwner | NodePromptOwner | ConsensusPromptOwner;
+  // S2.12: required. A node dispatch that cannot name its owner has no
+  // prompt to send.
+  promptOwner: GatePromptOwner | NodePromptOwner | ConsensusPromptOwner;
   flowDriverClaim?: FlowDriverClaim;
   signal?: AbortSignal;
   worktreePath: string;
@@ -1458,12 +1460,7 @@ async function runNewSession(
       const hostSessionId = session.hostSessionId;
       const promptOwner = ctx.promptOwner;
 
-      if (promptOwner)
-        await waitForPromptIncarnation(
-          ctx.db ?? getDb(),
-          client,
-          hostSessionId,
-        );
+      await waitForPromptIncarnation(ctx.db ?? getDb(), client, hostSessionId);
       const handle = await client.prompt(
         hostSessionId,
         {
@@ -1471,53 +1468,46 @@ async function runNewSession(
           nodeAttemptId: ctx.nodeAttemptId,
           prompt: resolvedPrompt,
         },
-        promptOwner
-          ? {
-              admitOwner: async (tx) => {
-                if (ctx.flowDriverClaim) {
-                  if (ctx.signal?.aborted)
-                    throw new FlowDriverClaimLost(ctx.flowDriverClaim);
-                  await assertFlowDriverClaim(tx, ctx.flowDriverClaim);
-                }
-                const admission =
-                  promptOwner.variant === "node" ||
-                  promptOwner.variant === "permission_resume"
-                    ? await admitNodePrompt(
-                        tx,
-                        client,
-                        hostSessionId,
-                        promptOwner,
-                      )
-                    : isConsensusOwner(promptOwner)
-                      ? await admitConsensusPrompt(
-                          tx,
-                          client,
-                          hostSessionId,
-                          promptOwner,
-                        )
-                      : await admitGatePrompt(
-                          tx,
-                          client,
-                          hostSessionId,
-                          promptOwner,
-                        );
-                const claim = ctx.flowDriverClaim;
-
-                return {
-                  ...admission,
-                  ...(claim
-                    ? {
-                        assertCommit: async () => {
-                          if (ctx.signal?.aborted)
-                            throw new FlowDriverClaimLost(claim);
-                          await assertFlowDriverCommit(tx, claim);
-                        },
-                      }
-                    : {}),
-                };
-              },
+        {
+          admitOwner: async (tx) => {
+            if (ctx.flowDriverClaim) {
+              if (ctx.signal?.aborted)
+                throw new FlowDriverClaimLost(ctx.flowDriverClaim);
+              await assertFlowDriverClaim(tx, ctx.flowDriverClaim);
             }
-          : undefined,
+            const admission =
+              promptOwner.variant === "node" ||
+              promptOwner.variant === "permission_resume"
+                ? await admitNodePrompt(tx, client, hostSessionId, promptOwner)
+                : isConsensusOwner(promptOwner)
+                  ? await admitConsensusPrompt(
+                      tx,
+                      client,
+                      hostSessionId,
+                      promptOwner,
+                    )
+                  : await admitGatePrompt(
+                      tx,
+                      client,
+                      hostSessionId,
+                      promptOwner,
+                    );
+            const claim = ctx.flowDriverClaim;
+
+            return {
+              ...admission,
+              ...(claim
+                ? {
+                    assertCommit: async () => {
+                      if (ctx.signal?.aborted)
+                        throw new FlowDriverClaimLost(claim);
+                      await assertFlowDriverCommit(tx, claim);
+                    },
+                  }
+                : {}),
+            };
+          },
+        },
       );
 
       try {

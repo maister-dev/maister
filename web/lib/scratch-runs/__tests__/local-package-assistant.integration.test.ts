@@ -101,6 +101,7 @@ let getLocalPackage: typeof import("@/lib/local-packages/service").getLocalPacka
 
 const schema = schemaModule as unknown as Record<string, any>;
 const {
+  executionCommands,
   domainEvents,
   localPackages,
   runs,
@@ -277,6 +278,9 @@ beforeEach(async () => {
   await db.delete(domainEvents);
   await db.delete(webhookEvents);
   await db.delete(scratchRuns);
+  // Command evidence protects its run from deletion (D6): discharge it
+  // explicitly instead of relying on the FK cascade.
+  await db.delete(executionCommands);
   await db.delete(runs);
 
   // Reset the supervisor stub to its happy-path defaults each test.

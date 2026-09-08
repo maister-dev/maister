@@ -550,9 +550,12 @@ describe("runtime event ingestion", () => {
       [promptAssignmentId, promptRunId],
     );
     await testDatabase.pool.query(
+      // S2.12: a prompt row carries an owner; the constraint refuses it otherwise.
       `insert into execution_commands
-         (id, run_id, execution_assignment_id, execution_host_id, assignment_epoch, kind, payload, state, max_attempts)
-       values ($1, $2, $3, $4, 1, 'session.prompt', '{}', 'delivering', 3)`,
+         (id, run_id, execution_assignment_id, execution_host_id, assignment_epoch, kind, payload, state, max_attempts,
+          owner_kind, owner_ref, logical_operation_key, request_schema, request_sha256)
+       values ($1, $2, $3, $4, 1, 'session.prompt', '{}', 'delivering', 3,
+          'flow_node_attempt', jsonb_build_object('version', 1, 'variant', 'node', 'nodeAttemptId', gen_random_uuid()::text, 'promptOrdinal', 0, 'runId', $2::text, 'runSessionId', gen_random_uuid()::text, 'incarnationId', gen_random_uuid()::text, 'assignmentId', $3::text, 'assignmentEpoch', 1), 'flow_node_attempt:node:' || $1::text || ':0', 'maister.command.request.v1', repeat('a', 64))`,
       [commandId, promptRunId, promptAssignmentId, hostId],
     );
     const terminal = event("5", {
@@ -728,8 +731,10 @@ describe("runtime event ingestion", () => {
     await testDatabase.pool.query(
       `insert into execution_commands
          (id, run_id, execution_assignment_id, execution_host_id, assignment_epoch,
-          kind, target_session_id, payload, state, max_attempts)
-       values ($1, $2, $3, $4, 1, 'session.prompt', $5, '{}', 'accepted', 3)`,
+          kind, target_session_id, payload, state, max_attempts,
+          owner_kind, owner_ref, logical_operation_key, request_schema, request_sha256)
+       values ($1, $2, $3, $4, 1, 'session.prompt', $5, '{}', 'accepted', 3,
+          'flow_node_attempt', jsonb_build_object('version', 1, 'variant', 'node', 'nodeAttemptId', gen_random_uuid()::text, 'promptOrdinal', 0, 'runId', $2::text, 'runSessionId', gen_random_uuid()::text, 'incarnationId', gen_random_uuid()::text, 'assignmentId', $3::text, 'assignmentEpoch', 1), 'flow_node_attempt:node:' || $1::text || ':0', 'maister.command.request.v1', repeat('a', 64))`,
       [lateCommandId, lateRunId, lateAssignmentId, lateHostId, lateSessionId],
     );
     const terminal = {

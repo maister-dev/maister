@@ -57,6 +57,7 @@ import {
   startRealSupervisor,
   useRealSupervisorUrl,
 } from "@/test-support/real-supervisor";
+import { seedNodePromptOwner } from "@/test-support/prompt-owner-fixture";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
@@ -316,10 +317,20 @@ describe("execution-command recovery (real supervisor)", () => {
     const beforeHealth = await hosts.local().health();
 
     // Durable prompt recovery must work without a process-local SSE subscriber.
-    const handle = await client.prompt(created.hostSessionId, {
-      stepId: "s1",
-      prompt: "hang",
-    });
+    const handle = await client.prompt(
+      created.hostSessionId,
+      {
+        stepId: "s1",
+        prompt: "hang",
+      },
+      {
+        admitOwner: await seedNodePromptOwner(
+          db,
+          client,
+          created.hostSessionId,
+        ),
+      },
+    );
 
     await untilState(handle.commandId, ["accepted"]);
 

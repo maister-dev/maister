@@ -1043,7 +1043,8 @@ describe("HITL respond route — kind=form / kind=human", () => {
       runtimeRoot,
       ".maister",
       "demo",
-      "runs",
+      "execution_commands",
+    "runs",
       runId,
       `input-${stepId}.json`,
     );
@@ -1072,7 +1073,8 @@ describe("HITL respond route — kind=form / kind=human", () => {
       runtimeRoot,
       ".maister",
       "demo",
-      "runs",
+      "execution_commands",
+    "runs",
       runId,
       `input-${stepId}.json`,
     );
@@ -1141,7 +1143,8 @@ describe("HITL respond route — kind=form / kind=human", () => {
       runtimeRoot,
       ".maister",
       "demo",
-      "runs",
+      "execution_commands",
+    "runs",
       runId,
       `input-${stepId}.json`,
     );
@@ -1216,7 +1219,8 @@ describe("HITL respond route — kind=form / kind=human", () => {
       runtimeRoot,
       ".maister",
       "demo",
-      "runs",
+      "execution_commands",
+    "runs",
       runId,
       `input-${stepId}.json`,
     );
@@ -1410,7 +1414,8 @@ describe("HITL respond route — consensus resolution decision (M41)", () => {
       runtimeRoot,
       ".maister",
       "demo",
-      "runs",
+      "execution_commands",
+    "runs",
       runId,
       `input-${stepId}.json`,
     );
@@ -1443,7 +1448,8 @@ describe("HITL respond route — consensus resolution decision (M41)", () => {
       runtimeRoot,
       ".maister",
       "demo",
-      "runs",
+      "execution_commands",
+    "runs",
       runId,
       `input-${stepId}.json`,
     );

@@ -1,6 +1,6 @@
 # Execution prompt lifecycle
 
-**Status:** Implemented short-lived admission, private v2 request/owner storage and shared canonical-event/receipt reconciliation. Request-bound receipt/event v2 and verified immutable command-output manifests are implemented on the explicit v2 development path. Unknown-admission reconciliation, frozen-request recovery, create/ACP binding fences and the registered owner application engine are implemented. Flow node/gate and agent initial/message/rework adapters are implemented. Remaining domain adapters, global activation and retirement remain **Designed** (AB-05–07/10).
+**Status:** Implemented short-lived admission, private v2 request/owner storage and shared canonical-event/receipt reconciliation. Request-bound receipt/event v2 and verified immutable command-output manifests are implemented on the explicit v2 development path. Unknown-admission reconciliation, frozen-request recovery, create/ACP binding fences and the registered owner application engine are implemented. Every domain adapter is implemented (Flow node/gate, consensus, agent, scratch and local-package, gate chat, sync resolver), the prompt owner is mandatory at both the client boundary and the ledger constraint, and state-aware command/receipt retirement is implemented as a two-sided handshake (AB-05–07/10).
 
 
 ## Purpose
@@ -151,7 +151,7 @@ accepted command's event prefix until terminal acknowledgement; manager event
 and object retirement must honor the manifest through the S2.11 eligibility
 protocol. A process restart never replaces the manifest with current messages,
 current session output or a redacted diagnostic projection. Manifest capture, verified reads and host prefix retention are implemented.
-Manager retirement eligibility and the full S2/S3 retention gate remain designed.
+Manager retirement eligibility is implemented: eligibility is derived under the run/owner/event-ACK predicate, exchanged with the host through `POST /commands/{commandId}/retirement`, and compacts both sides to tombstones. The S3 object-retention half of the gate remains designed.
 
 The evidence and application states are separate:
 
@@ -949,4 +949,4 @@ Deferred inventory must cover ACP permission promises, prompt wait subscriptions
 - [ADR-167](../decisions/adr-167.md) fixes command/receipt reuse and retention eligibility.
 - [Sessions](sessions.md), [runs](runs.md), [HITL](hitl.md), and [scratch runs](scratch-runs.md) own callers and their state transitions.
 - [Supervisor OpenAPI](../api/supervisor.openapi.yaml) and [host event AsyncAPI](../api/async/execution-host-events.asyncapi.yaml) define admission, receipt, and terminal contracts.
-- `IT-*` and `CT-*` labels are specification scenario IDs; durable per-owner acceptance remains Designed until the [stabilization owner matrix](../../.ai-factory/plans/stage-ab-stabilization.md#d2-prompt-owner-and-recovery-windows) is executed.
+- `IT-*` and `CT-*` labels are specification scenario IDs; the [stabilization owner matrix](../../.ai-factory/plans/stage-ab-stabilization.md#d2-prompt-owner-and-recovery-windows) records which durable per-owner cases are executed.

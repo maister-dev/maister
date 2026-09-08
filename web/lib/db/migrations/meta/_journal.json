@@ -1086,6 +1086,13 @@
       "when": 1788864447654,
       "tag": "0158_command_retirement",
       "breakpoints": true
+    },
+    {
+      "idx": 159,
+      "version": "7",
+      "when": 1788867480446,
+      "tag": "0159_mandatory_prompt_owner",
+      "breakpoints": true
     }
   ]
 }

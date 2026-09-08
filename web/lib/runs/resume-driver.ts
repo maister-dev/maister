@@ -15,6 +15,7 @@ import {
   PERMISSION_RESUME_PROMPT,
 } from "@/lib/flows/graph/permission-resume";
 import { runFlow } from "@/lib/flows/runner";
+import { admitNodePrompt } from "@/lib/flows/graph/node-prompt-owner";
 import { markNodeSucceeded } from "@/lib/flows/graph/ledger";
 import { type SupervisorEvent } from "@/lib/execution-host";
 import {
@@ -200,9 +201,12 @@ async function findOpenNodeAttempt(
   db: Db,
   runId: string,
   nodeId: string,
-): Promise<{ id: string } | null> {
+): Promise<{ id: string; actionPromptOrdinal: number } | null> {
   const rows = await db
-    .select({ id: nodeAttempts.id })
+    .select({
+      id: nodeAttempts.id,
+      actionPromptOrdinal: nodeAttempts.actionPromptOrdinal,
+    })
     .from(nodeAttempts)
     .where(
       and(
@@ -541,10 +545,31 @@ export async function runResumedSession(
   let promptError: Error | null = null;
 
   try {
-    const handle = await client.prompt(supervisorSessionId, {
-      stepId,
-      prompt: PERMISSION_RESUME_PROMPT,
-    });
+    // S2.12: the idle-resume continuation is an ACTION prompt on the node
+    // attempt it is waking, so it carries the same `node` owner the graph
+    // dispatch uses. Without an open attempt there is no owner and therefore
+    // no prompt — the run stays parked for the graph's own recovery instead of
+    // starting a turn nothing could finish after a restart.
+    const resumedAttempt = await findOpenNodeAttempt(db, runId, stepId);
+
+    if (!resumedAttempt)
+      throw new MaisterError(
+        "PRECONDITION",
+        "resumed continuation has no open node attempt to own it",
+        { details: { runId, stepId, reason: "unowned_resume_continuation" } },
+      );
+    const handle = await client.prompt(
+      supervisorSessionId,
+      { stepId, prompt: PERMISSION_RESUME_PROMPT },
+      {
+        admitOwner: (tx) =>
+          admitNodePrompt(tx, client, supervisorSessionId, {
+            variant: "node",
+            nodeAttemptId: resumedAttempt.id,
+            promptOrdinal: resumedAttempt.actionPromptOrdinal,
+          }),
+      },
+    );
 
     promptResult = await client.waitForPrompt(handle);
     stopReason = promptResult.stopReason;

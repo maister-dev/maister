@@ -943,6 +943,7 @@ table execution_commands {
   application_next_retry_at "timestamp with time zone"
   application_error jsonb
   completion_applied_at "timestamp with time zone"
+  retired_at "timestamp with time zone"
   state text [not null, default: 'queued']
   attempts integer [not null, default: 0]
   max_attempts integer [not null]
@@ -959,6 +960,7 @@ table execution_commands {
   indexes {
     (state, next_attempt_at) [name: 'execution_commands_open_idx']
     (run_id, created_at) [name: 'execution_commands_run_created_idx']
+    (completed_at, id) [name: 'execution_commands_retirement_idx']
     (run_id, execution_assignment_id, create_intent) [name: 'execution_commands_create_operation_uq', unique]
 
 
@@ -968,6 +970,7 @@ table execution_commands {
     (transport_state, next_attempt_at, id) [name: 'execution_commands_reconciliation_idx']
     (application_state, application_next_retry_at, application_claim_expires_at, id) [name: 'execution_commands_application_idx']
     (run_id, logical_operation_key) [name: 'execution_commands_prompt_logical_operation_uq', unique]
+
 
 
 

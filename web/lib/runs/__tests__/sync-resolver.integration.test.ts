@@ -218,6 +218,7 @@ beforeEach(async () => {
     "run_sessions",
     "hitl_requests",
     "workspaces",
+    "execution_commands",
     "runs",
     "tasks",
     "flows",

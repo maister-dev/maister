@@ -40,6 +40,7 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { executionCommands } from "@/lib/db/schema";
 
 const schema = schemaModule as unknown as Record<string, any>;
 const { flows, projects, runs, tasks, users } = schema;
@@ -95,6 +96,9 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  // Command evidence protects its run from deletion (D6): discharge it
+  // explicitly instead of relying on the FK cascade.
+  await db.delete(executionCommands);
   await db.delete(runs);
   await db.delete(tasks);
 });

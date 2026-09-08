@@ -81,6 +81,7 @@ afterAll(async () => {
 beforeEach(async () => {
   for (const t of [
     "workspaces",
+    "execution_commands",
     "runs",
     "tasks",
     "flows",

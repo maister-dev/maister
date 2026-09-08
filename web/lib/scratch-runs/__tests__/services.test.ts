@@ -286,6 +286,7 @@ describe("scratch event projection", () => {
         sessionId: "sup-1",
         stepId: "dialog",
         prompt: "go",
+        owner: { variant: "initial" },
         db,
         execution: legacyScratchApiToExecution(api as never),
       }),
@@ -381,6 +382,7 @@ describe("scratch event projection", () => {
       sessionId: "sup-1",
       stepId: "dialog",
       prompt: "go",
+      owner: { variant: "initial" },
       db,
       execution: legacyScratchApiToExecution(api as never),
     });

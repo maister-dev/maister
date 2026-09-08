@@ -2440,6 +2440,14 @@ export const executionCommands = pgTable(
       "execution_commands_terminal_shape_check",
       sql`(${inLiteralList(t.state, TERMINAL_COMMAND_STATES)}) = (${t.completedAt} IS NOT NULL)`,
     ),
+    // S2.12 activation. NOT VALID in the migration: it binds every NEW prompt
+    // row and every update (the old-writer rejection) while leaving pre-v2
+    // history exactly as written, which is what "preserve, never reconstruct"
+    // requires.
+    promptOwnerRequiredCheck: check(
+      "execution_commands_prompt_owner_required",
+      sql`${t.kind} <> 'session.prompt' OR ${t.ownerKind} IS NOT NULL`,
+    ),
     ownerShapeCheck: check(
       "execution_commands_owner_shape_check",
       sql`(${t.ownerKind} IS NULL AND ${t.ownerRef} IS NULL AND ${t.logicalOperationKey} IS NULL AND ${t.requestSchema} IS NULL AND ${t.requestSha256} IS NULL) OR (${t.ownerKind} IN ('flow_node_attempt', 'scratch_message', 'gate_chat', 'agent_turn', 'sync_resolution') AND jsonb_typeof(${t.ownerRef}) = 'object' AND ${t.logicalOperationKey} IS NOT NULL AND ${t.requestSchema} IS NOT NULL AND ${t.requestSha256} ~ '^[a-f0-9]{64}$')`,

@@ -39,6 +39,7 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { executionCommands } from "@/lib/db/schema";
 
 // M19 Phase 3: promoteNextPending now lazily dispatches the promoted run
 // (runFlow for a fresh queue, driveResume for a checkpointed resume). Stub
@@ -134,6 +135,9 @@ afterAll(async () => {
 beforeEach(async () => {
   // Clean runs + tasks between tests so each scenario starts from a
   // known baseline. Project + executor stay across tests.
+  // Command evidence protects its run from deletion (D6): discharge it
+  // explicitly instead of relying on the FK cascade.
+  await db.delete(executionCommands);
   await db.delete(runs);
   await db.delete(tasks);
 });

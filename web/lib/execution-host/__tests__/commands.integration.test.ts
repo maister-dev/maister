@@ -4,6 +4,7 @@
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionCommand, ExecutionEvent } from "@/lib/db/schema";
 import type { CommandReceipt } from "@/lib/execution-host/contracts";
+import type { CommandKind } from "@/lib/execution-host/types";
 
 import { randomUUID } from "node:crypto";
 
@@ -24,6 +25,7 @@ import {
   markSucceeded,
 } from "@/lib/execution-host/commands";
 import { UNKNOWN_OUTCOME_DETAIL } from "@/lib/execution-host/contracts";
+import { redactPayload } from "@/lib/execution-host/redact";
 import {
   startAsyncPrompt,
   waitForPromptCompletion,
@@ -80,6 +82,51 @@ async function seedAssignment() {
   );
 
   return { runId, assignment };
+}
+
+// S2.12: a prompt row carries an owner, so this suite mints one the way the
+// ledger constraint requires instead of reaching for the unowned insert path.
+async function insertOwnedPrompt(input: {
+  runId: string;
+  assignmentId: string;
+  assignmentEpoch: number;
+  payload: unknown;
+  targetSessionId?: string;
+}): Promise<ExecutionCommand> {
+  const id = randomUUID();
+  const rows = (await db
+    .insert(schema.executionCommands)
+    .values({
+      id,
+      runId: input.runId,
+      executionAssignmentId: input.assignmentId,
+      executionHostId: hostId,
+      assignmentEpoch: input.assignmentEpoch,
+      kind: "session.prompt",
+      targetSessionId: input.targetSessionId ?? null,
+      // The same projection `insertCommand` applies, so redaction stays under
+      // test on the owned path too.
+      payload: redactPayload("session.prompt", input.payload),
+      maxAttempts: 3,
+      ownerKind: "flow_node_attempt",
+      ownerRef: {
+        version: 1,
+        variant: "node",
+        nodeAttemptId: randomUUID(),
+        promptOrdinal: 0,
+        runId: input.runId,
+        runSessionId: randomUUID(),
+        incarnationId: randomUUID(),
+        assignmentId: input.assignmentId,
+        assignmentEpoch: input.assignmentEpoch,
+      },
+      logicalOperationKey: `flow_node_attempt:node:${id}:0`,
+      requestSchema: "maister.command.request.v1",
+      requestSha256: "d".repeat(64),
+    })
+    .returning()) as unknown as ExecutionCommand[];
+
+  return rows[0];
 }
 
 async function persistTerminalEvent(
@@ -196,19 +243,23 @@ function leafNames(value: unknown): string[] {
 describe("insertCommand", () => {
   it("C1: the per-kind ALLOW-list projection — ids, names and counts survive; no path, body, secret or argv key does", async () => {
     const { runId, assignment } = await seedAssignment();
-    const insert = (
-      kind: Parameters<typeof insertCommand>[1]["kind"],
-      payload: unknown,
-    ) =>
-      insertCommand(db, {
-        runId,
-        assignmentId: assignment.id,
-        hostId,
-        assignmentEpoch: assignment.epoch,
-        kind,
-        maxAttempts: 3,
-        payload,
-      });
+    const insert = (kind: CommandKind, payload: unknown) =>
+      kind === "session.prompt"
+        ? insertOwnedPrompt({
+            runId,
+            assignmentId: assignment.id,
+            assignmentEpoch: assignment.epoch,
+            payload,
+          })
+        : insertCommand(db, {
+            runId,
+            assignmentId: assignment.id,
+            hostId,
+            assignmentEpoch: assignment.epoch,
+            kind,
+            maxAttempts: 3,
+            payload,
+          });
 
     const create = await insert("session.create", {
       executionWorkspaceId: "ws_" + "b".repeat(32),
@@ -415,13 +466,10 @@ describe("CAS transitions", () => {
 
   it("C3: a signal on a terminal row changes nothing and logs command-late-signal", async () => {
     const { runId, assignment } = await seedAssignment();
-    const row = await insertCommand(db, {
+    const row = await insertOwnedPrompt({
       runId,
       assignmentId: assignment.id,
-      hostId,
       assignmentEpoch: assignment.epoch,
-      kind: "session.prompt",
-      maxAttempts: 3,
       payload: { stepId: "plan", prompt: "x" },
     });
 
@@ -544,13 +592,10 @@ describe("prompt receipt reconciliation", () => {
     "AT-06: recovery preserves %s receipt-first evidence without settling the prompt",
     async (phase) => {
       const { runId, assignment } = await seedAssignment();
-      const row = await insertCommand(db, {
+      const row = await insertOwnedPrompt({
         runId,
         assignmentId: assignment.id,
-        hostId,
         assignmentEpoch: assignment.epoch,
-        kind: "session.prompt",
-        maxAttempts: 3,
         targetSessionId: randomUUID(),
         payload: { stepId: "receipt-first" },
       });
@@ -652,13 +697,10 @@ describe("prompt receipt reconciliation", () => {
 
   it("keeps a terminal admission receipt as evidence until its canonical event arrives", async () => {
     const { runId, assignment } = await seedAssignment();
-    const row = await insertCommand(db, {
+    const row = await insertOwnedPrompt({
       runId,
       assignmentId: assignment.id,
-      hostId,
       assignmentEpoch: assignment.epoch,
-      kind: "session.prompt",
-      maxAttempts: 3,
       payload: { stepId: "plan", prompt: "lost admission acknowledgement" },
     });
     const terminalBody = { stopReason: "end_turn", meta: null };
@@ -705,13 +747,10 @@ describe("prompt receipt reconciliation", () => {
 
   it("keeps canonical event authority after release, then accepts its agreeing terminal receipt", async () => {
     const { runId, assignment } = await seedAssignment();
-    const row = await insertCommand(db, {
+    const row = await insertOwnedPrompt({
       runId,
       assignmentId: assignment.id,
-      hostId,
       assignmentEpoch: assignment.epoch,
-      kind: "session.prompt",
-      maxAttempts: 3,
       payload: { stepId: "plan", prompt: "checkpoint race" },
     });
 

@@ -73,6 +73,7 @@ beforeEach(async () => {
     "gate_results",
     "node_attempts",
     "workspaces",
+    "execution_commands",
     "runs",
     "tasks",
     "flows",
