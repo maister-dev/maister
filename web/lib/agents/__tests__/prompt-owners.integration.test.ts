@@ -42,6 +42,7 @@ import { markCheckpointed } from "@/lib/runs/state-transitions";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { queryRunTokens } from "@/lib/runs/cost-rollups";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
+import { RUNTIME_EVENT_CLAIM_LEASE_MS } from "@/lib/execution-host/events/consumer";
 import { testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { mintAssignment } from "@/lib/execution-host/assignments";
@@ -447,6 +448,12 @@ async function expectCompleted(
   expect(events.filter((event) => event.kind === "run.done")).toHaveLength(1);
 }
 
+// These windows SIGKILL a process that may hold the runtime-event stream claim.
+// A claim is a lease, so no other consumer ingests the killed turn's terminal
+// event until it expires — the waits below budget for that instead of being
+// re-guessed whenever lane timing shifts.
+const KILLED_CLAIM_WAIT_MS = RUNTIME_EVENT_CLAIM_LEASE_MS;
+
 async function killAtTerminalWrite(
   runId: string,
   message?: string,
@@ -490,7 +497,7 @@ async function interruptAgentStatusWrite(
 
           return waiting.rows[0].count as number;
         },
-        { timeout: 45_000, interval: 25 },
+        { timeout: 45_000 + KILLED_CLAIM_WAIT_MS, interval: 25 },
       )
       .toBe(1);
     driver.child.kill("SIGKILL");
@@ -712,7 +719,7 @@ describe("Agent owned prompts through the production launcher", () => {
                       ),
                     )
                 ).length,
-              { timeout: 45_000, interval: 25 },
+              { timeout: 45_000 + KILLED_CLAIM_WAIT_MS, interval: 25 },
             )
             .toBe(1);
           responder.child.kill("SIGKILL");
@@ -754,7 +761,7 @@ describe("Agent owned prompts through the production launcher", () => {
                     ),
                   )
               ).length,
-            { timeout: 60_000, interval: 100 },
+            { timeout: 60_000 + KILLED_CLAIM_WAIT_MS, interval: 100 },
           )
           .toBe(1);
         const turns = await db
@@ -778,7 +785,7 @@ describe("Agent owned prompts through the production launcher", () => {
         await continuation.stop();
       }
     },
-    120_000,
+    120_000 + KILLED_CLAIM_WAIT_MS * 2,
   );
 
   it.each([
@@ -922,7 +929,7 @@ describe("Agent owned prompts through the production launcher", () => {
                       ),
                     )
                 ).length,
-              { timeout: 45_000, interval: 25 },
+              { timeout: 45_000 + KILLED_CLAIM_WAIT_MS, interval: 25 },
             )
             .toBe(1);
           responder.child.kill("SIGKILL");
@@ -989,7 +996,7 @@ describe("Agent owned prompts through the production launcher", () => {
             async () =>
               (await db.select().from(runs).where(eq(runs.id, runId)))[0]
                 .status,
-            { timeout: 60_000, interval: 100 },
+            { timeout: 60_000 + KILLED_CLAIM_WAIT_MS, interval: 100 },
           )
           .toBe("Review");
         const turns = await db
@@ -1016,7 +1023,7 @@ describe("Agent owned prompts through the production launcher", () => {
         await continuation.stop();
       }
     },
-    120_000,
+    120_000 + KILLED_CLAIM_WAIT_MS * 2,
   );
 
   it("owner-agent-worker starts an admitted run before its first turn exists", async () => {
@@ -1138,7 +1145,7 @@ describe("Agent owned prompts through the production launcher", () => {
         .poll(
           async () =>
             (await db.select().from(runs).where(eq(runs.id, runId)))[0].status,
-          { timeout: 60_000, interval: 100 },
+          { timeout: 60_000 + KILLED_CLAIM_WAIT_MS, interval: 100 },
         )
         .toBe("Failed");
       expect(await claimAgentResumeSlot(db, runId, hosts)).toEqual({
@@ -1250,7 +1257,7 @@ describe("Agent owned prompts through the production launcher", () => {
       await expect
         .poll(
           async () => (await claimAgentResumeSlot(db, runId, hosts)).outcome,
-          { timeout: 60_000, interval: 100 },
+          { timeout: 60_000 + KILLED_CLAIM_WAIT_MS, interval: 100 },
         )
         .toBe("claimed");
       const [claimed] = await db
@@ -1321,7 +1328,7 @@ describe("Agent owned prompts through the production launcher", () => {
 
             return run.status;
           },
-          { timeout: 60_000, interval: 100 },
+          { timeout: 60_000 + KILLED_CLAIM_WAIT_MS, interval: 100 },
         )
         .toBe("Review");
       const turns = await db
@@ -1443,7 +1450,7 @@ describe("Agent owned prompts through the production launcher", () => {
             return (row.response as Record<string, unknown> | null)
               ?._agentResume;
           },
-          { timeout: 60_000, interval: 100 },
+          { timeout: 60_000 + KILLED_CLAIM_WAIT_MS, interval: 100 },
         )
         .toBeDefined();
       const [claimed] = await db
@@ -1751,7 +1758,7 @@ describe("Agent owned prompts through the production launcher", () => {
         prompts.every((command) => command.applicationState === "applied"),
       ).toBe(true);
     },
-    120_000,
+    120_000 + KILLED_CLAIM_WAIT_MS * 2,
   );
 
   it("owner-agent-rework refuses admission while its agent pool is full", async () => {

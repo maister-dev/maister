@@ -21,7 +21,8 @@
     "site-docs:dev": "pnpm --filter @maister/site-docs dev",
     "site-docs:validate": "pnpm --filter @maister/site-docs validate",
     "runtime:check": "node scripts/check-runtime.mjs",
-    "test:runtime": "node --test scripts/runtime-contract.test.mjs"
+    "test:runtime": "node --test scripts/runtime-contract.test.mjs",
+    "test:stage-ab-lane": "node --test scripts/run-stage-ab-tests.test.mjs"
   },
   "devDependencies": {
     "@apidevtools/swagger-parser": "10.1.1",

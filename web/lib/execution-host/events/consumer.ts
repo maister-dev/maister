@@ -20,6 +20,33 @@ const CLAIM_LEASE_MS = 30_000;
 const RECONNECT_MIN_MS = 250;
 const RECONNECT_MAX_MS = 15_000;
 
+/** A claim is a lease, so a consumer whose owner died cannot be distinguished
+ * from one that is merely slow: another consumer only takes over after this
+ * window. Callers that deliberately kill a claim holder must budget for it. */
+export const RUNTIME_EVENT_CLAIM_LEASE_MS = CLAIM_LEASE_MS;
+export const RUNTIME_EVENT_RECONNECT_MIN_MS = RECONNECT_MIN_MS;
+export const RUNTIME_EVENT_RECONNECT_MAX_MS = RECONNECT_MAX_MS;
+
+/** A contested claim resolves at a KNOWN bound — the holder's lease — so it
+ * backs off only far enough to stop hot-spinning the shared database, never
+ * far enough to delay takeover once that lease expires. A transport failure
+ * has no such bound and keeps the longer cap. */
+const CONTESTED_CLAIM_MAX_MS = 2_000;
+
+export function nextReconnectDelayMs(
+  previous: number,
+  outcome: "progress" | "reconnect" | "error",
+): number {
+  if (outcome === "progress") return RECONNECT_MIN_MS;
+
+  return Math.min(
+    previous * 2,
+    outcome === "reconnect" ? CONTESTED_CLAIM_MAX_MS : RECONNECT_MAX_MS,
+  );
+}
+
+export const RUNTIME_EVENT_CONTESTED_CLAIM_MAX_MS = CONTESTED_CLAIM_MAX_MS;
+
 const defaultLog = pino({
   name: "execution-host-events",
   level: process.env.LOG_LEVEL ?? "info",
@@ -384,9 +411,10 @@ export function startRuntimeEventConsumer(input: {
           logger,
         });
 
-        delayMs = summary.reconnectRequired
-          ? RECONNECT_MIN_MS
-          : RECONNECT_MIN_MS;
+        delayMs = nextReconnectDelayMs(
+          delayMs,
+          summary.reconnectRequired ? "reconnect" : "progress",
+        );
       } catch (error) {
         logger.warn(
           {
@@ -397,7 +425,7 @@ export function startRuntimeEventConsumer(input: {
           },
           "runtime-event-consumer-reconnect",
         );
-        delayMs = Math.min(delayMs * 2, RECONNECT_MAX_MS);
+        delayMs = nextReconnectDelayMs(delayMs, "error");
       }
       if (!controller.signal.aborted) {
         try {
