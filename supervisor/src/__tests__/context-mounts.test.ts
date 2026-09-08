@@ -16,11 +16,12 @@
 // both that the guard is not opt-in through `settings.hooks` and that it wins
 // over B1 auto-approve.
 
-import type { ContextMount, SessionRecord } from "../types";
+import type { ContextMount, SessionRecord, SupervisorError } from "../types";
 import type { Logger } from "pino";
 
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Readable, Writable } from "node:stream";
@@ -29,6 +30,7 @@ import * as acp from "@agentclientprotocol/sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createAcpConnection, sendPromptOnConnection } from "../acp-client";
+import { captureAcpFrames } from "../bounded-acp-stream";
 import {
   renderContextMountPreamble,
   takeContextMountPreamble,
@@ -271,7 +273,7 @@ type Harness = {
   ask: (toolCall: unknown) => Promise<acp.RequestPermissionResponse>;
   record: SessionRecord;
   warn: ReturnType<typeof vi.fn>;
-  close: () => void;
+  close: () => Promise<void>;
 };
 
 const openHarnesses: Harness[] = [];
@@ -339,15 +341,19 @@ async function openSession(opts: {
     contextMounts: opts.contextMounts,
   } as SessionRecord;
 
-  await createAcpConnection({
-    stdin: clientToAgent,
-    stdoutSource: agentToClient,
-    sessionId: record.sessionId,
-    worktreePath: opts.worktreePath,
-    record,
-    emitter: new EventEmitter(),
-    logger,
-    adapter: "claude",
+  const directory = await mkdtemp(join(tmpdir(), "ctx-mount-acp-"));
+  const failures: SupervisorError[] = [];
+  let resolveDrained: () => void = () => {};
+  const drained = new Promise<void>((resolve) => {
+    resolveDrained = resolve;
+  });
+  const stdoutSource = captureAcpFrames({
+    source: agentToClient,
+    directory,
+    log: createWriteStream(join(directory, "stdout.log")),
+    onLine: () => {},
+    onFailure: (error) => failures.push(error),
+    onDrained: resolveDrained,
   });
 
   const harness: Harness = {
@@ -359,13 +365,27 @@ async function openSession(opts: {
       }),
     record,
     warn,
-    close: () => {
+    close: async () => {
       clientToAgent.end();
       agentToClient.end();
+      await drained;
+      await rm(directory, { recursive: true, force: true });
+      expect(failures).toEqual([]);
     },
   };
 
   openHarnesses.push(harness);
+
+  await createAcpConnection({
+    stdin: clientToAgent,
+    stdoutSource,
+    sessionId: record.sessionId,
+    worktreePath: opts.worktreePath,
+    record,
+    emitter: new EventEmitter(),
+    logger,
+    adapter: "claude",
+  });
 
   return harness;
 }
@@ -378,8 +398,8 @@ function readCall(path: string) {
   return { toolCallId: "tc-2", kind: "read", locations: [{ path }] };
 }
 
-afterEach(() => {
-  for (const h of openHarnesses.splice(0)) h.close();
+afterEach(async () => {
+  for (const h of openHarnesses.splice(0)) await h.close();
 });
 
 describe("L2 — unconditional read-only guard over context mounts", () => {

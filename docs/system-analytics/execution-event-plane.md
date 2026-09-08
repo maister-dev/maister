@@ -98,6 +98,11 @@ permit through asynchronous guard evaluation; only the bounded RPC identity
 remains pending across HITL. IDs are at most 128 UTF-8 bytes, with at most 32
 pending permission replies per producer.
 
+`boundedAcpStream` requires the object-mode output of `captureAcpFrames`, with
+exactly one complete newline-terminated ACP frame per iterator value; a byte-mode
+source is refused at construction with `ACP_PROTOCOL`, reason
+`required_output_incomplete` and `outputFailure=producer_frame_invalid`.
+
 Metadata subscriptions expose the reference. Trusted projection/owner readers
 and content-authorized session/browser readers verify the run/fence, catalogue
 generation, length and actual byte digest before decoding. Accepted historical
