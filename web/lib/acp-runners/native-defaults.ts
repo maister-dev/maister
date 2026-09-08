@@ -59,12 +59,17 @@ function sameReasons(
  * (ADR-094). Runs at admin `/settings` load and is the single writer of
  * `readiness_status` outside the create/edit path:
  *
- * 1. Upsert-if-absent each AVAILABLE adapter's native default runner.
+ * 1. Bootstrap: while the catalog is EMPTY, insert each AVAILABLE adapter's
+ *    native default runner. A non-empty catalog is never touched here — the
+ *    upsert-if-absent it used to run on every /settings load resurrected
+ *    defaults an admin had deliberately deleted.
  * 2. Recompute readiness for ALL runner rows; persist only when status/reasons
  *    changed.
  * 3. Create the `platform_runtime_settings` singleton (pointing at the first
- *    Ready native default) when none exists yet — `default_runner_id` is
- *    NOT NULL, so the pre-config state is an absent singleton, not a null column.
+ *    enabled Ready runner in adapter preference order, the native default of
+ *    an adapter before its other runners) when none exists yet —
+ *    `default_runner_id` is NOT NULL, so the pre-config state is an absent
+ *    singleton, not a null column.
  *
  * Never auto-deletes. When diagnostics are unavailable (null) it is a no-op so a
  * transient supervisor outage does not clobber last-known readiness to NotReady.
@@ -94,13 +99,17 @@ export async function reconcilePlatformRunners(args: {
 
   log.debug({ availableAdapters }, "[reconcilePlatformRunners] entry");
 
-  // 1. Materialize the native default for each available adapter.
+  // 1. Bootstrap the native default for each available adapter — only while
+  //    the catalog is empty (see the docblock).
   const presetById = new Map(
     platformRunnerPresetRows().map((preset) => [preset.id, preset]),
   );
+  const catalogIsEmpty =
+    (await db.select({ id: platformAcpRunners.id }).from(platformAcpRunners))
+      .length === 0;
 
   for (const adapter of ADAPTER_IDS) {
-    if (!availableAdapters.includes(adapter)) continue;
+    if (!catalogIsEmpty || !availableAdapters.includes(adapter)) continue;
     const preset = presetById.get(nativeDefaultRunnerByAdapter[adapter]);
 
     if (!preset) continue;
@@ -190,11 +199,23 @@ export async function reconcilePlatformRunners(args: {
   let chosenDefault: string | null = null;
 
   for (const adapter of ADAPTER_DEFAULT_PREFERENCE) {
-    const runnerId = nativeDefaultRunnerByAdapter[adapter];
-    const computed = computedReadiness.get(runnerId);
+    const nativeId = nativeDefaultRunnerByAdapter[adapter];
+    // Native default first, then the adapter's other runners by id — so an
+    // admin-created runner becomes the default when no native one exists.
+    const candidates = runnerRows
+      .filter((runner: { adapter: string }) => runner.adapter === adapter)
+      .map((runner: { id: string }) => runner.id)
+      .sort((a: string, b: string) =>
+        a === nativeId ? -1 : b === nativeId ? 1 : a.localeCompare(b),
+      );
+    const ready = candidates.find((id: string) => {
+      const computed = computedReadiness.get(id);
 
-    if (computed?.enabled && computed.status === "Ready") {
-      chosenDefault = runnerId;
+      return computed?.enabled === true && computed.status === "Ready";
+    });
+
+    if (ready) {
+      chosenDefault = ready;
       break;
     }
   }

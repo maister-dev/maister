@@ -10,7 +10,7 @@ import {
   TrashIcon,
   XMarkIcon,
 } from "@heroicons/react/24/outline";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
@@ -105,8 +105,15 @@ export function AcpRunnersPanel({
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [selectedDefaultRunnerId, setSelectedDefaultRunnerId] = useState(
-    defaultRunnerId ?? runners[0]?.id ?? "",
+    defaultRunnerId ?? "",
   );
+
+  // The saved default changes underneath this client state on every
+  // router.refresh() (a reconcile or a save), so follow the prop instead of
+  // keeping the value captured at mount; "" (not set) must stay selectable.
+  useEffect(() => {
+    setSelectedDefaultRunnerId(defaultRunnerId ?? "");
+  }, [defaultRunnerId]);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -208,6 +215,11 @@ export function AcpRunnersPanel({
                 setSelectedDefaultRunnerId(event.target.value)
               }
             >
+              {defaultRunnerId ? null : (
+                <option disabled value="">
+                  {t("platformDefaultUnset")}
+                </option>
+              )}
               {runners.map((runner) => (
                 <option
                   key={runner.id}

@@ -1623,6 +1623,7 @@
     "forbidden": "Only an admin can view settings.",
     "envNote": "Read-only — set via MAISTER_REPOS_ROOT and MAISTER_WORKTREES_ROOT.",
     "platformDefaultRunner": "Platform default runner",
+    "platformDefaultUnset": "Not set",
     "projectDefaultRunner": "Project default runner",
     "inheritPlatformDefault": "Inherit platform default",
     "effectiveRunner": "Effective runner",

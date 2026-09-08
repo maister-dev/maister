@@ -1623,6 +1623,7 @@
     "forbidden": "Просматривать настройки может только администратор.",
     "envNote": "Только чтение — задаётся через MAISTER_REPOS_ROOT и MAISTER_WORKTREES_ROOT.",
     "platformDefaultRunner": "Дефолтный раннер платформы",
+    "platformDefaultUnset": "Не задан",
     "projectDefaultRunner": "Дефолтный раннер проекта",
     "inheritPlatformDefault": "Наследовать дефолт платформы",
     "effectiveRunner": "Итоговый раннер",

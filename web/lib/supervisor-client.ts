@@ -37,6 +37,10 @@ const logger = pino({
 
 const DEFAULT_BASE_URL = "http://localhost:7777";
 const DEFAULT_HEALTH_TIMEOUT_MS = 1_000;
+// /diagnostics probes every adapter binary (~0.75 s idle on a five-adapter
+// host); under the 1 s health budget the admin reconcile and create-time
+// readiness silently degraded to "unavailable" whenever the host was busy.
+const DEFAULT_DIAGNOSTICS_TIMEOUT_MS = 5_000;
 const longLivedDispatcher = new Agent({
   headersTimeout: 0,
   bodyTimeout: 0,
@@ -696,7 +700,7 @@ export async function checkSupervisorDiagnostics(
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(),
-    opts.timeoutMs ?? DEFAULT_HEALTH_TIMEOUT_MS,
+    opts.timeoutMs ?? DEFAULT_DIAGNOSTICS_TIMEOUT_MS,
   );
   let res: Response;
 

@@ -156,3 +156,19 @@ describe("AcpRunnersPanel", () => {
     expect(markup).toContain('title="readinessUnknown"');
   });
 });
+
+describe("AcpRunnersPanel platform default select", () => {
+  it("offers an explicit unset option instead of preselecting the first runner when no default exists", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AcpRunnersPanel, {
+        defaultRunnerId: null,
+        presets: [],
+        runners: [claudeRunner, codexRunner],
+      }),
+    );
+
+    expect(markup).toContain("platformDefaultUnset");
+    expect(markup).toMatch(/<option[^>]*value=""[^>]*>platformDefaultUnset/);
+    expect(markup).not.toMatch(/<option[^>]*selected[^>]*value="claude-code"/);
+  });
+});

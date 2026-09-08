@@ -128,6 +128,53 @@ describe("reconcilePlatformRunners (integration)", () => {
     expect(claude.readinessReasons.length).toBeGreaterThan(0);
   });
 
+  it("does not re-materialize a native default an admin deleted", async () => {
+    await reconcilePlatformRunners({
+      db,
+      diagnostics: diagnostics(["claude", "codex"]),
+    });
+    await db
+      .delete(platformAcpRunners)
+      .where(eq(platformAcpRunners.id, "codex-openai"));
+
+    await reconcilePlatformRunners({
+      db,
+      diagnostics: diagnostics(["claude", "codex"]),
+    });
+
+    const ids = (await runners()).map((row) => row.id);
+
+    expect(ids).toEqual(["claude-code"]);
+  });
+
+  it("does not bootstrap native defaults into a catalog the admin already populated", async () => {
+    await db.insert(platformAcpRunners).values({
+      id: "claude-code-custom",
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "claude-sonnet-4-6",
+      provider: { kind: "anthropic" },
+      permissionPolicy: "default",
+      enabled: true,
+      readinessStatus: "Unknown",
+      readinessReasons: [],
+    });
+
+    await reconcilePlatformRunners({
+      db,
+      diagnostics: diagnostics(["claude", "codex"]),
+    });
+
+    const rows = await runners();
+
+    expect(rows.map((row) => row.id)).toEqual(["claude-code-custom"]);
+    expect(rows[0].readinessStatus).toBe("Ready");
+
+    const settings = await db.select().from(platformRuntimeSettings);
+
+    expect(settings[0]?.defaultRunnerId).toBe("claude-code-custom");
+  });
+
   it("is a no-op when diagnostics are unavailable — preserves last-known readiness and writes no singleton", async () => {
     await db.insert(platformAcpRunners).values({
       id: "claude-code",
