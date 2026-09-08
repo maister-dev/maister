@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
-import { assertSupportedNode, RuntimeVersionError } from "../runtime/node-version.ts";
+import { assertSupportedNode, RuntimeVersionError, SUPPORTED_NODE_RANGE } from "../runtime/node-version.ts";
 
 test("runtime preflight accepts qualified patches and rejects unsupported versions", () => {
   for (const version of ["24.15.0", "24.19.0"]) assert.doesNotThrow(() => assertSupportedNode(version));
@@ -22,4 +22,11 @@ test("the container runtime is pinned to a concrete Node 24 image digest", async
   const dockerfile = await readFile(new URL("../Dockerfile", import.meta.url), "utf8");
 
   assert.match(dockerfile, /ARG NODE_VERSION=24\.19\.0-bookworm-slim@sha256:[a-f0-9]{64}/);
+});
+
+test("the quickstart preflight enforces the same qualified Node range", async () => {
+  const quickstart = await readFile(new URL("./quickstart.sh", import.meta.url), "utf8");
+
+  assert.ok(quickstart.includes(`NODE_RANGE="${SUPPORTED_NODE_RANGE}"`), "NODE_RANGE mirrors SUPPORTED_NODE_RANGE");
+  assert.ok(quickstart.includes("major === 24 && minor >= 15"), "check_node mirrors assertSupportedNode");
 });

@@ -9,7 +9,8 @@
 #   ./scripts/quickstart.sh
 #
 # Steps, in order (every one is safe to repeat):
-#   1. preflight: git, Node >= 22.13 (CI runs 24), pnpm >= 10, Docker Compose v2
+#   1. preflight: git, Node >=24.15.0 <25 (the qualified runtime), pnpm >= 10,
+#      Docker Compose v2
 #   2. clone https://github.com/maister-dev/maister into ./maister
 #      (skipped when the current directory already is a checkout)
 #   3. pnpm install --frozen-lockfile for the three runtime workspaces
@@ -45,8 +46,9 @@ MAISTER_REF="${MAISTER_REF:-master}"
 MAISTER_DIR="${MAISTER_DIR:-maister}"
 # Mirrors ARG PNPM_VERSION in the root Dockerfile.
 PNPM_VERSION="11.3.0"
-# Mirrors supervisor/package.json engines.node.
-NODE_FLOOR="22.13"
+# Mirrors SUPPORTED_NODE_RANGE in runtime/node-version.ts and the engines field
+# of the application manifests; scripts/runtime-contract.test.mjs keeps them in sync.
+NODE_RANGE=">=24.15.0 <25"
 POSTGRES_PORT=5432
 REPO_DIR=""
 
@@ -80,13 +82,14 @@ check_git() {
 }
 
 check_node() {
-  have node || die "Node.js ${NODE_FLOOR}+ is required (CI runs 24): https://nodejs.org"
+  have node || die "Node.js ${NODE_RANGE} is required (24.19.0 is the qualified current patch): https://nodejs.org"
+  # Same predicate as assertSupportedNode() in runtime/node-version.ts: only
+  # Node 24 from 24.15.0 is qualified and the web/supervisor boot guards refuse
+  # every other major, so fail here before installing anything.
   node -e '
     const [major, minor] = process.versions.node.split(".").map(Number);
-    const [floorMajor, floorMinor] = process.argv[1].split(".").map(Number);
-    const recent = major > floorMajor || (major === floorMajor && minor >= floorMinor);
-    process.exit(recent ? 0 : 1);
-  ' "$NODE_FLOOR" || die "Node $(node --version) is too old: ${NODE_FLOOR}+ is required, 24 is what CI runs"
+    process.exit(major === 24 && minor >= 15 ? 0 : 1);
+  ' || die "Node $(node --version) is outside the supported range ${NODE_RANGE}; install Node 24 (e.g. nvm install 24.19.0) and run this again"
   ok "node $(node --version)"
 }
 
