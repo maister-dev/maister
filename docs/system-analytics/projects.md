@@ -201,6 +201,12 @@ sequenceDiagram
         DB-->>W: existing row
         W-->>U: 409 CONFLICT (slug/repo_path taken)
     end
+    opt manifest names project.default_runner
+        W->>DB: SELECT platform_acp_runners WHERE id = default_runner
+        alt absent, disabled or not Ready
+            W-->>U: 422 CONFIG (runner not configured / not ready)
+        end
+    end
     W->>DB: BEGIN tx: INSERT project (+ repo_url, provider, maister_yaml_path) + executors + owner membership
     alt unique violation (concurrent duplicate)
         DB-->>W: 23505
