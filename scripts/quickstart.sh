@@ -263,8 +263,8 @@ print_next_steps() {
        Claude Code / Gemini / others:  the agent's own login command
      or put provider keys into supervisor/.env (ANTHROPIC_API_KEY, OPENAI_API_KEY, ...).
 
-  4. In the app: Settings -> ACP runners. Opening the page registers a native runner
-     for each signed-in agent (e.g. claude-code); wait for Ready.
+  4. In the app: Settings -> ACP runners. On a fresh install the first visit registers
+     a native runner per adapter found on this host (e.g. claude-code); wait for Ready.
   5. Projects -> Add project -> absolute path of a git repository on this host.
   6. Create a task on the project board and launch it.
 

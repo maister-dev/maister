@@ -79,8 +79,9 @@ pnpm dev        # supervisor on :7777, web on :3000
 
 Open `http://localhost:3000/login` and sign in as `admin@maister.local` with
 the password `maister-admin`; the first login asks for a new one. Before the
-first Run, open **Settings → ACP runners**: the page registers a native runner
-for each signed-in agent (for example `claude-code`); wait for **Ready**. Then
+first Run, open **Settings → ACP runners**: on a fresh install the first visit
+registers a native runner for each adapter found on the host (for example
+`claude-code`); wait for **Ready**. Then
 add a repository under **Projects → Add project** (a manifest that names a
 `default_runner` needs that runner **Ready** first).
 

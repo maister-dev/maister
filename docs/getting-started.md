@@ -328,9 +328,10 @@ referenced Flow plugins and creates the project row. You
 If the manifest names a `project.default_runner`, that id must already exist as
 an enabled platform runner in `Ready` state, otherwise registration is refused
 with `CONFIG` (the form shows the reason under "Show server response"). Native
-default runners (`claude-code`, `codex-openai`, …) are created the first time an
-admin opens **Settings → ACP runners** while the supervisor reports the adapter
-available, so open that page and wait for **Ready** first.
+default runners (`claude-code`, `codex-openai`, …) are created into an empty
+catalog the first time an admin opens **Settings → ACP runners** while the
+supervisor reports the adapter available (later, use the preset buttons on that
+page), so open it and wait for **Ready** first.
 
 **EN/RU language toggle.** The UI ships with English and Russian. The
 language is stored in the `NEXT_LOCALE` cookie. Use the toggle in the

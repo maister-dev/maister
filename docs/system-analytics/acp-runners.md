@@ -64,17 +64,21 @@ anthropic_compatible`, policies `default | dangerously_skip_permissions`;
   catalog rows. As of [ADR-094](../decisions.md#adr-094) the seed **no longer
   inserts** this preset list into `platform_acp_runners`, so a fresh install
   starts with an empty runner catalog. (Implemented, ADR-094)
-- **Default runners (materialized, not seeded)** — `reconcilePlatformRunners`
-  (`web/lib/acp-runners/native-defaults.ts`) upserts-if-absent each **available**
+- **Default runners (bootstrapped, not seeded)** — `reconcilePlatformRunners`
+  (`web/lib/acp-runners/native-defaults.ts`) inserts each **available**
   adapter's native default runner (`claude→claude-code`, `codex→codex-openai`,
   `gemini→gemini-cli`, `opencode→opencode-native`, `mimo→mimo-code-native`) at
-  admin `/settings` load, driven by live supervisor diagnostics. It is the
-  **single writer** of runner `readiness_status`/`readiness_reasons` outside
-  create/edit and never
+  admin `/settings` load, driven by live supervisor diagnostics, **only while
+  the catalog is empty**; a populated catalog changes only through explicit
+  admin actions (the preset "create" buttons), so a deleted default stays
+  deleted (ADR-094 amendment, 2026-09-09). It is the **single writer** of runner
+  `readiness_status`/`readiness_reasons` outside create/edit and never
   auto-deletes a row. (Implemented, ADR-094)
 - **`platform_runtime_settings.default_runner_id`** — NOT-NULL FK to a runner
   row (no cascade); the singleton platform default. The singleton is **created
-  by the reconcile** (pointing at the first `Ready` default) rather than seeded;
+  by the reconcile** (pointing at the first enabled `Ready` runner in adapter
+  preference order, an adapter's native default before its other runners)
+  rather than seeded;
   until then it is _absent_ (there is no null-default state), and readers fall
   back to "no platform default configured". (Implemented, ADR-094)
 - **Usage references** — `loadRunnerUsageReferences()` computes every live and
