@@ -1698,7 +1698,7 @@ components:
           minLength: 1
           description: |
             Free-form. The adapter validates against its own provider.
-            Examples: `claude-sonnet-4-6`, `gpt-5-codex`, `glm-4.6`.
+            Examples: `claude-sonnet-4-6`, `gpt-6-astra`, `glm-4.6`.
           example: "claude-sonnet-4-6"
         env:
           type: object

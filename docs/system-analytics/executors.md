@@ -68,7 +68,7 @@ acp_runners:
 
   - id: codex-openai
     adapter: codex
-    model: gpt-5-codex
+    model: gpt-6-astra
     provider:
       kind: openai
     permission_policy: default
