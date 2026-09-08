@@ -74,7 +74,7 @@ export function platformRunnerPresetRows(): PlatformRunnerPresetRow[] {
       id: "codex-openai",
       adapter: "codex",
       capabilityAgent: "codex",
-      model: "gpt-5.6-sol",
+      model: "gpt-6-astra",
       provider: { kind: "openai" },
       permissionPolicy: "default",
       readinessStatus: "Ready",
